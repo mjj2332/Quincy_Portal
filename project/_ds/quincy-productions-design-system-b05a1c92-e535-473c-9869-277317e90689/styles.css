@@ -1,0 +1,10 @@
+/* ==========================================================================
+   Quincy Productions — Design System
+   Global stylesheet entry point. Consumers link THIS one file.
+   Keep this file as @import lines only.
+   ========================================================================== */
+@import "tokens/fonts.css";
+@import "tokens/colors.css";
+@import "tokens/typography.css";
+@import "tokens/spacing.css";
+@import "tokens/base.css";

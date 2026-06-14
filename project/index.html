@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en-AU">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quincy Portal</title>
+<link rel="icon" href="assets/logos/quincy-qp-black.png">
+
+<!-- React + Babel (pinned) -->
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<!-- Quincy Productions design system -->
+<link rel="stylesheet" href="_ds/quincy-productions-design-system-b05a1c92-e535-473c-9869-277317e90689/styles.css">
+<script src="_ds/quincy-productions-design-system-b05a1c92-e535-473c-9869-277317e90689/_ds_bundle.js"></script>
+
+<!-- App styles -->
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div id="app"><div class="boot">Loading the studio…</div></div>
+
+<!-- App scripts (each exports to window.QP) -->
+<script type="text/babel" data-presets="react" src="app/data.jsx"></script>
+<script type="text/babel" data-presets="react" src="app/ui.jsx"></script>
+<script type="text/babel" data-presets="react" src="app/viewer.jsx"></script>
+<script type="text/babel" data-presets="react" src="app/dashboard.jsx"></script>
+<script type="text/babel" data-presets="react" src="app/review.jsx"></script>
+<script type="text/babel" data-presets="react" src="app/client.jsx"></script>
+<script type="text/babel" data-presets="react" src="app/tweaks-panel.jsx"></script>
+<script type="text/babel" data-presets="react" src="app/main.jsx"></script>
+</body>
+</html>
