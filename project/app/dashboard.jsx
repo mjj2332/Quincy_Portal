@@ -1,5 +1,5 @@
 /* =====================================================================
-   Quincy Portal — Team dashboard  →  window.QP.Dashboard
+   Quincy Portal — Dashboard  →  window.QP.Dashboard
    ===================================================================== */
 (function () {
   const QP = (window.QP = window.QP || {});
@@ -7,20 +7,22 @@
   const Icon = QP.Icon, cx = QP.cx;
   const DS = () => window.QuincyProductionsDesignSystem_b05a1c || {};
 
-  const STATUS_ORDER = ["all", "editing", "in_review", "client_review", "delivered"];
-
-  QP.Dashboard = function Dashboard({ projects, states, onOpen, query }) {
+  QP.Dashboard = function Dashboard({ projects, states, onOpen, query, role }) {
     const { Button } = DS();
-    const [filter, setFilter] = useStoredView("dash:filter", "all");
-    const [agency, setAgency] = useState("all");
-    const [view, setView] = useStoredView("dash:view", "grid");
+    const [filter, setFilter] = QP.useStored("dash:filter", "all");
+    const [view, setView] = QP.useStored("dash:view", "grid");
     const [sort, setSort] = useState("recent");
 
-    const agencies = ["all", ...Array.from(new Set(projects.map((p) => p.agency)))];
+    const photographerView = !role.seesAll;
+    const STATUS_ORDER = photographerView
+      ? ["all", "raw_review", "editing", "delivered"]
+      : ["all", "raw_review", "editing", "edited_review", "client_review", "delivered"];
 
-    let list = projects.filter((p) => {
+    // role scoping: photographers see only their assigned shoots
+    let scoped = projects.filter((p) => role.seesAll || p.photographer === role.who);
+
+    let list = scoped.filter((p) => {
       if (filter !== "all" && p.status !== filter) return false;
-      if (agency !== "all" && p.agency !== agency) return false;
       if (query) {
         const q = query.toLowerCase();
         if (!(`${p.street} ${p.suburb} ${p.agency} ${p.agent}`.toLowerCase().includes(q))) return false;
@@ -29,12 +31,16 @@
     });
     list = list.slice().sort((a, b) => sort === "recent" ? b.shoot.localeCompare(a.shoot) : a.suburb.localeCompare(b.suburb));
 
-    const count = (s) => projects.filter((p) => p.status === s).length;
-    const photosThisWeek = projects.filter((p) => p.shoot >= "2026-02-09").reduce((n, p) => n + p.collections[0].photos.length, 0);
+    const count = (s) => scoped.filter((p) => p.status === s).length;
 
-    const stats = [
-      { v: projects.filter((p) => p.status !== "delivered").length, l: "Active shoots" },
-      { v: count("in_review"), l: "In studio review", accent: "var(--signal-caution)" },
+    const stats = photographerView ? [
+      { v: scoped.length, l: "My shoots" },
+      { v: count("raw_review"), l: "Awaiting QA selection", accent: "var(--signal-caution)" },
+      { v: count("editing"), l: "In editing", accent: "var(--signal-info)" },
+      { v: count("delivered"), l: "Delivered", accent: "var(--signal-positive)" },
+    ] : [
+      { v: scoped.filter((p) => p.status !== "delivered").length, l: "Active shoots" },
+      { v: count("raw_review") + count("edited_review"), l: "Needs review", accent: "var(--signal-caution)" },
       { v: count("client_review"), l: "Awaiting client", accent: "var(--signal-info)" },
       { v: count("delivered"), l: "Delivered", accent: "var(--signal-positive)" },
     ];
@@ -43,16 +49,21 @@
       <div className="page">
         <div className="pagehead">
           <div>
-            <div className="ey" style={{ marginBottom: 14 }}>Quincy Portal · Studio</div>
-            <h1 className="serif">Projects</h1>
+            <div className="ey" style={{ marginBottom: 14 }}>Quincy Portal · {role.role}</div>
+            <h1 className="serif">{photographerView ? "My shoots" : "Projects"}</h1>
           </div>
           <div className="toolbar">
-            <Button variant="secondary" size="sm" iconLeft={<Icon name="calendar" size={15} />}>Schedule</Button>
-            <Button variant="primary" size="sm" iconLeft={<Icon name="plus" size={15} />}>New shoot</Button>
+            {photographerView ? (
+              <Button variant="primary" size="sm" iconLeft={<Icon name="upload" size={15} />}>Upload RAW</Button>
+            ) : (
+              <>
+                <Button variant="secondary" size="sm" iconLeft={<Icon name="calendar" size={15} />}>Schedule</Button>
+                {role.id === "admin" && <Button variant="primary" size="sm" iconLeft={<Icon name="plus" size={15} />}>New shoot</Button>}
+              </>
+            )}
           </div>
         </div>
 
-        {/* stat strip */}
         <div className="stats">
           {stats.map((s) => (
             <div className="stat" key={s.l}>
@@ -62,13 +73,12 @@
           ))}
         </div>
 
-        {/* filter bar */}
         <div className="spread" style={{ marginBottom: 20, gap: 16, flexWrap: "wrap" }}>
           <div className="toolbar">
             {STATUS_ORDER.map((s) => (
               <button key={s} className={cx("chip", filter === s && "is-active")} onClick={() => setFilter(s)}>
                 {s === "all" ? "All" : QP.STATUS[s].label}
-                <span className="cnt">{s === "all" ? projects.length : count(s)}</span>
+                <span className="cnt">{s === "all" ? scoped.length : count(s)}</span>
               </button>
             ))}
           </div>
@@ -90,7 +100,7 @@
 
         {view === "grid" && list.length > 0 && (
           <div className="projects">
-            {list.map((p) => <ProjectCard key={p.id} project={p} states={states} onOpen={onOpen} />)}
+            {list.map((p) => <ProjectCard key={p.id} project={p} states={states} onOpen={onOpen} photographerView={photographerView} />)}
           </div>
         )}
 
@@ -98,10 +108,11 @@
           <div className="plist">
             <div className="prow head">
               <div></div><div>Address</div><div className="prow__c-agency">Client</div>
-              <div className="prow__c-date">Shoot date</div><div className="prow__c-status">Status</div><div style={{ textAlign: "right" }}>Review</div>
+              <div className="prow__c-date">Shoot date</div><div className="prow__c-status">Status</div><div style={{ textAlign: "right" }}>{photographerView ? "RAW" : "Review"}</div>
             </div>
             {list.map((p) => {
               const rs = QP.reviewStats(p, states);
+              const raw = QP.rawStats(p, states);
               return (
                 <div className="prow" key={p.id} onClick={() => onOpen(p.id)}>
                   <img className="prow__thumb" src={p.cover} alt="" loading="lazy" />
@@ -113,7 +124,7 @@
                   <div className="prow__c-date" style={{ fontSize: 14 }}>{QP.fmtShort(p.shoot)}</div>
                   <div className="prow__c-status"><QP.StatusBadge status={p.status} /></div>
                   <div style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontSize: 14 }}>
-                    {p.status === "editing" ? <span className="muted">—</span> : `${rs.approved}/${rs.total}`}
+                    {photographerView ? `${raw.total}` : `${rs.approved}/${rs.total}`}
                   </div>
                 </div>
               );
@@ -125,17 +136,17 @@
   };
 
   /* ---- project card -------------------------------------------------- */
-  function ProjectCard({ project, states, onOpen }) {
+  function ProjectCard({ project, states, onOpen, photographerView }) {
     const p = project;
     const rs = QP.reviewStats(p, states);
-    const photoCount = p.collections.reduce((n, c) => n + c.photos.length, 0);
+    const raw = QP.rawStats(p, states);
     return (
       <div className="proj" onClick={() => onOpen(p.id)}>
         <div className="proj__media">
           <img src={p.cover} alt={p.street} loading="lazy" />
           <div className="proj__badges">
             <QP.StatusBadge status={p.status} style={{ background: "rgba(20,20,21,.42)", backdropFilter: "blur(6px)", padding: "5px 8px", borderRadius: 2 }} />
-            <span className="cbubble"><Icon name="image" size={12} />{photoCount}</span>
+            <span className="cbubble"><Icon name="image" size={12} />{QP.mediaCount(p)}</span>
           </div>
         </div>
         <div className="proj__body">
@@ -145,12 +156,16 @@
             <div style={{ fontSize: 13.5, color: "var(--text-secondary)", marginTop: 2 }}>{p.agency} · {p.agent}</div>
           </div>
           <div className="proj__foot">
-            {p.status === "editing" ? (
-              <span className="ey" style={{ color: "var(--text-muted)" }}>Editing in progress</span>
+            {photographerView ? (
+              <span className="ey nowrap" style={{ color: "var(--text-secondary)" }}>{raw.total} RAW frames uploaded</span>
+            ) : p.stage === 0 ? (
+              <span className="ey" style={{ color: "var(--text-muted)" }}>Awaiting RAW upload</span>
             ) : (
               <>
-                <div className="meter" title={`${rs.approved} approved`}><i style={{ width: rs.pct + "%" }} /></div>
-                <span className="ey nowrap" style={{ marginLeft: 12, color: "var(--text-secondary)" }}>{rs.approved}/{rs.total} {p.status === "delivered" ? "delivered" : "approved"}</span>
+                <div className="meter" title={rs.raw ? `${rs.approved} marked` : `${rs.approved} approved`}><i style={{ width: rs.pct + "%" }} /></div>
+                <span className="ey nowrap" style={{ marginLeft: 12, color: "var(--text-secondary)" }}>
+                  {rs.raw ? `${rs.approved}/${rs.total} marked` : `${rs.approved}/${rs.total} ${p.status === "delivered" ? "delivered" : "approved"}`}
+                </span>
               </>
             )}
           </div>
@@ -158,7 +173,4 @@
       </div>
     );
   }
-
-  // local persisted view helper (reuses QP.useStored but as a hook wrapper)
-  function useStoredView(key, init) { return QP.useStored(key, init); }
 })();

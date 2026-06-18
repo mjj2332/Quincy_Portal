@@ -1,9 +1,9 @@
 /* =====================================================================
-   Quincy Portal — app shell, routing, state, publish handoff
+   Quincy Portal — app shell, roles, routing, flows
    ===================================================================== */
 (function () {
   const QP = (window.QP = window.QP || {});
-  const { useState, useEffect, useMemo, useRef } = React;
+  const { useState, useEffect, useMemo } = React;
   const Icon = QP.Icon, cx = QP.cx;
   const DS = () => window.QuincyProductionsDesignSystem_b05a1c || {};
 
@@ -11,20 +11,39 @@
     const { Button } = DS();
     const { useTweaks } = window;
     const seed = useMemo(() => QP.seedReview(), []);
-    const [persona, setPersona] = QP.useStored("persona", "team");
-    const [view, setView] = QP.useStored("view", "dashboard"); // team: dashboard | project
+    const [persona, setPersona] = QP.useStored("persona", "admin");   // admin | photographer | editor | client
+    const [view, setView] = QP.useStored("view", "dashboard");
     const [currentId, setCurrentId] = QP.useStored("current", "p-kings");
     const [query, setQuery] = useState("");
-    const [states, setStates] = QP.useStored("review", seed.states);
-    const [comments, setComments] = QP.useStored("comments", seed.comments);
+    const [states, setStates] = QP.useStored("review2", seed.states);
+    const [comments, setComments] = QP.useStored("comments2", seed.comments);
     const [favs, setFavs] = QP.useStored("favs", seed.favs);
-    const [overrides, setOverrides] = QP.useStored("status", {});
+    const [purchases, setPurchases] = QP.useStored("purchases", seed.purchases);
+    const [overrides, setOverrides] = QP.useStored("status2", {});
+    const [copyEdits, setCopyEdits] = QP.useStored("copy", {});
     const [tweaks, setTweak] = useTweaks(TWEAK_DEFAULTS);
-    const [publish, setPublish] = useState(null); // {project} | {project, done:true}
+    const [publish, setPublish] = useState(null);
+    const [send, setSend] = useState(null);     // {project, n}
+    const [upload, setUpload] = useState(false);
 
-    // apply client theme tweak on the root
-    const projects = QP.PROJECTS.map((p) => ({ ...p, status: overrides[p.id] || p.status }));
-    const project = projects.find((p) => p.id === currentId) || projects[0];
+    const role = QP.ROLES[persona] || QP.ROLES.admin;
+
+    const projects = QP.PROJECTS.map((p) => ({
+      ...p,
+      status: overrides[p.id] || p.status,
+      copy: copyEdits[p.id] || p.copy,
+    }));
+    let project = projects.find((p) => p.id === currentId) || projects[0];
+
+    // role guards
+    if (persona === "photographer" && project.photographer !== role.who) {
+      project = projects.find((p) => p.photographer === role.who) || project;
+    }
+    // client must land on a published project
+    let clientProject = project;
+    if (persona === "client" && !QP.collOf(project, "edited")) {
+      clientProject = projects.find((p) => QP.collOf(p, "edited")) || project;
+    }
 
     const setReview = (id, patch) => setStates((prev) => {
       const cur = prev[id] || {};
@@ -33,97 +52,71 @@
     });
     const addComment = (id, { text, pin, drawing }) => setComments((prev) => ({
       ...prev,
-      [id]: [...(prev[id] || []), { id: Math.random().toString(36).slice(2), who: "You", role: persona === "reviewer" ? "Reviewer" : "Quincy", text, pin: pin || null, drawing: drawing || null, at: new Date().toISOString() }],
+      [id]: [...(prev[id] || []), { id: Math.random().toString(36).slice(2), who: role.who, role: role.id === "client" ? "Client" : role.label, text, pin: pin || null, drawing: drawing || null, at: new Date().toISOString() }],
     }));
     const toggleFav = (id) => setFavs((prev) => ({ ...prev, [id]: !prev[id] }));
+    const onPurchase = (id) => setPurchases((prev) => ({ ...prev, [id]: true }));
+    const setCopy = (pid, copy) => setCopyEdits((prev) => ({ ...prev, [pid]: { ...copy, status: copy.status || "draft" } }));
 
     const openProject = (id) => { setCurrentId(id); setView("project"); };
+    const confirmSend = (proj) => { setOverrides((o) => ({ ...o, [proj.id]: "editing" })); setSend(null); QP.toast("Copied to autoHDR Dropbox", { sub: `${proj.street} · editing in progress`, icon: "wand" }); };
+    const confirmPublish = (proj) => { setOverrides((o) => ({ ...o, [proj.id]: "delivered" })); setPublish({ project: proj, done: true }); };
 
-    const confirmPublish = (proj) => {
-      setOverrides((o) => ({ ...o, [proj.id]: "delivered" }));
-      setPublish({ project: proj, done: true });
-    };
-
-    /* ----- top chrome per persona ----- */
     const isClient = persona === "client";
-    const isReviewer = persona === "reviewer";
 
     return (
       <div className={cx("app", tweaks.accent === "olive" && "acc-olive")}>
-        {/* TEAM / REVIEWER top bar (client renders its own hero brand) */}
+        {/* top bar (not for client) */}
         {!isClient && (
-          <div className={cx("topbar", isReviewer && "is-ink")}>
-            <div className="topbar__brand" onClick={() => { if (!isReviewer) { setView("dashboard"); } }}>
-              <img src={isReviewer ? QP.res("wmWhite", "assets/logos/quincy-wordmark-white.png") : QP.res("wmBlack", "assets/logos/quincy-wordmark-black.png")} alt="Quincy Productions" />
+          <div className="topbar">
+            <div className="topbar__brand" onClick={() => setView("dashboard")}>
+              <img src={QP.res("wmBlack", "assets/logos/quincy-wordmark-black.png")} alt="Quincy Productions" />
             </div>
             <div className="topbar__divider" />
-            {isReviewer ? (
-              <div className="ey">Review link · {project.suburb}</div>
-            ) : (
-              <nav className="topnav">
-                <a className={view === "dashboard" ? "is-active" : ""} onClick={() => setView("dashboard")}>Projects</a>
-                <a>Clients</a>
-                <a>Schedule</a>
-                <a>Settings</a>
-              </nav>
-            )}
+            <nav className="topnav">
+              <a className={view === "dashboard" ? "is-active" : ""} onClick={() => setView("dashboard")}>{role.seesAll ? "Projects" : "My shoots"}</a>
+              {role.seesAll && <a>Clients</a>}
+              {role.seesAll && <a>Schedule</a>}
+              {role.id === "admin" && <a>Settings</a>}
+            </nav>
             <div className="grow" />
-            {!isReviewer && (
-              <div className="search">
-                <Icon name="search" size={15} />
-                <input placeholder="Search address, suburb, client…" value={query} onChange={(e) => setQuery(e.target.value)} onFocus={() => setView("dashboard")} />
-              </div>
-            )}
-            {!isReviewer && <button className="icbtn"><Icon name="calendar" size={17} /></button>}
-            <div className="avatar">{isReviewer ? "MP" : "JQ"}</div>
+            <div className="search">
+              <Icon name="search" size={15} />
+              <input placeholder="Search address, suburb, client…" value={query} onChange={(e) => setQuery(e.target.value)} onFocus={() => setView("dashboard")} />
+            </div>
+            <div className="row gap3">
+              <span className="ey" style={{ color: "var(--text-muted)" }}>{role.label}</span>
+              <div className="avatar">{role.initials}</div>
+            </div>
           </div>
         )}
 
-        {/* guest reviewer banner */}
-        {isReviewer && (
-          <div className="guestbar">
-            <div className="row gap4">
-              <span className="eyl">Shared for review</span>
-              <span style={{ opacity: .6 }}>—</span>
-              <span>You're reviewing <strong>{project.street}</strong> for Quincy Productions. Your approvals &amp; notes are sent back to the studio.</span>
-            </div>
-            <select className="chip" value={currentId} onChange={(e) => setCurrentId(e.target.value)} style={{ background: "transparent", color: "var(--paper-050)", borderColor: "rgba(246,244,239,.3)" }}>
-              {projects.filter((p) => p.status !== "editing").map((p) => <option key={p.id} value={p.id} style={{ color: "#111" }}>{p.street}</option>)}
-            </select>
-          </div>
+        {/* ROUTER */}
+        {!isClient && view === "dashboard" && (
+          <QP.Dashboard projects={projects} states={states} onOpen={openProject} query={query} role={role} />
         )}
 
-        {/* MAIN ROUTER */}
-        {persona === "team" && view === "dashboard" && (
-          <QP.Dashboard projects={projects} states={states} onOpen={openProject} query={query} />
-        )}
-
-        {persona === "team" && view === "project" && (
-          <>
-            <div className="spread" style={{ padding: "16px 28px 0", maxWidth: 1480, margin: "0 auto", width: "100%" }}>
-              <button className="chip" onClick={() => setView("dashboard")}><Icon name="left" size={13} /> All projects</button>
-              <div className="toolbar">
-                <button className="chip" onClick={() => setPersona("reviewer")}><Icon name="eye" size={13} /> Preview reviewer link</button>
-                <button className="chip" onClick={() => setPersona("client")}><Icon name="image" size={13} /> Preview client gallery</button>
-              </div>
-            </div>
-            <QP.Review project={project} states={states} setReview={setReview} comments={comments} addComment={addComment}
-              persona="team" density={tweaks.density} onRequestPublish={(p) => setPublish({ project: p })} />
-          </>
-        )}
-
-        {isReviewer && (
-          <QP.Review project={project} states={states} setReview={setReview} comments={comments} addComment={addComment}
-            persona="reviewer" density={tweaks.density} onRequestPublish={() => {}} />
+        {!isClient && view === "project" && (
+          <QP.Workspace project={project} role={role} states={states} setReview={setReview}
+            comments={comments} addComment={addComment} density={tweaks.density}
+            onBack={() => setView("dashboard")}
+            onPublish={(p) => setPublish({ project: p })}
+            onSendToEdit={(p, n) => setSend({ project: p, n })}
+            onUpload={role.canUploadRaw ? () => setUpload(true) : null}
+            setCopy={setCopy}
+            onPreview={() => setPersona("client")} />
         )}
 
         {isClient && (
-          <QP.Client project={project} favs={favs} toggleFav={toggleFav} density={tweaks.density} theme={tweaks.clientTheme} captions={tweaks.captions} />
+          <QP.Client project={clientProject} favs={favs} toggleFav={toggleFav} density={tweaks.density}
+            theme={tweaks.clientTheme} captions={tweaks.captions} purchases={purchases} onPurchase={onPurchase} />
         )}
 
-        {/* publish modal */}
+        {/* flows */}
         {publish && <PublishFlow data={publish} onConfirm={confirmPublish} onClose={() => setPublish(null)}
           states={states} viewClient={() => { setPublish(null); setPersona("client"); }} />}
+        {send && <SendFlow data={send} states={states} onConfirm={confirmSend} onClose={() => setSend(null)} />}
+        {upload && <UploadModal project={project} onClose={() => setUpload(false)} />}
 
         <QP.PersonaSwitch persona={persona} setPersona={setPersona} />
         <TweakPanelUI tweaks={tweaks} setTweak={setTweak} />
@@ -132,11 +125,34 @@
     );
   }
 
-  /* ---- publish handoff modal ----------------------------------------- */
+  /* ---- send to autoHDR ----------------------------------------------- */
+  function SendFlow({ data, states, onConfirm, onClose }) {
+    const { Button } = DS();
+    const { project } = data;
+    const rs = QP.rawStats(project, states);
+    return (
+      <QP.Modal eyebrow={`${project.street} · RAW`} title="Send to autoHDR" onClose={onClose} wide
+        footer={<>
+          <Button variant="ghost" size="md" onClick={onClose}>Cancel</Button>
+          <Button variant="primary" size="md" iconLeft={<Icon name="wand" size={15} />} onClick={() => onConfirm(project)} disabled={rs.selected === 0}>Copy {rs.selected} to Dropbox</Button>
+        </>}>
+        <p style={{ fontSize: 15, lineHeight: 1.6, color: "var(--text-secondary)" }}>The frames marked for editing are copied to the <strong style={{ color: "var(--text-primary)" }}>Dropbox folder autoHDR monitors</strong>. autoHDR retouches them automatically and the edited frames return to the <strong style={{ color: "var(--text-primary)" }}>Edited</strong> collection for QA.</p>
+        <div className="stats" style={{ margin: 0 }}>
+          <div className="stat" style={{ padding: 16 }}><div className="v" style={{ fontSize: 26 }}>{rs.selected}</div><div className="l">Marked for edit</div></div>
+          <div className="stat" style={{ padding: 16 }}><div className="v" style={{ fontSize: 26 }}>{rs.total - rs.selected}</div><div className="l">Held back</div></div>
+          <div className="stat" style={{ padding: 16 }}><div className="v" style={{ fontSize: 26 }}>~{Math.max(1, Math.round(rs.selected / 12))}h</div><div className="l">Est. turnaround</div></div>
+        </div>
+        <div className="ey muted" style={{ textTransform: "none", letterSpacing: 0, fontSize: 13 }}>Direct API hand-off to autoHDR — planned. For now the portal drops files into the watched Dropbox folder.</div>
+      </QP.Modal>
+    );
+  }
+
+  /* ---- publish to client --------------------------------------------- */
   function PublishFlow({ data, onConfirm, onClose, states, viewClient }) {
     const { Button } = DS();
     const { project } = data;
     const rs = QP.reviewStats(project, states);
+    const hasVideo = QP.collOf(project, "video"); const hasCopy = project.copy.status === "published";
     if (data.done) {
       return (
         <QP.Modal eyebrow="Published" title="The gallery is live." onClose={onClose} wide
@@ -145,7 +161,7 @@
             <Button variant="primary" size="md" iconLeft={<Icon name="arrow" size={15} />} onClick={viewClient}>Open client gallery</Button>
           </>}>
           <p style={{ fontSize: 15.5, lineHeight: 1.65, color: "var(--text-secondary)" }}>
-            <strong style={{ color: "var(--text-primary)" }}>{rs.approved} approved frames</strong> of {project.street} have been delivered to <strong style={{ color: "var(--text-primary)" }}>{project.agent}</strong> at {project.agency}. Flagged frames were held back.
+            <strong style={{ color: "var(--text-primary)" }}>{rs.approved} approved frames</strong>{hasVideo ? ", film" : ""}{hasCopy ? " & listing copy" : ""} for {project.street} have been delivered to <strong style={{ color: "var(--text-primary)" }}>{project.agent}</strong> at {project.agency}. Flagged frames were held back.
           </p>
           <div className="row gap3" style={{ border: "1px solid var(--border-hairline)", padding: "12px 14px", background: "var(--paper-000)" }}>
             <Icon name="link" size={16} style={{ color: "var(--text-muted)" }} />
@@ -160,7 +176,7 @@
           <Button variant="ghost" size="md" onClick={onClose}>Not yet</Button>
           <Button variant="primary" size="md" iconLeft={<Icon name="send" size={15} />} onClick={() => onConfirm(project)}>Publish {rs.approved} frames</Button>
         </>}>
-        <p style={{ fontSize: 15, lineHeight: 1.6, color: "var(--text-secondary)" }}>This delivers the approved set to the client gallery and notifies the agent. You can keep editing and re-publish anytime.</p>
+        <p style={{ fontSize: 15, lineHeight: 1.6, color: "var(--text-secondary)" }}>This delivers the approved images{hasVideo ? ", video" : ""}, floorplan{hasCopy ? " and copy" : ""} to the client gallery and notifies the agent. Premium add-ons stay paywalled. You can re-publish anytime.</p>
         <div className="stats" style={{ margin: 0 }}>
           <div className="stat" style={{ padding: 16 }}><div className="v" style={{ fontSize: 26 }}>{rs.approved}</div><div className="l">Approved</div></div>
           <div className="stat" style={{ padding: 16 }}><div className="v" style={{ fontSize: 26 }}>{rs.flagged}</div><div className="l">Held back</div></div>
@@ -174,7 +190,36 @@
     );
   }
 
-  /* ---- tweaks defaults + panel --------------------------------------- */
+  /* ---- upload RAW ---------------------------------------------------- */
+  function UploadModal({ project, onClose }) {
+    const { Button } = DS();
+    const [pct, setPct] = useState(null);
+    const n = 18;
+    const start = () => {
+      setPct(0); let p = 0;
+      const t = setInterval(() => { p += Math.random() * 18 + 6; if (p >= 100) { p = 100; clearInterval(t); setTimeout(() => { onClose(); QP.toast(`${n} RAW frames uploaded`, { sub: `${project.street} · ready for QA`, icon: "upload" }); }, 450); } setPct(Math.min(100, Math.round(p))); }, 220);
+    };
+    return (
+      <QP.Modal eyebrow={`${project.street} · ${project.suburb}`} title="Upload RAW" onClose={onClose}
+        footer={pct === null ? <>
+          <Button variant="ghost" size="md" onClick={onClose}>Cancel</Button>
+          <Button variant="primary" size="md" iconLeft={<Icon name="upload" size={15} />} onClick={start}>Upload {n} files</Button>
+        </> : null}>
+        {pct === null ? <>
+          <div className="dropzone"><Icon name="upload" size={26} /><div style={{ marginTop: 10, fontSize: 15 }}>Drop RAW or image files here</div><div className="ey muted" style={{ marginTop: 6 }}>Any RAW or image format · no size limit</div></div>
+          <div className="muted" style={{ fontSize: 13 }}>{n} files staged from this shoot. Bracketed sets aren't grouped — your editor brackets them manually during selection.</div>
+        </> : (
+          <div style={{ padding: "8px 0 4px" }}>
+            <div className="ey" style={{ marginBottom: 12 }}>Uploading {n} RAW frames…</div>
+            <QP.PrepBar pct={pct} />
+            <div className="muted" style={{ fontSize: 13, marginTop: 10 }}>{pct < 100 ? "Transferring originals…" : "Done — handed to QA."}</div>
+          </div>
+        )}
+      </QP.Modal>
+    );
+  }
+
+  /* ---- tweaks -------------------------------------------------------- */
   const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
     "density": "standard",
     "clientTheme": "paper",
@@ -198,9 +243,20 @@
     );
   }
 
-  /* ---- mount once DS bundle is ready ---------------------------------- */
   function mount() {
-    if (!window.QuincyProductionsDesignSystem_b05a1c || !QP.Dashboard || !window.useTweaks) return setTimeout(mount, 40);
+    if (!window.QuincyProductionsDesignSystem_b05a1c || !QP.Dashboard || !QP.Workspace || !QP.PhotoBoard || !window.useTweaks) {
+      mount._n = (mount._n || 0) + 1;
+      if (mount._n > 60) {
+        var miss = [];
+        if (!window.QuincyProductionsDesignSystem_b05a1c) miss.push("DS bundle");
+        if (!QP.Dashboard) miss.push("Dashboard"); if (!QP.Workspace) miss.push("Workspace");
+        if (!QP.PhotoBoard) miss.push("PhotoBoard"); if (!QP.Client) miss.push("Client");
+        if (!QP.ImageViewer) miss.push("ImageViewer"); if (!window.useTweaks) miss.push("Tweaks");
+        document.getElementById("app").innerHTML = '<div class="boot">Missing: ' + miss.join(", ") + '</div>';
+        return;
+      }
+      return setTimeout(mount, 40);
+    }
     ReactDOM.createRoot(document.getElementById("app")).render(<App />);
   }
   mount();

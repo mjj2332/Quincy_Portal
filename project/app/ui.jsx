@@ -61,23 +61,26 @@
      =================================================================== */
   QP.PhotoTile = function PhotoTile(props) {
     const {
-      photo, mode = "plain", onOpen,
+      photo, mode = "plain", onOpen, caps = {},
       // review
-      selectable, selected, onSelect, review, comments = 0, onApprove, onFlag,
+      selectable, selected, onSelect, review, comments = 0, onApprove, onFlag, onPick, onRecommend,
       // client
-      fav, onFav, onQuickDownload,
+      fav, onFav, onQuickDownload, locked,
       showCaption = true,
     } = props;
 
     const st = review?.state;
+    const pickedForEdit = mode === "raw" && review?.selected;
     const cls = cx(
       "tile",
       selected && "is-selected",
       st === "approved" && "st-approved",
       st === "flagged" && "st-flagged",
-      st && "has-state",
+      pickedForEdit && "st-approved",
+      (st || pickedForEdit) && "has-state",
       review?.rating && "has-rating",
       mode === "review" && st === "flagged" && "is-dim",
+      locked && "is-locked",
     );
 
     return (
@@ -90,7 +93,16 @@
           : <img loading="lazy" src={photo.src} alt={photo.cap} style={{ objectPosition: photo.pos }} />}
         <div className="tile__scrim" />
 
+        {/* premium paywall watermark (client) */}
+        {locked && (
+          <>
+            <div className="wmark" aria-hidden="true"><span>QUINCY · PREVIEW</span><span>QUINCY · PREVIEW</span><span>QUINCY · PREVIEW</span></div>
+            <span className="lockbadge"><Icon name="lock" size={12} /> {photo.price ? QP.fmtAUD(photo.price) : "Premium"}</span>
+          </>
+        )}
+
         {!selectable && mode === "review" && <span className="tile__num">{String(photo.n).padStart(2, "0")}</span>}
+        {!selectable && mode === "raw" && <span className="tile__num">{String(photo.n).padStart(2, "0")}</span>}
 
         {selectable && (
           <button className="selbox" onClick={(e) => { e.stopPropagation(); onSelect && onSelect(); }} aria-label="Select">
@@ -100,7 +112,7 @@
 
         {/* hover / state tools */}
         <div className="tile__tools">
-          {mode === "review" && (
+          {mode === "review" && caps.canQA !== false && (
             <>
               <button className={cx("icbtn", "icbtn--ondark")} title="Approve (A)"
                       onClick={(e) => { e.stopPropagation(); onApprove && onApprove(); }}
@@ -114,14 +126,28 @@
               </button>
             </>
           )}
+          {mode === "raw" && caps.canSelect && (
+            <button className={cx("icbtn", "icbtn--ondark")} title="Mark for editing"
+                    onClick={(e) => { e.stopPropagation(); onPick && onPick(); }}
+                    style={pickedForEdit ? { background: "var(--signal-positive)", borderColor: "var(--signal-positive)" } : null}>
+              <Icon name="check" size={15} />
+            </button>
+          )}
+          {mode === "raw" && caps.canRecommend && (
+            <button className={cx("icbtn", "icbtn--ondark")} title="Recommend to QA"
+                    onClick={(e) => { e.stopPropagation(); onRecommend && onRecommend(); }}
+                    style={review?.pick ? { background: "var(--signal-caution)", borderColor: "var(--signal-caution)" } : null}>
+              <Icon name="star" size={15} fill={review?.pick ? "currentColor" : "none"} />
+            </button>
+          )}
           {mode === "client" && (
             <>
               <button className={cx("icbtn", "icbtn--ondark", "tile__heart", fav && "is-on")} title="Favourite"
                       onClick={(e) => { e.stopPropagation(); onFav && onFav(); }}>
                 <Icon name="heart" size={15} fill={fav ? "currentColor" : "none"} />
               </button>
-              <button className="icbtn icbtn--ondark" title="Download" onClick={(e) => { e.stopPropagation(); onQuickDownload && onQuickDownload(); }}>
-                <Icon name="download" size={15} />
+              <button className="icbtn icbtn--ondark" title={locked ? "Unlock" : "Download"} onClick={(e) => { e.stopPropagation(); onQuickDownload && onQuickDownload(); }}>
+                <Icon name={locked ? "lock" : "download"} size={15} />
               </button>
             </>
           )}
@@ -142,6 +168,12 @@
           <span className={cx("statetag", "st-" + st)}>
             <Icon name={st === "approved" ? "check" : "flag"} size={12} />{st === "approved" ? "Approved" : "Flagged"}
           </span>
+        )}
+        {mode === "raw" && pickedForEdit && (
+          <span className="statetag st-approved"><Icon name="wand" size={12} /> For edit</span>
+        )}
+        {mode === "raw" && review?.pick && !pickedForEdit && (
+          <span className="statetag" style={{ background: "color-mix(in srgb, var(--signal-caution) 82%, #000)" }}><Icon name="star" size={12} fill="currentColor" /> Recommended</span>
         )}
 
         {review?.rating ? <QP.Stars value={review.rating} /> : null}
@@ -205,8 +237,9 @@
      =================================================================== */
   QP.PersonaSwitch = function PersonaSwitch({ persona, setPersona }) {
     const opts = [
-      { id: "team", label: "Team" },
-      { id: "reviewer", label: "Reviewer" },
+      { id: "admin", label: "Admin" },
+      { id: "photographer", label: "Photographer" },
+      { id: "editor", label: "Editor / QA" },
       { id: "client", label: "Client" },
     ];
     return (

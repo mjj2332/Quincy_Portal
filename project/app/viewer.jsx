@@ -8,7 +8,7 @@
   const DS = () => window.QuincyProductionsDesignSystem_b05a1c || {};
 
   function timeAgo(iso) {
-    const d = new Date(iso), now = new Date("2026-04-30T12:00:00");
+    const d = new Date(iso), now = new Date("2026-06-18T12:00:00");
     const days = Math.round((now - d) / 86400000);
     if (days <= 0) return "today";
     if (days === 1) return "yesterday";
@@ -20,14 +20,14 @@
      =================================================================== */
   QP.ImageViewer = function ImageViewer(props) {
     const {
-      mode = "client", photos, index, onIndex, onClose, project,
+      mode = "client", photos, index, onIndex, onClose, project, caps = {},
       getReview, setReview,                 // review
       getComments, addComment,              // review
-      favs, onFav, onDownload, onOrder,     // client
-      readOnly,                             // guest reviewer can comment/rate but not change pipeline (still can approve here)
+      favs, onFav, onDownload, onOrder, isLocked,     // client
     } = props;
     const { Button } = DS();
     const photo = photos[index];
+    const lockedNow = mode === "client" && isLocked ? isLocked(photo) : false;
     const [panelOpen, setPanelOpen] = useState(false);
     const [draft, setDraft] = useState("");
     // freehand markup
@@ -50,8 +50,10 @@
         if (e.key === "ArrowLeft") return go(-1);
         if (e.key === "ArrowRight") return go(1);
         if (mode === "review") {
-          if (e.key.toLowerCase() === "a") setReview(photo.id, (r) => ({ state: r.state === "approved" ? null : "approved" }));
-          if (e.key.toLowerCase() === "x") setReview(photo.id, (r) => ({ state: r.state === "flagged" ? null : "flagged" }));
+          if (caps.canQA && e.key.toLowerCase() === "a") setReview(photo.id, (r) => ({ state: r.state === "approved" ? null : "approved" }));
+          if (caps.canQA && e.key.toLowerCase() === "x") setReview(photo.id, (r) => ({ state: r.state === "flagged" ? null : "flagged" }));
+          if (caps.canSelect && e.key.toLowerCase() === "e") setReview(photo.id, (r) => ({ selected: !r.selected }));
+          if (caps.canRecommend && e.key.toLowerCase() === "r") setReview(photo.id, (r) => ({ pick: !r.pick }));
           if ("12345".includes(e.key)) setReview(photo.id, { rating: +e.key });
         }
         if (mode === "client" && e.key.toLowerCase() === "f") onFav(photo.id);
@@ -100,6 +102,7 @@
               {photo.floorplan
                 ? <QP.FloorplanArt />
                 : <img className="viewer__img" src={photo.src} alt={photo.cap} style={{ objectPosition: photo.pos }} />}
+              {lockedNow && <div className="wmark wmark--lg" aria-hidden="true"><span>QUINCY · PREVIEW</span><span>QUINCY · PREVIEW</span><span>QUINCY · PREVIEW</span><span>QUINCY · PREVIEW</span></div>}
               <svg className="markup-svg" viewBox="0 0 100 100" preserveAspectRatio="none"
                    style={{ pointerEvents: markup ? "auto" : "none", cursor: markup ? "crosshair" : "default", touchAction: "none" }}
                    onPointerDown={drawDown} onPointerMove={drawMove} onPointerUp={drawUp} onPointerLeave={drawUp}>
@@ -160,9 +163,9 @@
         {/* side panel */}
         <div className={cx("vpanel", panelOpen && "open")}>
           {mode === "review" ? (
-            <ReviewPanel {...{ photo, review, setReview, comments, draft, setDraft, markup, setMarkup, hasDrawing: strokes.length > 0, clearDraw, submitComment }} />
+            <ReviewPanel {...{ photo, review, setReview, comments, draft, setDraft, markup, setMarkup, hasDrawing: strokes.length > 0, clearDraw, submitComment, caps }} />
           ) : (
-            <ClientPanel {...{ photo, project, fav: favs[photo.id], onFav, onDownload, onOrder }} />
+            <ClientPanel {...{ photo, project, fav: favs[photo.id], onFav, onDownload, onOrder, locked: lockedNow }} />
           )}
         </div>
       </div>
@@ -170,7 +173,7 @@
   };
 
   /* ---- review side panel --------------------------------------------- */
-  function ReviewPanel({ photo, review, setReview, comments, draft, setDraft, markup, setMarkup, hasDrawing, clearDraw, submitComment }) {
+  function ReviewPanel({ photo, review, setReview, comments, draft, setDraft, markup, setMarkup, hasDrawing, clearDraw, submitComment, caps = {} }) {
     return (
       <>
         <div className="vpanel__head">
@@ -178,21 +181,56 @@
           <div className="vpanel__addr serif">{photo.cap}</div>
         </div>
         <div className="vpanel__scroll">
-          {/* decision */}
-          <div className="vpanel__sec">
-            <div className="eylab">Decision</div>
-            <div className="decide">
-              <button className={cx("dbtn", "on-approve", review.state === "approved" && "is-on")}
-                      onClick={() => setReview(photo.id, (r) => ({ state: r.state === "approved" ? null : "approved" }))}>
-                <Icon name="check" size={16} /> Approve
+          {/* decision — RAW select-for-edit */}
+          {caps.canSelect && (
+            <div className="vpanel__sec">
+              <div className="eylab">For editing</div>
+              {review.pick && <div className="row gap2" style={{ marginBottom: 10, color: "var(--signal-caution)", fontSize: 13 }}><Icon name="star" size={13} fill="currentColor" /> Recommended by photographer</div>}
+              <button className={cx("dbtn", "on-approve", review.selected && "is-on")} style={{ width: "100%" }}
+                      onClick={() => setReview(photo.id, (r) => ({ selected: !r.selected }))}>
+                <Icon name={review.selected ? "check2" : "wand"} size={16} /> {review.selected ? "Marked for editing" : "Mark for editing"}
               </button>
-              <button className={cx("dbtn", "on-flag", review.state === "flagged" && "is-on")}
-                      onClick={() => setReview(photo.id, (r) => ({ state: r.state === "flagged" ? null : "flagged" }))}>
-                <Icon name="flag" size={16} /> Flag
-              </button>
+              <div className="ey" style={{ marginTop: 10, color: "var(--text-muted)" }}>Shortcut · E · selected RAW frames go to autoHDR</div>
             </div>
-            <div className="ey" style={{ marginTop: 10, color: "var(--text-muted)" }}>Shortcut · A approve · X flag</div>
-          </div>
+          )}
+
+          {/* recommend (photographer) */}
+          {caps.canRecommend && (
+            <div className="vpanel__sec">
+              <div className="eylab">Recommend</div>
+              <button className={cx("dbtn", review.pick && "is-on")} style={{ width: "100%", ...(review.pick ? { background: "var(--signal-caution)", borderColor: "var(--signal-caution)", color: "#fff" } : {}) }}
+                      onClick={() => setReview(photo.id, (r) => ({ pick: !r.pick }))}>
+                <Icon name="star" size={16} fill={review.pick ? "currentColor" : "none"} /> {review.pick ? "Recommended to QA" : "Recommend to QA"}
+              </button>
+              <div className="ey" style={{ marginTop: 10, color: "var(--text-muted)" }}>Shortcut · R · flags this frame as your pick for editing</div>
+            </div>
+          )}
+
+          {/* annotate-only note for photographers */}
+          {caps.annotateOnly && (
+            <div className="vpanel__sec">
+              <div className="eylab">Your frame</div>
+              <div className="muted" style={{ fontSize: 13.5, lineHeight: 1.5 }}>Recommend your picks and leave notes &amp; markup to guide selection. QA decides which frames go to editing.</div>
+            </div>
+          )}
+
+          {/* decision — Edited QA */}
+          {caps.canQA && (
+            <div className="vpanel__sec">
+              <div className="eylab">Decision</div>
+              <div className="decide">
+                <button className={cx("dbtn", "on-approve", review.state === "approved" && "is-on")}
+                        onClick={() => setReview(photo.id, (r) => ({ state: r.state === "approved" ? null : "approved" }))}>
+                  <Icon name="check" size={16} /> Approve
+                </button>
+                <button className={cx("dbtn", "on-flag", review.state === "flagged" && "is-on")}
+                        onClick={() => setReview(photo.id, (r) => ({ state: r.state === "flagged" ? null : "flagged" }))}>
+                  <Icon name="flag" size={16} /> Flag
+                </button>
+              </div>
+              <div className="ey" style={{ marginTop: 10, color: "var(--text-muted)" }}>Shortcut · A approve · X flag</div>
+            </div>
+          )}
 
           {/* rating */}
           <div className="vpanel__sec">
@@ -206,16 +244,18 @@
             </div>
           </div>
 
-          {/* labels */}
-          <div className="vpanel__sec">
-            <div className="eylab">Label</div>
-            <div className="labels">
-              {QP.LABELS.map((l) => (
-                <button key={l.id} className={cx("labelpick", review.label === l.id && "is-on")} title={l.name}
-                        style={{ background: l.color }} onClick={() => setReview(photo.id, (r) => ({ label: r.label === l.id ? null : l.id }))} />
-              ))}
+          {/* labels (QA only) */}
+          {caps.canLabel && (
+            <div className="vpanel__sec">
+              <div className="eylab">Label</div>
+              <div className="labels">
+                {QP.LABELS.map((l) => (
+                  <button key={l.id} className={cx("labelpick", review.label === l.id && "is-on")} title={l.name}
+                          style={{ background: l.color }} onClick={() => setReview(photo.id, (r) => ({ label: r.label === l.id ? null : l.id }))} />
+                ))}
+              </div>
             </div>
-          </div>
+          )}
 
           {/* notes & markup */}
           <div className="vpanel__sec">
@@ -261,7 +301,9 @@
   }
 
   /* ---- client side panel --------------------------------------------- */
-  function ClientPanel({ photo, project, fav, onFav, onDownload, onOrder }) {
+  function ClientPanel({ photo, project, fav, onFav, onDownload, onOrder, locked }) {
+    const coll = project.collections.find((c) => c.id === photo.coll);
+    const total = coll && coll.photos ? coll.photos.length : 0;
     return (
       <>
         <div className="vpanel__head">
@@ -271,16 +313,26 @@
         <div className="vpanel__scroll">
           <div className="vpanel__sec">
             <div className="eylab">This frame</div>
-            <div className="kv"><span className="k">Frame</span><span className="vv">{String(photo.n).padStart(2,"0")} / {project.collections.find((c)=>c.id===photo.coll).photos.length}</span></div>
+            <div className="kv"><span className="k">Frame</span><span className="vv">{String(photo.n).padStart(2,"0")} / {total}</span></div>
             <div className="kv"><span className="k">Collection</span><span className="vv" style={{ textTransform: "capitalize" }}>{photo.coll}</span></div>
-            <div className="kv"><span className="k">Resolution</span><span className="vv">{photo.coll === "print" ? "6048 × 4032" : "2048 × 1365"}</span></div>
+            <div className="kv"><span className="k">Resolution</span><span className="vv">6048 × 4032</span></div>
           </div>
           <div className="vpanel__sec" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {locked ? (
+              <>
+                <div className="lockcard">
+                  <Icon name="lock" size={16} /><div><div style={{ fontSize: 13.5 }}>Premium frame</div><div className="ey muted">Watermarked preview · unlock to download</div></div>
+                </div>
+                <button className="dbtn" onClick={() => onOrder(photo)} style={{ background: "var(--ink-900)", color: "var(--paper-050)", borderColor: "var(--ink-900)" }}>
+                  <Icon name="unlock" size={16} /> Unlock {photo.price ? "— " + QP.fmtAUD(photo.price) : ""}
+                </button>
+              </>
+            ) : (
+              <button className="dbtn" onClick={() => onDownload(photo)}><Icon name="download" size={16} /> Download this frame</button>
+            )}
             <button className="dbtn" onClick={() => onFav(photo.id)} style={fav ? { background: "var(--ink-900)", color: "var(--paper-050)", borderColor: "var(--ink-900)" } : null}>
               <Icon name="heart" size={16} fill={fav ? "currentColor" : "none"} /> {fav ? "Favourited" : "Add to favourites"}
             </button>
-            <button className="dbtn" onClick={() => onDownload(photo)}><Icon name="download" size={16} /> Download this frame</button>
-            <button className="dbtn" onClick={() => onOrder(photo)}><Icon name="bag" size={16} /> Order a print</button>
           </div>
           <div className="vpanel__sec">
             <div className="eylab">Shoot</div>
@@ -296,7 +348,9 @@
   /* ===================================================================
      COMPARE — two frames side by side
      =================================================================== */
-  QP.Compare = function Compare({ photos, project, onClose, getReview, setReview }) {
+  QP.Compare = function Compare({ photos, project, onClose, getReview, setReview, caps = {} }) {
+    const isRaw = caps.isRaw;
+    const pick = (id) => { if (!setReview) return; if (isRaw) setReview(id, { selected: true }); else setReview(id, { state: "approved" }); };
     const [a, setA] = useState(0);
     const [b, setB] = useState(Math.min(1, photos.length - 1));
     const [picking, setPicking] = useState(null); // which side to re-pick
@@ -310,7 +364,7 @@
           <div style={{ position: "absolute", top: 16, right: 16 }}><QP.Stars value={r.rating} /></div>
           <button className="barbtn barbtn--solid compare__pickbtn"
                   onClick={onPick} style={{ color: "var(--ink-900)" }}>
-            <Icon name="check" size={14} /> Pick this one
+            <Icon name={isRaw ? "wand" : "check"} size={14} /> {isRaw ? "Mark for edit" : "Pick this one"}
           </button>
         </div>
       );
@@ -327,8 +381,8 @@
           </div>
         </div>
         <div className="compare__pair">
-          <Cell i={a} tag="A" onPick={() => { if (setReview) setReview(photos[a].id, { state: "approved" }); QP.toast("Frame A approved", { sub: photos[a].cap }); }} />
-          <Cell i={b} tag="B" onPick={() => { if (setReview) setReview(photos[b].id, { state: "approved" }); QP.toast("Frame B approved", { sub: photos[b].cap }); }} />
+          <Cell i={a} tag="A" onPick={() => { pick(photos[a].id); QP.toast(isRaw ? "Frame A marked for edit" : "Frame A approved", { sub: photos[a].cap }); }} />
+          <Cell i={b} tag="B" onPick={() => { pick(photos[b].id); QP.toast(isRaw ? "Frame B marked for edit" : "Frame B approved", { sub: photos[b].cap }); }} />
         </div>
       </div>
     );
