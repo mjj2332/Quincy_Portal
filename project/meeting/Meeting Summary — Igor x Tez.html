@@ -1,0 +1,546 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quincy Portal — Meeting Summary · Igor × Tez · 19 Jun 2026</title>
+
+<style>
+/* ==========================================================================
+   Quincy Productions — fonts (self-hosted from the design system bundle)
+   ========================================================================== */
+@font-face{font-family:"Mazius Review";src:url("quincy-productions-design-system/project/assets/fonts/MaziusReview-Regular.otf") format("opentype");font-weight:400;font-style:normal;font-display:swap}
+@font-face{font-family:"Apfel Grotezk";src:url("quincy-productions-design-system/project/assets/fonts/ApfelGrotezk-Regular.otf") format("opentype");font-weight:400;font-style:normal;font-display:swap}
+@font-face{font-family:"Messapia";src:url("quincy-productions-design-system/project/assets/fonts/Messapia-Regular.otf") format("opentype");font-weight:400;font-style:normal;font-display:swap}
+@font-face{font-family:"Messapia";src:url("quincy-productions-design-system/project/assets/fonts/Messapia-Bold.otf") format("opentype");font-weight:700;font-style:normal;font-display:swap}
+@font-face{font-family:"Athelas";src:url("quincy-productions-design-system/project/assets/fonts/Athelas-Regular.ttf") format("truetype");font-weight:400;font-style:normal;font-display:swap}
+@font-face{font-family:"Athelas";src:url("quincy-productions-design-system/project/assets/fonts/Athelas-Italic.ttf") format("truetype");font-weight:400;font-style:italic;font-display:swap}
+@font-face{font-family:"Athelas";src:url("quincy-productions-design-system/project/assets/fonts/Athelas-Bold.ttf") format("truetype");font-weight:700;font-style:normal;font-display:swap}
+
+/* ==========================================================================
+   Tokens — colour, type, spacing (from the Quincy design system)
+   ========================================================================== */
+:root{
+  --ink-900:#0a0a0a;--ink-800:#141414;--ink-700:#232323;--ink-600:#3a3937;
+  --paper-000:#fff;--paper-050:#faf8f2;--paper-100:#f4f0e7;--paper-200:#ece6d8;
+  --greige-100:#e4ded0;--greige-200:#cfc7b6;--greige-300:#b3aa97;--greige-400:#8f8775;--greige-500:#6d6657;--greige-600:#4d473c;
+  --signal-positive:#3f5b3a;--signal-caution:#9a6a1f;--signal-critical:#7a2420;--signal-info:#2f3b4d;
+
+  --bg-canvas:var(--paper-050);--bg-surface:var(--paper-000);--bg-raised:var(--paper-100);--bg-sunken:var(--paper-200);--bg-inverse:var(--ink-900);
+  --text-primary:var(--ink-900);--text-secondary:var(--greige-600);--text-muted:var(--greige-400);--text-on-inverse:var(--paper-050);--text-on-inverse-muted:var(--greige-200);
+  --border-hairline:var(--greige-200);--border-strong:var(--ink-900);--border-subtle:var(--paper-200);
+
+  --font-display:"Mazius Review","Apple Garamond","Times New Roman",serif;
+  --font-sans:"Apfel Grotezk","Helvetica Neue",Arial,sans-serif;
+  --font-statement:"Messapia","Mazius Review",serif;
+  --font-body-serif:"Athelas","Charter","Iowan Old Style",Georgia,serif;
+  --font-mono:ui-monospace,"SF Mono",Menlo,monospace;
+
+  --text-2xs:11px;--text-xs:12px;--text-sm:14px;--text-base:16px;--text-md:18px;--text-lg:22px;--text-xl:28px;--text-2xl:36px;--text-3xl:48px;--text-4xl:64px;--text-5xl:88px;--text-6xl:120px;
+  --leading-tight:1.04;--leading-snug:1.18;--leading-normal:1.5;--leading-relaxed:1.65;
+  --tracking-tightest:-0.03em;--tracking-tight:-0.01em;--tracking-normal:0;--tracking-wide:0.08em;--tracking-widest:0.22em;
+  --weight-regular:400;--weight-bold:700;
+
+  --space-1:4px;--space-2:8px;--space-3:12px;--space-4:16px;--space-5:24px;--space-6:32px;--space-7:48px;--space-8:64px;--space-9:96px;--space-10:128px;--space-11:192px;
+  --radius-none:0;--radius-sm:4px;--radius-pill:999px;
+  --border-width-rule:3px;
+  --container-md:860px;--container-lg:1100px;--container-xl:1320px;
+}
+
+/* ==========================================================================
+   Base
+   ========================================================================== */
+*,*::before,*::after{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%;scroll-behavior:smooth}
+body{margin:0;background:var(--bg-canvas);color:var(--text-primary);
+  font:var(--weight-regular) var(--text-base)/var(--leading-normal) var(--font-sans);
+  -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+h1,h2,h3,h4{margin:0;font-weight:var(--weight-regular)}
+p{margin:0}
+a{color:inherit}
+::selection{background:var(--ink-900);color:var(--paper-050)}
+
+.q-eyebrow{font:var(--weight-regular) var(--text-xs)/1.2 var(--font-sans);text-transform:uppercase;letter-spacing:var(--tracking-widest);color:var(--text-secondary)}
+.q-rule{border:0;border-top:var(--border-width-rule) solid var(--ink-900);margin:0}
+
+/* ---- Layout ---- */
+.wrap{max-width:var(--container-lg);margin:0 auto;padding:0 var(--space-6)}
+
+/* ---- Top bar ---- */
+.topbar{display:flex;align-items:center;justify-content:space-between;
+  padding:22px 32px;border-bottom:1px solid var(--border-hairline)}
+.topbar img{height:22px;display:block}
+.topbar .stamp{font:var(--weight-regular) var(--text-xs)/1.2 var(--font-sans);
+  text-transform:uppercase;letter-spacing:var(--tracking-wide);color:var(--text-muted)}
+
+/* ---- Hero ---- */
+.hero{position:relative;overflow:hidden;background:var(--ink-900);color:var(--paper-050);
+  padding:96px 32px 84px}
+.hero .pattern{position:absolute;inset:0;opacity:0.06;
+  background-image:url("quincy-productions-design-system/project/assets/patterns/quincy-pattern-white.png");
+  background-repeat:repeat;background-size:220px}
+.hero .inner{position:relative;max-width:var(--container-lg);margin:0 auto}
+.hero .kicker{color:var(--greige-200);margin-bottom:28px}
+.hero h1{font:var(--weight-regular) clamp(40px,7vw,var(--text-5xl))/var(--leading-tight) var(--font-display);
+  letter-spacing:var(--tracking-tightest);max-width:14ch;margin-bottom:24px}
+.hero .lede{font:var(--weight-regular) var(--text-md)/var(--leading-normal) var(--font-sans);
+  max-width:58ch;opacity:0.9;color:var(--paper-100)}
+.hero .meta{display:flex;flex-wrap:wrap;gap:40px;margin-top:44px;
+  padding-top:28px;border-top:1px solid rgba(207,199,182,0.25)}
+.hero .meta .k{display:block;font:var(--weight-regular) var(--text-2xs)/1.2 var(--font-sans);
+  text-transform:uppercase;letter-spacing:var(--tracking-widest);color:var(--greige-300);margin-bottom:8px}
+.hero .meta .v{font:var(--weight-regular) var(--text-md)/1.3 var(--font-display);color:var(--paper-050)}
+
+/* ---- Section ---- */
+section.block{padding:72px 0}
+section.block + section.block{padding-top:8px}
+.sec-head{margin-bottom:8px}
+.sec-head .q-eyebrow{margin-bottom:14px}
+.sec-head h2{font:var(--weight-regular) var(--text-2xl)/var(--leading-snug) var(--font-display);
+  letter-spacing:var(--tracking-tight)}
+.sec-head .rule{border:0;border-top:1px solid var(--border-hairline);margin-top:24px}
+.sec-body{margin-top:32px}
+.sec-body p{font:var(--weight-regular) var(--text-md)/var(--leading-relaxed) var(--font-body-serif);
+  color:var(--ink-700);max-width:72ch}
+.sec-body p + p{margin-top:18px}
+
+/* ---- Two-column at lap+ ---- */
+.cols{display:grid;grid-template-columns:1fr;gap:0}
+@media(min-width:880px){.cols{grid-template-columns:repeat(2,1fr)}}
+
+/* ---- TL;DR outcome grid ---- */
+.outcomes{display:grid;grid-template-columns:1fr;border-top:1px solid var(--border-hairline);margin-top:36px}
+@media(min-width:760px){.outcomes{grid-template-columns:repeat(2,1fr)}}
+.outcome{padding:28px 28px 30px;border-bottom:1px solid var(--border-hairline)}
+@media(min-width:760px){.outcome:nth-child(odd){border-right:1px solid var(--border-hairline)}}
+.outcome .n{font:var(--weight-regular) var(--text-xs)/1 var(--font-mono);color:var(--text-muted);
+  letter-spacing:var(--tracking-wide)}
+.outcome h3{margin:14px 0 8px;font:var(--weight-regular) var(--text-lg)/var(--leading-snug) var(--font-display);
+  letter-spacing:var(--tracking-tight)}
+.outcome p{font:var(--weight-regular) var(--text-sm)/var(--leading-normal) var(--font-sans);color:var(--text-secondary)}
+
+/* ---- Cards / callouts ---- */
+.card{background:var(--bg-surface);border:1px solid var(--border-hairline);padding:26px 28px;margin-top:26px}
+.card .label{display:inline-block;font:var(--weight-regular) var(--text-2xs)/1 var(--font-sans);
+  text-transform:uppercase;letter-spacing:var(--tracking-widest);
+  padding:6px 10px;border:1px solid var(--ink-900);margin-bottom:16px}
+.card h4{font:var(--weight-regular) var(--text-md)/var(--leading-snug) var(--font-display);margin-bottom:10px;letter-spacing:var(--tracking-tight)}
+.card p{font:var(--weight-regular) var(--text-base)/var(--leading-normal) var(--font-sans);color:var(--ink-700)}
+
+.callout{border-left:var(--border-width-rule) solid var(--ink-900);background:var(--bg-raised);
+  padding:22px 26px;margin-top:26px}
+.callout .label{color:var(--signal-info)}
+.callout.decision .label{color:var(--signal-positive)}
+.callout.open .label{color:var(--signal-caution)}
+.callout .label{display:block;font:var(--weight-regular) var(--text-2xs)/1 var(--font-sans);
+  text-transform:uppercase;letter-spacing:var(--tracking-widest);margin-bottom:10px}
+.callout p{font:var(--weight-regular) var(--text-base)/var(--leading-normal) var(--font-sans);color:var(--ink-800)}
+.callout strong{font-weight:var(--weight-bold)}
+
+/* ---- Definition list (pain → fix) ---- */
+.pf{margin-top:30px;border-top:1px solid var(--border-hairline)}
+.pf .row{display:grid;grid-template-columns:1fr;gap:0;border-bottom:1px solid var(--border-hairline)}
+@media(min-width:760px){.pf .row{grid-template-columns:1fr 1fr}}
+.pf .cell{padding:22px 26px}
+@media(min-width:760px){.pf .cell.pain{border-right:1px solid var(--border-hairline)}}
+.pf .tag{font:var(--weight-regular) var(--text-2xs)/1 var(--font-sans);text-transform:uppercase;
+  letter-spacing:var(--tracking-widest);color:var(--text-muted);display:block;margin-bottom:12px}
+.pf .cell.pain .tag{color:var(--signal-critical)}
+.pf .cell.fix .tag{color:var(--signal-positive)}
+.pf p{font:var(--weight-regular) var(--text-base)/var(--leading-normal) var(--font-sans);color:var(--ink-700)}
+
+/* ---- Roles strip ---- */
+.roles{display:grid;grid-template-columns:1fr;margin-top:34px;border-top:1px solid var(--border-hairline)}
+@media(min-width:760px){.roles{grid-template-columns:repeat(2,1fr)}}
+@media(min-width:1040px){.roles{grid-template-columns:repeat(4,1fr)}}
+.role{padding:26px 22px 28px;border-bottom:1px solid var(--border-hairline);min-height:160px;display:flex;flex-direction:column;gap:10px}
+@media(min-width:760px){.role{border-right:1px solid var(--border-hairline)}.role:nth-child(2n){border-right:0}}
+@media(min-width:1040px){.role{border-right:1px solid var(--border-hairline)}.role:nth-child(2n){border-right:1px solid var(--border-hairline)}.role:nth-child(4n){border-right:0}}
+.role .who{font:var(--weight-regular) var(--text-xl)/var(--leading-snug) var(--font-display);letter-spacing:var(--tracking-tight)}
+.role .q-eyebrow{margin:0}
+.role ul{margin:6px 0 0;padding-left:18px}
+.role li{font:var(--weight-regular) var(--text-sm)/var(--leading-normal) var(--font-sans);color:var(--text-secondary);margin-bottom:4px}
+
+/* ---- Flow ---- */
+.flow{display:flex;flex-wrap:wrap;align-items:stretch;gap:0;margin-top:34px;border:1px solid var(--border-hairline)}
+.flow .step{flex:1 1 160px;padding:22px 20px;border-right:1px solid var(--border-hairline);position:relative}
+.flow .step:last-child{border-right:0}
+.flow .step .n{font:var(--weight-regular) var(--text-xs)/1 var(--font-mono);color:var(--text-muted)}
+.flow .step h4{margin:12px 0 6px;font:var(--weight-regular) var(--text-md)/1.2 var(--font-display);letter-spacing:var(--tracking-tight)}
+.flow .step p{font:var(--weight-regular) var(--text-sm)/var(--leading-normal) var(--font-sans);color:var(--text-secondary)}
+
+/* ---- Action items table ---- */
+.actions{width:100%;border-collapse:collapse;margin-top:32px}
+.actions th{text-align:left;font:var(--weight-regular) var(--text-2xs)/1.2 var(--font-sans);
+  text-transform:uppercase;letter-spacing:var(--tracking-widest);color:var(--text-muted);
+  padding:0 16px 14px;border-bottom:var(--border-width-rule) solid var(--ink-900)}
+.actions td{padding:18px 16px;border-bottom:1px solid var(--border-hairline);vertical-align:top;
+  font:var(--weight-regular) var(--text-sm)/var(--leading-normal) var(--font-sans);color:var(--ink-700)}
+.actions td.task{font-size:var(--text-base);color:var(--ink-900)}
+.actions .owner{white-space:nowrap;font-family:var(--font-display);font-size:var(--text-base)}
+.pill{display:inline-block;font:var(--weight-regular) var(--text-2xs)/1 var(--font-sans);
+  text-transform:uppercase;letter-spacing:var(--tracking-wide);padding:6px 10px;border:1px solid var(--greige-300);white-space:nowrap}
+.pill.now{border-color:var(--signal-positive);color:var(--signal-positive)}
+.pill.next{border-color:var(--signal-caution);color:var(--signal-caution)}
+.pill.future{border-color:var(--greige-400);color:var(--greige-500)}
+
+/* ---- Statement band ---- */
+.statement{background:var(--paper-100);border-top:1px solid var(--border-hairline);
+  border-bottom:1px solid var(--border-hairline);padding:88px 32px;text-align:center;margin-top:24px}
+.statement p{font:var(--weight-bold) clamp(28px,5vw,var(--text-4xl))/1.02 var(--font-statement);
+  text-transform:uppercase;letter-spacing:var(--tracking-tight)}
+
+/* ---- Footer ---- */
+footer.site{background:var(--ink-900);color:var(--greige-200);padding:40px 32px;
+  display:flex;flex-wrap:wrap;gap:16px;justify-content:space-between;
+  font-family:var(--font-sans);font-size:var(--text-xs)}
+footer.site .uc{text-transform:uppercase;letter-spacing:var(--tracking-wide)}
+
+/* anchor offset */
+.anchor{scroll-margin-top:24px}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <img src="quincy-productions-design-system/project/assets/logos/quincy-wordmark-black.png" alt="Quincy Productions">
+  <span class="stamp">Meeting Summary · Internal</span>
+</div>
+
+<!-- ===================== HERO ===================== -->
+<header class="hero">
+  <div class="pattern"></div>
+  <div class="inner">
+    <div class="q-eyebrow kicker">Quincy Portal · Workflow workshop</div>
+    <h1>Igor&nbsp;&times;&nbsp;Tez</h1>
+    <p class="lede">A working session between Igor (photographer) and Terry “Tez” Lee (Quincy Portal) to map the
+      photography pipeline — from shutter to selects to HDR — and to anchor the portal that will hold it all together
+      before the busy season arrives.</p>
+    <div class="meta">
+      <div><span class="k">Date</span><span class="v">19 June 2026</span></div>
+      <div><span class="k">Participants</span><span class="v">Igor · Terry Lee</span></div>
+      <div><span class="k">Subject</span><span class="v">Capture &amp; portal workflow</span></div>
+      <div><span class="k">Prototype</span><span class="v">quincy.flamingfire.my</span></div>
+    </div>
+  </div>
+</header>
+
+<!-- ===================== TL;DR ===================== -->
+<section class="block anchor" id="outcomes">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="q-eyebrow">In one minute</div>
+      <h2>The four things we agreed to build for</h2>
+      <hr class="rule">
+    </div>
+    <div class="outcomes">
+      <div class="outcome">
+        <span class="n">01</span>
+        <h3>Star ratings carry through</h3>
+        <p>Rate on-site, embed the rating in the Lightroom JPEG export, and have the portal read it back — so selects are decided once, at the shoot.</p>
+      </div>
+      <div class="outcome">
+        <span class="n">02</span>
+        <h3>Upload with a guaranteed count</h3>
+        <p>The portal shows the exact number of files received. Upload 18, see 18 — no more mis-named folders or half-finished browser uploads.</p>
+      </div>
+      <div class="outcome">
+        <span class="n">03</span>
+        <h3>Clear instructions to QA</h3>
+        <p>The photographer annotates frames directly in the portal so Mark knows exactly what to edit — no screenshots, no separate note files.</p>
+      </div>
+      <div class="outcome">
+        <span class="n">04</span>
+        <h3>One reliable way in</h3>
+        <p>Capture method still open, but the direction is set: 100% JPEG from Lightroom, into Quincy Portal / Dropbox, with RAW kept only as backup.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== CAPTURE ===================== -->
+<section class="block anchor" id="capture">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="q-eyebrow">Capture · File format</div>
+      <h2>Straight-out-of-camera is the dream; JPEG is the decision</h2>
+      <hr class="rule">
+    </div>
+    <div class="sec-body">
+      <p>Igor has been testing how autoHDR responds to different inputs, and it behaves completely differently depending
+      on what it is fed. HEIF files — 10-bit, higher dynamic range, lighter than JPEG — looked the best on paper but
+      came out poorly through autoHDR. The likely reason: the AI is trained on old-school 8-bit JPEGs and doesn’t
+      understand the high-dynamic-range HEIF data.</p>
+      <p>The bigger HEIF problem was lens distortion. The camera auto-corrects barrel distortion on JPEG (a Canon
+      14–35 was the example), but on HEIF the correction is lost and walls come out curved — unacceptable for real-estate
+      interiors. Canon’s own guidance is to disable perspective/distortion correction only when shooting extreme angles.</p>
+      <p>The shared ambition is a clean straight-out-of-camera (SOOC) JPEG that can go directly to HDR — fewer steps,
+      less room for error, faster for everyone. Igor will keep testing to get SOOC quality good enough.</p>
+
+      <div class="callout decision">
+        <span class="label">Decision · per Christian’s direction</span>
+        <p>For now we keep it simple: <strong>100% JPEG exported from Lightroom → Quincy Portal</strong>. RAW files are
+        retained as a security backup only and won’t normally be used.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== BRACKETS ===================== -->
+<section class="block anchor" id="brackets">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="q-eyebrow">Capture · Bracketing</div>
+      <h2>Five brackets in, three brackets out</h2>
+      <hr class="rule">
+    </div>
+    <div class="pf">
+      <div class="row">
+        <div class="cell pain">
+          <span class="tag">The pain</span>
+          <p>autoHDR only really understands three brackets. Feed it five and it often picks the wrong ones — fully dark
+          or blown out — instead of the three usable exposures. Mark then has to hand-pick three of five for every photo,
+          which doesn’t scale on busy days (e.g. 10 shoots to edit).</p>
+        </div>
+        <div class="cell fix">
+          <span class="tag">The direction</span>
+          <p>Igor &amp; Christian have the exposure discipline (e.g. +2 stops, no clipping) to shoot three manual
+          brackets and skip the cherry-pick. Contractors are different — from them we still want <em>five brackets plus
+          RAW security backups</em>, to be safe.</p>
+        </div>
+      </div>
+    </div>
+    <div class="callout open">
+      <span class="label">Open question</span>
+      <p>How do we get contractors to a usable three-bracket output without policing every shoot? Likely answer:
+      let contractors over-deliver (5 + RAW) and solve the selection downstream, rather than trusting their brackets.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== RATING ===================== -->
+<section class="block anchor" id="rating">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="q-eyebrow">Workflow · On-camera ratings</div>
+      <h2>Decide the selects once, at the shoot</h2>
+      <hr class="rule">
+    </div>
+    <div class="sec-body">
+      <p>Igor’s idea is to cull on the camera while still on site with the agent. A single mapped button does
+      <em>rate + protect</em> in one press, so as he scrolls the dial with the agent (“you like this one?”) he flags the
+      keeper of each bracket — usually the middle exposure.</p>
+      <p>A simple rating code carries the meaning forward:</p>
+      <div class="cols">
+        <div class="card">
+          <span class="label">★ One star</span>
+          <h4>Select / keeper</h4>
+          <p>This frame is part of the final delivery. Filtering by one star in Lightroom surfaces exactly the photos
+          that need uploading — no relying on memory across ten later shoots.</p>
+        </div>
+        <div class="card">
+          <span class="label">★★ Two stars</span>
+          <h4>Has an editing note</h4>
+          <p>The agent asked for something (e.g. “remove this sign”). Two stars marks frames that need an instruction
+          to QA, so they can be batched and annotated quickly.</p>
+        </div>
+      </div>
+      <div class="callout decision">
+        <span class="label">Decision</span>
+        <p>Embed the star rating in the Lightroom JPEG export metadata. The portal will <strong>extract the rating</strong>
+        so the rating done on-site drives selection from the very start. (Igor to confirm the metadata export setting.)</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== COLOUR / EXPORT ===================== -->
+<section class="block anchor" id="color">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="q-eyebrow">Workflow · Colour &amp; export</div>
+      <h2>Warmer balance, and a one-click export</h2>
+      <hr class="rule">
+    </div>
+    <div class="sec-body">
+      <p>On import, Igor applies a Lightroom auto white balance on top of the camera’s — the result is noticeably warmer
+      and more pleasing than the camera’s cooler reading, and warmer than autoHDR (which tends to a blue tint). Working
+      the colour at this higher-quality stage beats tweaking a finished JPEG, which degrades it. A side idea for in-camera
+      custom white balance: a light-meter app with a neutral white cube, or a clear Lee filter / Sony grey cap hovered
+      over the lens — roughly 70–80% accurate, enough to get to a ballpark. The caveat is it has to be redone per room,
+      since green from a garden or magenta from brickwork shifts the reading.</p>
+
+      <p>The export itself is being streamlined into a single Lightroom preset:</p>
+      <div class="flow">
+        <div class="step"><span class="n">01</span><h4>RAW → JPEG</h4><p>Full resolution, no compression.</p></div>
+        <div class="step"><span class="n">02</span><h4>Straight to Dropbox</h4><p>Export to the server folder, not the laptop.</p></div>
+        <div class="step"><span class="n">03</span><h4>Name the folder</h4><p>Short address + input / output counts.</p></div>
+        <div class="step"><span class="n">04</span><h4>Show in Finder</h4><p>Dropbox app uploads while you work elsewhere.</p></div>
+      </div>
+      <div class="callout">
+        <span class="label">Detail worth keeping</span>
+        <p>Folder naming carries the counts: e.g. <strong>“…55”</strong> means 55 input files; an output count
+        (e.g. 11) tells Mark how many finished photos to expect. Most photos are 5 exposures, but a focus stack can be 10
+        — so both numbers are useful. The portal can read these counts straight off the folder.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== ANNOTATION ===================== -->
+<section class="block anchor" id="annotation">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="q-eyebrow">Workflow · Notes to QA</div>
+      <h2>Annotate in the portal, not in a pile of screenshots</h2>
+      <hr class="rule">
+    </div>
+    <div class="pf">
+      <div class="row">
+        <div class="cell pain">
+          <span class="tag">Today</span>
+          <p>To tell Mark what to fix, the team screenshots a frame, annotates it, saves it into a folder, and repeats
+          for every photo that needs a note. It’s fiddly and easily forgotten — roughly half an hour a job.</p>
+        </div>
+        <div class="cell fix">
+          <span class="tag">In the portal</span>
+          <p>Highlight and draw the instruction directly on the frame in Quincy Portal. The markup is an
+          <strong>overlay only</strong> — it generates a thumbnail and never alters the file Mark receives for editing.</p>
+        </div>
+      </div>
+    </div>
+    <div class="callout decision">
+      <span class="label">Impact</span>
+      <p>Estimated ~30 minutes saved per job, plus a “ready for raw review” notification to Mark when the photographer is done.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== PORTAL ===================== -->
+<section class="block anchor" id="portal">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="q-eyebrow">Platform · Quincy Portal</div>
+      <h2>One portal, four roles, on Cloudflare</h2>
+      <hr class="rule">
+    </div>
+    <div class="sec-body">
+      <p>The prototype (quincy.flamingfire.my) is non-functional but lets us visualise the system and make cheap changes
+      now, while the foundation is still soft. It runs on Cloudflare Pages with R2 storage — the decisive advantage is
+      <em>free egress / bandwidth</em>, which matters enormously for high-res photos (50–100&nbsp;MB each) and video.
+      Likely the free tier, or roughly $20/month — a fraction of what AWS would charge, and a path to cutting Dropbox,
+      Pixieset and Vimeo costs. Cloudflare can do this because it grew from a DNS provider into a global CDN, so the
+      distribution network is already built.</p>
+
+      <p>The same portal presents different views by role:</p>
+      <div class="roles">
+        <div class="role">
+          <div class="q-eyebrow">Admin / PM</div>
+          <div class="who">Megan</div>
+          <ul><li>Creates the job (likely manually, possibly from Tonomo)</li><li>Owns project &amp; client info</li></ul>
+        </div>
+        <div class="role">
+          <div class="q-eyebrow">Photographer</div>
+          <div class="who">Igor</div>
+          <ul><li>Uploads JPEGs, sees exact file count</li><li>Rates &amp; annotates frames</li><li>Flags “ready for review”</li></ul>
+        </div>
+        <div class="role">
+          <div class="q-eyebrow">Editor / QA</div>
+          <div class="who">Mark</div>
+          <ul><li>Reviews RAW, selects brackets</li><li>Sends selects to autoHDR</li><li>(download, or push to Dropbox)</li></ul>
+        </div>
+        <div class="role">
+          <div class="q-eyebrow">Client</div>
+          <div class="who">Agent</div>
+          <ul><li>Views the delivery</li><li>Extra angles shown watermarked</li><li>Pays to unlock upsells</li></ul>
+        </div>
+      </div>
+
+      <div class="callout">
+        <span class="label">Upsell, built in</span>
+        <p>Igor often shoots more angles than booked (kitchen, living, dining). Upload the extras and mark which Mark
+        should work on; the rest appear in the client portal as <strong>watermarked upsells</strong> the agent can pay to
+        unlock — turning spare frames into revenue.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== INTEGRATIONS ===================== -->
+<section class="block anchor" id="integrations">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="q-eyebrow">Platform · Integrations</div>
+      <h2>Dropbox is the spine — for now</h2>
+      <hr class="rule">
+    </div>
+    <div class="sec-body">
+      <p>Everything currently links through Dropbox, and that’s deliberate. Tonomo creates a job under the agent’s name
+      and — when a photographer is assigned — auto-creates a Dropbox upload folder for that job. The plan is for Igor to
+      export from Lightroom <em>straight into that waiting Dropbox folder</em>, because the Dropbox desktop app guarantees
+      the upload completes in the background while he works on something else.</p>
+
+      <div class="callout decision">
+        <span class="label">Decision · upload reliability</span>
+        <p>Avoid browser uploads. A browser tab must stay open and can silently fail or stop halfway — a real risk when
+        Igor uploads <strong>between jobs on a 5G hotspot</strong> rather than at home. The Dropbox app gives the
+        guarantee that a file is 100% uploaded.</p>
+      </div>
+
+      <p>autoHDR connects via Dropbox too: it can watch a folder, process new RAW/JPEG files automatically, and push the
+      edited results back to an “output” folder beside the inputs. Someone still needs to configure that watch
+      (Terry to look into it). A direct Quincy&nbsp;Portal ↔ autoHDR API integration is possible but is a future project —
+      roughly 1–2 weeks to build plus debugging — so it’s not happening soon.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== STATEMENT ===================== -->
+<div class="statement">
+  <p>Get the foundation<br>right before August</p>
+</div>
+
+<!-- ===================== ACTIONS ===================== -->
+<section class="block anchor" id="actions">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="q-eyebrow">Next steps</div>
+      <h2>Action items</h2>
+      <hr class="rule">
+    </div>
+    <table class="actions">
+      <thead><tr><th>Task</th><th>Owner</th><th>Horizon</th></tr></thead>
+      <tbody>
+        <tr><td class="task">Share the AI-generated summary of this meeting into the Quincy Portal folder</td><td class="owner">Terry</td><td><span class="pill now">Now</span></td></tr>
+        <tr><td class="task">Confirm Lightroom export embeds star-rating metadata in the JPEGs</td><td class="owner">Igor</td><td><span class="pill now">Now</span></td></tr>
+        <tr><td class="task">Build the export preset: RAW→JPEG, full-res, straight to Dropbox, show-in-Finder</td><td class="owner">Igor</td><td><span class="pill now">Now</span></td></tr>
+        <tr><td class="task">Keep testing SOOC / straight-to-HDR JPEG quality vs RAW</td><td class="owner">Igor</td><td><span class="pill next">Next</span></td></tr>
+        <tr><td class="task">Discuss with Christian whether the 3-bracket manual workflow holds for contractors</td><td class="owner">Igor</td><td><span class="pill next">Next</span></td></tr>
+        <tr><td class="task">Configure autoHDR to watch the Dropbox input folder &amp; push outputs back</td><td class="owner">Terry</td><td><span class="pill next">Next</span></td></tr>
+        <tr><td class="task">Wire Lightroom export → Tonomo-created Dropbox job folder; portal reads counts &amp; ratings</td><td class="owner">Terry / Igor</td><td><span class="pill next">Next</span></td></tr>
+        <tr><td class="task">Portal: in-frame annotation overlay, file-count verification, role views, client upsell</td><td class="owner">Terry</td><td><span class="pill next">Next</span></td></tr>
+        <tr><td class="task">Direct Quincy Portal ↔ autoHDR API integration</td><td class="owner">Terry</td><td><span class="pill future">Future</span></td></tr>
+        <tr><td class="task">Reconvene after the team digests &amp; runs tests during the quiet period</td><td class="owner">All</td><td><span class="pill future">Future</span></td></tr>
+      </tbody>
+    </table>
+
+    <div class="card" style="margin-top:36px">
+      <span class="label">Side notes</span>
+      <h4>AI: divide &amp; conquer</h4>
+      <p>Rather than every AI question funnelling to Terry, the team will split domains — Terry on the portal, Andrew on
+      video, Morgan on social content — and share learnings in the December low season to build a stronger collective skill set.
+      Practical tips raised: skip “prompt engineering” courses (just ask the AI what it needs from you); access OpenArt via the
+      <em>J2 Team Cookies</em> Chrome extension (Morgan’s annual plan — credits free to burn); for image gen use Nano Banana
+      and GPT Image; for video, Seedance 2.0 and Kling are the cost-effective picks (Veo is excellent but too expensive);
+      voice cloning is available to experiment with.</p>
+    </div>
+  </div>
+</section>
+
+<footer class="site">
+  <span>© 2026 Quincy Productions · Quincy Portal</span>
+  <span class="uc">Meeting summary · Igor × Tez · 19 Jun 2026</span>
+</footer>
+
+</body>
+</html>
