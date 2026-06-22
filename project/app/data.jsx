@@ -176,6 +176,23 @@
   QP.projectById = (id) => QP.PROJECTS.find((p) => p.id === id);
   QP.collOf = (project, id) => project.collections.find((c) => c.id === id);
 
+  /* public RAW photo factory — used by manual upload + Dropbox sync to
+     populate a project's RAW collection in the prototype */
+  QP.makeRawPhotos = function (projId, count, startN) {
+    const r = rng((projId || "x").split("").reduce((a, c) => a + c.charCodeAt(0), 0) + (startN || 0) + 1);
+    const out = [];
+    for (let i = 0; i < count; i++) {
+      const n = (startN || 0) + i + 1;
+      out.push({
+        id: `raw-${projId}-${n}-${Math.floor(r() * 1e6)}`,
+        n, src: POOL[Math.floor(r() * POOL.length)], coll: "raw",
+        cap: ROOMS[(n - 1) % ROOMS.length],
+        pos: `${Math.round(20 + r() * 60)}% ${Math.round(20 + r() * 60)}%`,
+      });
+    }
+    return out;
+  };
+
   /* ---- seeded state -------------------------------------------------- */
   // states[photoId] = { selected, state, rating, label }
   //   RAW frames use `selected` (chosen to send to autoHDR)
@@ -235,7 +252,7 @@
     const raw = QP.collOf(project, "raw"); if (!raw) return { total: 0, selected: 0, pct: 0 };
     const total = raw.photos.length;
     const selected = raw.photos.filter((p) => states[p.id]?.selected).length;
-    return { total, selected, pct: Math.round((selected / total) * 100) };
+    return { total, selected, pct: total ? Math.round((selected / total) * 100) : 0 };
   };
   QP.reviewStats = (project, states) => {
     const ed = QP.collOf(project, "edited");
@@ -261,6 +278,7 @@
     star: '<path d="m12 3 2.6 5.6 6 .7-4.4 4.1 1.2 6L12 16.8 6.6 19.4l1.2-6L3.4 9.3l6-.7z"/>',
     compare: '<path d="M12 3v18M3 7l4-2v14l-4-2zM21 7l-4-2v14l4-2z"/>',
     grid: '<rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/>',
+    kanban: '<rect x="3" y="3" width="18" height="18" rx="1"/><path d="M9 3v18M15 3v18M9 9H3M21 13h-6M9 14H3"/>',
     list: '<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',
     left: '<path d="m15 18-6-6 6-6"/>',
     right: '<path d="m9 18 6-6-6-6"/>',
@@ -294,6 +312,7 @@
     unlock: '<rect x="4" y="10" width="16" height="11" rx="1"/><path d="M8 10V7a4 4 0 0 1 7.5-2"/>',
     cart: '<circle cx="9" cy="20" r="1.4"/><circle cx="18" cy="20" r="1.4"/><path d="M2 3h3l2.4 12.5a1.5 1.5 0 0 0 1.5 1.2h8.6a1.5 1.5 0 0 0 1.5-1.2L22 7H6"/>',
     text: '<path d="M4 6h16M4 12h16M4 18h10"/>',
+    dropbox: '<path d="m7 3 5 3.2L7 9.5 2 6.2zM17 3l5 3.2-5 3.3-5-3.3zM2 12.8l5-3.3 5 3.3-5 3.2zM17 9.5l5 3.3-5 3.2-5-3.2zM7 16.8l5-3.2 5 3.2-5 3.2z"/>',
     clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
     wand: '<path d="M15 4V2M15 10V8M11 6H9M21 6h-2M18.5 3.5 17 5M18.5 8.5 17 7M13 9 3 19l2 2L15 11z"/>',
     select: '<path d="M3 8V5a2 2 0 0 1 2-2h3M16 3h3a2 2 0 0 1 2 2v3M21 16v3a2 2 0 0 1-2 2h-3M8 21H5a2 2 0 0 1-2-2v-3"/><path d="m9 12 2 2 4-4"/>',

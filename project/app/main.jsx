@@ -21,18 +21,34 @@
     const [purchases, setPurchases] = QP.useStored("purchases", seed.purchases);
     const [overrides, setOverrides] = QP.useStored("status2", {});
     const [copyEdits, setCopyEdits] = QP.useStored("copy", {});
+    const [created, setCreated] = QP.useStored("created", []);   // Tonomo-ingested order payloads
+    const [rawSync, setRawSync] = QP.useStored("rawSync", {});    // { [projectId]: [raw photos] } added via upload/sync
     const [tweaks, setTweak] = useTweaks(TWEAK_DEFAULTS);
     const [publish, setPublish] = useState(null);
     const [send, setSend] = useState(null);     // {project, n}
     const [upload, setUpload] = useState(false);
+    const [sync, setSync] = useState(false);    // Dropbox sync modal
+    const [tonomo, setTonomo] = useState(false);   // webhook modal
 
     const role = QP.ROLES[persona] || QP.ROLES.admin;
 
-    const projects = QP.PROJECTS.map((p) => ({
-      ...p,
-      status: overrides[p.id] || p.status,
-      copy: copyEdits[p.id] || p.copy,
-    }));
+    const createdProjects = (created || []).map((o) => QP.fromTonomo(o));
+    const projects = [...createdProjects, ...QP.PROJECTS].map((p) => {
+      const eff = overrides[p.id] || p.status;
+      // merge any uploaded/synced RAW frames into the project's RAW collection
+      const extraRaw = rawSync[p.id];
+      let collections = p.collections;
+      if (extraRaw && extraRaw.length) {
+        collections = p.collections.map((c) => c.id === "raw" ? { ...c, photos: [...c.photos, ...extraRaw] } : c);
+      }
+      return {
+        ...p,
+        status: eff,
+        stage: QP.STATUS[eff].stage,
+        copy: copyEdits[p.id] || p.copy,
+        collections,
+      };
+    });
     let project = projects.find((p) => p.id === currentId) || projects[0];
 
     // role guards
@@ -61,6 +77,28 @@
     const openProject = (id) => { setCurrentId(id); setView("project"); };
     const confirmSend = (proj) => { setOverrides((o) => ({ ...o, [proj.id]: "editing" })); setSend(null); QP.toast("Copied to autoHDR Dropbox", { sub: `${proj.street} · editing in progress`, icon: "wand" }); };
     const confirmPublish = (proj) => { setOverrides((o) => ({ ...o, [proj.id]: "delivered" })); setPublish({ project: proj, done: true }); };
+    const setStatus = (id, status) => setOverrides((o) => ({ ...o, [id]: status }));
+    const addRaw = (projId, count) => {
+      setRawSync((prev) => {
+        const existing = prev[projId] || [];
+        const next = QP.makeRawPhotos(projId, count, existing.length);
+        return { ...prev, [projId]: [...existing, ...next] };
+      });
+      // a fresh booking moves into RAW review once frames land
+      setOverrides((o) => (o[projId] === "raw_review" || !isAwaiting(projId) ? o : { ...o, [projId]: "raw_review" }));
+    };
+    const isAwaiting = (projId) => {
+      const base = [...createdProjects, ...QP.PROJECTS].find((p) => p.id === projId);
+      const eff = overrides[projId] || (base && base.status);
+      return eff === "awaiting_raw";
+    };
+    const createFromTonomo = (order) => {
+      setCreated((c) => [order, ...(c || [])]);
+      setTonomo(false);
+      const proj = QP.fromTonomo(order);
+      QP.toast("Project created from Tonomo", { sub: `${proj.street} · order ${order.orderNo}`, icon: "plus" });
+      setCurrentId(proj.id); setView("project");
+    };
 
     const isClient = persona === "client";
 
@@ -93,7 +131,7 @@
 
         {/* ROUTER */}
         {!isClient && view === "dashboard" && (
-          <QP.Dashboard projects={projects} states={states} onOpen={openProject} query={query} role={role} />
+          <QP.Dashboard projects={projects} states={states} onOpen={openProject} query={query} role={role} setStatus={setStatus} onNewProject={() => setTonomo(true)} />
         )}
 
         {!isClient && view === "project" && (
@@ -103,6 +141,7 @@
             onPublish={(p) => setPublish({ project: p })}
             onSendToEdit={(p, n) => setSend({ project: p, n })}
             onUpload={role.canUploadRaw ? () => setUpload(true) : null}
+            onSync={role.canUploadRaw ? () => setSync(true) : null}
             setCopy={setCopy}
             onPreview={() => setPersona("client")} />
         )}
@@ -116,7 +155,9 @@
         {publish && <PublishFlow data={publish} onConfirm={confirmPublish} onClose={() => setPublish(null)}
           states={states} viewClient={() => { setPublish(null); setPersona("client"); }} />}
         {send && <SendFlow data={send} states={states} onConfirm={confirmSend} onClose={() => setSend(null)} />}
-        {upload && <UploadModal project={project} onClose={() => setUpload(false)} />}
+        {upload && <UploadModal project={project} onClose={() => setUpload(false)} onDone={(n) => addRaw(project.id, n)} />}
+        {sync && <SyncModal project={project} onClose={() => setSync(false)} onDone={(n) => addRaw(project.id, n)} />}
+        {tonomo && <QP.TonomoModal orders={QP.TONOMO_ORDERS} existingIds={projects.map((p) => p.id)} onCreate={createFromTonomo} onClose={() => setTonomo(false)} />}
 
         <QP.PersonaSwitch persona={persona} setPersona={setPersona} />
         <TweakPanelUI tweaks={tweaks} setTweak={setTweak} />
@@ -191,21 +232,25 @@
   }
 
   /* ---- upload RAW ---------------------------------------------------- */
-  function UploadModal({ project, onClose }) {
+  function UploadModal({ project, onClose, onDone }) {
     const { Button } = DS();
-    const [pct, setPct] = useState(null);
+    const [uploading, setUploading] = useState(false);
+    const [pct, setPct] = useState(0);
     const n = 18;
-    const start = () => {
-      setPct(0); let p = 0;
-      const t = setInterval(() => { p += Math.random() * 18 + 6; if (p >= 100) { p = 100; clearInterval(t); setTimeout(() => { onClose(); QP.toast(`${n} RAW frames uploaded`, { sub: `${project.street} · ready for QA`, icon: "upload" }); }, 450); } setPct(Math.min(100, Math.round(p))); }, 220);
-    };
+    React.useEffect(() => {
+      if (!uploading) return;
+      const fill = setTimeout(() => setPct(100), 60);
+      const done = setTimeout(() => { onClose(); if (onDone) onDone(n); QP.toast(`${n} RAW frames uploaded`, { sub: `${project.street} · ready for QA`, icon: "upload" }); }, 1600);
+      return () => { clearTimeout(fill); clearTimeout(done); };
+    }, [uploading]);
+    const start = () => setUploading(true);
     return (
       <QP.Modal eyebrow={`${project.street} · ${project.suburb}`} title="Upload RAW" onClose={onClose}
-        footer={pct === null ? <>
+        footer={!uploading ? <>
           <Button variant="ghost" size="md" onClick={onClose}>Cancel</Button>
           <Button variant="primary" size="md" iconLeft={<Icon name="upload" size={15} />} onClick={start}>Upload {n} files</Button>
         </> : null}>
-        {pct === null ? <>
+        {!uploading ? <>
           <div className="dropzone"><Icon name="upload" size={26} /><div style={{ marginTop: 10, fontSize: 15 }}>Drop RAW or image files here</div><div className="ey muted" style={{ marginTop: 6 }}>Any RAW or image format · no size limit</div></div>
           <div className="muted" style={{ fontSize: 13 }}>{n} files staged from this shoot. Bracketed sets aren't grouped — your editor brackets them manually during selection.</div>
         </> : (
@@ -213,6 +258,61 @@
             <div className="ey" style={{ marginBottom: 12 }}>Uploading {n} RAW frames…</div>
             <QP.PrepBar pct={pct} />
             <div className="muted" style={{ fontSize: 13, marginTop: 10 }}>{pct < 100 ? "Transferring originals…" : "Done — handed to QA."}</div>
+          </div>
+        )}
+      </QP.Modal>
+    );
+  }
+
+  /* ---- sync RAW from Dropbox ----------------------------------------- */
+  function SyncModal({ project, onClose, onDone }) {
+    const { Button } = DS();
+    const t = project.tonomo || {};
+    const [link, setLink] = useState(t.rawFolderLink || "");
+    const [syncing, setSyncing] = useState(false);
+    const [pct, setPct] = useState(0);
+    const fromTonomo = !!(t.rawFolderLink && link === t.rawFolderLink);
+    const n = 24;
+
+    React.useEffect(() => {
+      if (!syncing) return;
+      // fill the bar, then complete with a single guaranteed timer
+      const fill = setTimeout(() => setPct(100), 60);
+      const done = setTimeout(() => { onClose(); if (onDone) onDone(n); QP.toast(`${n} RAW frames synced from Dropbox`, { sub: `${project.street} · ready for QA`, icon: "dropbox" }); }, 1700);
+      return () => { clearTimeout(fill); clearTimeout(done); };
+    }, [syncing]);
+
+    const start = () => { if (link.trim()) setSyncing(true); };
+    return (
+      <QP.Modal eyebrow={`${project.street} · ${project.suburb}`} title="Sync RAW from Dropbox" onClose={onClose} wide
+        footer={!syncing ? <>
+          <Button variant="ghost" size="md" onClick={onClose}>Cancel</Button>
+          <Button variant="primary" size="md" iconLeft={<Icon name="dropbox" size={15} />} onClick={start} disabled={!link.trim()}>Sync folder</Button>
+        </> : null}>
+        {!syncing ? <>
+          <p style={{ fontSize: 15, lineHeight: 1.6, color: "var(--text-secondary)" }}>Fetch the RAW frames straight from the shoot's Dropbox folder. Paste a folder link or path, or use the one carried over from the Tonomo booking.</p>
+          <div className="optrow">
+            <div className="ey">Dropbox folder link or path</div>
+            <input className="copyinput mono" style={{ fontSize: 13 }} value={link} placeholder="https://www.dropbox.com/scl/fo/…  or  /tonomo/raw files/…"
+                   onChange={(e) => setLink(e.target.value)} />
+          </div>
+          {t.rawFolderLink ? (
+            <button className={cx("dropcard", fromTonomo && "is-on")} onClick={() => setLink(t.rawFolderLink)}>
+              <Icon name="dropbox" size={18} />
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ fontSize: 13.5 }}>From Tonomo booking · order {t.orderNo}</div>
+                <div className="mono" style={{ fontSize: 12, color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.rawFolderPath}</div>
+              </div>
+              {fromTonomo && <Icon name="check" size={16} />}
+            </button>
+          ) : (
+            <div className="muted" style={{ fontSize: 13 }}>This project has no Dropbox folder from Tonomo — paste one manually above.</div>
+          )}
+        </> : (
+          <div style={{ padding: "8px 0 4px" }}>
+            <div className="ey row gap2" style={{ marginBottom: 12 }}><Icon name="dropbox" size={14} style={{ color: "var(--signal-info)" }} /> Syncing {n} RAW frames from Dropbox…</div>
+            <QP.PrepBar pct={pct} />
+            <div className="mono" style={{ fontSize: 12, marginTop: 12, color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{link}</div>
           </div>
         )}
       </QP.Modal>
@@ -244,7 +344,7 @@
   }
 
   function mount() {
-    if (!window.QuincyProductionsDesignSystem_b05a1c || !QP.Dashboard || !QP.Workspace || !QP.PhotoBoard || !window.useTweaks) {
+    if (!window.QuincyProductionsDesignSystem_b05a1c || !QP.Dashboard || !QP.Workspace || !QP.PhotoBoard || !QP.TonomoModal || !window.useTweaks) {
       mount._n = (mount._n || 0) + 1;
       if (mount._n > 60) {
         var miss = [];

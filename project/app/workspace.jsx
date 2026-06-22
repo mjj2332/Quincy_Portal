@@ -18,7 +18,7 @@
 
   QP.Workspace = function Workspace(props) {
     const { project, role, states, setReview, comments, addComment, density,
-            onBack, onPublish, onUpload, onSendToEdit, setCopy, onPreview } = props;
+            onBack, onPublish, onUpload, onSync, onSendToEdit, setCopy, onPreview } = props;
     const { Button } = DS();
 
     // which collection tabs this role may see AND that exist on the project
@@ -41,8 +41,30 @@
             <div className="kv"><span className="k">Agent</span><span className="vv">{project.agent}</span></div>
             <div className="kv"><span className="k">Shoot</span><span className="vv">{QP.fmtShort(project.shoot)}</span></div>
             <div className="kv"><span className="k">Shooter</span><span className="vv">{project.photographer}</span></div>
-            {role.id !== "photographer" && <div className="kv"><span className="k">Guide</span><span className="vv">{QP.fmtAUD(project.price)}</span></div>}
+            {role.id !== "photographer" && project.price != null && <div className="kv"><span className="k">Guide</span><span className="vv">{QP.fmtAUD(project.price)}</span></div>}
           </div>
+
+          {/* Tonomo booking details */}
+          {project.tonomo && role.id !== "photographer" && (
+            <div className="rail__sec">
+              <div className="ey row gap2" style={{ marginBottom: 12 }}><span className="tonomo-dot" /> Tonomo booking</div>
+              <div className="kv"><span className="k">Order</span><span className="vv">{project.tonomo.orderNo}</span></div>
+              <div className="kv"><span className="k">Scheduled</span><span className="vv">{project.tonomo.scheduledTime || "—"}</span></div>
+              <div className="kv"><span className="k">Value</span><span className="vv">{project.tonomo.invoice != null ? QP.fmtAUD(Math.round(project.tonomo.invoice)) : "—"}</span></div>
+              <div className="kv"><span className="k">Payment</span><span className="vv" style={{ textTransform: "capitalize" }}>{project.tonomo.paymentStatus || "—"}</span></div>
+              {project.tonomo.siteAgent && <div className="kv"><span className="k">Site agent</span><span className="vv">{project.tonomo.siteAgent}</span></div>}
+              {project.tonomo.rawFolderLink && <div className="kv"><span className="k">RAW folder</span><span className="vv"><span className="row gap2" style={{ justifyContent: "flex-end" }}><Icon name="dropbox" size={13} /> Dropbox</span></span></div>}
+              {project.tonomo.services && project.tonomo.services.length > 0 && (
+                <div style={{ marginTop: 10 }}>
+                  <div className="ey" style={{ marginBottom: 8, color: "var(--text-muted)" }}>Ordered</div>
+                  <div className="row gap2" style={{ flexWrap: "wrap" }}>
+                    {project.tonomo.services.map((s) => <span key={s} className="tag-sm">{s}</span>)}
+                  </div>
+                </div>
+              )}
+              {project.tonomo.featureNotes && <p className="muted" style={{ fontSize: 13, lineHeight: 1.5, marginTop: 12 }}>{project.tonomo.featureNotes}</p>}
+            </div>
+          )}
 
           <div className="rail__sec">
             <div className="ey" style={{ marginBottom: 12 }}>Collections</div>
@@ -85,10 +107,16 @@
             {ed && ed.status === "processing" && <span className="chip" style={{ cursor: "default" }}><span className="sdot" style={{ background: "var(--signal-caution)" }} /> autoHDR processing</span>}
             <div className="grow" />
             {role.id === "photographer" && (
-              <Button variant="primary" size="sm" iconLeft={<Icon name="upload" size={14} />} onClick={onUpload}>Upload RAW</Button>
+              <>
+                {onSync && activeTab === "raw" && <button className="chip" onClick={onSync}><Icon name="dropbox" size={13} /> Sync from Dropbox</button>}
+                <Button variant="primary" size="sm" iconLeft={<Icon name="upload" size={14} />} onClick={onUpload}>Upload RAW</Button>
+              </>
             )}
             {role.canManageExtras && onUpload && (
-              <button className="chip" onClick={onUpload}><Icon name="upload" size={13} /> Upload</button>
+              <>
+                {onSync && activeTab === "raw" && <button className="chip" onClick={onSync}><Icon name="dropbox" size={13} /> Sync from Dropbox</button>}
+                <button className="chip" onClick={onUpload}><Icon name="upload" size={13} /> Upload</button>
+              </>
             )}
             {role.canPublish && (
               <>
@@ -102,7 +130,7 @@
           {(activeTab === "raw" || activeTab === "edited") && (
             <QP.PhotoBoard project={project} coll={activeTab} role={role} states={states}
               setReview={setReview} comments={comments} addComment={addComment} density={density}
-              onSend={(n) => onSendToEdit(project, n)} />
+              onSend={(n) => onSendToEdit(project, n)} onUpload={onUpload} onSync={onSync} />
           )}
           {activeTab === "video" && <VideoBoard project={project} role={role} />}
           {activeTab === "floorplan" && <FloorplanBoard project={project} />}

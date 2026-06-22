@@ -8,7 +8,7 @@
   const Icon = QP.Icon, cx = QP.cx;
   const DS = () => window.QuincyProductionsDesignSystem_b05a1c || {};
 
-  QP.PhotoBoard = function PhotoBoard({ project, coll, role, states, setReview, comments, addComment, density, onSend }) {
+  QP.PhotoBoard = function PhotoBoard({ project, coll, role, states, setReview, comments, addComment, density, onSend, onUpload, onSync }) {
     const { Button } = DS();
     const collection = QP.collOf(project, coll);
     const photos = collection.photos;
@@ -115,7 +115,22 @@
         )}
 
         <div className="workgrid">
-          {shown.length === 0
+          {photos.length === 0
+            ? <div className="empty empty--raw">
+                <span className="serif">No frames yet.</span>
+                {isRaw ? (
+                  <>
+                    <p className="muted" style={{ maxWidth: 380, margin: "0 auto 18px" }}>Upload RAW frames from this shoot, or sync them straight from the Dropbox folder.</p>
+                    {(onUpload || onSync) && (
+                      <div className="row gap3" style={{ justifyContent: "center" }}>
+                        {onSync && <button className="chip" onClick={onSync}><Icon name="dropbox" size={13} /> Sync from Dropbox</button>}
+                        {onUpload && <button className="chip is-active" onClick={onUpload}><Icon name="upload" size={13} /> Upload RAW</button>}
+                      </div>
+                    )}
+                  </>
+                ) : "Nothing in this collection yet."}
+              </div>
+            : shown.length === 0
             ? <div className="empty"><span className="serif">All clear.</span>No frames in this filter.</div>
             : (
               <div className="grid" style={{ "--cols": density === "comfortable" ? 3 : density === "dense" ? 5 : 4 }}>

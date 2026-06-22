@@ -97,6 +97,46 @@ Full detail in **`Personas.md`**. Three internal roles + the external client.
 
 ---
 
+## 4a. Project intake — Tonomo webhook  ✅ Built
+
+Quincy takes bookings in **Tonomo**. When an order is created there, Tonomo fires a
+webhook to the portal, which **creates the matching project automatically** — no
+manual re-keying.
+
+- **Trigger:** `POST /webhooks/tonomo/order.created` with the order payload
+  (sample in `uploads/Webhook-data.md`).
+- **Mapping** (Tonomo → Quincy project):
+
+  | Tonomo field | → Quincy project |
+  |---|---|
+  | `property_address.street / city / zipcode` | address (street · suburb · postcode) |
+  | `bookingFlow.name` | client / agency |
+  | `listingAgents[0]` | agent name · email · phone |
+  | `when.start_time` · `scheduled_time` | shoot date · time window |
+  | `photographers[]` | assigned shooter(s) |
+  | `services_a_la_cart` | ordered deliverables (photos / video / floorplan / copy) |
+  | `invoice_amount` · `paymentStatus` | order value · payment state |
+  | `property_feature_notes` · `entry_notes` · site-agent question | shoot notes |
+  | `orderNo` · `orderId` | booking reference (kept on the project) |
+
+- **Result:** a new project is created at **Awaiting RAW**, pre-filled with all the
+  booking detail (shown in the project rail) and the right empty collections for the
+  services ordered. RAW then arrives by **manual upload** or **Sync from Dropbox** —
+  and if the Tonomo order carried a `rawFolderLink` / `rawFolderPath`, that Dropbox
+  folder is pre-filled into the sync action (one click to pull the frames).
+- **Prototype behaviour:** the admin **New shoot** button simulates an incoming
+  webhook — it shows the received payload mapped to a project preview (with the raw
+  JSON viewable) and a **Create project** action. In production this fires
+  automatically on the webhook; no human step is required.
+- ✏️ **NEEDS INPUT / planned:** auto-ingest deliverables too (Tonomo's payload already
+  carries Dropbox/links for finished photos, video, floorplan & copywriting PDF — we
+  could attach those to the project automatically rather than waiting on RAW upload).
+  Confirm whether a Tonomo order should create a project at *Awaiting RAW* (current)
+  or land already-delivered assets straight into the **Edited / Video / Floorplan /
+  Copy** collections.
+
+---
+
 ## 5. The production pipeline  🔶 Partial → ⬜ New
 
 The portal models a shoot moving left-to-right through stages. **Selection gates**
@@ -115,7 +155,9 @@ between stages are where QA happens.
 ### Stage detail
 
 **1. Capture / RAW upload** ✅ Built
-- Photographer (or Admin / Editor) uploads RAW images into a project.
+- RAW frames reach a project two ways:
+  - **Manual upload** — Photographer / Admin / Editor drops RAW or image files (any format, no size limit) onto the project.
+  - **Sync from Dropbox** — a one-click pull of the RAW frames from the shoot's Dropbox folder. The folder link/path can be **pasted manually** or **carried over automatically from the Tonomo booking** (`rawFolderLink` / `rawFolderPath` in the webhook). Syncing populates the RAW collection and moves the project into **RAW review**.
 - Photographers annotate / comment on RAWs and **recommend** their picks to guide QA.
 - **Accepted files:** any RAW or image file — **no format or size limit**. Bracketed sets are **not** grouped automatically; the editor brackets them manually during selection.
 
@@ -144,6 +186,7 @@ between stages are where QA happens.
 - ✅ All projects as cards / list, with pipeline status, progress, agency/agent, search, filters.
 - ✅ Dashboard filters **by the viewer's role** — photographers see the **same dashboard but only their assigned shoots** ("My shoots").
 - ✅ Status reflects the new pipeline stages (see §7).
+- ✅ **Three views:** Grid · List · **Kanban**. The Kanban has one column per pipeline stage (Awaiting RAW → Delivered); Admin / Editor can **drag a project card between columns to change its stage**. Photographers get a read-only, reduced-column Kanban.
 
 ### 6.2 Project workspace ✅ Built
 - ✅ Per-project rail (client, agent, shoot date, photographer, collections, filters, labels).

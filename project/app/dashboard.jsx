@@ -7,11 +7,13 @@
   const Icon = QP.Icon, cx = QP.cx;
   const DS = () => window.QuincyProductionsDesignSystem_b05a1c || {};
 
-  QP.Dashboard = function Dashboard({ projects, states, onOpen, query, role }) {
+  QP.Dashboard = function Dashboard({ projects, states, onOpen, query, role, setStatus, onNewProject }) {
     const { Button } = DS();
     const [filter, setFilter] = QP.useStored("dash:filter", "all");
     const [view, setView] = QP.useStored("dash:view", "grid");
     const [sort, setSort] = useState("recent");
+    const [drag, setDrag] = useState(null);     // { id } currently dragged
+    const [over, setOver] = useState(null);     // status column being hovered
 
     const photographerView = !role.seesAll;
     const STATUS_ORDER = photographerView
@@ -58,7 +60,7 @@
             ) : (
               <>
                 <Button variant="secondary" size="sm" iconLeft={<Icon name="calendar" size={15} />}>Schedule</Button>
-                {role.id === "admin" && <Button variant="primary" size="sm" iconLeft={<Icon name="plus" size={15} />}>New shoot</Button>}
+                {role.id === "admin" && <Button variant="primary" size="sm" iconLeft={<Icon name="plus" size={15} />} onClick={onNewProject}>New shoot</Button>}
               </>
             )}
           </div>
@@ -90,12 +92,20 @@
             <div className="segment">
               <button className={view === "grid" ? "is-active" : ""} onClick={() => setView("grid")} title="Grid"><Icon name="grid" size={14} /></button>
               <button className={view === "list" ? "is-active" : ""} onClick={() => setView("list")} title="List"><Icon name="list" size={14} /></button>
+              <button className={view === "kanban" ? "is-active" : ""} onClick={() => setView("kanban")} title="Kanban"><Icon name="kanban" size={14} /></button>
             </div>
           </div>
         </div>
 
         {list.length === 0 && (
           <div className="empty"><span className="serif">Nothing here yet.</span>No shoots match this filter.</div>
+        )}
+
+        {view === "kanban" && (
+          <Kanban projects={list} states={states} onOpen={onOpen} role={role}
+            canMove={!!setStatus && role.seesAll}
+            drag={drag} setDrag={setDrag} over={over} setOver={setOver}
+            onDrop={(id, status) => { if (setStatus) { setStatus(id, status); const pr = projects.find((x) => x.id === id); QP.toast("Moved to " + QP.STATUS[status].label, { sub: pr && pr.street }); } setDrag(null); setOver(null); }} />
         )}
 
         {view === "grid" && list.length > 0 && (
@@ -146,7 +156,7 @@
           <img src={p.cover} alt={p.street} loading="lazy" />
           <div className="proj__badges">
             <QP.StatusBadge status={p.status} style={{ background: "rgba(20,20,21,.42)", backdropFilter: "blur(6px)", padding: "5px 8px", borderRadius: 2 }} />
-            <span className="cbubble"><Icon name="image" size={12} />{QP.mediaCount(p)}</span>
+            {p.tonomo ? <span className="cbubble" title={"Tonomo order " + p.tonomo.orderNo}><span className="tonomo-dot" />{p.tonomo.orderNo}</span> : <span className="cbubble"><Icon name="image" size={12} />{QP.mediaCount(p)}</span>}
           </div>
         </div>
         <div className="proj__body">
@@ -170,6 +180,72 @@
             )}
           </div>
         </div>
+      </div>
+    );
+  }
+
+  /* ---- kanban view --------------------------------------------------- */
+  function Kanban({ projects, states, onOpen, role, canMove, drag, setDrag, over, setOver, onDrop }) {
+    // columns = pipeline stages, in order; photographers see a reduced set
+    const cols = role.seesAll
+      ? ["awaiting_raw", "raw_review", "editing", "edited_review", "client_review", "delivered"]
+      : ["raw_review", "editing", "delivered"];
+    const byStatus = (s) => projects.filter((p) => p.status === s);
+
+    return (
+      <div className="kanban">
+        {cols.map((s) => {
+          const meta = QP.STATUS[s];
+          const items = byStatus(s);
+          return (
+            <div key={s}
+                 className={cx("kcol", over === s && canMove && "is-over")}
+                 onDragOver={(e) => { if (canMove && drag) { e.preventDefault(); setOver(s); } }}
+                 onDragLeave={(e) => { if (over === s) setOver(null); }}
+                 onDrop={(e) => { e.preventDefault(); if (canMove && drag && drag.status !== s) onDrop(drag.id, s); else { setDrag(null); setOver(null); } }}>
+              <div className="kcol__head">
+                <span className="row gap2"><span className="sdot" style={{ background: meta.dot }} /><span className="ey">{meta.label}</span></span>
+                <span className="cnt">{items.length}</span>
+              </div>
+              <div className="kcol__body">
+                {items.length === 0 && <div className="kcol__empty">—</div>}
+                {items.map((p) => {
+                  const rs = QP.reviewStats(p, states);
+                  const raw = QP.rawStats(p, states);
+                  return (
+                    <div key={p.id}
+                         className={cx("kcard", drag && drag.id === p.id && "is-dragging")}
+                         draggable={canMove}
+                         onDragStart={(e) => { if (canMove) { setDrag({ id: p.id, status: p.status }); e.dataTransfer.effectAllowed = "move"; } }}
+                         onDragEnd={() => { setDrag(null); setOver(null); }}
+                         onClick={() => onOpen(p.id)}>
+                      <div className="kcard__media">
+                        <img src={p.cover} alt="" loading="lazy" />
+                      </div>
+                      <div className="kcard__b">
+                        <div className="kcard__addr serif">{p.street}</div>
+                        <div className="ey" style={{ marginTop: 3 }}>{p.suburb}</div>
+                        <div className="kcard__meta">{p.agency}</div>
+                        {p.stage > 0 && !rs.raw && (
+                          <div className="kcard__foot">
+                            <div className="meter"><i style={{ width: rs.pct + "%" }} /></div>
+                            <span className="ey nowrap">{rs.approved}/{rs.total}</span>
+                          </div>
+                        )}
+                        {p.stage > 0 && rs.raw && (
+                          <div className="kcard__foot">
+                            <div className="meter"><i style={{ width: raw.pct + "%" }} /></div>
+                            <span className="ey nowrap">{raw.selected}/{raw.total}</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
       </div>
     );
   }
