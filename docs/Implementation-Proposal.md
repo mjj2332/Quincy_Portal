@@ -1,6 +1,6 @@
 # Quincy Portal — Implementation Proposal
 
-> **Status:** Draft v1.1 · 22 June 2026 (revised after multi-agent review — see §13)
+> **Status:** Draft v1.2 · 22 June 2026 (capture-pipeline-first re-sequencing; multi-agent review history in §13)
 > **Source of truth:** `project/docs/PRD.md`, `Personas.md`, `Sitemap.md`, `project/uploads/Webhook-data*.md`, and the Igor × Tez capture-workflow decisions.
 > **Audience:** Quincy Productions team + implementing engineers
 > **Scope:** Turn the React prototype into a production system on Cloudflare.
@@ -34,7 +34,7 @@ already chosen.
 | UI | React 18 + TypeScript + **Vite SPA**, reusing the Quincy design system | SSR dropped as default (no SEO need; private links) |
 | App framework | Plain SPA + JSON API; **React Router v7 SSR only if a measured first-load need** | was "SSR by default" |
 | API | **Hono** on Cloudflare Workers (TypeScript) | — |
-| Worker topology | **3 Workers**: public *delivery* (client links + webhooks), staff *app/API* (behind Access), *background* consumers — joined by service bindings | was "single Worker" |
+| Worker topology | **Workers split by surface**: thin public *webhook-ingress* (Tonomo + Dropbox), public *client-delivery* (links/gallery/paywall), staff *app/API* (behind Access), *background* consumers — joined by service bindings | webhook ingress separated from client delivery so it can ship earlier (§6.2, §9) |
 | Relational data | **Cloudflare D1** (SQLite) + Drizzle ORM (metadata only) | Drizzle optional; plain typed SQL fine |
 | Object storage | **Cloudflare R2** (originals, ingest-generated renditions, cached zips) — **versioned, immutable keys** | — |
 | Image renditions | **Generated at ingest into R2** (web + thumbnail JPEGs). On-the-fly CF image transforms only for in-limit web JPEGs/watermark previews | was "Cloudflare Images on the fly" — see §6.4 |
@@ -49,8 +49,9 @@ already chosen.
 | Observability | Workers Observability + Logpush + **correlation IDs, audit log, stuck-stage alerts, cost dashboards** | deepened |
 | Backup/DR | **R2 versioning + lifecycle, D1 Time Travel + scheduled exports, soft-delete + retention** | new (§7) |
 
-A phased rollout (§9) replaces Pixieset first (client delivery + a thin admin back-office),
-then internalises the pipeline.
+A phased rollout (§9) builds the **internal capture → edit → QA pipeline first** (the team's
+daily workflow), then adds Tonomo intake and the dashboard, and delivers the client-facing
+gallery **last** (the Pixieset replacement).
 
 ---
 
@@ -110,8 +111,8 @@ Cloudflare is right for this workload. Refinements vs. the initial instinct (D1/
                                       │ POST /webhooks/tonomo/*  (signed, public)
                                       ▼
    Client ──signed link (/d/:token)──►  ┌───────────────────────────────────────┐
-   (no login, public)                   │  DELIVERY Worker (public)               │
-                                        │  • client galleries, downloads, webhooks │
+   (no login, public)                   │  PUBLIC Workers (ingress + delivery)    │
+                                        │  • webhooks + client galleries/downloads │
                                         └───────────────┬─────────────────────────┘
                                                         │ service bindings
    Staff ──Cloudflare Access (SSO/MFA)──► ┌─────────────▼───────────────────────┐
@@ -137,10 +138,14 @@ Cloudflare is right for this workload. Refinements vs. the initial instinct (D1/
                                                  └───────────┘        └─────────────┘
 ```
 
+> The diagram is the **end-state**. Early phases build only the staff *App/API* + *Background*
+> Workers; the thin public **webhook-ingress** Worker arrives in Phase 2 (Dropbox) / Phase 3
+> (Tonomo), and the public **client-delivery** Worker in Phase 5 (§9).
+
 ### Request-flow examples
-- **Tonomo order created/updated →** delivery Worker verifies signature, dedupes by event id,
-  upserts the project (create at *Awaiting RAW*, or update scope/schedule/deliverables),
-  enqueues deliverable hydration.
+- **Tonomo order created/updated →** the **webhook-ingress Worker** verifies signature, dedupes
+  by event id, upserts the project (create at *Awaiting RAW*, or update scope/schedule/
+  deliverables, reconciling with manual projects by `order_id`), enqueues deliverable hydration.
 - **Editor selects RAWs →** D1 records selection → a **Workflow** copies those JPEGs into the
   autoHDR-watched Dropbox folder, sets *Editing·autoHDR*, then ingests returned edits (on a
   Dropbox **webhook**, not polling) as the Edited collection → *Edited review*.
@@ -195,10 +200,16 @@ Core tables (all get `id`, `created_at`, `updated_at`):
   compare, kanban drag).
 
 ### 6.2 API & worker topology (Hono)
-- **Delivery Worker (public):** client galleries `/d/:token`, downloads, and `/webhooks/*`.
-  No Access in front. Strict signed-token + signature checks.
-- **App/API Worker (staff):** `/app/*`, `/api/*` behind Cloudflare Access.
+- **App/API Worker (staff):** `/app/*`, `/api/*` behind Cloudflare Access. **Built first** —
+  it carries the whole internal capture pipeline.
 - **Background Worker:** Queue consumers + Workflows (ingest, autoHDR, zip).
+- **Webhook-ingress Worker (public, thin):** `/webhooks/dropbox` and `/webhooks/tonomo/*`.
+  Public but locked to signature/secret validation only — **no gallery, no asset serving**.
+  Built when the first webhook is needed (Dropbox in Phase 2), extended for Tonomo in Phase 3.
+  Kept separate from client delivery so the public attack surface stays minimal and the two
+  ship independently.
+- **Client-delivery Worker (public):** client galleries `/d/:token`, downloads, paywall.
+  **Built last (Phase 5).** No Access in front; strict signed-token checks.
 - Workers communicate via **service bindings**; this bounds blast radius, bundle size, and
   rollback per surface.
 
@@ -227,6 +238,13 @@ Core tables (all get `id`, `created_at`, `updated_at`):
 - **On-the-fly CF image transforms** are an optional optimisation for web-size JPEGs within
   format/size limits and for **watermarked premium previews** (which must require signed URLs
   on *all* variants so the clean URL can't be guessed).
+- **Internal-only during Phases 1–4:** every asset preview/download endpoint is
+  **staff-Access-only**. The client signed-URL API and its **unlock checks** are introduced
+  with the client-delivery Worker (Phase 5); an internal endpoint must never become the client
+  path by simply being reused without those checks.
+- **Data-model-forward:** the Phase 1 ingest writes `is_premium` and the rendition variants in
+  the exact shape Phase 5 will read, even though nothing consumes them yet — so the paywall
+  doesn't force a later migration of a populated asset store.
 
 ### 6.5 Tonomo intake (webhook)
 - `POST /webhooks/tonomo/order.created` **and** `order.updated`: verify HMAC signature,
@@ -235,6 +253,11 @@ Core tables (all get `id`, `created_at`, `updated_at`):
   An **operator screen** surfaces failed/ambiguous mappings (poison events) for manual fix.
 - **Open decision (PRD §4a):** per-service flag — start reshoots at *Awaiting RAW* while
   already-finished deliverables (floorplan/video/copy links in the payload) attach immediately.
+- **Reconciliation with manually-created projects (Phase 3):** when intake is automated, match
+  incoming orders to existing projects by **`order_id`** (address as a fallback) so the
+  manually-created Phase 0/1 projects aren't duplicated; unmatched/ambiguous orders go to the
+  operator screen for merge/confirm. Manual projects carry the Tonomo `order_id` where known so
+  the later webhook merges cleanly.
 
 ### 6.6 Capture ingest, file counts & Dropbox sync
 - **Manual upload:** **direct-to-R2 multipart** with presigned URLs (the *only* large-file
@@ -243,15 +266,20 @@ Core tables (all get `id`, `created_at`, `updated_at`):
 - **Dropbox sync:** a Queue/Workflow consumer streams the folder **file-by-file** (avoids
   Worker time limits), idempotent by `content_hash`, with explicit **conflict/version
   semantics** (renames, duplicate names, revised edits, deletions → immutable asset versions).
+  In **Phase 1** sync is **manually triggered** from the UI; the Dropbox **webhook**
+  (delta/cursor-driven) is added in **Phase 2** for hands-off sync and the autoHDR return.
 - **File-count verification:** `expected_count` from the Dropbox folder-name convention
-  (input/output counts) vs. `received_count`; mismatches flagged in the UI ("upload 18 → see 18").
+  (input/output counts) **or, for manual uploads, the browser's selected-file manifest
+  (persisted before ingest)**, checked against `received_count`; mismatches flagged in the UI
+  ("upload 18 → see 18").
 - **Rating metadata:** read the JPEG's embedded star rating (XMP/IPTC) at ingest into
   `rating_from_metadata`, so on-site culling drives selection from the start (meeting decision).
 
 ### 6.7 autoHDR handoff (Workflow + Dropbox webhook)
 - A **Workflow** owns the round-trip: copy selected JPEGs to the autoHDR-watched Dropbox
-  folder → mark *Editing·autoHDR* → **receive returned edits via a Dropbox webhook** (not
-  polling) → ingest as Edited → *Edited review*. Includes explicit **timeout, manual retry,
+  folder → mark *Editing·autoHDR* → **the Dropbox webhook triggers a cursor/delta sync** and the
+  changed files are correlated to the autoHDR output folder (not naive polling or a per-file
+  push) → ingest as Edited → *Edited review*. Includes explicit **timeout, manual retry,
   and a "stuck in autoHDR" recovery screen**. (Direct autoHDR API remains a future option.)
 
 ### 6.8 Review tooling
@@ -290,7 +318,9 @@ Core tables (all get `id`, `created_at`, `updated_at`):
 - **Privacy:** agent contact details + addresses are PII — scope access, log it, and apply
   retention; client links never leak via referrer.
 - **Testing:** Vitest + `@cloudflare/vitest-pool-workers` (Miniflare), Playwright for the
-  critical flows (intake → ingest → select → autoHDR → publish → client download/unlock).
+  critical flows — **internal first**: manual project → upload/sync → renditions → RAW QA →
+  select-for-editing → autoHDR → Edited ingest → Edited QA (Phases 1–2); then intake → publish →
+  client download/unlock (Phases 3–5).
 - **Environments:** `dev` (Miniflare/local D1+R2) → `staging` → `production` (separate D1/R2).
 
 ---
@@ -316,26 +346,54 @@ Core tables (all get `id`, `created_at`, `updated_at`):
 
 ## 9. Phased delivery plan
 
-Replace Pixieset first (value, low risk), then internalise the pipeline.
+**Capture pipeline first.** The team will use the portal **internally** to run capture, QA
+and the autoHDR editing loop before anything client-facing exists; the client delivery page
+(the Pixieset replacement) is built **last**. This front-loads the workflow that saves the
+team time daily and de-risks the hardest internal mechanics (ingest, Dropbox sync, autoHDR
+round-trip) while there are no external users to disrupt. Each phase is independently
+shippable to the internal team behind Cloudflare Access.
 
-- **Phase 0 — Foundations.** 3-Worker skeleton, D1 schema + migrations, R2 buckets + versioning,
-  Access, CI/CD, DS integration, observability/audit baseline.
-- **Phase 1 — Client delivery + thin admin back-office (Pixieset replacement).** Publish model,
-  signed client links, gallery, favourites, downloads (stream + cached zip), ingest renditions,
-  premium watermark — **plus a minimal admin upload/publish screen** so delivery is usable
-  before full intake exists. Ship to real clients.
-- **Phase 2 — Intake + dashboard.** Tonomo `order.created`/`order.updated`, dashboard
-  (grid/list/kanban), capability-based role gating.
-- **Phase 3 — Capture pipeline.** Upload + Dropbox sync, file-count verification, rating-metadata
-  ingest, RAW QA (ratings/labels/markup/compare/recommend), **select-for-editing** gate.
-- **Phase 4 — autoHDR + Edited QA.** Workflow + Dropbox-webhook handoff, Edited ingest, Edited QA,
-  publish from Edited, RAW↔Edited compare.
-- **Phase 5 — Video + copy + extras.** Cloudflare Stream uploads, in-portal copy + social,
-  floorplan versioning, stage notifications.
+- **Phase 0 — Foundations (internal).** Staff app/API Worker behind Access with
+  **capability-based authorization**, background Worker (Queues/Workflows), D1 schema +
+  migrations, R2 buckets + versioning, CI/CD, observability + audit baseline, DS integration,
+  and **manual admin project creation** capturing the fields Tonomo will later supply (address,
+  agency/client, shoot date, ordered services/collections, expected RAW count, Dropbox folder
+  link/path, assigned photographer/editor, stage) **plus an optional Tonomo `order_id`** as the
+  reconciliation key. **Spike first:** prove the **rendition/image-processing path** against
+  worst-case full-res Lightroom JPEGs (Worker/WASM vs. an external job runner vs. a
+  Lightroom-side derivative export) before Phase 1 depends on it. *The public delivery Worker is
+  not built until Phase 5.*
+- **Phase 1 — Capture ingest + RAW QA (first daily-driver).** Capture upload (direct-to-R2
+  multipart) + Dropbox sync, **file-count verification**, **rating-metadata ingest**,
+  ingest-time renditions, a minimal project list, and RAW QA tooling (ratings, labels,
+  freehand markup, compare, photographer *recommend*) ending in the **select-for-editing**
+  gate. This is the first thing the team uses every day.
+- **Phase 2 — autoHDR handoff + Edited QA.** Introduce the thin **public webhook-ingress
+  Worker** (Dropbox webhook → cursor/delta sync) and the **Workflow** round-trip; Edited
+  collection ingest, Edited QA (approve / flag / rate / label / annotate), RAW↔Edited compare.
+  Completes the internal **capture → edit → QA** loop end-to-end.
+- **Phase 3 — Tonomo intake + full dashboard.** Extend the webhook-ingress Worker for Tonomo
+  (`order.created` / `order.updated`) to automate project creation, **with a
+  reconciliation/backfill step** (match by `order_id`/address, dedupe against the manual
+  projects, operator review); full dashboard (grid / list / kanban) with role-filtered views.
+- **Phase 4 — Video / floorplan / copy (internal management).** Vimeo film links, floorplan
+  PDF/JPG versioning, copywriting PDF — uploaded, managed and QA'd internally.
+- **Phase 5 — Client delivery (Pixieset replacement, last).** The public **client-delivery
+  Worker** (the webhook-ingress Worker already exists from Phase 2): signed client links,
+  editorial gallery, favourites, downloads (streamed + cached zip), and the watermarked
+  **premium paywall**; then retire Pixieset. Cloudflare Stream native video and basic **stage
+  notifications** are optional follow-ons here.
 
-**Launch gates (must pass before each client-facing release):** auth + capability authorization,
-ingest correctness + file-count verification, paywall enforcement, audit log, and backup/restore —
-treated separately from "prototype parity" features (kanban drag, compare polish, etc.).
+**Launch gates.** Internal phases (0–4) gate on **auth + capability authorization, ingest
+correctness + file-count verification, audit log, and backup/restore**. The first
+client-facing release (Phase 5) additionally gates on **paywall enforcement and client-link
+hardening**. These are kept separate from "prototype parity" polish (kanban drag, compare
+refinements, etc.).
+
+> **Sequencing trade-off (noted):** building delivery last means Pixieset keeps running until
+> Phase 5, so there is no cost saving on client delivery egress until then — accepted, because
+> the internal time-savings land far sooner. Phases 0–2 need only the staff + background
+> Workers; the public delivery Worker and its client-link/paywall surface arrive in Phase 5.
 
 ---
 
@@ -364,13 +422,18 @@ counts, not assumed flat.
 
 ## 12. Recommendation
 
-Build Quincy Portal as **three cooperating Cloudflare Workers** (Vite SPA + Hono API) over
+Build Quincy Portal as **four cooperating Cloudflare Workers** (staff app/API, background
+consumers, a thin public webhook-ingress, and client-delivery — Vite SPA + Hono API) over
 **D1 + R2**, with **ingest-time rendition generation**, **Queues/Workflows** for the media
 pipeline, **Cloudflare Access** for staff and **signed links** for clients. Treat the JPEG-only
 ingest, paywall enforcement, file-count verification, and backup/restore as launch gates. It
 satisfies the PRD, respects Cloudflare's real limits, matches the media-heavy/low-cost
-constraint, and extends the Cloudflare direction the repo already targets. Start with client
-delivery (plus a thin admin back-office) to retire Pixieset, then internalise the pipeline.
+constraint, and extends the Cloudflare direction the repo already targets. Treat JPEG-only
+ingest, file-count verification, and backup/restore as **internal launch gates**, with
+**paywall enforcement and client-link hardening as the Phase 5 client-launch gates**.
+**Start with the internal capture pipeline** (ingest → RAW QA → select-for-editing → autoHDR → Edited QA) so the
+team gets daily value first, then add Tonomo intake and the dashboard, and build the client
+delivery page (the Pixieset replacement) **last**.
 
 ---
 
@@ -393,7 +456,7 @@ key was available, so Antigravity was substituted. Findings and resolutions:
 | 9 | D1 limits ignored (2 MB row, 100 params, duration) (Codex) | P1 | Metadata only; annotations JSON to R2; chunked bulk ops (§5, §6.8, §8) |
 | 10 | Queue 128 KB message cap (Codex) | P1 | Pass IDs/manifests only (§8) |
 | 11 | Dropbox polling inefficient; needs stuck recovery (Codex, agy) | P1 | Dropbox **webhooks**; timeout/manual retry + recovery screen (§6.7) |
-| 12 | Single Worker over-concentrated (Codex) | P1 | Split into delivery / app-API / background Workers (§6.2) |
+| 12 | Single Worker over-concentrated (Codex) | P1 | Split into staff app/API, background, webhook-ingress, and client-delivery Workers (§6.2; webhook-ingress added in v1.2) |
 | 13 | SSR over-engineered for private galleries (Codex) | P1 | Default to **SPA**; SSR only if measured need (§1, §6.1) |
 | 14 | Durable Objects presence premature (Codex) | P1 | Deferred; polling/optimistic first (§6.8) |
 | 15 | KV weak fit (Codex) | P1 | Demoted to optional non-critical cache (§1) |
@@ -404,8 +467,27 @@ key was available, so Antigravity was substituted. Findings and resolutions:
 | 20 | Observability too thin (Codex) | P1 | Correlation IDs, audit log, stuck-stage alerts, cost dashboard (§7) |
 | 21 | Stream should stay optional (Codex) | P2 | Vimeo first; Stream later phase (§1, §6, §9) |
 | 22 | Drizzle not essential (Codex) | P2 | Marked optional (§1) |
-| 23 | Phase order needs thin admin back-office in Phase 1 (Codex) | P2 | Added to Phase 1 (§9) |
+| 23 | Phase order needs thin admin back-office (Codex) | P2 | Manual admin project creation in **Phase 0** (§9) |
 | 24 | No notification plan (Codex) | P2 | Basic stage notifications in Phase 5 (§9) |
 | 25 | Separate prototype parity from launch hardening (Codex) | P2 | Explicit **launch gates** (§9) |
 | 26 | RAW↔Edited compare needs matched web JPEGs (agy) | P2 | Provided by ingest renditions (§6.4) |
 | 27 | *Self:* rating metadata from JPEG; file-count verification; manual bracketing (meeting) | — | Added as first-class requirements (§2, §5, §6.6) |
+
+### v1.2 review round — capture-first re-sequencing (Codex + Antigravity + self)
+
+After re-sequencing to build the internal capture pipeline first and client delivery last,
+the proposal was re-reviewed by **Codex** and **Antigravity**; findings and resolutions:
+
+| # | Finding (source) | Severity | Resolution in v1.2 |
+|---|---|---|---|
+| 28 | Webhooks live on the delivery Worker, but it's deferred to Phase 5 while Dropbox (Ph2)/Tonomo (Ph3) webhooks are needed earlier — build-order blocker (Codex, agy) | P0 | Split a thin **public webhook-ingress Worker** from client delivery; built Phase 2 (§6.2, §9) |
+| 29 | Rendition path only said "background consumer"; capture-first makes it a Phase-1 dependency (Codex) | P0 | **Phase 0 spike** proving the path on worst-case JPEGs (§9) |
+| 30 | Manual project creation too vague to stand alone (Codex, agy) | P1 | Phase 0 captures the full Tonomo field set + `order_id` key (§9) |
+| 31 | Tonomo automation needs reconciliation vs. manual projects (Codex, agy) | P1 | Match by `order_id`/address, dedupe, operator review (§6.5, §9) |
+| 32 | File-count verification missing for manual upload (Codex) | P1 | `expected_count` from the browser upload manifest (§6.6) |
+| 33 | Internal endpoints could become the client path ungated (Codex) | P1 | Phases 1–4 endpoints staff-Access-only; unlock checks added with delivery Worker (§6.4) |
+| 34 | Paywall data-model drift if built last against a populated store (agy) | P1 | Phase 1 ingest writes `is_premium` + variants in Phase-5 shape (§6.4) |
+| 35 | Dropbox "webhook" too literal (Codex) | P1 | Webhook triggers cursor/delta sync + correlation (§6.7, §9) |
+| 36 | Phase-1 Dropbox sync trigger unclear without the webhook (agy) | P2 | Phase 1 = manual UI trigger; webhook from Phase 2 (§6.6) |
+| 37 | Diagram/testing/recommendation still read delivery-first (Codex) | P2 | End-state note (§4); internal-first test path (§7); Phase-5 paywall gate (§12) |
+| 38 | Review-log rows stale after re-sequencing (Codex) | P2 | Row 23 corrected; Phase 5 now lists notifications (§9, §13) |
