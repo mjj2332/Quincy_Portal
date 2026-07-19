@@ -19,6 +19,25 @@ tsconfig cause (which was my own gap: files added after the package's last green
 workspace typecheck after each wave — per-package green ≠ integration green. (3) Reject
 type shims/facades over workspace packages; fix the owning package's config instead.
 
+## 2026-07-19 — MCP servers added mid-session aren't usable mid-session
+`claude mcp add` (and the Cloudflare MCP setup it enabled) writes to `~/.claude.json`, but
+a *running* session's tool list is fixed at startup — `ToolSearch` won't surface a server
+registered after the session began, even once `claude mcp list` shows it "Connected". Needs
+a fresh session to actually call its tools.
+**Rule:** when asked to configure a new MCP server for "yourself" mid-conversation, register
+it, but don't expect to use it this session — verify via ToolSearch, and if empty, fall back
+to an already-authenticated CLI (wrangler, gh, etc.) for the actual work rather than blocking.
+
+## 2026-07-19 — Codex `codex exec` (non-interactive) can't approve MCP write actions
+Handing Codex a Cloudflare-provisioning task with its Cloudflare MCP configured failed
+silently: `mcp: cloudflare/execute (failed)` → "account lookup was cancelled before
+execution." `codex exec` runs with `approval: never`, and this MCP server's write actions
+apparently need a per-call approval Codex can't grant non-interactively — it isn't a network/
+sandbox permission issue (network access was enabled; `search` on the same server worked).
+**Rule:** for real-account write operations (cloud resource provisioning, anything
+consequential) via an MCP that a subagent can't self-approve, don't retry-tune the agent
+invocation — do it directly with an already-authenticated CLI instead.
+
 ## 2026-07-19 — D1 exec() SQL loading
 `D1Database.exec()` processes statements line-by-line; multiline SQL fails with
 "incomplete input", and comment lines can contain `;` which breaks naive splitting.
