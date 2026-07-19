@@ -22,7 +22,7 @@ function collectionLabel(value: string) { return value === "raw" ? "RAW" : value
 function emptyReview(): Review { return { stars: null, colorLabel: null, decision: null, recommended: false }; }
 function activeJob(job: Job) { return job.status === "queued" || job.status === "running"; }
 
-export function ProjectWorkspace({ projectId, notice, onNoticeShown, onBack }: { projectId: string | null; notice?: string | null; onNoticeShown?: () => void; onBack: () => void }) {
+export function ProjectWorkspace({ projectId, notice, onNoticeShown, onBack, onEditDetails }: { projectId: string | null; notice?: string | null; onNoticeShown?: () => void; onBack: () => void; onEditDetails: () => void }) {
   const { can } = useCapabilities();
   const [data, setData] = useState<ProjectResponse | null>(null);
   const [assets, setAssets] = useState<WorkspaceAsset[]>([]);
@@ -123,7 +123,7 @@ export function ProjectWorkspace({ projectId, notice, onNoticeShown, onBack }: {
   const project = data;
   const { collections, members } = data;
   const stage = DEFAULT_STAGES.find((item) => item.key === project.stageKey);
-  const canUpload = can("uploadRaw"), canSelect = can("selectForEditing"), isEdited = activeTab === "edited";
+  const canUpload = can("uploadRaw"), canSelect = can("selectForEditing"), canEdit = can("editProject"), isEdited = activeTab === "edited";
   const canReview = isEdited ? can("reviewEdited") : can("selectForEditing");
   const canRecommend = activeTab === "raw" && can("recommendRaw");
   const canAnnotate = activeTab === "raw" ? can("annotateRaw") : isEdited && can("annotateEdited");
@@ -134,7 +134,7 @@ export function ProjectWorkspace({ projectId, notice, onNoticeShown, onBack }: {
 
   return <main className="work">
     <aside className="rail"><div style={{ marginBottom: 10 }}><StatusBadge stageKey={project.stageKey} /></div><h2 className="serif">{project.street}</h2><div className="ey" style={{ marginTop: 8 }}>{[project.suburb, project.postcode].filter(Boolean).join(" · ")}</div>
-      <div className="rail__sec"><div className="kv"><span className="k">Agency</span><span className="vv">{project.agencyName ?? "—"}</span></div><div className="kv"><span className="k">Agent</span><span className="vv">{project.agentName ?? "—"}</span></div><div className="kv"><span className="k">Shoot</span><span className="vv">{date(project.shootDate)}</span></div><div className="kv"><span className="k">Stage</span><span className="vv">{stage?.label ?? project.stageKey}</span></div></div>
+      <div className="rail__sec"><div className="kv"><span className="k">Agency</span><span className="vv">{project.agencyName ?? "—"}</span></div><div className="kv"><span className="k">Agent</span><span className="vv">{project.agentName ?? "—"}</span></div><div className="kv"><span className="k">Shoot</span><span className="vv">{date(project.shootDate)}</span></div><div className="kv"><span className="k">Stage</span><span className="vv">{stage?.label ?? project.stageKey}</span></div>{canEdit && <button className="button button--secondary rail__edit" type="button" onClick={onEditDetails}>Edit details</button>}</div>
       <div className="rail__sec"><div className="ey" style={{ marginBottom: 10 }}>Photographers</div>{photographers.length ? photographers.map((member) => <div className="member" key={member.id}>{member.name || member.email}</div>) : <div className="muted">Not assigned</div>}</div>
       <div className="rail__sec"><div className="ey" style={{ marginBottom: 10 }}>Collections</div><div className="filterlist">{availableTabs.map((tab) => { const collection = collections.find((item) => item.kind === tab); return <button className={`frow ${activeTab === tab ? "is-active" : ""}`} type="button" key={tab} onClick={() => setActiveTab(tab)}><span>{collectionLabel(tab)}</span><span className="cnt">{collection ? collection.receivedCount : "—"}</span></button>; })}</div></div>
       {canUpload && (project.rawFolderPath || project.rawFolderLink) && <div className="rail__sec"><div className="ey" style={{ marginBottom: 10 }}>Dropbox RAW folder</div><button className="dropcard" type="button" disabled={isSyncing} onClick={() => void syncDropbox()}><span>◈</span><span>{isSyncing ? "Syncing Dropbox…" : "Sync from Dropbox"}</span></button></div>}

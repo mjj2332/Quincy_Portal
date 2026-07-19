@@ -1,7 +1,7 @@
 import type { MouseEvent } from "react";
 import { signOut } from "../lib/auth";
 
-export type AppView = "dashboard" | "project" | "create-project" | "admin";
+export type AppView = "dashboard" | "project" | "create-project" | "edit-project" | "admin";
 
 interface TopbarProps {
   activeView: AppView;

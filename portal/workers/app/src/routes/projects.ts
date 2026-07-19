@@ -10,12 +10,25 @@ import { newId } from "../lib/ids";
 import { jsonInput } from "./helpers";
 
 const nullable = <T extends z.ZodTypeAny>(item: T) => item.nullable().optional();
-const projectFields = z.object({ street: z.string().min(1), suburb: nullable(z.string()), postcode: nullable(z.string()), agencyName: nullable(z.string()), agentName: nullable(z.string()), agentEmail: nullable(z.string().email()), agentPhone: nullable(z.string()), agencyId: nullable(z.string().uuid()), agentId: nullable(z.string().uuid()), shootDate: nullable(z.string()), timeWindow: nullable(z.string()), orderNo: nullable(z.string()), orderId: nullable(z.string()), invoiceAmount: nullable(z.number()), paymentStatus: nullable(z.string()), notes: nullable(z.string()), rawFolderLink: nullable(z.string().url()), rawFolderPath: nullable(z.string()), orderedServices: z.array(z.enum(COLLECTION_KINDS)).min(1).optional(), photographerUserIds: z.array(z.string().uuid()).optional(), editorUserIds: z.array(z.string().uuid()).optional() });
-const editFields = projectFields.omit({ orderedServices: true, photographerUserIds: true, editorUserIds: true }).partial();
+const projectFields = z.object({ street: z.string().min(1), suburb: nullable(z.string()), postcode: nullable(z.string()), agencyName: nullable(z.string()), agentName: nullable(z.string()), agentEmail: nullable(z.string().email()), agentPhone: nullable(z.string()), agencyId: nullable(z.string().uuid()), agentId: nullable(z.string().uuid()), shootDate: nullable(z.string()), timeWindow: nullable(z.string()), orderNo: nullable(z.string()), orderId: nullable(z.string()), invoiceAmount: nullable(z.number()), paymentStatus: nullable(z.string()), notes: nullable(z.string()), rawFolderLink: nullable(z.string().url()), rawFolderPath: nullable(z.string()), orderedServices: z.array(z.enum(COLLECTION_KINDS)).optional(), photographerUserIds: z.array(z.string().uuid()).optional(), editorUserIds: z.array(z.string().uuid()).optional() });
+const editFields = projectFields.partial();
 const idCheck = (v: string) => z.string().uuid().safeParse(v).success;
 
 async function addMembers(db: ReturnType<typeof createDb>, projectId: string, ids: string[] | undefined, roleOnProject: "photographer" | "editor") {
   for (const userId of [...new Set(ids ?? [])]) await db.insert(schema.projectMembers).values({ id: newId(), projectId, userId, roleOnProject, createdAt: new Date() }).onConflictDoNothing();
+}
+async function addCollections(db: ReturnType<typeof createDb>, projectId: string, orderedServices: CollectionKind[] | undefined) {
+  const services = new Set<CollectionKind>(["raw", ...(orderedServices ?? [])]);
+  for (const kind of services) await db.insert(schema.collections).values({ id: newId(), projectId, kind, status: "empty", receivedCount: 0, createdAt: new Date(), updatedAt: new Date() }).onConflictDoNothing();
+  return services;
+}
+async function syncMembers(db: ReturnType<typeof createDb>, projectId: string, ids: string[], roleOnProject: "photographer" | "editor") {
+  const desired = [...new Set(ids)];
+  const existing = await db.select({ id: schema.projectMembers.id, userId: schema.projectMembers.userId }).from(schema.projectMembers).where(and(eq(schema.projectMembers.projectId, projectId), eq(schema.projectMembers.roleOnProject, roleOnProject))).all();
+  await addMembers(db, projectId, desired, roleOnProject);
+  const removed = existing.filter((member) => !desired.includes(member.userId));
+  for (const member of removed) await db.delete(schema.projectMembers).where(eq(schema.projectMembers.id, member.id));
+  return { added: desired.filter((userId) => !existing.some((member) => member.userId === userId)), removed: removed.map((member) => member.userId) };
 }
 async function details(db: ReturnType<typeof createDb>, projectId: string) {
   const project = await db.select().from(schema.projects).where(eq(schema.projects.id, projectId)).get();
@@ -34,8 +47,7 @@ projectsRoutes.post("/projects", requireCapability("createProject"), async (c) =
   const data = await jsonInput(c, projectFields); if (data instanceof Response) return data;
   const db = createDb(c.env.DB); const id = newId(); const { orderedServices, photographerUserIds, editorUserIds, ...fields } = data;
   await db.insert(schema.projects).values({ id, ...fields, stageKey: "awaiting_raw", createdAt: new Date(), updatedAt: new Date() });
-  const services = new Set<CollectionKind>(["raw", ...(orderedServices ?? [])]);
-  for (const kind of services) await db.insert(schema.collections).values({ id: newId(), projectId: id, kind, status: "empty", receivedCount: 0, createdAt: new Date(), updatedAt: new Date() });
+  const services = await addCollections(db, id, orderedServices);
   await addMembers(db, id, photographerUserIds, "photographer"); await addMembers(db, id, editorUserIds, "editor");
   await audit(c.env, c.get("user").id, "project.create", "project", id, { orderedServices: [...services] });
   return c.json(await details(db, id), 201);
@@ -47,7 +59,17 @@ projectsRoutes.patch("/projects/:id", async (c) => {
     if (!ROLE_CAPABILITIES[c.get("user").role].includes("editProject")) return c.json({ error: "Forbidden", capability: "editProject" }, 403);
     const data = await jsonInput(c, editFields); if (data instanceof Response) return data;
     const db = createDb(c.env.DB); if (!await db.select({ id: schema.projects.id }).from(schema.projects).where(eq(schema.projects.id, id)).get()) return c.json({ error: "Project not found" }, 404);
-    await db.update(schema.projects).set({ ...data, updatedAt: new Date() }).where(eq(schema.projects.id, id)); await audit(c.env, c.get("user").id, "project.update", "project", id, data); return c.json(await details(db, id));
+    const { orderedServices, photographerUserIds, editorUserIds, ...projectUpdates } = data;
+    const auditMeta: Record<string, unknown> = { ...projectUpdates };
+    if (orderedServices !== undefined) {
+      const existing = await db.select({ kind: schema.collections.kind }).from(schema.collections).where(eq(schema.collections.projectId, id)).all();
+      const existingKinds = new Set(existing.map((collection) => collection.kind as CollectionKind));
+      const services = await addCollections(db, id, orderedServices);
+      auditMeta.servicesAdded = [...services].filter((kind) => !existingKinds.has(kind));
+    }
+    if (photographerUserIds !== undefined) auditMeta.photographerMembers = await syncMembers(db, id, photographerUserIds, "photographer");
+    if (editorUserIds !== undefined) auditMeta.editorMembers = await syncMembers(db, id, editorUserIds, "editor");
+    await db.update(schema.projects).set({ ...projectUpdates, updatedAt: new Date() }).where(eq(schema.projects.id, id)); await audit(c.env, c.get("user").id, "project.update", "project", id, auditMeta); return c.json(await details(db, id));
   }
 });
 projectsRoutes.post("/projects/:id/dropbox-sync", async (c) => {

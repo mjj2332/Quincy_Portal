@@ -7,6 +7,7 @@ import { ProjectWorkspace } from "./screens/ProjectWorkspace";
 import { SignIn } from "./screens/SignIn";
 import { Admin } from "./screens/Admin";
 import { CreateProject } from "./screens/CreateProject";
+import { EditProject } from "./screens/EditProject";
 
 type SessionUser = {
   id?: string | null;
@@ -21,6 +22,7 @@ function Shell({ user }: { user: SessionUser }) {
   const { can } = useCapabilities();
   const canAccessAdmin = can("adminBackend");
   const canCreateProject = can("createProject");
+  const canEditProject = can("editProject");
 
   function navigate(nextView: AppView) {
     if (nextView === "admin" && !canAccessAdmin) {
@@ -28,6 +30,10 @@ function Shell({ user }: { user: SessionUser }) {
       return;
     }
     if (nextView === "create-project" && !canCreateProject) {
+      setView("dashboard");
+      return;
+    }
+    if (nextView === "edit-project" && !canEditProject) {
       setView("dashboard");
       return;
     }
@@ -44,8 +50,9 @@ function Shell({ user }: { user: SessionUser }) {
     <div className="app">
       <Topbar activeView={view} canAccessAdmin={canAccessAdmin} user={user} onNavigate={navigate} />
       {view === "dashboard" && <Dashboard onOpenProject={openProject} onCreateProject={() => navigate("create-project")} />}
-      {view === "project" && <ProjectWorkspace projectId={projectId} notice={projectNotice} onNoticeShown={() => setProjectNotice(null)} onBack={() => setView("dashboard")} />}
+      {view === "project" && <ProjectWorkspace projectId={projectId} notice={projectNotice} onNoticeShown={() => setProjectNotice(null)} onBack={() => setView("dashboard")} onEditDetails={() => navigate("edit-project")} />}
       {view === "create-project" && canCreateProject && <CreateProject onCancel={() => setView("dashboard")} onOpenProject={openProject} />}
+      {view === "edit-project" && canEditProject && projectId && <EditProject projectId={projectId} onCancel={() => setView("project")} onSaved={(notice) => openProject(projectId, notice)} />}
       {view === "admin" && canAccessAdmin && <Admin currentUserId={user.id} />}
     </div>
   );

@@ -9,6 +9,10 @@ const database = env as unknown as { DB: D1Database };
 const authEnv = env as unknown as Env;
 const authSecret = authEnv.BETTER_AUTH_SECRET ?? "dev-only-replace-better-auth-secret-32-bytes";
 const photographerToken = "test-photographer-session-token";
+const adminToken = "test-admin-session-token";
+const firstPhotographerId = "11111111-1111-4111-8111-111111111111";
+const secondPhotographerId = "22222222-2222-4222-8222-222222222222";
+const editorId = "33333333-3333-4333-8333-333333333333";
 declare const __PORTAL_MIGRATION_SQL__: string;
 declare const __PORTAL_SEED_SQL__: string;
 
@@ -43,6 +47,18 @@ beforeAll(async () => {
   await database.DB.prepare(
     "INSERT INTO session (id, expires_at, token, user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
   ).bind("test-photographer-session", now + 60 * 60 * 1000, photographerToken, "test-photographer", now, now).run();
+  await database.DB.prepare(
+    "INSERT INTO session (id, expires_at, token, user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+  ).bind("test-admin-session", now + 60 * 60 * 1000, adminToken, "seed-admin", now, now).run();
+  for (const [id, name, email, role] of [
+    [firstPhotographerId, "First Photographer", "first-photographer@example.test", "photographer"],
+    [secondPhotographerId, "Second Photographer", "second-photographer@example.test", "photographer"],
+    [editorId, "Test Editor", "test-editor@example.test", "editor"],
+  ]) {
+    await database.DB.prepare(
+      "INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    ).bind(id, name, email, 1, role, 1, now, now).run();
+  }
 });
 
 describe("staff app API", () => {
@@ -172,5 +188,34 @@ describe("staff app API", () => {
 
     const sessions = await database.DB.prepare("SELECT id FROM session WHERE user_id = ?").bind("inactive-user").all();
     expect(sessions.results).toHaveLength(0);
+  });
+
+  it("adds service collections and synchronizes only the requested project role", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const created = await SELF.fetch("https://portal.test/api/projects", {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({
+        street: "12 Kings Road",
+        orderedServices: ["edited"],
+        photographerUserIds: [firstPhotographerId],
+        editorUserIds: [editorId],
+      }),
+    });
+    expect(created.status).toBe(201);
+    const project = await created.json() as { id: string; collections: Array<{ kind: string }> };
+    expect(project.collections.map((collection) => collection.kind).sort()).toEqual(["edited", "raw"]);
+
+    const response = await SELF.fetch(`https://portal.test/api/projects/${project.id}`, {
+      method: "PATCH",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ orderedServices: ["edited", "video"], photographerUserIds: [secondPhotographerId] }),
+    });
+    expect(response.status).toBe(200);
+    const updated = await response.json() as { collections: Array<{ kind: string }>; members: Array<{ userId: string; roleOnProject: string }> };
+    expect(updated.collections).toHaveLength(project.collections.length + 1);
+    expect(updated.collections.map((collection) => collection.kind).sort()).toEqual(["edited", "raw", "video"]);
+    expect(updated.members.filter((member) => member.roleOnProject === "photographer").map((member) => member.userId)).toEqual([secondPhotographerId]);
+    expect(updated.members.filter((member) => member.roleOnProject === "editor").map((member) => member.userId)).toEqual([editorId]);
   });
 });
