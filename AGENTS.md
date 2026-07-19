@@ -97,25 +97,80 @@ Fonts: Mazius Review for display; Apfel Grotezk for body and UI; Messapia for st
 - When transcribing a videographer voice note, use the ElevenLabs STT skill/workflow available in the current agent environment.
 - Preserve existing folder conventions and naming patterns.
 
-## Quincy Portal prototype handoff
+## Quincy Portal — prototype vs. production build
 
-This repository is the Quincy Portal prototype, exported from Claude Design as HTML/CSS/JS. The prototype communicates the intended design and flows for a real implementation.
+This repository contains **two things**, and they serve different purposes. Do not confuse them.
 
-### Portal implementation rules
+1. **`project/`** — the original Claude-Design-exported HTML/CSS/JS **prototype**. It is a
+   *design and interaction reference only* — no build step, no backend, mock data in
+   `app/data.jsx`. It is not being extended further as an app; it exists to show what the
+   real thing should look and feel like.
+2. **`portal/`** — the actual **production Cloudflare app** being built to replace it: a
+   TypeScript monorepo (Vite SPA + Hono API on Workers, D1, R2, Queues/Workflows). This is
+   where implementation work happens now.
 
-1. Read `project/index.html` in full before implementing portal work. The user had this file open during the handoff, so it is the primary design reference.
-2. Follow every import from `project/index.html`. Open the shared components, CSS, scripts, assets, and design-system files it pulls in before changing code.
-3. Match the visual output of the prototype. Do not copy the prototype's internal structure unless it fits the target codebase.
-4. Do not render the prototype in a browser or take screenshots unless the user asks. Dimensions, colors, layout rules, and flow details should be read from the source.
-5. Use `project/index.html` as the current review entry point. The standalone single-file builds are older snapshots unless regenerated.
+### Source of truth, in order
 
-### Portal bundle contents
+1. `project/docs/Decision-Sheet.md` — approved product decisions (D-01…D-15). Anything here
+   overrides older docs where they conflict.
+2. `project/docs/Implementation-Plan.md` — the current architecture and phase plan (v1.0,
+   Cloudflare-audited). Supersedes `Implementation-Proposal.md` wherever they disagree
+   (notably: auth is Google OAuth not Cloudflare Access; image renditions use Cloudflare's
+   remote Image Transformation path, not a Cloudflare Container).
+3. `project/docs/PRD.md`, `Personas.md`, `Sitemap.md` — product requirements and UX detail.
+4. `tasks/todo.md` — the live phase-by-phase checklist. **Read this first** to see exactly
+   what's done, in progress, or blocked before starting any new work.
+5. `tasks/lessons.md` — patterns and bugs hit during this build (e.g. a Hono middleware
+   footgun that silently 403's whole routers). Read it before touching auth/routing code.
 
-- `README.md` — prototype overview and review notes.
-- `project/index.html` — current multi-file entry point.
-- `project/app/` — React/JSX prototype components.
-- `project/app.css` — app styles.
-- `project/_ds/` — Quincy Productions design system.
-- `project/docs/` — PRD, personas, and sitemap.
-- `project/assets/` — logos and patterns.
-- `chats/` — early design conversation transcript.
+### Build status (as of 2026-07-19)
+
+Phases 0, 1, and 2 of the Implementation Plan are built on branch **`build/phase-0-2`**
+(not yet merged to `main`), across 5 commits — `e6d3719` (monorepo scaffold + `@quincy/shared`
++ `@quincy/db` schema), `91ee387` (SPA shell + staff API worker + background/webhook
+workers), `f9f30fe` (Phase-1 UI + test suite + CI), `60ac4a8` (Phase-2: autoHDR flow, Edited
+QA, RAW↔Edited compare, annotations), `be88a83` (real Cloudflare resources provisioned).
+
+All 6 npm workspaces under `portal/` typecheck clean and the test suite passes
+(`packages/shared` + `workers/app` vitest suites, incl. the XMP star-rating parser verified
+against real Lightroom exports in `Test Images with star rating/` — gitignored, not in git).
+Before committing any further work, re-run: `npx tsc -p <workspace>/tsconfig.json` for all
+six workspaces, both `vitest run --config .../vitest.config.ts` suites, and
+`npm run build -w @quincy/web`.
+
+**Infra state:** D1 (`quincy-portal`), KV (`quincy-portal-sessions`), and a Queue
+(`quincy-ingest`) are provisioned on the real Cloudflare account and wired into the three
+`wrangler.jsonc` files with real IDs; the D1 schema + seed are applied remotely.
+**R2 is not yet enabled on the account** (dashboard action only the account owner can take)
+— the `quincy-portal-media` bucket is still pending, which blocks end-to-end upload/rendition
+testing. Google OAuth client secrets are not yet configured — see
+`project/docs/Google-OAuth-Setup.md` (a standalone handoff doc, written for someone without
+prior context).
+
+### Working agreements for `portal/` work
+
+- Never run `npm install` casually inside `portal/` without checking `package.json` first —
+  all Phase 0–2 dependencies are already pinned and installed.
+- `@quincy/shared` is the single source of truth for capabilities, pipeline stage keys, JPEG
+  ingest rules, and the XMP rating parser — extend it, don't duplicate its logic elsewhere.
+- Router-level middleware in the Hono workers must be path-scoped
+  (`router.use("/x", mw); router.use("/x/*", mw)`), never `router.use("*", mw)` — see
+  `tasks/lessons.md` for why this is a real, previously-shipped bug.
+- Keep `tasks/todo.md` and `tasks/lessons.md` current as you go; they are how the next agent
+  (human or not) picks up context without re-deriving it.
+
+### Prototype reference (still useful, `project/`)
+
+1. Read `project/index.html` in full before porting any prototype interaction — it is the
+   primary design reference and pulls in the shared components, CSS, scripts, and
+   design-system files.
+2. Match the prototype's visual output; do not copy its internal structure (globals +
+   Babel-in-browser) into `portal/` — that part has already been rebuilt properly as typed
+   Vite/React modules.
+3. Do not render the prototype in a browser or take screenshots unless asked.
+
+**Bundle contents:** `README.md` (prototype overview), `project/index.html` (prototype entry
+point), `project/app/` (prototype JSX components — reference only), `project/app.css`,
+`project/_ds/` (Quincy design system — already ported into `portal/apps/web/src/styles/`),
+`project/docs/` (PRD, personas, sitemap, decision sheet, implementation plan), `project/assets/`
+(logos/patterns), `chats/` (early design conversation transcript).
