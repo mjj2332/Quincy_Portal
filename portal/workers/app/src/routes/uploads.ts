@@ -28,7 +28,11 @@ uploadsRoutes.post("/uploads/presign", requireCapability("uploadRaw"), async (c)
   if (!await hasProjectAccess(c, data.projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403); {
     if (!isAcceptedPhotoFilename(data.filename)) return c.json({ error: "RAW uploads must be .jpg or .jpeg files" }, 400);
     const assetId = newId(); const key = `projects/${data.projectId}/raw/${assetId}/${safeFilename(data.filename)}`; const multipart = await createMultipartPresign(c.env, key, data.bytes);
-    if (!multipart) return c.json({ error: "R2 S3 upload credentials are not configured; use dev direct upload when APP_ENV=dev" }, 503);
+    if (!multipart) {
+      // Dev fallback: no R2 S3 creds locally → steer the uploader to the direct-PUT route (Miniflare R2).
+      if (c.env.APP_ENV === "dev") return c.json({ assetId, key, devDirect: true });
+      return c.json({ error: "R2 S3 upload credentials are not configured" }, 503);
+    }
     await audit(c.env, c.get("user").id, "upload.presign", "asset", assetId, { projectId: data.projectId, key, bytes: data.bytes }); return c.json({ assetId, ...multipart });
   }
 });

@@ -50,6 +50,18 @@ projectsRoutes.patch("/projects/:id", async (c) => {
     await db.update(schema.projects).set({ ...data, updatedAt: new Date() }).where(eq(schema.projects.id, id)); await audit(c.env, c.get("user").id, "project.update", "project", id, data); return c.json(await details(db, id));
   }
 });
+projectsRoutes.post("/projects/:id/dropbox-sync", async (c) => {
+  const id = c.req.param("id");
+  const user = c.get("user");
+  if (!ROLE_CAPABILITIES[user.role].includes("uploadRaw")) return c.json({ error: "Forbidden", capability: "uploadRaw" }, 403);
+  if (!(await hasProjectAccess(c, id))) return c.json({ error: "Not found" }, 404);
+  const project = await createDb(c.env.DB).select({ rawFolderPath: schema.projects.rawFolderPath, rawFolderLink: schema.projects.rawFolderLink }).from(schema.projects).where(eq(schema.projects.id, id)).get();
+  if (!project?.rawFolderPath && !project?.rawFolderLink) return c.json({ error: "No Dropbox folder configured for this project" }, 400);
+  const { jobId } = await c.env.BACKGROUND.triggerDropboxSync(id);
+  await audit(c.env, user.id, "project.dropbox_sync", "project", id, { jobId });
+  return c.json({ ok: true, jobId });
+});
+
 for (const [path, archived] of [["/projects/:id/archive", true], ["/projects/:id/restore", false]] as const) projectsRoutes.post(path, async (c) => {
   const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
   if (!ROLE_CAPABILITIES[c.get("user").role].includes("archiveProject")) return c.json({ error: "Forbidden", capability: "archiveProject" }, 403);

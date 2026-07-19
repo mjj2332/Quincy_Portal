@@ -1,8 +1,9 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { createDb, schema } from "@quincy/db";
-import { eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { z } from "zod";
+import type { CollectionKind } from "@quincy/shared";
 import type { AppEnv } from "../env";
 import { hasProjectAccess, requireCapability } from "../middleware/capability";
 import { audit } from "../lib/audit";
@@ -12,6 +13,36 @@ import { jsonInput } from "./helpers";
 const reviewInput = z.object({ stars: z.number().int().min(1).max(5).nullable().optional(), colorLabel: z.enum(["select", "maybe", "cut", "hero"]).nullable().optional(), decision: z.enum(["approved", "flagged"]).nullable().optional(), recommended: z.boolean().optional() });
 async function assetContext(c: Context<AppEnv>, assetId: string) { return createDb(c.env.DB).select({ projectId: schema.collections.projectId, kind: schema.collections.kind }).from(schema.assets).innerJoin(schema.collections, eq(schema.assets.collectionId, schema.collections.id)).where(eq(schema.assets.id, assetId)).get(); }
 export const reviewRoutes = new Hono<AppEnv>();
+reviewRoutes.get("/projects/:id/assets", async (c) => {
+  const projectId = c.req.param("id");
+  const collection = c.req.query("collection");
+  if (!z.string().uuid().safeParse(projectId).success) return c.json({ error: "Invalid project id" }, 400);
+  if (!collection || !["raw", "edited", "video", "floorplan", "copy"].includes(collection)) return c.json({ error: "A valid collection is required" }, 400);
+  const kind = collection as CollectionKind;
+  if (!await hasProjectAccess(c, projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
+  if (c.get("user").role === "photographer" && kind !== "raw") return c.json({ error: "Photographers may only view RAW assets" }, 403);
+
+  const rows = await createDb(c.env.DB).select({ asset: schema.assets, review: schema.assetReviewState, selection: schema.selections.id })
+    .from(schema.assets)
+    .innerJoin(schema.collections, and(eq(schema.assets.collectionId, schema.collections.id), eq(schema.collections.projectId, projectId), eq(schema.collections.kind, kind)))
+    .leftJoin(schema.assetReviewState, eq(schema.assetReviewState.assetId, schema.assets.id))
+    .leftJoin(schema.selections, eq(schema.selections.assetId, schema.assets.id))
+    .orderBy(asc(schema.assets.createdAt))
+    .all();
+
+  return c.json({ assets: rows.map(({ asset, review, selection }) => ({
+    id: asset.id,
+    collectionId: asset.collectionId,
+    originalFilename: asset.originalFilename,
+    bytes: asset.bytes,
+    width: asset.width,
+    height: asset.height,
+    ratingFromMetadata: asset.ratingFromMetadata,
+    createdAt: asset.createdAt,
+    review: review ? { stars: review.stars, colorLabel: review.colorLabel, decision: review.decision, recommended: review.recommended } : null,
+    selected: selection !== null,
+  })) });
+});
 reviewRoutes.post("/assets/:id/review", async (c) => {
   const id = c.req.param("id"); if (!z.string().uuid().safeParse(id).success) return c.json({ error: "Invalid asset id" }, 400); const asset = await assetContext(c, id); if (!asset) return c.json({ error: "Asset not found" }, 404);
   if (!await hasProjectAccess(c, asset.projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403); {

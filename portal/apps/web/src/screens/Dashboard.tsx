@@ -30,7 +30,7 @@ function formatDate(value: string | null): string {
 }
 
 function coverUrl(assetId: string): string {
-  return `/media/${encodeURIComponent(assetId)}`;
+  return `/media/asset/${encodeURIComponent(assetId)}/thumb`;
 }
 
 function ProjectCard({ project, onOpen }: { project: ProjectSummary; onOpen: (projectId: string) => void }) {

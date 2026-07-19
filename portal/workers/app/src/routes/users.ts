@@ -12,7 +12,9 @@ import { jsonInput } from "./helpers";
 const input = z.object({ email: z.string().email(), name: z.string().min(1).max(200), role: z.enum(ROLES) });
 const patchInput = input.partial().omit({ email: true }).extend({ active: z.boolean().optional() });
 export const usersRoutes = new Hono<AppEnv>();
-usersRoutes.use("*", requireCapability("manageUsers"));
+// Scope to /users paths only: use("*") leaks onto sibling routers mounted at the same base.
+usersRoutes.use("/users", requireCapability("manageUsers"));
+usersRoutes.use("/users/*", requireCapability("manageUsers"));
 usersRoutes.get("/users", async (c) => c.json({ users: await createDb(c.env.DB).select().from(schema.user).orderBy(desc(schema.user.createdAt)).all() }));
 usersRoutes.post("/users", async (c) => {
   const data = await jsonInput(c, input); if (data instanceof Response) return data;

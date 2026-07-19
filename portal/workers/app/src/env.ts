@@ -1,11 +1,12 @@
 import type { Role } from "@quincy/shared";
+import type { QuincyBackground } from "../../background/src/rpc-types";
 
 export interface Env {
   DB: D1Database;
   MEDIA: R2Bucket;
   SESSIONS: KVNamespace;
   INGEST_QUEUE: Queue;
-  BACKGROUND: Fetcher;
+  BACKGROUND: Service<QuincyBackground>;
   ASSETS: Fetcher;
   APP_ENV: string;
   APP_ORIGIN: string;

@@ -8,7 +8,9 @@ import { audit } from "../lib/audit";
 import { newId } from "../lib/ids";
 
 export const integrationsRoutes = new Hono<AppEnv>();
-integrationsRoutes.use("*", requireCapability("manageIntegrations"));
+// Scope to /integrations paths only: use("*") leaks onto sibling routers mounted at the same base.
+integrationsRoutes.use("/integrations", requireCapability("manageIntegrations"));
+integrationsRoutes.use("/integrations/*", requireCapability("manageIntegrations"));
 integrationsRoutes.get("/integrations", async (c) => c.json({ integrations: await createDb(c.env.DB).select({ id: schema.integrationConnections.id, provider: schema.integrationConnections.provider, status: schema.integrationConnections.status, expiresAt: schema.integrationConnections.expiresAt, scopes: schema.integrationConnections.scopes, lastEventAt: schema.integrationConnections.lastEventAt, lastError: schema.integrationConnections.lastError, updatedAt: schema.integrationConnections.updatedAt }).from(schema.integrationConnections).all() }));
 integrationsRoutes.post("/integrations/dropbox/connect-url", async (c) => { if (!c.env.DROPBOX_APP_KEY) return c.json({ error: "Dropbox OAuth is not configured" }, 503); const redirect = `${c.env.APP_ORIGIN}/api/integrations/dropbox/callback`; const url = new URL("https://www.dropbox.com/oauth2/authorize"); url.search = new URLSearchParams({ client_id: c.env.DROPBOX_APP_KEY, response_type: "code", token_access_type: "offline", redirect_uri: redirect }).toString(); return c.json({ url: url.toString() }); });
 integrationsRoutes.get("/integrations/dropbox/callback", async (c) => {
