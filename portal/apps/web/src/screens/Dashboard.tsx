@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { DEFAULT_STAGES, type StageKey } from "@quincy/shared";
 import { StatusBadge } from "../components/atoms";
 import { apiGet } from "../lib/api";
+import { useCapabilities } from "../lib/capabilities";
 
 export interface ProjectSummary {
   id: string;
@@ -20,6 +21,7 @@ interface ProjectsResponse {
 
 interface DashboardProps {
   onOpenProject: (projectId: string) => void;
+  onCreateProject: () => void;
 }
 
 function formatDate(value: string | null): string {
@@ -65,7 +67,9 @@ function ProjectCard({ project, onOpen }: { project: ProjectSummary; onOpen: (pr
   );
 }
 
-export function Dashboard({ onOpenProject }: DashboardProps) {
+export function Dashboard({ onOpenProject, onCreateProject }: DashboardProps) {
+  const { can } = useCapabilities();
+  const canCreateProject = can("createProject");
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [query, setQuery] = useState("");
   const [error, setError] = useState<string>();
@@ -111,11 +115,14 @@ export function Dashboard({ onOpenProject }: DashboardProps) {
           <div className="ey" style={{ marginBottom: 14 }}>Quincy Portal · production desk</div>
           <h1 className="serif">Projects</h1>
         </div>
-        <label className="dashboard-search">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><circle cx="11" cy="11" r="6" /><path d="m16 16 4 4" /></svg>
-          <span className="sr-only">Search projects</span>
-          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search address, suburb, client…" />
-        </label>
+        <div className="toolbar">
+          <label className="dashboard-search">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><circle cx="11" cy="11" r="6" /><path d="m16 16 4 4" /></svg>
+            <span className="sr-only">Search projects</span>
+            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search address, suburb, client…" />
+          </label>
+          {canCreateProject && <button className="button" type="button" onClick={onCreateProject}>New shoot</button>}
+        </div>
       </div>
 
       <div className="stats" aria-label="Project summary">
@@ -136,7 +143,11 @@ export function Dashboard({ onOpenProject }: DashboardProps) {
       )}
 
       {!isLoading && !error && filteredProjects.length === 0 && (
-        <div className="empty"><span className="serif">Nothing here yet.</span>{query ? "No projects match this search." : "Projects will appear here when work is scheduled."}</div>
+        <div className="empty">
+          <span className="serif">{query ? "Nothing here yet." : "No shoots yet — create the first one."}</span>
+          {query ? "No projects match this search." : "Start the production desk with the property, client, and team details."}
+          {!query && canCreateProject && <div style={{ marginTop: 16 }}><button className="button" type="button" onClick={onCreateProject}>New shoot</button></div>}
+        </div>
       )}
 
       {!isLoading && !error && filteredProjects.length > 0 && (

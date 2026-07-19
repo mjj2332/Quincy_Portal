@@ -746,16 +746,44 @@ button { font-family: var(--font-sans); }
 .integration-meta dd { margin: 0; color: var(--text-secondary); font-size: 13px; }
 .admin-notice { margin-top: var(--space-4); }
 
+/* New shoot ---------------------------------------------------------- */
+.create-project { max-width: 1080px; }
+.create-project__form { display: flex; flex-direction: column; gap: var(--space-5); }
+.create-project__section { padding: var(--space-5); border: 1px solid var(--border-hairline); background: var(--paper-000); }
+.create-project__section-head { margin-bottom: var(--space-5); }
+.create-project__section-head h2 { margin: 5px 0 0; font: var(--type-h3); font-size: 29px; letter-spacing: var(--tracking-tight); }
+.create-project__fields { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-4); }
+.create-project__fields--property { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(110px, .55fr); }
+.create-project__fields--two { grid-template-columns: repeat(2, minmax(0, 1fr)); max-width: 620px; }
+.create-project__checklist { display: grid; gap: 1px; margin-top: var(--space-3); border: 1px solid var(--border-hairline); }
+.create-project__checks { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 1px; background: var(--border-hairline); border: 1px solid var(--border-hairline); }
+.create-project__check { display: flex; align-items: flex-start; gap: 10px; min-height: 54px; padding: 12px; background: var(--paper-050); color: var(--text-secondary); font-size: 14px; cursor: pointer; }
+.create-project__check:hover { background: var(--paper-100); color: var(--text-primary); }
+.create-project__check input { width: 15px; height: 15px; margin: 2px 0 0; accent-color: var(--ink-900); }
+.create-project__check input:disabled { opacity: .55; cursor: not-allowed; }
+.create-project__check span { display: flex; flex-direction: column; gap: 3px; }
+.create-project__check strong { color: var(--text-primary); font-size: 13px; font-weight: 500; }
+.create-project__check small, .create-project__checklist p { margin: 0; color: var(--text-muted); font-size: 12px; line-height: 1.35; }
+.create-project__team { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-5); }
+.create-project__team-state { color: var(--text-secondary); font-size: 14px; }
+.create-project textarea { width: 100%; resize: vertical; padding: 10px; border: 1px solid var(--border-hairline); border-radius: var(--radius-sm); background: var(--paper-050); color: var(--text-primary); font: var(--type-body); font-size: 14px; }
+.create-project textarea:focus { outline: none; border-color: var(--ink-900); }
+.create-project__actions { display: flex; justify-content: flex-end; gap: var(--space-3); padding-top: var(--space-2); }
+
 @media (max-width: 720px) {
   .signin__panel { padding: var(--space-6); }
   .topbar__identity, .topbar__user .button--text { display: none; }
   .admin-provision, .integration-grid { grid-template-columns: 1fr; }
   .admin-provision__copy { margin-bottom: var(--space-2); }
   .admin-section__head { align-items: start; }
+  .create-project__fields, .create-project__fields--property, .create-project__fields--two, .create-project__checks, .create-project__team { grid-template-columns: 1fr; }
+  .create-project__section { padding: var(--space-4); }
 }
 
 @media (max-width: 1080px) and (min-width: 721px) {
   .admin-provision { grid-template-columns: 1fr 1fr; }
   .admin-provision__copy { grid-column: 1 / -1; }
   .integration-grid { grid-template-columns: 1fr; }
+  .create-project__fields { grid-template-columns: 1fr 1fr; }
+  .create-project__checks { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }

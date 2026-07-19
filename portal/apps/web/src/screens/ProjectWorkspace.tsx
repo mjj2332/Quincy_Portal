@@ -10,7 +10,7 @@ import { useCapabilities } from "../lib/capabilities";
 type Collection = { id: string; kind: "raw" | "edited" | "video" | "floorplan" | "copy"; status: string; expectedCount: number | null; receivedCount: number };
 type Member = { id: string; userId: string; roleOnProject: "photographer" | "editor"; name: string; email: string };
 type Project = { id: string; street: string; suburb: string | null; postcode: string | null; agencyName: string | null; agentName: string | null; shootDate: string | null; stageKey: StageKey; rawFolderPath: string | null; rawFolderLink: string | null };
-type ProjectResponse = { project: Project; collections: Collection[]; members: Member[] };
+type ProjectResponse = Project & { collections: Collection[]; members: Member[] };
 type AssetsResponse = { assets: WorkspaceAsset[] };
 type IngestStatus = { expectedCount: number | null; receivedCount: number; mismatch: boolean };
 type Job = { id: string; kind: "autohdr"; status: "queued" | "running" | "done" | "failed" | "stuck"; error: string | null; createdAt: string; updatedAt: string };
@@ -22,8 +22,8 @@ function collectionLabel(value: string) { return value === "raw" ? "RAW" : value
 function emptyReview(): Review { return { stars: null, colorLabel: null, decision: null, recommended: false }; }
 function activeJob(job: Job) { return job.status === "queued" || job.status === "running"; }
 
-export function ProjectWorkspace({ projectId, onBack }: { projectId: string | null; onBack: () => void }) {
-  const { can, role } = useCapabilities();
+export function ProjectWorkspace({ projectId, notice, onNoticeShown, onBack }: { projectId: string | null; notice?: string | null; onNoticeShown?: () => void; onBack: () => void }) {
+  const { can } = useCapabilities();
   const [data, setData] = useState<ProjectResponse | null>(null);
   const [assets, setAssets] = useState<WorkspaceAsset[]>([]);
   const [rawAssets, setRawAssets] = useState<WorkspaceAsset[]>([]);
@@ -42,6 +42,11 @@ export function ProjectWorkspace({ projectId, onBack }: { projectId: string | nu
     setToasts((current) => [...current, { id, message, tone }]);
     window.setTimeout(() => setToasts((current) => current.filter((item) => item.id !== id)), 3600);
   }, []);
+  useEffect(() => {
+    if (!notice) return;
+    toast(notice);
+    onNoticeShown?.();
+  }, [notice, onNoticeShown, toast]);
   const refreshProject = useCallback(async () => { if (projectId) setData(await apiGet<ProjectResponse>(`/api/projects/${projectId}`)); }, [projectId]);
   const refreshAssets = useCallback(async (kind = activeTab) => {
     if (!projectId) return;
@@ -112,13 +117,14 @@ export function ProjectWorkspace({ projectId, onBack }: { projectId: string | nu
     catch (reason) { toast(reason instanceof Error ? reason.message : "autoHDR retry could not be started.", "error"); }
   }
 
-  if (isLoading) return <main className="page"><div className="empty"><span className="serif">Loading project.</span>Preparing the workspace.</div></main>;
-  if (!projectId || error || !data) return <main className="page"><div className="pagehead"><h1 className="serif">Project workspace</h1><button className="button button--secondary" type="button" onClick={onBack}>Back to dashboard</button></div><div className="empty" role="alert"><span className="serif">Project unavailable.</span>{error ?? "No project was selected."}</div></main>;
+  if (isLoading) return <main className="page"><div className="empty"><span className="serif">Loading project.</span>Preparing the workspace.</div><div className="toasts">{toasts.map((item) => <div className={`toast ${item.tone === "error" ? "toast--error" : ""}`} key={item.id}>{item.tone === "error" ? "!" : "✓"}<span>{item.message}</span></div>)}</div></main>;
+  if (!projectId || error || !data) return <main className="page"><div className="pagehead"><h1 className="serif">Project workspace</h1><button className="button button--secondary" type="button" onClick={onBack}>Back to dashboard</button></div><div className="empty" role="alert"><span className="serif">Project unavailable.</span>{error ?? "No project was selected."}</div><div className="toasts">{toasts.map((item) => <div className={`toast ${item.tone === "error" ? "toast--error" : ""}`} key={item.id}>{item.tone === "error" ? "!" : "✓"}<span>{item.message}</span></div>)}</div></main>;
 
-  const { project, collections, members } = data;
+  const project = data;
+  const { collections, members } = data;
   const stage = DEFAULT_STAGES.find((item) => item.key === project.stageKey);
   const canUpload = can("uploadRaw"), canSelect = can("selectForEditing"), isEdited = activeTab === "edited";
-  const canReview = isEdited ? can("reviewEdited") : role === "admin" || role === "editor";
+  const canReview = isEdited ? can("reviewEdited") : can("selectForEditing");
   const canRecommend = activeTab === "raw" && can("recommendRaw");
   const canAnnotate = activeTab === "raw" ? can("annotateRaw") : isEdited && can("annotateEdited");
   const availableTabs: Collection["kind"][] = can("viewEdited") ? ["raw", "edited", "video", "floorplan", "copy"] : ["raw"];
