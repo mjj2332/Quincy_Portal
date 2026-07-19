@@ -21,11 +21,16 @@ mediaRoutes.get("/asset/:assetId/:variant", async (c) => {
     if (!signature) return c.json({ error: "Image transformations are not configured" }, 503);
     const sourceUrl = new URL(`/__transform-source/${row.asset.r2Key}`, c.req.url);
     sourceUrl.searchParams.set("sig", signature);
-    const response = await fetch(sourceUrl, { cf: { image: { width: spec.maxEdge, quality: spec.quality, format: "auto" } } as unknown as RequestInitCfProperties });
-    if (!response.ok) return c.json({ error: "Image transformation failed", status: response.status }, 502);
-    const headers = new Headers(response.headers);
-    headers.set("cache-control", "private, max-age=3600");
-    return new Response(response.body, { status: response.status, headers });
+    // Redirect the authenticated client to the /cdn-cgi/image/ URL instead of proxying:
+    // a Worker's same-zone subrequest skips the entire Cloudflare pipeline (loop
+    // prevention) — both fetch(cf.image) and an in-Worker /cdn-cgi/image/ fetch dead-end
+    // at the assets layer with 404. As an eyeball request, /cdn-cgi/image/ runs the Images
+    // engine at the edge, whose source fetch re-enters this Worker's signed
+    // /__transform-source route. Both legs verified live 2026-07-19.
+    // Session auth gates this redirect; the source URL is HMAC-bound to the exact R2 key.
+    // TODO(hardening): add an expiry to the source signature so redirect URLs age out.
+    const transformUrl = new URL(`/cdn-cgi/image/width=${spec.maxEdge},quality=${spec.quality},format=auto/${sourceUrl.href}`, c.req.url);
+    return c.redirect(transformUrl.href, 302);
   }
 });
 

@@ -1,5 +1,23 @@
 # Lessons — Quincy Portal build
 
+## 2026-07-19 — Worker same-zone subrequests bypass the entire Cloudflare pipeline
+A Worker `fetch()` to its OWN zone hostname does not re-enter the Worker (loop prevention)
+AND does not run edge features: `fetch(url, {cf:{image}})` and an in-Worker fetch of a
+`/cdn-cgi/image/...` URL both dead-ended at the static-assets layer (404) — while the exact
+same `/cdn-cgi/image/` URL worked perfectly as an eyeball request, including the Images
+engine's own source fetch re-entering the Worker route. **Rule:** to apply Image
+Transformations to a same-worker-served source, don't proxy — have the authenticated route
+302-redirect the client to the `/cdn-cgi/image/<options>/<signed-source-url>` form.
+Corollary: test transform paths against the DEPLOYED zone; local dev cannot reproduce any
+of this.
+
+## 2026-07-19 — Synthetic media fixtures can fail platforms that real files pass
+A "valid" 50 MiB JPEG made by zero-padding a 1×1 image after EOI drew a Cloudflare Images
+internal error (err=9516) — while real 28 MB and 84 MB photographs passed cleanly through
+the same path. **Rule:** media-pipeline gates use real photographs (or honest upscales of
+real photographs via sips), never structurally degenerate synthetics; keep a
+GATE_FIXTURE_PATH-style override so the fixture is swappable.
+
 ## 2026-07-19 — Follow explicit orchestration and hostname intent
 The user initially asked for GPT-5.6-Luna execution, then explicitly changed the instruction to solo execution. I attempted another agent capability probe after the change and had to be stopped. I also inferred that `quincy.flamingfire.my` should not be overwritten because it served a prototype, when the actual intent was to make it production and preserve the prototype on another subdomain.
 **Rules:** (1) When the user explicitly changes orchestration mode, stop all agent work and do not probe or substitute other agents unless asked again. (2) Existing production-looking content does not establish hostname intent; check the user’s stated target and preserve existing content separately when directed. (3) For reversible domain cutovers, preserve the old app on a second hostname first and retain an immediate rollback target.

@@ -76,13 +76,22 @@ function signedSession(token, secret) {
   return createHmac("sha256", secret).update(token).digest("base64");
 }
 
-function makeFixture() {
+async function makeFixture() {
+  // Prefer a REAL photograph via GATE_FIXTURE_PATH: the Images engine returned an
+  // internal error (err=9516) on the synthetic padded 1x1 fixture — degenerate input,
+  // not representative. Real Lightroom exports are the actual gate subject.
+  const fixturePath = process.env.GATE_FIXTURE_PATH;
+  if (fixturePath) {
+    const body = new Uint8Array(await readFile(fixturePath));
+    if (body[0] !== 0xff || body[1] !== 0xd8) throw new Error(`GATE_FIXTURE_PATH is not a JPEG: ${fixturePath}`);
+    console.log(`Using real fixture ${fixturePath} (${body.byteLength} bytes).`);
+    return body;
+  }
   if (fixtureJpeg.length >= fixtureBytes || fixtureJpeg[0] !== 0xff || fixtureJpeg[1] !== 0xd8 || fixtureJpeg.at(-2) !== 0xff || fixtureJpeg.at(-1) !== 0xd9) {
     throw new Error("Embedded JPEG fixture is not a valid-sized JPEG with SOI/EOI markers");
   }
   const body = new Uint8Array(fixtureBytes);
   body.set(fixtureJpeg);
-  // This mirrors the multipart spike's in-memory, fixed-size Uint8Array fixture approach.
   // JPEG decoders stop at EOI; zero padding makes the R2 original large without changing pixels.
   return body;
 }
@@ -204,7 +213,7 @@ try {
   const token = `gate-token-${stamp}`;
   const gateKey = `gate/transform-gate-${stamp}.jpg`;
   endpoint = `https://${accountId}.r2.cloudflarestorage.com/${bucket}/${gateKey}`;
-  const fixture = makeFixture();
+  const fixture = await makeFixture();
 
   console.log(`Uploading ${fixture.byteLength} byte fixture to ${gateKey}.`);
   await requireOk(await aws.fetch(endpoint, { method: "PUT", headers: { "content-type": "image/jpeg" }, body: fixture }), "upload transform gate fixture");
