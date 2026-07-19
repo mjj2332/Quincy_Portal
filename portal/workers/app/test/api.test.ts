@@ -10,6 +10,10 @@ const authEnv = env as unknown as Env;
 const authSecret = authEnv.BETTER_AUTH_SECRET ?? "dev-only-replace-better-auth-secret-32-bytes";
 const photographerToken = "test-photographer-session-token";
 const adminToken = "test-admin-session-token";
+const secondPhotographerToken = "test-second-photographer-session-token";
+// First photographer IS a member of the editable-comment project; the plain
+// photographerToken user is deliberately NOT (D-02 assigned-only scoping).
+const firstPhotographerToken = "test-first-photographer-session-token";
 const firstPhotographerId = "11111111-1111-4111-8111-111111111111";
 const secondPhotographerId = "22222222-2222-4222-8222-222222222222";
 const editorId = "33333333-3333-4333-8333-333333333333";
@@ -59,7 +63,42 @@ beforeAll(async () => {
       "INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
     ).bind(id, name, email, 1, role, 1, now, now).run();
   }
+  await database.DB.prepare(
+    "INSERT INTO session (id, expires_at, token, user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+  ).bind("test-second-photographer-session", now + 60 * 60 * 1000, secondPhotographerToken, secondPhotographerId, now, now).run();
+  await database.DB.prepare(
+    "INSERT INTO session (id, expires_at, token, user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+  ).bind("test-first-photographer-session", now + 60 * 60 * 1000, firstPhotographerToken, firstPhotographerId, now, now).run();
 });
+
+async function createEditableComment() {
+  const adminCookie = await sessionCookie(adminToken);
+  const projectResponse = await SELF.fetch("https://portal.test/api/projects", {
+    method: "POST",
+    headers: { cookie: adminCookie, "content-type": "application/json" },
+    body: JSON.stringify({
+      street: `Edit comment ${crypto.randomUUID()}`,
+      orderedServices: [],
+      photographerUserIds: [firstPhotographerId, secondPhotographerId],
+    }),
+  });
+  expect(projectResponse.status).toBe(201);
+  const project = await projectResponse.json() as { id: string };
+  const collection = await database.DB.prepare("SELECT id FROM collections WHERE project_id = ? AND kind = 'raw'").bind(project.id).first<{ id: string }>();
+  expect(collection).toBeDefined();
+  const assetId = crypto.randomUUID();
+  const now = Date.now();
+  await database.DB.prepare(
+    "INSERT INTO assets (id, collection_id, r2_key, original_filename, bytes, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+  ).bind(assetId, collection!.id, `tests/${assetId}.jpg`, "edit-comment.jpg", 1024, "upload", now, now).run();
+  const commentResponse = await SELF.fetch(`https://portal.test/api/assets/${assetId}/comments`, {
+    method: "POST",
+    headers: { cookie: await sessionCookie(firstPhotographerToken), "content-type": "application/json" },
+    body: JSON.stringify({ body: "Original comment" }),
+  });
+  expect(commentResponse.status).toBe(201);
+  return { assetId, commentId: (await commentResponse.json() as { id: string }).id };
+}
 
 describe("staff app API", () => {
   it("reports its health", async () => {
@@ -217,5 +256,33 @@ describe("staff app API", () => {
     expect(updated.collections.map((collection) => collection.kind).sort()).toEqual(["edited", "raw", "video"]);
     expect(updated.members.filter((member) => member.roleOnProject === "photographer").map((member) => member.userId)).toEqual([secondPhotographerId]);
     expect(updated.members.filter((member) => member.roleOnProject === "editor").map((member) => member.userId)).toEqual([editorId]);
+  });
+
+  it("allows an author to edit their own comment", async () => {
+    const { commentId } = await createEditableComment();
+    const response = await SELF.fetch(`https://portal.test/api/comments/${commentId}`, {
+      method: "PATCH",
+      headers: { cookie: await sessionCookie(firstPhotographerToken), "content-type": "application/json" },
+      body: JSON.stringify({ body: "Updated comment" }),
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ id: commentId, body: "Updated comment", editedAt: expect.any(String) });
+    const stored = await database.DB.prepare("SELECT body, edited_at FROM comments WHERE id = ?").bind(commentId).first<{ body: string; edited_at: number | null }>();
+    expect(stored).toEqual(expect.objectContaining({ body: "Updated comment", edited_at: expect.any(Number) }));
+  });
+
+  it("prevents a different user from editing another author's comment", async () => {
+    const { commentId } = await createEditableComment();
+    const response = await SELF.fetch(`https://portal.test/api/comments/${commentId}`, {
+      method: "PATCH",
+      headers: { cookie: await sessionCookie(secondPhotographerToken), "content-type": "application/json" },
+      body: JSON.stringify({ body: "Attempted overwrite" }),
+    });
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toMatchObject({ error: "Forbidden: only the author can edit this comment." });
+    const stored = await database.DB.prepare("SELECT body, edited_at FROM comments WHERE id = ?").bind(commentId).first<{ body: string; edited_at: number | null }>();
+    expect(stored).toEqual({ body: "Original comment", edited_at: null });
   });
 });

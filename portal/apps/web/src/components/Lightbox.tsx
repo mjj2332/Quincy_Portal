@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { apiGet, apiPost } from "../lib/api";
+import { apiGet, apiPatch, apiPost } from "../lib/api";
+import { useSession } from "../lib/auth";
 import type { ReviewPatch, WorkspaceAsset } from "./PhotoGrid";
 
 const labels = [
@@ -7,8 +8,8 @@ const labels = [
 ] as const;
 type Point = { x: number; y: number };
 type Stroke = { points: Point[]; color: string; width: number };
-type Annotation = { id: string; author: { id: string; name: string; role: string }; scope: "raw" | "edited"; strokeR2Key: string | null; noteText: string | null; createdAt: string };
-type ThreadComment = { id: string; parentId: string | null; body: string; author: { id: string; name: string; role: string }; createdAt: string; replies: ThreadComment[] };
+type Annotation = { id: string; authorId: string; author: { id: string; name: string; role: string }; scope: "raw" | "edited"; strokeR2Key: string | null; noteText: string | null; createdAt: string; editedAt: string | null };
+type ThreadComment = { id: string; parentId: string | null; authorId: string; body: string; author: { id: string; name: string; role: string }; createdAt: string; editedAt: string | null; replies: ThreadComment[] };
 type AnnotationResponse = { annotations: Annotation[]; comments: ThreadComment[] };
 
 interface LightboxProps {
@@ -21,12 +22,18 @@ interface LightboxProps {
   canAnnotate: boolean;
   onClose: () => void;
   onReview: (assetId: string, patch: ReviewPatch) => Promise<void>;
+  onToast: (message: string, tone?: "success" | "error") => void;
 }
 
 function pointsString(points: Point[]) { return points.map((point) => `${point.x},${point.y}`).join(" "); }
 function time(value: string) { return new Intl.DateTimeFormat("en-AU", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }).format(new Date(value)); }
+function replaceComment(comments: ThreadComment[], id: string, patch: Partial<ThreadComment>): ThreadComment[] {
+  return comments.map((comment) => ({ ...comment, ...(comment.id === id ? patch : {}), replies: replaceComment(comment.replies, id, patch) }));
+}
 
-export function Lightbox({ assets, rawAssets, initialAssetId, collectionKind, canReview, canRecommend, canAnnotate, onClose, onReview }: LightboxProps) {
+export function Lightbox({ assets, rawAssets, initialAssetId, collectionKind, canReview, canRecommend, canAnnotate, onClose, onReview, onToast }: LightboxProps) {
+  const session = useSession();
+  const currentUserId = (session.data?.user as { id?: string | null } | undefined)?.id ?? null;
   const [index, setIndex] = useState(() => Math.max(0, assets.findIndex((asset) => asset.id === initialAssetId)));
   const [showRawCompare, setShowRawCompare] = useState(false);
   const [markup, setMarkup] = useState(false);
@@ -38,6 +45,10 @@ export function Lightbox({ assets, rawAssets, initialAssetId, collectionKind, ca
   const [comments, setComments] = useState<ThreadComment[]>([]);
   const [commentBody, setCommentBody] = useState("");
   const [replyTo, setReplyTo] = useState<string | null>(null);
+  const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
+  const [editingCommentBody, setEditingCommentBody] = useState("");
+  const [editingAnnotationId, setEditingAnnotationId] = useState<string | null>(null);
+  const [editingAnnotationNote, setEditingAnnotationNote] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const frameRef = useRef<HTMLDivElement>(null);
   const drawingRef = useRef(false);
@@ -51,14 +62,17 @@ export function Lightbox({ assets, rawAssets, initialAssetId, collectionKind, ca
     setAnnotations(response.annotations); setComments(response.comments);
   };
   useEffect(() => {
-    setMarkup(false); setStrokes([]); setShownStrokes([]); setAnnotationNote(""); setCommentBody(""); setReplyTo(null);
+    setMarkup(false); setStrokes([]); setShownStrokes([]); setAnnotationNote(""); setCommentBody(""); setReplyTo(null); setEditingCommentId(null); setEditingAnnotationId(null);
     void refreshDiscussion().catch(() => { setAnnotations([]); setComments([]); });
   // Asset identity is the intentional refresh boundary.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [asset.id]);
   useEffect(() => {
     function keydown(event: KeyboardEvent) {
-      if (event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLInputElement) return;
+      if (event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLInputElement) {
+        if (event.key === "Escape") { event.preventDefault(); cancelInlineEdit(); }
+        return;
+      }
       if (event.key === "Escape") { if (markup) { setMarkup(false); setStrokes([]); return; } onClose(); return; }
       if (event.key === "ArrowLeft") { move(-1); return; }
       if (event.key === "ArrowRight") { move(1); return; }
@@ -98,6 +112,41 @@ export function Lightbox({ assets, rawAssets, initialAssetId, collectionKind, ca
     try { await apiPost(`/api/assets/${asset.id}/comments`, { body: commentBody.trim(), parentId: replyTo ?? undefined }); setCommentBody(""); setReplyTo(null); await refreshDiscussion(); }
     finally { setIsSaving(false); }
   }
+  function cancelInlineEdit() {
+    setEditingCommentId(null); setEditingCommentBody(""); setEditingAnnotationId(null); setEditingAnnotationNote("");
+  }
+  async function saveCommentEdit() {
+    if (!editingCommentId || !editingCommentBody.trim()) return;
+    const commentId = editingCommentId;
+    const body = editingCommentBody.trim();
+    const before = comments;
+    const optimisticEditedAt = new Date().toISOString();
+    setComments((current) => replaceComment(current, commentId, { body, editedAt: optimisticEditedAt }));
+    cancelInlineEdit(); setIsSaving(true);
+    try {
+      const updated = await apiPatch<{ body: string; editedAt: string | null }, { body: string }>(`/api/comments/${commentId}`, { body });
+      setComments((current) => replaceComment(current, commentId, { body: updated.body, editedAt: updated.editedAt }));
+    } catch (reason) {
+      setComments(before); setEditingCommentId(commentId); setEditingCommentBody(body);
+      onToast(reason instanceof Error ? reason.message : "The comment could not be updated.", "error");
+    } finally { setIsSaving(false); }
+  }
+  async function saveAnnotationEdit() {
+    if (!editingAnnotationId) return;
+    const annotationId = editingAnnotationId;
+    const noteText = editingAnnotationNote.trim() || null;
+    const before = annotations;
+    const optimisticEditedAt = new Date().toISOString();
+    setAnnotations((current) => current.map((annotation) => annotation.id === annotationId ? { ...annotation, noteText, editedAt: optimisticEditedAt } : annotation));
+    cancelInlineEdit(); setIsSaving(true);
+    try {
+      const updated = await apiPatch<{ noteText: string | null; editedAt: string | null }, { noteText: string | null }>(`/api/annotations/${annotationId}`, { noteText });
+      setAnnotations((current) => current.map((annotation) => annotation.id === annotationId ? { ...annotation, noteText: updated.noteText, editedAt: updated.editedAt } : annotation));
+    } catch (reason) {
+      setAnnotations(before); setEditingAnnotationId(annotationId); setEditingAnnotationNote(noteText ?? "");
+      onToast(reason instanceof Error ? reason.message : "The annotation note could not be updated.", "error");
+    } finally { setIsSaving(false); }
+  }
 
   const drawLayer = <svg className="markup-svg" viewBox="0 0 1 1" preserveAspectRatio="none" style={{ pointerEvents: markup ? "auto" : "none", cursor: markup ? "crosshair" : "default", touchAction: "none" }} onPointerDown={drawDown} onPointerMove={drawMove} onPointerUp={drawUp} onPointerLeave={drawUp}>
     {[...shownStrokes, ...strokes].map((stroke, index) => stroke.points.length < 2 ? <circle key={`${index}-${stroke.points[0]?.x ?? 0}`} cx={stroke.points[0]?.x} cy={stroke.points[0]?.y} r={stroke.width / 600} fill={stroke.color} /> : <polyline key={index} points={pointsString(stroke.points)} fill="none" stroke={stroke.color} strokeWidth={stroke.width} vectorEffect="non-scaling-stroke" strokeLinecap="round" strokeLinejoin="round" opacity={index < shownStrokes.length ? 0.82 : 1} />)}
@@ -115,13 +164,13 @@ export function Lightbox({ assets, rawAssets, initialAssetId, collectionKind, ca
       {canRecommend && <section className="vpanel__sec"><div className="eylab">Recommendation</div><button className={`dbtn ${asset.review?.recommended ? "is-on" : ""}`} style={{ width: "100%" }} type="button" onClick={() => void onReview(asset.id, { recommended: !asset.review?.recommended })}>{asset.review?.recommended ? "Recommended to QA" : "Recommend to QA"}</button></section>}
       {canReview && <section className="vpanel__sec"><div className="eylab">Rating</div><div className="starpick">{[1, 2, 3, 4, 5].map((number) => <button key={number} type="button" className={number <= stars ? "on" : ""} onClick={() => void onReview(asset.id, { stars: number === stars ? null : number })}>★</button>)}</div></section>}
       {canReview && <section className="vpanel__sec"><div className="eylab">Label</div><div className="labels">{labels.map((label) => <button className={`labelpick ${asset.review?.colorLabel === label.value ? "is-on" : ""}`} type="button" key={label.value} style={{ background: label.color }} title={label.name} onClick={() => void onReview(asset.id, { colorLabel: asset.review?.colorLabel === label.value ? null : label.value })} />)}</div></section>}
-      <section className="vpanel__sec"><div className="eylab" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}><span>Markup & annotations</span>{canAnnotate && <button className={`chip ${markup ? "is-active" : ""}`} type="button" onClick={() => setMarkup((current) => !current)}>{markup ? "Drawing…" : "Draw"}</button>}</div>{canAnnotate && <><textarea className="annotation-note" placeholder="Optional note for this markup…" value={annotationNote} onChange={(event) => setAnnotationNote(event.target.value)} /><button className="dbtn" style={{ width: "100%", marginTop: 8 }} type="button" disabled={isSaving || (!strokes.length && !annotationNote.trim())} onClick={() => void saveAnnotation()}>Save annotation</button></>}<div className="thread" style={{ marginTop: 14 }}>{annotations.length === 0 ? <div className="muted" style={{ fontSize: 14 }}>No annotations yet.</div> : annotations.map((annotation) => <div className="cmt" key={annotation.id}><div className="cmt__pin">✎</div><div className="cmt__b"><div className="cmt__who">{annotation.author.name}<span>{annotation.author.role}</span></div>{annotation.noteText && <div className="cmt__txt">{annotation.noteText}</div>}{annotation.strokeR2Key && <button className="chip" style={{ marginTop: 6 }} type="button" onClick={() => void showAnnotation(annotation)}>Show markup</button>}<div className="ey muted" style={{ marginTop: 6 }}>{time(annotation.createdAt)}</div></div></div>)}</div></section>
-      <section className="vpanel__sec"><div className="eylab">Comments</div><CommentThread comments={comments} onReply={setReplyTo} /></section>
+      <section className="vpanel__sec"><div className="eylab" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}><span>Markup & annotations</span>{canAnnotate && <button className={`chip ${markup ? "is-active" : ""}`} type="button" onClick={() => setMarkup((current) => !current)}>{markup ? "Drawing…" : "Draw"}</button>}</div>{canAnnotate && <><textarea className="annotation-note" placeholder="Optional note for this markup…" value={annotationNote} onChange={(event) => setAnnotationNote(event.target.value)} /><button className="dbtn" style={{ width: "100%", marginTop: 8 }} type="button" disabled={isSaving || (!strokes.length && !annotationNote.trim())} onClick={() => void saveAnnotation()}>Save annotation</button></>}<div className="thread" style={{ marginTop: 14 }}>{annotations.length === 0 ? <div className="muted" style={{ fontSize: 14 }}>No annotations yet.</div> : annotations.map((annotation) => <div className="cmt" key={annotation.id}><div className="cmt__pin">✎</div><div className="cmt__b"><div className="cmt__who">{annotation.author.name}<span>{annotation.author.role}</span></div>{editingAnnotationId === annotation.id ? <><textarea className="annotation-note" aria-label="Edit annotation note" value={editingAnnotationNote} onChange={(event) => setEditingAnnotationNote(event.target.value)} /><div className="spread" style={{ marginTop: 6 }}><button className="comment-reply" type="button" onClick={cancelInlineEdit}>Cancel</button><button className="comment-reply" type="button" disabled={isSaving} onClick={() => void saveAnnotationEdit()}>Save</button></div></> : <>{annotation.noteText && <div className="cmt__txt">{annotation.noteText}</div>}{annotation.strokeR2Key && <button className="chip" style={{ marginTop: 6 }} type="button" onClick={() => void showAnnotation(annotation)}>Show markup</button>}<div className="ey muted" style={{ marginTop: 6 }}>{time(annotation.createdAt)}{annotation.editedAt && " · (edited)"}{annotation.authorId === currentUserId && <> · <button className="comment-reply" type="button" onClick={() => { setEditingCommentId(null); setEditingAnnotationId(annotation.id); setEditingAnnotationNote(annotation.noteText ?? ""); }}>Edit note</button></>}</div></>}</div></div>)}</div></section>
+      <section className="vpanel__sec"><div className="eylab">Comments</div><CommentThread comments={comments} currentUserId={currentUserId} editingCommentId={editingCommentId} editingCommentBody={editingCommentBody} isSaving={isSaving} onReply={setReplyTo} onEdit={(comment) => { setEditingAnnotationId(null); setEditingCommentId(comment.id); setEditingCommentBody(comment.body); }} onEditBodyChange={setEditingCommentBody} onCancelEdit={cancelInlineEdit} onSaveEdit={() => void saveCommentEdit()} /></section>
     </div><div className="composer">{replyTo && <div className="hint">Replying to a comment · <button className="chip" type="button" onClick={() => setReplyTo(null)}>cancel</button></div>}<textarea placeholder={canAnnotate ? "Add a comment…" : "You do not have permission to comment."} disabled={!canAnnotate} value={commentBody} onChange={(event) => setCommentBody(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) void postComment(); }} /><div className="spread"><span className="ey muted">⌘↵ to send</span><button className="barbtn barbtn--solid" type="button" disabled={!canAnnotate || isSaving || !commentBody.trim()} onClick={() => void postComment()}>Send comment</button></div></div></aside>
     <div className="strip">{assets.map((item, itemIndex) => <button className={`strip__button ${itemIndex === index ? "is-active" : ""}`} type="button" key={item.id} onClick={() => setIndex(itemIndex)} title={item.originalFilename}><img className="strip__t" src={`/media/asset/${encodeURIComponent(item.id)}/thumb`} alt={item.originalFilename} /></button>)}</div>
   </div>;
 }
 
-function CommentThread({ comments, onReply, depth = 0 }: { comments: ThreadComment[]; onReply: (id: string) => void; depth?: number }) {
-  return <div className="thread">{comments.length === 0 ? <div className="muted" style={{ fontSize: 14 }}>No comments yet.</div> : comments.map((comment) => <div className="cmt" style={{ marginLeft: depth ? 16 : 0 }} key={comment.id}><div className="cmt__pin unpinned">●</div><div className="cmt__b"><div className="cmt__who">{comment.author.name}<span>{comment.author.role}</span></div><div className="cmt__txt">{comment.body}</div><div className="ey muted" style={{ marginTop: 6 }}>{time(comment.createdAt)} · <button className="comment-reply" type="button" onClick={() => onReply(comment.id)}>Reply</button></div>{comment.replies.length > 0 && <CommentThread comments={comment.replies} onReply={onReply} depth={depth + 1} />}</div></div>)}</div>;
+function CommentThread({ comments, currentUserId, editingCommentId, editingCommentBody, isSaving, onReply, onEdit, onEditBodyChange, onCancelEdit, onSaveEdit, depth = 0 }: { comments: ThreadComment[]; currentUserId: string | null; editingCommentId: string | null; editingCommentBody: string; isSaving: boolean; onReply: (id: string) => void; onEdit: (comment: ThreadComment) => void; onEditBodyChange: (body: string) => void; onCancelEdit: () => void; onSaveEdit: () => void; depth?: number }) {
+  return <div className="thread">{comments.length === 0 ? <div className="muted" style={{ fontSize: 14 }}>No comments yet.</div> : comments.map((comment) => <div className="cmt" style={{ marginLeft: depth ? 16 : 0 }} key={comment.id}><div className="cmt__pin unpinned">●</div><div className="cmt__b"><div className="cmt__who">{comment.author.name}<span>{comment.author.role}</span></div>{editingCommentId === comment.id ? <><textarea className="annotation-note" aria-label="Edit comment" value={editingCommentBody} onChange={(event) => onEditBodyChange(event.target.value)} /><div className="spread" style={{ marginTop: 6 }}><button className="comment-reply" type="button" onClick={onCancelEdit}>Cancel</button><button className="comment-reply" type="button" disabled={isSaving || !editingCommentBody.trim()} onClick={onSaveEdit}>Save</button></div></> : <><div className="cmt__txt">{comment.body}</div><div className="ey muted" style={{ marginTop: 6 }}>{time(comment.createdAt)}{comment.editedAt && " · (edited)"} · <button className="comment-reply" type="button" onClick={() => onReply(comment.id)}>Reply</button>{comment.authorId === currentUserId && <> · <button className="comment-reply" type="button" onClick={() => onEdit(comment)}>Edit</button></>}</div></>}{comment.replies.length > 0 && <CommentThread comments={comment.replies} currentUserId={currentUserId} editingCommentId={editingCommentId} editingCommentBody={editingCommentBody} isSaving={isSaving} onReply={onReply} onEdit={onEdit} onEditBodyChange={onEditBodyChange} onCancelEdit={onCancelEdit} onSaveEdit={onSaveEdit} depth={depth + 1} />}</div></div>)}</div>;
 }

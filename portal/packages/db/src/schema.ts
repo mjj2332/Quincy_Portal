@@ -331,6 +331,7 @@ export const annotations = sqliteTable(
     thumbnailR2Key: text("thumbnail_r2_key"),
     noteText: text("note_text"),
     createdAt: createdAt(),
+    editedAt: integer("edited_at", { mode: "timestamp_ms" }),
   },
   (t) => [index("annotations_asset_idx").on(t.assetId)],
 );
@@ -349,6 +350,7 @@ export const comments = sqliteTable(
     authorRole: text("author_role", { enum: ["admin", "photographer", "editor"] }).notNull(),
     body: text("body").notNull(),
     createdAt: createdAt(),
+    editedAt: integer("edited_at", { mode: "timestamp_ms" }),
   },
   (t) => [index("comments_asset_idx").on(t.assetId)],
 );

@@ -13,6 +13,8 @@ import { jsonInput } from "./helpers";
 const annotationInput = z.object({ strokes: z.unknown().optional(), noteText: z.string().trim().max(10_000).optional() })
   .refine((value) => value.strokes !== undefined || Boolean(value.noteText), { message: "A markup or note is required" });
 const commentInput = z.object({ body: z.string().trim().min(1).max(10_000), parentId: z.string().uuid().optional() });
+const annotationEditInput = z.object({ noteText: z.string().trim().max(10_000).nullable() });
+const commentEditInput = z.object({ body: z.string().trim().min(1).max(10_000) });
 
 type AssetContext = { assetId: string; projectId: string; kind: "raw" | "edited" | "video" | "floorplan" | "copy" };
 
@@ -54,7 +56,7 @@ annotationsRoutes.get("/assets/:id/annotations", async (c) => {
       .where(eq(schema.comments.assetId, assetId)).orderBy(asc(schema.comments.createdAt)).all(),
   ]);
   const comments = commentRows.map(({ comment, author }) => ({
-    id: comment.id, parentId: comment.parentId, body: comment.body, author: { id: author.id, name: author.name, role: comment.authorRole }, createdAt: comment.createdAt, replies: [] as unknown[],
+    id: comment.id, parentId: comment.parentId, authorId: comment.authorId, body: comment.body, author: { id: author.id, name: author.name, role: comment.authorRole }, createdAt: comment.createdAt, editedAt: comment.editedAt, replies: [] as unknown[],
   }));
   const byId = new Map(comments.map((comment) => [comment.id, comment]));
   const roots: typeof comments = [];
@@ -64,8 +66,8 @@ annotationsRoutes.get("/assets/:id/annotations", async (c) => {
   }
   return c.json({
     annotations: annotationRows.map(({ annotation, author }) => ({
-      id: annotation.id, author: { id: author.id, name: author.name, role: annotation.authorRole }, scope: annotation.scope,
-      strokeR2Key: annotation.strokeR2Key, noteText: annotation.noteText, createdAt: annotation.createdAt,
+      id: annotation.id, authorId: annotation.authorId, author: { id: author.id, name: author.name, role: annotation.authorRole }, scope: annotation.scope,
+      strokeR2Key: annotation.strokeR2Key, noteText: annotation.noteText, createdAt: annotation.createdAt, editedAt: annotation.editedAt,
     })),
     comments: roots,
   });
@@ -113,4 +115,40 @@ annotationsRoutes.post("/assets/:id/comments", async (c) => {
   await db.insert(schema.comments).values({ id, assetId, parentId: data.parentId ?? null, authorId: c.get("user").id, authorRole: c.get("user").role, body: data.body, createdAt: new Date() });
   await audit(c.env, c.get("user").id, "asset.comment", "asset", assetId, { commentId: id, parentId: data.parentId ?? null, scope });
   return c.json({ id }, 201);
+});
+
+annotationsRoutes.patch("/comments/:id", async (c) => {
+  const id = c.req.param("id");
+  if (!z.string().uuid().safeParse(id).success) return c.json({ error: "Invalid comment id" }, 400);
+  const db = createDb(c.env.DB);
+  const comment = await db.select().from(schema.comments).where(eq(schema.comments.id, id)).get();
+  if (!comment) return c.json({ error: "Comment not found" }, 404);
+  const asset = await assetContext(c, comment.assetId);
+  if (!asset) return c.json({ error: "Asset not found" }, 404);
+  if (!await hasProjectAccess(c, asset.projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
+  const scope = scopeForAsset(c, asset); if (scope instanceof Response) return scope;
+  if (comment.authorId !== c.get("user").id) return c.json({ error: "Forbidden: only the author can edit this comment." }, 403);
+  const data = await jsonInput(c, commentEditInput); if (data instanceof Response) return data;
+  const editedAt = new Date();
+  const updated = await db.update(schema.comments).set({ body: data.body, editedAt }).where(eq(schema.comments.id, id)).returning().get();
+  await audit(c.env, c.get("user").id, "comment.edit", "comment", id, { assetId: asset.assetId, scope });
+  return c.json(updated);
+});
+
+annotationsRoutes.patch("/annotations/:id", async (c) => {
+  const id = c.req.param("id");
+  if (!z.string().uuid().safeParse(id).success) return c.json({ error: "Invalid annotation id" }, 400);
+  const db = createDb(c.env.DB);
+  const annotation = await db.select().from(schema.annotations).where(eq(schema.annotations.id, id)).get();
+  if (!annotation) return c.json({ error: "Annotation not found" }, 404);
+  const asset = await assetContext(c, annotation.assetId);
+  if (!asset) return c.json({ error: "Asset not found" }, 404);
+  if (!await hasProjectAccess(c, asset.projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
+  const scope = scopeForAsset(c, asset); if (scope instanceof Response) return scope;
+  if (annotation.authorId !== c.get("user").id) return c.json({ error: "Forbidden: only the author can edit this annotation." }, 403);
+  const data = await jsonInput(c, annotationEditInput); if (data instanceof Response) return data;
+  const editedAt = new Date();
+  const updated = await db.update(schema.annotations).set({ noteText: data.noteText, editedAt }).where(eq(schema.annotations.id, id)).returning().get();
+  await audit(c.env, c.get("user").id, "annotation.edit", "annotation", id, { assetId: asset.assetId, scope });
+  return c.json(updated);
 });
