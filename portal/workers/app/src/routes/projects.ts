@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { createDb, schema } from "@quincy/db";
-import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { COLLECTION_KINDS, isStageKey, ROLE_CAPABILITIES, STAGE_TRANSITIONS, type CollectionKind } from "@quincy/shared";
 import { z } from "zod";
 import type { AppEnv } from "../env";
@@ -60,6 +60,47 @@ projectsRoutes.post("/projects/:id/dropbox-sync", async (c) => {
   const { jobId } = await c.env.BACKGROUND.triggerDropboxSync(id);
   await audit(c.env, user.id, "project.dropbox_sync", "project", id, { jobId });
   return c.json({ ok: true, jobId });
+});
+
+projectsRoutes.post("/projects/:id/send-to-autohdr", requireCapability("selectForEditing"), async (c) => {
+  const id = c.req.param("id");
+  if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
+  if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
+  const db = createDb(c.env.DB);
+  const selected = await db.select({ id: schema.selections.id })
+    .from(schema.selections)
+    .innerJoin(schema.assets, eq(schema.selections.assetId, schema.assets.id))
+    .innerJoin(schema.collections, and(eq(schema.assets.collectionId, schema.collections.id), eq(schema.collections.projectId, id), eq(schema.collections.kind, "raw")))
+    .where(eq(schema.selections.state, "selected_for_editing"))
+    .get();
+  if (!selected) return c.json({ error: "Select at least one RAW asset before sending to autoHDR" }, 400);
+  const { jobId } = await c.env.BACKGROUND.startAutoHdr(id);
+  await audit(c.env, c.get("user").id, "project.send_to_autohdr", "project", id, { jobId });
+  return c.json({ jobId });
+});
+
+projectsRoutes.get("/projects/:id/jobs", async (c) => {
+  const id = c.req.param("id");
+  if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
+  if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
+  const rows = await createDb(c.env.DB).select({
+    id: schema.jobs.id, kind: schema.jobs.kind, status: schema.jobs.status, error: schema.jobs.error,
+    createdAt: schema.jobs.createdAt, updatedAt: schema.jobs.updatedAt,
+  }).from(schema.jobs).where(and(eq(schema.jobs.projectId, id), eq(schema.jobs.kind, "autohdr"))).orderBy(desc(schema.jobs.createdAt)).limit(20).all();
+  return c.json({ jobs: rows });
+});
+
+projectsRoutes.post("/jobs/:id/retry", requireCapability("selectForEditing"), async (c) => {
+  const id = c.req.param("id");
+  if (!idCheck(id)) return c.json({ error: "Invalid job id" }, 400);
+  const job = await createDb(c.env.DB).select({ id: schema.jobs.id, projectId: schema.jobs.projectId, kind: schema.jobs.kind, status: schema.jobs.status })
+    .from(schema.jobs).where(eq(schema.jobs.id, id)).get();
+  if (!job || job.kind !== "autohdr" || !job.projectId) return c.json({ error: "autoHDR job not found" }, 404);
+  if (!await hasProjectAccess(c, job.projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
+  if (job.status !== "stuck" && job.status !== "failed") return c.json({ error: "Only stuck or failed autoHDR jobs can be retried" }, 409);
+  const { jobId } = await c.env.BACKGROUND.startAutoHdr(job.projectId);
+  await audit(c.env, c.get("user").id, "project.retry_autohdr", "project", job.projectId, { previousJobId: id, jobId });
+  return c.json({ jobId });
 });
 
 for (const [path, archived] of [["/projects/:id/archive", true], ["/projects/:id/restore", false]] as const) projectsRoutes.post(path, async (c) => {

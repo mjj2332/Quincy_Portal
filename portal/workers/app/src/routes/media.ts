@@ -5,6 +5,7 @@ import { RENDITION_SPECS } from "@quincy/shared";
 import { z } from "zod";
 import type { AppEnv } from "../env";
 import { hasProjectAccess } from "../middleware/capability";
+import { roleHasCapability } from "@quincy/shared";
 
 export const mediaRoutes = new Hono<AppEnv>();
 mediaRoutes.get("/asset/:assetId/:variant", async (c) => {
@@ -18,4 +19,23 @@ mediaRoutes.get("/asset/:assetId/:variant", async (c) => {
     try { const response = await fetch(new URL(`/media/asset/${assetId}/original`, c.req.url), { headers: c.req.raw.headers, cf: { image: { width: spec.maxEdge, quality: spec.quality, format: "auto" } } as unknown as RequestInitCfProperties }); if (response.ok) { const headers = new Headers(response.headers); headers.set("cache-control", "private, max-age=3600"); return new Response(response.body, { headers }); } } catch { /* serve original if Image Transformations is unavailable */ }
     const object = await c.env.MEDIA.get(row.asset.r2Key); if (!object) return c.json({ error: "Media object not found" }, 404); return new Response(object.body, { headers: { "content-type": "image/jpeg", "cache-control": "private, max-age=3600" } });
   }
+});
+
+mediaRoutes.get("/annotation/:annotationId", async (c) => {
+  const annotationId = c.req.param("annotationId");
+  if (!z.string().uuid().safeParse(annotationId).success) return c.json({ error: "Invalid annotation id" }, 400);
+  const row = await createDb(c.env.DB).select({
+    strokeR2Key: schema.annotations.strokeR2Key, projectId: schema.collections.projectId, collectionKind: schema.collections.kind,
+  }).from(schema.annotations)
+    .innerJoin(schema.assets, eq(schema.annotations.assetId, schema.assets.id))
+    .innerJoin(schema.collections, eq(schema.assets.collectionId, schema.collections.id))
+    .where(eq(schema.annotations.id, annotationId)).get();
+  if (!row) return c.json({ error: "Annotation not found" }, 404);
+  if (!await hasProjectAccess(c, row.projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
+  if (row.collectionKind === "edited" && !roleHasCapability(c.get("user").role, "viewEdited")) return c.json({ error: "Forbidden", capability: "viewEdited" }, 403);
+  if (row.collectionKind !== "raw" && row.collectionKind !== "edited") return c.json({ error: "Annotation is not attached to a photo collection" }, 400);
+  if (!row.strokeR2Key) return c.json({ error: "This annotation has no markup" }, 404);
+  const object = await c.env.MEDIA.get(row.strokeR2Key);
+  if (!object) return c.json({ error: "Annotation markup was not found" }, 404);
+  return new Response(object.body, { headers: { "content-type": "application/json", "cache-control": "private, max-age=3600" } });
 });

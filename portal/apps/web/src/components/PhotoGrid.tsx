@@ -2,7 +2,7 @@ import { useMemo, useRef, useState, type CSSProperties } from "react";
 import { LabelDot, Stars } from "./atoms";
 
 export type Review = { stars: number | null; colorLabel: "select" | "maybe" | "cut" | "hero" | null; decision: "approved" | "flagged" | null; recommended: boolean };
-export type WorkspaceAsset = { id: string; collectionId: string; originalFilename: string; bytes: number; width: number | null; height: number | null; ratingFromMetadata: number | null; createdAt: string; review: Review | null; selected: boolean };
+export type WorkspaceAsset = { id: string; collectionId: string; originalFilename: string; bytes: number; width: number | null; height: number | null; ratingFromMetadata: number | null; createdAt: string; sourceRawAssetId: string | null; review: Review | null; selected: boolean };
 export type ReviewPatch = Partial<Pick<Review, "stars" | "colorLabel" | "decision" | "recommended">>;
 
 const LABELS: { value: NonNullable<Review["colorLabel"]>; name: string; color: string }[] = [
@@ -33,7 +33,13 @@ export function PhotoGrid({ assets, canReview, canRecommend, canSelect, onOpen, 
     if (filter === "selected") return asset.selected;
     return true;
   }), [assets, filter]);
-  const filters = [{ id: "all", label: "All" }, { id: "recommended", label: "Recommended" }, { id: "rated", label: "Rated" }, { id: "labeled", label: "Labeled" }, { id: "selected", label: "For editing" }];
+  const filters = [
+    { id: "all", label: "All" },
+    ...(canRecommend ? [{ id: "recommended", label: "Recommended" }] : []),
+    { id: "rated", label: "Rated" },
+    { id: "labeled", label: "Labeled" },
+    ...(canSelect ? [{ id: "selected", label: "For editing" }] : []),
+  ];
 
   function toggleMulti(asset: WorkspaceAsset, shifted: boolean) {
     const index = visible.findIndex((item) => item.id === asset.id);

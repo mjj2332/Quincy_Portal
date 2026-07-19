@@ -6,11 +6,12 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import type { Env } from "../env";
 import { download, listFolder, listFolderContinue, upload, type DropboxFile } from "../dropbox/client";
 import { dbFor, errorMessage } from "../lib/db";
-import { createJob, setJobStatus } from "../lib/jobs";
+import { setJobStatus } from "../lib/jobs";
 
 export interface AutoHdrInput {
   projectId: string;
   assetIds: string[];
+  jobId: string;
 }
 
 interface RawAsset {
@@ -161,15 +162,14 @@ async function ingestReturnedFiles(
 export class AutoHdrRoundtrip extends WorkflowEntrypoint<Env, AutoHdrInput> {
   async run(event: Readonly<WorkflowEvent<AutoHdrInput>>, step: WorkflowStep): Promise<void> {
     const input = event.payload;
-    const jobId = await step.do("create-autohdr-job", async () => {
+    await step.do("mark-autohdr-running", async () => {
       const db = dbFor(this.env);
-      const createdJobId = await createJob(db, {
-        kind: "autohdr_roundtrip",
-        projectId: input.projectId,
-        payload: input,
-      });
-      await setJobStatus(db, createdJobId, "running");
-      return createdJobId;
+      await setJobStatus(db, input.jobId, "running");
+      await db
+        .update(projects)
+        .set({ stageKey: "editing_autohdr", updatedAt: new Date() })
+        .where(eq(projects.id, input.projectId));
+      return { status: "running", stageKey: "editing_autohdr" };
     });
 
     try {
@@ -207,18 +207,18 @@ export class AutoHdrRoundtrip extends WorkflowEntrypoint<Env, AutoHdrInput> {
               .update(projects)
               .set({ stageKey: "edited_review", updatedAt: new Date() })
               .where(eq(projects.id, input.projectId));
-            await setJobStatus(db, jobId, "done");
+            await setJobStatus(db, input.jobId, "done");
             return { stageKey: "edited_review" };
           });
           return;
         }
       }
       await step.do("mark-autohdr-stuck", async () => {
-        await setJobStatus(dbFor(this.env), jobId, "stuck", "Timed out waiting for autoHDR return files after 48 hours");
+        await setJobStatus(dbFor(this.env), input.jobId, "stuck", "Timed out waiting for autoHDR return files after 48 hours");
         return { status: "stuck" };
       });
     } catch (error) {
-      await setJobStatus(dbFor(this.env), jobId, "failed", errorMessage(error));
+      await setJobStatus(dbFor(this.env), input.jobId, "failed", errorMessage(error));
       throw error;
     }
   }
