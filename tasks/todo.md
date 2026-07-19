@@ -27,24 +27,25 @@ Production code lives in `portal/` (new monorepo). Agents may not touch anything
   - [x] Spike ③: deployed routing passed — authenticated unknown `/api/*` + `/media/*` return JSON 404; `/` + unknown client routes return the SPA shell.
   - [x] First Worker deploy completed in dependency order: background `f11aa6a7-9fd8-4bc5-bdb3-5b0dc2795c9a`, webhook `c677c1bb-ca40-420e-b971-219ba465020b`, app current `4bf0994b-9f63-4ca3-bb91-e96c782f1f73`. Queue producer/consumer, Workflow, DO migration, D1/KV/R2/service/assets bindings, health endpoints, and six app secret names verified.
   - [x] Existing prototype preserved at `https://prototype.quincy.flamingfire.my`; new app remains live at `https://staging.quincy.flamingfire.my` and `https://quincy-portal-app.mjj2332.workers.dev`.
-  - [ ] Spike ① / production cutover blocked by Cloudflare Image Transformations source policy. Cloudflare returned `cf-resized: err=9401` (`Transformation origin is not in allowed origins list`). In **Images → Transformations → flamingfire.my → Sources**, add exact source hostname `staging.quincy.flamingfire.my` (adding `flamingfire.my` does not cover subdomains), rerun the 50 MiB transform gate, then cut `quincy.flamingfire.my` to `quincy-portal-app`. The attempted cutover was automatically rolled back; production currently and deliberately remains on `quincyportal`.
+  - [ ] Spike ① / production cutover blocked by Cloudflare Image Transformations source policy (`cf-resized: err=9401`). **Confirmed dashboard-only (orchestrator, 2026-07-19): probed the API via Cloudflare MCP — no public endpoint for per-source transformation origins exists (7000 no-route), and zone-settings endpoints reject the MCP token (10000 auth). Docs confirm sources are managed in the dashboard and need zone-settings edit permission.** USER ACTION: in **Images → Transformations → flamingfire.my → Sources**, add BOTH exact hostnames `staging.quincy.flamingfire.my` AND `quincy.flamingfire.my` (bare `flamingfire.my` does not cover subdomains; adding prod now avoids a second round-trip after cutover). Then rerun the 50 MiB transform gate and cut `quincy.flamingfire.my` to `quincy-portal-app`. Production deliberately remains on `quincyportal` until then.
   - [ ] Real interactive Google browser login remains to be performed after successful production cutover; automated link/callback contract and real Google initiation URL are verified.
 
 ## Phase 1 — Capture ingest + RAW QA
-- [ ] WP-E (codex): dashboard (role-filtered) + project workspace + RAW grid + upload UI (multipart client) + file-count verification UI
-- [ ] WP-G (codex): RAW QA tooling — ratings (pre-filled from XMP), labels, approve/flag, recommend, select-for-editing, lightbox, compare, freehand markup → R2
-- [ ] Dropbox manual sync UI + studio OAuth connect (minimal)
+- [x] Dashboard, project workspace, RAW grid, upload UI, file-count verification, RAW QA tooling — built in Phase-0 waves WP-E/WP-G above (these lines were stale duplicates; code is committed and tested)
+- [ ] Dropbox manual sync UI exists (workspace button); **studio OAuth connect UI** ships in WP-H (running); live end-to-end sync blocked on Dropbox app registration (user)
 
 ## Phase 2 — autoHDR + Edited QA
-- [ ] Workflow round-trip (copy selected → watch → ingest returns via source_raw_asset_id)
-- [ ] Dropbox webhook live path (DO alarm cursor sync)
-- [ ] Edited QA + RAW↔Edited compare + stuck-recovery screen
+- [x] Workflow round-trip, Edited QA, RAW↔Edited compare, jobs/retry (stuck recovery) — built in WP-G above (stale duplicates removed)
+- [ ] Dropbox webhook LIVE path (DO alarm cursor sync) — code deployed; untestable until Dropbox app registration + webhook URL registration (user)
 
-## Deferred to user (external prep — cannot be done by agents)
-- [ ] Cloudflare account: create D1 db, R2 buckets, KV, Queues; paste real IDs into wrangler.jsonc files
-- [ ] Google OAuth client (redirect URIs per env) → .dev.vars / wrangler secrets
-- [ ] Dropbox app registration + studio account authorization
-- [ ] First admin user email for seed
+## Current work (orchestrator takeover 2026-07-19 PM)
+- [x] Interim-agent wave independently verified (6/6 tsc, 13+8+3 tests, build) and committed a0bc675
+- [x] Admin user confirmed live in remote D1: mjj2332@gmail.com role=admin active=1 (seed-admin) — ready for real Google sign-in test at staging
+- [ ] WP-H (codex, running): Admin UI — Users provisioning/deactivation + Integrations (Dropbox connect) tabs replacing the placeholder
+- [ ] WP-I (codex, running): scripted spike-① transform gate (`portal/scripts/verify-transform-gate.mjs`) — one command to re-verify after the dashboard Sources change, with strict temp-row cleanup
+- [ ] USER: add `staging.quincy.flamingfire.my` + `quincy.flamingfire.my` to Images → Transformations → Sources (see First-deploy checklist)
+- [ ] USER: Dropbox app registration (App Console: scoped app, files.metadata.read + files.content.read/write, redirect URI `https://staging.quincy.flamingfire.my/api/integrations/dropbox/callback`, webhook URI on webhook-ingress worker) → DROPBOX_APP_KEY/SECRET into .dev.vars + wrangler secrets
+- [ ] After user actions: run transform gate → production cutover → real Google browser login check → Dropbox connect + first live sync
 
 ## Review log
 - 2026-07-19 first deploy: full workspace typecheck green (6/6), tests green (11 total: app 8 + webhook 3), web build green; all three Wrangler dry-runs and startup analyses passed. Remote state verified at 24 D1 tables, 5 stages, active bootstrap admin, correct KV/R2/Queue; R2 CORS applied for production/staging workers.dev/local origins with PUT + `Content-Type` and exposed `ETag`.
