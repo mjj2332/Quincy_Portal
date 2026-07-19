@@ -269,6 +269,11 @@ button { font-family: var(--font-sans); }
 .viewer__meta { position: absolute; top: 16px; left: 50%; transform: translateX(-50%); z-index: 4; text-align: center; color: var(--paper-050); }
 .viewer__meta .a { font-family: var(--font-display); font-size: 18px; }
 .viewer__meta .b { font: var(--type-eyebrow); text-transform: uppercase; letter-spacing: var(--tracking-widest); color: var(--text-on-inverse-muted); margin-top: 3px; }
+.viewer__shortcuts { position: absolute; bottom: 18px; left: 50%; transform: translateX(-50%); z-index: 4; display: flex; align-items: center; gap: 7px; padding: 6px 10px; border: 1px solid rgba(246,244,239,.14); border-radius: var(--radius-pill); background: rgba(10,10,10,.6); color: var(--text-on-inverse-muted); font: var(--type-eyebrow); letter-spacing: var(--tracking-wide); white-space: nowrap; pointer-events: none; }
+.viewer__shortcuts.is-drawing { bottom: 70px; }
+.viewer__shortcuts span { display: inline-flex; align-items: center; gap: 4px; }
+.viewer__shortcuts i { color: rgba(246,244,239,.4); font-style: normal; }
+.kbd { display: inline-grid; min-width: 17px; place-items: center; padding: 1px 4px; border: 1px solid rgba(246,244,239,.24); border-radius: 3px; background: rgba(246,244,239,.08); color: var(--paper-050); font: var(--type-mono); font-size: 10px; line-height: 1.35; }
 
 /* drawing markup layer */
 .canvasframe { position: relative; display: inline-block; line-height: 0; max-width: 100%; max-height: 100%; }

@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { createDb, schema } from "@quincy/db";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import { roleHasCapability } from "@quincy/shared";
 import { z } from "zod";
 import type { Context } from "hono";
@@ -144,6 +144,27 @@ annotationsRoutes.patch("/comments/:id", async (c) => {
   const updated = await db.update(schema.comments).set({ body: data.body, editedAt }).where(eq(schema.comments.id, id)).returning().get();
   await audit(c.env, c.get("user").id, "comment.edit", "comment", id, { assetId: asset.assetId, scope });
   return c.json(updated);
+});
+
+annotationsRoutes.delete("/comments/:id", async (c) => {
+  const id = c.req.param("id");
+  if (!z.string().uuid().safeParse(id).success) return c.json({ error: "Invalid comment id" }, 400);
+  const db = createDb(c.env.DB);
+  const comment = await db.select().from(schema.comments).where(eq(schema.comments.id, id)).get();
+  if (!comment) return c.json({ error: "Comment not found" }, 404);
+  const asset = await assetContext(c, comment.assetId);
+  if (!asset) return c.json({ error: "Asset not found" }, 404);
+  if (!await hasProjectAccess(c, asset.projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
+  const scope = scopeForAsset(c, asset); if (scope instanceof Response) return scope;
+  if (comment.authorId !== c.get("user").id) return c.json({ error: "Forbidden: only the author can delete this comment." }, 403);
+  const rows = await db.select({ id: schema.comments.id, parentId: schema.comments.parentId }).from(schema.comments).where(eq(schema.comments.assetId, comment.assetId)).all();
+  const children = new Map<string, string[]>();
+  for (const row of rows) if (row.parentId) children.set(row.parentId, [...(children.get(row.parentId) ?? []), row.id]);
+  const ids = [id];
+  for (let cursor = 0; cursor < ids.length; cursor += 1) ids.push(...(children.get(ids[cursor]!) ?? []));
+  await db.delete(schema.comments).where(inArray(schema.comments.id, ids));
+  await audit(c.env, c.get("user").id, "comment.delete", "comment", id, { assetId: asset.assetId, scope, deletedReplies: ids.length - 1 });
+  return c.json({ ok: true, deletedCount: ids.length });
 });
 
 annotationsRoutes.patch("/annotations/:id", async (c) => {

@@ -316,6 +316,50 @@ describe("staff app API", () => {
     expect(stored).toEqual({ body: "Original comment", edited_at: null });
   });
 
+  it("deletes an author's comment and its reply subtree", async () => {
+    const { assetId, commentId } = await createEditableComment();
+    const replyResponse = await SELF.fetch(`https://portal.test/api/assets/${assetId}/comments`, {
+      method: "POST",
+      headers: { cookie: await sessionCookie(secondPhotographerToken), "content-type": "application/json" },
+      body: JSON.stringify({ body: "Reply", parentId: commentId }),
+    });
+    expect(replyResponse.status).toBe(201);
+    const replyId = (await replyResponse.json() as { id: string }).id;
+
+    const response = await SELF.fetch(`https://portal.test/api/comments/${commentId}`, {
+      method: "DELETE",
+      headers: { cookie: await sessionCookie(firstPhotographerToken) },
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ ok: true, deletedCount: 2 });
+    const stored = await database.DB.prepare("SELECT id FROM comments WHERE id IN (?, ?)").bind(commentId, replyId).all();
+    expect(stored.results).toHaveLength(0);
+  });
+
+  it("prevents a fellow project member from deleting another author's comment", async () => {
+    const { commentId } = await createEditableComment();
+    const response = await SELF.fetch(`https://portal.test/api/comments/${commentId}`, {
+      method: "DELETE",
+      headers: { cookie: await sessionCookie(secondPhotographerToken) },
+    });
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toMatchObject({ error: "Forbidden: only the author can delete this comment." });
+    const stored = await database.DB.prepare("SELECT id FROM comments WHERE id = ?").bind(commentId).first<{ id: string }>();
+    expect(stored).toEqual({ id: commentId });
+  });
+
+  it("returns not found before checking access for an unknown comment deletion", async () => {
+    const response = await SELF.fetch(`https://portal.test/api/comments/${crypto.randomUUID()}`, {
+      method: "DELETE",
+      headers: { cookie: await sessionCookie(firstPhotographerToken) },
+    });
+
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toMatchObject({ error: "Comment not found" });
+  });
+
   it("allows an author to replace their annotation's strokes and republishes a new R2 object", async () => {
     const initialStrokes = [{ points: [{ x: 0.1, y: 0.1 }, { x: 0.2, y: 0.3 }], color: "#e64b3c", width: 4 }];
     const { annotationId, strokeR2Key: originalKey } = await createEditableAnnotation(initialStrokes);
