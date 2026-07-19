@@ -1,0 +1,59 @@
+/* ==========================================================================
+   Quincy Productions — Color tokens
+   The brand is resolutely monochrome: black ink on warm paper. There is no
+   loud accent colour in the supplied kit — discipline IS the brand. A single
+   warm-greige neutral ramp carries hierarchy; black & paper do the rest.
+   ========================================================================== */
+:root {
+  /* ---- Base ink & paper ---------------------------------------------- */
+  --ink-900: #0a0a0a;   /* near-black, the brand black */
+  --ink-800: #141414;
+  --ink-700: #232323;
+  --ink-600: #3a3937;
+
+  --paper-000: #ffffff; /* pure white */
+  --paper-050: #faf8f2; /* warm paper, the default canvas */
+  --paper-100: #f4f0e7; /* card / raised paper */
+  --paper-200: #ece6d8; /* sunken / hairline-tint */
+
+  /* ---- Warm greige neutral ramp -------------------------------------- */
+  --greige-100: #e4ded0;
+  --greige-200: #cfc7b6;
+  --greige-300: #b3aa97;
+  --greige-400: #8f8775;
+  --greige-500: #6d6657;
+  --greige-600: #4d473c;
+
+  /* ---- Functional / status (kept muted & on-brand) ------------------- */
+  --signal-positive: #3f5b3a;  /* deep olive */
+  --signal-caution:  #9a6a1f;  /* burnt ochre */
+  --signal-critical: #7a2420;  /* oxblood */
+  --signal-info:     #2f3b4d;  /* slate ink */
+
+  /* ====================================================================
+     SEMANTIC ALIASES — reference these in components, not the raw scale
+     ==================================================================== */
+  --bg-canvas:        var(--paper-050);
+  --bg-surface:       var(--paper-000);
+  --bg-raised:        var(--paper-100);
+  --bg-sunken:        var(--paper-200);
+  --bg-inverse:       var(--ink-900);
+
+  --text-primary:     var(--ink-900);
+  --text-secondary:   var(--greige-600);
+  --text-muted:       var(--greige-400);
+  --text-on-inverse:  var(--paper-050);
+  --text-on-inverse-muted: var(--greige-200);
+
+  --border-hairline:  var(--greige-200);
+  --border-strong:    var(--ink-900);
+  --border-subtle:    var(--paper-200);
+
+  --field-bg:         var(--paper-000);
+  --field-border:     var(--ink-900);
+
+  --accent:           var(--ink-900);
+  --accent-on:        var(--paper-050);
+
+  --focus-ring:       var(--ink-900);
+}

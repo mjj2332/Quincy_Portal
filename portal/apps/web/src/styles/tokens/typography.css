@@ -1,0 +1,64 @@
+/* ==========================================================================
+   Quincy Productions — Typography tokens
+   THREE voices:
+   - Mazius Review  : editorial display serif (headlines, the brand voice)
+   - Apfel Grotezk  : neo-grotesque sans (UI, body, labels, "PRODUCTIONS")
+   - Messapia       : reverse-contrast display (rare, big statement moments)
+   Athelas (long-form body serif) was named in the kit but not supplied;
+   it falls back to a Charter/Georgia stack -- replace when the file arrives.
+   ========================================================================== */
+:root {
+  /* ---- Families ------------------------------------------------------ */
+  --font-display: "Mazius Review", "Apple Garamond", "Times New Roman", serif;
+  --font-sans:    "Apfel Grotezk", "Helvetica Neue", Arial, sans-serif;
+  --font-statement: "Messapia", "Mazius Review", serif;
+  --font-body-serif: "Athelas", "Charter", "Iowan Old Style", Georgia, serif;
+  --font-mono:    ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* ---- Type scale (major-third, 16px base) --------------------------- */
+  --text-2xs:  11px;
+  --text-xs:   12px;
+  --text-sm:   14px;
+  --text-base: 16px;
+  --text-md:   18px;
+  --text-lg:   22px;
+  --text-xl:   28px;
+  --text-2xl:  36px;
+  --text-3xl:  48px;
+  --text-4xl:  64px;
+  --text-5xl:  88px;
+  --text-6xl:  120px;
+
+  /* ---- Line heights -------------------------------------------------- */
+  --leading-tight:   1.04;
+  --leading-snug:    1.18;
+  --leading-normal:  1.5;
+  --leading-relaxed: 1.65;
+
+  /* ---- Tracking ------------------------------------------------------ */
+  --tracking-tightest: -0.03em;
+  --tracking-tight:    -0.01em;
+  --tracking-normal:   0em;
+  --tracking-wide:     0.08em;
+  --tracking-widest:   0.22em;
+
+  /* ---- Weights ------------------------------------------------------- */
+  --weight-regular: 400;
+  --weight-bold:    700;
+
+  /* ====================================================================
+     SEMANTIC TYPE ROLES
+     ==================================================================== */
+  --type-display:    var(--weight-regular) var(--text-5xl)/var(--leading-tight) var(--font-display);
+  --type-h1:         var(--weight-regular) var(--text-3xl)/var(--leading-tight) var(--font-display);
+  --type-h2:         var(--weight-regular) var(--text-2xl)/var(--leading-snug) var(--font-display);
+  --type-h3:         var(--weight-regular) var(--text-xl)/var(--leading-snug) var(--font-display);
+  --type-statement:  var(--weight-bold) var(--text-4xl)/var(--leading-tight) var(--font-statement);
+
+  --type-body:       var(--weight-regular) var(--text-base)/var(--leading-normal) var(--font-sans);
+  --type-body-lg:    var(--weight-regular) var(--text-md)/var(--leading-normal) var(--font-sans);
+  --type-body-serif: var(--weight-regular) var(--text-md)/var(--leading-relaxed) var(--font-body-serif);
+  --type-label:      var(--weight-regular) var(--text-sm)/1.2 var(--font-sans);
+  --type-eyebrow:    var(--weight-regular) var(--text-xs)/1.2 var(--font-sans);
+  --type-mono:       var(--weight-regular) var(--text-sm)/1.4 var(--font-mono);
+}

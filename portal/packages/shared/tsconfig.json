@@ -1,4 +1,9 @@
 {
   "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // TextDecoder/crypto/btoa are runtime-universal (Workers, browsers, Node ≥20);
+    // DOM lib supplies their types for this runtime-neutral package.
+    "lib": ["ES2022", "DOM"]
+  },
   "include": ["src"]
 }
