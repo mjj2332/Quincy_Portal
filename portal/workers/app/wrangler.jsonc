@@ -1,0 +1,36 @@
+{
+  // Staff app/API Worker — Hono + better-auth (Google-only) + serves the SPA.
+  // database_id / kv id are placeholders: local dev works; set real IDs before first deploy (SETUP.md).
+  "name": "quincy-portal-app",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+  "assets": {
+    "directory": "../../apps/web/dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/media/*"]
+  },
+  "d1_databases": [
+    { "binding": "DB", "database_name": "quincy-portal", "database_id": "REPLACE-AFTER-PROVISIONING" }
+  ],
+  "r2_buckets": [
+    { "binding": "MEDIA", "bucket_name": "quincy-portal-media" }
+  ],
+  "kv_namespaces": [
+    { "binding": "SESSIONS", "id": "REPLACE-AFTER-PROVISIONING" }
+  ],
+  "queues": {
+    "producers": [
+      { "binding": "INGEST_QUEUE", "queue": "quincy-ingest" }
+    ]
+  },
+  "services": [
+    { "binding": "BACKGROUND", "service": "quincy-portal-background" }
+  ],
+  "vars": {
+    "APP_ENV": "dev",
+    "APP_ORIGIN": "http://localhost:5173"
+  }
+}

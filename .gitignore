@@ -11,3 +11,6 @@
 
 # Design handoff bundles
 *.zip
+
+# Local media fixtures (614 MB — never commit; referenced by portal tests via path)
+Test Images with star rating/

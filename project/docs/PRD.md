@@ -89,6 +89,7 @@ Full detail in **`Personas.md`**. Three internal roles + the external client.
 | **Publish to client delivery page** | ✓ | ✗ | ✓ | ✗ |
 | View client delivery page | ✓ | ✗ | ✓ | ✓ |
 | Download final media | ✓ | ✗ | ✓ | ✓ |
+| **Access Admin backend dashboard** (users, project CRUD/archive, agencies/agents, pipeline config, integrations) | ✓ | ✗ | ✗ | ✗ |
 
 **Resolved decisions:**
 - A Photographer **cannot** see the client delivery page — they are scoped to RAW on their assigned shoots only.
@@ -160,6 +161,7 @@ between stages are where QA happens.
   - **Sync from Dropbox** — a one-click pull of the RAW frames from the shoot's Dropbox folder. The folder link/path can be **pasted manually** or **carried over automatically from the Tonomo booking** (`rawFolderLink` / `rawFolderPath` in the webhook). Syncing populates the RAW collection and moves the project into **RAW review**.
 - Photographers annotate / comment on RAWs and **recommend** their picks to guide QA.
 - **Accepted files:** any RAW or image file — **no format or size limit**. Bracketed sets are **not** grouped automatically; the editor brackets them manually during selection.
+- ⬜ **Embedded star rating ingest.** Photographers cull on-site in Lightroom before export, applying a 1–5 star rating per frame. On upload/sync, the Portal **reads that rating from the JPEG's embedded XMP metadata** (`xmp:Rating`) and pre-populates the frame's star rating in RAW QA automatically — no re-rating by hand. An un-rated export (no `xmp:Rating` attribute present) shows as unrated, not zero-starred-by-default. QA can still override any rating manually; the metadata read only sets the *starting* value. Validated against 44 real studio export JPEGs (2.9–28 MB) — see `Implementation-Plan.md` §2 A2.
 
 **2. RAW QA & selection** ✅ Built
 - Editor/QA reviews all RAWs, compares similar frames, annotates, and sees photographer recommendations.
@@ -195,6 +197,7 @@ between stages are where QA happens.
 
 ### 6.3 Review tools ✅ Built
 - ✅ Grid with approve / flag, **star ratings**, **colour labels**, comment counts.
+- ⬜ **Star ratings on RAW frames are pre-populated from the photographer's on-site Lightroom culling** (embedded XMP metadata read at ingest, §5 stage 1) rather than starting blank; QA can re-rate freely from there. Edited-collection ratings remain purely QA-assigned (autoHDR output doesn't carry a meaningful rating of its own).
 - ✅ **Freehand markup** (paint-style drawing) on a frame, attached to a note. _(replaced pin notes)_
 - ✅ Lightbox with filmstrip, keyboard shortcuts (A approve, X flag, 1–5 rate, ⌘Z undo).
 - ✅ **Compare** two frames side-by-side.
@@ -223,6 +226,29 @@ between stages are where QA happens.
 - ✅ Threaded notes per image, freehand drawing, author + role + timestamp.
 - ⬜ Notes should be **role-aware** (photographer's RAW notes vs QA's edit notes) and scoped to RAW or Edited.
 
+### 6.9 Admin backend dashboard ⬜ New
+A dedicated **Admin Settings** area, separate from the project workspace, for backend
+and operational management. **Admin-only** (per §4 capabilities model).
+
+- ⬜ **Users:** create / edit / deactivate staff accounts; assign roles & capabilities.
+- ⬜ **Projects:** full CRUD outside the normal pipeline flow — edit any field or
+  **archive** a project — for corrections and cleanup. **Archive-only, no hard-delete**,
+  to stay consistent with the immutable-asset-version model used elsewhere (§6.6/§6.10 of
+  `Implementation-Proposal.md`); an archived project is hidden from active dashboards/lists
+  but its data and assets are retained and can be restored.
+- ⬜ **Agencies / agents directory:** CRUD for client agencies and agents, so a shoot can
+  be linked to an existing record instead of re-entering free-text contact details each
+  time (agencies/agents currently arrive as free-text fields off the Tonomo webhook — see
+  §4a).
+- ⬜ **Pipeline configuration:** edit the pipeline stage labels/settings from §7 (e.g.
+  rename a stage, change ordering) without a code change.
+- ⬜ **Integrations:** a connections screen showing status (Connected / Expired / Error)
+  for each external service, with a **Reconnect** action for OAuth refresh:
+  - **Dropbox** — one **shared studio-level** OAuth connection, used for all RAW sync and
+    the autoHDR watch folder (not a per-project or per-user connection — see §6.6/§6.7 of
+    `Implementation-Proposal.md`).
+  - Tonomo webhook status (last event received, signing key rotation).
+  - Vimeo account connection.
 ---
 
 ## 7. Pipeline statuses  ✅ Built
