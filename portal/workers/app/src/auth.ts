@@ -15,6 +15,13 @@ export function createAuth(env: Env) {
     basePath: "/api/auth",
     trustedOrigins: [env.APP_ORIGIN],
     user: { additionalFields: { role: { type: "string", input: false }, active: { type: "boolean", input: false } } },
+    account: {
+      accountLinking: {
+        enabled: true,
+        trustedProviders: ["google"],
+        requireLocalEmailVerified: false,
+      },
+    },
     socialProviders: googleConfigured ? { google: { clientId: env.GOOGLE_CLIENT_ID!, clientSecret: env.GOOGLE_CLIENT_SECRET!, disableImplicitSignUp: true, disableSignUp: true } } : {},
     databaseHooks: {
       user: { create: { before: async () => { throw new APIError("FORBIDDEN", { message: "This is a closed staff system. Ask an administrator to provision your account." }); } } },

@@ -14,3 +14,6 @@
 
 # Local media fixtures (614 MB — never commit; referenced by portal tests via path)
 Test Images with star rating/
+
+# Wrangler local state (any level)
+.wrangler/

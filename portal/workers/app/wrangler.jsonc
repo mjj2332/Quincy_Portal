@@ -1,6 +1,6 @@
 {
   // Staff app/API Worker — Hono + better-auth (Google-only) + serves the SPA.
-  // database_id / kv id are placeholders: local dev works; set real IDs before first deploy (SETUP.md).
+  // Cloudflare bindings are production resources; local tests simulate them through Miniflare.
   "name": "quincy-portal-app",
   "main": "src/index.ts",
   "compatibility_date": "2026-07-01",
@@ -10,7 +10,7 @@
     "directory": "../../apps/web/dist",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*", "/media/*"]
+    "run_worker_first": ["/api/*", "/media/*", "/__transform-source/*"]
   },
   "d1_databases": [
     { "binding": "DB", "database_name": "quincy-portal", "database_id": "1d36b42e-f1e6-4659-8c9e-70afe822b6fa" }
@@ -30,7 +30,7 @@
     { "binding": "BACKGROUND", "service": "quincy-portal-background" }
   ],
   "vars": {
-    "APP_ENV": "dev",
-    "APP_ORIGIN": "http://localhost:5173"
+    "APP_ENV": "production",
+    "APP_ORIGIN": "https://quincy.flamingfire.my"
   }
 }

@@ -13,6 +13,6 @@
     { "binding": "BACKGROUND", "service": "quincy-portal-background" }
   ],
   "vars": {
-    "APP_ENV": "dev"
+    "APP_ENV": "production"
   }
 }

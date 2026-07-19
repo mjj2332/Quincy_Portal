@@ -52,6 +52,9 @@ app.get("/webhooks/dropbox", (context) => {
 });
 
 app.post("/webhooks/dropbox", async (context) => {
+  if (!context.env.DROPBOX_APP_SECRET) {
+    return context.text("Dropbox webhook is not configured", 503);
+  }
   const signature = context.req.header("X-Dropbox-Signature");
   const suppliedSignature = signature ? fromHex(signature) : null;
   const rawBody = await context.req.raw.arrayBuffer();

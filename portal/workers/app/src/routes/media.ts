@@ -6,6 +6,7 @@ import { z } from "zod";
 import type { AppEnv } from "../env";
 import { hasProjectAccess } from "../middleware/capability";
 import { roleHasCapability } from "@quincy/shared";
+import { signTransformSource } from "../lib/transform-source";
 
 export const mediaRoutes = new Hono<AppEnv>();
 mediaRoutes.get("/asset/:assetId/:variant", async (c) => {
@@ -16,8 +17,15 @@ mediaRoutes.get("/asset/:assetId/:variant", async (c) => {
     const user = c.get("user"); if (row.collectionKind !== "raw" && user.role === "photographer") return c.json({ error: "Photographers may only view RAW assets" }, 403); if (row.collectionKind !== "raw" && !["admin", "editor"].includes(user.role)) return c.json({ error: "Forbidden" }, 403);
     if (variant === "original" || c.env.APP_ENV === "dev") { const object = await c.env.MEDIA.get(row.asset.r2Key); if (!object) return c.json({ error: "Media object not found" }, 404); return new Response(object.body, { headers: { "content-type": "image/jpeg", "cache-control": "private, max-age=3600" } }); }
     const spec = RENDITION_SPECS[variant as "web" | "thumb"];
-    try { const response = await fetch(new URL(`/media/asset/${assetId}/original`, c.req.url), { headers: c.req.raw.headers, cf: { image: { width: spec.maxEdge, quality: spec.quality, format: "auto" } } as unknown as RequestInitCfProperties }); if (response.ok) { const headers = new Headers(response.headers); headers.set("cache-control", "private, max-age=3600"); return new Response(response.body, { headers }); } } catch { /* serve original if Image Transformations is unavailable */ }
-    const object = await c.env.MEDIA.get(row.asset.r2Key); if (!object) return c.json({ error: "Media object not found" }, 404); return new Response(object.body, { headers: { "content-type": "image/jpeg", "cache-control": "private, max-age=3600" } });
+    const signature = await signTransformSource(c.env, row.asset.r2Key);
+    if (!signature) return c.json({ error: "Image transformations are not configured" }, 503);
+    const sourceUrl = new URL(`/__transform-source/${row.asset.r2Key}`, c.req.url);
+    sourceUrl.searchParams.set("sig", signature);
+    const response = await fetch(sourceUrl, { cf: { image: { width: spec.maxEdge, quality: spec.quality, format: "auto" } } as unknown as RequestInitCfProperties });
+    if (!response.ok) return c.json({ error: "Image transformation failed", status: response.status }, 502);
+    const headers = new Headers(response.headers);
+    headers.set("cache-control", "private, max-age=3600");
+    return new Response(response.body, { status: response.status, headers });
   }
 });
 

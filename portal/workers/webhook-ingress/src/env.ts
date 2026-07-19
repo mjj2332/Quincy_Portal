@@ -4,5 +4,5 @@ export interface Env {
   APP_ENV: string;
   DB: D1Database;
   BACKGROUND: Service<QuincyBackground>;
-  DROPBOX_APP_SECRET: string;
+  DROPBOX_APP_SECRET?: string;
 }

@@ -37,6 +37,6 @@
     { "tag": "v1", "new_sqlite_classes": ["DropboxSyncDO"] }
   ],
   "vars": {
-    "APP_ENV": "dev"
+    "APP_ENV": "production"
   }
 }

@@ -11,6 +11,7 @@ import { integrationsRoutes } from "./routes/integrations";
 import { reviewRoutes } from "./routes/review";
 import { mediaRoutes } from "./routes/media";
 import { annotationsRoutes } from "./routes/annotations";
+import { verifyTransformSource } from "./lib/transform-source";
 
 const app = new Hono<AppEnv>();
 app.use("/api/*", async (c, next) => cors({ origin: c.env.APP_ORIGIN, credentials: true, allowHeaders: ["content-type"], allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"] })(c, next));
@@ -21,6 +22,15 @@ api.use("/*", requireSession);
 api.get("/me", (c) => { const user = c.get("user"); return c.json({ user, capabilities: [...ROLE_CAPABILITIES[user.role]] }); });
 api.route("/", usersRoutes).route("/", projectsRoutes).route("/", uploadsRoutes).route("/", integrationsRoutes).route("/", reviewRoutes).route("/", annotationsRoutes);
 app.route("/api", api);
+app.all("/api/*", (c) => c.json({ error: "Not found" }, 404));
 const media = new Hono<AppEnv>(); media.use("/*", requireSession); media.route("/", mediaRoutes); app.route("/media", media);
+app.all("/media/*", (c) => c.json({ error: "Not found" }, 404));
+app.get("/__transform-source/*", async (c) => {
+  const key = c.req.path.slice("/__transform-source/".length);
+  if (!await verifyTransformSource(c.env, key, c.req.query("sig"))) return c.notFound();
+  const object = await c.env.MEDIA.get(key);
+  if (!object) return c.notFound();
+  return new Response(object.body, { headers: { "content-type": "image/jpeg" } });
+});
 app.all("*", (c) => c.env.ASSETS.fetch(c.req.raw));
 export default { fetch: app.fetch };

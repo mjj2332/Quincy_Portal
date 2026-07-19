@@ -1,0 +1,18 @@
+{
+  "rules": [
+    {
+      "allowed": {
+        "origins": [
+          "https://quincy.flamingfire.my",
+          "https://quincy-portal-app.mjj2332.workers.dev",
+          "http://localhost:5173",
+          "http://localhost:8787"
+        ],
+        "methods": ["PUT"],
+        "headers": ["Content-Type"]
+      },
+      "exposeHeaders": ["ETag"],
+      "maxAgeSeconds": 3600
+    }
+  ]
+}
