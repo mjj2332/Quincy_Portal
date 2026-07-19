@@ -13,8 +13,19 @@ import { jsonInput } from "./helpers";
 const annotationInput = z.object({ strokes: z.unknown().optional(), noteText: z.string().trim().max(10_000).optional() })
   .refine((value) => value.strokes !== undefined || Boolean(value.noteText), { message: "A markup or note is required" });
 const commentInput = z.object({ body: z.string().trim().min(1).max(10_000), parentId: z.string().uuid().optional() });
-const annotationEditInput = z.object({ noteText: z.string().trim().max(10_000).nullable() });
+const strokeInput = z.object({
+  points: z.array(z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) })).min(1).max(2000),
+  color: z.string().trim().min(1).max(32),
+  width: z.number().positive().max(100),
+});
+const annotationEditInput = z.object({ noteText: z.string().trim().max(10_000).nullable().optional(), strokes: z.array(strokeInput).max(200).optional() })
+  .refine((value) => value.noteText !== undefined || value.strokes !== undefined, { message: "A note or markup change is required" });
 const commentEditInput = z.object({ body: z.string().trim().min(1).max(10_000) });
+
+// .length counts UTF-16 code units, not bytes — a JSON string full of multibyte
+// characters (e.g. non-ASCII color names) could pass a .length check while exceeding
+// the real 2 MB R2/D1-adjacent budget. Measure actual encoded bytes instead.
+function byteLength(value: string): number { return new TextEncoder().encode(value).byteLength; }
 
 type AssetContext = { assetId: string; projectId: string; kind: "raw" | "edited" | "video" | "floorplan" | "copy" };
 
@@ -84,7 +95,7 @@ annotationsRoutes.post("/assets/:id/annotations", async (c) => {
   let strokeJson: string | undefined;
   if (data.strokes !== undefined) {
     try { strokeJson = JSON.stringify(data.strokes); } catch { return c.json({ error: "Markup must be JSON-serializable" }, 400); }
-    if (strokeJson === undefined || strokeJson.length > 2_000_000) return c.json({ error: "Markup is too large" }, 400);
+    if (strokeJson === undefined || byteLength(strokeJson) > 2_000_000) return c.json({ error: "Markup is too large" }, 400);
   }
   const id = newId();
   const strokeR2Key = strokeJson ? `projects/${asset.projectId}/${scope}/${assetId}/annotations/${id}.json` : null;
@@ -148,7 +159,25 @@ annotationsRoutes.patch("/annotations/:id", async (c) => {
   if (annotation.authorId !== c.get("user").id) return c.json({ error: "Forbidden: only the author can edit this annotation." }, 403);
   const data = await jsonInput(c, annotationEditInput); if (data instanceof Response) return data;
   const editedAt = new Date();
-  const updated = await db.update(schema.annotations).set({ noteText: data.noteText, editedAt }).where(eq(schema.annotations.id, id)).returning().get();
-  await audit(c.env, c.get("user").id, "annotation.edit", "annotation", id, { assetId: asset.assetId, scope });
+  const patch: { noteText?: string | null; strokeR2Key?: string | null; editedAt: Date } = { editedAt };
+  const changed: string[] = [];
+  if (data.noteText !== undefined) { patch.noteText = data.noteText; changed.push("note"); }
+  if (data.strokes !== undefined) {
+    changed.push("strokes");
+    if (data.strokes.length === 0) { patch.strokeR2Key = null; }
+    else {
+      let strokeJson: string;
+      try { strokeJson = JSON.stringify(data.strokes); } catch { return c.json({ error: "Markup must be JSON-serializable" }, 400); }
+      if (byteLength(strokeJson) > 2_000_000) return c.json({ error: "Markup is too large" }, 400);
+      // New R2 object per edit (never overwrite/delete the old one — cheap, audit-friendly).
+      const dir = annotation.strokeR2Key ? annotation.strokeR2Key.slice(0, annotation.strokeR2Key.lastIndexOf("/")) : `projects/${asset.projectId}/${scope}/${annotation.assetId}/annotations`;
+      // Random suffix: Date.now() alone can collide for same-millisecond edits, overwriting the retained prior object.
+      const strokeR2Key = `${dir}/strokes-${Date.now()}-${crypto.randomUUID().slice(0, 8)}.json`;
+      await c.env.MEDIA.put(strokeR2Key, strokeJson, { httpMetadata: { contentType: "application/json" } });
+      patch.strokeR2Key = strokeR2Key;
+    }
+  }
+  const updated = await db.update(schema.annotations).set(patch).where(eq(schema.annotations.id, id)).returning().get();
+  await audit(c.env, c.get("user").id, "annotation.edit", "annotation", id, { assetId: asset.assetId, scope, changed });
   return c.json(updated);
 });

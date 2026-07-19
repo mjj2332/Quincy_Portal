@@ -100,6 +100,36 @@ async function createEditableComment() {
   return { assetId, commentId: (await commentResponse.json() as { id: string }).id };
 }
 
+async function createEditableAnnotation(strokes: Array<{ points: Array<{ x: number; y: number }>; color: string; width: number }>) {
+  const adminCookie = await sessionCookie(adminToken);
+  const projectResponse = await SELF.fetch("https://portal.test/api/projects", {
+    method: "POST",
+    headers: { cookie: adminCookie, "content-type": "application/json" },
+    body: JSON.stringify({
+      street: `Edit annotation ${crypto.randomUUID()}`,
+      orderedServices: [],
+      photographerUserIds: [firstPhotographerId, secondPhotographerId],
+    }),
+  });
+  expect(projectResponse.status).toBe(201);
+  const project = await projectResponse.json() as { id: string };
+  const collection = await database.DB.prepare("SELECT id FROM collections WHERE project_id = ? AND kind = 'raw'").bind(project.id).first<{ id: string }>();
+  expect(collection).toBeDefined();
+  const assetId = crypto.randomUUID();
+  const now = Date.now();
+  await database.DB.prepare(
+    "INSERT INTO assets (id, collection_id, r2_key, original_filename, bytes, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+  ).bind(assetId, collection!.id, `tests/${assetId}.jpg`, "edit-annotation.jpg", 1024, "upload", now, now).run();
+  const annotationResponse = await SELF.fetch(`https://portal.test/api/assets/${assetId}/annotations`, {
+    method: "POST",
+    headers: { cookie: await sessionCookie(firstPhotographerToken), "content-type": "application/json" },
+    body: JSON.stringify({ strokes }),
+  });
+  expect(annotationResponse.status).toBe(201);
+  const created = await annotationResponse.json() as { id: string; strokeR2Key: string | null };
+  return { assetId, annotationId: created.id, strokeR2Key: created.strokeR2Key };
+}
+
 describe("staff app API", () => {
   it("reports its health", async () => {
     const response = await SELF.fetch("https://portal.test/api/health");
@@ -284,5 +314,76 @@ describe("staff app API", () => {
     await expect(response.json()).resolves.toMatchObject({ error: "Forbidden: only the author can edit this comment." });
     const stored = await database.DB.prepare("SELECT body, edited_at FROM comments WHERE id = ?").bind(commentId).first<{ body: string; edited_at: number | null }>();
     expect(stored).toEqual({ body: "Original comment", edited_at: null });
+  });
+
+  it("allows an author to replace their annotation's strokes and republishes a new R2 object", async () => {
+    const initialStrokes = [{ points: [{ x: 0.1, y: 0.1 }, { x: 0.2, y: 0.3 }], color: "#e64b3c", width: 4 }];
+    const { annotationId, strokeR2Key: originalKey } = await createEditableAnnotation(initialStrokes);
+    expect(originalKey).toBeTruthy();
+
+    const replacementStrokes = [{ points: [{ x: 0.5, y: 0.5 }, { x: 0.6, y: 0.55 }, { x: 0.7, y: 0.6 }], color: "#2f6df0", width: 7 }];
+    const response = await SELF.fetch(`https://portal.test/api/annotations/${annotationId}`, {
+      method: "PATCH",
+      headers: { cookie: await sessionCookie(firstPhotographerToken), "content-type": "application/json" },
+      body: JSON.stringify({ strokes: replacementStrokes }),
+    });
+
+    expect(response.status).toBe(200);
+    const updated = await response.json() as { id: string; strokeR2Key: string | null; editedAt: string | number | null };
+    expect(updated.strokeR2Key).toBeTruthy();
+    expect(updated.strokeR2Key).not.toBe(originalKey);
+    expect(updated.editedAt).toBeTruthy();
+
+    const mediaEnv = env as unknown as { MEDIA: R2Bucket };
+    const object = await mediaEnv.MEDIA.get(updated.strokeR2Key!);
+    expect(object).not.toBeNull();
+    const stored = JSON.parse(await object!.text());
+    expect(stored).toEqual(replacementStrokes);
+
+    const storedRow = await database.DB.prepare("SELECT stroke_r2_key, edited_at FROM annotations WHERE id = ?").bind(annotationId).first<{ stroke_r2_key: string; edited_at: number }>();
+    expect(storedRow?.stroke_r2_key).toBe(updated.strokeR2Key);
+    expect(storedRow?.edited_at).toEqual(expect.any(Number));
+  });
+
+  it("prevents a different project member from editing another author's annotation strokes", async () => {
+    const initialStrokes = [{ points: [{ x: 0.2, y: 0.2 }, { x: 0.3, y: 0.25 }], color: "#3f8f5a", width: 4 }];
+    const { annotationId, strokeR2Key: originalKey } = await createEditableAnnotation(initialStrokes);
+    expect(originalKey).toBeTruthy();
+
+    const response = await SELF.fetch(`https://portal.test/api/annotations/${annotationId}`, {
+      method: "PATCH",
+      headers: { cookie: await sessionCookie(secondPhotographerToken), "content-type": "application/json" },
+      body: JSON.stringify({ strokes: [{ points: [{ x: 0.9, y: 0.9 }], color: "#000000", width: 2 }] }),
+    });
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toMatchObject({ error: "Forbidden: only the author can edit this annotation." });
+    const storedRow = await database.DB.prepare("SELECT stroke_r2_key, edited_at FROM annotations WHERE id = ?").bind(annotationId).first<{ stroke_r2_key: string; edited_at: number | null }>();
+    expect(storedRow).toEqual({ stroke_r2_key: originalKey, edited_at: null });
+  });
+
+  it("clears an annotation's drawing on PATCH strokes: [] while preserving the old R2 object", async () => {
+    const initialStrokes = [{ points: [{ x: 0.4, y: 0.4 }, { x: 0.45, y: 0.42 }], color: "#f0a020", width: 4 }];
+    const { annotationId, strokeR2Key: originalKey } = await createEditableAnnotation(initialStrokes);
+    expect(originalKey).toBeTruthy();
+
+    const response = await SELF.fetch(`https://portal.test/api/annotations/${annotationId}`, {
+      method: "PATCH",
+      headers: { cookie: await sessionCookie(firstPhotographerToken), "content-type": "application/json" },
+      body: JSON.stringify({ strokes: [] }),
+    });
+
+    expect(response.status).toBe(200);
+    const updated = await response.json() as { strokeR2Key: string | null; editedAt: string | number | null };
+    expect(updated.strokeR2Key).toBeNull();
+    expect(updated.editedAt).toBeTruthy();
+
+    const mediaEnv = env as unknown as { MEDIA: R2Bucket };
+    const oldObject = await mediaEnv.MEDIA.get(originalKey!);
+    expect(oldObject).not.toBeNull();
+
+    const storedRow = await database.DB.prepare("SELECT stroke_r2_key, edited_at FROM annotations WHERE id = ?").bind(annotationId).first<{ stroke_r2_key: string | null; edited_at: number }>();
+    expect(storedRow?.stroke_r2_key).toBeNull();
+    expect(storedRow?.edited_at).toEqual(expect.any(Number));
   });
 });

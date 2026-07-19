@@ -275,6 +275,8 @@ button { font-family: var(--font-sans); }
 .canvasframe .viewer__img { display: block; width: auto; height: auto; max-width: 100%; max-height: calc(100vh - 230px); object-fit: contain; }
 .canvasframe.is-plan { width: min(70%, 620px); aspect-ratio: 3 / 2; background: var(--paper-100); }
 .markup-svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.markup-svg .stroke-vis { transition: opacity var(--dur-slow, 900ms) ease; }
+.markup-svg g[data-annotation-id] { transition: opacity var(--dur-base); }
 .pin { position: absolute; z-index: 4; width: 24px; height: 24px; border-radius: 50% 50% 50% 2px; background: var(--paper-050); color: var(--ink-900); display: grid; place-items: center; font: var(--type-mono); font-size: 12px; transform: translate(-50%, -100%); box-shadow: var(--shadow-md); }
 
 /* markup toolbar */
@@ -448,7 +450,8 @@ button { font-family: var(--font-sans); }
 
 /* comments thread */
 .thread { display: flex; flex-direction: column; gap: var(--space-4); }
-.cmt { display: flex; gap: var(--space-3); }
+.cmt { display: flex; gap: var(--space-3); border-radius: var(--radius-sm); transition: background 1.6s ease; }
+.cmt--highlighted { background: var(--paper-200); }
 .cmt__pin { flex: none; width: 22px; height: 22px; border-radius: 50%; background: var(--ink-900); color: var(--paper-050); display: grid; place-items: center; font: var(--type-mono); font-size: 11px; margin-top: 2px; }
 .cmt__pin.unpinned { background: var(--paper-200); color: var(--text-muted); }
 .cmt__b { flex: 1; }
