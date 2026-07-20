@@ -7,6 +7,7 @@ import type { AppEnv } from "../env";
 import { hasProjectAccess, requireCapability } from "../middleware/capability";
 import { audit } from "../lib/audit";
 import { newId } from "../lib/ids";
+import { createZipStream } from "../lib/zip-stream";
 import { jsonInput } from "./helpers";
 
 const nullable = <T extends z.ZodTypeAny>(item: T) => item.nullable().optional();
@@ -99,6 +100,33 @@ projectsRoutes.post("/projects/:id/send-to-autohdr", requireCapability("selectFo
   const { jobId } = await c.env.BACKGROUND.startAutoHdr(id);
   await audit(c.env, c.get("user").id, "project.send_to_autohdr", "project", id, { jobId });
   return c.json({ jobId });
+});
+
+projectsRoutes.get("/projects/:id/selected-raw.zip", async (c) => {
+  const id = c.req.param("id");
+  if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
+  if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
+  if (!ROLE_CAPABILITIES[c.get("user").role].includes("selectForEditing")) return c.json({ error: "Forbidden", capability: "selectForEditing" }, 403);
+  const db = createDb(c.env.DB);
+  const selected = await db.select({ r2Key: schema.assets.r2Key, originalFilename: schema.assets.originalFilename, bytes: schema.assets.bytes })
+    .from(schema.selections)
+    .innerJoin(schema.assets, eq(schema.selections.assetId, schema.assets.id))
+    .innerJoin(schema.collections, and(eq(schema.assets.collectionId, schema.collections.id), eq(schema.collections.projectId, id), eq(schema.collections.kind, "raw")))
+    .where(eq(schema.selections.state, "selected_for_editing"))
+    .orderBy(asc(schema.assets.createdAt))
+    .all();
+  if (!selected.length) return c.json({ error: "Select at least one RAW asset before downloading" }, 400);
+  const project = await db.select({ street: schema.projects.street }).from(schema.projects).where(eq(schema.projects.id, id)).get();
+  const filename = `${(project?.street || id).replace(/[^a-z0-9._-]+/gi, "-").replace(/^-+|-+$/g, "") || id}-selected-raw.zip`;
+  async function* entries() {
+    for (const asset of selected) {
+      const object = await c.env.MEDIA.get(asset.r2Key);
+      if (!object) throw new Error(`Media object not found: ${asset.r2Key}`);
+      yield { name: asset.originalFilename, size: asset.bytes, stream: object.body as ReadableStream<Uint8Array> };
+    }
+  }
+  await audit(c.env, c.get("user").id, "project.download_selected", "project", id, { count: selected.length });
+  return new Response(createZipStream(entries()), { headers: { "content-type": "application/zip", "content-disposition": `attachment; filename="${filename}"` } });
 });
 
 projectsRoutes.get("/projects/:id/jobs", async (c) => {

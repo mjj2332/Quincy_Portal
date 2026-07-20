@@ -191,14 +191,16 @@ button { font-family: var(--font-sans); }
 .tile.st-approved { --ring: var(--signal-positive); }
 .tile.st-flagged  { --ring: var(--signal-critical); }
 .tile.is-dim img { opacity: .4; filter: grayscale(.3); }
-.statetag { position: absolute; left: 9px; bottom: 9px; z-index: 3; display: inline-flex; align-items: center; gap: 6px; padding: 4px 9px; border-radius: var(--radius-xs); font: var(--type-eyebrow); text-transform: uppercase; letter-spacing: var(--tracking-wide); color: #fff; background: rgba(20,20,21,.6); backdrop-filter: blur(6px); }
+.statetags { position: absolute; left: 9px; bottom: 9px; z-index: 3; display: flex; flex-wrap: wrap; gap: 5px; max-width: calc(100% - 18px); }
+.statetag { display: inline-flex; align-items: center; gap: 6px; padding: 4px 9px; border-radius: var(--radius-xs); font: var(--type-eyebrow); text-transform: uppercase; letter-spacing: var(--tracking-wide); color: #fff; background: rgba(20,20,21,.6); backdrop-filter: blur(6px); }
 .statetag.st-approved { background: color-mix(in srgb, var(--signal-positive) 82%, #000); }
 .statetag.st-flagged { background: color-mix(in srgb, var(--signal-critical) 82%, #000); }
+.statetag.st-editing { background: color-mix(in srgb, var(--signal-caution) 88%, #000); }
 
 /* corner select checkbox */
-.selbox { position: absolute; top: 9px; left: 9px; z-index: 4; width: 22px; height: 22px; border-radius: var(--radius-xs); border: 1.5px solid rgba(255,255,255,.85); background: rgba(20,20,21,.32); backdrop-filter: blur(4px); display: grid; place-items: center; opacity: 0; transition: opacity var(--dur-fast); }
+.selbox { position: absolute; top: 9px; left: 9px; z-index: 4; width: 22px; height: 22px; border-radius: var(--radius-xs); border: 1.5px solid rgba(255,255,255,.9); background: rgba(20,20,21,.48); backdrop-filter: blur(4px); display: grid; place-items: center; color: transparent; font: 700 15px/1 var(--font-sans); opacity: 0; transition: opacity var(--dur-fast), background var(--dur-fast), color var(--dur-fast); }
 .tile:hover .selbox, .tile.is-selected .selbox { opacity: 1; }
-.tile.is-selected .selbox { background: var(--ink-900); border-color: var(--ink-900); }
+.tile.is-selected .selbox { background: var(--paper-050); border-color: var(--paper-050); color: var(--ink-900); box-shadow: 0 1px 8px rgba(0,0,0,.35); }
 .selbox svg { width: 13px; height: 13px; color: #fff; opacity: 0; }
 .tile.is-selected .selbox svg { opacity: 1; }
 
@@ -302,7 +304,8 @@ button { font-family: var(--font-sans); }
 .boardnote { display: flex; align-items: center; gap: 12px; padding: 12px var(--space-6); background: var(--paper-100); border-bottom: 1px solid var(--border-hairline); font-size: 13.5px; color: var(--text-secondary); }
 .boardnote svg { flex: none; color: var(--text-muted); }
 
-.hdr { display: flex; align-items: center; gap: 12px; padding: 12px; border: 1px solid var(--border-hairline); background: var(--paper-000); }
+.hdr { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 12px; border: 1px solid var(--border-hairline); background: var(--paper-000); }
+.hdr .row { flex-wrap: wrap; }
 .hdr svg { flex: none; }
 
 /* video tiles */

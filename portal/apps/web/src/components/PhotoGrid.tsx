@@ -78,9 +78,11 @@ export function PhotoGrid({ assets, canReview, canRecommend, canSelect, onOpen, 
             {canRecommend && <button className="icbtn icbtn--ondark" type="button" title="Recommend" onClick={(event) => { event.stopPropagation(); void onReview(asset.id, { recommended: !review?.recommended }); }}>★</button>}
             {canSelect && <button className="icbtn icbtn--ondark" type="button" title="Select for editing" onClick={(event) => { event.stopPropagation(); void onSelection(asset.id, !asset.selected); }}>↗</button>}
           </div>
-          {asset.selected && <span className="statetag st-approved">For editing</span>}
-          {review?.recommended && !asset.selected && <span className="statetag">Recommended</span>}
-          {state && <span className={`statetag st-${state}`}>{state === "approved" ? "Approved" : "Flagged"}</span>}
+          <div className="statetags">
+            {asset.selected && <span className="statetag st-editing">For editing</span>}
+            {review?.recommended && !asset.selected && <span className="statetag">Recommended</span>}
+            {state && <span className={`statetag st-${state}`}>{state === "approved" ? "Approved" : "Flagged"}</span>}
+          </div>
           <Stars value={rating(asset)} />
         </div>;
       })}</div>}

@@ -112,6 +112,11 @@ export function ProjectWorkspace({ projectId, notice, onNoticeShown, onBack, onE
     catch (reason) { toast(reason instanceof Error ? reason.message : "autoHDR could not be started.", "error"); }
     finally { setIsSending(false); }
   }
+  function downloadSelectedRaw() {
+    if (!projectId || selectionCount === 0) return;
+    toast("Preparing your download…");
+    const link = document.createElement("a"); link.href = `/api/projects/${encodeURIComponent(projectId)}/selected-raw.zip`; link.download = ""; document.body.append(link); link.click(); link.remove();
+  }
   async function retryAutoHdr(jobId: string) {
     try { await apiPost<{ jobId: string }, Record<string, never>>(`/api/jobs/${jobId}/retry`, {}); await Promise.all([refreshJobs(), refreshProject()]); toast("autoHDR retry started."); }
     catch (reason) { toast(reason instanceof Error ? reason.message : "autoHDR retry could not be started.", "error"); }
@@ -142,7 +147,7 @@ export function ProjectWorkspace({ projectId, notice, onNoticeShown, onBack, onE
     <section className="workmain"><div className="wsbar"><button className="chip" type="button" onClick={onBack}>← Dashboard</button><span className="ey">{activeTab === "raw" ? `RAW capture · ${rawCollection?.receivedCount ?? 0} received` : `${collectionLabel(activeTab)} collection`}</span><div className="grow" />{canUpload && activeTab === "raw" && <button className="chip" type="button" disabled={isSyncing || !(project.rawFolderPath || project.rawFolderLink)} onClick={() => void syncDropbox()}>Sync Dropbox</button>}</div>
       {ingest?.mismatch && <div className="ingest-warning" role="alert"><strong>Capture count needs attention.</strong> Expected {ingest.expectedCount}, received {ingest.receivedCount}.</div>}
       {activeTab === "raw" || activeTab === "edited" ? <><div className="workspace-intro"><div><div className="ey">{activeTab === "raw" ? "Capture QA" : "Edited QA"}</div><h1 className="serif">{activeTab === "raw" ? "RAW frames" : "Edited frames"}</h1></div><div className="muted">{activeTab === "raw" ? "Ratings from XMP are shown at ingest. Select the strongest frames for editing." : "Review delivered edits before they move to client delivery."}</div></div>
-        {activeTab === "raw" && canSelect && <div className="hdr"><div className="grow"><strong>autoHDR hand-off</strong><div className="muted">{selectionCount} selected RAW frame{selectionCount === 1 ? "" : "s"} will be sent for editing.</div></div><button className="button" type="button" disabled={selectionCount === 0 || isSending} onClick={() => void sendToAutoHdr()}>{isSending ? "Sending…" : `Send ${selectionCount} selected to autoHDR`}</button></div>}
+        {activeTab === "raw" && canSelect && <div className="hdr"><div className="grow"><strong>autoHDR hand-off</strong><div className="muted">{selectionCount} selected RAW frame{selectionCount === 1 ? "" : "s"} will be sent for editing.</div></div><div className="row gap2"><button className="button button--secondary" type="button" disabled={selectionCount === 0} onClick={downloadSelectedRaw}>{`Download ${selectionCount} selected (zip)`}</button><button className="button" type="button" disabled={selectionCount === 0 || isSending} onClick={() => void sendToAutoHdr()}>{isSending ? "Sending…" : `Send ${selectionCount} selected to autoHDR`}</button></div></div>}
         {activeTab === "raw" && canUpload && <div className="workgrid"><UploadDropzone projectId={projectId} onComplete={refresh} onToast={toast} /></div>}
         <PhotoGrid assets={assets} canReview={canReview} canRecommend={canRecommend} canSelect={activeTab === "raw" && canSelect} onOpen={(asset) => setOpenAssetId(asset.id)} onReview={updateReview} onSelection={updateSelection} />
       </> : <div className="empty later-phase"><span className="serif">{collectionLabel(activeTab)} arrives in a later phase.</span>This collection is ready in the workspace, but its production view has not been connected yet.</div>}

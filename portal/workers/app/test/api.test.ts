@@ -4,6 +4,7 @@ import { handleOAuthUserInfo } from "better-auth/oauth2";
 import { beforeAll, describe, expect, it } from "vitest";
 import { createAuth } from "../src/auth";
 import type { Env } from "../src/env";
+import { createZipStream } from "../src/lib/zip-stream";
 
 const database = env as unknown as { DB: D1Database };
 const authEnv = env as unknown as Env;
@@ -11,6 +12,7 @@ const authSecret = authEnv.BETTER_AUTH_SECRET ?? "dev-only-replace-better-auth-s
 const photographerToken = "test-photographer-session-token";
 const adminToken = "test-admin-session-token";
 const secondPhotographerToken = "test-second-photographer-session-token";
+const editorToken = "test-editor-session-token";
 // First photographer IS a member of the editable-comment project; the plain
 // photographerToken user is deliberately NOT (D-02 assigned-only scoping).
 const firstPhotographerToken = "test-first-photographer-session-token";
@@ -69,6 +71,9 @@ beforeAll(async () => {
   await database.DB.prepare(
     "INSERT INTO session (id, expires_at, token, user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
   ).bind("test-first-photographer-session", now + 60 * 60 * 1000, firstPhotographerToken, firstPhotographerId, now, now).run();
+  await database.DB.prepare(
+    "INSERT INTO session (id, expires_at, token, user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+  ).bind("test-editor-session", now + 60 * 60 * 1000, editorToken, editorId, now, now).run();
 });
 
 async function createEditableComment() {
@@ -131,6 +136,42 @@ async function createEditableAnnotation(strokes: Array<{ points: Array<{ x: numb
 }
 
 describe("staff app API", () => {
+  it("writes a streaming STORE ZIP with descriptors and a valid central directory", async () => {
+    const encoder = new TextEncoder();
+    async function* entries() {
+      yield { name: "frame.jpg", size: 5, stream: new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(encoder.encode("hello")); controller.close(); } }) };
+      yield { name: "frame.jpg", size: 5, stream: new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(encoder.encode("world")); controller.close(); } }) };
+    }
+    const reader = createZipStream(entries()).getReader(); const chunks: Uint8Array[] = [];
+    while (true) { const { done, value } = await reader.read(); if (done) break; chunks.push(value!); }
+    const output = new Uint8Array(chunks.reduce((size, chunk) => size + chunk.length, 0)); let offset = 0; for (const chunk of chunks) { output.set(chunk, offset); offset += chunk.length; }
+    const signatureCount = (signature: number[]) => output.reduce((count, _, index) => signature.every((byte, part) => output[index + part] === byte) ? count + 1 : count, 0);
+    expect([...output.slice(0, 4)]).toEqual([0x50, 0x4b, 0x03, 0x04]);
+    expect(signatureCount([0x50, 0x4b, 0x01, 0x02])).toBe(2);
+    expect([...output.slice(-22, -18)]).toEqual([0x50, 0x4b, 0x05, 0x06]);
+    expect(new DataView(output.buffer, output.byteOffset + output.length - 22).getUint16(10, true)).toBe(2);
+    const descriptor = output.findIndex((_, index) => output[index] === 0x50 && output[index + 1] === 0x4b && output[index + 2] === 0x07 && output[index + 3] === 0x08);
+    expect(new DataView(output.buffer, output.byteOffset + descriptor + 4).getUint32(0, true)).toBe(0x3610a686);
+  });
+
+  it("writes ZIP64 local-header sentinels and end records", async () => {
+    const encoder = new TextEncoder();
+    async function* entries() {
+      yield { name: "frame.jpg", size: 5, stream: new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(encoder.encode("hello")); controller.close(); } }) };
+    }
+    const reader = createZipStream(entries(), 1).getReader(); const chunks: Uint8Array[] = [];
+    while (true) { const { done, value } = await reader.read(); if (done) break; chunks.push(value!); }
+    const output = new Uint8Array(chunks.reduce((size, chunk) => size + chunk.length, 0)); let offset = 0; for (const chunk of chunks) { output.set(chunk, offset); offset += chunk.length; }
+    const view = new DataView(output.buffer, output.byteOffset, output.byteLength);
+    expect(view.getUint16(4, true)).toBe(45);
+    expect(view.getUint32(18, true)).toBe(0xffff_ffff);
+    expect(view.getUint32(22, true)).toBe(0xffff_ffff);
+    expect(view.getUint16(30 + encoder.encode("frame.jpg").length, true)).toBe(0x0001);
+    expect([...output.slice(-98, -94)]).toEqual([0x50, 0x4b, 0x06, 0x06]);
+    expect([...output.slice(-42, -38)]).toEqual([0x50, 0x4b, 0x06, 0x07]);
+    expect([...output.slice(-22, -18)]).toEqual([0x50, 0x4b, 0x05, 0x06]);
+  });
+
   it("reports its health", async () => {
     const response = await SELF.fetch("https://portal.test/api/health");
 
@@ -286,6 +327,29 @@ describe("staff app API", () => {
     expect(updated.collections.map((collection) => collection.kind).sort()).toEqual(["edited", "raw", "video"]);
     expect(updated.members.filter((member) => member.roleOnProject === "photographer").map((member) => member.userId)).toEqual([secondPhotographerId]);
     expect(updated.members.filter((member) => member.roleOnProject === "editor").map((member) => member.userId)).toEqual([editorId]);
+  });
+
+  it("streams selected RAW files as a ZIP for an assigned editor and rejects a member without the capability", async () => {
+    const created = await SELF.fetch("https://portal.test/api/projects", {
+      method: "POST", headers: { cookie: await sessionCookie(adminToken), "content-type": "application/json" },
+      body: JSON.stringify({ street: "14 Zip Street", orderedServices: [], photographerUserIds: [firstPhotographerId], editorUserIds: [editorId] }),
+    });
+    expect(created.status).toBe(201);
+    const project = await created.json() as { id: string };
+    const raw = await database.DB.prepare("SELECT id FROM collections WHERE project_id = ? AND kind = 'raw'").bind(project.id).first<{ id: string }>();
+    const media = env as unknown as { MEDIA: R2Bucket }; const now = Date.now();
+    for (const [suffix, body] of [["one", "first RAW"], ["two", "second RAW"]] as const) {
+      const assetId = crypto.randomUUID(); const key = `tests/${project.id}/${suffix}.jpg`;
+      await media.MEDIA.put(key, body);
+      await database.DB.prepare("INSERT INTO assets (id, collection_id, r2_key, original_filename, bytes, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").bind(assetId, raw!.id, key, "capture.jpg", body.length, "upload", now, now).run();
+      await database.DB.prepare("INSERT INTO selections (id, asset_id, selected_by, state, created_at) VALUES (?, ?, ?, ?, ?)").bind(crypto.randomUUID(), assetId, editorId, "selected_for_editing", now).run();
+    }
+    const response = await SELF.fetch(`https://portal.test/api/projects/${project.id}/selected-raw.zip`, { headers: { cookie: await sessionCookie(editorToken) } });
+    expect(response.status).toBe(200); expect(response.headers.get("content-type")).toContain("application/zip"); expect(new Uint8Array(await response.arrayBuffer()).slice(0, 4)).toEqual(new Uint8Array([0x50, 0x4b, 0x03, 0x04]));
+    const nonMember = await SELF.fetch(`https://portal.test/api/projects/${project.id}/selected-raw.zip`, { headers: { cookie: await sessionCookie(photographerToken) } });
+    expect(nonMember.status).toBe(403);
+    const forbidden = await SELF.fetch(`https://portal.test/api/projects/${project.id}/selected-raw.zip`, { headers: { cookie: await sessionCookie(firstPhotographerToken) } });
+    expect(forbidden.status).toBe(403);
   });
 
   it("allows an author to edit their own comment", async () => {
