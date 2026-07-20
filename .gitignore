@@ -12,7 +12,8 @@
 # Design handoff bundles
 *.zip
 
-# Local media fixtures (614 MB — never commit; referenced by portal tests via path)
+# Local media fixtures (~614 MB — never commit). Live in test-data/ and are referenced by
+# the portal XMP test, which skips when they're absent (see test-data/README.md).
 Test Images with star rating/
 
 # Wrangler local state (any level)

@@ -6,7 +6,7 @@ import { XMP_SCAN_BYTES, parseXmpRating, xmpRatingToStars } from "../src/xmp";
 
 // Resolve from the config's directory, not the test file's directory.
 const fixtureDirectory = fileURLToPath(
-  new URL("../../..//Test Images with star rating/", new URL("../", import.meta.url)),
+  new URL("../../../test-data/Test Images with star rating/", new URL("../", import.meta.url)),
 );
 const fixturesAvailable = existsSync(fixtureDirectory);
 const oneStarFilenames = new Set([

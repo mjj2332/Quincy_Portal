@@ -1,6 +1,6 @@
 <!--
   CLAUDE.md and AGENTS.md are identical mirrors of this project guide.
-  Update BOTH together. AGENTS.md is read by non-Claude coding agents; CLAUDE.md is the
+  Update BOTH together. CLAUDE.md is read by Claude Code; AGENTS.md is the
   cross-tool equivalent for any other coding agent.
 -->
 

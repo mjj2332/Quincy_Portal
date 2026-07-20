@@ -2,7 +2,7 @@
  * XMP star-rating extraction (spike ④, Implementation-Plan §2 A2).
  *
  * Validated 2026-07-19 against 44 real studio Lightroom exports
- * (`Test Images with star rating/`): the rating is the RDF attribute
+ * (`test-data/Test Images with star rating/`): the rating is the RDF attribute
  * `xmp:Rating="N"` inside the `<x:xmpmeta>…</x:xmpmeta>` packet, which sits
  * in an APP1 segment near the start of the JPEG. A header range-read is
  * enough — no full decode.

@@ -1,7 +1,7 @@
 # Quincy Portal — Implementation Proposal
 
 > **Status:** Draft v1.2 · 22 June 2026 (capture-pipeline-first re-sequencing; multi-agent review history in §13)
-> **Source of truth:** `project/docs/PRD.md`, `Personas.md`, `Sitemap.md`, `project/uploads/Webhook-data*.md`, and the Igor × Tez capture-workflow decisions.
+> **Source of truth:** `docs/PRD.md`, `Personas.md`, `Sitemap.md`, `prototype/uploads/Webhook-data*.md`, and the Igor × Tez capture-workflow decisions.
 > **Audience:** Quincy Productions team + implementing engineers
 > **Scope:** Turn the React prototype into a production system on Cloudflare.
 
@@ -18,7 +18,7 @@ This proposal recommends building it as a **Cloudflare-native application**. The
 reason is economics and fit: Quincy moves large media (multi-MB JPEG exports, HDR results,
 1080p+ video). Cloudflare **R2 has zero egress fees**, **Workers + D1 + Queues + Workflows**
 give a single, cheap, globally-fast platform with no servers to run, and the existing
-`project/wrangler.jsonc` already deploys to Cloudflare Workers — so we extend a direction
+`prototype/wrangler.jsonc` already deploys to Cloudflare Workers — so we extend a direction
 already chosen.
 
 > **Key product clarification (drives the whole media design).** Per the Igor × Tez capture
@@ -192,7 +192,7 @@ Core tables (all get `id`, `created_at`, `updated_at`):
 ## 6. Component-by-component plan
 
 ### 6.1 Frontend (Quincy DS, React, TypeScript)
-- Reuse `project/_ds/` as the component foundation; port the prototype screens (`dashboard`,
+- Reuse `prototype/_ds/` as the component foundation; port the prototype screens (`dashboard`,
   `workspace`, `board`, `viewer`, `client`, `tonomo`) into typed components.
 - **Default: Vite SPA** + JSON API. The client gallery is a private link with no SEO need, so
   SSR isn't warranted; revisit React Router v7 SSR only if a measured first-load metric demands it.
