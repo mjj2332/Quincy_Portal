@@ -80,11 +80,40 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/other agents 
   navigation order; project+raw-scoped content-hash dedupe that updates `isPremium` when a
   file moves between root and EXTRAS.
 
+**Phase 3 (in progress) — Tonomo intake (WP-Z/Z2/Z3, 2026-07-21, deployed)**
+- Real-payload parser in `@quincy/shared` (`parseTonomoOrder`): built/tested against the
+  two captured webhooks (canonical copies: `test-data/tonomo/*.json`). Handles
+  `property_address`, `listingAgents`, `bookingFlow`, `services_a_la_cart`,
+  `deliverablesLinks` (Floor Plan/Video/PDF→copy; Photos skipped; content-hash dedupe of
+  duplicated share links), ISO shootDate from `when.start_time` in property timezone,
+  `customQuestions`→notes, tri-state invoice/payment (explicit null clears).
+- `TonomoProcessorDO` (fixed-ID) serializes all event processing: FIFO drain, alarm
+  retries (5 attempts then poison), deterministic errors (parse failures, archived-project
+  order match, ambiguous address match) poison immediately for the operator screen;
+  pendingDrain guard so a drain arriving mid-drain is never dropped.
+- Reconciliation: orderId → exact; else UNIQUE normalised street+postcode among
+  unlinked non-archived projects (ambiguous → poison; separators normalise to spaces so
+  1/23 ≠ 123); else create with stage `awaiting_raw`.
+- Zero re-keying: project pre-filled from the order (contact snapshot, `rawFolderLink`/
+  `rawFolderPath` additive → Dropbox sync source), photographer auto-assigned by active
+  user email, finished deliverable links land in new `collection_links` table (migration
+  0002, applied to prod; remote migration tracking backfilled — 0000/0001 were manual).
+- Ingress wakes the DO on every stored OR deduped delivery (stranded-row rescue).
+- PR #3 opened (build/phase-0-2 → main): https://github.com/mjj2332/Quincy_Portal/pull/3
+
 **Repo hygiene**
 - Reorganized repo into `prototype/ · portal/ · docs/ · test-data/`; wrote CLAUDE.md/AGENTS.md
   as the project guide (2026-07-20).
 
 ## Open / in progress
+- [ ] WP-AB (running): project cover images on grid + kanban cards, user-selectable cover
+  (POST /projects/:id/cover, `editProject`-gated, audit-logged), and the prototype's List
+  view as a third dashboard mode.
+- [ ] WP-AA (queued): admin backend completion — agencies/agents directory, pipeline stage
+  config, Tonomo health + poison-event operator screen (view payload / retry / discard).
+- [ ] Phase 4 (queued): Vimeo link tiles, floorplan PDF+preview versioning, copy PDF upload.
+- [ ] Phase 5 (queued): client-delivery Worker (signed links, gallery, favourites,
+  pre-built zips, premium paywall) — Pixieset replacement, own launch gates.
 - [ ] RAW↔Edited compare: synced zoom (deferred from the original compare build).
 - [ ] Hardening: add expiry to the `/__transform-source` HMAC signature — currently
   unexpiring per-key URLs (`TODO(hardening)` in `portal/workers/app/src/routes/media.ts`).
@@ -94,12 +123,16 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/other agents 
   AND uploaded as Worker secrets (app + background; secret also on webhook-ingress).
   `INTEGRATION_KEK` generated + uploaded (app + background). `TONOMO_WEBHOOK_TOKEN`
   generated + uploaded (ingress); value in `.prod-secrets.local`. See `docs/Dropbox-Setup.md`.
-- [ ] USER: in the Dropbox App Console — add the `sharing.read` scope (needed to resolve
-  `dropbox.com/scl/fo/…` shared links) and verify redirect URI
+- [x] First live Dropbox sync CONFIRMED WORKING by user (2026-07-21) — the earlier
+  "4 McGowen Ave" failure was a mistyped RAW folder path, not a code issue; team-space
+  Path-Root support is live and exercised.
+- [ ] USER: in the Dropbox App Console — add the `sharing.read` scope. Still needed:
+  Tonomo webhooks deliver `rawFolderLink` as `dropbox.com/scl/fo/…` shared links, which
+  the sync resolves via sharing/get_shared_link_metadata (folder-PATH syncs work without
+  it). Also verify redirect URI
   `https://quincy.flamingfire.my/api/integrations/dropbox/callback` + webhook URI
   `https://quincy-portal-webhook-ingress.mjj2332.workers.dev/webhooks/dropbox` per
-  `docs/Dropbox-Setup.md`. Then: Admin → Integrations → Connect Dropbox, and run the first
-  live sync test.
+  `docs/Dropbox-Setup.md`.
 - [ ] USER: configure Tonomo with the webhook URL (deployed with the current wave; orchestrator
   confirms when live): `https://quincy-portal-webhook-ingress.mjj2332.workers.dev/webhooks/tonomo?token=<see .prod-secrets.local>`.
 - [ ] Real interactive Google browser login check at `https://quincy.flamingfire.my` (sign-in

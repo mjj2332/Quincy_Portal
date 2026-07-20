@@ -3,3 +3,4 @@ export * from "./stages";
 export * from "./media";
 export * from "./xmp";
 export * from "./crypto";
+export * from "./tonomo";

@@ -205,6 +205,23 @@ export const collections = sqliteTable(
   (t) => [uniqueIndex("collections_project_kind").on(t.projectId, t.kind)],
 );
 
+/** Finished Tonomo deliverables are external URLs, not R2-backed media assets. */
+export const collectionLinks = sqliteTable(
+  "collection_links",
+  {
+    id: id(),
+    collectionId: text("collection_id")
+      .notNull()
+      .references(() => collections.id, { onDelete: "cascade" }),
+    url: text("url").notNull(),
+    label: text("label"),
+    source: text("source", { enum: ["tonomo", "manual"] }).notNull(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [index("collection_links_collection_idx").on(t.collectionId)],
+);
+
 export const assets = sqliteTable(
   "assets",
   {

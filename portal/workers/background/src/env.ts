@@ -1,4 +1,5 @@
 import type { DropboxSyncDO } from "./do/dropbox-sync";
+import type { TonomoProcessorDO } from "./do/tonomo-processor";
 import type { IngestMessage } from "./messages";
 import type { AutoHdrInput, AutoHdrRoundtrip } from "./workflows/autohdr";
 
@@ -9,6 +10,7 @@ export interface Env {
   INGEST_QUEUE: Queue<IngestMessage>;
   AUTOHDR_WORKFLOW: Workflow<AutoHdrInput>;
   DROPBOX_SYNC: DurableObjectNamespace<DropboxSyncDO>;
+  TONOMO_PROCESSOR: DurableObjectNamespace<TonomoProcessorDO>;
   INTEGRATION_KEK: string;
   DROPBOX_APP_KEY: string;
   DROPBOX_APP_SECRET: string;

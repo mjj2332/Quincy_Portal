@@ -3,6 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { assets, collections, integrationConnections, projects, selections } from "@quincy/db/schema";
 
 import { DropboxSyncDO } from "./do/dropbox-sync";
+import { TonomoProcessorDO } from "./do/tonomo-processor";
 import type { Env } from "./env";
 import { dbFor } from "./lib/db";
 import { createJob, setJobStatus } from "./lib/jobs";
@@ -10,7 +11,7 @@ import type { IngestMessage } from "./messages";
 import { syncProjectRawFolder } from "./dropbox/sync";
 import { AutoHdrRoundtrip } from "./workflows/autohdr";
 
-export { AutoHdrRoundtrip, DropboxSyncDO };
+export { AutoHdrRoundtrip, DropboxSyncDO, TonomoProcessorDO };
 
 type DropboxSyncMessage = Extract<IngestMessage, { type: "dropbox_sync" }> & { jobId?: string };
 
@@ -81,6 +82,11 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
         await stub.kick();
       }),
     );
+  }
+
+  async processTonomoEvents(): Promise<void> {
+    const id = this.env.TONOMO_PROCESSOR.idFromName("tonomo");
+    await this.env.TONOMO_PROCESSOR.get(id).drain();
   }
 
   async queue(batch: MessageBatch<IngestMessage>): Promise<void> {

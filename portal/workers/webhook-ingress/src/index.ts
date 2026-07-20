@@ -163,6 +163,10 @@ app.post("/webhooks/tonomo", async (context) => {
     )
       .bind(crypto.randomUUID(), "tonomo", eventId, payloadJson, "received", Date.now())
       .run();
+    context.executionCtx.waitUntil(context.env.BACKGROUND.processTonomoEvents().catch((error) => {
+      // The event is durably stored; an RPC failure must not make Tonomo retry a deduped delivery.
+      console.error("Tonomo webhook handoff failed", error);
+    }));
   } catch (error) {
     console.error("Tonomo webhook storage failed", error);
     return context.text("Webhook storage failed", 500);

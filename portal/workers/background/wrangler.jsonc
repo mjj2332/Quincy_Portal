@@ -30,11 +30,13 @@
   ],
   "durable_objects": {
     "bindings": [
-      { "name": "DROPBOX_SYNC", "class_name": "DropboxSyncDO" }
+      { "name": "DROPBOX_SYNC", "class_name": "DropboxSyncDO" },
+      { "name": "TONOMO_PROCESSOR", "class_name": "TonomoProcessorDO" }
     ]
   },
   "migrations": [
-    { "tag": "v1", "new_sqlite_classes": ["DropboxSyncDO"] }
+    { "tag": "v1", "new_sqlite_classes": ["DropboxSyncDO"] },
+    { "tag": "v2", "new_sqlite_classes": ["TonomoProcessorDO"] }
   ],
   "vars": {
     "APP_ENV": "production"
