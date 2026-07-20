@@ -189,6 +189,32 @@ for (const [path, archived] of [["/projects/:id/archive", true], ["/projects/:id
   if (!ROLE_CAPABILITIES[c.get("user").role].includes("archiveProject")) return c.json({ error: "Forbidden", capability: "archiveProject" }, 403);
   const db = createDb(c.env.DB); await db.update(schema.projects).set({ archivedAt: archived ? new Date() : null, archivedBy: archived ? c.get("user").id : null, updatedAt: new Date() }).where(eq(schema.projects.id, id)); await audit(c.env, c.get("user").id, archived ? "project.archive" : "project.restore", "project", id); return c.json({ ok: true });
 });
+projectsRoutes.delete("/projects/:id", async (c) => {
+  const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
+  const db = createDb(c.env.DB); const project = await db.select({ id: schema.projects.id, street: schema.projects.street, archivedAt: schema.projects.archivedAt }).from(schema.projects).where(eq(schema.projects.id, id)).get();
+  if (!project) return c.json({ error: "Project not found" }, 404);
+  // Inline capability check like every other route — invoking the middleware factory manually
+  // with a body-closure `next` discards the closure's c.json() return and falls through to 404.
+  if (!ROLE_CAPABILITIES[c.get("user").role].includes("adminBackend")) return c.json({ error: "Forbidden", capability: "adminBackend" }, 403);
+  if (!project.archivedAt) return c.json({ error: "Archive the project before deleting it." }, 409);
+  const activeJobs = (await db.select({ count: sql<number>`count(*)` }).from(schema.jobs).where(and(eq(schema.jobs.projectId, id), inArray(schema.jobs.status, ["queued", "running"]))).get())?.count ?? 0;
+  if (activeJobs) return c.json({ error: "Background work is still running for this project — wait for it to finish and try again.", activeJobs }, 409);
+  const r2Prefix = `projects/${id}/`;
+  const assetCount = (await db.select({ count: sql<number>`count(*)` }).from(schema.assets).innerJoin(schema.collections, eq(schema.assets.collectionId, schema.collections.id)).where(eq(schema.collections.projectId, id)).get())?.count ?? 0;
+  // Audit BEFORE destruction so the trail survives even if a later step dies mid-way.
+  await audit(c.env, c.get("user").id, "project.delete", "project", id, { street: project.street, assetCount, r2Prefix });
+  const keys: string[] = []; let cursor: string | undefined;
+  while (true) {
+    const page = await c.env.MEDIA.list({ prefix: r2Prefix, ...(cursor ? { cursor } : {}) });
+    keys.push(...page.objects.map((object) => object.key));
+    if (!page.truncated) break;
+    cursor = page.cursor;
+  }
+  for (let index = 0; index < keys.length; index += 1000) await c.env.MEDIA.delete(keys.slice(index, index + 1000));
+  await db.delete(schema.jobs).where(eq(schema.jobs.projectId, id));
+  await db.delete(schema.projects).where(eq(schema.projects.id, id));
+  return c.json({ ok: true, deletedObjects: keys.length });
+});
 projectsRoutes.post("/projects/:id/stage", async (c) => {
   const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
   if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);

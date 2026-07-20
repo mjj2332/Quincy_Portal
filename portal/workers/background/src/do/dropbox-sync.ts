@@ -5,15 +5,10 @@ import { integrationConnections, projects } from "@quincy/db/schema";
 import type { Env } from "../env";
 import { dbFor, errorMessage } from "../lib/db";
 import { DropboxCursorResetError, recordDropboxError, listFolder, listFolderContinue, type DropboxEntry, type DropboxFolderPage } from "../dropbox/client";
-import { syncProjectRawFolder } from "../dropbox/sync";
+import { normalisePath, syncProjectRawFolder } from "../dropbox/sync";
 
 const CURSOR_KEY = "cursor";
 const TICK_DELAY_MS = 60_000;
-
-function normalisePath(path: string): string {
-  const trimmed = path.trim().replace(/\\/g, "/").replace(/\/+$/, "");
-  return trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
-}
 
 function changedProjectIds(
   entries: DropboxEntry[],

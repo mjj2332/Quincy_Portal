@@ -15,6 +15,13 @@ export interface DropboxCredentials {
   refreshToken: string;
 }
 
+/** Resolved once for a sync so every file call uses the account's root namespace. */
+export interface DropboxClientContext {
+  connectionId: string;
+  accessToken: string;
+  pathRootHeader?: string;
+}
+
 export interface DropboxFile {
   ".tag": "file";
   name: string;
@@ -200,23 +207,75 @@ export async function getAccessToken(env: Env, db: Database, connectionId?: stri
   }
 }
 
+/**
+ * Dropbox Business accounts can have a team root distinct from a member's home namespace.
+ * Resolve it once, then pass this context through file API calls for the operation.
+ */
+export async function createDropboxClientContext(
+  env: Env,
+  db: Database,
+  connectionId?: string,
+): Promise<DropboxClientContext> {
+  const connection = await getConnection(db, connectionId);
+  try {
+    const accessToken = await getAccessToken(env, db, connection.id);
+    const response = await fetch(`${API_URL}/users/get_current_account`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${accessToken}` },
+    });
+    if (!response.ok) throw new Error(`Dropbox users/get_current_account failed (${response.status}): ${await response.text()}`);
+    const account: unknown = await response.json();
+    const rootInfo = isRecord(account) && isRecord(account.root_info) ? account.root_info : null;
+    const rootNamespaceId = rootInfo?.root_namespace_id;
+    const homeNamespaceId = rootInfo?.home_namespace_id;
+    const isTeamRoot = rootInfo?.[".tag"] === "team";
+    const pathRootHeader = typeof rootNamespaceId === "string" && (isTeamRoot || rootNamespaceId !== homeNamespaceId)
+      ? JSON.stringify({ ".tag": "root", root: rootNamespaceId })
+      : undefined;
+    return { connectionId: connection.id, accessToken, pathRootHeader };
+  } catch (error) {
+    await recordDropboxError(db, connection.id, error);
+    throw error;
+  }
+}
+
+async function resolveClient(
+  env: Env,
+  db: Database,
+  connectionId?: string,
+  client?: DropboxClientContext,
+): Promise<DropboxClientContext> {
+  return client ?? createDropboxClientContext(env, db, connectionId);
+}
+
+function fileHeaders(client: DropboxClientContext, headers: HeadersInit = {}, includePathRoot = true): Headers {
+  const result = new Headers(headers);
+  result.set("authorization", `Bearer ${client.accessToken}`);
+  if (includePathRoot && client.pathRootHeader) result.set("Dropbox-API-Path-Root", client.pathRootHeader);
+  return result;
+}
+
 async function authorisedJson(
   env: Env,
   db: Database,
   endpoint: string,
   payload: Record<string, unknown>,
   connectionId?: string,
+  client?: DropboxClientContext,
+  includePathRoot = true,
 ): Promise<unknown> {
-  const connection = await getConnection(db, connectionId);
+  const resolvedClient = await resolveClient(env, db, connectionId, client);
   try {
-    const token = await getAccessToken(env, db, connection.id);
     const response = await fetch(`${API_URL}${endpoint}`, {
       method: "POST",
-      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      headers: fileHeaders(resolvedClient, { "content-type": "application/json" }, includePathRoot),
       body: JSON.stringify(payload),
     });
     if (!response.ok) {
       const body = await response.text();
+      if (endpoint === "/files/list_folder" && response.status === 409 && /\bnot_found\b/i.test(body)) {
+        throw new Error(`Dropbox folder not found: ${JSON.stringify(payload.path)} — check the path in the project's Dropbox settings`);
+      }
       if (endpoint === "/files/list_folder/continue" && response.status === 409 && /\breset\b/i.test(body)) {
         throw new DropboxCursorResetError(`Dropbox cursor reset: ${body}`);
       }
@@ -225,7 +284,7 @@ async function authorisedJson(
     return await response.json() as unknown;
   } catch (error) {
     if (error instanceof DropboxCursorResetError) throw error;
-    await recordDropboxError(db, connection.id, error);
+    await recordDropboxError(db, resolvedClient.connectionId, error);
     throw error;
   }
 }
@@ -235,16 +294,17 @@ export async function getSharedLinkMetadata(
   db: Database,
   url: string,
   connectionId?: string,
+  client?: DropboxClientContext,
 ): Promise<string> {
-  const connection = await getConnection(db, connectionId);
+  const resolvedClient = await resolveClient(env, db, connectionId, client);
   try {
-    const value = await authorisedJson(env, db, "/sharing/get_shared_link_metadata", { url }, connection.id);
+    const value = await authorisedJson(env, db, "/sharing/get_shared_link_metadata", { url }, resolvedClient.connectionId, resolvedClient);
     if (!isRecord(value)) throw new Error("Dropbox returned an invalid shared-link response");
     if (typeof value.path_lower !== "string" || !value.path_lower) throw new Error("Shared link is not owned by / mounted in the studio Dropbox — use a folder inside the studio account.");
     return value.path_lower;
   } catch (error) {
     const message = errorMessage(error) === "Shared link is not owned by / mounted in the studio Dropbox — use a folder inside the studio account." ? errorMessage(error) : `Dropbox shared-link resolution failed; the Dropbox sharing.read scope may be missing: ${errorMessage(error)}`;
-    await recordDropboxError(db, connection.id, new Error(message));
+    await recordDropboxError(db, resolvedClient.connectionId, new Error(message));
     throw new Error(message);
   }
 }
@@ -255,13 +315,14 @@ export async function listFolder(
   path: string,
   options: { recursive?: boolean } = {},
   connectionId?: string,
+  client?: DropboxClientContext,
 ): Promise<DropboxFolderPage> {
   return parseFolderPage(
     await authorisedJson(env, db, "/files/list_folder", {
       path,
       recursive: options.recursive ?? false,
       include_deleted: false,
-    }, connectionId),
+    }, connectionId, client),
   );
 }
 
@@ -270,8 +331,9 @@ export async function listFolderContinue(
   db: Database,
   cursor: string,
   connectionId?: string,
+  client?: DropboxClientContext,
 ): Promise<DropboxFolderPage> {
-  return parseFolderPage(await authorisedJson(env, db, "/files/list_folder/continue", { cursor }, connectionId));
+  return parseFolderPage(await authorisedJson(env, db, "/files/list_folder/continue", { cursor }, connectionId, client));
 }
 
 export async function download(
@@ -280,12 +342,11 @@ export async function download(
   path: string,
   options: { range?: string } = {},
   connectionId?: string,
+  client?: DropboxClientContext,
 ): Promise<Response> {
-  const connection = await getConnection(db, connectionId);
+  const resolvedClient = await resolveClient(env, db, connectionId, client);
   try {
-    const token = await getAccessToken(env, db, connection.id);
-    const headers = new Headers({
-      authorization: `Bearer ${token}`,
+    const headers = fileHeaders(resolvedClient, {
       "Dropbox-API-Arg": JSON.stringify({ path }),
     });
     if (options.range) headers.set("range", options.range);
@@ -293,7 +354,7 @@ export async function download(
     if (!response.ok) throw new Error(`Dropbox files/download failed (${response.status}): ${await response.text()}`);
     return response;
   } catch (error) {
-    await recordDropboxError(db, connection.id, error);
+    await recordDropboxError(db, resolvedClient.connectionId, error);
     throw error;
   }
 }
@@ -304,23 +365,22 @@ export async function upload(
   path: string,
   body: ReadableStream<Uint8Array>,
   connectionId?: string,
+  client?: DropboxClientContext,
 ): Promise<DropboxFile> {
-  const connection = await getConnection(db, connectionId);
+  const resolvedClient = await resolveClient(env, db, connectionId, client);
   try {
-    const token = await getAccessToken(env, db, connection.id);
     const response = await fetch(`${CONTENT_URL}/files/upload`, {
       method: "POST",
-      headers: {
-        authorization: `Bearer ${token}`,
+      headers: fileHeaders(resolvedClient, {
         "content-type": "application/octet-stream",
         "Dropbox-API-Arg": JSON.stringify({ path, mode: "overwrite", autorename: false, mute: true }),
-      },
+      }),
       body,
     });
     if (!response.ok) throw new Error(`Dropbox files/upload failed (${response.status}): ${await response.text()}`);
     return parseEntry(await response.json() as unknown) as DropboxFile;
   } catch (error) {
-    await recordDropboxError(db, connection.id, error);
+    await recordDropboxError(db, resolvedClient.connectionId, error);
     throw error;
   }
 }

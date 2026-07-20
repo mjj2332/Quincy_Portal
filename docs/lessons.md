@@ -66,3 +66,21 @@
   probe/substitute other agents unless asked again; (2) check the user's stated target rather
   than inferring intent from what's already deployed; (3) for reversible domain cutovers, keep
   the old app live on a second hostname first as an immediate rollback target.
+
+- **Style what's actually rendered — verify selector↔markup pairing.** Tile stars shipped
+  as CSS targeting `.tstars svg`, but the component renders text `★` spans: the on/off
+  distinction silently died and every rated tile read as 5★. **Rule:** when styling or
+  reviewing a component, open the component and confirm the selectors match its real DOM
+  (spans vs svg, class names) — a selector that matches nothing fails without any error.
+
+- **Never invoke a Hono middleware factory manually with a body closure.**
+  `requireCapability("x")(c, async () => c.json(...))` discards the closure's return value —
+  the route falls through (404) on the success path. **Rule:** middleware goes in the route
+  registration list; inside a handler body, do inline capability checks
+  (`ROLE_CAPABILITIES[role].includes(...)`) and return the response directly.
+
+- **Guard destructive operations at the writer, not only at the trigger.** Project deletion
+  checked "no queued/running jobs" but a Dropbox sync could still start in the race window
+  and write R2 objects under a purged prefix. **Rule:** background writers must re-check
+  terminal state themselves (archived/deleted) before writing — trigger-side checks are
+  TOCTOU by construction.

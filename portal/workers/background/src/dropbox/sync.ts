@@ -1,20 +1,27 @@
-import { assets, collections, projects } from "@quincy/db/schema";
+import { assets, collections, jobs, projects } from "@quincy/db/schema";
 import { isAcceptedPhotoFilename, parseXmpRating, XMP_SCAN_BYTES, xmpRatingToStars } from "@quincy/shared";
-import { and, eq, isNull, or, sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 
 import type { Env } from "../env";
 import { dbFor, errorMessage } from "../lib/db";
 import { createJob, setJobStatus } from "../lib/jobs";
 import type { IngestMessage } from "../messages";
-import { download, getSharedLinkMetadata, listFolder, listFolderContinue, type DropboxFile } from "./client";
+import { createDropboxClientContext, download, getSharedLinkMetadata, listFolder, listFolderContinue, type DropboxClientContext, type DropboxFile } from "./client";
 
-function normalisePath(path: string): string {
-  const trimmed = path.trim().replace(/\\/g, "/").replace(/\/+$/, "");
-  if (!trimmed) return "";
-  return trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+export function normalisePath(path: string): string {
+  let normalised = path.trim().replace(/\\/g, "/").replace(/\/+/g, "/");
+  if (/^\/(?:users|volumes)\//i.test(normalised)) {
+    const segments = normalised.split("/");
+    // Matches team-space roots ("Quincy Productions Dropbox") and the personal "Dropbox" folder,
+    // without stripping unrelated segments that merely contain the word.
+    const dropboxIndex = segments.findIndex((segment) => /(?:^| )Dropbox$/i.test(segment));
+    if (dropboxIndex !== -1) normalised = segments.slice(dropboxIndex + 1).join("/");
+  }
+  normalised = normalised.replace(/^\/+|\/+$/g, "");
+  return normalised ? `/${normalised}` : "";
 }
 
-async function pathFromRawFolderLink(env: Env, rawFolderLink: string | null, connectionId?: string): Promise<string | null> {
+async function pathFromRawFolderLink(env: Env, rawFolderLink: string | null, connectionId?: string, client?: DropboxClientContext): Promise<string | null> {
   if (!rawFolderLink) return null;
   let url: URL;
   try {
@@ -31,7 +38,7 @@ async function pathFromRawFolderLink(env: Env, rawFolderLink: string | null, con
   const homeMarker = "/home";
   const markerIndex = url.pathname.toLowerCase().indexOf(homeMarker);
   if (markerIndex !== -1) return normalisePath(decodeURIComponent(url.pathname.slice(markerIndex + homeMarker.length)));
-  return normalisePath(await getSharedLinkMetadata(env, dbFor(env), rawFolderLink, connectionId));
+  return normalisePath(await getSharedLinkMetadata(env, dbFor(env), rawFolderLink, connectionId, client));
 }
 
 function expectedCountFromFolder(path: string): number | null {
@@ -43,15 +50,24 @@ function expectedCountFromFolder(path: string): number | null {
   return Number.isSafeInteger(count) && count >= 0 ? count : null;
 }
 
-async function allFolderFiles(env: Env, path: string, connectionId?: string): Promise<DropboxFile[]> {
+async function allFolderFiles(env: Env, path: string, connectionId: string | undefined, client: DropboxClientContext): Promise<DropboxFile[]> {
   const db = dbFor(env);
-  let page = await listFolder(env, db, path, { recursive: false }, connectionId);
+  let page = await listFolder(env, db, path, { recursive: true }, connectionId, client);
   const files: DropboxFile[] = [];
   while (true) {
     files.push(...page.entries.filter((entry): entry is DropboxFile => entry[".tag"] === "file"));
     if (!page.has_more) return files;
-    page = await listFolderContinue(env, db, page.cursor, connectionId);
+    page = await listFolderContinue(env, db, page.cursor, connectionId, client);
   }
+}
+
+function subfolderKind(file: DropboxFile, rootPath: string): "capture" | "premium" | "skip" {
+  const root = normalisePath(rootPath).toLowerCase();
+  const filePath = normalisePath(file.path_lower).toLowerCase();
+  if (!filePath.startsWith(`${root}/`)) return "skip";
+  const relative = filePath.slice(root.length).split("/").filter(Boolean);
+  if (relative.length === 1) return "capture";
+  return relative.length === 2 && relative[0] === "extras" ? "premium" : "skip";
 }
 
 async function ensureRawCollection(env: Env, projectId: string): Promise<{ id: string; expectedCount: number | null }> {
@@ -89,15 +105,18 @@ export async function syncProjectRawFolder(
 
   try {
     const [project] = await db
-      .select({ rawFolderPath: projects.rawFolderPath, rawFolderLink: projects.rawFolderLink })
+      .select({ rawFolderPath: projects.rawFolderPath, rawFolderLink: projects.rawFolderLink, archivedAt: projects.archivedAt })
       .from(projects)
       .where(eq(projects.id, projectId))
       .limit(1);
     if (!project) throw new Error(`Project ${projectId} does not exist`);
+    // Writer-side guard: archived projects are deletable, and deletion races any sync that
+    // slips in after its active-jobs check — refuse at the source, not just at the trigger.
+    if (project.archivedAt) throw new Error(`Project ${projectId} is archived — Dropbox sync refused`);
 
-    const rawFolderPath = project.rawFolderPath ? normalisePath(project.rawFolderPath) : normalisePath(await pathFromRawFolderLink(env, project.rawFolderLink, connectionId) ?? "");
+    const client = await createDropboxClientContext(env, db, connectionId);
+    const rawFolderPath = project.rawFolderPath ? normalisePath(project.rawFolderPath) : normalisePath(await pathFromRawFolderLink(env, project.rawFolderLink, connectionId, client) ?? "");
     if (!rawFolderPath) throw new Error(`Project ${projectId} has no resolvable Dropbox RAW folder path`);
-    if (!project.rawFolderPath) await db.update(projects).set({ rawFolderPath, updatedAt: new Date() }).where(and(eq(projects.id, projectId), or(isNull(projects.rawFolderPath), eq(projects.rawFolderPath, ""))));
 
     const collection = await ensureRawCollection(env, projectId);
     const expectedCount = expectedCountFromFolder(rawFolderPath);
@@ -108,28 +127,35 @@ export async function syncProjectRawFolder(
         .where(and(eq(collections.id, collection.id), isNull(collections.expectedCount)));
     }
 
-    const files = await allFolderFiles(env, rawFolderPath, connectionId);
+    const files = await allFolderFiles(env, rawFolderPath, connectionId, client);
+    let skippedSubfolderFiles = 0;
     for (const file of files) {
       if (!isAcceptedPhotoFilename(file.name)) continue;
+      const kind = subfolderKind(file, rawFolderPath);
+      if (kind === "skip") { skippedSubfolderFiles += 1; continue; }
       if (file.content_hash) {
         const [existing] = await db
-          .select({ id: assets.id })
+          .select({ id: assets.id, isPremium: assets.isPremium })
           .from(assets)
-          .where(eq(assets.contentHash, file.content_hash))
+          .innerJoin(collections, eq(assets.collectionId, collections.id))
+          .where(and(eq(assets.contentHash, file.content_hash), eq(collections.projectId, projectId), eq(collections.kind, "raw")))
           .limit(1);
-        if (existing) continue;
+        if (existing) {
+          if (existing.isPremium !== (kind === "premium")) await db.update(assets).set({ isPremium: kind === "premium", updatedAt: new Date() }).where(eq(assets.id, existing.id));
+          continue;
+        }
       }
 
       const assetId = crypto.randomUUID();
       const r2Key = `projects/${projectId}/raw/${assetId}/${file.name}`;
       const sourcePath = file.path_display ?? file.path_lower;
-      const source = await download(env, db, sourcePath, {}, connectionId);
+      const source = await download(env, db, sourcePath, {}, connectionId, client);
       if (!source.body) throw new Error(`Dropbox returned no body for ${file.name}`);
       await env.MEDIA.put(r2Key, source.body, {
         httpMetadata: { contentType: "image/jpeg" },
       });
 
-      const header = await download(env, db, sourcePath, { range: `bytes=0-${XMP_SCAN_BYTES - 1}` }, connectionId);
+      const header = await download(env, db, sourcePath, { range: `bytes=0-${XMP_SCAN_BYTES - 1}` }, connectionId, client);
       const rating = xmpRatingToStars(parseXmpRating(await header.arrayBuffer()));
       const inserted = await db
         .insert(assets)
@@ -143,6 +169,7 @@ export async function syncProjectRawFolder(
           contentHash: file.content_hash ?? null,
           source: "dropbox",
           ratingFromMetadata: rating,
+          isPremium: kind === "premium",
         })
         .onConflictDoNothing()
         .returning({ id: assets.id });
@@ -155,6 +182,13 @@ export async function syncProjectRawFolder(
       const message: IngestMessage = { type: "asset_ingested", assetId };
       await env.INGEST_QUEUE.send(message);
     }
+    if (skippedSubfolderFiles > 0) {
+      await db.update(jobs).set({
+        payloadJson: JSON.stringify({ note: `skipped ${skippedSubfolderFiles} files in unrecognized subfolders`, skippedSubfolderFiles }),
+        updatedAt: new Date(),
+      }).where(eq(jobs.id, trackingJobId));
+    }
+    if (project.rawFolderPath !== rawFolderPath) await db.update(projects).set({ rawFolderPath, updatedAt: new Date() }).where(eq(projects.id, projectId));
     await setJobStatus(db, trackingJobId, "done");
   } catch (error) {
     await setJobStatus(db, trackingJobId, "failed", errorMessage(error));

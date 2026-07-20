@@ -208,11 +208,12 @@ button { font-family: var(--font-sans); }
 .tile__heart.is-on svg { fill: #fff; }
 
 /* rating stars on tile */
-.tstars { position: absolute; right: 9px; bottom: 9px; z-index: 3; display: flex; gap: 2px; opacity: 0; transition: opacity var(--dur-base); }
+/* Stars render as text ★ spans (components/atoms.tsx), NOT svg — selectors must target
+   the spans or the on/off distinction silently dies (shipped once: every tile read as 5★). */
+.tstars { position: absolute; right: 9px; bottom: 9px; z-index: 3; display: flex; gap: 2px; opacity: 0; transition: opacity var(--dur-base); line-height: 1; }
 .tile:hover .tstars, .tile.has-rating .tstars { opacity: 1; }
-.tstars svg { width: 13px; height: 13px; color: #fff; }
-.tstars .on svg { fill: #fff; }
-.tstars .off svg { opacity: .45; }
+.tstars .on { color: #f0a020; text-shadow: 0 1px 4px rgba(0,0,0,.55); }
+.tstars .off { color: rgba(255,255,255,.28); text-shadow: 0 1px 3px rgba(0,0,0,.4); }
 
 /* comment count pin on tile */
 .cbubble { display: inline-flex; align-items: center; gap: 4px; padding: 4px 8px; border-radius: var(--radius-pill); background: rgba(20,20,21,.6); backdrop-filter: blur(6px); color: #fff; font: var(--type-mono); font-size: 11px; }
@@ -449,9 +450,8 @@ button { font-family: var(--font-sans); }
 .dbtn.on-flag.is-on { background: var(--signal-critical); border-color: var(--signal-critical); color: #fff; }
 
 .starpick { display: flex; gap: 4px; }
-.starpick button { background: none; border: 0; cursor: pointer; padding: 2px; color: var(--text-muted); }
-.starpick button svg { width: 22px; height: 22px; }
-.starpick button.on { color: var(--ink-900); } .starpick button.on svg { fill: var(--ink-900); }
+.starpick button { background: none; border: 0; cursor: pointer; padding: 2px; color: var(--text-muted); font-size: 22px; line-height: 1; }
+.starpick button.on { color: #9a6a1f; text-shadow: 0 1px 1px rgba(0,0,0,.12); }
 
 .labels { display: flex; gap: var(--space-3); }
 .labelpick { width: 26px; height: 26px; border-radius: 50%; border: 1px solid var(--border-hairline); cursor: pointer; position: relative; }
@@ -819,3 +819,16 @@ button { font-family: var(--font-sans); }
   .create-project__fields { grid-template-columns: 1fr 1fr; }
   .create-project__checks { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
+
+/* Project deletion --------------------------------------------------- */
+.edit-project__archived { display: inline-flex; margin-top: var(--space-3); padding: 5px 8px; border: 1px solid color-mix(in srgb, var(--signal-caution) 45%, var(--border-hairline)); background: color-mix(in srgb, var(--signal-caution) 8%, var(--paper-000)); color: var(--signal-caution); font: var(--type-eyebrow); font-size: 10px; letter-spacing: var(--tracking-wide); text-transform: uppercase; }
+.danger-zone { display: grid; gap: var(--space-5); margin-top: var(--space-8); padding: var(--space-5); border: 1px solid color-mix(in srgb, var(--signal-critical) 48%, var(--border-hairline)); background: color-mix(in srgb, var(--signal-critical) 4%, var(--paper-000)); }
+.danger-zone h2 { margin: 5px 0 0; font: var(--type-h3); font-size: 29px; letter-spacing: var(--tracking-tight); }
+.danger-zone__action, .danger-zone__delete { display: flex; align-items: end; justify-content: space-between; gap: var(--space-5); padding-top: var(--space-5); border-top: 1px solid color-mix(in srgb, var(--signal-critical) 28%, var(--border-hairline)); }
+.danger-zone strong { color: var(--text-primary); font-size: 14px; font-weight: 500; }
+.danger-zone p { max-width: 52ch; margin: 6px 0 0; color: var(--text-secondary); font-size: 13.5px; line-height: 1.5; }
+.danger-zone__delete { display: grid; grid-template-columns: minmax(0, 1fr) minmax(220px, .7fr) auto; }
+.danger-zone__button { border-color: var(--signal-critical); background: var(--signal-critical); }
+.danger-zone__button:hover:not(:disabled) { border-color: color-mix(in srgb, var(--signal-critical) 84%, var(--ink-900)); background: color-mix(in srgb, var(--signal-critical) 84%, var(--ink-900)); }
+.danger-zone__notice { padding: var(--space-3); color: var(--signal-positive); background: color-mix(in srgb, var(--signal-positive) 8%, var(--paper-000)); font-size: var(--text-sm); }
+@media (max-width: 720px) { .danger-zone__action, .danger-zone__delete { align-items: stretch; grid-template-columns: 1fr; } .danger-zone__action { flex-direction: column; } .danger-zone__action .button, .danger-zone__delete .button { width: 100%; } }

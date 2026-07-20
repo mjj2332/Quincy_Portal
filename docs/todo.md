@@ -65,6 +65,21 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/other agents 
   shared discussion-refresh code (stale-asset refresh clobbering the current asset; edit
   rollback not asset-guarded).
 
+**Wave: deletion + Dropbox team-space + stars (2026-07-20, deployed)**
+- Star display fix (WP-V): tile stars are text `★` spans, not svg — CSS retargeted; bright
+  gold `#f0a020` on tiles, darker `#9a6a1f` in the lightbox star picker (light panel contrast).
+- Two-step project deletion (WP-W): archive first, then admin-only typed-street-confirmed
+  DELETE — audit-first, paginated R2 prefix purge, 409 while background jobs are
+  queued/running, writer-side archived guard in Dropbox sync (TOCTOU defense).
+- Dropbox Business team-space support (WP-X/Y): `Dropbox-API-Path-Root` header resolved
+  once per sync and applied to ALL file calls including shared-link resolution; shared
+  `normalisePath` (Finder-path stripping needs a segment (^| )Dropbox$); canonical path
+  persisted after successful sync so webhook matching can't silently miss.
+- EXTRAS upsell folder (WP-X/Y): one-level `EXTRAS/` JPEGs ingest as `isPremium`;
+  Captures/Extras grid sections with visual-order shift-selection and matching lightbox
+  navigation order; project+raw-scoped content-hash dedupe that updates `isPremium` when a
+  file moves between root and EXTRAS.
+
 **Repo hygiene**
 - Reorganized repo into `prototype/ · portal/ · docs/ · test-data/`; wrote CLAUDE.md/AGENTS.md
   as the project guide (2026-07-20).

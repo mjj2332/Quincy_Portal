@@ -473,6 +473,84 @@ describe("staff app API", () => {
     expect(forbidden.status).toBe(403);
   });
 
+  it("permanently deletes an archived project, its jobs, and all project R2 media", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const created = await SELF.fetch("https://portal.test/api/projects", {
+      method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ street: "Delete me", orderedServices: [] }),
+    });
+    expect(created.status).toBe(201);
+    const project = await created.json() as { id: string };
+    const raw = await database.DB.prepare("SELECT id FROM collections WHERE project_id = ? AND kind = 'raw'").bind(project.id).first<{ id: string }>();
+    const media = env as unknown as { MEDIA: R2Bucket }; const now = Date.now();
+    const keys = [`projects/${project.id}/originals/one.jpg`, `projects/${project.id}/annotations/two.json`];
+    for (const key of keys) {
+      await media.MEDIA.put(key, key);
+      await database.DB.prepare("INSERT INTO assets (id, collection_id, r2_key, original_filename, bytes, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").bind(crypto.randomUUID(), raw!.id, key, "delete.jpg", key.length, "upload", now, now).run();
+    }
+    const jobId = crypto.randomUUID();
+    await database.DB.prepare("INSERT INTO jobs (id, kind, status, project_id, retries, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)").bind(jobId, "delete-test", "done", project.id, 0, now, now).run();
+    expect((await SELF.fetch(`https://portal.test/api/projects/${project.id}/archive`, { method: "POST", headers: { cookie, "content-type": "application/json" }, body: "{}" })).status).toBe(200);
+
+    const response = await SELF.fetch(`https://portal.test/api/projects/${project.id}`, { method: "DELETE", headers: { cookie } });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ ok: true, deletedObjects: 2 });
+    expect(await database.DB.prepare("SELECT id FROM projects WHERE id = ?").bind(project.id).first()).toBeNull();
+    expect(await database.DB.prepare("SELECT id FROM jobs WHERE id = ?").bind(jobId).first()).toBeNull();
+    for (const key of keys) expect(await media.MEDIA.get(key)).toBeNull();
+  });
+
+  it("refuses to delete an archived project while background work is active", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const created = await SELF.fetch("https://portal.test/api/projects", {
+      method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ street: "Active work", orderedServices: [] }),
+    });
+    const project = await created.json() as { id: string };
+    const media = env as unknown as { MEDIA: R2Bucket }; const now = Date.now(); const key = `projects/${project.id}/originals/intact.jpg`; const jobId = crypto.randomUUID();
+    await media.MEDIA.put(key, "intact");
+    await database.DB.prepare("INSERT INTO jobs (id, kind, status, project_id, retries, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)").bind(jobId, "dropbox_sync", "running", project.id, 0, now, now).run();
+    expect((await SELF.fetch(`https://portal.test/api/projects/${project.id}/archive`, { method: "POST", headers: { cookie, "content-type": "application/json" }, body: "{}" })).status).toBe(200);
+
+    const blocked = await SELF.fetch(`https://portal.test/api/projects/${project.id}`, { method: "DELETE", headers: { cookie } });
+    expect(blocked.status).toBe(409);
+    await expect(blocked.json()).resolves.toEqual({ error: "Background work is still running for this project — wait for it to finish and try again.", activeJobs: 1 });
+    expect(await database.DB.prepare("SELECT id FROM projects WHERE id = ?").bind(project.id).first()).not.toBeNull();
+    expect(await media.MEDIA.get(key)).not.toBeNull();
+
+    await database.DB.prepare("UPDATE jobs SET status = 'done', updated_at = ? WHERE id = ?").bind(Date.now(), jobId).run();
+    expect((await SELF.fetch(`https://portal.test/api/projects/${project.id}`, { method: "DELETE", headers: { cookie } })).status).toBe(200);
+    expect(await media.MEDIA.get(key)).toBeNull();
+  });
+
+  it("refuses to delete a non-archived project without changing its media or rows", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const created = await SELF.fetch("https://portal.test/api/projects", {
+      method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ street: "Not archived", orderedServices: [] }),
+    });
+    const project = await created.json() as { id: string };
+    const raw = await database.DB.prepare("SELECT id FROM collections WHERE project_id = ? AND kind = 'raw'").bind(project.id).first<{ id: string }>();
+    const key = `projects/${project.id}/originals/intact.jpg`; const media = env as unknown as { MEDIA: R2Bucket }; const now = Date.now();
+    await media.MEDIA.put(key, "intact");
+    await database.DB.prepare("INSERT INTO assets (id, collection_id, r2_key, original_filename, bytes, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").bind(crypto.randomUUID(), raw!.id, key, "intact.jpg", 6, "upload", now, now).run();
+
+    const response = await SELF.fetch(`https://portal.test/api/projects/${project.id}`, { method: "DELETE", headers: { cookie } });
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({ error: "Archive the project before deleting it." });
+    expect(await database.DB.prepare("SELECT id FROM projects WHERE id = ?").bind(project.id).first()).not.toBeNull();
+    expect(await database.DB.prepare("SELECT r2_key FROM assets WHERE collection_id = ?").bind(raw!.id).first()).toEqual({ r2_key: key });
+    expect(await media.MEDIA.get(key)).not.toBeNull();
+  });
+
+  it("prevents an editor from permanently deleting a project", async () => {
+    const created = await SELF.fetch("https://portal.test/api/projects", {
+      method: "POST", headers: { cookie: await sessionCookie(adminToken), "content-type": "application/json" }, body: JSON.stringify({ street: "Editor cannot delete", orderedServices: [] }),
+    });
+    const project = await created.json() as { id: string };
+    const response = await SELF.fetch(`https://portal.test/api/projects/${project.id}`, { method: "DELETE", headers: { cookie: await sessionCookie(editorToken) } });
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({ error: "Forbidden", capability: "adminBackend" });
+    expect(await database.DB.prepare("SELECT id FROM projects WHERE id = ?").bind(project.id).first()).not.toBeNull();
+  });
+
   it("allows an author to edit their own comment", async () => {
     const { commentId } = await createEditableComment();
     const response = await SELF.fetch(`https://portal.test/api/comments/${commentId}`, {
