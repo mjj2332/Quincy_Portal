@@ -1,54 +1,88 @@
-# Quincy Portal — Phase 0–2 build (started 2026-07-19)
+# Quincy Portal — build tracker
 
-Orchestration: Claude = planner/orchestrator/contract-layer; Codex agents = groundwork.
-Production code lives in `portal/` (new monorepo). Agents may not touch anything outside `portal/`.
+Orchestration: Claude = planner/orchestrator/contract-layer; Codex/other agents = groundwork.
 
-## Phase 0 — Foundations
-- [x] WP-ROOT (orchestrator): monorepo scaffold — workspaces, tsconfig, deps preinstalled (better-auth 1.6 / drizzle 0.45 / hono 4.12 / vite 8 / wrangler 4.112 / TS 7), wrangler configs for 3 workers, node_modules Dropbox-ignored
-- [x] WP-CONTRACT (orchestrator): `packages/shared` (capabilities, stages, media, XMP parser, AES-GCM credential envelope) + `packages/db` (drizzle schema v1 → migration 0000 generated, seed SQL w/ stages + bootstrap admin). Both typecheck clean.
-- [x] **Spike ④ VERIFIED**: shared XMP parser passes 43/43 real fixtures from a 256 KB range-read (8×1-star, 35 unrated; null ≠ 0 semantics correct)
-- [x] WP-B (codex): `apps/web` — Vite SPA shell + design-system port, sign-in screen, dashboard. Verified: tsc clean (independent re-run), vite build produces dist, fonts/brand ported, session gating + capability-gated admin nav correct.
-- [x] WP-C (codex): `workers/app` — better-auth Google-only closed-signup (user-create hook throws; disableSignUp+disableImplicitSignUp; inactive→session reject; deactivate revokes sessions), capability + membership middleware, users/projects(archive-only)/uploads/media/integrations/review routes, audit. Verified: tsc, boots locally, /api/health + auth route respond.
-- [x] WP-D (codex): background worker (Dropbox client w/ refresh rotation, sync engine — JPEG-only/content_hash-idempotent/XMP-rating, DropboxSyncDO cursor alarm, AutoHdrRoundtrip workflow w/ source_raw_asset_id pairing + stuck detection) + webhook-ingress (constant-time HMAC, dedupe, fast-ack). Verified: tsc, both boot, challenge echo + 404 surface.
-- [x] Integration fixes (orchestrator): removed WP-D's @quincy/shared type shim → unified lib ES2022+DOM incl. shared's own tsconfig; added missing POST /api/projects/:id/dropbox-sync route + typed Service<QuincyBackground> binding; 6/6 workspaces tsc green. Committed e6d3719 + 91ee387 on build/phase-0-2.
-- [x] WP-E (codex): Phase-1 UI — ProjectWorkspace, UploadDropzone, PhotoGrid, Lightbox (+ added GET /projects/:id/assets route). Verified: tsc + build.
-- [x] WP-F (codex): tests + CI. Verified: shared 13/13 (incl. 43-fixture XMP scan), worker 3/3 after orchestrator fixes.
-- [x] Integration fixes wave 3 (orchestrator): **critical Hono middleware-leak bug** (use("*") capability gates 403-locking photographers out of later-mounted routes — caught by the photographer-session test, fixed by path-scoping, regression now locked); test-harness BACKGROUND stub + D1 SQL flattening; presign devDirect contract. Committed f9f30fe. Lessons → docs/lessons.md.
-- [x] WP-G (codex): Phase 2 — startAutoHdr RPC + workflow job lifecycle (queued→running→done/stuck@48h/failed), send-to-autohdr + jobs + retry routes, Edited QA tab, RAW↔Edited compare (sourceRawAssetId), annotations/comments API + freehand markup, threaded comments. Verified: 6/6 tsc, 13+3 tests, build. Deferred: synced zoom in compare.
-- [x] Cloudflare resources provisioned (orchestrator, direct via authenticated wrangler — Codex's MCP path hit a non-interactive approval wall, abandoned): D1 `quincy-portal` (1d36b42e-f1e6-4659-8c9e-70afe822b6fa, account 5649541c0660b8c9b45d114a868ebc13), KV `quincy-portal-sessions` (1344f43c2da84b28bc8729ac15c36925), Queue `quincy-ingest` — all fresh, no collisions. Real IDs written into all 3 wrangler.jsonc (zero placeholders remain, tsc clean). Schema (24 tables) + seed applied to REMOTE D1; verified via query: 5 pipeline stages + bootstrap admin (mjj2332@gmail.com, active) present.
-- [x] Cloudflare R2 enabled by user through the dashboard; MEDIA bucket `quincy-portal-media` created via wrangler (Standard storage class). Both `workers/app` and `workers/background` wrangler.jsonc already referenced it by name only — no ID edit needed.
-- [x] Google OAuth client created by user: project "Quincy Portal" (`keen-virtue-502912-m2`), consent screen External/Testing, owner added as test user. Client ID `544815162886-4rm94a760isbac5h0e5l11uh562m0gh6.apps.googleusercontent.com`. Client secret deliberately kept out of chat (in user's password manager) — not written anywhere by the orchestrator.
-- [x] `portal/workers/app/.dev.vars` created (gitignored, verified via `git check-ignore`): BETTER_AUTH_SECRET generated (openssl rand -base64 32), GOOGLE_CLIENT_ID filled in, GOOGLE_CLIENT_SECRET left blank for the user to paste directly into the file. Boot-verified: /api/health + /api/auth/get-session respond 200; Google sign-in route correctly 404s until the secret is pasted in (auth.ts only registers the provider when both ID+secret are present — expected, not a bug).
-- [x] Google Client Secret added to the gitignored `portal/workers/app/.dev.vars`; local/provider configuration and production secret-name upload verified without exposing values.
-- [x] R2 S3 API token created for presigned multipart upload (`quincyportal presigned uploads`, Object Read & Write, all current and future buckets). `R2_ACCOUNT_ID`, `R2_S3_ACCESS_KEY_ID`, and `R2_S3_SECRET_ACCESS_KEY` are set in the gitignored `portal/workers/app/.dev.vars`.
-- [ ] First-deploy checklist:
-  - [x] Better Auth Google linking is regression-tested: a verified Google identity links to the existing unverified `seed-admin`, creates one Google account + session, unknown identities cannot sign up, and inactive users cannot create sessions (8/8 app Worker tests green).
-  - [x] Spike ②: real two-part R2 S3 multipart upload passed at 67,109,888 bytes; CORS preflight passed, `ETag` was browser-readable, completion size matched, and cleanup left zero spike objects.
-  - [x] Spike ③: deployed routing passed — authenticated unknown `/api/*` + `/media/*` return JSON 404; `/` + unknown client routes return the SPA shell.
-  - [x] First Worker deploy completed in dependency order: background `f11aa6a7-9fd8-4bc5-bdb3-5b0dc2795c9a`, webhook `c677c1bb-ca40-420e-b971-219ba465020b`, app current `4bf0994b-9f63-4ca3-bb91-e96c782f1f73`. Queue producer/consumer, Workflow, DO migration, D1/KV/R2/service/assets bindings, health endpoints, and six app secret names verified.
-  - [x] Existing prototype preserved at `https://prototype.quincy.flamingfire.my`; new app remains live at `https://staging.quincy.flamingfire.my` and `https://quincy-portal-app.mjj2332.workers.dev`.
-  - [x] **Spike ① CLOSED (2026-07-19).** User added both hostnames to Transformations Sources. Two real bugs then found+fixed in the media route: a Worker's same-zone subrequest skips the whole CF pipeline (loop prevention), so BOTH fetch(cf.image) AND in-Worker /cdn-cgi/image/ fetches dead-end at the assets layer (inner 404 → 502). Fix: the authenticated /media route now 302-redirects the client to the /cdn-cgi/image/ URL over the HMAC-signed /__transform-source/ path — both legs verified live. Gate rewritten to use REAL photographs (synthetic padded 1×1 fixture caused CF internal err=9516): **GATE PASSED at 28.4 MB real export AND at an 83.8 MB / 88 MP real JPEG** (beyond the 50 MB spec bound). Zero gate residue after both runs.
-  - [x] **Production cutover DONE (2026-07-19).** `quincy.flamingfire.my` → `quincy-portal-app` via Workers custom-domain override (Cloudflare MCP). Verified: prod health ok, SPA 200, Google sign-in initiation returns a real accounts.google.com URL; staging healthy; prototype.quincy.flamingfire.my untouched. BETTER_AUTH_SECRET was rotated for the gate — value in gitignored `portal/workers/app/.prod-secrets.local` → USER: move to password manager and delete the file.
-  - [ ] USER: real interactive Google browser login at **https://quincy.flamingfire.my** (the staging-origin 404 the user hit is fixed by the cutover — callbacks now land on the app worker). Note: sign-in FROM staging still bounces to the prod origin (single APP_ORIGIN); use prod, or we add multi-origin later.
-  - [ ] Hardening follow-up: add expiry to the /__transform-source HMAC signature (currently unexpiring per-key URLs; noted in media.ts TODO).
+## Status
+- Branch `build/phase-0-2` (not yet merged to `main`). Production live at
+  `quincy.flamingfire.my`; staging at `staging.quincy.flamingfire.my`; prototype preserved at
+  `prototype.quincy.flamingfire.my`.
+- Phases 0–2 built and deployed: foundations/auth/infra, capture ingest + RAW QA, autoHDR +
+  Edited QA, and the review lightbox (comments, markup, edit/delete) through wave WP-O.
+  Repo reorganized into `prototype/ · portal/ · docs/ · test-data/` with a fresh CLAUDE.md/AGENTS.md (2026-07-20).
+- Latest verified state: 6/6 workspaces typecheck clean; tests `packages/shared` 13/13,
+  `workers/app` 19/19, `workers/webhook-ingress` 3/3; SPA build clean.
 
-## Phase 1 — Capture ingest + RAW QA
-- [x] Dashboard, project workspace, RAW grid, upload UI, file-count verification, RAW QA tooling — built in Phase-0 waves WP-E/WP-G above (these lines were stale duplicates; code is committed and tested)
-- [ ] Dropbox manual sync UI exists (workspace button); **studio OAuth connect UI** ships in WP-H (running); live end-to-end sync blocked on Dropbox app registration (user)
+## Done
 
-## Phase 2 — autoHDR + Edited QA
-- [x] Workflow round-trip, Edited QA, RAW↔Edited compare, jobs/retry (stuck recovery) — built in WP-G above (stale duplicates removed)
-- [ ] Dropbox webhook LIVE path (DO alarm cursor sync) — code deployed; untestable until Dropbox app registration + webhook URL registration (user)
+**Phase 0 — Foundations**
+- Monorepo scaffold (workspaces, tsconfig, deps, wrangler configs for 3 workers).
+- `packages/shared` (capabilities, stages, media rules, XMP parser, AES-GCM credential
+  envelope) + `packages/db` (Drizzle schema, migration 0000, seed). XMP parser verified
+  43/43 real fixtures (Spike ④).
+- `apps/web`: Vite SPA shell + design-system port, sign-in, dashboard.
+- `workers/app`: better-auth Google-only closed signup, capability/membership middleware,
+  users/projects/uploads/media/integrations/review routes, audit log.
+- `workers/background`: Dropbox client (refresh rotation), sync engine (JPEG-only,
+  content-hash idempotent, XMP rating), DropboxSyncDO cursor alarm, AutoHdrRoundtrip workflow.
+- `workers/webhook-ingress`: constant-time HMAC verification, dedupe, fast-ack.
+- Phase-1 UI: ProjectWorkspace, UploadDropzone, PhotoGrid, Lightbox. Test suite + CI stood up.
+- Fixed critical Hono middleware-leak bug (403-locked non-admin roles out of later-mounted
+  routes) — see `docs/lessons.md`.
+- Cloudflare resources provisioned on the real account: D1 `quincy-portal`
+  (`1d36b42e-f1e6-4659-8c9e-70afe822b6fa`), KV `quincy-portal-sessions`
+  (`1344f43c2da84b28bc8729ac15c36925`), Queue `quincy-ingest`, R2 `quincy-portal-media`
+  (account `5649541c0660b8c9b45d114a868ebc13`). Schema (24 tables) + seed applied to remote D1.
+- Google OAuth client: project `keen-virtue-502912-m2`, Client ID
+  `544815162886-4rm94a760isbac5h0e5l11uh562m0gh6.apps.googleusercontent.com` (secret lives
+  only in the user's password manager / Worker secrets, never in the repo).
+- R2 S3 API token for presigned multipart uploads (`quincyportal presigned uploads`);
+  credentials in gitignored `.dev.vars`.
+- First deploy hardened: better-auth Google-linking regression tests, Spike ② (67 MB R2
+  multipart upload) and Spike ③ (deployed routing) both passed, all 3 workers deployed in
+  dependency order, prototype preserved on its own hostname.
+- Admin backend UI (WP-H): Users provisioning/deactivation + Integrations (Dropbox connect)
+  tabs, replacing the placeholder.
+- Scripted Spike-① transform gate (WP-I): `portal/scripts/verify-transform-gate.mjs`,
+  one-command re-verification with strict temp-data cleanup.
+- Spike ① closed + production cutover: root cause was a Worker's same-zone subrequest
+  bypassing the whole Cloudflare pipeline; fixed via a signed `/cdn-cgi/image/` redirect.
+  Gate passed at 28.4 MB and 83.8 MB/88 MP real photos. `quincy.flamingfire.my` cut over to
+  `quincy-portal-app`.
 
-## Current work (orchestrator takeover 2026-07-19 PM)
-- [x] Interim-agent wave independently verified (6/6 tsc, 13+8+3 tests, build) and committed a0bc675
-- [x] Admin user confirmed live in remote D1: mjj2332@gmail.com role=admin active=1 (seed-admin) — ready for real Google sign-in test at staging
-- [ ] WP-H (codex, running): Admin UI — Users provisioning/deactivation + Integrations (Dropbox connect) tabs replacing the placeholder
-- [ ] WP-I (codex, running): scripted spike-① transform gate (`portal/scripts/verify-transform-gate.mjs`) — one command to re-verify after the dashboard Sources change, with strict temp-row cleanup
-- [ ] USER: add `staging.quincy.flamingfire.my` + `quincy.flamingfire.my` to Images → Transformations → Sources (see First-deploy checklist)
-- [ ] USER: Dropbox app registration (App Console: scoped app, files.metadata.read + files.content.read/write, redirect URI `https://staging.quincy.flamingfire.my/api/integrations/dropbox/callback`, webhook URI on webhook-ingress worker) → DROPBOX_APP_KEY/SECRET into .dev.vars + wrangler secrets
-- [ ] After user actions: run transform gate → production cutover → real Google browser login check → Dropbox connect + first live sync
+**Phase 1 — Capture ingest + RAW QA**
+- Dashboard, project workspace, RAW grid, upload UI, file-count verification, RAW QA tooling.
+- New-shoot project-creation UI (WP-J): full manual CreateProject form, capability-gated CTA.
+- Quick-create + edit-details-later (WP-K): address-first quick create; deferred-details Edit
+  screen; additive-only PATCH semantics (never deletes ordered services/members).
 
-## Review log
-- 2026-07-19 first deploy: full workspace typecheck green (6/6), tests green (11 total: app 8 + webhook 3), web build green; all three Wrangler dry-runs and startup analyses passed. Remote state verified at 24 D1 tables, 5 stages, active bootstrap admin, correct KV/R2/Queue; R2 CORS applied for production/staging workers.dev/local origins with PUT + `Content-Type` and exposed `ETag`.
-- Workers deployed and healthy; app secrets uploaded as encrypted Worker secrets. Prototype copied to `prototype.quincy.flamingfire.my`; staging points to the new app. Production cutover health/SPA/Google-initiation checks passed, but the image gate returned Cloudflare 9401, so `quincy.flamingfire.my` was restored to `quincyportal` and verified. Temporary R2 object, D1 project/collection/asset/session rows, generated 50 MiB fixture, and local Wrangler state were all removed.
+**Phase 2 — autoHDR + Edited QA + review lightbox**
+- Workflow round-trip, Edited QA, RAW↔Edited compare, jobs/retry with stuck recovery.
+- Comment/annotation edit (WP-L): author-only PATCH on comments/annotations, audit-logged,
+  inline edit UI with optimistic updates.
+- Lightbox markup UX (WP-M): always-visible drawings, author-only drawing edit, click-to-highlight.
+- Lightbox comment delete + keyboard-shortcut hint bar (WP-N).
+- Annotation delete + discussion race hardening (WP-O): fixed two latent race bugs in the
+  shared discussion-refresh code (stale-asset refresh clobbering the current asset; edit
+  rollback not asset-guarded).
+
+**Repo hygiene**
+- Reorganized repo into `prototype/ · portal/ · docs/ · test-data/`; wrote CLAUDE.md/AGENTS.md
+  as the project guide (2026-07-20).
+
+## Open / in progress
+- [ ] RAW↔Edited compare: synced zoom (deferred from the original compare build).
+- [ ] Hardening: add expiry to the `/__transform-source` HMAC signature — currently
+  unexpiring per-key URLs (`TODO(hardening)` in `portal/workers/app/src/routes/media.ts`).
+
+## Waiting on user / external
+- [ ] Dropbox app registration (App Console: scoped app, `files.metadata.read` +
+  `files.content.read/write`; redirect URI
+  `https://staging.quincy.flamingfire.my/api/integrations/dropbox/callback`; webhook URI on
+  the webhook-ingress worker) → put `DROPBOX_APP_KEY`/`SECRET` into `.dev.vars` + wrangler
+  secrets. Blocks: live end-to-end Dropbox sync test and the Dropbox webhook LIVE path (DO
+  alarm cursor sync) test — both are code-complete and deployed, just unverified live.
+- [ ] Real interactive Google browser login check at `https://quincy.flamingfire.my` (sign-in
+  attempted FROM staging still bounces to the prod origin — single `APP_ORIGIN`; use prod).
+- [ ] Rotate/retire the production `BETTER_AUTH_SECRET`: the gate-rotation value still sits in
+  gitignored `portal/workers/app/.prod-secrets.local` (confirmed present) — user should move
+  it to the password manager and delete the file.
