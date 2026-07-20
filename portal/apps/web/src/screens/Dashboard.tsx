@@ -7,9 +7,10 @@ import { useCapabilities } from "../lib/capabilities";
 export interface ProjectSummary {
   id: string;
   street: string;
-  suburb: string;
-  agencyName: string;
-  agentName: string;
+  suburb: string | null;
+  postcode: string | null;
+  agencyName: string | null;
+  agentName: string | null;
   stageKey: StageKey;
   shootDate: string | null;
   coverAssetId: string | null;
@@ -26,7 +27,7 @@ interface DashboardProps {
   onCreateProject: () => void;
 }
 
-type DashboardView = "grid" | "kanban";
+type DashboardView = "grid" | "list" | "kanban";
 type Toast = { id: number; message: string; tone: "success" | "error" };
 
 function formatDate(value: string | null): string {
@@ -40,19 +41,21 @@ function coverUrl(assetId: string): string {
   return `/media/asset/${encodeURIComponent(assetId)}/thumb`;
 }
 
+function CoverMedia({ project, className = "", inlinePlaceholder = false }: { project: ProjectSummary; className?: string; inlinePlaceholder?: boolean }) {
+  if (project.coverAssetId) return <img className={className} src={coverUrl(project.coverAssetId)} alt={`Preview of ${project.street}`} loading="lazy" />;
+  const content = project.street.trim().charAt(0).toUpperCase() || "Q";
+  return inlinePlaceholder ? <span className={`project-cover-placeholder ${className}`} aria-hidden="true">{content}</span> : <div className={`project-cover-placeholder ${className}`} aria-hidden="true">{content}</div>;
+}
+
+function location(project: ProjectSummary) { return [project.suburb, project.postcode].filter(Boolean).join(" · ") || "Location pending"; }
+
 function ProjectCard({ project, onOpen }: { project: ProjectSummary; onOpen: (projectId: string) => void }) {
   const stage = DEFAULT_STAGES.find(({ key }) => key === project.stageKey);
 
   return (
     <button className="proj" type="button" onClick={() => onOpen(project.id)}>
       <div className="proj__media">
-        {project.coverAssetId ? (
-          <img src={coverUrl(project.coverAssetId)} alt={`Preview of ${project.street}`} loading="lazy" />
-        ) : (
-          <div className="proj__placeholder" aria-hidden="true">
-            <img src="/brand/quincy-qp-white.png" alt="" />
-          </div>
-        )}
+        <CoverMedia project={project} />
         <div className="proj__badges">
           <span className="cbubble"><StatusBadge stageKey={project.stageKey} /></span>
         </div>
@@ -60,8 +63,8 @@ function ProjectCard({ project, onOpen }: { project: ProjectSummary; onOpen: (pr
       <div className="proj__body">
         <div className="proj__addr serif">{project.street}</div>
         <div className="proj__meta">
-          <div className="ey">{project.suburb}</div>
-          <div>{project.agencyName} · {project.agentName}</div>
+          <div className="ey">{location(project)}</div>
+          <div>{[project.agencyName, project.agentName].filter(Boolean).join(" · ") || "Client pending"}</div>
         </div>
         <div className="proj__foot">
           <span className="ey">{formatDate(project.shootDate)}</span>
@@ -82,9 +85,10 @@ function KanbanCard({ project, canMove, isDragging, onOpen, onDragStart, onDragE
 }) {
   const rawCount = project.expectedCount === null ? `${project.receivedCount} RAW` : `${project.receivedCount}/${project.expectedCount} RAW`;
   return <button className={`kcard ${isDragging ? "is-dragging" : ""}`} type="button" draggable={canMove} onClick={() => onOpen(project.id)} onDragStart={(event) => onDragStart(project, event)} onDragEnd={onDragEnd}>
+    <div className="kcard__media"><CoverMedia project={project} /></div>
     <div className="kcard__b">
       <div className="kcard__addr serif">{project.street}</div>
-      <div className="kcard__meta">{project.suburb}</div>
+      <div className="kcard__meta">{location(project)}</div>
       <div className="kcard__meta">{project.agencyName || "Agency pending"}</div>
       <div className="kcard__foot"><span className="ey">{rawCount}</span></div>
     </div>
@@ -97,7 +101,10 @@ export function Dashboard({ onOpenProject, onCreateProject }: DashboardProps) {
   const canMoveStages = can("selectForEditing");
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [query, setQuery] = useState("");
-  const [view, setView] = useState<DashboardView>("grid");
+  const [view, setView] = useState<DashboardView>(() => {
+    try { const saved = window.localStorage.getItem("quincy:dashboard:view"); return saved === "grid" || saved === "list" || saved === "kanban" ? saved : "grid"; }
+    catch { return "grid"; }
+  });
   const [dragging, setDragging] = useState<ProjectSummary>();
   const [pendingMoves, setPendingMoves] = useState<Set<string>>(new Set());
   const [dropStage, setDropStage] = useState<StageKey>();
@@ -137,12 +144,17 @@ export function Dashboard({ onOpenProject, onCreateProject }: DashboardProps) {
     const term = query.trim().toLocaleLowerCase();
     if (!term) return projects;
     return projects.filter((project) => [project.street, project.suburb, project.agencyName, project.agentName]
-      .some((value) => value.toLocaleLowerCase().includes(term)));
+      .some((value) => (value ?? "").toLocaleLowerCase().includes(term)));
   }, [projects, query]);
 
   const activeCount = projects.filter((project) => project.stageKey !== "delivered").length;
   const needsReviewCount = projects.filter((project) => project.stageKey === "raw_review" || project.stageKey === "edited_review").length;
   const deliveredCount = projects.filter((project) => project.stageKey === "delivered").length;
+
+  function selectView(next: DashboardView) {
+    setView(next);
+    try { window.localStorage.setItem("quincy:dashboard:view", next); } catch { /* Storage can be disabled by the browser. */ }
+  }
 
   function beginDrag(project: ProjectSummary, event: DragEvent<HTMLButtonElement>) {
     if (!canMoveStages || pendingMoves.has(project.id)) return;
@@ -197,8 +209,9 @@ export function Dashboard({ onOpenProject, onCreateProject }: DashboardProps) {
       <div className="dashboard-viewbar">
         <span className="ey">View</span>
         <div className="segment" aria-label="Dashboard view">
-          <button className={view === "grid" ? "is-active" : ""} type="button" onClick={() => setView("grid")}>Grid</button>
-          <button className={view === "kanban" ? "is-active" : ""} type="button" onClick={() => setView("kanban")}>Kanban</button>
+          <button className={view === "grid" ? "is-active" : ""} type="button" onClick={() => selectView("grid")}>Grid</button>
+          <button className={view === "list" ? "is-active" : ""} type="button" onClick={() => selectView("list")}>List</button>
+          <button className={view === "kanban" ? "is-active" : ""} type="button" onClick={() => selectView("kanban")}>Kanban</button>
         </div>
       </div>
 
@@ -223,6 +236,20 @@ export function Dashboard({ onOpenProject, onCreateProject }: DashboardProps) {
       {!isLoading && !error && filteredProjects.length > 0 && view === "grid" && (
         <div className="projects">
           {filteredProjects.map((project) => <ProjectCard key={project.id} project={project} onOpen={onOpenProject} />)}
+        </div>
+      )}
+
+      {!isLoading && !error && filteredProjects.length > 0 && view === "list" && (
+        <div className="plist" aria-label="Projects list">
+          <div className="prow head"><div /><div>Address</div><div className="prow__c-agency">Client</div><div className="prow__c-date">Shoot date</div><div className="prow__c-status">Status</div><div className="prow__raw">RAW received</div></div>
+          {filteredProjects.map((project) => <button className="prow" type="button" key={project.id} onClick={() => onOpenProject(project.id)}>
+            <CoverMedia project={project} className="prow__thumb" inlinePlaceholder />
+            <span><span className="serif prow__addr">{project.street}</span><span className="ey prow__location">{location(project)}</span></span>
+            <span className="prow__c-agency">{project.agencyName || "Agency pending"}<span className="muted">{project.agentName || "Agent pending"}</span></span>
+            <span className="prow__c-date">{formatDate(project.shootDate)}</span>
+            <span className="prow__c-status"><StatusBadge stageKey={project.stageKey} /></span>
+            <span className="prow__raw">{project.receivedCount}</span>
+          </button>)}
         </div>
       )}
 

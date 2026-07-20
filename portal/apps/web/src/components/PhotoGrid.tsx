@@ -14,6 +14,12 @@ interface PhotoGridProps {
   canReview: boolean;
   canRecommend: boolean;
   canSelect: boolean;
+  canSetCover: boolean;
+  /** Effective cover (stored-if-valid else automatic) — drives the "Cover" tag. */
+  coverAssetId: string | null;
+  /** Explicitly stored cover — its tile's button clears instead of sets. */
+  storedCoverAssetId: string | null;
+  onSetCover: (assetId: string | null) => Promise<void>;
   onOpen: (asset: WorkspaceAsset, orderedAssets: WorkspaceAsset[]) => void;
   onReview: (assetId: string, patch: ReviewPatch) => Promise<void>;
   onSelection: (assetId: string, selected: boolean) => Promise<void>;
@@ -22,7 +28,7 @@ interface PhotoGridProps {
 function rating(asset: WorkspaceAsset) { return asset.review?.stars ?? asset.ratingFromMetadata ?? 0; }
 function labelName(value: Review["colorLabel"]) { return LABELS.find((label) => label.value === value)?.name ?? ""; }
 
-export function PhotoGrid({ assets, canReview, canRecommend, canSelect, onOpen, onReview, onSelection }: PhotoGridProps) {
+export function PhotoGrid({ assets, canReview, canRecommend, canSelect, canSetCover, coverAssetId, storedCoverAssetId, onSetCover, onOpen, onReview, onSelection }: PhotoGridProps) {
   const [filter, setFilter] = useState("all");
   const [multi, setMulti] = useState<Set<string>>(new Set());
   const lastSelected = useRef<number | null>(null);
@@ -80,9 +86,11 @@ export function PhotoGrid({ assets, canReview, canRecommend, canSelect, onOpen, 
           {canReview && <><button className="icbtn icbtn--ondark" type="button" title="Approve" onClick={(event) => { event.stopPropagation(); void onReview(asset.id, { decision: state === "approved" ? null : "approved" }); }}>✓</button><button className="icbtn icbtn--ondark" type="button" title="Flag" onClick={(event) => { event.stopPropagation(); void onReview(asset.id, { decision: state === "flagged" ? null : "flagged" }); }}>⚑</button></>}
           {canRecommend && <button className="icbtn icbtn--ondark" type="button" title="Recommend" onClick={(event) => { event.stopPropagation(); void onReview(asset.id, { recommended: !review?.recommended }); }}>★</button>}
           {canSelect && <button className="icbtn icbtn--ondark" type="button" title="Select for editing" onClick={(event) => { event.stopPropagation(); void onSelection(asset.id, !asset.selected); }}>↗</button>}
+          {canSetCover && <button className="icbtn icbtn--ondark" type="button" title={storedCoverAssetId === asset.id ? "Remove as cover (use first RAW frame)" : "Use as project cover"} onClick={(event) => { event.stopPropagation(); void onSetCover(storedCoverAssetId === asset.id ? null : asset.id); }}>◈</button>}
         </div>
         <div className="statetags">
           {asset.selected && <span className="statetag st-editing">For editing</span>}
+          {coverAssetId === asset.id && <span className="statetag">Cover</span>}
           {review?.recommended && !asset.selected && <span className="statetag">Recommended</span>}
           {state && <span className={`statetag st-${state}`}>{state === "approved" ? "Approved" : "Flagged"}</span>}
         </div>

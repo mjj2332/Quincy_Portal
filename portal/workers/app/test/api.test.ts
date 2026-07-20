@@ -329,6 +329,97 @@ describe("staff app API", () => {
     expect(updated.members.filter((member) => member.roleOnProject === "editor").map((member) => member.userId)).toEqual([editorId]);
   });
 
+  it("sets a project cover, reflects it in the project list, and can clear it", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const created = await SELF.fetch("https://portal.test/api/projects", { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ street: "Cover set and clear", orderedServices: [] }) });
+    const project = await created.json() as { id: string };
+    const raw = await database.DB.prepare("SELECT id FROM collections WHERE project_id = ? AND kind = 'raw'").bind(project.id).first<{ id: string }>();
+    const assetId = crypto.randomUUID(); const now = Date.now();
+    await database.DB.prepare("INSERT INTO assets (id, collection_id, r2_key, original_filename, bytes, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").bind(assetId, raw!.id, `tests/${assetId}.jpg`, "cover.jpg", 1024, "upload", now, now).run();
+
+    const set = await SELF.fetch(`https://portal.test/api/projects/${project.id}/cover`, { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ assetId }) });
+    expect(set.status).toBe(200); await expect(set.json()).resolves.toEqual({ coverAssetId: assetId });
+    const listed = await SELF.fetch("https://portal.test/api/projects", { headers: { cookie } });
+    expect((await listed.json() as { projects: Array<{ id: string; coverAssetId: string | null }> }).projects.find((item) => item.id === project.id)?.coverAssetId).toBe(assetId);
+
+    const cleared = await SELF.fetch(`https://portal.test/api/projects/${project.id}/cover`, { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ assetId: null }) });
+    expect(cleared.status).toBe(200); await expect(cleared.json()).resolves.toEqual({ coverAssetId: null });
+  });
+
+  it("rejects a cover asset from another project", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const create = async (street: string) => SELF.fetch("https://portal.test/api/projects", { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ street, orderedServices: [] }) });
+    const target = await (await create("Cover target")).json() as { id: string };
+    const source = await (await create("Cover source")).json() as { id: string };
+    const raw = await database.DB.prepare("SELECT id FROM collections WHERE project_id = ? AND kind = 'raw'").bind(source.id).first<{ id: string }>();
+    const assetId = crypto.randomUUID(); const now = Date.now();
+    await database.DB.prepare("INSERT INTO assets (id, collection_id, r2_key, original_filename, bytes, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").bind(assetId, raw!.id, `tests/${assetId}.jpg`, "other-project.jpg", 1024, "upload", now, now).run();
+
+    const response = await SELF.fetch(`https://portal.test/api/projects/${target.id}/cover`, { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ assetId }) });
+    expect(response.status).toBe(404); await expect(response.json()).resolves.toEqual({ error: "Asset not in this project" });
+  });
+
+  it("requires editProject to set a cover after confirming project access", async () => {
+    const adminCookie = await sessionCookie(adminToken);
+    const created = await SELF.fetch("https://portal.test/api/projects", { method: "POST", headers: { cookie: adminCookie, "content-type": "application/json" }, body: JSON.stringify({ street: "Photographer cover", orderedServices: [], photographerUserIds: [firstPhotographerId] }) });
+    const project = await created.json() as { id: string };
+    const raw = await database.DB.prepare("SELECT id FROM collections WHERE project_id = ? AND kind = 'raw'").bind(project.id).first<{ id: string }>();
+    const assetId = crypto.randomUUID(); const now = Date.now();
+    await database.DB.prepare("INSERT INTO assets (id, collection_id, r2_key, original_filename, bytes, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").bind(assetId, raw!.id, `tests/${assetId}.jpg`, "photographer-cover.jpg", 1024, "upload", now, now).run();
+
+    const response = await SELF.fetch(`https://portal.test/api/projects/${project.id}/cover`, { method: "POST", headers: { cookie: await sessionCookie(firstPhotographerToken), "content-type": "application/json" }, body: JSON.stringify({ assetId }) });
+    expect(response.status).toBe(403); await expect(response.json()).resolves.toEqual({ error: "Forbidden", capability: "editProject" });
+  });
+
+  it("uses the alphabetically first RAW asset as the automatic cover", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const created = await SELF.fetch("https://portal.test/api/projects", { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ street: "Automatic cover", orderedServices: [] }) });
+    const project = await created.json() as { id: string };
+    const raw = await database.DB.prepare("SELECT id FROM collections WHERE project_id = ? AND kind = 'raw'").bind(project.id).first<{ id: string }>();
+    const laterId = crypto.randomUUID(); const firstId = crypto.randomUUID(); const now = Date.now();
+    for (const [assetId, filename] of [[laterId, "zebra.jpg"], [firstId, "alpha.jpg"]]) await database.DB.prepare("INSERT INTO assets (id, collection_id, r2_key, original_filename, bytes, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").bind(assetId, raw!.id, `tests/${assetId}.jpg`, filename, 1024, "upload", now, now).run();
+
+    const response = await SELF.fetch("https://portal.test/api/projects", { headers: { cookie } });
+    expect((await response.json() as { projects: Array<{ id: string; coverAssetId: string | null }> }).projects.find((item) => item.id === project.id)?.coverAssetId).toBe(firstId);
+    const details = await SELF.fetch(`https://portal.test/api/projects/${project.id}`, { headers: { cookie } });
+    expect((await details.json() as { effectiveCoverAssetId: string | null }).effectiveCoverAssetId).toBe(firstId);
+  });
+
+  it("chunks cover lookups when listing more than 100 projects", async () => {
+    const now = Date.now();
+    const projectIds = Array.from({ length: 110 }, () => crypto.randomUUID());
+    await database.DB.batch(projectIds.map((id, index) => database.DB.prepare(
+      "INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+    ).bind(id, `Chunked cover ${index}`, "awaiting_raw", now, now)));
+
+    const response = await SELF.fetch("https://portal.test/api/projects", { headers: { cookie: await sessionCookie(adminToken) } });
+    expect(response.status).toBe(200);
+    const listed = new Map((await response.json() as { projects: Array<{ id: string; coverAssetId: string | null }> }).projects.map((project) => [project.id, project.coverAssetId]));
+    expect(projectIds.map((id) => listed.get(id))).toEqual(Array<string | null>(110).fill(null));
+  });
+
+  it("uses a RAW fallback cover for photographers when an admin stores an edited cover", async () => {
+    const adminCookie = await sessionCookie(adminToken);
+    const created = await SELF.fetch("https://portal.test/api/projects", { method: "POST", headers: { cookie: adminCookie, "content-type": "application/json" }, body: JSON.stringify({ street: "Role-aware cover", orderedServices: ["edited"], photographerUserIds: [firstPhotographerId] }) });
+    const project = await created.json() as { id: string };
+    const raw = await database.DB.prepare("SELECT id FROM collections WHERE project_id = ? AND kind = 'raw'").bind(project.id).first<{ id: string }>();
+    const edited = await database.DB.prepare("SELECT id FROM collections WHERE project_id = ? AND kind = 'edited'").bind(project.id).first<{ id: string }>();
+    const rawAssetId = crypto.randomUUID(); const editedAssetId = crypto.randomUUID(); const now = Date.now();
+    await database.DB.batch([
+      database.DB.prepare("INSERT INTO assets (id, collection_id, r2_key, original_filename, bytes, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").bind(rawAssetId, raw!.id, `tests/${rawAssetId}.jpg`, "raw-cover.jpg", 1024, "upload", now, now),
+      database.DB.prepare("INSERT INTO assets (id, collection_id, r2_key, original_filename, bytes, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").bind(editedAssetId, edited!.id, `tests/${editedAssetId}.jpg`, "edited-cover.jpg", 1024, "upload", now, now),
+    ]);
+
+    const set = await SELF.fetch(`https://portal.test/api/projects/${project.id}/cover`, { method: "POST", headers: { cookie: adminCookie, "content-type": "application/json" }, body: JSON.stringify({ assetId: editedAssetId }) });
+    expect(set.status).toBe(200);
+    const [adminList, photographerList] = await Promise.all([
+      SELF.fetch("https://portal.test/api/projects", { headers: { cookie: adminCookie } }),
+      SELF.fetch("https://portal.test/api/projects", { headers: { cookie: await sessionCookie(firstPhotographerToken) } }),
+    ]);
+    expect((await adminList.json() as { projects: Array<{ id: string; coverAssetId: string | null }> }).projects.find((item) => item.id === project.id)?.coverAssetId).toBe(editedAssetId);
+    expect((await photographerList.json() as { projects: Array<{ id: string; coverAssetId: string | null }> }).projects.find((item) => item.id === project.id)?.coverAssetId).toBe(rawAssetId);
+  });
+
   it("removes an empty service collection when ordered services are de-selected", async () => {
     const cookie = await sessionCookie(adminToken);
     const created = await SELF.fetch("https://portal.test/api/projects", {

@@ -13,7 +13,40 @@ import { jsonInput } from "./helpers";
 const nullable = <T extends z.ZodTypeAny>(item: T) => item.nullable().optional();
 const projectFields = z.object({ street: z.string().min(1), suburb: nullable(z.string()), postcode: nullable(z.string()), agencyName: nullable(z.string()), agentName: nullable(z.string()), agentEmail: nullable(z.string().email()), agentPhone: nullable(z.string()), agencyId: nullable(z.string().uuid()), agentId: nullable(z.string().uuid()), shootDate: nullable(z.string()), timeWindow: nullable(z.string()), orderNo: nullable(z.string()), orderId: nullable(z.string()), invoiceAmount: nullable(z.number()), paymentStatus: nullable(z.string()), notes: nullable(z.string()), rawFolderLink: nullable(z.string().url()), rawFolderPath: nullable(z.string()), orderedServices: z.array(z.enum(COLLECTION_KINDS)).optional(), photographerUserIds: z.array(z.string().uuid()).optional(), editorUserIds: z.array(z.string().uuid()).optional() });
 const editFields = projectFields.partial();
+const coverInput = z.object({ assetId: z.string().uuid().nullable() });
 const idCheck = (v: string) => z.string().uuid().safeParse(v).success;
+
+function chunked<T>(items: T[], size = 80): T[][] {
+  const chunks: T[][] = [];
+  for (let index = 0; index < items.length; index += size) chunks.push(items.slice(index, index + size));
+  return chunks;
+}
+
+async function coverMaps(db: ReturnType<typeof createDb>, projectIds: string[], photographersOnlySeeRaw = false) {
+  const storedByProject = new Map<string, string>();
+  const automaticByProject = new Map<string, string>();
+  for (const ids of chunked(projectIds)) {
+    // Mirror media.ts: photographers may only view RAW assets.
+    const storedCollectionJoin = photographersOnlySeeRaw
+      ? and(eq(schema.assets.collectionId, schema.collections.id), eq(schema.collections.projectId, schema.projects.id), eq(schema.collections.kind, "raw"))
+      : and(eq(schema.assets.collectionId, schema.collections.id), eq(schema.collections.projectId, schema.projects.id));
+    // D1/Drizzle mis-renders correlated scalar subqueries. Keep both lookups set-based;
+    // the grouped RAW query uses SQLite's bare-column-with-min() behaviour for its asset id.
+    const [storedCovers, automaticCovers] = await Promise.all([
+      db.select({ projectId: schema.projects.id, assetId: schema.assets.id }).from(schema.projects)
+        .innerJoin(schema.assets, eq(schema.projects.coverAssetId, schema.assets.id))
+        .innerJoin(schema.collections, storedCollectionJoin)
+        .where(inArray(schema.projects.id, ids)).all(),
+      db.select({ projectId: schema.collections.projectId, assetId: schema.assets.id, filename: sql<string>`min(${schema.assets.originalFilename})` }).from(schema.assets)
+        .innerJoin(schema.collections, eq(schema.assets.collectionId, schema.collections.id))
+        .where(and(inArray(schema.collections.projectId, ids), eq(schema.collections.kind, "raw")))
+        .groupBy(schema.collections.projectId).all(),
+    ]);
+    for (const row of storedCovers) storedByProject.set(row.projectId, row.assetId);
+    for (const row of automaticCovers) automaticByProject.set(row.projectId, row.assetId);
+  }
+  return { storedByProject, automaticByProject };
+}
 
 async function addMembers(db: ReturnType<typeof createDb>, projectId: string, ids: string[] | undefined, roleOnProject: "photographer" | "editor") {
   for (const userId of [...new Set(ids ?? [])]) await db.insert(schema.projectMembers).values({ id: newId(), projectId, userId, roleOnProject, createdAt: new Date() }).onConflictDoNothing();
@@ -31,18 +64,24 @@ async function syncMembers(db: ReturnType<typeof createDb>, projectId: string, i
   for (const member of removed) await db.delete(schema.projectMembers).where(eq(schema.projectMembers.id, member.id));
   return { added: desired.filter((userId) => !existing.some((member) => member.userId === userId)), removed: removed.map((member) => member.userId) };
 }
-async function details(db: ReturnType<typeof createDb>, projectId: string) {
+async function details(db: ReturnType<typeof createDb>, projectId: string, viewerSeesRawOnly = false) {
   const project = await db.select().from(schema.projects).where(eq(schema.projects.id, projectId)).get();
   if (!project) return null;
-  const [collections, members] = await Promise.all([db.select().from(schema.collections).where(eq(schema.collections.projectId, projectId)).all(), db.select({ id: schema.projectMembers.id, userId: schema.projectMembers.userId, roleOnProject: schema.projectMembers.roleOnProject, name: schema.user.name, email: schema.user.email }).from(schema.projectMembers).innerJoin(schema.user, eq(schema.projectMembers.userId, schema.user.id)).where(eq(schema.projectMembers.projectId, projectId)).all()]);
-  return { ...project, collections, members };
+  const [{ storedByProject, automaticByProject }, collections, members] = await Promise.all([
+    coverMaps(db, [projectId], viewerSeesRawOnly),
+    db.select().from(schema.collections).where(eq(schema.collections.projectId, projectId)).all(),
+    db.select({ id: schema.projectMembers.id, userId: schema.projectMembers.userId, roleOnProject: schema.projectMembers.roleOnProject, name: schema.user.name, email: schema.user.email }).from(schema.projectMembers).innerJoin(schema.user, eq(schema.projectMembers.userId, schema.user.id)).where(eq(schema.projectMembers.projectId, projectId)).all(),
+  ]);
+  return { ...project, effectiveCoverAssetId: storedByProject.get(projectId) ?? automaticByProject.get(projectId) ?? null, collections, members };
 }
 export const projectsRoutes = new Hono<AppEnv>();
 projectsRoutes.get("/projects", async (c) => {
   const db = createDb(c.env.DB); const user = c.get("user");
   const base = db.select({ project: schema.projects, receivedCount: schema.collections.receivedCount, expectedCount: schema.collections.expectedCount }).from(schema.projects).leftJoin(schema.collections, and(eq(schema.collections.projectId, schema.projects.id), eq(schema.collections.kind, "raw")));
   const rows = user.role === "photographer" ? await base.innerJoin(schema.projectMembers, and(eq(schema.projectMembers.projectId, schema.projects.id), eq(schema.projectMembers.userId, user.id))).where(isNull(schema.projects.archivedAt)).orderBy(asc(schema.projects.shootDate)).all() : await base.where(isNull(schema.projects.archivedAt)).orderBy(asc(schema.projects.shootDate)).all();
-  return c.json({ projects: rows.map((r) => ({ ...r.project, receivedCount: r.receivedCount ?? 0, expectedCount: r.expectedCount })) });
+  const projectIds = rows.map(({ project }) => project.id);
+  const { storedByProject, automaticByProject } = await coverMaps(db, projectIds, user.role === "photographer");
+  return c.json({ projects: rows.map((r) => ({ ...r.project, coverAssetId: storedByProject.get(r.project.id) ?? automaticByProject.get(r.project.id) ?? null, receivedCount: r.receivedCount ?? 0, expectedCount: r.expectedCount })) });
 });
 projectsRoutes.post("/projects", requireCapability("createProject"), async (c) => {
   const data = await jsonInput(c, projectFields); if (data instanceof Response) return data;
@@ -103,6 +142,25 @@ projectsRoutes.patch("/projects/:id", async (c) => {
     if (editorUserIds !== undefined) auditMeta.editorMembers = await syncMembers(db, id, editorUserIds, "editor");
     await db.update(schema.projects).set({ ...projectUpdates, updatedAt: new Date() }).where(eq(schema.projects.id, id)); await audit(c.env, c.get("user").id, "project.update", "project", id, auditMeta); return c.json(await details(db, id));
   }
+});
+projectsRoutes.post("/projects/:id/cover", async (c) => {
+  const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
+  if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
+  if (!ROLE_CAPABILITIES[c.get("user").role].includes("editProject")) return c.json({ error: "Forbidden", capability: "editProject" }, 403);
+  const data = await jsonInput(c, coverInput); if (data instanceof Response) return data;
+  const db = createDb(c.env.DB);
+  // hasProjectAccess passes for any id under viewAllProjects — without this check an admin
+  // posting to an unknown UUID would get 200 and an orphan audit row (matches PATCH).
+  if (!await db.select({ id: schema.projects.id }).from(schema.projects).where(eq(schema.projects.id, id)).get()) return c.json({ error: "Project not found" }, 404);
+  if (data.assetId !== null) {
+    const asset = await db.select({ id: schema.assets.id }).from(schema.assets)
+      .innerJoin(schema.collections, and(eq(schema.assets.collectionId, schema.collections.id), eq(schema.collections.projectId, id)))
+      .where(and(eq(schema.assets.id, data.assetId), eq(schema.assets.kind, "photo"))).get();
+    if (!asset) return c.json({ error: "Asset not in this project" }, 404);
+  }
+  await db.update(schema.projects).set({ coverAssetId: data.assetId, updatedAt: new Date() }).where(eq(schema.projects.id, id));
+  await audit(c.env, c.get("user").id, "project.cover.set", "project", id, { assetId: data.assetId });
+  return c.json({ coverAssetId: data.assetId });
 });
 projectsRoutes.post("/projects/:id/dropbox-sync", async (c) => {
   const id = c.req.param("id");
@@ -226,4 +284,4 @@ projectsRoutes.post("/projects/:id/stage", async (c) => {
     await db.update(schema.projects).set({ stageKey: data.stageKey, updatedAt: new Date() }).where(eq(schema.projects.id, id)); await audit(c.env, c.get("user").id, "stage.set", "project", id, { from: project.stageKey, to: data.stageKey }); return c.json({ ok: true, stageKey: data.stageKey });
   }
 });
-projectsRoutes.get("/projects/:id", async (c) => { const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400); if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403); const value = await details(createDb(c.env.DB), id); return value ? c.json(value) : c.json({ error: "Project not found" }, 404); });
+projectsRoutes.get("/projects/:id", async (c) => { const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400); if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403); const value = await details(createDb(c.env.DB), id, c.get("user").role === "photographer"); return value ? c.json(value) : c.json({ error: "Project not found" }, 404); });
