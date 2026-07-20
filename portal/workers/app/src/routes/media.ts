@@ -19,7 +19,8 @@ mediaRoutes.get("/asset/:assetId/:variant", async (c) => {
     const spec = RENDITION_SPECS[variant as "web" | "thumb"];
     const signature = await signTransformSource(c.env, row.asset.r2Key);
     if (!signature) return c.json({ error: "Image transformations are not configured" }, 503);
-    const sourceUrl = new URL(`/__transform-source/${row.asset.r2Key}`, c.req.url);
+    const sourcePath = "/__transform-source/" + row.asset.r2Key.split("/").map(encodeURIComponent).join("/");
+    const sourceUrl = new URL(sourcePath, c.req.url);
     sourceUrl.searchParams.set("sig", signature);
     // Redirect the authenticated client to the /cdn-cgi/image/ URL instead of proxying:
     // a Worker's same-zone subrequest skips the entire Cloudflare pipeline (loop

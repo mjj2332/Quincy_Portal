@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState, type DragEvent } from "react";
-import { DEFAULT_STAGES, type StageKey } from "@quincy/shared";
+import { type StageKey } from "@quincy/shared";
 import { StatusBadge } from "../components/atoms";
 import { apiGet, apiPost } from "../lib/api";
 import { useCapabilities } from "../lib/capabilities";
+import { useStages } from "../lib/stages";
 
 export interface ProjectSummary {
   id: string;
@@ -50,7 +51,8 @@ function CoverMedia({ project, className = "", inlinePlaceholder = false }: { pr
 function location(project: ProjectSummary) { return [project.suburb, project.postcode].filter(Boolean).join(" · ") || "Location pending"; }
 
 function ProjectCard({ project, onOpen }: { project: ProjectSummary; onOpen: (projectId: string) => void }) {
-  const stage = DEFAULT_STAGES.find(({ key }) => key === project.stageKey);
+  const { stages } = useStages();
+  const stage = stages.find(({ key }) => key === project.stageKey);
 
   return (
     <button className="proj" type="button" onClick={() => onOpen(project.id)}>
@@ -97,6 +99,7 @@ function KanbanCard({ project, canMove, isDragging, onOpen, onDragStart, onDragE
 
 export function Dashboard({ onOpenProject, onCreateProject }: DashboardProps) {
   const { can } = useCapabilities();
+  const { stages } = useStages();
   const canCreateProject = can("createProject");
   const canMoveStages = can("selectForEditing");
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
@@ -150,6 +153,7 @@ export function Dashboard({ onOpenProject, onCreateProject }: DashboardProps) {
   const activeCount = projects.filter((project) => project.stageKey !== "delivered").length;
   const needsReviewCount = projects.filter((project) => project.stageKey === "raw_review" || project.stageKey === "edited_review").length;
   const deliveredCount = projects.filter((project) => project.stageKey === "delivered").length;
+  const activeStages = stages.filter((stage) => stage.active);
 
   function selectView(next: DashboardView) {
     setView(next);
@@ -172,7 +176,7 @@ export function Dashboard({ onOpenProject, onCreateProject }: DashboardProps) {
     setPendingMoves((current) => new Set(current).add(project.id));
     try {
       await apiPost<{ ok: true; stageKey: StageKey }, { stageKey: StageKey }>(`/api/projects/${project.id}/stage`, { stageKey });
-      const label = DEFAULT_STAGES.find((stage) => stage.key === stageKey)?.label ?? stageKey;
+      const label = stages.find((stage) => stage.key === stageKey)?.label ?? stageKey;
       toast(`Moved to ${label}.`);
     } catch (reason) {
       setProjects((current) => current.map((item) => item.id === project.id && item.stageKey === stageKey ? { ...item, stageKey: project.stageKey } : item));
@@ -255,7 +259,7 @@ export function Dashboard({ onOpenProject, onCreateProject }: DashboardProps) {
 
       {!isLoading && !error && filteredProjects.length > 0 && view === "kanban" && (
         <div className="kanban" aria-label="Project pipeline board">
-          {DEFAULT_STAGES.map((stage) => {
+          {activeStages.map((stage) => {
             const stageProjects = filteredProjects.filter((project) => project.stageKey === stage.key);
             const isDropTarget = canMoveStages && dropStage === stage.key;
             return <section className={`kcol ${isDropTarget ? "is-over" : ""}`} key={stage.key} onDragOver={(event) => { if (canMoveStages && dragging) { event.preventDefault(); setDropStage(stage.key); } }} onDragLeave={() => { if (dropStage === stage.key) setDropStage(undefined); }} onDrop={(event) => { event.preventDefault(); void moveProject(stage.key); }}>

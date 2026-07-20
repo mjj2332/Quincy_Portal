@@ -105,12 +105,30 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/other agents 
 - Reorganized repo into `prototype/ · portal/ · docs/ · test-data/`; wrote CLAUDE.md/AGENTS.md
   as the project guide (2026-07-20).
 
+**Wave: covers + List view (WP-AB/AB2, 2026-07-21, deployed)**
+- Effective cover per project (stored-if-valid else first RAW by filename), chunked
+  queries under D1's 100-param limit, photographer-safe RAW fallback for Edited covers.
+- POST /projects/:id/cover set/clear (`editProject`, audit-logged); ◈ tile button with
+  clear-on-current-cover; workspace "Cover" tag matches the dashboard's effective cover.
+- Dashboard: cover images on grid + kanban cards (monogram placeholder), NEW List view
+  (prototype parity), view preference persisted. Tonomo payload fixtures made canonical
+  at `test-data/tonomo/` (committed; parser tests read them).
+
+**Wave: thumbnail outage fix + admin backend completion (WP-AC + WP-AA/AA2, 2026-07-21, deployed)**
+- WP-AC (outage): spaced filenames broke every rendition — the /__transform-source HMAC
+  was verified against the percent-encoded path while signed over the raw R2 key. Fixed
+  (per-segment encode on issue, decode-before-verify on receipt, malformed % → 404),
+  hotfix-deployed from a clean worktree, verified live against prod with a real signed
+  spaced-key fetch. Regression tests pin the signed-source round-trip.
+- WP-AA/AA2 (admin backend, closes Phase 3): agencies/agents directory CRUD (no deletes);
+  pipeline stage config that is actually CONSUMED (session-gated GET /api/stages + SPA
+  stages context with post-mutation refresh; kanban columns/badges/drop targets honour
+  label/order/active; stage-change 409s onto inactive stages; awaiting_raw undeactivatable);
+  atomic single-batch stage reorder; Tonomo operator queue (paginated poison list,
+  payload viewer, race-proof guarded retry/discard with per-row locking) + health card
+  ("Receiving"/"Awaiting first event"). App suite 45/45.
+
 ## Open / in progress
-- [ ] WP-AB (running): project cover images on grid + kanban cards, user-selectable cover
-  (POST /projects/:id/cover, `editProject`-gated, audit-logged), and the prototype's List
-  view as a third dashboard mode.
-- [ ] WP-AA (queued): admin backend completion — agencies/agents directory, pipeline stage
-  config, Tonomo health + poison-event operator screen (view payload / retry / discard).
 - [ ] Phase 4 (queued): Vimeo link tiles, floorplan PDF+preview versioning, copy PDF upload.
 - [ ] Phase 5 (queued): client-delivery Worker (signed links, gallery, favourites,
   pre-built zips, premium paywall) — Pixieset replacement, own launch gates.

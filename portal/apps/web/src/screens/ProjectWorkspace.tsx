@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
-import { DEFAULT_STAGES, type StageKey } from "@quincy/shared";
+import { type StageKey } from "@quincy/shared";
 import { StatusBadge } from "../components/atoms";
 import { Lightbox } from "../components/Lightbox";
 import { PhotoGrid, type Review, type ReviewPatch, type WorkspaceAsset } from "../components/PhotoGrid";
 import { UploadDropzone } from "../components/UploadDropzone";
 import { apiGet, apiPost } from "../lib/api";
 import { useCapabilities } from "../lib/capabilities";
+import { useStages } from "../lib/stages";
 
 type Collection = { id: string; kind: "raw" | "edited" | "video" | "floorplan" | "copy"; status: string; expectedCount: number | null; receivedCount: number };
 type Member = { id: string; userId: string; roleOnProject: "photographer" | "editor"; name: string; email: string };
@@ -24,6 +25,7 @@ function activeJob(job: Job) { return job.status === "queued" || job.status === 
 
 export function ProjectWorkspace({ projectId, notice, onNoticeShown, onBack, onEditDetails }: { projectId: string | null; notice?: string | null; onNoticeShown?: () => void; onBack: () => void; onEditDetails: () => void }) {
   const { can } = useCapabilities();
+  const { stages } = useStages();
   const [data, setData] = useState<ProjectResponse | null>(null);
   const [assets, setAssets] = useState<WorkspaceAsset[]>([]);
   const [rawAssets, setRawAssets] = useState<WorkspaceAsset[]>([]);
@@ -138,7 +140,7 @@ export function ProjectWorkspace({ projectId, notice, onNoticeShown, onBack, onE
 
   const project = data;
   const { collections, members } = data;
-  const stage = DEFAULT_STAGES.find((item) => item.key === project.stageKey);
+  const stage = stages.find((item) => item.key === project.stageKey);
   const canUpload = can("uploadRaw"), canSelect = can("selectForEditing"), canEdit = can("editProject"), isEdited = activeTab === "edited";
   const canReview = isEdited ? can("reviewEdited") : can("selectForEditing");
   const canRecommend = activeTab === "raw" && can("recommendRaw");

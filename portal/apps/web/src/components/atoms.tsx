@@ -1,4 +1,5 @@
-import { DEFAULT_STAGES, type StageKey } from "@quincy/shared";
+import { type StageKey } from "@quincy/shared";
+import { useStages } from "../lib/stages";
 
 const stageColors: Record<StageKey, string> = {
   awaiting_raw: "var(--greige-400)",
@@ -9,7 +10,8 @@ const stageColors: Record<StageKey, string> = {
 };
 
 export function StatusBadge({ stageKey }: { stageKey: StageKey }) {
-  const stage = DEFAULT_STAGES.find(({ key }) => key === stageKey);
+  const { stages } = useStages();
+  const stage = stages.find(({ key }) => key === stageKey);
 
   return (
     <span className="row gap2">

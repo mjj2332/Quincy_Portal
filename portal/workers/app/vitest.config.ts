@@ -33,7 +33,7 @@ export default defineConfig({
             name: "quincy-portal-background",
             modules: true,
             script:
-              "export default { fetch() { return new Response(JSON.stringify({ ok: true, stub: true }), { headers: { 'content-type': 'application/json' } }); } };",
+              "import { WorkerEntrypoint } from 'cloudflare:workers'; export default class QuincyBackground extends WorkerEntrypoint { async processTonomoEvents() {} }",
           },
         ],
       },

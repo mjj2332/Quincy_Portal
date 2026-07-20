@@ -8,6 +8,7 @@ import { SignIn } from "./screens/SignIn";
 import { Admin } from "./screens/Admin";
 import { CreateProject } from "./screens/CreateProject";
 import { EditProject } from "./screens/EditProject";
+import { StagesProvider } from "./lib/stages";
 
 type SessionUser = {
   id?: string | null;
@@ -69,5 +70,5 @@ export default function App() {
     return <SignIn />;
   }
 
-  return <Shell user={session.data.user as SessionUser} />;
+  return <StagesProvider><Shell user={session.data.user as SessionUser} /></StagesProvider>;
 }

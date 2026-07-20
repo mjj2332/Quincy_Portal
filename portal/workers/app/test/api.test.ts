@@ -5,6 +5,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { createAuth } from "../src/auth";
 import type { Env } from "../src/env";
 import { createZipStream } from "../src/lib/zip-stream";
+import { signTransformSource } from "../src/lib/transform-source";
 
 const database = env as unknown as { DB: D1Database };
 const authEnv = env as unknown as Env;
@@ -212,6 +213,33 @@ describe("staff app API", () => {
     expect(media.headers.get("content-type")).toContain("application/json");
     expect(spa.status).toBe(200);
     expect(spa.headers.get("content-type")).toContain("text/html");
+  });
+
+  it("serves signed transform sources for R2 keys with encoded filename characters", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const created = await SELF.fetch("https://portal.test/api/projects", {
+      method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ street: "Transform source", orderedServices: [] }),
+    });
+    expect(created.status).toBe(201);
+    const project = await created.json() as { id: string };
+    const raw = await database.DB.prepare("SELECT id FROM collections WHERE project_id = ? AND kind = 'raw'").bind(project.id).first<{ id: string }>();
+    const assetId = crypto.randomUUID(); const key = `projects/${project.id}/raw/${assetId}/se.CR527827_4 EV #20Jul.jpg`; const body = "spaced capture"; const now = Date.now();
+    const media = env as unknown as { MEDIA: R2Bucket };
+    await media.MEDIA.put(key, body);
+    await database.DB.prepare("INSERT INTO assets (id, collection_id, r2_key, original_filename, bytes, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").bind(assetId, raw!.id, key, "se.CR527827_4 EV #20Jul.jpg", body.length, "upload", now, now).run();
+
+    // APP_ENV=dev in the test env makes /media serve the object directly (200), so the
+    // 302 leg never runs here — exercise the production-critical signed source route
+    // directly: signature over the RAW key, request path percent-encoded per segment.
+    const rendition = await SELF.fetch(`https://portal.test/media/asset/${assetId}/thumb`, { headers: { cookie } });
+    expect(rendition.status).toBe(200);
+    const sig = await signTransformSource(env as unknown as Parameters<typeof signTransformSource>[0], key);
+    const encodedPath = "/__transform-source/" + key.split("/").map(encodeURIComponent).join("/");
+    expect(encodedPath).toContain(encodeURIComponent("se.CR527827_4 EV #20Jul.jpg"));
+    const source = await SELF.fetch(`https://portal.test${encodedPath}?sig=${sig}`);
+    expect(source.status).toBe(200); await expect(source.text()).resolves.toBe(body);
+    expect((await SELF.fetch(`https://portal.test${encodedPath}?sig=tampered`)).status).toBe(404);
+    expect((await SELF.fetch("https://portal.test/__transform-source/bad%ZZ?sig=tampered")).status).toBe(404);
   });
 
   it("implicitly links a verified Google identity to the pre-provisioned admin", async () => {
@@ -815,5 +843,70 @@ describe("staff app API", () => {
     await expect(response.json()).resolves.toMatchObject({ error: "Forbidden: only the author can delete this annotation." });
     const storedRow = await database.DB.prepare("SELECT id FROM annotations WHERE id = ?").bind(annotationId).first<{ id: string }>();
     expect(storedRow).toEqual({ id: annotationId });
+  });
+
+  it("creates and updates agencies and agents, while rejecting non-admin directory access", async () => {
+    const adminCookie = await sessionCookie(adminToken);
+    const created = await SELF.fetch("https://portal.test/api/admin/agencies", { method: "POST", headers: { cookie: adminCookie, "content-type": "application/json" }, body: JSON.stringify({ name: "Harbour Realty", notes: "North shore" }) });
+    expect(created.status).toBe(201); const agency = await created.json() as { id: string; name: string };
+    const agentCreated = await SELF.fetch("https://portal.test/api/admin/agents", { method: "POST", headers: { cookie: adminCookie, "content-type": "application/json" }, body: JSON.stringify({ agencyId: agency.id, name: "Ava Agent", email: "ava@example.test", phone: "0400 000 000" }) });
+    expect(agentCreated.status).toBe(201); const agent = await agentCreated.json() as { id: string };
+    const [agencyUpdated, agentUpdated, listed, forbidden] = await Promise.all([
+      SELF.fetch(`https://portal.test/api/admin/agencies/${agency.id}`, { method: "PATCH", headers: { cookie: adminCookie, "content-type": "application/json" }, body: JSON.stringify({ notes: "Updated note" }) }),
+      SELF.fetch(`https://portal.test/api/admin/agents/${agent.id}`, { method: "PATCH", headers: { cookie: adminCookie, "content-type": "application/json" }, body: JSON.stringify({ phone: "0411 111 111" }) }),
+      SELF.fetch(`https://portal.test/api/admin/agencies`, { headers: { cookie: adminCookie } }),
+      SELF.fetch("https://portal.test/api/admin/agencies", { headers: { cookie: await sessionCookie(photographerToken) } }),
+    ]);
+    expect(agencyUpdated.status).toBe(200); expect(agentUpdated.status).toBe(200); expect(forbidden.status).toBe(403);
+    await expect(listed.json()).resolves.toMatchObject({ agencies: [expect.objectContaining({ id: agency.id, agentCount: 1 })] });
+    const filtered = await SELF.fetch(`https://portal.test/api/admin/agents?agencyId=${agency.id}`, { headers: { cookie: adminCookie } });
+    await expect(filtered.json()).resolves.toMatchObject({ agents: [expect.objectContaining({ id: agent.id, phone: "0411 111 111" })] });
+  });
+
+  it("seeds stages on first read, serves them to photographers, and protects the system stage", async () => {
+    const cookie = await sessionCookie(adminToken);
+    await database.DB.exec("DELETE FROM pipeline_stages;");
+    const seeded = await SELF.fetch("https://portal.test/api/admin/stages", { headers: { cookie } });
+    expect(seeded.status).toBe(200); await expect(seeded.json()).resolves.toMatchObject({ stages: expect.arrayContaining([expect.objectContaining({ key: "awaiting_raw", displayOrder: 1 })]) });
+    const photographerStages = await SELF.fetch("https://portal.test/api/stages", { headers: { cookie: await sessionCookie(photographerToken) } });
+    expect(photographerStages.status).toBe(200); await expect(photographerStages.json()).resolves.toMatchObject({ stages: expect.arrayContaining([expect.objectContaining({ key: "awaiting_raw" })]) });
+    const label = await SELF.fetch("https://portal.test/api/admin/stages/raw_review", { method: "PATCH", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ label: "Raw triage" }) });
+    await expect(label.json()).resolves.toMatchObject({ label: "Raw triage" });
+    const moved = await SELF.fetch("https://portal.test/api/admin/stages/raw_review/move", { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ direction: "up" }) });
+    expect(moved.status).toBe(200);
+    const movedStages = (await moved.json() as { stages: { key: string; displayOrder: number }[] }).stages;
+    expect(movedStages[0]).toMatchObject({ key: "raw_review", displayOrder: 1 });
+    expect(movedStages[1]).toMatchObject({ key: "awaiting_raw", displayOrder: 2 });
+    const systemBlocked = await SELF.fetch("https://portal.test/api/admin/stages/awaiting_raw", { method: "PATCH", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ active: false }) });
+    expect(systemBlocked.status).toBe(409); await expect(systemBlocked.json()).resolves.toEqual({ error: "The awaiting_raw stage is required for new projects." });
+    const created = await SELF.fetch("https://portal.test/api/projects", { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ street: "Stage guard", orderedServices: [] }) });
+    expect(created.status).toBe(201);
+    await database.DB.prepare("UPDATE pipeline_stages SET active = 0 WHERE key = ?").bind("raw_review").run();
+    const inactiveTarget = await SELF.fetch(`https://portal.test/api/projects/${(await created.json() as { id: string }).id}/stage`, { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ stageKey: "raw_review" }) });
+    expect(inactiveTarget.status).toBe(409); await expect(inactiveTarget.json()).resolves.toEqual({ error: "Stage is deactivated" });
+    await database.DB.prepare("UPDATE pipeline_stages SET active = 1 WHERE key = ?").bind("raw_review").run();
+  });
+
+  it("filters Tonomo events and lets operators retry or discard only poison rows", async () => {
+    const cookie = await sessionCookie(adminToken); const poisonId = crypto.randomUUID(); const receivedId = crypto.randomUUID(); const now = Date.now();
+    await database.DB.batch([
+      database.DB.prepare("INSERT INTO webhook_events (id, source, event_id, payload_json, status, error, received_at, processed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").bind(poisonId, "tonomo", `poison-${poisonId}`, JSON.stringify({ id: "order-poison", property_address: "7 Poison Road" }), "poison", "Cannot reconcile", now, now),
+      database.DB.prepare("INSERT INTO webhook_events (id, source, event_id, payload_json, status, received_at) VALUES (?, ?, ?, ?, ?, ?)").bind(receivedId, "tonomo", `received-${receivedId}`, "{}", "received", now + 1),
+    ]);
+    const filtered = await SELF.fetch("https://portal.test/api/admin/webhook-events?source=tonomo&status=poison&limit=1&offset=0", { headers: { cookie } });
+    await expect(filtered.json()).resolves.toMatchObject({ events: [expect.objectContaining({ id: poisonId, error: "Cannot reconcile" })], total: expect.any(Number) });
+    const notPoison = await SELF.fetch(`https://portal.test/api/admin/webhook-events/${receivedId}/retry`, { method: "POST", headers: { cookie } });
+    expect(notPoison.status).toBe(409);
+    const retried = await SELF.fetch(`https://portal.test/api/admin/webhook-events/${poisonId}/retry`, { method: "POST", headers: { cookie } });
+    expect(retried.status).toBe(200);
+    expect(await database.DB.prepare("SELECT status, error FROM webhook_events WHERE id = ?").bind(poisonId).first()).toEqual({ status: "received", error: null });
+    await database.DB.prepare("UPDATE webhook_events SET status = ?, error = ? WHERE id = ?").bind("poison", "Still broken", poisonId).run();
+    const discarded = await SELF.fetch(`https://portal.test/api/admin/webhook-events/${poisonId}/discard`, { method: "POST", headers: { cookie } });
+    expect(discarded.status).toBe(200);
+    expect(await database.DB.prepare("SELECT status, error FROM webhook_events WHERE id = ?").bind(poisonId).first()).toEqual({ status: "processed", error: "Still broken — discarded by operator" });
+    const auditCount = await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE action = ? AND target_id = ?").bind("tonomo_event.discard", poisonId).first<{ count: number }>();
+    const discardedAgain = await SELF.fetch(`https://portal.test/api/admin/webhook-events/${poisonId}/discard`, { method: "POST", headers: { cookie } });
+    expect(discardedAgain.status).toBe(409); await expect(discardedAgain.json()).resolves.toEqual({ error: "Event is no longer poison" });
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE action = ? AND target_id = ?").bind("tonomo_event.discard", poisonId).first()).toEqual(auditCount);
   });
 });

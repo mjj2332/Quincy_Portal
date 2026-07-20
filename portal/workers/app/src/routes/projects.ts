@@ -9,6 +9,7 @@ import { audit } from "../lib/audit";
 import { newId } from "../lib/ids";
 import { createZipStream } from "../lib/zip-stream";
 import { jsonInput } from "./helpers";
+import { ensurePipelineStages } from "./stages";
 
 const nullable = <T extends z.ZodTypeAny>(item: T) => item.nullable().optional();
 const projectFields = z.object({ street: z.string().min(1), suburb: nullable(z.string()), postcode: nullable(z.string()), agencyName: nullable(z.string()), agentName: nullable(z.string()), agentEmail: nullable(z.string().email()), agentPhone: nullable(z.string()), agencyId: nullable(z.string().uuid()), agentId: nullable(z.string().uuid()), shootDate: nullable(z.string()), timeWindow: nullable(z.string()), orderNo: nullable(z.string()), orderId: nullable(z.string()), invoiceAmount: nullable(z.number()), paymentStatus: nullable(z.string()), notes: nullable(z.string()), rawFolderLink: nullable(z.string().url()), rawFolderPath: nullable(z.string()), orderedServices: z.array(z.enum(COLLECTION_KINDS)).optional(), photographerUserIds: z.array(z.string().uuid()).optional(), editorUserIds: z.array(z.string().uuid()).optional() });
@@ -281,6 +282,9 @@ projectsRoutes.post("/projects/:id/stage", async (c) => {
     const data = await jsonInput(c, z.object({ stageKey: z.string() })); if (data instanceof Response) return data;
     if (!isStageKey(data.stageKey)) return c.json({ error: "Unknown stage" }, 400);
     const db = createDb(c.env.DB); const project = await db.select().from(schema.projects).where(eq(schema.projects.id, id)).get(); if (!project) return c.json({ error: "Project not found" }, 404);
+    await ensurePipelineStages(db);
+    const target = await db.select({ active: schema.pipelineStages.active }).from(schema.pipelineStages).where(eq(schema.pipelineStages.key, data.stageKey)).get();
+    if (!target?.active) return c.json({ error: "Stage is deactivated" }, 409);
     await db.update(schema.projects).set({ stageKey: data.stageKey, updatedAt: new Date() }).where(eq(schema.projects.id, id)); await audit(c.env, c.get("user").id, "stage.set", "project", id, { from: project.stageKey, to: data.stageKey }); return c.json({ ok: true, stageKey: data.stageKey });
   }
 });

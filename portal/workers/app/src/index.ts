@@ -11,6 +11,8 @@ import { integrationsRoutes } from "./routes/integrations";
 import { reviewRoutes } from "./routes/review";
 import { mediaRoutes } from "./routes/media";
 import { annotationsRoutes } from "./routes/annotations";
+import { adminRoutes } from "./routes/admin";
+import { stagesRoutes } from "./routes/stages";
 import { verifyTransformSource } from "./lib/transform-source";
 
 const app = new Hono<AppEnv>();
@@ -20,13 +22,15 @@ app.all("/api/auth/*", (c) => createAuth(c.env).handler(c.req.raw));
 const api = new Hono<AppEnv>();
 api.use("/*", requireSession);
 api.get("/me", (c) => { const user = c.get("user"); return c.json({ user, capabilities: [...ROLE_CAPABILITIES[user.role]] }); });
-api.route("/", usersRoutes).route("/", projectsRoutes).route("/", uploadsRoutes).route("/", integrationsRoutes).route("/", reviewRoutes).route("/", annotationsRoutes);
+api.route("/", usersRoutes).route("/", projectsRoutes).route("/", uploadsRoutes).route("/", integrationsRoutes).route("/", reviewRoutes).route("/", annotationsRoutes).route("/", stagesRoutes).route("/", adminRoutes);
 app.route("/api", api);
 app.all("/api/*", (c) => c.json({ error: "Not found" }, 404));
 const media = new Hono<AppEnv>(); media.use("/*", requireSession); media.route("/", mediaRoutes); app.route("/media", media);
 app.all("/media/*", (c) => c.json({ error: "Not found" }, 404));
 app.get("/__transform-source/*", async (c) => {
-  const key = c.req.path.slice("/__transform-source/".length);
+  let key: string;
+  try { key = decodeURIComponent(c.req.path.slice("/__transform-source/".length)); }
+  catch { return c.notFound(); }
   if (!await verifyTransformSource(c.env, key, c.req.query("sig"))) return c.notFound();
   const object = await c.env.MEDIA.get(key);
   if (!object) return c.notFound();
