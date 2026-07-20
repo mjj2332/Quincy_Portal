@@ -329,6 +329,127 @@ describe("staff app API", () => {
     expect(updated.members.filter((member) => member.roleOnProject === "editor").map((member) => member.userId)).toEqual([editorId]);
   });
 
+  it("removes an empty service collection when ordered services are de-selected", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const created = await SELF.fetch("https://portal.test/api/projects", {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ street: "Empty service removal", orderedServices: ["edited"] }),
+    });
+    expect(created.status).toBe(201);
+    const project = await created.json() as { id: string };
+
+    const response = await SELF.fetch(`https://portal.test/api/projects/${project.id}`, {
+      method: "PATCH",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ orderedServices: [] }),
+    });
+    expect(response.status).toBe(200);
+    const edited = await database.DB.prepare("SELECT id FROM collections WHERE project_id = ? AND kind = 'edited'").bind(project.id).first();
+    const raw = await database.DB.prepare("SELECT id FROM collections WHERE project_id = ? AND kind = 'raw'").bind(project.id).first();
+    expect(edited).toBeNull();
+    expect(raw).not.toBeNull();
+  });
+
+  it("keeps a de-selected service collection when it contains an asset", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const created = await SELF.fetch("https://portal.test/api/projects", {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ street: "Protected service removal", orderedServices: ["edited"] }),
+    });
+    expect(created.status).toBe(201);
+    const project = await created.json() as { id: string };
+    const edited = await database.DB.prepare("SELECT id FROM collections WHERE project_id = ? AND kind = 'edited'").bind(project.id).first<{ id: string }>();
+    const now = Date.now();
+    await database.DB.prepare("INSERT INTO assets (id, collection_id, r2_key, original_filename, bytes, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+      .bind(crypto.randomUUID(), edited!.id, `tests/${crypto.randomUUID()}.jpg`, "protected.jpg", 1024, "upload", now, now).run();
+
+    const response = await SELF.fetch(`https://portal.test/api/projects/${project.id}`, {
+      method: "PATCH",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ orderedServices: [] }),
+    });
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({ blocked: [{ kind: "edited", assetCount: 1 }] });
+    const remaining = await database.DB.prepare("SELECT id FROM collections WHERE project_id = ? AND kind = 'edited'").bind(project.id).first();
+    expect(remaining).not.toBeNull();
+  });
+
+  it("removes nothing when a mixed de-selection includes a protected service", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const created = await SELF.fetch("https://portal.test/api/projects", {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ street: "Mixed service removal", orderedServices: ["edited", "video"] }),
+    });
+    expect(created.status).toBe(201);
+    const project = await created.json() as { id: string };
+    const edited = await database.DB.prepare("SELECT id FROM collections WHERE project_id = ? AND kind = 'edited'").bind(project.id).first<{ id: string }>();
+    const now = Date.now();
+    await database.DB.prepare("INSERT INTO assets (id, collection_id, r2_key, original_filename, bytes, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+      .bind(crypto.randomUUID(), edited!.id, `tests/${crypto.randomUUID()}.jpg`, "mixed-protected.jpg", 1024, "upload", now, now).run();
+
+    // De-select BOTH: edited is protected (has an asset), video is empty. The pre-screen must
+    // block the whole request with NO partial removal — video must survive.
+    const response = await SELF.fetch(`https://portal.test/api/projects/${project.id}`, {
+      method: "PATCH",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ orderedServices: [] }),
+    });
+    expect(response.status).toBe(409);
+    const payload = await response.json() as { blocked: Array<{ kind: string }>; removed?: string[] };
+    expect(payload.blocked).toEqual([expect.objectContaining({ kind: "edited", assetCount: 1 })]);
+    expect(payload.removed).toBeUndefined();
+    const video = await database.DB.prepare("SELECT id FROM collections WHERE project_id = ? AND kind = 'video'").bind(project.id).first();
+    expect(video).not.toBeNull();
+  });
+
+  it("keeps a de-selected service collection with a pending upload manifest", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const created = await SELF.fetch("https://portal.test/api/projects", {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ street: "Manifest-protected service removal", orderedServices: ["edited"] }),
+    });
+    expect(created.status).toBe(201);
+    const project = await created.json() as { id: string };
+    const edited = await database.DB.prepare("SELECT id FROM collections WHERE project_id = ? AND kind = 'edited'").bind(project.id).first<{ id: string }>();
+    await database.DB.prepare("INSERT INTO upload_manifests (id, collection_id, expected_count, filenames_json, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)")
+      .bind(crypto.randomUUID(), edited!.id, 1, "[\"pending.jpg\"]", "seed-admin", Date.now()).run();
+
+    const response = await SELF.fetch(`https://portal.test/api/projects/${project.id}`, {
+      method: "PATCH",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ orderedServices: [] }),
+    });
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({ blocked: [{ kind: "edited", manifestCount: 1 }] });
+    const remaining = await database.DB.prepare("SELECT id FROM collections WHERE project_id = ? AND kind = 'edited'").bind(project.id).first();
+    expect(remaining).not.toBeNull();
+  });
+
+  it("allows an editor to move an assigned project backwards through the pipeline", async () => {
+    const created = await SELF.fetch("https://portal.test/api/projects", {
+      method: "POST",
+      headers: { cookie: await sessionCookie(adminToken), "content-type": "application/json" },
+      body: JSON.stringify({ street: "Backward stage move", orderedServices: [], editorUserIds: [editorId] }),
+    });
+    expect(created.status).toBe(201);
+    const project = await created.json() as { id: string };
+    await database.DB.prepare("UPDATE projects SET stage_key = ? WHERE id = ?").bind("edited_review", project.id).run();
+
+    const response = await SELF.fetch(`https://portal.test/api/projects/${project.id}/stage`, {
+      method: "POST",
+      headers: { cookie: await sessionCookie(editorToken), "content-type": "application/json" },
+      body: JSON.stringify({ stageKey: "raw_review" }),
+    });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ stageKey: "raw_review" });
+    const stored = await database.DB.prepare("SELECT stage_key FROM projects WHERE id = ?").bind(project.id).first<{ stage_key: string }>();
+    expect(stored).toEqual(expect.objectContaining({ stage_key: "raw_review" }));
+  });
+
   it("streams selected RAW files as a ZIP for an assigned editor and rejects a member without the capability", async () => {
     const created = await SELF.fetch("https://portal.test/api/projects", {
       method: "POST", headers: { cookie: await sessionCookie(adminToken), "content-type": "application/json" },

@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { createDb, schema } from "@quincy/db";
-import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
-import { COLLECTION_KINDS, isStageKey, ROLE_CAPABILITIES, STAGE_TRANSITIONS, type CollectionKind } from "@quincy/shared";
+import { and, asc, desc, eq, inArray, isNull, notExists, sql } from "drizzle-orm";
+import { COLLECTION_KINDS, isStageKey, ROLE_CAPABILITIES, type CollectionKind } from "@quincy/shared";
 import { z } from "zod";
 import type { AppEnv } from "../env";
 import { hasProjectAccess, requireCapability } from "../middleware/capability";
@@ -63,10 +63,41 @@ projectsRoutes.patch("/projects/:id", async (c) => {
     const { orderedServices, photographerUserIds, editorUserIds, ...projectUpdates } = data;
     const auditMeta: Record<string, unknown> = { ...projectUpdates };
     if (orderedServices !== undefined) {
-      const existing = await db.select({ kind: schema.collections.kind }).from(schema.collections).where(eq(schema.collections.projectId, id)).all();
+      // Grouped counts merged in JS — a correlated scalar subquery via sql`${schema.assets}` renders
+      // incorrectly under drizzle/D1 and silently returned 0 (caught by the blocked-payload tests).
+      const countsFor = async (collectionIds: string[]) => {
+        const [assetRows, manifestRows] = await Promise.all([
+          db.select({ collectionId: schema.assets.collectionId, n: sql<number>`count(*)` }).from(schema.assets).where(inArray(schema.assets.collectionId, collectionIds)).groupBy(schema.assets.collectionId).all(),
+          db.select({ collectionId: schema.uploadManifests.collectionId, n: sql<number>`count(*)` }).from(schema.uploadManifests).where(inArray(schema.uploadManifests.collectionId, collectionIds)).groupBy(schema.uploadManifests.collectionId).all(),
+        ]);
+        return { assets: new Map(assetRows.map((row) => [row.collectionId, row.n])), manifests: new Map(manifestRows.map((row) => [row.collectionId, row.n])) };
+      };
+      const existing = await db.select({ id: schema.collections.id, kind: schema.collections.kind, receivedCount: schema.collections.receivedCount }).from(schema.collections).where(eq(schema.collections.projectId, id)).all();
+      const desiredServices = new Set<CollectionKind>(["raw", ...orderedServices]);
+      const removedCollections = existing.filter((collection) => collection.kind !== "raw" && !desiredServices.has(collection.kind as CollectionKind));
+      const blockedPayload = (list: typeof removedCollections, counts: Awaited<ReturnType<typeof countsFor>>, removedKinds: string[] = []) =>
+        c.json({ error: "Services with received media cannot be removed.", blocked: list.map((collection) => ({ kind: collection.kind, assetCount: counts.assets.get(collection.id) ?? 0, manifestCount: counts.manifests.get(collection.id) ?? 0 })), ...(removedKinds.length ? { removed: removedKinds } : {}) }, 409);
+      if (removedCollections.length) {
+        // Pre-screen so the COMMON blocked case mutates nothing at all (no partial removals on 409).
+        const pre = await countsFor(removedCollections.map((collection) => collection.id));
+        const preBlocked = removedCollections.filter((collection) => collection.receivedCount > 0 || (pre.assets.get(collection.id) ?? 0) > 0 || (pre.manifests.get(collection.id) ?? 0) > 0);
+        if (preBlocked.length) return blockedPayload(preBlocked, pre);
+      }
+      // Correctness (no cascade-deleting a mid-flight upload) lives in the guarded DELETE itself —
+      // the pre-screen above only shapes UX. A race between the two can still block a delete here;
+      // in that rare case we audit what WAS removed and report both halves honestly.
+      const guardedDeletes = await Promise.all(removedCollections.map((collection) => db.delete(schema.collections).where(and(eq(schema.collections.id, collection.id), eq(schema.collections.receivedCount, 0), notExists(db.select({ id: schema.assets.id }).from(schema.assets).where(eq(schema.assets.collectionId, schema.collections.id))), notExists(db.select({ id: schema.uploadManifests.id }).from(schema.uploadManifests).where(eq(schema.uploadManifests.collectionId, schema.collections.id))))).returning({ id: schema.collections.id })));
+      const deletedIds = new Set(guardedDeletes.flatMap((rows) => rows.map((row) => row.id)));
+      const guardedBlocked = removedCollections.filter((collection) => !deletedIds.has(collection.id));
+      if (guardedBlocked.length) {
+        const removedKinds = removedCollections.filter((collection) => deletedIds.has(collection.id)).map((collection) => collection.kind);
+        if (removedKinds.length) await audit(c.env, c.get("user").id, "project.update", "project", id, { servicesRemoved: removedKinds, partial: true });
+        return blockedPayload(guardedBlocked, await countsFor(guardedBlocked.map((collection) => collection.id)), removedKinds);
+      }
       const existingKinds = new Set(existing.map((collection) => collection.kind as CollectionKind));
       const services = await addCollections(db, id, orderedServices);
       auditMeta.servicesAdded = [...services].filter((kind) => !existingKinds.has(kind));
+      auditMeta.servicesRemoved = removedCollections.map((collection) => collection.kind);
     }
     if (photographerUserIds !== undefined) auditMeta.photographerMembers = await syncMembers(db, id, photographerUserIds, "photographer");
     if (editorUserIds !== undefined) auditMeta.editorMembers = await syncMembers(db, id, editorUserIds, "editor");
@@ -162,12 +193,11 @@ projectsRoutes.post("/projects/:id/stage", async (c) => {
   const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
   if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   {
-    if (!ROLE_CAPABILITIES[c.get("user").role].includes("editProject")) return c.json({ error: "Forbidden", capability: "editProject" }, 403);
+    if (!ROLE_CAPABILITIES[c.get("user").role].includes("selectForEditing")) return c.json({ error: "Forbidden", capability: "selectForEditing" }, 403);
     const data = await jsonInput(c, z.object({ stageKey: z.string() })); if (data instanceof Response) return data;
     if (!isStageKey(data.stageKey)) return c.json({ error: "Unknown stage" }, 400);
     const db = createDb(c.env.DB); const project = await db.select().from(schema.projects).where(eq(schema.projects.id, id)).get(); if (!project) return c.json({ error: "Project not found" }, 404);
-    const force = c.get("user").role === "admin"; if (!force && !STAGE_TRANSITIONS[project.stageKey as keyof typeof STAGE_TRANSITIONS]?.includes(data.stageKey)) return c.json({ error: "Invalid stage transition" }, 409);
-    await db.update(schema.projects).set({ stageKey: data.stageKey, updatedAt: new Date() }).where(eq(schema.projects.id, id)); await audit(c.env, c.get("user").id, force ? "stage.force" : "stage.transition", "project", id, { from: project.stageKey, to: data.stageKey }); return c.json({ ok: true, stageKey: data.stageKey });
+    await db.update(schema.projects).set({ stageKey: data.stageKey, updatedAt: new Date() }).where(eq(schema.projects.id, id)); await audit(c.env, c.get("user").id, "stage.set", "project", id, { from: project.stageKey, to: data.stageKey }); return c.json({ ok: true, stageKey: data.stageKey });
   }
 });
 projectsRoutes.get("/projects/:id", async (c) => { const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400); if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403); const value = await details(createDb(c.env.DB), id); return value ? c.json(value) : c.json({ error: "Project not found" }, 404); });

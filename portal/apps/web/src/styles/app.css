@@ -373,6 +373,7 @@ button { font-family: var(--font-sans); }
    Kanban board (dashboard view)
    --------------------------------------------------------------------- */
 .kanban { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(244px, 1fr); gap: 1px; background: var(--border-hairline); border: 1px solid var(--border-hairline); overflow-x: auto; }
+.dashboard-viewbar { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin: calc(var(--space-7) * -1) 0 var(--space-4); }
 .kcol { background: var(--paper-050); display: flex; flex-direction: column; min-width: 0; transition: background var(--dur-fast); }
 .kcol.is-over { background: var(--paper-100); }
 .kcol__head { display: flex; align-items: center; justify-content: space-between; padding: 14px var(--space-4); border-bottom: 1px solid var(--border-hairline); background: var(--paper-050); }
@@ -381,7 +382,7 @@ button { font-family: var(--font-sans); }
 .kcol__head .cnt { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--text-muted); }
 .kcol__body { display: flex; flex-direction: column; gap: 10px; padding: 12px; min-height: 120px; }
 .kcol__empty { text-align: center; color: var(--greige-300); padding: 18px 0; font-size: 20px; }
-.kcard { background: var(--paper-000); border: 1px solid var(--border-hairline); cursor: pointer; transition: background var(--dur-fast), border-color var(--dur-fast), transform var(--dur-fast); }
+.kcard { width: 100%; padding: 0; color: inherit; text-align: left; font: inherit; background: var(--paper-000); border: 1px solid var(--border-hairline); cursor: pointer; transition: background var(--dur-fast), border-color var(--dur-fast), transform var(--dur-fast); }
 .kcard:hover { background: var(--paper-100); border-color: var(--greige-300); }
 .kcard[draggable="true"] { cursor: grab; }
 .kcard[draggable="true"]:active { cursor: grabbing; }

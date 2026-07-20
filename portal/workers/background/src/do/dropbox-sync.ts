@@ -4,7 +4,7 @@ import { integrationConnections, projects } from "@quincy/db/schema";
 
 import type { Env } from "../env";
 import { dbFor, errorMessage } from "../lib/db";
-import { recordDropboxError, listFolder, listFolderContinue, type DropboxEntry } from "../dropbox/client";
+import { DropboxCursorResetError, recordDropboxError, listFolder, listFolderContinue, type DropboxEntry, type DropboxFolderPage } from "../dropbox/client";
 import { syncProjectRawFolder } from "../dropbox/sync";
 
 const CURSOR_KEY = "cursor";
@@ -44,9 +44,16 @@ export class DropboxSyncDO extends DurableObject<Env> {
     try {
       const cursor = await this.ctx.storage.get<string>(CURSOR_KEY);
       // First webhook establishes the recursive delta cursor. Later alarms do exactly one continue tick.
-      const page = cursor
-        ? await listFolderContinue(this.env, db, cursor, connectionId)
-        : await listFolder(this.env, db, "", { recursive: true }, connectionId);
+      let page: DropboxFolderPage;
+      try {
+        page = cursor
+          ? await listFolderContinue(this.env, db, cursor, connectionId)
+          : await listFolder(this.env, db, "", { recursive: true }, connectionId);
+      } catch (error) {
+        if (!(error instanceof DropboxCursorResetError)) throw error;
+        await this.ctx.storage.delete(CURSOR_KEY);
+        page = await listFolder(this.env, db, "", { recursive: true }, connectionId);
+      }
       await this.ctx.storage.put(CURSOR_KEY, page.cursor);
 
       const projectPaths = await db
@@ -54,7 +61,7 @@ export class DropboxSyncDO extends DurableObject<Env> {
         .from(projects)
         .where(isNull(projects.archivedAt));
       for (const projectId of changedProjectIds(page.entries, projectPaths)) {
-        await syncProjectRawFolder(this.env, projectId, connectionId);
+        await syncProjectRawFolder(this.env, projectId, undefined, connectionId);
       }
 
       if (page.has_more) await this.ctx.storage.setAlarm(Date.now() + TICK_DELAY_MS);

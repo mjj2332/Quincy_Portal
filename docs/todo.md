@@ -75,12 +75,18 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/other agents 
   unexpiring per-key URLs (`TODO(hardening)` in `portal/workers/app/src/routes/media.ts`).
 
 ## Waiting on user / external
-- [ ] Dropbox app registration (App Console: scoped app, `files.metadata.read` +
-  `files.content.read/write`; redirect URI
-  `https://staging.quincy.flamingfire.my/api/integrations/dropbox/callback`; webhook URI on
-  the webhook-ingress worker) → put `DROPBOX_APP_KEY`/`SECRET` into `.dev.vars` + wrangler
-  secrets. Blocks: live end-to-end Dropbox sync test and the Dropbox webhook LIVE path (DO
-  alarm cursor sync) test — both are code-complete and deployed, just unverified live.
+- [x] Dropbox app registered by user (2026-07-20); `DROPBOX_APP_KEY`/`SECRET` in `.dev.vars`
+  AND uploaded as Worker secrets (app + background; secret also on webhook-ingress).
+  `INTEGRATION_KEK` generated + uploaded (app + background). `TONOMO_WEBHOOK_TOKEN`
+  generated + uploaded (ingress); value in `.prod-secrets.local`. See `docs/Dropbox-Setup.md`.
+- [ ] USER: in the Dropbox App Console — add the `sharing.read` scope (needed to resolve
+  `dropbox.com/scl/fo/…` shared links) and verify redirect URI
+  `https://quincy.flamingfire.my/api/integrations/dropbox/callback` + webhook URI
+  `https://quincy-portal-webhook-ingress.mjj2332.workers.dev/webhooks/dropbox` per
+  `docs/Dropbox-Setup.md`. Then: Admin → Integrations → Connect Dropbox, and run the first
+  live sync test.
+- [ ] USER: configure Tonomo with the webhook URL (deployed with the current wave; orchestrator
+  confirms when live): `https://quincy-portal-webhook-ingress.mjj2332.workers.dev/webhooks/tonomo?token=<see .prod-secrets.local>`.
 - [ ] Real interactive Google browser login check at `https://quincy.flamingfire.my` (sign-in
   attempted FROM staging still bounces to the prod origin — single `APP_ORIGIN`; use prod).
 - [ ] Rotate/retire the production `BETTER_AUTH_SECRET`: the gate-rotation value still sits in

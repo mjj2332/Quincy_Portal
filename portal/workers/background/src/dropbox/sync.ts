@@ -1,12 +1,12 @@
 import { assets, collections, projects } from "@quincy/db/schema";
 import { isAcceptedPhotoFilename, parseXmpRating, XMP_SCAN_BYTES, xmpRatingToStars } from "@quincy/shared";
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, isNull, or, sql } from "drizzle-orm";
 
 import type { Env } from "../env";
 import { dbFor, errorMessage } from "../lib/db";
 import { createJob, setJobStatus } from "../lib/jobs";
 import type { IngestMessage } from "../messages";
-import { download, listFolder, listFolderContinue, type DropboxFile } from "./client";
+import { download, getSharedLinkMetadata, listFolder, listFolderContinue, type DropboxFile } from "./client";
 
 function normalisePath(path: string): string {
   const trimmed = path.trim().replace(/\\/g, "/").replace(/\/+$/, "");
@@ -14,20 +14,24 @@ function normalisePath(path: string): string {
   return trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
 }
 
-function pathFromRawFolderLink(rawFolderLink: string | null): string | null {
+async function pathFromRawFolderLink(env: Env, rawFolderLink: string | null, connectionId?: string): Promise<string | null> {
   if (!rawFolderLink) return null;
+  let url: URL;
   try {
-    const url = new URL(rawFolderLink);
-    const queryPath = url.searchParams.get("path");
-    if (queryPath) return normalisePath(queryPath);
-    const homeMarker = "/home";
-    const markerIndex = url.pathname.toLowerCase().indexOf(homeMarker);
-    if (markerIndex !== -1) return normalisePath(decodeURIComponent(url.pathname.slice(markerIndex + homeMarker.length)));
+    url = new URL(rawFolderLink);
   } catch {
     // A manually entered Dropbox path is also a useful fallback.
     if (rawFolderLink.startsWith("/")) return normalisePath(rawFolderLink);
+    return null;
   }
-  return null;
+  const hostname = url.hostname.toLowerCase();
+  if (hostname !== "dropbox.com" && hostname !== "www.dropbox.com" && !hostname.endsWith(".dropbox.com")) throw new Error("Dropbox RAW folder link must use a dropbox.com URL");
+  const queryPath = url.searchParams.get("path");
+  if (queryPath) return normalisePath(queryPath);
+  const homeMarker = "/home";
+  const markerIndex = url.pathname.toLowerCase().indexOf(homeMarker);
+  if (markerIndex !== -1) return normalisePath(decodeURIComponent(url.pathname.slice(markerIndex + homeMarker.length)));
+  return normalisePath(await getSharedLinkMetadata(env, dbFor(env), rawFolderLink, connectionId));
 }
 
 function expectedCountFromFolder(path: string): number | null {
@@ -72,15 +76,16 @@ async function ensureRawCollection(env: Env, projectId: string): Promise<{ id: s
 export async function syncProjectRawFolder(
   env: Env,
   projectId: string,
+  jobId?: string,
   connectionId?: string,
 ): Promise<void> {
   const db = dbFor(env);
-  const jobId = await createJob(db, {
+  const trackingJobId = jobId ?? await createJob(db, {
     kind: "dropbox_sync",
     projectId,
     correlationId: `dropbox_sync:${projectId}`,
   });
-  await setJobStatus(db, jobId, "running");
+  await setJobStatus(db, trackingJobId, "running");
 
   try {
     const [project] = await db
@@ -90,8 +95,9 @@ export async function syncProjectRawFolder(
       .limit(1);
     if (!project) throw new Error(`Project ${projectId} does not exist`);
 
-    const rawFolderPath = normalisePath(project.rawFolderPath ?? pathFromRawFolderLink(project.rawFolderLink) ?? "");
+    const rawFolderPath = project.rawFolderPath ? normalisePath(project.rawFolderPath) : normalisePath(await pathFromRawFolderLink(env, project.rawFolderLink, connectionId) ?? "");
     if (!rawFolderPath) throw new Error(`Project ${projectId} has no resolvable Dropbox RAW folder path`);
+    if (!project.rawFolderPath) await db.update(projects).set({ rawFolderPath, updatedAt: new Date() }).where(and(eq(projects.id, projectId), or(isNull(projects.rawFolderPath), eq(projects.rawFolderPath, ""))));
 
     const collection = await ensureRawCollection(env, projectId);
     const expectedCount = expectedCountFromFolder(rawFolderPath);
@@ -149,9 +155,9 @@ export async function syncProjectRawFolder(
       const message: IngestMessage = { type: "asset_ingested", assetId };
       await env.INGEST_QUEUE.send(message);
     }
-    await setJobStatus(db, jobId, "done");
+    await setJobStatus(db, trackingJobId, "done");
   } catch (error) {
-    await setJobStatus(db, jobId, "failed", errorMessage(error));
+    await setJobStatus(db, trackingJobId, "failed", errorMessage(error));
     throw error;
   }
 }

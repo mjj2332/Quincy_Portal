@@ -5,4 +5,5 @@ export interface Env {
   DB: D1Database;
   BACKGROUND: Service<QuincyBackground>;
   DROPBOX_APP_SECRET?: string;
+  TONOMO_WEBHOOK_TOKEN?: string;
 }

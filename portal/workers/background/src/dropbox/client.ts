@@ -41,6 +41,8 @@ export interface DropboxFolderPage {
   has_more: boolean;
 }
 
+export class DropboxCursorResetError extends Error {}
+
 interface DropboxConnection {
   id: string;
   encryptedCredentials: string | null;
@@ -183,8 +185,10 @@ export async function getAccessToken(env: Env, db: Database, connectionId?: stri
     const parsed: unknown = JSON.parse(plaintext);
     if (!isRecord(parsed)) throw new Error("Dropbox credentials are malformed");
     const credentials: DropboxCredentials = {
-      accessToken: asString(parsed.accessToken, "accessToken"),
-      refreshToken: asString(parsed.refreshToken, "refreshToken"),
+      // Accept the initial callback's former snake_case envelope once, then the next
+      // refresh persists the canonical camelCase form below.
+      accessToken: asString(parsed.accessToken ?? parsed.access_token, "accessToken"),
+      refreshToken: asString(parsed.refreshToken ?? parsed.refresh_token, "refreshToken"),
     };
     if (!connection.expiresAt || connection.expiresAt.getTime() <= Date.now() + REFRESH_SKEW_MS) {
       return refreshAccessToken(env, db, connection, credentials);
@@ -211,11 +215,37 @@ async function authorisedJson(
       headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
       body: JSON.stringify(payload),
     });
-    if (!response.ok) throw new Error(`Dropbox ${endpoint} failed (${response.status}): ${await response.text()}`);
+    if (!response.ok) {
+      const body = await response.text();
+      if (endpoint === "/files/list_folder/continue" && response.status === 409 && /\breset\b/i.test(body)) {
+        throw new DropboxCursorResetError(`Dropbox cursor reset: ${body}`);
+      }
+      throw new Error(`Dropbox ${endpoint} failed (${response.status}): ${body}`);
+    }
     return await response.json() as unknown;
   } catch (error) {
+    if (error instanceof DropboxCursorResetError) throw error;
     await recordDropboxError(db, connection.id, error);
     throw error;
+  }
+}
+
+export async function getSharedLinkMetadata(
+  env: Env,
+  db: Database,
+  url: string,
+  connectionId?: string,
+): Promise<string> {
+  const connection = await getConnection(db, connectionId);
+  try {
+    const value = await authorisedJson(env, db, "/sharing/get_shared_link_metadata", { url }, connection.id);
+    if (!isRecord(value)) throw new Error("Dropbox returned an invalid shared-link response");
+    if (typeof value.path_lower !== "string" || !value.path_lower) throw new Error("Shared link is not owned by / mounted in the studio Dropbox — use a folder inside the studio account.");
+    return value.path_lower;
+  } catch (error) {
+    const message = errorMessage(error) === "Shared link is not owned by / mounted in the studio Dropbox — use a folder inside the studio account." ? errorMessage(error) : `Dropbox shared-link resolution failed; the Dropbox sharing.read scope may be missing: ${errorMessage(error)}`;
+    await recordDropboxError(db, connection.id, new Error(message));
+    throw new Error(message);
   }
 }
 

@@ -64,8 +64,8 @@ export function ProjectFields({ form, errors, existingCollections = [], onChange
 
   useEffect(() => { void loadUsers(); }, [loadUsers]);
 
-  const photographers = users.filter((user) => user.role === "photographer" && (user.active || form.photographerUserIds.includes(user.id)));
-  const editors = users.filter((user) => user.role === "editor" && (user.active || form.editorUserIds.includes(user.id)));
+  const photographers = users.filter((user) => (user.role === "photographer" || user.role === "admin") && (user.active || form.photographerUserIds.includes(user.id)));
+  const editors = users.filter((user) => (user.role === "editor" || user.role === "admin") && (user.active || form.editorUserIds.includes(user.id)));
   const collectionExists = (kind: CollectionKind) => existingCollections.includes(kind);
 
   return <>
@@ -85,7 +85,7 @@ export function ProjectFields({ form, errors, existingCollections = [], onChange
       <div className="create-project__section-head"><div className="ey">Services</div><h2 className="serif" id="services-heading">What is being delivered?</h2></div>
       <div className="create-project__checks" role="group" aria-labelledby="services-heading">
         <label className="create-project__check"><input type="checkbox" checked disabled /><span><strong>RAW</strong><small>{collectionExists("raw") ? "Already created" : "Always included"}</small></span></label>
-        {SERVICES.map((service) => { const existing = collectionExists(service.kind); return <label className="create-project__check" key={service.kind}><input type="checkbox" checked={existing || form.orderedServices.includes(service.kind)} disabled={existing} onChange={() => onToggle("orderedServices", service.kind)} /><span>{service.label}{existing && <small>Already created</small>}</span></label>; })}
+        {SERVICES.map((service) => <label className="create-project__check" key={service.kind}><input type="checkbox" checked={form.orderedServices.includes(service.kind)} onChange={() => onToggle("orderedServices", service.kind)} /><span>{service.label}</span></label>)}
       </div>
     </section>
     <section className="create-project__section" aria-labelledby="dropbox-heading">
@@ -96,7 +96,7 @@ export function ProjectFields({ form, errors, existingCollections = [], onChange
       <div className="create-project__section-head"><div className="ey">Team</div><h2 className="serif" id="team-heading">Who is assigned?</h2></div>
       {isLoadingUsers && <div className="create-project__team-state" role="status">Loading available team members…</div>}
       {!isLoadingUsers && usersError && <div className="notice" role="alert">{usersError}<div style={{ marginTop: 12 }}><button className="button button--secondary" type="button" onClick={() => void loadUsers()}>Try again</button></div></div>}
-      {!isLoadingUsers && !usersError && <div className="create-project__team"><div><div className="ey">Photographers</div><div className="create-project__checklist">{photographers.length ? photographers.map((user) => <label className="create-project__check" key={user.id}><input type="checkbox" checked={form.photographerUserIds.includes(user.id)} onChange={() => onToggle("photographerUserIds", user.id)} /><span><strong>{userName(user)}</strong><small>{user.email}</small></span></label>) : <p>No active photographers are provisioned.</p>}</div></div><div><div className="ey">Editors</div><div className="create-project__checklist">{editors.length ? editors.map((user) => <label className="create-project__check" key={user.id}><input type="checkbox" checked={form.editorUserIds.includes(user.id)} onChange={() => onToggle("editorUserIds", user.id)} /><span><strong>{userName(user)}</strong><small>{user.email}</small></span></label>) : <p>No active editors are provisioned.</p>}</div></div></div>}
+      {!isLoadingUsers && !usersError && <div className="create-project__team"><div><div className="ey">Photographers</div><div className="create-project__checklist">{photographers.length ? photographers.map((user) => <label className="create-project__check" key={user.id}><input type="checkbox" checked={form.photographerUserIds.includes(user.id)} onChange={() => onToggle("photographerUserIds", user.id)} /><span><strong>{userName(user)}</strong><small>{user.email}{user.role === "admin" && " · admin"}</small></span></label>) : <p>No active photographers are provisioned.</p>}</div></div><div><div className="ey">Editors</div><div className="create-project__checklist">{editors.length ? editors.map((user) => <label className="create-project__check" key={user.id}><input type="checkbox" checked={form.editorUserIds.includes(user.id)} onChange={() => onToggle("editorUserIds", user.id)} /><span><strong>{userName(user)}</strong><small>{user.email}{user.role === "admin" && " · admin"}</small></span></label>) : <p>No active editors are provisioned.</p>}</div></div></div>}
     </section>
     <section className="create-project__section" aria-labelledby="notes-heading">
       <div className="create-project__section-head"><div className="ey">Notes</div><h2 className="serif" id="notes-heading">Anything the team should know?</h2></div>

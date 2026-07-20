@@ -12,6 +12,8 @@ import { AutoHdrRoundtrip } from "./workflows/autohdr";
 
 export { AutoHdrRoundtrip, DropboxSyncDO };
 
+type DropboxSyncMessage = Extract<IngestMessage, { type: "dropbox_sync" }> & { jobId?: string };
+
 export default class QuincyBackground extends WorkerEntrypoint<Env> {
   async fetch(): Promise<Response> {
     return Response.json({ ok: true, service: "quincy-background" });
@@ -25,7 +27,8 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
       correlationId: `dropbox_sync:${projectId}`,
     });
     try {
-      await this.env.INGEST_QUEUE.send({ type: "dropbox_sync", projectId });
+      const message: DropboxSyncMessage = { type: "dropbox_sync", projectId, jobId };
+      await this.env.INGEST_QUEUE.send(message);
       return { jobId };
     } catch (error) {
       await setJobStatus(db, jobId, "failed", error instanceof Error ? error.message : String(error));
@@ -89,7 +92,7 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
             message.ack();
             break;
           case "dropbox_sync":
-            await syncProjectRawFolder(this.env, message.body.projectId);
+            await syncProjectRawFolder(this.env, message.body.projectId, (message.body as DropboxSyncMessage).jobId);
             message.ack();
             break;
           case "autohdr_check":

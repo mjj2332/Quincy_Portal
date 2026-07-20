@@ -3,6 +3,9 @@ import { Hono } from "hono";
 import type { Env } from "./env";
 
 const encoder = new TextEncoder();
+const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
+const maxTonomoBodyBytes = 1_024 * 1_024;
+const tonomoEvents = new Set(["order.created", "order.updated"]);
 
 function toHex(bytes: Uint8Array): string {
   return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -42,6 +45,50 @@ async function sha256(value: string): Promise<string> {
   return toHex(new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(value))));
 }
 
+async function sha256Bytes(value: ArrayBuffer): Promise<string> {
+  return toHex(new Uint8Array(await crypto.subtle.digest("SHA-256", value)));
+}
+
+async function readBodyWithinLimit(request: Request, limit: number): Promise<ArrayBuffer | null> {
+  const contentLength = request.headers.get("content-length");
+  if (contentLength && Number(contentLength) > limit) return null;
+
+  if (!request.body) return new ArrayBuffer(0);
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      length += value.byteLength;
+      if (length > limit) {
+        await reader.cancel();
+        return null;
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const body = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return body.buffer;
+}
+
+function firstOrderKey(payload: unknown): string | undefined {
+  const firstOrder = Array.isArray(payload) ? payload[0] : payload;
+  if (!firstOrder || typeof firstOrder !== "object" || Array.isArray(firstOrder)) return undefined;
+  const order = firstOrder as Record<string, unknown>;
+  const key = order.id ?? order.orderNo;
+  return typeof key === "string" || typeof key === "number" ? String(key) : undefined;
+}
+
 const app = new Hono<{ Bindings: Env }>();
 
 app.get("/health", (context) => context.json({ ok: true, service: "quincy-webhook-ingress" }));
@@ -79,6 +126,48 @@ app.post("/webhooks/dropbox", async (context) => {
     console.error("Dropbox webhook handoff failed", error);
   }
   return context.text("ok");
+});
+
+app.get("/webhooks/tonomo", (context) => context.text("Method not allowed", 405, { Allow: "POST" }));
+
+app.post("/webhooks/tonomo", async (context) => {
+  const token = context.req.query("token");
+  const expectedToken = context.env.TONOMO_WEBHOOK_TOKEN;
+  if (!expectedToken) return context.text("Tonomo webhook is not configured", 503);
+  if (!constantTimeEqual(encoder.encode(token ?? ""), encoder.encode(expectedToken))) {
+    return context.text("unauthorized", 401);
+  }
+
+  const event = context.req.query("event") ?? "order.created";
+  if (!tonomoEvents.has(event)) return context.text("Invalid Tonomo event", 400);
+
+  const rawBody = await readBodyWithinLimit(context.req.raw, maxTonomoBodyBytes);
+  if (!rawBody) return context.text("Payload too large", 413);
+
+  let payloadJson: string;
+  let payload: unknown;
+  try {
+    payloadJson = decoder.decode(rawBody);
+    payload = JSON.parse(payloadJson);
+  } catch {
+    return context.text("Invalid JSON", 400);
+  }
+  if (!payload || typeof payload !== "object") return context.text("Invalid JSON", 400);
+
+  const bodyHash = await sha256Bytes(rawBody);
+  const stableOrderKey = firstOrderKey(payload) ?? bodyHash;
+  const eventId = await sha256(`${event}:${stableOrderKey}:${bodyHash}`);
+  try {
+    await context.env.DB.prepare(
+      "INSERT INTO webhook_events (id, source, event_id, payload_json, status, received_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(source, event_id) DO NOTHING",
+    )
+      .bind(crypto.randomUUID(), "tonomo", eventId, payloadJson, "received", Date.now())
+      .run();
+  } catch (error) {
+    console.error("Tonomo webhook storage failed", error);
+    return context.text("Webhook storage failed", 500);
+  }
+  return context.json({ ok: true });
 });
 
 app.notFound((context) => context.text("Not found", 404));

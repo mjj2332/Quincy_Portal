@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import type { CollectionKind } from "@quincy/shared";
 import { ProjectFields, emptyProjectForm, type ProjectFieldError, type ProjectForm, type ProjectSelectionField, type ProjectTextField, validateProjectFields } from "../components/ProjectFields";
-import { apiGet, apiPatch } from "../lib/api";
+import { ApiError, apiGet, apiPatch } from "../lib/api";
 
 type ProjectResponse = {
   id: string; street: string; suburb: string | null; postcode: string | null; agencyName: string | null; agentName: string | null; agentEmail: string | null; agentPhone: string | null;
@@ -9,9 +9,23 @@ type ProjectResponse = {
   collections: Array<{ id: string; kind: CollectionKind }>; members: Array<{ userId: string; roleOnProject: "photographer" | "editor" }>;
 };
 type FormErrors = Partial<Record<"street" | ProjectFieldError, string>>;
+type ServiceRemovalBlock = { kind: CollectionKind; assetCount: number; manifestCount?: number };
 
 function fieldValue(value: string | number | null): string { return value === null ? "" : String(value); }
 function optionalValue(value: string): string | null { return value.trim() || null; }
+function serviceLabel(kind: CollectionKind): string { return kind === "raw" ? "RAW" : kind.charAt(0).toUpperCase() + kind.slice(1); }
+
+function blockedServiceMessage(reason: unknown): string | undefined {
+  if (!(reason instanceof ApiError) || reason.status !== 409 || !reason.details || typeof reason.details !== "object") return undefined;
+  const blocked = (reason.details as { blocked?: unknown }).blocked;
+  if (!Array.isArray(blocked) || !blocked.length) return undefined;
+  const details = blocked.filter((item): item is ServiceRemovalBlock => Boolean(item) && typeof item === "object" && typeof (item as { kind?: unknown }).kind === "string" && typeof (item as { assetCount?: unknown }).assetCount === "number")
+    .map((item) => {
+      const parts = [item.assetCount > 0 ? `${item.assetCount} asset${item.assetCount === 1 ? "" : "s"}` : null, (item.manifestCount ?? 0) > 0 ? `${item.manifestCount} pending upload${item.manifestCount === 1 ? "" : "s"}` : null].filter(Boolean);
+      return `${serviceLabel(item.kind)} (${parts.join(", ") || "received media"})`;
+    });
+  return details.length ? `Can’t remove ${details.join(", ")}: media has been received or is being uploaded.` : undefined;
+}
 
 function formFromProject(project: ProjectResponse): ProjectForm {
   return {
@@ -56,7 +70,17 @@ export function EditProject({ projectId, onCancel, onSaved }: { projectId: strin
         street: form.street.trim(), suburb: optionalValue(form.suburb), postcode: optionalValue(form.postcode), agencyName: optionalValue(form.agencyName), agentName: optionalValue(form.agentName), agentEmail: optionalValue(form.agentEmail), agentPhone: optionalValue(form.agentPhone), shootDate: optionalValue(form.shootDate), timeWindow: optionalValue(form.timeWindow), orderNo: optionalValue(form.orderNo), orderId: optionalValue(form.orderId), invoiceAmount: invoiceAmount ? Number(invoiceAmount) : null, paymentStatus: optionalValue(form.paymentStatus), notes: optionalValue(form.notes), rawFolderLink: optionalValue(form.rawFolderLink), rawFolderPath: optionalValue(form.rawFolderPath), orderedServices: form.orderedServices, photographerUserIds: form.photographerUserIds, editorUserIds: form.editorUserIds,
       });
       onSaved("Shoot details saved.");
-    } catch (reason) { setSubmitError(reason instanceof Error ? reason.message : "The shoot details could not be saved."); }
+    } catch (reason) {
+      const blockedMessage = blockedServiceMessage(reason);
+      if (blockedMessage) {
+        setSubmitError(blockedMessage);
+        try {
+          const current = await apiGet<ProjectResponse>(`/api/projects/${projectId}`);
+          setProject(current);
+          setForm(formFromProject(current));
+        } catch { /* Keep the safety error visible even if the re-sync request fails. */ }
+      } else setSubmitError(reason instanceof Error ? reason.message : "The shoot details could not be saved.");
+    }
     finally { setIsSubmitting(false); }
   }
 
