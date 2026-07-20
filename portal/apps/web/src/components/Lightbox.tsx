@@ -79,12 +79,17 @@ export function Lightbox({ assets, rawAssets, initialAssetId, collectionKind, ca
   // resolve last would win even if it was issued first. A monotonically increasing
   // generation fixes that: only the response from the most-recently-issued call is ever
   // applied, regardless of arrival order.
+  // That generation only orders requests; it does not establish which asset a winning
+  // response belongs to. Check the current asset too, so a slow mutation refresh from a
+  // previously displayed asset cannot overwrite the discussion now on screen.
   const refreshGenRef = useRef(0);
   const refreshDiscussion = async () => {
+    if (currentAssetIdRef.current !== asset.id) return; // a stale mutation refresh must never touch the shared generation
     const assetIdAtCall = asset.id;
     const gen = ++refreshGenRef.current;
     const response = await apiGet<AnnotationResponse>(`/api/assets/${assetIdAtCall}/annotations`);
     if (gen !== refreshGenRef.current) return; // a newer refresh call has since superseded this one — discard
+    if (currentAssetIdRef.current !== assetIdAtCall) return; // the user has since navigated to a different asset — discard
     setAnnotations(response.annotations); setComments(response.comments);
   };
   useEffect(() => {
@@ -198,6 +203,7 @@ export function Lightbox({ assets, rawAssets, initialAssetId, collectionKind, ca
   }
   async function saveCommentEdit() {
     if (!editingCommentId || !editingCommentBody.trim()) return;
+    const assetIdAtStart = asset.id;
     const commentId = editingCommentId;
     const body = editingCommentBody.trim();
     const before = comments;
@@ -208,8 +214,10 @@ export function Lightbox({ assets, rawAssets, initialAssetId, collectionKind, ca
       const updated = await apiPatch<{ body: string; editedAt: string | null }, { body: string }>(`/api/comments/${commentId}`, { body });
       setComments((current) => replaceComment(current, commentId, { body: updated.body, editedAt: updated.editedAt }));
     } catch (reason) {
-      setComments(before); setEditingCommentId(commentId); setEditingCommentBody(body);
-      onToast(reason instanceof Error ? reason.message : "The comment could not be updated.", "error");
+      if (currentAssetIdRef.current === assetIdAtStart) {
+        setComments(before); setEditingCommentId(commentId); setEditingCommentBody(body);
+        onToast(reason instanceof Error ? reason.message : "The comment could not be updated.", "error");
+      }
     } finally { setIsSaving(false); }
   }
   async function deleteComment(comment: ThreadComment) {
@@ -231,8 +239,45 @@ export function Lightbox({ assets, rawAssets, initialAssetId, collectionKind, ca
       onToast(reason instanceof Error ? reason.message : "The comment could not be deleted.", "error");
     } finally { setIsSaving(false); }
   }
+  async function deleteAnnotation(annotation: Annotation) {
+    if (!window.confirm(annotation.strokeR2Key ? "Delete this annotation and its markup?" : "Delete this annotation?")) return;
+    const assetIdAtDelete = asset.id;
+    const before = annotations;
+    const strokeCacheBefore = strokeCache;
+    const editingAnnotationBefore = editingAnnotationId;
+    const editingAnnotationNoteBefore = editingAnnotationNote;
+    const editingDrawingBefore = editingDrawingId;
+    const markupBefore = markup;
+    const strokesBefore = strokes;
+    if (editingDrawingId === annotation.id) exitDrawMode();
+    setAnnotations((current) => current.filter((item) => item.id !== annotation.id));
+    setStrokeCache((current) => { const next = new Map(current); next.delete(annotation.id); return next; });
+    if (highlightedAnnotationId === annotation.id) setHighlightedAnnotationId(null);
+    if (editingAnnotationId === annotation.id) { setEditingAnnotationId(null); setEditingAnnotationNote(""); }
+    setIsSaving(true);
+    try {
+      const response = await fetch(`/api/annotations/${encodeURIComponent(annotation.id)}`, { method: "DELETE", credentials: "include", headers: { Accept: "application/json" } });
+      const payload = await response.json().catch(() => undefined) as { error?: string } | undefined;
+      if (!response.ok) throw new Error(payload?.error ?? "The annotation could not be deleted.");
+    } catch (reason) {
+      if (currentAssetIdRef.current === assetIdAtDelete) {
+        setAnnotations(before); setStrokeCache(strokeCacheBefore); setEditingAnnotationId(editingAnnotationBefore); setEditingAnnotationNote(editingAnnotationNoteBefore);
+        if (editingDrawingBefore === annotation.id) { setEditingDrawingId(editingDrawingBefore); setMarkup(markupBefore); setStrokes(strokesBefore); }
+        onToast(reason instanceof Error ? reason.message : "The annotation could not be deleted.", "error");
+      }
+      setIsSaving(false);
+      return;
+    }
+    try {
+      await refreshDiscussion();
+      if (currentAssetIdRef.current === assetIdAtDelete) onToast("Annotation deleted.", "success");
+    } catch {
+      if (currentAssetIdRef.current === assetIdAtDelete) onToast("Annotation deleted; the list may be briefly out of date.", "success");
+    } finally { setIsSaving(false); }
+  }
   async function saveAnnotationEdit() {
     if (!editingAnnotationId) return;
+    const assetIdAtStart = asset.id;
     const annotationId = editingAnnotationId;
     const noteText = editingAnnotationNote.trim() || null;
     const before = annotations;
@@ -243,8 +288,10 @@ export function Lightbox({ assets, rawAssets, initialAssetId, collectionKind, ca
       const updated = await apiPatch<{ noteText: string | null; editedAt: string | null }, { noteText: string | null }>(`/api/annotations/${annotationId}`, { noteText });
       setAnnotations((current) => current.map((annotation) => annotation.id === annotationId ? { ...annotation, noteText: updated.noteText, editedAt: updated.editedAt } : annotation));
     } catch (reason) {
-      setAnnotations(before); setEditingAnnotationId(annotationId); setEditingAnnotationNote(noteText ?? "");
-      onToast(reason instanceof Error ? reason.message : "The annotation note could not be updated.", "error");
+      if (currentAssetIdRef.current === assetIdAtStart) {
+        setAnnotations(before); setEditingAnnotationId(annotationId); setEditingAnnotationNote(noteText ?? "");
+        onToast(reason instanceof Error ? reason.message : "The annotation note could not be updated.", "error");
+      }
     } finally { setIsSaving(false); }
   }
 
@@ -273,7 +320,7 @@ export function Lightbox({ assets, rawAssets, initialAssetId, collectionKind, ca
       {canRecommend && <section className="vpanel__sec"><div className="eylab">Recommendation</div><button className={`dbtn ${asset.review?.recommended ? "is-on" : ""}`} style={{ width: "100%" }} type="button" onClick={() => void onReview(asset.id, { recommended: !asset.review?.recommended })}>{asset.review?.recommended ? "Recommended to QA" : "Recommend to QA"}</button></section>}
       {canReview && <section className="vpanel__sec"><div className="eylab">Rating</div><div className="starpick">{[1, 2, 3, 4, 5].map((number) => <button key={number} type="button" className={number <= stars ? "on" : ""} onClick={() => void onReview(asset.id, { stars: number === stars ? null : number })}>★</button>)}</div></section>}
       {canReview && <section className="vpanel__sec"><div className="eylab">Label</div><div className="labels">{labels.map((label) => <button className={`labelpick ${asset.review?.colorLabel === label.value ? "is-on" : ""}`} type="button" key={label.value} style={{ background: label.color }} title={label.name} onClick={() => void onReview(asset.id, { colorLabel: asset.review?.colorLabel === label.value ? null : label.value })} />)}</div></section>}
-      <section className="vpanel__sec"><div className="eylab" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}><span>Markup & annotations</span><span style={{ display: "flex", gap: 6 }}><button className="chip" type="button" onClick={() => setMarkupVisible((current) => !current)}>{markupVisible ? "Hide markup" : "Show markup"}</button>{canAnnotate && <button className={`chip ${markup && !editingDrawingId ? "is-active" : ""}`} type="button" disabled={editingDrawingId !== null} onClick={toggleDraw}>{markup && !editingDrawingId ? "Drawing…" : "Draw"}</button>}</span></div>{canAnnotate && <><textarea className="annotation-note" placeholder="Optional note for this markup…" value={annotationNote} disabled={isDrawingMode} onChange={(event) => setAnnotationNote(event.target.value)} /><button className="dbtn" style={{ width: "100%", marginTop: 8 }} type="button" disabled={isSaving || isDrawingMode || (!strokes.length && !annotationNote.trim())} onClick={() => void saveAnnotation()}>Save annotation</button></>}<div className="thread" style={{ marginTop: 14 }}>{annotations.length === 0 ? <div className="muted" style={{ fontSize: 14 }}>No annotations yet.</div> : annotations.map((annotation) => <div className={`cmt ${highlightedAnnotationId === annotation.id ? "cmt--highlighted" : ""}`} key={annotation.id} ref={(el) => { if (el) annotationRefs.current.set(annotation.id, el); else annotationRefs.current.delete(annotation.id); }}><div className="cmt__pin">✎</div><div className="cmt__b"><div className="cmt__who">{annotation.author.name}<span>{annotation.author.role}</span></div>{editingAnnotationId === annotation.id ? <><textarea className="annotation-note" aria-label="Edit annotation note" value={editingAnnotationNote} disabled={isDrawingMode} onChange={(event) => setEditingAnnotationNote(event.target.value)} /><div className="spread" style={{ marginTop: 6 }}><button className="comment-reply" type="button" disabled={isDrawingMode} onClick={cancelInlineEdit}>Cancel</button><button className="comment-reply" type="button" disabled={isSaving || isDrawingMode} onClick={() => void saveAnnotationEdit()}>Save</button></div></> : <>{annotation.noteText && <div className="cmt__txt">{annotation.noteText}</div>}<div className="ey muted" style={{ marginTop: 6 }}>{time(annotation.createdAt)}{annotation.editedAt && " · (edited)"}{annotation.authorId === currentUserId && <> · <button className="comment-reply" type="button" disabled={isDrawingMode || isSaving} onClick={() => { setEditingCommentId(null); setEditingAnnotationId(annotation.id); setEditingAnnotationNote(annotation.noteText ?? ""); }}>Edit note</button> · <button className="comment-reply" type="button" disabled={isDrawingMode || isSaving || !strokesReady(annotation)} title={!strokesReady(annotation) ? "Loading markup…" : undefined} onClick={() => startDrawingEdit(annotation)}>{annotation.strokeR2Key ? "Edit drawing" : "Add drawing"}</button></>}</div></>}</div></div>)}</div></section>
+      <section className="vpanel__sec"><div className="eylab" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}><span>Markup & annotations</span><span style={{ display: "flex", gap: 6 }}><button className="chip" type="button" onClick={() => setMarkupVisible((current) => !current)}>{markupVisible ? "Hide markup" : "Show markup"}</button>{canAnnotate && <button className={`chip ${markup && !editingDrawingId ? "is-active" : ""}`} type="button" disabled={editingDrawingId !== null} onClick={toggleDraw}>{markup && !editingDrawingId ? "Drawing…" : "Draw"}</button>}</span></div>{canAnnotate && <><textarea className="annotation-note" placeholder="Optional note for this markup…" value={annotationNote} disabled={isDrawingMode} onChange={(event) => setAnnotationNote(event.target.value)} /><button className="dbtn" style={{ width: "100%", marginTop: 8 }} type="button" disabled={isSaving || isDrawingMode || (!strokes.length && !annotationNote.trim())} onClick={() => void saveAnnotation()}>Save annotation</button></>}<div className="thread" style={{ marginTop: 14 }}>{annotations.length === 0 ? <div className="muted" style={{ fontSize: 14 }}>No annotations yet.</div> : annotations.map((annotation) => <div className={`cmt ${highlightedAnnotationId === annotation.id ? "cmt--highlighted" : ""}`} key={annotation.id} ref={(el) => { if (el) annotationRefs.current.set(annotation.id, el); else annotationRefs.current.delete(annotation.id); }}><div className="cmt__pin">✎</div><div className="cmt__b"><div className="cmt__who">{annotation.author.name}<span>{annotation.author.role}</span></div>{editingAnnotationId === annotation.id ? <><textarea className="annotation-note" aria-label="Edit annotation note" value={editingAnnotationNote} disabled={isDrawingMode} onChange={(event) => setEditingAnnotationNote(event.target.value)} /><div className="spread" style={{ marginTop: 6 }}><button className="comment-reply" type="button" disabled={isDrawingMode} onClick={cancelInlineEdit}>Cancel</button><button className="comment-reply" type="button" disabled={isSaving || isDrawingMode} onClick={() => void saveAnnotationEdit()}>Save</button></div></> : <>{annotation.noteText && <div className="cmt__txt">{annotation.noteText}</div>}<div className="ey muted" style={{ marginTop: 6 }}>{time(annotation.createdAt)}{annotation.editedAt && " · (edited)"}{annotation.authorId === currentUserId && <> · <button className="comment-reply" type="button" disabled={isDrawingMode || isSaving} onClick={() => { setEditingCommentId(null); setEditingAnnotationId(annotation.id); setEditingAnnotationNote(annotation.noteText ?? ""); }}>Edit note</button> · <button className="comment-reply" type="button" disabled={isDrawingMode || isSaving || !strokesReady(annotation)} title={!strokesReady(annotation) ? "Loading markup…" : undefined} onClick={() => startDrawingEdit(annotation)}>{annotation.strokeR2Key ? "Edit drawing" : "Add drawing"}</button> · <button className="comment-reply" type="button" disabled={isDrawingMode || isSaving} onClick={() => void deleteAnnotation(annotation)}>Delete</button></>}</div></>}</div></div>)}</div></section>
       <section className="vpanel__sec"><div className="eylab">Comments</div><CommentThread comments={comments} currentUserId={currentUserId} editingCommentId={editingCommentId} editingCommentBody={editingCommentBody} isSaving={isSaving} disableActions={isDrawingMode} onReply={setReplyTo} onEdit={(comment) => { setEditingAnnotationId(null); setEditingCommentId(comment.id); setEditingCommentBody(comment.body); }} onDelete={(comment) => void deleteComment(comment)} onEditBodyChange={setEditingCommentBody} onCancelEdit={cancelInlineEdit} onSaveEdit={() => void saveCommentEdit()} /></section>
     </div><div className="composer">{replyTo && <div className="hint">Replying to a comment · <button className="chip" type="button" disabled={isDrawingMode} onClick={() => setReplyTo(null)}>cancel</button></div>}<textarea placeholder={canAnnotate ? "Add a comment…" : "You do not have permission to comment."} disabled={!canAnnotate || isDrawingMode} value={commentBody} onChange={(event) => setCommentBody(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) void postComment(); }} /><div className="spread"><span className="ey muted">⌘↵ to send</span><button className="barbtn barbtn--solid" type="button" disabled={!canAnnotate || isSaving || isDrawingMode || !commentBody.trim()} onClick={() => void postComment()}>Send comment</button></div></div></aside>
     <div className="strip">{assets.map((item, itemIndex) => <button className={`strip__button ${itemIndex === index ? "is-active" : ""}`} type="button" key={item.id} onClick={() => setIndex(itemIndex)} title={item.originalFilename}><img className="strip__t" src={`/media/asset/${encodeURIComponent(item.id)}/thumb`} alt={item.originalFilename} /></button>)}</div>

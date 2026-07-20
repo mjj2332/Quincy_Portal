@@ -167,6 +167,23 @@ annotationsRoutes.delete("/comments/:id", async (c) => {
   return c.json({ ok: true, deletedCount: ids.length });
 });
 
+annotationsRoutes.delete("/annotations/:id", async (c) => {
+  const id = c.req.param("id");
+  if (!z.string().uuid().safeParse(id).success) return c.json({ error: "Invalid annotation id" }, 400);
+  const db = createDb(c.env.DB);
+  const annotation = await db.select().from(schema.annotations).where(eq(schema.annotations.id, id)).get();
+  if (!annotation) return c.json({ error: "Annotation not found" }, 404);
+  const asset = await assetContext(c, annotation.assetId);
+  if (!asset) return c.json({ error: "Asset not found" }, 404);
+  if (!await hasProjectAccess(c, asset.projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
+  const scope = scopeForAsset(c, asset); if (scope instanceof Response) return scope;
+  if (annotation.authorId !== c.get("user").id) return c.json({ error: "Forbidden: only the author can delete this annotation." }, 403);
+  // Retain stroke objects in R2: deletes only remove the D1 reference, preserving cheap, audit-friendly history.
+  await db.delete(schema.annotations).where(eq(schema.annotations.id, id));
+  await audit(c.env, c.get("user").id, "annotation.delete", "annotation", id, { assetId: asset.assetId, scope, hadStrokes: Boolean(annotation.strokeR2Key) });
+  return c.json({ ok: true });
+});
+
 annotationsRoutes.patch("/annotations/:id", async (c) => {
   const id = c.req.param("id");
   if (!z.string().uuid().safeParse(id).success) return c.json({ error: "Invalid annotation id" }, 400);

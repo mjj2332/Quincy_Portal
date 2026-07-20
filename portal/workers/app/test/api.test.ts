@@ -430,4 +430,36 @@ describe("staff app API", () => {
     expect(storedRow?.stroke_r2_key).toBeNull();
     expect(storedRow?.edited_at).toEqual(expect.any(Number));
   });
+
+  it("deletes an author's annotation while retaining its stroke object", async () => {
+    const strokes = [{ points: [{ x: 0.1, y: 0.1 }, { x: 0.2, y: 0.3 }], color: "#e64b3c", width: 4 }];
+    const { annotationId, strokeR2Key } = await createEditableAnnotation(strokes);
+    expect(strokeR2Key).toBeTruthy();
+
+    const response = await SELF.fetch(`https://portal.test/api/annotations/${annotationId}`, {
+      method: "DELETE",
+      headers: { cookie: await sessionCookie(firstPhotographerToken) },
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ ok: true });
+    const storedRow = await database.DB.prepare("SELECT id FROM annotations WHERE id = ?").bind(annotationId).first<{ id: string }>();
+    expect(storedRow).toBeNull();
+    const mediaEnv = env as unknown as { MEDIA: R2Bucket };
+    expect(await mediaEnv.MEDIA.get(strokeR2Key!)).not.toBeNull();
+  });
+
+  it("prevents a fellow project member from deleting another author's annotation", async () => {
+    const strokes = [{ points: [{ x: 0.2, y: 0.2 }, { x: 0.3, y: 0.25 }], color: "#3f8f5a", width: 4 }];
+    const { annotationId } = await createEditableAnnotation(strokes);
+    const response = await SELF.fetch(`https://portal.test/api/annotations/${annotationId}`, {
+      method: "DELETE",
+      headers: { cookie: await sessionCookie(secondPhotographerToken) },
+    });
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toMatchObject({ error: "Forbidden: only the author can delete this annotation." });
+    const storedRow = await database.DB.prepare("SELECT id FROM annotations WHERE id = ?").bind(annotationId).first<{ id: string }>();
+    expect(storedRow).toEqual({ id: annotationId });
+  });
 });
