@@ -133,7 +133,10 @@ function transformUrl(origin: string, key: string, variant: RenditionVariant, se
 export async function generateRenditions(
   env: Pick<Env, "APP_ORIGIN" | "TRANSFORM_SOURCE_SECRET" | "MEDIA">,
   assetId: string,
-  dependencies: { store: RenditionStore; fetch: typeof fetch } = { store: createRenditionStore(env as Env), fetch },
+  // fetch MUST be wrapped, not passed bare: calling `dependencies.fetch(...)` invokes native
+  // fetch with `this = dependencies`, which throws "Illegal invocation". The arrow calls the
+  // free global fetch with correct binding. (Injected test fetchers are unaffected.)
+  dependencies: { store: RenditionStore; fetch: typeof fetch } = { store: createRenditionStore(env as Env), fetch: (...args: Parameters<typeof fetch>) => fetch(...args) },
 ): Promise<{ generated: RenditionVariant[]; skipped: RenditionVariant[] }> {
   const asset = await dependencies.store.getAsset(assetId);
   if (!asset) return { generated: [], skipped: ["thumb", "web"] };
