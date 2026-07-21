@@ -1,6 +1,6 @@
 # Quincy Portal — Product Requirements Document (PRD)
 
-> **Status:** Draft v0.2 · 18 June 2026
+> **Status:** Draft v0.3 · 21 July 2026
 > **Owner:** _✏️ your name_
 > **Prototype:** `index.html` (live React prototype)
 
@@ -266,7 +266,142 @@ Implemented stages, shown on the dashboard and project rail:
 
 ---
 
-## 8. Open questions (remaining)
+## 8. Tech stack & architecture  ✅ Built (production `portal/`)
+
+> This section describes the **production application** in `portal/` — a TypeScript
+> monorepo running entirely on Cloudflare. It is a **summary**; the authoritative
+> architecture and phase plan live in **`Implementation-Plan.md`** (§4 target
+> architecture, §5 data model), which overrides this section on any conflict. The
+> `prototype/` app (React via CDN + in-browser Babel, mock data, no backend) is
+> **reference-only** and is not the production stack described here.
+
+### 8.1 Stack at a glance
+
+| Layer | Technology | Version | Notes |
+|---|---|---|---|
+| **Frontend** | React + React-DOM | 18.3.1 | SPA, no framework router (state-based routing) |
+| Build / dev | Vite + `@vitejs/plugin-react` | 8.1.5 / 6.0.3 | `@cloudflare/vite-plugin` for Worker-aware dev |
+| Language | TypeScript | 7.0.2 | strict; every workspace typechecks in CI |
+| **API / backend** | Hono | 4.12.31 | runs on Cloudflare Workers |
+| Auth | better-auth (+ Google provider) | 1.6.23 | sessions in D1 + KV; closed/allow-listed signup |
+| ORM / schema | Drizzle ORM + drizzle-kit | 0.45.2 / 0.31.10 | typed D1 schema + SQL migrations |
+| Validation | Zod | 3.25.76 | request/webhook payload parsing |
+| R2 signing | aws4fetch | 1.0.20 | presigned S3-API multipart uploads |
+| **Runtime / infra** | Cloudflare Workers · D1 · R2 · KV · Queues · Workflows · Durable Objects · Image Transformations | — | see §8.3–8.5 |
+| Tooling | Wrangler · Vitest + `@cloudflare/vitest-pool-workers` | 4.112.0 / 4.1.10 | tests run in the Workers runtime |
+
+Dependencies are **hoisted to the monorepo root** and pinned; workspaces don't install
+their own copies.
+
+### 8.2 Monorepo layout (`portal/`)
+
+Six npm workspaces — three deployable Workers, one SPA, two shared libraries:
+
+| Workspace | Package | Role |
+|---|---|---|
+| `apps/web` | `@quincy/web` | Vite + React 18 SPA — the staff UI (dashboard, workspace, review lightbox, admin). |
+| `workers/app` | — | **Staff API** (Hono) + better-auth; also **serves the built SPA**; issues signed image-transform URLs. |
+| `workers/background` | — | Queue consumers, **Workflows** (autoHDR round-trip), and the **Dropbox-sync + Tonomo-processor Durable Objects**. |
+| `workers/webhook-ingress` | — | Thin **public** webhook receiver (Dropbox + Tonomo): verifies signatures, dedupes, fast-acks, hands off via service binding. |
+| `packages/shared` | `@quincy/shared` | Single source for capabilities, pipeline stage keys, JPEG/media ingest rules, XMP star-rating parser, AES-GCM credential crypto. |
+| `packages/db` | `@quincy/db` | Drizzle D1 schema, migrations (0000–0003 applied to prod), seed. |
+
+### 8.3 Runtime architecture
+
+```
+                    ┌───────────── Tonomo ─────────────┐         ┌── Dropbox ──┐
+                    │ order.created/updated + links     │         │ file change │
+                    └───────────────┬───────────────────┘         └──────┬──────┘
+                    signed POST /webhooks/tonomo           signed POST /webhooks/dropbox
+                                    ▼                                    ▼
+ Client ── signed link (Ph 5) ──►  ┌───────────────────────────────────────────┐
+ (no login, public)                │  PUBLIC Worker — webhook-ingress            │
+                                   │  HMAC verify · dedupe · fast-ack            │
+                                   └───────────────────┬─────────────────────────┘
+                                                       │ service bindings (RPC)
+ Staff ── Google OAuth ─────────►  ┌────────────────────▼────────────────────────┐
+ (better-auth: D1 + KV sessions)   │  APP / API Worker (staff)                    │
+                                   │  Hono · better-auth · serves SPA             │
+                                   │  R2-read → signed /cdn-cgi/image transform    │
+                                   └──┬────────┬────────┬────────┬────────────────┘
+                                      │        │        │        │ service binding
+                                 ┌────▼─┐ ┌────▼─┐ ┌────▼──┐ ┌───▼──────────────────┐
+                                 │  D1  │ │  R2  │ │Queues │ │  BACKGROUND Worker    │
+                                 │ meta │ │media │ │(ingest)│ │  Queue consumers      │
+                                 └──────┘ │(priv)│ └───┬───┘ │  Workflows (autoHDR)  │
+                                          └──▲───┘     │     │  DropboxSyncDO (alarm)│
+                            Image Transformations      │     │  TonomoProcessorDO    │
+                            (remote path, ~100 MB;     └─────┤  → Dropbox API        │
+                             resize in CF infra)             └───────────────────────┘
+                                                                       ▲
+                                                        autoHDR watches Dropbox folder
+```
+
+- **No 5th compute surface for images** — renditions use the **remote Image
+  Transformation path** (`/cdn-cgi/image/…`, ~100 MB limit), not a Container. The app
+  Worker issues **HMAC-signed transform-source URLs** so the public transform endpoint
+  can read the private R2 original. (Signatures are currently unexpiring — a known
+  hardening item.)
+- **Client-side loading** is concurrency-limited (`LazyImage`, module-level semaphore)
+  so a grid of large originals can't stampede Cloudflare edge rate-limits.
+- **Deploy order matters** (service bindings resolve at deploy time):
+  **background → webhook-ingress → app**; Phase 5 adds a `client-delivery` Worker last.
+
+### 8.4 Data & storage (Cloudflare primitives)
+
+| Primitive | Resource | Holds |
+|---|---|---|
+| **D1** (SQLite) | `quincy-portal` | All relational metadata — projects, assets, collections, selections, ratings/labels/decisions, comments, annotations (strokes → R2), publishes, `webhook_events`, `jobs`, `audit_log`, auth tables, `integration_connections`, `pipeline_stages`, agencies/agents. |
+| **R2** | `quincy-portal-media` | Original media (private), edited assets, annotation stroke JSON, PDFs, cached renditions. **Immutable** — edits/deletes write new keys; old objects retained. Bucket versioning on. |
+| **KV** | `quincy-portal-sessions` | better-auth session store (with D1). |
+| **Queues** | `quincy-ingest` | Ingest / processing jobs (consumed by the background Worker). |
+| **Workflows** | — | Durable multi-step autoHDR round-trip (selected RAW → Dropbox → returned edits). |
+| **Durable Objects** | `DropboxSyncDO`, `TonomoProcessorDO` | Fixed-ID, single-writer serialization: Dropbox cursor sync (alarm-driven) and FIFO Tonomo event processing with poison-event operator queue. |
+
+### 8.5 Auth, capabilities & security
+
+- **Staff auth:** better-auth with **Google OAuth only** (D-14) — closed, allow-listed
+  signup; deactivated users are locked out and sessions revoked. Sessions persist in
+  **D1 + KV**. (Cloudflare Access was dropped in favour of owned auth.)
+- **Capability model:** roles → capabilities (`uploadRaw`, `selectForEditing`,
+  `viewEdited`, `manageExtras`, `publish`, `adminBackend`, …) in a **`role_capabilities`
+  table**, enforced by capability middleware on API routes. `@quincy/shared` is the
+  single source for these keys.
+- **Credential encryption:** external-integration tokens (Dropbox) are stored
+  **AES-GCM encrypted** under an `INTEGRATION_KEK` Worker secret — never in plaintext.
+- **Webhook integrity:** constant-time HMAC verification (Dropbox `X-Dropbox-Signature`;
+  Tonomo bearer token), dedupe by event id, fast-ack.
+- **Audit integrity:** every mutation is audit-logged; comment/annotation **edit &
+  delete are author-only** (admins are *not* exempt); media is never destructively
+  deleted.
+
+### 8.6 External integrations
+
+- **Dropbox** — one **shared studio-level** OAuth connection (not per-user/per-project),
+  used for RAW sync and the autoHDR watch folder; Business team-space aware
+  (`Dropbox-API-Path-Root`); needs `sharing.read` for `scl/fo/…` shared-link folders.
+- **Tonomo** — booking webhooks auto-create pre-filled projects at *Awaiting RAW*
+  (§4a); DO-serialized processing.
+- **autoHDR** — external editor that watches a Dropbox folder; integration is via
+  Dropbox today (direct API is planned).
+- **Vimeo** — films delivered as links/tiles (direct upload planned).
+
+### 8.7 Environments & delivery
+
+| Environment | Host | Notes |
+|---|---|---|
+| Production | `quincy.flamingfire.my` | Live. `main` is the source of truth. |
+| Staging | `staging.quincy.flamingfire.my` | Pre-prod (shares a single `APP_ORIGIN` for OAuth). |
+| Prototype | `prototype.quincy.flamingfire.my` | The old design prototype, reference-only. |
+
+CI (`.github/portal.yml`) typechecks every workspace, runs the Vitest suites
+(`packages/shared`, `workers/app`, `webhook-ingress`) in the Workers runtime, and builds
+the SPA. Secrets are **Worker secrets** in prod; local dev reads gitignored
+`.dev.vars`. Deploys run in the fixed **background → webhook-ingress → app** order.
+
+---
+
+## 9. Open questions (remaining)
 
 The decisions resolved in v0.2 have been folded into the sections above. Still open:
 
@@ -277,7 +412,7 @@ The decisions resolved in v0.2 have been folded into the sections above. Still o
 
 ---
 
-## 9. Out of current prototype scope / parked
+## 10. Out of current prototype scope / parked
 
 - Real payment processing for premium unlocks (currently a simulated checkout).
 - Notifications (email/SMS) on stage changes.
