@@ -6,6 +6,7 @@ import { createAuth } from "../src/auth";
 import type { Env } from "../src/env";
 import { createZipStream } from "../src/lib/zip-stream";
 import { signTransformSource } from "../src/lib/transform-source";
+import { uniqueVersionError } from "../src/routes/collections";
 
 const database = env as unknown as { DB: D1Database };
 const authEnv = env as unknown as Env;
@@ -103,7 +104,7 @@ async function createEditableComment() {
     body: JSON.stringify({ body: "Original comment" }),
   });
   expect(commentResponse.status).toBe(201);
-  return { assetId, commentId: (await commentResponse.json() as { id: string }).id };
+  return { projectId: project.id, assetId, commentId: (await commentResponse.json() as { id: string }).id };
 }
 
 async function createEditableAnnotation(strokes: Array<{ points: Array<{ x: number; y: number }>; color: string; width: number }>) {
@@ -137,6 +138,13 @@ async function createEditableAnnotation(strokes: Array<{ points: Array<{ x: numb
 }
 
 describe("staff app API", () => {
+  it("recognizes a D1 version collision carried by error.cause", () => {
+    expect(uniqueVersionError(new Error("Failed query", {
+      cause: new Error("UNIQUE constraint failed: assets.version_group_id, assets.kind, assets.version"),
+    }))).toBe(true);
+    expect(uniqueVersionError(new Error("Failed query"))).toBe(false);
+  });
+
   it("writes a streaming STORE ZIP with descriptors and a valid central directory", async () => {
     const encoder = new TextEncoder();
     async function* entries() {
@@ -238,8 +246,18 @@ describe("staff app API", () => {
     expect(encodedPath).toContain(encodeURIComponent("se.CR527827_4 EV #20Jul.jpg"));
     const source = await SELF.fetch(`https://portal.test${encodedPath}?sig=${sig}`);
     expect(source.status).toBe(200); await expect(source.text()).resolves.toBe(body);
+    expect(source.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
     expect((await SELF.fetch(`https://portal.test${encodedPath}?sig=tampered`)).status).toBe(404);
     expect((await SELF.fetch("https://portal.test/__transform-source/bad%ZZ?sig=tampered")).status).toBe(404);
+  });
+
+  it("does not expose delivery links to an assigned photographer", async () => {
+    const { projectId } = await createEditableComment();
+    const response = await SELF.fetch(`https://portal.test/api/projects/${projectId}/links?collection=video`, {
+      headers: { cookie: await sessionCookie(firstPhotographerToken) },
+    });
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toMatchObject({ capability: "viewEdited" });
   });
 
   it("implicitly links a verified Google identity to the pre-provisioned admin", async () => {
@@ -908,5 +926,55 @@ describe("staff app API", () => {
     const discardedAgain = await SELF.fetch(`https://portal.test/api/admin/webhook-events/${poisonId}/discard`, { method: "POST", headers: { cookie } });
     expect(discardedAgain.status).toBe(409); await expect(discardedAgain.json()).resolves.toEqual({ error: "Event is no longer poison" });
     expect(await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE action = ? AND target_id = ?").bind("tonomo_event.discard", poisonId).first()).toEqual(auditCount);
+  });
+
+  it("manages manual collection links while preserving immutable Tonomo links", async () => {
+    const adminCookie = await sessionCookie(adminToken);
+    const created = await SELF.fetch("https://portal.test/api/projects", { method: "POST", headers: { cookie: adminCookie, "content-type": "application/json" }, body: JSON.stringify({ street: "Link collection", orderedServices: ["video"], photographerUserIds: [firstPhotographerId] }) });
+    expect(created.status).toBe(201); const project = await created.json() as { id: string };
+    const manual = await SELF.fetch(`https://portal.test/api/projects/${project.id}/links`, { method: "POST", headers: { cookie: adminCookie, "content-type": "application/json" }, body: JSON.stringify({ collection: "video", url: "https://vimeo.com/123456", label: "Walkthrough" }) });
+    expect(manual.status).toBe(201); const manualLink = await manual.json() as { id: string; source: string };
+    expect(manualLink.source).toBe("manual");
+    const video = await database.DB.prepare("SELECT id FROM collections WHERE project_id = ? AND kind = ?").bind(project.id, "video").first<{ id: string }>();
+    expect((await SELF.fetch(`https://portal.test/api/projects/${project.id}/links/${manualLink.id}`, { method: "DELETE", headers: { cookie: adminCookie } })).status).toBe(204);
+    expect(await database.DB.prepare("SELECT status FROM collections WHERE id = ?").bind(video!.id).first()).toEqual({ status: "empty" });
+    const replacement = await SELF.fetch(`https://portal.test/api/projects/${project.id}/links`, { method: "POST", headers: { cookie: adminCookie, "content-type": "application/json" }, body: JSON.stringify({ collection: "video", url: "https://vimeo.com/123456", label: "Walkthrough" }) });
+    expect(replacement.status).toBe(201); const replacementLink = await replacement.json() as { id: string };
+    const tonomoId = crypto.randomUUID(); const now = Date.now();
+    await database.DB.prepare("INSERT INTO collection_links (id, collection_id, url, label, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)").bind(tonomoId, video!.id, "https://dropbox.com/s/finished", "Tonomo floor", "tonomo", now, now).run();
+    const listed = await SELF.fetch(`https://portal.test/api/projects/${project.id}/links?collection=video`, { headers: { cookie: adminCookie } });
+    await expect(listed.json()).resolves.toMatchObject({ links: expect.arrayContaining([expect.objectContaining({ id: replacementLink.id, source: "manual" }), expect.objectContaining({ id: tonomoId, source: "tonomo" })]) });
+    expect((await SELF.fetch(`https://portal.test/api/projects/${project.id}/links/${replacementLink.id}`, { method: "DELETE", headers: { cookie: adminCookie } })).status).toBe(204);
+    expect((await SELF.fetch(`https://portal.test/api/projects/${project.id}/links/${tonomoId}`, { method: "DELETE", headers: { cookie: adminCookie } })).status).toBe(409);
+    const photographer = await SELF.fetch(`https://portal.test/api/projects/${project.id}/links`, { method: "POST", headers: { cookie: await sessionCookie(firstPhotographerToken), "content-type": "application/json" }, body: JSON.stringify({ collection: "video", url: "https://vimeo.com/forbidden" }) });
+    expect(photographer.status).toBe(403);
+  });
+
+  it("uploads immutable floorplan and copy document versions with their correct media type", async () => {
+    const adminCookie = await sessionCookie(adminToken);
+    const created = await SELF.fetch("https://portal.test/api/projects", { method: "POST", headers: { cookie: adminCookie, "content-type": "application/json" }, body: JSON.stringify({ street: "Document collection", orderedServices: [], photographerUserIds: [firstPhotographerId] }) });
+    expect(created.status).toBe(201); const project = await created.json() as { id: string };
+    const upload = (kind: string, filename: string, type: string, versionGroupId?: string) => { const form = new FormData(); form.set("kind", kind); form.set("file", new Blob([`document ${filename}`], { type }), filename); if (versionGroupId) form.set("versionGroupId", versionGroupId); return SELF.fetch(`https://portal.test/api/projects/${project.id}/documents`, { method: "POST", headers: { cookie: adminCookie }, body: form }); };
+    const v1Response = await upload("floorplan_pdf", "floorplan-v1.pdf", "application/pdf"); expect(v1Response.status).toBe(201); const v1 = await v1Response.json() as { id: string; version: number; versionGroupId: string; supersedesAssetId: string | null };
+    expect(v1).toMatchObject({ version: 1, supersedesAssetId: null });
+    const v2Response = await upload("floorplan_pdf", "floorplan-v2.pdf", "application/pdf", v1.versionGroupId); expect(v2Response.status).toBe(201); const v2 = await v2Response.json() as { id: string; version: number; versionGroupId: string; supersedesAssetId: string | null };
+    expect(v2).toMatchObject({ version: 2, versionGroupId: v1.versionGroupId, supersedesAssetId: v1.id });
+    const previewV1Response = await upload("floorplan_preview", "floorplan-v1.jpg", "image/jpeg", v1.versionGroupId); expect(previewV1Response.status).toBe(201); const previewV1 = await previewV1Response.json() as { id: string; version: number; supersedesAssetId: string | null };
+    expect(previewV1).toMatchObject({ version: 1, supersedesAssetId: null });
+    const previewV2 = await upload("floorplan_preview", "floorplan-v2.jpg", "image/jpeg", v1.versionGroupId); expect(previewV2.status).toBe(201); await expect(previewV2.json()).resolves.toMatchObject({ kind: "floorplan_preview", version: 2, versionGroupId: v1.versionGroupId, supersedesAssetId: previewV1.id });
+    const copy = await upload("copy_pdf", "copy.pdf", "application/pdf"); expect(copy.status).toBe(201); await expect(copy.json()).resolves.toMatchObject({ kind: "copy_pdf", version: 1 });
+    const approved = await SELF.fetch(`https://portal.test/api/assets/${v2.id}/review`, { method: "POST", headers: { cookie: adminCookie, "content-type": "application/json" }, body: JSON.stringify({ decision: "approved" }) });
+    expect(approved.status).toBe(200);
+    const listed = await SELF.fetch(`https://portal.test/api/projects/${project.id}/assets?collection=floorplan`, { headers: { cookie: adminCookie } });
+    await expect(listed.json()).resolves.toMatchObject({ assets: expect.arrayContaining([expect.objectContaining({ id: v2.id, kind: "floorplan_pdf", version: 2, versionGroupId: v1.versionGroupId, review: expect.objectContaining({ decision: "approved" }) })]) });
+    const original = await SELF.fetch(`https://portal.test/media/asset/${v2.id}/original`, { headers: { cookie: adminCookie } });
+    expect(original.status).toBe(200); expect(original.headers.get("content-type")).toContain("application/pdf");
+    expect(original.headers.get("content-disposition")).toBe('inline; filename="floorplan-v2.pdf"');
+    await database.DB.prepare("UPDATE assets SET original_filename = ? WHERE id = ?").bind("floorplan-v2.pdf\r\nInjected: no", v2.id).run();
+    const sanitized = await SELF.fetch(`https://portal.test/media/asset/${v2.id}/original`, { headers: { cookie: adminCookie } });
+    expect(sanitized.headers.get("content-disposition")).toBe('inline; filename="floorplan-v2.pdfInjected: no"');
+    const deniedForm = new FormData(); deniedForm.set("kind", "copy_pdf"); deniedForm.set("file", new Blob(["nope"], { type: "application/pdf" }), "forbidden.pdf");
+    const photographer = await SELF.fetch(`https://portal.test/api/projects/${project.id}/documents`, { method: "POST", headers: { cookie: await sessionCookie(firstPhotographerToken) }, body: deniedForm });
+    expect(photographer.status).toBe(403);
   });
 });

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type DragEvent } from "react";
 import { type StageKey } from "@quincy/shared";
 import { StatusBadge } from "../components/atoms";
+import { LazyImage } from "../components/LazyImage";
 import { apiGet, apiPost } from "../lib/api";
 import { useCapabilities } from "../lib/capabilities";
 import { useStages } from "../lib/stages";
@@ -43,7 +44,7 @@ function coverUrl(assetId: string): string {
 }
 
 function CoverMedia({ project, className = "", inlinePlaceholder = false }: { project: ProjectSummary; className?: string; inlinePlaceholder?: boolean }) {
-  if (project.coverAssetId) return <img className={className} src={coverUrl(project.coverAssetId)} alt={`Preview of ${project.street}`} loading="lazy" />;
+  if (project.coverAssetId) return <LazyImage className={className} src={coverUrl(project.coverAssetId)} alt={`Preview of ${project.street}`} />;
   const content = project.street.trim().charAt(0).toUpperCase() || "Q";
   return inlinePlaceholder ? <span className={`project-cover-placeholder ${className}`} aria-hidden="true">{content}</span> : <div className={`project-cover-placeholder ${className}`} aria-hidden="true">{content}</div>;
 }

@@ -50,6 +50,15 @@ function optionalString(value: unknown): string | null {
   return null;
 }
 
+function optionalHttpUrl(value: unknown): string | null {
+  const url = optionalString(value);
+  if (!url) return null;
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "http:" || parsed.protocol === "https:" ? url : null;
+  } catch { return null; }
+}
+
 function requiredString(value: unknown, reason: string): string {
   const result = optionalString(value);
   if (!result) throw new TonomoParseError(reason);
@@ -95,7 +104,7 @@ function parseServices(value: unknown): Pick<TonomoOrder, "services" | "unrecogn
     }
     services.push({
       kind,
-      url: details ? optionalString(valueFor(details, ["url", "link", "delivery_url"])) : null,
+      url: details ? optionalHttpUrl(valueFor(details, ["url", "link", "delivery_url"])) : null,
       label: name,
     });
   }
@@ -141,7 +150,7 @@ function parseDeliverableLinks(value: unknown, parsed: Pick<TonomoOrder, "servic
       parsed.unrecognisedServices.push(name ?? "(unnamed deliverable)");
       continue;
     }
-    const url = optionalString(details.url);
+    const url = optionalHttpUrl(details.url);
     if (url && parsed.services.some((service) => service.url === url)) continue;
     const existing = !absorbedKinds.has(kind)
       ? parsed.services.find((service) => service.kind === kind && !service.url)

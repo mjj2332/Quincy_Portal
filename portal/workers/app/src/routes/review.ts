@@ -24,6 +24,7 @@ reviewRoutes.get("/projects/:id/assets", async (c) => {
   const user = c.get("user");
   if (kind === "edited" && !roleHasCapability(user.role, "viewEdited")) return c.json({ error: "Forbidden", capability: "viewEdited" }, 403);
   if (kind === "raw" && !roleHasCapability(user.role, "viewRaw")) return c.json({ error: "Forbidden", capability: "viewRaw" }, 403);
+  if (["video", "floorplan", "copy"].includes(kind) && !roleHasCapability(user.role, "viewEdited")) return c.json({ error: "Forbidden", capability: "viewEdited" }, 403);
 
   const rows = await createDb(c.env.DB).select({ asset: schema.assets, review: schema.assetReviewState, selection: schema.selections.id })
     .from(schema.assets)
@@ -36,6 +37,7 @@ reviewRoutes.get("/projects/:id/assets", async (c) => {
   return c.json({ assets: rows.map(({ asset, review, selection }) => ({
     id: asset.id,
     collectionId: asset.collectionId,
+    kind: asset.kind,
     originalFilename: asset.originalFilename,
     bytes: asset.bytes,
     width: asset.width,
@@ -44,6 +46,9 @@ reviewRoutes.get("/projects/:id/assets", async (c) => {
     isPremium: asset.isPremium,
     createdAt: asset.createdAt,
     sourceRawAssetId: asset.sourceRawAssetId,
+    version: asset.version,
+    versionGroupId: asset.versionGroupId,
+    supersedesAssetId: asset.supersedesAssetId,
     review: review ? { stars: review.stars, colorLabel: review.colorLabel, decision: review.decision, recommended: review.recommended } : null,
     selected: selection !== null,
   })) });

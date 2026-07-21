@@ -257,6 +257,7 @@ export const assets = sqliteTable(
     index("assets_collection_idx").on(t.collectionId),
     index("assets_source_raw_idx").on(t.sourceRawAssetId),
     index("assets_hash_idx").on(t.contentHash),
+    uniqueIndex("assets_version_group_kind_version_unique").on(t.versionGroupId, t.kind, t.version),
   ],
 );
 

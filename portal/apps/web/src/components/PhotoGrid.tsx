@@ -1,8 +1,9 @@
 import { useMemo, useRef, useState, type CSSProperties } from "react";
 import { LabelDot, Stars } from "./atoms";
+import { LazyImage } from "./LazyImage";
 
 export type Review = { stars: number | null; colorLabel: "select" | "maybe" | "cut" | "hero" | null; decision: "approved" | "flagged" | null; recommended: boolean };
-export type WorkspaceAsset = { id: string; collectionId: string; originalFilename: string; bytes: number; width: number | null; height: number | null; ratingFromMetadata: number | null; isPremium: boolean; createdAt: string; sourceRawAssetId: string | null; review: Review | null; selected: boolean };
+export type WorkspaceAsset = { id: string; collectionId: string; kind: "photo" | "video" | "floorplan_pdf" | "floorplan_preview" | "copy_pdf"; originalFilename: string; bytes: number; width: number | null; height: number | null; ratingFromMetadata: number | null; isPremium: boolean; createdAt: string; sourceRawAssetId: string | null; version: number; versionGroupId: string | null; supersedesAssetId: string | null; review: Review | null; selected: boolean };
 export type ReviewPatch = Partial<Pick<Review, "stars" | "colorLabel" | "decision" | "recommended">>;
 
 const LABELS: { value: NonNullable<Review["colorLabel"]>; name: string; color: string }[] = [
@@ -78,7 +79,7 @@ export function PhotoGrid({ assets, canReview, canRecommend, canSelect, canSetCo
       const marked = multi.has(asset.id);
       const state = review?.decision;
       return <div className={`tile ${marked ? "is-selected" : ""} ${state ? `st-${state}` : ""} ${rating(asset) ? "has-rating" : ""} ${asset.selected ? "has-state" : ""}`} key={asset.id} role="button" tabIndex={0} onClick={() => onOpen(asset, displayOrder)} onKeyDown={(event) => { if (event.key === "Enter") onOpen(asset, displayOrder); }}>
-        <img loading="lazy" src={`/media/asset/${encodeURIComponent(asset.id)}/thumb`} alt={asset.originalFilename} /><div className="tile__scrim" />
+        <LazyImage src={`/media/asset/${encodeURIComponent(asset.id)}/thumb`} alt={asset.originalFilename} /><div className="tile__scrim" />
         <button className="selbox" type="button" aria-label={`Select ${asset.originalFilename}`} onClick={(event) => { event.stopPropagation(); toggleMulti(asset, event.shiftKey); }}>✓</button>
         <span className="tile__num">{asset.originalFilename}</span>
         {review?.colorLabel && <span style={{ position: "absolute", top: 13, left: 42, zIndex: 4 }}><LabelDot color={LABELS.find((item) => item.value === review.colorLabel)?.color ?? "#fff"} name={labelName(review.colorLabel)} /></span>}

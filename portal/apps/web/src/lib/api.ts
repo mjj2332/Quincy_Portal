@@ -66,6 +66,14 @@ export function apiPost<T, TBody>(path: string, body: TBody): Promise<T> {
   });
 }
 
+export function apiDelete<T>(path: string): Promise<T> {
+  return request<T>(path, { method: "DELETE" });
+}
+
+export function apiPostForm<T>(path: string, body: FormData): Promise<T> {
+  return request<T>(path, { method: "POST", body });
+}
+
 export function apiPatch<T, TBody>(path: string, body: TBody): Promise<T> {
   return request<T>(path, {
     method: "PATCH",

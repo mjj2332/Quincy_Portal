@@ -34,6 +34,18 @@ describe("parseTonomoOrder", () => {
     });
   });
 
+  it("strips unsafe service and deliverable URLs", () => {
+    const order = parseTonomoOrder({
+      id: "unsafe-url", street: "1 Test St",
+      services: [{ service: "video", delivery_url: "javascript:alert(1)" }],
+      deliverablesLinks: [{ type: "Floor Plan", name: "Floor plan", url: "javascript:alert(1)" }],
+    });
+    expect(order.services).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "video", url: null }),
+      expect.objectContaining({ kind: "floorplan", url: null }),
+    ]));
+  });
+
   it("rejects an order without an id or street", () => {
     expect(() => parseTonomoOrder({ street: "1 Test St" })).toThrow(TonomoParseError);
     expect(() => parseTonomoOrder({ id: "7" })).toThrow(TonomoParseError);

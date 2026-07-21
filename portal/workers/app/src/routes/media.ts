@@ -15,7 +15,16 @@ mediaRoutes.get("/asset/:assetId/:variant", async (c) => {
   if (!await hasProjectAccess(c, row.projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   {
     const user = c.get("user"); if (row.collectionKind !== "raw" && user.role === "photographer") return c.json({ error: "Photographers may only view RAW assets" }, 403); if (row.collectionKind !== "raw" && !["admin", "editor"].includes(user.role)) return c.json({ error: "Forbidden" }, 403);
-    if (variant === "original" || c.env.APP_ENV === "dev") { const object = await c.env.MEDIA.get(row.asset.r2Key); if (!object) return c.json({ error: "Media object not found" }, 404); return new Response(object.body, { headers: { "content-type": "image/jpeg", "cache-control": "private, max-age=3600" } }); }
+    if (variant === "original" || c.env.APP_ENV === "dev") {
+      const object = await c.env.MEDIA.get(row.asset.r2Key); if (!object) return c.json({ error: "Media object not found" }, 404);
+      const contentType = row.asset.kind === "floorplan_pdf" || row.asset.kind === "copy_pdf" ? "application/pdf" : "image/jpeg";
+      const headers: Record<string, string> = { "content-type": contentType, "cache-control": "private, max-age=3600", "x-content-type-options": "nosniff" };
+      if (contentType === "application/pdf") {
+        const safeName = row.asset.originalFilename.replace(/[\x00-\x1f"\\]/g, "");
+        headers["content-disposition"] = `inline; filename="${safeName}"`;
+      }
+      return new Response(object.body, { headers });
+    }
     const spec = RENDITION_SPECS[variant as "web" | "thumb"];
     const signature = await signTransformSource(c.env, row.asset.r2Key);
     if (!signature) return c.json({ error: "Image transformations are not configured" }, 503);
@@ -30,8 +39,12 @@ mediaRoutes.get("/asset/:assetId/:variant", async (c) => {
     // /__transform-source route. Both legs verified live 2026-07-19.
     // Session auth gates this redirect; the source URL is HMAC-bound to the exact R2 key.
     // TODO(hardening): add an expiry to the source signature so redirect URLs age out.
-    const transformUrl = new URL(`/cdn-cgi/image/width=${spec.maxEdge},quality=${spec.quality},format=auto/${sourceUrl.href}`, c.req.url);
-    return c.redirect(transformUrl.href, 302);
+    // width+height+fit=scale-down is a bounding box that preserves aspect ratio without
+    // upscaling — width alone lets a portrait exceed maxEdge on its long side.
+    const transformUrl = new URL(`/cdn-cgi/image/width=${spec.maxEdge},height=${spec.maxEdge},fit=scale-down,quality=${spec.quality},format=auto/${sourceUrl.href}`, c.req.url);
+    const response = c.redirect(transformUrl.href, 302);
+    response.headers.set("cache-control", "private, max-age=86400");
+    return response;
   }
 });
 
