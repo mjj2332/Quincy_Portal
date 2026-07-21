@@ -361,6 +361,20 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/other agents 
   - [ ] Add a partial unique index on `(collection_id, content_hash) WHERE content_hash IS NOT NULL`
     (+ dedup existing rows first) so concurrent sync runs can't insert duplicate assets (queue
     at-least-once redelivery race; sol F+G #2).
+
+**Wave: archived view + manual edited uploads + Edited-QA sectioning (2026-07-22, DEPLOYED)**
+- Admin **Archived projects view** (`GET /projects?archived=1`, adminBackend-only + Dashboard
+  Active/Archived toggle) — fixes the catch-22 where archived projects were unreachable for
+  restore/delete. app `b3ec2faf`.
+- **Manual edited uploads**: new `uploadEdited` capability (admin+editor); upload pipeline
+  (presign/direct/complete/`finalizeIngest`) parameterized by collection → can target the edited
+  collection (`source='upload'`, no RAW pairing); Edited-tab uploader beside "Fetch edited from
+  autoHDR". All upload routes now reject archived projects.
+- **Edited-QA sectioning**: AutoHDR fetch tags `section='AutoHDR'`, manual upload tags `'Manual'`;
+  Edited tab groups by section like RAW QA. Fetch dedup scoped to `source='dropbox'` so a manual
+  edit can't suppress an AutoHDR result.
+- Follow-up (not blocking): [ ] validate JPEG magic bytes from R2 on ingest (both RAW and edited
+  currently trust the extension — pre-existing gap; sol H+I+J #3).
 - [ ] **USER/testing (not yet available):** validate the fetch flow against a real AutoHDR
   `04-FINAL(S)-Photos` sample once one exists — confirm the exact finals-folder spelling
   (`04-FINAL-Photos` vs `04-FINALS-Photos`) and the finished-filename ↔ RAW basename mapping,
