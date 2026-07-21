@@ -21,6 +21,12 @@ describe("PRD §4 capability matrix", () => {
     expect(roleHasCapability("editor", "adminBackend")).toBe(false);
   });
 
+  it("allows admins and editors, but not photographers, to upload edited images", () => {
+    expect(roleHasCapability("admin", "uploadEdited")).toBe(true);
+    expect(roleHasCapability("editor", "uploadEdited")).toBe(true);
+    expect(roleHasCapability("photographer", "uploadEdited")).toBe(false);
+  });
+
   it("reserves the admin backend for admins", () => {
     expect(roleHasCapability("admin", "adminBackend")).toBe(true);
   });

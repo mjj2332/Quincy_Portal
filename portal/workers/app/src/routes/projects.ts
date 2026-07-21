@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { createDb, schema } from "@quincy/db";
-import { and, asc, desc, eq, inArray, isNull, notExists, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, notExists, sql } from "drizzle-orm";
 import { COLLECTION_KINDS, isStageKey, ROLE_CAPABILITIES, type CollectionKind } from "@quincy/shared";
 import { z } from "zod";
 import type { AppEnv } from "../env";
@@ -94,8 +94,12 @@ async function details(db: ReturnType<typeof createDb>, projectId: string, viewe
 export const projectsRoutes = new Hono<AppEnv>();
 projectsRoutes.get("/projects", async (c) => {
   const db = createDb(c.env.DB); const user = c.get("user");
+  const archived = c.req.query("archived") === "1" && ROLE_CAPABILITIES[user.role].includes("adminBackend");
+  const archivedFilter = archived ? isNotNull(schema.projects.archivedAt) : isNull(schema.projects.archivedAt);
   const base = db.select({ project: schema.projects, receivedCount: schema.collections.receivedCount, expectedCount: schema.collections.expectedCount }).from(schema.projects).leftJoin(schema.collections, and(eq(schema.collections.projectId, schema.projects.id), eq(schema.collections.kind, "raw")));
-  const rows = user.role === "photographer" ? await base.innerJoin(schema.projectMembers, and(eq(schema.projectMembers.projectId, schema.projects.id), eq(schema.projectMembers.userId, user.id))).where(isNull(schema.projects.archivedAt)).orderBy(asc(schema.projects.shootDate)).all() : await base.where(isNull(schema.projects.archivedAt)).orderBy(asc(schema.projects.shootDate)).all();
+  const rows = user.role === "photographer"
+    ? await base.innerJoin(schema.projectMembers, and(eq(schema.projectMembers.projectId, schema.projects.id), eq(schema.projectMembers.userId, user.id))).where(archivedFilter).orderBy(asc(schema.projects.shootDate)).all()
+    : await base.where(archivedFilter).orderBy(archived ? desc(schema.projects.updatedAt) : asc(schema.projects.shootDate)).all();
   const projectIds = rows.map(({ project }) => project.id);
   const { storedByProject, automaticByProject } = await coverMaps(db, projectIds, user.role === "photographer");
   return c.json({ projects: rows.map((r) => ({ ...r.project, coverAssetId: storedByProject.get(r.project.id) ?? automaticByProject.get(r.project.id) ?? null, receivedCount: r.receivedCount ?? 0, expectedCount: r.expectedCount })) });

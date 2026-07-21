@@ -30,6 +30,7 @@ interface DashboardProps {
 }
 
 type DashboardView = "grid" | "list" | "kanban";
+type ProjectScope = "active" | "archived";
 type Toast = { id: number; message: string; tone: "success" | "error" };
 
 function formatDate(value: string | null): string {
@@ -120,7 +121,9 @@ export function Dashboard({ onOpenProject, onCreateProject }: DashboardProps) {
   const { stages } = useStages();
   const canCreateProject = can("createProject");
   const canMoveStages = can("selectForEditing");
+  const canViewArchived = can("adminBackend");
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const [projectScope, setProjectScope] = useState<ProjectScope>("active");
   const [query, setQuery] = useState("");
   const [view, setView] = useState<DashboardView>(() => {
     try { const saved = window.localStorage.getItem("quincy:dashboard:view"); return saved === "grid" || saved === "list" || saved === "kanban" ? saved : "grid"; }
@@ -145,7 +148,7 @@ export function Dashboard({ onOpenProject, onCreateProject }: DashboardProps) {
     setIsLoading(true);
     setError(undefined);
 
-    apiGet<ProjectsResponse>("/api/projects")
+    apiGet<ProjectsResponse>(projectScope === "archived" ? "/api/projects?archived=1" : "/api/projects")
       .then((response) => {
         if (isCurrent) setProjects(response.projects);
       })
@@ -159,7 +162,7 @@ export function Dashboard({ onOpenProject, onCreateProject }: DashboardProps) {
     return () => {
       isCurrent = false;
     };
-  }, [reload]);
+  }, [projectScope, reload]);
 
   const filteredProjects = useMemo(() => {
     const term = query.trim().toLocaleLowerCase();
@@ -172,6 +175,7 @@ export function Dashboard({ onOpenProject, onCreateProject }: DashboardProps) {
   const needsReviewCount = projects.filter((project) => project.stageKey === "raw_review" || project.stageKey === "edited_review").length;
   const deliveredCount = projects.filter((project) => project.stageKey === "delivered").length;
   const activeStages = stages.filter((stage) => stage.active);
+  const viewingArchived = projectScope === "archived";
 
   function selectView(next: DashboardView) {
     setView(next);
@@ -221,27 +225,37 @@ export function Dashboard({ onOpenProject, onCreateProject }: DashboardProps) {
         </div>
       </div>
 
-      <div className="stats" aria-label="Project summary">
+      {!viewingArchived && <div className="stats" aria-label="Project summary">
         <div className="stat"><div className="v">{activeCount}</div><div className="l">Active shoots</div></div>
         <div className="stat"><div className="v"><span className="sdot" style={{ background: "var(--signal-caution)" }} />{needsReviewCount}</div><div className="l">Needs review</div></div>
         <div className="stat"><div className="v"><span className="sdot" style={{ background: "var(--signal-positive)" }} />{deliveredCount}</div><div className="l">Delivered</div></div>
         <div className="stat"><div className="v">{projects.length}</div><div className="l">All projects</div></div>
-      </div>
+      </div>}
 
       <div className="dashboard-viewbar">
+        {canViewArchived && <>
+          <span className="ey">Projects</span>
+          <div className="segment" aria-label="Project status">
+            <button className={!viewingArchived ? "is-active" : ""} type="button" onClick={() => setProjectScope("active")}>Active</button>
+            <button className={viewingArchived ? "is-active" : ""} type="button" onClick={() => setProjectScope("archived")}>Archived</button>
+          </div>
+        </>}
+        {viewingArchived && <span className="ey" role="status">Archived projects</span>}
+        {!viewingArchived && <>
         <span className="ey">View</span>
         <div className="segment" aria-label="Dashboard view">
           <button className={view === "grid" ? "is-active" : ""} type="button" onClick={() => selectView("grid")}>Grid</button>
           <button className={view === "list" ? "is-active" : ""} type="button" onClick={() => selectView("list")}>List</button>
           <button className={view === "kanban" ? "is-active" : ""} type="button" onClick={() => selectView("kanban")}>Kanban</button>
         </div>
+        </>}
       </div>
 
-      {isLoading && <div className="empty" role="status"><span className="serif">Loading projects.</span>Preparing the production desk.</div>}
+      {isLoading && <div className="empty" role="status"><span className="serif">Loading {viewingArchived ? "archived " : ""}projects.</span>Preparing the production desk.</div>}
 
       {!isLoading && error && (
         <div className="empty" role="alert">
-          <span className="serif">Projects are unavailable.</span>
+          <span className="serif">{viewingArchived ? "Archived projects" : "Projects"} are unavailable.</span>
           {error}
           <div style={{ marginTop: 16 }}><button className="button button--secondary" type="button" onClick={() => setReload((value) => value + 1)}>Try again</button></div>
         </div>
@@ -249,26 +263,26 @@ export function Dashboard({ onOpenProject, onCreateProject }: DashboardProps) {
 
       {!isLoading && !error && filteredProjects.length === 0 && (
         <div className="empty">
-          <span className="serif">{query ? "Nothing here yet." : "No shoots yet — create the first one."}</span>
-          {query ? "No projects match this search." : "Start the production desk with the property, client, and team details."}
-          {!query && canCreateProject && <div style={{ marginTop: 16 }}><button className="button" type="button" onClick={onCreateProject}>New shoot</button></div>}
+          <span className="serif">{query ? "Nothing here yet." : viewingArchived ? "No archived projects." : "No shoots yet — create the first one."}</span>
+          {query ? "No projects match this search." : viewingArchived ? "Archived projects remain here until they are restored or permanently deleted." : "Start the production desk with the property, client, and team details."}
+          {!query && !viewingArchived && canCreateProject && <div style={{ marginTop: 16 }}><button className="button" type="button" onClick={onCreateProject}>New shoot</button></div>}
         </div>
       )}
 
-      {!isLoading && !error && filteredProjects.length > 0 && view === "grid" && (
+      {!isLoading && !error && filteredProjects.length > 0 && (viewingArchived || view === "grid") && (
         <div className="projects">
           {filteredProjects.map((project) => <ProjectCard key={project.id} project={project} onOpen={onOpenProject} />)}
         </div>
       )}
 
-      {!isLoading && !error && filteredProjects.length > 0 && view === "list" && (
+      {!isLoading && !error && !viewingArchived && filteredProjects.length > 0 && view === "list" && (
         <div className="plist" aria-label="Projects list">
           <div className="prow head"><div /><div>Address</div><div className="prow__c-agency">Client</div><div className="prow__c-date">Shoot date</div><div className="prow__c-status">Status</div><div className="prow__raw">RAW received</div></div>
           {filteredProjects.map((project) => <ProjectListRow key={project.id} project={project} onOpen={onOpenProject} />)}
         </div>
       )}
 
-      {!isLoading && !error && filteredProjects.length > 0 && view === "kanban" && (
+      {!isLoading && !error && !viewingArchived && filteredProjects.length > 0 && view === "kanban" && (
         <div className="kanban" aria-label="Project pipeline board">
           {activeStages.map((stage) => {
             const stageProjects = filteredProjects.filter((project) => project.stageKey === stage.key);

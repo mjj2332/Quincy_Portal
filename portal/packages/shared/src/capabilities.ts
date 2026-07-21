@@ -14,6 +14,7 @@ export const CAPABILITIES = [
   "archiveProject",
   "manageUsers",
   "uploadRaw",
+  "uploadEdited",
   "viewRaw",
   "annotateRaw",
   "recommendRaw",
@@ -48,6 +49,7 @@ export const ROLE_CAPABILITIES: Record<Role, readonly Capability[]> = {
     "archiveProject",
     "manageUsers",
     "uploadRaw",
+    "uploadEdited",
     "viewRaw",
     "annotateRaw",
     "recommendRaw",
@@ -68,6 +70,7 @@ export const ROLE_CAPABILITIES: Record<Role, readonly Capability[]> = {
   editor: [
     "viewAllProjects",
     "uploadRaw",
+    "uploadEdited",
     "viewRaw",
     "annotateRaw",
     "recommendRaw",

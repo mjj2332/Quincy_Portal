@@ -106,10 +106,13 @@ export class AutoHdrFetch extends WorkflowEntrypoint<Env, AutoHdrFetchInput> {
         let ingested = 0;
         let skipped = 0;
         for (const file of finalFiles) {
+          // Only dedupe against prior AutoHDR-origin edits — a manually uploaded edit sharing this
+          // filename must not suppress the AutoHDR result (it has no source_raw_asset_id and would
+          // stall stage advancement).
           const existing = await db
             .select({ id: assets.id })
             .from(assets)
-            .where(and(eq(assets.collectionId, editedCollection.id), eq(assets.originalFilename, file.name)))
+            .where(and(eq(assets.collectionId, editedCollection.id), eq(assets.originalFilename, file.name), eq(assets.source, "dropbox")))
             .get();
           if (existing) {
             skipped += 1;
@@ -125,7 +128,7 @@ export class AutoHdrFetch extends WorkflowEntrypoint<Env, AutoHdrFetchInput> {
           const now = new Date();
           const matched = rawByBasename.get(plainBasename(file.name)) ?? rawByBasename.get(strippedBasename(file.name));
           await this.env.DB.batch([
-            this.env.DB.prepare("INSERT INTO assets (id, collection_id, kind, r2_key, original_filename, bytes, content_hash, source, source_raw_asset_id, created_at, updated_at) VALUES (?, ?, 'photo', ?, ?, ?, ?, 'dropbox', ?, ?, ?)")
+            this.env.DB.prepare("INSERT INTO assets (id, collection_id, kind, r2_key, original_filename, bytes, content_hash, source, source_raw_asset_id, section, created_at, updated_at) VALUES (?, ?, 'photo', ?, ?, ?, ?, 'dropbox', ?, 'AutoHDR', ?, ?)")
               .bind(assetId, editedCollection.id, r2Key, file.name, file.size, file.content_hash ?? null, matched?.id ?? null, now.getTime(), now.getTime()),
             this.env.DB.prepare(COLLECTION_RECEIVED_COUNT_SQL).bind(...collectionReceivedCountBindings(editedCollection.id, now.getTime())),
           ]);

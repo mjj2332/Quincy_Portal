@@ -12,7 +12,7 @@ const LABELS: { value: NonNullable<Review["colorLabel"]>; name: string; color: s
 
 interface PhotoGridProps {
   assets: WorkspaceAsset[];
-  /** RAW review groups root captures and immediate Dropbox subfolders; Edited QA stays flat. */
+  /** RAW review groups root captures and Dropbox subfolders; Edited QA groups AutoHDR vs Manual. */
   showSections: boolean;
   canReview: boolean;
   canRecommend: boolean;
