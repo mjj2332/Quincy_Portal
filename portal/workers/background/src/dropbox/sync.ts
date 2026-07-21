@@ -8,6 +8,8 @@ import { dbFor, errorMessage } from "../lib/db";
 import { createJob, setJobStatus } from "../lib/jobs";
 import { createDropboxClientContext, download, getSharedLinkMetadata, listFolder, listFolderContinue, recordDropboxSuccess, type DropboxClientContext, type DropboxFile } from "./client";
 
+const MAX_DOWNLOADS_PER_RUN = 150;
+
 export function normalisePath(path: string): string {
   let normalised = path.trim().replace(/\\/g, "/").replace(/\/+/g, "/");
   if (/^\/(?:users|volumes)\//i.test(normalised)) {
@@ -133,30 +135,47 @@ export async function syncProjectRawFolder(
 
     const files = await allFolderFiles(env, rawFolderPath, connectionId, client);
     let skippedSubfolderFiles = 0;
+    let downloadsThisRun = 0;
+    let continuationEnqueued = false;
     for (const file of files) {
       if (!isAcceptedPhotoFilename(file.name)) continue;
       const section = sectionForDropboxFile(file, rawFolderPath);
       if (section === SKIP_DROPBOX_SECTION) { skippedSubfolderFiles += 1; continue; }
-      if (file.content_hash) {
-        const [existing] = await db
-          .select({ id: assets.id, section: assets.section, isPremium: assets.isPremium })
-          .from(assets)
-          .innerJoin(collections, eq(assets.collectionId, collections.id))
-          .where(and(eq(assets.contentHash, file.content_hash), eq(collections.projectId, projectId), eq(collections.kind, "raw")))
-          .limit(1);
-        if (existing) {
-          const now = new Date();
-          const statements = [env.DB.prepare(COLLECTION_RECEIVED_COUNT_SQL).bind(...collectionReceivedCountBindings(collection.id, now.getTime()))];
-          if (existing.section !== section || existing.isPremium) statements.unshift(env.DB.prepare("UPDATE assets SET section = ?, is_premium = 0, updated_at = ? WHERE id = ?").bind(section, now.getTime(), existing.id));
-          await env.DB.batch(statements);
-          await enqueueRenditionSafely(env, existing.id, "dropbox-existing-asset");
-          continue;
-        }
+      const sourcePath = file.path_display ?? file.path_lower;
+      // Reconcile by content hash when Dropbox supplies one, else by the stored source path so
+      // hashless files are still recognised on the next continuation run (otherwise the download
+      // cap would re-fetch them forever and never advance past the cap).
+      const [existing] = await db
+        .select({ id: assets.id, section: assets.section, isPremium: assets.isPremium, sourcePath: assets.sourcePath })
+        .from(assets)
+        .innerJoin(collections, eq(assets.collectionId, collections.id))
+        .where(and(
+          file.content_hash ? eq(assets.contentHash, file.content_hash) : eq(assets.sourcePath, sourcePath),
+          eq(collections.projectId, projectId),
+          eq(collections.kind, "raw"),
+        ))
+        .limit(1);
+      if (existing) {
+        const now = new Date();
+        const statements = [env.DB.prepare(COLLECTION_RECEIVED_COUNT_SQL).bind(...collectionReceivedCountBindings(collection.id, now.getTime()))];
+        // Keep source_path current (a Dropbox move keeps the same content hash but changes the
+        // path); a stale path would later break AutoHDR's server-side copy.
+        if (existing.section !== section || existing.isPremium || existing.sourcePath !== sourcePath) statements.unshift(env.DB.prepare("UPDATE assets SET section = ?, is_premium = 0, source_path = ?, updated_at = ? WHERE id = ?").bind(section, sourcePath, now.getTime(), existing.id));
+        await env.DB.batch(statements);
+        await enqueueRenditionSafely(env, existing.id, "dropbox-existing-asset");
+        continue;
+      }
+
+      // Reconcile-only files do not consume the cap. Once an additional new asset is found,
+      // leave it for a fresh queue invocation so Dropbox downloads remain bounded.
+      if (downloadsThisRun >= MAX_DOWNLOADS_PER_RUN) {
+        continuationEnqueued = true;
+        break;
       }
 
       const assetId = crypto.randomUUID();
       const r2Key = `projects/${projectId}/raw/${assetId}/${file.name}`;
-      const sourcePath = file.path_display ?? file.path_lower;
+      downloadsThisRun += 1;
       const source = await download(env, db, sourcePath, {}, connectionId, client);
       if (!source.body) throw new Error(`Dropbox returned no body for ${file.name}`);
       await env.MEDIA.put(r2Key, source.body, {
@@ -167,13 +186,19 @@ export async function syncProjectRawFolder(
       const rating = xmpRatingToStars(parseXmpRating(await header.arrayBuffer()));
       const now = new Date();
       const results = await env.DB.batch([
-        env.DB.prepare("INSERT INTO assets (id, collection_id, kind, r2_key, original_filename, bytes, content_hash, source, rating_from_metadata, section, is_premium, created_at, updated_at) VALUES (?, ?, 'photo', ?, ?, ?, ?, 'dropbox', ?, ?, 0, ?, ?) ON CONFLICT DO NOTHING").bind(assetId, collection.id, r2Key, file.name, file.size, file.content_hash ?? null, rating, section, now.getTime(), now.getTime()),
+        env.DB.prepare("INSERT INTO assets (id, collection_id, kind, r2_key, original_filename, bytes, content_hash, source, source_path, rating_from_metadata, section, is_premium, created_at, updated_at) VALUES (?, ?, 'photo', ?, ?, ?, ?, 'dropbox', ?, ?, ?, 0, ?, ?) ON CONFLICT DO NOTHING").bind(assetId, collection.id, r2Key, file.name, file.size, file.content_hash ?? null, sourcePath, rating, section, now.getTime(), now.getTime()),
         env.DB.prepare(COLLECTION_RECEIVED_COUNT_SQL).bind(...collectionReceivedCountBindings(collection.id, now.getTime())),
       ]);
       if ((results[0]?.meta.changes ?? 0) === 0) continue; // reconciliation already ran in this batch
       await enqueueRenditionSafely(env, assetId, "dropbox-ingest");
     }
-    if (skippedSubfolderFiles > 0) {
+    if (continuationEnqueued && downloadsThisRun > 0) {
+      await env.INGEST_QUEUE.send({ type: "dropbox_sync", projectId });
+      await db.update(jobs).set({
+        payloadJson: JSON.stringify({ note: `partial sync — ${downloadsThisRun} downloaded, continuation enqueued`, downloaded: downloadsThisRun, skippedSubfolderFiles }),
+        updatedAt: new Date(),
+      }).where(eq(jobs.id, trackingJobId));
+    } else if (skippedSubfolderFiles > 0) {
       await db.update(jobs).set({
         payloadJson: JSON.stringify({ note: `skipped ${skippedSubfolderFiles} files nested deeper than one subfolder`, skippedSubfolderFiles }),
         updatedAt: new Date(),

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { autoHdrFinalPathCandidates, autoHdrRawInputPath, deriveAutoHdrFolderName } from "../src/autohdr/paths";
+import { autoHdrFinalPathCandidates, autoHdrRawInputPath, deriveAutoHdrFolderName, reconstructSourcePath } from "../src/autohdr/paths";
 
 describe("AutoHDR paths", () => {
   const mcGowenRawPath = "/Projects/4 McGowen Ave, Malabar NSW 2036, Australia/Listing Images";
@@ -27,6 +27,12 @@ describe("AutoHDR paths", () => {
 
   it("builds the required AutoHDR input path", () => {
     expect(autoHdrRawInputPath("123 Main St")).toBe("/AutoHDR/123 Main St/01-RAW-Photos");
+  });
+
+  it("reconstructs root and sectioned Dropbox source paths", () => {
+    expect(reconstructSourcePath(mcGowenRawPath, null, "DSC_0001.CR3")).toBe(`${mcGowenRawPath}/DSC_0001.CR3`);
+    expect(reconstructSourcePath(mcGowenRawPath, "Premium", "DSC_0002.CR3")).toBe(`${mcGowenRawPath}/Premium/DSC_0002.CR3`);
+    expect(reconstructSourcePath(`${mcGowenRawPath}///`, null, "DSC_0003.CR3")).toBe(`${mcGowenRawPath}/DSC_0003.CR3`);
   });
 
   it("builds final-folder candidates in priority order", () => {

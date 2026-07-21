@@ -48,6 +48,33 @@ export interface DropboxFolderPage {
   has_more: boolean;
 }
 
+export interface DropboxCopyBatchSuccessEntry {
+  ".tag": "success";
+  // Deliberately no metadata: we only ever inspect failures, and parsing the copied FileMetadata
+  // (whose Dropbox serialization varies by endpoint) risks throwing AFTER the copy succeeded.
+}
+
+export interface DropboxCopyBatchFailureEntry {
+  ".tag": "failure";
+  failure: Record<string, unknown>;
+}
+
+export type DropboxCopyBatchEntryResult = DropboxCopyBatchSuccessEntry | DropboxCopyBatchFailureEntry;
+
+export interface DropboxCopyBatchCompleteResult {
+  ".tag": "complete";
+  entries: DropboxCopyBatchEntryResult[];
+}
+
+export interface DropboxCopyBatchAsyncResult {
+  ".tag": "async_job_id";
+  async_job_id: string;
+}
+
+export type DropboxCopyBatchResult = DropboxCopyBatchCompleteResult | DropboxCopyBatchAsyncResult;
+
+export type DropboxCopyBatchCheckResult = DropboxCopyBatchCompleteResult | { ".tag": "in_progress" };
+
 export class DropboxCursorResetError extends Error {}
 
 /**
@@ -166,6 +193,43 @@ function parseFolderPage(value: unknown): DropboxFolderPage {
     cursor: asString(value.cursor, "cursor"),
     has_more: value.has_more === true,
   };
+}
+
+function parseCopyBatchEntry(value: unknown): DropboxCopyBatchEntryResult {
+  if (!isRecord(value)) throw new Error("Dropbox returned an invalid copy_batch entry");
+  const tag = asString(value[".tag"], ".tag");
+  // Success = the copy landed; we never read its metadata, so don't parse it (Dropbox's
+  // union-of-struct serialization varies by endpoint and parsing it risks throwing post-copy).
+  if (tag === "success") return { ".tag": "success" };
+  if (tag === "failure") {
+    if (!isRecord(value.failure)) throw new Error("Dropbox returned an invalid copy_batch failure");
+    return { ".tag": "failure", failure: value.failure };
+  }
+  throw new Error(`Dropbox returned unsupported copy_batch entry type ${tag}`);
+}
+
+function parseCopyBatchComplete(value: Record<string, unknown>): DropboxCopyBatchCompleteResult {
+  // Entries may sit inline under the `complete` tag or nested under a `complete` key depending on
+  // Dropbox's serialization; accept either.
+  const source = isRecord(value.complete) ? value.complete : value;
+  if (!Array.isArray(source.entries)) throw new Error("Dropbox returned an invalid copy_batch completion response");
+  return { ".tag": "complete", entries: source.entries.map(parseCopyBatchEntry) };
+}
+
+export function parseCopyBatchResult(value: unknown): DropboxCopyBatchResult {
+  if (!isRecord(value)) throw new Error("Dropbox returned an invalid copy_batch response");
+  const tag = asString(value[".tag"], ".tag");
+  if (tag === "complete") return parseCopyBatchComplete(value);
+  if (tag === "async_job_id") return { ".tag": "async_job_id", async_job_id: asString(value.async_job_id, "async_job_id") };
+  throw new Error(`Dropbox returned unsupported copy_batch response type ${tag}`);
+}
+
+function parseCopyBatchCheckResult(value: unknown): DropboxCopyBatchCheckResult {
+  if (!isRecord(value)) throw new Error("Dropbox returned an invalid copy_batch check response");
+  const tag = asString(value[".tag"], ".tag");
+  if (tag === "complete") return parseCopyBatchComplete(value);
+  if (tag === "in_progress") return { ".tag": "in_progress" };
+  throw new Error(`Dropbox returned unsupported copy_batch check response type ${tag}`);
 }
 
 async function getConnection(db: Database, connectionId?: string): Promise<DropboxConnection> {
@@ -434,6 +498,56 @@ export async function listFolderContinue(
   client?: DropboxClientContext,
 ): Promise<DropboxFolderPage> {
   return parseFolderPage(await authorisedJson(env, db, "/files/list_folder/continue", { cursor }, connectionId, client));
+}
+
+/** Creates an AutoHDR destination folder; Dropbox reports an existing folder as a 409 conflict. */
+export async function createFolder(
+  env: Env,
+  db: Database,
+  path: string,
+  connectionId?: string,
+  client?: DropboxClientContext,
+): Promise<void> {
+  const resolvedClient = await resolveClient(env, db, connectionId, client);
+  try {
+    const response = await fetch(`${API_URL}/files/create_folder_v2`, {
+      method: "POST",
+      headers: fileHeaders(resolvedClient, { "content-type": "application/json" }),
+      body: JSON.stringify({ path, autorename: false }),
+    });
+    if (response.ok) return;
+    const body = await response.text();
+    if (response.status === 409 && /\bpath\/conflict\b/i.test(body)) return;
+    throw new Error(`Dropbox /files/create_folder_v2 failed (${response.status}): ${body}`);
+  } catch (error) {
+    await recordDropboxError(db, resolvedClient.connectionId, error);
+    throw error;
+  }
+}
+
+export async function copyBatch(
+  env: Env,
+  db: Database,
+  entries: { from_path: string; to_path: string }[],
+  connectionId?: string,
+  client?: DropboxClientContext,
+): Promise<DropboxCopyBatchResult> {
+  return parseCopyBatchResult(await authorisedJson(env, db, "/files/copy_batch_v2", {
+    entries,
+    autorename: false,
+  }, connectionId, client));
+}
+
+export async function copyBatchCheck(
+  env: Env,
+  db: Database,
+  asyncJobId: string,
+  connectionId?: string,
+  client?: DropboxClientContext,
+): Promise<DropboxCopyBatchCheckResult> {
+  return parseCopyBatchCheckResult(await authorisedJson(env, db, "/files/copy_batch/check_v2", {
+    async_job_id: asyncJobId,
+  }, connectionId, client));
 }
 
 export async function download(

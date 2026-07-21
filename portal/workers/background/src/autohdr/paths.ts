@@ -14,6 +14,12 @@ export function autoHdrRawInputPath(folderName: string): string {
   return `${AUTOHDR_ROOT}/${folderName}/${AUTOHDR_RAW_SUBFOLDER}`;
 }
 
+/** Rebuilds a legacy Dropbox source path when the asset predates `assets.source_path`. */
+export function reconstructSourcePath(rawFolderPath: string, section: string | null, filename: string): string {
+  const basePath = normalisePath(rawFolderPath).replace(/\/+$/, "");
+  return section ? `${basePath}/${section}/${filename}` : `${basePath}/${filename}`;
+}
+
 export function autoHdrFinalPathCandidates(folderName: string): string[] {
   return AUTOHDR_FINAL_SUBFOLDER_CANDIDATES.map((subfolder) => `${AUTOHDR_ROOT}/${folderName}/${subfolder}`);
 }
