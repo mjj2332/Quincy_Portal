@@ -26,7 +26,7 @@ const executionContext = { waitUntil: () => undefined, passThroughOnException: (
 async function request(path: string, token: string, method: "GET" | "POST" = "GET"): Promise<Response> {
   const context = await createAuth(requestEnv).$context;
   const cookie = `${context.authCookies.sessionToken.name}=${token}.${await makeSignature(token, authSecret)}`;
-  return app.fetch(new Request(`https://portal.test${path}`, { method, headers: { cookie } }), requestEnv, executionContext);
+  return app.fetch(new Request(`https://portal.test${path}`, { method, headers: { cookie, ...(method === "POST" ? { origin: requestEnv.APP_ORIGIN } : {}) } }), requestEnv, executionContext);
 }
 
 beforeAll(async () => {

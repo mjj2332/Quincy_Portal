@@ -23,7 +23,8 @@
   ],
   "queues": {
     "producers": [
-      { "binding": "INGEST_QUEUE", "queue": "quincy-ingest" }
+      { "binding": "INGEST_QUEUE", "queue": "quincy-ingest" },
+      { "binding": "RENDITION_QUEUE", "queue": "quincy-renditions" }
     ]
   },
   "services": [
@@ -31,6 +32,7 @@
   ],
   "vars": {
     "APP_ENV": "production",
-    "APP_ORIGIN": "https://quincy.flamingfire.my"
+    "APP_ORIGIN": "https://quincy.flamingfire.my",
+    "RENDITIONS_ENABLED": true
   }
 }

@@ -3,7 +3,8 @@
  * Metadata only: media bytes live in R2; dense annotation JSON lives in R2 (ref here).
  * All media rows use immutable, versioned R2 keys.
  */
-import { sqliteTable, text, integer, real, index, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, real, index, uniqueIndex, check } from "drizzle-orm/sqlite-core";
+import { sql } from "drizzle-orm";
 
 const id = () => text("id").primaryKey();
 const createdAt = () =>
@@ -219,7 +220,57 @@ export const collectionLinks = sqliteTable(
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  (t) => [index("collection_links_collection_idx").on(t.collectionId)],
+  (t) => [
+    index("collection_links_collection_idx").on(t.collectionId),
+    uniqueIndex("collection_links_collection_url_unique").on(t.collectionId, t.url),
+  ],
+);
+
+/** Server-owned reservation for direct document uploads. Keys and version numbers never
+ * come from the browser; a completed reservation is also the idempotency record. */
+export const documentUploads = sqliteTable(
+  "document_uploads",
+  {
+    id: id(),
+    projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+    collectionId: text("collection_id").notNull().references(() => collections.id, { onDelete: "cascade" }),
+    createdBy: text("created_by").notNull().references(() => user.id),
+    kind: text("kind", { enum: ["copy_pdf", "floorplan"] }).notNull(),
+    versionGroupId: text("version_group_id").notNull(),
+    version: integer("version").notNull(),
+    pdfAssetId: text("pdf_asset_id").notNull(),
+    pdfKey: text("pdf_key").notNull().unique(),
+    pdfFilename: text("pdf_filename").notNull(),
+    pdfBytes: integer("pdf_bytes").notNull(),
+    pdfContentType: text("pdf_content_type").notNull(),
+    pdfUploadId: text("pdf_upload_id"),
+    pdfSupersedesAssetId: text("pdf_supersedes_asset_id"),
+    previewAssetId: text("preview_asset_id"),
+    previewKey: text("preview_key").unique(),
+    previewFilename: text("preview_filename"),
+    previewBytes: integer("preview_bytes"),
+    previewContentType: text("preview_content_type"),
+    previewUploadId: text("preview_upload_id"),
+    previewSupersedesAssetId: text("preview_supersedes_asset_id"),
+    /** Finite lifecycle: pending → completing → completed; aborting owns failed R2 cleanup. */
+    status: text("status", { enum: ["pending", "completing", "aborting", "completed", "expired", "failed"] }).notNull().default("pending"),
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+    /** Completing has a bounded lease; stale sessions are retried through abort cleanup. */
+    completingAt: integer("completing_at", { mode: "timestamp_ms" }),
+    completedAt: integer("completed_at", { mode: "timestamp_ms" }),
+    /** Stored before external completion so the final asset/audit batch is retry-safe. */
+    completionAuditId: text("completion_audit_id").notNull().unique(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex("document_uploads_active_group_unique").on(t.versionGroupId).where(sql`${t.status} in ('pending', 'completing', 'aborting')`),
+    index("document_uploads_project_creator_idx").on(t.projectId, t.createdBy),
+    index("document_uploads_collection_idx").on(t.collectionId),
+    index("document_uploads_status_expiry_idx").on(t.status, t.expiresAt),
+    check("document_uploads_status_check", sql`${t.status} in ('pending', 'completing', 'aborting', 'completed', 'expired', 'failed')`),
+    check("document_uploads_kind_preview_check", sql`(${t.kind} = 'copy_pdf' AND ${t.previewAssetId} IS NULL AND ${t.previewKey} IS NULL AND ${t.previewFilename} IS NULL AND ${t.previewBytes} IS NULL AND ${t.previewContentType} IS NULL AND ${t.previewUploadId} IS NULL AND ${t.previewSupersedesAssetId} IS NULL) OR (${t.kind} = 'floorplan' AND ${t.previewAssetId} IS NOT NULL AND ${t.previewKey} IS NOT NULL AND ${t.previewFilename} IS NOT NULL AND ${t.previewBytes} IS NOT NULL AND ${t.previewContentType} = 'image/jpeg')`),
+  ],
 );
 
 export const assets = sqliteTable(
@@ -243,6 +294,9 @@ export const assets = sqliteTable(
     /** XMP xmp:Rating read at ingest; NULL = unrated (never coerce to 0). */
     ratingFromMetadata: integer("rating_from_metadata"),
     streamUid: text("stream_uid"),
+    /** NULL is the root Captures section; Dropbox immediate subfolders retain their display name. */
+    section: text("section"),
+    /** Deprecated in favour of section; retained for non-destructive compatibility. */
     isPremium: integer("is_premium", { mode: "boolean" }).notNull().default(false),
     version: integer("version").notNull().default(1),
     supersedesAssetId: text("supersedes_asset_id"),
@@ -271,9 +325,18 @@ export const assetRenditions = sqliteTable(
     variant: text("variant", { enum: ["thumb", "web"] }).notNull(),
     r2Key: text("r2_key").notNull(),
     bytes: integer("bytes"),
+    // Defaults deliberately describe unvalidated legacy rows. The generator writes every
+    // validated v1 field explicitly, so new scaffold data can never look current by default.
+    contentType: text("content_type").notNull().default("application/octet-stream"),
+    width: integer("width"),
+    height: integer("height"),
+    specVersion: text("spec_version").notNull().default("legacy"),
     createdAt: createdAt(),
   },
-  (t) => [uniqueIndex("asset_renditions_unique").on(t.assetId, t.variant)],
+  (t) => [
+    uniqueIndex("asset_renditions_unique").on(t.assetId, t.variant),
+    index("asset_renditions_current_spec_idx").on(t.assetId, t.specVersion),
+  ],
 );
 
 /** Browser-selected-file manifest persisted BEFORE ingest (file-count verification for manual uploads). */

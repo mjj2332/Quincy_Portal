@@ -3,6 +3,8 @@ import { apiGet, apiPatch, apiPost } from "../lib/api";
 import { useSession } from "../lib/auth";
 import type { ReviewPatch, WorkspaceAsset } from "./PhotoGrid";
 import { LazyImage } from "./LazyImage";
+import { clampZoom, initialZoom, panBy, zoomBy, type ZoomBounds, type ZoomTransform } from "../lib/lightbox-zoom";
+import { cycleLightboxIndex } from "../lib/lightbox-navigation";
 
 const labels = [
   { value: "hero", name: "Hero", color: "#9a6a1f" }, { value: "select", name: "Select", color: "#3f5b3a" }, { value: "maybe", name: "Maybe", color: "#2f3b4d" }, { value: "cut", name: "Cut", color: "#7a2420" },
@@ -36,7 +38,18 @@ function replaceComment(comments: ThreadComment[], id: string, patch: Partial<Th
 function removeComment(comments: ThreadComment[], id: string): ThreadComment[] {
   return comments.filter((comment) => comment.id !== id).map((comment) => ({ ...comment, replies: removeComment(comment.replies, id) }));
 }
+function insertComment(comments: ThreadComment[], comment: ThreadComment): ThreadComment[] {
+  if (!comment.parentId) return [...comments, comment];
+  return comments.map((item) => item.id === comment.parentId ? { ...item, replies: [...item.replies, comment] } : { ...item, replies: insertComment(item.replies, comment) });
+}
 function commentSubtreeIds(comment: ThreadComment): string[] { return [comment.id, ...comment.replies.flatMap(commentSubtreeIds)]; }
+
+function FilmstripThumbnail({ asset, active, onSelect }: { asset: WorkspaceAsset; active: boolean; onSelect: () => void }) {
+  const [failed, setFailed] = useState(false);
+  const [retryToken, setRetryToken] = useState(0);
+  function activate() { if (failed) { setFailed(false); setRetryToken((current) => current + 1); } else onSelect(); }
+  return <button className={`strip__button ${active ? "is-active" : ""}`} type="button" onClick={activate} title={failed ? `Retry ${asset.originalFilename}` : asset.originalFilename} aria-label={failed ? `Retry thumbnail for ${asset.originalFilename}` : asset.originalFilename}><LazyImage className="strip__t" src={`/media/asset/${encodeURIComponent(asset.id)}/thumb`} alt={asset.originalFilename} retryToken={retryToken} onFailedChange={setFailed} /></button>;
+}
 
 export function Lightbox({ assets, rawAssets, initialAssetId, collectionKind, canReview, canRecommend, canAnnotate, onClose, onReview, onToast }: LightboxProps) {
   const session = useSession();
@@ -60,20 +73,38 @@ export function Lightbox({ assets, rawAssets, initialAssetId, collectionKind, ca
   const [editingAnnotationId, setEditingAnnotationId] = useState<string | null>(null);
   const [editingAnnotationNote, setEditingAnnotationNote] = useState("");
   const [isSaving, setIsSaving] = useState(false);
+  const [zoom, setZoom] = useState<ZoomTransform>(initialZoom);
   const frameRef = useRef<HTMLDivElement>(null);
+  const rawFrameRef = useRef<HTMLDivElement>(null);
   const drawingRef = useRef(false);
   const annotationRefs = useRef(new Map<string, HTMLDivElement>());
   const highlightTimeoutRef = useRef<number | null>(null);
+  const panRef = useRef<{ pointerId: number; x: number; y: number; width: number; height: number; bounds: ZoomBounds } | null>(null);
+  const pinchRef = useRef<{ distance: number; scale: number; bounds: ZoomBounds } | null>(null);
   const asset = assets[index]!;
   // Always the LATEST asset id, updated synchronously every render (unlike a value
   // captured in an effect/async closure) — the only reliable way to detect, from inside
   // a promise that resolves after the user has since navigated, that its response is stale.
   const currentAssetIdRef = useRef(asset.id);
   currentAssetIdRef.current = asset.id;
+  const mutationGenerationRef = useRef(0);
+  const mutationAssetRef = useRef(asset.id);
+  const strokesRef = useRef(strokes);
+  const annotationNoteRef = useRef(annotationNote);
+  const commentBodyRef = useRef(commentBody);
+  const replyToRef = useRef(replyTo);
+  // Increment during render so an A→B→A navigation invalidates old A completions before
+  // effects run; asset ID alone cannot distinguish that round trip.
+  if (mutationAssetRef.current !== asset.id) { mutationAssetRef.current = asset.id; mutationGenerationRef.current += 1; }
+  strokesRef.current = strokes;
+  annotationNoteRef.current = annotationNote;
+  commentBodyRef.current = commentBody;
+  replyToRef.current = replyTo;
   const isDrawingMode = markup;
   const rawCompareAsset = useMemo(() => asset.sourceRawAssetId ? rawAssets.find((item) => item.id === asset.sourceRawAssetId) ?? null : null, [asset.sourceRawAssetId, rawAssets]);
+  const compareActive = showRawCompare && Boolean(rawCompareAsset);
   const stars = asset.review?.stars ?? asset.ratingFromMetadata ?? 0;
-  const move = (change: number) => setIndex((current) => (current + change + assets.length) % assets.length);
+  const move = (change: number) => setIndex((current) => cycleLightboxIndex(current, change, assets.length));
 
   // An asset-id comparison alone cannot order two in-flight requests for the SAME asset
   // (a quick A→B→A hop, or two refreshes fired back-to-back on A) — whichever happens to
@@ -95,7 +126,7 @@ export function Lightbox({ assets, rawAssets, initialAssetId, collectionKind, ca
   };
   useEffect(() => {
     if (highlightTimeoutRef.current) window.clearTimeout(highlightTimeoutRef.current);
-    setMarkup(false); setStrokes([]); setEditingDrawingId(null); setStrokeCache(new Map()); setMarkupVisible(true); setHighlightedAnnotationId(null); setAnnotationNote(""); setCommentBody(""); setReplyTo(null); setEditingCommentId(null); setEditingAnnotationId(null);
+    setShowRawCompare(false); setMarkup(false); setStrokes([]); setEditingDrawingId(null); setStrokeCache(new Map()); setMarkupVisible(true); setHighlightedAnnotationId(null); setAnnotationNote(""); setCommentBody(""); setReplyTo(null); setEditingCommentId(null); setEditingAnnotationId(null); setIsSaving(false); setZoom(initialZoom());
     const pending = refreshDiscussion();
     const gen = refreshGenRef.current; // refreshDiscussion's synchronous prefix has already run and assigned this
     void pending.catch(() => { if (refreshGenRef.current === gen) { setAnnotations([]); setComments([]); } });
@@ -134,14 +165,18 @@ export function Lightbox({ assets, rawAssets, initialAssetId, collectionKind, ca
       // focus never having left the canvas, or (less commonly) with a stray textarea
       // still focused, and either way Escape must stop the drawing first.
       if (event.key === "Escape" && isDrawingMode) { event.preventDefault(); exitDrawMode(); return; }
-      if (event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLInputElement) {
+      // Markup owns the keyboard: never navigate or apply review shortcuts while a drawing
+      // draft is active. Escape above and undo below are the only supported keys.
+      if (isDrawingMode && (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") { event.preventDefault(); setStrokes((current) => current.slice(0, -1)); return; }
+      if (isDrawingMode) return;
+      const target = event.target instanceof Element ? event.target : null;
+      if (target?.closest("input, textarea, select, button, a, [contenteditable='true']")) {
         if (event.key === "Escape") { event.preventDefault(); cancelInlineEdit(); }
         return;
       }
       if (event.key === "Escape") { onClose(); return; }
       if (event.key === "ArrowLeft") { move(-1); return; }
       if (event.key === "ArrowRight") { move(1); return; }
-      if (isDrawingMode && (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") { event.preventDefault(); setStrokes((current) => current.slice(0, -1)); return; }
       if (!canReview) return;
       if (event.key.toLowerCase() === "a") void onReview(asset.id, { decision: asset.review?.decision === "approved" ? null : "approved" });
       if (event.key.toLowerCase() === "x") void onReview(asset.id, { decision: asset.review?.decision === "flagged" ? null : "flagged" });
@@ -162,12 +197,30 @@ export function Lightbox({ assets, rawAssets, initialAssetId, collectionKind, ca
   function drawUp() { drawingRef.current = false; }
   async function saveAnnotation() {
     if (!canAnnotate || editingDrawingId || (!strokes.length && !annotationNote.trim())) return;
+    const assetIdAtStart = asset.id;
+    const mutation = ++mutationGenerationRef.current;
+    const submittedStrokes = strokes;
+    const submittedNote = annotationNote.trim();
     setIsSaving(true);
-    try { await apiPost(`/api/assets/${asset.id}/annotations`, { strokes: strokes.length ? strokes : undefined, noteText: annotationNote.trim() || undefined }); setStrokes([]); setAnnotationNote(""); setMarkup(false); await refreshDiscussion(); }
-    finally { setIsSaving(false); }
+    try {
+      const created = await apiPost<Annotation, { strokes?: Stroke[]; noteText?: string }>(`/api/assets/${assetIdAtStart}/annotations`, { strokes: submittedStrokes.length ? submittedStrokes : undefined, noteText: submittedNote || undefined });
+      if (mutation !== mutationGenerationRef.current || currentAssetIdRef.current !== assetIdAtStart) return;
+      setAnnotations((current) => current.some((item) => item.id === created.id) ? current : [...current, created]);
+      // Clear only the submitted snapshot. The artist may have continued drawing/typing while
+      // this POST ran, and that newer draft belongs to the next save.
+      const strokesUnchanged = strokesRef.current === submittedStrokes;
+      const noteUnchanged = annotationNoteRef.current.trim() === submittedNote;
+      if (strokesUnchanged) setStrokes([]);
+      if (noteUnchanged) setAnnotationNote("");
+      if (strokesUnchanged && noteUnchanged) setMarkup(false);
+      void refreshDiscussion().catch(() => undefined);
+    } catch (reason) {
+      if (mutation === mutationGenerationRef.current && currentAssetIdRef.current === assetIdAtStart) onToast(reason instanceof Error ? reason.message : "The annotation could not be saved.", "error");
+    }
+    finally { if (mutation === mutationGenerationRef.current && currentAssetIdRef.current === assetIdAtStart) setIsSaving(false); }
   }
   function exitDrawMode() { setMarkup(false); setStrokes([]); setEditingDrawingId(null); }
-  function toggleDraw() { if (!markup) { cancelInlineEdit(); setReplyTo(null); } setMarkup((current) => !current); }
+  function toggleDraw() { if (!markup) { cancelInlineEdit(); setReplyTo(null); setZoom(initialZoom()); } setMarkup((current) => !current); }
   /** True once an annotation's CURRENT strokes are cached — gating drawing-edit on this prevents seeding the editor with [] and silently erasing the drawing on Save. */
   function strokesReady(annotation: Annotation) { return !annotation.strokeR2Key || strokeCache.get(annotation.id)?.key === annotation.strokeR2Key; }
   function startDrawingEdit(annotation: Annotation) {
@@ -176,15 +229,16 @@ export function Lightbox({ assets, rawAssets, initialAssetId, collectionKind, ca
     setReplyTo(null);
     const cached = strokeCache.get(annotation.id);
     const preload = cached && cached.key === annotation.strokeR2Key ? cached.strokes.map((stroke) => ({ ...stroke, points: stroke.points.map((point) => ({ ...point })) })) : [];
-    setStrokes(preload); setEditingDrawingId(annotation.id); setMarkup(true);
+    setStrokes(preload); setEditingDrawingId(annotation.id); setZoom(initialZoom()); setMarkup(true);
   }
   async function saveDrawingEdit() {
     if (!editingDrawingId) return;
+    const assetIdAtStart = asset.id;
     const annotationId = editingDrawingId;
     setIsSaving(true);
     try { await apiPatch<{ strokeR2Key: string | null; editedAt: string | null }, { strokes: Stroke[] }>(`/api/annotations/${annotationId}`, { strokes }); await refreshDiscussion(); exitDrawMode(); onToast("Drawing updated.", "success"); }
     catch (reason) { onToast(reason instanceof Error ? reason.message : "The drawing could not be updated.", "error"); }
-    finally { setIsSaving(false); }
+    finally { if (currentAssetIdRef.current === assetIdAtStart) setIsSaving(false); }
   }
   function selectAnnotation(id: string) {
     if (markup) return;
@@ -195,9 +249,23 @@ export function Lightbox({ assets, rawAssets, initialAssetId, collectionKind, ca
   }
   async function postComment() {
     if (!canAnnotate || isDrawingMode || !commentBody.trim()) return;
+    const assetIdAtStart = asset.id;
+    const mutation = ++mutationGenerationRef.current;
+    const submittedBody = commentBody.trim();
+    const submittedParentId = replyTo;
     setIsSaving(true);
-    try { await apiPost(`/api/assets/${asset.id}/comments`, { body: commentBody.trim(), parentId: replyTo ?? undefined }); setCommentBody(""); setReplyTo(null); await refreshDiscussion(); }
-    finally { setIsSaving(false); }
+    try {
+      const created = await apiPost<ThreadComment, { body: string; parentId?: string }>(`/api/assets/${assetIdAtStart}/comments`, { body: submittedBody, parentId: submittedParentId ?? undefined });
+      if (mutation !== mutationGenerationRef.current || currentAssetIdRef.current !== assetIdAtStart) return;
+      setComments((current) => current.some((item) => item.id === created.id) ? current : insertComment(current, created));
+      if (commentBodyRef.current.trim() === submittedBody && replyToRef.current === submittedParentId) { setCommentBody(""); setReplyTo(null); }
+      // POST already succeeded and has been merged. A GET failure must never turn Retry into
+      // another create; the next normal refresh reconciles it.
+      void refreshDiscussion().catch(() => undefined);
+    } catch (reason) {
+      if (mutation === mutationGenerationRef.current && currentAssetIdRef.current === assetIdAtStart) onToast(reason instanceof Error ? reason.message : "The comment could not be saved.", "error");
+    }
+    finally { if (mutation === mutationGenerationRef.current && currentAssetIdRef.current === assetIdAtStart) setIsSaving(false); }
   }
   function cancelInlineEdit() {
     setEditingCommentId(null); setEditingCommentBody(""); setEditingAnnotationId(null); setEditingAnnotationNote("");
@@ -296,6 +364,47 @@ export function Lightbox({ assets, rawAssets, initialAssetId, collectionKind, ca
     } finally { setIsSaving(false); }
   }
 
+  function resetZoom() { setZoom(initialZoom()); }
+  function boundsFor(frame: HTMLDivElement): ZoomBounds {
+    const viewport = frame.parentElement;
+    return { viewportWidth: viewport?.clientWidth ?? frame.offsetWidth, viewportHeight: viewport?.clientHeight ?? frame.offsetHeight, imageWidth: frame.offsetWidth, imageHeight: frame.offsetHeight };
+  }
+  function startPan(event: React.PointerEvent<HTMLDivElement>) {
+    if (markup || zoom.scale <= 1) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    panRef.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, width: rect.width, height: rect.height, bounds: boundsFor(event.currentTarget) };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+  function movePan(event: React.PointerEvent<HTMLDivElement>) {
+    const active = panRef.current;
+    if (!active || active.pointerId !== event.pointerId || markup) return;
+    event.preventDefault();
+    setZoom((current) => panBy(current, (event.clientX - active.x) / active.width, (event.clientY - active.y) / active.height, active.bounds));
+    panRef.current = { ...active, x: event.clientX, y: event.clientY };
+  }
+  function endPan(event: React.PointerEvent<HTMLDivElement>) { if (panRef.current?.pointerId === event.pointerId) panRef.current = null; }
+  function wheelZoom(event: React.WheelEvent<HTMLDivElement>) {
+    if (markup) return;
+    event.preventDefault();
+    setZoom((current) => zoomBy(current, event.deltaY < 0 ? 0.2 : -0.2, boundsFor(event.currentTarget)));
+  }
+  function touchStartZoom(event: React.TouchEvent<HTMLDivElement>) {
+    if (markup || event.touches.length !== 2) return;
+    const [first, second] = [event.touches[0]!, event.touches[1]!];
+    pinchRef.current = { distance: Math.hypot(first.clientX - second.clientX, first.clientY - second.clientY), scale: zoom.scale, bounds: boundsFor(event.currentTarget) };
+  }
+  function touchMoveZoom(event: React.TouchEvent<HTMLDivElement>) {
+    const pinch = pinchRef.current;
+    if (markup || !pinch || event.touches.length !== 2) return;
+    event.preventDefault(); const [first, second] = [event.touches[0]!, event.touches[1]!]; const distance = Math.hypot(first.clientX - second.clientX, first.clientY - second.clientY);
+    setZoom((current) => clampZoom({ ...current, scale: pinch.scale * (distance / pinch.distance) }, pinch.bounds));
+  }
+  function touchEndZoom() { pinchRef.current = null; }
+  function zoomStyleFor(frame: React.RefObject<HTMLDivElement | null>) {
+    const local = frame.current ? clampZoom(zoom, boundsFor(frame.current)) : zoom;
+    return { transform: `translate(${local.panX * 100}%, ${local.panY * 100}%) scale(${local.scale})` };
+  }
+
   const drawLayer = <svg className="markup-svg" viewBox="0 0 1 1" preserveAspectRatio="none" style={{ pointerEvents: markup ? "auto" : "none", cursor: markup ? "crosshair" : "default", touchAction: "none" }} onPointerDown={drawDown} onPointerMove={drawMove} onPointerUp={drawUp} onPointerLeave={drawUp}>
     {markupVisible && annotations.map((annotation) => {
       if (annotation.id === editingDrawingId || !annotation.strokeR2Key) return null;
@@ -308,15 +417,16 @@ export function Lightbox({ assets, rawAssets, initialAssetId, collectionKind, ca
     })}
     {strokes.map((stroke, strokeIndex) => strokeVisible(stroke, `draft-${strokeIndex}`, 1))}
   </svg>;
-  const editedStage = <div className="viewer__stage"><button className="icbtn icbtn--ondark viewer__close" type="button" onClick={onClose} aria-label="Close">×</button><div className="viewer__meta"><div className="a">{asset.originalFilename}</div><div className="b">{collectionKind === "edited" ? "Edited" : "RAW"} · Frame {index + 1} of {assets.length}</div></div><button className="icbtn icbtn--ondark viewer__nav prev" type="button" onClick={() => move(-1)} aria-label="Previous frame">←</button><div className="viewer__imgwrap"><div className="canvasframe" ref={frameRef}><img className="viewer__img" src={`/media/asset/${encodeURIComponent(asset.id)}/web`} alt={asset.originalFilename} />{drawLayer}</div></div><button className="icbtn icbtn--ondark viewer__nav next" type="button" onClick={() => move(1)} aria-label="Next frame">→</button><div className={`viewer__shortcuts ${isDrawingMode ? "is-drawing" : ""}`} aria-hidden="true">{isDrawingMode ? <><span><kbd className="kbd">⌘Z</kbd> undo</span><i>·</i><span><kbd className="kbd">Esc</kbd> done</span></> : <><span><kbd className="kbd">←</kbd><kbd className="kbd">→</kbd> frames</span>{canReview && <><i>·</i><span><kbd className="kbd">A</kbd> approve</span><i>·</i><span><kbd className="kbd">X</kbd> flag</span><i>·</i><span><kbd className="kbd">1–5</kbd> rate</span><i>·</i><span><kbd className="kbd">0</kbd> clear</span></>}<i>·</i><span><kbd className="kbd">Esc</kbd> close</span></>}</div>
+  const editedStage = <div className="viewer__stage"><button className="icbtn icbtn--ondark viewer__close" type="button" onClick={onClose} aria-label="Close">×</button><div className="viewer__meta"><div className="a">{asset.originalFilename}</div><div className="b">{collectionKind === "edited" ? "Edited" : "RAW"} · Frame {index + 1} of {assets.length}</div></div><button className="icbtn icbtn--ondark viewer__nav prev" type="button" onClick={() => move(-1)} aria-label="Previous frame">←</button><div className="viewer__imgwrap"><div className={`canvasframe canvasframe--zoomable ${zoom.scale > 1 && !markup ? "is-zoomed" : ""}`} ref={frameRef} style={zoomStyleFor(frameRef)} onPointerDown={startPan} onPointerMove={movePan} onPointerUp={endPan} onPointerCancel={endPan} onWheel={wheelZoom} onTouchStart={touchStartZoom} onTouchMove={touchMoveZoom} onTouchEnd={touchEndZoom}><img className="viewer__img" draggable={false} onDragStart={(event) => event.preventDefault()} src={`/media/asset/${encodeURIComponent(asset.id)}/web`} alt={asset.originalFilename} />{drawLayer}</div></div><button className="icbtn icbtn--ondark viewer__nav next" type="button" onClick={() => move(1)} aria-label="Next frame">→</button><div className={`viewer__shortcuts ${isDrawingMode ? "is-drawing" : ""}`} aria-hidden="true">{isDrawingMode ? <><span><kbd className="kbd">⌘Z</kbd> undo</span><i>·</i><span><kbd className="kbd">Esc</kbd> done</span></> : <><span><kbd className="kbd">←</kbd><kbd className="kbd">→</kbd> frames</span>{canReview && <><i>·</i><span><kbd className="kbd">A</kbd> approve</span><i>·</i><span><kbd className="kbd">X</kbd> flag</span><i>·</i><span><kbd className="kbd">1–5</kbd> rate</span><i>·</i><span><kbd className="kbd">0</kbd> clear</span></>}<i>·</i><span><kbd className="kbd">Esc</kbd> close</span></>}</div>
     {markup && <div className="drawbar"><span className="drawbar__lbl">{editingDrawingId ? "Editing drawing" : "Markup"}</span><span className="drawbar__grp">{["#e64b3c", "#f0a020", "#3f8f5a", "#2f6df0", "#ffffff", "#0a0a0a"].map((color) => <button key={color} className={`swatch ${tool.color === color ? "on" : ""}`} type="button" style={{ background: color }} onClick={() => setTool((current) => ({ ...current, color }))} />)}</span><span className="drawbar__grp">{[2, 4, 7].map((width) => <button key={width} className={`wbtn ${tool.width === width ? "on" : ""}`} type="button" onClick={() => setTool((current) => ({ ...current, width }))}><span style={{ width: width + 3, height: width + 3 }} /></button>)}</span><button className="barbtn" type="button" onClick={() => setStrokes((current) => current.slice(0, -1))}>Undo</button><button className="barbtn" type="button" onClick={() => setStrokes([])}>Clear</button>{editingDrawingId && <><button className="barbtn" type="button" onClick={exitDrawMode}>Cancel</button><button className="barbtn barbtn--solid" type="button" disabled={isSaving} onClick={() => void saveDrawingEdit()}>Save</button></>}</div>}
   </div>;
 
-  return <div className={`viewer ${showRawCompare ? "viewer--compare" : ""}`} role="dialog" aria-modal="true" aria-label="Photo viewer">
-    {showRawCompare && rawCompareAsset ? <div className="viewer__stage"><div className="viewer__meta"><div className="a">RAW comparison</div><div className="b">{rawCompareAsset.originalFilename}</div></div><div className="viewer__imgwrap"><div className="canvasframe"><img className="viewer__img" src={`/media/asset/${encodeURIComponent(rawCompareAsset.id)}/web`} alt={`RAW ${rawCompareAsset.originalFilename}`} /></div></div></div> : null}
+  return <div className={`viewer ${compareActive ? "viewer--compare" : ""}`} role="dialog" aria-modal="true" aria-label="Photo viewer">
+    {compareActive && rawCompareAsset ? <div className="viewer__stage"><div className="viewer__meta"><div className="a">RAW comparison</div><div className="b">{rawCompareAsset.originalFilename}</div></div><div className="viewer__imgwrap"><div className={`canvasframe canvasframe--zoomable ${zoom.scale > 1 && !markup ? "is-zoomed" : ""}`} ref={rawFrameRef} style={zoomStyleFor(rawFrameRef)} onPointerDown={startPan} onPointerMove={movePan} onPointerUp={endPan} onPointerCancel={endPan} onWheel={wheelZoom} onTouchStart={touchStartZoom} onTouchMove={touchMoveZoom} onTouchEnd={touchEndZoom}><img className="viewer__img" draggable={false} onDragStart={(event) => event.preventDefault()} src={`/media/asset/${encodeURIComponent(rawCompareAsset.id)}/web`} alt={`RAW ${rawCompareAsset.originalFilename}`} /></div></div></div> : null}
     {editedStage}
     <aside className="vpanel open"><div className="vpanel__head"><div className="ey" style={{ marginBottom: 8 }}>{collectionKind === "edited" ? "Edited QA" : "RAW capture"} · {asset.width ?? "—"} × {asset.height ?? "—"}</div><div className="vpanel__addr serif">{asset.originalFilename}</div></div><div className="vpanel__scroll">
-      {collectionKind === "edited" && rawCompareAsset && <section className="vpanel__sec"><div className="eylab">RAW ↔ Edited</div><button className={`dbtn ${showRawCompare ? "is-on" : ""}`} style={{ width: "100%" }} type="button" onClick={() => setShowRawCompare((current) => !current)}>{showRawCompare ? "Hide RAW comparison" : "Compare with RAW"}</button></section>}
+      <section className="vpanel__sec"><div className="eylab">Zoom</div><div className="row gap2"><button className="chip" type="button" onClick={() => setZoom((current) => zoomBy(current, -0.25))} disabled={zoom.scale <= 1} aria-label="Zoom out">−</button><span className="muted" aria-live="polite">{Math.round(zoom.scale * 100)}%</span><button className="chip" type="button" onClick={() => setZoom((current) => zoomBy(current, 0.25))} disabled={zoom.scale >= 4} aria-label="Zoom in">+</button><button className="chip" type="button" onClick={resetZoom} disabled={zoom.scale === 1 && zoom.panX === 0 && zoom.panY === 0}>Reset</button></div><div className="muted" style={{ fontSize: 12, marginTop: 6 }}>{markup ? "Zoom is reset while drawing to preserve markup alignment." : "Scroll to zoom; drag a zoomed image to pan."}</div></section>
+      {collectionKind === "edited" && rawCompareAsset && <section className="vpanel__sec"><div className="eylab">RAW ↔ Edited</div><button className={`dbtn ${compareActive ? "is-on" : ""}`} style={{ width: "100%" }} type="button" onClick={() => { resetZoom(); setShowRawCompare((current) => !current); }}>{compareActive ? "Hide RAW comparison" : "Compare with RAW"}</button></section>}
       {canReview && <section className="vpanel__sec"><div className="eylab">Decision</div><div className="decide"><button className={`dbtn on-approve ${asset.review?.decision === "approved" ? "is-on" : ""}`} type="button" onClick={() => void onReview(asset.id, { decision: asset.review?.decision === "approved" ? null : "approved" })}>✓ Approve</button><button className={`dbtn on-flag ${asset.review?.decision === "flagged" ? "is-on" : ""}`} type="button" onClick={() => void onReview(asset.id, { decision: asset.review?.decision === "flagged" ? null : "flagged" })}>⚑ Flag</button></div></section>}
       {canRecommend && <section className="vpanel__sec"><div className="eylab">Recommendation</div><button className={`dbtn ${asset.review?.recommended ? "is-on" : ""}`} style={{ width: "100%" }} type="button" onClick={() => void onReview(asset.id, { recommended: !asset.review?.recommended })}>{asset.review?.recommended ? "Recommended to QA" : "Recommend to QA"}</button></section>}
       {canReview && <section className="vpanel__sec"><div className="eylab">Rating</div><div className="starpick">{[1, 2, 3, 4, 5].map((number) => <button key={number} type="button" className={number <= stars ? "on" : ""} onClick={() => void onReview(asset.id, { stars: number === stars ? null : number })}>★</button>)}</div></section>}
@@ -324,7 +434,7 @@ export function Lightbox({ assets, rawAssets, initialAssetId, collectionKind, ca
       <section className="vpanel__sec"><div className="eylab" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}><span>Markup & annotations</span><span style={{ display: "flex", gap: 6 }}><button className="chip" type="button" onClick={() => setMarkupVisible((current) => !current)}>{markupVisible ? "Hide markup" : "Show markup"}</button>{canAnnotate && <button className={`chip ${markup && !editingDrawingId ? "is-active" : ""}`} type="button" disabled={editingDrawingId !== null} onClick={toggleDraw}>{markup && !editingDrawingId ? "Drawing…" : "Draw"}</button>}</span></div>{canAnnotate && <><textarea className="annotation-note" placeholder="Optional note for this markup…" value={annotationNote} disabled={isDrawingMode} onChange={(event) => setAnnotationNote(event.target.value)} /><button className="dbtn" style={{ width: "100%", marginTop: 8 }} type="button" disabled={isSaving || isDrawingMode || (!strokes.length && !annotationNote.trim())} onClick={() => void saveAnnotation()}>Save annotation</button></>}<div className="thread" style={{ marginTop: 14 }}>{annotations.length === 0 ? <div className="muted" style={{ fontSize: 14 }}>No annotations yet.</div> : annotations.map((annotation) => <div className={`cmt ${highlightedAnnotationId === annotation.id ? "cmt--highlighted" : ""}`} key={annotation.id} ref={(el) => { if (el) annotationRefs.current.set(annotation.id, el); else annotationRefs.current.delete(annotation.id); }}><div className="cmt__pin">✎</div><div className="cmt__b"><div className="cmt__who">{annotation.author.name}<span>{annotation.author.role}</span></div>{editingAnnotationId === annotation.id ? <><textarea className="annotation-note" aria-label="Edit annotation note" value={editingAnnotationNote} disabled={isDrawingMode} onChange={(event) => setEditingAnnotationNote(event.target.value)} /><div className="spread" style={{ marginTop: 6 }}><button className="comment-reply" type="button" disabled={isDrawingMode} onClick={cancelInlineEdit}>Cancel</button><button className="comment-reply" type="button" disabled={isSaving || isDrawingMode} onClick={() => void saveAnnotationEdit()}>Save</button></div></> : <>{annotation.noteText && <div className="cmt__txt">{annotation.noteText}</div>}<div className="ey muted" style={{ marginTop: 6 }}>{time(annotation.createdAt)}{annotation.editedAt && " · (edited)"}{annotation.authorId === currentUserId && <> · <button className="comment-reply" type="button" disabled={isDrawingMode || isSaving} onClick={() => { setEditingCommentId(null); setEditingAnnotationId(annotation.id); setEditingAnnotationNote(annotation.noteText ?? ""); }}>Edit note</button> · <button className="comment-reply" type="button" disabled={isDrawingMode || isSaving || !strokesReady(annotation)} title={!strokesReady(annotation) ? "Loading markup…" : undefined} onClick={() => startDrawingEdit(annotation)}>{annotation.strokeR2Key ? "Edit drawing" : "Add drawing"}</button> · <button className="comment-reply" type="button" disabled={isDrawingMode || isSaving} onClick={() => void deleteAnnotation(annotation)}>Delete</button></>}</div></>}</div></div>)}</div></section>
       <section className="vpanel__sec"><div className="eylab">Comments</div><CommentThread comments={comments} currentUserId={currentUserId} editingCommentId={editingCommentId} editingCommentBody={editingCommentBody} isSaving={isSaving} disableActions={isDrawingMode} onReply={setReplyTo} onEdit={(comment) => { setEditingAnnotationId(null); setEditingCommentId(comment.id); setEditingCommentBody(comment.body); }} onDelete={(comment) => void deleteComment(comment)} onEditBodyChange={setEditingCommentBody} onCancelEdit={cancelInlineEdit} onSaveEdit={() => void saveCommentEdit()} /></section>
     </div><div className="composer">{replyTo && <div className="hint">Replying to a comment · <button className="chip" type="button" disabled={isDrawingMode} onClick={() => setReplyTo(null)}>cancel</button></div>}<textarea placeholder={canAnnotate ? "Add a comment…" : "You do not have permission to comment."} disabled={!canAnnotate || isDrawingMode} value={commentBody} onChange={(event) => setCommentBody(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) void postComment(); }} /><div className="spread"><span className="ey muted">⌘↵ to send</span><button className="barbtn barbtn--solid" type="button" disabled={!canAnnotate || isSaving || isDrawingMode || !commentBody.trim()} onClick={() => void postComment()}>Send comment</button></div></div></aside>
-    <div className="strip">{assets.map((item, itemIndex) => <button className={`strip__button ${itemIndex === index ? "is-active" : ""}`} type="button" key={item.id} onClick={() => setIndex(itemIndex)} title={item.originalFilename}><LazyImage className="strip__t" src={`/media/asset/${encodeURIComponent(item.id)}/thumb`} alt={item.originalFilename} /></button>)}</div>
+    <div className="strip">{assets.map((item, itemIndex) => <FilmstripThumbnail key={item.id} asset={item} active={itemIndex === index} onSelect={() => setIndex(itemIndex)} />)}</div>
   </div>;
 }
 

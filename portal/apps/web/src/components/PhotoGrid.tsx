@@ -1,9 +1,9 @@
-import { useMemo, useRef, useState, type CSSProperties } from "react";
+import { useMemo, useRef, useState } from "react";
 import { LabelDot, Stars } from "./atoms";
 import { LazyImage } from "./LazyImage";
 
 export type Review = { stars: number | null; colorLabel: "select" | "maybe" | "cut" | "hero" | null; decision: "approved" | "flagged" | null; recommended: boolean };
-export type WorkspaceAsset = { id: string; collectionId: string; kind: "photo" | "video" | "floorplan_pdf" | "floorplan_preview" | "copy_pdf"; originalFilename: string; bytes: number; width: number | null; height: number | null; ratingFromMetadata: number | null; isPremium: boolean; createdAt: string; sourceRawAssetId: string | null; version: number; versionGroupId: string | null; supersedesAssetId: string | null; review: Review | null; selected: boolean };
+export type WorkspaceAsset = { id: string; collectionId: string; kind: "photo" | "video" | "floorplan_pdf" | "floorplan_preview" | "copy_pdf"; originalFilename: string; bytes: number; width: number | null; height: number | null; ratingFromMetadata: number | null; section: string | null; createdAt: string; sourceRawAssetId: string | null; version: number; versionGroupId: string | null; supersedesAssetId: string | null; review: Review | null; selected: boolean };
 export type ReviewPatch = Partial<Pick<Review, "stars" | "colorLabel" | "decision" | "recommended">>;
 
 const LABELS: { value: NonNullable<Review["colorLabel"]>; name: string; color: string }[] = [
@@ -12,6 +12,8 @@ const LABELS: { value: NonNullable<Review["colorLabel"]>; name: string; color: s
 
 interface PhotoGridProps {
   assets: WorkspaceAsset[];
+  /** RAW review groups root captures and immediate Dropbox subfolders; Edited QA stays flat. */
+  showSections: boolean;
   canReview: boolean;
   canRecommend: boolean;
   canSelect: boolean;
@@ -28,11 +30,33 @@ interface PhotoGridProps {
 
 function rating(asset: WorkspaceAsset) { return asset.review?.stars ?? asset.ratingFromMetadata ?? 0; }
 function labelName(value: Review["colorLabel"]) { return LABELS.find((label) => label.value === value)?.name ?? ""; }
+export function groupWorkspaceAssetsBySection(assets: WorkspaceAsset[]) {
+  const captures: WorkspaceAsset[] = [];
+  const sections = new Map<string, WorkspaceAsset[]>();
+  for (const asset of assets) {
+    if (asset.section === null) { captures.push(asset); continue; }
+    const sectionAssets = sections.get(asset.section);
+    if (sectionAssets) sectionAssets.push(asset); else sections.set(asset.section, [asset]);
+  }
+  const groups = [...sections.entries()]
+    .sort(([left], [right]) => left.localeCompare(right, undefined, { sensitivity: "base" }) || left.localeCompare(right))
+    .map(([section, sectionAssets]) => ({ section, label: section, assets: sectionAssets }));
+  return captures.length ? [{ section: null, label: "Captures", assets: captures }, ...groups] : groups;
+}
+export function workspaceSectionKey(section: string | null) { return section === null ? "workspace-section:root" : `workspace-section:folder:${section}`; }
+export function workspaceAssetIdsBetween(assets: WorkspaceAsset[], firstId: string, lastId: string) {
+  const first = assets.findIndex((asset) => asset.id === firstId);
+  const last = assets.findIndex((asset) => asset.id === lastId);
+  if (first < 0 || last < 0) return [];
+  return assets.slice(Math.min(first, last), Math.max(first, last) + 1).map((asset) => asset.id);
+}
 
-export function PhotoGrid({ assets, canReview, canRecommend, canSelect, canSetCover, coverAssetId, storedCoverAssetId, onSetCover, onOpen, onReview, onSelection }: PhotoGridProps) {
+export function PhotoGrid({ assets, showSections, canReview, canRecommend, canSelect, canSetCover, coverAssetId, storedCoverAssetId, onSetCover, onOpen, onReview, onSelection }: PhotoGridProps) {
   const [filter, setFilter] = useState("all");
   const [multi, setMulti] = useState<Set<string>>(new Set());
-  const lastSelected = useRef<number | null>(null);
+  const [failedThumbnails, setFailedThumbnails] = useState<Set<string>>(new Set());
+  const [thumbnailRetries, setThumbnailRetries] = useState<Record<string, number>>({});
+  const lastSelected = useRef<string | null>(null);
   const visible = useMemo(() => assets.filter((asset) => {
     if (filter === "recommended") return asset.review?.recommended;
     if (filter === "rated") return rating(asset) > 0;
@@ -40,12 +64,8 @@ export function PhotoGrid({ assets, canReview, canRecommend, canSelect, canSetCo
     if (filter === "selected") return asset.selected;
     return true;
   }), [assets, filter]);
-  const captures = visible.filter((asset) => !asset.isPremium);
-  const extras = visible.filter((asset) => asset.isPremium);
-  const displayOrder = [...captures, ...extras];
-  // Section headings only when the VISIBLE set spans both groups — a filter that empties
-  // one group must not leave its heading behind.
-  const hasExtras = extras.length > 0 && captures.length > 0;
+  const sectionGroups = useMemo(() => groupWorkspaceAssetsBySection(visible), [visible]);
+  const displayOrder = showSections ? sectionGroups.flatMap((group) => group.assets) : visible;
   const filters = [
     { id: "all", label: "All" },
     ...(canRecommend ? [{ id: "recommended", label: "Recommended" }] : []),
@@ -55,17 +75,18 @@ export function PhotoGrid({ assets, canReview, canRecommend, canSelect, canSetCo
   ];
 
   function toggleMulti(asset: WorkspaceAsset, shifted: boolean) {
-    const index = displayOrder.findIndex((item) => item.id === asset.id);
     setMulti((current) => {
       const next = new Set(current);
       if (shifted && lastSelected.current !== null) {
-        const from = Math.min(lastSelected.current, index);
-        const to = Math.max(lastSelected.current, index);
-        for (let i = from; i <= to; i += 1) next.add(displayOrder[i]!.id);
+        for (const id of workspaceAssetIdsBetween(displayOrder, lastSelected.current, asset.id)) next.add(id);
       } else if (next.has(asset.id)) next.delete(asset.id); else next.add(asset.id);
       return next;
     });
-    lastSelected.current = index;
+    lastSelected.current = asset.id;
+  }
+  function retryThumbnail(assetId: string) {
+    setFailedThumbnails((current) => { const next = new Set(current); next.delete(assetId); return next; });
+    setThumbnailRetries((current) => ({ ...current, [assetId]: (current[assetId] ?? 0) + 1 }));
   }
   async function bulk(action: "approve" | "flag" | "recommend" | "select" | "rate" | "label") {
     const ids = [...multi];
@@ -74,12 +95,13 @@ export function PhotoGrid({ assets, canReview, canRecommend, canSelect, canSetCo
     setMulti(new Set());
   }
   function renderGrid(gridAssets: WorkspaceAsset[]) {
-    return <div className="grid" style={{ "--cols": 4 } as CSSProperties}>{gridAssets.map((asset) => {
+    return <div className="grid workspace-photo-grid">{gridAssets.map((asset) => {
       const review = asset.review;
       const marked = multi.has(asset.id);
       const state = review?.decision;
-      return <div className={`tile ${marked ? "is-selected" : ""} ${state ? `st-${state}` : ""} ${rating(asset) ? "has-rating" : ""} ${asset.selected ? "has-state" : ""}`} key={asset.id} role="button" tabIndex={0} onClick={() => onOpen(asset, displayOrder)} onKeyDown={(event) => { if (event.key === "Enter") onOpen(asset, displayOrder); }}>
-        <LazyImage src={`/media/asset/${encodeURIComponent(asset.id)}/thumb`} alt={asset.originalFilename} /><div className="tile__scrim" />
+      const activate = () => failedThumbnails.has(asset.id) ? retryThumbnail(asset.id) : onOpen(asset, displayOrder);
+      return <div className={`tile ${marked ? "is-selected" : ""} ${state ? `st-${state}` : ""} ${rating(asset) ? "has-rating" : ""} ${asset.selected ? "has-state" : ""}`} key={asset.id} role="button" tabIndex={0} aria-label={failedThumbnails.has(asset.id) ? `Retry thumbnail for ${asset.originalFilename}` : undefined} onClick={activate} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); activate(); } }}>
+        <LazyImage src={`/media/asset/${encodeURIComponent(asset.id)}/thumb`} alt={asset.originalFilename} retryToken={thumbnailRetries[asset.id]} onFailedChange={(failed) => setFailedThumbnails((current) => { const next = new Set(current); if (failed) next.add(asset.id); else next.delete(asset.id); return next; })} /><div className="tile__scrim" />
         <button className="selbox" type="button" aria-label={`Select ${asset.originalFilename}`} onClick={(event) => { event.stopPropagation(); toggleMulti(asset, event.shiftKey); }}>✓</button>
         <span className="tile__num">{asset.originalFilename}</span>
         {review?.colorLabel && <span style={{ position: "absolute", top: 13, left: 42, zIndex: 4 }}><LabelDot color={LABELS.find((item) => item.value === review.colorLabel)?.color ?? "#fff"} name={labelName(review.colorLabel)} /></span>}
@@ -103,7 +125,7 @@ export function PhotoGrid({ assets, canReview, canRecommend, canSelect, canSetCo
   return <>
     <div className="worktools"><div className="filter-chips">{filters.map((item) => <button type="button" className={`chip ${filter === item.id ? "is-active" : ""}`} key={item.id} onClick={() => setFilter(item.id)}>{item.label}<span className="cnt">{item.id === "all" ? assets.length : assets.filter((asset) => item.id === "recommended" ? asset.review?.recommended : item.id === "rated" ? rating(asset) > 0 : item.id === "labeled" ? Boolean(asset.review?.colorLabel) : asset.selected).length}</span></button>)}</div><div className="grow" /><span className="prog">{assets.length} frames</span></div>
     <div className="workgrid">
-      {visible.length === 0 ? <div className="empty"><span className="serif">No frames in this view.</span>Choose another filter or upload the capture set.</div> : hasExtras ? <><div className="ey" style={{ margin: "4px 0 10px" }}>Captures</div>{captures.length > 0 && renderGrid(captures)}<div className="ey" style={{ margin: "22px 0 10px" }}>Extras</div>{extras.length > 0 && renderGrid(extras)}</> : renderGrid(visible)}
+      {visible.length === 0 ? <div className="empty"><span className="serif">No frames in this view.</span>Choose another filter or upload the capture set.</div> : showSections ? sectionGroups.map((group, index) => <section className="workspace-section" key={workspaceSectionKey(group.section)}><div className="ey" style={{ margin: index === 0 ? "4px 0 10px" : "22px 0 10px" }}>{group.label}</div>{renderGrid(group.assets)}</section>) : renderGrid(visible)}
     </div>
     {multi.size > 0 && <div className="actionbar"><span className="n">{multi.size}</span><span className="lbl">selected</span><span className="vline" />{canReview && <><button className="barbtn" type="button" onClick={() => void bulk("rate")}>Rate 5</button><button className="barbtn" type="button" onClick={() => void bulk("label")}>Label</button><button className="barbtn barbtn--solid" type="button" onClick={() => void bulk("approve")}>Approve</button><button className="barbtn" type="button" onClick={() => void bulk("flag")}>Flag</button></>}{canRecommend && <button className="barbtn barbtn--solid" type="button" onClick={() => void bulk("recommend")}>Recommend</button>}{canSelect && <button className="barbtn" type="button" onClick={() => void bulk("select")}>Select for editing</button>}<button className="barbtn" type="button" onClick={() => setMulti(new Set())}>Clear</button></div>}
   </>;

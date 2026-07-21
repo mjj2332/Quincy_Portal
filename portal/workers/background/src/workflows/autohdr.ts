@@ -1,7 +1,9 @@
 import { WorkflowEntrypoint } from "cloudflare:workers";
 import type { WorkflowEvent, WorkflowStep } from "cloudflare:workers";
+import { COLLECTION_RECEIVED_COUNT_SQL, collectionReceivedCountBindings } from "@quincy/db";
 import { assets, collections, projects } from "@quincy/db/schema";
 import { and, eq, inArray, sql } from "drizzle-orm";
+import { enqueueRenditionSafely } from "@quincy/shared";
 
 import type { Env } from "../env";
 import { download, listFolder, listFolderContinue, upload, type DropboxFile } from "../dropbox/client";
@@ -110,6 +112,9 @@ async function ingestReturnedFiles(
       .where(eq(assets.sourceRawAssetId, rawAsset.id))
       .limit(1);
     if (existing) {
+      const now = new Date();
+      await env.DB.prepare(COLLECTION_RECEIVED_COUNT_SQL).bind(...collectionReceivedCountBindings(editedCollectionId, now.getTime())).run();
+      await enqueueRenditionSafely(env, existing.id, "autohdr-existing-asset");
       returned.push({
         id: existing.id,
         originalFilename: file.name,
@@ -126,26 +131,12 @@ async function ingestReturnedFiles(
     const source = await download(env, db, file.path_display ?? file.path_lower);
     if (!source.body) throw new Error(`Dropbox returned no body for edited file ${file.name}`);
     await env.MEDIA.put(r2Key, source.body, { httpMetadata: { contentType: "image/jpeg" } });
-    const inserted = await db
-      .insert(assets)
-      .values({
-        id: assetId,
-        collectionId: editedCollectionId,
-        kind: "photo",
-        r2Key,
-        originalFilename: file.name,
-        bytes: file.size,
-        contentHash: file.content_hash ?? null,
-        source: "dropbox",
-        sourceRawAssetId: rawAsset.id,
-      })
-      .onConflictDoNothing()
-      .returning({ id: assets.id });
-    if (inserted.length > 0) {
-      await db
-        .update(collections)
-        .set({ receivedCount: sql`${collections.receivedCount} + 1`, status: "received", updatedAt: new Date() })
-        .where(eq(collections.id, editedCollectionId));
+    const now = new Date();
+    const results = await env.DB.batch([
+      env.DB.prepare("INSERT INTO assets (id, collection_id, kind, r2_key, original_filename, bytes, content_hash, source, source_raw_asset_id, created_at, updated_at) VALUES (?, ?, 'photo', ?, ?, ?, ?, 'dropbox', ?, ?, ?) ON CONFLICT DO NOTHING").bind(assetId, editedCollectionId, r2Key, file.name, file.size, file.content_hash ?? null, rawAsset.id, now.getTime(), now.getTime()),
+      env.DB.prepare(COLLECTION_RECEIVED_COUNT_SQL).bind(...collectionReceivedCountBindings(editedCollectionId, now.getTime())),
+    ]);
+    if ((results[0]?.meta.changes ?? 0) > 0) {
       returned.push({
         id: assetId,
         originalFilename: file.name,
@@ -154,6 +145,7 @@ async function ingestReturnedFiles(
         contentHash: file.content_hash ?? null,
         sourceRawAssetId: rawAsset.id,
       });
+      await enqueueRenditionSafely(env, assetId, "autohdr-ingest");
     }
   }
   return returned;

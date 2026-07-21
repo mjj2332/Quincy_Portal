@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import type { Context } from "hono";
 import { createDb, schema } from "@quincy/db";
 import { and, asc, desc, eq, inArray, isNull, notExists, sql } from "drizzle-orm";
 import { COLLECTION_KINDS, isStageKey, ROLE_CAPABILITIES, type CollectionKind } from "@quincy/shared";
@@ -10,6 +11,7 @@ import { newId } from "../lib/ids";
 import { createZipStream } from "../lib/zip-stream";
 import { jsonInput } from "./helpers";
 import { ensurePipelineStages } from "./stages";
+import { abortMultipart } from "../lib/r2s3";
 
 const nullable = <T extends z.ZodTypeAny>(item: T) => item.nullable().optional();
 const projectFields = z.object({ street: z.string().min(1), suburb: nullable(z.string()), postcode: nullable(z.string()), agencyName: nullable(z.string()), agentName: nullable(z.string()), agentEmail: nullable(z.string().email()), agentPhone: nullable(z.string()), agencyId: nullable(z.string().uuid()), agentId: nullable(z.string().uuid()), shootDate: nullable(z.string()), timeWindow: nullable(z.string()), orderNo: nullable(z.string()), orderId: nullable(z.string()), invoiceAmount: nullable(z.number()), paymentStatus: nullable(z.string()), notes: nullable(z.string()), rawFolderLink: nullable(z.string().url()), rawFolderPath: nullable(z.string()), orderedServices: z.array(z.enum(COLLECTION_KINDS)).optional(), photographerUserIds: z.array(z.string().uuid()).optional(), editorUserIds: z.array(z.string().uuid()).optional() });
@@ -65,6 +67,20 @@ async function syncMembers(db: ReturnType<typeof createDb>, projectId: string, i
   for (const member of removed) await db.delete(schema.projectMembers).where(eq(schema.projectMembers.id, member.id));
   return { added: desired.filter((userId) => !existing.some((member) => member.userId === userId)), removed: removed.map((member) => member.userId) };
 }
+async function abortActiveDocumentSessions(c: Context<AppEnv>, projectId: string) {
+  const db = createDb(c.env.DB); const now = new Date();
+  const sessions = await db.select().from(schema.documentUploads).where(and(eq(schema.documentUploads.projectId, projectId), sql`${schema.documentUploads.status} in ('pending', 'completing', 'aborting')`)).all();
+  for (const session of sessions) {
+    await db.update(schema.documentUploads).set({ status: "aborting", updatedAt: now }).where(and(eq(schema.documentUploads.id, session.id), sql`${schema.documentUploads.status} in ('pending', 'completing', 'aborting')`));
+    let aborted = true;
+    try { await Promise.all([
+      session.pdfUploadId ? abortMultipart(c.env, session.pdfKey, session.pdfUploadId) : undefined,
+      session.previewKey && session.previewUploadId ? abortMultipart(c.env, session.previewKey, session.previewUploadId) : undefined,
+    ]); } catch { aborted = false; }
+    if (aborted) await db.update(schema.documentUploads).set({ status: "failed", updatedAt: now }).where(and(eq(schema.documentUploads.id, session.id), eq(schema.documentUploads.status, "aborting")));
+  }
+  return sessions.length;
+}
 async function details(db: ReturnType<typeof createDb>, projectId: string, viewerSeesRawOnly = false) {
   const project = await db.select().from(schema.projects).where(eq(schema.projects.id, projectId)).get();
   if (!project) return null;
@@ -106,27 +122,30 @@ projectsRoutes.patch("/projects/:id", async (c) => {
       // Grouped counts merged in JS — a correlated scalar subquery via sql`${schema.assets}` renders
       // incorrectly under drizzle/D1 and silently returned 0 (caught by the blocked-payload tests).
       const countsFor = async (collectionIds: string[]) => {
-        const [assetRows, manifestRows] = await Promise.all([
+        const [assetRows, manifestRows, documentRows] = await Promise.all([
           db.select({ collectionId: schema.assets.collectionId, n: sql<number>`count(*)` }).from(schema.assets).where(inArray(schema.assets.collectionId, collectionIds)).groupBy(schema.assets.collectionId).all(),
           db.select({ collectionId: schema.uploadManifests.collectionId, n: sql<number>`count(*)` }).from(schema.uploadManifests).where(inArray(schema.uploadManifests.collectionId, collectionIds)).groupBy(schema.uploadManifests.collectionId).all(),
+          db.select({ collectionId: schema.documentUploads.collectionId, n: sql<number>`count(*)` }).from(schema.documentUploads).where(and(inArray(schema.documentUploads.collectionId, collectionIds), sql`${schema.documentUploads.status} in ('pending', 'completing', 'aborting')`)).groupBy(schema.documentUploads.collectionId).all(),
         ]);
-        return { assets: new Map(assetRows.map((row) => [row.collectionId, row.n])), manifests: new Map(manifestRows.map((row) => [row.collectionId, row.n])) };
+        return { assets: new Map(assetRows.map((row) => [row.collectionId, row.n])), manifests: new Map(manifestRows.map((row) => [row.collectionId, row.n])), documents: new Map(documentRows.map((row) => [row.collectionId, row.n])) };
       };
       const existing = await db.select({ id: schema.collections.id, kind: schema.collections.kind, receivedCount: schema.collections.receivedCount }).from(schema.collections).where(eq(schema.collections.projectId, id)).all();
       const desiredServices = new Set<CollectionKind>(["raw", ...orderedServices]);
       const removedCollections = existing.filter((collection) => collection.kind !== "raw" && !desiredServices.has(collection.kind as CollectionKind));
       const blockedPayload = (list: typeof removedCollections, counts: Awaited<ReturnType<typeof countsFor>>, removedKinds: string[] = []) =>
-        c.json({ error: "Services with received media cannot be removed.", blocked: list.map((collection) => ({ kind: collection.kind, assetCount: counts.assets.get(collection.id) ?? 0, manifestCount: counts.manifests.get(collection.id) ?? 0 })), ...(removedKinds.length ? { removed: removedKinds } : {}) }, 409);
+        c.json({ error: "Services with received media or active document uploads cannot be removed.", blocked: list.map((collection) => ({ kind: collection.kind, assetCount: counts.assets.get(collection.id) ?? 0, manifestCount: counts.manifests.get(collection.id) ?? 0, activeDocumentSessions: counts.documents.get(collection.id) ?? 0 })), ...(removedKinds.length ? { removed: removedKinds } : {}) }, 409);
       if (removedCollections.length) {
         // Pre-screen so the COMMON blocked case mutates nothing at all (no partial removals on 409).
         const pre = await countsFor(removedCollections.map((collection) => collection.id));
-        const preBlocked = removedCollections.filter((collection) => collection.receivedCount > 0 || (pre.assets.get(collection.id) ?? 0) > 0 || (pre.manifests.get(collection.id) ?? 0) > 0);
+        const links = await db.select({ collectionId: schema.collectionLinks.collectionId, n: sql<number>`count(*)` }).from(schema.collectionLinks).where(inArray(schema.collectionLinks.collectionId, removedCollections.map((collection) => collection.id))).groupBy(schema.collectionLinks.collectionId).all();
+        const linkCounts = new Map(links.map((row) => [row.collectionId, row.n]));
+        const preBlocked = removedCollections.filter((collection) => collection.receivedCount > 0 || (pre.assets.get(collection.id) ?? 0) > 0 || (pre.manifests.get(collection.id) ?? 0) > 0 || (pre.documents.get(collection.id) ?? 0) > 0 || (linkCounts.get(collection.id) ?? 0) > 0);
         if (preBlocked.length) return blockedPayload(preBlocked, pre);
       }
       // Correctness (no cascade-deleting a mid-flight upload) lives in the guarded DELETE itself —
       // the pre-screen above only shapes UX. A race between the two can still block a delete here;
       // in that rare case we audit what WAS removed and report both halves honestly.
-      const guardedDeletes = await Promise.all(removedCollections.map((collection) => db.delete(schema.collections).where(and(eq(schema.collections.id, collection.id), eq(schema.collections.receivedCount, 0), notExists(db.select({ id: schema.assets.id }).from(schema.assets).where(eq(schema.assets.collectionId, schema.collections.id))), notExists(db.select({ id: schema.uploadManifests.id }).from(schema.uploadManifests).where(eq(schema.uploadManifests.collectionId, schema.collections.id))))).returning({ id: schema.collections.id })));
+      const guardedDeletes = await Promise.all(removedCollections.map((collection) => db.delete(schema.collections).where(and(eq(schema.collections.id, collection.id), eq(schema.collections.receivedCount, 0), notExists(db.select({ id: schema.assets.id }).from(schema.assets).where(eq(schema.assets.collectionId, schema.collections.id))), notExists(db.select({ id: schema.collectionLinks.id }).from(schema.collectionLinks).where(eq(schema.collectionLinks.collectionId, schema.collections.id))), notExists(db.select({ id: schema.uploadManifests.id }).from(schema.uploadManifests).where(eq(schema.uploadManifests.collectionId, schema.collections.id))), notExists(db.select({ id: schema.documentUploads.id }).from(schema.documentUploads).where(and(eq(schema.documentUploads.collectionId, schema.collections.id), sql`${schema.documentUploads.status} in ('pending', 'completing', 'aborting')`))))).returning({ id: schema.collections.id })));
       const deletedIds = new Set(guardedDeletes.flatMap((rows) => rows.map((row) => row.id)));
       const guardedBlocked = removedCollections.filter((collection) => !deletedIds.has(collection.id));
       if (guardedBlocked.length) {
@@ -246,7 +265,10 @@ projectsRoutes.post("/jobs/:id/retry", requireCapability("selectForEditing"), as
 for (const [path, archived] of [["/projects/:id/archive", true], ["/projects/:id/restore", false]] as const) projectsRoutes.post(path, async (c) => {
   const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
   if (!ROLE_CAPABILITIES[c.get("user").role].includes("archiveProject")) return c.json({ error: "Forbidden", capability: "archiveProject" }, 403);
-  const db = createDb(c.env.DB); await db.update(schema.projects).set({ archivedAt: archived ? new Date() : null, archivedBy: archived ? c.get("user").id : null, updatedAt: new Date() }).where(eq(schema.projects.id, id)); await audit(c.env, c.get("user").id, archived ? "project.archive" : "project.restore", "project", id); return c.json({ ok: true });
+  const db = createDb(c.env.DB); const now = new Date();
+  const result = await db.update(schema.projects).set({ archivedAt: archived ? now : null, archivedBy: archived ? c.get("user").id : null, updatedAt: now }).where(archived ? and(eq(schema.projects.id, id), notExists(db.select({ id: schema.documentUploads.id }).from(schema.documentUploads).where(and(eq(schema.documentUploads.projectId, id), sql`${schema.documentUploads.status} in ('pending', 'completing', 'aborting')`)))) : eq(schema.projects.id, id)).returning({ id: schema.projects.id });
+  if (!result.length) return c.json({ error: archived ? "Active document uploads must be aborted before archiving." : "Project not found" }, archived ? 409 : 404);
+  await audit(c.env, c.get("user").id, archived ? "project.archive" : "project.restore", "project", id); return c.json({ ok: true });
 });
 projectsRoutes.delete("/projects/:id", async (c) => {
   const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
@@ -258,6 +280,14 @@ projectsRoutes.delete("/projects/:id", async (c) => {
   if (!project.archivedAt) return c.json({ error: "Archive the project before deleting it." }, 409);
   const activeJobs = (await db.select({ count: sql<number>`count(*)` }).from(schema.jobs).where(and(eq(schema.jobs.projectId, id), inArray(schema.jobs.status, ["queued", "running"]))).get())?.count ?? 0;
   if (activeJobs) return c.json({ error: "Background work is still running for this project — wait for it to finish and try again.", activeJobs }, 409);
+  const activeDocuments = (await db.select({ count: sql<number>`count(*)` }).from(schema.documentUploads).where(and(eq(schema.documentUploads.projectId, id), sql`${schema.documentUploads.status} in ('pending', 'completing', 'aborting')`)).get())?.count ?? 0;
+  if (activeDocuments) {
+    // Abort known R2 uploads and terminally fail their reservations before permitting a
+    // destructive retry. This leaves late presigned PUTs untracked only until their <=1h URL
+    // expiry, and prevents the project cascade from erasing the ownership record first.
+    await abortActiveDocumentSessions(c, id);
+    return c.json({ error: "Active document uploads were aborted. Confirm deletion again after the sessions are terminal.", activeDocuments }, 409);
+  }
   const r2Prefix = `projects/${id}/`;
   const assetCount = (await db.select({ count: sql<number>`count(*)` }).from(schema.assets).innerJoin(schema.collections, eq(schema.assets.collectionId, schema.collections.id)).where(eq(schema.collections.projectId, id)).get())?.count ?? 0;
   // Audit BEFORE destruction so the trail survives even if a later step dies mid-way.

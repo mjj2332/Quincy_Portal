@@ -15,6 +15,7 @@ const agentFields = z.object({ agencyId: z.string().uuid().nullable().optional()
 const agentPatch = agentFields.partial();
 const stagePatch = z.object({ label: z.string().trim().min(1).optional(), active: z.boolean().optional() });
 const stageMove = z.object({ direction: z.enum(["up", "down"]) });
+const renditionBackfill = z.object({ dryRun: z.boolean().optional(), cursor: z.string().uuid().optional(), limit: z.number().int().min(1).max(100).optional(), confirmProduction: z.literal(true).optional() });
 const optionalQuery = <T extends z.ZodTypeAny>(schema: T) => z.preprocess((value) => value === "" ? undefined : value, schema.optional());
 const eventsQuery = z.object({ source: optionalQuery(z.literal("tonomo")), status: optionalQuery(z.enum(["received", "processed", "poison"])), offset: optionalQuery(z.coerce.number().int().min(0)), limit: optionalQuery(z.coerce.number().int().min(1).max(100)) });
 const idCheck = (value: string) => z.string().uuid().safeParse(value).success;
@@ -31,6 +32,20 @@ function summary(payloadJson: string) {
 }
 
 export const adminRoutes = new Hono<AppEnv>();
+
+// This is intentionally an operator endpoint, not an automatic deployment task. Each call
+// advances at most one cursor page; production also requires an explicit body confirmation.
+adminRoutes.post("/admin/renditions/backfill", async (c) => {
+  if (!adminAllowed(c)) return c.json({ error: "Forbidden", capability: "adminBackend" }, 403);
+  const input = await jsonInput(c, renditionBackfill); if (input instanceof Response) return input;
+  try {
+    const result = await c.env.BACKGROUND.backfillRenditions(input);
+    await audit(c.env, c.get("user").id, "rendition.backfill.request", "asset_renditions", input.cursor ?? "start", input);
+    return c.json(result);
+  } catch (error) {
+    return c.json({ error: error instanceof Error ? error.message : "Rendition backfill failed" }, 409);
+  }
+});
 
 adminRoutes.get("/admin/agencies", async (c) => {
   if (!adminAllowed(c)) return c.json({ error: "Forbidden", capability: "adminBackend" }, 403);

@@ -36,6 +36,9 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
       },
     });
   } catch (error) {
+    // Abort is control flow for view changes, not an API failure. Callers that use an
+    // AbortController need to distinguish it from a real transport error.
+    if (error instanceof Error && error.name === "AbortError") throw error;
     const message = error instanceof Error ? error.message : "The network request failed.";
     throw new ApiError(message, 0, error);
   }
@@ -54,8 +57,8 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return payload as T;
 }
 
-export function apiGet<T>(path: string): Promise<T> {
-  return request<T>(path);
+export function apiGet<T>(path: string, init?: Pick<RequestInit, "signal">): Promise<T> {
+  return request<T>(path, init);
 }
 
 export function apiPost<T, TBody>(path: string, body: TBody): Promise<T> {

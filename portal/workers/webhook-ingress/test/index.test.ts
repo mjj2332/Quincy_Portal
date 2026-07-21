@@ -10,12 +10,23 @@ interface StoredWebhookEvent {
   receivedAt: number;
 }
 
-function createWebhookEventsDatabase() {
+function createWebhookEventsDatabase(options: { failInsert?: boolean; failReceiptUpdate?: boolean } = {}) {
   const rows = new Map<string, StoredWebhookEvent>();
+  let receiptUpdates = 0;
+  const receiptBindings: unknown[][] = [];
+  let receiptUpdateQuery = "";
   const database = {
-    prepare: () => ({
+    prepare: (query: string) => ({
       bind: (...values: unknown[]) => ({
         run: async () => {
+          if (query.startsWith("UPDATE integration_connections")) {
+            if (options.failReceiptUpdate) throw new Error("receipt update failed");
+            receiptUpdates += 1;
+            receiptBindings.push(values);
+            receiptUpdateQuery = query;
+            return { meta: { changes: 1 } };
+          }
+          if (options.failInsert) throw new Error("storage failed");
           const [id, source, eventId, payloadJson, status, receivedAt] = values as [string, string, string, string, string, number];
           const dedupeKey = `${source}:${eventId}`;
           if (rows.has(dedupeKey)) return { meta: { changes: 0 } };
@@ -26,7 +37,7 @@ function createWebhookEventsDatabase() {
     }),
   } as unknown as D1Database;
 
-  return { database, rows };
+  return { database, rows, receiptUpdates: () => receiptUpdates, receiptBindings: () => receiptBindings, receiptUpdateQuery: () => receiptUpdateQuery };
 }
 
 const baseEnv = {
@@ -43,6 +54,16 @@ function tonomoEnv(database: D1Database, processTonomoEvents = async () => {}) {
 
 function request(url: string, init: RequestInit, env: typeof baseEnv & { TONOMO_WEBHOOK_TOKEN?: string }) {
   return worker.request(url, init, env, { waitUntil: (promise) => { void promise; } } as ExecutionContext);
+}
+
+async function dropboxSignature(secret: string, body: string): Promise<string> {
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const signature = new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(body)));
+  return [...signature].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function dropboxEnv(database: D1Database, handleDropboxWebhook = async () => {}) {
+  return { ...baseEnv, DB: database, DROPBOX_APP_SECRET: "test-dropbox-secret", BACKGROUND: { handleDropboxWebhook } as Fetcher };
 }
 
 describe("webhook ingress", () => {
@@ -65,6 +86,69 @@ describe("webhook ingress", () => {
 
     expect(response.status).toBe(503);
     await expect(response.text()).resolves.toBe("Dropbox webhook is not configured");
+  });
+
+  it("stores a valid Dropbox delivery, records its receipt, and wakes processing", async () => {
+    const { database, rows, receiptUpdates, receiptBindings, receiptUpdateQuery } = createWebhookEventsDatabase();
+    const body = JSON.stringify({ list_folder: { accounts: ["dbid:one"] } });
+    let wakes = 0;
+    const response = await request("https://webhook.test/webhooks/dropbox", {
+      method: "POST", body, headers: { "X-Dropbox-Signature": await dropboxSignature("test-dropbox-secret", body) },
+    }, dropboxEnv(database, async () => { wakes += 1; }));
+
+    expect(response.status).toBe(200);
+    expect(rows.size).toBe(1);
+    expect(receiptUpdates()).toBe(1);
+    const stored = [...rows.values()][0]!;
+    expect(receiptBindings()[0]).toEqual([stored.receivedAt, stored.receivedAt, stored.receivedAt, stored.receivedAt, "dropbox", "connected", "error"]);
+    expect(receiptUpdateQuery()).toContain("status IN (?, ?)");
+    expect(receiptUpdateQuery()).toContain("last_event_at < ?");
+    expect(wakes).toBe(1);
+  });
+
+  it("rejects an invalid Dropbox signature without storing or waking", async () => {
+    const { database, rows, receiptUpdates } = createWebhookEventsDatabase();
+    let wakes = 0;
+    const response = await request("https://webhook.test/webhooks/dropbox", {
+      method: "POST", body: "{}", headers: { "X-Dropbox-Signature": "00" },
+    }, dropboxEnv(database, async () => { wakes += 1; }));
+
+    expect(response.status).toBe(401);
+    expect(rows.size).toBe(0);
+    expect(receiptUpdates()).toBe(0);
+    expect(wakes).toBe(0);
+  });
+
+  it("wakes processing for a duplicate Dropbox delivery to rescue a stranded row", async () => {
+    const { database, rows, receiptUpdates } = createWebhookEventsDatabase();
+    const body = "{}";
+    const headers = { "X-Dropbox-Signature": await dropboxSignature("test-dropbox-secret", body) };
+    let wakes = 0;
+    const env = dropboxEnv(database, async () => { wakes += 1; });
+    await expect(request("https://webhook.test/webhooks/dropbox", { method: "POST", body, headers }, env)).resolves.toHaveProperty("status", 200);
+    await expect(request("https://webhook.test/webhooks/dropbox", { method: "POST", body, headers }, env)).resolves.toHaveProperty("status", 200);
+    expect(rows.size).toBe(1);
+    expect(receiptUpdates()).toBe(2);
+    expect(wakes).toBe(2);
+  });
+
+  it("returns non-2xx when Dropbox persistence fails", async () => {
+    const { database } = createWebhookEventsDatabase({ failInsert: true });
+    const body = "{}";
+    const response = await request("https://webhook.test/webhooks/dropbox", {
+      method: "POST", body, headers: { "X-Dropbox-Signature": await dropboxSignature("test-dropbox-secret", body) },
+    }, dropboxEnv(database));
+    expect(response.status).toBe(503);
+  });
+
+  it("returns non-2xx when the synchronous Dropbox handoff fails", async () => {
+    const { database, rows } = createWebhookEventsDatabase();
+    const body = "{}";
+    const response = await request("https://webhook.test/webhooks/dropbox", {
+      method: "POST", body, headers: { "X-Dropbox-Signature": await dropboxSignature("test-dropbox-secret", body) },
+    }, dropboxEnv(database, async () => { throw new Error("background unavailable"); }));
+    expect(response.status).toBe(503);
+    expect(rows.size).toBe(1);
   });
 
   it("stores a valid Tonomo array payload as a received webhook event", async () => {

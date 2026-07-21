@@ -141,3 +141,31 @@
   screenshot for "did the images actually load."
 - **`codex exec` agents can't run vitest** (sandbox EPERM binding 127.0.0.1) — they ALWAYS
   report "tests couldn't start." Run the suites yourself before trusting a green claim.
+
+## Renditions + transforms deploy (2026-07-21, session 2)
+
+- **`err=9401 "Transformation origin is not in allowed origins list"` is a Cloudflare
+  control-plane setting, not code.** Images → Transformations → **Sources** must list the
+  **exact hostname** `quincy.flamingfire.my` under "Specified origins" — a `*.flamingfire.my`
+  wildcard did NOT match, and the staged list must be **Saved** (an unsaved edit still rejects
+  live). While broken it blocked ALL cold `/cdn-cgi/image` transforms on every PoP (LAX + KUL),
+  so new uploads broke on all browsers, old images broke on Safari (Chrome served cache), AND
+  rendition generation failed (the background worker's transform fetch hits the same 9401).
+- **Never call native `fetch` as an object method.** The rendition generator stored bare
+  `fetch` in a `{ store, fetch }` deps object and called `deps.fetch(...)` → `this = deps` →
+  `TypeError: Illegal invocation` on EVERY job (0 renditions, silent unless you parse the queue
+  `logs`). Wrap it: `fetch: (...a) => fetch(...a)`. Injected test fetchers are unaffected.
+- **Cloudflare returns `image/jpeg` (not webp) for large `format=webp` transforms.** The 3200px
+  `web` variant came back 200 / `cf-resized: internal=ok` / `content-type: image/jpeg`; the
+  strict webp-only check dead-lettered every web message (thumbs, 640px, encode as webp fine).
+  Renditions must be **format-agnostic**: accept webp OR jpeg, store the actual content_type,
+  serve it back the same way, validate dims only for webp.
+- **`wrangler r2 object get` can't read R2 keys containing spaces** — it returns "The specified
+  key does not exist" for an object the Worker binding reads fine. Not a reliable existence check.
+- **Codex-Chrome is policy-blocked on `quincy.flamingfire.my`** (raw CDP refused). Codex can read
+  other sites, but authenticated mutations on the prod portal (e.g. the rendition backfill
+  endpoint) must be run by the user via a DevTools console `fetch`, on the correct tab (a
+  relative `/api/...` URL resolves against whatever origin the console is attached to).
+- **wrangler tail JSON is pretty-printed** (multi-line per event); parse it as a stream of
+  concatenated objects, and read queue-handler failures from each event's `logs`/`exceptions`
+  (outcome can still be `ok` while a caught error is logged).

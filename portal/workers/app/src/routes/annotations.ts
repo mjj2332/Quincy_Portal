@@ -10,14 +10,16 @@ import { audit } from "../lib/audit";
 import { newId } from "../lib/ids";
 import { jsonInput } from "./helpers";
 
-const annotationInput = z.object({ strokes: z.unknown().optional(), noteText: z.string().trim().max(10_000).optional() })
-  .refine((value) => value.strokes !== undefined || Boolean(value.noteText), { message: "A markup or note is required" });
 const commentInput = z.object({ body: z.string().trim().min(1).max(10_000), parentId: z.string().uuid().optional() });
 const strokeInput = z.object({
   points: z.array(z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) })).min(1).max(2000),
   color: z.string().trim().min(1).max(32),
   width: z.number().positive().max(100),
 });
+// Creation intentionally uses the same stroke contract as PATCH. A note-only
+// annotation remains valid, but an empty/absent markup plus empty note does not.
+const annotationInput = z.object({ strokes: z.array(strokeInput).max(200).optional(), noteText: z.string().trim().max(10_000).optional() })
+  .refine((value) => (value.strokes?.length ?? 0) > 0 || Boolean(value.noteText), { message: "A markup or note is required" });
 const annotationEditInput = z.object({ noteText: z.string().trim().max(10_000).nullable().optional(), strokes: z.array(strokeInput).max(200).optional() })
   .refine((value) => value.noteText !== undefined || value.strokes !== undefined, { message: "A note or markup change is required" });
 const commentEditInput = z.object({ body: z.string().trim().min(1).max(10_000) });
@@ -100,12 +102,14 @@ annotationsRoutes.post("/assets/:id/annotations", async (c) => {
   const id = newId();
   const strokeR2Key = strokeJson ? `projects/${asset.projectId}/${scope}/${assetId}/annotations/${id}.json` : null;
   if (strokeR2Key && strokeJson) await c.env.MEDIA.put(strokeR2Key, strokeJson, { httpMetadata: { contentType: "application/json" } });
+  const createdAt = new Date();
   await createDb(c.env.DB).insert(schema.annotations).values({
     id, assetId, authorId: c.get("user").id, authorRole: c.get("user").role, scope,
-    strokeR2Key, noteText: data.noteText || null, createdAt: new Date(),
+    strokeR2Key, noteText: data.noteText || null, createdAt,
   });
   await audit(c.env, c.get("user").id, "asset.annotate", "asset", assetId, { annotationId: id, scope, hasStrokes: Boolean(strokeR2Key) });
-  return c.json({ id, strokeR2Key, scope }, 201);
+  const user = c.get("user");
+  return c.json({ id, authorId: user.id, author: { id: user.id, name: user.name, role: user.role }, scope, strokeR2Key, noteText: data.noteText || null, createdAt: createdAt.toISOString(), editedAt: null }, 201);
 });
 
 annotationsRoutes.post("/assets/:id/comments", async (c) => {
@@ -123,9 +127,11 @@ annotationsRoutes.post("/assets/:id/comments", async (c) => {
     if (!parent) return c.json({ error: "Comment parent was not found on this asset" }, 400);
   }
   const id = newId();
-  await db.insert(schema.comments).values({ id, assetId, parentId: data.parentId ?? null, authorId: c.get("user").id, authorRole: c.get("user").role, body: data.body, createdAt: new Date() });
+  const createdAt = new Date();
+  await db.insert(schema.comments).values({ id, assetId, parentId: data.parentId ?? null, authorId: c.get("user").id, authorRole: c.get("user").role, body: data.body, createdAt });
   await audit(c.env, c.get("user").id, "asset.comment", "asset", assetId, { commentId: id, parentId: data.parentId ?? null, scope });
-  return c.json({ id }, 201);
+  const user = c.get("user");
+  return c.json({ id, parentId: data.parentId ?? null, authorId: user.id, body: data.body, author: { id: user.id, name: user.name, role: user.role }, createdAt: createdAt.toISOString(), editedAt: null, replies: [] }, 201);
 });
 
 annotationsRoutes.patch("/comments/:id", async (c) => {

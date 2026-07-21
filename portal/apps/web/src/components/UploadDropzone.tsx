@@ -1,8 +1,9 @@
 import { useRef, useState, type DragEvent, type ChangeEvent } from "react";
 import { isAcceptedPhotoFilename } from "@quincy/shared";
 import { apiPost } from "../lib/api";
+import { uploadMultipartFile, type MultipartPresign } from "../lib/multipart-upload";
 
-type PresignResponse = {
+type PresignResponse = MultipartPresign & {
   assetId?: string;
   key: string;
   uploadId?: string;
@@ -18,25 +19,6 @@ interface UploadDropzoneProps {
   projectId: string;
   onComplete: () => Promise<void> | void;
   onToast: (message: string, tone?: "error" | "success") => void;
-}
-
-async function putMultipart(file: File, presign: PresignResponse): Promise<void> {
-  if (presign.devDirect) {
-    const response = await fetch(`/api/uploads/direct?key=${encodeURIComponent(presign.key)}`, { method: "PUT", credentials: "include", headers: { "content-type": "image/jpeg" }, body: file });
-    if (!response.ok) throw new Error("Direct upload failed.");
-    return;
-  }
-  if (!presign.partUrls?.length || !presign.uploadId || !presign.partBytes) throw new Error("Upload service returned an incomplete multipart session.");
-  const parts: { partNumber: number; etag: string }[] = [];
-  for (let index = 0; index < presign.partUrls.length; index += 1) {
-    const start = index * presign.partBytes;
-    const response = await fetch(presign.partUrls[index]!, { method: "PUT", body: file.slice(start, start + presign.partBytes) });
-    if (!response.ok) throw new Error(`Part ${index + 1} could not be uploaded.`);
-    const etag = response.headers.get("etag");
-    if (!etag) throw new Error(`Part ${index + 1} returned no ETag.`);
-    parts.push({ partNumber: index + 1, etag });
-  }
-  await apiPost("/api/uploads/complete", { projectId: presign.key.split("/")[1], key: presign.key, uploadId: presign.uploadId, parts, originalFilename: file.name });
 }
 
 export function UploadDropzone({ projectId, onComplete, onToast }: UploadDropzoneProps) {
@@ -72,7 +54,8 @@ export function UploadDropzone({ projectId, onComplete, onToast }: UploadDropzon
           try {
             const presign = await apiPost<PresignResponse, { projectId: string; filename: string; bytes: number }>("/api/uploads/presign", { projectId, filename: file.name, bytes: file.size });
             update(file.name, { percent: 35 });
-            await putMultipart(file, presign);
+            const completed = await uploadMultipartFile(file, presign, `/api/uploads/direct?key=${encodeURIComponent(presign.key)}`);
+            await apiPost("/api/uploads/complete", { projectId, key: presign.key, uploadId: completed.uploadId, parts: completed.parts, originalFilename: file.name });
             update(file.name, { state: "complete", percent: 100 });
           } catch (error) {
             update(file.name, { state: "failed", error: error instanceof Error ? error.message : "Upload failed." });

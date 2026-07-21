@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { type StageKey } from "@quincy/shared";
 import { StatusBadge } from "../components/atoms";
 import { Lightbox } from "../components/Lightbox";
@@ -34,7 +34,7 @@ export function ProjectWorkspace({ projectId, notice, onNoticeShown, onBack, onE
   const [jobs, setJobs] = useState<Job[]>([]);
   const [activeTab, setActiveTab] = useState<Collection["kind"]>("raw");
   const [openAssetId, setOpenAssetId] = useState<string | null>(null);
-  // Snapshot of the grid's displayed order (captures then extras) at open time — ids only,
+  // Snapshot of the grid's displayed order (Captures then alphabetical sections) at open time — ids only,
   // so the lightbox still reads live review/selection state from `assets`.
   const [lightboxOrderIds, setLightboxOrderIds] = useState<string[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -42,6 +42,13 @@ export function ProjectWorkspace({ projectId, notice, onNoticeShown, onBack, onE
   const [isSyncing, setIsSyncing] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const currentProjectIdRef = useRef(projectId);
+  const currentTabRef = useRef(activeTab);
+  const rawAssetsRef = useRef(rawAssets);
+  const assetRequestRef = useRef<{ generation: number; controller: AbortController | null }>({ generation: 0, controller: null });
+  currentProjectIdRef.current = projectId;
+  currentTabRef.current = activeTab;
+  rawAssetsRef.current = rawAssets;
 
   const toast = useCallback((message: string, tone: "success" | "error" = "success") => {
     const id = Date.now() + Math.random();
@@ -56,8 +63,14 @@ export function ProjectWorkspace({ projectId, notice, onNoticeShown, onBack, onE
   const refreshProject = useCallback(async () => { if (projectId) setData(await apiGet<ProjectResponse>(`/api/projects/${projectId}`)); }, [projectId]);
   const refreshAssets = useCallback(async (kind = activeTab) => {
     if (!projectId) return;
-    const response = await apiGet<AssetsResponse>(`/api/projects/${projectId}/assets?collection=${kind}`);
-    if (kind === activeTab) setAssets(response.assets);
+    const request = assetRequestRef.current;
+    request.controller?.abort();
+    const controller = new AbortController();
+    const generation = request.generation + 1;
+    assetRequestRef.current = { generation, controller };
+    const response = await apiGet<AssetsResponse>(`/api/projects/${projectId}/assets?collection=${kind}`, { signal: controller.signal });
+    if (assetRequestRef.current.generation !== generation || currentProjectIdRef.current !== projectId || currentTabRef.current !== kind) return;
+    setAssets(response.assets);
     if (kind === "raw") setRawAssets(response.assets);
   }, [activeTab, projectId]);
   const refreshIngest = useCallback(async () => { if (projectId) setIngest(await apiGet<IngestStatus>(`/api/projects/${projectId}/ingest-status`)); }, [projectId]);
@@ -66,18 +79,25 @@ export function ProjectWorkspace({ projectId, notice, onNoticeShown, onBack, onE
 
   useEffect(() => {
     if (!projectId) { setIsLoading(false); return; }
-    let alive = true;
+    const controller = new AbortController();
+    const projectIdAtStart = projectId;
     setIsLoading(true); setError(null); setActiveTab("raw");
-    Promise.all([apiGet<ProjectResponse>(`/api/projects/${projectId}`), apiGet<AssetsResponse>(`/api/projects/${projectId}/assets?collection=raw`), apiGet<IngestStatus>(`/api/projects/${projectId}/ingest-status`), apiGet<JobsResponse>(`/api/projects/${projectId}/jobs`)])
-      .then(([project, raw, status, jobList]) => { if (alive) { setData(project); setAssets(raw.assets); setRawAssets(raw.assets); setIngest(status); setJobs(jobList.jobs); } })
-      .catch((reason: unknown) => { if (alive) setError(reason instanceof Error ? reason.message : "Project details could not be loaded."); })
-      .finally(() => { if (alive) setIsLoading(false); });
-    return () => { alive = false; };
+    Promise.all([apiGet<ProjectResponse>(`/api/projects/${projectId}`, { signal: controller.signal }), apiGet<AssetsResponse>(`/api/projects/${projectId}/assets?collection=raw`, { signal: controller.signal }), apiGet<IngestStatus>(`/api/projects/${projectId}/ingest-status`, { signal: controller.signal }), apiGet<JobsResponse>(`/api/projects/${projectId}/jobs`, { signal: controller.signal })])
+      .then(([project, raw, status, jobList]) => { if (!controller.signal.aborted && currentProjectIdRef.current === projectIdAtStart) { setData(project); setAssets(raw.assets); setRawAssets(raw.assets); setIngest(status); setJobs(jobList.jobs); } })
+      .catch((reason: unknown) => { if (!controller.signal.aborted && currentProjectIdRef.current === projectIdAtStart) setError(reason instanceof Error ? reason.message : "Project details could not be loaded."); })
+      .finally(() => { if (!controller.signal.aborted && currentProjectIdRef.current === projectIdAtStart) setIsLoading(false); });
+    return () => { controller.abort(); };
   }, [projectId]);
 
   useEffect(() => {
-    if (!projectId || activeTab === "raw") return;
-    void refreshAssets(activeTab).catch((reason: unknown) => toast(reason instanceof Error ? reason.message : "Collection could not be loaded.", "error"));
+    if (!projectId) return;
+    // Restore the RAW collection synchronously, then refresh it under the same generation
+    // guard as every other tab. This never leaves Edited assets under RAW-only controls.
+    if (activeTab === "raw") setAssets(rawAssetsRef.current);
+    void refreshAssets(activeTab).catch((reason: unknown) => {
+      if (reason instanceof Error && reason.name === "AbortError") return;
+      toast(reason instanceof Error ? reason.message : "Collection could not be loaded.", "error");
+    });
   }, [activeTab, projectId, refreshAssets, toast]);
 
   useEffect(() => {
@@ -163,7 +183,7 @@ export function ProjectWorkspace({ projectId, notice, onNoticeShown, onBack, onE
       {activeTab === "raw" || activeTab === "edited" ? <><div className="workspace-intro"><div><div className="ey">{activeTab === "raw" ? "Capture QA" : "Edited QA"}</div><h1 className="serif">{activeTab === "raw" ? "RAW frames" : "Edited frames"}</h1></div><div className="muted">{activeTab === "raw" ? "Ratings from XMP are shown at ingest. Select the strongest frames for editing." : "Review delivered edits before they move to client delivery."}</div></div>
         {activeTab === "raw" && canSelect && <div className="hdr"><div className="grow"><strong>autoHDR hand-off</strong><div className="muted">{selectionCount} selected RAW frame{selectionCount === 1 ? "" : "s"} will be sent for editing.</div></div><div className="row gap2"><button className="button button--secondary" type="button" disabled={selectionCount === 0} onClick={downloadSelectedRaw}>{`Download ${selectionCount} selected (zip)`}</button><button className="button" type="button" disabled={selectionCount === 0 || isSending} onClick={() => void sendToAutoHdr()}>{isSending ? "Sending…" : `Send ${selectionCount} selected to autoHDR`}</button></div></div>}
         {activeTab === "raw" && canUpload && <div className="workgrid"><UploadDropzone projectId={projectId} onComplete={refresh} onToast={toast} /></div>}
-        <PhotoGrid assets={assets} canReview={canReview} canRecommend={canRecommend} canSelect={activeTab === "raw" && canSelect} canSetCover={canEdit && (activeTab === "raw" || activeTab === "edited")} coverAssetId={project.effectiveCoverAssetId} storedCoverAssetId={project.coverAssetId} onSetCover={updateCover} onOpen={(asset, orderedAssets) => { setLightboxOrderIds(orderedAssets.map((item) => item.id)); setOpenAssetId(asset.id); }} onReview={updateReview} onSelection={updateSelection} />
+        <PhotoGrid assets={assets} showSections={activeTab === "raw"} canReview={canReview} canRecommend={canRecommend} canSelect={activeTab === "raw" && canSelect} canSetCover={canEdit && (activeTab === "raw" || activeTab === "edited")} coverAssetId={project.effectiveCoverAssetId} storedCoverAssetId={project.coverAssetId} onSetCover={updateCover} onOpen={(asset, orderedAssets) => { setLightboxOrderIds(orderedAssets.map((item) => item.id)); setOpenAssetId(asset.id); }} onReview={updateReview} onSelection={updateSelection} />
       </> : <CollectionPanel projectId={projectId} collection={activeTab} assets={assets} canManage={canManageCollections} canApprove={can("reviewEdited")} onReview={updateReview} onChanged={async () => { await Promise.all([refreshAssets(activeTab), refreshProject()]); }} onToast={toast} />}
       {jobs.length > 0 && <div className="workgrid"><section className="hdr" style={{ alignItems: "flex-start", flexDirection: "column" }}><div><strong>autoHDR status</strong><div className="muted">Recent hand-offs for this project.</div></div>{jobs.map((job) => <div className="kv" style={{ width: "100%" }} key={job.id}><span className="k">{new Date(job.createdAt).toLocaleString("en-AU")}</span><span className="vv"><span className={`statetag st-${job.status}`}>{job.status}</span>{job.error ? ` ${job.error}` : ""}{(job.status === "stuck" || job.status === "failed") && canSelect && <button className="chip" style={{ marginLeft: 8 }} type="button" onClick={() => void retryAutoHdr(job.id)}>Retry</button>}</span></div>)}</section></div>}
     </section>
