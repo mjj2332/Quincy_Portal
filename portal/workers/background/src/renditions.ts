@@ -16,7 +16,8 @@ const MAX_RENDITION_BYTES = 16 * 1024 * 1024;
 
 export type RenditionAsset = { id: string; r2Key: string; contentHash: string | null };
 export type StoredRendition = { variant: RenditionVariant; r2Key: string; specVersion: string };
-export type MeasuredRendition = StoredRendition & { bytes: number; contentType: string; width: number; height: number };
+export type RenditionContentType = "image/webp" | "image/jpeg";
+export type MeasuredRendition = StoredRendition & { bytes: number; contentType: RenditionContentType; width: number | null; height: number | null };
 
 export interface RenditionStore {
   getAsset(assetId: string): Promise<RenditionAsset | undefined>;
@@ -112,6 +113,10 @@ function validDimensions(dimensions: { width: number; height: number } | null, m
   return Boolean(dimensions && dimensions.width > 0 && dimensions.height > 0 && dimensions.width <= maxEdge && dimensions.height <= maxEdge);
 }
 
+function isJpeg(bytes: Uint8Array): boolean {
+  return bytes.byteLength >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+}
+
 function sha256Hex(bytes: Uint8Array): Promise<string> {
   // Copy to an ArrayBuffer: Workers accepts Uint8Array, while TS 7 distinguishes a possible
   // SharedArrayBuffer view from WebCrypto's BufferSource type.
@@ -146,22 +151,28 @@ export async function generateRenditions(
     const previous = existing.get(variant);
     if (previous?.specVersion === RENDITION_SPEC_VERSION && await env.MEDIA.head(previous.r2Key)) { skipped.push(variant); continue; }
     const response = await dependencies.fetch(await transformUrl(env.APP_ORIGIN, asset.r2Key, variant, env.TRANSFORM_SOURCE_SECRET), { headers: { accept: "image/webp" } });
-    const contentType = response.headers.get("content-type")?.split(";", 1)[0]?.toLowerCase();
+    const contentType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
     const resized = response.headers.get("cf-resized");
-    if (!response.ok || contentType !== "image/webp" || /(?:^|[;,\s])err=/i.test(resized ?? "") || (resized && !/(?:^|[;,\s])internal=ok/i.test(resized))) {
+    if (!response.ok || (contentType !== "image/webp" && contentType !== "image/jpeg") || /(?:^|[;,\s])err=/i.test(resized ?? "") || !/(?:^|[;,\s])internal=ok/i.test(resized ?? "")) {
       throw new Error(`Invalid transform response for ${assetId}/${variant}: status=${response.status} content-type=${contentType ?? "missing"} cf-resized=${resized ?? "missing"}`);
     }
     const body = await readBounded(response.body);
-    const dimensions = webpDimensions(body);
-    if (!validDimensions(dimensions, RENDITION_SPECS[variant].maxEdge)) throw new Error(`Invalid WebP dimensions for ${assetId}/${variant}`);
+    let width: number | null = null; let height: number | null = null;
+    if (contentType === "image/webp") {
+      const dimensions = webpDimensions(body);
+      if (!validDimensions(dimensions, RENDITION_SPECS[variant].maxEdge)) throw new Error(`Invalid WebP dimensions for ${assetId}/${variant}`);
+      width = dimensions.width; height = dimensions.height;
+    } else if (!isJpeg(body)) {
+      throw new Error(`Invalid JPEG output for ${assetId}/${variant}`);
+    }
     const outputDigest = await sha256Hex(body);
-    const r2Key = renditionR2Key(asset.id, asset.contentHash, variant, outputDigest);
+    const r2Key = renditionR2Key(asset.id, asset.contentHash, variant, outputDigest, contentType);
     // Never overwrite an immutable rendition object. If a prior attempt wrote R2 then lost its
     // D1 update, the deterministic digest key is adopted below; an untracked orphan is safe.
     if (!await env.MEDIA.head(r2Key)) {
-      await env.MEDIA.put(r2Key, body, { httpMetadata: { contentType: "image/webp" }, customMetadata: { specVersion: RENDITION_SPEC_VERSION, assetId, variant, outputDigest } });
+      await env.MEDIA.put(r2Key, body, { httpMetadata: { contentType }, customMetadata: { specVersion: RENDITION_SPEC_VERSION, assetId, variant, outputDigest } });
     }
-    await dependencies.store.save({ assetId, variant, r2Key, specVersion: RENDITION_SPEC_VERSION, bytes: body.byteLength, contentType: "image/webp", ...dimensions });
+    await dependencies.store.save({ assetId, variant, r2Key, specVersion: RENDITION_SPEC_VERSION, bytes: body.byteLength, contentType, width, height });
     generated.push(variant);
   }
   return { generated, skipped };

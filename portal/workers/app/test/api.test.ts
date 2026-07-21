@@ -320,6 +320,11 @@ describe("staff app API", () => {
     const cached = await SELF.fetch(`https://portal.test/media/asset/${assetId}/thumb`, { headers: { cookie } });
     expect(cached.status).toBe(200); expect(cached.headers.get("content-type")).toBe("image/webp"); expect(cached.headers.get("cache-control")).toBe("private, no-store"); await expect(cached.text()).resolves.toBe("stored-webp");
     expect(await media.MEDIA.get(sourceKey)).not.toBeNull();
+    const jpegRenditionKey = `renditions/${assetId}/content/${RENDITION_SPEC_VERSION}/web.jpg`;
+    await media.MEDIA.put(jpegRenditionKey, "stored-jpeg", { httpMetadata: { contentType: "image/jpeg" } });
+    await database.DB.prepare("INSERT INTO asset_renditions (id, asset_id, variant, r2_key, bytes, content_type, width, height, spec_version, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(crypto.randomUUID(), assetId, "web", jpegRenditionKey, 11, "image/jpeg", null, null, RENDITION_SPEC_VERSION, now).run();
+    const cachedJpeg = await SELF.fetch(`https://portal.test/media/asset/${assetId}/web`, { headers: { cookie } });
+    expect(cachedJpeg.status).toBe(200); expect(cachedJpeg.headers.get("content-type")).toBe("image/jpeg"); expect(cachedJpeg.headers.get("cache-control")).toBe("private, no-store"); await expect(cachedJpeg.text()).resolves.toBe("stored-jpeg");
     const forbidden = await SELF.fetch(`https://portal.test/media/asset/${assetId}/thumb`, { headers: { cookie: await sessionCookie(photographerToken) } });
     expect(forbidden.status).toBe(403);
     await database.DB.prepare("UPDATE asset_renditions SET spec_version = 'old' WHERE asset_id = ?").bind(assetId).run();

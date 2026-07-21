@@ -31,14 +31,21 @@ export const RENDITION_SPECS: Record<RenditionVariant, { maxEdge: number; qualit
   thumb: { maxEdge: 640, quality: 75 },
 };
 
-export function renditionR2Key(assetId: string, contentHash: string | null, variant: RenditionVariant, outputDigest: string): string {
+export function renditionR2Key(
+  assetId: string,
+  contentHash: string | null,
+  variant: RenditionVariant,
+  outputDigest: string,
+  contentType: "image/webp" | "image/jpeg",
+): string {
   // Asset IDs identify immutable source rows. Keep a content component too, so a future
   // re-ingest/import cannot accidentally share a derivative key with different bytes.
   const content = encodeURIComponent(contentHash || "source-unknown");
   if (!/^[a-f0-9]{64}$/i.test(outputDigest)) throw new Error("Rendition output digest must be a SHA-256 hex digest");
   // The output digest makes each successfully written object immutable. A retry after an R2
   // success / D1 failure adopts this key after HEAD instead of overwriting it.
-  return `renditions/${assetId}/${content}/${RENDITION_SPEC_VERSION}/${variant}/${outputDigest.toLowerCase()}.webp`;
+  const extension = contentType === "image/jpeg" ? "jpg" : "webp";
+  return `renditions/${assetId}/${content}/${RENDITION_SPEC_VERSION}/${variant}/${outputDigest.toLowerCase()}.${extension}`;
 }
 
 /**

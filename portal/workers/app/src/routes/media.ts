@@ -44,11 +44,11 @@ mediaRoutes.get("/asset/:assetId/:variant", async (c) => {
       eq(schema.assetRenditions.variant, variant as "web" | "thumb"),
       eq(schema.assetRenditions.specVersion, RENDITION_SPEC_VERSION),
     )).get();
-    if (cached?.contentType === "image/webp") {
+    if (cached && (cached.contentType === "image/webp" || cached.contentType === "image/jpeg")) {
       const object = await c.env.MEDIA.get(cached.r2Key);
-      if (object?.httpMetadata?.contentType === "image/webp") {
+      if (object?.httpMetadata?.contentType === cached.contentType) {
         const headers: Record<string, string> = {
-          "content-type": "image/webp",
+          "content-type": cached.contentType,
           // The authenticated URL must recheck project access after logout/revocation.
           "cache-control": "private, no-store",
           "content-length": String(object.size),

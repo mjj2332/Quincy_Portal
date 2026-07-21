@@ -14,6 +14,8 @@ function webp(width = 40, height = 30): Uint8Array {
   return bytes;
 }
 
+const tinyJpeg = Uint8Array.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0xff, 0xd9]);
+
 function harness() {
   const saved: MeasuredRendition[] = []; const objects = new Set<string>(); const requests: string[] = []; let puts = 0;
   const store: RenditionStore = {
@@ -46,8 +48,16 @@ describe("durable rendition generation", () => {
     const result = await generateRenditions(h.env as never, asset.id, { store: h.store, fetch: (async (url: string) => { h.requests.push(url); return new Response(webp(), { headers: { "content-type": "image/webp", "cf-resized": "internal=ok" } }); }) as typeof fetch });
     expect(result.generated).toEqual(["thumb", "web"]); expect(h.saved).toHaveLength(2); expect(h.objects.size).toBe(2);
     expect(h.saved.every((row) => /^renditions\/.+\/[a-f0-9]{64}\.webp$/.test(row.r2Key))).toBe(true);
-    expect(h.saved.every((row) => row.specVersion === RENDITION_SPEC_VERSION && row.width === 40 && row.height === 30)).toBe(true);
+    expect(h.saved.every((row) => row.specVersion === RENDITION_SPEC_VERSION && row.contentType === "image/webp" && row.width === 40 && row.height === 30)).toBe(true);
     expect(h.requests.every((url) => url.includes("format=webp/") && url.includes("v=v2"))).toBe(true);
+  });
+
+  it("stores a valid JPEG fallback without fabricating dimensions", async () => {
+    const h = harness();
+    const result = await generateRenditions(h.env as never, asset.id, { store: h.store, fetch: (async () => new Response(tinyJpeg, { headers: { "content-type": "image/jpeg", "cf-resized": "internal=ok" } })) as typeof fetch });
+    expect(result.generated).toEqual(["thumb", "web"]);
+    expect(h.saved).toHaveLength(2);
+    expect(h.saved.every((row) => row.contentType === "image/jpeg" && row.width === null && row.height === null && row.r2Key.endsWith(".jpg"))).toBe(true);
   });
 
   it("rejects Images 9401/non-image responses before R2 or D1 writes", async () => {
@@ -102,6 +112,7 @@ describe("durable rendition generation", () => {
     await generateRenditions(h.env as never, asset.id, { store: h.store, fetch: (async () => new Response(webp(), { headers: { "content-type": "image/webp", "cf-resized": "internal=ok" } })) as typeof fetch });
     // Thumb was adopted (no second put); web was generated once on the successful retry.
     expect(h.puts).toBe(2);
-    expect(renditionR2Key(asset.id, asset.contentHash, "thumb", "a".repeat(64))).toContain("/" + "a".repeat(64) + ".webp");
+    expect(renditionR2Key(asset.id, asset.contentHash, "thumb", "a".repeat(64), "image/webp")).toContain("/" + "a".repeat(64) + ".webp");
+    expect(renditionR2Key(asset.id, asset.contentHash, "web", "b".repeat(64), "image/jpeg")).toContain("/" + "b".repeat(64) + ".jpg");
   });
 });
