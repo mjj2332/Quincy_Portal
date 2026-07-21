@@ -319,7 +319,10 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/other agents 
   gitignored `portal/workers/app/.prod-secrets.local` (confirmed present) — user should move
   it to the password manager and delete the file.
 
-**Wave: AutoHDR per-project send + fetch (2026-07-22, implemented — pending deploy + real-sample test)**
+**Wave: AutoHDR per-project send + fetch (2026-07-22, DEPLOYED to prod — pending real-sample test)**
+- Deployed from branch `fix/p0-p3-qa` (pushed; NOT yet merged to `main` — prod is ahead of main).
+  background version `2e037ae2`, app version `08061c24`. Live route `POST /api/projects/:id/fetch-edited`
+  verified 403-gated in prod; homepage 200.
 - Replaced the fixed-path `AutoHdrRoundtrip` (48h auto-poll) with two decoupled per-project
   operations against AutoHDR's own Dropbox layout (`/AutoHDR/<listing>/01-RAW-Photos` in,
   `04-FINAL-Photos` out — see `docs/lessons.md` for the doc discrepancies).
