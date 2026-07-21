@@ -4,27 +4,12 @@ import { integrationConnections, projects } from "@quincy/db/schema";
 
 import type { Env } from "../env";
 import { dbFor, errorMessage } from "../lib/db";
-import { DropboxCursorResetError, recordDropboxError, listFolder, listFolderContinue, type DropboxEntry, type DropboxFolderPage } from "../dropbox/client";
+import { DropboxCursorResetError, recordDropboxError, recordDropboxSuccess, listFolder, listFolderContinue, type DropboxFolderPage } from "../dropbox/client";
+import { completeDropboxDeltaPage } from "../dropbox/delta";
 import { normalisePath, syncProjectRawFolder } from "../dropbox/sync";
 
 const CURSOR_KEY = "cursor";
 const TICK_DELAY_MS = 60_000;
-
-function changedProjectIds(
-  entries: DropboxEntry[],
-  projectPaths: readonly { id: string; rawFolderPath: string | null }[],
-): string[] {
-  const ids = new Set<string>();
-  for (const entry of entries) {
-    const changedPath = entry.path_lower.toLowerCase();
-    for (const project of projectPaths) {
-      if (!project.rawFolderPath) continue;
-      const folderPath = normalisePath(project.rawFolderPath).toLowerCase();
-      if (changedPath === folderPath || changedPath.startsWith(`${folderPath}/`)) ids.add(project.id);
-    }
-  }
-  return [...ids];
-}
 
 /** One DO per Dropbox connection; its named ID is the integration connection ID. */
 export class DropboxSyncDO extends DurableObject<Env> {
@@ -49,18 +34,20 @@ export class DropboxSyncDO extends DurableObject<Env> {
         await this.ctx.storage.delete(CURSOR_KEY);
         page = await listFolder(this.env, db, "", { recursive: true }, connectionId);
       }
-      await this.ctx.storage.put(CURSOR_KEY, page.cursor);
-
       const projectPaths = await db
         .select({ id: projects.id, rawFolderPath: projects.rawFolderPath })
         .from(projects)
         .where(isNull(projects.archivedAt));
-      for (const projectId of changedProjectIds(page.entries, projectPaths)) {
-        await syncProjectRawFolder(this.env, projectId, undefined, connectionId);
-      }
-
-      if (page.has_more) await this.ctx.storage.setAlarm(Date.now() + TICK_DELAY_MS);
-      else await this.ctx.storage.deleteAlarm();
+      await completeDropboxDeltaPage(page, projectPaths, {
+        normalisePath,
+        syncProject: (projectId) => syncProjectRawFolder(this.env, projectId, undefined, connectionId),
+        setAlarm: () => this.ctx.storage.setAlarm(Date.now() + TICK_DELAY_MS),
+        clearAlarm: () => this.ctx.storage.deleteAlarm(),
+        persistCursor: (nextCursor) => this.ctx.storage.put(CURSOR_KEY, nextCursor),
+      });
+      // A full delta exercises credentials/current-account/list-folder, but not a shared
+      // link or each project path. Keep those sticky failures visible until their own retry.
+      await recordDropboxSuccess(db, connectionId, ["credentials", "current_account", "list_folder"]);
     } catch (error) {
       await recordDropboxError(db, connectionId, error).catch(() => undefined);
       // Keep a failed cursor tick recoverable by the next Dropbox webhook.

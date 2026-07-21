@@ -1,6 +1,6 @@
 import { integrationConnections } from "@quincy/db/schema";
 import { decryptCredentials, encryptCredentials } from "@quincy/shared";
-import { eq } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 
 import type { Database } from "@quincy/db";
 import type { Env } from "../env";
@@ -49,6 +49,48 @@ export interface DropboxFolderPage {
 }
 
 export class DropboxCursorResetError extends Error {}
+
+/**
+ * Error classes are stored as a prefix in the existing last_error column so no migration is
+ * needed. Sticky classes are only cleared by a success that exercised the same capability.
+ */
+export type DropboxErrorClass = "transient" | "credentials" | "sharing_read" | "folder_path" | "configuration";
+export type DropboxRecoveryCapability = "credentials" | "current_account" | "list_folder" | "sharing_read" | "folder_path";
+const ERROR_PREFIX = /^\[dropbox:([a-z_]+)\]\s*/i;
+
+export function classifyDropboxError(error: unknown): DropboxErrorClass {
+  const message = errorMessage(error);
+  if (/sharing\.read|shared[- ]link resolution|shared link is not owned/i.test(message)) return "sharing_read";
+  if (/folder not found|no resolvable Dropbox RAW folder path|check the path in the project's Dropbox settings/i.test(message)) return "folder_path";
+  if (/credential|decrypt|malformed|token refresh|invalid_access_token|oauth2\/token|no connected Dropbox integration|failed \(401\)/i.test(message)) return "credentials";
+  // Runtime/network errors are retryable. Ordinary Dropbox 4xx responses are an invalid
+  // integration/configuration state and must remain visible until an operator fixes it.
+  if (/Dropbox .* failed \((?:400|403|404|409)\)/i.test(message)) return "configuration";
+  return "transient";
+}
+
+export function formatDropboxError(error: unknown): string {
+  return `[dropbox:${classifyDropboxError(error)}] ${errorMessage(error)}`;
+}
+
+export function storedDropboxErrorClass(lastError: string | null): DropboxErrorClass {
+  const match = lastError?.match(ERROR_PREFIX);
+  switch (match?.[1]?.toLowerCase()) {
+    case "credentials": return "credentials";
+    case "sharing_read": return "sharing_read";
+    case "folder_path": return "folder_path";
+    case "configuration": return "configuration";
+    case "transient": return "transient";
+    // Historic unprefixed errors predate this contract. Treat them as transient so an
+    // ordinary successful delta can recover the previous behaviour safely.
+    default: return "transient";
+  }
+}
+
+export function canRecoverDropboxError(lastError: string | null, capabilities: readonly DropboxRecoveryCapability[]): boolean {
+  const classification = storedDropboxErrorClass(lastError);
+  return classification === "transient" || (classification !== "configuration" && capabilities.includes(classification));
+}
 
 interface DropboxConnection {
   id: string;
@@ -120,7 +162,9 @@ async function getConnection(db: Database, connectionId?: string): Promise<Dropb
       expiresAt: integrationConnections.expiresAt,
     })
     .from(integrationConnections)
-    .where(where)
+    // A historic schema permits several rows. Choose the canonical active row consistently
+    // everywhere until an explicit singleton migration can be designed and rolled out.
+    .where(where).orderBy(asc(integrationConnections.createdAt), asc(integrationConnections.id))
     .limit(1);
   if (!connection || !connection.encryptedCredentials) {
     throw new Error("No connected Dropbox integration is available");
@@ -135,8 +179,27 @@ export async function recordDropboxError(
 ): Promise<void> {
   await db
     .update(integrationConnections)
-    .set({ status: "error", lastError: errorMessage(error), updatedAt: new Date() })
+    .set({ status: "error", lastError: formatDropboxError(error), updatedAt: new Date() })
     .where(eq(integrationConnections.id, connectionId));
+}
+
+/**
+ * Record recovery only after a successful operation has exercised the supplied capabilities.
+ * A root delta does not prove that sharing.read or an individual configured folder path works.
+ */
+export async function recordDropboxSuccess(
+  db: Database,
+  connectionId: string,
+  capabilities: readonly DropboxRecoveryCapability[],
+): Promise<void> {
+  const connection = await db.select({ lastError: integrationConnections.lastError })
+    .from(integrationConnections).where(eq(integrationConnections.id, connectionId)).get();
+  if (!connection || !canRecoverDropboxError(connection.lastError, capabilities)) return;
+  await db
+    .update(integrationConnections)
+    .set({ status: "connected", lastError: null, updatedAt: new Date() })
+    // Do not erase a sticky error that another request wrote after our read.
+    .where(and(eq(integrationConnections.id, connectionId), sql`${integrationConnections.lastError} IS ${connection.lastError}`));
 }
 
 async function refreshAccessToken(
@@ -172,11 +235,12 @@ async function refreshAccessToken(
       .set({
         encryptedCredentials,
         expiresAt: new Date(Date.now() + expiresIn * 1_000),
-        status: "connected",
-        lastError: null,
         updatedAt: new Date(),
       })
       .where(eq(integrationConnections.id, connection.id));
+    // A successful refresh proves the credential path only; do not hide an unrelated
+    // sharing.read or project-folder configuration failure.
+    await recordDropboxSuccess(db, connection.id, ["credentials"]);
     return accessToken;
   } catch (error) {
     await recordDropboxError(db, connection.id, error);

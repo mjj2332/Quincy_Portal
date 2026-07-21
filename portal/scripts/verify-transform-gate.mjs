@@ -2,8 +2,8 @@
 /**
  * Re-verifies the deployed staging Worker Image Transformations gate.
  *
- * This is intentionally a destructive, remote integration spike: it uploads one
- * ~50 MiB JPEG to the production R2 account and creates temporary REMOTE D1 rows.
+ * This is intentionally a destructive, remote integration spike: it uploads one caller-supplied
+ * real JPEG to the production R2 account and creates temporary REMOTE D1 rows.
  * It refuses to start unless RUN_TRANSFORM_GATE=1 is set, and always attempts to
  * remove only gate-scoped data in finally.
  *
@@ -24,16 +24,10 @@ import { AwsClient } from "aws4fetch";
 
 const stagingOrigin = "https://staging.quincy.flamingfire.my";
 const bucket = "quincy-portal-media";
-const fixtureBytes = 50 * 1024 * 1024;
 const portalRoot = fileURLToPath(new URL("..", import.meta.url));
-const fixtureJpeg = Buffer.from(
-  // A baseline 1x1 JPEG. Bytes after its EOI marker are deliberately harmless padding.
-  "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAX/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAH/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAEFAqf/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oACAEDAQE/Aaf/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oACAECAQE/Aaf/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAY/Al//xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAE/IV//2gAMAwEAAgADAAAAEP/EABQRAQAAAAAAAAAAAAAAAAAAABD/2gAIAQMBAT8QH//EABQRAQAAAAAAAAAAAAAAAAAAABD/2gAIAQIBAT8QH//EABQQAQAAAAAAAAAAAAAAAAAAABD/2gAIAQEAAT8QH//Z",
-  "base64",
-);
 
 function printIntent() {
-  console.error("This gate would upload a ~50 MiB valid JPEG to quincy-portal-media, seed temporary gate-* rows in remote D1, request the deployed staging /media/asset/:assetId/web endpoint, assert a real Cloudflare transformation, then clean up.");
+  console.error("This gate would upload the supplied real JPEG to quincy-portal-media, seed temporary gate-* rows in remote D1, request the deployed staging /media/asset/:assetId/web endpoint, assert a real Cloudflare transformation, then clean up.");
 }
 
 if (process.env.RUN_TRANSFORM_GATE !== "1") {
@@ -63,10 +57,6 @@ function parseEnv(text) {
   return values;
 }
 
-function mask(value) {
-  return value.length <= 4 ? "*".repeat(value.length) : `${"*".repeat(Math.max(4, value.length - 4))}${value.slice(-4)}`;
-}
-
 function sqlString(value) {
   return `'${String(value).replaceAll("'", "''")}'`;
 }
@@ -77,22 +67,12 @@ function signedSession(token, secret) {
 }
 
 async function makeFixture() {
-  // Prefer a REAL photograph via GATE_FIXTURE_PATH: the Images engine returned an
-  // internal error (err=9516) on the synthetic padded 1x1 fixture — degenerate input,
-  // not representative. Real Lightroom exports are the actual gate subject.
+  // The Images gate must use a real JPEG. Synthetic padded files produced false 9516 results.
   const fixturePath = process.env.GATE_FIXTURE_PATH;
-  if (fixturePath) {
-    const body = new Uint8Array(await readFile(fixturePath));
-    if (body[0] !== 0xff || body[1] !== 0xd8) throw new Error(`GATE_FIXTURE_PATH is not a JPEG: ${fixturePath}`);
-    console.log(`Using real fixture ${fixturePath} (${body.byteLength} bytes).`);
-    return body;
-  }
-  if (fixtureJpeg.length >= fixtureBytes || fixtureJpeg[0] !== 0xff || fixtureJpeg[1] !== 0xd8 || fixtureJpeg.at(-2) !== 0xff || fixtureJpeg.at(-1) !== 0xd9) {
-    throw new Error("Embedded JPEG fixture is not a valid-sized JPEG with SOI/EOI markers");
-  }
-  const body = new Uint8Array(fixtureBytes);
-  body.set(fixtureJpeg);
-  // JPEG decoders stop at EOI; zero padding makes the R2 original large without changing pixels.
+  if (!fixturePath) throw new Error("GATE_FIXTURE_PATH must name a real JPEG fixture; synthetic defaults are forbidden");
+  const body = new Uint8Array(await readFile(fixturePath));
+  if (body.byteLength < 1024 || body[0] !== 0xff || body[1] !== 0xd8 || body.at(-2) !== 0xff || body.at(-1) !== 0xd9) throw new Error(`GATE_FIXTURE_PATH is not a complete real JPEG: ${fixturePath}`);
+  console.log(`Using real fixture ${fixturePath} (${body.byteLength} bytes).`);
   return body;
 }
 
@@ -144,6 +124,29 @@ async function d1Count(statement, field) {
 function assert(label, passed, detail, failures) {
   console.log(`${passed ? "PASS" : "FAIL"} ${label}${detail ? ` — ${detail}` : ""}`);
   if (!passed) failures.push(label);
+}
+
+function webpDimensions(bytes) {
+  const ascii = (offset, length) => Buffer.from(bytes.slice(offset, offset + length)).toString("ascii");
+  if (bytes.byteLength < 12 || ascii(0, 4) !== "RIFF" || ascii(8, 4) !== "WEBP") return null;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (view.getUint32(4, true) + 8 !== bytes.byteLength) return null;
+  let offset = 12; let image = null;
+  while (offset < bytes.byteLength) {
+    if (offset + 8 > bytes.byteLength) return null;
+    const name = ascii(offset, 4); const length = view.getUint32(offset + 4, true); const data = offset + 8; const end = data + length + (length & 1);
+    if (end > bytes.byteLength) return null;
+    if (name === "VP8 ") {
+      const frameTag = bytes[data] | (bytes[data + 1] << 8) | (bytes[data + 2] << 16); const firstPartitionLength = frameTag >>> 5;
+      if (length < 11 || (frameTag & 1) !== 0 || firstPartitionLength <= 7 || firstPartitionLength > length - 3 || bytes[data + 3] !== 0x9d || bytes[data + 4] !== 0x01 || bytes[data + 5] !== 0x2a || image) return null;
+      image = { width: (bytes[data + 6] | (bytes[data + 7] << 8)) & 0x3fff, height: (bytes[data + 8] | (bytes[data + 9] << 8)) & 0x3fff };
+    } else if (name === "VP8L") {
+      if (length < 6 || bytes[data] !== 0x2f || image) return null;
+      const bits = view.getUint32(data + 1, true); image = { width: (bits & 0x3fff) + 1, height: ((bits >>> 14) & 0x3fff) + 1 };
+    }
+    offset = end;
+  }
+  return image;
 }
 
 async function cleanup(aws, endpoint) {
@@ -200,7 +203,7 @@ try {
   const secretAccessKey = values.R2_S3_SECRET_ACCESS_KEY;
   if (!accountId || !accessKeyId || !secretAccessKey) throw new Error("R2 S3 credentials are missing from workers/app/.dev.vars");
 
-  console.log(`Credentials loaded (account ${mask(accountId)}, access key ${mask(accessKeyId)}, secret ${mask(secretAccessKey)}, production auth secret ${mask(productionAuthSecret)}).`);
+  console.log("Credentials loaded from workers/app/.dev.vars and environment.");
   aws = new AwsClient({ accessKeyId, secretAccessKey, service: "s3", region: "auto" });
 
   const now = Date.now();
@@ -231,16 +234,35 @@ try {
   // gate also works if staging retains the legacy unprefixed cookie configuration.
   const cookie = `better-auth.session_token=${signedValue}; __Secure-better-auth.session_token=${signedValue}`;
   console.log(`Requesting ${stagingOrigin}/media/asset/${assetId}/web.`);
-  const response = await fetch(`${stagingOrigin}/media/asset/${assetId}/web`, { headers: { cookie } });
+  const redirect = await fetch(`${stagingOrigin}/media/asset/${assetId}/web`, { headers: { cookie }, redirect: "manual" });
+  const location = redirect.headers.get("location");
+  assert("authenticated media redirect is 302", redirect.status === 302, `status ${redirect.status}`, failures);
+  assert("authenticated redirect is private/no-store", redirect.headers.get("cache-control") === "private, no-store", redirect.headers.get("cache-control") ?? "<missing>", failures);
+  let transformed = new Uint8Array(); let response = new Response(null, { status: 503 });
+  if (location) {
+    const transform = new URL(location);
+    const embeddedSource = decodeURIComponent(transform.pathname.slice(transform.pathname.indexOf("/https") + 1));
+    assert("transform source path is preserved", embeddedSource.includes("/__transform-source/"), embeddedSource, failures);
+    assert("transform source query has exact signed shape", [...transform.searchParams.keys()].sort().join(",") === "exp,sig,v", transform.search, failures);
+    assert("transform source carries cache version", transform.searchParams.get("v") === "v2", transform.search, failures);
+    assert("transform source carries numeric expiry and HMAC", /^\d+$/.test(transform.searchParams.get("exp") ?? "") && /^[0-9a-f]{64}$/i.test(transform.searchParams.get("sig") ?? ""), transform.search, failures);
+    response = await fetch(location, { headers: { accept: "image/webp,image/*;q=0.8" } });
+    transformed = new Uint8Array(await response.arrayBuffer());
+  } else {
+    failures.push("redirect location");
+  }
   const contentType = response.headers.get("content-type") ?? "";
   const cfResized = response.headers.get("cf-resized");
-  const transformed = new Uint8Array(await response.arrayBuffer());
 
   assert("HTTP 200", response.status === 200, `status ${response.status}`, failures);
   assert("content-type is image/*", /^image\//i.test(contentType), contentType || "<missing>", failures);
   console.log(`cf-resized: ${cfResized ?? "<missing>"}`);
-  assert("cf-resized is present and has no err=", Boolean(cfResized) && !/err=/i.test(cfResized), cfResized ?? "<missing>", failures);
+  assert("cf-resized is internal=ok with no err=", Boolean(cfResized) && /internal=ok/i.test(cfResized) && !/err=/i.test(cfResized), cfResized ?? "<missing>", failures);
   assert("transformed byte size is smaller than original", transformed.byteLength < fixture.byteLength, `${transformed.byteLength} < ${fixture.byteLength}`, failures);
+  if (/^image\/webp/i.test(contentType)) {
+    const dimensions = webpDimensions(transformed);
+    assert("WebP magic and bounded dimensions", Boolean(dimensions && dimensions.width > 0 && dimensions.height > 0 && dimensions.width <= 3200 && dimensions.height <= 3200), dimensions ? `${dimensions.width}×${dimensions.height}` : "unparseable WebP", failures);
+  }
 
   if (/err=9401/i.test(cfResized ?? "")) {
     console.error("Dashboard remediation: Images → Transformations → flamingfire.my → Sources → add staging.quincy.flamingfire.my and quincy.flamingfire.my.");

@@ -1,4 +1,5 @@
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
+import { COLLECTION_RECEIVED_COUNT_SQL, collectionReceivedCountBindings } from "@quincy/db";
 import { COLLECTION_KINDS, normaliseAddressKey, parseTonomoOrder, TonomoParseError, type CollectionKind, type TonomoOrder } from "@quincy/shared";
 import { auditLog, collectionLinks, collections, projectMembers, projects, user, webhookEvents } from "@quincy/db/schema";
 
@@ -41,16 +42,13 @@ async function attachServiceLinks(env: Env, order: TonomoOrder, collectionByKind
     if (!service.url || service.kind === "raw") continue;
     const collection = collectionByKind.get(service.kind);
     if (!collection) continue;
-    const existing = await db.select({ id: collectionLinks.id }).from(collectionLinks)
-      .where(and(eq(collectionLinks.collectionId, collection.id), eq(collectionLinks.url, service.url))).get();
     const now = new Date();
-    if (!existing) {
-      await db.insert(collectionLinks).values({
-        id: crypto.randomUUID(), collectionId: collection.id, url: service.url, label: service.label,
-        source: "tonomo", createdAt: now, updatedAt: now,
-      });
-    }
-    await db.update(collections).set({ status: "received", updatedAt: now }).where(eq(collections.id, collection.id));
+    // Redeliveries and concurrent manual additions use one logical-link constraint. The
+    // count reconciliation shares this D1 batch even when the insert dedupes.
+    await env.DB.batch([
+      env.DB.prepare("INSERT INTO collection_links (id, collection_id, url, label, source, created_at, updated_at) VALUES (?, ?, ?, ?, 'tonomo', ?, ?) ON CONFLICT(collection_id, url) DO NOTHING").bind(crypto.randomUUID(), collection.id, service.url, service.label ?? null, now.getTime(), now.getTime()),
+      env.DB.prepare(COLLECTION_RECEIVED_COUNT_SQL).bind(...collectionReceivedCountBindings(collection.id, now.getTime())),
+    ]);
   }
 }
 

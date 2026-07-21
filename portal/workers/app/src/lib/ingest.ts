@@ -1,6 +1,6 @@
-import { createDb, schema } from "@quincy/db";
-import { and, eq, sql } from "drizzle-orm";
-import { parseXmpRating, XMP_SCAN_BYTES, xmpRatingToStars } from "@quincy/shared";
+import { COLLECTION_RECEIVED_COUNT_SQL, collectionReceivedCountBindings, createDb, schema } from "@quincy/db";
+import { and, eq } from "drizzle-orm";
+import { enqueueRenditionSafely, parseXmpRating, XMP_SCAN_BYTES, xmpRatingToStars } from "@quincy/shared";
 import type { Env } from "../env";
 import { audit } from "./audit";
 
@@ -12,9 +12,17 @@ export async function finalizeIngest(env: Env, input: { actorId: string; project
   const db = createDb(env.DB);
   const raw = await db.select().from(schema.collections).where(and(eq(schema.collections.projectId, input.projectId), eq(schema.collections.kind, "raw"))).get();
   if (!raw) throw new Error("Project has no RAW collection");
-  await db.insert(schema.assets).values({ id: input.assetId, collectionId: raw.id, kind: "photo", r2Key: input.key, originalFilename: input.originalFilename, bytes: object.size, contentHash: input.contentHash ?? null, source: "upload", ratingFromMetadata: stars, createdAt: new Date(), updatedAt: new Date() });
-  await db.update(schema.collections).set({ receivedCount: sql`${schema.collections.receivedCount} + 1`, status: "receiving", updatedAt: new Date() }).where(eq(schema.collections.id, raw.id));
-  await env.INGEST_QUEUE.send({ type: "asset_ingested", assetId: input.assetId });
-  await audit(env, input.actorId, "asset.ingested", "asset", input.assetId, { projectId: input.projectId, key: input.key, ratingFromMetadata: stars });
+  const now = new Date();
+  const results = await env.DB.batch([
+    env.DB.prepare("INSERT INTO assets (id, collection_id, kind, r2_key, original_filename, bytes, content_hash, source, rating_from_metadata, created_at, updated_at) VALUES (?, ?, 'photo', ?, ?, ?, ?, 'upload', ?, ?, ?) ON CONFLICT DO NOTHING").bind(input.assetId, raw.id, input.key, input.originalFilename, object.size, input.contentHash ?? null, stars, now.getTime(), now.getTime()),
+    env.DB.prepare(COLLECTION_RECEIVED_COUNT_SQL).bind(...collectionReceivedCountBindings(raw.id, now.getTime())),
+  ]);
+  const inserted = (results[0]?.meta.changes ?? 0) > 0;
+  if (inserted) {
+    await audit(env, input.actorId, "asset.ingested", "asset", input.assetId, { projectId: input.projectId, key: input.key, ratingFromMetadata: stars });
+  }
+  // Queue failure cannot invalidate the durable source asset. A duplicate finalization also
+  // repairs missing generation work once the red gate has explicitly been enabled.
+  await enqueueRenditionSafely(env, input.assetId, inserted ? "upload-ingest" : "upload-existing-asset");
   return { assetId: input.assetId, ratingFromMetadata: stars };
 }

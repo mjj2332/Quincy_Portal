@@ -11,6 +11,11 @@ export type AssetSource = (typeof ASSET_SOURCES)[number];
 export const RENDITION_VARIANTS = ["thumb", "web"] as const;
 export type RenditionVariant = (typeof RENDITION_VARIANTS)[number];
 
+/** Bump when rendition options or validation requirements change. */
+export const RENDITION_SPEC_VERSION = "v1";
+/** Bump to make a repaired transform URL distinct from previously cached failures. */
+export const TRANSFORM_CACHE_VERSION = "v2";
+
 /** D-01: photo ingest is JPEG-only. Camera RAW never enters the portal. */
 export const ACCEPTED_PHOTO_EXTENSIONS = [".jpg", ".jpeg"] as const;
 export const ACCEPTED_PHOTO_MIME = "image/jpeg";
@@ -25,6 +30,16 @@ export const RENDITION_SPECS: Record<RenditionVariant, { maxEdge: number; qualit
   web: { maxEdge: 3200, quality: 85 },
   thumb: { maxEdge: 640, quality: 75 },
 };
+
+export function renditionR2Key(assetId: string, contentHash: string | null, variant: RenditionVariant, outputDigest: string): string {
+  // Asset IDs identify immutable source rows. Keep a content component too, so a future
+  // re-ingest/import cannot accidentally share a derivative key with different bytes.
+  const content = encodeURIComponent(contentHash || "source-unknown");
+  if (!/^[a-f0-9]{64}$/i.test(outputDigest)) throw new Error("Rendition output digest must be a SHA-256 hex digest");
+  // The output digest makes each successfully written object immutable. A retry after an R2
+  // success / D1 failure adopts this key after HEAD instead of overwriting it.
+  return `renditions/${assetId}/${content}/${RENDITION_SPEC_VERSION}/${variant}/${outputDigest.toLowerCase()}.webp`;
+}
 
 /**
  * XMP star rating semantics (validated 2026-07-19 against real studio exports):

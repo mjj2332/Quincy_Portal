@@ -113,17 +113,36 @@ app.post("/webhooks/dropbox", async (context) => {
   const timestamp = context.req.header("X-Dropbox-Request-Timestamp") ?? "";
   const eventId = await sha256(`${signature}:${timestamp}`);
   const payloadJson = new TextDecoder().decode(rawBody);
+  // One receipt instant belongs to both durable observations. It must be captured before
+  // either write so concurrent deliveries can never move a connection backwards in time.
+  const receivedAt = Date.now();
   try {
-    const result = await context.env.DB.prepare(
+    await context.env.DB.prepare(
       "INSERT INTO webhook_events (id, source, event_id, payload_json, status, received_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(source, event_id) DO NOTHING",
     )
-      .bind(crypto.randomUUID(), "dropbox", eventId, payloadJson, "received", Date.now())
+      .bind(crypto.randomUUID(), "dropbox", eventId, payloadJson, "received", receivedAt)
       .run();
-    if (result.meta.changes === 0) return context.text("ok");
-    await context.env.BACKGROUND.handleDropboxWebhook();
+    // Wake on both new and duplicate events. A prior wake can have been interrupted after
+    // storage, and a redelivery is our at-least-once stranded-row rescue.
+    let handoffError: unknown;
+    try {
+      await context.env.BACKGROUND.handleDropboxWebhook();
+    } catch (error) {
+      handoffError = error;
+    }
+    // A receipt timestamp is deliberately separate from sync health: it means that a
+    // valid Dropbox delivery was verified and durably recorded (or was already present).
+    // Dropbox sends account-level notifications, so every configured Dropbox connection
+    // has observed the receipt.
+    await context.env.DB.prepare(
+      "UPDATE integration_connections SET last_event_at = CASE WHEN last_event_at IS NULL OR last_event_at < ? THEN ? ELSE last_event_at END, updated_at = CASE WHEN last_event_at IS NULL OR last_event_at < ? THEN ? ELSE updated_at END WHERE provider = ? AND status IN (?, ?)",
+    ).bind(receivedAt, receivedAt, receivedAt, receivedAt, "dropbox", "connected", "error").run();
+    if (handoffError) throw handoffError;
   } catch (error) {
-    // Dropbox retries only on non-2xx; record failures in Worker logs while acknowledging promptly.
-    console.error("Dropbox webhook handoff failed", error);
+    // Dropbox retries only on non-2xx. Never acknowledge an event whose durable storage,
+    // receipt bookkeeping, or synchronous background handoff did not complete.
+    console.error("Dropbox webhook persistence or handoff failed", error);
+    return context.text("Dropbox webhook processing failed", 503);
   }
   return context.text("ok");
 });

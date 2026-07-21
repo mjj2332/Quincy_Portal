@@ -6,11 +6,15 @@ export interface Env {
   MEDIA: R2Bucket;
   SESSIONS: KVNamespace;
   INGEST_QUEUE: Queue;
+  /** Bound only after the rendition queue has been provisioned and the red gate is green. */
+  RENDITION_QUEUE?: Queue<{ type: "generate_renditions"; assetId: string }>;
   BACKGROUND: Service<QuincyBackground>;
   ASSETS: Fetcher;
   APP_ENV: string;
   APP_ORIGIN: string;
   BETTER_AUTH_SECRET?: string;
+  TRANSFORM_SOURCE_SECRET?: string;
+  RENDITIONS_ENABLED?: boolean;
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
   INTEGRATION_KEK?: string;

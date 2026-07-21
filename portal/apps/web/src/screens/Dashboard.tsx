@@ -43,8 +43,8 @@ function coverUrl(assetId: string): string {
   return `/media/asset/${encodeURIComponent(assetId)}/thumb`;
 }
 
-function CoverMedia({ project, className = "", inlinePlaceholder = false }: { project: ProjectSummary; className?: string; inlinePlaceholder?: boolean }) {
-  if (project.coverAssetId) return <LazyImage className={className} src={coverUrl(project.coverAssetId)} alt={`Preview of ${project.street}`} />;
+function CoverMedia({ project, className = "", inlinePlaceholder = false, retryToken, onFailedChange }: { project: ProjectSummary; className?: string; inlinePlaceholder?: boolean; retryToken?: number; onFailedChange?: (failed: boolean) => void }) {
+  if (project.coverAssetId) return <LazyImage className={className} src={coverUrl(project.coverAssetId)} alt={`Preview of ${project.street}`} retryToken={retryToken} onFailedChange={onFailedChange} />;
   const content = project.street.trim().charAt(0).toUpperCase() || "Q";
   return inlinePlaceholder ? <span className={`project-cover-placeholder ${className}`} aria-hidden="true">{content}</span> : <div className={`project-cover-placeholder ${className}`} aria-hidden="true">{content}</div>;
 }
@@ -54,11 +54,13 @@ function location(project: ProjectSummary) { return [project.suburb, project.pos
 function ProjectCard({ project, onOpen }: { project: ProjectSummary; onOpen: (projectId: string) => void }) {
   const { stages } = useStages();
   const stage = stages.find(({ key }) => key === project.stageKey);
+  const [coverFailed, setCoverFailed] = useState(false); const [coverRetry, setCoverRetry] = useState(0);
+  function activate() { if (coverFailed) { setCoverFailed(false); setCoverRetry((current) => current + 1); } else onOpen(project.id); }
 
   return (
-    <button className="proj" type="button" onClick={() => onOpen(project.id)}>
+    <button className="proj" type="button" onClick={activate} aria-label={coverFailed ? `Retry cover image for ${project.street}` : undefined}>
       <div className="proj__media">
-        <CoverMedia project={project} />
+        <CoverMedia project={project} retryToken={coverRetry} onFailedChange={setCoverFailed} />
         <div className="proj__badges">
           <span className="cbubble"><StatusBadge stageKey={project.stageKey} /></span>
         </div>
@@ -87,14 +89,29 @@ function KanbanCard({ project, canMove, isDragging, onOpen, onDragStart, onDragE
   onDragEnd: () => void;
 }) {
   const rawCount = project.expectedCount === null ? `${project.receivedCount} RAW` : `${project.receivedCount}/${project.expectedCount} RAW`;
-  return <button className={`kcard ${isDragging ? "is-dragging" : ""}`} type="button" draggable={canMove} onClick={() => onOpen(project.id)} onDragStart={(event) => onDragStart(project, event)} onDragEnd={onDragEnd}>
-    <div className="kcard__media"><CoverMedia project={project} /></div>
+  const [coverFailed, setCoverFailed] = useState(false); const [coverRetry, setCoverRetry] = useState(0);
+  function activate() { if (coverFailed) { setCoverFailed(false); setCoverRetry((current) => current + 1); } else onOpen(project.id); }
+  return <button className={`kcard ${isDragging ? "is-dragging" : ""}`} type="button" draggable={canMove} onClick={activate} aria-label={coverFailed ? `Retry cover image for ${project.street}` : undefined} onDragStart={(event) => onDragStart(project, event)} onDragEnd={onDragEnd}>
+    <div className="kcard__media"><CoverMedia project={project} retryToken={coverRetry} onFailedChange={setCoverFailed} /></div>
     <div className="kcard__b">
       <div className="kcard__addr serif">{project.street}</div>
       <div className="kcard__meta">{location(project)}</div>
       <div className="kcard__meta">{project.agencyName || "Agency pending"}</div>
       <div className="kcard__foot"><span className="ey">{rawCount}</span></div>
     </div>
+  </button>;
+}
+
+function ProjectListRow({ project, onOpen }: { project: ProjectSummary; onOpen: (projectId: string) => void }) {
+  const [coverFailed, setCoverFailed] = useState(false); const [coverRetry, setCoverRetry] = useState(0);
+  function activate() { if (coverFailed) { setCoverFailed(false); setCoverRetry((current) => current + 1); } else onOpen(project.id); }
+  return <button className="prow" type="button" onClick={activate} aria-label={coverFailed ? `Retry cover image for ${project.street}` : undefined}>
+    <CoverMedia project={project} className="prow__thumb" inlinePlaceholder retryToken={coverRetry} onFailedChange={setCoverFailed} />
+    <span><span className="serif prow__addr">{project.street}</span><span className="ey prow__location">{location(project)}</span></span>
+    <span className="prow__c-agency">{project.agencyName || "Agency pending"}<span className="muted">{project.agentName || "Agent pending"}</span></span>
+    <span className="prow__c-date">{formatDate(project.shootDate)}</span>
+    <span className="prow__c-status"><StatusBadge stageKey={project.stageKey} /></span>
+    <span className="prow__raw">{project.receivedCount}</span>
   </button>;
 }
 
@@ -247,14 +264,7 @@ export function Dashboard({ onOpenProject, onCreateProject }: DashboardProps) {
       {!isLoading && !error && filteredProjects.length > 0 && view === "list" && (
         <div className="plist" aria-label="Projects list">
           <div className="prow head"><div /><div>Address</div><div className="prow__c-agency">Client</div><div className="prow__c-date">Shoot date</div><div className="prow__c-status">Status</div><div className="prow__raw">RAW received</div></div>
-          {filteredProjects.map((project) => <button className="prow" type="button" key={project.id} onClick={() => onOpenProject(project.id)}>
-            <CoverMedia project={project} className="prow__thumb" inlinePlaceholder />
-            <span><span className="serif prow__addr">{project.street}</span><span className="ey prow__location">{location(project)}</span></span>
-            <span className="prow__c-agency">{project.agencyName || "Agency pending"}<span className="muted">{project.agentName || "Agent pending"}</span></span>
-            <span className="prow__c-date">{formatDate(project.shootDate)}</span>
-            <span className="prow__c-status"><StatusBadge stageKey={project.stageKey} /></span>
-            <span className="prow__raw">{project.receivedCount}</span>
-          </button>)}
+          {filteredProjects.map((project) => <ProjectListRow key={project.id} project={project} onOpen={onOpenProject} />)}
         </div>
       )}
 

@@ -5,7 +5,7 @@
   "name": "quincy-portal-background",
   "main": "src/index.ts",
   "compatibility_date": "2026-07-01",
-  "compatibility_flags": ["nodejs_compat"],
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
   "observability": { "enabled": true },
   "d1_databases": [
     { "binding": "DB", "database_name": "quincy-portal", "database_id": "1d36b42e-f1e6-4659-8c9e-70afe822b6fa" }
@@ -15,10 +15,12 @@
   ],
   "queues": {
     "consumers": [
-      { "queue": "quincy-ingest", "max_batch_size": 10, "max_retries": 3 }
+      { "queue": "quincy-ingest", "max_batch_size": 10, "max_retries": 3 },
+      { "queue": "quincy-renditions", "max_batch_size": 1, "max_concurrency": 1, "max_retries": 3, "dead_letter_queue": "quincy-renditions-dlq" }
     ],
     "producers": [
-      { "binding": "INGEST_QUEUE", "queue": "quincy-ingest" }
+      { "binding": "INGEST_QUEUE", "queue": "quincy-ingest" },
+      { "binding": "RENDITION_QUEUE", "queue": "quincy-renditions" }
     ]
   },
   "workflows": [
@@ -39,6 +41,8 @@
     { "tag": "v2", "new_sqlite_classes": ["TonomoProcessorDO"] }
   ],
   "vars": {
-    "APP_ENV": "production"
+    "APP_ENV": "production",
+    "APP_ORIGIN": "https://quincy.flamingfire.my",
+    "RENDITIONS_ENABLED": true
   }
 }

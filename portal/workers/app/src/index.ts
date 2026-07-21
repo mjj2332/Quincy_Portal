@@ -15,9 +15,14 @@ import { adminRoutes } from "./routes/admin";
 import { stagesRoutes } from "./routes/stages";
 import { collectionsRoutes } from "./routes/collections";
 import { verifyTransformSource } from "./lib/transform-source";
+import { requireAppOrigin } from "./middleware/origin";
 
 const app = new Hono<AppEnv>();
 app.use("/api/*", async (c, next) => cors({ origin: c.env.APP_ORIGIN, credentials: true, allowHeaders: ["content-type"], allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"] })(c, next));
+// Scope this middleware to /api explicitly: router-wide '*' middleware mounted at
+// '/' can leak into sibling routes (see docs/lessons.md).
+app.use("/api", requireAppOrigin);
+app.use("/api/*", requireAppOrigin);
 app.get("/api/health", (c) => c.json({ ok: true, env: c.env.APP_ENV }));
 app.all("/api/auth/*", (c) => createAuth(c.env).handler(c.req.raw));
 const api = new Hono<AppEnv>();
@@ -32,11 +37,19 @@ app.get("/__transform-source/*", async (c) => {
   let key: string;
   try { key = decodeURIComponent(c.req.path.slice("/__transform-source/".length)); }
   catch { return c.notFound(); }
-  if (!await verifyTransformSource(c.env, key, c.req.query("sig"))) return c.notFound();
+  const query = new URL(c.req.url).searchParams;
+  // A signed source has one canonical query shape. Reject extra/duplicate fields so a bearer
+  // cannot manufacture distinct Images cache keys during its authorized source-fetch window.
+  const names = [...query.keys()].sort();
+  if (names.join(",") !== "exp,sig,v") return c.notFound();
+  if (!await verifyTransformSource(c.env, key, query.get("sig") ?? undefined, query.get("exp") ?? undefined, query.get("v") ?? undefined)) return c.notFound();
   const object = await c.env.MEDIA.get(key);
   if (!object) return c.notFound();
-  // ETag + Content-Length let the Images engine revalidate/size the source it caches.
-  const headers: Record<string, string> = { "content-type": "image/jpeg", "cache-control": "public, max-age=31536000, immutable", "content-length": String(object.size) };
+  // The source URL is no-store, but Images may retain a transformed result after this HMAC
+  // expires. The redirect is therefore a short-lived bearer with effective lifetime set by
+  // Cloudflare's transform cache, not an auth-revocation mechanism. Remove this fallback only
+  // once durable renditions are fully populated; do not proxy it (same-zone bypass recurs).
+  const headers: Record<string, string> = { "content-type": "image/jpeg", "cache-control": "private, no-store", "content-length": String(object.size), "x-content-type-options": "nosniff" };
   if (object.httpEtag) headers.etag = object.httpEtag;
   return new Response(object.body, { headers });
 });

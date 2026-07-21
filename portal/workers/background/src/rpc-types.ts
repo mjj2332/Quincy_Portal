@@ -6,4 +6,5 @@ export declare abstract class QuincyBackground extends WorkerEntrypoint {
   abstract startAutoHdr(projectId: string): Promise<{ jobId: string }>;
   abstract handleDropboxWebhook(): Promise<void>;
   abstract processTonomoEvents(): Promise<void>;
+  abstract backfillRenditions(input?: { dryRun?: boolean; cursor?: string; limit?: number; confirmProduction?: boolean }): Promise<{ scanned: number; wouldEnqueue: number; enqueued: number; skipped: number; nextCursor: string | null; dryRun: boolean }>;
 }

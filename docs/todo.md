@@ -16,9 +16,21 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/other agents 
   Cloudflare edge rate-limiting. The 2nd fix (client concurrency-limited `LazyImage` +
   cacheable transforms) was **verified live in an authenticated browser: 69 media requests,
   all 200, zero 403** (grid + lightbox filmstrip).
+- **New production image outage diagnosed, not fixed (2026-07-21):** Cloudflare's KUL PoP
+  rejects the same-zone absolute transformation source with `403` / `cf-resized: err=9401`
+  (origin not allowed), while fresh equivalent LAX transforms return `200` /
+  `internal=ok`. Mac Safari is confirmed; the matching iPhone symptom is consistent with this
+  failure but remains unconfirmed until its final response headers and PoP are captured. See
+  the P0 plan under "Open / in progress".
 - Latest verified state: 5/5 workspaces typecheck clean; `workers/app` **49/49**,
   `packages/shared` 23/23, `workers/webhook-ingress` 8/8; SPA build clean. D1 migrations
   0000–0003 applied to prod.
+- **Local hardening repair (2026-07-21; not deployed):** pending/completing document
+  reservations now have bounded recovery/abort ownership; final document writes and archive
+  are archive-race guarded; collection links are deduped/count-reconciled in 0005 and their
+  manual mutations are audit-atomic. CI now includes production+dev app configs, background,
+  webhook, shared, and frontend unit suites. See `QA-Staging-Matrix.md` for unprovisioned
+  staging/external prerequisites. Migration 0005 remains unapplied anywhere remote.
 - **Deploy = terra(implement, gpt-5.6-terra) → sol(review, gpt-5.6-sol high) → Claude(gate)
   loop.** Verify agent claims independently (their sandboxes can't run vitest — EPERM
   loopback; they always report tests "couldn't start"). Deploy order: background →
@@ -26,9 +38,10 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/other agents 
 
 ## Next / open decisions
 - **Rendition cache (Phases 2–3 of the thumbnail plan) — spec'd + Phase-1 SPIKE PASSED,
-  awaiting user go-ahead.** Not an outage fix (outage already resolved); it makes first-ever
-  grid views instant. See the "Thumbnail rendition cache" section below for the full plan and
-  the proven `global_fetch_strictly_public` mechanism.
+  awaiting user go-ahead.** It is not the immediate KUL repair. After the control-plane and
+  cold multi-PoP gate are green, it is the durable way to remove browser request-time
+  transformation dependency. See the "Thumbnail rendition cache" section below for the full
+  plan and the proven `global_fetch_strictly_public` mechanism.
 - User external actions still open: configure Tonomo with the webhook URL + token; retire the
   prod `BETTER_AUTH_SECRET` from `.prod-secrets.local` (see #3 below — canonical value is
   already a Worker secret + belongs in the password manager). Dropbox `sharing.read` scope
@@ -194,6 +207,89 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/other agents 
 - [ ] RAW↔Edited compare: synced zoom (deferred from the original compare build).
 - [ ] Hardening: add expiry to the `/__transform-source` HMAC signature — currently
   unexpiring per-key URLs (`TODO(hardening)` in `portal/workers/app/src/routes/media.ts`).
+
+### P0 — Safari-visible image outage (diagnosed 2026-07-21; no fix implemented yet)
+
+- **Confirmed failure point (Mac Safari):** `/media/asset/:id/thumb` authenticates and returns
+  its expected 302, but the final `/cdn-cgi/image/...` request is rejected by Cloudflare at KUL.
+  A cache-bypassing request returned `403`, `cf-cache-status: MISS`,
+  `cf-resized: err=9401`, Ray `a1e8ce67d99a4a9b-KUL`, and body
+  `Transformation origin is not in allowed origins list`. An earlier cached failure was Ray
+  `a1e8ca80cdbd4a9b-KUL` and advertised `max-age=14400`.
+- **Cross-PoP proof:** fresh, uncached transforms of both a normal filename and a spaced
+  filename succeed through LAX (`200 image/*`, `cf-resized: internal=ok`; Rays
+  `a1e8cf3c6ca32a92-LAX` and `a1e8cf87dd73c3a8-LAX`). The signed source objects themselves
+  also return `200`. This rules out Safari codecs/rendering, R2 absence, HMAC/path encoding,
+  CORS/CSP, the prior filename bug, and the prior transform-rate-limit failure.
+- **iPhone scope:** the supplied screenshots show the same terminal `LazyImage` placeholders,
+  but screenshots do not establish the final HTTP status or serving PoP. Capture `cf-ray` and
+  `cf-resized` through Remote Web Inspector. If it also returns `9401` from KUL, the shared
+  outage is confirmed.
+- **Configuration uncertainty:** Cloudflare documents same-zone sources as allowed and exact
+  subdomains as separate origins, yet KUL and LAX enforce different state. The current
+  Wrangler OAuth credential can list the zone but gets `403` reading
+  `transformations_allowed_origins`, so it remains to determine whether the dashboard lost
+  `quincy.flamingfire.my` or Cloudflare has a regional propagation/enforcement defect.
+- [ ] **Control-plane repair:** in Images → Transformations → `flamingfire.my` → Sources,
+  verify and re-save exact `quincy.flamingfire.my` with no unintended path restriction (and
+  staging separately, or an intentional `*.flamingfire.my` entry). Do not switch to "any
+  origin" except as a time-boxed emergency measure.
+- [ ] **Cold multi-PoP gate:** after the save, test fresh transform keys from KUL and LAX with
+  an image-capable `Accept`; require `200`, `Content-Type: image/*`, valid decoded dimensions,
+  and `cf-resized: internal=ok`. If KUL remains `9401`, escalate to Cloudflare with the paired
+  MISS Ray IDs above and the fact that transform and source use the same hostname.
+- [ ] **Candidate code mitigation — spike before implementation:** hand-construct an
+  equivalent transform using Cloudflare's supported origin-relative source path
+  (`.../cdn-cgi/image/<opts>/__transform-source/...`) and test it at KUL against the
+  absolute-source equivalent. Only implement this in `workers/app/src/routes/media.ts` if the
+  relative form returns `200` while the absolute form returns `9401`; KUL may apply the same
+  origin enforcement to both forms. If adopted, keep the HMAC-bound source route and add a
+  production-mode test for the exact encoded 302 `Location`.
+- [ ] **Cache recovery:** version the media/transform URL so repaired responses do not reuse
+  browser and/or KUL edge caches' four-hour 9401 response, and replace the authenticated
+  redirect's current private 24-hour TTL with an explicit short-lived/no-store policy
+  consistent with expiring HMACs. Validate logout/access-revocation and secret-rotation
+  behavior as part of this change.
+- [ ] **Client resilience (secondary, not this outage's cause):** refactor `LazyImage` so its
+  four-permit semaphore governs the actual rendered `<img>` request rather than a detached
+  preload followed by a second cache-dependent element; add an explicit failed state with a
+  user-triggered retry. Cover cold/disabled-cache and timeout cases in WebKit tests.
+- [ ] **Durable removal of the request-time browser/PoP dependency:** after the cold multi-PoP
+  transform gate passes, prioritize rendition-cache Phases 2–3 above. Generate and validate
+  `thumb`/`web` renditions in the background, reject any non-image/`9401` response, retry
+  safely, and serve stored R2 renditions directly with the live transform only as a temporary
+  fallback. Background generation still depends on Cloudflare transformations, so do not
+  begin generation/backfill while the multi-PoP gate is red.
+- [ ] **Release verification:** extend the transform gate beyond its current single egress,
+  then verify dashboard covers, the 103-image grid, lightbox hero, and filmstrip in Mac Safari
+  and iPhone Safari using network status/headers (not screenshots alone). The existing app
+  test explicitly skips the production 302 path under `APP_ENV=dev` and must be supplemented.
+
+### Live QA sweep findings (2026-07-21, terra→sol→gate, test-only — see
+### `docs/reviews/2026-07-21-live-qa-sweep-terra-sol.md` for full detail; no code changed yet)
+- [ ] **P1** Dropbox delivery reliability + honest health status: webhook handoff failures are
+  acked 200 (Dropbox never retries) and don't re-wake the DO on a deduped delivery, unlike
+  Tonomo; the integration-status `error` is sticky (clears only on token refresh/OAuth
+  reconnect, never on a successful ordinary sync); `lastEventAt` is never written so admin
+  always shows "No events recorded". Currently showing `Error` / "Durable Object reset because
+  its code was updated" in prod — likely a benign deploy-time artifact, but the sticky-health
+  bug is real. Verify via a manual reconnect whether it clears to green.
+- [ ] **P1** Comment/annotation *creation* fails silently — `postComment()`/`saveAnnotation()`
+  in `Lightbox.tsx` have no `catch` (unlike their edit-handler siblings, which do). Also
+  annotation create schema is `z.unknown()` for strokes while edit validates properly
+  (`workers/app/src/routes/annotations.ts`).
+- [ ] **P1** Mutation-safe staging QA corpus + E2E/background-worker test matrix — no live
+  coverage exists for RAW↔Edited compare, collections/PDF versioning, Extras ingest, or any
+  form-submit path; background Dropbox sync has no dedicated automated test suite.
+- [ ] **P2** Narrow-screen (≤720px) nav loses Admin + Sign-out with no mobile-menu
+  replacement (`Topbar.tsx`/`app.css`).
+- [ ] **P2** Floorplan PDF+preview version pairing not actually enforced (independent
+  per-kind counters); external collection links never bump `receivedCount`; collection
+  tab-switch race can apply a stale response; compare-mode layout not reset on navigating to
+  an unpaired asset; no CSRF/origin guard on custom `/api` mutations (required by
+  Implementation-Plan); `LazyImage` terminal failure looks identical to loading (no retry).
+- [ ] **P3** Lightbox zoom (works-as-designed gap, not a regression — see synced-zoom item
+  above) · move 50MB document uploads off `formData()` onto presigned upload.
 
 ## Waiting on user / external
 - [x] Dropbox app registered by user (2026-07-20); `DROPBOX_APP_KEY`/`SECRET` in `.dev.vars`

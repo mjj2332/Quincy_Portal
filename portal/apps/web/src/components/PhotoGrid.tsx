@@ -32,6 +32,8 @@ function labelName(value: Review["colorLabel"]) { return LABELS.find((label) => 
 export function PhotoGrid({ assets, canReview, canRecommend, canSelect, canSetCover, coverAssetId, storedCoverAssetId, onSetCover, onOpen, onReview, onSelection }: PhotoGridProps) {
   const [filter, setFilter] = useState("all");
   const [multi, setMulti] = useState<Set<string>>(new Set());
+  const [failedThumbnails, setFailedThumbnails] = useState<Set<string>>(new Set());
+  const [thumbnailRetries, setThumbnailRetries] = useState<Record<string, number>>({});
   const lastSelected = useRef<number | null>(null);
   const visible = useMemo(() => assets.filter((asset) => {
     if (filter === "recommended") return asset.review?.recommended;
@@ -67,6 +69,10 @@ export function PhotoGrid({ assets, canReview, canRecommend, canSelect, canSetCo
     });
     lastSelected.current = index;
   }
+  function retryThumbnail(assetId: string) {
+    setFailedThumbnails((current) => { const next = new Set(current); next.delete(assetId); return next; });
+    setThumbnailRetries((current) => ({ ...current, [assetId]: (current[assetId] ?? 0) + 1 }));
+  }
   async function bulk(action: "approve" | "flag" | "recommend" | "select" | "rate" | "label") {
     const ids = [...multi];
     const patch = action === "approve" ? { decision: "approved" as const } : action === "flag" ? { decision: "flagged" as const } : action === "recommend" ? { recommended: true } : action === "rate" ? { stars: 5 } : { colorLabel: "select" as const };
@@ -78,8 +84,9 @@ export function PhotoGrid({ assets, canReview, canRecommend, canSelect, canSetCo
       const review = asset.review;
       const marked = multi.has(asset.id);
       const state = review?.decision;
-      return <div className={`tile ${marked ? "is-selected" : ""} ${state ? `st-${state}` : ""} ${rating(asset) ? "has-rating" : ""} ${asset.selected ? "has-state" : ""}`} key={asset.id} role="button" tabIndex={0} onClick={() => onOpen(asset, displayOrder)} onKeyDown={(event) => { if (event.key === "Enter") onOpen(asset, displayOrder); }}>
-        <LazyImage src={`/media/asset/${encodeURIComponent(asset.id)}/thumb`} alt={asset.originalFilename} /><div className="tile__scrim" />
+      const activate = () => failedThumbnails.has(asset.id) ? retryThumbnail(asset.id) : onOpen(asset, displayOrder);
+      return <div className={`tile ${marked ? "is-selected" : ""} ${state ? `st-${state}` : ""} ${rating(asset) ? "has-rating" : ""} ${asset.selected ? "has-state" : ""}`} key={asset.id} role="button" tabIndex={0} aria-label={failedThumbnails.has(asset.id) ? `Retry thumbnail for ${asset.originalFilename}` : undefined} onClick={activate} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); activate(); } }}>
+        <LazyImage src={`/media/asset/${encodeURIComponent(asset.id)}/thumb`} alt={asset.originalFilename} retryToken={thumbnailRetries[asset.id]} onFailedChange={(failed) => setFailedThumbnails((current) => { const next = new Set(current); if (failed) next.add(asset.id); else next.delete(asset.id); return next; })} /><div className="tile__scrim" />
         <button className="selbox" type="button" aria-label={`Select ${asset.originalFilename}`} onClick={(event) => { event.stopPropagation(); toggleMulti(asset, event.shiftKey); }}>✓</button>
         <span className="tile__num">{asset.originalFilename}</span>
         {review?.colorLabel && <span style={{ position: "absolute", top: 13, left: 42, zIndex: 4 }}><LabelDot color={LABELS.find((item) => item.value === review.colorLabel)?.color ?? "#fff"} name={labelName(review.colorLabel)} /></span>}

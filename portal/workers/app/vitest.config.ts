@@ -20,11 +20,20 @@ export default defineConfig({
   define: {
     __PORTAL_MIGRATION_SQL__: JSON.stringify(migrationSql),
     __PORTAL_SEED_SQL__: JSON.stringify(seedSql),
+    "process.env.DOCUMENT_DIRECT_TEST": JSON.stringify("false"),
   },
   plugins: [
     cloudflareTest({
       wrangler: { configPath: "./wrangler.jsonc" },
       miniflare: {
+        bindings: {
+          TRANSFORM_SOURCE_SECRET: "test-transform-source-secret-32-bytes",
+          // Primary suite is production-shaped: direct browser PUTs must not leak here.
+          APP_ENV: "production",
+          R2_ACCOUNT_ID: "",
+          R2_S3_ACCESS_KEY_ID: "",
+          R2_S3_SECRET_ACCESS_KEY: "",
+        },
         // The BACKGROUND service binding points at the separately-deployed
         // background Worker; tests don't exercise it, so satisfy the binding
         // with a stub auxiliary worker to let workerd start.

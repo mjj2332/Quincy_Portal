@@ -1,12 +1,12 @@
+import { COLLECTION_RECEIVED_COUNT_SQL, collectionReceivedCountBindings } from "@quincy/db";
 import { assets, collections, jobs, projects } from "@quincy/db/schema";
-import { isAcceptedPhotoFilename, parseXmpRating, XMP_SCAN_BYTES, xmpRatingToStars } from "@quincy/shared";
+import { enqueueRenditionSafely, isAcceptedPhotoFilename, parseXmpRating, XMP_SCAN_BYTES, xmpRatingToStars } from "@quincy/shared";
 import { and, eq, isNull, sql } from "drizzle-orm";
 
 import type { Env } from "../env";
 import { dbFor, errorMessage } from "../lib/db";
 import { createJob, setJobStatus } from "../lib/jobs";
-import type { IngestMessage } from "../messages";
-import { createDropboxClientContext, download, getSharedLinkMetadata, listFolder, listFolderContinue, type DropboxClientContext, type DropboxFile } from "./client";
+import { createDropboxClientContext, download, getSharedLinkMetadata, listFolder, listFolderContinue, recordDropboxSuccess, type DropboxClientContext, type DropboxFile } from "./client";
 
 export function normalisePath(path: string): string {
   let normalised = path.trim().replace(/\\/g, "/").replace(/\/+/g, "/");
@@ -141,7 +141,11 @@ export async function syncProjectRawFolder(
           .where(and(eq(assets.contentHash, file.content_hash), eq(collections.projectId, projectId), eq(collections.kind, "raw")))
           .limit(1);
         if (existing) {
-          if (existing.isPremium !== (kind === "premium")) await db.update(assets).set({ isPremium: kind === "premium", updatedAt: new Date() }).where(eq(assets.id, existing.id));
+          const now = new Date();
+          const statements = [env.DB.prepare(COLLECTION_RECEIVED_COUNT_SQL).bind(...collectionReceivedCountBindings(collection.id, now.getTime()))];
+          if (existing.isPremium !== (kind === "premium")) statements.unshift(env.DB.prepare("UPDATE assets SET is_premium = ?, updated_at = ? WHERE id = ?").bind(kind === "premium" ? 1 : 0, now.getTime(), existing.id));
+          await env.DB.batch(statements);
+          await enqueueRenditionSafely(env, existing.id, "dropbox-existing-asset");
           continue;
         }
       }
@@ -157,30 +161,13 @@ export async function syncProjectRawFolder(
 
       const header = await download(env, db, sourcePath, { range: `bytes=0-${XMP_SCAN_BYTES - 1}` }, connectionId, client);
       const rating = xmpRatingToStars(parseXmpRating(await header.arrayBuffer()));
-      const inserted = await db
-        .insert(assets)
-        .values({
-          id: assetId,
-          collectionId: collection.id,
-          kind: "photo",
-          r2Key,
-          originalFilename: file.name,
-          bytes: file.size,
-          contentHash: file.content_hash ?? null,
-          source: "dropbox",
-          ratingFromMetadata: rating,
-          isPremium: kind === "premium",
-        })
-        .onConflictDoNothing()
-        .returning({ id: assets.id });
-
-      if (inserted.length === 0) continue;
-      await db
-        .update(collections)
-        .set({ receivedCount: sql`${collections.receivedCount} + 1`, status: "received", updatedAt: new Date() })
-        .where(eq(collections.id, collection.id));
-      const message: IngestMessage = { type: "asset_ingested", assetId };
-      await env.INGEST_QUEUE.send(message);
+      const now = new Date();
+      const results = await env.DB.batch([
+        env.DB.prepare("INSERT INTO assets (id, collection_id, kind, r2_key, original_filename, bytes, content_hash, source, rating_from_metadata, is_premium, created_at, updated_at) VALUES (?, ?, 'photo', ?, ?, ?, ?, 'dropbox', ?, ?, ?, ?) ON CONFLICT DO NOTHING").bind(assetId, collection.id, r2Key, file.name, file.size, file.content_hash ?? null, rating, kind === "premium" ? 1 : 0, now.getTime(), now.getTime()),
+        env.DB.prepare(COLLECTION_RECEIVED_COUNT_SQL).bind(...collectionReceivedCountBindings(collection.id, now.getTime())),
+      ]);
+      if ((results[0]?.meta.changes ?? 0) === 0) continue; // reconciliation already ran in this batch
+      await enqueueRenditionSafely(env, assetId, "dropbox-ingest");
     }
     if (skippedSubfolderFiles > 0) {
       await db.update(jobs).set({
@@ -190,6 +177,11 @@ export async function syncProjectRawFolder(
     }
     if (project.rawFolderPath !== rawFolderPath) await db.update(projects).set({ rawFolderPath, updatedAt: new Date() }).where(eq(projects.id, projectId));
     await setJobStatus(db, trackingJobId, "done");
+    // This operation did list the configured project folder, so it can recover a sticky path
+    // error. It does not necessarily exercise sharing.read (a saved path can bypass it).
+    await recordDropboxSuccess(db, client.connectionId, ["credentials", "current_account", "list_folder", "folder_path"]).catch((error) => {
+      console.error("Dropbox sync succeeded but health recovery bookkeeping failed", error);
+    });
   } catch (error) {
     await setJobStatus(db, trackingJobId, "failed", errorMessage(error));
     throw error;

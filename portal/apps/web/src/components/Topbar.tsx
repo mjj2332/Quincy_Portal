@@ -1,4 +1,4 @@
-import type { MouseEvent } from "react";
+import { useEffect, useId, useRef, useState, type MouseEvent } from "react";
 import { signOut } from "../lib/auth";
 
 export type AppView = "dashboard" | "project" | "create-project" | "edit-project" | "admin";
@@ -22,28 +22,58 @@ function initials(name: string): string {
 
 export function Topbar({ activeView, canAccessAdmin, onNavigate, user }: TopbarProps) {
   const displayName = user.name || user.email || "Quincy user";
+  const [menuOpen, setMenuOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const menuId = useId();
+  const [signOutError, setSignOutError] = useState<string | null>(null);
+
+  function closeMenu(returnFocus = false) {
+    setMenuOpen(false);
+    if (returnFocus) window.setTimeout(() => triggerRef.current?.focus(), 0);
+  }
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    window.setTimeout(() => menuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus(), 0);
+    function onKeyDown(event: KeyboardEvent) { if (event.key === "Escape") { event.preventDefault(); closeMenu(true); } }
+    function onPointerDown(event: PointerEvent) {
+      const target = event.target as Node;
+      if (!menuRef.current?.contains(target) && !triggerRef.current?.contains(target)) closeMenu();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("pointerdown", onPointerDown);
+    return () => { window.removeEventListener("keydown", onKeyDown); window.removeEventListener("pointerdown", onPointerDown); };
+  }, [menuOpen]);
 
   async function handleSignOut(event: MouseEvent<HTMLButtonElement>) {
-    event.currentTarget.disabled = true;
+    const button = event.currentTarget;
+    button.disabled = true;
+    setSignOutError(null);
+    closeMenu();
     try {
       await signOut();
+    } catch (error) {
+      setSignOutError(error instanceof Error ? error.message : "Sign out could not be completed. Please try again.");
     } finally {
-      event.currentTarget.disabled = false;
+      button.disabled = false;
     }
   }
 
+  function navigate(view: AppView) { closeMenu(); onNavigate(view); }
+
   return (
     <header className="topbar">
-      <button className="topbar__brand button--text" type="button" onClick={() => onNavigate("dashboard")} aria-label="Quincy Portal home">
+      <button className="topbar__brand button--text" type="button" onClick={() => navigate("dashboard")} aria-label="Quincy Portal home">
         <img src="/brand/quincy-wordmark-black.png" alt="Quincy Productions" />
       </button>
       <div className="topbar__divider" />
       <nav className="topnav" aria-label="Primary navigation">
-        <button type="button" className={activeView === "dashboard" ? "is-active" : ""} onClick={() => onNavigate("dashboard")}>
+        <button type="button" className={activeView === "dashboard" ? "is-active" : ""} onClick={() => navigate("dashboard")}>
           Dashboard
         </button>
         {canAccessAdmin && (
-          <button type="button" className={activeView === "admin" ? "is-active" : ""} onClick={() => onNavigate("admin")}>
+          <button type="button" className={activeView === "admin" ? "is-active" : ""} onClick={() => navigate("admin")}>
             Admin
           </button>
         )}
@@ -59,6 +89,16 @@ export function Topbar({ activeView, canAccessAdmin, onNavigate, user }: TopbarP
           Sign out
         </button>
       </div>
+      {signOutError && <div className="topbar__signout-error" role="alert">{signOutError}</div>}
+      <button ref={triggerRef} className="topbar__menu-trigger" type="button" aria-label="Open account and navigation menu" aria-haspopup="menu" aria-expanded={menuOpen} aria-controls={menuId} onClick={() => setMenuOpen((current) => !current)}>
+        <span aria-hidden="true">Menu</span>
+      </button>
+      {menuOpen && <div ref={menuRef} id={menuId} className="topbar__mobile-menu" role="menu" aria-label="Account and navigation menu">
+        <div className="topbar__mobile-identity"><strong>{displayName}</strong>{user.email && <span>{user.email}</span>}</div>
+        <button role="menuitem" type="button" className={activeView === "dashboard" ? "is-active" : ""} onClick={() => navigate("dashboard")}>Dashboard</button>
+        {canAccessAdmin && <button role="menuitem" type="button" className={activeView === "admin" ? "is-active" : ""} onClick={() => navigate("admin")}>Admin</button>}
+        <button role="menuitem" type="button" onClick={handleSignOut}>Sign out</button>
+      </div>}
     </header>
   );
 }

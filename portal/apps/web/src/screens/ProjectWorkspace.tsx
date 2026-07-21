@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { type StageKey } from "@quincy/shared";
 import { StatusBadge } from "../components/atoms";
 import { Lightbox } from "../components/Lightbox";
@@ -42,6 +42,13 @@ export function ProjectWorkspace({ projectId, notice, onNoticeShown, onBack, onE
   const [isSyncing, setIsSyncing] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const currentProjectIdRef = useRef(projectId);
+  const currentTabRef = useRef(activeTab);
+  const rawAssetsRef = useRef(rawAssets);
+  const assetRequestRef = useRef<{ generation: number; controller: AbortController | null }>({ generation: 0, controller: null });
+  currentProjectIdRef.current = projectId;
+  currentTabRef.current = activeTab;
+  rawAssetsRef.current = rawAssets;
 
   const toast = useCallback((message: string, tone: "success" | "error" = "success") => {
     const id = Date.now() + Math.random();
@@ -56,8 +63,14 @@ export function ProjectWorkspace({ projectId, notice, onNoticeShown, onBack, onE
   const refreshProject = useCallback(async () => { if (projectId) setData(await apiGet<ProjectResponse>(`/api/projects/${projectId}`)); }, [projectId]);
   const refreshAssets = useCallback(async (kind = activeTab) => {
     if (!projectId) return;
-    const response = await apiGet<AssetsResponse>(`/api/projects/${projectId}/assets?collection=${kind}`);
-    if (kind === activeTab) setAssets(response.assets);
+    const request = assetRequestRef.current;
+    request.controller?.abort();
+    const controller = new AbortController();
+    const generation = request.generation + 1;
+    assetRequestRef.current = { generation, controller };
+    const response = await apiGet<AssetsResponse>(`/api/projects/${projectId}/assets?collection=${kind}`, { signal: controller.signal });
+    if (assetRequestRef.current.generation !== generation || currentProjectIdRef.current !== projectId || currentTabRef.current !== kind) return;
+    setAssets(response.assets);
     if (kind === "raw") setRawAssets(response.assets);
   }, [activeTab, projectId]);
   const refreshIngest = useCallback(async () => { if (projectId) setIngest(await apiGet<IngestStatus>(`/api/projects/${projectId}/ingest-status`)); }, [projectId]);
@@ -66,18 +79,25 @@ export function ProjectWorkspace({ projectId, notice, onNoticeShown, onBack, onE
 
   useEffect(() => {
     if (!projectId) { setIsLoading(false); return; }
-    let alive = true;
+    const controller = new AbortController();
+    const projectIdAtStart = projectId;
     setIsLoading(true); setError(null); setActiveTab("raw");
-    Promise.all([apiGet<ProjectResponse>(`/api/projects/${projectId}`), apiGet<AssetsResponse>(`/api/projects/${projectId}/assets?collection=raw`), apiGet<IngestStatus>(`/api/projects/${projectId}/ingest-status`), apiGet<JobsResponse>(`/api/projects/${projectId}/jobs`)])
-      .then(([project, raw, status, jobList]) => { if (alive) { setData(project); setAssets(raw.assets); setRawAssets(raw.assets); setIngest(status); setJobs(jobList.jobs); } })
-      .catch((reason: unknown) => { if (alive) setError(reason instanceof Error ? reason.message : "Project details could not be loaded."); })
-      .finally(() => { if (alive) setIsLoading(false); });
-    return () => { alive = false; };
+    Promise.all([apiGet<ProjectResponse>(`/api/projects/${projectId}`, { signal: controller.signal }), apiGet<AssetsResponse>(`/api/projects/${projectId}/assets?collection=raw`, { signal: controller.signal }), apiGet<IngestStatus>(`/api/projects/${projectId}/ingest-status`, { signal: controller.signal }), apiGet<JobsResponse>(`/api/projects/${projectId}/jobs`, { signal: controller.signal })])
+      .then(([project, raw, status, jobList]) => { if (!controller.signal.aborted && currentProjectIdRef.current === projectIdAtStart) { setData(project); setAssets(raw.assets); setRawAssets(raw.assets); setIngest(status); setJobs(jobList.jobs); } })
+      .catch((reason: unknown) => { if (!controller.signal.aborted && currentProjectIdRef.current === projectIdAtStart) setError(reason instanceof Error ? reason.message : "Project details could not be loaded."); })
+      .finally(() => { if (!controller.signal.aborted && currentProjectIdRef.current === projectIdAtStart) setIsLoading(false); });
+    return () => { controller.abort(); };
   }, [projectId]);
 
   useEffect(() => {
-    if (!projectId || activeTab === "raw") return;
-    void refreshAssets(activeTab).catch((reason: unknown) => toast(reason instanceof Error ? reason.message : "Collection could not be loaded.", "error"));
+    if (!projectId) return;
+    // Restore the RAW collection synchronously, then refresh it under the same generation
+    // guard as every other tab. This never leaves Edited assets under RAW-only controls.
+    if (activeTab === "raw") setAssets(rawAssetsRef.current);
+    void refreshAssets(activeTab).catch((reason: unknown) => {
+      if (reason instanceof Error && reason.name === "AbortError") return;
+      toast(reason instanceof Error ? reason.message : "Collection could not be loaded.", "error");
+    });
   }, [activeTab, projectId, refreshAssets, toast]);
 
   useEffect(() => {

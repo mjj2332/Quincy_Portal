@@ -1,4 +1,4 @@
-import { env, SELF } from "cloudflare:test";
+import { env, SELF as workerSelf } from "cloudflare:test";
 import { makeSignature } from "better-auth/crypto";
 import { handleOAuthUserInfo } from "better-auth/oauth2";
 import { beforeAll, describe, expect, it } from "vitest";
@@ -6,6 +6,8 @@ import { createAuth } from "../src/auth";
 import type { Env } from "../src/env";
 import { createZipStream } from "../src/lib/zip-stream";
 import { signTransformSource } from "../src/lib/transform-source";
+import { liveTransformLocation } from "../src/routes/media";
+import { RENDITION_SPEC_VERSION } from "@quincy/shared";
 import { uniqueVersionError } from "../src/routes/collections";
 
 const database = env as unknown as { DB: D1Database };
@@ -15,6 +17,7 @@ const photographerToken = "test-photographer-session-token";
 const adminToken = "test-admin-session-token";
 const secondPhotographerToken = "test-second-photographer-session-token";
 const editorToken = "test-editor-session-token";
+const otherAdminToken = "test-other-admin-session-token";
 // First photographer IS a member of the editable-comment project; the plain
 // photographerToken user is deliberately NOT (D-02 assigned-only scoping).
 const firstPhotographerToken = "test-first-photographer-session-token";
@@ -23,6 +26,20 @@ const secondPhotographerId = "22222222-2222-4222-8222-222222222222";
 const editorId = "33333333-3333-4333-8333-333333333333";
 declare const __PORTAL_MIGRATION_SQL__: string;
 declare const __PORTAL_SEED_SQL__: string;
+
+// Browser fetch supplies Origin for unsafe same-origin requests. Keep the existing
+// integration corpus realistic rather than weakening the production middleware.
+const unsafeMethods = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+const SELF = {
+  fetch(input: RequestInfo | URL, init?: RequestInit) {
+    const request = new Request(input, init);
+    const url = new URL(request.url);
+    if (!unsafeMethods.has(request.method) || !url.pathname.startsWith("/api/") || url.pathname.startsWith("/api/auth/")) return workerSelf.fetch(request);
+    const headers = new Headers(request.headers);
+    if (!headers.has("origin")) headers.set("origin", authEnv.APP_ORIGIN);
+    return workerSelf.fetch(new Request(request, { headers }));
+  },
+};
 
 async function executeSql(sql: string): Promise<void> {
   // D1's exec() processes line-by-line. Strip comment lines FIRST (comments may
@@ -76,6 +93,12 @@ beforeAll(async () => {
   await database.DB.prepare(
     "INSERT INTO session (id, expires_at, token, user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
   ).bind("test-editor-session", now + 60 * 60 * 1000, editorToken, editorId, now, now).run();
+  await database.DB.prepare(
+    "INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+  ).bind("test-other-admin", "Other Admin", "other-admin@example.test", 1, "admin", 1, now, now).run();
+  await database.DB.prepare(
+    "INSERT INTO session (id, expires_at, token, user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+  ).bind("test-other-admin-session", now + 60 * 60 * 1000, otherAdminToken, "test-other-admin", now, now).run();
 });
 
 async function createEditableComment() {
@@ -188,6 +211,26 @@ describe("staff app API", () => {
     await expect(response.json()).resolves.toMatchObject({ ok: true });
   });
 
+  it("requires the exact configured Origin for custom API mutations while leaving safe and auth routes alone", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const body = JSON.stringify({ street: `Origin guard ${crypto.randomUUID()}`, orderedServices: [] });
+    const exact = await workerSelf.fetch("https://portal.test/api/projects", {
+      method: "POST", headers: { cookie, origin: authEnv.APP_ORIGIN, "content-type": "application/json" }, body,
+    });
+    expect(exact.status).toBe(201);
+
+    const [wrong, missing, safe, auth] = await Promise.all([
+      workerSelf.fetch("https://portal.test/api/projects", { method: "POST", headers: { cookie, origin: "https://attacker.example", "content-type": "application/json" }, body }),
+      workerSelf.fetch("https://portal.test/api/projects", { method: "POST", headers: { cookie, "content-type": "application/json" }, body }),
+      workerSelf.fetch("https://portal.test/api/projects", { headers: { cookie } }),
+      workerSelf.fetch("https://portal.test/api/auth/sign-in/email", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }),
+    ]);
+    expect(wrong.status).toBe(403);
+    expect(missing.status).toBe(403);
+    expect(safe.status).toBe(200);
+    expect(auth.status).not.toBe(403);
+  });
+
   it("requires authentication for staff endpoints", async () => {
     const [me, projects] = await Promise.all([
       SELF.fetch("https://portal.test/api/me"),
@@ -236,19 +279,65 @@ describe("staff app API", () => {
     await media.MEDIA.put(key, body);
     await database.DB.prepare("INSERT INTO assets (id, collection_id, r2_key, original_filename, bytes, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").bind(assetId, raw!.id, key, "se.CR527827_4 EV #20Jul.jpg", body.length, "upload", now, now).run();
 
-    // APP_ENV=dev in the test env makes /media serve the object directly (200), so the
-    // 302 leg never runs here — exercise the production-critical signed source route
-    // directly: signature over the RAW key, request path percent-encoded per segment.
-    const rendition = await SELF.fetch(`https://portal.test/media/asset/${assetId}/thumb`, { headers: { cookie } });
-    expect(rendition.status).toBe(200);
-    const sig = await signTransformSource(env as unknown as Parameters<typeof signTransformSource>[0], key);
+    // Primary config is production-shaped: assert the redirect itself instead of following
+    // a Cloudflare Images URL in Miniflare.
+    const rendition = await SELF.fetch(`https://portal.test/media/asset/${assetId}/thumb`, { headers: { cookie }, redirect: "manual" });
+    expect(rendition.status).toBe(302);
+    expect(rendition.headers.get("location")).toContain("/cdn-cgi/image/");
+    const expiresAt = Math.floor(Date.now() / 1000) + 300;
+    const sig = await signTransformSource(env as unknown as Parameters<typeof signTransformSource>[0], key, expiresAt);
     const encodedPath = "/__transform-source/" + key.split("/").map(encodeURIComponent).join("/");
     expect(encodedPath).toContain(encodeURIComponent("se.CR527827_4 EV #20Jul.jpg"));
-    const source = await SELF.fetch(`https://portal.test${encodedPath}?sig=${sig}`);
+    const source = await SELF.fetch(`https://portal.test${encodedPath}?v=v2&exp=${expiresAt}&sig=${sig}`);
     expect(source.status).toBe(200); await expect(source.text()).resolves.toBe(body);
-    expect(source.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
-    expect((await SELF.fetch(`https://portal.test${encodedPath}?sig=tampered`)).status).toBe(404);
-    expect((await SELF.fetch("https://portal.test/__transform-source/bad%ZZ?sig=tampered")).status).toBe(404);
+    expect(source.headers.get("cache-control")).toBe("private, no-store");
+    expect((await SELF.fetch(`https://portal.test${encodedPath}?exp=${expiresAt}&sig=tampered`)).status).toBe(404);
+    expect((await SELF.fetch(`https://portal.test${encodedPath}?v=v-tampered&exp=${expiresAt}&sig=${sig}`)).status).toBe(404);
+    expect((await SELF.fetch(`https://portal.test${encodedPath}?v=v2&exp=${expiresAt}&sig=${sig}&extra=1`)).status).toBe(404);
+    expect((await SELF.fetch("https://portal.test/__transform-source/bad%ZZ?exp=1&sig=tampered")).status).toBe(404);
+  });
+
+  it("builds the production live-transform redirect with encoded source, cache version, and expiry", () => {
+    const key = "projects/a raw/asset/space #?.jpg";
+    const location = liveTransformLocation("https://portal.test/media/asset/x/thumb", key, "thumb", { expiresAt: 1_800_000_300, signature: "a".repeat(64) });
+    expect(location).toContain("width=640,height=640,fit=scale-down,quality=75,format=auto/");
+    expect(location).toContain("__transform-source/projects/a%20raw/asset/space%20%23%3F.jpg");
+    expect(location).toContain("?v=v2&exp=1800000300&sig=");
+  });
+
+  it("serves only an authorized current stored rendition and falls back when it is stale or absent", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const created = await SELF.fetch("https://portal.test/api/projects", {
+      method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ street: "Rendition cache", orderedServices: [] }),
+    });
+    const project = await created.json() as { id: string };
+    const raw = await database.DB.prepare("SELECT id FROM collections WHERE project_id = ? AND kind = 'raw'").bind(project.id).first<{ id: string }>();
+    const assetId = crypto.randomUUID(); const sourceKey = `projects/${project.id}/raw/${assetId}/source.jpg`; const renditionKey = `renditions/${assetId}/content/${RENDITION_SPEC_VERSION}/thumb.webp`; const now = Date.now();
+    const media = env as unknown as { MEDIA: R2Bucket };
+    await media.MEDIA.put(sourceKey, "original-kept", { httpMetadata: { contentType: "image/jpeg" } }); await media.MEDIA.put(renditionKey, "stored-webp", { httpMetadata: { contentType: "image/webp" } });
+    await database.DB.prepare("INSERT INTO assets (id, collection_id, r2_key, original_filename, bytes, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").bind(assetId, raw!.id, sourceKey, "source.jpg", 13, "upload", now, now).run();
+    await database.DB.prepare("INSERT INTO asset_renditions (id, asset_id, variant, r2_key, bytes, content_type, width, height, spec_version, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(crypto.randomUUID(), assetId, "thumb", renditionKey, 11, "image/webp", 1, 1, RENDITION_SPEC_VERSION, now).run();
+    const cached = await SELF.fetch(`https://portal.test/media/asset/${assetId}/thumb`, { headers: { cookie } });
+    expect(cached.status).toBe(200); expect(cached.headers.get("content-type")).toBe("image/webp"); expect(cached.headers.get("cache-control")).toBe("private, no-store"); await expect(cached.text()).resolves.toBe("stored-webp");
+    expect(await media.MEDIA.get(sourceKey)).not.toBeNull();
+    const forbidden = await SELF.fetch(`https://portal.test/media/asset/${assetId}/thumb`, { headers: { cookie: await sessionCookie(photographerToken) } });
+    expect(forbidden.status).toBe(403);
+    await database.DB.prepare("UPDATE asset_renditions SET spec_version = 'old' WHERE asset_id = ?").bind(assetId).run();
+    const stale = await SELF.fetch(`https://portal.test/media/asset/${assetId}/thumb`, { headers: { cookie }, redirect: "manual" });
+    expect(stale.status).toBe(302); expect(stale.headers.get("cache-control")).toBe("private, no-store"); expect(stale.headers.get("location")).toContain("/cdn-cgi/image/");
+    await database.DB.prepare("UPDATE asset_renditions SET spec_version = ? WHERE asset_id = ?").bind(RENDITION_SPEC_VERSION, assetId).run(); await media.MEDIA.delete(renditionKey);
+    const missing = await SELF.fetch(`https://portal.test/media/asset/${assetId}/thumb`, { headers: { cookie }, redirect: "manual" });
+    expect(missing.status).toBe(302); expect(missing.headers.get("cache-control")).toBe("private, no-store"); expect(missing.headers.get("location")).toContain("/cdn-cgi/image/");
+    await media.MEDIA.put(renditionKey, "wrong-r2-type", { httpMetadata: { contentType: "text/plain" } });
+    const wrongR2Type = await SELF.fetch(`https://portal.test/media/asset/${assetId}/thumb`, { headers: { cookie }, redirect: "manual" });
+    expect(wrongR2Type.status).toBe(302); expect(wrongR2Type.headers.get("cache-control")).toBe("private, no-store"); expect(wrongR2Type.headers.get("location")).toContain("/cdn-cgi/image/");
+    await media.MEDIA.delete(renditionKey);
+    await database.DB.prepare("UPDATE asset_renditions SET content_type = 'text/plain' WHERE asset_id = ?").bind(assetId).run();
+    const wrongRowType = await SELF.fetch(`https://portal.test/media/asset/${assetId}/thumb`, { headers: { cookie }, redirect: "manual" });
+    expect(wrongRowType.status).toBe(302); expect(wrongRowType.headers.get("cache-control")).toBe("private, no-store"); expect(wrongRowType.headers.get("location")).toContain("/cdn-cgi/image/");
+    await media.MEDIA.delete(sourceKey);
+    const missingOriginal = await SELF.fetch(`https://portal.test/media/asset/${assetId}/thumb`, { headers: { cookie }, redirect: "manual" });
+    expect(missingOriginal.status).toBe(404);
   });
 
   it("does not expose delivery links to an assigned photographer", async () => {
@@ -789,6 +878,26 @@ describe("staff app API", () => {
     expect(storedRow?.edited_at).toEqual(expect.any(Number));
   });
 
+  it("rejects malformed or excessive annotation creation before it writes D1 or R2", async () => {
+    const { assetId, strokeR2Key } = await createEditableAnnotation([{ points: [{ x: 0.1, y: 0.1 }], color: "#e64b3c", width: 4 }]);
+    const before = await database.DB.prepare("SELECT count(*) AS count FROM annotations WHERE asset_id = ?").bind(assetId).first<{ count: number }>();
+    const media = env as unknown as { MEDIA: R2Bucket };
+    const prefix = strokeR2Key!.slice(0, strokeR2Key!.lastIndexOf("/") + 1);
+    const initialObjects = (await media.MEDIA.list({ prefix })).objects.length;
+    const cookie = await sessionCookie(firstPhotographerToken);
+    const [invalidPoint, tooMany] = await Promise.all([
+      SELF.fetch(`https://portal.test/api/assets/${assetId}/annotations`, { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ strokes: [{ points: [{ x: 1.1, y: 0 }], color: "#000", width: 2 }] }) }),
+      SELF.fetch(`https://portal.test/api/assets/${assetId}/annotations`, { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ strokes: Array.from({ length: 201 }, () => ({ points: [{ x: 0, y: 0 }], color: "#000", width: 2 })) }) }),
+    ]);
+    expect(invalidPoint.status).toBe(400);
+    expect(tooMany.status).toBe(400);
+    await expect(database.DB.prepare("SELECT count(*) AS count FROM annotations WHERE asset_id = ?").bind(assetId).first<{ count: number }>()).resolves.toEqual(before);
+    expect((await media.MEDIA.list({ prefix })).objects.length).toBe(initialObjects);
+
+    const noteOnly = await SELF.fetch(`https://portal.test/api/assets/${assetId}/annotations`, { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ noteText: "A note without drawing" }) });
+    expect(noteOnly.status).toBe(201);
+  });
+
   it("prevents a different project member from editing another author's annotation strokes", async () => {
     const initialStrokes = [{ points: [{ x: 0.2, y: 0.2 }, { x: 0.3, y: 0.25 }], color: "#3f8f5a", width: 4 }];
     const { annotationId, strokeR2Key: originalKey } = await createEditableAnnotation(initialStrokes);
@@ -935,8 +1044,11 @@ describe("staff app API", () => {
     const manual = await SELF.fetch(`https://portal.test/api/projects/${project.id}/links`, { method: "POST", headers: { cookie: adminCookie, "content-type": "application/json" }, body: JSON.stringify({ collection: "video", url: "https://vimeo.com/123456", label: "Walkthrough" }) });
     expect(manual.status).toBe(201); const manualLink = await manual.json() as { id: string; source: string };
     expect(manualLink.source).toBe("manual");
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE action = ? AND target_id = ?").bind("collection_link.create", manualLink.id).first()).toEqual({ count: 1 });
     const video = await database.DB.prepare("SELECT id FROM collections WHERE project_id = ? AND kind = ?").bind(project.id, "video").first<{ id: string }>();
+    expect(await database.DB.prepare("SELECT received_count, status FROM collections WHERE id = ?").bind(video!.id).first()).toEqual({ received_count: 1, status: "received" });
     expect((await SELF.fetch(`https://portal.test/api/projects/${project.id}/links/${manualLink.id}`, { method: "DELETE", headers: { cookie: adminCookie } })).status).toBe(204);
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE action = ? AND target_id = ?").bind("collection_link.delete", manualLink.id).first()).toEqual({ count: 1 });
     expect(await database.DB.prepare("SELECT status FROM collections WHERE id = ?").bind(video!.id).first()).toEqual({ status: "empty" });
     const replacement = await SELF.fetch(`https://portal.test/api/projects/${project.id}/links`, { method: "POST", headers: { cookie: adminCookie, "content-type": "application/json" }, body: JSON.stringify({ collection: "video", url: "https://vimeo.com/123456", label: "Walkthrough" }) });
     expect(replacement.status).toBe(201); const replacementLink = await replacement.json() as { id: string };
@@ -945,36 +1057,106 @@ describe("staff app API", () => {
     const listed = await SELF.fetch(`https://portal.test/api/projects/${project.id}/links?collection=video`, { headers: { cookie: adminCookie } });
     await expect(listed.json()).resolves.toMatchObject({ links: expect.arrayContaining([expect.objectContaining({ id: replacementLink.id, source: "manual" }), expect.objectContaining({ id: tonomoId, source: "tonomo" })]) });
     expect((await SELF.fetch(`https://portal.test/api/projects/${project.id}/links/${replacementLink.id}`, { method: "DELETE", headers: { cookie: adminCookie } })).status).toBe(204);
+    expect(await database.DB.prepare("SELECT received_count, status FROM collections WHERE id = ?").bind(video!.id).first()).toEqual({ received_count: 1, status: "received" });
     expect((await SELF.fetch(`https://portal.test/api/projects/${project.id}/links/${tonomoId}`, { method: "DELETE", headers: { cookie: adminCookie } })).status).toBe(409);
     const photographer = await SELF.fetch(`https://portal.test/api/projects/${project.id}/links`, { method: "POST", headers: { cookie: await sessionCookie(firstPhotographerToken), "content-type": "application/json" }, body: JSON.stringify({ collection: "video", url: "https://vimeo.com/forbidden" }) });
     expect(photographer.status).toBe(403);
   });
 
-  it("uploads immutable floorplan and copy document versions with their correct media type", async () => {
+  const documentDirectIt = process.env.DOCUMENT_DIRECT_TEST === "true" ? it : it.skip;
+  documentDirectIt("reserves direct R2 document uploads, atomically pairs floorplan versions, and reconciles delivery counts", async () => {
     const adminCookie = await sessionCookie(adminToken);
     const created = await SELF.fetch("https://portal.test/api/projects", { method: "POST", headers: { cookie: adminCookie, "content-type": "application/json" }, body: JSON.stringify({ street: "Document collection", orderedServices: [], photographerUserIds: [firstPhotographerId] }) });
     expect(created.status).toBe(201); const project = await created.json() as { id: string };
-    const upload = (kind: string, filename: string, type: string, versionGroupId?: string) => { const form = new FormData(); form.set("kind", kind); form.set("file", new Blob([`document ${filename}`], { type }), filename); if (versionGroupId) form.set("versionGroupId", versionGroupId); return SELF.fetch(`https://portal.test/api/projects/${project.id}/documents`, { method: "POST", headers: { cookie: adminCookie }, body: form }); };
-    const v1Response = await upload("floorplan_pdf", "floorplan-v1.pdf", "application/pdf"); expect(v1Response.status).toBe(201); const v1 = await v1Response.json() as { id: string; version: number; versionGroupId: string; supersedesAssetId: string | null };
-    expect(v1).toMatchObject({ version: 1, supersedesAssetId: null });
-    const v2Response = await upload("floorplan_pdf", "floorplan-v2.pdf", "application/pdf", v1.versionGroupId); expect(v2Response.status).toBe(201); const v2 = await v2Response.json() as { id: string; version: number; versionGroupId: string; supersedesAssetId: string | null };
-    expect(v2).toMatchObject({ version: 2, versionGroupId: v1.versionGroupId, supersedesAssetId: v1.id });
-    const previewV1Response = await upload("floorplan_preview", "floorplan-v1.jpg", "image/jpeg", v1.versionGroupId); expect(previewV1Response.status).toBe(201); const previewV1 = await previewV1Response.json() as { id: string; version: number; supersedesAssetId: string | null };
-    expect(previewV1).toMatchObject({ version: 1, supersedesAssetId: null });
-    const previewV2 = await upload("floorplan_preview", "floorplan-v2.jpg", "image/jpeg", v1.versionGroupId); expect(previewV2.status).toBe(201); await expect(previewV2.json()).resolves.toMatchObject({ kind: "floorplan_preview", version: 2, versionGroupId: v1.versionGroupId, supersedesAssetId: previewV1.id });
-    const copy = await upload("copy_pdf", "copy.pdf", "application/pdf"); expect(copy.status).toBe(201); await expect(copy.json()).resolves.toMatchObject({ kind: "copy_pdf", version: 1 });
+    type Reserved = { sessionId: string; version: number; versionGroupId: string; files: { pdf: { key: string; assetId: string }; preview?: { key: string; assetId: string } } };
+    const reserve = async (body: Record<string, unknown>, cookie = adminCookie) => SELF.fetch(`https://portal.test/api/projects/${project.id}/documents/presign`, { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify(body) });
+    const put = (sessionId: string, slot: "pdf" | "preview", body: string, cookie = adminCookie) => SELF.fetch(`https://portal.test/api/projects/${project.id}/documents/direct/${sessionId}/${slot}`, { method: "PUT", headers: { cookie, "content-type": slot === "pdf" ? "application/pdf" : "image/jpeg" }, body });
+    const complete = (sessionId: string, preview = false, cookie = adminCookie) => SELF.fetch(`https://portal.test/api/projects/${project.id}/documents/complete`, { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ sessionId, pdf: {}, ...(preview ? { preview: {} } : {}) }) });
+    const floorplanInput = (pdf: string, preview: string, versionGroupId?: string) => ({ kind: "floorplan", versionGroupId, pdf: { filename: `floorplan-${pdf}.pdf`, bytes: pdf.length, contentType: "application/pdf" }, preview: { filename: `floorplan-${preview}.jpg`, bytes: preview.length, contentType: "image/jpeg" } });
+    const copyInput = (pdf: string, versionGroupId?: string) => ({ kind: "copy_pdf", versionGroupId, pdf: { filename: `copy-${pdf}.pdf`, bytes: pdf.length, contentType: "application/pdf" } });
+
+    expect((await reserve({ kind: "copy_pdf", pdf: { filename: "not-pdf.txt", bytes: 2, contentType: "text/plain" } })).status).toBe(400);
+    expect((await reserve({ kind: "copy_pdf", pdf: { filename: "too-big.pdf", bytes: 50 * 1024 * 1024 + 1, contentType: "application/pdf" } })).status).toBe(400);
+    expect((await reserve(copyInput("deny"), await sessionCookie(firstPhotographerToken))).status).toBe(403);
+
+    const invalid = await reserve(copyInput("four")); expect(invalid.status).toBe(201); const invalidSession = await invalid.json() as Reserved;
+    expect((await put(invalidSession.sessionId, "pdf", "bad")).status).toBe(204);
+    expect((await complete(invalidSession.sessionId)).status).toBe(409); // R2 head bytes are server-verified before metadata exists.
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM assets WHERE r2_key = ?").bind(invalidSession.files.pdf.key).first()).toEqual({ count: 0 });
+    const wrongMimeResponse = await reserve(copyInput("mime")); expect(wrongMimeResponse.status).toBe(201); const wrongMime = await wrongMimeResponse.json() as Reserved;
+    await authEnv.MEDIA.put(wrongMime.files.pdf.key, "mime", { httpMetadata: { contentType: "text/plain" } });
+    expect((await complete(wrongMime.sessionId)).status).toBe(409); // R2 content type is also checked against server-owned metadata.
+
+    const missing = await reserve(floorplanInput("pdf", "jpg")); expect(missing.status).toBe(201); const missingSession = await missing.json() as Reserved;
+    expect((await complete(missingSession.sessionId)).status).toBe(400); // The pair is a logical floorplan version.
+    expect((await complete(missingSession.sessionId, true, await sessionCookie(otherAdminToken))).status).toBe(404); // session belongs to its presigning user.
+
+    const floorplan1Response = await reserve(floorplanInput("one", "one")); expect(floorplan1Response.status).toBe(201); const floorplan1 = await floorplan1Response.json() as Reserved;
+    expect((await put(floorplan1.sessionId, "pdf", "one")).status).toBe(204); expect((await put(floorplan1.sessionId, "preview", "one")).status).toBe(204);
+    const v1Response = await complete(floorplan1.sessionId, true); expect(v1Response.status).toBe(201); const v1 = await v1Response.json() as { id: string; version: number; versionGroupId: string; preview: { id: string; version: number } };
+    expect(v1).toMatchObject({ version: 1, versionGroupId: floorplan1.versionGroupId, preview: { version: 1 } });
+    expect((await complete(floorplan1.sessionId, true)).status).toBe(200); // retry-safe completion
+
+    const expiryRaceResponse = await reserve(copyInput("expiry-race")); expect(expiryRaceResponse.status).toBe(201); const expiryRace = await expiryRaceResponse.json() as Reserved;
+    await put(expiryRace.sessionId, "pdf", "expiry-race");
+    await database.DB.prepare("UPDATE document_uploads SET expires_at = ? WHERE id = ?").bind(Date.now() - 1, expiryRace.sessionId).run();
+    const expiryResults = await Promise.all([complete(expiryRace.sessionId), complete(expiryRace.sessionId)]);
+    expect(expiryResults.map((response) => response.status)).toEqual([409, 409]);
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM assets WHERE r2_key = ?").bind(expiryRace.files.pdf.key).first()).toEqual({ count: 0 });
+
+    // Completing is leased, not a permanent version-group lock. The next presign acts as the
+    // bounded reaper in this request-driven system and retries its (dev-direct) abort safely.
+    const stalledResponse = await reserve(copyInput("stalled")); expect(stalledResponse.status).toBe(201); const stalled = await stalledResponse.json() as Reserved;
+    await put(stalled.sessionId, "pdf", "stalled"); expect((await complete(stalled.sessionId)).status).toBe(409);
+    await database.DB.prepare("UPDATE document_uploads SET completing_at = ? WHERE id = ?").bind(Date.now() - 16 * 60 * 1000, stalled.sessionId).run();
+    expect((await reserve(copyInput("reaper-kick"))).status).toBe(201);
+    expect(await database.DB.prepare("SELECT status FROM document_uploads WHERE id = ?").bind(stalled.sessionId).first()).toEqual({ status: "expired" });
+
+    const archiveBlockResponse = await reserve(copyInput("archive-block")); expect(archiveBlockResponse.status).toBe(201); const archiveBlocked = await SELF.fetch(`https://portal.test/api/projects/${project.id}/archive`, { method: "POST", headers: { cookie: adminCookie } });
+    expect(archiveBlocked.status).toBe(409);
+    const archiveSession = await archiveBlockResponse.json() as Reserved;
+    expect((await SELF.fetch(`https://portal.test/api/projects/${project.id}/documents/${archiveSession.sessionId}/abort`, { method: "POST", headers: { cookie: adminCookie } })).status).toBe(204);
+    expect((await SELF.fetch(`https://portal.test/api/projects/${project.id}/archive`, { method: "POST", headers: { cookie: adminCookie } })).status).toBe(200);
+    expect((await complete(archiveSession.sessionId)).status).toBe(409);
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM assets WHERE id = ?").bind(archiveSession.files.pdf.assetId).first()).toEqual({ count: 0 });
+    expect((await SELF.fetch(`https://portal.test/api/projects/${project.id}/restore`, { method: "POST", headers: { cookie: adminCookie } })).status).toBe(200);
+
+    const simultaneousResponse = await reserve(copyInput("simultaneous")); expect(simultaneousResponse.status).toBe(201); const simultaneous = await simultaneousResponse.json() as Reserved;
+    await put(simultaneous.sessionId, "pdf", "simultaneous");
+    const simultaneousResults = await Promise.all([complete(simultaneous.sessionId), complete(simultaneous.sessionId)]);
+    expect(simultaneousResults.map((response) => response.status).sort()).toEqual([200, 201]);
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM assets WHERE id = ?").bind(simultaneous.files.pdf.assetId).first()).toEqual({ count: 1 });
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE target_id = ? AND action = 'document.complete'").bind(simultaneous.sessionId).first()).toEqual({ count: 1 });
+
+    const floorplan2Response = await reserve(floorplanInput("two", "two", v1.versionGroupId)); expect(floorplan2Response.status).toBe(201); const floorplan2 = await floorplan2Response.json() as Reserved;
+    expect(floorplan2.version).toBe(2); expect((await put(floorplan2.sessionId, "pdf", "two")).status).toBe(204); expect((await put(floorplan2.sessionId, "preview", "two")).status).toBe(204);
+    const v2Response = await complete(floorplan2.sessionId, true); expect(v2Response.status).toBe(201); const v2 = await v2Response.json() as { id: string; version: number; versionGroupId: string; preview: { id: string; version: number } };
+    expect(v2).toMatchObject({ version: 2, versionGroupId: v1.versionGroupId, preview: { version: 2 } });
+    const concurrent = await Promise.all([reserve(floorplanInput("three", "three", v1.versionGroupId)), reserve(floorplanInput("four", "four", v1.versionGroupId))]);
+    expect(concurrent.map((response) => response.status).sort()).toEqual([201, 409]);
+
+    const copy1Response = await reserve(copyInput("copy")); expect(copy1Response.status).toBe(201); const copy1 = await copy1Response.json() as Reserved; await put(copy1.sessionId, "pdf", "copy"); expect((await complete(copy1.sessionId)).status).toBe(201);
+    const copy2Response = await reserve(copyInput("next", copy1.versionGroupId)); expect(copy2Response.status).toBe(201); const copy2 = await copy2Response.json() as Reserved; expect(copy2.version).toBe(2); await put(copy2.sessionId, "pdf", "next"); expect((await complete(copy2.sessionId)).status).toBe(201);
+
     const approved = await SELF.fetch(`https://portal.test/api/assets/${v2.id}/review`, { method: "POST", headers: { cookie: adminCookie, "content-type": "application/json" }, body: JSON.stringify({ decision: "approved" }) });
     expect(approved.status).toBe(200);
     const listed = await SELF.fetch(`https://portal.test/api/projects/${project.id}/assets?collection=floorplan`, { headers: { cookie: adminCookie } });
-    await expect(listed.json()).resolves.toMatchObject({ assets: expect.arrayContaining([expect.objectContaining({ id: v2.id, kind: "floorplan_pdf", version: 2, versionGroupId: v1.versionGroupId, review: expect.objectContaining({ decision: "approved" }) })]) });
+    await expect(listed.json()).resolves.toMatchObject({ assets: expect.arrayContaining([expect.objectContaining({ id: v2.id, kind: "floorplan_pdf", version: 2, versionGroupId: v1.versionGroupId, review: expect.objectContaining({ decision: "approved" }) }), expect.objectContaining({ id: v2.preview.id, kind: "floorplan_preview", version: 2, versionGroupId: v1.versionGroupId })]) });
+    expect(await database.DB.prepare("SELECT received_count, status FROM collections WHERE project_id = ? AND kind = 'floorplan'").bind(project.id).first()).toEqual({ received_count: 4, status: "received" });
+    const projectDetails = await SELF.fetch(`https://portal.test/api/projects/${project.id}`, { headers: { cookie: adminCookie } });
+    await expect(projectDetails.json()).resolves.toMatchObject({ collections: expect.arrayContaining([expect.objectContaining({ kind: "floorplan", receivedCount: 4, status: "received" }), expect.objectContaining({ kind: "copy", receivedCount: 2, status: "received" })]) });
     const original = await SELF.fetch(`https://portal.test/media/asset/${v2.id}/original`, { headers: { cookie: adminCookie } });
     expect(original.status).toBe(200); expect(original.headers.get("content-type")).toContain("application/pdf");
-    expect(original.headers.get("content-disposition")).toBe('inline; filename="floorplan-v2.pdf"');
-    await database.DB.prepare("UPDATE assets SET original_filename = ? WHERE id = ?").bind("floorplan-v2.pdf\r\nInjected: no", v2.id).run();
+    expect(original.headers.get("content-disposition")).toBe('inline; filename="floorplan-two.pdf"');
+    await database.DB.prepare("UPDATE assets SET original_filename = ? WHERE id = ?").bind("floorplan-two.pdf\r\nInjected: no", v2.id).run();
     const sanitized = await SELF.fetch(`https://portal.test/media/asset/${v2.id}/original`, { headers: { cookie: adminCookie } });
-    expect(sanitized.headers.get("content-disposition")).toBe('inline; filename="floorplan-v2.pdfInjected: no"');
-    const deniedForm = new FormData(); deniedForm.set("kind", "copy_pdf"); deniedForm.set("file", new Blob(["nope"], { type: "application/pdf" }), "forbidden.pdf");
-    const photographer = await SELF.fetch(`https://portal.test/api/projects/${project.id}/documents`, { method: "POST", headers: { cookie: await sessionCookie(firstPhotographerToken) }, body: deniedForm });
-    expect(photographer.status).toBe(403);
+    expect(sanitized.headers.get("content-disposition")).toBe('inline; filename="floorplan-two.pdfInjected: no"');
+    expect((await SELF.fetch(`https://portal.test/api/projects/${project.id}/documents`, { method: "POST", headers: { cookie: adminCookie } })).status).toBe(410);
+  });
+
+  it("keeps direct document PUT unavailable in the production-shaped suite", async () => {
+    const path = `https://portal.test/api/projects/${crypto.randomUUID()}/documents/direct/${crypto.randomUUID()}/pdf`;
+    expect((await SELF.fetch(path, { method: "PUT" })).status).toBe(401);
+    expect((await SELF.fetch(path, { method: "PUT", headers: { cookie: await sessionCookie(adminToken) } })).status).toBe(404);
   });
 });
