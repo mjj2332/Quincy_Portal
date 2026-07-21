@@ -318,3 +318,33 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/other agents 
 - [ ] Rotate/retire the production `BETTER_AUTH_SECRET`: the gate-rotation value still sits in
   gitignored `portal/workers/app/.prod-secrets.local` (confirmed present) — user should move
   it to the password manager and delete the file.
+
+**Wave: AutoHDR per-project send + fetch (2026-07-22, implemented — pending deploy + real-sample test)**
+- Replaced the fixed-path `AutoHdrRoundtrip` (48h auto-poll) with two decoupled per-project
+  operations against AutoHDR's own Dropbox layout (`/AutoHDR/<listing>/01-RAW-Photos` in,
+  `04-FINAL-Photos` out — see `docs/lessons.md` for the doc discrepancies).
+- `<listing>` folder name = the project RAW folder path with its final segment dropped
+  (`.../4 McGowen Ave.../Listing Images` → `4 McGowen Ave...`); pure helper +
+  unit tests in `workers/background/src/autohdr/paths.ts`.
+- **Send** (`AutoHdrSend`): one-shot per-file copy of selected RAW → `01-RAW-Photos`
+  (Dropbox auto-creates parents); refuses duplicate case-insensitive filenames; stays
+  `editing_autohdr`.
+- **Fetch** (`AutoHdrFetch`, on-demand button on the Edited tab): lists `04-FINAL-Photos`
+  (falls back to `04-FINALS-Photos`; missing folder = "0 finals yet", not an error via
+  `listFolderIfExists`), ingests new JPEGs (accepted-photo filter) into the `edited`
+  collection, pairs to RAW by plain basename with a `_vs`/`_staged` suffix fallback,
+  advances `editing_autohdr → edited_review` only when every selected RAW has a returned
+  edit (conditional, no stage regression).
+- Concurrency: `fetchEditedFromAutoHdr` is single-flight per project (returns the active
+  queued/running job) since edited assets have no unique DB constraint. Both routes reject
+  archived projects (409); jobs panel + retry handle `fetch_edited` alongside `autohdr`.
+- **Deferred (known, revisit with a real AutoHDR output sample):** exact final-folder
+  spelling; whether bracket-merged finals map 1:1 to RAW basenames (if not, unmatched
+  finals still ingest with `source_raw_asset_id = null` — no data lost — but auto
+  stage-advance may stall and need a manual move).
+- [ ] **USER/testing (not yet available):** validate the fetch flow against a real AutoHDR
+  `04-FINAL(S)-Photos` sample once one exists — confirm the exact finals-folder spelling
+  (`04-FINAL-Photos` vs `04-FINALS-Photos`) and the finished-filename ↔ RAW basename mapping,
+  especially for bracket-merged sets. Adjust the fetch matcher / stage-advance rule if names
+  don't map 1:1. Code currently reads BOTH spellings and ingests unmatched finals as
+  `source_raw_asset_id = null` so nothing is lost meanwhile.

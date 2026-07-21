@@ -327,7 +327,8 @@ async function authorisedJson(
   connectionId?: string,
   client?: DropboxClientContext,
   includePathRoot = true,
-): Promise<unknown> {
+  allowNotFound = false,
+): Promise<unknown | null> {
   const resolvedClient = await resolveClient(env, db, connectionId, client);
   try {
     const response = await fetch(`${API_URL}${endpoint}`, {
@@ -337,7 +338,8 @@ async function authorisedJson(
     });
     if (!response.ok) {
       const body = await response.text();
-      if (endpoint === "/files/list_folder" && response.status === 409 && /\bnot_found\b/i.test(body)) {
+      if (endpoint === "/files/list_folder" && response.status === 409 && /\bpath\/not_found\b/i.test(body)) {
+        if (allowNotFound) return null;
         throw new Error(`Dropbox folder not found: ${JSON.stringify(payload.path)} — check the path in the project's Dropbox settings`);
       }
       if (endpoint === "/files/list_folder/continue" && response.status === 409 && /\breset\b/i.test(body)) {
@@ -388,6 +390,23 @@ export async function listFolder(
       include_deleted: false,
     }, connectionId, client),
   );
+}
+
+/** Lists a folder without treating an AutoHDR finals folder that is not ready yet as an integration error. */
+export async function listFolderIfExists(
+  env: Env,
+  db: Database,
+  path: string,
+  options: { recursive?: boolean } = {},
+  connectionId?: string,
+  client?: DropboxClientContext,
+): Promise<DropboxFolderPage | null> {
+  const page = await authorisedJson(env, db, "/files/list_folder", {
+    path,
+    recursive: options.recursive ?? false,
+    include_deleted: false,
+  }, connectionId, client, true, true);
+  return page === null ? null : parseFolderPage(page);
 }
 
 export async function listFolderContinue(

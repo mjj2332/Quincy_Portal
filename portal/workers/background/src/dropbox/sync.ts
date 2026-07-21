@@ -21,7 +21,7 @@ export function normalisePath(path: string): string {
   return normalised ? `/${normalised}` : "";
 }
 
-async function pathFromRawFolderLink(env: Env, rawFolderLink: string | null, connectionId?: string, client?: DropboxClientContext): Promise<string | null> {
+export async function pathFromRawFolderLink(env: Env, rawFolderLink: string | null, connectionId?: string, client?: DropboxClientContext): Promise<string | null> {
   if (!rawFolderLink) return null;
   let url: URL;
   try {

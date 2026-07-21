@@ -27,7 +27,12 @@
     {
       "binding": "AUTOHDR_WORKFLOW",
       "name": "quincy-autohdr-roundtrip",
-      "class_name": "AutoHdrRoundtrip"
+      "class_name": "AutoHdrSend"
+    },
+    {
+      "binding": "AUTOHDR_FETCH_WORKFLOW",
+      "name": "quincy-autohdr-fetch",
+      "class_name": "AutoHdrFetch"
     }
   ],
   "durable_objects": {

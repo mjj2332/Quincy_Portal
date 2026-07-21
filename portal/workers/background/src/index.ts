@@ -1,6 +1,6 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
-import { and, asc, eq, gt } from "drizzle-orm";
-import { assets, collections, integrationConnections, projects, selections } from "@quincy/db/schema";
+import { and, asc, eq, gt, inArray } from "drizzle-orm";
+import { assets, collections, integrationConnections, jobs, projects, selections } from "@quincy/db/schema";
 import { enqueueRenditionSafely, renditionsEnabled, type RenditionMessage } from "@quincy/shared";
 
 import { DropboxSyncDO } from "./do/dropbox-sync";
@@ -14,9 +14,10 @@ import { syncProjectRawFolder } from "./dropbox/sync";
 import { fanOutDropboxKicks } from "./dropbox/webhook";
 import { canMutateRenditionBackfill } from "./backfill-gate";
 import { parseQueueBody } from "./queue-dispatch";
-import { AutoHdrRoundtrip } from "./workflows/autohdr";
+import { AutoHdrSend } from "./workflows/autohdr";
+import { AutoHdrFetch } from "./workflows/autohdr-fetch";
 
-export { AutoHdrRoundtrip, DropboxSyncDO, TonomoProcessorDO };
+export { AutoHdrFetch, AutoHdrSend, DropboxSyncDO, TonomoProcessorDO };
 
 type DropboxSyncMessage = Extract<IngestMessage, { type: "dropbox_sync" }> & { jobId?: string };
 export type RenditionBackfillInput = { dryRun?: boolean; cursor?: string; limit?: number; confirmProduction?: boolean };
@@ -69,6 +70,31 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
       await this.env.AUTOHDR_WORKFLOW.create({ id: jobId, params: { projectId, assetIds, jobId } });
       // Surface the hand-off immediately; the workflow owns terminal stage and job updates.
       await db.update(projects).set({ stageKey: "editing_autohdr", updatedAt: new Date() }).where(eq(projects.id, projectId));
+      return { jobId };
+    } catch (error) {
+      await setJobStatus(db, jobId, "failed", error instanceof Error ? error.message : String(error));
+      throw error;
+    }
+  }
+
+  async fetchEditedFromAutoHdr(projectId: string): Promise<{ jobId: string }> {
+    const db = dbFor(this.env);
+    // Single-flight: an in-progress fetch already covers this project. Returning it avoids two
+    // concurrent workflows double-inserting the same finals (no unique constraint on edited assets).
+    const active = await db
+      .select({ id: jobs.id })
+      .from(jobs)
+      .where(and(eq(jobs.projectId, projectId), eq(jobs.kind, "fetch_edited"), inArray(jobs.status, ["queued", "running"])))
+      .get();
+    if (active) return { jobId: active.id };
+    const jobId = await createJob(db, {
+      kind: "fetch_edited",
+      projectId,
+      payload: { projectId },
+      correlationId: `fetch_edited:${projectId}`,
+    });
+    try {
+      await this.env.AUTOHDR_FETCH_WORKFLOW.create({ id: jobId, params: { projectId, jobId } });
       return { jobId };
     } catch (error) {
       await setJobStatus(db, jobId, "failed", error instanceof Error ? error.message : String(error));
@@ -136,7 +162,7 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
             message.ack();
             break;
           case "autohdr_check":
-            // The workflow owns the 15-minute polling loop; this ID-only event is reserved for recovery checks.
+            // Reserved for the future on-demand return-file fetch flow.
             message.ack();
             break;
         }

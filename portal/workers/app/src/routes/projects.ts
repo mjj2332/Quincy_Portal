@@ -199,6 +199,8 @@ projectsRoutes.post("/projects/:id/send-to-autohdr", requireCapability("selectFo
   if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
   if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   const db = createDb(c.env.DB);
+  const target = await db.select({ archivedAt: schema.projects.archivedAt }).from(schema.projects).where(eq(schema.projects.id, id)).get();
+  if (target?.archivedAt) return c.json({ error: "Project is archived" }, 409);
   const selected = await db.select({ id: schema.selections.id })
     .from(schema.selections)
     .innerJoin(schema.assets, eq(schema.selections.assetId, schema.assets.id))
@@ -208,6 +210,17 @@ projectsRoutes.post("/projects/:id/send-to-autohdr", requireCapability("selectFo
   if (!selected) return c.json({ error: "Select at least one RAW asset before sending to autoHDR" }, 400);
   const { jobId } = await c.env.BACKGROUND.startAutoHdr(id);
   await audit(c.env, c.get("user").id, "project.send_to_autohdr", "project", id, { jobId });
+  return c.json({ jobId });
+});
+
+projectsRoutes.post("/projects/:id/fetch-edited", requireCapability("selectForEditing"), async (c) => {
+  const id = c.req.param("id");
+  if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
+  if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
+  const target = await createDb(c.env.DB).select({ archivedAt: schema.projects.archivedAt }).from(schema.projects).where(eq(schema.projects.id, id)).get();
+  if (target?.archivedAt) return c.json({ error: "Project is archived" }, 409);
+  const { jobId } = await c.env.BACKGROUND.fetchEditedFromAutoHdr(id);
+  await audit(c.env, c.get("user").id, "project.fetch_edited", "project", id, { jobId });
   return c.json({ jobId });
 });
 
@@ -245,7 +258,7 @@ projectsRoutes.get("/projects/:id/jobs", async (c) => {
   const rows = await createDb(c.env.DB).select({
     id: schema.jobs.id, kind: schema.jobs.kind, status: schema.jobs.status, error: schema.jobs.error,
     createdAt: schema.jobs.createdAt, updatedAt: schema.jobs.updatedAt,
-  }).from(schema.jobs).where(and(eq(schema.jobs.projectId, id), eq(schema.jobs.kind, "autohdr"))).orderBy(desc(schema.jobs.createdAt)).limit(20).all();
+  }).from(schema.jobs).where(and(eq(schema.jobs.projectId, id), inArray(schema.jobs.kind, ["autohdr", "fetch_edited"]))).orderBy(desc(schema.jobs.createdAt)).limit(20).all();
   return c.json({ jobs: rows });
 });
 
@@ -254,11 +267,13 @@ projectsRoutes.post("/jobs/:id/retry", requireCapability("selectForEditing"), as
   if (!idCheck(id)) return c.json({ error: "Invalid job id" }, 400);
   const job = await createDb(c.env.DB).select({ id: schema.jobs.id, projectId: schema.jobs.projectId, kind: schema.jobs.kind, status: schema.jobs.status })
     .from(schema.jobs).where(eq(schema.jobs.id, id)).get();
-  if (!job || job.kind !== "autohdr" || !job.projectId) return c.json({ error: "autoHDR job not found" }, 404);
+  if (!job || !job.projectId || (job.kind !== "autohdr" && job.kind !== "fetch_edited")) return c.json({ error: "autoHDR job not found" }, 404);
   if (!await hasProjectAccess(c, job.projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   if (job.status !== "stuck" && job.status !== "failed") return c.json({ error: "Only stuck or failed autoHDR jobs can be retried" }, 409);
-  const { jobId } = await c.env.BACKGROUND.startAutoHdr(job.projectId);
-  await audit(c.env, c.get("user").id, "project.retry_autohdr", "project", job.projectId, { previousJobId: id, jobId });
+  const { jobId } = job.kind === "autohdr"
+    ? await c.env.BACKGROUND.startAutoHdr(job.projectId)
+    : await c.env.BACKGROUND.fetchEditedFromAutoHdr(job.projectId);
+  await audit(c.env, c.get("user").id, job.kind === "autohdr" ? "project.retry_autohdr" : "project.retry_fetch_edited", "project", job.projectId, { previousJobId: id, jobId });
   return c.json({ jobId });
 });
 
