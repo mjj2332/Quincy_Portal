@@ -2,15 +2,37 @@
 
 Orchestration: Claude = planner/orchestrator/contract-layer; Codex/other agents = groundwork.
 
-## Status
-- Branch `build/phase-0-2` (not yet merged to `main`). Production live at
-  `quincy.flamingfire.my`; staging at `staging.quincy.flamingfire.my`; prototype preserved at
-  `prototype.quincy.flamingfire.my`.
-- Phases 0–2 built and deployed: foundations/auth/infra, capture ingest + RAW QA, autoHDR +
-  Edited QA, and the review lightbox (comments, markup, edit/delete) through wave WP-O.
-  Repo reorganized into `prototype/ · portal/ · docs/ · test-data/` with a fresh CLAUDE.md/AGENTS.md (2026-07-20).
-- Latest verified state: 6/6 workspaces typecheck clean; tests `packages/shared` 13/13,
-  `workers/app` 19/19, `workers/webhook-ingress` 3/3; SPA build clean.
+## Status (2026-07-21)
+- **`main` is current** — `build/phase-0-2` merged to `main` via PR #3 (merge commit
+  `3a7fe8d`). Branch off `main` for new work. Production live at `quincy.flamingfire.my`
+  (staging + prototype preserved on their hostnames).
+- **Phases 0–4 built, deployed, and live.** 0: foundations/auth/infra. 1: capture ingest +
+  RAW QA. 2: autoHDR + Edited QA + review lightbox. 3: Tonomo intake (DO-serialized) +
+  grid/list/kanban dashboard + selectable cover images + admin backend (users, directory,
+  pipeline stages, Dropbox+Tonomo integrations w/ poison-event operator queue). 4:
+  video/floorplan/copy — link tiles + PDF version groups.
+- **Two production image outages fixed** (both in "Done" below): (a) spaced filenames broke
+  the transform HMAC; (b) grid concurrency of live large-original transforms tripped
+  Cloudflare edge rate-limiting. The 2nd fix (client concurrency-limited `LazyImage` +
+  cacheable transforms) was **verified live in an authenticated browser: 69 media requests,
+  all 200, zero 403** (grid + lightbox filmstrip).
+- Latest verified state: 5/5 workspaces typecheck clean; `workers/app` **49/49**,
+  `packages/shared` 23/23, `workers/webhook-ingress` 8/8; SPA build clean. D1 migrations
+  0000–0003 applied to prod.
+- **Deploy = terra(implement, gpt-5.6-terra) → sol(review, gpt-5.6-sol high) → Claude(gate)
+  loop.** Verify agent claims independently (their sandboxes can't run vitest — EPERM
+  loopback; they always report tests "couldn't start"). Deploy order: background →
+  webhook-ingress → app.
+
+## Next / open decisions
+- **Rendition cache (Phases 2–3 of the thumbnail plan) — spec'd + Phase-1 SPIKE PASSED,
+  awaiting user go-ahead.** Not an outage fix (outage already resolved); it makes first-ever
+  grid views instant. See the "Thumbnail rendition cache" section below for the full plan and
+  the proven `global_fetch_strictly_public` mechanism.
+- User external actions still open: add Dropbox `sharing.read` scope (needed only for
+  `scl/fo/…` shared-link RAW folders, e.g. from Tonomo); configure Tonomo with the webhook
+  URL + token; rotate/retire the prod `BETTER_AUTH_SECRET` from `.prod-secrets.local`. See
+  "Waiting on user / external" below.
 
 ## Done
 
