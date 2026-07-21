@@ -140,6 +140,23 @@ function parseEntry(value: unknown): DropboxEntry {
   throw new Error(`Dropbox returned unsupported entry type ${tag}`);
 }
 
+/** `/files/upload` returns a bare FileMetadata with NO `.tag` (the `.tag` union discriminator only
+ *  appears in list_folder entries). Parse it as a file directly — using parseEntry here throws
+ *  "Dropbox response is missing .tag" AFTER the file has already been written. */
+export function parseFileMetadata(value: unknown): DropboxFile {
+  if (!isRecord(value)) throw new Error("Dropbox returned an invalid upload response");
+  const contentHash = value.content_hash;
+  return {
+    ".tag": "file",
+    name: asString(value.name, "name"),
+    path_lower: asString(value.path_lower, "path_lower"),
+    path_display: typeof value.path_display === "string" ? value.path_display : undefined,
+    id: asString(value.id, "id"),
+    size: asNumber(value.size, "size"),
+    content_hash: typeof contentHash === "string" ? contentHash : undefined,
+  };
+}
+
 function parseFolderPage(value: unknown): DropboxFolderPage {
   if (!isRecord(value) || !Array.isArray(value.entries)) {
     throw new Error("Dropbox returned an invalid list_folder response");
@@ -461,7 +478,7 @@ export async function upload(
       body,
     });
     if (!response.ok) throw new Error(`Dropbox files/upload failed (${response.status}): ${await response.text()}`);
-    return parseEntry(await response.json() as unknown) as DropboxFile;
+    return parseFileMetadata(await response.json() as unknown);
   } catch (error) {
     await recordDropboxError(db, resolvedClient.connectionId, error);
     throw error;
