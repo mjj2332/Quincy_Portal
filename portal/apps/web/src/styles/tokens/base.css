@@ -1,0 +1,59 @@
+/* ==========================================================================
+   Quincy Productions — Base element styles & helpers
+   Sensible document defaults wired to the tokens, plus a few brand utilities.
+   ========================================================================== */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: var(--bg-canvas);
+  color: var(--text-primary);
+  font: var(--type-body);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+h1, h2, h3, h4 { margin: 0; font-weight: var(--weight-regular); }
+p { margin: 0; }
+a { color: inherit; }
+
+::selection { background: var(--ink-900); color: var(--paper-050); }
+
+:focus-visible {
+  outline: var(--border-width-bold) solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* ---- Brand display helpers ------------------------------------------ */
+.q-display   { font: var(--type-display); letter-spacing: var(--tracking-tightest); }
+.q-h1        { font: var(--type-h1); letter-spacing: var(--tracking-tight); }
+.q-h2        { font: var(--type-h2); letter-spacing: var(--tracking-tight); }
+.q-h3        { font: var(--type-h3); }
+.q-statement { font: var(--type-statement); text-transform: uppercase; }
+.q-body      { font: var(--type-body); }
+.q-body-serif{ font: var(--type-body-serif); }
+
+/* The signature spaced-caps lockup label, as under the wordmark. */
+.q-eyebrow {
+  font: var(--type-eyebrow);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-widest);
+  color: var(--text-secondary);
+}
+
+/* Editorial section rule. */
+.q-rule {
+  border: 0;
+  border-top: var(--border-width-rule) solid var(--ink-900);
+  margin: 0;
+}
+
+/* The four-Q pinwheel / wordmark as background motifs. */
+.q-pattern-bg {
+  background-image: url("/brand/quincy-pattern-black.png");
+  background-repeat: repeat;
+  background-size: 180px;
+}

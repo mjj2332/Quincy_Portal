@@ -1,0 +1,57 @@
+/* ==========================================================================
+   Quincy Productions — Spacing, radii, borders, shadows, motion
+   The brand is editorial & architectural: generous whitespace, hairline
+   rules, square or barely-softened corners, almost no drop shadow. Structure
+   comes from rules and negative space, not from elevation.
+   ========================================================================== */
+:root {
+  /* ---- Spacing (4px base grid) --------------------------------------- */
+  --space-0:   0;
+  --space-1:   4px;
+  --space-2:   8px;
+  --space-3:   12px;
+  --space-4:   16px;
+  --space-5:   24px;
+  --space-6:   32px;
+  --space-7:   48px;
+  --space-8:   64px;
+  --space-9:   96px;
+  --space-10: 128px;
+  --space-11: 192px;
+
+  /* ---- Radii (intentionally minimal — the brand is square-ish) ------- */
+  --radius-none: 0;
+  --radius-xs:   2px;
+  --radius-sm:   4px;
+  --radius-md:   8px;
+  --radius-lg:   14px;
+  --radius-pill: 999px;
+  --radius-card: var(--radius-none);  /* cards are square by default */
+
+  /* ---- Borders ------------------------------------------------------- */
+  --border-width-hair: 1px;
+  --border-width-mid:  1.5px;
+  --border-width-bold: 2px;
+  --border-width-rule: 3px;   /* the editorial "rule" under section heads */
+
+  /* ---- Shadows (whisper-quiet; used rarely, only for overlays) ------- */
+  --shadow-none: none;
+  --shadow-sm:  0 1px 2px rgba(10,10,10,0.06);
+  --shadow-md:  0 8px 24px rgba(10,10,10,0.10);
+  --shadow-lg:  0 24px 64px rgba(10,10,10,0.16);
+
+  /* ---- Motion -------------------------------------------------------- */
+  --ease-standard: cubic-bezier(0.22, 0.61, 0.36, 1);   /* @kind other */
+  --ease-entrance: cubic-bezier(0.16, 1, 0.3, 1);       /* @kind other */
+  --ease-exit:     cubic-bezier(0.4, 0, 1, 1);          /* @kind other */
+  --dur-fast:   120ms;  /* @kind other */
+  --dur-base:   220ms;  /* @kind other */
+  --dur-slow:   420ms;  /* @kind other */
+
+  /* ---- Layout -------------------------------------------------------- */
+  --container-sm:  640px;
+  --container-md:  860px;
+  --container-lg: 1100px;
+  --container-xl: 1320px;
+  --gutter:       var(--space-6);
+}

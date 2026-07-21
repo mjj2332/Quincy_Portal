@@ -1,0 +1,14 @@
+{
+  "name": "@quincy/db",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./schema": "./src/schema.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "generate": "drizzle-kit generate",
+    "migrate:local": "wrangler d1 migrations apply quincy-portal --local --config ../../workers/app/wrangler.jsonc"
+  }
+}

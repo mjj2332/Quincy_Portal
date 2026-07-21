@@ -1,71 +1,51 @@
-# Quincy Portal — Prototype
+# Quincy Portal
 
-An interactive design prototype for **Quincy Portal**, a replacement for our current
-[Pixieset site](https://quincyproductions.pixieset.com). It combines client photo
-**delivery** with an internal photo **review / approval** layer, in one connected product.
+An internal media-pipeline + client-delivery web app for **Quincy Productions**, a
+real-estate photography studio — replacing our [Pixieset site](https://quincyproductions.pixieset.com).
+It runs the full pipeline for a shoot: RAW capture → internal QA & markup → editing handoff →
+client delivery, with role-based access for admin, photographers, and editors.
 
-> ⚠️ **This is a prototype for review, not production code.** It was mocked up in HTML/CSS/JS
-> (React via CDN) using Claude Design. It is meant to communicate the intended design and
-> flows so the team can give feedback before we build the real thing.
+**Production is live at <https://quincy.flamingfire.my>.**
 
-## How to review it
+## What's in this repo
 
-**Use the multi-file build — [`project/index.html`](project/index.html)** (this is also
-what the Cloudflare Pages site serves). Open it in a modern browser — no build step or
-server required. It pulls in `app/*.jsx`, `app.css`, and the design system under
-`project/_ds/`, and is the **current, up-to-date** version of the prototype.
+| Folder | What it is |
+|---|---|
+| **`portal/`** | **The production app.** TypeScript monorepo — React 18 + Vite SPA, Hono API on Cloudflare Workers, D1 · R2 · KV · Queues · Workflows, Google-OAuth sign-in. This is the real, deployed software. |
+| **`prototype/`** | The original **design prototype** (HTML/CSS/JS, React via CDN, mock data — no backend). A look-and-flow reference the production app was built from; not extended. Demo at <https://prototype.quincy.flamingfire.my>. |
+| **`docs/`** | Product & planning docs — [PRD](docs/PRD.md), [Personas](docs/Personas.md), [Sitemap](docs/Sitemap.md), the approved [Decision Sheet](docs/Decision-Sheet.md), the [Implementation Plan](docs/Implementation-Plan.md), setup/handoff guides, plus the live [to-do list](docs/todo.md), [lessons log](docs/lessons.md), and archived [reviews](docs/reviews/). |
+| **`test-data/`** | Local-only test fixtures (media is large and gitignored — see [test-data/README.md](test-data/README.md)). |
+| **`chats/`** | Early design-conversation transcript (archival). |
 
-> ⚠️ The single-file `project/Quincy Portal.html` (and `project/export/Quincy Portal.html`)
-> is an **older snapshot** — it predates the RAW/Edited workspace rework and doesn't reflect
-> the latest design. Don't review from it until it's regenerated. Use `index.html`.
+`CLAUDE.md` / `AGENTS.md` are the guide for coding agents (identical mirrors).
 
-## What's in it
+## Working on the production app
 
-Surfaces sharing one data model, switchable via the **"View as"** control (bottom-left):
-**Team / Reviewer / Client**.
+Everything lives under `portal/` (an npm-workspaces monorepo). From `portal/`:
 
-- **Team dashboard** — every shoot as a project card with pipeline status, review progress,
-  filters (status, agency, search), and grid / list views.
-- **Project workspace** — the internal hub for a shoot: project rail (client, agent, dates,
-  photographer), **RAW** and **Edited** collections, grid + lightbox with **freehand
-  paint-style markup**, comments, star ratings, colour labels, approve / flag, side-by-side
-  compare, bulk actions, and **Publish to client**. A guest-reviewer link is review-only.
-- **Client delivery page** (no login, private link) — editorial cover hero, collection tabs,
-  gallery grid + lightbox, favourites, slideshow, share, download (web / full-res, single /
-  zip), a video/film section, a copywriting/description section, and premium (watermarked,
-  paywalled) content.
-
-Built on the Quincy Productions design system (ink-on-paper, Mazius display, Apfel UI).
-
-> 📄 **Where the product thinking lives:** the `project/docs/` folder holds the working
-> [PRD](project/docs/PRD.md), [Personas](project/docs/Personas.md), and
-> [Sitemap](project/docs/Sitemap.md). They flag what's built vs. planned (e.g. the
-> photographer role, RAW→autoHDR editing pipeline, role-gated login) and mark open questions
-> for the team — a good place to leave feedback.
-
-### Notes for reviewers
-
-- **Property photos are hot-linked** from Quincy's Pixieset CDN, so they need an internet
-  connection to display and may appear blank in offline/automated captures. For production
-  we'd host our own exports.
-- Grids reuse a pool of ~8 real interiors, so a single gallery repeats shots. Real
-  per-property export sets would make it photo-accurate.
-
-## Repo layout
-
+```bash
+npm run dev -w @quincy/web          # run the SPA locally (needs the app worker too)
+npx wrangler dev                    # in workers/app — the API + auth + SPA host
+npm run build -w @quincy/web        # build the SPA
+npx vitest run --config workers/app/vitest.config.ts   # API/integration tests
 ```
-project/                     The prototype
-  index.html                 Multi-file entry point
-  Quincy Portal.html         Standalone single-file build
-  Quincy Portal (standalone source).html
-  app/                       React/JSX components (data, ui, viewer, dashboard,
-                             board, workspace, client, tweaks-panel, main)
-  app.css                    App styles
-  docs/                      Product docs — PRD, Personas, Sitemap
-  assets/                    Logos & patterns
-  export/                    Exported standalone build
-  uploads/                   Saved markup/drawings from the prototype
-  _ds/                       Quincy Productions design system (tokens, fonts, styles)
-chats/                       Early design conversation transcript (origins)
-AGENTS.md                    Handoff notes for a coding agent that implements this for real
-```
+
+Local secrets go in `portal/workers/app/.dev.vars` (gitignored). See
+[docs/Google-OAuth-Setup.md](docs/Google-OAuth-Setup.md) to configure sign-in, and
+[CLAUDE.md](CLAUDE.md) for the full build/verify/deploy workflow and conventions.
+
+Deploys go out in dependency order (**background → webhook-ingress → app**) via
+`wrangler deploy`. Current work is on the `build/phase-0-2` branch.
+
+## Reviewing the prototype
+
+Open [`prototype/index.html`](prototype/index.html) in a modern browser — no build step. It
+shows the intended design and flows (team dashboard, project workspace with RAW/Edited review
+and freehand markup, and the client delivery page). It is a reference only; the shipping
+product is `portal/`.
+
+## Design system & brand
+
+Built on the Quincy Productions design system (ink-on-paper; Mazius Review display, Apfel
+Grotezk UI). The prototype's design system under `prototype/_ds/` has been ported into
+`portal/apps/web/src/styles/`.

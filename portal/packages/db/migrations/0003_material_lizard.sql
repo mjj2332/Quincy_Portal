@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX `assets_version_group_kind_version_unique` ON `assets` (`version_group_id`,`kind`,`version`);

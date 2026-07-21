@@ -1,0 +1,106 @@
+name: Quincy Portal
+
+on:
+  push:
+    paths:
+      - "portal/**"
+  pull_request:
+    paths:
+      - "portal/**"
+  workflow_dispatch:
+
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: portal
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: portal/package-lock.json
+      - run: npm ci
+
+  typecheck:
+    needs: install
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: portal
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: portal/package-lock.json
+      - run: npm ci
+      - run: npx tsc -p packages/shared/tsconfig.json
+      - run: npx tsc -p packages/db/tsconfig.json
+      - run: npx tsc -p apps/web/tsconfig.json
+      - run: npx tsc -p workers/app/tsconfig.json
+      - run: npx tsc -p workers/background/tsconfig.json
+      - run: npx tsc -p workers/webhook-ingress/tsconfig.json
+
+  test:
+    needs: install
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: portal
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: portal/package-lock.json
+      - run: npm ci
+      - run: npx vitest run --config packages/shared/vitest.config.ts
+      - run: npx vitest run --config workers/app/vitest.config.ts
+
+  build-web:
+    needs: install
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: portal
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: portal/package-lock.json
+      - run: npm ci
+      - run: npm run build -w @quincy/web
+
+  deploy:
+    needs: [typecheck, test, build-web]
+    runs-on: ubuntu-latest
+    # TODO: enable after the production Cloudflare resources are provisioned.
+    if: ${{ false && github.ref == 'refs/heads/main' && secrets.CLOUDFLARE_API_TOKEN != '' }}
+    defaults:
+      run:
+        working-directory: portal
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: portal/package-lock.json
+      - run: npm ci
+      # Service bindings resolve when a Worker is deployed, so deploy their target first.
+      - run: npx wrangler deploy --config workers/background/wrangler.jsonc
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      - run: npx wrangler deploy --config workers/webhook-ingress/wrangler.jsonc
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      - run: npx wrangler deploy --config workers/app/wrangler.jsonc
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

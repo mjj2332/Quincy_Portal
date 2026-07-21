@@ -1,0 +1,43 @@
+{
+  "name": "quincy-portal",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/shared",
+    "packages/db",
+    "apps/web",
+    "workers/app",
+    "workers/background",
+    "workers/webhook-ingress"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w @quincy/web",
+    "build": "npm run build -w @quincy/web",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "db:generate": "npm run generate -w @quincy/db",
+    "db:migrate:local": "npm run migrate:local -w @quincy/db"
+  },
+  "dependencies": {
+    "aws4fetch": "^1.0.20",
+    "better-auth": "^1.6.23",
+    "drizzle-orm": "^0.45.2",
+    "hono": "^4.12.31",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.45.1",
+    "@cloudflare/vitest-pool-workers": "^0.18.6",
+    "@cloudflare/workers-types": "^5.20260719.1",
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
+    "@vitejs/plugin-react": "^6.0.3",
+    "drizzle-kit": "^0.31.10",
+    "typescript": "^7.0.2",
+    "vite": "^8.1.5",
+    "vitest": "^4.1.10",
+    "wrangler": "^4.112.0"
+  }
+}

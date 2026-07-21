@@ -1,0 +1,44 @@
+{
+  // Background Worker — Queue consumers, Workflows (autoHDR round-trip, zip builds),
+  // Dropbox sync engine + DropboxSync Durable Object (cursor/delta loop).
+  // Deployed FIRST in CI (other workers bind to it by name).
+  "name": "quincy-portal-background",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+  "d1_databases": [
+    { "binding": "DB", "database_name": "quincy-portal", "database_id": "1d36b42e-f1e6-4659-8c9e-70afe822b6fa" }
+  ],
+  "r2_buckets": [
+    { "binding": "MEDIA", "bucket_name": "quincy-portal-media" }
+  ],
+  "queues": {
+    "consumers": [
+      { "queue": "quincy-ingest", "max_batch_size": 10, "max_retries": 3 }
+    ],
+    "producers": [
+      { "binding": "INGEST_QUEUE", "queue": "quincy-ingest" }
+    ]
+  },
+  "workflows": [
+    {
+      "binding": "AUTOHDR_WORKFLOW",
+      "name": "quincy-autohdr-roundtrip",
+      "class_name": "AutoHdrRoundtrip"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      { "name": "DROPBOX_SYNC", "class_name": "DropboxSyncDO" },
+      { "name": "TONOMO_PROCESSOR", "class_name": "TonomoProcessorDO" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["DropboxSyncDO"] },
+    { "tag": "v2", "new_sqlite_classes": ["TonomoProcessorDO"] }
+  ],
+  "vars": {
+    "APP_ENV": "production"
+  }
+}

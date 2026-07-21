@@ -1,0 +1,71 @@
+/* ==========================================================================
+   Quincy Productions — Webfonts
+   Brand faces supplied as OTF. Athelas (body serif) was referenced in the
+   brand kit but its file was NOT supplied — see styles fallback + readme.
+   ========================================================================== */
+
+/* Mazius Review — the signature editorial display serif (the "Quincy" logotype).
+   High contrast, refined, with elegant swash terminals. */
+@font-face {
+  font-family: "Mazius Review";
+  src: url("../assets/fonts/MaziusReview-Regular.otf") format("opentype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Apfel Grotezk — the workhorse neo-grotesque sans (UI, body, "PRODUCTIONS"). */
+@font-face {
+  font-family: "Apfel Grotezk";
+  src: url("../assets/fonts/ApfelGrotezk-Regular.otf") format("opentype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Messapia — reverse-contrast display face used sparingly for big statements. */
+@font-face {
+  font-family: "Messapia";
+  src: url("../assets/fonts/Messapia-Regular.otf") format("opentype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Messapia";
+  src: url("../assets/fonts/Messapia-Bold.otf") format("opentype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Athelas — the long-form body serif. A warm, readable book face for
+   running prose (paired with Apfel for UI). Now self-hosted. */
+@font-face {
+  font-family: "Athelas";
+  src: url("../assets/fonts/Athelas-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Athelas";
+  src: url("../assets/fonts/Athelas-Italic.ttf") format("truetype");
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Athelas";
+  src: url("../assets/fonts/Athelas-Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Athelas";
+  src: url("../assets/fonts/Athelas-BoldItalic.ttf") format("truetype");
+  font-weight: 700;
+  font-style: italic;
+  font-display: swap;
+}

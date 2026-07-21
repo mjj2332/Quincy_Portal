@@ -1,0 +1,36 @@
+{
+  // Staff app/API Worker — Hono + better-auth (Google-only) + serves the SPA.
+  // Cloudflare bindings are production resources; local tests simulate them through Miniflare.
+  "name": "quincy-portal-app",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+  "assets": {
+    "directory": "../../apps/web/dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/media/*", "/__transform-source/*"]
+  },
+  "d1_databases": [
+    { "binding": "DB", "database_name": "quincy-portal", "database_id": "1d36b42e-f1e6-4659-8c9e-70afe822b6fa", "migrations_dir": "../../packages/db/migrations" }
+  ],
+  "r2_buckets": [
+    { "binding": "MEDIA", "bucket_name": "quincy-portal-media" }
+  ],
+  "kv_namespaces": [
+    { "binding": "SESSIONS", "id": "1344f43c2da84b28bc8729ac15c36925" }
+  ],
+  "queues": {
+    "producers": [
+      { "binding": "INGEST_QUEUE", "queue": "quincy-ingest" }
+    ]
+  },
+  "services": [
+    { "binding": "BACKGROUND", "service": "quincy-portal-background" }
+  ],
+  "vars": {
+    "APP_ENV": "production",
+    "APP_ORIGIN": "https://quincy.flamingfire.my"
+  }
+}

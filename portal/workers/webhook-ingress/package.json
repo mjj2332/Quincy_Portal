@@ -1,0 +1,11 @@
+{
+  "name": "@quincy/worker-webhook-ingress",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json"
+  }
+}
