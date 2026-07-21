@@ -4,6 +4,7 @@ import { useSession } from "../lib/auth";
 import type { ReviewPatch, WorkspaceAsset } from "./PhotoGrid";
 import { LazyImage } from "./LazyImage";
 import { clampZoom, initialZoom, panBy, zoomBy, type ZoomBounds, type ZoomTransform } from "../lib/lightbox-zoom";
+import { cycleLightboxIndex } from "../lib/lightbox-navigation";
 
 const labels = [
   { value: "hero", name: "Hero", color: "#9a6a1f" }, { value: "select", name: "Select", color: "#3f5b3a" }, { value: "maybe", name: "Maybe", color: "#2f3b4d" }, { value: "cut", name: "Cut", color: "#7a2420" },
@@ -103,7 +104,7 @@ export function Lightbox({ assets, rawAssets, initialAssetId, collectionKind, ca
   const rawCompareAsset = useMemo(() => asset.sourceRawAssetId ? rawAssets.find((item) => item.id === asset.sourceRawAssetId) ?? null : null, [asset.sourceRawAssetId, rawAssets]);
   const compareActive = showRawCompare && Boolean(rawCompareAsset);
   const stars = asset.review?.stars ?? asset.ratingFromMetadata ?? 0;
-  const move = (change: number) => setIndex((current) => (current + change + assets.length) % assets.length);
+  const move = (change: number) => setIndex((current) => cycleLightboxIndex(current, change, assets.length));
 
   // An asset-id comparison alone cannot order two in-flight requests for the SAME asset
   // (a quick A→B→A hop, or two refreshes fired back-to-back on A) — whichever happens to

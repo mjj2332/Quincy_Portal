@@ -43,7 +43,7 @@ reviewRoutes.get("/projects/:id/assets", async (c) => {
     width: asset.width,
     height: asset.height,
     ratingFromMetadata: asset.ratingFromMetadata,
-    isPremium: asset.isPremium,
+    section: asset.section,
     createdAt: asset.createdAt,
     sourceRawAssetId: asset.sourceRawAssetId,
     version: asset.version,

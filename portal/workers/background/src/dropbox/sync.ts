@@ -61,13 +61,17 @@ async function allFolderFiles(env: Env, path: string, connectionId: string | und
   }
 }
 
-function subfolderKind(file: DropboxFile, rootPath: string): "capture" | "premium" | "skip" {
-  const root = normalisePath(rootPath).toLowerCase();
-  const filePath = normalisePath(file.path_lower).toLowerCase();
-  if (!filePath.startsWith(`${root}/`)) return "skip";
-  const relative = filePath.slice(root.length).split("/").filter(Boolean);
-  if (relative.length === 1) return "capture";
-  return relative.length === 2 && relative[0] === "extras" ? "premium" : "skip";
+export const SKIP_DROPBOX_SECTION = Symbol("skip-dropbox-section");
+
+/** Root files are Captures; only immediate Dropbox subfolders become named sections. */
+export function sectionForDropboxFile(file: DropboxFile, rootPath: string): string | null | typeof SKIP_DROPBOX_SECTION {
+  const rootSegments = normalisePath(rootPath).toLowerCase().split("/").filter(Boolean);
+  const lowerSegments = normalisePath(file.path_lower).toLowerCase().split("/").filter(Boolean);
+  if (lowerSegments.length <= rootSegments.length || rootSegments.some((segment, index) => lowerSegments[index] !== segment)) return SKIP_DROPBOX_SECTION;
+  const displaySegments = normalisePath(file.path_display ?? file.path_lower).split("/").filter(Boolean);
+  const relative = displaySegments.slice(rootSegments.length);
+  if (relative.length === 1) return null;
+  return relative.length === 2 ? relative[0]! : SKIP_DROPBOX_SECTION;
 }
 
 async function ensureRawCollection(env: Env, projectId: string): Promise<{ id: string; expectedCount: number | null }> {
@@ -131,11 +135,11 @@ export async function syncProjectRawFolder(
     let skippedSubfolderFiles = 0;
     for (const file of files) {
       if (!isAcceptedPhotoFilename(file.name)) continue;
-      const kind = subfolderKind(file, rawFolderPath);
-      if (kind === "skip") { skippedSubfolderFiles += 1; continue; }
+      const section = sectionForDropboxFile(file, rawFolderPath);
+      if (section === SKIP_DROPBOX_SECTION) { skippedSubfolderFiles += 1; continue; }
       if (file.content_hash) {
         const [existing] = await db
-          .select({ id: assets.id, isPremium: assets.isPremium })
+          .select({ id: assets.id, section: assets.section, isPremium: assets.isPremium })
           .from(assets)
           .innerJoin(collections, eq(assets.collectionId, collections.id))
           .where(and(eq(assets.contentHash, file.content_hash), eq(collections.projectId, projectId), eq(collections.kind, "raw")))
@@ -143,7 +147,7 @@ export async function syncProjectRawFolder(
         if (existing) {
           const now = new Date();
           const statements = [env.DB.prepare(COLLECTION_RECEIVED_COUNT_SQL).bind(...collectionReceivedCountBindings(collection.id, now.getTime()))];
-          if (existing.isPremium !== (kind === "premium")) statements.unshift(env.DB.prepare("UPDATE assets SET is_premium = ?, updated_at = ? WHERE id = ?").bind(kind === "premium" ? 1 : 0, now.getTime(), existing.id));
+          if (existing.section !== section || existing.isPremium) statements.unshift(env.DB.prepare("UPDATE assets SET section = ?, is_premium = 0, updated_at = ? WHERE id = ?").bind(section, now.getTime(), existing.id));
           await env.DB.batch(statements);
           await enqueueRenditionSafely(env, existing.id, "dropbox-existing-asset");
           continue;
@@ -163,7 +167,7 @@ export async function syncProjectRawFolder(
       const rating = xmpRatingToStars(parseXmpRating(await header.arrayBuffer()));
       const now = new Date();
       const results = await env.DB.batch([
-        env.DB.prepare("INSERT INTO assets (id, collection_id, kind, r2_key, original_filename, bytes, content_hash, source, rating_from_metadata, is_premium, created_at, updated_at) VALUES (?, ?, 'photo', ?, ?, ?, ?, 'dropbox', ?, ?, ?, ?) ON CONFLICT DO NOTHING").bind(assetId, collection.id, r2Key, file.name, file.size, file.content_hash ?? null, rating, kind === "premium" ? 1 : 0, now.getTime(), now.getTime()),
+        env.DB.prepare("INSERT INTO assets (id, collection_id, kind, r2_key, original_filename, bytes, content_hash, source, rating_from_metadata, section, is_premium, created_at, updated_at) VALUES (?, ?, 'photo', ?, ?, ?, ?, 'dropbox', ?, ?, 0, ?, ?) ON CONFLICT DO NOTHING").bind(assetId, collection.id, r2Key, file.name, file.size, file.content_hash ?? null, rating, section, now.getTime(), now.getTime()),
         env.DB.prepare(COLLECTION_RECEIVED_COUNT_SQL).bind(...collectionReceivedCountBindings(collection.id, now.getTime())),
       ]);
       if ((results[0]?.meta.changes ?? 0) === 0) continue; // reconciliation already ran in this batch
@@ -171,7 +175,7 @@ export async function syncProjectRawFolder(
     }
     if (skippedSubfolderFiles > 0) {
       await db.update(jobs).set({
-        payloadJson: JSON.stringify({ note: `skipped ${skippedSubfolderFiles} files in unrecognized subfolders`, skippedSubfolderFiles }),
+        payloadJson: JSON.stringify({ note: `skipped ${skippedSubfolderFiles} files nested deeper than one subfolder`, skippedSubfolderFiles }),
         updatedAt: new Date(),
       }).where(eq(jobs.id, trackingJobId));
     }

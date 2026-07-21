@@ -43,6 +43,13 @@
       "when": 1784627948599,
       "tag": "0005_striped_tyger_tiger",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1784639542323,
+      "tag": "0006_purple_inhumans",
+      "breakpoints": true
     }
   ]
 }

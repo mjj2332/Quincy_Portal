@@ -294,6 +294,9 @@ export const assets = sqliteTable(
     /** XMP xmp:Rating read at ingest; NULL = unrated (never coerce to 0). */
     ratingFromMetadata: integer("rating_from_metadata"),
     streamUid: text("stream_uid"),
+    /** NULL is the root Captures section; Dropbox immediate subfolders retain their display name. */
+    section: text("section"),
+    /** Deprecated in favour of section; retained for non-destructive compatibility. */
     isPremium: integer("is_premium", { mode: "boolean" }).notNull().default(false),
     version: integer("version").notNull().default(1),
     supersedesAssetId: text("supersedes_asset_id"),

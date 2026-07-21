@@ -181,6 +181,10 @@ button { font-family: var(--font-sans); }
    Photo grid + tiles (shared by review & client)
    --------------------------------------------------------------------- */
 .grid { display: grid; gap: var(--gap, 14px); grid-template-columns: repeat(var(--cols, 4), 1fr); }
+.work .workspace-photo-grid {
+  /* 205px minimum: 5×205 + 4×14 gap + 288px rail + 64px workgrid padding = 1433px. */
+  grid-template-columns: repeat(auto-fill, minmax(205px, 1fr));
+}
 .tile {
   position: relative; aspect-ratio: 3 / 2; overflow: hidden; background: var(--ink-800);
   cursor: pointer; outline: 0; --ring: transparent;
@@ -494,11 +498,12 @@ button { font-family: var(--font-sans); }
 .comment-reply { padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-decoration: underline; cursor: pointer; }
 
 /* filmstrip */
-.strip { grid-column: 1 / 2; grid-row: 2 / 3; display: flex; gap: 8px; padding: 12px 16px; overflow-x: auto; background: rgba(10,10,10,.6); border-top: 1px solid rgba(246,244,239,.1); }
+.strip { grid-column: 1 / 2; grid-row: 2 / 3; display: flex; min-width: 0; gap: 8px; padding: 12px 16px; overflow-x: auto; background: rgba(10,10,10,.6); border-top: 1px solid rgba(246,244,239,.1); }
 .strip.full { grid-column: 1 / -1; }
+.strip__button { flex: 0 0 84px; width: 84px; height: 56px; padding: 0; border: 0; background: transparent; line-height: 0; cursor: pointer; outline: 2px solid transparent; }
 .strip__t { flex: none; width: 84px; height: 56px; object-fit: cover; opacity: .5; cursor: pointer; outline: 2px solid transparent; transition: opacity var(--dur-fast), outline-color var(--dur-fast); background: var(--ink-700); }
-.strip__t:hover { opacity: .85; }
-.strip__t.is-active { opacity: 1; outline-color: var(--paper-050); }
+.strip__button:hover .strip__t { opacity: .85; }
+.strip__button.is-active .strip__t { opacity: 1; outline-color: var(--paper-050); }
 
 /* compare mode */
 .compare { position: fixed; inset: 0; z-index: 85; background: var(--ink-900); display: flex; flex-direction: column; }
@@ -635,6 +640,10 @@ button { font-family: var(--font-sans); }
 /* ---------------------------------------------------------------------
    Responsive
    --------------------------------------------------------------------- */
+/* Cap auto-fill at five tiles once the rail layout can still give each tile 205px. */
+@media (min-width: 1433px) {
+  .work .workspace-photo-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+}
 @media (max-width: 1080px) {
   .projects { grid-template-columns: repeat(2, 1fr); }
   .stats { grid-template-columns: repeat(2, 1fr); }
@@ -755,7 +764,6 @@ button { font-family: var(--font-sans); }
 .upload-rejected { max-width: 600px; margin: 15px auto 0; padding: 10px; background: color-mix(in srgb, var(--signal-critical) 7%, var(--paper-050)); color: var(--signal-critical); font-size: 12.5px; text-align: left; }
 .filter-chips { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 .filter-chips .chip { padding: 6px 10px; }
-.strip__button { padding: 0; border: 0; background: transparent; line-height: 0; cursor: pointer; outline: 2px solid transparent; }
 .strip__button.is-active, .strip__button.is-compare { outline-color: var(--paper-050); }
 .strip__button .strip__t { display: block; }
 .compare-trigger { position: fixed; z-index: 84; left: 50%; bottom: 82px; transform: translateX(-50%); padding: 8px 13px; border: 1px solid rgba(246,244,239,.3); background: rgba(20,20,21,.78); color: var(--paper-050); border-radius: var(--radius-pill); font: var(--type-label); font-size: 12px; letter-spacing: var(--tracking-wide); cursor: pointer; }
