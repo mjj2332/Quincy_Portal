@@ -29,10 +29,11 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/other agents 
   awaiting user go-ahead.** Not an outage fix (outage already resolved); it makes first-ever
   grid views instant. See the "Thumbnail rendition cache" section below for the full plan and
   the proven `global_fetch_strictly_public` mechanism.
-- User external actions still open: add Dropbox `sharing.read` scope (needed only for
-  `scl/fo/…` shared-link RAW folders, e.g. from Tonomo); configure Tonomo with the webhook
-  URL + token; rotate/retire the prod `BETTER_AUTH_SECRET` from `.prod-secrets.local`. See
-  "Waiting on user / external" below.
+- User external actions still open: configure Tonomo with the webhook URL + token; retire the
+  prod `BETTER_AUTH_SECRET` from `.prod-secrets.local` (see #3 below — canonical value is
+  already a Worker secret + belongs in the password manager). Dropbox `sharing.read` scope
+  was enabled 2026-07-21 (re-auth the connection to pick it up — see "Waiting on user /
+  external" below).
 
 ## Done
 
@@ -202,10 +203,15 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/other agents 
 - [x] First live Dropbox sync CONFIRMED WORKING by user (2026-07-21) — the earlier
   "4 McGowen Ave" failure was a mistyped RAW folder path, not a code issue; team-space
   Path-Root support is live and exercised.
-- [ ] USER: in the Dropbox App Console — add the `sharing.read` scope. Still needed:
-  Tonomo webhooks deliver `rawFolderLink` as `dropbox.com/scl/fo/…` shared links, which
-  the sync resolves via sharing/get_shared_link_metadata (folder-PATH syncs work without
-  it). Also verify redirect URI
+- [x] USER: in the Dropbox App Console — add the `sharing.read` scope (done 2026-07-21).
+  Needed so Tonomo `dropbox.com/scl/fo/…` shared-link RAW folders resolve via
+  sharing/get_shared_link_metadata (folder-PATH syncs already work without it).
+  **CAVEAT — re-auth required:** a scope added in the console does NOT apply to the
+  existing Dropbox connection's refresh token, which was granted under the old scope set.
+  The connection must be re-authorized (disconnect + reconnect via the Integrations tab, or
+  first-time consent) before the token actually carries `sharing.read`. Verify on the first
+  real `scl/fo/…` sync; a 401/`missing_scope` there means the token is stale, not the config.
+  Also verify redirect URI
   `https://quincy.flamingfire.my/api/integrations/dropbox/callback` + webhook URI
   `https://quincy-portal-webhook-ingress.mjj2332.workers.dev/webhooks/dropbox` per
   `docs/Dropbox-Setup.md`.
