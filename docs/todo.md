@@ -128,8 +128,44 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/other agents 
   payload viewer, race-proof guarded retry/discard with per-row locking) + health card
   ("Receiving"/"Awaiting first event"). App suite 45/45.
 
+**Wave: image grid outage fix + Phase 4 collections (2026-07-21, deployed, commit 8f1415e)**
+- Image outage (2nd, distinct from WP-AC): every thumbnail was a LIVE Cloudflare transform
+  of the full 6–33 MB original; a grid firing 24–40 at once tripped Cloudflare EDGE
+  rate-limiting → 403 broken tiles (real captures are large; earlier test uploads were tiny
+  so never hit it). Fix: `LazyImage` — module-level 4-permit semaphore preloading each
+  thumb via a detached `Image()` (fresh per attempt → no stale-event permit corruption),
+  25 s watchdog frees hung fetches, retry+backoff, neutral placeholder; used by PhotoGrid,
+  Dashboard covers (grid/kanban/list), CollectionPanel previews, AND the Lightbox filmstrip
+  (the filmstrip stampede sol caught). `/__transform-source` now immutable + Content-Length
+  + ETag (transform once, then cache). Transforms use width=N,height=N,fit=scale-down
+  (true bounding box). Verified live. Sol took 4 review rounds (caught: loader deadlock via
+  hung-fetch permit hold, D1 error-cause unique-retry, double-escaped filename regex,
+  stale-event permit release, filmstrip gap, width-only non-bounding-box).
+- Phase 4 (D-08): video link tiles + floorplan/copy PDF versioning — collections.ts
+  (/links manual+immutable-Tonomo, /documents immutable versioned uploads, per-(group,kind)
+  chains atomic via UNIQUE + cause-chain retry, viewEdited-gated, URL-sanitised,
+  nosniff/Content-Disposition), CollectionPanel UI. Migration 0003 applied to prod. 49/49.
+
+## Thumbnail rendition cache (sol-cross-reviewed plan, 2026-07-21)
+- Q: thumbnails are already 640px/~15KB — payload was never the issue; the cost is
+  cold-transforming huge originals per view. Durable fix = cache derived sizes in R2
+  (`asset_renditions`, scaffolded but unused). 46% of originals >20MB exceed the Images
+  BINDING cap. Key mechanism (sol): `global_fetch_strictly_public` compat flag lets a
+  Worker fetch its own `/cdn-cgi/image/` (100MB remote limit) instead of the same-zone
+  bypass — unlocks server-side generation for ALL sizes.
+- [x] Phase 1 SPIKE — **PASSED (2026-07-21)**. Background Worker with
+  `global_fetch_strictly_public` fetched its own `/cdn-cgi/image/…?format=webp` for a
+  **35 MB** original (binding can't; remote limit is 100 MB): status 200,
+  `content-type image/webp`, `cf-resized: internal=ok` (engine ran), valid WebP magic,
+  58 KB out, streamed to R2 and read back intact; 2nd run `cf-cache-status: HIT` (transform
+  edge-caches). Confirms server-side generation works for ALL sizes. Harness reverted;
+  spike secrets deleted from the background worker.
+- [ ] Phase 2 (pending spike): `quincy-renditions` queue (max_concurrency 1), generate
+  web+thumb WebP on asset_ingested + AutoHDR-return, serve stored rendition from R2 with
+  live-transform fallback; extend asset_renditions (content_type/width/height/spec_version).
+- [ ] Phase 3 (pending): backfill 106 existing assets via the queue (not a browser grid).
+
 ## Open / in progress
-- [ ] Phase 4 (queued): Vimeo link tiles, floorplan PDF+preview versioning, copy PDF upload.
 - [ ] Phase 5 (queued): client-delivery Worker (signed links, gallery, favourites,
   pre-built zips, premium paywall) — Pixieset replacement, own launch gates.
 - [ ] RAW↔Edited compare: synced zoom (deferred from the original compare build).
