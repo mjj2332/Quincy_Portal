@@ -345,6 +345,22 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/other agents 
   spelling; whether bracket-merged finals map 1:1 to RAW basenames (if not, unmatched
   finals still ingest with `source_raw_asset_id = null` — no data lost — but auto
   stage-advance may stall and need a manual move).
+**Wave: durable Dropbox sync + server-side copy_batch send (2026-07-22, DEPLOYED + live-verified)**
+- `assets.source_path` captured at ingest (migration 0007, applied to prod directly as
+  `ALTER TABLE assets ADD COLUMN source_path text`). Sync bounds downloads at 150/run with an
+  auto-continuation (fixes "Too many subrequests" on large folders); reconciles hashless files by
+  source_path so continuations terminate.
+- AutoHDR send now copies Dropbox-sourced RAW **server-side** via `/files/copy_batch_v2` (R2-upload
+  fallback for non-Dropbox assets) — **user-verified near-instant** in prod. copy_batch parsing is
+  defensive to Dropbox's inconsistent union serialization (never throws post-copy); destination-
+  conflict tolerance makes re-sends idempotent. background version `f9c7427d`.
+- Follow-ups (not blocking):
+  - [ ] Harden project DELETE: a stale `queued`/orphaned job blocks it forever (409). A stale
+    `queued` dropbox_sync on `0bd99fef` blocked the McGowen dedupe; reaped manually 2026-07-22.
+    Reap/ignore jobs past a staleness threshold, or clear terminal-eligible jobs on archive.
+  - [ ] Add a partial unique index on `(collection_id, content_hash) WHERE content_hash IS NOT NULL`
+    (+ dedup existing rows first) so concurrent sync runs can't insert duplicate assets (queue
+    at-least-once redelivery race; sol F+G #2).
 - [ ] **USER/testing (not yet available):** validate the fetch flow against a real AutoHDR
   `04-FINAL(S)-Photos` sample once one exists — confirm the exact finals-folder spelling
   (`04-FINAL-Photos` vs `04-FINALS-Photos`) and the finished-filename ↔ RAW basename mapping,
