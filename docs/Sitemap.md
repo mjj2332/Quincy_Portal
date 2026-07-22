@@ -29,10 +29,11 @@ Quincy Portal
 │   │   │     ├── Grid + lightbox  ✅
 │   │   │     ├── Annotate / comment / markup  ✅
 │   │   │     ├── Compare frames  ✅                    (A · E · P ✏️?)
-│   │   │     └── ★ Select RAWs → send to autoHDR  ⬜   (A · E)
+│   │   │     └── ★ Select RAWs for editing  ⬜          (A · E)
+│   │   │           └── Execute AutoHDR handoff  ⬜    (A only)
 │   │   │
-│   │   ├── ▸ Editing (autoHDR) status  ⬜             (A · E)
-│   │   │     └── "Sent · Processing · Returned"  ✏️
+│   │   ├── ▸ Editing status  ⬜                         (A · E)
+│   │   │     └── Non-admin view: neutral "Editing" status; AutoHDR details are admin-only
 │   │   │
 │   │   ├── ▸ Edited collection  🔶                    (A · E)   ❌ not Photographer
 │   │   │     ├── Grid + lightbox  ✅
@@ -99,7 +100,7 @@ This is a presentation convenience, **not** the real permission model. The targe
 | Video | ⬜ | A · E | project tab |
 | Floorplan | 🔶 | A · E | project tab |
 | Copywriting | ⬜ | A · E | project tab |
-| autoHDR status | ⬜ | A · E | after "select for editing" |
+| autoHDR status | ⬜ | A (full details) · E (neutral **Editing** status only) | after "select for editing"; API projection/authorization enforces the boundary, not UI hiding |
 | Publish flow | ✅ | A · E | workspace toolbar |
 | Client delivery page | ✅ | C (+ A·E preview) | private link / "preview client" |
 | Settings · Users | ⬜ | A | top nav |
@@ -114,7 +115,7 @@ Once you've filled in the docs, I'd suggest tackling it in this order:
 
 1. **Role model + gating** — introduce Photographer; gate screens by role.
 2. **RAW vs Edited split** — restructure the project workspace into RAW / Edited collections.
-3. **"Select for editing" → autoHDR** — the selection gate + editing status.
+3. **"Select for editing" → internal Editing workflow** — Editor/QA selects; Admin executes the private AutoHDR handoff; non-admin API projections remain neutral.
 4. **Pipeline statuses** — update dashboard to the new stages.
 5. **Video + Copywriting** — add as collections and deliverables.
 6. **Client page additions** — surface video + copy on delivery.

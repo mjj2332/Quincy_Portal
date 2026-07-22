@@ -10,7 +10,7 @@ import { audit } from "../lib/audit";
 import { newId } from "../lib/ids";
 import { createZipStream } from "../lib/zip-stream";
 import { jsonInput } from "./helpers";
-import { ensurePipelineStages } from "./stages";
+import { ensurePipelineStages, projectStageForRole } from "./stages";
 import { abortMultipart } from "../lib/r2s3";
 
 const nullable = <T extends z.ZodTypeAny>(item: T) => item.nullable().optional();
@@ -81,7 +81,7 @@ async function abortActiveDocumentSessions(c: Context<AppEnv>, projectId: string
   }
   return sessions.length;
 }
-async function details(db: ReturnType<typeof createDb>, projectId: string, viewerSeesRawOnly = false) {
+async function details(db: ReturnType<typeof createDb>, projectId: string, role: AppEnv["Variables"]["user"]["role"], viewerSeesRawOnly = false) {
   const project = await db.select().from(schema.projects).where(eq(schema.projects.id, projectId)).get();
   if (!project) return null;
   const [{ storedByProject, automaticByProject }, collections, members] = await Promise.all([
@@ -89,7 +89,7 @@ async function details(db: ReturnType<typeof createDb>, projectId: string, viewe
     db.select().from(schema.collections).where(eq(schema.collections.projectId, projectId)).all(),
     db.select({ id: schema.projectMembers.id, userId: schema.projectMembers.userId, roleOnProject: schema.projectMembers.roleOnProject, name: schema.user.name, email: schema.user.email }).from(schema.projectMembers).innerJoin(schema.user, eq(schema.projectMembers.userId, schema.user.id)).where(eq(schema.projectMembers.projectId, projectId)).all(),
   ]);
-  return { ...project, effectiveCoverAssetId: storedByProject.get(projectId) ?? automaticByProject.get(projectId) ?? null, collections, members };
+  return projectStageForRole({ ...project, effectiveCoverAssetId: storedByProject.get(projectId) ?? automaticByProject.get(projectId) ?? null, collections, members }, role);
 }
 export const projectsRoutes = new Hono<AppEnv>();
 projectsRoutes.get("/projects", async (c) => {
@@ -102,7 +102,7 @@ projectsRoutes.get("/projects", async (c) => {
     : await base.where(archivedFilter).orderBy(archived ? desc(schema.projects.updatedAt) : asc(schema.projects.shootDate)).all();
   const projectIds = rows.map(({ project }) => project.id);
   const { storedByProject, automaticByProject } = await coverMaps(db, projectIds, user.role === "photographer");
-  return c.json({ projects: rows.map((r) => ({ ...r.project, coverAssetId: storedByProject.get(r.project.id) ?? automaticByProject.get(r.project.id) ?? null, receivedCount: r.receivedCount ?? 0, expectedCount: r.expectedCount })) });
+  return c.json({ projects: rows.map((r) => projectStageForRole({ ...r.project, coverAssetId: storedByProject.get(r.project.id) ?? automaticByProject.get(r.project.id) ?? null, receivedCount: r.receivedCount ?? 0, expectedCount: r.expectedCount }, user.role)) });
 });
 projectsRoutes.post("/projects", requireCapability("createProject"), async (c) => {
   const data = await jsonInput(c, projectFields); if (data instanceof Response) return data;
@@ -111,7 +111,7 @@ projectsRoutes.post("/projects", requireCapability("createProject"), async (c) =
   const services = await addCollections(db, id, orderedServices);
   await addMembers(db, id, photographerUserIds, "photographer"); await addMembers(db, id, editorUserIds, "editor");
   await audit(c.env, c.get("user").id, "project.create", "project", id, { orderedServices: [...services] });
-  return c.json(await details(db, id), 201);
+  return c.json(await details(db, id, c.get("user").role), 201);
 });
 projectsRoutes.patch("/projects/:id", async (c) => {
   const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
@@ -164,7 +164,7 @@ projectsRoutes.patch("/projects/:id", async (c) => {
     }
     if (photographerUserIds !== undefined) auditMeta.photographerMembers = await syncMembers(db, id, photographerUserIds, "photographer");
     if (editorUserIds !== undefined) auditMeta.editorMembers = await syncMembers(db, id, editorUserIds, "editor");
-    await db.update(schema.projects).set({ ...projectUpdates, updatedAt: new Date() }).where(eq(schema.projects.id, id)); await audit(c.env, c.get("user").id, "project.update", "project", id, auditMeta); return c.json(await details(db, id));
+    await db.update(schema.projects).set({ ...projectUpdates, updatedAt: new Date() }).where(eq(schema.projects.id, id)); await audit(c.env, c.get("user").id, "project.update", "project", id, auditMeta); return c.json(await details(db, id, c.get("user").role));
   }
 });
 projectsRoutes.post("/projects/:id/cover", async (c) => {
@@ -198,7 +198,7 @@ projectsRoutes.post("/projects/:id/dropbox-sync", async (c) => {
   return c.json({ ok: true, jobId });
 });
 
-projectsRoutes.post("/projects/:id/send-to-autohdr", requireCapability("selectForEditing"), async (c) => {
+projectsRoutes.post("/projects/:id/send-to-autohdr", requireCapability("adminBackend"), async (c) => {
   const id = c.req.param("id");
   if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
   if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
@@ -217,7 +217,7 @@ projectsRoutes.post("/projects/:id/send-to-autohdr", requireCapability("selectFo
   return c.json({ jobId });
 });
 
-projectsRoutes.post("/projects/:id/fetch-edited", requireCapability("selectForEditing"), async (c) => {
+projectsRoutes.post("/projects/:id/fetch-edited", requireCapability("adminBackend"), async (c) => {
   const id = c.req.param("id");
   if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
   if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
@@ -255,7 +255,7 @@ projectsRoutes.get("/projects/:id/selected-raw.zip", async (c) => {
   return new Response(createZipStream(entries()), { headers: { "content-type": "application/zip", "content-disposition": `attachment; filename="${filename}"` } });
 });
 
-projectsRoutes.get("/projects/:id/jobs", async (c) => {
+projectsRoutes.get("/projects/:id/jobs", requireCapability("adminBackend"), async (c) => {
   const id = c.req.param("id");
   if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
   if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
@@ -266,7 +266,7 @@ projectsRoutes.get("/projects/:id/jobs", async (c) => {
   return c.json({ jobs: rows });
 });
 
-projectsRoutes.post("/jobs/:id/retry", requireCapability("selectForEditing"), async (c) => {
+projectsRoutes.post("/jobs/:id/retry", requireCapability("adminBackend"), async (c) => {
   const id = c.req.param("id");
   if (!idCheck(id)) return c.json({ error: "Invalid job id" }, 400);
   const job = await createDb(c.env.DB).select({ id: schema.jobs.id, projectId: schema.jobs.projectId, kind: schema.jobs.kind, status: schema.jobs.status })
@@ -329,6 +329,7 @@ projectsRoutes.post("/projects/:id/stage", async (c) => {
   {
     if (!ROLE_CAPABILITIES[c.get("user").role].includes("selectForEditing")) return c.json({ error: "Forbidden", capability: "selectForEditing" }, 403);
     const data = await jsonInput(c, z.object({ stageKey: z.string() })); if (data instanceof Response) return data;
+    if (data.stageKey === "editing_autohdr" && !ROLE_CAPABILITIES[c.get("user").role].includes("adminBackend")) return c.json({ error: "Forbidden" }, 403);
     if (!isStageKey(data.stageKey)) return c.json({ error: "Unknown stage" }, 400);
     const db = createDb(c.env.DB); const project = await db.select().from(schema.projects).where(eq(schema.projects.id, id)).get(); if (!project) return c.json({ error: "Project not found" }, 404);
     await ensurePipelineStages(db);
@@ -337,4 +338,10 @@ projectsRoutes.post("/projects/:id/stage", async (c) => {
     await db.update(schema.projects).set({ stageKey: data.stageKey, updatedAt: new Date() }).where(eq(schema.projects.id, id)); await audit(c.env, c.get("user").id, "stage.set", "project", id, { from: project.stageKey, to: data.stageKey }); return c.json({ ok: true, stageKey: data.stageKey });
   }
 });
-projectsRoutes.get("/projects/:id", async (c) => { const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400); if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403); const value = await details(createDb(c.env.DB), id, c.get("user").role === "photographer"); return value ? c.json(value) : c.json({ error: "Project not found" }, 404); });
+projectsRoutes.get("/projects/:id", async (c) => {
+  const id = c.req.param("id");
+  if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
+  if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
+  const value = await details(createDb(c.env.DB), id, c.get("user").role, c.get("user").role === "photographer");
+  return value ? c.json(value) : c.json({ error: "Project not found" }, 404);
+});

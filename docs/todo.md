@@ -344,6 +344,16 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/other agents 
   spelling; whether bracket-merged finals map 1:1 to RAW basenames (if not, unmatched
   finals still ingest with `source_raw_asset_id = null` — no data lost — but auto
   stage-advance may stall and need a manual move).
+**Wave: Dropbox two-level grouping + AutoHDR privacy boundary (2026-07-22, completed locally — integration pending)**
+- [x] Extend Dropbox RAW grouping from root/immediate-folder to root plus up to two nested
+  folder levels (`Parent/Child`, preserving Dropbox display casing) and skip deeper paths.
+- [x] Safely reconstruct missing legacy `assets.source_path` only when every reconstructed
+  segment remains under the configured RAW root; otherwise use the existing R2-copy fallback.
+- [x] Keep AutoHDR internal to Admin: non-admin project/stage API payloads present neutral
+  `editing`; operational routes, jobs, diagnostics, polling, controls, and retry remain admin-only.
+- [x] Add API/UI/classifier/path regression coverage; full typechecks, 145 tests plus 1 intentional
+  app-test skip, production web build, and independent review passed.
+
 **Wave: durable Dropbox sync + server-side copy_batch send (2026-07-22, DEPLOYED + live-verified)**
 - `assets.source_path` captured at ingest (migration 0007, applied to prod directly as
   `ALTER TABLE assets ADD COLUMN source_path text`). Sync bounds downloads at 150/run with an

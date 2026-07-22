@@ -13,7 +13,10 @@ in Admin → Integrations, approves once, and the portal stores the OAuth tokens
 connection to:
 - **Pull RAW captures**: each shoot's Dropbox folder (from the project's `rawFolderPath` /
   `rawFolderLink`) is synced file-by-file into R2 — JPEG-only, idempotent by content hash,
-  XMP star ratings read during ingest.
+  XMP star ratings read during ingest. Files at the configured root are Captures; files may
+  be grouped by one or two nested folder levels (`Parent/Child` preserves Dropbox casing),
+  while deeper paths are skipped. Every Dropbox-ingested asset also retains its exact source
+  path for later AutoHDR server-side copies.
 - **autoHDR round-trip**: copy selected RAWs into the autoHDR watch folder and ingest the
   returned edits (folder paths to be confirmed with the autoHDR account — still TODO).
 - **Webhook-driven delta sync**: Dropbox notifies the ingress worker on changes; a Durable
@@ -57,6 +60,10 @@ Uploaded 2026-07-20. Rotating the KEK invalidates the stored connection (reconne
 - Card shows **error** + `lastError`: usually scope missing (reconnect after fixing
   permissions) or the folder path not matching (`rawFolderPath` should look like
   `/Photos/2026/12 Kings Road`, case-insensitive).
+- `source_path` safety: Dropbox-ingested assets use their persisted exact Dropbox path. For
+  legacy assets created before this field existed, the AutoHDR handoff reconstructs a path only
+  from safe root/section/filename segments; malformed `.` / `..` / slash-containing segments
+  cannot escape the configured RAW folder and use the existing immutable-R2 copy fallback.
 - Webhook not firing: check the console's webhook shows **Enabled** after the challenge;
   deliveries are HMAC-verified, so a signature mismatch (wrong app secret on the ingress
   worker) drops them with 401.

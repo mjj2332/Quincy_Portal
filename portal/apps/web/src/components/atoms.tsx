@@ -1,22 +1,23 @@
-import { type StageKey } from "@quincy/shared";
-import { useStages } from "../lib/stages";
+import { type ProjectStageKey, useStages } from "../lib/stages";
 
-const stageColors: Record<StageKey, string> = {
+const stageColors: Record<ProjectStageKey, string> = {
   awaiting_raw: "var(--greige-400)",
   raw_review: "var(--signal-caution)",
   editing_autohdr: "var(--signal-info)",
+  editing: "var(--signal-info)",
   edited_review: "var(--signal-caution)",
   delivered: "var(--signal-positive)",
 };
 
-export function StatusBadge({ stageKey }: { stageKey: StageKey }) {
-  const { stages } = useStages();
-  const stage = stages.find(({ key }) => key === stageKey);
+export function StatusBadge({ stageKey }: { stageKey: ProjectStageKey }) {
+  const { presentationStageKey, stages } = useStages();
+  const visibleStageKey = presentationStageKey(stageKey);
+  const stage = stages.find(({ key }) => key === visibleStageKey);
 
   return (
     <span className="row gap2">
-      <span className="sdot" style={{ background: stageColors[stageKey] }} />
-      <span className="ey">{stage?.label ?? stageKey}</span>
+      <span className="sdot" style={{ background: stageColors[visibleStageKey] }} />
+      <span className="ey">{stage?.label ?? visibleStageKey}</span>
     </span>
   );
 }

@@ -65,7 +65,7 @@ async function allFolderFiles(env: Env, path: string, connectionId: string | und
 
 export const SKIP_DROPBOX_SECTION = Symbol("skip-dropbox-section");
 
-/** Root files are Captures; only immediate Dropbox subfolders become named sections. */
+/** Root files are Captures; files may be grouped by up to two Dropbox subfolder levels. */
 export function sectionForDropboxFile(file: DropboxFile, rootPath: string): string | null | typeof SKIP_DROPBOX_SECTION {
   const rootSegments = normalisePath(rootPath).toLowerCase().split("/").filter(Boolean);
   const lowerSegments = normalisePath(file.path_lower).toLowerCase().split("/").filter(Boolean);
@@ -73,7 +73,8 @@ export function sectionForDropboxFile(file: DropboxFile, rootPath: string): stri
   const displaySegments = normalisePath(file.path_display ?? file.path_lower).split("/").filter(Boolean);
   const relative = displaySegments.slice(rootSegments.length);
   if (relative.length === 1) return null;
-  return relative.length === 2 ? relative[0]! : SKIP_DROPBOX_SECTION;
+  if (relative.length === 2) return relative[0]!;
+  return relative.length === 3 ? `${relative[0]!}/${relative[1]!}` : SKIP_DROPBOX_SECTION;
 }
 
 async function ensureRawCollection(env: Env, projectId: string): Promise<{ id: string; expectedCount: number | null }> {

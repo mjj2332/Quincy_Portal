@@ -17,10 +17,18 @@ export function autoHdrRawInputPath(folderName: string): string {
   return `${AUTOHDR_ROOT}/${folderName}/${AUTOHDR_RAW_SUBFOLDER}`;
 }
 
-/** Rebuilds a legacy Dropbox source path when the asset predates `assets.source_path`. */
+/** Rebuilds a legacy Dropbox source path when the asset predates `assets.source_path`.
+ * Returns an empty path for malformed legacy metadata so callers use their R2-copy fallback. */
 export function reconstructSourcePath(rawFolderPath: string, section: string | null, filename: string): string {
-  const basePath = normalisePath(rawFolderPath).replace(/\/+$/, "");
-  return section ? `${basePath}/${section}/${filename}` : `${basePath}/${filename}`;
+  const baseSegments = normalisePath(rawFolderPath).split("/").filter(Boolean);
+  const sectionSegments = section ? section.split("/") : [];
+  const segments = [...baseSegments, ...sectionSegments, filename];
+  if (baseSegments.length === 0 || segments.some((segment) => !isSafeDropboxPathSegment(segment))) return "";
+  return `/${segments.join("/")}`;
+}
+
+function isSafeDropboxPathSegment(segment: string): boolean {
+  return Boolean(segment) && segment !== "." && segment !== ".." && !/[\\/]/.test(segment);
 }
 
 export function autoHdrFinalPathCandidates(folderName: string): string[] {

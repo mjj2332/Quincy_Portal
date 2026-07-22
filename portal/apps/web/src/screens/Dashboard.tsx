@@ -4,7 +4,7 @@ import { StatusBadge } from "../components/atoms";
 import { LazyImage } from "../components/LazyImage";
 import { apiGet, apiPost } from "../lib/api";
 import { useCapabilities } from "../lib/capabilities";
-import { useStages } from "../lib/stages";
+import { type ProjectStageKey, useStages } from "../lib/stages";
 
 export interface ProjectSummary {
   id: string;
@@ -13,7 +13,7 @@ export interface ProjectSummary {
   postcode: string | null;
   agencyName: string | null;
   agentName: string | null;
-  stageKey: StageKey;
+  stageKey: ProjectStageKey;
   shootDate: string | null;
   coverAssetId: string | null;
   receivedCount: number;
@@ -53,8 +53,8 @@ function CoverMedia({ project, className = "", inlinePlaceholder = false, retryT
 function location(project: ProjectSummary) { return [project.suburb, project.postcode].filter(Boolean).join(" · ") || "Location pending"; }
 
 function ProjectCard({ project, onOpen }: { project: ProjectSummary; onOpen: (projectId: string) => void }) {
-  const { stages } = useStages();
-  const stage = stages.find(({ key }) => key === project.stageKey);
+  const { presentationStageKey, stages } = useStages();
+  const stage = stages.find(({ key }) => key === presentationStageKey(project.stageKey));
   const [coverFailed, setCoverFailed] = useState(false); const [coverRetry, setCoverRetry] = useState(0);
   function activate() { if (coverFailed) { setCoverFailed(false); setCoverRetry((current) => current + 1); } else onOpen(project.id); }
 
@@ -286,8 +286,10 @@ export function Dashboard({ onOpenProject, onCreateProject }: DashboardProps) {
         <div className="kanban" aria-label="Project pipeline board">
           {activeStages.map((stage) => {
             const stageProjects = filteredProjects.filter((project) => project.stageKey === stage.key);
-            const isDropTarget = canMoveStages && dropStage === stage.key;
-            return <section className={`kcol ${isDropTarget ? "is-over" : ""}`} key={stage.key} onDragOver={(event) => { if (canMoveStages && dragging) { event.preventDefault(); setDropStage(stage.key); } }} onDragLeave={() => { if (dropStage === stage.key) setDropStage(undefined); }} onDrop={(event) => { event.preventDefault(); void moveProject(stage.key); }}>
+            const stageKey = stage.key === "editing" ? "editing_autohdr" : stage.key;
+            const canDropStage = canMoveStages && (canViewArchived || stage.key !== "editing");
+            const isDropTarget = canDropStage && dropStage === stageKey;
+            return <section className={`kcol ${isDropTarget ? "is-over" : ""}`} key={stage.key} onDragOver={(event) => { if (canDropStage && dragging) { event.preventDefault(); setDropStage(stageKey); } }} onDragLeave={() => { if (dropStage === stageKey) setDropStage(undefined); }} onDrop={(event) => { event.preventDefault(); if (canDropStage) void moveProject(stageKey); }}>
               <div className="kcol__head"><span className="row gap2"><StatusBadge stageKey={stage.key} /></span><span className="cnt">{stageProjects.length}</span></div>
               <div className="kcol__body">
                 {stageProjects.length === 0 && <div className="kcol__empty">—</div>}
