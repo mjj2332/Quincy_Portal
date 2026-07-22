@@ -18,7 +18,7 @@ Quincy Portal
 │   ├── Dashboard / Projects  ✅                      (A · E full · P assigned only 🔶)
 │   │   ├── Project card → opens Project Workspace
 │   │   ├── Filters: status, agency, search  ✅
-│   │   └── Grid / List view toggle  ✅
+│   │   └── Kanban / List view toggle; Archived is List-only  ✅
 │   │
 │   ├── Project Workspace  ✅ (expanding)             (A · E · P→RAW only)
 │   │   ├── Project header / rail  ✅  (client, agent, dates, photographer)

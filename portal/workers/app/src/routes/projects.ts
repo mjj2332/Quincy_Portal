@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { createDb, schema } from "@quincy/db";
-import { and, asc, desc, eq, inArray, isNotNull, isNull, notExists, sql } from "drizzle-orm";
+import { and, asc, desc, eq, exists, inArray, isNotNull, isNull, notExists, sql } from "drizzle-orm";
 import { COLLECTION_KINDS, isStageKey, ROLE_CAPABILITIES, type CollectionKind } from "@quincy/shared";
 import { z } from "zod";
 import type { AppEnv } from "../env";
@@ -18,6 +18,31 @@ const projectFields = z.object({ street: z.string().min(1), suburb: nullable(z.s
 const editFields = projectFields.partial();
 const coverInput = z.object({ assetId: z.string().uuid().nullable() });
 const idCheck = (v: string) => z.string().uuid().safeParse(v).success;
+
+const dashboardProjectOrder = [
+  asc(sql`case when ${schema.projects.shootDate} is null then 1 else 0 end`),
+  desc(schema.projects.shootDate),
+] as const;
+
+// SQLite's lower() only provides ASCII case folding. Keep shoot-date/null
+// ordering in D1, then correct same-date ties with the Unicode-aware rule.
+const dashboardStreetCollator = new Intl.Collator("en-AU", { sensitivity: "accent" });
+
+function orderDashboardStreetTies<T extends { project: { id: string; street: string; shootDate: string | null } }>(rows: T[]): T[] {
+  const ordered: T[] = [];
+  for (let start = 0; start < rows.length;) {
+    const shootDate = rows[start]!.project.shootDate;
+    let end = start + 1;
+    while (end < rows.length && rows[end]!.project.shootDate === shootDate) end += 1;
+    ordered.push(...rows.slice(start, end).sort((left, right) => {
+      const byStreet = dashboardStreetCollator.compare(left.project.street, right.project.street);
+      if (byStreet !== 0) return byStreet;
+      return left.project.id < right.project.id ? -1 : left.project.id > right.project.id ? 1 : 0;
+    }));
+    start = end;
+  }
+  return ordered;
+}
 
 function chunked<T>(items: T[], size = 80): T[][] {
   const chunks: T[][] = [];
@@ -98,11 +123,12 @@ projectsRoutes.get("/projects", async (c) => {
   const archivedFilter = archived ? isNotNull(schema.projects.archivedAt) : isNull(schema.projects.archivedAt);
   const base = db.select({ project: schema.projects, receivedCount: schema.collections.receivedCount, expectedCount: schema.collections.expectedCount }).from(schema.projects).leftJoin(schema.collections, and(eq(schema.collections.projectId, schema.projects.id), eq(schema.collections.kind, "raw")));
   const rows = user.role === "photographer"
-    ? await base.innerJoin(schema.projectMembers, and(eq(schema.projectMembers.projectId, schema.projects.id), eq(schema.projectMembers.userId, user.id))).where(archivedFilter).orderBy(asc(schema.projects.shootDate)).all()
-    : await base.where(archivedFilter).orderBy(archived ? desc(schema.projects.updatedAt) : asc(schema.projects.shootDate)).all();
-  const projectIds = rows.map(({ project }) => project.id);
+    ? await base.where(and(archivedFilter, exists(db.select({ id: schema.projectMembers.id }).from(schema.projectMembers).where(and(eq(schema.projectMembers.projectId, schema.projects.id), eq(schema.projectMembers.userId, user.id)))))).orderBy(...dashboardProjectOrder).all()
+    : await base.where(archivedFilter).orderBy(...dashboardProjectOrder).all();
+  const orderedRows = orderDashboardStreetTies(rows);
+  const projectIds = orderedRows.map(({ project }) => project.id);
   const { storedByProject, automaticByProject } = await coverMaps(db, projectIds, user.role === "photographer");
-  return c.json({ projects: rows.map((r) => projectStageForRole({ ...r.project, coverAssetId: storedByProject.get(r.project.id) ?? automaticByProject.get(r.project.id) ?? null, receivedCount: r.receivedCount ?? 0, expectedCount: r.expectedCount }, user.role)) });
+  return c.json({ projects: orderedRows.map((r) => projectStageForRole({ ...r.project, coverAssetId: storedByProject.get(r.project.id) ?? automaticByProject.get(r.project.id) ?? null, receivedCount: r.receivedCount ?? 0, expectedCount: r.expectedCount }, user.role)) });
 });
 projectsRoutes.post("/projects", requireCapability("createProject"), async (c) => {
   const data = await jsonInput(c, projectFields); if (data instanceof Response) return data;

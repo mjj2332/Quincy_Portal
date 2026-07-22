@@ -191,7 +191,7 @@ between stages are where QA happens.
 - ✅ All projects as cards / list, with pipeline status, progress, agency/agent, search, filters.
 - ✅ Dashboard filters **by the viewer's role** — photographers see the **same dashboard but only their assigned shoots** ("My shoots").
 - ✅ Status reflects the new pipeline stages (see §7).
-- ✅ **Three views:** Grid · List · **Kanban**. The Kanban has one column per pipeline stage (Awaiting RAW → Delivered); Admin / Editor can **drag a project card between columns to change its stage**. Photographers get a read-only, reduced-column Kanban.
+- ✅ **Active dashboard views:** **Kanban** (default) · List. The Kanban has one column per pipeline stage (Awaiting RAW → Delivered); Admin / Editor can **drag a project card between columns to change its stage**. Photographers get a read-only, reduced-column Kanban. The archived dashboard is List-only.
 
 ### 6.2 Project workspace ✅ Built
 - ✅ Per-project rail (client, agent, shoot date, photographer, collections, filters, labels).

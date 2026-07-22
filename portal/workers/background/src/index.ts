@@ -16,6 +16,7 @@ import { canMutateRenditionBackfill } from "./backfill-gate";
 import { parseQueueBody } from "./queue-dispatch";
 import { AutoHdrSend } from "./workflows/autohdr";
 import { AutoHdrFetch } from "./workflows/autohdr-fetch";
+import { reconcileAwaitingRawProjects } from "./reconcile-awaiting-raw";
 
 export { AutoHdrFetch, AutoHdrSend, DropboxSyncDO, TonomoProcessorDO };
 
@@ -26,6 +27,10 @@ export type RenditionBackfillResult = { scanned: number; wouldEnqueue: number; e
 export default class QuincyBackground extends WorkerEntrypoint<Env> {
   async fetch(): Promise<Response> {
     return Response.json({ ok: true, service: "quincy-background" });
+  }
+
+  async scheduled(controller: ScheduledController): Promise<void> {
+    await reconcileAwaitingRawProjects(this.env.DB, controller.scheduledTime);
   }
 
   async triggerDropboxSync(projectId: string): Promise<{ jobId: string }> {

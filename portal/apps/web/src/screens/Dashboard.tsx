@@ -5,6 +5,7 @@ import { LazyImage } from "../components/LazyImage";
 import { apiGet, apiPost } from "../lib/api";
 import { useCapabilities } from "../lib/capabilities";
 import { type ProjectStageKey, useStages } from "../lib/stages";
+import { formatDashboardDate, initializeDashboardView, type DashboardView } from "./dashboard-helpers";
 
 export interface ProjectSummary {
   id: string;
@@ -29,16 +30,8 @@ interface DashboardProps {
   onCreateProject: () => void;
 }
 
-type DashboardView = "grid" | "list" | "kanban";
 type ProjectScope = "active" | "archived";
 type Toast = { id: number; message: string; tone: "success" | "error" };
-
-function formatDate(value: string | null): string {
-  if (!value) return "Shoot date pending";
-  const date = new Date(value);
-  if (Number.isNaN(date.valueOf())) return value;
-  return new Intl.DateTimeFormat("en-AU", { day: "numeric", month: "short", year: "numeric" }).format(date);
-}
 
 function coverUrl(assetId: string): string {
   return `/media/asset/${encodeURIComponent(assetId)}/thumb`;
@@ -51,35 +44,6 @@ function CoverMedia({ project, className = "", inlinePlaceholder = false, retryT
 }
 
 function location(project: ProjectSummary) { return [project.suburb, project.postcode].filter(Boolean).join(" · ") || "Location pending"; }
-
-function ProjectCard({ project, onOpen }: { project: ProjectSummary; onOpen: (projectId: string) => void }) {
-  const { presentationStageKey, stages } = useStages();
-  const stage = stages.find(({ key }) => key === presentationStageKey(project.stageKey));
-  const [coverFailed, setCoverFailed] = useState(false); const [coverRetry, setCoverRetry] = useState(0);
-  function activate() { if (coverFailed) { setCoverFailed(false); setCoverRetry((current) => current + 1); } else onOpen(project.id); }
-
-  return (
-    <button className="proj" type="button" onClick={activate} aria-label={coverFailed ? `Retry cover image for ${project.street}` : undefined}>
-      <div className="proj__media">
-        <CoverMedia project={project} retryToken={coverRetry} onFailedChange={setCoverFailed} />
-        <div className="proj__badges">
-          <span className="cbubble"><StatusBadge stageKey={project.stageKey} /></span>
-        </div>
-      </div>
-      <div className="proj__body">
-        <div className="proj__addr serif">{project.street}</div>
-        <div className="proj__meta">
-          <div className="ey">{location(project)}</div>
-          <div>{[project.agencyName, project.agentName].filter(Boolean).join(" · ") || "Client pending"}</div>
-        </div>
-        <div className="proj__foot">
-          <span className="ey">{formatDate(project.shootDate)}</span>
-          <span className="ey muted">{stage?.label ?? project.stageKey}</span>
-        </div>
-      </div>
-    </button>
-  );
-}
 
 function KanbanCard({ project, canMove, isDragging, onOpen, onDragStart, onDragEnd }: {
   project: ProjectSummary;
@@ -110,7 +74,7 @@ function ProjectListRow({ project, onOpen }: { project: ProjectSummary; onOpen: 
     <CoverMedia project={project} className="prow__thumb" inlinePlaceholder retryToken={coverRetry} onFailedChange={setCoverFailed} />
     <span><span className="serif prow__addr">{project.street}</span><span className="ey prow__location">{location(project)}</span></span>
     <span className="prow__c-agency">{project.agencyName || "Agency pending"}<span className="muted">{project.agentName || "Agent pending"}</span></span>
-    <span className="prow__c-date">{formatDate(project.shootDate)}</span>
+    <span className="prow__c-date">{formatDashboardDate(project.shootDate)}</span>
     <span className="prow__c-status"><StatusBadge stageKey={project.stageKey} /></span>
     <span className="prow__raw">{project.receivedCount}</span>
   </button>;
@@ -125,10 +89,10 @@ export function Dashboard({ onOpenProject, onCreateProject }: DashboardProps) {
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [projectScope, setProjectScope] = useState<ProjectScope>("active");
   const [query, setQuery] = useState("");
-  const [view, setView] = useState<DashboardView>(() => {
-    try { const saved = window.localStorage.getItem("quincy:dashboard:view"); return saved === "grid" || saved === "list" || saved === "kanban" ? saved : "grid"; }
-    catch { return "grid"; }
-  });
+  const [view, setView] = useState<DashboardView>(() => initializeDashboardView({
+    read: () => window.localStorage.getItem("quincy:dashboard:view"),
+    write: (next) => window.localStorage.setItem("quincy:dashboard:view", next),
+  }));
   const [dragging, setDragging] = useState<ProjectSummary>();
   const [pendingMoves, setPendingMoves] = useState<Set<string>>(new Set());
   const [dropStage, setDropStage] = useState<StageKey>();
@@ -244,7 +208,6 @@ export function Dashboard({ onOpenProject, onCreateProject }: DashboardProps) {
         {!viewingArchived && <>
         <span className="ey">View</span>
         <div className="segment" aria-label="Dashboard view">
-          <button className={view === "grid" ? "is-active" : ""} type="button" onClick={() => selectView("grid")}>Grid</button>
           <button className={view === "list" ? "is-active" : ""} type="button" onClick={() => selectView("list")}>List</button>
           <button className={view === "kanban" ? "is-active" : ""} type="button" onClick={() => selectView("kanban")}>Kanban</button>
         </div>
@@ -269,13 +232,7 @@ export function Dashboard({ onOpenProject, onCreateProject }: DashboardProps) {
         </div>
       )}
 
-      {!isLoading && !error && filteredProjects.length > 0 && (viewingArchived || view === "grid") && (
-        <div className="projects">
-          {filteredProjects.map((project) => <ProjectCard key={project.id} project={project} onOpen={onOpenProject} />)}
-        </div>
-      )}
-
-      {!isLoading && !error && !viewingArchived && filteredProjects.length > 0 && view === "list" && (
+      {!isLoading && !error && filteredProjects.length > 0 && (viewingArchived || view === "list") && (
         <div className="plist" aria-label="Projects list">
           <div className="prow head"><div /><div>Address</div><div className="prow__c-agency">Client</div><div className="prow__c-date">Shoot date</div><div className="prow__c-status">Status</div><div className="prow__raw">RAW received</div></div>
           {filteredProjects.map((project) => <ProjectListRow key={project.id} project={project} onOpen={onOpenProject} />)}

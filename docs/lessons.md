@@ -1,5 +1,19 @@
 # Lessons — Quincy Portal build
 
+- **Cron schedules are UTC; business rules may not be.** Cloudflare cron expressions fire in
+  UTC, so a scheduled rule tied to a local operating day must derive that date from the scheduled
+  instant with `Intl.DateTimeFormat(..., { timeZone: "Australia/Sydney" }).formatToParts()`.
+  This keeps the rule correct through Sydney daylight-saving transitions.
+
+- **Never `Date`-parse a date-only database value.** `yyyy-mm-dd` is a calendar date, not an
+  instant; browser/runtime timezone conversion can display or compare the prior day. Validate its
+  calendar components directly (including leap years), and leave malformed legacy text untouched.
+
+- **Automatic stage changes need a guarded mutation and system audit in one transaction.** Guard
+  the expected stage, archive state, and scanned source value in the `UPDATE`; insert the audit
+  only when that update changed a row, in the same D1 batch. This makes retries idempotent and
+  prevents a scheduler from overwriting a concurrent manual stage change.
+
 - **Worker same-zone subrequests bypass the whole Cloudflare pipeline.** A Worker `fetch()` to
   its own zone hostname doesn't re-enter the Worker (loop prevention) and skips edge features —
   `fetch(url, {cf:{image}})` and an in-Worker `/cdn-cgi/image/...` fetch both dead-ended at the
