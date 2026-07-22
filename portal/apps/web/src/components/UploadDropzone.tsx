@@ -17,11 +17,12 @@ type UploadProgress = { name: string; percent: number; state: "waiting" | "uploa
 
 interface UploadDropzoneProps {
   projectId: string;
+  collection?: "raw" | "edited";
   onComplete: () => Promise<void> | void;
   onToast: (message: string, tone?: "error" | "success") => void;
 }
 
-export function UploadDropzone({ projectId, onComplete, onToast }: UploadDropzoneProps) {
+export function UploadDropzone({ projectId, collection = "raw", onComplete, onToast }: UploadDropzoneProps) {
   const fileInput = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [rejected, setRejected] = useState<string[]>([]);
@@ -44,7 +45,7 @@ export function UploadDropzone({ projectId, onComplete, onToast }: UploadDropzon
     setIsUploading(true);
     setProgress(accepted.map((file) => ({ name: file.name, percent: 0, state: "waiting" })));
     try {
-      await apiPost<{ manifestId: string }, { filenames: string[] }>(`/api/projects/${projectId}/upload-manifest`, { filenames: accepted.map((file) => file.name) });
+      if (collection === "raw") await apiPost<{ manifestId: string }, { filenames: string[] }>(`/api/projects/${projectId}/upload-manifest`, { filenames: accepted.map((file) => file.name) });
       let next = 0;
       const worker = async () => {
         while (next < accepted.length) {
@@ -52,10 +53,10 @@ export function UploadDropzone({ projectId, onComplete, onToast }: UploadDropzon
           if (!file) return;
           update(file.name, { state: "uploading", percent: 8 });
           try {
-            const presign = await apiPost<PresignResponse, { projectId: string; filename: string; bytes: number }>("/api/uploads/presign", { projectId, filename: file.name, bytes: file.size });
+            const presign = await apiPost<PresignResponse, { projectId: string; filename: string; bytes: number; collection: "raw" | "edited" }>("/api/uploads/presign", { projectId, filename: file.name, bytes: file.size, collection });
             update(file.name, { percent: 35 });
             const completed = await uploadMultipartFile(file, presign, `/api/uploads/direct?key=${encodeURIComponent(presign.key)}`);
-            await apiPost("/api/uploads/complete", { projectId, key: presign.key, uploadId: completed.uploadId, parts: completed.parts, originalFilename: file.name });
+            await apiPost("/api/uploads/complete", { projectId, key: presign.key, uploadId: completed.uploadId, parts: completed.parts, originalFilename: file.name, collection });
             update(file.name, { state: "complete", percent: 100 });
           } catch (error) {
             update(file.name, { state: "failed", error: error instanceof Error ? error.message : "Upload failed." });
@@ -80,9 +81,9 @@ export function UploadDropzone({ projectId, onComplete, onToast }: UploadDropzon
   return (
     <section className={`upload-zone ${isDragging ? "is-dragging" : ""}`} onDragOver={(event) => { event.preventDefault(); setIsDragging(true); }} onDragLeave={() => setIsDragging(false)} onDrop={onDrop}>
       <input ref={fileInput} className="sr-only" type="file" accept=".jpg,.jpeg,image/jpeg" multiple onChange={onChange} />
-      <div className="ey">RAW capture upload</div>
+      <div className="ey">{collection === "raw" ? "RAW capture upload" : "Edited image upload"}</div>
       <div className="upload-zone__title serif">Drop JPEG frames here</div>
-      <p>JPEG only. The upload manifest verifies the expected capture count before ingest.</p>
+      <p>{collection === "raw" ? "JPEG only. The upload manifest verifies the expected capture count before ingest." : "JPEG only. Images are added directly to the Edited collection."}</p>
       <button className="button button--secondary" type="button" disabled={isUploading} onClick={() => fileInput.current?.click()}>{isUploading ? "Uploading…" : "Choose files"}</button>
       {progress.length > 0 && <div className="upload-progress" aria-live="polite"><div className="meter"><i style={{ width: `${overall}%` }} /></div><span className="ey">{overall}% uploaded</span>{progress.map((item) => <div className="upload-file" key={item.name}><span>{item.name}</span><span>{item.state === "failed" ? item.error : `${item.percent}%`}</span></div>)}</div>}
       {rejected.length > 0 && <div className="upload-rejected" role="status"><strong>Not uploaded — JPEG only:</strong> {rejected.join(", ")}</div>}

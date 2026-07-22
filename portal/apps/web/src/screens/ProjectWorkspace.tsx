@@ -15,7 +15,7 @@ type Project = { id: string; street: string; suburb: string | null; postcode: st
 type ProjectResponse = Project & { collections: Collection[]; members: Member[] };
 type AssetsResponse = { assets: WorkspaceAsset[] };
 type IngestStatus = { expectedCount: number | null; receivedCount: number; mismatch: boolean };
-type Job = { id: string; kind: "autohdr"; status: "queued" | "running" | "done" | "failed" | "stuck"; error: string | null; createdAt: string; updatedAt: string };
+type Job = { id: string; kind: "autohdr" | "fetch_edited"; status: "queued" | "running" | "done" | "failed" | "stuck"; error: string | null; createdAt: string; updatedAt: string };
 type JobsResponse = { jobs: Job[] };
 type Toast = { id: number; message: string; tone: "success" | "error" };
 
@@ -41,6 +41,7 @@ export function ProjectWorkspace({ projectId, notice, onNoticeShown, onBack, onE
   const [isLoading, setIsLoading] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
   const [isSending, setIsSending] = useState(false);
+  const [isFetching, setIsFetching] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const currentProjectIdRef = useRef(projectId);
   const currentTabRef = useRef(activeTab);
@@ -146,6 +147,13 @@ export function ProjectWorkspace({ projectId, notice, onNoticeShown, onBack, onE
     catch (reason) { toast(reason instanceof Error ? reason.message : "autoHDR could not be started.", "error"); }
     finally { setIsSending(false); }
   }
+  async function fetchEdited() {
+    if (!projectId || isFetching) return;
+    setIsFetching(true);
+    try { const response = await apiPost<{ jobId: string }, Record<string, never>>(`/api/projects/${projectId}/fetch-edited`, {}); await Promise.all([refreshAssets("edited"), refreshJobs(), refreshProject()]); toast(`Fetched edited photos (${response.jobId.slice(0, 8)}).`); }
+    catch (reason) { toast(reason instanceof Error ? reason.message : "Edited photos could not be fetched.", "error"); }
+    finally { setIsFetching(false); }
+  }
   function downloadSelectedRaw() {
     if (!projectId || selectionCount === 0) return;
     toast("Preparing your download…");
@@ -182,10 +190,12 @@ export function ProjectWorkspace({ projectId, notice, onNoticeShown, onBack, onE
       {ingest?.mismatch && <div className="ingest-warning" role="alert"><strong>Capture count needs attention.</strong> Expected {ingest.expectedCount}, received {ingest.receivedCount}.</div>}
       {activeTab === "raw" || activeTab === "edited" ? <><div className="workspace-intro"><div><div className="ey">{activeTab === "raw" ? "Capture QA" : "Edited QA"}</div><h1 className="serif">{activeTab === "raw" ? "RAW frames" : "Edited frames"}</h1></div><div className="muted">{activeTab === "raw" ? "Ratings from XMP are shown at ingest. Select the strongest frames for editing." : "Review delivered edits before they move to client delivery."}</div></div>
         {activeTab === "raw" && canSelect && <div className="hdr"><div className="grow"><strong>autoHDR hand-off</strong><div className="muted">{selectionCount} selected RAW frame{selectionCount === 1 ? "" : "s"} will be sent for editing.</div></div><div className="row gap2"><button className="button button--secondary" type="button" disabled={selectionCount === 0} onClick={downloadSelectedRaw}>{`Download ${selectionCount} selected (zip)`}</button><button className="button" type="button" disabled={selectionCount === 0 || isSending} onClick={() => void sendToAutoHdr()}>{isSending ? "Sending…" : `Send ${selectionCount} selected to autoHDR`}</button></div></div>}
+        {activeTab === "edited" && canSelect && <div className="hdr"><div className="grow"><strong>Fetch from autoHDR</strong><div className="muted">Pull finished edits from autoHDR's 04-FINAL-Photos into this collection.</div></div><button className="button" type="button" disabled={isFetching} onClick={() => void fetchEdited()}>{isFetching ? "Fetching…" : "Fetch edited from autoHDR"}</button></div>}
         {activeTab === "raw" && canUpload && <div className="workgrid"><UploadDropzone projectId={projectId} onComplete={refresh} onToast={toast} /></div>}
-        <PhotoGrid assets={assets} showSections={activeTab === "raw"} canReview={canReview} canRecommend={canRecommend} canSelect={activeTab === "raw" && canSelect} canSetCover={canEdit && (activeTab === "raw" || activeTab === "edited")} coverAssetId={project.effectiveCoverAssetId} storedCoverAssetId={project.coverAssetId} onSetCover={updateCover} onOpen={(asset, orderedAssets) => { setLightboxOrderIds(orderedAssets.map((item) => item.id)); setOpenAssetId(asset.id); }} onReview={updateReview} onSelection={updateSelection} />
+        {activeTab === "edited" && can("uploadEdited") && <div className="workgrid"><UploadDropzone projectId={projectId} collection="edited" onComplete={async () => { await Promise.all([refreshAssets("edited"), refreshProject()]); }} onToast={toast} /></div>}
+        <PhotoGrid assets={assets} showSections={activeTab === "raw" || activeTab === "edited"} canReview={canReview} canRecommend={canRecommend} canSelect={activeTab === "raw" && canSelect} canSetCover={canEdit && (activeTab === "raw" || activeTab === "edited")} coverAssetId={project.effectiveCoverAssetId} storedCoverAssetId={project.coverAssetId} onSetCover={updateCover} onOpen={(asset, orderedAssets) => { setLightboxOrderIds(orderedAssets.map((item) => item.id)); setOpenAssetId(asset.id); }} onReview={updateReview} onSelection={updateSelection} />
       </> : <CollectionPanel projectId={projectId} collection={activeTab} assets={assets} canManage={canManageCollections} canApprove={can("reviewEdited")} onReview={updateReview} onChanged={async () => { await Promise.all([refreshAssets(activeTab), refreshProject()]); }} onToast={toast} />}
-      {jobs.length > 0 && <div className="workgrid"><section className="hdr" style={{ alignItems: "flex-start", flexDirection: "column" }}><div><strong>autoHDR status</strong><div className="muted">Recent hand-offs for this project.</div></div>{jobs.map((job) => <div className="kv" style={{ width: "100%" }} key={job.id}><span className="k">{new Date(job.createdAt).toLocaleString("en-AU")}</span><span className="vv"><span className={`statetag st-${job.status}`}>{job.status}</span>{job.error ? ` ${job.error}` : ""}{(job.status === "stuck" || job.status === "failed") && canSelect && <button className="chip" style={{ marginLeft: 8 }} type="button" onClick={() => void retryAutoHdr(job.id)}>Retry</button>}</span></div>)}</section></div>}
+      {jobs.length > 0 && <div className="workgrid"><section className="hdr" style={{ alignItems: "flex-start", flexDirection: "column" }}><div><strong>autoHDR status</strong><div className="muted">Recent hand-offs for this project.</div></div>{jobs.map((job) => <div className="kv" style={{ width: "100%" }} key={job.id}><span className="k">{new Date(job.createdAt).toLocaleString("en-AU")}</span><span className="vv"><span className="k">{job.kind === "fetch_edited" ? "Fetch" : "Send"}</span>{" "}<span className={`statetag st-${job.status}`}>{job.status}</span>{job.error ? ` ${job.error}` : ""}{(job.status === "stuck" || job.status === "failed") && canSelect && <button className="chip" style={{ marginLeft: 8 }} type="button" onClick={() => void retryAutoHdr(job.id)}>Retry</button>}</span></div>)}</section></div>}
     </section>
     {openAssetId && <Lightbox assets={lightboxOrderIds ? lightboxOrderIds.map((id) => assets.find((asset) => asset.id === id)).filter((asset): asset is WorkspaceAsset => Boolean(asset)) : assets} rawAssets={rawAssets} initialAssetId={openAssetId} collectionKind={activeTab === "edited" ? "edited" : "raw"} canReview={canReview} canRecommend={canRecommend} canAnnotate={canAnnotate} onClose={() => { setOpenAssetId(null); setLightboxOrderIds(null); }} onReview={updateReview} onToast={toast} />}
     <div className="toasts">{toasts.map((item) => <div className={`toast ${item.tone === "error" ? "toast--error" : ""}`} key={item.id}>{item.tone === "error" ? "!" : "✓"}<span>{item.message}</span></div>)}</div>

@@ -169,3 +169,26 @@
 - **wrangler tail JSON is pretty-printed** (multi-line per event); parse it as a stream of
   concatenated objects, and read queue-handler failures from each event's `logs`/`exceptions`
   (outcome can still be `ok` while a caught error is logged).
+- **AutoHDR's own Dropbox docs contradict themselves on the output folder name.** Setup/Upload
+  steps say `04-FINAL-Photos`; the Delivery step says `04-FINALS-Photos` (with an S)
+  (`knowledge.autohdr.com/get-started/dropbox/*`, checked 2026-07-22). The input folder
+  `01-RAW-Photos` is exact-case (they reject `01 RAW Photos`/`01-raw-photos`), and AutoHDR
+  **creates the output folder itself** ("do not create this folder yourself"). **Rule:** never
+  pre-create the finals folder; on read, try both `04-FINAL-Photos` and `04-FINALS-Photos`, and
+  treat a Dropbox `path/not_found` on it as "no finals yet," not an integration error — otherwise
+  every fetch before AutoHDR finishes records a false Dropbox connection error.
+- **Dropbox `/files/upload` returns a `.tag`-less FileMetadata — don't parse it as a list entry.**
+  `upload()` fed its response to `parseEntry` (which requires the `.tag` union discriminator that
+  only appears on `list_folder` entries), so every upload threw `Dropbox response is missing .tag`
+  AFTER the file was already written. In the AutoHDR send loop this failed the workflow on file #1
+  (retries just re-overwrote it), so only 1 of 13 selected RAW reached `01-RAW-Photos`. Latent
+  since the helper's inception — first exercised when AutoHDR paths went live (2026-07-22). **Rule:**
+  parse concrete-endpoint metadata (`upload`, `get_metadata`, …) with a tag-less parser
+  (`parseFileMetadata`); only `list_folder`/`Metadata`-union responses carry `.tag`. Diagnose
+  partial-copy bugs from the **job's stored `error`**, not the destination file count.
+- **AutoHDR merges brackets, so finished-filename→source-RAW is not guaranteed 1:1.** Several
+  bracketed RAW can collapse into one final, and add-ons keep the original name plus a suffix
+  ("add suffix VS / staged"). Basename matching must key RAW by extension+case ONLY (never
+  suffix-strip a RAW name — `kitchen.jpg` and `kitchen_staged.jpg` would collide), and only
+  suffix-strip the returned FINAL as a fallback lookup. Ingest unmatched finals with
+  `source_raw_asset_id = null` (lose nothing) and gate any auto stage-advance on real matches.

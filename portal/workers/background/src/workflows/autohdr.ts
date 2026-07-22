@@ -1,12 +1,12 @@
 import { WorkflowEntrypoint } from "cloudflare:workers";
 import type { WorkflowEvent, WorkflowStep } from "cloudflare:workers";
-import { COLLECTION_RECEIVED_COUNT_SQL, collectionReceivedCountBindings } from "@quincy/db";
 import { assets, collections, projects } from "@quincy/db/schema";
-import { and, eq, inArray, sql } from "drizzle-orm";
-import { enqueueRenditionSafely } from "@quincy/shared";
+import { eq, inArray } from "drizzle-orm";
 
+import { autoHdrRawInputPath, deriveAutoHdrFolderName, reconstructSourcePath } from "../autohdr/paths";
+import { copyBatch, copyBatchCheck, createFolder, listFolderContinue, listFolderIfExists, type DropboxCopyBatchEntryResult, upload } from "../dropbox/client";
+import { pathFromRawFolderLink } from "../dropbox/sync";
 import type { Env } from "../env";
-import { download, listFolder, listFolderContinue, upload, type DropboxFile } from "../dropbox/client";
 import { dbFor, errorMessage } from "../lib/db";
 import { setJobStatus } from "../lib/jobs";
 
@@ -20,57 +20,9 @@ interface RawAsset {
   id: string;
   originalFilename: string;
   r2Key: string;
-}
-
-interface ReturnedAsset {
-  id: string;
-  originalFilename: string;
-  r2Key: string;
-  bytes: number;
-  contentHash: string | null;
-  sourceRawAssetId: string;
-}
-
-const WAIT_INTERVAL = "15 minutes" as const;
-const MAX_WAIT_TICKS = 48 * 4;
-
-function requireAutoHdrPaths(env: Env): { input: string; output: string } {
-  if (!env.AUTOHDR_IN_PATH || !env.AUTOHDR_OUT_PATH) {
-    throw new Error(
-      "TODO: configure AUTOHDR_IN_PATH and AUTOHDR_OUT_PATH after the real autoHDR Dropbox account is confirmed",
-    );
-  }
-  return { input: env.AUTOHDR_IN_PATH.replace(/\/+$/, ""), output: env.AUTOHDR_OUT_PATH.replace(/\/+$/, "") };
-}
-
-function basename(filename: string): string {
-  return filename.replace(/\.[^.]+$/, "").toLowerCase();
-}
-
-async function allFilesInFolder(env: Env, path: string): Promise<DropboxFile[]> {
-  const db = dbFor(env);
-  let page = await listFolder(env, db, path);
-  const files: DropboxFile[] = [];
-  while (true) {
-    files.push(...page.entries.filter((entry): entry is DropboxFile => entry[".tag"] === "file"));
-    if (!page.has_more) return files;
-    page = await listFolderContinue(env, db, page.cursor);
-  }
-}
-
-async function ensureEditedCollection(env: Env, projectId: string): Promise<string> {
-  const db = dbFor(env);
-  await db
-    .insert(collections)
-    .values({ id: crypto.randomUUID(), projectId, kind: "edited", status: "empty" })
-    .onConflictDoNothing();
-  const [collection] = await db
-    .select({ id: collections.id })
-    .from(collections)
-    .where(and(eq(collections.projectId, projectId), eq(collections.kind, "edited")))
-    .limit(1);
-  if (!collection) throw new Error(`Unable to resolve edited collection for project ${projectId}`);
-  return collection.id;
+  section: string | null;
+  source: "upload" | "dropbox" | "tonomo";
+  sourcePath: string | null;
 }
 
 async function loadRawAssets(env: Env, input: AutoHdrInput): Promise<RawAsset[]> {
@@ -81,6 +33,9 @@ async function loadRawAssets(env: Env, input: AutoHdrInput): Promise<RawAsset[]>
       id: assets.id,
       originalFilename: assets.originalFilename,
       r2Key: assets.r2Key,
+      section: assets.section,
+      source: assets.source,
+      sourcePath: assets.sourcePath,
       projectId: collections.projectId,
       collectionKind: collections.kind,
     })
@@ -90,124 +45,154 @@ async function loadRawAssets(env: Env, input: AutoHdrInput): Promise<RawAsset[]>
   if (rows.length !== input.assetIds.length || rows.some((row) => row.projectId !== input.projectId || row.collectionKind !== "raw")) {
     throw new Error("All autoHDR asset IDs must be RAW assets in the requested project");
   }
-  return rows.map(({ id, originalFilename, r2Key }) => ({ id, originalFilename, r2Key }));
-}
-
-async function ingestReturnedFiles(
-  env: Env,
-  projectId: string,
-  rawAssets: readonly RawAsset[],
-): Promise<ReturnedAsset[]> {
-  const { output } = requireAutoHdrPaths(env);
-  const db = dbFor(env);
-  const rawByBasename = new Map(rawAssets.map((asset) => [basename(asset.originalFilename), asset]));
-  const editedCollectionId = await ensureEditedCollection(env, projectId);
-  const returned: ReturnedAsset[] = [];
-  for (const file of await allFilesInFolder(env, output)) {
-    const rawAsset = rawByBasename.get(basename(file.name));
-    if (!rawAsset) continue;
-    const [existing] = await db
-      .select({ id: assets.id })
-      .from(assets)
-      .where(eq(assets.sourceRawAssetId, rawAsset.id))
-      .limit(1);
-    if (existing) {
-      const now = new Date();
-      await env.DB.prepare(COLLECTION_RECEIVED_COUNT_SQL).bind(...collectionReceivedCountBindings(editedCollectionId, now.getTime())).run();
-      await enqueueRenditionSafely(env, existing.id, "autohdr-existing-asset");
-      returned.push({
-        id: existing.id,
-        originalFilename: file.name,
-        r2Key: "",
-        bytes: file.size,
-        contentHash: file.content_hash ?? null,
-        sourceRawAssetId: rawAsset.id,
-      });
-      continue;
-    }
-
-    const assetId = crypto.randomUUID();
-    const r2Key = `projects/${projectId}/edited/${assetId}/${file.name}`;
-    const source = await download(env, db, file.path_display ?? file.path_lower);
-    if (!source.body) throw new Error(`Dropbox returned no body for edited file ${file.name}`);
-    await env.MEDIA.put(r2Key, source.body, { httpMetadata: { contentType: "image/jpeg" } });
-    const now = new Date();
-    const results = await env.DB.batch([
-      env.DB.prepare("INSERT INTO assets (id, collection_id, kind, r2_key, original_filename, bytes, content_hash, source, source_raw_asset_id, created_at, updated_at) VALUES (?, ?, 'photo', ?, ?, ?, ?, 'dropbox', ?, ?, ?) ON CONFLICT DO NOTHING").bind(assetId, editedCollectionId, r2Key, file.name, file.size, file.content_hash ?? null, rawAsset.id, now.getTime(), now.getTime()),
-      env.DB.prepare(COLLECTION_RECEIVED_COUNT_SQL).bind(...collectionReceivedCountBindings(editedCollectionId, now.getTime())),
-    ]);
-    if ((results[0]?.meta.changes ?? 0) > 0) {
-      returned.push({
-        id: assetId,
-        originalFilename: file.name,
-        r2Key,
-        bytes: file.size,
-        contentHash: file.content_hash ?? null,
-        sourceRawAssetId: rawAsset.id,
-      });
-      await enqueueRenditionSafely(env, assetId, "autohdr-ingest");
-    }
+  // Each selected frame maps to one Dropbox path by filename; a case-insensitive collision would
+  // silently overwrite in the AutoHDR input folder, so refuse it up front.
+  const seen = new Set<string>();
+  for (const row of rows) {
+    const key = row.originalFilename.toLowerCase();
+    if (seen.has(key)) throw new Error(`Duplicate RAW filename selected for autoHDR: ${row.originalFilename}. Rename so every selected frame is unique.`);
+    seen.add(key);
   }
-  return returned;
+  return rows.map(({ id, originalFilename, r2Key, section, source, sourcePath }) => ({
+    id,
+    originalFilename,
+    r2Key,
+    section,
+    source,
+    sourcePath,
+  }));
 }
 
-export class AutoHdrRoundtrip extends WorkflowEntrypoint<Env, AutoHdrInput> {
+function tagOf(value: unknown): string | undefined {
+  return typeof value === "object" && value !== null && typeof (value as Record<string, unknown>)[".tag"] === "string"
+    ? (value as Record<string, string>)[".tag"]
+    : undefined;
+}
+
+/** True ONLY for a destination-side (`to`) write conflict — the file is already at the target,
+ *  which for our immutable RAW copies is the desired end state. This makes copy retries and
+ *  re-sends idempotent (a resubmitted batch after a lost response or premature poll-timeout returns
+ *  to/conflict per entry, which we accept). A source-side (`from_*`) conflict is a real failure and
+ *  must NOT be masked. Tolerates Dropbox nesting the RelocationError or inlining it. */
+function isDestinationConflict(failure: Record<string, unknown>): boolean {
+  const reloc = tagOf(failure) === "relocation_error" && typeof failure.relocation_error === "object" && failure.relocation_error !== null
+    ? failure.relocation_error as Record<string, unknown>
+    : failure;
+  if (tagOf(reloc) !== "to") return false;
+  return tagOf(reloc.to) === "conflict";
+}
+
+function throwOnCopyFailures(entries: DropboxCopyBatchEntryResult[], inputs: { from_path: string; to_path: string }[]): void {
+  const hard: { from?: string; to?: string; failure: Record<string, unknown> }[] = [];
+  entries.forEach((entry, index) => {
+    if (entry[".tag"] !== "failure") return;
+    if (isDestinationConflict(entry.failure)) return;
+    hard.push({ from: inputs[index]?.from_path, to: inputs[index]?.to_path, failure: entry.failure });
+  });
+  if (hard.length > 0) throw new Error(`Dropbox copy_batch_v2 failed: ${JSON.stringify(hard)}`);
+}
+
+const COPY_BATCH_MAX_ENTRIES = 1_000;
+const COPY_BATCH_MAX_POLLS = 45;
+
+export class AutoHdrSend extends WorkflowEntrypoint<Env, AutoHdrInput> {
   async run(event: Readonly<WorkflowEvent<AutoHdrInput>>, step: WorkflowStep): Promise<void> {
     const input = event.payload;
-    await step.do("mark-autohdr-running", async () => {
-      const db = dbFor(this.env);
-      await setJobStatus(db, input.jobId, "running");
-      await db
-        .update(projects)
-        .set({ stageKey: "editing_autohdr", updatedAt: new Date() })
-        .where(eq(projects.id, input.projectId));
-      return { status: "running", stageKey: "editing_autohdr" };
-    });
-
     try {
-      const rawAssets = await step.do("load-raw-assets", async () => loadRawAssets(this.env, input));
-      await step.do("copy-to-autohdr", async () => {
-        const { input: inputPath } = requireAutoHdrPaths(this.env);
+      await step.do("mark-send-running", async () => {
         const db = dbFor(this.env);
-        for (const asset of rawAssets) {
-          const object = await this.env.MEDIA.get(asset.r2Key);
-          if (!object) throw new Error(`Original RAW asset ${asset.id} is missing from R2`);
-          // TODO: confirm autoHDR's required folder layout and filename-collision policy with the real account.
-          await upload(this.env, db, `${inputPath}/${asset.originalFilename}`, object.body);
-        }
-        return { copied: rawAssets.length };
-      });
-      await step.do("mark-stage", async () => {
-        const db = dbFor(this.env);
+        await setJobStatus(db, input.jobId, "running");
         await db
           .update(projects)
           .set({ stageKey: "editing_autohdr", updatedAt: new Date() })
           .where(eq(projects.id, input.projectId));
-        return { stageKey: "editing_autohdr" };
+        return { status: "running", stageKey: "editing_autohdr" };
       });
 
-      for (let tick = 0; tick < MAX_WAIT_TICKS; tick += 1) {
-        await step.sleep(`wait-for-autohdr-${tick}`, WAIT_INTERVAL);
-        const returned = await step.do(`check-returned-${tick}`, async () =>
-          ingestReturnedFiles(this.env, input.projectId, rawAssets),
-        );
-        const returnedSourceIds = new Set(returned.map((asset) => asset.sourceRawAssetId));
-        if (rawAssets.every((asset) => returnedSourceIds.has(asset.id))) {
-          await step.do("complete-autohdr-roundtrip", async () => {
-            const db = dbFor(this.env);
-            await db
-              .update(projects)
-              .set({ stageKey: "edited_review", updatedAt: new Date() })
-              .where(eq(projects.id, input.projectId));
-            await setJobStatus(db, input.jobId, "done");
-            return { stageKey: "edited_review" };
-          });
-          return;
+      const rawAssets = await step.do("load-assets", async () => loadRawAssets(this.env, input));
+      const { inputPath, rawFolderPath } = await step.do("resolve-input-path", async () => {
+        const db = dbFor(this.env);
+        const [project] = await db
+          .select({ rawFolderPath: projects.rawFolderPath, rawFolderLink: projects.rawFolderLink })
+          .from(projects)
+          .where(eq(projects.id, input.projectId))
+          .limit(1);
+        if (!project) throw new Error(`Project ${input.projectId} does not exist`);
+        const rawFolderPath = project.rawFolderPath ?? await pathFromRawFolderLink(this.env, project.rawFolderLink);
+        if (!rawFolderPath) throw new Error(`Project ${input.projectId} has no Dropbox RAW folder configured`);
+        return { rawFolderPath, inputPath: autoHdrRawInputPath(deriveAutoHdrFolderName(rawFolderPath)) };
+      });
+
+      await step.do("ensure-dest-folder", async () => {
+        await createFolder(this.env, dbFor(this.env), inputPath);
+        return { inputPath };
+      });
+
+      const transfers = await step.do("skip-existing", async () => {
+        const db = dbFor(this.env);
+        const existingNames = new Set<string>();
+        let page = await listFolderIfExists(this.env, db, inputPath);
+        while (page) {
+          for (const entry of page.entries) if (entry[".tag"] === "file") existingNames.add(entry.name.toLowerCase());
+          if (!page.has_more) break;
+          page = await listFolderContinue(this.env, db, page.cursor);
         }
+        const copyable: { assetId: string; fromPath: string; toPath: string }[] = [];
+        const fallback: RawAsset[] = [];
+        for (const asset of rawAssets) {
+          if (existingNames.has(asset.originalFilename.toLowerCase())) continue;
+          const fromPath = asset.sourcePath ?? reconstructSourcePath(rawFolderPath, asset.section, asset.originalFilename);
+          if (asset.source === "dropbox" && fromPath.trim()) {
+            copyable.push({ assetId: asset.id, fromPath, toPath: `${inputPath}/${asset.originalFilename}` });
+          } else {
+            fallback.push(asset);
+          }
+        }
+        return { copyable, fallback };
+      });
+
+      for (let offset = 0; offset < transfers.copyable.length; offset += COPY_BATCH_MAX_ENTRIES) {
+        const chunk = transfers.copyable.slice(offset, offset + COPY_BATCH_MAX_ENTRIES);
+        const submitted = chunk.map(({ fromPath, toPath }) => ({ from_path: fromPath, to_path: toPath }));
+        const chunkNumber = (offset / COPY_BATCH_MAX_ENTRIES) + 1;
+        const copyStepName = chunkNumber === 1 ? "copy-batch" : `copy-batch-${chunkNumber}`;
+        const started = await step.do(copyStepName, async () => {
+          const result = await copyBatch(this.env, dbFor(this.env), submitted);
+          if (result[".tag"] === "complete") {
+            throwOnCopyFailures(result.entries, submitted);
+            return { asyncJobId: null };
+          }
+          return { asyncJobId: result.async_job_id };
+        });
+
+        let asyncJobId = started.asyncJobId;
+        for (let attempt = 1; asyncJobId && attempt <= COPY_BATCH_MAX_POLLS; attempt += 1) {
+          await step.sleep(`copy-batch-wait-${chunkNumber}-${attempt}`, "2 seconds");
+          const check = await step.do(`copy-batch-check-${chunkNumber}-${attempt}`, async () => {
+            const result = await copyBatchCheck(this.env, dbFor(this.env), asyncJobId!);
+            if (result[".tag"] === "complete") {
+              throwOnCopyFailures(result.entries, submitted);
+              return { complete: true };
+            }
+            return { complete: false };
+          });
+          if (check.complete) asyncJobId = null;
+        }
+        if (asyncJobId) throw new Error(`Dropbox copy_batch_v2 did not complete after ${COPY_BATCH_MAX_POLLS} checks`);
       }
-      await step.do("mark-autohdr-stuck", async () => {
-        await setJobStatus(dbFor(this.env), input.jobId, "stuck", "Timed out waiting for autoHDR return files after 48 hours");
-        return { status: "stuck" };
+
+      for (const asset of transfers.fallback) {
+        await step.do(`copy-fallback-${asset.id}`, async () => {
+          const object = await this.env.MEDIA.get(asset.r2Key);
+          if (!object) throw new Error(`Original RAW asset ${asset.id} is missing from R2`);
+          await upload(this.env, dbFor(this.env), `${inputPath}/${asset.originalFilename}`, object.body);
+          return { assetId: asset.id };
+        });
+      }
+
+      await step.do("complete-send", async () => {
+        await setJobStatus(dbFor(this.env), input.jobId, "done");
+        return { status: "done" };
       });
     } catch (error) {
       await setJobStatus(dbFor(this.env), input.jobId, "failed", errorMessage(error));

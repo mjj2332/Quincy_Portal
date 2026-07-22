@@ -318,3 +318,66 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/other agents 
 - [ ] Rotate/retire the production `BETTER_AUTH_SECRET`: the gate-rotation value still sits in
   gitignored `portal/workers/app/.prod-secrets.local` (confirmed present) — user should move
   it to the password manager and delete the file.
+
+**Wave: AutoHDR per-project send + fetch (2026-07-22, DEPLOYED to prod — pending real-sample test)**
+- Deployed from branch `fix/p0-p3-qa` (pushed; NOT yet merged to `main` — prod is ahead of main).
+  background version `2e037ae2`, app version `08061c24`. Live route `POST /api/projects/:id/fetch-edited`
+  verified 403-gated in prod; homepage 200.
+- Replaced the fixed-path `AutoHdrRoundtrip` (48h auto-poll) with two decoupled per-project
+  operations against AutoHDR's own Dropbox layout (`/AutoHDR/<listing>/01-RAW-Photos` in,
+  `04-FINAL-Photos` out — see `docs/lessons.md` for the doc discrepancies).
+- `<listing>` folder name = the project RAW folder path with its final segment dropped
+  (`.../4 McGowen Ave.../Listing Images` → `4 McGowen Ave...`); pure helper +
+  unit tests in `workers/background/src/autohdr/paths.ts`.
+- **Send** (`AutoHdrSend`): one-shot per-file copy of selected RAW → `01-RAW-Photos`
+  (Dropbox auto-creates parents); refuses duplicate case-insensitive filenames; stays
+  `editing_autohdr`.
+- **Fetch** (`AutoHdrFetch`, on-demand button on the Edited tab): lists `04-FINAL-Photos`
+  (falls back to `04-FINALS-Photos`; missing folder = "0 finals yet", not an error via
+  `listFolderIfExists`), ingests new JPEGs (accepted-photo filter) into the `edited`
+  collection, pairs to RAW by plain basename with a `_vs`/`_staged` suffix fallback,
+  advances `editing_autohdr → edited_review` only when every selected RAW has a returned
+  edit (conditional, no stage regression).
+- Concurrency: `fetchEditedFromAutoHdr` is single-flight per project (returns the active
+  queued/running job) since edited assets have no unique DB constraint. Both routes reject
+  archived projects (409); jobs panel + retry handle `fetch_edited` alongside `autohdr`.
+- **Deferred (known, revisit with a real AutoHDR output sample):** exact final-folder
+  spelling; whether bracket-merged finals map 1:1 to RAW basenames (if not, unmatched
+  finals still ingest with `source_raw_asset_id = null` — no data lost — but auto
+  stage-advance may stall and need a manual move).
+**Wave: durable Dropbox sync + server-side copy_batch send (2026-07-22, DEPLOYED + live-verified)**
+- `assets.source_path` captured at ingest (migration 0007, applied to prod directly as
+  `ALTER TABLE assets ADD COLUMN source_path text`). Sync bounds downloads at 150/run with an
+  auto-continuation (fixes "Too many subrequests" on large folders); reconciles hashless files by
+  source_path so continuations terminate.
+- AutoHDR send now copies Dropbox-sourced RAW **server-side** via `/files/copy_batch_v2` (R2-upload
+  fallback for non-Dropbox assets) — **user-verified near-instant** in prod. copy_batch parsing is
+  defensive to Dropbox's inconsistent union serialization (never throws post-copy); destination-
+  conflict tolerance makes re-sends idempotent. background version `f9c7427d`.
+- Follow-ups (not blocking):
+  - [ ] Harden project DELETE: a stale `queued`/orphaned job blocks it forever (409). A stale
+    `queued` dropbox_sync on `0bd99fef` blocked the McGowen dedupe; reaped manually 2026-07-22.
+    Reap/ignore jobs past a staleness threshold, or clear terminal-eligible jobs on archive.
+  - [ ] Add a partial unique index on `(collection_id, content_hash) WHERE content_hash IS NOT NULL`
+    (+ dedup existing rows first) so concurrent sync runs can't insert duplicate assets (queue
+    at-least-once redelivery race; sol F+G #2).
+
+**Wave: archived view + manual edited uploads + Edited-QA sectioning (2026-07-22, DEPLOYED)**
+- Admin **Archived projects view** (`GET /projects?archived=1`, adminBackend-only + Dashboard
+  Active/Archived toggle) — fixes the catch-22 where archived projects were unreachable for
+  restore/delete. app `b3ec2faf`.
+- **Manual edited uploads**: new `uploadEdited` capability (admin+editor); upload pipeline
+  (presign/direct/complete/`finalizeIngest`) parameterized by collection → can target the edited
+  collection (`source='upload'`, no RAW pairing); Edited-tab uploader beside "Fetch edited from
+  autoHDR". All upload routes now reject archived projects.
+- **Edited-QA sectioning**: AutoHDR fetch tags `section='AutoHDR'`, manual upload tags `'Manual'`;
+  Edited tab groups by section like RAW QA. Fetch dedup scoped to `source='dropbox'` so a manual
+  edit can't suppress an AutoHDR result.
+- Follow-up (not blocking): [ ] validate JPEG magic bytes from R2 on ingest (both RAW and edited
+  currently trust the extension — pre-existing gap; sol H+I+J #3).
+- [ ] **USER/testing (not yet available):** validate the fetch flow against a real AutoHDR
+  `04-FINAL(S)-Photos` sample once one exists — confirm the exact finals-folder spelling
+  (`04-FINAL-Photos` vs `04-FINALS-Photos`) and the finished-filename ↔ RAW basename mapping,
+  especially for bracket-merged sets. Adjust the fetch matcher / stage-advance rule if names
+  don't map 1:1. Code currently reads BOTH spellings and ingests unmatched finals as
+  `source_raw_asset_id = null` so nothing is lost meanwhile.

@@ -50,6 +50,13 @@
       "when": 1784639542323,
       "tag": "0006_purple_inhumans",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1784672325404,
+      "tag": "0007_soft_catseye",
+      "breakpoints": true
     }
   ]
 }
