@@ -81,7 +81,8 @@ Full detail in **`Personas.md`**. Three internal roles + the external client.
 | Comment / annotate **RAW** | ✓ | ✓ | ✓ | ✗ |
 | View **RAW** images | ✓ | ✓ | ✓ | ✗ |
 | Recommend RAW frames (suggest to QA) | ✓ | ✓ | ✓ | ✗ |
-| **Select RAW → send to autoHDR** | ✓ | ✗ | ✓ | ✗ |
+| **Select RAW for editing** | ✓ | ✗ | ✓ | ✗ |
+| **Execute AutoHDR handoff** | ✓ | ✗ | ✗ | ✗ |
 | View / QA **Edited** images | ✓ | ✗ | ✓ | ✗ |
 | Comment / annotate **Edited** | ✓ | ✗ | ✓ | ✗ |
 | Compare images side-by-side | ✓ | ✓ | ✓ | ✗ |
@@ -95,6 +96,7 @@ Full detail in **`Personas.md`**. Three internal roles + the external client.
 - A Photographer **cannot** see the client delivery page — they are scoped to RAW on their assigned shoots only.
 - **Project creation is Admin-only.** Editor/QA work within projects Admin sets up.
 - **Video, floorplan and copywriting** can be managed by **both Admin and Editor/QA** (`canManageExtras`).
+- **AutoHDR is an internal, Admin-only workflow.** Editor/QA can select RAWs for editing, but only Admin can execute the AutoHDR handoff. Non-admin staff see the neutral **Editing** stage and status; AutoHDR's name, provider details, watch-folder details, and handoff metadata are not part of their API projections. This privacy boundary must be enforced by API authorization and response projection, not by hiding controls in the UI.
 
 ---
 
@@ -167,10 +169,11 @@ between stages are where QA happens.
 - Editor/QA reviews all RAWs, compares similar frames, annotates, and sees photographer recommendations.
 - Editor/QA **selects** (a state separate from approve) the RAWs that should be edited, then sends them to autoHDR.
 
-**3. Editing — autoHDR handoff** ✅ Built
-- Selected RAWs are **copied to a Dropbox folder that autoHDR monitors**; autoHDR retouches them automatically.
+**3. Editing — internal handoff** ✅ Built
+- The Admin-only AutoHDR workflow copies selected RAWs to a Dropbox folder that AutoHDR monitors; AutoHDR retouches them automatically.
+- Non-admin staff see this stage and its progress using the neutral **Editing** label. AutoHDR-specific provider and handoff details are admin-only and must be omitted from non-admin API responses, not merely hidden in the UI.
 - Edited images come back into the project as the **Edited** set, shown with a "Processing → Returned" status.
-- _Planned:_ sending images directly to autoHDR via API (not implemented yet).
+- _Planned:_ sending images directly to AutoHDR via API (not implemented yet).
 
 **4. Edited QA** ✅ Built
 - Editor/QA reviews the edited images, approves / flags, rates, labels, annotates.
@@ -259,7 +262,7 @@ Implemented stages, shown on the dashboard and project rail:
 |---|---|---|
 | 1 | **Awaiting RAW** | Project created, no RAW uploaded yet |
 | 2 | **RAW review** | RAW uploaded, QA selecting |
-| 3 | **Editing · autoHDR** | Selected RAWs copied to autoHDR's Dropbox folder |
+| 3 | **Editing** | Selected RAWs are in the internal admin-only AutoHDR workflow; non-admin API projections expose only the neutral stage/status |
 | 4 | **Edited review** | Edits returned, QA reviewing |
 | 5 | **Client review** | Published to client _(optional gate)_ |
 | 6 | **Delivered** | Final media delivered |
@@ -382,8 +385,7 @@ Six npm workspaces — three deployable Workers, one SPA, two shared libraries:
   (`Dropbox-API-Path-Root`); needs `sharing.read` for `scl/fo/…` shared-link folders.
 - **Tonomo** — booking webhooks auto-create pre-filled projects at *Awaiting RAW*
   (§4a); DO-serialized processing.
-- **autoHDR** — external editor that watches a Dropbox folder; integration is via
-  Dropbox today (direct API is planned).
+- **autoHDR** — internal, **Admin-only** editing workflow that watches a Dropbox folder; integration is via Dropbox today (direct API is planned). Non-admin API projections use the neutral **Editing** label and omit provider, folder, and handoff details; authorization and projection are enforced at the API boundary, independently of UI visibility.
 - **Vimeo** — films delivered as links/tiles (direct upload planned).
 
 ### 8.7 Environments & delivery

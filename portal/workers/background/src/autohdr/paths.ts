@@ -6,18 +6,29 @@ export const AUTOHDR_FINAL_SUBFOLDER_CANDIDATES = ["04-FINAL-Photos", "04-FINALS
 
 export function deriveAutoHdrFolderName(rawFolderPath: string): string {
   const segments = normalisePath(rawFolderPath).split("/").filter(Boolean);
-  if (segments.length < 2) throw new Error(`Cannot derive AutoHDR folder name from RAW folder path: ${rawFolderPath}`);
-  return segments.at(-2)!;
+  const lastSegment = segments.at(-1);
+  if (!lastSegment || (lastSegment.toLowerCase() === "listing images" && segments.length < 2)) {
+    throw new Error(`Cannot derive AutoHDR folder name from RAW folder path: ${rawFolderPath}`);
+  }
+  return lastSegment.toLowerCase() === "listing images" ? segments.at(-2)! : lastSegment;
 }
 
 export function autoHdrRawInputPath(folderName: string): string {
   return `${AUTOHDR_ROOT}/${folderName}/${AUTOHDR_RAW_SUBFOLDER}`;
 }
 
-/** Rebuilds a legacy Dropbox source path when the asset predates `assets.source_path`. */
+/** Rebuilds a legacy Dropbox source path when the asset predates `assets.source_path`.
+ * Returns an empty path for malformed legacy metadata so callers use their R2-copy fallback. */
 export function reconstructSourcePath(rawFolderPath: string, section: string | null, filename: string): string {
-  const basePath = normalisePath(rawFolderPath).replace(/\/+$/, "");
-  return section ? `${basePath}/${section}/${filename}` : `${basePath}/${filename}`;
+  const baseSegments = normalisePath(rawFolderPath).split("/").filter(Boolean);
+  const sectionSegments = section ? section.split("/") : [];
+  const segments = [...baseSegments, ...sectionSegments, filename];
+  if (baseSegments.length === 0 || segments.some((segment) => !isSafeDropboxPathSegment(segment))) return "";
+  return `/${segments.join("/")}`;
+}
+
+function isSafeDropboxPathSegment(segment: string): boolean {
+  return Boolean(segment) && segment !== "." && segment !== ".." && !/[\\/]/.test(segment);
 }
 
 export function autoHdrFinalPathCandidates(folderName: string): string[] {

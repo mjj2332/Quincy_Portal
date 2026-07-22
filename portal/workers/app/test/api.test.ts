@@ -511,6 +511,34 @@ describe("staff app API", () => {
     expect(response.status).toBe(403); await expect(response.json()).resolves.toEqual({ error: "Forbidden", capability: "editProject" });
   });
 
+  it("returns project assets in deterministic case-insensitive filename order", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const created = await SELF.fetch("https://portal.test/api/projects", { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ street: "Asset filename ordering", orderedServices: [] }) });
+    expect(created.status).toBe(201);
+    const project = await created.json() as { id: string };
+    const raw = await database.DB.prepare("SELECT id FROM collections WHERE project_id = ? AND kind = 'raw'").bind(project.id).first<{ id: string }>();
+    const rows = [
+      ["ffffffff-ffff-4fff-8fff-ffffffffffff", "zebra.jpg", 1],
+      ["00000000-0000-4000-8000-000000000002", "alpha.jpg", 2],
+      ["00000000-0000-4000-8000-000000000001", "alpha.jpg", 3],
+      ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "Alpha.jpg", 4],
+      ["bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "Bravo.jpg", 5],
+    ] as const;
+    await database.DB.batch(rows.map(([id, filename, createdAt]) => database.DB.prepare(
+      "INSERT INTO assets (id, collection_id, r2_key, original_filename, bytes, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    ).bind(id, raw!.id, `tests/${id}.jpg`, filename, 1024, "upload", createdAt, createdAt)));
+
+    const response = await SELF.fetch(`https://portal.test/api/projects/${project.id}/assets?collection=raw`, { headers: { cookie } });
+    expect(response.status).toBe(200);
+    expect((await response.json() as { assets: Array<{ id: string; originalFilename: string }> }).assets.map(({ id, originalFilename }) => [originalFilename, id])).toEqual([
+      ["Alpha.jpg", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"],
+      ["alpha.jpg", "00000000-0000-4000-8000-000000000001"],
+      ["alpha.jpg", "00000000-0000-4000-8000-000000000002"],
+      ["Bravo.jpg", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"],
+      ["zebra.jpg", "ffffffff-ffff-4fff-8fff-ffffffffffff"],
+    ]);
+  });
+
   it("uses the alphabetically first RAW asset as the automatic cover", async () => {
     const cookie = await sessionCookie(adminToken);
     const created = await SELF.fetch("https://portal.test/api/projects", { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ street: "Automatic cover", orderedServices: [] }) });
@@ -993,6 +1021,68 @@ describe("staff app API", () => {
     await expect(listed.json()).resolves.toMatchObject({ agencies: [expect.objectContaining({ id: agency.id, agentCount: 1 })] });
     const filtered = await SELF.fetch(`https://portal.test/api/admin/agents?agencyId=${agency.id}`, { headers: { cookie: adminCookie } });
     await expect(filtered.json()).resolves.toMatchObject({ agents: [expect.objectContaining({ id: agent.id, phone: "0411 111 111" })] });
+  });
+
+  it("projects AutoHDR state and restricts operational routes to the admin backend", async () => {
+    const adminCookie = await sessionCookie(adminToken);
+    const created = await SELF.fetch("https://portal.test/api/projects", {
+      method: "POST",
+      headers: { cookie: adminCookie, "content-type": "application/json" },
+      body: JSON.stringify({ street: "AutoHDR privacy", orderedServices: [], editorUserIds: [editorId], photographerUserIds: [firstPhotographerId] }),
+    });
+    expect(created.status).toBe(201);
+    const project = await created.json() as { id: string; stageKey: string };
+    await database.DB.prepare("UPDATE projects SET stage_key = ? WHERE id = ?").bind("editing_autohdr", project.id).run();
+
+    const [adminList, editorList, photographerList, adminDetail, editorDetail, photographerDetail, adminStages, editorStages, photographerStages] = await Promise.all([
+      SELF.fetch("https://portal.test/api/projects", { headers: { cookie: adminCookie } }),
+      SELF.fetch("https://portal.test/api/projects", { headers: { cookie: await sessionCookie(editorToken) } }),
+      SELF.fetch("https://portal.test/api/projects", { headers: { cookie: await sessionCookie(firstPhotographerToken) } }),
+      SELF.fetch(`https://portal.test/api/projects/${project.id}`, { headers: { cookie: adminCookie } }),
+      SELF.fetch(`https://portal.test/api/projects/${project.id}`, { headers: { cookie: await sessionCookie(editorToken) } }),
+      SELF.fetch(`https://portal.test/api/projects/${project.id}`, { headers: { cookie: await sessionCookie(firstPhotographerToken) } }),
+      SELF.fetch("https://portal.test/api/stages", { headers: { cookie: adminCookie } }),
+      SELF.fetch("https://portal.test/api/stages", { headers: { cookie: await sessionCookie(editorToken) } }),
+      SELF.fetch("https://portal.test/api/stages", { headers: { cookie: await sessionCookie(firstPhotographerToken) } }),
+    ]);
+    const stageFor = async (response: Response) => (await response.json() as { projects: Array<{ id: string; stageKey: string }> }).projects.find((item) => item.id === project.id)?.stageKey;
+    await expect(stageFor(adminList)).resolves.toBe("editing_autohdr");
+    await expect(stageFor(editorList)).resolves.toBe("editing");
+    await expect(stageFor(photographerList)).resolves.toBe("editing");
+    await expect(adminDetail.json()).resolves.toMatchObject({ stageKey: "editing_autohdr" });
+    await expect(editorDetail.json()).resolves.toMatchObject({ stageKey: "editing" });
+    await expect(photographerDetail.json()).resolves.toMatchObject({ stageKey: "editing" });
+    for (const response of [adminStages, editorStages, photographerStages]) expect(response.status).toBe(200);
+    const stageKeys = async (response: Response) => (await response.json() as { stages: Array<{ key: string; label: string }> }).stages;
+    await expect(stageKeys(adminStages)).resolves.toEqual(expect.arrayContaining([expect.objectContaining({ key: "editing_autohdr" })]));
+    for (const response of [editorStages, photographerStages]) {
+      const stages = await stageKeys(response);
+      expect(stages).toEqual(expect.arrayContaining([expect.objectContaining({ key: "editing", label: "Editing" })]));
+      expect(stages).not.toEqual(expect.arrayContaining([expect.objectContaining({ key: "editing_autohdr" })]));
+    }
+
+    const editorCookie = await sessionCookie(editorToken); const photographerCookie = await sessionCookie(firstPhotographerToken);
+    const denied = await Promise.all([
+      ...[editorCookie, photographerCookie].flatMap((cookie) => [
+        SELF.fetch(`https://portal.test/api/projects/${project.id}/send-to-autohdr`, { method: "POST", headers: { cookie } }),
+        SELF.fetch(`https://portal.test/api/projects/${project.id}/fetch-edited`, { method: "POST", headers: { cookie } }),
+        SELF.fetch(`https://portal.test/api/projects/${project.id}/jobs`, { headers: { cookie } }),
+        SELF.fetch(`https://portal.test/api/jobs/${crypto.randomUUID()}/retry`, { method: "POST", headers: { cookie } }),
+      ]),
+    ]);
+    for (const response of denied) {
+      expect(response.status).toBe(403);
+      await expect(response.json()).resolves.toEqual({ error: "Forbidden", capability: "adminBackend" });
+    }
+    const internalStageDenied = await SELF.fetch(`https://portal.test/api/projects/${project.id}/stage`, { method: "POST", headers: { cookie: editorCookie, "content-type": "application/json" }, body: JSON.stringify({ stageKey: "editing_autohdr" }) });
+    expect(internalStageDenied.status).toBe(403);
+    await expect(internalStageDenied.json()).resolves.toEqual({ error: "Forbidden" });
+
+    const persisted = await database.DB.prepare("SELECT stage_key FROM projects WHERE id = ?").bind(project.id).first<{ stage_key: string }>();
+    expect(persisted).toEqual({ stage_key: "editing_autohdr" });
+    const adminMutation = await SELF.fetch(`https://portal.test/api/projects/${project.id}/stage`, { method: "POST", headers: { cookie: adminCookie, "content-type": "application/json" }, body: JSON.stringify({ stageKey: "editing" }) });
+    expect(adminMutation.status).toBe(400);
+    await expect(adminMutation.json()).resolves.toEqual({ error: "Unknown stage" });
   });
 
   it("seeds stages on first read, serves them to photographers, and protects the system stage", async () => {

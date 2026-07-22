@@ -85,6 +85,13 @@
   terminal state themselves (archived/deleted) before writing — trigger-side checks are
   TOCTOU by construction.
 
+- **AutoHDR privacy is an API-boundary requirement, not a UI concern.** AutoHDR is an internal,
+  Admin-only workflow. Editor/QA may select RAWs for editing, but only Admin may execute the
+  handoff or receive provider, watch-folder, and handoff metadata. **Rule:** project/job
+  endpoints must authorize the Admin-only operations and project those fields out of every
+  non-admin response; expose the neutral **Editing** label/status to non-admin staff. Hiding an
+  AutoHDR control in the SPA is not enforcement, because callers can bypass the UI.
+
 ## Image renditions / Cloudflare Images (2026-07-21)
 
 - **Don't fire N concurrent live transforms of large originals.** Thumbnails were served by

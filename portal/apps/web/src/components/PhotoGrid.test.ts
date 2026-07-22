@@ -36,6 +36,26 @@ describe("groupWorkspaceAssetsBySection", () => {
     expect(cycleLightboxIndex(order.length - 1, 1, order.length)).toBe(0);
   });
 
+  it("preserves API-provided order within sections while presenting Captures then sections", () => {
+    const assets = [
+      { ...asset("kitchen-zebra", "Kitchen"), originalFilename: "zebra.jpg" },
+      { ...asset("capture-zebra", null), originalFilename: "capture-zebra.jpg" },
+      { ...asset("balcony-alpha", "Balcony"), originalFilename: "alpha.jpg" },
+      { ...asset("capture-alpha", null), originalFilename: "capture-alpha.jpg" },
+      { ...asset("kitchen-alpha", "Kitchen"), originalFilename: "alpha.jpg" },
+    ];
+    const markup = renderToStaticMarkup(createElement(PhotoGrid, {
+      assets, showSections: true,
+      canReview: true, canRecommend: false, canSelect: false, canSetCover: false,
+      coverAssetId: null, storedCoverAssetId: null,
+      onSetCover: async () => undefined, onOpen: () => undefined, onReview: async () => undefined, onSelection: async () => undefined,
+    }));
+    expect(markup.indexOf(">Captures<")).toBeLessThan(markup.indexOf(">Balcony<"));
+    expect(markup.indexOf(">Balcony<")).toBeLessThan(markup.indexOf(">Kitchen<"));
+    expect(markup.indexOf("capture-zebra.jpg")).toBeLessThan(markup.indexOf("capture-alpha.jpg"));
+    expect(markup.indexOf("zebra.jpg")).toBeLessThan(markup.indexOf("alpha.jpg", markup.indexOf(">Kitchen<")));
+  });
+
   it("renders Edited QA as one flat workspace grid without section headings", () => {
     const markup = renderToStaticMarkup(createElement(PhotoGrid, {
       assets: [asset("root", null), asset("kitchen", "Kitchen")], showSections: false,

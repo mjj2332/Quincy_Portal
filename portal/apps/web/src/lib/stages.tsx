@@ -1,16 +1,38 @@
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { DEFAULT_STAGES, isStageKey, type StageKey } from "@quincy/shared";
 import { apiGet } from "./api";
+import { useCapabilities } from "./capabilities";
 
-export type PipelineStage = { key: StageKey; label: string; displayOrder: number; active: boolean };
+export type ProjectStageKey = StageKey | "editing";
+export type PipelineStage = { key: ProjectStageKey; label: string; displayOrder: number; active: boolean };
 type StagesContextValue = { stages: readonly PipelineStage[]; isLoading: boolean; refreshStages: () => Promise<void> };
 
 const fallbackStages: readonly PipelineStage[] = DEFAULT_STAGES.map((stage) => ({ ...stage, active: true }));
 const StagesContext = createContext<StagesContextValue>({ stages: fallbackStages, isLoading: true, refreshStages: async () => {} });
 
+function isProjectStageKey(value: string): value is ProjectStageKey {
+  return value === "editing" || isStageKey(value);
+}
+
+export function presentationStageKey(stageKey: ProjectStageKey, canAdminBackend: boolean): ProjectStageKey {
+  return !canAdminBackend && stageKey === "editing_autohdr" ? "editing" : stageKey;
+}
+
+export function presentationStages(stages: readonly PipelineStage[], canAdminBackend: boolean): readonly PipelineStage[] {
+  if (canAdminBackend || stages.some((stage) => stage.key === "editing")) return stages;
+
+  const internalStage = stages.find((stage) => stage.key === "editing_autohdr");
+  const editingOrder = internalStage?.displayOrder ?? (stages.find((stage) => stage.key === "raw_review")?.displayOrder ?? 0) + 0.5;
+  const neutralEditingStage: PipelineStage = { key: "editing", label: "Editing", displayOrder: editingOrder, active: internalStage?.active ?? true };
+  return [
+    ...stages.filter((stage) => stage.key !== "editing_autohdr"),
+    neutralEditingStage,
+  ].sort((left, right) => left.displayOrder - right.displayOrder);
+}
+
 function loadStages(): Promise<readonly PipelineStage[]> {
   return apiGet<{ stages: Array<{ key: string; label: string; displayOrder: number; active: boolean }> }>("/api/stages")
-    .then(({ stages }) => stages.filter((stage): stage is PipelineStage => isStageKey(stage.key)));
+    .then(({ stages }) => stages.filter((stage): stage is PipelineStage => isProjectStageKey(stage.key)));
 }
 
 export function StagesProvider({ children }: { children: ReactNode }) {
@@ -33,5 +55,11 @@ export function StagesProvider({ children }: { children: ReactNode }) {
 }
 
 export function useStages() {
-  return useContext(StagesContext);
+  const context = useContext(StagesContext);
+  const { can } = useCapabilities();
+  const canAdminBackend = can("adminBackend");
+  const stages = useMemo(() => presentationStages(context.stages, canAdminBackend), [canAdminBackend, context.stages]);
+  const visibleStageKey = useCallback((stageKey: ProjectStageKey) => presentationStageKey(stageKey, canAdminBackend), [canAdminBackend]);
+
+  return { ...context, stages, presentationStageKey: visibleStageKey };
 }

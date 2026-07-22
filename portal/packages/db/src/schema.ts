@@ -291,7 +291,7 @@ export const assets = sqliteTable(
     height: integer("height"),
     contentHash: text("content_hash"),
     source: text("source", { enum: ["upload", "dropbox", "tonomo"] }).notNull(),
-    /** Original provider path, retained for source-system handoffs such as AutoHDR. */
+    /** Original provider path captured at ingest for source-system handoffs such as AutoHDR; legacy rows may be NULL. */
     sourcePath: text("source_path"),
     /** XMP xmp:Rating read at ingest; NULL = unrated (never coerce to 0). */
     ratingFromMetadata: integer("rating_from_metadata"),
