@@ -7,6 +7,7 @@
   "compatibility_date": "2026-07-01",
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
   "observability": { "enabled": true },
+  "triggers": { "crons": ["0 * * * *"] },
   "d1_databases": [
     { "binding": "DB", "database_name": "quincy-portal", "database_id": "1d36b42e-f1e6-4659-8c9e-70afe822b6fa" }
   ],

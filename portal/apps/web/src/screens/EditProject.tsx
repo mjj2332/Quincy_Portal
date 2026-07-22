@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import type { CollectionKind } from "@quincy/shared";
 import { ProjectFields, emptyProjectForm, type ProjectFieldError, type ProjectForm, type ProjectSelectionField, type ProjectTextField, validateProjectFields } from "../components/ProjectFields";
-import { ApiError, apiGet, apiPatch, apiPost } from "../lib/api";
+import { apiGet, apiPatch, apiPost } from "../lib/api";
 import { useCapabilities } from "../lib/capabilities";
 
 type ProjectResponse = {
@@ -11,27 +11,21 @@ type ProjectResponse = {
   collections: Array<{ id: string; kind: CollectionKind }>; members: Array<{ userId: string; roleOnProject: "photographer" | "editor" }>;
 };
 type FormErrors = Partial<Record<"street" | ProjectFieldError, string>>;
-type ServiceRemovalBlock = { kind: CollectionKind; assetCount: number; manifestCount?: number };
 
 function fieldValue(value: string | number | null): string { return value === null ? "" : String(value); }
 function optionalValue(value: string): string | null { return value.trim() || null; }
-function serviceLabel(kind: CollectionKind): string { return kind === "raw" ? "RAW" : kind.charAt(0).toUpperCase() + kind.slice(1); }
-
-function blockedServiceMessage(reason: unknown): string | undefined {
-  if (!(reason instanceof ApiError) || reason.status !== 409 || !reason.details || typeof reason.details !== "object") return undefined;
-  const blocked = (reason.details as { blocked?: unknown }).blocked;
-  if (!Array.isArray(blocked) || !blocked.length) return undefined;
-  const details = blocked.filter((item): item is ServiceRemovalBlock => Boolean(item) && typeof item === "object" && typeof (item as { kind?: unknown }).kind === "string" && typeof (item as { assetCount?: unknown }).assetCount === "number")
-    .map((item) => {
-      const parts = [item.assetCount > 0 ? `${item.assetCount} asset${item.assetCount === 1 ? "" : "s"}` : null, (item.manifestCount ?? 0) > 0 ? `${item.manifestCount} pending upload${item.manifestCount === 1 ? "" : "s"}` : null].filter(Boolean);
-      return `${serviceLabel(item.kind)} (${parts.join(", ") || "received media"})`;
-    });
-  return details.length ? `Can’t remove ${details.join(", ")}: media has been received or is being uploaded.` : undefined;
-}
-
 function formFromProject(project: ProjectResponse): ProjectForm {
   return {
     street: project.street, suburb: fieldValue(project.suburb), postcode: fieldValue(project.postcode), agencyName: fieldValue(project.agencyName), agentName: fieldValue(project.agentName), agentEmail: fieldValue(project.agentEmail), agentPhone: fieldValue(project.agentPhone), shootDate: fieldValue(project.shootDate), timeWindow: fieldValue(project.timeWindow), orderNo: fieldValue(project.orderNo), orderId: fieldValue(project.orderId), invoiceAmount: fieldValue(project.invoiceAmount), paymentStatus: fieldValue(project.paymentStatus), notes: fieldValue(project.notes), rawFolderLink: fieldValue(project.rawFolderLink), rawFolderPath: fieldValue(project.rawFolderPath), orderedServices: project.collections.flatMap((collection) => collection.kind === "raw" ? [] : [collection.kind]), photographerUserIds: project.members.filter((member) => member.roleOnProject === "photographer").map((member) => member.userId), editorUserIds: project.members.filter((member) => member.roleOnProject === "editor").map((member) => member.userId),
+  };
+}
+
+export function editProjectPayload(form: ProjectForm): Record<string, unknown> {
+  return {
+    street: form.street.trim(), suburb: optionalValue(form.suburb), postcode: optionalValue(form.postcode),
+    agencyName: optionalValue(form.agencyName), agentName: optionalValue(form.agentName), agentEmail: optionalValue(form.agentEmail), agentPhone: optionalValue(form.agentPhone),
+    shootDate: optionalValue(form.shootDate), timeWindow: optionalValue(form.timeWindow), rawFolderLink: optionalValue(form.rawFolderLink), rawFolderPath: optionalValue(form.rawFolderPath),
+    photographerUserIds: form.photographerUserIds, editorUserIds: form.editorUserIds,
   };
 }
 
@@ -57,7 +51,7 @@ export function EditProject({ projectId, onCancel, onSaved }: { projectId: strin
 
   function updateField(field: ProjectTextField, value: string) {
     setForm((current) => ({ ...current, [field]: value }));
-    if (field === "street" || field === "agentEmail" || field === "rawFolderLink" || field === "invoiceAmount") setErrors((current) => ({ ...current, [field]: undefined }));
+    if (field === "street" || field === "agentEmail" || field === "rawFolderLink") setErrors((current) => ({ ...current, [field]: undefined }));
     setSubmitError(undefined);
   }
 
@@ -67,26 +61,15 @@ export function EditProject({ projectId, onCancel, onSaved }: { projectId: strin
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const nextErrors: FormErrors = { street: form.street.trim() ? undefined : "Enter the property street address.", ...validateProjectFields(form) };
+    const nextErrors: FormErrors = { street: form.street.trim() ? undefined : "Enter the property street address.", ...validateProjectFields(form, "edit") };
     setErrors(nextErrors); setSubmitError(undefined);
     if (Object.values(nextErrors).some(Boolean)) return;
     setIsSubmitting(true);
     try {
-      const invoiceAmount = form.invoiceAmount.trim();
-      await apiPatch<ProjectResponse, Record<string, unknown>>(`/api/projects/${projectId}`, {
-        street: form.street.trim(), suburb: optionalValue(form.suburb), postcode: optionalValue(form.postcode), agencyName: optionalValue(form.agencyName), agentName: optionalValue(form.agentName), agentEmail: optionalValue(form.agentEmail), agentPhone: optionalValue(form.agentPhone), shootDate: optionalValue(form.shootDate), timeWindow: optionalValue(form.timeWindow), orderNo: optionalValue(form.orderNo), orderId: optionalValue(form.orderId), invoiceAmount: invoiceAmount ? Number(invoiceAmount) : null, paymentStatus: optionalValue(form.paymentStatus), notes: optionalValue(form.notes), rawFolderLink: optionalValue(form.rawFolderLink), rawFolderPath: optionalValue(form.rawFolderPath), orderedServices: form.orderedServices, photographerUserIds: form.photographerUserIds, editorUserIds: form.editorUserIds,
-      });
+      await apiPatch<ProjectResponse, Record<string, unknown>>(`/api/projects/${projectId}`, editProjectPayload(form));
       onSaved("Shoot details saved.");
     } catch (reason) {
-      const blockedMessage = blockedServiceMessage(reason);
-      if (blockedMessage) {
-        setSubmitError(blockedMessage);
-        try {
-          const current = await apiGet<ProjectResponse>(`/api/projects/${projectId}`);
-          setProject(current);
-          setForm(formFromProject(current));
-        } catch { /* Keep the safety error visible even if the re-sync request fails. */ }
-      } else setSubmitError(reason instanceof Error ? reason.message : "The shoot details could not be saved.");
+      setSubmitError(reason instanceof Error ? reason.message : "The shoot details could not be saved.");
     }
     finally { setIsSubmitting(false); }
   }
@@ -130,7 +113,7 @@ export function EditProject({ projectId, onCancel, onSaved }: { projectId: strin
     <form className="create-project__form" onSubmit={(event) => void submit(event)} noValidate>
       {submitError && <div className="notice" role="alert">{submitError}</div>}
       <section className="create-project__section" aria-labelledby="property-heading"><div className="create-project__section-head"><div className="ey">Property</div><h2 className="serif" id="property-heading">Where is the shoot?</h2></div><div className="create-project__fields create-project__fields--property"><label className="admin-field create-project__field--wide"><span>Street *</span><input required value={form.street} onChange={(event) => updateField("street", event.target.value)} aria-invalid={Boolean(errors.street)} />{errors.street && <small>{errors.street}</small>}</label><label className="admin-field"><span>Suburb</span><input value={form.suburb} onChange={(event) => updateField("suburb", event.target.value)} /></label><label className="admin-field"><span>Postcode</span><input inputMode="numeric" value={form.postcode} onChange={(event) => updateField("postcode", event.target.value)} /></label></div></section>
-      <ProjectFields form={form} errors={errors} existingCollections={project.collections.map((collection) => collection.kind)} onChange={updateField} onToggle={toggleValue} />
+      <ProjectFields form={form} errors={errors} existingCollections={project.collections.map((collection) => collection.kind)} mode="edit" onChange={updateField} onToggle={toggleValue} />
       <div className="create-project__actions"><button className="button button--secondary" type="button" onClick={onCancel} disabled={isSubmitting}>Cancel</button><button className="button" type="submit" disabled={isSubmitting}>{isSubmitting ? "Saving details…" : "Save changes"}</button></div>
     </form>
     {can("adminBackend") && <section className="danger-zone" aria-labelledby="danger-zone-heading"><div><div className="ey">Danger zone</div><h2 className="serif" id="danger-zone-heading">Project lifecycle</h2></div>{dangerError && <div className="notice" role="alert">{dangerError}</div>}{dangerNotice && <div className="danger-zone__notice" role="status">{dangerNotice}</div>}{!archived ? <div className="danger-zone__action"><div><strong>Archive project</strong><p>Archived projects are hidden from the dashboard but remain recoverable.</p></div><button className="button button--secondary" type="button" disabled={isDangerAction} onClick={() => void archiveProject()}>{isDangerAction ? "Archiving…" : "Archive project"}</button></div> : <><div className="danger-zone__action"><div><strong>Restore project</strong><p>Return this project to the dashboard and active production work.</p></div><button className="button button--secondary" type="button" disabled={isDangerAction} onClick={() => void restoreProject()}>{isDangerAction ? "Restoring…" : "Restore project"}</button></div><div className="danger-zone__delete"><div><strong>Delete project permanently</strong><p>All media in cloud storage will be erased. This cannot be undone.</p></div><label className="admin-field"><span>Type “{project.street}” to confirm</span><input value={deleteConfirmation} onChange={(event) => setDeleteConfirmation(event.target.value)} autoComplete="off" /></label><button className="button danger-zone__button" type="button" disabled={isDangerAction || !deleteMatchesStreet} onClick={() => void deleteProject()}>{isDangerAction ? "Deleting…" : "Delete project permanently"}</button></div></>}</section>}

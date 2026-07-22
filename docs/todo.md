@@ -3,6 +3,18 @@
 Orchestration: Claude = planner/orchestrator/contract-layer; Codex/other agents = groundwork.
 
 ## Status (2026-07-21)
+- **Dashboard + awaiting-RAW reconciliation wave (DEPLOYED + live-verified; 2026-07-22):** Grid is
+  removed; active projects use Kanban (default) or List, archived projects use List only, and
+  project ordering is server-authoritative by shoot date. The background Worker adds an
+  hourly UTC cron that derives the Australia/Sydney business date and advances eligible existing
+  `awaiting_raw` projects to `raw_review` with a guarded system audit; hourly runs reconcile
+  existing eligible rows in bounded batches until drained. Edit Details protects services, order
+  details, and notes while Create Project remains unchanged. Terra implementation plus four Luna
+  review passes completed; Claude independently verified all six typechecks, **166 passing tests +
+  1 intentional skip**, the production SPA build, real D1 transaction/scan behavior, and the local
+  authenticated browser flow. Deployed versions: background `ff8fe38b`, webhook `41507d3c`, app
+  `5c49a55f`. The first production cron used Sydney business date `2026-07-23`, advanced 12/12
+  eligible projects, wrote 12 unique audits, and left zero due projects in `awaiting_raw`.
 - **`main` is current** — `build/phase-0-2` merged to `main` via PR #3 (merge commit
   `3a7fe8d`). Branch off `main` for new work. Production live at `quincy.flamingfire.my`
   (staging + prototype preserved on their hostnames).
