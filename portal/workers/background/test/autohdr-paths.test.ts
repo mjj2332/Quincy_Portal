@@ -20,7 +20,19 @@ describe("AutoHDR paths", () => {
     expect(deriveAutoHdrFolderName("/Volumes/TerrySylviaT7/Quincy Productions Dropbox/Clients/123 Main St/Listing Images")).toBe("123 Main St");
   });
 
-  it("rejects paths without a parent segment", () => {
+  it("uses the last segment for direct Tonomo RAW folder paths, including a trailing slash", () => {
+    expect(deriveAutoHdrFolderName("/Tonomo/123 Main St, Malabar NSW/")).toBe("123 Main St, Malabar NSW");
+  });
+
+  it("normalises a direct Windows Tonomo path while preserving final-segment casing", () => {
+    expect(deriveAutoHdrFolderName("\\Tonomo\\123 Main St, MALABAR NSW")).toBe("123 Main St, MALABAR NSW");
+  });
+
+  it("uses the parent only when the final segment is the Listing Images marker", () => {
+    expect(deriveAutoHdrFolderName("/Projects/123 Main St/LISTING IMAGES")).toBe("123 Main St");
+  });
+
+  it("rejects empty paths and a lone Listing Images marker", () => {
     expect(() => deriveAutoHdrFolderName("")).toThrow("Cannot derive AutoHDR folder name from RAW folder path: ");
     expect(() => deriveAutoHdrFolderName("Listing Images")).toThrow("Cannot derive AutoHDR folder name from RAW folder path: Listing Images");
   });

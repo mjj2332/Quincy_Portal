@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { createDb, schema } from "@quincy/db";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { CollectionKind } from "@quincy/shared";
 import type { AppEnv } from "../env";
@@ -31,7 +31,7 @@ reviewRoutes.get("/projects/:id/assets", async (c) => {
     .innerJoin(schema.collections, and(eq(schema.assets.collectionId, schema.collections.id), eq(schema.collections.projectId, projectId), eq(schema.collections.kind, kind)))
     .leftJoin(schema.assetReviewState, eq(schema.assetReviewState.assetId, schema.assets.id))
     .leftJoin(schema.selections, eq(schema.selections.assetId, schema.assets.id))
-    .orderBy(asc(schema.assets.createdAt))
+    .orderBy(asc(sql`lower(${schema.assets.originalFilename})`), asc(schema.assets.originalFilename), asc(schema.assets.id))
     .all();
 
   return c.json({ assets: rows.map(({ asset, review, selection }) => ({

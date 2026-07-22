@@ -320,15 +320,14 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/other agents 
   it to the password manager and delete the file.
 
 **Wave: AutoHDR per-project send + fetch (2026-07-22, DEPLOYED to prod — pending real-sample test)**
+- [x] Follow-up (approved scope, 2026-07-22): review asset order is deterministic by case-insensitive filename, exact filename, then ID; API-to-PhotoGrid order propagation and AutoHDR direct/`Listing Images` path derivation are covered by focused tests.
 - Deployed from branch `fix/p0-p3-qa` (pushed; NOT yet merged to `main` — prod is ahead of main).
   background version `2e037ae2`, app version `08061c24`. Live route `POST /api/projects/:id/fetch-edited`
   verified 403-gated in prod; homepage 200.
 - Replaced the fixed-path `AutoHdrRoundtrip` (48h auto-poll) with two decoupled per-project
   operations against AutoHDR's own Dropbox layout (`/AutoHDR/<listing>/01-RAW-Photos` in,
   `04-FINAL-Photos` out — see `docs/lessons.md` for the doc discrepancies).
-- `<listing>` folder name = the project RAW folder path with its final segment dropped
-  (`.../4 McGowen Ave.../Listing Images` → `4 McGowen Ave...`); pure helper +
-  unit tests in `workers/background/src/autohdr/paths.ts`.
+- `<listing>` folder name = the final RAW path segment for direct folder paths; if that segment is exactly `Listing Images` (case-insensitive), use its parent instead (`.../4 McGowen Ave.../Listing Images` → `4 McGowen Ave...`); pure helper + unit tests in `workers/background/src/autohdr/paths.ts`.
 - **Send** (`AutoHdrSend`): one-shot per-file copy of selected RAW → `01-RAW-Photos`
   (Dropbox auto-creates parents); refuses duplicate case-insensitive filenames; stays
   `editing_autohdr`.

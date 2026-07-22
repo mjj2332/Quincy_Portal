@@ -6,8 +6,11 @@ export const AUTOHDR_FINAL_SUBFOLDER_CANDIDATES = ["04-FINAL-Photos", "04-FINALS
 
 export function deriveAutoHdrFolderName(rawFolderPath: string): string {
   const segments = normalisePath(rawFolderPath).split("/").filter(Boolean);
-  if (segments.length < 2) throw new Error(`Cannot derive AutoHDR folder name from RAW folder path: ${rawFolderPath}`);
-  return segments.at(-2)!;
+  const lastSegment = segments.at(-1);
+  if (!lastSegment || (lastSegment.toLowerCase() === "listing images" && segments.length < 2)) {
+    throw new Error(`Cannot derive AutoHDR folder name from RAW folder path: ${rawFolderPath}`);
+  }
+  return lastSegment.toLowerCase() === "listing images" ? segments.at(-2)! : lastSegment;
 }
 
 export function autoHdrRawInputPath(folderName: string): string {

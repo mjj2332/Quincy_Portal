@@ -511,6 +511,34 @@ describe("staff app API", () => {
     expect(response.status).toBe(403); await expect(response.json()).resolves.toEqual({ error: "Forbidden", capability: "editProject" });
   });
 
+  it("returns project assets in deterministic case-insensitive filename order", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const created = await SELF.fetch("https://portal.test/api/projects", { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ street: "Asset filename ordering", orderedServices: [] }) });
+    expect(created.status).toBe(201);
+    const project = await created.json() as { id: string };
+    const raw = await database.DB.prepare("SELECT id FROM collections WHERE project_id = ? AND kind = 'raw'").bind(project.id).first<{ id: string }>();
+    const rows = [
+      ["ffffffff-ffff-4fff-8fff-ffffffffffff", "zebra.jpg", 1],
+      ["00000000-0000-4000-8000-000000000002", "alpha.jpg", 2],
+      ["00000000-0000-4000-8000-000000000001", "alpha.jpg", 3],
+      ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "Alpha.jpg", 4],
+      ["bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "Bravo.jpg", 5],
+    ] as const;
+    await database.DB.batch(rows.map(([id, filename, createdAt]) => database.DB.prepare(
+      "INSERT INTO assets (id, collection_id, r2_key, original_filename, bytes, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    ).bind(id, raw!.id, `tests/${id}.jpg`, filename, 1024, "upload", createdAt, createdAt)));
+
+    const response = await SELF.fetch(`https://portal.test/api/projects/${project.id}/assets?collection=raw`, { headers: { cookie } });
+    expect(response.status).toBe(200);
+    expect((await response.json() as { assets: Array<{ id: string; originalFilename: string }> }).assets.map(({ id, originalFilename }) => [originalFilename, id])).toEqual([
+      ["Alpha.jpg", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"],
+      ["alpha.jpg", "00000000-0000-4000-8000-000000000001"],
+      ["alpha.jpg", "00000000-0000-4000-8000-000000000002"],
+      ["Bravo.jpg", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"],
+      ["zebra.jpg", "ffffffff-ffff-4fff-8fff-ffffffffffff"],
+    ]);
+  });
+
   it("uses the alphabetically first RAW asset as the automatic cover", async () => {
     const cookie = await sessionCookie(adminToken);
     const created = await SELF.fetch("https://portal.test/api/projects", { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ street: "Automatic cover", orderedServices: [] }) });
