@@ -3,6 +3,7 @@
 Orchestration: Claude = planner/orchestrator/contract-layer; Codex/other agents = groundwork.
 
 ## Status (2026-07-21)
+- **Awaiting-RAW cron — superseded in the proposed Dropbox webhook automation plan (2026-07-23):** The live hourly, date-driven `awaiting_raw → raw_review` reconciliation remains historical production behavior until the approved event-driven replacement ships. The replacement advances only after qualifying RAW media is durable in R2 and D1, covers Dropbox and direct uploads, writes a guarded transition audit, and removes the Background Worker `scheduled()` handler/cron; do not treat the historical cron as the target behavior for new work.
 - **Dashboard + awaiting-RAW reconciliation wave (DEPLOYED + live-verified; 2026-07-22):** Grid is
   removed; active projects use Kanban (default) or List, archived projects use List only, and
   project ordering is server-authoritative by shoot date. The background Worker adds an
@@ -348,7 +349,10 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/other agents 
   `listFolderIfExists`), ingests new JPEGs (accepted-photo filter) into the `edited`
   collection, pairs to RAW by plain basename with a `_vs`/`_staged` suffix fallback,
   advances `editing_autohdr → edited_review` only when every selected RAW has a returned
-  edit (conditional, no stage regression).
+  edit (conditional, no stage regression). **This is current live behavior, but the proposed
+  Dropbox webhook automation plan supersedes it for the future event-driven design:** the first
+  successfully imported current final with credible frozen-handoff coverage begins Edited Review;
+  complete handoff coverage becomes a separate QA/readiness diagnostic.
 - Concurrency: `fetchEditedFromAutoHdr` is single-flight per project (returns the active
   queued/running job) since edited assets have no unique DB constraint. Both routes reject
   archived projects (409); jobs panel + retry handle `fetch_edited` alongside `autohdr`.
