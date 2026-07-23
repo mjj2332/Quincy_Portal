@@ -82,36 +82,44 @@ async function job(jobId: string) {
     .first<{ id: string; status: string }>();
 }
 
-async function latestFailedJobId(projectId: string, assetId: string): Promise<string> {
-  const latest = await database.DB.prepare(
-    "SELECT id FROM jobs WHERE project_id = ? AND correlation_id = ? AND status = 'failed' ORDER BY created_at DESC, id DESC LIMIT 1",
-  ).bind(projectId, `manual_edited_publish:${assetId}`).first<{ id: string }>();
-  expect(latest).toBeDefined();
-  return latest!.id;
-}
-
 describe("manual edited publication retries", () => {
   it("keeps a ready asset ready and fails its new job when retry workflow creation rejects", async () => {
     const { projectId, assetId } = await insertManualAsset("ready");
     await insertFailedHandoff(projectId, assetId);
+    let retryWorkflow: WorkflowInput | undefined;
 
-    await expect(service(async () => {
+    await expect(service(async (input) => {
+      retryWorkflow = input;
       throw new Error("workflow unavailable");
     }).publishManualEditedUpload(projectId, assetId)).rejects.toThrow("workflow unavailable");
 
+    expect(retryWorkflow).toMatchObject({
+      params: expect.objectContaining({ projectId, assetId }),
+    });
     await expect(assetStatus(assetId)).resolves.toEqual({ publish_status: "ready" });
-    await expect(job(await latestFailedJobId(projectId, assetId))).resolves.toMatchObject({ status: "failed" });
+    await expect(job(retryWorkflow!.id)).resolves.toEqual({
+      id: retryWorkflow!.id,
+      status: "failed",
+    });
   });
 
   it("marks a pending asset failed with its job when workflow creation rejects", async () => {
     const { projectId, assetId } = await insertManualAsset("pending");
+    let workflow: WorkflowInput | undefined;
 
-    await expect(service(async () => {
+    await expect(service(async (input) => {
+      workflow = input;
       throw new Error("workflow unavailable");
     }).publishManualEditedUpload(projectId, assetId)).rejects.toThrow("workflow unavailable");
 
+    expect(workflow).toMatchObject({
+      params: expect.objectContaining({ projectId, assetId }),
+    });
     await expect(assetStatus(assetId)).resolves.toEqual({ publish_status: "failed" });
-    await expect(job(await latestFailedJobId(projectId, assetId))).resolves.toMatchObject({ status: "failed" });
+    await expect(job(workflow!.id)).resolves.toEqual({
+      id: workflow!.id,
+      status: "failed",
+    });
   });
 
   it("starts a new workflow after a prior failed ready handoff", async () => {
