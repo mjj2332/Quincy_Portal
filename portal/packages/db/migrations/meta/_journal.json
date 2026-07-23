@@ -57,6 +57,13 @@
       "when": 1784672325404,
       "tag": "0007_soft_catseye",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1784841600000,
+      "tag": "0008_manual_edited_publish",
+      "breakpoints": true
     }
   ]
 }

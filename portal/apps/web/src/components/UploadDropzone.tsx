@@ -1,4 +1,4 @@
-import { useRef, useState, type DragEvent, type ChangeEvent } from "react";
+import { useEffect, useRef, useState, type DragEvent, type ChangeEvent } from "react";
 import { isAcceptedPhotoFilename } from "@quincy/shared";
 import { apiPost } from "../lib/api";
 import { uploadMultipartFile, type MultipartPresign } from "../lib/multipart-upload";
@@ -13,7 +13,10 @@ type PresignResponse = MultipartPresign & {
   devDirect?: boolean;
 };
 
-type UploadProgress = { name: string; percent: number; state: "waiting" | "uploading" | "complete" | "failed"; error?: string };
+type CompleteResponse = { assetId: string; jobId?: string; publishStatus?: "pending" | "ready" | "failed"; error?: string };
+type JobStatus = "queued" | "running" | "done" | "failed" | "stuck";
+type Job = { id: string; status: JobStatus; error: string | null };
+type UploadProgress = { name: string; percent: number; state: "waiting" | "uploading" | "publishing" | "complete" | "failed"; jobId?: string; error?: string };
 
 interface UploadDropzoneProps {
   projectId: string;
@@ -28,10 +31,44 @@ export function UploadDropzone({ projectId, collection = "raw", onComplete, onTo
   const [rejected, setRejected] = useState<string[]>([]);
   const [progress, setProgress] = useState<UploadProgress[]>([]);
   const [isUploading, setIsUploading] = useState(false);
+  const onCompleteRef = useRef(onComplete);
+  onCompleteRef.current = onComplete;
 
   function update(filename: string, patch: Partial<UploadProgress>) {
     setProgress((items) => items.map((item) => item.name === filename ? { ...item, ...patch } : item));
   }
+
+  const publishingJobIds = progress
+    .filter((item) => item.state === "publishing" && item.jobId)
+    .map((item) => item.jobId!);
+
+  useEffect(() => {
+    if (!publishingJobIds.length) return;
+    let cancelled = false;
+    const refreshPublishing = async () => {
+      try {
+        const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/manual-upload-jobs`, { credentials: "same-origin" });
+        if (!response.ok) return;
+        const body = await response.json() as { jobs?: Job[] };
+        if (cancelled) return;
+        const statuses = new Map((body.jobs ?? []).map((job) => [job.id, job]));
+        let completed = false;
+        setProgress((items) => items.map((item) => {
+          if (item.state !== "publishing" || !item.jobId) return item;
+          const job = statuses.get(item.jobId);
+          if (job?.status === "done") { completed = true; return { ...item, state: "complete", percent: 100, error: undefined }; }
+          if (job?.status === "failed" || job?.status === "stuck") return { ...item, state: "failed", error: job.error ?? "Dropbox publishing failed. An administrator can retry it from the jobs panel." };
+          return item;
+        }));
+        if (completed) await onCompleteRef.current();
+      } catch {
+        // Keep the durable job visible as publishing; the next poll can recover a transient error.
+      }
+    };
+    void refreshPublishing();
+    const interval = window.setInterval(() => void refreshPublishing(), 5_000);
+    return () => { cancelled = true; window.clearInterval(interval); };
+  }, [projectId, publishingJobIds.join(",")]);
 
   async function upload(files: File[]) {
     const accepted = files.filter((file) => isAcceptedPhotoFilename(file.name));
@@ -56,8 +93,10 @@ export function UploadDropzone({ projectId, collection = "raw", onComplete, onTo
             const presign = await apiPost<PresignResponse, { projectId: string; filename: string; bytes: number; collection: "raw" | "edited" }>("/api/uploads/presign", { projectId, filename: file.name, bytes: file.size, collection });
             update(file.name, { percent: 35 });
             const completed = await uploadMultipartFile(file, presign, `/api/uploads/direct?key=${encodeURIComponent(presign.key)}`);
-            await apiPost("/api/uploads/complete", { projectId, key: presign.key, uploadId: completed.uploadId, parts: completed.parts, originalFilename: file.name, collection });
-            update(file.name, { state: "complete", percent: 100 });
+            const result = await apiPost<CompleteResponse, { projectId: string; key: string; uploadId?: string; parts?: { partNumber: number; etag: string }[]; originalFilename: string; collection: "raw" | "edited" }>("/api/uploads/complete", { projectId, key: presign.key, uploadId: completed.uploadId, parts: completed.parts, originalFilename: file.name, collection });
+            if (result.publishStatus === "failed") update(file.name, { state: "failed", percent: 100, jobId: result.jobId, error: result.error ?? "Dropbox publishing failed. An administrator can retry it from the jobs panel." });
+            else if (result.publishStatus === "pending") update(file.name, { state: "publishing", percent: 100, jobId: result.jobId });
+            else update(file.name, { state: "complete", percent: 100 });
           } catch (error) {
             update(file.name, { state: "failed", error: error instanceof Error ? error.message : "Upload failed." });
           }
@@ -65,7 +104,7 @@ export function UploadDropzone({ projectId, collection = "raw", onComplete, onTo
       };
       await Promise.all(Array.from({ length: Math.min(3, accepted.length) }, worker));
       await onComplete();
-      onToast("Upload processing is complete.");
+      onToast(collection === "edited" ? "Edited uploads are publishing to Dropbox. They will appear here when ready." : "Upload processing is complete.");
     } catch (error) {
       onToast(error instanceof Error ? error.message : "The upload could not be started.", "error");
     } finally {
@@ -83,9 +122,9 @@ export function UploadDropzone({ projectId, collection = "raw", onComplete, onTo
       <input ref={fileInput} className="sr-only" type="file" accept=".jpg,.jpeg,image/jpeg" multiple onChange={onChange} />
       <div className="ey">{collection === "raw" ? "RAW capture upload" : "Edited image upload"}</div>
       <div className="upload-zone__title serif">Drop JPEG frames here</div>
-      <p>{collection === "raw" ? "JPEG only. The upload manifest verifies the expected capture count before ingest." : "JPEG only. Images are added directly to the Edited collection."}</p>
+      <p>{collection === "raw" ? "JPEG only. The upload manifest verifies the expected capture count before ingest." : "JPEG only. Each upload is published to Dropbox before it appears in the Edited collection."}</p>
       <button className="button button--secondary" type="button" disabled={isUploading} onClick={() => fileInput.current?.click()}>{isUploading ? "Uploading…" : "Choose files"}</button>
-      {progress.length > 0 && <div className="upload-progress" aria-live="polite"><div className="meter"><i style={{ width: `${overall}%` }} /></div><span className="ey">{overall}% uploaded</span>{progress.map((item) => <div className="upload-file" key={item.name}><span>{item.name}</span><span>{item.state === "failed" ? item.error : `${item.percent}%`}</span></div>)}</div>}
+      {progress.length > 0 && <div className="upload-progress" aria-live="polite"><div className="meter"><i style={{ width: `${overall}%` }} /></div><span className="ey">{overall}% uploaded</span>{progress.map((item) => <div className="upload-file" key={item.name}><span>{item.name}</span><span>{item.state === "failed" ? item.error : item.state === "publishing" ? "Publishing to Dropbox…" : `${item.percent}%`}</span></div>)}</div>}
       {rejected.length > 0 && <div className="upload-rejected" role="status"><strong>Not uploaded — JPEG only:</strong> {rejected.join(", ")}</div>}
     </section>
   );

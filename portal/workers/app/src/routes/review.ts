@@ -4,6 +4,7 @@ import { createDb, schema } from "@quincy/db";
 import { and, asc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { CollectionKind } from "@quincy/shared";
+import { RENDITION_SPEC_VERSION } from "@quincy/shared";
 import type { AppEnv } from "../env";
 import { hasProjectAccess, requireCapability } from "../middleware/capability";
 import { roleHasCapability } from "@quincy/shared";
@@ -26,15 +27,22 @@ reviewRoutes.get("/projects/:id/assets", async (c) => {
   if (kind === "raw" && !roleHasCapability(user.role, "viewRaw")) return c.json({ error: "Forbidden", capability: "viewRaw" }, 403);
   if (["video", "floorplan", "copy"].includes(kind) && !roleHasCapability(user.role, "viewEdited")) return c.json({ error: "Forbidden", capability: "viewEdited" }, 403);
 
-  const rows = await createDb(c.env.DB).select({ asset: schema.assets, review: schema.assetReviewState, selection: schema.selections.id })
+  const rows = await createDb(c.env.DB).select({ asset: schema.assets, review: schema.assetReviewState, selection: schema.selections.id, rendition: schema.assetRenditions.id })
     .from(schema.assets)
     .innerJoin(schema.collections, and(eq(schema.assets.collectionId, schema.collections.id), eq(schema.collections.projectId, projectId), eq(schema.collections.kind, kind)))
+    .where(kind === "edited" ? eq(schema.assets.publishStatus, "ready") : sql`1 = 1`)
     .leftJoin(schema.assetReviewState, eq(schema.assetReviewState.assetId, schema.assets.id))
+    .leftJoin(schema.assetRenditions, and(
+      eq(schema.assetRenditions.assetId, schema.assets.id),
+      eq(schema.assetRenditions.variant, "thumb"),
+      eq(schema.assetRenditions.specVersion, RENDITION_SPEC_VERSION),
+      sql`${schema.assetRenditions.contentType} in ('image/webp', 'image/jpeg')`,
+    ))
     .leftJoin(schema.selections, eq(schema.selections.assetId, schema.assets.id))
     .orderBy(asc(sql`lower(${schema.assets.originalFilename})`), asc(schema.assets.originalFilename), asc(schema.assets.id))
     .all();
 
-  return c.json({ assets: rows.map(({ asset, review, selection }) => ({
+  return c.json({ assets: rows.map(({ asset, review, selection, rendition }) => ({
     id: asset.id,
     collectionId: asset.collectionId,
     kind: asset.kind,
@@ -44,6 +52,7 @@ reviewRoutes.get("/projects/:id/assets", async (c) => {
     height: asset.height,
     ratingFromMetadata: asset.ratingFromMetadata,
     section: asset.section,
+    renditionStatus: rendition ? "ready" : "processing",
     createdAt: asset.createdAt,
     sourceRawAssetId: asset.sourceRawAssetId,
     version: asset.version,

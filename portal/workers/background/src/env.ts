@@ -4,6 +4,7 @@ import type { IngestMessage } from "./messages";
 import type { RenditionMessage } from "@quincy/shared";
 import type { AutoHdrInput, AutoHdrSend } from "./workflows/autohdr";
 import type { AutoHdrFetchInput } from "./workflows/autohdr-fetch";
+import type { ManualEditedPublishInput } from "./workflows/manual-edited-publish";
 
 export interface Env {
   APP_ENV: string;
@@ -20,6 +21,7 @@ export interface Env {
   APP_ORIGIN: string;
   AUTOHDR_WORKFLOW: Workflow<AutoHdrInput>;
   AUTOHDR_FETCH_WORKFLOW: Workflow<AutoHdrFetchInput>;
+  MANUAL_EDITED_PUBLISH_WORKFLOW: Workflow<ManualEditedPublishInput>;
   DROPBOX_SYNC: DurableObjectNamespace<DropboxSyncDO>;
   TONOMO_PROCESSOR: DurableObjectNamespace<TonomoProcessorDO>;
   INTEGRATION_KEK: string;

@@ -3,7 +3,7 @@ import { LabelDot, Stars } from "./atoms";
 import { LazyImage } from "./LazyImage";
 
 export type Review = { stars: number | null; colorLabel: "select" | "maybe" | "cut" | "hero" | null; decision: "approved" | "flagged" | null; recommended: boolean };
-export type WorkspaceAsset = { id: string; collectionId: string; kind: "photo" | "video" | "floorplan_pdf" | "floorplan_preview" | "copy_pdf"; originalFilename: string; bytes: number; width: number | null; height: number | null; ratingFromMetadata: number | null; section: string | null; createdAt: string; sourceRawAssetId: string | null; version: number; versionGroupId: string | null; supersedesAssetId: string | null; review: Review | null; selected: boolean };
+export type WorkspaceAsset = { id: string; collectionId: string; kind: "photo" | "video" | "floorplan_pdf" | "floorplan_preview" | "copy_pdf"; originalFilename: string; bytes: number; width: number | null; height: number | null; ratingFromMetadata: number | null; section: string | null; renditionStatus: "processing" | "ready"; createdAt: string; sourceRawAssetId: string | null; version: number; versionGroupId: string | null; supersedesAssetId: string | null; review: Review | null; selected: boolean };
 export type ReviewPatch = Partial<Pick<Review, "stars" | "colorLabel" | "decision" | "recommended">>;
 
 const LABELS: { value: NonNullable<Review["colorLabel"]>; name: string; color: string }[] = [
@@ -99,9 +99,10 @@ export function PhotoGrid({ assets, showSections, canReview, canRecommend, canSe
       const review = asset.review;
       const marked = multi.has(asset.id);
       const state = review?.decision;
-      const activate = () => failedThumbnails.has(asset.id) ? retryThumbnail(asset.id) : onOpen(asset, displayOrder);
-      return <div className={`tile ${marked ? "is-selected" : ""} ${state ? `st-${state}` : ""} ${rating(asset) ? "has-rating" : ""} ${asset.selected ? "has-state" : ""}`} key={asset.id} role="button" tabIndex={0} aria-label={failedThumbnails.has(asset.id) ? `Retry thumbnail for ${asset.originalFilename}` : undefined} onClick={activate} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); activate(); } }}>
-        <LazyImage src={`/media/asset/${encodeURIComponent(asset.id)}/thumb`} alt={asset.originalFilename} retryToken={thumbnailRetries[asset.id]} onFailedChange={(failed) => setFailedThumbnails((current) => { const next = new Set(current); if (failed) next.add(asset.id); else next.delete(asset.id); return next; })} /><div className="tile__scrim" />
+      const previewPending = asset.renditionStatus === "processing";
+      const activate = () => previewPending ? undefined : failedThumbnails.has(asset.id) ? retryThumbnail(asset.id) : onOpen(asset, displayOrder);
+      return <div className={`tile ${marked ? "is-selected" : ""} ${state ? `st-${state}` : ""} ${rating(asset) ? "has-rating" : ""} ${asset.selected ? "has-state" : ""} ${previewPending ? "is-processing" : ""}`} key={asset.id} role="button" tabIndex={previewPending ? -1 : 0} aria-disabled={previewPending || undefined} aria-label={previewPending ? `${asset.originalFilename} is processing` : failedThumbnails.has(asset.id) ? `Retry thumbnail for ${asset.originalFilename}` : undefined} onClick={activate} onKeyDown={(event) => { if (!previewPending && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); activate(); } }}>
+        {previewPending ? <div className="project-cover-placeholder lazy-image-placeholder" role="status" aria-label={`Processing preview for ${asset.originalFilename}`}><span>Processing preview…</span></div> : <LazyImage src={`/media/asset/${encodeURIComponent(asset.id)}/thumb`} alt={asset.originalFilename} retryToken={thumbnailRetries[asset.id]} onFailedChange={(failed) => setFailedThumbnails((current) => { const next = new Set(current); if (failed) next.add(asset.id); else next.delete(asset.id); return next; })} />}<div className="tile__scrim" />
         <button className="selbox" type="button" aria-label={`Select ${asset.originalFilename}`} onClick={(event) => { event.stopPropagation(); toggleMulti(asset, event.shiftKey); }}>✓</button>
         <span className="tile__num">{asset.originalFilename}</span>
         {review?.colorLabel && <span style={{ position: "absolute", top: 13, left: 42, zIndex: 4 }}><LabelDot color={LABELS.find((item) => item.value === review.colorLabel)?.color ?? "#fff"} name={labelName(review.colorLabel)} /></span>}
@@ -113,6 +114,7 @@ export function PhotoGrid({ assets, showSections, canReview, canRecommend, canSe
         </div>
         <div className="statetags">
           {asset.selected && <span className="statetag st-editing">For editing</span>}
+          {previewPending && <span className="statetag st-editing">Processing preview</span>}
           {coverAssetId === asset.id && <span className="statetag">Cover</span>}
           {review?.recommended && !asset.selected && <span className="statetag">Recommended</span>}
           {state && <span className={`statetag st-${state}`}>{state === "approved" ? "Approved" : "Flagged"}</span>}

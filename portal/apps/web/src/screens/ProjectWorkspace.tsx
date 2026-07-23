@@ -14,7 +14,7 @@ type Project = { id: string; street: string; suburb: string | null; postcode: st
 type ProjectResponse = Project & { collections: Collection[]; members: Member[] };
 type AssetsResponse = { assets: WorkspaceAsset[] };
 type IngestStatus = { expectedCount: number | null; receivedCount: number; mismatch: boolean };
-type Job = { id: string; kind: "autohdr" | "fetch_edited"; status: "queued" | "running" | "done" | "failed" | "stuck"; error: string | null; createdAt: string; updatedAt: string };
+type Job = { id: string; kind: "autohdr" | "fetch_edited" | "manual_edited_publish"; status: "queued" | "running" | "done" | "failed" | "stuck"; error: string | null; createdAt: string; updatedAt: string };
 type JobsResponse = { jobs: Job[] };
 type Toast = { id: number; message: string; tone: "success" | "error" };
 
@@ -111,9 +111,10 @@ export function ProjectWorkspace({ projectId, notice, onNoticeShown, onBack, onE
 
   useEffect(() => {
     if (!canAdminBackend || !projectId || !jobs.some(activeJob)) return;
-    const interval = window.setInterval(() => { void refreshJobs().catch(() => undefined); }, 15_000);
+    const refreshUntilTerminal = () => { void Promise.all([refreshJobs(), refreshAssets("edited"), refreshProject()]).catch(() => undefined); };
+    const interval = window.setInterval(refreshUntilTerminal, 5_000);
     return () => window.clearInterval(interval);
-  }, [canAdminBackend, jobs, projectId, refreshJobs]);
+  }, [canAdminBackend, jobs, projectId, refreshAssets, refreshJobs, refreshProject]);
 
   const updateReview = useCallback(async (assetId: string, patch: ReviewPatch) => {
     const before = assets.find((asset) => asset.id === assetId); if (!before) return;
@@ -158,7 +159,7 @@ export function ProjectWorkspace({ projectId, notice, onNoticeShown, onBack, onE
   async function fetchEdited() {
     if (!projectId || !canAdminBackend || isFetching) return;
     setIsFetching(true);
-    try { const response = await apiPost<{ jobId: string }, Record<string, never>>(`/api/projects/${projectId}/fetch-edited`, {}); await Promise.all([refreshAssets("edited"), refreshJobs(), refreshProject()]); toast(`Fetched edited photos (${response.jobId.slice(0, 8)}).`); }
+    try { const response = await apiPost<{ jobId: string }, Record<string, never>>(`/api/projects/${projectId}/fetch-edited`, {}); await refreshJobs(); toast(`Fetch queued (${response.jobId.slice(0, 8)}). The Edited collection refreshes when it completes.`); }
     catch (reason) { toast(reason instanceof Error ? reason.message : "Edited photos could not be fetched.", "error"); }
     finally { setIsFetching(false); }
   }
@@ -169,8 +170,8 @@ export function ProjectWorkspace({ projectId, notice, onNoticeShown, onBack, onE
   }
   async function retryAutoHdr(jobId: string) {
     if (!canAdminBackend) return;
-    try { await apiPost<{ jobId: string }, Record<string, never>>(`/api/jobs/${jobId}/retry`, {}); await Promise.all([refreshJobs(), refreshProject()]); toast("autoHDR retry started."); }
-    catch (reason) { toast(reason instanceof Error ? reason.message : "autoHDR retry could not be started.", "error"); }
+    try { await apiPost<{ jobId: string }, Record<string, never>>(`/api/jobs/${jobId}/retry`, {}); await Promise.all([refreshJobs(), refreshProject()]); toast("Background job retry started."); }
+    catch (reason) { toast(reason instanceof Error ? reason.message : "Background job retry could not be started.", "error"); }
   }
 
   if (isLoading) return <main className="page"><div className="empty"><span className="serif">Loading project.</span>Preparing the workspace.</div><div className="toasts">{toasts.map((item) => <div className={`toast ${item.tone === "error" ? "toast--error" : ""}`} key={item.id}>{item.tone === "error" ? "!" : "✓"}<span>{item.message}</span></div>)}</div></main>;
@@ -204,7 +205,7 @@ export function ProjectWorkspace({ projectId, notice, onNoticeShown, onBack, onE
         {activeTab === "edited" && can("uploadEdited") && <div className="workgrid"><UploadDropzone projectId={projectId} collection="edited" onComplete={async () => { await Promise.all([refreshAssets("edited"), refreshProject()]); }} onToast={toast} /></div>}
         <PhotoGrid assets={assets} showSections={activeTab === "raw" || activeTab === "edited"} canReview={canReview} canRecommend={canRecommend} canSelect={activeTab === "raw" && canSelect} canSetCover={canEdit && (activeTab === "raw" || activeTab === "edited")} coverAssetId={project.effectiveCoverAssetId} storedCoverAssetId={project.coverAssetId} onSetCover={updateCover} onOpen={(asset, orderedAssets) => { setLightboxOrderIds(orderedAssets.map((item) => item.id)); setOpenAssetId(asset.id); }} onReview={updateReview} onSelection={updateSelection} />
       </> : <CollectionPanel projectId={projectId} collection={activeTab} assets={assets} canManage={canManageCollections} canApprove={can("reviewEdited")} onReview={updateReview} onChanged={async () => { await Promise.all([refreshAssets(activeTab), refreshProject()]); }} onToast={toast} />}
-      {canAdminBackend && jobs.length > 0 && <div className="workgrid"><section className="hdr" style={{ alignItems: "flex-start", flexDirection: "column" }}><div><strong>autoHDR status</strong><div className="muted">Recent hand-offs for this project.</div></div>{jobs.map((job) => <div className="kv" style={{ width: "100%" }} key={job.id}><span className="k">{new Date(job.createdAt).toLocaleString("en-AU")}</span><span className="vv"><span className="k">{job.kind === "fetch_edited" ? "Fetch" : "Send"}</span>{" "}<span className={`statetag st-${job.status}`}>{job.status}</span>{job.error ? ` ${job.error}` : ""}{(job.status === "stuck" || job.status === "failed") && <button className="chip" style={{ marginLeft: 8 }} type="button" onClick={() => void retryAutoHdr(job.id)}>Retry</button>}</span></div>)}</section></div>}
+      {canAdminBackend && jobs.length > 0 && <div className="workgrid"><section className="hdr" style={{ alignItems: "flex-start", flexDirection: "column" }}><div><strong>autoHDR status</strong><div className="muted">Recent hand-offs, fetches, and manual-upload publishes for this project.</div></div>{jobs.map((job) => <div className="kv" style={{ width: "100%" }} key={job.id}><span className="k">{new Date(job.createdAt).toLocaleString("en-AU")}</span><span className="vv"><span className="k">{job.kind === "fetch_edited" ? "Fetch" : job.kind === "manual_edited_publish" ? "Manual upload" : "Send"}</span>{" "}<span className={`statetag st-${job.status}`}>{job.status}</span>{job.error ? ` ${job.error}` : ""}{(job.status === "stuck" || job.status === "failed") && <button className="chip" style={{ marginLeft: 8 }} type="button" onClick={() => void retryAutoHdr(job.id)}>Retry</button>}</span></div>)}</section></div>}
     </section>
     {openAssetId && <Lightbox assets={lightboxOrderIds ? lightboxOrderIds.map((id) => assets.find((asset) => asset.id === id)).filter((asset): asset is WorkspaceAsset => Boolean(asset)) : assets} rawAssets={rawAssets} initialAssetId={openAssetId} collectionKind={activeTab === "edited" ? "edited" : "raw"} canReview={canReview} canRecommend={canRecommend} canAnnotate={canAnnotate} onClose={() => { setOpenAssetId(null); setLightboxOrderIds(null); }} onReview={updateReview} onToast={toast} />}
     <div className="toasts">{toasts.map((item) => <div className={`toast ${item.tone === "error" ? "toast--error" : ""}`} key={item.id}>{item.tone === "error" ? "!" : "✓"}<span>{item.message}</span></div>)}</div>

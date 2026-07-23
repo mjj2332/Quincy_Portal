@@ -42,7 +42,7 @@ export default defineConfig({
             name: "quincy-portal-background",
             modules: true,
             script:
-              "import { WorkerEntrypoint } from 'cloudflare:workers'; export default class QuincyBackground extends WorkerEntrypoint { async processTonomoEvents() {} }",
+              "import { WorkerEntrypoint } from 'cloudflare:workers'; export default class QuincyBackground extends WorkerEntrypoint { async processTonomoEvents() {} async publishManualEditedUpload() { return { jobId: crypto.randomUUID() }; } }",
           },
         ],
       },

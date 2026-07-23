@@ -34,6 +34,11 @@
       "binding": "AUTOHDR_FETCH_WORKFLOW",
       "name": "quincy-autohdr-fetch",
       "class_name": "AutoHdrFetch"
+    },
+    {
+      "binding": "MANUAL_EDITED_PUBLISH_WORKFLOW",
+      "name": "quincy-manual-edited-publish",
+      "class_name": "ManualEditedPublish"
     }
   ],
   "durable_objects": {

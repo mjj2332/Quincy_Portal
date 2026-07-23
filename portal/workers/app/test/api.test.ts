@@ -1232,6 +1232,49 @@ describe("staff app API", () => {
     await expect(filtered.json()).resolves.toMatchObject({ agents: [expect.objectContaining({ id: agent.id, phone: "0411 111 111" })] });
   });
 
+  it("queues edited uploads for Dropbox before exposing them", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const created = await SELF.fetch("https://portal.test/api/projects", { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ street: "Manual publish queue", orderedServices: [] }) });
+    expect(created.status).toBe(201);
+    const project = await created.json() as { id: string };
+    const assetId = crypto.randomUUID();
+    const key = `projects/${project.id}/edited/${assetId}/manual.jpg`;
+    await authEnv.MEDIA.put(key, "manual-jpeg", { httpMetadata: { contentType: "image/jpeg" } });
+    const completed = await SELF.fetch("https://portal.test/api/uploads/complete", {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ projectId: project.id, key, originalFilename: "manual.jpg", collection: "edited" }),
+    });
+    expect(completed.status).toBe(202);
+    await expect(completed.json()).resolves.toMatchObject({ assetId, jobId: expect.any(String), publishStatus: "pending" });
+    expect(await database.DB.prepare("SELECT publish_status FROM assets WHERE id = ?").bind(assetId).first()).toEqual({ publish_status: "pending" });
+    expect(await database.DB.prepare("SELECT received_count FROM collections WHERE project_id = ? AND kind = 'edited'").bind(project.id).first()).toEqual({ received_count: 0 });
+    expect(await authEnv.MEDIA.get(key)).not.toBeNull();
+    const listed = await SELF.fetch(`https://portal.test/api/projects/${project.id}/assets?collection=edited`, { headers: { cookie } });
+    await expect(listed.json()).resolves.toEqual({ assets: [] });
+  });
+
+  it("hides pending manual edited uploads until Dropbox publishing is ready", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const created = await SELF.fetch("https://portal.test/api/projects", { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ street: "Manual publish visibility", orderedServices: [] }) });
+    const project = await created.json() as { id: string };
+    const collectionId = crypto.randomUUID(); const now = Date.now();
+    await database.DB.prepare("INSERT INTO collections (id, project_id, kind, status, received_count, created_at, updated_at) VALUES (?, ?, 'edited', 'empty', 0, ?, ?)").bind(collectionId, project.id, now, now).run();
+    const pendingId = crypto.randomUUID(); const readyId = crypto.randomUUID();
+    await database.DB.batch([
+      database.DB.prepare("INSERT INTO assets (id, collection_id, r2_key, original_filename, bytes, source, publish_status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'upload', 'pending', ?, ?)").bind(pendingId, collectionId, `tests/${pendingId}.jpg`, "pending.jpg", 1, now, now),
+      database.DB.prepare("INSERT INTO assets (id, collection_id, r2_key, original_filename, bytes, source, publish_status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'upload', 'ready', ?, ?)").bind(readyId, collectionId, `tests/${readyId}.jpg`, "ready.jpg", 1, now, now),
+    ]);
+    const response = await SELF.fetch(`https://portal.test/api/projects/${project.id}/assets?collection=edited`, { headers: { cookie } });
+    expect(response.status).toBe(200);
+    const assets = (await response.json() as { assets: Array<{ id: string; renditionStatus: string }> }).assets;
+    expect(assets).toEqual([expect.objectContaining({ id: readyId, renditionStatus: "processing" })]);
+
+    const legacyRenditionId = crypto.randomUUID();
+    await database.DB.prepare("INSERT INTO asset_renditions (id, asset_id, variant, r2_key, content_type, spec_version, created_at) VALUES (?, ?, 'thumb', ?, 'application/octet-stream', 'legacy', ?)").bind(legacyRenditionId, readyId, `renditions/${readyId}/legacy.webp`, now).run();
+    const afterLegacy = await SELF.fetch(`https://portal.test/api/projects/${project.id}/assets?collection=edited`, { headers: { cookie } });
+    await expect(afterLegacy.json()).resolves.toMatchObject({ assets: [expect.objectContaining({ id: readyId, renditionStatus: "processing" })] });
+  });
   it("projects AutoHDR state and restricts operational routes to the admin backend", async () => {
     const adminCookie = await sessionCookie(adminToken);
     const created = await SELF.fetch("https://portal.test/api/projects", {

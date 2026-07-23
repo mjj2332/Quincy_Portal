@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { autoHdrFinalPathCandidates, autoHdrRawInputPath, deriveAutoHdrFolderName, reconstructSourcePath } from "../src/autohdr/paths";
+import { autoHdrFinalPathCandidates, autoHdrManualUploadPath, autoHdrRawInputPath, deriveAutoHdrFolderName, reconstructSourcePath } from "../src/autohdr/paths";
 
 describe("AutoHDR paths", () => {
   const mcGowenRawPath = "/Projects/4 McGowen Ave, Malabar NSW 2036, Australia/Listing Images";
@@ -57,6 +57,14 @@ describe("AutoHDR paths", () => {
     expect(reconstructSourcePath("", null, "DSC_0001.CR3")).toBe("");
   });
 
+  it("builds an immutable per-asset manual-upload destination", () => {
+    expect(autoHdrManualUploadPath("123 Main St", "11111111-1111-4111-8111-111111111111", "edited final.jpg"))
+      .toBe("/AutoHDR/123 Main St/Manual-Uploads/11111111-1111-4111-8111-111111111111/edited final.jpg");
+    expect(() => autoHdrManualUploadPath("123 Main St", "not-an-id", "edited.jpg")).toThrow("Invalid manual upload path segment");
+    expect(() => autoHdrManualUploadPath("123 Main St", "11111111-1111-4111-8111-111111111111", "nested/edited.jpg")).toThrow("Invalid manual upload path segment");
+    expect(() => autoHdrManualUploadPath("../escape", "11111111-1111-4111-8111-111111111111", "edited.jpg")).toThrow("Invalid manual upload path segment");
+    expect(() => autoHdrManualUploadPath("123 Main St", "11111111-1111-4111-8111-111111111111", "../edited.jpg")).toThrow("Invalid manual upload path segment");
+  });
   it("builds final-folder candidates in priority order", () => {
     expect(autoHdrFinalPathCandidates("123 Main St")).toEqual([
       "/AutoHDR/123 Main St/04-FINAL-Photos",

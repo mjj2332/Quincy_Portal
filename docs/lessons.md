@@ -213,3 +213,20 @@
   suffix-strip a RAW name — `kitchen.jpg` and `kitchen_staged.jpg` would collide), and only
   suffix-strip the returned FINAL as a fallback lookup. Ingest unmatched finals with
   `source_raw_asset_id = null` (lose nothing) and gate any auto stage-advance on real matches.
+
+## Manual edited Dropbox publication (2026-07-24)
+
+- **A durable R2 upload is not yet a published edited asset.** A manual Edited JPEG first lands
+  under its immutable R2 key with `publish_status='pending'`; only a successful Dropbox overwrite
+  at `/AutoHDR/<listing>/Manual-Uploads/<asset-id>/<filename>` promotes it to `ready` and makes it
+  visible/countable. **Rule:** failure must retain the R2 source and surface a retryable job;
+  never treat an accepted browser upload as a completed external handoff.
+- **Idempotency needs a database backstop, not merely a preflight query.** A queued/running
+  partial unique job index on the asset-specific correlation key prevents two concurrent manual
+  publish workflows. Destination paths include the immutable asset ID and Dropbox uses overwrite,
+  so a retry after a lost response is safe even if Dropbox wrote the bytes before the workflow
+  checkpoint persisted.
+- **Preview readiness is independent of asset publication.** A ready asset with no valid current
+  thumb rendition is still visible but must say `Processing preview…`, not `Image unavailable`.
+  Only the current rendition spec with an image content type counts as ready in the workspace;
+  serving remains authoritative and verifies both D1 metadata and the R2 object.

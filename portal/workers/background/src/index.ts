@@ -16,9 +16,10 @@ import { canMutateRenditionBackfill } from "./backfill-gate";
 import { parseQueueBody } from "./queue-dispatch";
 import { AutoHdrSend } from "./workflows/autohdr";
 import { AutoHdrFetch } from "./workflows/autohdr-fetch";
+import { ManualEditedPublish } from "./workflows/manual-edited-publish";
 import { reconcileAwaitingRawProjects } from "./reconcile-awaiting-raw";
 
-export { AutoHdrFetch, AutoHdrSend, DropboxSyncDO, TonomoProcessorDO };
+export { AutoHdrFetch, AutoHdrSend, ManualEditedPublish, DropboxSyncDO, TonomoProcessorDO };
 
 type DropboxSyncMessage = Extract<IngestMessage, { type: "dropbox_sync" }> & { jobId?: string };
 export type RenditionBackfillInput = { dryRun?: boolean; cursor?: string; limit?: number; confirmProduction?: boolean };
@@ -103,6 +104,56 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
       return { jobId };
     } catch (error) {
       await setJobStatus(db, jobId, "failed", error instanceof Error ? error.message : String(error));
+      throw error;
+    }
+  }
+
+  async publishManualEditedUpload(projectId: string, assetId: string): Promise<{ jobId: string }> {
+    const db = dbFor(this.env);
+    const asset = await db.select({ id: assets.id, publishStatus: assets.publishStatus, archivedAt: projects.archivedAt })
+      .from(assets)
+      .innerJoin(collections, eq(assets.collectionId, collections.id))
+      .innerJoin(projects, eq(collections.projectId, projects.id))
+      .where(and(eq(assets.id, assetId), eq(collections.projectId, projectId), eq(collections.kind, "edited"), eq(assets.source, "upload"))).get();
+    if (!asset) throw new Error("Manual edited upload is not available for publishing");
+    // The service can be called after the app's archive check, so it must independently close
+    // that race before creating a new background writer.
+    if (asset.archivedAt) throw new Error(`Project ${projectId} is archived — manual publish refused`);
+    if (asset.publishStatus === "ready") throw new Error("Manual edited upload is already published");
+    const active = await db.select({ id: jobs.id }).from(jobs).where(and(
+      eq(jobs.projectId, projectId), eq(jobs.kind, "manual_edited_publish"), inArray(jobs.status, ["queued", "running"]),
+      eq(jobs.correlationId, `manual_edited_publish:${assetId}`),
+    )).get();
+    if (active) return { jobId: active.id };
+    // A retry of a failed asset returns it to the only state that the workflow can promote.
+    await db.update(assets).set({ publishStatus: "pending", updatedAt: new Date() }).where(eq(assets.id, assetId));
+    let jobId: string;
+    try {
+      jobId = await createJob(db, { kind: "manual_edited_publish", projectId, payload: { projectId, assetId }, correlationId: `manual_edited_publish:${assetId}` });
+    } catch (error) {
+      // The partial unique index is the single-flight authority. A second caller can race the
+      // preflight above, so return the winner rather than report a false publication failure.
+      const uniqueConflict = (() => {
+        for (let cause: unknown = error; cause instanceof Error; cause = cause.cause) {
+          if (/UNIQUE constraint failed:\s*jobs\.correlation_id/i.test(cause.message)) return true;
+        }
+        return false;
+      })();
+      if (uniqueConflict) {
+        const winner = await db.select({ id: jobs.id }).from(jobs).where(and(
+          eq(jobs.projectId, projectId), eq(jobs.kind, "manual_edited_publish"), inArray(jobs.status, ["queued", "running"]),
+          eq(jobs.correlationId, `manual_edited_publish:${assetId}`),
+        )).get();
+        if (winner) return { jobId: winner.id };
+      }
+      throw error;
+    }
+    try {
+      await this.env.MANUAL_EDITED_PUBLISH_WORKFLOW.create({ id: jobId, params: { projectId, assetId, jobId } });
+      return { jobId };
+    } catch (error) {
+      await setJobStatus(db, jobId, "failed", error instanceof Error ? error.message : String(error));
+      await db.update(assets).set({ publishStatus: "failed", updatedAt: new Date() }).where(eq(assets.id, assetId));
       throw error;
     }
   }

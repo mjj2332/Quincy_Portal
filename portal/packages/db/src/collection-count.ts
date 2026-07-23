@@ -2,9 +2,9 @@
 export const COLLECTION_RECEIVED_COUNT_SQL = `
   UPDATE collections
   SET received_count = (SELECT count(*) FROM collection_links WHERE collection_id = ?)
-                     + (SELECT count(*) FROM assets WHERE collection_id = ?),
+                     + (SELECT count(*) FROM assets WHERE collection_id = ? AND publish_status = 'ready'),
       status = CASE WHEN (SELECT count(*) FROM collection_links WHERE collection_id = ?)
-                           + (SELECT count(*) FROM assets WHERE collection_id = ?) > 0
+                           + (SELECT count(*) FROM assets WHERE collection_id = ? AND publish_status = 'ready') > 0
                     THEN 'received' ELSE 'empty' END,
       updated_at = ?
   WHERE id = ?

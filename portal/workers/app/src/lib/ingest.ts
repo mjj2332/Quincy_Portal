@@ -22,15 +22,26 @@ export async function finalizeIngest(env: Env, input: { actorId: string; project
   const results = await env.DB.batch([
     collectionKind === "raw"
       ? env.DB.prepare("INSERT INTO assets (id, collection_id, kind, r2_key, original_filename, bytes, content_hash, source, rating_from_metadata, created_at, updated_at) VALUES (?, ?, 'photo', ?, ?, ?, ?, 'upload', ?, ?, ?) ON CONFLICT DO NOTHING").bind(input.assetId, targetCollection.id, input.key, input.originalFilename, object.size, input.contentHash ?? null, stars, now.getTime(), now.getTime())
-      : env.DB.prepare("INSERT INTO assets (id, collection_id, kind, r2_key, original_filename, bytes, content_hash, source, source_raw_asset_id, section, rating_from_metadata, created_at, updated_at) VALUES (?, ?, 'photo', ?, ?, ?, ?, 'upload', NULL, 'Manual', ?, ?, ?) ON CONFLICT DO NOTHING").bind(input.assetId, targetCollection.id, input.key, input.originalFilename, object.size, input.contentHash ?? null, stars, now.getTime(), now.getTime()),
+      : env.DB.prepare("INSERT INTO assets (id, collection_id, kind, r2_key, original_filename, bytes, content_hash, source, source_raw_asset_id, section, publish_status, rating_from_metadata, created_at, updated_at) VALUES (?, ?, 'photo', ?, ?, ?, ?, 'upload', NULL, 'Manual', 'pending', ?, ?, ?) ON CONFLICT DO NOTHING").bind(input.assetId, targetCollection.id, input.key, input.originalFilename, object.size, input.contentHash ?? null, stars, now.getTime(), now.getTime()),
     env.DB.prepare(COLLECTION_RECEIVED_COUNT_SQL).bind(...collectionReceivedCountBindings(targetCollection.id, now.getTime())),
   ]);
   const inserted = (results[0]?.meta.changes ?? 0) > 0;
   if (inserted) {
     await audit(env, input.actorId, "asset.ingested", "asset", input.assetId, { projectId: input.projectId, key: input.key, ratingFromMetadata: stars });
   }
+  // Manual edited uploads must cross the Dropbox boundary before they become visible. The
+  // background publisher is started by the caller after this durable pending row is committed.
+  if (collectionKind === "edited") {
+    const published = await db.select({ publishStatus: schema.assets.publishStatus }).from(schema.assets).where(eq(schema.assets.id, input.assetId)).get();
+    const publishStatus = published?.publishStatus ?? "pending";
+    return {
+      assetId: input.assetId,
+      ratingFromMetadata: stars,
+      publishStatus: publishStatus as "pending" | "ready" | "failed",
+    };
+  }
   // Queue failure cannot invalidate the durable source asset. A duplicate finalization also
   // repairs missing generation work once the red gate has explicitly been enabled.
-  await enqueueRenditionSafely(env, input.assetId, inserted ? collectionKind === "edited" ? "upload-edited-ingest" : "upload-ingest" : "upload-existing-asset");
-  return { assetId: input.assetId, ratingFromMetadata: stars };
+  await enqueueRenditionSafely(env, input.assetId, inserted ? "upload-ingest" : "upload-existing-asset");
+  return { assetId: input.assetId, ratingFromMetadata: stars, publishStatus: "ready" as const };
 }

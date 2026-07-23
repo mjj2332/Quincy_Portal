@@ -5,7 +5,7 @@ import { PhotoGrid, groupWorkspaceAssetsBySection, workspaceAssetIdsBetween, wor
 import { cycleLightboxIndex } from "../lib/lightbox-navigation";
 
 function asset(id: string, section: string | null): WorkspaceAsset {
-  return { id, section, collectionId: "collection", kind: "photo", originalFilename: `${id}.jpg`, bytes: 1, width: null, height: null, ratingFromMetadata: null, createdAt: "2026-07-21T00:00:00.000Z", sourceRawAssetId: null, version: 1, versionGroupId: null, supersedesAssetId: null, review: null, selected: false };
+  return { id, section, collectionId: "collection", kind: "photo", originalFilename: `${id}.jpg`, bytes: 1, width: null, height: null, ratingFromMetadata: null, renditionStatus: "ready", createdAt: "2026-07-21T00:00:00.000Z", sourceRawAssetId: null, version: 1, versionGroupId: null, supersedesAssetId: null, review: null, selected: false };
 }
 
 describe("groupWorkspaceAssetsBySection", () => {
@@ -54,6 +54,17 @@ describe("groupWorkspaceAssetsBySection", () => {
     expect(markup.indexOf(">Balcony<")).toBeLessThan(markup.indexOf(">Kitchen<"));
     expect(markup.indexOf("capture-zebra.jpg")).toBeLessThan(markup.indexOf("capture-alpha.jpg"));
     expect(markup.indexOf("zebra.jpg")).toBeLessThan(markup.indexOf("alpha.jpg", markup.indexOf(">Kitchen<")));
+  });
+
+  it("shows processing explicitly instead of an unavailable-image failure", () => {
+    const markup = renderToStaticMarkup(createElement(PhotoGrid, {
+      assets: [{ ...asset("pending", "Manual"), renditionStatus: "processing" }], showSections: true,
+      canReview: true, canRecommend: false, canSelect: false, canSetCover: false,
+      coverAssetId: null, storedCoverAssetId: null,
+      onSetCover: async () => undefined, onOpen: () => undefined, onReview: async () => undefined, onSelection: async () => undefined,
+    }));
+    expect(markup).toContain("Processing preview");
+    expect(markup).not.toContain("Image unavailable");
   });
 
   it("renders Edited QA as one flat workspace grid without section headings", () => {

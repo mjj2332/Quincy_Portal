@@ -3,6 +3,7 @@ import { normalisePath } from "../dropbox/sync";
 export const AUTOHDR_ROOT = "/AutoHDR";
 export const AUTOHDR_RAW_SUBFOLDER = "01-RAW-Photos";
 export const AUTOHDR_FINAL_SUBFOLDER_CANDIDATES = ["04-FINAL-Photos", "04-FINALS-Photos"] as const;
+export const AUTOHDR_MANUAL_UPLOADS_SUBFOLDER = "Manual-Uploads";
 
 export function deriveAutoHdrFolderName(rawFolderPath: string): string {
   const segments = normalisePath(rawFolderPath).split("/").filter(Boolean);
@@ -33,4 +34,13 @@ function isSafeDropboxPathSegment(segment: string): boolean {
 
 export function autoHdrFinalPathCandidates(folderName: string): string[] {
   return AUTOHDR_FINAL_SUBFOLDER_CANDIDATES.map((subfolder) => `${AUTOHDR_ROOT}/${folderName}/${subfolder}`);
+}
+
+/** Each manual upload has an immutable provider destination, so retries can safely overwrite only
+ * its own Dropbox object and never expose an asset before the publish succeeds. */
+export function autoHdrManualUploadPath(folderName: string, assetId: string, filename: string): string {
+  if (!isSafeDropboxPathSegment(folderName) || !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(assetId) || !isSafeDropboxPathSegment(filename) || /\u0000/.test(filename)) {
+    throw new Error("Invalid manual upload path segment");
+  }
+  return `${AUTOHDR_ROOT}/${folderName}/${AUTOHDR_MANUAL_UPLOADS_SUBFOLDER}/${assetId}/${filename}`;
 }

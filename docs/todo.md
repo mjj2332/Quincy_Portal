@@ -406,3 +406,22 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/other agents 
   especially for bracket-merged sets. Adjust the fetch matcher / stage-advance rule if names
   don't map 1:1. Code currently reads BOTH spellings and ingests unmatched finals as
   `source_raw_asset_id = null` so nothing is lost meanwhile.
+
+**Wave: manual edited Dropbox publication + explicit rendition readiness (2026-07-24, local — not deployed)**
+- [x] Edited upload completion now creates an asset as `publish_status='pending'`, retains its
+  immutable R2 source, and queues one single-flight `ManualEditedPublish` Workflow per asset.
+  The workflow uploads with Dropbox overwrite semantics to
+  `/AutoHDR/<listing>/Manual-Uploads/<asset-id>/<filename>`; `<listing>` reuses the established
+  direct-folder / `Listing Images` parent derivation.
+- [x] The Edited collection and its received count include only `publish_status='ready'` assets.
+  Dropbox failure marks the asset/job failed without deleting R2; admins can retry the failed job,
+  while uploaders see an explicit failed/publishing state rather than a false completed upload.
+- [x] Publication writers re-check archived state, use the asset ID destination for replay-safe
+  overwrites, and enqueue durable thumb/web rendition work only after publication succeeds.
+  Grids distinguish a valid current thumb rendition from `Processing preview…`; media serving
+  still prefers validated stored renditions and falls back only when necessary.
+- [x] Fetch-edited UI now says **queued** and polls jobs, project state, and Edited assets through
+  terminal completion instead of claiming that photos were already fetched.
+- [ ] **Before deploy:** apply D1 migration `0008_manual_edited_publish` (including its active
+  manual-publisher unique index), then exercise a real Dropbox success, retry-after-failure, and
+  archive-race scenario against a non-production fixture.
