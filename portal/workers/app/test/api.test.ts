@@ -1284,6 +1284,51 @@ describe("staff app API", () => {
     const afterLegacy = await SELF.fetch(`https://portal.test/api/projects/${project.id}/assets?collection=edited`, { headers: { cookie } });
     await expect(afterLegacy.json()).resolves.toMatchObject({ assets: [expect.objectContaining({ id: readyId, renditionStatus: "processing" })] });
   });
+
+  it("blocks direct unpublished edited asset media and mutations without gating ready assets", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const created = await SELF.fetch("https://portal.test/api/projects", { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ street: "Unpublished direct-id guard", orderedServices: [] }) });
+    const project = await created.json() as { id: string };
+    const editedId = crypto.randomUUID(); const now = Date.now();
+    await database.DB.prepare("INSERT INTO collections (id, project_id, kind, status, received_count, created_at, updated_at) VALUES (?, ?, 'edited', 'empty', 0, ?, ?)").bind(editedId, project.id, now, now).run();
+    const pendingId = crypto.randomUUID(); const readyId = crypto.randomUUID();
+    await database.DB.batch([
+      database.DB.prepare("INSERT INTO assets (id, collection_id, r2_key, original_filename, bytes, source, publish_status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'upload', 'pending', ?, ?)").bind(pendingId, editedId, `tests/${pendingId}.jpg`, "pending.jpg", 1, now, now),
+      database.DB.prepare("INSERT INTO assets (id, collection_id, r2_key, original_filename, bytes, source, publish_status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'upload', 'ready', ?, ?)").bind(readyId, editedId, `tests/${readyId}.jpg`, "ready.jpg", 1, now, now),
+    ]);
+    await authEnv.MEDIA.put(`tests/${readyId}.jpg`, "ready", { httpMetadata: { contentType: "image/jpeg" } });
+    const blocked = await Promise.all([
+      ...["original", "thumb", "web"].map((variant) => SELF.fetch(`https://portal.test/media/asset/${pendingId}/${variant}`, { headers: { cookie } })),
+      SELF.fetch(`https://portal.test/api/assets/${pendingId}/review`, { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ stars: 5 }) }),
+      SELF.fetch(`https://portal.test/api/assets/${pendingId}/annotations`, { headers: { cookie } }),
+      SELF.fetch(`https://portal.test/api/assets/${pendingId}/comments`, { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ body: "not yet" }) }),
+      SELF.fetch(`https://portal.test/api/projects/${project.id}/cover`, { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ assetId: pendingId }) }),
+    ]);
+    for (const response of blocked) expect(response.status).toBe(404);
+    const readyOriginal = await SELF.fetch(`https://portal.test/media/asset/${readyId}/original`, { headers: { cookie } });
+    expect(readyOriginal.status).toBe(200);
+    expect(await readyOriginal.text()).toBe("ready");
+    const readyReview = await SELF.fetch(`https://portal.test/api/assets/${readyId}/review`, { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ stars: 5 }) });
+    expect(readyReview.status).toBe(200);
+  });
+
+  it("marks a manual upload failed when its publication service cannot start", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const projectId = "00000000-0000-4000-8000-0000000000ff"; const collectionId = crypto.randomUUID(); const assetId = crypto.randomUUID(); const now = Date.now();
+    await database.DB.batch([
+      database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, ?, 'awaiting_raw', ?, ?)").bind(projectId, "Manual service failure", now, now),
+      database.DB.prepare("INSERT INTO collections (id, project_id, kind, status, received_count, created_at, updated_at) VALUES (?, ?, 'raw', 'empty', 0, ?, ?)").bind(crypto.randomUUID(), projectId, now, now),
+      database.DB.prepare("INSERT INTO collections (id, project_id, kind, status, received_count, created_at, updated_at) VALUES (?, ?, 'edited', 'empty', 0, ?, ?)").bind(collectionId, projectId, now, now),
+    ]);
+    const key = `projects/${projectId}/edited/${assetId}/service-failure.jpg`;
+    await authEnv.MEDIA.put(key, "manual-jpeg", { httpMetadata: { contentType: "image/jpeg" } });
+    const response = await SELF.fetch("https://portal.test/api/uploads/complete", { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ projectId, key, originalFilename: "service-failure.jpg", collection: "edited" }) });
+    expect(response.status).toBe(202);
+    await expect(response.json()).resolves.toMatchObject({ assetId, publishStatus: "failed", jobId: expect.any(String) });
+    await expect(database.DB.prepare("SELECT publish_status FROM assets WHERE id = ?").bind(assetId).first()).resolves.toEqual({ publish_status: "failed" });
+    await expect(database.DB.prepare("SELECT status FROM jobs WHERE correlation_id = ?").bind(`manual_edited_publish:${assetId}`).first()).resolves.toEqual({ status: "failed" });
+    expect(await authEnv.MEDIA.get(key)).not.toBeNull();
+  });
   it("projects AutoHDR state and restricts operational routes to the admin backend", async () => {
     const adminCookie = await sessionCookie(adminToken);
     const created = await SELF.fetch("https://portal.test/api/projects", {

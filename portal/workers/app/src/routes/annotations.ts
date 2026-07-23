@@ -9,6 +9,7 @@ import { hasProjectAccess } from "../middleware/capability";
 import { audit } from "../lib/audit";
 import { newId } from "../lib/ids";
 import { jsonInput } from "./helpers";
+import { isUserVisibleAsset, unpublishedAssetResponse } from "../lib/asset-visibility";
 
 const commentInput = z.object({ body: z.string().trim().min(1).max(10_000), parentId: z.string().uuid().optional() });
 const strokeInput = z.object({
@@ -29,15 +30,16 @@ const commentEditInput = z.object({ body: z.string().trim().min(1).max(10_000) }
 // the real 2 MB R2/D1-adjacent budget. Measure actual encoded bytes instead.
 function byteLength(value: string): number { return new TextEncoder().encode(value).byteLength; }
 
-type AssetContext = { assetId: string; projectId: string; kind: "raw" | "edited" | "video" | "floorplan" | "copy" };
+type AssetContext = { assetId: string; projectId: string; kind: "raw" | "edited" | "video" | "floorplan" | "copy"; publishStatus: "pending" | "ready" | "failed" };
 
 async function assetContext(c: Context<AppEnv>, assetId: string): Promise<AssetContext | undefined> {
-  return createDb(c.env.DB).select({ assetId: schema.assets.id, projectId: schema.collections.projectId, kind: schema.collections.kind })
+  return createDb(c.env.DB).select({ assetId: schema.assets.id, projectId: schema.collections.projectId, kind: schema.collections.kind, publishStatus: schema.assets.publishStatus })
     .from(schema.assets).innerJoin(schema.collections, eq(schema.assets.collectionId, schema.collections.id))
     .where(eq(schema.assets.id, assetId)).get();
 }
 
 function scopeForAsset(c: Context<AppEnv>, asset: AssetContext): "raw" | "edited" | Response {
+  if (!isUserVisibleAsset(asset.kind, asset.publishStatus)) return unpublishedAssetResponse(c);
   if (asset.kind !== "raw" && asset.kind !== "edited") return c.json({ error: "Annotations are available for RAW and edited photo assets only" }, 400);
   const capability = asset.kind === "raw" ? "annotateRaw" : "annotateEdited";
   if (!roleHasCapability(c.get("user").role, capability)) return c.json({ error: "Forbidden", capability }, 403);
@@ -45,6 +47,7 @@ function scopeForAsset(c: Context<AppEnv>, asset: AssetContext): "raw" | "edited
 }
 
 async function canViewAsset(c: Context<AppEnv>, asset: AssetContext): Promise<Response | null> {
+  if (!isUserVisibleAsset(asset.kind, asset.publishStatus)) return unpublishedAssetResponse(c);
   if (!await hasProjectAccess(c, asset.projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   if (asset.kind === "edited" && !roleHasCapability(c.get("user").role, "viewEdited")) return c.json({ error: "Forbidden", capability: "viewEdited" }, 403);
   if (asset.kind !== "raw" && asset.kind !== "edited") return c.json({ error: "Annotations are available for RAW and edited photo assets only" }, 400);

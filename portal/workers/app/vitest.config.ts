@@ -42,7 +42,7 @@ export default defineConfig({
             name: "quincy-portal-background",
             modules: true,
             script:
-              "import { WorkerEntrypoint } from 'cloudflare:workers'; export default class QuincyBackground extends WorkerEntrypoint { async processTonomoEvents() {} async publishManualEditedUpload() { return { jobId: crypto.randomUUID() }; } }",
+              "import { WorkerEntrypoint } from 'cloudflare:workers'; export default class QuincyBackground extends WorkerEntrypoint { async processTonomoEvents() {} async publishManualEditedUpload(projectId) { if (projectId === '00000000-0000-4000-8000-0000000000ff') throw new Error('Manual publish service unavailable'); return { jobId: crypto.randomUUID() }; } }",
           },
         ],
       },

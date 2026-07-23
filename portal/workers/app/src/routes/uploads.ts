@@ -72,6 +72,7 @@ uploadsRoutes.post("/uploads/complete", async (c) => {
           // existing terminal job when a lost RPC response raced a successful enqueue; otherwise
           // surface a failed operation that an admin can retry from the jobs panel.
           const db = createDb(c.env.DB);
+          const message = error instanceof Error ? error.message : "Manual Dropbox publishing could not be started";
           let existingJob = await db.select({ id: schema.jobs.id, status: schema.jobs.status })
             .from(schema.jobs)
             .where(and(
@@ -84,7 +85,6 @@ uploadsRoutes.post("/uploads/complete", async (c) => {
           if (!existingJob) {
             // A service-binding failure happens after the source asset is safely committed. Keep
             // a terminal job in D1 so the existing admin retry route can restart publication.
-            const message = error instanceof Error ? error.message : "Manual Dropbox publishing could not be started";
             await db.insert(schema.jobs).values({
               id: newId(), kind: "manual_edited_publish", status: "failed", projectId: data.projectId,
               correlationId: `manual_edited_publish:${assetId}`,
@@ -100,7 +100,16 @@ uploadsRoutes.post("/uploads/complete", async (c) => {
               ))
               .orderBy(desc(schema.jobs.createdAt))
               .get();
-            if (existingJob?.status === "failed") await audit(c.env, c.get("user").id, "asset.manual_publish.start_failed", "asset", assetId, { projectId: data.projectId, jobId: existingJob.id, error: message });
+          }
+          if (existingJob?.status === "failed") {
+            // The app owns this fallback when the service binding itself could not begin.
+            // Keep the R2 source, but terminally hide the un-published asset so retry has a
+            // durable pending -> failed lifecycle to restart from.
+            await db.update(schema.assets).set({ publishStatus: "failed", updatedAt: new Date() }).where(and(
+              eq(schema.assets.id, assetId),
+              eq(schema.assets.publishStatus, "pending"),
+            ));
+            await audit(c.env, c.get("user").id, "asset.manual_publish.start_failed", "asset", assetId, { projectId: data.projectId, jobId: existingJob.id, error: message });
           }
           if (existingJob) return c.json({ ...completed, jobId: existingJob.id, publishStatus: existingJob.status === "failed" ? "failed" : "pending" }, 202);
           return c.json({ ...completed, publishStatus: "failed", error: error instanceof Error ? error.message : "Manual Dropbox publishing could not be started" }, 202);

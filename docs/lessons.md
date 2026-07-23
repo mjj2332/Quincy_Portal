@@ -235,3 +235,12 @@
   becomes its deterministic Dropbox destination at guarded promotion time; preserve that durable
   linkage alongside the system audit record so later investigations do not have to reconstruct a
   path from mutable project metadata.
+- **List filtering is not an authorization boundary.** Pending/failed Edited rows can still be
+  guessed by UUID and reached through media, review, cover, annotation, or nested-markup routes.
+  **Rule:** centralize the condition `collection.kind !== 'edited' || publish_status === 'ready'`
+  and apply it to every user-facing direct-ID lookup, returning the same not-found response as an
+  unknown asset; do not accidentally gate RAW or non-Edited collections.
+- **A post-publication rendition handoff must be retryable without undoing publication.** If the
+  queue handoff reports false after Dropbox succeeded, failing the asset back to hidden is wrong.
+  **Rule:** leave it `ready`, mark the workflow/job failed, and allow that failed job to replay the
+  idempotent queue handoff only (no second Dropbox state transition).

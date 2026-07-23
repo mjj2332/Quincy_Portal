@@ -12,6 +12,7 @@ import { createZipStream } from "../lib/zip-stream";
 import { jsonInput } from "./helpers";
 import { ensurePipelineStages, projectStageForRole } from "./stages";
 import { abortMultipart } from "../lib/r2s3";
+import { isUserVisibleAsset } from "../lib/asset-visibility";
 
 const nullable = <T extends z.ZodTypeAny>(item: T) => item.nullable().optional();
 const projectFields = z.object({ street: z.string().min(1), suburb: nullable(z.string()), postcode: nullable(z.string()), agencyName: nullable(z.string()), agentName: nullable(z.string()), agentEmail: nullable(z.string().email()), agentPhone: nullable(z.string()), agencyId: nullable(z.string().uuid()), agentId: nullable(z.string().uuid()), shootDate: nullable(z.string()), timeWindow: nullable(z.string()), orderNo: nullable(z.string()), orderId: nullable(z.string()), invoiceAmount: nullable(z.number()), paymentStatus: nullable(z.string()), notes: nullable(z.string()), rawFolderLink: nullable(z.string().url()), rawFolderPath: nullable(z.string()), orderedServices: z.array(z.enum(COLLECTION_KINDS)).optional(), photographerUserIds: z.array(z.string().uuid()).optional(), editorUserIds: z.array(z.string().uuid()).optional() });
@@ -57,7 +58,7 @@ async function coverMaps(db: ReturnType<typeof createDb>, projectIds: string[], 
     // Mirror media.ts: photographers may only view RAW assets.
     const storedCollectionJoin = photographersOnlySeeRaw
       ? and(eq(schema.assets.collectionId, schema.collections.id), eq(schema.collections.projectId, schema.projects.id), eq(schema.collections.kind, "raw"))
-      : and(eq(schema.assets.collectionId, schema.collections.id), eq(schema.collections.projectId, schema.projects.id));
+      : and(eq(schema.assets.collectionId, schema.collections.id), eq(schema.collections.projectId, schema.projects.id), sql`(${schema.collections.kind} <> 'edited' OR ${schema.assets.publishStatus} = 'ready')`);
     // D1/Drizzle mis-renders correlated scalar subqueries. Keep both lookups set-based;
     // the grouped RAW query uses SQLite's bare-column-with-min() behaviour for its asset id.
     const [storedCovers, automaticCovers] = await Promise.all([
@@ -203,10 +204,10 @@ projectsRoutes.post("/projects/:id/cover", async (c) => {
   // posting to an unknown UUID would get 200 and an orphan audit row (matches PATCH).
   if (!await db.select({ id: schema.projects.id }).from(schema.projects).where(eq(schema.projects.id, id)).get()) return c.json({ error: "Project not found" }, 404);
   if (data.assetId !== null) {
-    const asset = await db.select({ id: schema.assets.id }).from(schema.assets)
+    const asset = await db.select({ id: schema.assets.id, collectionKind: schema.collections.kind, publishStatus: schema.assets.publishStatus }).from(schema.assets)
       .innerJoin(schema.collections, and(eq(schema.assets.collectionId, schema.collections.id), eq(schema.collections.projectId, id)))
       .where(and(eq(schema.assets.id, data.assetId), eq(schema.assets.kind, "photo"))).get();
-    if (!asset) return c.json({ error: "Asset not in this project" }, 404);
+    if (!asset || !isUserVisibleAsset(asset.collectionKind, asset.publishStatus)) return c.json({ error: "Asset not in this project" }, 404);
   }
   await db.update(schema.projects).set({ coverAssetId: data.assetId, updatedAt: new Date() }).where(eq(schema.projects.id, id));
   await audit(c.env, c.get("user").id, "project.cover.set", "project", id, { assetId: data.assetId });

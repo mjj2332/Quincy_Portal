@@ -418,9 +418,16 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/other agents 
   while uploaders see an explicit failed/publishing state rather than a false completed upload.
 - [x] Publication writers re-check archived state, persist the deterministic Dropbox destination
   as the manual asset `source_path`, use the asset ID destination for replay-safe overwrites, and
-  enqueue durable thumb/web rendition work only after publication succeeds. Grids distinguish
-  BOTH valid current thumb and web renditions from `Processing preview…`; media serving still
-  prefers validated stored renditions and falls back only when necessary.
+  enqueue durable thumb/web rendition work only after publication succeeds. A failed enqueue keeps
+  the published asset ready but fails the retryable workflow/job; replay skips Dropbox and retries
+  only the queue handoff. Grids distinguish BOTH valid current thumb and web renditions from
+  `Processing preview…`; media serving still prefers validated stored renditions and falls back
+  only when necessary.
+- [x] A centralized user-facing visibility guard returns not-found for non-ready Edited assets
+  reached by direct ID (media originals/renditions, cover choice, review, annotations/comments,
+  and annotation markup); RAW and non-Edited assets are unaffected. App-side publication-start
+  failures now atomically retain R2, persist a failed job, and transition the pending asset to
+  `failed` for a normal admin retry.
 - [x] Fetch-edited UI now says **queued** and polls jobs, project state, and Edited assets through
   terminal completion instead of claiming that photos were already fetched.
 - [ ] **Before deploy:** apply D1 migration `0008_manual_edited_publish` (including its active

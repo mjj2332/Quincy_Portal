@@ -7,6 +7,7 @@ import type { AppEnv } from "../env";
 import { hasProjectAccess } from "../middleware/capability";
 import { roleHasCapability } from "@quincy/shared";
 import { issueTransformSource } from "../lib/transform-source";
+import { isUserVisibleAsset, unpublishedAssetResponse } from "../lib/asset-visibility";
 
 export const mediaRoutes = new Hono<AppEnv>();
 
@@ -24,6 +25,7 @@ export function liveTransformLocation(baseUrl: string, key: string, variant: "we
 mediaRoutes.get("/asset/:assetId/:variant", async (c) => {
   const assetId = c.req.param("assetId"), variant = c.req.param("variant"); if (!z.string().uuid().safeParse(assetId).success || !["web", "thumb", "original"].includes(variant)) return c.json({ error: "Invalid media request" }, 400);
   const db = createDb(c.env.DB); const row = await db.select({ asset: schema.assets, projectId: schema.collections.projectId, collectionKind: schema.collections.kind }).from(schema.assets).innerJoin(schema.collections, eq(schema.assets.collectionId, schema.collections.id)).where(eq(schema.assets.id, assetId)).get(); if (!row) return c.json({ error: "Asset not found" }, 404);
+  if (!isUserVisibleAsset(row.collectionKind, row.asset.publishStatus)) return unpublishedAssetResponse(c);
   if (!await hasProjectAccess(c, row.projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   {
     const user = c.get("user"); if (row.collectionKind !== "raw" && user.role === "photographer") return c.json({ error: "Photographers may only view RAW assets" }, 403); if (row.collectionKind !== "raw" && !["admin", "editor"].includes(user.role)) return c.json({ error: "Forbidden" }, 403);
@@ -90,11 +92,13 @@ mediaRoutes.get("/annotation/:annotationId", async (c) => {
   if (!z.string().uuid().safeParse(annotationId).success) return c.json({ error: "Invalid annotation id" }, 400);
   const row = await createDb(c.env.DB).select({
     strokeR2Key: schema.annotations.strokeR2Key, projectId: schema.collections.projectId, collectionKind: schema.collections.kind,
+    publishStatus: schema.assets.publishStatus,
   }).from(schema.annotations)
     .innerJoin(schema.assets, eq(schema.annotations.assetId, schema.assets.id))
     .innerJoin(schema.collections, eq(schema.assets.collectionId, schema.collections.id))
     .where(eq(schema.annotations.id, annotationId)).get();
   if (!row) return c.json({ error: "Annotation not found" }, 404);
+  if (!isUserVisibleAsset(row.collectionKind, row.publishStatus)) return c.json({ error: "Annotation not found" }, 404);
   if (!await hasProjectAccess(c, row.projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   if (row.collectionKind === "edited" && !roleHasCapability(c.get("user").role, "viewEdited")) return c.json({ error: "Forbidden", capability: "viewEdited" }, 403);
   if (row.collectionKind !== "raw" && row.collectionKind !== "edited") return c.json({ error: "Annotation is not attached to a photo collection" }, 400);

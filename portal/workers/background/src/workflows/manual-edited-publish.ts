@@ -2,7 +2,6 @@ import { WorkflowEntrypoint } from "cloudflare:workers";
 import type { WorkflowEvent, WorkflowStep } from "cloudflare:workers";
 import { COLLECTION_RECEIVED_COUNT_SQL, collectionReceivedCountBindings } from "@quincy/db";
 import { assets, collections, projects } from "@quincy/db/schema";
-import { enqueueRenditionSafely } from "@quincy/shared";
 import { and, eq, isNull } from "drizzle-orm";
 
 import { autoHdrManualUploadPath, deriveAutoHdrFolderName } from "../autohdr/paths";
@@ -11,6 +10,7 @@ import { upload } from "../dropbox/client";
 import type { Env } from "../env";
 import { dbFor, errorMessage } from "../lib/db";
 import { setJobStatus } from "../lib/jobs";
+import { enqueueManualEditedRenditions } from "../manual-edited-renditions";
 
 export interface ManualEditedPublishInput {
   projectId: string;
@@ -74,12 +74,16 @@ export class ManualEditedPublish extends WorkflowEntrypoint<Env, ManualEditedPub
             .innerJoin(projects, and(eq(collections.projectId, projects.id), eq(projects.id, input.projectId), isNull(projects.archivedAt)))
             .where(eq(assets.id, input.assetId)).get();
           if (promoted?.publishStatus !== "ready") throw new Error(`Manual edited upload ${input.assetId} could not be published`);
-          // Source publication is durable before this best-effort side effect. A failed queue
-          // handoff leaves the ready asset eligible for the bounded rendition backfill.
-          await enqueueRenditionSafely(this.env, input.assetId, "manual-edited-publish");
           return { status: "ready" };
         });
       }
+
+      await step.do("enqueue-manual-edited-renditions", async () => {
+        // Dropbox publication is already durable. Throwing preserves ready visibility and makes
+        // the Workflow/job retryable; a replay skips upload/promotion and retries only enqueue.
+        await enqueueManualEditedRenditions(this.env, input.assetId);
+        return { queued: true };
+      });
 
       await step.do("complete-manual-publish", async () => {
         await setJobStatus(dbFor(this.env), input.jobId, "done");
