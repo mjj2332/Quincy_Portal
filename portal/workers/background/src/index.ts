@@ -10,6 +10,7 @@ import { dbFor } from "./lib/db";
 import { createJob, setJobStatus } from "./lib/jobs";
 import type { IngestMessage } from "./messages";
 import { generateRenditions } from "./renditions";
+import { publishStatusAfterWorkflowCreateFailure } from "./manual-edited-renditions";
 import { syncProjectRawFolder } from "./dropbox/sync";
 import { fanOutDropboxKicks } from "./dropbox/webhook";
 import { canMutateRenditionBackfill } from "./backfill-gate";
@@ -134,6 +135,7 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
       eq(jobs.correlationId, `manual_edited_publish:${assetId}`),
     )).get();
     if (active) return { jobId: active.id };
+    const statusAfterWorkflowCreateFailure = publishStatusAfterWorkflowCreateFailure(asset.publishStatus);
     // A failed publication retry must return the asset to the only state the workflow can
     // promote. A ready asset is a post-publication rendition-handoff retry and remains visible.
     if (asset.publishStatus !== "ready") await db.update(assets).set({ publishStatus: "pending", updatedAt: new Date() }).where(eq(assets.id, assetId));
@@ -163,7 +165,12 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
       return { jobId };
     } catch (error) {
       await setJobStatus(db, jobId, "failed", error instanceof Error ? error.message : String(error));
-      await db.update(assets).set({ publishStatus: "failed", updatedAt: new Date() }).where(eq(assets.id, assetId));
+      // A publication-start failure only hides an asset that has not reached Dropbox yet. A
+      // ready retry is repairing a rendition handoff, so preserve its visible publication state.
+      if (statusAfterWorkflowCreateFailure === "failed") await db.update(assets).set({ publishStatus: "failed", updatedAt: new Date() }).where(and(
+        eq(assets.id, assetId),
+        eq(assets.publishStatus, "pending"),
+      ));
       throw error;
     }
   }

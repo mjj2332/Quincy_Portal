@@ -420,7 +420,8 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/other agents 
   as the manual asset `source_path`, use the asset ID destination for replay-safe overwrites, and
   enqueue durable thumb/web rendition work only after publication succeeds. A failed enqueue keeps
   the published asset ready but fails the retryable workflow/job; replay skips Dropbox and retries
-  only the queue handoff. Grids distinguish BOTH valid current thumb and web renditions from
+  only the queue handoff. If creating that retry workflow fails, the ready asset still remains
+  ready while its job is failed. Grids distinguish BOTH valid current thumb and web renditions from
   `Processing preview…`; media serving still prefers validated stored renditions and falls back
   only when necessary.
 - [x] A centralized user-facing visibility guard returns not-found for non-ready Edited assets

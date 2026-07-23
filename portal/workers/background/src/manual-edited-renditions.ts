@@ -1,6 +1,10 @@
 import { enqueueRenditionSafely } from "@quincy/shared";
 import type { Env } from "./env";
 
+export function publishStatusAfterWorkflowCreateFailure(publishStatus: "pending" | "ready" | "failed"): "failed" | "ready" {
+  return publishStatus === "ready" ? "ready" : "failed";
+}
+
 /**
  * Do not let a Dropbox-published asset complete its job until its rendition work is durable.
  * The caller leaves publish_status ready so a retry only repeats this idempotent handoff.

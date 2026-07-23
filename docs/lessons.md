@@ -243,4 +243,6 @@
 - **A post-publication rendition handoff must be retryable without undoing publication.** If the
   queue handoff reports false after Dropbox succeeded, failing the asset back to hidden is wrong.
   **Rule:** leave it `ready`, mark the workflow/job failed, and allow that failed job to replay the
-  idempotent queue handoff only (no second Dropbox state transition).
+  idempotent queue handoff only (no second Dropbox state transition). The same rule applies if
+  creating that retry workflow itself fails: transition only `pending -> failed`; a ready asset
+  must remain ready while its retry job records the failure.
