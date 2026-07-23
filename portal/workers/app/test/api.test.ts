@@ -1271,7 +1271,16 @@ describe("staff app API", () => {
     expect(assets).toEqual([expect.objectContaining({ id: readyId, renditionStatus: "processing" })]);
 
     const legacyRenditionId = crypto.randomUUID();
-    await database.DB.prepare("INSERT INTO asset_renditions (id, asset_id, variant, r2_key, content_type, spec_version, created_at) VALUES (?, ?, 'thumb', ?, 'application/octet-stream', 'legacy', ?)").bind(legacyRenditionId, readyId, `renditions/${readyId}/legacy.webp`, now).run();
+    await database.DB.prepare("INSERT INTO asset_renditions (id, asset_id, variant, r2_key, content_type, spec_version, created_at) VALUES (?, ?, 'thumb', ?, 'image/webp', ?, ?)").bind(legacyRenditionId, readyId, `renditions/${readyId}/thumb.webp`, RENDITION_SPEC_VERSION, now).run();
+    const thumbOnly = await SELF.fetch(`https://portal.test/api/projects/${project.id}/assets?collection=edited`, { headers: { cookie } });
+    await expect(thumbOnly.json()).resolves.toMatchObject({ assets: [expect.objectContaining({ id: readyId, renditionStatus: "processing" })] });
+
+    const webRenditionId = crypto.randomUUID();
+    await database.DB.prepare("INSERT INTO asset_renditions (id, asset_id, variant, r2_key, content_type, spec_version, created_at) VALUES (?, ?, 'web', ?, 'image/jpeg', ?, ?)").bind(webRenditionId, readyId, `renditions/${readyId}/web.jpg`, RENDITION_SPEC_VERSION, now).run();
+    const afterBoth = await SELF.fetch(`https://portal.test/api/projects/${project.id}/assets?collection=edited`, { headers: { cookie } });
+    await expect(afterBoth.json()).resolves.toMatchObject({ assets: [expect.objectContaining({ id: readyId, renditionStatus: "ready" })] });
+
+    await database.DB.prepare("UPDATE asset_renditions SET content_type = 'application/octet-stream', spec_version = 'legacy' WHERE id = ?").bind(webRenditionId).run();
     const afterLegacy = await SELF.fetch(`https://portal.test/api/projects/${project.id}/assets?collection=edited`, { headers: { cookie } });
     await expect(afterLegacy.json()).resolves.toMatchObject({ assets: [expect.objectContaining({ id: readyId, renditionStatus: "processing" })] });
   });

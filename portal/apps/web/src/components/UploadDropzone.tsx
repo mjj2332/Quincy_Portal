@@ -84,6 +84,8 @@ export function UploadDropzone({ projectId, collection = "raw", onComplete, onTo
     try {
       if (collection === "raw") await apiPost<{ manifestId: string }, { filenames: string[] }>(`/api/projects/${projectId}/upload-manifest`, { filenames: accepted.map((file) => file.name) });
       let next = 0;
+      let succeeded = 0;
+      let failed = 0;
       const worker = async () => {
         while (next < accepted.length) {
           const file = accepted[next++];
@@ -94,17 +96,24 @@ export function UploadDropzone({ projectId, collection = "raw", onComplete, onTo
             update(file.name, { percent: 35 });
             const completed = await uploadMultipartFile(file, presign, `/api/uploads/direct?key=${encodeURIComponent(presign.key)}`);
             const result = await apiPost<CompleteResponse, { projectId: string; key: string; uploadId?: string; parts?: { partNumber: number; etag: string }[]; originalFilename: string; collection: "raw" | "edited" }>("/api/uploads/complete", { projectId, key: presign.key, uploadId: completed.uploadId, parts: completed.parts, originalFilename: file.name, collection });
-            if (result.publishStatus === "failed") update(file.name, { state: "failed", percent: 100, jobId: result.jobId, error: result.error ?? "Dropbox publishing failed. An administrator can retry it from the jobs panel." });
-            else if (result.publishStatus === "pending") update(file.name, { state: "publishing", percent: 100, jobId: result.jobId });
-            else update(file.name, { state: "complete", percent: 100 });
+            if (result.publishStatus === "failed") { failed += 1; update(file.name, { state: "failed", percent: 100, jobId: result.jobId, error: result.error ?? "Dropbox publishing failed. An administrator can retry it from the jobs panel." }); }
+            else if (result.publishStatus === "pending") { succeeded += 1; update(file.name, { state: "publishing", percent: 100, jobId: result.jobId }); }
+            else { succeeded += 1; update(file.name, { state: "complete", percent: 100 }); }
           } catch (error) {
+            failed += 1;
             update(file.name, { state: "failed", error: error instanceof Error ? error.message : "Upload failed." });
           }
         }
       };
       await Promise.all(Array.from({ length: Math.min(3, accepted.length) }, worker));
       await onComplete();
-      onToast(collection === "edited" ? "Edited uploads are publishing to Dropbox. They will appear here when ready." : "Upload processing is complete.");
+      if (collection === "edited") {
+        if (succeeded && failed) onToast(`${succeeded} edited upload${succeeded === 1 ? " is" : "s are"} publishing to Dropbox; ${failed} failed.`);
+        else if (succeeded) onToast("Edited uploads are publishing to Dropbox. They will appear here when ready.");
+        else onToast("Edited uploads could not be queued for Dropbox publishing.", "error");
+      } else {
+        onToast("Upload processing is complete.");
+      }
     } catch (error) {
       onToast(error instanceof Error ? error.message : "The upload could not be started.", "error");
     } finally {

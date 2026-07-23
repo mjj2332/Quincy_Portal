@@ -227,6 +227,11 @@
   so a retry after a lost response is safe even if Dropbox wrote the bytes before the workflow
   checkpoint persisted.
 - **Preview readiness is independent of asset publication.** A ready asset with no valid current
-  thumb rendition is still visible but must say `Processing preview…`, not `Image unavailable`.
-  Only the current rendition spec with an image content type counts as ready in the workspace;
-  serving remains authoritative and verifies both D1 metadata and the R2 object.
+  thumb and web renditions is still visible but must say `Processing preview…`, not `Image
+  unavailable`. Both variants are required before the workspace opens the lightbox, because the
+  lightbox requests `web` and must never fall through to a transform as a side effect of a
+  thumb-only cache. Serving remains authoritative and verifies both D1 metadata and the R2 object.
+- **Store the provider destination once publication succeeds.** The manual asset's `source_path`
+  becomes its deterministic Dropbox destination at guarded promotion time; preserve that durable
+  linkage alongside the system audit record so later investigations do not have to reconstruct a
+  path from mutable project metadata.

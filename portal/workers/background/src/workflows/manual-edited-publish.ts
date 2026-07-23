@@ -62,7 +62,7 @@ export class ManualEditedPublish extends WorkflowEntrypoint<Env, ManualEditedPub
           // Recheck the project in the promotion statement: archive/delete can happen after
           // Dropbox accepts the idempotent overwrite but before this final visibility change.
           await this.env.DB.batch([
-            this.env.DB.prepare("UPDATE assets SET publish_status = 'ready', updated_at = ? WHERE id = ? AND publish_status = 'pending' AND EXISTS (SELECT 1 FROM collections INNER JOIN projects ON collections.project_id = projects.id WHERE collections.id = assets.collection_id AND projects.id = ? AND projects.archived_at IS NULL)").bind(now.getTime(), input.assetId, input.projectId),
+            this.env.DB.prepare("UPDATE assets SET publish_status = 'ready', source_path = ?, updated_at = ? WHERE id = ? AND publish_status = 'pending' AND EXISTS (SELECT 1 FROM collections INNER JOIN projects ON collections.project_id = projects.id WHERE collections.id = assets.collection_id AND projects.id = ? AND projects.archived_at IS NULL)").bind(destination, now.getTime(), input.assetId, input.projectId),
             // `changes()` is connection-local, and D1 batches execute on one connection. The
             // audit row therefore exists only for the guarded pending -> ready promotion.
             this.env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, NULL, 'asset.manual_publish.ready', 'asset', ?, ?, ? WHERE changes() = 1").bind(crypto.randomUUID(), input.assetId, JSON.stringify({ actor: "system", projectId: input.projectId, jobId: input.jobId, destination }), now.getTime()),

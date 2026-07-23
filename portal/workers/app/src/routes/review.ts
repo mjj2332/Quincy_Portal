@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { createDb, schema } from "@quincy/db";
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { CollectionKind } from "@quincy/shared";
 import { RENDITION_SPEC_VERSION } from "@quincy/shared";
@@ -27,22 +27,30 @@ reviewRoutes.get("/projects/:id/assets", async (c) => {
   if (kind === "raw" && !roleHasCapability(user.role, "viewRaw")) return c.json({ error: "Forbidden", capability: "viewRaw" }, 403);
   if (["video", "floorplan", "copy"].includes(kind) && !roleHasCapability(user.role, "viewEdited")) return c.json({ error: "Forbidden", capability: "viewEdited" }, 403);
 
-  const rows = await createDb(c.env.DB).select({ asset: schema.assets, review: schema.assetReviewState, selection: schema.selections.id, rendition: schema.assetRenditions.id })
+  const rows = await createDb(c.env.DB).select({ asset: schema.assets, review: schema.assetReviewState, selection: schema.selections.id, renditionVariant: schema.assetRenditions.variant })
     .from(schema.assets)
     .innerJoin(schema.collections, and(eq(schema.assets.collectionId, schema.collections.id), eq(schema.collections.projectId, projectId), eq(schema.collections.kind, kind)))
     .where(kind === "edited" ? eq(schema.assets.publishStatus, "ready") : sql`1 = 1`)
     .leftJoin(schema.assetReviewState, eq(schema.assetReviewState.assetId, schema.assets.id))
     .leftJoin(schema.assetRenditions, and(
       eq(schema.assetRenditions.assetId, schema.assets.id),
-      eq(schema.assetRenditions.variant, "thumb"),
+      inArray(schema.assetRenditions.variant, ["thumb", "web"]),
       eq(schema.assetRenditions.specVersion, RENDITION_SPEC_VERSION),
       sql`${schema.assetRenditions.contentType} in ('image/webp', 'image/jpeg')`,
     ))
     .leftJoin(schema.selections, eq(schema.selections.assetId, schema.assets.id))
     .orderBy(asc(sql`lower(${schema.assets.originalFilename})`), asc(schema.assets.originalFilename), asc(schema.assets.id))
     .all();
+  const readiness = new Map<string, Set<"thumb" | "web">>();
+  for (const row of rows) {
+    if (!row.renditionVariant) continue;
+    const variants = readiness.get(row.asset.id) ?? new Set<"thumb" | "web">();
+    variants.add(row.renditionVariant);
+    readiness.set(row.asset.id, variants);
+  }
+  const uniqueRows = rows.filter((row, index) => index === 0 || rows[index - 1]!.asset.id !== row.asset.id);
 
-  return c.json({ assets: rows.map(({ asset, review, selection, rendition }) => ({
+  return c.json({ assets: uniqueRows.map(({ asset, review, selection }) => ({
     id: asset.id,
     collectionId: asset.collectionId,
     kind: asset.kind,
@@ -52,7 +60,7 @@ reviewRoutes.get("/projects/:id/assets", async (c) => {
     height: asset.height,
     ratingFromMetadata: asset.ratingFromMetadata,
     section: asset.section,
-    renditionStatus: rendition ? "ready" : "processing",
+    renditionStatus: readiness.get(asset.id)?.has("thumb") && readiness.get(asset.id)?.has("web") ? "ready" : "processing",
     createdAt: asset.createdAt,
     sourceRawAssetId: asset.sourceRawAssetId,
     version: asset.version,
