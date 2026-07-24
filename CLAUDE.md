@@ -96,10 +96,10 @@ and **skips cleanly** when absent (so CI passes without the 614 MB media).
 - Cloudflare resources are provisioned on the real account: D1 `quincy-portal`, KV
   `quincy-portal-sessions`, Queue `quincy-ingest`, R2 `quincy-portal-media`. Prod secrets are
   Worker secrets; local dev reads `portal/workers/app/.dev.vars` (gitignored — never commit).
-- **`main` is the source of truth (2026-07-21).** `build/phase-0-2` was merged to `main`
-  via PR #3 after Phases 0–4 shipped. New work: branch off `main`. D1 migrations **0000–0011
+- **`main` is the source of truth (2026-07-24).** `build/phase-0-2` was merged to `main`
+  via PR #3 after Phases 0–4 shipped. New work: branch off `main`. D1 migrations **0000–0014
   are confirmed applied to prod** (verified directly against the remote `d1_migrations` table
-  2026-07-24 — next available migration number is `0012`). **Read `docs/todo.md` for the
+  2026-07-24 — next available migration number is `0015`). **Read `docs/todo.md` for the
   live phase-by-phase status** — that is the current-state source, not this guide.
 
 ## Working agreements

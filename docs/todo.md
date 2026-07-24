@@ -15,13 +15,8 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
 - **Phases 0–4 shipped and live**: foundations/auth/infra; capture ingest + RAW QA; AutoHDR +
   Edited QA + review lightbox; Tonomo intake + dashboard (Kanban/List) + admin backend;
   video/floorplan/copy collections.
-- **D1 migrations: reconciled 2026-07-24.** Prod's `d1_migrations` table confirms `0000`–`0011`
-  all applied (checked directly, not inferred) — **next available migration number is
-  `0012`**. This branch's local `packages/db/migrations/` only goes to `0010`; `0011_dapper_tarantula.sql`
-  (adds `rendition_dlq_events` — the DLQ-monitoring fix from `main`, PR #9) lives on `main`
-  already and will be present once this branch is rebased/a fresh branch is cut from `main`.
-  The prerequisite gate in `docs/Implementation-Sequencing-Plan.md` is satisfied — no further
-  reconciliation needed before Wave 2/3.
+- **D1 migrations: `0000`–`0014` confirmed applied to prod (2026-07-24).** Next available
+  migration number is `0015`.
 - **Rendition pipeline is live and working**: background queue generates thumb/web WebP on
   ingest/AutoHDR-return, served from R2 with a live-transform fallback (the "thumbnail
   rendition cache" plan from 2026-07-21 — Phases 1–3 all shipped as part of the 2026-07-24
@@ -34,26 +29,27 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
 - **Master sequencing plan ready for review**: `docs/Implementation-Sequencing-Plan.md` ties
   together every pending item below into waves with builder/reviewer assignment and
   dependencies — read that first before picking up any individual item.
-- **Waves 1a, 1b, 2, 3 built and independently verified — none committed/merged/deployed yet.**
-  Each lives in its own git worktree/branch off `main`, awaiting a merge/PR decision:
+- **Waves 1a, 1b, 2, 3 merged to `main` and deployed to production (2026-07-24).** PRs #12–#15
+  (docs housekeeping was #11). Deploy order `background → webhook-ingress → app` completed;
+  migrations `0012`–`0014` applied to prod; smoke-tested (`/`, `/api/session`, `/d` reservation
+  all responding correctly).
   - **1a** `feat/staff-routing-deep-links` — SPA History-API router, `/d/*` Worker reservation,
-    mandatory OAuth callback allowlist.
-  - **1b** `fix/r2-rendition-purge-on-delete` — R2 renditions now purged on project delete.
+    mandatory OAuth callback allowlist. **Live.**
+  - **1b** `fix/r2-rendition-purge-on-delete` — R2 renditions now purged on project delete. **Live.**
   - **2** `feat/capture-count-and-dropbox-mirror` — durable manifest-based capture count, manual
-    RAW uploads now mirror to Dropbox.
-  - **3** `feat/dropbox-webhook-automation` (worktree `/tmp/quincy-wave3-dropbox-webhook-automation`,
-    built on top of Wave 2's changes — needs Wave 2 merged/rebased first) — event-driven Dropbox
-    intake, dual root-scoped monitors, AutoHDR handoff/claim/versioning model, migrations `0013`
-    + `0014`. All three new automation flags (`DROPBOX_RAW_AUTOMATION_ENABLED`,
-    `DROPBOX_AUTOHDR_AUTOMATION_ENABLED`, `DROPBOX_HANDOFF_V2_ENABLED`) default `"0"` — this ships
-    as a no-op until deliberately enabled per the plan's staged-rollout section. The legacy hourly
-    cron is deliberately still present as a safety net (see `docs/lessons.md`) — do not remove it
-    in the same deploy that enables the new monitors. An independent review caught and a follow-up
-    fix pass resolved 8 real races/gaps before this was considered done — see `docs/lessons.md`
-    for the two most reusable patterns (partial-unique-index backstop for "exactly one current
-    row"; never retire a legacy safety mechanism in the same deploy that defaults its replacement
-    off). Four rollout doc updates (`docs/Dropbox-Setup.md`, `docs/Implementation-Plan.md`) are
-    still outstanding — the plan's step 8 documentation checklist has not been applied yet.
+    RAW uploads now mirror to Dropbox. **Live.**
+  - **3** `feat/dropbox-webhook-automation` — event-driven Dropbox intake, dual root-scoped
+    monitors, AutoHDR handoff/claim/versioning model. **Deployed but dormant by design**: all
+    three new automation flags (`DROPBOX_RAW_AUTOMATION_ENABLED`, `DROPBOX_AUTOHDR_AUTOMATION_ENABLED`,
+    `DROPBOX_HANDOFF_V2_ENABLED`) default `"0"` in production, confirmed via `wrangler deploy`
+    output. The legacy hourly cron is deliberately still present as a safety net — do not remove
+    it in the same deploy that enables the new monitors. An independent review caught and a
+    follow-up fix pass resolved 8 real races/gaps before this was considered done — see
+    `docs/lessons.md` for the two most reusable patterns (partial-unique-index backstop for
+    "exactly one current row"; never retire a legacy safety mechanism in the same deploy that
+    defaults its replacement off). **Still outstanding, not blocking:** four rollout doc updates
+    (`docs/Dropbox-Setup.md`, `docs/Implementation-Plan.md` — the plan's step 8 checklist) and
+    the deliberate decision of *when* to flip the automation flags on.
 
 ## Waiting on user / external
 
