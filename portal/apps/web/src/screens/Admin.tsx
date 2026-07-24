@@ -18,6 +18,8 @@ type Event = { id: string; eventId: string; status: "received" | "processed" | "
 type EventsResponse = { events: Event[]; total: number };
 type TonomoHealth = { tonomo: { lastEventAt: string | null; counts: { received: number; processed: number; poison: number }; poisonCount: number } };
 type EventDetail = { event: Event & { payloadJson: string } };
+type RenditionDlqEvent = { id: string; assetId: string; status: "open" | "replayed" | "discarded"; receivedAt: string | null; resolvedAt: string | null; projectId: string | null; street: string | null };
+type RenditionDlqResponse = { events: RenditionDlqEvent[]; openCount: number };
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PROVIDERS = ["dropbox", "tonomo", "vimeo"] as const;
@@ -70,6 +72,9 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
   const [tonomoHealth, setTonomoHealth] = useState<TonomoHealth["tonomo"]>();
   const [poisonEvents, setPoisonEvents] = useState<Event[]>([]);
   const [poisonTotal, setPoisonTotal] = useState(0);
+  const [renditionDlq, setRenditionDlq] = useState<RenditionDlqEvent[]>([]);
+  const [renditionDlqOpenCount, setRenditionDlqOpenCount] = useState(0);
+  const [operatingRenditionDlqIds, setOperatingRenditionDlqIds] = useState<Set<string>>(new Set());
   const [selectedAgencyId, setSelectedAgencyId] = useState<string>();
   const [agencyForm, setAgencyForm] = useState({ name: "", notes: "" });
   const [agentForm, setAgentForm] = useState({ name: "", email: "", phone: "" });
@@ -146,12 +151,27 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
     } catch (reason) { setIntegrationsError(reason instanceof Error ? reason.message : "Tonomo status could not be loaded."); }
   }, []);
 
+  const loadRenditionsDlq = useCallback(async () => {
+    try {
+      const response = await apiGet<RenditionDlqResponse>("/api/admin/renditions-dlq");
+      setRenditionDlq(response.events); setRenditionDlqOpenCount(response.openCount);
+    } catch (reason) { setIntegrationsError(reason instanceof Error ? reason.message : "Rendition backlog could not be loaded."); }
+  }, []);
+
+  // integrationsError is shared across loadIntegrations/loadTonomo/loadRenditionsDlq, so any
+  // retry of that error state must re-run all three or it can silently re-render stale/empty
+  // Tonomo or rendition-backlog data as if nothing were wrong.
+  const loadIntegrationsTab = useCallback(async () => {
+    await loadIntegrations();
+    if (canAdminBackend) { await loadTonomo(); await loadRenditionsDlq(); }
+  }, [canAdminBackend, loadIntegrations, loadRenditionsDlq, loadTonomo]);
+
   useEffect(() => {
     if (activeTab === "users" && canManageUsers) void loadUsers();
     if (activeTab === "directory" && canAdminBackend) void loadDirectory();
     if (activeTab === "pipeline" && canAdminBackend) void loadPipeline();
-    if (activeTab === "integrations" && canManageIntegrations) { void loadIntegrations(); if (canAdminBackend) void loadTonomo(); }
-  }, [activeTab, canAdminBackend, canManageIntegrations, canManageUsers, loadDirectory, loadIntegrations, loadPipeline, loadTonomo, loadUsers]);
+    if (activeTab === "integrations" && canManageIntegrations) void loadIntegrationsTab();
+  }, [activeTab, canAdminBackend, canManageIntegrations, canManageUsers, loadDirectory, loadIntegrationsTab, loadPipeline, loadUsers]);
 
   async function provisionUser(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -246,6 +266,12 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
     catch (reason) { toast(reason instanceof Error ? reason.message : "Event could not be updated.", "error"); }
     finally { setOperatingEventIds((current) => { const next = new Set(current); next.delete(id); return next; }); }
   }
+  async function operateRenditionDlqEvent(id: string, action: "replay" | "discard") {
+    setOperatingRenditionDlqIds((current) => new Set(current).add(id));
+    try { await apiPost(`/api/admin/renditions-dlq/${id}/${action}`, {}); await loadRenditionsDlq(); toast(action === "replay" ? "Rendition queued for retry." : "Rendition discarded."); }
+    catch (reason) { toast(reason instanceof Error ? reason.message : "Rendition event could not be updated.", "error"); }
+    finally { setOperatingRenditionDlqIds((current) => { const next = new Set(current); next.delete(id); return next; }); }
+  }
   if (availableTabs.length === 0) return null;
 
   return (
@@ -302,9 +328,9 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
       </section>}
 
       {activeTab === "integrations" && canManageIntegrations && <section className="admin-section" role="tabpanel">
-        <div className="admin-section__head"><div><div className="ey">Studio connections</div><h2 className="serif">Integrations</h2></div><button className="button button--secondary" type="button" onClick={() => void loadIntegrations()} disabled={isLoadingIntegrations}>Refresh</button></div>
+        <div className="admin-section__head"><div><div className="ey">Studio connections</div><h2 className="serif">Integrations</h2></div><button className="button button--secondary" type="button" onClick={() => void loadIntegrationsTab()} disabled={isLoadingIntegrations}>Refresh</button></div>
         {isLoadingIntegrations && <div className="empty" role="status"><span className="serif">Loading integrations.</span>Checking studio connections.</div>}
-        {!isLoadingIntegrations && integrationsError && <div className="empty" role="alert"><span className="serif">Integrations are unavailable.</span>{integrationsError}<div style={{ marginTop: 16 }}><button className="button button--secondary" type="button" onClick={() => void loadIntegrations()}>Try again</button></div></div>}
+        {!isLoadingIntegrations && integrationsError && <div className="empty" role="alert"><span className="serif">Integrations are unavailable.</span>{integrationsError}<div style={{ marginTop: 16 }}><button className="button button--secondary" type="button" onClick={() => void loadIntegrationsTab()}>Try again</button></div></div>}
         {!isLoadingIntegrations && !integrationsError && <div className="integration-grid">{PROVIDERS.map((provider) => {
           const integration = integrations.find((item) => item.provider === provider);
           const status = provider === "tonomo" ? (tonomoHealth?.lastEventAt ? "connected" : "disconnected") : integration?.status ?? "not-configured";
@@ -312,6 +338,7 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
           return <article className="integration-card" key={provider}><div className="integration-card__top"><div><div className="ey">{title}</div><h3 className="serif">{title}</h3></div><span className={`admin-status admin-status--${status}`}>{provider === "tonomo" ? tonomoHealth?.lastEventAt ? "Receiving" : "Awaiting first event" : statusLabel(status)}</span></div>{provider === "dropbox" ? <><p>{integration ? "Connect the studio Dropbox to sync RAW capture folders." : "No Dropbox connection has been configured for this studio."}</p>{integration?.lastError && <div className="notice admin-notice" role="alert">{integration.lastError}</div>}<dl className="integration-meta"><div><dt>Last event</dt><dd>{relativeTime(integration?.lastEventAt ?? null)}</dd></div>{integration?.expiresAt && <div><dt>Expires</dt><dd>{formatDate(integration.expiresAt)}</dd></div>}</dl>{dropboxNotice && <div className="notice admin-notice" role="alert">{dropboxNotice}</div>}<button className="button" type="button" onClick={() => void connectDropbox()} disabled={isConnectingDropbox}>{isConnectingDropbox ? "Opening Dropbox…" : integration?.status === "connected" ? "Reconnect Dropbox" : "Connect Dropbox"}</button></> : provider === "tonomo" ? <><p>Order deliveries are recorded and reconciled automatically.</p><dl className="integration-meta"><div><dt>Last event</dt><dd>{relativeTime(tonomoHealth?.lastEventAt ?? null)}</dd></div><div><dt>Processed</dt><dd>{tonomoHealth?.counts.processed ?? 0}</dd></div><div><dt>Received</dt><dd>{tonomoHealth?.counts.received ?? 0}</dd></div><div><dt>Poison</dt><dd>{tonomoHealth?.counts.poison ?? 0}</dd></div></dl></> : <><p>Configured in a later phase.</p><dl className="integration-meta"><div><dt>Last event</dt><dd>{relativeTime(integration?.lastEventAt ?? null)}</dd></div></dl></>}</article>;
         })}</div>}
         {!isLoadingIntegrations && !integrationsError && canAdminBackend && <div className="admin-poison"><div className="admin-section__head"><div><div className="ey">Operator queue</div><h2 className="serif">Failed Tonomo events</h2></div></div>{poisonEvents.length === 0 ? <div className="empty"><span className="serif">No failed events.</span>Tonomo orders are processing normally.</div> : <><div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Received</th><th>Order</th><th>Error reason</th><th><span className="sr-only">Actions</span></th></tr></thead><tbody>{poisonEvents.map((event) => { const isOperating = operatingEventIds.has(event.id); return <tr key={event.id}><td data-label="Received">{formatDate(event.receivedAt)}</td><td data-label="Order">{event.summary ? <>{event.summary.street}<br /><small>{event.summary.orderId}</small></> : "Unparseable"}</td><td data-label="Error reason">{event.error || "—"}</td><td className="admin-table__action"><button className="button button--text" type="button" onClick={() => void viewPayload(event.id)}>View payload</button><button className="button button--secondary" type="button" disabled={isOperating} onClick={() => void operateEvent(event.id, "retry")}>Retry</button><button className="button button--text" type="button" disabled={isOperating} onClick={() => void operateEvent(event.id, "discard")}>Discard</button></td></tr>; })}</tbody></table></div>{poisonTotal > poisonEvents.length && <div style={{ marginTop: 16 }}><button className="button button--secondary" type="button" onClick={() => void loadTonomo(poisonEvents.length, true)}>Load more</button></div>}</>}</div>}
+        {!isLoadingIntegrations && !integrationsError && canAdminBackend && <div className="admin-poison"><div className="admin-section__head"><div><div className="ey">Operator queue</div><h2 className="serif">Rendition delivery failures</h2></div><span className={`admin-status admin-status--${renditionDlqOpenCount > 0 ? "error" : "active"}`}>{renditionDlqOpenCount > 0 ? `${renditionDlqOpenCount} stuck` : "No backlog"}</span></div>{renditionDlq.length === 0 ? <div className="empty"><span className="serif">No stuck renditions.</span>Preview generation is processing normally.</div> : <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>First failed</th><th>Project</th><th>Asset</th><th><span className="sr-only">Actions</span></th></tr></thead><tbody>{renditionDlq.map((event) => { const isOperating = operatingRenditionDlqIds.has(event.id); return <tr key={event.id}><td data-label="First failed">{formatDate(event.receivedAt)}</td><td data-label="Project">{event.street || "—"}</td><td data-label="Asset"><code>{event.assetId}</code></td><td className="admin-table__action"><button className="button button--secondary" type="button" disabled={isOperating} onClick={() => void operateRenditionDlqEvent(event.id, "replay")}>Replay</button><button className="button button--text" type="button" disabled={isOperating} onClick={() => void operateRenditionDlqEvent(event.id, "discard")}>Discard</button></td></tr>; })}</tbody></table></div>}</div>}
       </section>}
       {payload && <div className="admin-modal" role="dialog" aria-modal="true" aria-label="Tonomo event payload"><div className="admin-modal__panel"><div className="admin-section__head"><div><div className="ey">Webhook payload</div><h2 className="serif">Event details</h2></div><button className="button button--secondary" type="button" onClick={() => setPayload(undefined)}>Close</button></div><pre>{payload.json}</pre></div></div>}
       <div className="toasts" aria-live="polite">{toasts.map((item) => <div className={`toast ${item.tone === "error" ? "toast--error" : ""}`} key={item.id}>{item.tone === "error" ? "!" : "✓"}<span>{item.message}</span></div>)}</div>

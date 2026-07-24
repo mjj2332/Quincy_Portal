@@ -510,6 +510,26 @@ export const webhookEvents = sqliteTable(
   (t) => [uniqueIndex("webhook_events_dedupe").on(t.source, t.eventId)],
 );
 
+/** One row per message the rendition consumer's DLQ actually received (append-only; a replay
+ * that fails again produces a fresh row rather than mutating this one). */
+export const renditionDlqEvents = sqliteTable(
+  "rendition_dlq_events",
+  {
+    id: id(),
+    assetId: text("asset_id").notNull(),
+    status: text("status", { enum: ["open", "replayed", "discarded"] })
+      .notNull()
+      .default("open"),
+    receivedAt: integer("received_at", { mode: "timestamp_ms" }).notNull(),
+    resolvedAt: integer("resolved_at", { mode: "timestamp_ms" }),
+  },
+  (t) => [
+    index("rendition_dlq_events_asset_idx").on(t.assetId),
+    // Matches the admin list route's actual access pattern: filter by status, order by receivedAt.
+    index("rendition_dlq_events_status_received_idx").on(t.status, t.receivedAt),
+  ],
+);
+
 export const jobs = sqliteTable(
   "jobs",
   {

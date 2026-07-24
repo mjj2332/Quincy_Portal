@@ -1,7 +1,7 @@
 import { Hono, type Context } from "hono";
 import { createDb, schema } from "@quincy/db";
 import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
-import { parseTonomoOrder, ROLE_CAPABILITIES } from "@quincy/shared";
+import { enqueueRenditionSafely, parseTonomoOrder, renditionsEnabled, ROLE_CAPABILITIES } from "@quincy/shared";
 import { z } from "zod";
 import type { AppEnv } from "../env";
 import { audit } from "../lib/audit";
@@ -45,6 +45,77 @@ adminRoutes.post("/admin/renditions/backfill", async (c) => {
   } catch (error) {
     return c.json({ error: error instanceof Error ? error.message : "Rendition backfill failed" }, 409);
   }
+});
+
+// Messages the quincy-renditions consumer's DLQ actually received (see background queue()'s
+// RENDITION_DLQ_QUEUE_NAME branch). Each row is append-only: a replay that fails 3x again lands
+// as a fresh "open" row rather than mutating this one.
+adminRoutes.get("/admin/renditions-dlq", async (c) => {
+  if (!adminAllowed(c)) return c.json({ error: "Forbidden", capability: "adminBackend" }, 403);
+  const parsed = z.object({ status: optionalQuery(z.enum(["open", "replayed", "discarded"])), limit: optionalQuery(z.coerce.number().int().min(1).max(200)) }).safeParse(c.req.query());
+  if (!parsed.success) return c.json({ error: "Invalid query", details: parsed.error.flatten() }, 400);
+  const db = createDb(c.env.DB); const status = parsed.data.status ?? "open";
+  const [events, openCount] = await Promise.all([
+    db.select({ id: schema.renditionDlqEvents.id, assetId: schema.renditionDlqEvents.assetId, status: schema.renditionDlqEvents.status, receivedAt: schema.renditionDlqEvents.receivedAt, resolvedAt: schema.renditionDlqEvents.resolvedAt, projectId: schema.projects.id, street: schema.projects.street })
+      .from(schema.renditionDlqEvents)
+      .leftJoin(schema.assets, eq(schema.assets.id, schema.renditionDlqEvents.assetId))
+      .leftJoin(schema.collections, eq(schema.collections.id, schema.assets.collectionId))
+      .leftJoin(schema.projects, eq(schema.projects.id, schema.collections.projectId))
+      .where(eq(schema.renditionDlqEvents.status, status))
+      .orderBy(desc(schema.renditionDlqEvents.receivedAt)).limit(parsed.data.limit ?? 50).all(),
+    db.select({ count: sql<number>`count(*)` }).from(schema.renditionDlqEvents).where(eq(schema.renditionDlqEvents.status, "open")).get(),
+  ]);
+  return c.json({ events, openCount: openCount?.count ?? 0 });
+});
+
+adminRoutes.post("/admin/renditions-dlq/:id/replay", async (c) => {
+  if (!adminAllowed(c)) return c.json({ error: "Forbidden", capability: "adminBackend" }, 403);
+  const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid rendition DLQ event id" }, 400);
+  const db = createDb(c.env.DB);
+  const event = await db.select({ id: schema.renditionDlqEvents.id, assetId: schema.renditionDlqEvents.assetId }).from(schema.renditionDlqEvents)
+    .where(and(eq(schema.renditionDlqEvents.id, id), eq(schema.renditionDlqEvents.status, "open"))).get();
+  if (!event) return c.json({ error: "Rendition DLQ event is not open" }, 409);
+  // A malformed DLQ body (see background queue()'s fallback assetId) has nothing real to
+  // re-enqueue; only "discard" is meaningful for it.
+  if (!idCheck(event.assetId)) return c.json({ error: "This event has no valid asset to replay — discard it instead" }, 409);
+  // enqueueRenditionSafely already checks the queue binding; a replay is a single
+  // operator-identified asset, the same blast radius as the ungated webhook-event retry below,
+  // so it does not need the bulk backfill's extra production flag. The gate is checked here too
+  // (redundantly with enqueueRenditionSafely) so it can be checked BEFORE the row is claimed —
+  // claiming first, then finding out the send failed, would leave the row misleadingly
+  // "replayed" with nothing actually queued.
+  if (!renditionsEnabled(c.env)) return c.json({ error: "Renditions are disabled" }, 409);
+  // Claim the row atomically before the side effect: a concurrent discard (or a second
+  // concurrent replay) racing this same row must lose here, not after it's already caused a
+  // stray rendition re-generation for an asset the operator just decided to discard.
+  // Do not reorder this claim after enqueueRenditionSafely() — that would reopen exactly the
+  // discard-vs-replay race this comment is guarding against.
+  const claimed = await db.update(schema.renditionDlqEvents).set({ status: "replayed", resolvedAt: new Date() })
+    .where(and(eq(schema.renditionDlqEvents.id, id), eq(schema.renditionDlqEvents.status, "open"))).run();
+  if (claimed.meta.changes === 0) return c.json({ error: "Rendition DLQ event is not open" }, 409);
+  if (!await enqueueRenditionSafely(c.env, event.assetId, "operator-dlq-replay")) {
+    // The gate is pre-checked above, so this only fires if the queue send itself failed after
+    // the row was already claimed. Revert the claim rather than leaving a "replayed" row that
+    // nothing actually queued — the default admin view only lists status='open', so an
+    // unreverted row here would silently vanish from the backlog while the rendition stays
+    // stuck, reproducing the exact invisible-failure mode this feature exists to prevent.
+    await db.update(schema.renditionDlqEvents).set({ status: "open", resolvedAt: null })
+      .where(and(eq(schema.renditionDlqEvents.id, id), eq(schema.renditionDlqEvents.status, "replayed")));
+    return c.json({ error: "Renditions are enabled but the rendition queue rejected the message" }, 502);
+  }
+  await audit(c.env, c.get("user").id, "rendition.dlq.replay", "rendition_dlq_event", id, { assetId: event.assetId });
+  return c.json({ ok: true });
+});
+
+adminRoutes.post("/admin/renditions-dlq/:id/discard", async (c) => {
+  if (!adminAllowed(c)) return c.json({ error: "Forbidden", capability: "adminBackend" }, 403);
+  const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid rendition DLQ event id" }, 400);
+  const db = createDb(c.env.DB);
+  const result = await db.update(schema.renditionDlqEvents).set({ status: "discarded", resolvedAt: new Date() })
+    .where(and(eq(schema.renditionDlqEvents.id, id), eq(schema.renditionDlqEvents.status, "open"))).run();
+  if (result.meta.changes === 0) return c.json({ error: "Rendition DLQ event is not open" }, 409);
+  await audit(c.env, c.get("user").id, "rendition.dlq.discard", "rendition_dlq_event", id);
+  return c.json({ ok: true });
 });
 
 adminRoutes.get("/admin/agencies", async (c) => {

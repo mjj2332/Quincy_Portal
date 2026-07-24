@@ -78,6 +78,13 @@
       "when": 1785014400000,
       "tag": "0010_retire_legacy_manual_edited_recovery",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1784882006463,
+      "tag": "0011_dapper_tarantula",
+      "breakpoints": true
     }
   ]
 }

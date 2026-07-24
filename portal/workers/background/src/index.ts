@@ -1,6 +1,6 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { and, asc, eq, gt, inArray } from "drizzle-orm";
-import { assets, collections, integrationConnections, jobs, projects, selections } from "@quincy/db/schema";
+import { assets, collections, integrationConnections, jobs, projects, renditionDlqEvents, selections } from "@quincy/db/schema";
 import { enqueueRenditionSafely, renditionsEnabled, type RenditionMessage } from "@quincy/shared";
 
 import { DropboxSyncDO } from "./do/dropbox-sync";
@@ -15,7 +15,7 @@ import { syncProjectRawFolder } from "./dropbox/sync";
 import { fanOutDropboxKicks } from "./dropbox/webhook";
 import { canMutateRenditionBackfill } from "./backfill-gate";
 import { safeRenditionFailure } from "./rendition-diagnostics";
-import { parseQueueBody } from "./queue-dispatch";
+import { parseQueueBody, RENDITION_DLQ_QUEUE_NAME } from "./queue-dispatch";
 import { AutoHdrSend } from "./workflows/autohdr";
 import { AutoHdrFetch } from "./workflows/autohdr-fetch";
 import { ManualEditedPublish } from "./workflows/manual-edited-publish";
@@ -215,6 +215,36 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
   }
 
   async queue(batch: MessageBatch<IngestMessage | RenditionMessage>): Promise<void> {
+    if (batch.queue === RENDITION_DLQ_QUEUE_NAME) {
+      // Messages here already exhausted max_retries on quincy-renditions. Record the backlog so
+      // it's operator-visible, then ack — retrying here just burns attempts before the root
+      // cause (e.g. a secret drift) has actually been fixed.
+      const db = dbFor(this.env);
+      for (const message of batch.messages) {
+        const parsed = parseQueueBody(batch.queue, message.body);
+        // A malformed body should be unreachable (the only producer of quincy-renditions-dlq is
+        // Cloudflare re-delivering an already-validated quincy-renditions body), but "should be
+        // unreachable" describes the exact gap that caused this incident. Record it anyway with
+        // a best-effort asset id rather than silently dropping it — an unrecorded arrival here
+        // reproduces the same invisible-backlog failure this consumer exists to catch.
+        const rawBody = message.body;
+        const fallbackAssetId = rawBody && typeof rawBody === "object" && typeof (rawBody as { assetId?: unknown }).assetId === "string"
+          ? (rawBody as { assetId: string }).assetId
+          : "unparseable-dlq-body";
+        const assetId = parsed && parsed.body.type === "generate_renditions" ? parsed.body.assetId : fallbackAssetId;
+        if (!parsed || parsed.body.type !== "generate_renditions") {
+          console.error("Rendition DLQ message has an unrecognized body", { queue: batch.queue, assetId });
+        }
+        await db.insert(renditionDlqEvents).values({
+          id: crypto.randomUUID(),
+          assetId,
+          status: "open",
+          receivedAt: new Date(),
+        });
+        message.ack();
+      }
+      return;
+    }
     for (const message of batch.messages) {
       try {
         const parsed = parseQueueBody(batch.queue, message.body);
