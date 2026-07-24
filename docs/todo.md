@@ -434,3 +434,9 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/other agents 
 - [ ] **Before deploy:** apply D1 migration `0008_manual_edited_publish` (including its active
   manual-publisher unique index), then exercise a real Dropbox success, retry-after-failure, and
   archive-race scenario against a non-production fixture.
+- [x] **Pilot rendition diagnostics (local, 2026-07-24):** replaced raw rendition queue-error
+  logging with allowlisted failure metadata only (queue/type/asset ID, stage, status, recognized
+  content type, and `cf-resized` flags/codes). Retry/DLQ behavior remains `message.retry()`;
+  focused Background tests/typecheck plus the full workspace verification matrix pass. Deployment
+  is deliberately pending explicit authorization; only then may the existing pilot rendition
+  message be retried to determine its production root cause.

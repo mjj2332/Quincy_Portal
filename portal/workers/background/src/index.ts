@@ -14,6 +14,7 @@ import { publishStatusAfterWorkflowCreateFailure } from "./manual-edited-renditi
 import { syncProjectRawFolder } from "./dropbox/sync";
 import { fanOutDropboxKicks } from "./dropbox/webhook";
 import { canMutateRenditionBackfill } from "./backfill-gate";
+import { safeRenditionFailure } from "./rendition-diagnostics";
 import { parseQueueBody } from "./queue-dispatch";
 import { AutoHdrSend } from "./workflows/autohdr";
 import { AutoHdrFetch } from "./workflows/autohdr-fetch";
@@ -240,7 +241,16 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
             break;
         }
       } catch (error) {
-        console.error("Background queue message failed", message.body, error);
+        const body = message.body;
+        const renditionFailure = batch.queue === "quincy-renditions" && body && typeof body === "object" && (body as { type?: unknown }).type === "generate_renditions"
+          ? safeRenditionFailure(error)
+          : undefined;
+        console.error("Background queue message failed", {
+          queue: batch.queue,
+          type: body && typeof body === "object" ? (body as { type?: unknown }).type : "invalid",
+          assetId: body && typeof body === "object" && typeof (body as { assetId?: unknown }).assetId === "string" ? (body as { assetId: string }).assetId : undefined,
+          renditionFailure,
+        });
         message.retry();
       }
     }
