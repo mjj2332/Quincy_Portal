@@ -39,11 +39,6 @@
       "binding": "MANUAL_EDITED_PUBLISH_WORKFLOW",
       "name": "quincy-manual-edited-publish",
       "class_name": "ManualEditedPublish"
-    },
-    {
-      "binding": "LEGACY_MANUAL_EDITED_RECOVERY_WORKFLOW",
-      "name": "quincy-legacy-manual-edited-recovery",
-      "class_name": "LegacyManualEditedRecovery"
     }
   ],
   "durable_objects": {

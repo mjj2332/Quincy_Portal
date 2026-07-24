@@ -4,7 +4,7 @@ import { ApiError, apiGet, apiPatch, apiPost } from "../lib/api";
 import { useCapabilities } from "../lib/capabilities";
 import { useStages } from "../lib/stages";
 
-type AdminTab = "users" | "directory" | "pipeline" | "integrations" | "recovery";
+type AdminTab = "users" | "directory" | "pipeline" | "integrations";
 type Toast = { id: number; message: string; tone: "success" | "error" };
 type User = { id: string; name: string; email: string; role: Role; active: boolean; createdAt: string | null };
 type IntegrationStatus = "connected" | "disconnected" | "expired" | "error";
@@ -18,8 +18,6 @@ type Event = { id: string; eventId: string; status: "received" | "processed" | "
 type EventsResponse = { events: Event[]; total: number };
 type TonomoHealth = { tonomo: { lastEventAt: string | null; counts: { received: number; processed: number; poison: number }; poisonCount: number } };
 type EventDetail = { event: Event & { payloadJson: string } };
-type LegacyRecoveryAsset = { id: string; projectId: string; originalFilename: string; sourcePath: null; publishStatus: "ready"; source: "upload"; collectionKind: "edited"; archivedAt: null; renditionCount: 0 };
-type LegacyRecoveryPreview = { assets: LegacyRecoveryAsset[]; count: number; temporary: true };
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PROVIDERS = ["dropbox", "tonomo", "vimeo"] as const;
@@ -60,7 +58,7 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
   const canAdminBackend = can("adminBackend");
   const availableTabs: AdminTab[] = [
     ...(canManageUsers ? ["users" as const] : []),
-    ...(canAdminBackend ? ["directory" as const, "pipeline" as const, "recovery" as const] : []),
+    ...(canAdminBackend ? ["directory" as const, "pipeline" as const] : []),
     ...(canManageIntegrations ? ["integrations" as const] : []),
   ];
   const [activeTab, setActiveTab] = useState<AdminTab>(availableTabs[0] ?? "users");
@@ -92,10 +90,6 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
   const [form, setForm] = useState({ email: "", name: "", role: "photographer" as Role });
   const [formErrors, setFormErrors] = useState<{ email?: string; name?: string }>({});
   const [dropboxNotice, setDropboxNotice] = useState<string>();
-  const [legacyRecovery, setLegacyRecovery] = useState<LegacyRecoveryAsset[]>([]);
-  const [legacyRecoveryError, setLegacyRecoveryError] = useState<string>();
-  const [selectedLegacyRecoveryIds, setSelectedLegacyRecoveryIds] = useState<Set<string>>(new Set());
-  const [isRecoveringLegacyAssets, setIsRecoveringLegacyAssets] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
 
   const toast = useCallback((message: string, tone: Toast["tone"] = "success") => {
@@ -145,15 +139,6 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
     catch (reason) { setPipelineError(reason instanceof Error ? reason.message : "Pipeline stages could not be loaded."); }
   }, []);
 
-  const loadLegacyRecovery = useCallback(async () => {
-    setLegacyRecoveryError(undefined);
-    try {
-      const response = await apiGet<LegacyRecoveryPreview>("/api/admin/legacy-manual-edited-recovery/preview");
-      setLegacyRecovery(response.assets);
-      setSelectedLegacyRecoveryIds(new Set(response.assets.map((asset) => asset.id)));
-    } catch (reason) { setLegacyRecoveryError(reason instanceof Error ? reason.message : "Legacy recovery preview could not be loaded."); }
-  }, []);
-
   const loadTonomo = useCallback(async (offset = 0, append = false) => {
     try {
       const [health, events] = await Promise.all([apiGet<TonomoHealth>("/api/admin/tonomo-health"), apiGet<EventsResponse>(`/api/admin/webhook-events?source=tonomo&status=poison&limit=50&offset=${offset}`)]);
@@ -165,9 +150,8 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
     if (activeTab === "users" && canManageUsers) void loadUsers();
     if (activeTab === "directory" && canAdminBackend) void loadDirectory();
     if (activeTab === "pipeline" && canAdminBackend) void loadPipeline();
-    if (activeTab === "recovery" && canAdminBackend) void loadLegacyRecovery();
     if (activeTab === "integrations" && canManageIntegrations) { void loadIntegrations(); if (canAdminBackend) void loadTonomo(); }
-  }, [activeTab, canAdminBackend, canManageIntegrations, canManageUsers, loadDirectory, loadIntegrations, loadLegacyRecovery, loadPipeline, loadTonomo, loadUsers]);
+  }, [activeTab, canAdminBackend, canManageIntegrations, canManageUsers, loadDirectory, loadIntegrations, loadPipeline, loadTonomo, loadUsers]);
 
   async function provisionUser(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -262,19 +246,6 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
     catch (reason) { toast(reason instanceof Error ? reason.message : "Event could not be updated.", "error"); }
     finally { setOperatingEventIds((current) => { const next = new Set(current); next.delete(id); return next; }); }
   }
-  async function executeLegacyRecovery() {
-    const assetIds = [...selectedLegacyRecoveryIds];
-    if (!assetIds.length || !window.confirm(`Queue recovery for ${assetIds.length} strict legacy Edited asset${assetIds.length === 1 ? "" : "s"}? This performs the approved deterministic Dropbox copy, repairs the missing source path only if still safe, then generates previews.`)) return;
-    setIsRecoveringLegacyAssets(true);
-    try {
-      const confirmation = window.confirm("If this is production, confirm the temporary recovery now.");
-      const response = await apiPost<{ jobIds: string[] }, { assetIds: string[]; confirmProduction?: true }>("/api/admin/legacy-manual-edited-recovery/execute", confirmation ? { assetIds, confirmProduction: true } : { assetIds });
-      toast(`Queued ${response.jobIds.length} legacy recovery job${response.jobIds.length === 1 ? "" : "s"}.`);
-      await loadLegacyRecovery();
-    } catch (reason) { toast(reason instanceof Error ? reason.message : "Legacy recovery could not be queued.", "error"); }
-    finally { setIsRecoveringLegacyAssets(false); }
-  }
-
   if (availableTabs.length === 0) return null;
 
   return (
@@ -287,7 +258,7 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
       </div>
 
       <div className="admin-tabs" role="tablist" aria-label="Administration sections">
-        {availableTabs.map((tab) => <button key={tab} className={`ctab ${activeTab === tab ? "is-active" : ""}`} type="button" role="tab" aria-selected={activeTab === tab} onClick={() => setActiveTab(tab)}>{tab === "users" ? "Users" : tab === "directory" ? "Directory" : tab === "pipeline" ? "Pipeline" : tab === "recovery" ? "Recovery" : "Integrations"}</button>)}
+        {availableTabs.map((tab) => <button key={tab} className={`ctab ${activeTab === tab ? "is-active" : ""}`} type="button" role="tab" aria-selected={activeTab === tab} onClick={() => setActiveTab(tab)}>{tab === "users" ? "Users" : tab === "directory" ? "Directory" : tab === "pipeline" ? "Pipeline" : "Integrations"}</button>)}
       </div>
 
       {activeTab === "users" && canManageUsers && <section className="admin-section" role="tabpanel">
@@ -328,14 +299,6 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
         <div className="admin-section__head"><div><div className="ey">Project flow</div><h2 className="serif">Pipeline stages</h2></div><button className="button button--secondary" type="button" onClick={() => void loadPipeline()}>Refresh</button></div>
         {pipelineError && <div className="notice" role="alert">{pipelineError}</div>}{stageError && <div className="notice" role="alert">{stageError}</div>}
         <div className="admin-stage-list">{stages.map((stage, index) => <div className="admin-stage" key={stage.key}><div className="admin-stage__order">{stage.displayOrder}</div><div><strong>{stage.key.replace(/_/g, " ")}</strong><small>Stable stage key</small></div><label className="admin-field"><span>Label</span><input value={stage.label} onChange={(event) => setStages((current) => current.map((item) => item.key === stage.key ? { ...item, label: event.target.value } : item))} onBlur={() => void updateStage(stage.key, { label: stage.label })} /></label><label className="admin-toggle"><input type="checkbox" checked={stage.active} onChange={(event) => void updateStage(stage.key, { active: event.target.checked })} /><span>{stage.active ? "Active" : "Inactive"}</span></label><div className="admin-stage__actions"><button className="button button--text" type="button" disabled={index === 0} onClick={() => void reorderStage(index, -1)}>Up</button><button className="button button--text" type="button" disabled={index === stages.length - 1} onClick={() => void reorderStage(index, 1)}>Down</button></div></div>)}</div>
-      </section>}
-
-      {activeTab === "recovery" && canAdminBackend && <section className="admin-section" role="tabpanel">
-        <div className="admin-section__head"><div><div className="ey">Temporary operator facility</div><h2 className="serif">Legacy manual Edited recovery</h2></div><button className="button button--secondary" type="button" onClick={() => void loadLegacyRecovery()} disabled={isRecoveringLegacyAssets}>Refresh preview</button></div>
-        <p className="muted">Only ready manual Edited uploads with no Dropbox source path, no stored renditions, and an active project are eligible. Recovery copies the immutable R2 source to its deterministic Dropbox destination, repairs the missing source path under a guarded compare-and-set, then queues previews.</p>
-        {legacyRecoveryError && <div className="notice" role="alert">{legacyRecoveryError}</div>}
-        {!legacyRecoveryError && legacyRecovery.length === 0 && <div className="empty"><span className="serif">No eligible legacy assets.</span>The strict recovery predicate found nothing to queue.</div>}
-        {!legacyRecoveryError && legacyRecovery.length > 0 && <><div className="admin-table-wrap"><table className="admin-table"><thead><tr><th><span className="sr-only">Select</span></th><th>Filename</th><th>Project</th><th>Stored renditions</th></tr></thead><tbody>{legacyRecovery.map((asset) => <tr key={asset.id}><td><input aria-label={`Select ${asset.originalFilename}`} type="checkbox" checked={selectedLegacyRecoveryIds.has(asset.id)} onChange={(event) => setSelectedLegacyRecoveryIds((current) => { const next = new Set(current); if (event.target.checked) next.add(asset.id); else next.delete(asset.id); return next; })} /></td><td data-label="Filename"><strong>{asset.originalFilename}</strong></td><td data-label="Project"><code>{asset.projectId}</code></td><td data-label="Stored renditions">{asset.renditionCount}</td></tr>)}</tbody></table></div><div style={{ marginTop: 16 }}><button className="button" type="button" disabled={isRecoveringLegacyAssets || selectedLegacyRecoveryIds.size === 0} onClick={() => void executeLegacyRecovery()}>{isRecoveringLegacyAssets ? "Queueing recovery…" : `Queue recovery (${selectedLegacyRecoveryIds.size})`}</button></div></>}
       </section>}
 
       {activeTab === "integrations" && canManageIntegrations && <section className="admin-section" role="tabpanel">

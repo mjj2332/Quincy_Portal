@@ -532,9 +532,6 @@ export const jobs = sqliteTable(
     uniqueIndex("jobs_manual_edited_publish_active_unique")
       .on(t.correlationId)
       .where(sql`${t.kind} = 'manual_edited_publish' and ${t.status} in ('queued', 'running')`),
-    uniqueIndex("jobs_legacy_manual_edited_recovery_active_unique")
-      .on(t.correlationId)
-      .where(sql`${t.kind} = 'legacy_manual_edited_recovery' and ${t.status} in ('queued', 'running')`),
   ],
 );
 

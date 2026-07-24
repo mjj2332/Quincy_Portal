@@ -1,0 +1,1 @@
+DROP INDEX jobs_legacy_manual_edited_recovery_active_unique;

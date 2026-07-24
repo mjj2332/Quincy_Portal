@@ -71,6 +71,13 @@
       "when": 1784928000000,
       "tag": "0009_legacy_manual_edited_recovery",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1785014400000,
+      "tag": "0010_retire_legacy_manual_edited_recovery",
+      "breakpoints": true
     }
   ]
 }

@@ -1,7 +1,7 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { and, asc, eq, gt, inArray } from "drizzle-orm";
 import { assets, collections, integrationConnections, jobs, projects, selections } from "@quincy/db/schema";
-import { enqueueRenditionSafely, renditionsEnabled, type RenditionMessage, isLegacyManualEditedRecoveryCandidate, legacyManualEditedRecoveryCorrelationId } from "@quincy/shared";
+import { enqueueRenditionSafely, renditionsEnabled, type RenditionMessage } from "@quincy/shared";
 
 import { DropboxSyncDO } from "./do/dropbox-sync";
 import { TonomoProcessorDO } from "./do/tonomo-processor";
@@ -18,10 +18,9 @@ import { parseQueueBody } from "./queue-dispatch";
 import { AutoHdrSend } from "./workflows/autohdr";
 import { AutoHdrFetch } from "./workflows/autohdr-fetch";
 import { ManualEditedPublish } from "./workflows/manual-edited-publish";
-import { LegacyManualEditedRecovery } from "./workflows/legacy-manual-edited-recovery";
 import { reconcileAwaitingRawProjects } from "./reconcile-awaiting-raw";
 
-export { AutoHdrFetch, AutoHdrSend, ManualEditedPublish, LegacyManualEditedRecovery, DropboxSyncDO, TonomoProcessorDO };
+export { AutoHdrFetch, AutoHdrSend, ManualEditedPublish, DropboxSyncDO, TonomoProcessorDO };
 
 type DropboxSyncMessage = Extract<IngestMessage, { type: "dropbox_sync" }> & { jobId?: string };
 export type RenditionBackfillInput = { dryRun?: boolean; cursor?: string; limit?: number; confirmProduction?: boolean };
@@ -174,61 +173,6 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
       ));
       throw error;
     }
-  }
-
-  async recoverLegacyManualEditedAssets(input: { assetIds: string[]; confirmProduction?: boolean }): Promise<{ jobIds: string[] }> {
-    if (!Array.isArray(input.assetIds) || input.assetIds.length === 0 || input.assetIds.length > 100 || new Set(input.assetIds).size !== input.assetIds.length) {
-      throw new Error("Legacy recovery requires 1–100 unique asset IDs");
-    }
-    if (this.env.APP_ENV === "production" && this.env.ALLOW_PRODUCTION_LEGACY_MANUAL_EDITED_RECOVERY !== "1") {
-      throw new Error("Production legacy recovery requires ALLOW_PRODUCTION_LEGACY_MANUAL_EDITED_RECOVERY=1");
-    }
-    if (this.env.APP_ENV === "production" && input.confirmProduction !== true) {
-      throw new Error("Production legacy recovery requires confirmProduction: true");
-    }
-
-    const rows = await Promise.all(input.assetIds.map(async (assetId) => {
-      const row = await this.env.DB.prepare(
-        "SELECT assets.id AS asset_id, collections.project_id AS project_id, collections.kind AS collection_kind, assets.source, assets.publish_status, assets.source_path, projects.archived_at, (SELECT COUNT(*) FROM asset_renditions WHERE asset_renditions.asset_id = assets.id) AS rendition_count FROM assets INNER JOIN collections ON collections.id = assets.collection_id INNER JOIN projects ON projects.id = collections.project_id WHERE assets.id = ?",
-      ).bind(assetId).first<{ asset_id: string; project_id: string; collection_kind: string; source: string; publish_status: string | null; source_path: string | null; archived_at: number | null; rendition_count: number }>();
-      if (!row || !isLegacyManualEditedRecoveryCandidate({
-        collectionKind: row.collection_kind, source: row.source, publishStatus: row.publish_status,
-        sourcePath: row.source_path, archivedAt: row.archived_at, renditionCount: row.rendition_count,
-      })) throw new Error(`Asset ${assetId} does not meet the strict legacy manual Edited recovery predicate`);
-      const active = await this.env.DB.prepare(
-        "SELECT id FROM jobs WHERE kind = 'legacy_manual_edited_recovery' AND correlation_id = ? AND status IN ('queued', 'running')",
-      ).bind(legacyManualEditedRecoveryCorrelationId(assetId)).first<{ id: string }>();
-      if (active) throw new Error(`Asset ${assetId} already has active legacy recovery job ${active.id}`);
-      return { assetId: row.asset_id, projectId: row.project_id };
-    }));
-
-    // All candidates are validated before the first write. A mixed selection therefore cannot
-    // partially queue recovery jobs. The partial unique index remains the concurrent backstop.
-    const now = Date.now();
-    const jobsToStart = rows.map(({ assetId, projectId }) => ({
-      jobId: crypto.randomUUID(), assetId, projectId, correlationId: legacyManualEditedRecoveryCorrelationId(assetId),
-    }));
-    try {
-      await this.env.DB.batch(jobsToStart.map((job) => this.env.DB.prepare(
-        "INSERT INTO jobs (id, kind, status, project_id, correlation_id, payload_json, retries, created_at, updated_at) VALUES (?, 'legacy_manual_edited_recovery', 'queued', ?, ?, ?, 0, ?, ?)",
-      ).bind(job.jobId, job.projectId, job.correlationId, JSON.stringify({ projectId: job.projectId, assetId: job.assetId }), now, now)));
-    } catch (error) {
-      throw new Error(`Legacy recovery was not queued: ${error instanceof Error ? error.message : String(error)}`);
-    }
-
-    try {
-      await Promise.all(jobsToStart.map(async (job) => {
-        try {
-          await this.env.LEGACY_MANUAL_EDITED_RECOVERY_WORKFLOW.create({ id: job.jobId, params: { projectId: job.projectId, assetId: job.assetId, jobId: job.jobId } });
-        } catch (error) {
-          await setJobStatus(dbFor(this.env), job.jobId, "failed", error instanceof Error ? error.message : String(error));
-          throw error;
-        }
-      }));
-    } catch (error) {
-      throw new Error(`Legacy recovery jobs were recorded but workflow startup failed: ${error instanceof Error ? error.message : String(error)}`);
-    }
-    return { jobIds: jobsToStart.map((job) => job.jobId) };
   }
 
   /** The historical schema is not singleton-enforced; use its canonical oldest row only. */
