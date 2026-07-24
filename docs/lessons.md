@@ -99,6 +99,11 @@
   terminal state themselves (archived/deleted) before writing — trigger-side checks are
   TOCTOU by construction.
 
+- **Purge every R2 keyspace before its D1 ownership rows cascade.** Project media is keyed by
+  project ID, but renditions are keyed by globally unique asset ID. **Rule:** enumerate a
+  project's asset IDs before deletion and include each `renditions/<assetId>/` prefix in the
+  same object-purge batch; do not rely on the cascade to leave enough information afterward.
+
 - **AutoHDR privacy is an API-boundary requirement, not a UI concern.** AutoHDR is an internal,
   Admin-only workflow. Editor/QA may select RAWs for editing, but only Admin may execute the
   handoff or receive provider, watch-folder, and handoff metadata. **Rule:** project/job
@@ -245,6 +250,45 @@
   **Rule:** leave it `ready`, mark the workflow/job failed, and allow that failed job to replay the
   idempotent queue handoff only (no second Dropbox state transition). The same rule applies if
   creating that retry workflow itself fails: transition only `pending -> failed`; a ready asset
+
+- **"Insert-then-fence" races still need a DB-level backstop, not just a reread.** Wave 3
+  (Dropbox Webhook Automation) originally wrote a new "current" AutoHDR version row, *then*
+  conditionally superseded the old one and swapped the pointer in the same `D1.batch()` — but a
+  *losing* concurrent writer's batch still durably committed its own new row before its own
+  pointer-swap failed, leaving a non-atomic cleanup `DELETE` as the only thing preventing two
+  "current" rows from coexisting. An independent review caught this; the fix was a real partial
+  unique index (`... WHERE superseded_at IS NULL`) plus reordering the supersede-UPDATE *before*
+  the INSERT in the same batch, so the losing writer's own INSERT now violates the constraint and
+  the *entire atomic batch* rolls back — no orphaned row, no separate cleanup call needed. **Rule:**
+  whenever "exactly one current/active row" is a correctness requirement, enforce it with a
+  partial unique index, not application-level check-then-write ordering, however carefully batched.
+- **A same-wave build/review pair can still let a bug through — verify the fix, don't just re-run
+  tests.** The fix pass for the finding above introduced its own bug: an `INSERT ... SELECT`
+  statement had one extra `?` placeholder versus its column list (`D1_ERROR: 19 values for 18
+  columns`), caught only because the full Workers-pool test suite was re-run independently after
+  the fix (the fix's own sandbox couldn't run it — same loopback-EPERM limitation as the original
+  build). **Rule:** a subagent's "all fixes applied, verification green" report is only as good as
+  the tests it could actually run; always re-run the tests its sandbox couldn't, on every pass, not
+  just the first one.
+- **Removing a legacy cron and defaulting its replacement's flag off in the same deploy is a live
+  regression, not a neutral no-op.** Wave 3 initially deleted `reconcileAwaitingRawProjects()` and
+  its hourly cron trigger in the same diff that shipped the new root-scoped Dropbox monitors
+  gated behind a flag defaulted to `"0"`. Deployed as committed, that diff would have silently
+  removed the only live automatic RAW-reconciliation path with nothing active to replace it.
+  **Rule:** when a plan's own rollout section says "retire the old mechanism only once the new one
+  has live coverage," treat that as a hard constraint on what ships in *this* diff, not just
+  ordering guidance for *when* to flip a flag later — keep the old mechanism's code and trigger
+  in place as a safety net until the replacement is verified live, and remove it in a separate,
+  later, low-risk deploy.
+- **A worktree "branched from" another wave's branch name doesn't carry that wave's uncommitted
+  changes.** Two waves' work each lived only as uncommitted changes in their own worktrees (per
+  this project's own policy of never committing without being asked). Creating a third worktree
+  via `git worktree add <branch>` for a branch that had zero commits just checked out the same
+  commit as `main` — none of the "prior" wave's actual file changes came along, despite the
+  branch name implying otherwise. **Rule:** uncommitted worktree state never transfers via branch
+  name; if a later wave needs an earlier wave's in-flight changes, transplant them explicitly
+  (`git diff` + `git apply`, or a direct file copy) and verify the transplant (typecheck) before
+  building on top of it.
   must remain ready while its retry job records the failure.
 
 ## Rendition DLQ silent backlog (2026-07-24)
@@ -275,3 +319,26 @@
   provisioning a third Cloudflare queue resource) — a repeated D1 write failure on this consumer
   would still silently drop after 3 retries; this residual gap is intentionally left for a future
   pass rather than adding infrastructure speculatively.
+
+## Capture manifests + manual RAW Dropbox mirrors (2026-07-24)
+
+- **Collection lifetime totals cannot verify a newly selected browser batch.** A collection with
+  ten older assets plus a new one-file upload must report `1/1`, not `1/11`. **Rule:** carry the
+  server-created manifest ID through every completion and stamp it on the immutable asset row;
+  compute batch receipt by `assets.manifest_id`, never by filenames or collection totals. Keep
+  every incomplete manifest active indefinitely so a newer batch cannot hide an older shortfall.
+- **Provider-derived collection counts and browser manifests have different owners.** Dropbox
+  sync owns folder-derived `collections.expected_count`; a manual upload manifest owns only its
+  own `upload_manifests.expected_count`. **Rule:** manifest creation must never overwrite the
+  collection count, and ingest status may fall back to collection totals only if the RAW
+  collection has no manifests at all.
+- **Verify path-depth assumptions relative to the configured sync root.** The canonical RAW
+  folder is the listing folder itself, so a mirror at `Manual-Uploads/<filename>` has two relative
+  components. The shipped `sectionForDropboxFile()` accepts that as a section even though it is
+  four folders below `/Tonomo/Raw Files`. **Rule:** explicitly exclude the provider-owned
+  `Manual-Uploads` subtree from RAW sync; global-root depth is not the ingest boundary.
+- **A RAW mirror is a side effect, not a visibility gate.** R2/D1 become authoritative as soon as
+  upload finalization succeeds. **Rule:** Dropbox mirror failures create retryable
+  `manual_raw_publish` jobs and audits but never change the RAW asset's ready state or turn a
+  successful upload response into a failure. Persist the exact Dropbox destination in
+  `source_path` only after provider success.

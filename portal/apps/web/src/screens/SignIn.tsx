@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { signIn } from "../lib/auth";
 
-export function SignIn() {
+export function SignIn({ pathname }: { pathname: string }) {
   const [error, setError] = useState<string>();
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -10,7 +10,7 @@ export function SignIn() {
     setIsSubmitting(true);
 
     try {
-      await signIn();
+      await signIn(pathname);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "You could not sign in. Please try again or contact your administrator.");
       setIsSubmitting(false);

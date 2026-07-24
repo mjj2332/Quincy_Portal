@@ -3,6 +3,7 @@ import type { CollectionKind } from "@quincy/shared";
 import { ProjectFields, emptyProjectForm, type ProjectFieldError, type ProjectForm, type ProjectSelectionField, type ProjectTextField, validateProjectFields } from "../components/ProjectFields";
 import { apiGet, apiPatch, apiPost } from "../lib/api";
 import { useCapabilities } from "../lib/capabilities";
+import { InternalLink } from "../components/InternalLink";
 
 type ProjectResponse = {
   id: string; street: string; suburb: string | null; postcode: string | null; agencyName: string | null; agentName: string | null; agentEmail: string | null; agentPhone: string | null;
@@ -29,7 +30,7 @@ export function editProjectPayload(form: ProjectForm): Record<string, unknown> {
   };
 }
 
-export function EditProject({ projectId, onCancel, onSaved }: { projectId: string; onCancel: () => void; onSaved: (notice: string) => void }) {
+export function EditProject({ projectId, onNavigate }: { projectId: string; onNavigate: (path: string, notice?: string, replace?: boolean) => void }) {
   const { can } = useCapabilities();
   const [project, setProject] = useState<ProjectResponse>();
   const [form, setForm] = useState<ProjectForm>(emptyProjectForm);
@@ -67,7 +68,7 @@ export function EditProject({ projectId, onCancel, onSaved }: { projectId: strin
     setIsSubmitting(true);
     try {
       await apiPatch<ProjectResponse, Record<string, unknown>>(`/api/projects/${projectId}`, editProjectPayload(form));
-      onSaved("Shoot details saved.");
+      onNavigate(`/projects/${encodeURIComponent(projectId)}`, "Shoot details saved.");
     } catch (reason) {
       setSubmitError(reason instanceof Error ? reason.message : "The shoot details could not be saved.");
     }
@@ -77,7 +78,7 @@ export function EditProject({ projectId, onCancel, onSaved }: { projectId: strin
   async function archiveProject() {
     if (!window.confirm("Archive this project? It will be hidden from the dashboard and can be restored later.")) return;
     setDangerError(undefined); setIsDangerAction(true);
-    try { await apiPost<{ ok: true }, Record<string, never>>(`/api/projects/${projectId}/archive`, {}); onSaved("Project archived."); }
+    try { await apiPost<{ ok: true }, Record<string, never>>(`/api/projects/${projectId}/archive`, {}); onNavigate(`/projects/${encodeURIComponent(projectId)}`, "Project archived."); }
     catch (reason) { setDangerError(reason instanceof Error ? reason.message : "The project could not be archived."); }
     finally { setIsDangerAction(false); }
   }
@@ -85,7 +86,7 @@ export function EditProject({ projectId, onCancel, onSaved }: { projectId: strin
   async function restoreProject() {
     if (!window.confirm("Restore this project to the dashboard?")) return;
     setDangerError(undefined); setIsDangerAction(true);
-    try { await apiPost<{ ok: true }, Record<string, never>>(`/api/projects/${projectId}/restore`, {}); onSaved("Project restored."); }
+    try { await apiPost<{ ok: true }, Record<string, never>>(`/api/projects/${projectId}/restore`, {}); onNavigate(`/projects/${encodeURIComponent(projectId)}`, "Project restored."); }
     catch (reason) { setDangerError(reason instanceof Error ? reason.message : "The project could not be restored."); }
     finally { setIsDangerAction(false); }
   }
@@ -97,24 +98,23 @@ export function EditProject({ projectId, onCancel, onSaved }: { projectId: strin
       const response = await fetch(`/api/projects/${projectId}`, { method: "DELETE", credentials: "include", headers: { Accept: "application/json" } });
       const payload = await response.json().catch(() => undefined) as { error?: unknown } | undefined;
       if (!response.ok) throw new Error(typeof payload?.error === "string" ? payload.error : "The project could not be deleted.");
-      setDangerNotice("Project permanently deleted. Returning to dashboard…");
-      window.setTimeout(() => window.location.assign("/"), 500);
+      onNavigate("/", "Project permanently deleted.", true);
     } catch (reason) { setDangerError(reason instanceof Error ? reason.message : "The project could not be deleted."); setIsDangerAction(false); }
   }
 
-  if (loadError) return <main className="page"><div className="pagehead"><h1 className="serif">Edit shoot</h1><button className="button button--secondary" type="button" onClick={onCancel}>Back to workspace</button></div><div className="empty" role="alert"><span className="serif">Project unavailable.</span>{loadError}</div></main>;
+  if (loadError) return <main className="page"><div className="pagehead"><h1 className="serif">Edit shoot</h1><InternalLink className="button button--secondary" to={`/projects/${encodeURIComponent(projectId)}`}>Back to workspace</InternalLink></div><div className="empty" role="alert"><span className="serif">Project unavailable.</span>{loadError}</div></main>;
   if (!project) return <main className="page"><div className="empty"><span className="serif">Loading shoot details.</span>Preparing the form.</div></main>;
 
   const archived = Boolean(project.archivedAt);
   const deleteMatchesStreet = deleteConfirmation.trim().toLocaleLowerCase() === project.street.trim().toLocaleLowerCase();
 
   return <main className="page create-project edit-project">
-    <div className="pagehead"><div><div className="ey" style={{ marginBottom: 14 }}>Production desk</div><h1 className="serif">Edit shoot</h1>{archived && <div className="edit-project__archived" role="status">Archived — hidden from the dashboard</div>}</div><button className="button button--secondary" type="button" onClick={onCancel}>Cancel</button></div>
+    <div className="pagehead"><div><div className="ey" style={{ marginBottom: 14 }}>Production desk</div><h1 className="serif">Edit shoot</h1>{archived && <div className="edit-project__archived" role="status">Archived — hidden from the dashboard</div>}</div><InternalLink className="button button--secondary" to={`/projects/${encodeURIComponent(projectId)}`}>Cancel</InternalLink></div>
     <form className="create-project__form" onSubmit={(event) => void submit(event)} noValidate>
       {submitError && <div className="notice" role="alert">{submitError}</div>}
       <section className="create-project__section" aria-labelledby="property-heading"><div className="create-project__section-head"><div className="ey">Property</div><h2 className="serif" id="property-heading">Where is the shoot?</h2></div><div className="create-project__fields create-project__fields--property"><label className="admin-field create-project__field--wide"><span>Street *</span><input required value={form.street} onChange={(event) => updateField("street", event.target.value)} aria-invalid={Boolean(errors.street)} />{errors.street && <small>{errors.street}</small>}</label><label className="admin-field"><span>Suburb</span><input value={form.suburb} onChange={(event) => updateField("suburb", event.target.value)} /></label><label className="admin-field"><span>Postcode</span><input inputMode="numeric" value={form.postcode} onChange={(event) => updateField("postcode", event.target.value)} /></label></div></section>
       <ProjectFields form={form} errors={errors} existingCollections={project.collections.map((collection) => collection.kind)} mode="edit" onChange={updateField} onToggle={toggleValue} />
-      <div className="create-project__actions"><button className="button button--secondary" type="button" onClick={onCancel} disabled={isSubmitting}>Cancel</button><button className="button" type="submit" disabled={isSubmitting}>{isSubmitting ? "Saving details…" : "Save changes"}</button></div>
+      <div className="create-project__actions"><InternalLink className="button button--secondary" to={`/projects/${encodeURIComponent(projectId)}`} aria-disabled={isSubmitting}>Cancel</InternalLink><button className="button" type="submit" disabled={isSubmitting}>{isSubmitting ? "Saving details…" : "Save changes"}</button></div>
     </form>
     {can("adminBackend") && <section className="danger-zone" aria-labelledby="danger-zone-heading"><div><div className="ey">Danger zone</div><h2 className="serif" id="danger-zone-heading">Project lifecycle</h2></div>{dangerError && <div className="notice" role="alert">{dangerError}</div>}{dangerNotice && <div className="danger-zone__notice" role="status">{dangerNotice}</div>}{!archived ? <div className="danger-zone__action"><div><strong>Archive project</strong><p>Archived projects are hidden from the dashboard but remain recoverable.</p></div><button className="button button--secondary" type="button" disabled={isDangerAction} onClick={() => void archiveProject()}>{isDangerAction ? "Archiving…" : "Archive project"}</button></div> : <><div className="danger-zone__action"><div><strong>Restore project</strong><p>Return this project to the dashboard and active production work.</p></div><button className="button button--secondary" type="button" disabled={isDangerAction} onClick={() => void restoreProject()}>{isDangerAction ? "Restoring…" : "Restore project"}</button></div><div className="danger-zone__delete"><div><strong>Delete project permanently</strong><p>All media in cloud storage will be erased. This cannot be undone.</p></div><label className="admin-field"><span>Type “{project.street}” to confirm</span><input value={deleteConfirmation} onChange={(event) => setDeleteConfirmation(event.target.value)} autoComplete="off" /></label><button className="button danger-zone__button" type="button" disabled={isDangerAction || !deleteMatchesStreet} onClick={() => void deleteProject()}>{isDangerAction ? "Deleting…" : "Delete project permanently"}</button></div></>}</section>}
   </main>;

@@ -30,6 +30,8 @@ export default defineConfig({
           TRANSFORM_SOURCE_SECRET: "test-transform-source-secret-32-bytes",
           // Primary suite is production-shaped: direct browser PUTs must not leak here.
           APP_ENV: "production",
+          GOOGLE_CLIENT_ID: "test-google-client",
+          GOOGLE_CLIENT_SECRET: "test-google-secret",
           R2_ACCOUNT_ID: "",
           R2_S3_ACCESS_KEY_ID: "",
           R2_S3_SECRET_ACCESS_KEY: "",

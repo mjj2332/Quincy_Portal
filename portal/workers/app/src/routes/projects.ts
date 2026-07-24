@@ -446,15 +446,19 @@ projectsRoutes.delete("/projects/:id", async (c) => {
     return c.json({ error: "Active document uploads were aborted. Confirm deletion again after the sessions are terminal.", activeDocuments }, 409);
   }
   const r2Prefix = `projects/${id}/`;
-  const assetCount = (await db.select({ count: sql<number>`count(*)` }).from(schema.assets).innerJoin(schema.collections, eq(schema.assets.collectionId, schema.collections.id)).where(eq(schema.collections.projectId, id)).get())?.count ?? 0;
+  const assetIds = (await db.select({ id: schema.assets.id }).from(schema.assets).innerJoin(schema.collections, eq(schema.assets.collectionId, schema.collections.id)).where(eq(schema.collections.projectId, id)).all()).map((asset) => asset.id);
+  const assetCount = assetIds.length;
   // Audit BEFORE destruction so the trail survives even if a later step dies mid-way.
   await audit(c.env, c.get("user").id, "project.delete", "project", id, { street: project.street, assetCount, r2Prefix });
-  const keys: string[] = []; let cursor: string | undefined;
-  while (true) {
-    const page = await c.env.MEDIA.list({ prefix: r2Prefix, ...(cursor ? { cursor } : {}) });
-    keys.push(...page.objects.map((object) => object.key));
-    if (!page.truncated) break;
-    cursor = page.cursor;
+  const keys: string[] = [];
+  for (const prefix of [r2Prefix, ...assetIds.map((assetId) => `renditions/${assetId}/`)]) {
+    let cursor: string | undefined;
+    while (true) {
+      const page = await c.env.MEDIA.list({ prefix, ...(cursor ? { cursor } : {}) });
+      keys.push(...page.objects.map((object) => object.key));
+      if (!page.truncated) break;
+      cursor = page.cursor;
+    }
   }
   for (let index = 0; index < keys.length; index += 1000) await c.env.MEDIA.delete(keys.slice(index, index + 1000));
   await c.env.DB.batch([
