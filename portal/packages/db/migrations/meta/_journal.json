@@ -64,6 +64,13 @@
       "when": 1784841600000,
       "tag": "0008_manual_edited_publish",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1784928000000,
+      "tag": "0009_legacy_manual_edited_recovery",
+      "breakpoints": true
     }
   ]
 }

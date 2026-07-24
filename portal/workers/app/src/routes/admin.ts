@@ -1,7 +1,7 @@
 import { Hono, type Context } from "hono";
 import { createDb, schema } from "@quincy/db";
 import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
-import { parseTonomoOrder, ROLE_CAPABILITIES } from "@quincy/shared";
+import { isLegacyManualEditedRecoveryCandidate, parseTonomoOrder, ROLE_CAPABILITIES } from "@quincy/shared";
 import { z } from "zod";
 import type { AppEnv } from "../env";
 import { audit } from "../lib/audit";
@@ -16,6 +16,7 @@ const agentPatch = agentFields.partial();
 const stagePatch = z.object({ label: z.string().trim().min(1).optional(), active: z.boolean().optional() });
 const stageMove = z.object({ direction: z.enum(["up", "down"]) });
 const renditionBackfill = z.object({ dryRun: z.boolean().optional(), cursor: z.string().uuid().optional(), limit: z.number().int().min(1).max(100).optional(), confirmProduction: z.literal(true).optional() });
+const legacyManualEditedRecovery = z.object({ assetIds: z.array(z.string().uuid()).min(1).max(100).refine((ids) => new Set(ids).size === ids.length, "Asset IDs must be unique"), confirmProduction: z.literal(true).optional() });
 const optionalQuery = <T extends z.ZodTypeAny>(schema: T) => z.preprocess((value) => value === "" ? undefined : value, schema.optional());
 const eventsQuery = z.object({ source: optionalQuery(z.literal("tonomo")), status: optionalQuery(z.enum(["received", "processed", "poison"])), offset: optionalQuery(z.coerce.number().int().min(0)), limit: optionalQuery(z.coerce.number().int().min(1).max(100)) });
 const idCheck = (value: string) => z.string().uuid().safeParse(value).success;
@@ -44,6 +45,34 @@ adminRoutes.post("/admin/renditions/backfill", async (c) => {
     return c.json(result);
   } catch (error) {
     return c.json({ error: error instanceof Error ? error.message : "Rendition backfill failed" }, 409);
+  }
+});
+
+const legacyRecoveryRows = (db: ReturnType<typeof createDb>) => db.select({
+  id: schema.assets.id, projectId: schema.collections.projectId, originalFilename: schema.assets.originalFilename,
+  sourcePath: schema.assets.sourcePath, publishStatus: schema.assets.publishStatus, source: schema.assets.source,
+  collectionKind: schema.collections.kind, archivedAt: schema.projects.archivedAt,
+  renditionCount: sql<number>`(SELECT count(*) FROM asset_renditions WHERE asset_renditions.asset_id = ${schema.assets.id})`,
+}).from(schema.assets)
+  .innerJoin(schema.collections, eq(schema.assets.collectionId, schema.collections.id))
+  .innerJoin(schema.projects, eq(schema.collections.projectId, schema.projects.id));
+
+adminRoutes.get("/admin/legacy-manual-edited-recovery/preview", async (c) => {
+  if (!adminAllowed(c)) return c.json({ error: "Forbidden", capability: "adminBackend" }, 403);
+  const rows = await legacyRecoveryRows(createDb(c.env.DB)).orderBy(asc(schema.assets.createdAt)).all();
+  const assets = rows.filter((row) => isLegacyManualEditedRecoveryCandidate(row));
+  return c.json({ assets, count: assets.length, temporary: true });
+});
+
+adminRoutes.post("/admin/legacy-manual-edited-recovery/execute", async (c) => {
+  if (!adminAllowed(c)) return c.json({ error: "Forbidden", capability: "adminBackend" }, 403);
+  const input = await jsonInput(c, legacyManualEditedRecovery); if (input instanceof Response) return input;
+  try {
+    const result = await c.env.BACKGROUND.recoverLegacyManualEditedAssets(input);
+    await audit(c.env, c.get("user").id, "legacy_manual_edited_recovery.execute", "asset", input.assetIds.join(","), { assetIds: input.assetIds, jobIds: result.jobIds, confirmProduction: input.confirmProduction === true });
+    return c.json(result, 202);
+  } catch (error) {
+    return c.json({ error: error instanceof Error ? error.message : "Legacy manual Edited recovery failed" }, 409);
   }
 });
 

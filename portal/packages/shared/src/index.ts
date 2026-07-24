@@ -6,3 +6,4 @@ export * from "./crypto";
 export * from "./tonomo";
 export * from "./transform-source";
 export * from "./renditions";
+export * from "./legacy-manual-edited-recovery";
