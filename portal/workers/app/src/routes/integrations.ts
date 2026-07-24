@@ -6,10 +6,13 @@ import { requireCapability } from "../middleware/capability";
 import { encryptCredentials } from "@quincy/shared";
 import { audit } from "../lib/audit";
 import { newId } from "../lib/ids";
+import { z } from "zod";
+import { jsonInput } from "./helpers";
 
 export const integrationsRoutes = new Hono<AppEnv>();
 const stateKey = (nonce: string) => `dropbox_oauth_state:${nonce}`;
 function dropboxState(): string { const bytes = crypto.getRandomValues(new Uint8Array(16)); return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join(""); }
+function monitorScope(value: string): "raw" | "autohdr" | null { return value === "raw" || value === "autohdr" ? value : null; }
 
 // Scope to /integrations paths only: use("*") leaks onto sibling routers mounted at the same base.
 integrationsRoutes.use("/integrations", requireCapability("manageIntegrations"));
@@ -17,6 +20,32 @@ integrationsRoutes.use("/integrations/*", requireCapability("manageIntegrations"
 // Keep the historical multi-row schema observable, but place the same deterministic canonical
 // Dropbox record first that workers use. Consolidation requires a separate migration decision.
 integrationsRoutes.get("/integrations", async (c) => c.json({ integrations: await createDb(c.env.DB).select({ id: schema.integrationConnections.id, provider: schema.integrationConnections.provider, status: schema.integrationConnections.status, expiresAt: schema.integrationConnections.expiresAt, scopes: schema.integrationConnections.scopes, lastEventAt: schema.integrationConnections.lastEventAt, lastError: schema.integrationConnections.lastError, updatedAt: schema.integrationConnections.updatedAt }).from(schema.integrationConnections).orderBy(asc(schema.integrationConnections.provider), asc(schema.integrationConnections.createdAt), asc(schema.integrationConnections.id)).all() }));
+integrationsRoutes.get("/integrations/dropbox/monitors/:scope", async (c) => {
+  const scope = monitorScope(c.req.param("scope"));
+  if (!scope) return c.json({ error: "Monitor scope must be raw or autohdr" }, 400);
+  return c.json(await c.env.BACKGROUND.inspectDropboxMonitor(scope));
+});
+integrationsRoutes.post("/integrations/dropbox/monitors/:scope/reset", async (c) => {
+  const scope = monitorScope(c.req.param("scope"));
+  if (!scope) return c.json({ error: "Monitor scope must be raw or autohdr" }, 400);
+  const result = await c.env.BACKGROUND.resetDropboxMonitor(scope);
+  await audit(c.env, c.get("user").id, "integration.dropbox_monitor_reset", "integration", "dropbox", { scope });
+  return c.json(result);
+});
+integrationsRoutes.post("/integrations/dropbox/mappings/:mappingId/resolve", async (c) => {
+  const mappingId = c.req.param("mappingId");
+  if (!z.string().uuid().safeParse(mappingId).success) return c.json({ error: "Invalid mapping id" }, 400);
+  const data = await jsonInput(c, z.object({ chosenPathKey: z.string().min(1), verifiedFolderId: z.string().min(1) }));
+  if (data instanceof Response) return data;
+  const result = await c.env.BACKGROUND.resolveAutoHdrMapping(mappingId, data.chosenPathKey, data.verifiedFolderId, c.get("user").id);
+  return c.json(result);
+});
+integrationsRoutes.post("/integrations/dropbox/path-claims/reassign", async (c) => {
+  const data = await jsonInput(c, z.object({ pathKey: z.string().min(1), targetMappingId: z.string().uuid(), verifiedFolderId: z.string().min(1) }));
+  if (data instanceof Response) return data;
+  const result = await c.env.BACKGROUND.reassignAutoHdrPathClaim(data.pathKey, data.targetMappingId, data.verifiedFolderId, c.get("user").id);
+  return c.json(result);
+});
 integrationsRoutes.post("/integrations/dropbox/connect-url", async (c) => {
   if (!c.env.DROPBOX_APP_KEY) return c.json({ error: "Dropbox OAuth is not configured" }, 503);
   const nonce = dropboxState(); await c.env.SESSIONS.put(stateKey(nonce), c.get("user").id, { expirationTtl: 600 });

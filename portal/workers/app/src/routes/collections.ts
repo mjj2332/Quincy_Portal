@@ -52,7 +52,7 @@ async function ensureCollection(db: Db, projectId: string, kind: CollectionKind)
 
 /** Collections are delivery counts, not mutation counters. This is safe after retries and concurrent writers. */
 export async function reconcileCollectionReceivedCount(db: Db, collectionId: string, now = new Date()) {
-  const count = sql<number>`(SELECT count(*) FROM collection_links WHERE collection_id = ${collectionId}) + (SELECT count(*) FROM assets WHERE collection_id = ${collectionId})`;
+  const count = sql<number>`(SELECT count(*) FROM collection_links WHERE collection_id = ${collectionId}) + (SELECT count(*) FROM assets WHERE collection_id = ${collectionId} AND publish_status = 'ready' AND superseded_at IS NULL)`;
   await db.update(schema.collections).set({ receivedCount: count, status: sql<string>`CASE WHEN ${count} > 0 THEN 'received' ELSE 'empty' END`, updatedAt: now }).where(eq(schema.collections.id, collectionId));
   const collection = await db.select({ receivedCount: schema.collections.receivedCount }).from(schema.collections).where(eq(schema.collections.id, collectionId)).get();
   return collection?.receivedCount ?? 0;

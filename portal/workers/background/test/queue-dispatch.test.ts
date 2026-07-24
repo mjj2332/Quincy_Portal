@@ -19,4 +19,16 @@ describe("queue-name dispatch", () => {
     expect(parseQueueBody(INGEST_QUEUE_NAME, { type: "autohdr_check", jobId: "job-1" })).toEqual({ queue: INGEST_QUEUE_NAME, body: { type: "autohdr_check", jobId: "job-1" } });
     expect(parseQueueBody("unknown", { type: "asset_ingested", assetId: "asset-1" })).toBeNull();
   });
+
+  it("preserves a bare Dropbox connection and delta trigger but rejects a composite monitor name", () => {
+    expect(parseQueueBody(INGEST_QUEUE_NAME, {
+      type: "dropbox_sync", projectId: "p", jobId: "j", connectionId: "connection-1", trigger: "dropbox_delta",
+    })).toEqual({
+      queue: INGEST_QUEUE_NAME,
+      body: { type: "dropbox_sync", projectId: "p", jobId: "j", connectionId: "connection-1", trigger: "dropbox_delta" },
+    });
+    expect(parseQueueBody(INGEST_QUEUE_NAME, {
+      type: "dropbox_sync", projectId: "p", connectionId: "connection-1:raw", trigger: "dropbox_delta",
+    })).toBeNull();
+  });
 });

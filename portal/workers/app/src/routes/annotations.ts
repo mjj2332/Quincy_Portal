@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { createDb, schema } from "@quincy/db";
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import { roleHasCapability } from "@quincy/shared";
 import { z } from "zod";
 import type { Context } from "hono";
@@ -35,7 +35,7 @@ type AssetContext = { assetId: string; projectId: string; kind: "raw" | "edited"
 async function assetContext(c: Context<AppEnv>, assetId: string): Promise<AssetContext | undefined> {
   return createDb(c.env.DB).select({ assetId: schema.assets.id, projectId: schema.collections.projectId, kind: schema.collections.kind, publishStatus: schema.assets.publishStatus })
     .from(schema.assets).innerJoin(schema.collections, eq(schema.assets.collectionId, schema.collections.id))
-    .where(eq(schema.assets.id, assetId)).get();
+    .where(and(eq(schema.assets.id, assetId), isNull(schema.assets.supersededAt))).get();
 }
 
 function scopeForAsset(c: Context<AppEnv>, asset: AssetContext): "raw" | "edited" | Response {

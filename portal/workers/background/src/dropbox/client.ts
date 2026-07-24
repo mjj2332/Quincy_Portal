@@ -311,14 +311,27 @@ async function refreshAccessToken(
       env.INTEGRATION_KEK,
       JSON.stringify({ accessToken, refreshToken } satisfies DropboxCredentials),
     );
-    await db
+    const persisted = await db
       .update(integrationConnections)
       .set({
         encryptedCredentials,
         expiresAt: new Date(Date.now() + expiresIn * 1_000),
         updatedAt: new Date(),
       })
-      .where(eq(integrationConnections.id, connection.id));
+      // Two root monitors may refresh together. Only the caller that still sees the encrypted
+      // blob it decrypted may rotate it; a loser rereads and uses the winner's canonical token.
+      .where(and(
+        eq(integrationConnections.id, connection.id),
+        sql`${integrationConnections.encryptedCredentials} IS ${connection.encryptedCredentials}`,
+      ))
+      .returning({ encryptedCredentials: integrationConnections.encryptedCredentials });
+    if (!persisted.length) {
+      const winner = await getConnection(db, connection.id);
+      const plaintext = await decryptCredentials(env.INTEGRATION_KEK, winner.encryptedCredentials ?? "");
+      const parsed: unknown = JSON.parse(plaintext);
+      if (!isRecord(parsed)) throw new Error("Dropbox credentials are malformed after concurrent refresh");
+      return asString(parsed.accessToken ?? parsed.access_token, "accessToken");
+    }
     // A successful refresh proves the credential path only; do not hide an unrelated
     // sharing.read or project-folder configuration failure.
     await recordDropboxSuccess(db, connection.id, ["credentials"]);
@@ -498,6 +511,22 @@ export async function listFolderContinue(
   client?: DropboxClientContext,
 ): Promise<DropboxFolderPage> {
   return parseFolderPage(await authorisedJson(env, db, "/files/list_folder/continue", { cursor }, connectionId, client));
+}
+
+export async function getMetadata(
+  env: Env,
+  db: Database,
+  path: string,
+  connectionId?: string,
+  client?: DropboxClientContext,
+): Promise<DropboxFile | DropboxFolder> {
+  const value = await authorisedJson(env, db, "/files/get_metadata", {
+    path,
+    include_deleted: false,
+  }, connectionId, client);
+  const entry = parseEntry(value);
+  if (entry[".tag"] === "deleted") throw new Error("Dropbox metadata unexpectedly returned a deleted entry");
+  return entry;
 }
 
 /** Creates an AutoHDR destination folder; Dropbox reports an existing folder as a 409 conflict. */

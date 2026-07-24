@@ -1,6 +1,6 @@
-import { normalisePath } from "../dropbox/sync";
+import { AUTOHDR_ROOT, normalisePath } from "../dropbox/paths";
 
-export const AUTOHDR_ROOT = "/AutoHDR";
+export { AUTOHDR_ROOT } from "../dropbox/paths";
 export const AUTOHDR_RAW_SUBFOLDER = "01-RAW-Photos";
 export const AUTOHDR_FINAL_SUBFOLDER_CANDIDATES = ["04-FINAL-Photos", "04-FINALS-Photos"] as const;
 export const AUTOHDR_MANUAL_UPLOADS_SUBFOLDER = "Manual-Uploads";

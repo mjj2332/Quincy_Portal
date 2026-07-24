@@ -1,9 +1,9 @@
 import { WorkflowEntrypoint } from "cloudflare:workers";
 import type { WorkflowEvent, WorkflowStep } from "cloudflare:workers";
 import { COLLECTION_RECEIVED_COUNT_SQL, collectionReceivedCountBindings } from "@quincy/db";
-import { assets, collections, projects, selections } from "@quincy/db/schema";
+import { assets, autoHdrFetchClaims, collections, projects, selections } from "@quincy/db/schema";
 import { enqueueRenditionSafely, isAcceptedPhotoFilename } from "@quincy/shared";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 
 import { autoHdrFinalPathCandidates, deriveAutoHdrFolderName } from "../autohdr/paths";
 import { createDropboxClientContext, download, listFolderContinue, listFolderIfExists, type DropboxFile } from "../dropbox/client";
@@ -11,10 +11,23 @@ import { pathFromRawFolderLink } from "../dropbox/sync";
 import type { Env } from "../env";
 import { dbFor, errorMessage } from "../lib/db";
 import { setJobStatus } from "../lib/jobs";
+import { writeAutoHdrFinal, type FinalWriteContext } from "../autohdr/finals";
 
 export interface AutoHdrFetchInput {
   projectId: string;
   jobId: string;
+  claimId?: string;
+  handoffId?: string;
+  manifestVersion?: number;
+  mappingId?: string;
+  mappingGeneration?: number;
+  connectionId?: string;
+  finalPath?: string;
+  finalPathKey?: string;
+  trigger?: "manual" | "dropbox_delta";
+  representativeChangedPath?: string;
+  monitorScope?: "autohdr";
+  monitorRoot?: "/AutoHDR";
 }
 
 interface RawAsset {
@@ -62,6 +75,7 @@ async function rawAssetsByBasename(env: Env, projectId: string): Promise<Map<str
 export class AutoHdrFetch extends WorkflowEntrypoint<Env, AutoHdrFetchInput> {
   async run(event: Readonly<WorkflowEvent<AutoHdrFetchInput>>, step: WorkflowStep): Promise<void> {
     const input = event.payload;
+    if (input.claimId) return this.runClaimed(input, step);
     try {
       await step.do("mark-fetch-running", async () => {
         await setJobStatus(dbFor(this.env), input.jobId, "running");
@@ -167,6 +181,74 @@ export class AutoHdrFetch extends WorkflowEntrypoint<Env, AutoHdrFetchInput> {
       });
     } catch (error) {
       await setJobStatus(dbFor(this.env), input.jobId, "failed", errorMessage(error));
+      throw error;
+    }
+  }
+
+  private async runClaimed(input: AutoHdrFetchInput, step: WorkflowStep): Promise<void> {
+    const required = [
+      input.claimId, input.handoffId, input.mappingId, input.connectionId,
+      input.finalPath, input.finalPathKey, input.trigger,
+    ];
+    if (required.some((value) => !value) || input.mappingGeneration === undefined || input.manifestVersion === undefined) {
+      throw new Error("Claimed AutoHDR fetch input is incomplete");
+    }
+    const context: FinalWriteContext = {
+      projectId: input.projectId,
+      jobId: input.jobId,
+      claimId: input.claimId!,
+      handoffId: input.handoffId!,
+      manifestVersion: input.manifestVersion!,
+      mappingId: input.mappingId!,
+      mappingGeneration: input.mappingGeneration!,
+      connectionId: input.connectionId!,
+      finalPath: input.finalPath!,
+      finalPathKey: input.finalPathKey!,
+      trigger: input.trigger!,
+    };
+    try {
+      await step.do("confirm-fetch-owner", async () => {
+        const db = dbFor(this.env);
+        await setJobStatus(db, input.jobId, "running");
+        await db.update(autoHdrFetchClaims).set({ state: "running", startedAt: new Date(), updatedAt: new Date() })
+          .where(and(eq(autoHdrFetchClaims.id, input.claimId!), inArray(autoHdrFetchClaims.state, ["starting", "running"])));
+        return { claimId: input.claimId };
+      });
+      const files = await step.do("list-frozen-final-path", async () => {
+        const db = dbFor(this.env);
+        const client = await createDropboxClientContext(this.env, db, input.connectionId);
+        let page = await listFolderIfExists(this.env, db, input.finalPath!, {}, input.connectionId, client);
+        if (!page) return [] as DropboxFile[];
+        const result: DropboxFile[] = [];
+        while (true) {
+          result.push(...page.entries.filter((entry): entry is DropboxFile =>
+            entry[".tag"] === "file" && isAcceptedPhotoFilename(entry.name)));
+          if (!page.has_more) return result;
+          page = await listFolderContinue(this.env, db, page.cursor, input.connectionId, client);
+        }
+      });
+      const results: Awaited<ReturnType<typeof writeAutoHdrFinal>>[] = [];
+      for (const file of files) {
+        results.push(await step.do(`write-final-${file.id.replace(/[^a-zA-Z0-9_-]/g, "_")}`, async () =>
+          writeAutoHdrFinal(this.env, context, file)));
+      }
+      await step.do("complete-claimed-fetch", async () => {
+        const db = dbFor(this.env);
+        const quarantined = results.some((result) => result.status === "quarantined");
+        await db.update(autoHdrFetchClaims).set({
+          state: quarantined ? "quarantined" : "done",
+          completedAt: new Date(),
+          updatedAt: new Date(),
+        }).where(eq(autoHdrFetchClaims.id, input.claimId!));
+        await setJobStatus(db, input.jobId, quarantined ? "failed" : "done", quarantined ? "One or more finals were quarantined" : undefined);
+        return { count: results.length, quarantined };
+      });
+    } catch (error) {
+      const db = dbFor(this.env);
+      await db.update(autoHdrFetchClaims).set({
+        state: "failed", lastError: errorMessage(error), completedAt: new Date(), updatedAt: new Date(),
+      }).where(eq(autoHdrFetchClaims.id, input.claimId!));
+      await setJobStatus(db, input.jobId, "failed", errorMessage(error));
       throw error;
     }
   }

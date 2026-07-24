@@ -22,7 +22,13 @@ export function parseQueueBody(queue: string, body: unknown): QueueBody | null {
   }
   if (queue === INGEST_QUEUE_NAME) {
     if (value.type === "asset_ingested" && typeof value.assetId === "string") return { queue, body: { type: "asset_ingested", assetId: value.assetId } };
-    if (value.type === "dropbox_sync" && typeof value.projectId === "string" && (value.jobId === undefined || typeof value.jobId === "string")) return { queue, body: value as IngestMessage };
+    if (value.type === "dropbox_sync" &&
+        typeof value.projectId === "string" &&
+        (value.jobId === undefined || typeof value.jobId === "string") &&
+        (value.connectionId === undefined || (typeof value.connectionId === "string" && value.connectionId.length > 0 && !/[:/]/.test(value.connectionId))) &&
+        (value.trigger === undefined || ["dropbox_delta", "manual_dropbox_sync", "queue_retry"].includes(String(value.trigger)))) {
+      return { queue, body: value as IngestMessage };
+    }
     if (value.type === "autohdr_check" && typeof value.jobId === "string") return { queue, body: { type: "autohdr_check", jobId: value.jobId } };
   }
   return null;

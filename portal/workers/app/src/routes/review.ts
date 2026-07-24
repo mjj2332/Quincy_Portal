@@ -14,7 +14,7 @@ import { jsonInput } from "./helpers";
 import { isUserVisibleAsset, unpublishedAssetResponse } from "../lib/asset-visibility";
 
 const reviewInput = z.object({ stars: z.number().int().min(1).max(5).nullable().optional(), colorLabel: z.enum(["select", "maybe", "cut", "hero"]).nullable().optional(), decision: z.enum(["approved", "flagged"]).nullable().optional(), recommended: z.boolean().optional() });
-async function assetContext(c: Context<AppEnv>, assetId: string) { return createDb(c.env.DB).select({ projectId: schema.collections.projectId, kind: schema.collections.kind, publishStatus: schema.assets.publishStatus }).from(schema.assets).innerJoin(schema.collections, eq(schema.assets.collectionId, schema.collections.id)).where(eq(schema.assets.id, assetId)).get(); }
+async function assetContext(c: Context<AppEnv>, assetId: string) { return createDb(c.env.DB).select({ projectId: schema.collections.projectId, kind: schema.collections.kind, publishStatus: schema.assets.publishStatus }).from(schema.assets).innerJoin(schema.collections, eq(schema.assets.collectionId, schema.collections.id)).where(and(eq(schema.assets.id, assetId), sql`${schema.assets.supersededAt} IS NULL`)).get(); }
 function unavailableAsset(c: Context<AppEnv>, asset: { kind: string; publishStatus: string }): Response | null { return isUserVisibleAsset(asset.kind, asset.publishStatus) ? null : unpublishedAssetResponse(c); }
 export const reviewRoutes = new Hono<AppEnv>();
 reviewRoutes.get("/projects/:id/assets", async (c) => {
@@ -32,7 +32,9 @@ reviewRoutes.get("/projects/:id/assets", async (c) => {
   const rows = await createDb(c.env.DB).select({ asset: schema.assets, review: schema.assetReviewState, selection: schema.selections.id, renditionVariant: schema.assetRenditions.variant })
     .from(schema.assets)
     .innerJoin(schema.collections, and(eq(schema.assets.collectionId, schema.collections.id), eq(schema.collections.projectId, projectId), eq(schema.collections.kind, kind)))
-    .where(kind === "edited" ? eq(schema.assets.publishStatus, "ready") : sql`1 = 1`)
+    .where(kind === "edited"
+      ? and(eq(schema.assets.publishStatus, "ready"), sql`${schema.assets.supersededAt} IS NULL`)
+      : sql`${schema.assets.supersededAt} IS NULL`)
     .leftJoin(schema.assetReviewState, eq(schema.assetReviewState.assetId, schema.assets.id))
     .leftJoin(schema.assetRenditions, and(
       eq(schema.assetRenditions.assetId, schema.assets.id),

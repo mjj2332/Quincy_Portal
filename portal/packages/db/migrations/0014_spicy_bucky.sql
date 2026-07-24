@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX `assets_current_source_unique` ON `assets` (`collection_id`,`source_path_key`) WHERE "assets"."superseded_at" IS NULL AND "assets"."source_path_key" IS NOT NULL;

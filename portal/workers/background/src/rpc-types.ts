@@ -3,8 +3,12 @@ import type { WorkerEntrypoint } from "cloudflare:workers";
 /** Public, serializable surface exposed over the BACKGROUND service binding. */
 export declare abstract class QuincyBackground extends WorkerEntrypoint {
   abstract triggerDropboxSync(projectId: string): Promise<{ jobId: string }>;
-  abstract startAutoHdr(projectId: string): Promise<{ jobId: string }>;
+  abstract startAutoHdr(projectId: string, initiatedBy?: string): Promise<{ jobId: string }>;
   abstract fetchEditedFromAutoHdr(projectId: string): Promise<{ jobId: string }>;
+  abstract inspectDropboxMonitor(scope: "raw" | "autohdr"): Promise<Record<string, unknown>>;
+  abstract resetDropboxMonitor(scope: "raw" | "autohdr"): Promise<Record<string, unknown>>;
+  abstract resolveAutoHdrMapping(mappingId: string, chosenPathKey: string, verifiedFolderId: string, actorId: string): Promise<Record<string, unknown>>;
+  abstract reassignAutoHdrPathClaim(pathKey: string, targetMappingId: string, verifiedFolderId: string, actorId: string): Promise<Record<string, unknown>>;
   abstract publishManualUpload(projectId: string, assetId: string): Promise<{ jobId: string }>;
   abstract publishManualEditedUpload(projectId: string, assetId: string): Promise<{ jobId: string }>;
   abstract handleDropboxWebhook(): Promise<void>;
