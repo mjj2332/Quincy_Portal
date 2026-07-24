@@ -273,6 +273,26 @@ export const documentUploads = sqliteTable(
   ],
 );
 
+/** Browser-selected-file manifest persisted BEFORE ingest (file-count verification for manual uploads). */
+export const uploadManifests = sqliteTable(
+  "upload_manifests",
+  {
+    id: id(),
+    collectionId: text("collection_id")
+      .notNull()
+      .references(() => collections.id, { onDelete: "cascade" }),
+    expectedCount: integer("expected_count").notNull(),
+    filenamesJson: text("filenames_json").notNull(),
+    /** Active manifests nag indefinitely until their stamped asset count exactly matches. */
+    status: text("status", { enum: ["active", "complete"] }).notNull().default("active"),
+    createdBy: text("created_by")
+      .notNull()
+      .references(() => user.id),
+    createdAt: createdAt(),
+  },
+  (t) => [index("upload_manifests_collection_idx").on(t.collectionId)],
+);
+
 export const assets = sqliteTable(
   "assets",
   {
@@ -293,6 +313,10 @@ export const assets = sqliteTable(
     source: text("source", { enum: ["upload", "dropbox", "tonomo"] }).notNull(),
     /** Original provider path captured at ingest for source-system handoffs such as AutoHDR; legacy rows may be NULL. */
     sourcePath: text("source_path"),
+    /** Lower-cased canonical Dropbox key. Nullable until the Wave-3 backfill validates legacy rows. */
+    sourcePathKey: text("source_path_key"),
+    /** Durable manual-upload batch attribution; retained independently of collection totals. */
+    manifestId: text("manifest_id").references(() => uploadManifests.id, { onDelete: "set null" }),
     /** Manual edited uploads stay hidden until their Dropbox publish job succeeds. */
     publishStatus: text("publish_status", { enum: ["pending", "ready", "failed"] }).notNull().default("ready"),
     /** XMP xmp:Rating read at ingest; NULL = unrated (never coerce to 0). */
@@ -304,6 +328,11 @@ export const assets = sqliteTable(
     isPremium: integer("is_premium", { mode: "boolean" }).notNull().default(false),
     version: integer("version").notNull().default(1),
     supersedesAssetId: text("supersedes_asset_id"),
+    /** Current edited versions have NULL. Historical versions are retained indefinitely. */
+    supersededAt: integer("superseded_at", { mode: "timestamp_ms" }),
+    replacedByAssetId: text("replaced_by_asset_id"),
+    /** Frozen AutoHDR handoff that owns this returned final. */
+    autoHdrHandoffId: text("autohdr_handoff_id"),
     /** RAW↔Edited pairing (D-07): set on edited assets returned from autoHDR. */
     sourceRawAssetId: text("source_raw_asset_id"),
     /** Ties floorplan PDF + preview JPG into one floorplan version (D-08). */
@@ -313,7 +342,13 @@ export const assets = sqliteTable(
   },
   (t) => [
     index("assets_collection_idx").on(t.collectionId),
+    index("assets_manifest_idx").on(t.manifestId),
     index("assets_source_raw_idx").on(t.sourceRawAssetId),
+    index("assets_source_path_key_idx").on(t.collectionId, t.sourcePathKey),
+    index("assets_current_idx").on(t.collectionId, t.supersededAt),
+    uniqueIndex("assets_current_source_unique").on(t.collectionId, t.sourcePathKey)
+      .where(sql`${t.supersededAt} IS NULL AND ${t.sourcePathKey} IS NOT NULL`),
+    index("assets_autohdr_handoff_idx").on(t.autoHdrHandoffId),
     index("assets_hash_idx").on(t.contentHash),
     index("assets_publish_status_idx").on(t.publishStatus),
     uniqueIndex("assets_version_group_kind_version_unique").on(t.versionGroupId, t.kind, t.version),
@@ -344,24 +379,6 @@ export const assetRenditions = sqliteTable(
   ],
 );
 
-/** Browser-selected-file manifest persisted BEFORE ingest (file-count verification for manual uploads). */
-export const uploadManifests = sqliteTable(
-  "upload_manifests",
-  {
-    id: id(),
-    collectionId: text("collection_id")
-      .notNull()
-      .references(() => collections.id, { onDelete: "cascade" }),
-    expectedCount: integer("expected_count").notNull(),
-    filenamesJson: text("filenames_json").notNull(),
-    createdBy: text("created_by")
-      .notNull()
-      .references(() => user.id),
-    createdAt: createdAt(),
-  },
-  (t) => [index("upload_manifests_collection_idx").on(t.collectionId)],
-);
-
 /* ------------------------------------------------------------ QA state */
 
 export const selections = sqliteTable(
@@ -380,6 +397,212 @@ export const selections = sqliteTable(
     createdAt: createdAt(),
   },
   (t) => [uniqueIndex("selections_asset_unique").on(t.assetId)],
+);
+
+/** Immutable selection/readiness snapshot and atomic ownership record for one AutoHDR send. */
+export const autoHdrHandoffs = sqliteTable(
+  "autohdr_handoffs",
+  {
+    id: id(),
+    projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+    connectionId: text("connection_id").notNull().references(() => integrationConnections.id),
+    generation: integer("generation").notNull(),
+    manifestVersion: integer("manifest_version").notNull().default(1),
+    selectionHash: text("selection_hash").notNull(),
+    selectedAssetIdsJson: text("selected_asset_ids_json").notNull(),
+    readinessUnitsJson: text("readiness_units_json").notNull(),
+    frozenRawFolderPath: text("frozen_raw_folder_path").notNull(),
+    initiatedBy: text("initiated_by").notNull().references(() => user.id),
+    expectedOriginStage: text("expected_origin_stage").notNull().default("raw_review"),
+    state: text("state", { enum: ["starting", "started", "blocked", "retired", "failed"] }).notNull().default("starting"),
+    workflowId: text("workflow_id").notNull().unique(),
+    jobId: text("job_id").notNull().references(() => jobs.id),
+    leaseExpiresAt: integer("lease_expires_at", { mode: "timestamp_ms" }).notNull(),
+    startedAt: integer("started_at", { mode: "timestamp_ms" }),
+    lastError: text("last_error"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex("autohdr_handoffs_project_generation_unique").on(t.projectId, t.generation),
+    uniqueIndex("autohdr_handoffs_active_project_unique").on(t.projectId)
+      .where(sql`${t.state} in ('starting', 'started', 'blocked')`),
+    index("autohdr_handoffs_connection_idx").on(t.connectionId),
+  ],
+);
+
+/** One handoff-owned mapping; candidate path ownership lives in the permanent claim table. */
+export const autoHdrOutputMappings = sqliteTable(
+  "autohdr_output_mappings",
+  {
+    id: id(),
+    projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+    handoffId: text("handoff_id").notNull().references(() => autoHdrHandoffs.id, { onDelete: "cascade" }).unique(),
+    connectionId: text("connection_id").notNull().references(() => integrationConnections.id),
+    generation: integer("generation").notNull(),
+    state: text("state", { enum: ["pending_discovery", "active", "blocked_collision", "retired"] }).notNull().default("pending_discovery"),
+    finalPath: text("final_path"),
+    finalPathKey: text("final_path_key"),
+    folderId: text("folder_id"),
+    diagnostic: text("diagnostic"),
+    observedAt: integer("observed_at", { mode: "timestamp_ms" }),
+    retiredAt: integer("retired_at", { mode: "timestamp_ms" }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex("autohdr_output_mappings_project_generation_unique").on(t.projectId, t.generation),
+    index("autohdr_output_mappings_connection_state_idx").on(t.connectionId, t.state),
+  ],
+);
+
+/** Permanent connection-scoped ownership. Rows are tombstoned, never deleted on archive. */
+export const autoHdrPathClaims = sqliteTable(
+  "autohdr_path_claims",
+  {
+    id: id(),
+    mappingId: text("mapping_id").notNull().references(() => autoHdrOutputMappings.id, { onDelete: "restrict" }),
+    handoffId: text("handoff_id").notNull().references(() => autoHdrHandoffs.id, { onDelete: "restrict" }),
+    projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "restrict" }),
+    connectionId: text("connection_id").notNull().references(() => integrationConnections.id),
+    candidate: text("candidate", { enum: ["final", "finals"] }).notNull(),
+    path: text("path").notNull(),
+    pathKey: text("path_key").notNull(),
+    folderId: text("folder_id"),
+    state: text("state", { enum: ["pending", "active", "blocked", "tombstone"] }).notNull().default("pending"),
+    diagnostic: text("diagnostic"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex("autohdr_path_claims_connection_path_unique").on(t.connectionId, t.pathKey),
+    uniqueIndex("autohdr_path_claims_mapping_candidate_unique").on(t.mappingId, t.candidate),
+    index("autohdr_path_claims_handoff_idx").on(t.handoffId),
+  ],
+);
+
+/** Active workflow ownership is DB-backed; deterministic Workflow IDs are only a second fence. */
+export const autoHdrFetchClaims = sqliteTable(
+  "autohdr_fetch_claims",
+  {
+    id: id(),
+    projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+    handoffId: text("handoff_id").notNull().references(() => autoHdrHandoffs.id, { onDelete: "cascade" }),
+    mappingId: text("mapping_id").notNull().references(() => autoHdrOutputMappings.id, { onDelete: "cascade" }),
+    mappingGeneration: integer("mapping_generation").notNull(),
+    connectionId: text("connection_id").notNull().references(() => integrationConnections.id),
+    workflowId: text("workflow_id").notNull().unique(),
+    jobId: text("job_id").notNull().references(() => jobs.id),
+    state: text("state", { enum: ["starting", "running", "done", "failed", "quarantined"] }).notNull().default("starting"),
+    leaseExpiresAt: integer("lease_expires_at", { mode: "timestamp_ms" }).notNull(),
+    trigger: text("trigger", { enum: ["manual", "dropbox_delta"] }).notNull(),
+    triggerJson: text("trigger_json").notNull(),
+    startedAt: integer("started_at", { mode: "timestamp_ms" }),
+    completedAt: integer("completed_at", { mode: "timestamp_ms" }),
+    lastError: text("last_error"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex("autohdr_fetch_claims_active_unique").on(t.projectId, t.mappingGeneration)
+      .where(sql`${t.state} in ('starting', 'running')`),
+    index("autohdr_fetch_claims_mapping_idx").on(t.mappingId),
+  ],
+);
+
+/** Per-project single-flight for overlapping webhook baselines, retries, and manual sync. */
+export const rawReconciliationClaims = sqliteTable(
+  "raw_reconciliation_claims",
+  {
+    id: id(),
+    projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+    ownerJobId: text("owner_job_id").notNull().references(() => jobs.id),
+    state: text("state", { enum: ["running", "done", "failed"] }).notNull().default("running"),
+    leaseExpiresAt: integer("lease_expires_at", { mode: "timestamp_ms" }).notNull(),
+    trigger: text("trigger").notNull(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex("raw_reconciliation_claims_active_unique").on(t.projectId)
+      .where(sql`${t.state} = 'running'`),
+  ],
+);
+
+/** Provider/source identity reservation prevents overlapping intake paths from duplicating RAWs. */
+export const assetIngestIdentities = sqliteTable(
+  "asset_ingest_identities",
+  {
+    id: id(),
+    collectionId: text("collection_id").notNull().references(() => collections.id, { onDelete: "cascade" }),
+    identityKey: text("identity_key").notNull(),
+    assetId: text("asset_id").notNull().references(() => assets.id, { onDelete: "cascade" }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex("asset_ingest_identities_collection_key_unique").on(t.collectionId, t.identityKey),
+    uniqueIndex("asset_ingest_identities_asset_unique").on(t.assetId),
+  ],
+);
+
+/** The authoritative current pointer makes source-key replacement ownership explicit. */
+export const editedSourceClaims = sqliteTable(
+  "edited_source_claims",
+  {
+    id: id(),
+    collectionId: text("collection_id").notNull().references(() => collections.id, { onDelete: "cascade" }),
+    sourcePathKey: text("source_path_key").notNull(),
+    currentAssetId: text("current_asset_id").references(() => assets.id, { onDelete: "restrict" }),
+    contentHash: text("content_hash"),
+    handoffId: text("handoff_id").references(() => autoHdrHandoffs.id, { onDelete: "restrict" }),
+    reservationToken: text("reservation_token"),
+    updatedAt: updatedAt(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex("edited_source_claims_collection_path_unique").on(t.collectionId, t.sourcePathKey),
+    index("edited_source_claims_current_asset_idx").on(t.currentAssetId),
+  ],
+);
+
+/** Explicit many-to-one returned-final coverage for bracket readiness units. */
+export const autoHdrFinalAssociations = sqliteTable(
+  "autohdr_final_associations",
+  {
+    id: id(),
+    handoffId: text("handoff_id").notNull().references(() => autoHdrHandoffs.id, { onDelete: "cascade" }),
+    assetId: text("asset_id").notNull().references(() => assets.id, { onDelete: "cascade" }),
+    readinessUnitKey: text("readiness_unit_key").notNull(),
+    matchKind: text("match_kind", { enum: ["exact", "suffix", "manual"] }).notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex("autohdr_final_associations_unique").on(t.handoffId, t.assetId, t.readinessUnitKey),
+    index("autohdr_final_associations_unit_idx").on(t.handoffId, t.readinessUnitKey),
+  ],
+);
+
+/** Scope health is persisted independently so one root cannot mask its sibling. */
+export const dropboxMonitorHealth = sqliteTable(
+  "dropbox_monitor_health",
+  {
+    id: id(),
+    connectionId: text("connection_id").notNull().references(() => integrationConnections.id, { onDelete: "cascade" }),
+    scope: text("scope", { enum: ["raw", "autohdr"] }).notNull(),
+    root: text("root").notNull(),
+    cursorFingerprint: text("cursor_fingerprint"),
+    cursorUpdatedAt: integer("cursor_updated_at", { mode: "timestamp_ms" }),
+    lastSuccessfulPageAt: integer("last_successful_page_at", { mode: "timestamp_ms" }),
+    lastError: text("last_error"),
+    resetCount: integer("reset_count").notNull().default(0),
+    scannedCount: integer("scanned_count").notNull().default(0),
+    matchedCount: integer("matched_count").notNull().default(0),
+    skippedCount: integer("skipped_count").notNull().default(0),
+    routedProjectCount: integer("routed_project_count").notNull().default(0),
+    durationMs: integer("duration_ms"),
+    updatedAt: updatedAt(),
+  },
+  (t) => [uniqueIndex("dropbox_monitor_health_scope_unique").on(t.connectionId, t.scope)],
 );
 
 /** Singular QA state per asset (ratings / labels / decisions / photographer recommend). */
@@ -549,9 +772,9 @@ export const jobs = sqliteTable(
   (t) => [
     index("jobs_status_idx").on(t.status),
     index("jobs_correlation_idx").on(t.correlationId),
-    uniqueIndex("jobs_manual_edited_publish_active_unique")
+    uniqueIndex("jobs_manual_upload_publish_active_unique")
       .on(t.correlationId)
-      .where(sql`${t.kind} = 'manual_edited_publish' and ${t.status} in ('queued', 'running')`),
+      .where(sql`${t.kind} in ('manual_edited_publish', 'manual_raw_publish') and ${t.status} in ('queued', 'running')`),
   ],
 );
 

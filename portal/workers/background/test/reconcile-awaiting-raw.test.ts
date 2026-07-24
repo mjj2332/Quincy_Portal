@@ -12,6 +12,8 @@ import {
   scanAwaitingRawProjects,
 } from "../src/reconcile-awaiting-raw";
 
+declare const __BACKGROUND_WRANGLER_CONFIG__: string;
+
 describe("awaiting RAW reconciliation dates", () => {
   it("derives Australia/Sydney business dates across DST without parsing date-only text", () => {
     expect(australiaSydneyBusinessDate(new Date("2026-10-03T13:30:00Z"))).toBe("2026-10-03");
@@ -40,6 +42,10 @@ describe("awaiting RAW reconciliation dates", () => {
 });
 
 describe("awaiting RAW reconciliation mutation", () => {
+  it("keeps the hourly cron trigger as the temporary production safety net", () => {
+    expect(__BACKGROUND_WRANGLER_CONFIG__).toContain('"triggers": { "crons": ["0 * * * *"] }');
+  });
+
   it("asks D1 for one stable, canonical due batch rather than scanning every awaiting project", async () => {
     const all = vi.fn().mockResolvedValue({ results: [] });
     const bind = vi.fn(() => ({ all }));

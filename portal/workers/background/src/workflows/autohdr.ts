@@ -1,7 +1,7 @@
 import { WorkflowEntrypoint } from "cloudflare:workers";
 import type { WorkflowEvent, WorkflowStep } from "cloudflare:workers";
-import { assets, collections, projects } from "@quincy/db/schema";
-import { eq, inArray } from "drizzle-orm";
+import { assets, autoHdrHandoffs, collections, projects } from "@quincy/db/schema";
+import { and, eq, inArray } from "drizzle-orm";
 
 import { autoHdrRawInputPath, deriveAutoHdrFolderName, reconstructSourcePath } from "../autohdr/paths";
 import { copyBatch, copyBatchCheck, createFolder, listFolderContinue, listFolderIfExists, type DropboxCopyBatchEntryResult, upload } from "../dropbox/client";
@@ -9,11 +9,16 @@ import { pathFromRawFolderLink } from "../dropbox/sync";
 import type { Env } from "../env";
 import { dbFor, errorMessage } from "../lib/db";
 import { setJobStatus } from "../lib/jobs";
+import { confirmAutoHdrHandoff } from "../autohdr/claims";
 
 export interface AutoHdrInput {
   projectId: string;
   assetIds: string[];
   jobId: string;
+  handoffId?: string;
+  connectionId?: string;
+  mappingGeneration?: number;
+  initiatedBy?: string;
 }
 
 interface RawAsset {
@@ -102,40 +107,59 @@ export class AutoHdrSend extends WorkflowEntrypoint<Env, AutoHdrInput> {
       await step.do("mark-send-running", async () => {
         const db = dbFor(this.env);
         await setJobStatus(db, input.jobId, "running");
-        await db
-          .update(projects)
-          .set({ stageKey: "editing_autohdr", updatedAt: new Date() })
-          .where(eq(projects.id, input.projectId));
+        if (input.handoffId) {
+          if (!input.connectionId || input.mappingGeneration === undefined || !input.initiatedBy) {
+            throw new Error("Frozen AutoHDR handoff input is incomplete");
+          }
+          await confirmAutoHdrHandoff(this.env, {
+            projectId: input.projectId,
+            handoffId: input.handoffId,
+            connectionId: input.connectionId,
+            mappingGeneration: input.mappingGeneration,
+            initiatedBy: input.initiatedBy,
+            jobId: input.jobId,
+          });
+          const confirmed = await db.select({ state: autoHdrHandoffs.state, stageKey: projects.stageKey })
+            .from(autoHdrHandoffs).innerJoin(projects, eq(autoHdrHandoffs.projectId, projects.id))
+            .where(eq(autoHdrHandoffs.id, input.handoffId)).get();
+          if (confirmed?.state !== "started" || confirmed.stageKey !== "editing_autohdr") {
+            throw new Error("AutoHDR handoff confirmation lost its stage/ownership guard");
+          }
+        } else {
+          await db.update(projects).set({ stageKey: "editing_autohdr", updatedAt: new Date() })
+            .where(eq(projects.id, input.projectId));
+        }
         return { status: "running", stageKey: "editing_autohdr" };
       });
 
       const rawAssets = await step.do("load-assets", async () => loadRawAssets(this.env, input));
       const { inputPath, rawFolderPath } = await step.do("resolve-input-path", async () => {
         const db = dbFor(this.env);
-        const [project] = await db
-          .select({ rawFolderPath: projects.rawFolderPath, rawFolderLink: projects.rawFolderLink })
-          .from(projects)
-          .where(eq(projects.id, input.projectId))
-          .limit(1);
+        const project = input.handoffId
+          ? await db.select({ rawFolderPath: autoHdrHandoffs.frozenRawFolderPath, rawFolderLink: projects.rawFolderLink })
+            .from(autoHdrHandoffs).innerJoin(projects, eq(autoHdrHandoffs.projectId, projects.id))
+            .where(and(eq(autoHdrHandoffs.id, input.handoffId), eq(autoHdrHandoffs.projectId, input.projectId))).get()
+          : await db.select({ rawFolderPath: projects.rawFolderPath, rawFolderLink: projects.rawFolderLink })
+            .from(projects).where(eq(projects.id, input.projectId)).get();
         if (!project) throw new Error(`Project ${input.projectId} does not exist`);
-        const rawFolderPath = project.rawFolderPath ?? await pathFromRawFolderLink(this.env, project.rawFolderLink);
+        const rawFolderPath = project.rawFolderPath ?? await pathFromRawFolderLink(this.env, project.rawFolderLink, input.connectionId);
         if (!rawFolderPath) throw new Error(`Project ${input.projectId} has no Dropbox RAW folder configured`);
         return { rawFolderPath, inputPath: autoHdrRawInputPath(deriveAutoHdrFolderName(rawFolderPath)) };
       });
 
       await step.do("ensure-dest-folder", async () => {
-        await createFolder(this.env, dbFor(this.env), inputPath);
+        await createFolder(this.env, dbFor(this.env), inputPath, input.connectionId);
         return { inputPath };
       });
 
       const transfers = await step.do("skip-existing", async () => {
         const db = dbFor(this.env);
         const existingNames = new Set<string>();
-        let page = await listFolderIfExists(this.env, db, inputPath);
+        let page = await listFolderIfExists(this.env, db, inputPath, {}, input.connectionId);
         while (page) {
           for (const entry of page.entries) if (entry[".tag"] === "file") existingNames.add(entry.name.toLowerCase());
           if (!page.has_more) break;
-          page = await listFolderContinue(this.env, db, page.cursor);
+          page = await listFolderContinue(this.env, db, page.cursor, input.connectionId);
         }
         const copyable: { assetId: string; fromPath: string; toPath: string }[] = [];
         const fallback: RawAsset[] = [];
@@ -157,7 +181,7 @@ export class AutoHdrSend extends WorkflowEntrypoint<Env, AutoHdrInput> {
         const chunkNumber = (offset / COPY_BATCH_MAX_ENTRIES) + 1;
         const copyStepName = chunkNumber === 1 ? "copy-batch" : `copy-batch-${chunkNumber}`;
         const started = await step.do(copyStepName, async () => {
-          const result = await copyBatch(this.env, dbFor(this.env), submitted);
+          const result = await copyBatch(this.env, dbFor(this.env), submitted, input.connectionId);
           if (result[".tag"] === "complete") {
             throwOnCopyFailures(result.entries, submitted);
             return { asyncJobId: null };
@@ -169,7 +193,7 @@ export class AutoHdrSend extends WorkflowEntrypoint<Env, AutoHdrInput> {
         for (let attempt = 1; asyncJobId && attempt <= COPY_BATCH_MAX_POLLS; attempt += 1) {
           await step.sleep(`copy-batch-wait-${chunkNumber}-${attempt}`, "2 seconds");
           const check = await step.do(`copy-batch-check-${chunkNumber}-${attempt}`, async () => {
-            const result = await copyBatchCheck(this.env, dbFor(this.env), asyncJobId!);
+            const result = await copyBatchCheck(this.env, dbFor(this.env), asyncJobId!, input.connectionId);
             if (result[".tag"] === "complete") {
               throwOnCopyFailures(result.entries, submitted);
               return { complete: true };
@@ -185,7 +209,7 @@ export class AutoHdrSend extends WorkflowEntrypoint<Env, AutoHdrInput> {
         await step.do(`copy-fallback-${asset.id}`, async () => {
           const object = await this.env.MEDIA.get(asset.r2Key);
           if (!object) throw new Error(`Original RAW asset ${asset.id} is missing from R2`);
-          await upload(this.env, dbFor(this.env), `${inputPath}/${asset.originalFilename}`, object.body);
+          await upload(this.env, dbFor(this.env), `${inputPath}/${asset.originalFilename}`, object.body, input.connectionId);
           return { assetId: asset.id };
         });
       }

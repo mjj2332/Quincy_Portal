@@ -1,19 +1,20 @@
 import type { DropboxEntry, DropboxFolderPage } from "./client";
+import { pathEqualsOrIsBelow } from "./paths";
 
 export type DropboxProjectPath = { id: string; rawFolderPath: string | null };
 
 export function changedProjectIds(
   entries: DropboxEntry[],
   projectPaths: readonly DropboxProjectPath[],
-  normalisePath: (path: string) => string,
+  watchedRoot: string,
 ): string[] {
   const ids = new Set<string>();
   for (const entry of entries) {
-    const changedPath = entry.path_lower.toLowerCase();
+    if (entry[".tag"] === "deleted" || !pathEqualsOrIsBelow(entry.path_lower, watchedRoot)) continue;
     for (const project of projectPaths) {
       if (!project.rawFolderPath) continue;
-      const folderPath = normalisePath(project.rawFolderPath).toLowerCase();
-      if (changedPath === folderPath || changedPath.startsWith(`${folderPath}/`)) ids.add(project.id);
+      if (!pathEqualsOrIsBelow(project.rawFolderPath, watchedRoot)) continue;
+      if (pathEqualsOrIsBelow(entry.path_lower, project.rawFolderPath)) ids.add(project.id);
     }
   }
   return [...ids];
@@ -27,14 +28,14 @@ export async function completeDropboxDeltaPage(
   page: DropboxFolderPage,
   projectPaths: readonly DropboxProjectPath[],
   dependencies: {
-    normalisePath: (path: string) => string;
+    watchedRoot: string;
     syncProject: (projectId: string) => Promise<void>;
     setAlarm: () => Promise<void>;
     clearAlarm: () => Promise<void>;
     persistCursor: (cursor: string) => Promise<void>;
   },
 ): Promise<void> {
-  for (const projectId of changedProjectIds(page.entries, projectPaths, dependencies.normalisePath)) {
+  for (const projectId of changedProjectIds(page.entries, projectPaths, dependencies.watchedRoot)) {
     await dependencies.syncProject(projectId);
   }
   if (page.has_more) await dependencies.setAlarm();

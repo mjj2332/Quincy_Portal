@@ -57,8 +57,8 @@ async function coverMaps(db: ReturnType<typeof createDb>, projectIds: string[], 
   for (const ids of chunked(projectIds)) {
     // Mirror media.ts: photographers may only view RAW assets.
     const storedCollectionJoin = photographersOnlySeeRaw
-      ? and(eq(schema.assets.collectionId, schema.collections.id), eq(schema.collections.projectId, schema.projects.id), eq(schema.collections.kind, "raw"))
-      : and(eq(schema.assets.collectionId, schema.collections.id), eq(schema.collections.projectId, schema.projects.id), sql`(${schema.collections.kind} <> 'edited' OR ${schema.assets.publishStatus} = 'ready')`);
+      ? and(eq(schema.assets.collectionId, schema.collections.id), eq(schema.collections.projectId, schema.projects.id), eq(schema.collections.kind, "raw"), sql`${schema.assets.supersededAt} IS NULL`)
+      : and(eq(schema.assets.collectionId, schema.collections.id), eq(schema.collections.projectId, schema.projects.id), sql`(${schema.collections.kind} <> 'edited' OR ${schema.assets.publishStatus} = 'ready')`, sql`${schema.assets.supersededAt} IS NULL`);
     // D1/Drizzle mis-renders correlated scalar subqueries. Keep both lookups set-based;
     // the grouped RAW query uses SQLite's bare-column-with-min() behaviour for its asset id.
     const [storedCovers, automaticCovers] = await Promise.all([
@@ -68,7 +68,7 @@ async function coverMaps(db: ReturnType<typeof createDb>, projectIds: string[], 
         .where(inArray(schema.projects.id, ids)).all(),
       db.select({ projectId: schema.collections.projectId, assetId: schema.assets.id, filename: sql<string>`min(${schema.assets.originalFilename})` }).from(schema.assets)
         .innerJoin(schema.collections, eq(schema.assets.collectionId, schema.collections.id))
-        .where(and(inArray(schema.collections.projectId, ids), eq(schema.collections.kind, "raw")))
+        .where(and(inArray(schema.collections.projectId, ids), eq(schema.collections.kind, "raw"), sql`${schema.assets.supersededAt} IS NULL`))
         .groupBy(schema.collections.projectId).all(),
     ]);
     for (const row of storedCovers) storedByProject.set(row.projectId, row.assetId);
@@ -206,7 +206,7 @@ projectsRoutes.post("/projects/:id/cover", async (c) => {
   if (data.assetId !== null) {
     const asset = await db.select({ id: schema.assets.id, collectionKind: schema.collections.kind, publishStatus: schema.assets.publishStatus }).from(schema.assets)
       .innerJoin(schema.collections, and(eq(schema.assets.collectionId, schema.collections.id), eq(schema.collections.projectId, id)))
-      .where(and(eq(schema.assets.id, data.assetId), eq(schema.assets.kind, "photo"))).get();
+      .where(and(eq(schema.assets.id, data.assetId), eq(schema.assets.kind, "photo"), isNull(schema.assets.supersededAt))).get();
     if (!asset || !isUserVisibleAsset(asset.collectionKind, asset.publishStatus)) return c.json({ error: "Asset not in this project" }, 404);
   }
   await db.update(schema.projects).set({ coverAssetId: data.assetId, updatedAt: new Date() }).where(eq(schema.projects.id, id));
@@ -239,7 +239,7 @@ projectsRoutes.post("/projects/:id/send-to-autohdr", requireCapability("adminBac
     .where(eq(schema.selections.state, "selected_for_editing"))
     .get();
   if (!selected) return c.json({ error: "Select at least one RAW asset before sending to autoHDR" }, 400);
-  const { jobId } = await c.env.BACKGROUND.startAutoHdr(id);
+  const { jobId } = await c.env.BACKGROUND.startAutoHdr(id, c.get("user").id);
   await audit(c.env, c.get("user").id, "project.send_to_autohdr", "project", id, { jobId });
   return c.json({ jobId });
 });
@@ -253,6 +253,85 @@ projectsRoutes.post("/projects/:id/fetch-edited", requireCapability("adminBacken
   const { jobId } = await c.env.BACKGROUND.fetchEditedFromAutoHdr(id);
   await audit(c.env, c.get("user").id, "project.fetch_edited", "project", id, { jobId });
   return c.json({ jobId });
+});
+
+projectsRoutes.get("/projects/:id/autohdr-status", requireCapability("adminBackend"), async (c) => {
+  const projectId = c.req.param("id");
+  if (!idCheck(projectId)) return c.json({ error: "Invalid project id" }, 400);
+  if (!await hasProjectAccess(c, projectId)) return c.json({ error: "Forbidden" }, 403);
+  const db = createDb(c.env.DB);
+  const handoff = await db.select({
+    id: schema.autoHdrHandoffs.id,
+    generation: schema.autoHdrHandoffs.generation,
+    state: schema.autoHdrHandoffs.state,
+    readinessUnitsJson: schema.autoHdrHandoffs.readinessUnitsJson,
+    selectionHash: schema.autoHdrHandoffs.selectionHash,
+    manifestVersion: schema.autoHdrHandoffs.manifestVersion,
+    mappingState: schema.autoHdrOutputMappings.state,
+    finalPath: schema.autoHdrOutputMappings.finalPath,
+    diagnostic: schema.autoHdrOutputMappings.diagnostic,
+  }).from(schema.autoHdrHandoffs)
+    .innerJoin(schema.autoHdrOutputMappings, eq(schema.autoHdrOutputMappings.handoffId, schema.autoHdrHandoffs.id))
+    .where(eq(schema.autoHdrHandoffs.projectId, projectId))
+    .orderBy(desc(schema.autoHdrHandoffs.generation)).get();
+  if (!handoff) return c.json({ handoff: null });
+  const associations = await db.select({
+    assetId: schema.autoHdrFinalAssociations.assetId,
+    readinessUnitKey: schema.autoHdrFinalAssociations.readinessUnitKey,
+    matchKind: schema.autoHdrFinalAssociations.matchKind,
+  }).from(schema.autoHdrFinalAssociations)
+    .innerJoin(schema.assets, and(eq(schema.autoHdrFinalAssociations.assetId, schema.assets.id), isNull(schema.assets.supersededAt)))
+    .where(eq(schema.autoHdrFinalAssociations.handoffId, handoff.id)).all();
+  return c.json({
+    handoff: {
+      ...handoff,
+      readinessUnits: JSON.parse(handoff.readinessUnitsJson),
+      associations,
+    },
+  });
+});
+
+projectsRoutes.get("/projects/:id/autohdr-history", requireCapability("adminBackend"), async (c) => {
+  const projectId = c.req.param("id");
+  if (!idCheck(projectId)) return c.json({ error: "Invalid project id" }, 400);
+  if (!await hasProjectAccess(c, projectId)) return c.json({ error: "Forbidden" }, 403);
+  const rows = await createDb(c.env.DB).select({
+    id: schema.assets.id,
+    filename: schema.assets.originalFilename,
+    sourcePath: schema.assets.sourcePath,
+    sourcePathKey: schema.assets.sourcePathKey,
+    contentHash: schema.assets.contentHash,
+    handoffId: schema.assets.autoHdrHandoffId,
+    supersededAt: schema.assets.supersededAt,
+    replacedByAssetId: schema.assets.replacedByAssetId,
+    createdAt: schema.assets.createdAt,
+  }).from(schema.assets)
+    .innerJoin(schema.collections, and(eq(schema.assets.collectionId, schema.collections.id), eq(schema.collections.projectId, projectId), eq(schema.collections.kind, "edited")))
+    .where(eq(schema.assets.source, "dropbox"))
+    .orderBy(desc(schema.assets.createdAt)).all();
+  return c.json({ assets: rows });
+});
+
+projectsRoutes.post("/projects/:id/autohdr-coverage", requireCapability("adminBackend"), async (c) => {
+  const projectId = c.req.param("id");
+  if (!idCheck(projectId)) return c.json({ error: "Invalid project id" }, 400);
+  if (!await hasProjectAccess(c, projectId)) return c.json({ error: "Forbidden" }, 403);
+  const data = await jsonInput(c, z.object({ handoffId: z.string().uuid(), assetId: z.string().uuid(), readinessUnitKey: z.string().min(1).max(240) }));
+  if (data instanceof Response) return data;
+  const db = createDb(c.env.DB);
+  const handoff = await db.select({ unitsJson: schema.autoHdrHandoffs.readinessUnitsJson }).from(schema.autoHdrHandoffs)
+    .where(and(eq(schema.autoHdrHandoffs.id, data.handoffId), eq(schema.autoHdrHandoffs.projectId, projectId))).get();
+  const asset = await db.select({ id: schema.assets.id }).from(schema.assets)
+    .innerJoin(schema.collections, and(eq(schema.assets.collectionId, schema.collections.id), eq(schema.collections.projectId, projectId), eq(schema.collections.kind, "edited")))
+    .where(and(eq(schema.assets.id, data.assetId), isNull(schema.assets.supersededAt))).get();
+  const units = handoff ? JSON.parse(handoff.unitsJson) as { key: string }[] : [];
+  if (!handoff || !asset || !units.some((unit) => unit.key === data.readinessUnitKey)) return c.json({ error: "Handoff, current asset, or readiness unit is invalid" }, 409);
+  await db.insert(schema.autoHdrFinalAssociations).values({
+    id: newId(), handoffId: data.handoffId, assetId: data.assetId,
+    readinessUnitKey: data.readinessUnitKey, matchKind: "manual", createdAt: new Date(),
+  }).onConflictDoNothing();
+  await audit(c.env, c.get("user").id, "autohdr.coverage.resolve", "asset", data.assetId, { projectId, handoffId: data.handoffId, readinessUnitKey: data.readinessUnitKey });
+  return c.json({ ok: true });
 });
 
 projectsRoutes.get("/projects/:id/selected-raw.zip", async (c) => {
@@ -288,7 +367,7 @@ projectsRoutes.get("/projects/:id/manual-upload-jobs", async (c) => {
   if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   const rows = await createDb(c.env.DB).select({
     id: schema.jobs.id, status: schema.jobs.status, error: schema.jobs.error,
-  }).from(schema.jobs).where(and(eq(schema.jobs.projectId, id), eq(schema.jobs.kind, "manual_edited_publish"))).orderBy(desc(schema.jobs.createdAt)).limit(50).all();
+  }).from(schema.jobs).where(and(eq(schema.jobs.projectId, id), inArray(schema.jobs.kind, ["manual_edited_publish", "manual_raw_publish"]))).orderBy(desc(schema.jobs.createdAt)).limit(50).all();
   return c.json({ jobs: rows });
 });
 
@@ -299,7 +378,7 @@ projectsRoutes.get("/projects/:id/jobs", requireCapability("adminBackend"), asyn
   const rows = await createDb(c.env.DB).select({
     id: schema.jobs.id, kind: schema.jobs.kind, status: schema.jobs.status, error: schema.jobs.error,
     createdAt: schema.jobs.createdAt, updatedAt: schema.jobs.updatedAt,
-  }).from(schema.jobs).where(and(eq(schema.jobs.projectId, id), inArray(schema.jobs.kind, ["autohdr", "fetch_edited", "manual_edited_publish"]))).orderBy(desc(schema.jobs.createdAt)).limit(20).all();
+  }).from(schema.jobs).where(and(eq(schema.jobs.projectId, id), inArray(schema.jobs.kind, ["autohdr", "fetch_edited", "manual_edited_publish", "manual_raw_publish"]))).orderBy(desc(schema.jobs.createdAt)).limit(20).all();
   return c.json({ jobs: rows });
 });
 
@@ -308,17 +387,18 @@ projectsRoutes.post("/jobs/:id/retry", requireCapability("adminBackend"), async 
   if (!idCheck(id)) return c.json({ error: "Invalid job id" }, 400);
   const job = await createDb(c.env.DB).select({ id: schema.jobs.id, projectId: schema.jobs.projectId, kind: schema.jobs.kind, status: schema.jobs.status, payloadJson: schema.jobs.payloadJson })
     .from(schema.jobs).where(eq(schema.jobs.id, id)).get();
-  if (!job || !job.projectId || !["autohdr", "fetch_edited", "manual_edited_publish"].includes(job.kind)) return c.json({ error: "Background job not found" }, 404);
+  if (!job || !job.projectId || !["autohdr", "fetch_edited", "manual_edited_publish", "manual_raw_publish"].includes(job.kind)) return c.json({ error: "Background job not found" }, 404);
   if (!await hasProjectAccess(c, job.projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   if (job.status !== "stuck" && job.status !== "failed") return c.json({ error: "Only stuck or failed background jobs can be retried" }, 409);
-  const manualAssetId = job.kind === "manual_edited_publish" ? (() => { try { const payload = JSON.parse(job.payloadJson ?? "{}"); return typeof payload.assetId === "string" ? payload.assetId : null; } catch { return null; } })() : null;
-  if (job.kind === "manual_edited_publish" && !manualAssetId) return c.json({ error: "Manual upload job has no asset" }, 409);
+  const isManualPublish = job.kind === "manual_edited_publish" || job.kind === "manual_raw_publish";
+  const manualAssetId = isManualPublish ? (() => { try { const payload = JSON.parse(job.payloadJson ?? "{}"); return typeof payload.assetId === "string" ? payload.assetId : null; } catch { return null; } })() : null;
+  if (isManualPublish && !manualAssetId) return c.json({ error: "Manual upload job has no asset" }, 409);
   const { jobId } = job.kind === "autohdr"
-    ? await c.env.BACKGROUND.startAutoHdr(job.projectId)
+    ? await c.env.BACKGROUND.startAutoHdr(job.projectId, c.get("user").id)
     : job.kind === "fetch_edited"
       ? await c.env.BACKGROUND.fetchEditedFromAutoHdr(job.projectId)
-      : await c.env.BACKGROUND.publishManualEditedUpload(job.projectId, manualAssetId!);
-  await audit(c.env, c.get("user").id, job.kind === "autohdr" ? "project.retry_autohdr" : job.kind === "fetch_edited" ? "project.retry_fetch_edited" : "project.retry_manual_edited_publish", "project", job.projectId, { previousJobId: id, jobId });
+      : await c.env.BACKGROUND.publishManualUpload(job.projectId, manualAssetId!);
+  await audit(c.env, c.get("user").id, job.kind === "autohdr" ? "project.retry_autohdr" : job.kind === "fetch_edited" ? "project.retry_fetch_edited" : job.kind === "manual_raw_publish" ? "project.retry_manual_raw_publish" : "project.retry_manual_edited_publish", "project", job.projectId, { previousJobId: id, jobId });
   return c.json({ jobId });
 });
 
@@ -326,8 +406,25 @@ for (const [path, archived] of [["/projects/:id/archive", true], ["/projects/:id
   const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
   if (!ROLE_CAPABILITIES[c.get("user").role].includes("archiveProject")) return c.json({ error: "Forbidden", capability: "archiveProject" }, 403);
   const db = createDb(c.env.DB); const now = new Date();
-  const result = await db.update(schema.projects).set({ archivedAt: archived ? now : null, archivedBy: archived ? c.get("user").id : null, updatedAt: now }).where(archived ? and(eq(schema.projects.id, id), notExists(db.select({ id: schema.documentUploads.id }).from(schema.documentUploads).where(and(eq(schema.documentUploads.projectId, id), sql`${schema.documentUploads.status} in ('pending', 'completing', 'aborting')`)))) : eq(schema.projects.id, id)).returning({ id: schema.projects.id });
-  if (!result.length) return c.json({ error: archived ? "Active document uploads must be aborted before archiving." : "Project not found" }, archived ? 409 : 404);
+  if (archived) {
+    // Ownership survives archive: retire the mapping and tombstone both permanent candidate
+    // claims, never release them for silent reuse.
+    const archivedAt = now.getTime();
+    const result = await c.env.DB.batch([
+      c.env.DB.prepare("UPDATE projects SET archived_at = ?, archived_by = ?, updated_at = ? WHERE id = ? AND NOT EXISTS (SELECT 1 FROM document_uploads WHERE project_id = ? AND status in ('pending', 'completing', 'aborting'))")
+        .bind(archivedAt, c.get("user").id, archivedAt, id, id),
+      c.env.DB.prepare("UPDATE autohdr_output_mappings SET state = 'retired', retired_at = ?, updated_at = ? WHERE project_id = ? AND EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at = ?)")
+        .bind(archivedAt, archivedAt, id, id, archivedAt),
+      c.env.DB.prepare("UPDATE autohdr_path_claims SET state = 'tombstone', updated_at = ? WHERE project_id = ? AND EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at = ?)")
+        .bind(archivedAt, id, id, archivedAt),
+      c.env.DB.prepare("UPDATE autohdr_handoffs SET state = 'retired', updated_at = ? WHERE project_id = ? AND state in ('starting', 'started', 'blocked') AND EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at = ?)")
+        .bind(archivedAt, id, id, archivedAt),
+    ]);
+    if ((result[0]?.meta.changes ?? 0) !== 1) return c.json({ error: "Active document uploads must be aborted before archiving." }, 409);
+  } else {
+    const result = await db.update(schema.projects).set({ archivedAt: null, archivedBy: null, updatedAt: now }).where(eq(schema.projects.id, id)).returning({ id: schema.projects.id });
+    if (!result.length) return c.json({ error: "Project not found" }, 404);
+  }
   await audit(c.env, c.get("user").id, archived ? "project.archive" : "project.restore", "project", id); return c.json({ ok: true });
 });
 projectsRoutes.delete("/projects/:id", async (c) => {
@@ -360,8 +457,17 @@ projectsRoutes.delete("/projects/:id", async (c) => {
     cursor = page.cursor;
   }
   for (let index = 0; index < keys.length; index += 1000) await c.env.MEDIA.delete(keys.slice(index, index + 1000));
-  await db.delete(schema.jobs).where(eq(schema.jobs.projectId, id));
-  await db.delete(schema.projects).where(eq(schema.projects.id, id));
+  await c.env.DB.batch([
+    c.env.DB.prepare("DELETE FROM autohdr_path_claims WHERE project_id = ?").bind(id),
+    c.env.DB.prepare("DELETE FROM autohdr_fetch_claims WHERE project_id = ?").bind(id),
+    c.env.DB.prepare("DELETE FROM autohdr_final_associations WHERE handoff_id IN (SELECT id FROM autohdr_handoffs WHERE project_id = ?)").bind(id),
+    c.env.DB.prepare("DELETE FROM edited_source_claims WHERE collection_id IN (SELECT id FROM collections WHERE project_id = ?)").bind(id),
+    c.env.DB.prepare("DELETE FROM autohdr_output_mappings WHERE project_id = ?").bind(id),
+    c.env.DB.prepare("DELETE FROM autohdr_handoffs WHERE project_id = ?").bind(id),
+    c.env.DB.prepare("DELETE FROM raw_reconciliation_claims WHERE project_id = ?").bind(id),
+    c.env.DB.prepare("DELETE FROM jobs WHERE project_id = ?").bind(id),
+    c.env.DB.prepare("DELETE FROM projects WHERE id = ?").bind(id),
+  ]);
   return c.json({ ok: true, deletedObjects: keys.length });
 });
 projectsRoutes.post("/projects/:id/stage", async (c) => {

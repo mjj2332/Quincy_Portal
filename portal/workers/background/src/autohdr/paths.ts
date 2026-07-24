@@ -1,6 +1,6 @@
-import { normalisePath } from "../dropbox/sync";
+import { AUTOHDR_ROOT, normalisePath } from "../dropbox/paths";
 
-export const AUTOHDR_ROOT = "/AutoHDR";
+export { AUTOHDR_ROOT } from "../dropbox/paths";
 export const AUTOHDR_RAW_SUBFOLDER = "01-RAW-Photos";
 export const AUTOHDR_FINAL_SUBFOLDER_CANDIDATES = ["04-FINAL-Photos", "04-FINALS-Photos"] as const;
 export const AUTOHDR_MANUAL_UPLOADS_SUBFOLDER = "Manual-Uploads";
@@ -43,4 +43,17 @@ export function autoHdrManualUploadPath(folderName: string, assetId: string, fil
     throw new Error("Invalid manual upload path segment");
   }
   return `${AUTOHDR_ROOT}/${folderName}/${AUTOHDR_MANUAL_UPLOADS_SUBFOLDER}/${assetId}/${filename}`;
+}
+
+/** Mirrors a manual RAW upload beneath the Tonomo-owned listing folder. Dropbox overwrite
+ * semantics make retries idempotent; the caller must not create a missing listing folder. */
+export function rawManualUploadFolderPath(rawFolderPath: string): string {
+  const base = normalisePath(rawFolderPath);
+  if (!base) throw new Error("Invalid manual RAW mirror path");
+  return `${base}/${AUTOHDR_MANUAL_UPLOADS_SUBFOLDER}`;
+}
+
+export function rawManualUploadPath(rawFolderPath: string, filename: string): string {
+  if (!isSafeDropboxPathSegment(filename) || /\u0000/.test(filename)) throw new Error("Invalid manual RAW mirror path");
+  return `${rawManualUploadFolderPath(rawFolderPath)}/${filename}`;
 }

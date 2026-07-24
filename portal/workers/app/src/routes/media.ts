@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { createDb, schema } from "@quincy/db";
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { RENDITION_SPECS, RENDITION_SPEC_VERSION, TRANSFORM_CACHE_VERSION } from "@quincy/shared";
 import { z } from "zod";
 import type { AppEnv } from "../env";
@@ -24,7 +24,7 @@ export function liveTransformLocation(baseUrl: string, key: string, variant: "we
 
 mediaRoutes.get("/asset/:assetId/:variant", async (c) => {
   const assetId = c.req.param("assetId"), variant = c.req.param("variant"); if (!z.string().uuid().safeParse(assetId).success || !["web", "thumb", "original"].includes(variant)) return c.json({ error: "Invalid media request" }, 400);
-  const db = createDb(c.env.DB); const row = await db.select({ asset: schema.assets, projectId: schema.collections.projectId, collectionKind: schema.collections.kind }).from(schema.assets).innerJoin(schema.collections, eq(schema.assets.collectionId, schema.collections.id)).where(eq(schema.assets.id, assetId)).get(); if (!row) return c.json({ error: "Asset not found" }, 404);
+  const db = createDb(c.env.DB); const row = await db.select({ asset: schema.assets, projectId: schema.collections.projectId, collectionKind: schema.collections.kind }).from(schema.assets).innerJoin(schema.collections, eq(schema.assets.collectionId, schema.collections.id)).where(and(eq(schema.assets.id, assetId), isNull(schema.assets.supersededAt))).get(); if (!row) return c.json({ error: "Asset not found" }, 404);
   if (!isUserVisibleAsset(row.collectionKind, row.asset.publishStatus)) return unpublishedAssetResponse(c);
   if (!await hasProjectAccess(c, row.projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   {
@@ -96,7 +96,7 @@ mediaRoutes.get("/annotation/:annotationId", async (c) => {
   }).from(schema.annotations)
     .innerJoin(schema.assets, eq(schema.annotations.assetId, schema.assets.id))
     .innerJoin(schema.collections, eq(schema.assets.collectionId, schema.collections.id))
-    .where(eq(schema.annotations.id, annotationId)).get();
+    .where(and(eq(schema.annotations.id, annotationId), isNull(schema.assets.supersededAt))).get();
   if (!row) return c.json({ error: "Annotation not found" }, 404);
   if (!isUserVisibleAsset(row.collectionKind, row.publishStatus)) return c.json({ error: "Annotation not found" }, 404);
   if (!await hasProjectAccess(c, row.projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);

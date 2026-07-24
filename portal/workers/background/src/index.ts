@@ -1,6 +1,6 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
-import { and, asc, eq, gt, inArray } from "drizzle-orm";
-import { assets, collections, integrationConnections, jobs, projects, renditionDlqEvents, selections } from "@quincy/db/schema";
+import { and, eq, gt, inArray, sql } from "drizzle-orm";
+import { assets, autoHdrFinalAssociations, autoHdrHandoffs, autoHdrOutputMappings, autoHdrPathClaims, collections, dropboxMonitorHealth, jobs, projects, renditionDlqEvents, selections } from "@quincy/db/schema";
 import { enqueueRenditionSafely, renditionsEnabled, type RenditionMessage } from "@quincy/shared";
 
 import { DropboxSyncDO } from "./do/dropbox-sync";
@@ -19,11 +19,18 @@ import { parseQueueBody, RENDITION_DLQ_QUEUE_NAME } from "./queue-dispatch";
 import { AutoHdrSend } from "./workflows/autohdr";
 import { AutoHdrFetch } from "./workflows/autohdr-fetch";
 import { ManualEditedPublish } from "./workflows/manual-edited-publish";
+import { canonicalDropboxConnectionId } from "./dropbox/connection";
+import { automationFlag } from "./dropbox/monitor-state";
+import { dropboxPathKey, monitorName } from "./dropbox/paths";
+import { claimAutoHdrFetch, claimAutoHdrHandoff, isWorkflowAlreadyExists, startClaimedFetch } from "./autohdr/claims";
+import { routeAutoHdrDelta, type RoutedAutoHdrMapping } from "./autohdr/mapping";
+import { getMetadata, listFolderIfExists } from "./dropbox/client";
+import { autoHdrFinalPathCandidates, deriveAutoHdrFolderName } from "./autohdr/paths";
 import { reconcileAwaitingRawProjects } from "./reconcile-awaiting-raw";
 
 export { AutoHdrFetch, AutoHdrSend, ManualEditedPublish, DropboxSyncDO, TonomoProcessorDO };
 
-type DropboxSyncMessage = Extract<IngestMessage, { type: "dropbox_sync" }> & { jobId?: string };
+type DropboxSyncMessage = Extract<IngestMessage, { type: "dropbox_sync" }>;
 export type RenditionBackfillInput = { dryRun?: boolean; cursor?: string; limit?: number; confirmProduction?: boolean };
 export type RenditionBackfillResult = { scanned: number; wouldEnqueue: number; enqueued: number; skipped: number; nextCursor: string | null; dryRun: boolean };
 
@@ -32,6 +39,7 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
     return Response.json({ ok: true, service: "quincy-background" });
   }
 
+  // Temporary safety net: retire only after Dropbox RAW automation has been verified live in a later deploy.
   async scheduled(controller: ScheduledController): Promise<void> {
     await reconcileAwaitingRawProjects(this.env.DB, controller.scheduledTime);
   }
@@ -44,7 +52,7 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
       correlationId: `dropbox_sync:${projectId}`,
     });
     try {
-      const message: DropboxSyncMessage = { type: "dropbox_sync", projectId, jobId };
+      const message: DropboxSyncMessage = { type: "dropbox_sync", projectId, jobId, trigger: "manual_dropbox_sync" };
       await this.env.INGEST_QUEUE.send(message);
       return { jobId };
     } catch (error) {
@@ -53,7 +61,7 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
     }
   }
 
-  async startAutoHdr(projectId: string): Promise<{ jobId: string }> {
+  private async startAutoHdrLegacy(projectId: string): Promise<{ jobId: string }> {
     const db = dbFor(this.env);
     const selected = await db
       .select({ assetId: assets.id })
@@ -85,7 +93,7 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
     }
   }
 
-  async fetchEditedFromAutoHdr(projectId: string): Promise<{ jobId: string }> {
+  private async fetchEditedFromAutoHdrLegacy(projectId: string): Promise<{ jobId: string }> {
     const db = dbFor(this.env);
     // Single-flight: an in-progress fetch already covers this project. Returning it avoids two
     // concurrent workflows double-inserting the same finals (no unique constraint on edited assets).
@@ -110,39 +118,141 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
     }
   }
 
-  async publishManualEditedUpload(projectId: string, assetId: string): Promise<{ jobId: string }> {
+  async startAutoHdr(projectId: string, initiatedBy?: string): Promise<{ jobId: string }> {
+    if (!automationFlag(this.env.DROPBOX_HANDOFF_V2_ENABLED)) return this.startAutoHdrLegacy(projectId);
+    if (!initiatedBy) throw new Error("AutoHDR handoff requires an initiating staff identity");
+    const owner = await claimAutoHdrHandoff(this.env, projectId, initiatedBy);
     const db = dbFor(this.env);
-    const asset = await db.select({ id: assets.id, publishStatus: assets.publishStatus, archivedAt: projects.archivedAt })
+    try {
+      const handoff = await db.select({
+        assetIdsJson: autoHdrHandoffs.selectedAssetIdsJson,
+        connectionId: autoHdrHandoffs.connectionId,
+        generation: autoHdrHandoffs.generation,
+        initiatedBy: autoHdrHandoffs.initiatedBy,
+        state: autoHdrHandoffs.state,
+      }).from(autoHdrHandoffs).where(eq(autoHdrHandoffs.id, owner.handoffId)).get();
+      if (!handoff) throw new Error("Claimed AutoHDR handoff disappeared");
+      if (handoff.state === "started") return { jobId: owner.jobId };
+      if (handoff.state === "blocked") throw new Error("AutoHDR handoff is blocked for staff resolution");
+      await this.env.AUTOHDR_WORKFLOW.create({
+        id: owner.workflowId,
+        params: {
+          projectId,
+          assetIds: JSON.parse(handoff.assetIdsJson) as string[],
+          jobId: owner.jobId,
+          handoffId: owner.handoffId,
+          connectionId: handoff.connectionId,
+          mappingGeneration: handoff.generation,
+          initiatedBy: handoff.initiatedBy,
+        },
+      });
+      return { jobId: owner.jobId };
+    } catch (error) {
+      if (isWorkflowAlreadyExists(error)) return { jobId: owner.jobId };
+      await setJobStatus(db, owner.jobId, "failed", error instanceof Error ? error.message : String(error));
+      throw error;
+    }
+  }
+
+  async fetchEditedFromAutoHdr(projectId: string): Promise<{ jobId: string }> {
+    if (!automationFlag(this.env.DROPBOX_HANDOFF_V2_ENABLED)) return this.fetchEditedFromAutoHdrLegacy(projectId);
+    const db = dbFor(this.env);
+    const mapping = await db.select({
+      mappingId: autoHdrOutputMappings.id,
+      projectId: autoHdrOutputMappings.projectId,
+      handoffId: autoHdrOutputMappings.handoffId,
+      generation: autoHdrOutputMappings.generation,
+      connectionId: autoHdrOutputMappings.connectionId,
+      state: autoHdrOutputMappings.state,
+      finalPath: autoHdrOutputMappings.finalPath,
+      finalPathKey: autoHdrOutputMappings.finalPathKey,
+    }).from(autoHdrOutputMappings)
+      .innerJoin(autoHdrHandoffs, eq(autoHdrOutputMappings.handoffId, autoHdrHandoffs.id))
+      .where(and(eq(autoHdrOutputMappings.projectId, projectId), eq(autoHdrHandoffs.state, "started")))
+      .get();
+    if (!mapping) throw new Error("No started AutoHDR handoff mapping exists for this project");
+    let route: RoutedAutoHdrMapping | undefined;
+    if (mapping.state === "active" && mapping.finalPath && mapping.finalPathKey) {
+      route = {
+        projectId: mapping.projectId,
+        handoffId: mapping.handoffId,
+        mappingId: mapping.mappingId,
+        generation: mapping.generation,
+        connectionId: mapping.connectionId,
+        finalPath: mapping.finalPath,
+        finalPathKey: mapping.finalPathKey,
+        representativeChangedPath: mapping.finalPath,
+      };
+    } else if (mapping.state === "pending_discovery") {
+      const claims = await db.select({ path: autoHdrPathClaims.path, pathKey: autoHdrPathClaims.pathKey })
+        .from(autoHdrPathClaims).where(eq(autoHdrPathClaims.mappingId, mapping.mappingId));
+      const observed = [];
+      for (const claim of claims) {
+        const page = await listFolderIfExists(this.env, db, claim.path, {}, mapping.connectionId);
+        if (page) observed.push({
+          ".tag": "folder" as const,
+          id: `manual:${claim.pathKey}`,
+          name: claim.path.split("/").at(-1)!,
+          path_lower: claim.pathKey,
+          path_display: claim.path,
+        });
+      }
+      route = (await routeAutoHdrDelta(db, mapping.connectionId, observed)).routes[0];
+    }
+    if (!route) {
+      throw new Error(mapping.state === "blocked_collision"
+        ? "AutoHDR output mapping is blocked for staff resolution"
+        : "AutoHDR final folder is not ready");
+    }
+    const owner = await claimAutoHdrFetch(this.env, route, { trigger: "manual", representativeChangedPath: route.finalPath });
+    await startClaimedFetch(this.env, owner);
+    return { jobId: owner.jobId };
+  }
+
+  async publishManualUpload(projectId: string, assetId: string): Promise<{ jobId: string }> {
+    const db = dbFor(this.env);
+    const asset = await db.select({
+      id: assets.id,
+      collectionKind: collections.kind,
+      sourcePath: assets.sourcePath,
+      publishStatus: assets.publishStatus,
+      archivedAt: projects.archivedAt,
+    })
       .from(assets)
       .innerJoin(collections, eq(assets.collectionId, collections.id))
       .innerJoin(projects, eq(collections.projectId, projects.id))
-      .where(and(eq(assets.id, assetId), eq(collections.projectId, projectId), eq(collections.kind, "edited"), eq(assets.source, "upload"))).get();
-    if (!asset) throw new Error("Manual edited upload is not available for publishing");
+      .where(and(eq(assets.id, assetId), eq(collections.projectId, projectId), inArray(collections.kind, ["raw", "edited"]), eq(assets.source, "upload"))).get();
+    if (!asset) throw new Error("Manual upload is not available for Dropbox publishing");
     // The service can be called after the app's archive check, so it must independently close
     // that race before creating a new background writer.
     if (asset.archivedAt) throw new Error(`Project ${projectId} is archived — manual publish refused`);
-    if (asset.publishStatus === "ready") {
+    const isEdited = asset.collectionKind === "edited";
+    const jobKind = isEdited ? "manual_edited_publish" : "manual_raw_publish";
+    const correlationId = `${jobKind}:${assetId}`;
+    if ((isEdited && asset.publishStatus === "ready") || (!isEdited && asset.sourcePath)) {
       // A ready manual asset can only re-enter this workflow after its durable Dropbox
-      // publication succeeded but the rendition queue handoff failed. The replay skips
-      // Dropbox and retries that handoff; ordinary already-published assets stay immutable.
+      // write succeeded but the final handoff/job checkpoint failed. The replay skips the
+      // idempotent provider write; ordinary completed assets stay immutable.
       const failedHandoff = await db.select({ id: jobs.id }).from(jobs).where(and(
-        eq(jobs.projectId, projectId), eq(jobs.kind, "manual_edited_publish"),
-        eq(jobs.correlationId, `manual_edited_publish:${assetId}`), inArray(jobs.status, ["failed", "stuck"]),
+        eq(jobs.projectId, projectId), eq(jobs.kind, jobKind),
+        eq(jobs.correlationId, correlationId), inArray(jobs.status, ["failed", "stuck"]),
       )).get();
-      if (!failedHandoff) throw new Error("Manual edited upload is already published");
+      if (!failedHandoff) throw new Error(isEdited ? "Manual edited upload is already published" : "Manual RAW upload is already mirrored");
     }
     const active = await db.select({ id: jobs.id }).from(jobs).where(and(
-      eq(jobs.projectId, projectId), eq(jobs.kind, "manual_edited_publish"), inArray(jobs.status, ["queued", "running"]),
-      eq(jobs.correlationId, `manual_edited_publish:${assetId}`),
+      eq(jobs.projectId, projectId), eq(jobs.kind, jobKind), inArray(jobs.status, ["queued", "running"]),
+      eq(jobs.correlationId, correlationId),
     )).get();
     if (active) return { jobId: active.id };
-    const statusAfterWorkflowCreateFailure = publishStatusAfterWorkflowCreateFailure(asset.publishStatus);
+    const statusAfterWorkflowCreateFailure = isEdited
+      ? publishStatusAfterWorkflowCreateFailure(asset.publishStatus)
+      : "ready";
     // A failed publication retry must return the asset to the only state the workflow can
     // promote. A ready asset is a post-publication rendition-handoff retry and remains visible.
-    if (asset.publishStatus !== "ready") await db.update(assets).set({ publishStatus: "pending", updatedAt: new Date() }).where(eq(assets.id, assetId));
+    if (isEdited && asset.publishStatus !== "ready") await db.update(assets).set({ publishStatus: "pending", updatedAt: new Date() }).where(eq(assets.id, assetId));
     let jobId: string;
     try {
-      jobId = await createJob(db, { kind: "manual_edited_publish", projectId, payload: { projectId, assetId }, correlationId: `manual_edited_publish:${assetId}` });
+      jobId = await createJob(db, { kind: jobKind, projectId, payload: { projectId, assetId, collection: asset.collectionKind }, correlationId });
     } catch (error) {
       // The partial unique index is the single-flight authority. A second caller can race the
       // preflight above, so return the winner rather than report a false publication failure.
@@ -154,8 +264,8 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
       })();
       if (uniqueConflict) {
         const winner = await db.select({ id: jobs.id }).from(jobs).where(and(
-          eq(jobs.projectId, projectId), eq(jobs.kind, "manual_edited_publish"), inArray(jobs.status, ["queued", "running"]),
-          eq(jobs.correlationId, `manual_edited_publish:${assetId}`),
+          eq(jobs.projectId, projectId), eq(jobs.kind, jobKind), inArray(jobs.status, ["queued", "running"]),
+          eq(jobs.correlationId, correlationId),
         )).get();
         if (winner) return { jobId: winner.id };
       }
@@ -176,18 +286,186 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
     }
   }
 
-  /** The historical schema is not singleton-enforced; use its canonical oldest row only. */
+  /** Backward-compatible service method for already-deployed app Workers during ordered rollout. */
+  async publishManualEditedUpload(projectId: string, assetId: string): Promise<{ jobId: string }> {
+    return this.publishManualUpload(projectId, assetId);
+  }
+
+  /** One account notification wakes both independent root-specific objects. */
   async handleDropboxWebhook(): Promise<void> {
     const db = dbFor(this.env);
-    const connections = await db
-      .select({ id: integrationConnections.id })
-      .from(integrationConnections)
-      .where(eq(integrationConnections.provider, "dropbox"))
-      .orderBy(asc(integrationConnections.createdAt), asc(integrationConnections.id)).limit(1);
-    await fanOutDropboxKicks(connections.map((connection) => connection.id), async (connectionId) => {
-      const stub = this.env.DROPBOX_SYNC.getByName(connectionId);
+    const connectionId = await canonicalDropboxConnectionId(db);
+    await fanOutDropboxKicks(
+      [monitorName(connectionId, "raw"), monitorName(connectionId, "autohdr")],
+      async (name) => {
+      const stub = this.env.DROPBOX_SYNC.getByName(name);
       await stub.kick();
+      },
+    );
+  }
+
+  async inspectDropboxMonitor(scope: "raw" | "autohdr"): Promise<Record<string, unknown>> {
+    const db = dbFor(this.env);
+    const connectionId = await canonicalDropboxConnectionId(db);
+    const durable = await this.env.DROPBOX_SYNC.getByName(monitorName(connectionId, scope)).inspect();
+    const health = await db.query.dropboxMonitorHealth.findFirst({
+      where: (table, operators) => operators.and(
+        operators.eq(table.connectionId, connectionId),
+        operators.eq(table.scope, scope),
+      ),
     });
+    const mappingRows = scope === "autohdr"
+      ? await db.select({
+        id: autoHdrOutputMappings.id,
+        projectId: autoHdrOutputMappings.projectId,
+        state: autoHdrOutputMappings.state,
+        generation: autoHdrOutputMappings.generation,
+        diagnostic: autoHdrOutputMappings.diagnostic,
+        handoffId: autoHdrHandoffs.id,
+        handoffState: autoHdrHandoffs.state,
+        handoffError: autoHdrHandoffs.lastError,
+        readinessUnitsJson: autoHdrHandoffs.readinessUnitsJson,
+        jobId: jobs.id,
+        jobStatus: jobs.status,
+        jobError: jobs.error,
+      }).from(autoHdrOutputMappings)
+        .innerJoin(autoHdrHandoffs, eq(autoHdrOutputMappings.handoffId, autoHdrHandoffs.id))
+        .innerJoin(jobs, eq(autoHdrHandoffs.jobId, jobs.id))
+        .where(inArray(autoHdrOutputMappings.state, ["pending_discovery", "active", "blocked_collision"]))
+        .limit(100)
+      : [];
+    const mappings = await Promise.all(mappingRows.map(async (mapping) => {
+      const units = JSON.parse(mapping.readinessUnitsJson) as { key: string }[];
+      const { readinessUnitsJson: _readinessUnitsJson, ...diagnostic } = mapping;
+      const covered = await db.select({ key: autoHdrFinalAssociations.readinessUnitKey })
+        .from(autoHdrFinalAssociations)
+        .innerJoin(assets, and(
+          eq(autoHdrFinalAssociations.assetId, assets.id),
+          sql`${assets.supersededAt} IS NULL`,
+        ))
+        .where(eq(autoHdrFinalAssociations.handoffId, mapping.handoffId));
+      const coveredKeys = new Set(covered.map((row) => row.key));
+      return {
+        ...diagnostic,
+        readiness: {
+          covered: coveredKeys.size,
+          total: units.length,
+          missing: units.filter((unit) => !coveredKeys.has(unit.key)).map((unit) => unit.key),
+        },
+      };
+    }));
+    return {
+      durable,
+      health: health ? {
+        ...health,
+        cursorAgeMs: health.cursorUpdatedAt ? Math.max(0, Date.now() - health.cursorUpdatedAt.getTime()) : null,
+      } : null,
+      mappings,
+    };
+  }
+
+  async resetDropboxMonitor(scope: "raw" | "autohdr"): Promise<Record<string, unknown>> {
+    const connectionId = await canonicalDropboxConnectionId(dbFor(this.env));
+    const stub = this.env.DROPBOX_SYNC.getByName(monitorName(connectionId, scope));
+    await stub.resetCursor();
+    return stub.inspect();
+  }
+
+  async resolveAutoHdrMapping(mappingId: string, chosenPathKey: string, verifiedFolderId: string, actorId: string): Promise<Record<string, unknown>> {
+    const db = dbFor(this.env);
+    const claim = await db.select({
+      id: autoHdrPathClaims.id,
+      path: autoHdrPathClaims.path,
+      pathKey: autoHdrPathClaims.pathKey,
+      connectionId: autoHdrPathClaims.connectionId,
+      mappingId: autoHdrPathClaims.mappingId,
+    }).from(autoHdrPathClaims)
+      .innerJoin(autoHdrOutputMappings, eq(autoHdrPathClaims.mappingId, autoHdrOutputMappings.id))
+      .where(and(
+        eq(autoHdrPathClaims.mappingId, mappingId),
+        eq(autoHdrPathClaims.pathKey, chosenPathKey),
+        eq(autoHdrOutputMappings.state, "blocked_collision"),
+      )).get();
+    if (!claim) throw new Error("Blocked AutoHDR mapping candidate was not found");
+    const metadata = await getMetadata(this.env, db, claim.path, claim.connectionId);
+    if (metadata[".tag"] !== "folder" || metadata.id !== verifiedFolderId) {
+      throw new Error("Dropbox folder ownership verification failed");
+    }
+    const now = new Date();
+    const results = await this.env.DB.batch([
+      this.env.DB.prepare("UPDATE autohdr_output_mappings SET state = 'active', final_path = ?, final_path_key = ?, folder_id = ?, diagnostic = NULL, observed_at = ?, updated_at = ? WHERE id = ? AND state = 'blocked_collision'")
+        .bind(claim.path, claim.pathKey, metadata.id, now.getTime(), now.getTime(), mappingId),
+      this.env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, ?, 'integration.autohdr_mapping.resolve', 'autohdr_mapping', ?, ?, ? WHERE changes() = 1")
+        .bind(crypto.randomUUID(), actorId, mappingId, JSON.stringify({ chosenPathKey: claim.pathKey, verifiedFolderId: metadata.id }), now.getTime()),
+      this.env.DB.prepare("UPDATE autohdr_path_claims SET state = CASE WHEN id = ? THEN 'active' ELSE 'tombstone' END, folder_id = CASE WHEN id = ? THEN ? ELSE folder_id END, diagnostic = NULL, updated_at = ? WHERE mapping_id = ? AND EXISTS (SELECT 1 FROM autohdr_output_mappings WHERE id = ? AND state = 'active' AND final_path_key = ?)")
+        .bind(claim.id, claim.id, metadata.id, now.getTime(), mappingId, mappingId, claim.pathKey),
+      this.env.DB.prepare("UPDATE autohdr_handoffs SET state = 'started', last_error = NULL, updated_at = ? WHERE id = (SELECT handoff_id FROM autohdr_output_mappings WHERE id = ? AND state = 'active' AND final_path_key = ?) AND state = 'blocked'")
+        .bind(now.getTime(), mappingId, claim.pathKey),
+    ]);
+    if ((results[0]?.meta.changes ?? 0) !== 1) {
+      const winner = await db.select({ state: autoHdrOutputMappings.state, finalPathKey: autoHdrOutputMappings.finalPathKey })
+        .from(autoHdrOutputMappings).where(eq(autoHdrOutputMappings.id, mappingId)).get();
+      if (winner?.state !== "active" || winner.finalPathKey !== claim.pathKey) {
+        throw new Error("AutoHDR mapping resolution lost a concurrent ownership race");
+      }
+    }
+    return { mappingId, finalPath: claim.path, finalPathKey: claim.pathKey, folderId: metadata.id, state: "active" };
+  }
+
+  async reassignAutoHdrPathClaim(pathKey: string, targetMappingId: string, verifiedFolderId: string, actorId: string): Promise<Record<string, unknown>> {
+    const db = dbFor(this.env);
+    const target = await db.select({
+      mappingId: autoHdrOutputMappings.id,
+      projectId: autoHdrOutputMappings.projectId,
+      handoffId: autoHdrOutputMappings.handoffId,
+      connectionId: autoHdrOutputMappings.connectionId,
+      rawFolderPath: autoHdrHandoffs.frozenRawFolderPath,
+      jobId: autoHdrHandoffs.jobId,
+    }).from(autoHdrOutputMappings)
+      .innerJoin(autoHdrHandoffs, eq(autoHdrOutputMappings.handoffId, autoHdrHandoffs.id))
+      .where(and(eq(autoHdrOutputMappings.id, targetMappingId), eq(autoHdrOutputMappings.state, "blocked_collision"))).get();
+    if (!target) throw new Error("Target AutoHDR mapping is not blocked for reassignment");
+    const source = await db.select({
+      claimId: autoHdrPathClaims.id,
+      sourceMappingId: autoHdrPathClaims.mappingId,
+      path: autoHdrPathClaims.path,
+      pathKey: autoHdrPathClaims.pathKey,
+      connectionId: autoHdrPathClaims.connectionId,
+      sourceState: autoHdrPathClaims.state,
+    }).from(autoHdrPathClaims).where(and(
+      eq(autoHdrPathClaims.connectionId, target.connectionId),
+      eq(autoHdrPathClaims.pathKey, pathKey),
+    )).get();
+    if (!source || !["tombstone", "blocked"].includes(source.sourceState)) {
+      throw new Error("Path claim is not eligible for explicit reassignment");
+    }
+    const metadata = await getMetadata(this.env, db, source.path, source.connectionId);
+    if (metadata[".tag"] !== "folder" || metadata.id !== verifiedFolderId) throw new Error("Dropbox folder ownership verification failed");
+    const candidates = autoHdrFinalPathCandidates(deriveAutoHdrFolderName(target.rawFolderPath));
+    if (!candidates.map(dropboxPathKey).includes(source.pathKey)) throw new Error("Claim path is not one of the target handoff's frozen candidates");
+    const siblingPath = candidates.find((candidate) => dropboxPathKey(candidate) !== source.pathKey)!;
+    const siblingCollision = await db.select({ id: autoHdrPathClaims.id }).from(autoHdrPathClaims)
+      .where(and(eq(autoHdrPathClaims.connectionId, target.connectionId), eq(autoHdrPathClaims.pathKey, dropboxPathKey(siblingPath)))).get();
+    if (siblingCollision) throw new Error("The target handoff's sibling candidate also has a permanent owner");
+    const now = Date.now();
+    const results = await this.env.DB.batch([
+      this.env.DB.prepare("UPDATE autohdr_path_claims SET mapping_id = ?, handoff_id = ?, project_id = ?, state = 'active', folder_id = ?, diagnostic = NULL, updated_at = ? WHERE id = ? AND state in ('tombstone','blocked') AND EXISTS (SELECT 1 FROM autohdr_output_mappings WHERE id = ? AND state = 'blocked_collision')")
+        .bind(target.mappingId, target.handoffId, target.projectId, metadata.id, now, source.claimId, target.mappingId),
+      this.env.DB.prepare("INSERT INTO autohdr_path_claims (id, mapping_id, handoff_id, project_id, connection_id, candidate, path, path_key, state, created_at, updated_at) SELECT ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ? WHERE changes() = 1")
+        .bind(crypto.randomUUID(), target.mappingId, target.handoffId, target.projectId, target.connectionId, siblingPath.includes("/04-FINALS-") ? "finals" : "final", siblingPath, dropboxPathKey(siblingPath), now, now),
+      this.env.DB.prepare("UPDATE autohdr_output_mappings SET state = 'active', final_path = ?, final_path_key = ?, folder_id = ?, diagnostic = NULL, observed_at = ?, updated_at = ? WHERE id = ? AND state = 'blocked_collision' AND EXISTS (SELECT 1 FROM autohdr_path_claims WHERE id = ? AND mapping_id = ? AND state = 'active')")
+        .bind(source.path, source.pathKey, metadata.id, now, now, target.mappingId, source.claimId, target.mappingId),
+      this.env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, ?, 'integration.autohdr_path_claim.reassign', 'autohdr_mapping', ?, ?, ? WHERE changes() = 1")
+        .bind(crypto.randomUUID(), actorId, target.mappingId, JSON.stringify({ pathKey: source.pathKey, sourceMappingId: source.sourceMappingId, verifiedFolderId: metadata.id }), now),
+      this.env.DB.prepare("UPDATE autohdr_handoffs SET state = 'starting', last_error = NULL, updated_at = ? WHERE id = ? AND state = 'blocked' AND EXISTS (SELECT 1 FROM autohdr_output_mappings WHERE id = ? AND state = 'active' AND final_path_key = ?)")
+        .bind(now, target.handoffId, target.mappingId, source.pathKey),
+      this.env.DB.prepare("UPDATE jobs SET status = 'queued', error = NULL, updated_at = ? WHERE id = ? AND status = 'failed' AND EXISTS (SELECT 1 FROM autohdr_output_mappings WHERE id = ? AND state = 'active' AND final_path_key = ?)")
+        .bind(now, target.jobId, target.mappingId, source.pathKey),
+    ]);
+    if ((results[2]?.meta.changes ?? 0) !== 1) {
+      throw new Error("AutoHDR path reassignment lost a concurrent ownership race");
+    }
+    return { sourceMappingId: source.sourceMappingId, targetMappingId, path: source.path, pathKey: source.pathKey, folderId: metadata.id };
   }
 
   async processTonomoEvents(): Promise<void> {
@@ -262,7 +540,13 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
             message.ack();
             break;
           case "dropbox_sync":
-            await syncProjectRawFolder(this.env, parsed.body.projectId, (parsed.body as DropboxSyncMessage).jobId);
+            await syncProjectRawFolder(
+              this.env,
+              parsed.body.projectId,
+              (parsed.body as DropboxSyncMessage).jobId,
+              (parsed.body as DropboxSyncMessage).connectionId,
+              (parsed.body as DropboxSyncMessage).trigger ?? "queue_retry",
+            );
             message.ack();
             break;
           case "autohdr_check":

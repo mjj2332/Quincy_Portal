@@ -10,12 +10,7 @@ import { signTransformSource } from "../src/lib/transform-source";
 import { liveTransformLocation } from "../src/routes/media";
 import { RENDITION_SPEC_VERSION } from "@quincy/shared";
 import { uniqueVersionError } from "../src/routes/collections";
-import {
-  RECONCILE_AWAITING_RAW_BATCH_SIZE,
-  RECONCILE_AWAITING_RAW_UPDATE_SQL,
-  advanceAwaitingRawProject,
-  scanAwaitingRawProjects,
-} from "../../background/src/reconcile-awaiting-raw";
+import { finalizeIngest } from "../src/lib/ingest";
 
 const database = env as unknown as { DB: D1Database };
 const authEnv = env as unknown as Env;
@@ -67,6 +62,75 @@ async function executeSql(sql: string): Promise<void> {
 async function sessionCookie(token: string): Promise<string> {
   const context = await createAuth(authEnv).$context;
   return `${context.authCookies.sessionToken.name}=${token}.${await makeSignature(token, authSecret)}`;
+}
+
+async function createUploadProject(cookie: string, street: string): Promise<{ id: string }> {
+  const response = await SELF.fetch("https://portal.test/api/projects", {
+    method: "POST",
+    headers: { cookie, "content-type": "application/json" },
+    body: JSON.stringify({ street, orderedServices: [] }),
+  });
+  expect(response.status).toBe(201);
+  return response.json() as Promise<{ id: string }>;
+}
+
+async function createRawManifest(cookie: string, projectId: string, filenames: string[]): Promise<string> {
+  const response = await SELF.fetch(`https://portal.test/api/projects/${projectId}/upload-manifest`, {
+    method: "POST",
+    headers: { cookie, "content-type": "application/json" },
+    body: JSON.stringify({ filenames }),
+  });
+  expect(response.status).toBe(200);
+  return (await response.json() as { manifestId: string }).manifestId;
+}
+
+async function completeRawUpload(cookie: string, projectId: string, filename: string, manifestId?: string): Promise<Response> {
+  const assetId = crypto.randomUUID();
+  const key = `projects/${projectId}/raw/${assetId}/${filename}`;
+  await authEnv.MEDIA.put(key, `raw-${filename}`, { httpMetadata: { contentType: "image/jpeg" } });
+  return SELF.fetch("https://portal.test/api/uploads/complete", {
+    method: "POST",
+    headers: { cookie, "content-type": "application/json" },
+    body: JSON.stringify({ projectId, key, originalFilename: filename, collection: "raw", manifestId }),
+  });
+}
+
+async function ingestStatus(cookie: string, projectId: string): Promise<{ expectedCount: number | null; receivedCount: number; mismatch: boolean }> {
+  const response = await SELF.fetch(`https://portal.test/api/projects/${projectId}/ingest-status`, { headers: { cookie } });
+  expect(response.status).toBe(200);
+  return response.json() as Promise<{ expectedCount: number | null; receivedCount: number; mismatch: boolean }>;
+}
+
+async function seedAutoHdrGraph(projectId: string, assetId: string) {
+  const now = Date.now();
+  const connectionId = crypto.randomUUID();
+  const jobId = crypto.randomUUID();
+  const handoffId = crypto.randomUUID();
+  const mappingId = crypto.randomUUID();
+  const fetchClaimId = crypto.randomUUID();
+  const collection = await database.DB.prepare("SELECT id FROM collections WHERE project_id = ? AND kind = 'raw'")
+    .bind(projectId).first<{ id: string }>();
+  await database.DB.batch([
+    database.DB.prepare("INSERT INTO integration_connections (id, provider, status, created_at, updated_at) VALUES (?, 'dropbox', 'connected', ?, ?)").bind(connectionId, now, now),
+    database.DB.prepare("INSERT INTO jobs (id, kind, status, project_id, retries, created_at, updated_at) VALUES (?, 'autohdr', 'done', ?, 0, ?, ?)").bind(jobId, projectId, now, now),
+    database.DB.prepare("INSERT INTO autohdr_handoffs (id, project_id, connection_id, generation, manifest_version, selection_hash, selected_asset_ids_json, readiness_units_json, frozen_raw_folder_path, initiated_by, state, workflow_id, job_id, lease_expires_at, created_at, updated_at) VALUES (?, ?, ?, 1, 1, 'selection', ?, ?, ?, 'seed-admin', 'starting', ?, ?, ?, ?, ?)")
+      .bind(handoffId, projectId, connectionId, JSON.stringify([assetId]), JSON.stringify([{ key: `asset:${assetId}`, assetIds: [assetId] }]), `/Raw/${projectId}`, `send:${handoffId}`, jobId, now + 60_000, now, now),
+    database.DB.prepare("INSERT INTO autohdr_output_mappings (id, project_id, handoff_id, connection_id, generation, state, created_at, updated_at) VALUES (?, ?, ?, ?, 1, 'pending_discovery', ?, ?)")
+      .bind(mappingId, projectId, handoffId, connectionId, now, now),
+    database.DB.prepare("INSERT INTO autohdr_path_claims (id, mapping_id, handoff_id, project_id, connection_id, candidate, path, path_key, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'final', ?, ?, 'pending', ?, ?)")
+      .bind(crypto.randomUUID(), mappingId, handoffId, projectId, connectionId, `/AutoHDR/${projectId}/04-FINAL-Photos`, `/autohdr/${projectId}/04-final-photos`, now, now),
+    database.DB.prepare("INSERT INTO autohdr_path_claims (id, mapping_id, handoff_id, project_id, connection_id, candidate, path, path_key, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'finals', ?, ?, 'pending', ?, ?)")
+      .bind(crypto.randomUUID(), mappingId, handoffId, projectId, connectionId, `/AutoHDR/${projectId}/04-FINALS-Photos`, `/autohdr/${projectId}/04-finals-photos`, now, now),
+    database.DB.prepare("INSERT INTO autohdr_fetch_claims (id, project_id, handoff_id, mapping_id, mapping_generation, connection_id, workflow_id, job_id, state, lease_expires_at, trigger, trigger_json, created_at, updated_at) VALUES (?, ?, ?, ?, 1, ?, ?, ?, 'done', ?, 'manual', '{}', ?, ?)")
+      .bind(fetchClaimId, projectId, handoffId, mappingId, connectionId, `fetch:${fetchClaimId}`, jobId, now + 60_000, now, now),
+    database.DB.prepare("INSERT INTO autohdr_final_associations (id, handoff_id, asset_id, readiness_unit_key, match_kind, created_at) VALUES (?, ?, ?, ?, 'exact', ?)")
+      .bind(crypto.randomUUID(), handoffId, assetId, `asset:${assetId}`, now),
+    database.DB.prepare("INSERT INTO edited_source_claims (id, collection_id, source_path_key, current_asset_id, content_hash, handoff_id, created_at, updated_at) VALUES (?, ?, ?, ?, 'delete-hash', ?, ?, ?)")
+      .bind(crypto.randomUUID(), collection!.id, `/autohdr/${projectId}/04-final-photos/delete.jpg`, assetId, handoffId, now, now),
+    database.DB.prepare("INSERT INTO raw_reconciliation_claims (id, project_id, owner_job_id, state, lease_expires_at, trigger, created_at, updated_at) VALUES (?, ?, ?, 'done', ?, 'dropbox_delta', ?, ?)")
+      .bind(crypto.randomUUID(), projectId, jobId, now, now, now),
+  ]);
+  return { connectionId, jobId, handoffId, mappingId };
 }
 
 beforeAll(async () => {
@@ -168,6 +232,127 @@ async function createEditableAnnotation(strokes: Array<{ points: Array<{ x: numb
 }
 
 describe("staff app API", () => {
+  it("verifies a fresh manual RAW batch from its durable manifest attribution", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const project = await createUploadProject(cookie, `Fresh manifest ${crypto.randomUUID()}`);
+    const filenames = ["fresh-1.jpg", "fresh-2.jpeg", "fresh-3.jpg"];
+    const manifestId = await createRawManifest(cookie, project.id, filenames);
+
+    for (const filename of filenames) {
+      const response = await completeRawUpload(cookie, project.id, filename, manifestId);
+      expect(response.status).toBe(201);
+      await expect(response.json()).resolves.toMatchObject({
+        publishStatus: "ready",
+        mirrorStatus: "pending",
+        jobId: expect.any(String),
+      });
+    }
+
+    await expect(ingestStatus(cookie, project.id)).resolves.toEqual({
+      expectedCount: 3,
+      receivedCount: 3,
+      mismatch: false,
+    });
+    await expect(database.DB.prepare("SELECT status FROM upload_manifests WHERE id = ?").bind(manifestId).first()).resolves.toEqual({ status: "complete" });
+    await expect(database.DB.prepare("SELECT count(*) AS n FROM assets WHERE manifest_id = ?").bind(manifestId).first()).resolves.toEqual({ n: 3 });
+  });
+
+  it("compares a new one-file manifest with its own asset instead of ten older collection assets", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const project = await createUploadProject(cookie, `Manifest delta ${crypto.randomUUID()}`);
+    const raw = await database.DB.prepare("SELECT id FROM collections WHERE project_id = ? AND kind = 'raw'").bind(project.id).first<{ id: string }>();
+    const now = Date.now();
+    const statements = Array.from({ length: 10 }, (_, index) => {
+      const assetId = crypto.randomUUID();
+      return database.DB.prepare("INSERT INTO assets (id, collection_id, r2_key, original_filename, bytes, source, created_at, updated_at) VALUES (?, ?, ?, ?, 1, 'dropbox', ?, ?)")
+        .bind(assetId, raw!.id, `tests/${assetId}.jpg`, `existing-${index}.jpg`, now, now);
+    });
+    statements.push(database.DB.prepare("UPDATE collections SET received_count = 10 WHERE id = ?").bind(raw!.id));
+    await database.DB.batch(statements);
+
+    const manifestId = await createRawManifest(cookie, project.id, ["new-only.jpg"]);
+    expect((await completeRawUpload(cookie, project.id, "new-only.jpg", manifestId)).status).toBe(201);
+    await expect(ingestStatus(cookie, project.id)).resolves.toEqual({
+      expectedCount: 1,
+      receivedCount: 1,
+      mismatch: false,
+    });
+  });
+
+  it("keeps a genuine active-manifest shortfall visible", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const project = await createUploadProject(cookie, `Manifest shortfall ${crypto.randomUUID()}`);
+    const manifestId = await createRawManifest(cookie, project.id, ["short-1.jpg", "short-2.jpg", "short-3.jpg"]);
+    expect((await completeRawUpload(cookie, project.id, "short-1.jpg", manifestId)).status).toBe(201);
+    expect((await completeRawUpload(cookie, project.id, "short-2.jpg", manifestId)).status).toBe(201);
+
+    await expect(ingestStatus(cookie, project.id)).resolves.toEqual({
+      expectedCount: 3,
+      receivedCount: 2,
+      mismatch: true,
+    });
+    await expect(database.DB.prepare("SELECT status FROM upload_manifests WHERE id = ?").bind(manifestId).first()).resolves.toEqual({ status: "active" });
+  });
+
+  it("aggregates every active manifest so a newer batch cannot hide an older shortfall", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const project = await createUploadProject(cookie, `Manifest aggregate ${crypto.randomUUID()}`);
+    const older = await createRawManifest(cookie, project.id, ["old-1.jpg", "old-2.jpg", "old-3.jpg"]);
+    expect((await completeRawUpload(cookie, project.id, "old-1.jpg", older)).status).toBe(201);
+    expect((await completeRawUpload(cookie, project.id, "old-2.jpg", older)).status).toBe(201);
+    const newer = await createRawManifest(cookie, project.id, ["new-1.jpg", "new-2.jpg"]);
+    expect((await completeRawUpload(cookie, project.id, "new-1.jpg", newer)).status).toBe(201);
+
+    await expect(ingestStatus(cookie, project.id)).resolves.toEqual({
+      expectedCount: 5,
+      receivedCount: 3,
+      mismatch: true,
+    });
+  });
+
+  it("preserves collection-level count verification for a Dropbox-only project with no manifests", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const project = await createUploadProject(cookie, `Dropbox-only count ${crypto.randomUUID()}`);
+    await database.DB.prepare("UPDATE collections SET expected_count = 8, received_count = 7 WHERE project_id = ? AND kind = 'raw'").bind(project.id).run();
+    await expect(ingestStatus(cookie, project.id)).resolves.toEqual({
+      expectedCount: 8,
+      receivedCount: 7,
+      mismatch: true,
+    });
+  });
+
+  it("does not let manifest creation clobber Dropbox's collection expected count", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const project = await createUploadProject(cookie, `Manifest writer isolation ${crypto.randomUUID()}`);
+    await database.DB.prepare("UPDATE collections SET expected_count = 37 WHERE project_id = ? AND kind = 'raw'").bind(project.id).run();
+    await createRawManifest(cookie, project.id, ["manual-1.jpg", "manual-2.jpg"]);
+    await expect(database.DB.prepare("SELECT expected_count FROM collections WHERE project_id = ? AND kind = 'raw'").bind(project.id).first()).resolves.toEqual({ expected_count: 37 });
+  });
+
+  it("rejects manifest creation for an archived project", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const project = await createUploadProject(cookie, `Archived manifest ${crypto.randomUUID()}`);
+    await database.DB.prepare("UPDATE projects SET archived_at = ? WHERE id = ?").bind(Date.now(), project.id).run();
+    const response = await SELF.fetch(`https://portal.test/api/projects/${project.id}/upload-manifest`, {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ filenames: ["archived.jpg"] }),
+    });
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({ error: "Project is archived" });
+  });
+
+  it("rejects a manifest that does not belong to the completed upload's RAW collection", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const owner = await createUploadProject(cookie, `Manifest owner ${crypto.randomUUID()}`);
+    const other = await createUploadProject(cookie, `Manifest other ${crypto.randomUUID()}`);
+    const manifestId = await createRawManifest(cookie, owner.id, ["owner.jpg"]);
+    const response = await completeRawUpload(cookie, other.id, "other.jpg", manifestId);
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({ error: "Upload manifest does not belong to this project's RAW collection" });
+    await expect(database.DB.prepare("SELECT count(*) AS n FROM assets WHERE manifest_id = ?").bind(manifestId).first()).resolves.toEqual({ n: 0 });
+  });
+
   it("recognizes a D1 version collision carried by error.cause", () => {
     expect(uniqueVersionError(new Error("Failed query", {
       cause: new Error("UNIQUE constraint failed: assets.version_group_id, assets.kind, assets.version"),
@@ -216,103 +401,6 @@ describe("staff app API", () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({ ok: true });
-  });
-
-  it("advances awaiting RAW projects with the real D1 batch guards, audit, and rollback semantics", async () => {
-    const now = 1_784_678_400_000;
-    const insertProject = async (id: string, shootDate: string, stageKey = "awaiting_raw", archivedAt: number | null = null) => {
-      await database.DB.prepare(
-        "INSERT INTO projects (id, street, shoot_date, stage_key, archived_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-      ).bind(id, `Reconciliation ${id}`, shootDate, stageKey, archivedAt, now - 1, now - 1).run();
-    };
-    const candidateFor = (id: string, shootDate = "2026-07-22") => ({ id, shootDate, stageKey: "awaiting_raw", archivedAt: null } as const);
-    const auditCount = async (id: string) => (await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE target_id = ? AND action = 'stage.auto_advance'").bind(id).first<{ count: number }>())!.count;
-
-    const advancedId = crypto.randomUUID();
-    await insertProject(advancedId, "2026-07-22");
-    await expect(advanceAwaitingRawProject(database.DB, candidateFor(advancedId), "2026-07-22", now)).resolves.toBe(true);
-    await expect(database.DB.prepare("SELECT stage_key AS stageKey, updated_at AS updatedAt FROM projects WHERE id = ?").bind(advancedId).first()).resolves.toEqual({ stageKey: "raw_review", updatedAt: now });
-    const audit = await database.DB.prepare("SELECT actor_id AS actorId, action, target_type AS targetType, target_id AS targetId, meta_json AS metaJson, created_at AS createdAt FROM audit_log WHERE target_id = ? AND action = 'stage.auto_advance'").bind(advancedId).first<{ actorId: string | null; action: string; targetType: string; targetId: string; metaJson: string; createdAt: number }>();
-    expect(audit).toEqual({
-      actorId: null,
-      action: "stage.auto_advance",
-      targetType: "project",
-      targetId: advancedId,
-      metaJson: JSON.stringify({ actor: "system", trigger: "hourly-awaiting-raw-reconciliation", businessDate: "2026-07-22", shootDate: "2026-07-22", from: "awaiting_raw", to: "raw_review" }),
-      createdAt: now,
-    });
-    await expect(advanceAwaitingRawProject(database.DB, candidateFor(advancedId), "2026-07-22", now + 1)).resolves.toBe(false);
-    await expect(auditCount(advancedId)).resolves.toBe(1);
-
-    const movedId = crypto.randomUUID(); const archivedId = crypto.randomUUID(); const staleDateId = crypto.randomUUID();
-    await insertProject(movedId, "2026-07-22", "edited_review");
-    await insertProject(archivedId, "2026-07-22", "awaiting_raw", now - 1);
-    await insertProject(staleDateId, "2026-07-23");
-    await expect(advanceAwaitingRawProject(database.DB, candidateFor(movedId), "2026-07-22", now)).resolves.toBe(false);
-    await expect(advanceAwaitingRawProject(database.DB, candidateFor(archivedId), "2026-07-22", now)).resolves.toBe(false);
-    await expect(advanceAwaitingRawProject(database.DB, candidateFor(staleDateId), "2026-07-22", now)).resolves.toBe(false);
-    await expect(Promise.all([auditCount(movedId), auditCount(archivedId), auditCount(staleDateId)])).resolves.toEqual([0, 0, 0]);
-
-    const rollbackId = crypto.randomUUID();
-    await insertProject(rollbackId, "2026-07-22");
-    await expect(database.DB.batch([
-      database.DB.prepare(RECONCILE_AWAITING_RAW_UPDATE_SQL).bind(now, rollbackId, "2026-07-22"),
-      database.DB.prepare("INSERT INTO audit_log (id, action, target_type, created_at) VALUES (?, NULL, 'project', ?)").bind(crypto.randomUUID(), now),
-    ])).rejects.toThrow();
-    await expect(database.DB.prepare("SELECT stage_key AS stageKey FROM projects WHERE id = ?").bind(rollbackId).first()).resolves.toEqual({ stageKey: "awaiting_raw" });
-  });
-
-  it("scans only canonical due active awaiting RAW projects in stable bounded D1 batches", async () => {
-    const now = 1_784_678_400_000;
-    const prefix = "00000000-0000-4000-8001-";
-    const dueIds = Array.from({ length: RECONCILE_AWAITING_RAW_BATCH_SIZE + 2 }, (_, index) => `${prefix}${String(index + 1).padStart(12, "0")}`);
-    const excludedIds = {
-      malformed: `${prefix}000000000201`,
-      impossible: `${prefix}000000000202`,
-      nonPadded: `${prefix}000000000203`,
-      nullDate: `${prefix}000000000204`,
-      future: `${prefix}000000000205`,
-      archived: `${prefix}000000000206`,
-      nonAwaiting: `${prefix}000000000207`,
-    };
-    const allIds = [...dueIds, ...Object.values(excludedIds)];
-    const insertProject = async (id: string, shootDate: string | null, stageKey = "awaiting_raw", archivedAt: number | null = null) => {
-      await database.DB.prepare(
-        "INSERT INTO projects (id, street, shoot_date, stage_key, archived_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-      ).bind(id, `Scan reconciliation ${id}`, shootDate, stageKey, archivedAt, now, now).run();
-    };
-
-    try {
-      for (const id of dueIds) await insertProject(id, "2026-07-22");
-      await insertProject(excludedIds.malformed, "22/07/2026");
-      await insertProject(excludedIds.impossible, "2026-02-29");
-      await insertProject(excludedIds.nonPadded, "2026-7-02");
-      await insertProject(excludedIds.nullDate, null);
-      await insertProject(excludedIds.future, "2026-07-23");
-      await insertProject(excludedIds.archived, "2026-07-21", "awaiting_raw", now);
-      await insertProject(excludedIds.nonAwaiting, "2026-07-21", "raw_review");
-
-      const firstBatch = await scanAwaitingRawProjects(database.DB, "2026-07-22");
-      expect(firstBatch.map((project) => project.id)).toEqual(dueIds.slice(0, RECONCILE_AWAITING_RAW_BATCH_SIZE));
-      expect(firstBatch.every((project) => project.shootDate === "2026-07-22" && project.stageKey === "awaiting_raw" && project.archivedAt === null)).toBe(true);
-
-      await database.DB.batch(firstBatch.map((project) => database.DB.prepare(
-        "UPDATE projects SET stage_key = 'raw_review', updated_at = ? WHERE id = ?",
-      ).bind(now + 1, project.id)));
-
-      const secondBatch = await scanAwaitingRawProjects(database.DB, "2026-07-22");
-      const remainingTestIds = secondBatch.map((project) => project.id).filter((id) => id.startsWith(prefix));
-      expect(remainingTestIds).toEqual(dueIds.slice(RECONCILE_AWAITING_RAW_BATCH_SIZE));
-      expect(remainingTestIds).toHaveLength(2);
-      expect(remainingTestIds.some((id) => Object.values(excludedIds).includes(id))).toBe(false);
-    } finally {
-      for (let offset = 0; offset < allIds.length; offset += 80) {
-        const ids = allIds.slice(offset, offset + 80);
-        const placeholders = ids.map(() => "?").join(", ");
-        await database.DB.prepare(`DELETE FROM audit_log WHERE target_id IN (${placeholders})`).bind(...ids).run();
-        await database.DB.prepare(`DELETE FROM projects WHERE id IN (${placeholders})`).bind(...ids).run();
-      }
-    }
   });
 
   it("orders active and archived projects by shoot date for every dashboard role without exposing archives to photographers", async () => {
@@ -952,20 +1040,49 @@ describe("staff app API", () => {
     const raw = await database.DB.prepare("SELECT id FROM collections WHERE project_id = ? AND kind = 'raw'").bind(project.id).first<{ id: string }>();
     const media = env as unknown as { MEDIA: R2Bucket }; const now = Date.now();
     const keys = [`projects/${project.id}/originals/one.jpg`, `projects/${project.id}/annotations/two.json`];
+    const assetIds: string[] = [];
     for (const key of keys) {
       await media.MEDIA.put(key, key);
-      await database.DB.prepare("INSERT INTO assets (id, collection_id, r2_key, original_filename, bytes, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").bind(crypto.randomUUID(), raw!.id, key, "delete.jpg", key.length, "upload", now, now).run();
+      const assetId = crypto.randomUUID(); assetIds.push(assetId);
+      await database.DB.prepare("INSERT INTO assets (id, collection_id, r2_key, original_filename, bytes, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").bind(assetId, raw!.id, key, "delete.jpg", key.length, "upload", now, now).run();
     }
-    const jobId = crypto.randomUUID();
-    await database.DB.prepare("INSERT INTO jobs (id, kind, status, project_id, retries, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)").bind(jobId, "delete-test", "done", project.id, 0, now, now).run();
+    const { jobId, handoffId } = await seedAutoHdrGraph(project.id, assetIds[0]!);
     expect((await SELF.fetch(`https://portal.test/api/projects/${project.id}/archive`, { method: "POST", headers: { cookie, "content-type": "application/json" }, body: "{}" })).status).toBe(200);
+    await expect(database.DB.prepare("SELECT state FROM autohdr_path_claims WHERE project_id = ? LIMIT 1").bind(project.id).first()).resolves.toEqual({ state: "tombstone" });
 
     const response = await SELF.fetch(`https://portal.test/api/projects/${project.id}`, { method: "DELETE", headers: { cookie } });
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ ok: true, deletedObjects: 2 });
     expect(await database.DB.prepare("SELECT id FROM projects WHERE id = ?").bind(project.id).first()).toBeNull();
     expect(await database.DB.prepare("SELECT id FROM jobs WHERE id = ?").bind(jobId).first()).toBeNull();
+    await expect(database.DB.prepare("SELECT count(*) count FROM autohdr_path_claims WHERE project_id = ?").bind(project.id).first()).resolves.toEqual({ count: 0 });
+    await expect(database.DB.prepare("SELECT count(*) count FROM autohdr_fetch_claims WHERE project_id = ?").bind(project.id).first()).resolves.toEqual({ count: 0 });
+    await expect(database.DB.prepare("SELECT count(*) count FROM autohdr_output_mappings WHERE project_id = ?").bind(project.id).first()).resolves.toEqual({ count: 0 });
+    await expect(database.DB.prepare("SELECT count(*) count FROM autohdr_final_associations WHERE handoff_id = ?").bind(handoffId).first()).resolves.toEqual({ count: 0 });
+    await expect(database.DB.prepare("SELECT count(*) count FROM autohdr_handoffs WHERE project_id = ?").bind(project.id).first()).resolves.toEqual({ count: 0 });
     for (const key of keys) expect(await media.MEDIA.get(key)).toBeNull();
+  });
+
+  it("rolls back project archive when claim tombstoning fails in the same transaction", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const project = await createUploadProject(cookie, `Atomic archive ${crypto.randomUUID()}`);
+    const raw = await database.DB.prepare("SELECT id FROM collections WHERE project_id = ? AND kind = 'raw'")
+      .bind(project.id).first<{ id: string }>();
+    const assetId = crypto.randomUUID(); const now = Date.now();
+    await database.DB.prepare("INSERT INTO assets (id, collection_id, r2_key, original_filename, bytes, source, created_at, updated_at) VALUES (?, ?, ?, 'archive.jpg', 1, 'upload', ?, ?)")
+      .bind(assetId, raw!.id, `tests/${assetId}.jpg`, now, now).run();
+    await seedAutoHdrGraph(project.id, assetId);
+    await database.DB.exec(
+      `CREATE TRIGGER fail_${project.id.replaceAll("-", "_")} BEFORE UPDATE OF state ON autohdr_path_claims ` +
+      `WHEN NEW.project_id = '${project.id}' BEGIN SELECT RAISE(ABORT, 'forced tombstone failure'); END;`,
+    );
+    const failed = await SELF.fetch(`https://portal.test/api/projects/${project.id}/archive`, { method: "POST", headers: { cookie } });
+    expect(failed.status).toBe(500);
+    await expect(database.DB.prepare("SELECT archived_at FROM projects WHERE id = ?").bind(project.id).first()).resolves.toEqual({ archived_at: null });
+    await expect(database.DB.prepare("SELECT state FROM autohdr_output_mappings WHERE project_id = ?").bind(project.id).first()).resolves.toEqual({ state: "pending_discovery" });
+    await expect(database.DB.prepare("SELECT state FROM autohdr_path_claims WHERE project_id = ? LIMIT 1").bind(project.id).first()).resolves.toEqual({ state: "pending" });
+    await expect(database.DB.prepare("SELECT state FROM autohdr_handoffs WHERE project_id = ?").bind(project.id).first()).resolves.toEqual({ state: "starting" });
+    await database.DB.exec(`DROP TRIGGER fail_${project.id.replaceAll("-", "_")};`);
   });
 
   it("refuses to delete an archived project while background work is active", async () => {
@@ -1311,6 +1428,133 @@ describe("staff app API", () => {
     expect(await readyOriginal.text()).toBe("ready");
     const readyReview = await SELF.fetch(`https://portal.test/api/assets/${readyId}/review`, { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ stars: 5 }) });
     expect(readyReview.status).toBe(200);
+  });
+
+  it("keeps a manual RAW asset immediately usable when Dropbox mirror startup fails", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const projectId = "00000000-0000-4000-8000-0000000000fe";
+    const collectionId = crypto.randomUUID();
+    const assetId = crypto.randomUUID();
+    const now = Date.now();
+    await database.DB.batch([
+      database.DB.prepare("INSERT INTO projects (id, street, stage_key, raw_folder_path, created_at, updated_at) VALUES (?, ?, 'awaiting_raw', ?, ?, ?)")
+        .bind(projectId, "RAW mirror service failure", "/Tonomo/Raw Files/Terry/2026-07-24/RAW mirror service failure", now, now),
+      database.DB.prepare("INSERT INTO collections (id, project_id, kind, status, received_count, created_at, updated_at) VALUES (?, ?, 'raw', 'empty', 0, ?, ?)")
+        .bind(collectionId, projectId, now, now),
+    ]);
+    const key = `projects/${projectId}/raw/${assetId}/service-failure.jpg`;
+    await authEnv.MEDIA.put(key, "manual-raw-jpeg", { httpMetadata: { contentType: "image/jpeg" } });
+
+    const response = await SELF.fetch("https://portal.test/api/uploads/complete", {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ projectId, key, originalFilename: "service-failure.jpg", collection: "raw" }),
+    });
+    expect(response.status).toBe(201);
+    const body = await response.json() as { assetId: string; jobId: string; publishStatus: string; mirrorStatus: string };
+    expect(body).toMatchObject({ assetId, jobId: expect.any(String), publishStatus: "ready", mirrorStatus: "failed" });
+    await expect(database.DB.prepare("SELECT publish_status, source_path FROM assets WHERE id = ?").bind(assetId).first())
+      .resolves.toEqual({ publish_status: "ready", source_path: null });
+    await expect(database.DB.prepare("SELECT status FROM jobs WHERE correlation_id = ?").bind(`manual_raw_publish:${assetId}`).first())
+      .resolves.toEqual({ status: "failed" });
+    await expect(database.DB.prepare("SELECT stage_key FROM projects WHERE id = ?").bind(projectId).first())
+      .resolves.toEqual({ stage_key: "raw_review" });
+    const stageAudits = await database.DB.prepare("SELECT actor_id, meta_json FROM audit_log WHERE target_id = ? AND action = 'stage.auto_advance'").bind(projectId).all<{ actor_id: string | null; meta_json: string }>();
+    expect(stageAudits.results).toHaveLength(1);
+    expect(stageAudits.results[0]?.actor_id).toBeNull();
+    expect(JSON.parse(stageAudits.results[0]!.meta_json)).toMatchObject({ trigger: "direct_upload", durableRawEvidence: { newlyImported: true, currentRawAvailable: true } });
+    expect(await authEnv.MEDIA.get(key)).not.toBeNull();
+
+    const listed = await SELF.fetch(`https://portal.test/api/projects/${projectId}/assets?collection=raw`, { headers: { cookie } });
+    expect(listed.status).toBe(200);
+    await expect(listed.json()).resolves.toMatchObject({ assets: [expect.objectContaining({ id: assetId })] });
+  });
+
+  it("atomically loses a direct-upload identity race to a Dropbox-style asset transaction", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const project = await createUploadProject(cookie, `Identity race ${crypto.randomUUID()}`);
+    const collection = await database.DB.prepare("SELECT id FROM collections WHERE project_id = ? AND kind = 'raw'")
+      .bind(project.id).first<{ id: string }>();
+    const directAssetId = crypto.randomUUID();
+    const dropboxAssetId = crypto.randomUUID();
+    const directKey = `projects/${project.id}/raw/${directAssetId}/race.jpg`;
+    const dropboxKey = `projects/${project.id}/raw/dropbox/race/race.jpg`;
+    await authEnv.MEDIA.put(directKey, "direct-race", { httpMetadata: { contentType: "image/jpeg" } });
+    await authEnv.MEDIA.put(dropboxKey, "dropbox-race", { httpMetadata: { contentType: "image/jpeg" } });
+    const completed = await finalizeIngest(authEnv, {
+      actorId: "seed-admin",
+      projectId: project.id,
+      assetId: directAssetId,
+      key: directKey,
+      originalFilename: "race.jpg",
+      contentHash: "same-content-hash",
+      collection: "raw",
+    }, {
+      beforeMetadataBatch: async () => {
+        const now = Date.now();
+        await database.DB.batch([
+          database.DB.prepare("INSERT INTO assets (id, collection_id, kind, r2_key, original_filename, bytes, content_hash, source, source_path, source_path_key, created_at, updated_at) VALUES (?, ?, 'photo', ?, 'race.jpg', 12, 'same-content-hash', 'dropbox', '/Raw/race.jpg', '/raw/race.jpg', ?, ?)")
+            .bind(dropboxAssetId, collection!.id, dropboxKey, now, now),
+          database.DB.prepare("INSERT INTO asset_ingest_identities (id, collection_id, identity_key, asset_id, created_at) VALUES (?, ?, 'hash:same-content-hash', ?, ?)")
+            .bind(crypto.randomUUID(), collection!.id, dropboxAssetId, now),
+        ]);
+      },
+    });
+    expect(completed).toMatchObject({ assetId: dropboxAssetId, durableRawEvidence: { newlyImported: false, currentRawAvailable: true } });
+    await expect(database.DB.prepare("SELECT id FROM assets WHERE id = ?").bind(directAssetId).first()).resolves.toBeNull();
+    await expect(database.DB.prepare("SELECT asset_id FROM asset_ingest_identities WHERE collection_id = ? AND identity_key = 'hash:same-content-hash'").bind(collection!.id).first())
+      .resolves.toEqual({ asset_id: dropboxAssetId });
+    await expect(database.DB.prepare("SELECT count(*) count FROM assets WHERE collection_id = ?").bind(collection!.id).first()).resolves.toEqual({ count: 1 });
+    expect(await authEnv.MEDIA.get(directKey)).not.toBeNull();
+  });
+
+  it("allows an administrator to retry a failed manual RAW mirror job", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const project = await createUploadProject(cookie, `RAW mirror retry ${crypto.randomUUID()}`);
+    const collection = await database.DB.prepare("SELECT id FROM collections WHERE project_id = ? AND kind = 'raw'")
+      .bind(project.id).first<{ id: string }>();
+    const assetId = crypto.randomUUID();
+    const jobId = crypto.randomUUID();
+    const now = Date.now();
+    await database.DB.batch([
+      database.DB.prepare("INSERT INTO assets (id, collection_id, r2_key, original_filename, bytes, source, publish_status, created_at, updated_at) VALUES (?, ?, ?, 'retry.jpg', 1, 'upload', 'ready', ?, ?)")
+        .bind(assetId, collection!.id, `tests/${assetId}.jpg`, now, now),
+      database.DB.prepare("INSERT INTO jobs (id, kind, status, project_id, correlation_id, payload_json, error, created_at, updated_at) VALUES (?, 'manual_raw_publish', 'failed', ?, ?, ?, 'Dropbox unavailable', ?, ?)")
+        .bind(jobId, project.id, `manual_raw_publish:${assetId}`, JSON.stringify({ projectId: project.id, assetId, collection: "raw" }), now, now),
+    ]);
+
+    const response = await SELF.fetch(`https://portal.test/api/jobs/${jobId}/retry`, {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+    });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ jobId: expect.any(String) });
+  });
+
+  it("uses current-only edited readers while keeping history explicitly available to staff", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const project = await createUploadProject(cookie, `Current edited ${crypto.randomUUID()}`);
+    const collectionId = crypto.randomUUID();
+    const oldId = crypto.randomUUID();
+    const currentId = crypto.randomUUID();
+    const now = Date.now();
+    await database.DB.batch([
+      database.DB.prepare("INSERT INTO collections (id, project_id, kind, status, received_count, created_at, updated_at) VALUES (?, ?, 'edited', 'received', 1, ?, ?)")
+        .bind(collectionId, project.id, now, now),
+      database.DB.prepare("INSERT INTO assets (id, collection_id, r2_key, original_filename, bytes, content_hash, source, source_path, source_path_key, superseded_at, replaced_by_asset_id, created_at, updated_at) VALUES (?, ?, ?, 'final.jpg', 1, 'old', 'dropbox', '/AutoHDR/Test/04-FINAL-Photos/final.jpg', '/autohdr/test/04-final-photos/final.jpg', ?, ?, ?, ?)")
+        .bind(oldId, collectionId, `tests/${oldId}.jpg`, now, currentId, now - 1, now),
+      database.DB.prepare("INSERT INTO assets (id, collection_id, r2_key, original_filename, bytes, content_hash, source, source_path, source_path_key, created_at, updated_at) VALUES (?, ?, ?, 'final.jpg', 1, 'new', 'dropbox', '/AutoHDR/Test/04-FINAL-Photos/final.jpg', '/autohdr/test/04-final-photos/final.jpg', ?, ?)")
+        .bind(currentId, collectionId, `tests/${currentId}.jpg`, now, now),
+    ]);
+    const listed = await SELF.fetch(`https://portal.test/api/projects/${project.id}/assets?collection=edited`, { headers: { cookie } });
+    expect(listed.status).toBe(200);
+    await expect(listed.json()).resolves.toMatchObject({ assets: [expect.objectContaining({ id: currentId })] });
+    const oldDirect = await SELF.fetch(`https://portal.test/media/asset/${oldId}/original`, { headers: { cookie } });
+    expect(oldDirect.status).toBe(404);
+    const history = await SELF.fetch(`https://portal.test/api/projects/${project.id}/autohdr-history`, { headers: { cookie } });
+    expect(history.status).toBe(200);
+    const historyBody = await history.json() as { assets: { id: string }[] };
+    expect(new Set(historyBody.assets.map((asset) => asset.id))).toEqual(new Set([oldId, currentId]));
   });
 
   it("marks a manual upload failed when its publication service cannot start", async () => {

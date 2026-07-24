@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { createDb, schema } from "@quincy/db";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { isAcceptedPhotoFilename, roleHasCapability } from "@quincy/shared";
 import { z } from "zod";
 import type { AppEnv } from "../env";
@@ -13,14 +13,21 @@ import { jsonInput } from "./helpers";
 
 const manifestInput = z.object({ filenames: z.array(z.string().min(1)).min(1).max(10_000) });
 const presignInput = z.object({ projectId: z.string().uuid(), filename: z.string().min(1), bytes: z.number().int().positive().max(5 * 1024 * 1024 * 1024), collection: z.enum(["raw", "edited"]).default("raw") });
-const completeInput = z.object({ projectId: z.string().uuid(), key: z.string().min(1), uploadId: z.string().optional(), parts: z.array(z.object({ partNumber: z.number().int().positive(), etag: z.string().min(1) })).optional(), originalFilename: z.string().min(1), contentHash: z.string().max(256).optional(), collection: z.enum(["raw", "edited"]).default("raw") });
+const completeInput = z.object({ projectId: z.string().uuid(), key: z.string().min(1), uploadId: z.string().optional(), parts: z.array(z.object({ partNumber: z.number().int().positive(), etag: z.string().min(1) })).optional(), originalFilename: z.string().min(1), contentHash: z.string().max(256).optional(), collection: z.enum(["raw", "edited"]).default("raw"), manifestId: z.string().uuid().optional() });
 export const uploadsRoutes = new Hono<AppEnv>();
 uploadsRoutes.post("/projects/:id/upload-manifest", requireCapability("uploadRaw"), async (c) => {
   const projectId = c.req.param("id"); if (!await hasProjectAccess(c, projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403); {
     const data = await jsonInput(c, manifestInput); if (data instanceof Response) return data;
     if (data.filenames.some((name) => !isAcceptedPhotoFilename(name))) return c.json({ error: "RAW uploads must be .jpg or .jpeg files" }, 400);
-    const db = createDb(c.env.DB); const raw = await db.select().from(schema.collections).where(and(eq(schema.collections.projectId, projectId), eq(schema.collections.kind, "raw"))).get(); if (!raw) return c.json({ error: "Project RAW collection not found" }, 404);
-    const id = newId(); await db.insert(schema.uploadManifests).values({ id, collectionId: raw.id, expectedCount: data.filenames.length, filenamesJson: JSON.stringify(data.filenames), createdBy: c.get("user").id, createdAt: new Date() }); await db.update(schema.collections).set({ expectedCount: data.filenames.length, status: "awaiting_upload", updatedAt: new Date() }).where(eq(schema.collections.id, raw.id)); await audit(c.env, c.get("user").id, "upload.manifest", "upload_manifest", id, { projectId, expectedCount: data.filenames.length }); return c.json({ manifestId: id });
+    const db = createDb(c.env.DB);
+    const project = await db.select({ archivedAt: schema.projects.archivedAt }).from(schema.projects).where(eq(schema.projects.id, projectId)).get();
+    if (project?.archivedAt) return c.json({ error: "Project is archived" }, 409);
+    const raw = await db.select().from(schema.collections).where(and(eq(schema.collections.projectId, projectId), eq(schema.collections.kind, "raw"))).get(); if (!raw) return c.json({ error: "Project RAW collection not found" }, 404);
+    const id = newId();
+    await db.insert(schema.uploadManifests).values({ id, collectionId: raw.id, expectedCount: data.filenames.length, filenamesJson: JSON.stringify(data.filenames), status: "active", createdBy: c.get("user").id, createdAt: new Date() });
+    await db.update(schema.collections).set({ status: "awaiting_upload", updatedAt: new Date() }).where(eq(schema.collections.id, raw.id));
+    await audit(c.env, c.get("user").id, "upload.manifest", "upload_manifest", id, { projectId, expectedCount: data.filenames.length });
+    return c.json({ manifestId: id });
   }
 });
 uploadsRoutes.post("/uploads/presign", async (c) => {
@@ -62,11 +69,18 @@ uploadsRoutes.post("/uploads/complete", async (c) => {
     const assetId = data.key.match(new RegExp(`^projects/${data.projectId}/${data.collection}/([^/]+)/`))?.[1]; if (!assetId || !z.string().uuid().safeParse(assetId).success) return c.json({ error: "R2 key does not follow the required asset key convention" }, 400);
     if (data.uploadId) { if (!data.parts?.length) return c.json({ error: "Multipart uploads require completed parts" }, 400); await completeMultipart(c.env, data.key, data.uploadId, data.parts); }
     try {
-      const completed = await finalizeIngest(c.env, { actorId: c.get("user").id, projectId: data.projectId, assetId, key: data.key, originalFilename: data.originalFilename, contentHash: data.contentHash, collection: data.collection });
-      if (data.collection === "edited" && completed.publishStatus !== "ready") {
+      const completed = await finalizeIngest(c.env, { actorId: c.get("user").id, projectId: data.projectId, assetId, key: data.key, originalFilename: data.originalFilename, contentHash: data.contentHash, collection: data.collection, manifestId: data.manifestId });
+      const needsDropboxPublish = data.collection === "edited"
+        ? completed.publishStatus !== "ready"
+        : !("mirrorStatus" in completed) || completed.mirrorStatus !== "ready";
+      if (needsDropboxPublish) {
+        const jobKind = data.collection === "edited" ? "manual_edited_publish" : "manual_raw_publish";
+        const correlationId = `${jobKind}:${assetId}`;
         try {
-          const { jobId } = await c.env.BACKGROUND.publishManualEditedUpload(data.projectId, assetId);
-          return c.json({ ...completed, jobId, publishStatus: "pending" }, 202);
+          const { jobId } = await c.env.BACKGROUND.publishManualUpload(data.projectId, assetId);
+          return data.collection === "edited"
+            ? c.json({ ...completed, jobId, publishStatus: "pending" }, 202)
+            : c.json({ ...completed, jobId, publishStatus: "ready", mirrorStatus: "pending" }, 201);
         } catch (error) {
           // Finalization is already durable and R2 bytes are intentionally retained. Return the
           // existing terminal job when a lost RPC response raced a successful enqueue; otherwise
@@ -77,8 +91,8 @@ uploadsRoutes.post("/uploads/complete", async (c) => {
             .from(schema.jobs)
             .where(and(
               eq(schema.jobs.projectId, data.projectId),
-              eq(schema.jobs.kind, "manual_edited_publish"),
-              eq(schema.jobs.correlationId, `manual_edited_publish:${assetId}`),
+              eq(schema.jobs.kind, jobKind),
+              eq(schema.jobs.correlationId, correlationId),
             ))
             .orderBy(desc(schema.jobs.createdAt))
             .get();
@@ -86,37 +100,84 @@ uploadsRoutes.post("/uploads/complete", async (c) => {
             // A service-binding failure happens after the source asset is safely committed. Keep
             // a terminal job in D1 so the existing admin retry route can restart publication.
             await db.insert(schema.jobs).values({
-              id: newId(), kind: "manual_edited_publish", status: "failed", projectId: data.projectId,
-              correlationId: `manual_edited_publish:${assetId}`,
-              payloadJson: JSON.stringify({ projectId: data.projectId, assetId }), error: message,
+              id: newId(), kind: jobKind, status: "failed", projectId: data.projectId,
+              correlationId,
+              payloadJson: JSON.stringify({ projectId: data.projectId, assetId, collection: data.collection }), error: message,
               createdAt: new Date(), updatedAt: new Date(),
             }).onConflictDoNothing();
             existingJob = await db.select({ id: schema.jobs.id, status: schema.jobs.status })
               .from(schema.jobs)
               .where(and(
                 eq(schema.jobs.projectId, data.projectId),
-                eq(schema.jobs.kind, "manual_edited_publish"),
-                eq(schema.jobs.correlationId, `manual_edited_publish:${assetId}`),
+                eq(schema.jobs.kind, jobKind),
+                eq(schema.jobs.correlationId, correlationId),
               ))
               .orderBy(desc(schema.jobs.createdAt))
               .get();
           }
           if (existingJob?.status === "failed") {
-            // The app owns this fallback when the service binding itself could not begin.
-            // Keep the R2 source, but terminally hide the un-published asset so retry has a
-            // durable pending -> failed lifecycle to restart from.
-            await db.update(schema.assets).set({ publishStatus: "failed", updatedAt: new Date() }).where(and(
-              eq(schema.assets.id, assetId),
-              eq(schema.assets.publishStatus, "pending"),
-            ));
-            await audit(c.env, c.get("user").id, "asset.manual_publish.start_failed", "asset", assetId, { projectId: data.projectId, jobId: existingJob.id, error: message });
+            if (data.collection === "edited") {
+              // Edited publication controls visibility; RAW mirroring never does.
+              await db.update(schema.assets).set({ publishStatus: "failed", updatedAt: new Date() }).where(and(
+                eq(schema.assets.id, assetId),
+                eq(schema.assets.publishStatus, "pending"),
+              ));
+            }
+            await audit(c.env, c.get("user").id, data.collection === "edited" ? "asset.manual_publish.start_failed" : "asset.manual_raw_mirror.start_failed", "asset", assetId, { projectId: data.projectId, jobId: existingJob.id, error: message });
+          }
+          if (data.collection === "raw") {
+            return c.json({ ...completed, jobId: existingJob?.id, publishStatus: "ready", mirrorStatus: existingJob?.status === "failed" ? "failed" : "pending", error: message }, 201);
           }
           if (existingJob) return c.json({ ...completed, jobId: existingJob.id, publishStatus: existingJob.status === "failed" ? "failed" : "pending" }, 202);
-          return c.json({ ...completed, publishStatus: "failed", error: error instanceof Error ? error.message : "Manual Dropbox publishing could not be started" }, 202);
+          return c.json({ ...completed, publishStatus: "failed", error: message }, 202);
         }
       }
       return c.json(completed, completed.publishStatus === "ready" ? 201 : 202);
     } catch (error) { return c.json({ error: error instanceof Error ? error.message : "Could not finalize upload" }, 409); }
   }
 });
-uploadsRoutes.get("/projects/:id/ingest-status", async (c) => { const projectId = c.req.param("id"); if (!await hasProjectAccess(c, projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403); const raw = await createDb(c.env.DB).select({ expectedCount: schema.collections.expectedCount, receivedCount: schema.collections.receivedCount }).from(schema.collections).where(and(eq(schema.collections.projectId, projectId), eq(schema.collections.kind, "raw"))).get(); if (!raw) return c.json({ error: "Project RAW collection not found" }, 404); return c.json({ expectedCount: raw.expectedCount, receivedCount: raw.receivedCount, mismatch: raw.expectedCount !== null && raw.expectedCount !== raw.receivedCount }); });
+uploadsRoutes.get("/projects/:id/ingest-status", async (c) => {
+  const projectId = c.req.param("id");
+  if (!await hasProjectAccess(c, projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
+  const db = createDb(c.env.DB);
+  const raw = await db.select({
+    id: schema.collections.id,
+    expectedCount: schema.collections.expectedCount,
+    receivedCount: schema.collections.receivedCount,
+  }).from(schema.collections).where(and(eq(schema.collections.projectId, projectId), eq(schema.collections.kind, "raw"))).get();
+  if (!raw) return c.json({ error: "Project RAW collection not found" }, 404);
+
+  // One collection-id parameter, regardless of manifest/file count. Attribution comes only
+  // from assets.manifest_id; filenames are audit context, never an inferred join key.
+  const manifests = await db.select({
+    id: schema.uploadManifests.id,
+    status: schema.uploadManifests.status,
+    expectedCount: schema.uploadManifests.expectedCount,
+    receivedCount: sql<number>`count(${schema.assets.id})`,
+    createdAt: schema.uploadManifests.createdAt,
+  }).from(schema.uploadManifests)
+    .leftJoin(schema.assets, eq(schema.assets.manifestId, schema.uploadManifests.id))
+    .where(eq(schema.uploadManifests.collectionId, raw.id))
+    .groupBy(schema.uploadManifests.id)
+    .orderBy(desc(schema.uploadManifests.createdAt), desc(schema.uploadManifests.id))
+    .all();
+  if (manifests.length === 0) {
+    return c.json({
+      expectedCount: raw.expectedCount,
+      receivedCount: raw.receivedCount,
+      mismatch: raw.expectedCount !== null && raw.expectedCount !== raw.receivedCount,
+    });
+  }
+
+  const active = manifests.filter((manifest) => manifest.status === "active");
+  // Once no shortfall remains, retain useful verification for the just-finished batch rather
+  // than falling back to unrelated lifetime collection totals.
+  const relevant = active.length > 0 ? active : manifests.slice(0, 1);
+  const expectedCount = relevant.reduce((sum, manifest) => sum + manifest.expectedCount, 0);
+  const receivedCount = relevant.reduce((sum, manifest) => sum + Number(manifest.receivedCount), 0);
+  return c.json({
+    expectedCount,
+    receivedCount,
+    mismatch: relevant.some((manifest) => Number(manifest.receivedCount) !== manifest.expectedCount),
+  });
+});
