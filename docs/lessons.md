@@ -99,6 +99,11 @@
   terminal state themselves (archived/deleted) before writing — trigger-side checks are
   TOCTOU by construction.
 
+- **Purge every R2 keyspace before its D1 ownership rows cascade.** Project media is keyed by
+  project ID, but renditions are keyed by globally unique asset ID. **Rule:** enumerate a
+  project's asset IDs before deletion and include each `renditions/<assetId>/` prefix in the
+  same object-purge batch; do not rely on the cascade to leave enough information afterward.
+
 - **AutoHDR privacy is an API-boundary requirement, not a UI concern.** AutoHDR is an internal,
   Admin-only workflow. Editor/QA may select RAWs for editing, but only Admin may execute the
   handoff or receive provider, watch-folder, and handoff metadata. **Rule:** project/job
