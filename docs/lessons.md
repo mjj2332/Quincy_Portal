@@ -245,4 +245,43 @@
   **Rule:** leave it `ready`, mark the workflow/job failed, and allow that failed job to replay the
   idempotent queue handoff only (no second Dropbox state transition). The same rule applies if
   creating that retry workflow itself fails: transition only `pending -> failed`; a ready asset
+
+- **"Insert-then-fence" races still need a DB-level backstop, not just a reread.** Wave 3
+  (Dropbox Webhook Automation) originally wrote a new "current" AutoHDR version row, *then*
+  conditionally superseded the old one and swapped the pointer in the same `D1.batch()` — but a
+  *losing* concurrent writer's batch still durably committed its own new row before its own
+  pointer-swap failed, leaving a non-atomic cleanup `DELETE` as the only thing preventing two
+  "current" rows from coexisting. An independent review caught this; the fix was a real partial
+  unique index (`... WHERE superseded_at IS NULL`) plus reordering the supersede-UPDATE *before*
+  the INSERT in the same batch, so the losing writer's own INSERT now violates the constraint and
+  the *entire atomic batch* rolls back — no orphaned row, no separate cleanup call needed. **Rule:**
+  whenever "exactly one current/active row" is a correctness requirement, enforce it with a
+  partial unique index, not application-level check-then-write ordering, however carefully batched.
+- **A same-wave build/review pair can still let a bug through — verify the fix, don't just re-run
+  tests.** The fix pass for the finding above introduced its own bug: an `INSERT ... SELECT`
+  statement had one extra `?` placeholder versus its column list (`D1_ERROR: 19 values for 18
+  columns`), caught only because the full Workers-pool test suite was re-run independently after
+  the fix (the fix's own sandbox couldn't run it — same loopback-EPERM limitation as the original
+  build). **Rule:** a subagent's "all fixes applied, verification green" report is only as good as
+  the tests it could actually run; always re-run the tests its sandbox couldn't, on every pass, not
+  just the first one.
+- **Removing a legacy cron and defaulting its replacement's flag off in the same deploy is a live
+  regression, not a neutral no-op.** Wave 3 initially deleted `reconcileAwaitingRawProjects()` and
+  its hourly cron trigger in the same diff that shipped the new root-scoped Dropbox monitors
+  gated behind a flag defaulted to `"0"`. Deployed as committed, that diff would have silently
+  removed the only live automatic RAW-reconciliation path with nothing active to replace it.
+  **Rule:** when a plan's own rollout section says "retire the old mechanism only once the new one
+  has live coverage," treat that as a hard constraint on what ships in *this* diff, not just
+  ordering guidance for *when* to flip a flag later — keep the old mechanism's code and trigger
+  in place as a safety net until the replacement is verified live, and remove it in a separate,
+  later, low-risk deploy.
+- **A worktree "branched from" another wave's branch name doesn't carry that wave's uncommitted
+  changes.** Two waves' work each lived only as uncommitted changes in their own worktrees (per
+  this project's own policy of never committing without being asked). Creating a third worktree
+  via `git worktree add <branch>` for a branch that had zero commits just checked out the same
+  commit as `main` — none of the "prior" wave's actual file changes came along, despite the
+  branch name implying otherwise. **Rule:** uncommitted worktree state never transfers via branch
+  name; if a later wave needs an earlier wave's in-flight changes, transplant them explicitly
+  (`git diff` + `git apply`, or a direct file copy) and verify the transplant (typecheck) before
+  building on top of it.
   must remain ready while its retry job records the failure.
