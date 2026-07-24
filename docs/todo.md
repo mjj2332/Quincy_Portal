@@ -440,3 +440,15 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/other agents 
   focused Background tests/typecheck plus the full workspace verification matrix pass. Deployment
   is deliberately pending explicit authorization; only then may the existing pilot rendition
   message be retried to determine its production root cause.
+- [x] **Rendition DLQ monitoring (local, 2026-07-24):** `quincy-renditions-dlq` had zero
+  consumers bound, so exhausted rendition jobs (root cause was `TRANSFORM_SOURCE_SECRET` drift
+  between `workers/app` and `workers/background` — see `docs/lessons.md`) piled up with no
+  signal. Added a second background queue consumer that records each DLQ arrival into a new
+  append-only `rendition_dlq_events` table (D1 migration `0011_dapper_tarantula`), plus
+  `GET/POST /admin/renditions-dlq*` (list/replay/discard, gated `adminBackend`) and an
+  Integrations-tab card in `Admin.tsx` mirroring the existing Tonomo poison-event UI. Full
+  workspace typecheck/vitest/build passes.
+  - [ ] **Before deploy:** apply D1 migration `0011` (same as the existing 0008/0009/0010
+    callouts above), then redeploy `workers/background` before `workers/app` (service-binding
+    order). Fixing the actual `TRANSFORM_SOURCE_SECRET` drift (`wrangler secret put` in both
+    Workers) is a separate, still-pending operator action.

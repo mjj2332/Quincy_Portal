@@ -246,3 +246,32 @@
   idempotent queue handoff only (no second Dropbox state transition). The same rule applies if
   creating that retry workflow itself fails: transition only `pending -> failed`; a ready asset
   must remain ready while its retry job records the failure.
+
+## Rendition DLQ silent backlog (2026-07-24)
+
+- **`TRANSFORM_SOURCE_SECRET` must be set identically in both Workers, and nothing enforces
+  that.** `workers/app` signs (well, verifies — see `src/lib/transform-source.ts`) and
+  `workers/background` issues/signs transform-source URLs (`renditions.ts`) using the *same*
+  shared secret, set independently via `wrangler secret put TRANSFORM_SOURCE_SECRET` in each
+  Worker. There is no automation, no CI step, and (before this entry) no doc beyond one line in
+  `docs/QA-Staging-Matrix.md`. Drift between the two isn't a partial degradation — it's a 100%
+  signature-rejection failure of every rendition job, indistinguishable at the UI layer from any
+  other rendition failure (frames just show "Processing preview…" forever). **Rule:** when
+  rendition generation fails for every asset (not just some), check secret parity across workers
+  first, before assuming a code regression; re-set the secret identically in both with
+  `wrangler secret put`.
+- **A configured `dead_letter_queue` with no bound consumer is invisible by construction.** The
+  `quincy-renditions` consumer (`portal/workers/background/wrangler.jsonc`) has always pointed
+  `dead_letter_queue` at `quincy-renditions-dlq`, but nothing ever consumed that queue — 23 jobs
+  piled up there silently with zero signal beyond the stuck-preview symptom above, until a human
+  happened to go looking. **Rule:** a `dead_letter_queue` name in a queue consumer config is not
+  monitoring by itself; it needs its own bound consumer (or a scheduled poll) or the backlog is
+  structurally invisible. Fixed by binding a second consumer to `quincy-renditions-dlq` that
+  records each arrival into an append-only `rendition_dlq_events` table (`open` → `replayed` |
+  `discarded`) and acks immediately (retrying inside the DLQ itself just burns attempts before
+  the root cause is fixed); surfaced via `GET/POST /admin/renditions-dlq*` and a card in the
+  Integrations tab of `apps/web/src/screens/Admin.tsx`, mirroring the existing Tonomo
+  poison-event pattern. No secondary DLQ is configured on this new consumer (would need
+  provisioning a third Cloudflare queue resource) — a repeated D1 write failure on this consumer
+  would still silently drop after 3 retries; this residual gap is intentionally left for a future
+  pass rather than adding infrastructure speculatively.

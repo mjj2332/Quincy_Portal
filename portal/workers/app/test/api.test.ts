@@ -2,6 +2,7 @@ import { env, SELF as workerSelf } from "cloudflare:test";
 import { makeSignature } from "better-auth/crypto";
 import { handleOAuthUserInfo } from "better-auth/oauth2";
 import { beforeAll, describe, expect, it } from "vitest";
+import app from "../src/index";
 import { createAuth } from "../src/auth";
 import type { Env } from "../src/env";
 import { createZipStream } from "../src/lib/zip-stream";
@@ -1436,6 +1437,91 @@ describe("staff app API", () => {
     const discardedAgain = await SELF.fetch(`https://portal.test/api/admin/webhook-events/${poisonId}/discard`, { method: "POST", headers: { cookie } });
     expect(discardedAgain.status).toBe(409); await expect(discardedAgain.json()).resolves.toEqual({ error: "Event is no longer poison" });
     expect(await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE action = ? AND target_id = ?").bind("tonomo_event.discard", poisonId).first()).toEqual(auditCount);
+  });
+
+  it("lists, replays, and discards rendition dead-letter events, gated to admin", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const openId = crypto.randomUUID(); const assetId = crypto.randomUUID(); const now = Date.now();
+    await database.DB.prepare("INSERT INTO rendition_dlq_events (id, asset_id, status, received_at) VALUES (?, ?, 'open', ?)").bind(openId, assetId, now).run();
+
+    const photographerCookie = await sessionCookie(photographerToken);
+    const forbidden = await SELF.fetch("https://portal.test/api/admin/renditions-dlq", { headers: { cookie: photographerCookie } });
+    expect(forbidden.status).toBe(403);
+    const replayForbidden = await SELF.fetch(`https://portal.test/api/admin/renditions-dlq/${openId}/replay`, { method: "POST", headers: { cookie: photographerCookie } });
+    expect(replayForbidden.status).toBe(403);
+    const discardForbidden = await SELF.fetch(`https://portal.test/api/admin/renditions-dlq/${openId}/discard`, { method: "POST", headers: { cookie: photographerCookie } });
+    expect(discardForbidden.status).toBe(403);
+
+    const listed = await SELF.fetch("https://portal.test/api/admin/renditions-dlq", { headers: { cookie } });
+    expect(listed.status).toBe(200);
+    await expect(listed.json()).resolves.toMatchObject({ events: expect.arrayContaining([expect.objectContaining({ id: openId, assetId, status: "open" })]), openCount: expect.any(Number) });
+
+    const replayed = await SELF.fetch(`https://portal.test/api/admin/renditions-dlq/${openId}/replay`, { method: "POST", headers: { cookie } });
+    expect(replayed.status).toBe(200);
+    expect(await database.DB.prepare("SELECT status FROM rendition_dlq_events WHERE id = ?").bind(openId).first()).toEqual({ status: "replayed" });
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE action = ? AND target_id = ?").bind("rendition.dlq.replay", openId).first()).toEqual({ count: 1 });
+
+    const replayAgain = await SELF.fetch(`https://portal.test/api/admin/renditions-dlq/${openId}/replay`, { method: "POST", headers: { cookie } });
+    expect(replayAgain.status).toBe(409);
+
+    const secondId = crypto.randomUUID(); const secondAsset = crypto.randomUUID();
+    await database.DB.prepare("INSERT INTO rendition_dlq_events (id, asset_id, status, received_at) VALUES (?, ?, 'open', ?)").bind(secondId, secondAsset, now + 1).run();
+    const discarded = await SELF.fetch(`https://portal.test/api/admin/renditions-dlq/${secondId}/discard`, { method: "POST", headers: { cookie } });
+    expect(discarded.status).toBe(200);
+    expect(await database.DB.prepare("SELECT status FROM rendition_dlq_events WHERE id = ?").bind(secondId).first()).toEqual({ status: "discarded" });
+    const discardAgain = await SELF.fetch(`https://portal.test/api/admin/renditions-dlq/${secondId}/discard`, { method: "POST", headers: { cookie } });
+    expect(discardAgain.status).toBe(409);
+  });
+
+  it("lets only one of two concurrent rendition-DLQ replays claim the same open row", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const raceId = crypto.randomUUID(); const raceAsset = crypto.randomUUID();
+    await database.DB.prepare("INSERT INTO rendition_dlq_events (id, asset_id, status, received_at) VALUES (?, ?, 'open', ?)").bind(raceId, raceAsset, Date.now()).run();
+    const replay = () => SELF.fetch(`https://portal.test/api/admin/renditions-dlq/${raceId}/replay`, { method: "POST", headers: { cookie } });
+    const [first, second] = await Promise.all([replay(), replay()]);
+    expect([first.status, second.status].sort()).toEqual([200, 409]);
+    expect(await database.DB.prepare("SELECT status FROM rendition_dlq_events WHERE id = ?").bind(raceId).first()).toEqual({ status: "replayed" });
+  });
+
+  // The HTTP-level race above depends on the two fetches actually interleaving, which isn't
+  // guaranteed by Promise.all alone. This asserts the underlying guarantee directly: D1/SQLite
+  // serializes writes to the same row, so of two concurrent `UPDATE ... WHERE status = 'open'`
+  // statements issued against the same row, exactly one can ever report a changed row.
+  it("guarantees the guarded status-transition UPDATE only ever wins for one concurrent writer", async () => {
+    const raceId = crypto.randomUUID(); const raceAsset = crypto.randomUUID();
+    await database.DB.prepare("INSERT INTO rendition_dlq_events (id, asset_id, status, received_at) VALUES (?, ?, 'open', ?)").bind(raceId, raceAsset, Date.now()).run();
+    const attempt = () => database.DB.prepare("UPDATE rendition_dlq_events SET status = 'replayed', resolved_at = ? WHERE id = ? AND status = 'open'").bind(Date.now(), raceId).run();
+    const [a, b] = await Promise.all([attempt(), attempt()]);
+    expect([a.meta.changes, b.meta.changes].sort()).toEqual([0, 1]);
+  });
+
+  it("refuses to replay a DLQ event with no valid asset id, but allows discarding it", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const brokenId = crypto.randomUUID();
+    await database.DB.prepare("INSERT INTO rendition_dlq_events (id, asset_id, status, received_at) VALUES (?, 'unparseable-dlq-body', 'open', ?)").bind(brokenId, Date.now()).run();
+    const replay = await SELF.fetch(`https://portal.test/api/admin/renditions-dlq/${brokenId}/replay`, { method: "POST", headers: { cookie } });
+    expect(replay.status).toBe(409);
+    expect(await database.DB.prepare("SELECT status FROM rendition_dlq_events WHERE id = ?").bind(brokenId).first()).toEqual({ status: "open" });
+    const discarded = await SELF.fetch(`https://portal.test/api/admin/renditions-dlq/${brokenId}/discard`, { method: "POST", headers: { cookie } });
+    expect(discarded.status).toBe(200);
+  });
+
+  it("reverts a claimed rendition-DLQ replay back to open when the queue send itself fails", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const failId = crypto.randomUUID(); const failAsset = crypto.randomUUID();
+    await database.DB.prepare("INSERT INTO rendition_dlq_events (id, asset_id, status, received_at) VALUES (?, ?, 'open', ?)").bind(failId, failAsset, Date.now()).run();
+    // A per-request env override (bypassing SELF.fetch's fixed worker binding) is the only way
+    // to make just this one request's queue send throw while every other test keeps a working
+    // binding — same pattern as workers/app/test/integrations.test.ts.
+    const throwingQueueEnv: Env = { ...authEnv, RENDITION_QUEUE: { send: async () => { throw new Error("queue unavailable"); } } as never };
+    const executionContext = { waitUntil: () => undefined, passThroughOnException: () => undefined, props: undefined } as unknown as ExecutionContext;
+    const response = await app.fetch(
+      new Request(`https://portal.test/api/admin/renditions-dlq/${failId}/replay`, { method: "POST", headers: { cookie, origin: authEnv.APP_ORIGIN } }),
+      throwingQueueEnv,
+      executionContext,
+    );
+    expect(response.status).toBe(502);
+    expect(await database.DB.prepare("SELECT status, resolved_at FROM rendition_dlq_events WHERE id = ?").bind(failId).first()).toEqual({ status: "open", resolved_at: null });
   });
 
   it("manages manual collection links while preserving immutable Tonomo links", async () => {
