@@ -1,13 +1,13 @@
 import { useEffect, useId, useRef, useState, type MouseEvent } from "react";
 import { signOut } from "../lib/auth";
+import { InternalLink } from "./InternalLink";
 
-export type AppView = "dashboard" | "project" | "create-project" | "edit-project" | "admin";
+export type AppView = "dashboard" | "project" | "create-project" | "edit-project" | "admin" | "not-found";
 
 interface TopbarProps {
   activeView: AppView;
   canAccessAdmin: boolean;
   user: { name?: string | null; email?: string | null };
-  onNavigate: (view: AppView) => void;
 }
 
 function initials(name: string): string {
@@ -20,7 +20,7 @@ function initials(name: string): string {
     .toUpperCase();
 }
 
-export function Topbar({ activeView, canAccessAdmin, onNavigate, user }: TopbarProps) {
+export function Topbar({ activeView, canAccessAdmin, user }: TopbarProps) {
   const displayName = user.name || user.email || "Quincy user";
   const [menuOpen, setMenuOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -60,22 +60,22 @@ export function Topbar({ activeView, canAccessAdmin, onNavigate, user }: TopbarP
     }
   }
 
-  function navigate(view: AppView) { closeMenu(); onNavigate(view); }
+  function closeNavigationMenu() { closeMenu(); }
 
   return (
     <header className="topbar">
-      <button className="topbar__brand button--text" type="button" onClick={() => navigate("dashboard")} aria-label="Quincy Portal home">
+      <InternalLink className="topbar__brand button--text" to="/" aria-label="Quincy Portal home">
         <img src="/brand/quincy-wordmark-black.png" alt="Quincy Productions" />
-      </button>
+      </InternalLink>
       <div className="topbar__divider" />
       <nav className="topnav" aria-label="Primary navigation">
-        <button type="button" className={activeView === "dashboard" ? "is-active" : ""} onClick={() => navigate("dashboard")}>
+        <InternalLink className={activeView === "dashboard" ? "is-active" : ""} to="/">
           Dashboard
-        </button>
+        </InternalLink>
         {canAccessAdmin && (
-          <button type="button" className={activeView === "admin" ? "is-active" : ""} onClick={() => navigate("admin")}>
+          <InternalLink className={activeView === "admin" ? "is-active" : ""} to="/admin">
             Admin
-          </button>
+          </InternalLink>
         )}
       </nav>
       <div className="grow" />
@@ -95,8 +95,8 @@ export function Topbar({ activeView, canAccessAdmin, onNavigate, user }: TopbarP
       </button>
       {menuOpen && <div ref={menuRef} id={menuId} className="topbar__mobile-menu" role="menu" aria-label="Account and navigation menu">
         <div className="topbar__mobile-identity"><strong>{displayName}</strong>{user.email && <span>{user.email}</span>}</div>
-        <button role="menuitem" type="button" className={activeView === "dashboard" ? "is-active" : ""} onClick={() => navigate("dashboard")}>Dashboard</button>
-        {canAccessAdmin && <button role="menuitem" type="button" className={activeView === "admin" ? "is-active" : ""} onClick={() => navigate("admin")}>Admin</button>}
+        <InternalLink role="menuitem" className={activeView === "dashboard" ? "is-active" : ""} to="/" onClick={closeNavigationMenu}>Dashboard</InternalLink>
+        {canAccessAdmin && <InternalLink role="menuitem" className={activeView === "admin" ? "is-active" : ""} to="/admin" onClick={closeNavigationMenu}>Admin</InternalLink>}
         <button role="menuitem" type="button" onClick={handleSignOut}>Sign out</button>
       </div>}
     </header>
