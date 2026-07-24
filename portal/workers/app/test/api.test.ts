@@ -69,6 +69,43 @@ async function sessionCookie(token: string): Promise<string> {
   return `${context.authCookies.sessionToken.name}=${token}.${await makeSignature(token, authSecret)}`;
 }
 
+async function createUploadProject(cookie: string, street: string): Promise<{ id: string }> {
+  const response = await SELF.fetch("https://portal.test/api/projects", {
+    method: "POST",
+    headers: { cookie, "content-type": "application/json" },
+    body: JSON.stringify({ street, orderedServices: [] }),
+  });
+  expect(response.status).toBe(201);
+  return response.json() as Promise<{ id: string }>;
+}
+
+async function createRawManifest(cookie: string, projectId: string, filenames: string[]): Promise<string> {
+  const response = await SELF.fetch(`https://portal.test/api/projects/${projectId}/upload-manifest`, {
+    method: "POST",
+    headers: { cookie, "content-type": "application/json" },
+    body: JSON.stringify({ filenames }),
+  });
+  expect(response.status).toBe(200);
+  return (await response.json() as { manifestId: string }).manifestId;
+}
+
+async function completeRawUpload(cookie: string, projectId: string, filename: string, manifestId?: string): Promise<Response> {
+  const assetId = crypto.randomUUID();
+  const key = `projects/${projectId}/raw/${assetId}/${filename}`;
+  await authEnv.MEDIA.put(key, `raw-${filename}`, { httpMetadata: { contentType: "image/jpeg" } });
+  return SELF.fetch("https://portal.test/api/uploads/complete", {
+    method: "POST",
+    headers: { cookie, "content-type": "application/json" },
+    body: JSON.stringify({ projectId, key, originalFilename: filename, collection: "raw", manifestId }),
+  });
+}
+
+async function ingestStatus(cookie: string, projectId: string): Promise<{ expectedCount: number | null; receivedCount: number; mismatch: boolean }> {
+  const response = await SELF.fetch(`https://portal.test/api/projects/${projectId}/ingest-status`, { headers: { cookie } });
+  expect(response.status).toBe(200);
+  return response.json() as Promise<{ expectedCount: number | null; receivedCount: number; mismatch: boolean }>;
+}
+
 beforeAll(async () => {
   await executeSql(__PORTAL_MIGRATION_SQL__);
   await executeSql(__PORTAL_SEED_SQL__);
@@ -168,6 +205,127 @@ async function createEditableAnnotation(strokes: Array<{ points: Array<{ x: numb
 }
 
 describe("staff app API", () => {
+  it("verifies a fresh manual RAW batch from its durable manifest attribution", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const project = await createUploadProject(cookie, `Fresh manifest ${crypto.randomUUID()}`);
+    const filenames = ["fresh-1.jpg", "fresh-2.jpeg", "fresh-3.jpg"];
+    const manifestId = await createRawManifest(cookie, project.id, filenames);
+
+    for (const filename of filenames) {
+      const response = await completeRawUpload(cookie, project.id, filename, manifestId);
+      expect(response.status).toBe(201);
+      await expect(response.json()).resolves.toMatchObject({
+        publishStatus: "ready",
+        mirrorStatus: "pending",
+        jobId: expect.any(String),
+      });
+    }
+
+    await expect(ingestStatus(cookie, project.id)).resolves.toEqual({
+      expectedCount: 3,
+      receivedCount: 3,
+      mismatch: false,
+    });
+    await expect(database.DB.prepare("SELECT status FROM upload_manifests WHERE id = ?").bind(manifestId).first()).resolves.toEqual({ status: "complete" });
+    await expect(database.DB.prepare("SELECT count(*) AS n FROM assets WHERE manifest_id = ?").bind(manifestId).first()).resolves.toEqual({ n: 3 });
+  });
+
+  it("compares a new one-file manifest with its own asset instead of ten older collection assets", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const project = await createUploadProject(cookie, `Manifest delta ${crypto.randomUUID()}`);
+    const raw = await database.DB.prepare("SELECT id FROM collections WHERE project_id = ? AND kind = 'raw'").bind(project.id).first<{ id: string }>();
+    const now = Date.now();
+    const statements = Array.from({ length: 10 }, (_, index) => {
+      const assetId = crypto.randomUUID();
+      return database.DB.prepare("INSERT INTO assets (id, collection_id, r2_key, original_filename, bytes, source, created_at, updated_at) VALUES (?, ?, ?, ?, 1, 'dropbox', ?, ?)")
+        .bind(assetId, raw!.id, `tests/${assetId}.jpg`, `existing-${index}.jpg`, now, now);
+    });
+    statements.push(database.DB.prepare("UPDATE collections SET received_count = 10 WHERE id = ?").bind(raw!.id));
+    await database.DB.batch(statements);
+
+    const manifestId = await createRawManifest(cookie, project.id, ["new-only.jpg"]);
+    expect((await completeRawUpload(cookie, project.id, "new-only.jpg", manifestId)).status).toBe(201);
+    await expect(ingestStatus(cookie, project.id)).resolves.toEqual({
+      expectedCount: 1,
+      receivedCount: 1,
+      mismatch: false,
+    });
+  });
+
+  it("keeps a genuine active-manifest shortfall visible", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const project = await createUploadProject(cookie, `Manifest shortfall ${crypto.randomUUID()}`);
+    const manifestId = await createRawManifest(cookie, project.id, ["short-1.jpg", "short-2.jpg", "short-3.jpg"]);
+    expect((await completeRawUpload(cookie, project.id, "short-1.jpg", manifestId)).status).toBe(201);
+    expect((await completeRawUpload(cookie, project.id, "short-2.jpg", manifestId)).status).toBe(201);
+
+    await expect(ingestStatus(cookie, project.id)).resolves.toEqual({
+      expectedCount: 3,
+      receivedCount: 2,
+      mismatch: true,
+    });
+    await expect(database.DB.prepare("SELECT status FROM upload_manifests WHERE id = ?").bind(manifestId).first()).resolves.toEqual({ status: "active" });
+  });
+
+  it("aggregates every active manifest so a newer batch cannot hide an older shortfall", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const project = await createUploadProject(cookie, `Manifest aggregate ${crypto.randomUUID()}`);
+    const older = await createRawManifest(cookie, project.id, ["old-1.jpg", "old-2.jpg", "old-3.jpg"]);
+    expect((await completeRawUpload(cookie, project.id, "old-1.jpg", older)).status).toBe(201);
+    expect((await completeRawUpload(cookie, project.id, "old-2.jpg", older)).status).toBe(201);
+    const newer = await createRawManifest(cookie, project.id, ["new-1.jpg", "new-2.jpg"]);
+    expect((await completeRawUpload(cookie, project.id, "new-1.jpg", newer)).status).toBe(201);
+
+    await expect(ingestStatus(cookie, project.id)).resolves.toEqual({
+      expectedCount: 5,
+      receivedCount: 3,
+      mismatch: true,
+    });
+  });
+
+  it("preserves collection-level count verification for a Dropbox-only project with no manifests", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const project = await createUploadProject(cookie, `Dropbox-only count ${crypto.randomUUID()}`);
+    await database.DB.prepare("UPDATE collections SET expected_count = 8, received_count = 7 WHERE project_id = ? AND kind = 'raw'").bind(project.id).run();
+    await expect(ingestStatus(cookie, project.id)).resolves.toEqual({
+      expectedCount: 8,
+      receivedCount: 7,
+      mismatch: true,
+    });
+  });
+
+  it("does not let manifest creation clobber Dropbox's collection expected count", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const project = await createUploadProject(cookie, `Manifest writer isolation ${crypto.randomUUID()}`);
+    await database.DB.prepare("UPDATE collections SET expected_count = 37 WHERE project_id = ? AND kind = 'raw'").bind(project.id).run();
+    await createRawManifest(cookie, project.id, ["manual-1.jpg", "manual-2.jpg"]);
+    await expect(database.DB.prepare("SELECT expected_count FROM collections WHERE project_id = ? AND kind = 'raw'").bind(project.id).first()).resolves.toEqual({ expected_count: 37 });
+  });
+
+  it("rejects manifest creation for an archived project", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const project = await createUploadProject(cookie, `Archived manifest ${crypto.randomUUID()}`);
+    await database.DB.prepare("UPDATE projects SET archived_at = ? WHERE id = ?").bind(Date.now(), project.id).run();
+    const response = await SELF.fetch(`https://portal.test/api/projects/${project.id}/upload-manifest`, {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ filenames: ["archived.jpg"] }),
+    });
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({ error: "Project is archived" });
+  });
+
+  it("rejects a manifest that does not belong to the completed upload's RAW collection", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const owner = await createUploadProject(cookie, `Manifest owner ${crypto.randomUUID()}`);
+    const other = await createUploadProject(cookie, `Manifest other ${crypto.randomUUID()}`);
+    const manifestId = await createRawManifest(cookie, owner.id, ["owner.jpg"]);
+    const response = await completeRawUpload(cookie, other.id, "other.jpg", manifestId);
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({ error: "Upload manifest does not belong to this project's RAW collection" });
+    await expect(database.DB.prepare("SELECT count(*) AS n FROM assets WHERE manifest_id = ?").bind(manifestId).first()).resolves.toEqual({ n: 0 });
+  });
+
   it("recognizes a D1 version collision carried by error.cause", () => {
     expect(uniqueVersionError(new Error("Failed query", {
       cause: new Error("UNIQUE constraint failed: assets.version_group_id, assets.kind, assets.version"),
@@ -1311,6 +1469,63 @@ describe("staff app API", () => {
     expect(await readyOriginal.text()).toBe("ready");
     const readyReview = await SELF.fetch(`https://portal.test/api/assets/${readyId}/review`, { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ stars: 5 }) });
     expect(readyReview.status).toBe(200);
+  });
+
+  it("keeps a manual RAW asset immediately usable when Dropbox mirror startup fails", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const projectId = "00000000-0000-4000-8000-0000000000fe";
+    const collectionId = crypto.randomUUID();
+    const assetId = crypto.randomUUID();
+    const now = Date.now();
+    await database.DB.batch([
+      database.DB.prepare("INSERT INTO projects (id, street, stage_key, raw_folder_path, created_at, updated_at) VALUES (?, ?, 'awaiting_raw', ?, ?, ?)")
+        .bind(projectId, "RAW mirror service failure", "/Tonomo/Raw Files/Terry/2026-07-24/RAW mirror service failure", now, now),
+      database.DB.prepare("INSERT INTO collections (id, project_id, kind, status, received_count, created_at, updated_at) VALUES (?, ?, 'raw', 'empty', 0, ?, ?)")
+        .bind(collectionId, projectId, now, now),
+    ]);
+    const key = `projects/${projectId}/raw/${assetId}/service-failure.jpg`;
+    await authEnv.MEDIA.put(key, "manual-raw-jpeg", { httpMetadata: { contentType: "image/jpeg" } });
+
+    const response = await SELF.fetch("https://portal.test/api/uploads/complete", {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ projectId, key, originalFilename: "service-failure.jpg", collection: "raw" }),
+    });
+    expect(response.status).toBe(201);
+    const body = await response.json() as { assetId: string; jobId: string; publishStatus: string; mirrorStatus: string };
+    expect(body).toMatchObject({ assetId, jobId: expect.any(String), publishStatus: "ready", mirrorStatus: "failed" });
+    await expect(database.DB.prepare("SELECT publish_status, source_path FROM assets WHERE id = ?").bind(assetId).first())
+      .resolves.toEqual({ publish_status: "ready", source_path: null });
+    await expect(database.DB.prepare("SELECT status FROM jobs WHERE correlation_id = ?").bind(`manual_raw_publish:${assetId}`).first())
+      .resolves.toEqual({ status: "failed" });
+    expect(await authEnv.MEDIA.get(key)).not.toBeNull();
+
+    const listed = await SELF.fetch(`https://portal.test/api/projects/${projectId}/assets?collection=raw`, { headers: { cookie } });
+    expect(listed.status).toBe(200);
+    await expect(listed.json()).resolves.toMatchObject({ assets: [expect.objectContaining({ id: assetId })] });
+  });
+
+  it("allows an administrator to retry a failed manual RAW mirror job", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const project = await createUploadProject(cookie, `RAW mirror retry ${crypto.randomUUID()}`);
+    const collection = await database.DB.prepare("SELECT id FROM collections WHERE project_id = ? AND kind = 'raw'")
+      .bind(project.id).first<{ id: string }>();
+    const assetId = crypto.randomUUID();
+    const jobId = crypto.randomUUID();
+    const now = Date.now();
+    await database.DB.batch([
+      database.DB.prepare("INSERT INTO assets (id, collection_id, r2_key, original_filename, bytes, source, publish_status, created_at, updated_at) VALUES (?, ?, ?, 'retry.jpg', 1, 'upload', 'ready', ?, ?)")
+        .bind(assetId, collection!.id, `tests/${assetId}.jpg`, now, now),
+      database.DB.prepare("INSERT INTO jobs (id, kind, status, project_id, correlation_id, payload_json, error, created_at, updated_at) VALUES (?, 'manual_raw_publish', 'failed', ?, ?, ?, 'Dropbox unavailable', ?, ?)")
+        .bind(jobId, project.id, `manual_raw_publish:${assetId}`, JSON.stringify({ projectId: project.id, assetId, collection: "raw" }), now, now),
+    ]);
+
+    const response = await SELF.fetch(`https://portal.test/api/jobs/${jobId}/retry`, {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+    });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ jobId: expect.any(String) });
   });
 
   it("marks a manual upload failed when its publication service cannot start", async () => {

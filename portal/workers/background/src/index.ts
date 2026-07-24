@@ -110,39 +110,50 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
     }
   }
 
-  async publishManualEditedUpload(projectId: string, assetId: string): Promise<{ jobId: string }> {
+  async publishManualUpload(projectId: string, assetId: string): Promise<{ jobId: string }> {
     const db = dbFor(this.env);
-    const asset = await db.select({ id: assets.id, publishStatus: assets.publishStatus, archivedAt: projects.archivedAt })
+    const asset = await db.select({
+      id: assets.id,
+      collectionKind: collections.kind,
+      sourcePath: assets.sourcePath,
+      publishStatus: assets.publishStatus,
+      archivedAt: projects.archivedAt,
+    })
       .from(assets)
       .innerJoin(collections, eq(assets.collectionId, collections.id))
       .innerJoin(projects, eq(collections.projectId, projects.id))
-      .where(and(eq(assets.id, assetId), eq(collections.projectId, projectId), eq(collections.kind, "edited"), eq(assets.source, "upload"))).get();
-    if (!asset) throw new Error("Manual edited upload is not available for publishing");
+      .where(and(eq(assets.id, assetId), eq(collections.projectId, projectId), inArray(collections.kind, ["raw", "edited"]), eq(assets.source, "upload"))).get();
+    if (!asset) throw new Error("Manual upload is not available for Dropbox publishing");
     // The service can be called after the app's archive check, so it must independently close
     // that race before creating a new background writer.
     if (asset.archivedAt) throw new Error(`Project ${projectId} is archived — manual publish refused`);
-    if (asset.publishStatus === "ready") {
+    const isEdited = asset.collectionKind === "edited";
+    const jobKind = isEdited ? "manual_edited_publish" : "manual_raw_publish";
+    const correlationId = `${jobKind}:${assetId}`;
+    if ((isEdited && asset.publishStatus === "ready") || (!isEdited && asset.sourcePath)) {
       // A ready manual asset can only re-enter this workflow after its durable Dropbox
-      // publication succeeded but the rendition queue handoff failed. The replay skips
-      // Dropbox and retries that handoff; ordinary already-published assets stay immutable.
+      // write succeeded but the final handoff/job checkpoint failed. The replay skips the
+      // idempotent provider write; ordinary completed assets stay immutable.
       const failedHandoff = await db.select({ id: jobs.id }).from(jobs).where(and(
-        eq(jobs.projectId, projectId), eq(jobs.kind, "manual_edited_publish"),
-        eq(jobs.correlationId, `manual_edited_publish:${assetId}`), inArray(jobs.status, ["failed", "stuck"]),
+        eq(jobs.projectId, projectId), eq(jobs.kind, jobKind),
+        eq(jobs.correlationId, correlationId), inArray(jobs.status, ["failed", "stuck"]),
       )).get();
-      if (!failedHandoff) throw new Error("Manual edited upload is already published");
+      if (!failedHandoff) throw new Error(isEdited ? "Manual edited upload is already published" : "Manual RAW upload is already mirrored");
     }
     const active = await db.select({ id: jobs.id }).from(jobs).where(and(
-      eq(jobs.projectId, projectId), eq(jobs.kind, "manual_edited_publish"), inArray(jobs.status, ["queued", "running"]),
-      eq(jobs.correlationId, `manual_edited_publish:${assetId}`),
+      eq(jobs.projectId, projectId), eq(jobs.kind, jobKind), inArray(jobs.status, ["queued", "running"]),
+      eq(jobs.correlationId, correlationId),
     )).get();
     if (active) return { jobId: active.id };
-    const statusAfterWorkflowCreateFailure = publishStatusAfterWorkflowCreateFailure(asset.publishStatus);
+    const statusAfterWorkflowCreateFailure = isEdited
+      ? publishStatusAfterWorkflowCreateFailure(asset.publishStatus)
+      : "ready";
     // A failed publication retry must return the asset to the only state the workflow can
     // promote. A ready asset is a post-publication rendition-handoff retry and remains visible.
-    if (asset.publishStatus !== "ready") await db.update(assets).set({ publishStatus: "pending", updatedAt: new Date() }).where(eq(assets.id, assetId));
+    if (isEdited && asset.publishStatus !== "ready") await db.update(assets).set({ publishStatus: "pending", updatedAt: new Date() }).where(eq(assets.id, assetId));
     let jobId: string;
     try {
-      jobId = await createJob(db, { kind: "manual_edited_publish", projectId, payload: { projectId, assetId }, correlationId: `manual_edited_publish:${assetId}` });
+      jobId = await createJob(db, { kind: jobKind, projectId, payload: { projectId, assetId, collection: asset.collectionKind }, correlationId });
     } catch (error) {
       // The partial unique index is the single-flight authority. A second caller can race the
       // preflight above, so return the winner rather than report a false publication failure.
@@ -154,8 +165,8 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
       })();
       if (uniqueConflict) {
         const winner = await db.select({ id: jobs.id }).from(jobs).where(and(
-          eq(jobs.projectId, projectId), eq(jobs.kind, "manual_edited_publish"), inArray(jobs.status, ["queued", "running"]),
-          eq(jobs.correlationId, `manual_edited_publish:${assetId}`),
+          eq(jobs.projectId, projectId), eq(jobs.kind, jobKind), inArray(jobs.status, ["queued", "running"]),
+          eq(jobs.correlationId, correlationId),
         )).get();
         if (winner) return { jobId: winner.id };
       }
@@ -174,6 +185,11 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
       ));
       throw error;
     }
+  }
+
+  /** Backward-compatible service method for already-deployed app Workers during ordered rollout. */
+  async publishManualEditedUpload(projectId: string, assetId: string): Promise<{ jobId: string }> {
+    return this.publishManualUpload(projectId, assetId);
   }
 
   /** The historical schema is not singleton-enforced; use its canonical oldest row only. */

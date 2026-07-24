@@ -72,6 +72,9 @@ export function sectionForDropboxFile(file: DropboxFile, rootPath: string): stri
   if (lowerSegments.length <= rootSegments.length || rootSegments.some((segment, index) => lowerSegments[index] !== segment)) return SKIP_DROPBOX_SECTION;
   const displaySegments = normalisePath(file.path_display ?? file.path_lower).split("/").filter(Boolean);
   const relative = displaySegments.slice(rootSegments.length);
+  // Manual browser uploads are mirrored back to Dropbox for external visibility, but R2/D1
+  // already own the canonical asset. Never ingest that provider copy a second time.
+  if (relative.length >= 2 && relative[0]?.toLowerCase() === "manual-uploads") return SKIP_DROPBOX_SECTION;
   if (relative.length === 1) return null;
   if (relative.length === 2) return relative[0]!;
   return relative.length === 3 ? `${relative[0]!}/${relative[1]!}` : SKIP_DROPBOX_SECTION;

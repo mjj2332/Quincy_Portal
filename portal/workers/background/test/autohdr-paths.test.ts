@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { autoHdrFinalPathCandidates, autoHdrManualUploadPath, autoHdrRawInputPath, deriveAutoHdrFolderName, reconstructSourcePath } from "../src/autohdr/paths";
+import { autoHdrFinalPathCandidates, autoHdrManualUploadPath, autoHdrRawInputPath, deriveAutoHdrFolderName, rawManualUploadFolderPath, rawManualUploadPath, reconstructSourcePath } from "../src/autohdr/paths";
 
 describe("AutoHDR paths", () => {
   const mcGowenRawPath = "/Projects/4 McGowen Ave, Malabar NSW 2036, Australia/Listing Images";
@@ -65,6 +65,19 @@ describe("AutoHDR paths", () => {
     expect(() => autoHdrManualUploadPath("../escape", "11111111-1111-4111-8111-111111111111", "edited.jpg")).toThrow("Invalid manual upload path segment");
     expect(() => autoHdrManualUploadPath("123 Main St", "11111111-1111-4111-8111-111111111111", "../edited.jpg")).toThrow("Invalid manual upload path segment");
   });
+
+  it("derives the manual RAW mirror from the canonical Tonomo listing path", () => {
+    expect(rawManualUploadFolderPath(
+      "/Tonomo/Raw Files/Terry/2026-07-24/18 Example St",
+    )).toBe("/Tonomo/Raw Files/Terry/2026-07-24/18 Example St/Manual-Uploads");
+    expect(rawManualUploadPath(
+      "/Tonomo/Raw Files/Terry/2026-07-24/18 Example St",
+      "capture 001.jpg",
+    )).toBe("/Tonomo/Raw Files/Terry/2026-07-24/18 Example St/Manual-Uploads/capture 001.jpg");
+    expect(() => rawManualUploadPath("/Tonomo/Raw Files/Terry/2026-07-24/18 Example St", "../capture.jpg"))
+      .toThrow("Invalid manual RAW mirror path");
+  });
+
   it("builds final-folder candidates in priority order", () => {
     expect(autoHdrFinalPathCandidates("123 Main St")).toEqual([
       "/AutoHDR/123 Main St/04-FINAL-Photos",

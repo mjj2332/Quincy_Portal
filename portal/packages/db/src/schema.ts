@@ -273,6 +273,26 @@ export const documentUploads = sqliteTable(
   ],
 );
 
+/** Browser-selected-file manifest persisted BEFORE ingest (file-count verification for manual uploads). */
+export const uploadManifests = sqliteTable(
+  "upload_manifests",
+  {
+    id: id(),
+    collectionId: text("collection_id")
+      .notNull()
+      .references(() => collections.id, { onDelete: "cascade" }),
+    expectedCount: integer("expected_count").notNull(),
+    filenamesJson: text("filenames_json").notNull(),
+    /** Active manifests nag indefinitely until their stamped asset count exactly matches. */
+    status: text("status", { enum: ["active", "complete"] }).notNull().default("active"),
+    createdBy: text("created_by")
+      .notNull()
+      .references(() => user.id),
+    createdAt: createdAt(),
+  },
+  (t) => [index("upload_manifests_collection_idx").on(t.collectionId)],
+);
+
 export const assets = sqliteTable(
   "assets",
   {
@@ -293,6 +313,8 @@ export const assets = sqliteTable(
     source: text("source", { enum: ["upload", "dropbox", "tonomo"] }).notNull(),
     /** Original provider path captured at ingest for source-system handoffs such as AutoHDR; legacy rows may be NULL. */
     sourcePath: text("source_path"),
+    /** Durable manual-upload batch attribution; retained independently of collection totals. */
+    manifestId: text("manifest_id").references(() => uploadManifests.id, { onDelete: "set null" }),
     /** Manual edited uploads stay hidden until their Dropbox publish job succeeds. */
     publishStatus: text("publish_status", { enum: ["pending", "ready", "failed"] }).notNull().default("ready"),
     /** XMP xmp:Rating read at ingest; NULL = unrated (never coerce to 0). */
@@ -313,6 +335,7 @@ export const assets = sqliteTable(
   },
   (t) => [
     index("assets_collection_idx").on(t.collectionId),
+    index("assets_manifest_idx").on(t.manifestId),
     index("assets_source_raw_idx").on(t.sourceRawAssetId),
     index("assets_hash_idx").on(t.contentHash),
     index("assets_publish_status_idx").on(t.publishStatus),
@@ -342,24 +365,6 @@ export const assetRenditions = sqliteTable(
     uniqueIndex("asset_renditions_unique").on(t.assetId, t.variant),
     index("asset_renditions_current_spec_idx").on(t.assetId, t.specVersion),
   ],
-);
-
-/** Browser-selected-file manifest persisted BEFORE ingest (file-count verification for manual uploads). */
-export const uploadManifests = sqliteTable(
-  "upload_manifests",
-  {
-    id: id(),
-    collectionId: text("collection_id")
-      .notNull()
-      .references(() => collections.id, { onDelete: "cascade" }),
-    expectedCount: integer("expected_count").notNull(),
-    filenamesJson: text("filenames_json").notNull(),
-    createdBy: text("created_by")
-      .notNull()
-      .references(() => user.id),
-    createdAt: createdAt(),
-  },
-  (t) => [index("upload_manifests_collection_idx").on(t.collectionId)],
 );
 
 /* ------------------------------------------------------------ QA state */
@@ -549,9 +554,9 @@ export const jobs = sqliteTable(
   (t) => [
     index("jobs_status_idx").on(t.status),
     index("jobs_correlation_idx").on(t.correlationId),
-    uniqueIndex("jobs_manual_edited_publish_active_unique")
+    uniqueIndex("jobs_manual_upload_publish_active_unique")
       .on(t.correlationId)
-      .where(sql`${t.kind} = 'manual_edited_publish' and ${t.status} in ('queued', 'running')`),
+      .where(sql`${t.kind} in ('manual_edited_publish', 'manual_raw_publish') and ${t.status} in ('queued', 'running')`),
   ],
 );
 
