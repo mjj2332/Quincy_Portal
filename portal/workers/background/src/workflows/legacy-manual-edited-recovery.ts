@@ -18,6 +18,27 @@ export interface LegacyManualEditedRecoveryInput {
   jobId: string;
 }
 
+function requireLegacyManualEditedRecoveryInput(payload: unknown): LegacyManualEditedRecoveryInput {
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+    throw new Error("Legacy manual Edited recovery payload must be an object");
+  }
+
+  const input = payload as Record<string, unknown>;
+  const requireNonEmptyString = (key: "projectId" | "assetId" | "jobId"): string => {
+    const value = input[key];
+    if (typeof value !== "string" || value.trim() === "") {
+      throw new Error(`Legacy manual Edited recovery payload requires a non-empty string ${key}`);
+    }
+    return value;
+  };
+
+  return {
+    projectId: requireNonEmptyString("projectId"),
+    assetId: requireNonEmptyString("assetId"),
+    jobId: requireNonEmptyString("jobId"),
+  };
+}
+
 /**
  * Temporary recovery for the exact legacy state created before manual Edited publication tracked
  * a Dropbox destination. It never delegates to ManualEditedPublish: that workflow's semantics
@@ -28,7 +49,9 @@ export class LegacyManualEditedRecovery extends WorkflowEntrypoint<Env, LegacyMa
   protected readonly uploadToDropbox = upload;
 
   async run(event: Readonly<WorkflowEvent<LegacyManualEditedRecoveryInput>>, step: WorkflowStep): Promise<void> {
-    const input = event.payload;
+    // Workflow payloads are external runtime data despite the generic contract. Validate before
+    // entering the error handler so malformed payloads cannot mutate a job or write an audit row.
+    const input = requireLegacyManualEditedRecoveryInput(event.payload);
     try {
       await step.do("mark-legacy-recovery-running", async () => {
         await setJobStatus(dbFor(this.env), input.jobId, "running");

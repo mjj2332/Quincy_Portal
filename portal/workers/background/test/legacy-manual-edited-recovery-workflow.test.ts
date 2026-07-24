@@ -90,7 +90,34 @@ async function job(jobId: string) {
   return database.DB.prepare("SELECT status FROM jobs WHERE id = ?").bind(jobId).first<{ status: string }>();
 }
 
+async function auditCount(assetId: string) {
+  const row = await database.DB.prepare("SELECT COUNT(*) AS count FROM audit_log WHERE target_id = ?").bind(assetId).first<{ count: number }>();
+  return row?.count ?? 0;
+}
+
 describe("LegacyManualEditedRecovery workflow", () => {
+  it.each([
+    ["a non-object payload", null, "must be an object"],
+    ["an array payload", [], "must be an object"],
+    ["a missing projectId", { assetId: "asset", jobId: "job" }, "projectId"],
+    ["a missing assetId", { projectId: "project", jobId: "job" }, "assetId"],
+    ["a missing jobId", { projectId: "project", assetId: "asset" }, "jobId"],
+    ["a non-string projectId", { projectId: 1, assetId: "asset", jobId: "job" }, "projectId"],
+    ["a non-string assetId", { projectId: "project", assetId: 1, jobId: "job" }, "assetId"],
+    ["a blank jobId", { projectId: "project", assetId: "asset", jobId: "  " }, "jobId"],
+  ])("rejects %s before any job, audit, or upload write", async (_label, payload, error) => {
+    const data = await fixture();
+    const { instance, uploads, queuedAssetIds } = workflow();
+    const noWriteStep = { do: async () => { throw new Error("Workflow step must not run for malformed input"); } };
+
+    await expect(instance.run({ payload } as never, noWriteStep as never)).rejects.toThrow(error);
+
+    expect(uploads).toHaveLength(0);
+    expect(queuedAssetIds).toEqual([]);
+    await expect(job(data.jobId)).resolves.toEqual({ status: "queued" });
+    await expect(auditCount(data.assetId)).resolves.toBe(0);
+  });
+
   it("copies to the deterministic Dropbox overwrite path, repairs source_path, and queues renditions", async () => {
     const data = await fixture();
     const { instance, uploads, queuedAssetIds } = workflow();
