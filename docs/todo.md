@@ -96,8 +96,19 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
   unmatched finals as `source_raw_asset_id = null` (nothing lost meanwhile).
 - [ ] Phase 5 (queued, own launch gates): client-delivery Worker — signed links, gallery,
   favourites, pre-built zips, premium paywall (Pixieset replacement).
+- [ ] **Operator action:** fix the `TRANSFORM_SOURCE_SECRET` drift between `workers/app` and
+  `workers/background` (`wrangler secret put` in both) — the root cause behind the rendition DLQ
+  incident below. The DLQ monitoring/replay tooling is live, but the drift itself is unfixed.
 
 ## Resolved incidents (kept for pattern-recognition; see `docs/lessons.md` for mechanics)
+
+- **Rendition DLQ had zero consumers bound (2026-07-24, merged via PR #9).** Exhausted
+  rendition jobs (root cause: `TRANSFORM_SOURCE_SECRET` drift between `workers/app` and
+  `workers/background`) piled up in `quincy-renditions-dlq` with no signal beyond stuck
+  "Processing preview…" tiles. Fixed with a bound DLQ consumer recording arrivals into
+  `rendition_dlq_events` (migration `0011_dapper_tarantula`, confirmed applied to prod), plus
+  `GET/POST /admin/renditions-dlq*` (list/replay/discard) and an Admin.tsx card. The root-cause
+  secret drift itself is a separate, still-pending operator action — see "Open, not yet fixed".
 
 - **Cloudflare `err=9401` rendition outage (2026-07-21 diagnosed → 2026-07-24 resolved).**
   Every `/cdn-cgi/image/` transform on the zone was rejected, reproduced even for a trivial
