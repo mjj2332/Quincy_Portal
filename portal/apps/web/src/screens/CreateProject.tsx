@@ -2,13 +2,14 @@ import { useState, type FormEvent } from "react";
 import type { CollectionKind } from "@quincy/shared";
 import { ProjectFields, emptyProjectForm, type ProjectFieldError, type ProjectForm, type ProjectSelectionField, type ProjectTextField, validateProjectFields } from "../components/ProjectFields";
 import { apiPost } from "../lib/api";
+import { InternalLink } from "../components/InternalLink";
 
 type ProjectDetail = { id: string; collections: Array<{ id: string; kind: CollectionKind }>; members: Array<{ id: string }> };
 type FormErrors = Partial<Record<"street" | ProjectFieldError, string>>;
 
 function optionalValue(value: string): string | null { return value.trim() || null; }
 
-export function CreateProject({ onCancel, onOpenProject }: { onCancel: () => void; onOpenProject: (projectId: string, notice?: string) => void }) {
+export function CreateProject({ onNavigate }: { onNavigate: (path: string, notice?: string) => void }) {
   const [form, setForm] = useState<ProjectForm>(emptyProjectForm);
   const [showDetails, setShowDetails] = useState(false);
   const [errors, setErrors] = useState<FormErrors>({});
@@ -36,13 +37,13 @@ export function CreateProject({ onCancel, onOpenProject }: { onCancel: () => voi
       const project = await apiPost<ProjectDetail, Record<string, unknown>>("/api/projects", {
         street: form.street.trim(), suburb: optionalValue(form.suburb), postcode: optionalValue(form.postcode), agencyName: optionalValue(form.agencyName), agentName: optionalValue(form.agentName), agentEmail: optionalValue(form.agentEmail), agentPhone: optionalValue(form.agentPhone), shootDate: optionalValue(form.shootDate), timeWindow: optionalValue(form.timeWindow), orderNo: optionalValue(form.orderNo), orderId: optionalValue(form.orderId), invoiceAmount: invoiceAmount ? Number(invoiceAmount) : null, paymentStatus: optionalValue(form.paymentStatus), notes: optionalValue(form.notes), rawFolderLink: optionalValue(form.rawFolderLink), rawFolderPath: optionalValue(form.rawFolderPath), orderedServices: form.orderedServices, photographerUserIds: form.photographerUserIds, editorUserIds: form.editorUserIds,
       });
-      onOpenProject(project.id, "Shoot created.");
+      onNavigate(`/projects/${encodeURIComponent(project.id)}`, "Shoot created.");
     } catch (reason) { setSubmitError(reason instanceof Error ? reason.message : "The shoot could not be created."); }
     finally { setIsSubmitting(false); }
   }
 
   return <main className="page create-project">
-    <div className="pagehead"><div><div className="ey" style={{ marginBottom: 14 }}>Production desk</div><h1 className="serif">New shoot</h1></div><button className="button button--secondary" type="button" onClick={onCancel}>Cancel</button></div>
+    <div className="pagehead"><div><div className="ey" style={{ marginBottom: 14 }}>Production desk</div><h1 className="serif">New shoot</h1></div><InternalLink className="button button--secondary" to="/">Cancel</InternalLink></div>
     <form className="create-project__form" onSubmit={(event) => void submit(event)} noValidate>
       {submitError && <div className="notice" role="alert">{submitError}</div>}
       <section className="create-project__hero" aria-labelledby="property-heading">
@@ -52,7 +53,7 @@ export function CreateProject({ onCancel, onOpenProject }: { onCancel: () => voi
         <div className="create-project__refinements"><label className="admin-field"><span>Suburb <em>optional</em></span><input value={form.suburb} onChange={(event) => updateField("suburb", event.target.value)} /></label><label className="admin-field"><span>Postcode <em>optional</em></span><input inputMode="numeric" value={form.postcode} onChange={(event) => updateField("postcode", event.target.value)} /></label></div>
         <p>You can fill in everything else later from the shoot&apos;s workspace.</p>
       </section>
-      <details className="create-project__details" open={showDetails} onToggle={(event) => setShowDetails(event.currentTarget.open)}><summary>Add details now <span>(optional)</span></summary><div className="create-project__detail-content"><ProjectFields form={form} errors={errors} onChange={updateField} onToggle={toggleValue} /><div className="create-project__actions"><button className="button button--secondary" type="button" onClick={onCancel} disabled={isSubmitting}>Cancel</button><button className="button" type="submit" disabled={isSubmitting || !form.street.trim()}>{isSubmitting ? "Creating shoot…" : "Create shoot"}</button></div></div></details>
+      <details className="create-project__details" open={showDetails} onToggle={(event) => setShowDetails(event.currentTarget.open)}><summary>Add details now <span>(optional)</span></summary><div className="create-project__detail-content"><ProjectFields form={form} errors={errors} onChange={updateField} onToggle={toggleValue} /><div className="create-project__actions"><InternalLink className="button button--secondary" to="/" aria-disabled={isSubmitting}>Cancel</InternalLink><button className="button" type="submit" disabled={isSubmitting || !form.street.trim()}>{isSubmitting ? "Creating shoot…" : "Create shoot"}</button></div></div></details>
     </form>
   </main>;
 }
