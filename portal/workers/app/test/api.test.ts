@@ -476,6 +476,48 @@ describe("staff app API", () => {
     expect(spa.headers.get("content-type")).toContain("text/html");
   });
 
+  it("reserves delivery and backend roots before the SPA fallback", async () => {
+    const cookie = await sessionCookie(photographerToken);
+    const staffPaths = ["/", "/projects/new", `/projects/${crypto.randomUUID()}`, `/projects/${crypto.randomUUID()}/edit`, "/admin"];
+    const [apiRoot, mediaRoot, sourceRoot, api, media, staffResponses, deliveryRoot, deliverySlash, deliveryToken, deliveryPost] = await Promise.all([
+      SELF.fetch("https://portal.test/api", { headers: { cookie } }),
+      SELF.fetch("https://portal.test/media", { headers: { cookie } }),
+      SELF.fetch("https://portal.test/__transform-source"),
+      SELF.fetch("https://portal.test/api/does-not-exist", { headers: { cookie } }),
+      SELF.fetch("https://portal.test/media/does-not-exist", { headers: { cookie } }),
+      Promise.all(staffPaths.map((path) => SELF.fetch(`https://portal.test${path}`))),
+      SELF.fetch("https://portal.test/d"),
+      SELF.fetch("https://portal.test/d/"),
+      SELF.fetch("https://portal.test/d/token"),
+      SELF.fetch("https://portal.test/d", { method: "POST" }),
+    ]);
+    for (const response of [apiRoot, mediaRoot, sourceRoot, api, media, deliveryRoot, deliverySlash, deliveryToken, deliveryPost]) expect(response.status).toBe(404);
+    expect(apiRoot.headers.get("content-type")).toContain("application/json");
+    expect(mediaRoot.headers.get("content-type")).toContain("application/json");
+    for (const staffResponse of staffResponses) {
+      expect(staffResponse.status).toBe(200);
+      expect(staffResponse.headers.get("content-type")).toContain("text/html");
+    }
+  });
+
+  it("allows only canonical staff callbacks through the actual Better Auth sign-in endpoint", async () => {
+    const request = (callbackURL: string) => SELF.fetch("https://portal.test/api/auth/sign-in/social", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ provider: "google", callbackURL, disableRedirect: true }),
+    });
+    const allowed = await request(`/projects/${firstPhotographerId}/edit`);
+    expect(allowed.status).toBe(200);
+    const provider = new URL((await allowed.json() as { url: string }).url);
+    expect(provider.searchParams.getAll("state")).toHaveLength(1);
+    expect(provider.searchParams.get("state")).toBeTruthy();
+    expect(provider.searchParams.get("code_challenge")).toBeTruthy();
+    expect(provider.searchParams.get("code_challenge_method")).toBe("S256");
+    for (const callbackURL of ["/api/projects", "/d/token", "/unknown", `${authEnv.APP_ORIGIN}/admin`]) {
+      expect((await request(callbackURL)).status).toBe(400);
+    }
+  });
+
   it("serves signed transform sources for R2 keys with encoded filename characters", async () => {
     const cookie = await sessionCookie(adminToken);
     const created = await SELF.fetch("https://portal.test/api/projects", {
