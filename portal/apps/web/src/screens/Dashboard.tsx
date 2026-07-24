@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type DragEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import { type StageKey } from "@quincy/shared";
 import { StatusBadge } from "../components/atoms";
 import { LazyImage } from "../components/LazyImage";
@@ -6,6 +6,7 @@ import { apiGet, apiPost } from "../lib/api";
 import { useCapabilities } from "../lib/capabilities";
 import { type ProjectStageKey, useStages } from "../lib/stages";
 import { formatDashboardDate, initializeDashboardView, type DashboardView } from "./dashboard-helpers";
+import { InternalLink } from "../components/InternalLink";
 
 export interface ProjectSummary {
   id: string;
@@ -25,11 +26,6 @@ interface ProjectsResponse {
   projects: ProjectSummary[];
 }
 
-interface DashboardProps {
-  onOpenProject: (projectId: string) => void;
-  onCreateProject: () => void;
-}
-
 type ProjectScope = "active" | "archived";
 type Toast = { id: number; message: string; tone: "success" | "error" };
 
@@ -45,42 +41,48 @@ function CoverMedia({ project, className = "", inlinePlaceholder = false, retryT
 
 function location(project: ProjectSummary) { return [project.suburb, project.postcode].filter(Boolean).join(" · ") || "Location pending"; }
 
-function KanbanCard({ project, canMove, isDragging, onOpen, onDragStart, onDragEnd }: {
+export function KanbanCard({ project, canMove, isDragging, onDragStart, onDragEnd, initialCoverFailed = false }: {
   project: ProjectSummary;
   canMove: boolean;
   isDragging: boolean;
-  onOpen: (projectId: string) => void;
-  onDragStart: (project: ProjectSummary, event: DragEvent<HTMLButtonElement>) => void;
+  onDragStart: (project: ProjectSummary, event: DragEvent<HTMLAnchorElement>) => void;
   onDragEnd: () => void;
+  /** Used by the Node markup test; normal cards begin with their cover available. */
+  initialCoverFailed?: boolean;
 }) {
   const rawCount = project.expectedCount === null ? `${project.receivedCount} RAW` : `${project.receivedCount}/${project.expectedCount} RAW`;
-  const [coverFailed, setCoverFailed] = useState(false); const [coverRetry, setCoverRetry] = useState(0);
-  function activate() { if (coverFailed) { setCoverFailed(false); setCoverRetry((current) => current + 1); } else onOpen(project.id); }
-  return <button className={`kcard ${isDragging ? "is-dragging" : ""}`} type="button" draggable={canMove} onClick={activate} aria-label={coverFailed ? `Retry cover image for ${project.street}` : undefined} onDragStart={(event) => onDragStart(project, event)} onDragEnd={onDragEnd}>
-    <div className="kcard__media"><CoverMedia project={project} retryToken={coverRetry} onFailedChange={setCoverFailed} /></div>
-    <div className="kcard__b">
-      <div className="kcard__addr serif">{project.street}</div>
-      <div className="kcard__meta">{location(project)}</div>
-      <div className="kcard__meta">{project.agencyName || "Agency pending"}</div>
-      <div className="kcard__foot"><span className="ey">{rawCount}</span></div>
-    </div>
-  </button>;
+  const [coverFailed, setCoverFailed] = useState(initialCoverFailed); const [coverRetry, setCoverRetry] = useState(0);
+  const suppressNavigation = useRef(false);
+  return <div className={`kcard-wrap ${isDragging ? "is-dragging" : ""}`}>
+    <InternalLink className="kcard" to={`/projects/${encodeURIComponent(project.id)}`} draggable={canMove} onClick={(event) => { if (suppressNavigation.current) { event.preventDefault(); suppressNavigation.current = false; } }} onDragStart={(event) => onDragStart(project, event)} onDragEnd={() => { suppressNavigation.current = true; window.setTimeout(() => { suppressNavigation.current = false; }, 0); onDragEnd(); }}>
+      <div className="kcard__media"><CoverMedia project={project} retryToken={coverRetry} onFailedChange={setCoverFailed} /></div>
+      <div className="kcard__b">
+        <div className="kcard__addr serif">{project.street}</div>
+        <div className="kcard__meta">{location(project)}</div>
+        <div className="kcard__meta">{project.agencyName || "Agency pending"}</div>
+        <div className="kcard__foot"><span className="ey">{rawCount}</span></div>
+      </div>
+    </InternalLink>
+    {coverFailed && <button className="kcard__retry button button--secondary" type="button" onClick={() => { setCoverFailed(false); setCoverRetry((current) => current + 1); }}>Retry cover image</button>}
+  </div>;
 }
 
-function ProjectListRow({ project, onOpen }: { project: ProjectSummary; onOpen: (projectId: string) => void }) {
+function ProjectListRow({ project }: { project: ProjectSummary }) {
   const [coverFailed, setCoverFailed] = useState(false); const [coverRetry, setCoverRetry] = useState(0);
-  function activate() { if (coverFailed) { setCoverFailed(false); setCoverRetry((current) => current + 1); } else onOpen(project.id); }
-  return <button className="prow" type="button" onClick={activate} aria-label={coverFailed ? `Retry cover image for ${project.street}` : undefined}>
-    <CoverMedia project={project} className="prow__thumb" inlinePlaceholder retryToken={coverRetry} onFailedChange={setCoverFailed} />
-    <span><span className="serif prow__addr">{project.street}</span><span className="ey prow__location">{location(project)}</span></span>
-    <span className="prow__c-agency">{project.agencyName || "Agency pending"}<span className="muted">{project.agentName || "Agent pending"}</span></span>
-    <span className="prow__c-date">{formatDashboardDate(project.shootDate)}</span>
-    <span className="prow__c-status"><StatusBadge stageKey={project.stageKey} /></span>
-    <span className="prow__raw">{project.receivedCount}</span>
-  </button>;
+  return <div className="prow-wrap">
+    <InternalLink className="prow" to={`/projects/${encodeURIComponent(project.id)}`}>
+      <CoverMedia project={project} className="prow__thumb" inlinePlaceholder retryToken={coverRetry} onFailedChange={setCoverFailed} />
+      <span><span className="serif prow__addr">{project.street}</span><span className="ey prow__location">{location(project)}</span></span>
+      <span className="prow__c-agency">{project.agencyName || "Agency pending"}<span className="muted">{project.agentName || "Agent pending"}</span></span>
+      <span className="prow__c-date">{formatDashboardDate(project.shootDate)}</span>
+      <span className="prow__c-status"><StatusBadge stageKey={project.stageKey} /></span>
+      <span className="prow__raw">{project.receivedCount}</span>
+    </InternalLink>
+    {coverFailed && <button className="prow__retry button button--secondary" type="button" onClick={() => { setCoverFailed(false); setCoverRetry((current) => current + 1); }}>Retry cover image</button>}
+  </div>;
 }
 
-export function Dashboard({ onOpenProject, onCreateProject }: DashboardProps) {
+export function Dashboard() {
   const { can } = useCapabilities();
   const { stages } = useStages();
   const canCreateProject = can("createProject");
@@ -146,7 +148,7 @@ export function Dashboard({ onOpenProject, onCreateProject }: DashboardProps) {
     try { window.localStorage.setItem("quincy:dashboard:view", next); } catch { /* Storage can be disabled by the browser. */ }
   }
 
-  function beginDrag(project: ProjectSummary, event: DragEvent<HTMLButtonElement>) {
+  function beginDrag(project: ProjectSummary, event: DragEvent<HTMLAnchorElement>) {
     if (!canMoveStages || pendingMoves.has(project.id)) return;
     event.dataTransfer.effectAllowed = "move";
     event.dataTransfer.setData("text/plain", project.id);
@@ -185,7 +187,7 @@ export function Dashboard({ onOpenProject, onCreateProject }: DashboardProps) {
             <span className="sr-only">Search projects</span>
             <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search address, suburb, client…" />
           </label>
-          {canCreateProject && <button className="button" type="button" onClick={onCreateProject}>New shoot</button>}
+          {canCreateProject && <InternalLink className="button" to="/projects/new">New shoot</InternalLink>}
         </div>
       </div>
 
@@ -228,14 +230,14 @@ export function Dashboard({ onOpenProject, onCreateProject }: DashboardProps) {
         <div className="empty">
           <span className="serif">{query ? "Nothing here yet." : viewingArchived ? "No archived projects." : "No shoots yet — create the first one."}</span>
           {query ? "No projects match this search." : viewingArchived ? "Archived projects remain here until they are restored or permanently deleted." : "Start the production desk with the property, client, and team details."}
-          {!query && !viewingArchived && canCreateProject && <div style={{ marginTop: 16 }}><button className="button" type="button" onClick={onCreateProject}>New shoot</button></div>}
+          {!query && !viewingArchived && canCreateProject && <div style={{ marginTop: 16 }}><InternalLink className="button" to="/projects/new">New shoot</InternalLink></div>}
         </div>
       )}
 
       {!isLoading && !error && filteredProjects.length > 0 && (viewingArchived || view === "list") && (
         <div className="plist" aria-label="Projects list">
           <div className="prow head"><div /><div>Address</div><div className="prow__c-agency">Client</div><div className="prow__c-date">Shoot date</div><div className="prow__c-status">Status</div><div className="prow__raw">RAW received</div></div>
-          {filteredProjects.map((project) => <ProjectListRow key={project.id} project={project} onOpen={onOpenProject} />)}
+          {filteredProjects.map((project) => <ProjectListRow key={project.id} project={project} />)}
         </div>
       )}
 
@@ -250,7 +252,7 @@ export function Dashboard({ onOpenProject, onCreateProject }: DashboardProps) {
               <div className="kcol__head"><span className="row gap2"><StatusBadge stageKey={stage.key} /></span><span className="cnt">{stageProjects.length}</span></div>
               <div className="kcol__body">
                 {stageProjects.length === 0 && <div className="kcol__empty">—</div>}
-                {stageProjects.map((project) => <KanbanCard key={project.id} project={project} canMove={canMoveStages && !pendingMoves.has(project.id)} isDragging={dragging?.id === project.id} onOpen={onOpenProject} onDragStart={beginDrag} onDragEnd={() => { setDragging(undefined); setDropStage(undefined); }} />)}
+                {stageProjects.map((project) => <KanbanCard key={project.id} project={project} canMove={canMoveStages && !pendingMoves.has(project.id)} isDragging={dragging?.id === project.id} onDragStart={beginDrag} onDragEnd={() => { setDragging(undefined); setDropStage(undefined); }} />)}
               </div>
             </section>;
           })}

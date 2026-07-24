@@ -634,6 +634,48 @@ describe("staff app API", () => {
     expect(spa.headers.get("content-type")).toContain("text/html");
   });
 
+  it("reserves delivery and backend roots before the SPA fallback", async () => {
+    const cookie = await sessionCookie(photographerToken);
+    const staffPaths = ["/", "/projects/new", `/projects/${crypto.randomUUID()}`, `/projects/${crypto.randomUUID()}/edit`, "/admin"];
+    const [apiRoot, mediaRoot, sourceRoot, api, media, staffResponses, deliveryRoot, deliverySlash, deliveryToken, deliveryPost] = await Promise.all([
+      SELF.fetch("https://portal.test/api", { headers: { cookie } }),
+      SELF.fetch("https://portal.test/media", { headers: { cookie } }),
+      SELF.fetch("https://portal.test/__transform-source"),
+      SELF.fetch("https://portal.test/api/does-not-exist", { headers: { cookie } }),
+      SELF.fetch("https://portal.test/media/does-not-exist", { headers: { cookie } }),
+      Promise.all(staffPaths.map((path) => SELF.fetch(`https://portal.test${path}`))),
+      SELF.fetch("https://portal.test/d"),
+      SELF.fetch("https://portal.test/d/"),
+      SELF.fetch("https://portal.test/d/token"),
+      SELF.fetch("https://portal.test/d", { method: "POST" }),
+    ]);
+    for (const response of [apiRoot, mediaRoot, sourceRoot, api, media, deliveryRoot, deliverySlash, deliveryToken, deliveryPost]) expect(response.status).toBe(404);
+    expect(apiRoot.headers.get("content-type")).toContain("application/json");
+    expect(mediaRoot.headers.get("content-type")).toContain("application/json");
+    for (const staffResponse of staffResponses) {
+      expect(staffResponse.status).toBe(200);
+      expect(staffResponse.headers.get("content-type")).toContain("text/html");
+    }
+  });
+
+  it("allows only canonical staff callbacks through the actual Better Auth sign-in endpoint", async () => {
+    const request = (callbackURL: string) => SELF.fetch("https://portal.test/api/auth/sign-in/social", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ provider: "google", callbackURL, disableRedirect: true }),
+    });
+    const allowed = await request(`/projects/${firstPhotographerId}/edit`);
+    expect(allowed.status).toBe(200);
+    const provider = new URL((await allowed.json() as { url: string }).url);
+    expect(provider.searchParams.getAll("state")).toHaveLength(1);
+    expect(provider.searchParams.get("state")).toBeTruthy();
+    expect(provider.searchParams.get("code_challenge")).toBeTruthy();
+    expect(provider.searchParams.get("code_challenge_method")).toBe("S256");
+    for (const callbackURL of ["/api/projects", "/d/token", "/unknown", `${authEnv.APP_ORIGIN}/admin`]) {
+      expect((await request(callbackURL)).status).toBe(400);
+    }
+  });
+
   it("serves signed transform sources for R2 keys with encoded filename characters", async () => {
     const cookie = await sessionCookie(adminToken);
     const created = await SELF.fetch("https://portal.test/api/projects", {
@@ -1100,7 +1142,7 @@ describe("staff app API", () => {
     expect(forbidden.status).toBe(403);
   });
 
-  it("permanently deletes an archived project, its jobs, and all project R2 media", async () => {
+  it("permanently deletes an archived project, its jobs, project R2 media, and asset renditions", async () => {
     const cookie = await sessionCookie(adminToken);
     const created = await SELF.fetch("https://portal.test/api/projects", {
       method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ street: "Delete me", orderedServices: [] }),
@@ -1109,21 +1151,103 @@ describe("staff app API", () => {
     const project = await created.json() as { id: string };
     const raw = await database.DB.prepare("SELECT id FROM collections WHERE project_id = ? AND kind = 'raw'").bind(project.id).first<{ id: string }>();
     const media = env as unknown as { MEDIA: R2Bucket }; const now = Date.now();
-    const keys = [`projects/${project.id}/originals/one.jpg`, `projects/${project.id}/annotations/two.json`];
-    for (const key of keys) {
+    const projectKeys = [`projects/${project.id}/originals/one.jpg`, `projects/${project.id}/annotations/two.json`];
+    const assetIds = [crypto.randomUUID(), crypto.randomUUID()];
+    for (const [index, key] of projectKeys.entries()) {
       await media.MEDIA.put(key, key);
-      await database.DB.prepare("INSERT INTO assets (id, collection_id, r2_key, original_filename, bytes, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").bind(crypto.randomUUID(), raw!.id, key, "delete.jpg", key.length, "upload", now, now).run();
+      await database.DB.prepare("INSERT INTO assets (id, collection_id, r2_key, original_filename, bytes, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").bind(assetIds[index], raw!.id, key, "delete.jpg", key.length, "upload", now, now).run();
     }
+    const renditionKeys = assetIds.flatMap((assetId, index) => [
+      `renditions/${assetId}/content-${index}/${RENDITION_SPEC_VERSION}/thumb/${"a".repeat(64)}.webp`,
+      `renditions/${assetId}/content-${index}/${RENDITION_SPEC_VERSION}/web/${"b".repeat(64)}.webp`,
+    ]);
+    for (const key of renditionKeys) await media.MEDIA.put(key, key);
     const jobId = crypto.randomUUID();
     await database.DB.prepare("INSERT INTO jobs (id, kind, status, project_id, retries, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)").bind(jobId, "delete-test", "done", project.id, 0, now, now).run();
     expect((await SELF.fetch(`https://portal.test/api/projects/${project.id}/archive`, { method: "POST", headers: { cookie, "content-type": "application/json" }, body: "{}" })).status).toBe(200);
 
     const response = await SELF.fetch(`https://portal.test/api/projects/${project.id}`, { method: "DELETE", headers: { cookie } });
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ ok: true, deletedObjects: 2 });
+    await expect(response.json()).resolves.toEqual({ ok: true, deletedObjects: projectKeys.length + renditionKeys.length });
     expect(await database.DB.prepare("SELECT id FROM projects WHERE id = ?").bind(project.id).first()).toBeNull();
     expect(await database.DB.prepare("SELECT id FROM jobs WHERE id = ?").bind(jobId).first()).toBeNull();
-    for (const key of keys) expect(await media.MEDIA.get(key)).toBeNull();
+    for (const key of [...projectKeys, ...renditionKeys]) expect(await media.MEDIA.get(key)).toBeNull();
+  });
+
+  it("does not purge another project's asset renditions", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const create = async (street: string) => {
+      const response = await SELF.fetch("https://portal.test/api/projects", {
+        method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ street, orderedServices: [] }),
+      });
+      expect(response.status).toBe(201);
+      const project = await response.json() as { id: string };
+      const raw = await database.DB.prepare("SELECT id FROM collections WHERE project_id = ? AND kind = 'raw'").bind(project.id).first<{ id: string }>();
+      return { ...project, rawId: raw!.id };
+    };
+    const [deletedProject, retainedProject] = await Promise.all([create("Delete rendition project"), create("Retain rendition project")]);
+    const media = env as unknown as { MEDIA: R2Bucket }; const now = Date.now();
+    const deletedAssetId = crypto.randomUUID(); const retainedAssetId = crypto.randomUUID();
+    const deletedProjectKey = `projects/${deletedProject.id}/originals/delete.jpg`;
+    const retainedProjectKey = `projects/${retainedProject.id}/originals/retain.jpg`;
+    const deletedRenditionKey = `renditions/${deletedAssetId}/content/${RENDITION_SPEC_VERSION}/thumb/${"c".repeat(64)}.webp`;
+    const retainedRenditionKey = `renditions/${retainedAssetId}/content/${RENDITION_SPEC_VERSION}/thumb/${"d".repeat(64)}.webp`;
+    for (const key of [deletedProjectKey, retainedProjectKey, deletedRenditionKey, retainedRenditionKey]) await media.MEDIA.put(key, key);
+    await Promise.all([
+      database.DB.prepare("INSERT INTO assets (id, collection_id, r2_key, original_filename, bytes, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").bind(deletedAssetId, deletedProject.rawId, deletedProjectKey, "delete.jpg", 1, "upload", now, now).run(),
+      database.DB.prepare("INSERT INTO assets (id, collection_id, r2_key, original_filename, bytes, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").bind(retainedAssetId, retainedProject.rawId, retainedProjectKey, "retain.jpg", 1, "upload", now, now).run(),
+      database.DB.prepare("INSERT INTO asset_renditions (id, asset_id, variant, r2_key, created_at) VALUES (?, ?, ?, ?, ?)").bind(crypto.randomUUID(), deletedAssetId, "thumb", deletedRenditionKey, now).run(),
+      database.DB.prepare("INSERT INTO asset_renditions (id, asset_id, variant, r2_key, created_at) VALUES (?, ?, ?, ?, ?)").bind(crypto.randomUUID(), retainedAssetId, "thumb", retainedRenditionKey, now).run(),
+    ]);
+    expect((await SELF.fetch(`https://portal.test/api/projects/${deletedProject.id}/archive`, { method: "POST", headers: { cookie, "content-type": "application/json" }, body: "{}" })).status).toBe(200);
+
+    const response = await SELF.fetch(`https://portal.test/api/projects/${deletedProject.id}`, { method: "DELETE", headers: { cookie } });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ ok: true, deletedObjects: 2 });
+    expect(await media.MEDIA.get(deletedRenditionKey)).toBeNull();
+    expect(await database.DB.prepare("SELECT id FROM assets WHERE id = ?").bind(deletedAssetId).first()).toBeNull();
+    expect(await media.MEDIA.get(retainedProjectKey)).not.toBeNull();
+    expect(await media.MEDIA.get(retainedRenditionKey)).not.toBeNull();
+    expect(await database.DB.prepare("SELECT id FROM assets WHERE id = ?").bind(retainedAssetId).first()).not.toBeNull();
+    expect(await database.DB.prepare("SELECT asset_id FROM asset_renditions WHERE asset_id = ?").bind(retainedAssetId).first()).toEqual({ asset_id: retainedAssetId });
+  });
+
+  it("deletes a project asset that has no renditions", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const created = await SELF.fetch("https://portal.test/api/projects", {
+      method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ street: "No renditions", orderedServices: [] }),
+    });
+    expect(created.status).toBe(201);
+    const project = await created.json() as { id: string };
+    const raw = await database.DB.prepare("SELECT id FROM collections WHERE project_id = ? AND kind = 'raw'").bind(project.id).first<{ id: string }>();
+    const key = `projects/${project.id}/originals/no-rendition.jpg`; const media = env as unknown as { MEDIA: R2Bucket };
+    await media.MEDIA.put(key, "no rendition");
+    await database.DB.prepare("INSERT INTO assets (id, collection_id, r2_key, original_filename, bytes, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").bind(crypto.randomUUID(), raw!.id, key, "no-rendition.jpg", 12, "upload", Date.now(), Date.now()).run();
+    expect((await SELF.fetch(`https://portal.test/api/projects/${project.id}/archive`, { method: "POST", headers: { cookie, "content-type": "application/json" }, body: "{}" })).status).toBe(200);
+
+    const response = await SELF.fetch(`https://portal.test/api/projects/${project.id}`, { method: "DELETE", headers: { cookie } });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ ok: true, deletedObjects: 1 });
+    expect(await media.MEDIA.get(key)).toBeNull();
+  });
+
+  it("retains the active-document deletion guard", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const created = await SELF.fetch("https://portal.test/api/projects", {
+      method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ street: "Active document deletion", orderedServices: ["copy"] }),
+    });
+    expect(created.status).toBe(201);
+    const project = await created.json() as { id: string };
+    const copy = await database.DB.prepare("SELECT id FROM collections WHERE project_id = ? AND kind = 'copy'").bind(project.id).first<{ id: string }>();
+    expect((await SELF.fetch(`https://portal.test/api/projects/${project.id}/archive`, { method: "POST", headers: { cookie, "content-type": "application/json" }, body: "{}" })).status).toBe(200);
+    const now = Date.now();
+    await database.DB.prepare("INSERT INTO document_uploads (id, project_id, collection_id, created_by, kind, version_group_id, version, pdf_asset_id, pdf_key, pdf_filename, pdf_bytes, pdf_content_type, status, expires_at, completion_audit_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(crypto.randomUUID(), project.id, copy!.id, "seed-admin", "copy_pdf", crypto.randomUUID(), 1, crypto.randomUUID(), `projects/${project.id}/copy/pending.pdf`, "pending.pdf", 1, "application/pdf", "pending", now + 60_000, crypto.randomUUID(), now, now).run();
+
+    const response = await SELF.fetch(`https://portal.test/api/projects/${project.id}`, { method: "DELETE", headers: { cookie } });
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({ error: "Active document uploads were aborted. Confirm deletion again after the sessions are terminal.", activeDocuments: 1 });
+    expect(await database.DB.prepare("SELECT id FROM projects WHERE id = ?").bind(project.id).first()).not.toBeNull();
+    expect(await database.DB.prepare("SELECT status FROM document_uploads WHERE project_id = ?").bind(project.id).first()).toEqual({ status: "failed" });
   });
 
   it("refuses to delete an archived project while background work is active", async () => {
