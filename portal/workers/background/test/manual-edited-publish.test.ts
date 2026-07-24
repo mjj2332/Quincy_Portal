@@ -30,18 +30,18 @@ beforeAll(async () => {
   await executeSql(__PORTAL_MIGRATION_SQL__);
 });
 
-async function insertManualAsset(publishStatus: "pending" | "ready") {
+async function insertManualAsset(publishStatus: "pending" | "ready", collectionKind: "raw" | "edited" = "edited") {
   const projectId = crypto.randomUUID();
   const collectionId = crypto.randomUUID();
   const assetId = crypto.randomUUID();
   const now = Date.now();
   await database.DB.batch([
     database.DB.prepare(
-      "INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, ?, 'awaiting_raw', ?, ?)",
-    ).bind(projectId, `Manual publication ${assetId}`, now, now),
+      "INSERT INTO projects (id, street, stage_key, raw_folder_path, created_at, updated_at) VALUES (?, ?, 'awaiting_raw', ?, ?, ?)",
+    ).bind(projectId, `Manual publication ${assetId}`, `/Tonomo/Raw Files/Terry/2026-07-24/${assetId}`, now, now),
     database.DB.prepare(
-      "INSERT INTO collections (id, project_id, kind, status, received_count, created_at, updated_at) VALUES (?, ?, 'edited', 'empty', 0, ?, ?)",
-    ).bind(collectionId, projectId, now, now),
+      "INSERT INTO collections (id, project_id, kind, status, received_count, created_at, updated_at) VALUES (?, ?, ?, 'empty', 0, ?, ?)",
+    ).bind(collectionId, projectId, collectionKind, now, now),
     database.DB.prepare(
       "INSERT INTO assets (id, collection_id, r2_key, original_filename, bytes, source, publish_status, created_at, updated_at) VALUES (?, ?, ?, ?, 1, 'upload', ?, ?, ?)",
     ).bind(assetId, collectionId, `tests/${assetId}.jpg`, "manual.jpg", publishStatus, now, now),
@@ -49,14 +49,15 @@ async function insertManualAsset(publishStatus: "pending" | "ready") {
   return { projectId, assetId };
 }
 
-async function insertFailedHandoff(projectId: string, assetId: string) {
+async function insertFailedHandoff(projectId: string, assetId: string, jobKind = "manual_edited_publish") {
   const now = Date.now();
   await database.DB.prepare(
-    "INSERT INTO jobs (id, kind, status, project_id, correlation_id, payload_json, error, created_at, updated_at) VALUES (?, 'manual_edited_publish', 'failed', ?, ?, ?, 'rendition handoff failed', ?, ?)",
+    "INSERT INTO jobs (id, kind, status, project_id, correlation_id, payload_json, error, created_at, updated_at) VALUES (?, ?, 'failed', ?, ?, ?, 'rendition handoff failed', ?, ?)",
   ).bind(
     crypto.randomUUID(),
+    jobKind,
     projectId,
-    `manual_edited_publish:${assetId}`,
+    `${jobKind}:${assetId}`,
     JSON.stringify({ projectId, assetId }),
     now,
     now,
@@ -82,7 +83,7 @@ async function job(jobId: string) {
     .first<{ id: string; status: string }>();
 }
 
-describe("manual edited publication retries", () => {
+describe("manual Dropbox publication retries", () => {
   it("keeps a ready asset ready and fails its new job when retry workflow creation rejects", async () => {
     const { projectId, assetId } = await insertManualAsset("ready");
     await insertFailedHandoff(projectId, assetId);
@@ -132,6 +133,29 @@ describe("manual edited publication retries", () => {
     }).publishManualEditedUpload(projectId, assetId);
 
     expect(started).toEqual([{
+      id: result.jobId,
+      params: { projectId, assetId, jobId: result.jobId },
+    }]);
+    await expect(assetStatus(assetId)).resolves.toEqual({ publish_status: "ready" });
+    await expect(job(result.jobId)).resolves.toEqual({ id: result.jobId, status: "queued" });
+  });
+
+  it("preserves RAW visibility on startup failure and provides an idempotent mirror retry", async () => {
+    const { projectId, assetId } = await insertManualAsset("ready", "raw");
+    let failedWorkflow: WorkflowInput | undefined;
+    await expect(service(async (input) => {
+      failedWorkflow = input;
+      throw new Error("workflow unavailable");
+    }).publishManualUpload(projectId, assetId)).rejects.toThrow("workflow unavailable");
+
+    await expect(assetStatus(assetId)).resolves.toEqual({ publish_status: "ready" });
+    await expect(job(failedWorkflow!.id)).resolves.toEqual({ id: failedWorkflow!.id, status: "failed" });
+
+    const retried: WorkflowInput[] = [];
+    const result = await service(async (input) => {
+      retried.push(input);
+    }).publishManualUpload(projectId, assetId);
+    expect(retried).toEqual([{
       id: result.jobId,
       params: { projectId, assetId, jobId: result.jobId },
     }]);

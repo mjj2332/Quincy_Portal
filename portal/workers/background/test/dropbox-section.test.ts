@@ -15,4 +15,14 @@ describe("sectionForDropboxFile", () => {
     expect(sectionForDropboxFile(file("/jobs/42/kitchen/day/retouched/frame.jpg"), "/Jobs/42")).toBe(SKIP_DROPBOX_SECTION);
     expect(sectionForDropboxFile(file("/jobs/420/frame.jpg"), "/Jobs/42")).toBe(SKIP_DROPBOX_SECTION);
   });
+
+  it("never re-ingests provider copies from the manual-upload mirror folder", () => {
+    expect(sectionForDropboxFile(
+      file(
+        "/tonomo/raw files/terry/2026-07-24/18 example st/manual-uploads/capture.jpg",
+        "/Tonomo/Raw Files/Terry/2026-07-24/18 Example St/Manual-Uploads/capture.jpg",
+      ),
+      "/Tonomo/Raw Files/Terry/2026-07-24/18 Example St",
+    )).toBe(SKIP_DROPBOX_SECTION);
+  });
 });

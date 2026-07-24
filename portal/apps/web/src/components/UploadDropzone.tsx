@@ -82,7 +82,9 @@ export function UploadDropzone({ projectId, collection = "raw", onComplete, onTo
     setIsUploading(true);
     setProgress(accepted.map((file) => ({ name: file.name, percent: 0, state: "waiting" })));
     try {
-      if (collection === "raw") await apiPost<{ manifestId: string }, { filenames: string[] }>(`/api/projects/${projectId}/upload-manifest`, { filenames: accepted.map((file) => file.name) });
+      const manifestId = collection === "raw"
+        ? (await apiPost<{ manifestId: string }, { filenames: string[] }>(`/api/projects/${projectId}/upload-manifest`, { filenames: accepted.map((file) => file.name) })).manifestId
+        : undefined;
       let next = 0;
       let succeeded = 0;
       let failed = 0;
@@ -95,7 +97,7 @@ export function UploadDropzone({ projectId, collection = "raw", onComplete, onTo
             const presign = await apiPost<PresignResponse, { projectId: string; filename: string; bytes: number; collection: "raw" | "edited" }>("/api/uploads/presign", { projectId, filename: file.name, bytes: file.size, collection });
             update(file.name, { percent: 35 });
             const completed = await uploadMultipartFile(file, presign, `/api/uploads/direct?key=${encodeURIComponent(presign.key)}`);
-            const result = await apiPost<CompleteResponse, { projectId: string; key: string; uploadId?: string; parts?: { partNumber: number; etag: string }[]; originalFilename: string; collection: "raw" | "edited" }>("/api/uploads/complete", { projectId, key: presign.key, uploadId: completed.uploadId, parts: completed.parts, originalFilename: file.name, collection });
+            const result = await apiPost<CompleteResponse, { projectId: string; key: string; uploadId?: string; parts?: { partNumber: number; etag: string }[]; originalFilename: string; collection: "raw" | "edited"; manifestId?: string }>("/api/uploads/complete", { projectId, key: presign.key, uploadId: completed.uploadId, parts: completed.parts, originalFilename: file.name, collection, manifestId });
             if (result.publishStatus === "failed") { failed += 1; update(file.name, { state: "failed", percent: 100, jobId: result.jobId, error: result.error ?? "Dropbox publishing failed. An administrator can retry it from the jobs panel." }); }
             else if (result.publishStatus === "pending") { succeeded += 1; update(file.name, { state: "publishing", percent: 100, jobId: result.jobId }); }
             else { succeeded += 1; update(file.name, { state: "complete", percent: 100 }); }

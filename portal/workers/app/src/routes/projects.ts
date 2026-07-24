@@ -288,7 +288,7 @@ projectsRoutes.get("/projects/:id/manual-upload-jobs", async (c) => {
   if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   const rows = await createDb(c.env.DB).select({
     id: schema.jobs.id, status: schema.jobs.status, error: schema.jobs.error,
-  }).from(schema.jobs).where(and(eq(schema.jobs.projectId, id), eq(schema.jobs.kind, "manual_edited_publish"))).orderBy(desc(schema.jobs.createdAt)).limit(50).all();
+  }).from(schema.jobs).where(and(eq(schema.jobs.projectId, id), inArray(schema.jobs.kind, ["manual_edited_publish", "manual_raw_publish"]))).orderBy(desc(schema.jobs.createdAt)).limit(50).all();
   return c.json({ jobs: rows });
 });
 
@@ -299,7 +299,7 @@ projectsRoutes.get("/projects/:id/jobs", requireCapability("adminBackend"), asyn
   const rows = await createDb(c.env.DB).select({
     id: schema.jobs.id, kind: schema.jobs.kind, status: schema.jobs.status, error: schema.jobs.error,
     createdAt: schema.jobs.createdAt, updatedAt: schema.jobs.updatedAt,
-  }).from(schema.jobs).where(and(eq(schema.jobs.projectId, id), inArray(schema.jobs.kind, ["autohdr", "fetch_edited", "manual_edited_publish"]))).orderBy(desc(schema.jobs.createdAt)).limit(20).all();
+  }).from(schema.jobs).where(and(eq(schema.jobs.projectId, id), inArray(schema.jobs.kind, ["autohdr", "fetch_edited", "manual_edited_publish", "manual_raw_publish"]))).orderBy(desc(schema.jobs.createdAt)).limit(20).all();
   return c.json({ jobs: rows });
 });
 
@@ -308,17 +308,18 @@ projectsRoutes.post("/jobs/:id/retry", requireCapability("adminBackend"), async 
   if (!idCheck(id)) return c.json({ error: "Invalid job id" }, 400);
   const job = await createDb(c.env.DB).select({ id: schema.jobs.id, projectId: schema.jobs.projectId, kind: schema.jobs.kind, status: schema.jobs.status, payloadJson: schema.jobs.payloadJson })
     .from(schema.jobs).where(eq(schema.jobs.id, id)).get();
-  if (!job || !job.projectId || !["autohdr", "fetch_edited", "manual_edited_publish"].includes(job.kind)) return c.json({ error: "Background job not found" }, 404);
+  if (!job || !job.projectId || !["autohdr", "fetch_edited", "manual_edited_publish", "manual_raw_publish"].includes(job.kind)) return c.json({ error: "Background job not found" }, 404);
   if (!await hasProjectAccess(c, job.projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   if (job.status !== "stuck" && job.status !== "failed") return c.json({ error: "Only stuck or failed background jobs can be retried" }, 409);
-  const manualAssetId = job.kind === "manual_edited_publish" ? (() => { try { const payload = JSON.parse(job.payloadJson ?? "{}"); return typeof payload.assetId === "string" ? payload.assetId : null; } catch { return null; } })() : null;
-  if (job.kind === "manual_edited_publish" && !manualAssetId) return c.json({ error: "Manual upload job has no asset" }, 409);
+  const isManualPublish = job.kind === "manual_edited_publish" || job.kind === "manual_raw_publish";
+  const manualAssetId = isManualPublish ? (() => { try { const payload = JSON.parse(job.payloadJson ?? "{}"); return typeof payload.assetId === "string" ? payload.assetId : null; } catch { return null; } })() : null;
+  if (isManualPublish && !manualAssetId) return c.json({ error: "Manual upload job has no asset" }, 409);
   const { jobId } = job.kind === "autohdr"
     ? await c.env.BACKGROUND.startAutoHdr(job.projectId)
     : job.kind === "fetch_edited"
       ? await c.env.BACKGROUND.fetchEditedFromAutoHdr(job.projectId)
-      : await c.env.BACKGROUND.publishManualEditedUpload(job.projectId, manualAssetId!);
-  await audit(c.env, c.get("user").id, job.kind === "autohdr" ? "project.retry_autohdr" : job.kind === "fetch_edited" ? "project.retry_fetch_edited" : "project.retry_manual_edited_publish", "project", job.projectId, { previousJobId: id, jobId });
+      : await c.env.BACKGROUND.publishManualUpload(job.projectId, manualAssetId!);
+  await audit(c.env, c.get("user").id, job.kind === "autohdr" ? "project.retry_autohdr" : job.kind === "fetch_edited" ? "project.retry_fetch_edited" : job.kind === "manual_raw_publish" ? "project.retry_manual_raw_publish" : "project.retry_manual_edited_publish", "project", job.projectId, { previousJobId: id, jobId });
   return c.json({ jobId });
 });
 

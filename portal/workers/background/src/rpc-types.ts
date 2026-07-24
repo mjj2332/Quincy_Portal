@@ -5,6 +5,7 @@ export declare abstract class QuincyBackground extends WorkerEntrypoint {
   abstract triggerDropboxSync(projectId: string): Promise<{ jobId: string }>;
   abstract startAutoHdr(projectId: string): Promise<{ jobId: string }>;
   abstract fetchEditedFromAutoHdr(projectId: string): Promise<{ jobId: string }>;
+  abstract publishManualUpload(projectId: string, assetId: string): Promise<{ jobId: string }>;
   abstract publishManualEditedUpload(projectId: string, assetId: string): Promise<{ jobId: string }>;
   abstract handleDropboxWebhook(): Promise<void>;
   abstract processTonomoEvents(): Promise<void>;

@@ -319,3 +319,26 @@
   provisioning a third Cloudflare queue resource) — a repeated D1 write failure on this consumer
   would still silently drop after 3 retries; this residual gap is intentionally left for a future
   pass rather than adding infrastructure speculatively.
+
+## Capture manifests + manual RAW Dropbox mirrors (2026-07-24)
+
+- **Collection lifetime totals cannot verify a newly selected browser batch.** A collection with
+  ten older assets plus a new one-file upload must report `1/1`, not `1/11`. **Rule:** carry the
+  server-created manifest ID through every completion and stamp it on the immutable asset row;
+  compute batch receipt by `assets.manifest_id`, never by filenames or collection totals. Keep
+  every incomplete manifest active indefinitely so a newer batch cannot hide an older shortfall.
+- **Provider-derived collection counts and browser manifests have different owners.** Dropbox
+  sync owns folder-derived `collections.expected_count`; a manual upload manifest owns only its
+  own `upload_manifests.expected_count`. **Rule:** manifest creation must never overwrite the
+  collection count, and ingest status may fall back to collection totals only if the RAW
+  collection has no manifests at all.
+- **Verify path-depth assumptions relative to the configured sync root.** The canonical RAW
+  folder is the listing folder itself, so a mirror at `Manual-Uploads/<filename>` has two relative
+  components. The shipped `sectionForDropboxFile()` accepts that as a section even though it is
+  four folders below `/Tonomo/Raw Files`. **Rule:** explicitly exclude the provider-owned
+  `Manual-Uploads` subtree from RAW sync; global-root depth is not the ingest boundary.
+- **A RAW mirror is a side effect, not a visibility gate.** R2/D1 become authoritative as soon as
+  upload finalization succeeds. **Rule:** Dropbox mirror failures create retryable
+  `manual_raw_publish` jobs and audits but never change the RAW asset's ready state or turn a
+  successful upload response into a failure. Persist the exact Dropbox destination in
+  `source_path` only after provider success.
