@@ -187,6 +187,7 @@ export async function syncProjectRawFolder(
     const files = await allFolderFiles(env, rawFolderPath, connectionId, client);
     let skippedSubfolderFiles = 0;
     let downloadsThisRun = 0;
+    let contentCallsThisRun = 0;
     let continuationEnqueued = false;
     let newlyImported = 0;
     for (const file of files) {
@@ -243,13 +244,17 @@ export async function syncProjectRawFolder(
       const stableSource = (file.content_hash ?? file.id).replace(/[^a-zA-Z0-9_-]/g, "_");
       const r2Key = `projects/${projectId}/raw/dropbox/${stableSource}/${file.name}`;
       downloadsThisRun += 1;
+      if (contentCallsThisRun > 0) await new Promise<void>((resolve) => setTimeout(resolve, 150));
       const source = await download(env, db, sourcePath, {}, connectionId, client);
+      contentCallsThisRun += 1;
       if (!source.body) throw new Error(`Dropbox returned no body for ${file.name}`);
       await env.MEDIA.put(r2Key, source.body, {
         httpMetadata: { contentType: "image/jpeg" },
       });
 
+      if (contentCallsThisRun > 0) await new Promise<void>((resolve) => setTimeout(resolve, 150));
       const header = await download(env, db, sourcePath, { range: `bytes=0-${XMP_SCAN_BYTES - 1}` }, connectionId, client);
+      contentCallsThisRun += 1;
       const rating = xmpRatingToStars(parseXmpRating(await header.arrayBuffer()));
       await assertLease();
       const now = new Date();

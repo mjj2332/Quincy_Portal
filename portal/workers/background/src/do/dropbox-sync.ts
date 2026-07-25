@@ -7,6 +7,7 @@ import { dbFor, errorMessage } from "../lib/db";
 import { createJob, setJobStatus } from "../lib/jobs";
 import {
   DropboxCursorResetError,
+  DropboxRateLimitError,
   listFolder,
   listFolderContinue,
   recordDropboxError,
@@ -22,6 +23,16 @@ import { claimAutoHdrFetch, startClaimedFetch } from "../autohdr/claims";
 const CURSOR_KEY = "cursor";
 const KICK_GENERATION_KEY = "kick-generation";
 const TICK_DELAY_MS = 60_000;
+// Ceiling on how far a Dropbox-supplied Retry-After can push the next alarm out. A large or
+// malformed value must not silently stall the sync monitor for hours — capping still respects
+// the requested backoff while bounding operator-invisible downtime.
+const MAX_RATE_LIMIT_DELAY_MS = 15 * 60_000;
+
+export function alarmRetryDelay(error: unknown, baseDelayMs: number): number {
+  return error instanceof DropboxRateLimitError && error.retryAfterSeconds !== undefined
+    ? Math.min(Math.max(baseDelayMs, error.retryAfterSeconds * 1000), MAX_RATE_LIMIT_DELAY_MS)
+    : baseDelayMs;
+}
 
 async function cursorFingerprint(cursor: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(cursor));
@@ -107,7 +118,8 @@ export class DropboxSyncDO extends DurableObject<Env> {
       } else {
         const routed = await routeAutoHdrDelta(db, identity.connectionId, page.entries);
         matchedCount = routed.matched;
-        for (const route of routed.routes) {
+        for (const [index, route] of routed.routes.entries()) {
+          if (index > 0) await new Promise<void>((resolve) => setTimeout(resolve, 250));
           const owner = await claimAutoHdrFetch(this.env, route, {
             trigger: "dropbox_delta",
             representativeChangedPath: route.representativeChangedPath,
@@ -188,7 +200,7 @@ export class DropboxSyncDO extends DurableObject<Env> {
       // Persist scope failure first. A sibling success checks both rows before it is allowed to
       // clear shared connection health, and this connection error is ordered after that marker.
       await recordDropboxError(db, identity.connectionId, error).catch(() => undefined);
-      await this.ctx.storage.setAlarm(Date.now() + TICK_DELAY_MS);
+      await this.ctx.storage.setAlarm(Date.now() + alarmRetryDelay(error, TICK_DELAY_MS));
       console.error("Dropbox root monitor failed", { scope: identity.scope, error: errorMessage(error) });
     }
   }

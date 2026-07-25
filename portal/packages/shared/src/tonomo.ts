@@ -255,6 +255,7 @@ export function parseTonomoOrder(payload: unknown): TonomoOrder {
   const orderId = requiredString(valueFor(source, ["order_id", "orderId", "id"]), "missing required order id");
   const propertyAddress = record(source.property_address);
   const street = optionalString(propertyAddress?.street)
+    ?? optionalString(valueFor(propertyAddress ?? {}, ["formatted_address", "formattedAddress"]))
     ?? addressFromManual(source.manualPropertyAddress)
     ?? optionalString(source.street)
     ?? optionalString(source.address)

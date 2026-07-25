@@ -97,6 +97,20 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
 
 ## Resolved incidents (kept for pattern-recognition; see `docs/lessons.md` for mechanics)
 
+- **Dropbox `files/download` 429 from cursor-reset burst amplification (2026-07-25).** One new
+  AutoHDR image triggered a shared-content traffic-limit 429 on the Admin dashboard. Root
+  cause: a cursor-reset full re-list of `/AutoHDR` could match several projects and start
+  concurrent `AutoHdrFetch` Workflows, with no `Retry-After`-aware backoff and no pacing
+  between downloads anywhere in the stack. Fixed: `DropboxRateLimitError` +
+  `rate_limited` classification (self-heals like `transient`), `Retry-After`-aware alarm
+  rescheduling, and pacing/stagger in `dropbox/sync.ts` and `workflows/autohdr-fetch.ts`. Not
+  escalated to Dropbox Support — fully explained by this code gap; escalate only if the
+  affected link/folder is still throttled after ~24-48h or a 429 recurs post-fix.
+- **Tonomo webhooks poisoned on manually-entered addresses (2026-07-25).** `parseTonomoOrder`
+  never checked `property_address.formatted_address` as a fallback when `.street` was blank
+  (common for manually-entered addresses that skip Tonomo's place-autocomplete). Fixed by
+  adding it to the fallback chain, ordered after the structured `.street` field. See
+  `docs/lessons.md` for the asymmetric-fallback-helper pattern this exposed.
 - **Rendition DLQ had zero consumers bound (2026-07-24, merged via PR #9).** Exhausted
   rendition jobs (root cause: `TRANSFORM_SOURCE_SECRET` drift between `workers/app` and
   `workers/background`) piled up in `quincy-renditions-dlq` with no signal beyond stuck
@@ -157,6 +171,13 @@ allowlist are silent no-ops otherwise). Full mechanics in `docs/Subagent-Orchest
   **Not recommended to proceed now**: the outage that motivated it resolved on its own, and an
   independent two-reviewer debate (Agy + Sol) on a related idea (moving originals to Dropbox)
   concluded reject — Hosted Images could cost more than the R2 storage it would touch.
+- **`Multi-Role-Staff-Identity-Plan.md`** — general-purpose multi-role staff identity
+  (`user_roles` join table replacing the single `role` column). **Not scheduled**: the
+  immediate need (one staff member who is both photographer and editor) is already solved
+  with zero code changes — `editor`'s capability set is already a strict superset of
+  `photographer`'s, so setting that person's `role` to `"editor"` works today. Kept as a
+  ready-to-execute reference in case the workaround's tradeoffs (unscoped project visibility,
+  lost photographer-only review restriction) become a real problem.
 
 ## Reference: infra & credentials (stable, rarely changes)
 

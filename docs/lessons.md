@@ -320,6 +320,47 @@
   would still silently drop after 3 retries; this residual gap is intentionally left for a future
   pass rather than adding infrastructure speculatively.
 
+## Dropbox 429 burst amplification + Tonomo formatted_address fallback (2026-07-25)
+
+- **A cursor-reset re-list can turn "one new file" into a Dropbox traffic-limit ban.** One
+  AutoHDR image landing in Dropbox produced `[dropbox:transient] Dropbox files/download failed
+  (429) ... this link has been automatically turned off for now` on the Admin dashboard.
+  Confirmed NOT a hard-coded shared-link fetch — `download()`
+  (`workers/background/src/dropbox/client.ts`) is a properly authenticated
+  `content.dropboxapi.com/2/files/download` call; the shared-link-flavored 429 wording is
+  explained by the *content* being served from a Dropbox shared folder (mounted via
+  `sharing.read`), which Dropbox can traffic-throttle even on authenticated calls. The real bug:
+  on a missing/invalidated delta cursor, `DropboxSyncDO.alarm()` re-lists the **entire**
+  `/AutoHDR` tree (intentional recovery behavior, not the bug), which can match many
+  `editing_autohdr` projects and start several `AutoHdrFetch` Workflows concurrently — and
+  nothing in the stack paced downloads or respected Dropbox's `Retry-After` header on a 429, so
+  a cold cursor could burst enough traffic to trip the limit. **Rule:** any code path that can
+  fan out N downloads from a single trigger (delta re-list, batch reconciliation, etc.) needs
+  both (a) explicit 429/`Retry-After` handling that backs off correctly — not just a generic
+  "transient, retry on the usual cadence" bucket — and (b) some pacing/stagger between
+  Dropbox calls, even a small fixed delay (100-250ms), so a burst doesn't compound. Fixed by
+  adding `DropboxRateLimitError` (carries `retryAfterSeconds`, parsed from the `Retry-After`
+  header with a JSON-body fallback), a `rate_limited` error classification that self-heals like
+  `transient`, `Retry-After`-aware alarm rescheduling in `dropbox-sync.ts`, and pacing/stagger in
+  `dropbox/sync.ts` (RAW downloads) and `workflows/autohdr-fetch.ts` (paced via the
+  Workflows-native `step.sleep`, not a bare `setTimeout`, so the delay survives Workflow
+  retries correctly).
+- **`property_address.formatted_address` is a real, always-present fallback for a missing
+  `.street`, but the parser never checked it.** Tonomo webhooks for manually-entered addresses
+  (`property_address.isManualEntered`) can arrive with `.street` blank but
+  `.formatted_address` (a full Google-Places-style string) still populated by their geocoder —
+  `parseTonomoOrder()` (`packages/shared/src/tonomo.ts`) rejected these with "missing required
+  street address" and poisoned the webhook event, even though a sibling helper
+  (`addressFromManual`) already knew to look for `formatted_address` on a *different* field
+  (`manualPropertyAddress`) but not on `property_address` itself. **Rule:** when a parser has
+  several near-identical fallback-lookup helpers for different source objects, check that each
+  one actually covers the same key set — an asymmetry between "helper A checks keys X/Y/Z" and
+  "helper B (for a sibling field) checks only X" is an easy silent gap. Fixed by adding
+  `property_address.formatted_address`/`formattedAddress` to the `street` fallback chain,
+  ordered after the structured `.street` field (preferred when present) and before the looser
+  `manualPropertyAddress`/order-name fallbacks. `projects.street` is free text, so the full
+  formatted string can be used directly with no component parsing.
+
 ## Capture manifests + manual RAW Dropbox mirrors (2026-07-24)
 
 - **Collection lifetime totals cannot verify a newly selected browser batch.** A collection with
