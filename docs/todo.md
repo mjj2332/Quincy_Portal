@@ -50,6 +50,22 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
     (`docs/Dropbox-Setup.md`, `docs/Implementation-Plan.md` — the plan's step 8 checklist) and
     the deliberate decision of *when* to flip the automation flags on.
 
+- **Branch `fix/gate-manual-edited-upload-on-raw-folder` (2026-07-25) — not yet merged or
+  deployed.** Manual *edited* uploads were accepted (presign 200 → R2 bytes → D1 row → 202) on
+  projects with neither `raw_folder_path` nor `raw_folder_link`, then failed minutes later in
+  `ManualEditedPublish` and landed at `publish_status = 'failed'` — permanently invisible, because
+  the edited listing filters on `'ready'`. Recovery was `adminBackend`-only, while `editor` holds
+  `uploadEdited`. Now refused up front (409 `raw_folder_missing` / `raw_folder_invalid`) on
+  presign, complete and dev direct-PUT, with the Edited dropzone replaced by a notice telling the
+  user to create the shoot folder in Tonomo. Portal never creates that folder — Tonomo owns it.
+  The Portal-owned `/AutoHDR/{name}/Manual-Uploads/{assetId}` chain is now created explicitly by
+  the Workflow (`ensure-manual-edited-folder`), matching the AutoHDR hand-off's `ensure-dest-folder`
+  instead of relying on the provider's implicit parent creation. RAW is deliberately *not* gated:
+  a failed RAW mirror never hides the asset. No migration. **Still open:** existing prod assets
+  already stuck at `publish_status = 'failed'` are not backfilled — check with
+  `SELECT count(*) FROM assets WHERE publish_status = 'failed';` after deploy, then set each
+  project's RAW folder and retry the job.
+
 ## Waiting on user / external
 
 - [ ] Configure Tonomo with the webhook URL:
