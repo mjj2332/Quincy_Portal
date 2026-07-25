@@ -86,7 +86,11 @@ jobs:
     needs: [typecheck, test, build-web]
     runs-on: ubuntu-latest
     # TODO: enable after the production Cloudflare resources are provisioned.
-    if: ${{ false && github.ref == 'refs/heads/main' && secrets.CLOUDFLARE_API_TOKEN != '' }}
+    # Note: the `secrets` context is not permitted in job-level `if:` conditionals
+    # (GitHub Actions rejects the whole workflow file if it's used there), so the
+    # CLOUDFLARE_API_TOKEN presence check has to move to a step-level check when
+    # this job is actually enabled.
+    if: false
     defaults:
       run:
         working-directory: portal
