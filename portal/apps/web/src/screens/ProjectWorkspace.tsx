@@ -28,6 +28,7 @@ export function ProjectWorkspace({ projectId, notice, onNoticeShown }: { project
   const { can } = useCapabilities();
   const { presentationStageKey, stages } = useStages();
   const canAdminBackend = can("adminBackend");
+  const canViewEdited = can("viewEdited");
   const [data, setData] = useState<ProjectResponse | null>(null);
   const [assets, setAssets] = useState<WorkspaceAsset[]>([]);
   const [rawAssets, setRawAssets] = useState<WorkspaceAsset[]>([]);
@@ -93,11 +94,18 @@ export function ProjectWorkspace({ projectId, notice, onNoticeShown }: { project
       apiGet<IngestStatus>(`/api/projects/${projectId}/ingest-status`, { signal: controller.signal }),
       jobsRequest,
     ])
-      .then(([project, raw, status, jobList]) => { if (!controller.signal.aborted && currentProjectIdRef.current === projectIdAtStart) { setData(project); setAssets(raw.assets); setRawAssets(raw.assets); setIngest(status); setJobs(jobList?.jobs ?? []); } })
+      .then(([project, raw, status, jobList]) => {
+        if (!controller.signal.aborted && currentProjectIdRef.current === projectIdAtStart) {
+          setData(project); setAssets(raw.assets); setRawAssets(raw.assets); setIngest(status); setJobs(jobList?.jobs ?? []);
+          // Editors land straight on the collection they actually work in during these stages,
+          // rather than always defaulting to RAW (which is done being reviewed by then).
+          if (canViewEdited && (project.stageKey === "editing_autohdr" || project.stageKey === "edited_review")) setActiveTab("edited");
+        }
+      })
       .catch((reason: unknown) => { if (!controller.signal.aborted && currentProjectIdRef.current === projectIdAtStart) setError(reason instanceof Error ? reason.message : "Project details could not be loaded."); })
       .finally(() => { if (!controller.signal.aborted && currentProjectIdRef.current === projectIdAtStart) setIsLoading(false); });
     return () => { controller.abort(); };
-  }, [canAdminBackend, projectId]);
+  }, [canAdminBackend, canViewEdited, projectId]);
 
   useEffect(() => {
     if (!projectId) return;
