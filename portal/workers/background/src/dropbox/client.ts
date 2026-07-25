@@ -77,16 +77,23 @@ export type DropboxCopyBatchCheckResult = DropboxCopyBatchCompleteResult | { ".t
 
 export class DropboxCursorResetError extends Error {}
 
+export class DropboxRateLimitError extends Error {
+  constructor(message: string, readonly retryAfterSeconds: number | undefined) {
+    super(message);
+  }
+}
+
 /**
  * Error classes are stored as a prefix in the existing last_error column so no migration is
  * needed. Sticky classes are only cleared by a success that exercised the same capability.
  */
-export type DropboxErrorClass = "transient" | "credentials" | "sharing_read" | "folder_path" | "configuration";
+export type DropboxErrorClass = "transient" | "rate_limited" | "credentials" | "sharing_read" | "folder_path" | "configuration";
 export type DropboxRecoveryCapability = "credentials" | "current_account" | "list_folder" | "sharing_read" | "folder_path";
 const ERROR_PREFIX = /^\[dropbox:([a-z_]+)\]\s*/i;
 
 export function classifyDropboxError(error: unknown): DropboxErrorClass {
   const message = errorMessage(error);
+  if (error instanceof DropboxRateLimitError || /rate-limited \(429\)/i.test(message)) return "rate_limited";
   if (/sharing\.read|shared[- ]link resolution|shared link is not owned/i.test(message)) return "sharing_read";
   if (/folder not found|no resolvable Dropbox RAW folder path|check the path in the project's Dropbox settings/i.test(message)) return "folder_path";
   if (/credential|decrypt|malformed|token refresh|invalid_access_token|oauth2\/token|no connected Dropbox integration|failed \(401\)/i.test(message)) return "credentials";
@@ -107,6 +114,7 @@ export function storedDropboxErrorClass(lastError: string | null): DropboxErrorC
     case "sharing_read": return "sharing_read";
     case "folder_path": return "folder_path";
     case "configuration": return "configuration";
+    case "rate_limited": return "rate_limited";
     case "transient": return "transient";
     // Historic unprefixed errors predate this contract. Treat them as transient so an
     // ordinary successful delta can recover the previous behaviour safely.
@@ -116,7 +124,28 @@ export function storedDropboxErrorClass(lastError: string | null): DropboxErrorC
 
 export function canRecoverDropboxError(lastError: string | null, capabilities: readonly DropboxRecoveryCapability[]): boolean {
   const classification = storedDropboxErrorClass(lastError);
-  return classification === "transient" || (classification !== "configuration" && capabilities.includes(classification));
+  return classification === "transient" || classification === "rate_limited" || (classification !== "configuration" && capabilities.includes(classification));
+}
+
+function retryAfterSeconds(response: Response, body: string): number | undefined {
+  const header = response.headers.get("retry-after");
+  if (header && /^\d+$/.test(header.trim())) return Number(header);
+  try {
+    const error = JSON.parse(body).error;
+    return typeof error?.retry_after === "number" && Number.isFinite(error.retry_after)
+      ? error.retry_after
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function rateLimitMessage(context: string, retryAfter: number | undefined, body: string): string {
+  const delay = retryAfter === undefined ? "unknown" : String(retryAfter);
+  const guidance = retryAfter === undefined
+    ? "Dropbox is rate-limiting this app; retrying automatically — no action needed unless this persists."
+    : `Dropbox is rate-limiting this app; retrying automatically in ~${retryAfter}s — no action needed unless this persists.`;
+  return `Dropbox ${context} rate-limited (429), retry-after=${delay}s: ${guidance} ${body}`;
 }
 
 interface DropboxConnection {
@@ -439,6 +468,10 @@ async function authorisedJson(
       if (endpoint === "/files/list_folder/continue" && response.status === 409 && /\breset\b/i.test(body)) {
         throw new DropboxCursorResetError(`Dropbox cursor reset: ${body}`);
       }
+      if (response.status === 429) {
+        const retryAfter = retryAfterSeconds(response, body);
+        throw new DropboxRateLimitError(rateLimitMessage(endpoint, retryAfter, body), retryAfter);
+      }
       throw new Error(`Dropbox ${endpoint} failed (${response.status}): ${body}`);
     }
     return await response.json() as unknown;
@@ -594,7 +627,14 @@ export async function download(
     });
     if (options.range) headers.set("range", options.range);
     const response = await fetch(`${CONTENT_URL}/files/download`, { method: "POST", headers });
-    if (!response.ok) throw new Error(`Dropbox files/download failed (${response.status}): ${await response.text()}`);
+    if (!response.ok) {
+      const body = await response.text();
+      if (response.status === 429) {
+        const retryAfter = retryAfterSeconds(response, body);
+        throw new DropboxRateLimitError(rateLimitMessage("files/download", retryAfter, body), retryAfter);
+      }
+      throw new Error(`Dropbox files/download failed (${response.status}): ${body}`);
+    }
     return response;
   } catch (error) {
     await recordDropboxError(db, resolvedClient.connectionId, error);

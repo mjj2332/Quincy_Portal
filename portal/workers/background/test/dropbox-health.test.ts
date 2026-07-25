@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canRecoverDropboxError, classifyDropboxError, formatDropboxError } from "../src/dropbox/client";
+import { DropboxRateLimitError, canRecoverDropboxError, classifyDropboxError, formatDropboxError } from "../src/dropbox/client";
 
 describe("Dropbox health classification", () => {
   it("keeps auth/configuration failures sticky and classifies them in the existing error field", () => {
@@ -20,5 +20,11 @@ describe("Dropbox health classification", () => {
     const credentialsError = "[dropbox:credentials] Dropbox token refresh failed";
     expect(canRecoverDropboxError(credentialsError, ["credentials"])).toBe(true);
     expect(canRecoverDropboxError("[dropbox:transient] network error", ["list_folder"])).toBe(true);
+    expect(canRecoverDropboxError("[dropbox:rate_limited] Dropbox is rate-limiting this app", [])).toBe(true);
+  });
+
+  it("classifies Dropbox 429 errors as automatically recoverable rate limits", () => {
+    expect(classifyDropboxError(new DropboxRateLimitError("Dropbox files/download rate-limited (429), retry-after=63s", 63))).toBe("rate_limited");
+    expect(classifyDropboxError(new Error("Dropbox files/download rate-limited (429), retry-after=unknowns"))).toBe("rate_limited");
   });
 });

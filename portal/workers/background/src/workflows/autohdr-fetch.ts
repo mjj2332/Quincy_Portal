@@ -228,7 +228,8 @@ export class AutoHdrFetch extends WorkflowEntrypoint<Env, AutoHdrFetchInput> {
         }
       });
       const results: Awaited<ReturnType<typeof writeAutoHdrFinal>>[] = [];
-      for (const file of files) {
+      for (const [index, file] of files.entries()) {
+        if (index > 0) await step.sleep(`pace-final-${file.id.replace(/[^a-zA-Z0-9_-]/g, "_")}`, 200);
         results.push(await step.do(`write-final-${file.id.replace(/[^a-zA-Z0-9_-]/g, "_")}`, async () =>
           writeAutoHdrFinal(this.env, context, file)));
       }
