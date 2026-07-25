@@ -118,26 +118,38 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
   - **RAW half: DONE and live.** `DROPBOX_RAW_AUTOMATION_ENABLED="1"`; the RAW monitor matches
     changed paths against `projects.raw_folder_path` directly, so it needs no claims. Verified
     2026-07-25 (an image dropped into 12 Brompton's folder ingested on its own).
-  - **AutoHDR half: BLOCKED ON `DROPBOX_HANDOFF_V2_ENABLED="1"` — this is the only remaining
-    work.** `DROPBOX_AUTOHDR_AUTOMATION_ENABLED="1"` is already live but **structurally inert**
-    without V2: the monitor routes finals by matching `autohdr_path_claims` /
+  - **AutoHDR half: `DROPBOX_HANDOFF_V2_ENABLED="1"` enabled 2026-07-25 — awaiting first
+    end-to-end confirmation.** Before this, `DROPBOX_AUTOHDR_AUTOMATION_ENABLED="1"` was live but
+    **structurally inert**: the monitor routes finals by matching `autohdr_path_claims` /
     `autohdr_output_mappings`, and only the V2 send path creates those rows. With V2 off,
-    `startAutoHdr`/`fetchEditedFromAutoHdr` fall through to the legacy branches
+    `startAutoHdr`/`fetchEditedFromAutoHdr` fell through to the legacy branches
     (`workers/background/src/index.ts:122`, `:158`), which never create claims — so the monitor
-    scans every webhook and always reports `matched_count: 0`.
+    scanned every webhook and always reported `matched_count: 0` (measured: a file added to
+    12 Brompton's `04-FINAL-Photos` fired the webhook and a scan within ~1s, matched nothing).
+    **Still to verify:** send a project to AutoHDR through V2, confirm a handoff + mapping +
+    path claim row appear, then drop a file in its finals folder and confirm auto-fetch with no
+    button press.
   - **Why V2 rather than path-derived routing:** routing finals by deriving the folder name from
     `raw_folder_path` (the way RAW works) has no collision detection. On 2026-07-25 two live
     projects derived to the same AutoHDR folder differing only in case (Dropbox paths are
     case-insensitive), which would have cross-ingested one client's finals into another's
     gallery. `autohdr_path_claims`' unique index catches exactly this and parks it in
     `blocked_collision` for a human. Do not build a parallel path-based mechanism.
-  - **Sequenced precondition (not a reason to drop the feature):** V2's fetch requires an output
-    mapping joined to a `started` handoff and *throws* otherwise. Prod has 0 handoffs/0 mappings
-    but projects still live in `editing_autohdr` (was 5 on 2026-07-25; one duplicate deleted by
-    the user, leaving 4) — all sent via legacy, so flipping mid-flight breaks their fetch button.
-    Let them finish on the legacy path, then flip. Check with
+  - **Precondition — SATISFIED 2026-07-25 before the flip.** V2's fetch requires an output
+    mapping joined to a `started` handoff and *throws* otherwise, so any project left in
+    `editing_autohdr` from the legacy path would have had its fetch button break. Started at 5;
+    one duplicate deleted by the user; the remaining 4 were drained to 0 via
+    `POST /api/projects/:id/stage` (validated + audit-logged, 4 `stage.set` entries) — 168 Botany,
+    4 McGowen Avenue and 6/120 Beach to `raw_review` (they had RAW but 0 edited, so
+    `editing_autohdr` was inaccurate), 12 Brompton to `edited_review` (20 edited already fetched).
+    Re-check before any future flip with
     `SELECT count(*) FROM projects WHERE archived_at IS NULL AND stage_key='editing_autohdr';`
-    The send path is already V2-compatible (`projects.ts:242` passes `initiatedBy`).
+    The send path was already V2-compatible (`projects.ts:242` passes `initiatedBy`).
+  - **Gap found while draining:** stage only auto-advances out of `editing_autohdr` when at least
+    one RAW asset is in `selected_for_editing` *and* every selected asset has a matching edited
+    asset (`autohdr-fetch.ts` `advance-stage`). All 4 had **zero** selections, so they could never
+    advance no matter how many times fetch ran. A project sent to AutoHDR without selections is
+    permanently stuck at that stage — worth a guard or a surfaced warning.
   - **Expectation once enabled:** auto-fetch applies to projects *sent through V2*. Anything sent
     on the legacy path has no claim and will always need the manual button — auto-fetch starts
     with the next shoot sent after the flip.
