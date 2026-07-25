@@ -1,7 +1,7 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { createDb, schema } from "@quincy/db";
 import { and, desc, eq, sql } from "drizzle-orm";
-import { isAcceptedPhotoFilename, roleHasCapability } from "@quincy/shared";
+import { isAcceptedPhotoFilename, rawFolderGate, roleHasCapability, RAW_FOLDER_INVALID_MESSAGE, RAW_FOLDER_MISSING_MESSAGE } from "@quincy/shared";
 import { z } from "zod";
 import type { AppEnv } from "../env";
 import { hasProjectAccess, requireCapability } from "../middleware/capability";
@@ -14,6 +14,22 @@ import { jsonInput } from "./helpers";
 const manifestInput = z.object({ filenames: z.array(z.string().min(1)).min(1).max(10_000) });
 const presignInput = z.object({ projectId: z.string().uuid(), filename: z.string().min(1), bytes: z.number().int().positive().max(5 * 1024 * 1024 * 1024), collection: z.enum(["raw", "edited"]).default("raw") });
 const completeInput = z.object({ projectId: z.string().uuid(), key: z.string().min(1), uploadId: z.string().optional(), parts: z.array(z.object({ partNumber: z.number().int().positive(), etag: z.string().min(1) })).optional(), originalFilename: z.string().min(1), contentHash: z.string().max(256).optional(), collection: z.enum(["raw", "edited"]).default("raw"), manifestId: z.string().uuid().optional() });
+/** One project read covering both upload preconditions. A manual edited upload stays invisible
+ * until the publish Workflow writes it to Dropbox, so a project with no usable RAW folder must be
+ * refused before any bytes reach R2 — otherwise the uploader gets a 202 for an asset that can
+ * never appear. Quincy Portal cannot create that folder: Tonomo owns it. */
+async function uploadPrecondition(c: Context<AppEnv>, projectId: string, collection: "raw" | "edited"): Promise<Response | null> {
+  const project = await createDb(c.env.DB).select({ archivedAt: schema.projects.archivedAt, rawFolderPath: schema.projects.rawFolderPath, rawFolderLink: schema.projects.rawFolderLink })
+    .from(schema.projects).where(eq(schema.projects.id, projectId)).get();
+  if (project?.archivedAt) return c.json({ error: "Project is archived" }, 409);
+  if (collection !== "edited") return null;
+  const gate = rawFolderGate(project?.rawFolderPath, project?.rawFolderLink);
+  if (gate.ok) return null;
+  return gate.reason === "missing"
+    ? c.json({ error: RAW_FOLDER_MISSING_MESSAGE, code: "raw_folder_missing" }, 409)
+    : c.json({ error: RAW_FOLDER_INVALID_MESSAGE, code: "raw_folder_invalid" }, 409);
+}
+
 export const uploadsRoutes = new Hono<AppEnv>();
 uploadsRoutes.post("/projects/:id/upload-manifest", requireCapability("uploadRaw"), async (c) => {
   const projectId = c.req.param("id"); if (!await hasProjectAccess(c, projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403); {
@@ -35,7 +51,7 @@ uploadsRoutes.post("/uploads/presign", async (c) => {
   const capability = data.collection === "edited" ? "uploadEdited" : "uploadRaw";
   if (!roleHasCapability(c.get("user").role, capability)) return c.json({ error: "Forbidden", capability }, 403);
   if (!await hasProjectAccess(c, data.projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
-  if ((await createDb(c.env.DB).select({ archivedAt: schema.projects.archivedAt }).from(schema.projects).where(eq(schema.projects.id, data.projectId)).get())?.archivedAt) return c.json({ error: "Project is archived" }, 409); {
+  const refused = await uploadPrecondition(c, data.projectId, data.collection); if (refused) return refused; {
     if (!isAcceptedPhotoFilename(data.filename)) return c.json({ error: data.collection === "raw" ? "RAW uploads must be .jpg or .jpeg files" : "Edited uploads must be .jpg or .jpeg files" }, 400);
     const assetId = newId(); const key = `projects/${data.projectId}/${data.collection}/${assetId}/${safeFilename(data.filename)}`; const multipart = await createMultipartPresign(c.env, key, data.bytes);
     if (!multipart) {
@@ -54,7 +70,7 @@ uploadsRoutes.put("/uploads/direct", async (c) => {
   const capability = collection === "edited" ? "uploadEdited" : "uploadRaw";
   if (!roleHasCapability(c.get("user").role, capability)) return c.json({ error: "Forbidden", capability }, 403);
   if (!await hasProjectAccess(c, projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
-  if ((await createDb(c.env.DB).select({ archivedAt: schema.projects.archivedAt }).from(schema.projects).where(eq(schema.projects.id, projectId)).get())?.archivedAt) return c.json({ error: "Project is archived" }, 409);
+  const refused = await uploadPrecondition(c, projectId, collection as "raw" | "edited"); if (refused) return refused;
   await c.env.MEDIA.put(key, c.req.raw.body, { httpMetadata: { contentType: "image/jpeg" } });
   await audit(c.env, c.get("user").id, "upload.direct", "asset", assetId, { projectId, key });
   return c.body(null, 204);
@@ -64,7 +80,7 @@ uploadsRoutes.post("/uploads/complete", async (c) => {
   const capability = data.collection === "edited" ? "uploadEdited" : "uploadRaw";
   if (!roleHasCapability(c.get("user").role, capability)) return c.json({ error: "Forbidden", capability }, 403);
   if (!await hasProjectAccess(c, data.projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
-  if ((await createDb(c.env.DB).select({ archivedAt: schema.projects.archivedAt }).from(schema.projects).where(eq(schema.projects.id, data.projectId)).get())?.archivedAt) return c.json({ error: "Project is archived" }, 409); {
+  const refused = await uploadPrecondition(c, data.projectId, data.collection); if (refused) return refused; {
     if (!isAcceptedPhotoFilename(data.originalFilename)) return c.json({ error: data.collection === "raw" ? "RAW uploads must be .jpg or .jpeg files" : "Edited uploads must be .jpg or .jpeg files" }, 400);
     const assetId = data.key.match(new RegExp(`^projects/${data.projectId}/${data.collection}/([^/]+)/`))?.[1]; if (!assetId || !z.string().uuid().safeParse(assetId).success) return c.json({ error: "R2 key does not follow the required asset key convention" }, 400);
     if (data.uploadId) { if (!data.parts?.length) return c.json({ error: "Multipart uploads require completed parts" }, 400); await completeMultipart(c.env, data.key, data.uploadId, data.parts); }

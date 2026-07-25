@@ -1,18 +1,12 @@
 import { AUTOHDR_ROOT, normalisePath } from "../dropbox/paths";
 
 export { AUTOHDR_ROOT } from "../dropbox/paths";
+/** Folder-name derivation is owned by `@quincy/shared` so the app worker can refuse an upload
+ * whose destination could never be derived. Re-exported to keep background imports unchanged. */
+export { deriveAutoHdrFolderName } from "@quincy/shared";
 export const AUTOHDR_RAW_SUBFOLDER = "01-RAW-Photos";
 export const AUTOHDR_FINAL_SUBFOLDER_CANDIDATES = ["04-FINAL-Photos", "04-FINALS-Photos"] as const;
 export const AUTOHDR_MANUAL_UPLOADS_SUBFOLDER = "Manual-Uploads";
-
-export function deriveAutoHdrFolderName(rawFolderPath: string): string {
-  const segments = normalisePath(rawFolderPath).split("/").filter(Boolean);
-  const lastSegment = segments.at(-1);
-  if (!lastSegment || (lastSegment.toLowerCase() === "listing images" && segments.length < 2)) {
-    throw new Error(`Cannot derive AutoHDR folder name from RAW folder path: ${rawFolderPath}`);
-  }
-  return lastSegment.toLowerCase() === "listing images" ? segments.at(-2)! : lastSegment;
-}
 
 export function autoHdrRawInputPath(folderName: string): string {
   return `${AUTOHDR_ROOT}/${folderName}/${AUTOHDR_RAW_SUBFOLDER}`;
@@ -43,6 +37,21 @@ export function autoHdrManualUploadPath(folderName: string, assetId: string, fil
     throw new Error("Invalid manual upload path segment");
   }
   return `${AUTOHDR_ROOT}/${folderName}/${AUTOHDR_MANUAL_UPLOADS_SUBFOLDER}/${assetId}/${filename}`;
+}
+
+/** The `/AutoHDR` subtree is Portal-owned, so the publish Workflow creates its own destination
+ * rather than relying on the provider's implicit parent creation. Taking the destination itself
+ * means the folders created are exactly the parents of the object written. Every level is returned
+ * because `create_folder_v2` only guarantees the leaf; the watched root is never created here. */
+export function autoHdrManualUploadFolderChain(destination: string): string[] {
+  const segments = normalisePath(destination).split("/").filter(Boolean);
+  const [root, folderName, manualUploads, assetId] = segments;
+  if (segments.length !== 5 || `/${root}` !== AUTOHDR_ROOT || manualUploads !== AUTOHDR_MANUAL_UPLOADS_SUBFOLDER) {
+    throw new Error(`Unexpected manual edited upload destination: ${destination}`);
+  }
+  const projectFolder = `${AUTOHDR_ROOT}/${folderName}`;
+  const uploadsFolder = `${projectFolder}/${manualUploads}`;
+  return [projectFolder, uploadsFolder, `${uploadsFolder}/${assetId}`];
 }
 
 /** Mirrors a manual RAW upload beneath the Tonomo-owned listing folder. Dropbox overwrite

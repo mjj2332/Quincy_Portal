@@ -383,6 +383,25 @@
   `manual_raw_publish` jobs and audits but never change the RAW asset's ready state or turn a
   successful upload response into a failure. Persist the exact Dropbox destination in
   `source_path` only after provider success.
+- **When a background step controls visibility, its preconditions belong at the API boundary.**
+  The inverse of the rule above: an *edited* manual upload is invisible until
+  `ManualEditedPublish` writes it to Dropbox, so every precondition that Workflow needs is really
+  an upload precondition. Shipping the check only inside the Workflow meant a project with no
+  `raw_folder_path`/`raw_folder_link` (both optional at create, and Tonomo-owned so Portal cannot
+  create one) accepted the upload end to end — presign 200, R2 bytes written, D1 row committed,
+  HTTP 202 — and only failed minutes later, leaving `publish_status = 'failed'` and an asset no
+  listing would ever return. To the uploader that is indistinguishable from data loss, and the
+  only recovery (`/api/jobs/:id/retry`) sat behind `adminBackend` while `editor` is the role that
+  actually holds `uploadEdited`. **Rule:** if a durable background step gates visibility, validate
+  its inputs synchronously before accepting bytes, and return a machine-readable code the UI can
+  turn into an actionable message. A 202 is a promise; only make it when it can be kept.
+- **Distinguish provider folders you own from ones you don't.** `/AutoHDR/*` is Portal-owned, so
+  the publish Workflow creates its own destination chain explicitly (each `create_folder_v2`
+  absorbing `path/conflict`) rather than leaning on the provider's implicit parent creation —
+  same shape as the AutoHDR hand-off's `ensure-dest-folder`. The Tonomo listing folder is *not*
+  ours: the RAW branch deliberately creates only its own child so a missing listing parent fails
+  loudly instead of being conjured. **Rule:** derive the chain from the destination path itself,
+  so the folders created are provably the parents of the object written and cannot drift.
 
 - **The `secrets` context is not allowed in a job-level `if:` in GitHub Actions.** Using it there
   (e.g. `if: ${{ ... && secrets.FOO != '' }}` on a job) doesn't fail loudly — it invalidates the

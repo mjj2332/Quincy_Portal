@@ -4,7 +4,7 @@ import { COLLECTION_RECEIVED_COUNT_SQL, collectionReceivedCountBindings } from "
 import { assets, collections, projects } from "@quincy/db/schema";
 import { and, eq, isNull } from "drizzle-orm";
 
-import { autoHdrManualUploadPath, deriveAutoHdrFolderName, rawManualUploadPath } from "../autohdr/paths";
+import { autoHdrManualUploadFolderChain, autoHdrManualUploadPath, deriveAutoHdrFolderName, rawManualUploadPath } from "../autohdr/paths";
 import { pathFromRawFolderLink } from "../dropbox/sync";
 import { createFolder, upload } from "../dropbox/client";
 import type { Env } from "../env";
@@ -64,6 +64,16 @@ export class ManualEditedPublish extends WorkflowEntrypoint<Env, ManualEditedPub
             const folder = destination.slice(0, destination.lastIndexOf("/"));
             await createFolder(this.env, dbFor(this.env), folder);
             return { folder };
+          });
+        } else {
+          await step.do("ensure-manual-edited-folder", async () => {
+            // Unlike the Tonomo listing folder, the `/AutoHDR` subtree is Portal-owned, so create
+            // the destination the same way the AutoHDR hand-off does instead of relying on the
+            // provider's implicit parent creation. Every level is created because create_folder_v2
+            // only guarantees the leaf, and each call absorbs path/conflict.
+            const folders = autoHdrManualUploadFolderChain(destination);
+            for (const folder of folders) await createFolder(this.env, dbFor(this.env), folder);
+            return { folders };
           });
         }
         await step.do("publish-manual-upload", async () => {

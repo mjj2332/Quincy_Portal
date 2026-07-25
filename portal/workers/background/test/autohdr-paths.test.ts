@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { autoHdrFinalPathCandidates, autoHdrManualUploadPath, autoHdrRawInputPath, deriveAutoHdrFolderName, rawManualUploadFolderPath, rawManualUploadPath, reconstructSourcePath } from "../src/autohdr/paths";
+import { autoHdrFinalPathCandidates, autoHdrManualUploadFolderChain, autoHdrManualUploadPath, autoHdrRawInputPath, deriveAutoHdrFolderName, rawManualUploadFolderPath, rawManualUploadPath, reconstructSourcePath } from "../src/autohdr/paths";
 
 describe("AutoHDR paths", () => {
   const mcGowenRawPath = "/Projects/4 McGowen Ave, Malabar NSW 2036, Australia/Listing Images";
@@ -64,6 +64,28 @@ describe("AutoHDR paths", () => {
     expect(() => autoHdrManualUploadPath("123 Main St", "11111111-1111-4111-8111-111111111111", "nested/edited.jpg")).toThrow("Invalid manual upload path segment");
     expect(() => autoHdrManualUploadPath("../escape", "11111111-1111-4111-8111-111111111111", "edited.jpg")).toThrow("Invalid manual upload path segment");
     expect(() => autoHdrManualUploadPath("123 Main St", "11111111-1111-4111-8111-111111111111", "../edited.jpg")).toThrow("Invalid manual upload path segment");
+  });
+
+  it("creates every Portal-owned parent of a manual upload, never the watched root", () => {
+    const destination = autoHdrManualUploadPath("123 Main St", "11111111-1111-4111-8111-111111111111", "edited final.jpg");
+    const folders = autoHdrManualUploadFolderChain(destination);
+    expect(folders).toEqual([
+      "/AutoHDR/123 Main St",
+      "/AutoHDR/123 Main St/Manual-Uploads",
+      "/AutoHDR/123 Main St/Manual-Uploads/11111111-1111-4111-8111-111111111111",
+    ]);
+    // Outermost first, and the last folder is exactly the parent of the object written.
+    expect(destination.startsWith(`${folders.at(-1)}/`)).toBe(true);
+    expect(folders).not.toContain("/AutoHDR");
+  });
+
+  it("refuses to create folders for a destination outside the manual-upload convention", () => {
+    expect(() => autoHdrManualUploadFolderChain("/AutoHDR/123 Main St/04-FINAL-Photos/edited.jpg"))
+      .toThrow("Unexpected manual edited upload destination");
+    expect(() => autoHdrManualUploadFolderChain("/Tonomo/Raw Files/123 Main St/Manual-Uploads/11111111-1111-4111-8111-111111111111/edited.jpg"))
+      .toThrow("Unexpected manual edited upload destination");
+    expect(() => autoHdrManualUploadFolderChain("/AutoHDR/123 Main St/Manual-Uploads/edited.jpg"))
+      .toThrow("Unexpected manual edited upload destination");
   });
 
   it("derives the manual RAW mirror from the canonical Tonomo listing path", () => {

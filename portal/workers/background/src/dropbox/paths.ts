@@ -1,3 +1,9 @@
+import { normalisePath } from "@quincy/shared";
+
+/** Path normalisation is owned by `@quincy/shared` so the app worker can apply the same rule when
+ * it gates uploads. Re-exported here to keep every existing background import unchanged. */
+export { normalisePath } from "@quincy/shared";
+
 /** Canonical roots for the only two automated Dropbox intake scopes. */
 export const TONOMO_RAW_ROOT = "/Tonomo/Raw Files" as const;
 export const AUTOHDR_ROOT = "/AutoHDR" as const;
@@ -8,19 +14,6 @@ export type DropboxMonitorIdentity = {
   scope: DropboxMonitorScope;
   watchedRoot: typeof TONOMO_RAW_ROOT | typeof AUTOHDR_ROOT;
 };
-
-/** Shared provider-path normalisation. Display casing is retained; comparison callers use
- * `dropboxPathKey`. Local Finder mount prefixes are stripped once here for every consumer. */
-export function normalisePath(path: string): string {
-  let normalised = path.trim().replace(/\\/g, "/").replace(/\/+/g, "/");
-  if (/^\/(?:users|volumes)\//i.test(normalised)) {
-    const segments = normalised.split("/");
-    const dropboxIndex = segments.findIndex((segment) => /(?:^| )Dropbox$/i.test(segment));
-    if (dropboxIndex !== -1) normalised = segments.slice(dropboxIndex + 1).join("/");
-  }
-  normalised = normalised.replace(/^\/+|\/+$/g, "");
-  return normalised ? `/${normalised}` : "";
-}
 
 export function dropboxPathKey(path: string): string {
   return normalisePath(path).toLowerCase();

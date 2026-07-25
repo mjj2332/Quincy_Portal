@@ -1474,7 +1474,7 @@ describe("staff app API", () => {
 
   it("queues edited uploads for Dropbox before exposing them", async () => {
     const cookie = await sessionCookie(adminToken);
-    const created = await SELF.fetch("https://portal.test/api/projects", { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ street: "Manual publish queue", orderedServices: [] }) });
+    const created = await SELF.fetch("https://portal.test/api/projects", { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ street: "Manual publish queue", orderedServices: [], rawFolderPath: "/Tonomo/Raw Files/Manual publish queue" }) });
     expect(created.status).toBe(201);
     const project = await created.json() as { id: string };
     const assetId = crypto.randomUUID();
@@ -1492,6 +1492,78 @@ describe("staff app API", () => {
     expect(await authEnv.MEDIA.get(key)).not.toBeNull();
     const listed = await SELF.fetch(`https://portal.test/api/projects/${project.id}/assets?collection=edited`, { headers: { cookie } });
     await expect(listed.json()).resolves.toEqual({ assets: [] });
+  });
+
+  it("refuses edited uploads before any bytes land when the project has no Dropbox RAW folder", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const created = await SELF.fetch("https://portal.test/api/projects", { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ street: "No Dropbox folder", orderedServices: [] }) });
+    expect(created.status).toBe(201);
+    const project = await created.json() as { id: string };
+
+    const presigned = await SELF.fetch("https://portal.test/api/uploads/presign", {
+      method: "POST", headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ projectId: project.id, filename: "manual.jpg", bytes: 1024, collection: "edited" }),
+    });
+    expect(presigned.status).toBe(409);
+    await expect(presigned.json()).resolves.toMatchObject({ code: "raw_folder_missing" });
+
+    // A client that skips presign must not get further: the asset would be committed as pending
+    // and then be hidden forever once the publish Workflow fails.
+    const assetId = crypto.randomUUID();
+    const key = `projects/${project.id}/edited/${assetId}/manual.jpg`;
+    await authEnv.MEDIA.put(key, "manual-jpeg", { httpMetadata: { contentType: "image/jpeg" } });
+    const completed = await SELF.fetch("https://portal.test/api/uploads/complete", {
+      method: "POST", headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ projectId: project.id, key, originalFilename: "manual.jpg", collection: "edited" }),
+    });
+    expect(completed.status).toBe(409);
+    await expect(completed.json()).resolves.toMatchObject({ code: "raw_folder_missing" });
+    expect(await database.DB.prepare("SELECT id FROM assets WHERE id = ?").bind(assetId).first()).toBeNull();
+    expect(await database.DB.prepare("SELECT id FROM collections WHERE project_id = ? AND kind = 'edited'").bind(project.id).first()).toBeNull();
+  });
+
+  it("refuses edited uploads when the RAW folder path yields no AutoHDR shoot folder", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const created = await SELF.fetch("https://portal.test/api/projects", { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ street: "Underivable folder", orderedServices: [], rawFolderPath: "/Listing Images" }) });
+    const project = await created.json() as { id: string };
+    const presigned = await SELF.fetch("https://portal.test/api/uploads/presign", {
+      method: "POST", headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ projectId: project.id, filename: "manual.jpg", bytes: 1024, collection: "edited" }),
+    });
+    expect(presigned.status).toBe(409);
+    await expect(presigned.json()).resolves.toMatchObject({ code: "raw_folder_invalid" });
+  });
+
+  it("accepts edited uploads on a link-only project and never gates RAW uploads on the folder", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const [linkOnly, noFolder] = await Promise.all([
+      SELF.fetch("https://portal.test/api/projects", { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ street: "Link only", orderedServices: [], rawFolderLink: "https://www.dropbox.com/scl/fo/link-only" }) }),
+      SELF.fetch("https://portal.test/api/projects", { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ street: "RAW upload without folder", orderedServices: [] }) }),
+    ]);
+    const linkProject = await linkOnly.json() as { id: string };
+    const rawProject = await noFolder.json() as { id: string };
+
+    // Only the background worker can resolve a share link to a path, so link-only projects stay
+    // allowed here and are still checked by the publish Workflow.
+    const editedId = crypto.randomUUID();
+    const editedKey = `projects/${linkProject.id}/edited/${editedId}/manual.jpg`;
+    await authEnv.MEDIA.put(editedKey, "manual-jpeg", { httpMetadata: { contentType: "image/jpeg" } });
+    const edited = await SELF.fetch("https://portal.test/api/uploads/complete", {
+      method: "POST", headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ projectId: linkProject.id, key: editedKey, originalFilename: "manual.jpg", collection: "edited" }),
+    });
+    expect(edited.status).toBe(202);
+    await expect(edited.json()).resolves.toMatchObject({ assetId: editedId, publishStatus: "pending" });
+
+    // A failed RAW mirror never hides the asset, so RAW keeps working with no Dropbox folder.
+    const rawId = crypto.randomUUID();
+    const rawKey = `projects/${rawProject.id}/raw/${rawId}/capture.jpg`;
+    await authEnv.MEDIA.put(rawKey, "raw-jpeg", { httpMetadata: { contentType: "image/jpeg" } });
+    const raw = await SELF.fetch("https://portal.test/api/uploads/complete", {
+      method: "POST", headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ projectId: rawProject.id, key: rawKey, originalFilename: "capture.jpg", collection: "raw" }),
+    });
+    expect(raw.status).toBe(201);
   });
 
   it("hides pending manual edited uploads until Dropbox publishing is ready", async () => {
@@ -1683,7 +1755,7 @@ describe("staff app API", () => {
     const cookie = await sessionCookie(adminToken);
     const projectId = "00000000-0000-4000-8000-0000000000ff"; const collectionId = crypto.randomUUID(); const assetId = crypto.randomUUID(); const now = Date.now();
     await database.DB.batch([
-      database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, ?, 'awaiting_raw', ?, ?)").bind(projectId, "Manual service failure", now, now),
+      database.DB.prepare("INSERT INTO projects (id, street, stage_key, raw_folder_path, created_at, updated_at) VALUES (?, ?, 'awaiting_raw', ?, ?, ?)").bind(projectId, "Manual service failure", "/Tonomo/Raw Files/Manual service failure", now, now),
       database.DB.prepare("INSERT INTO collections (id, project_id, kind, status, received_count, created_at, updated_at) VALUES (?, ?, 'raw', 'empty', 0, ?, ?)").bind(crypto.randomUUID(), projectId, now, now),
       database.DB.prepare("INSERT INTO collections (id, project_id, kind, status, received_count, created_at, updated_at) VALUES (?, ?, 'edited', 'empty', 0, ?, ?)").bind(collectionId, projectId, now, now),
     ]);
