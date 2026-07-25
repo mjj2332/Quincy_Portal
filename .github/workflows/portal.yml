@@ -59,6 +59,9 @@ jobs:
           cache: npm
           cache-dependency-path: portal/package-lock.json
       - run: npm ci
+      # workers/app's tests serve the SPA through the ASSETS binding, which
+      # reads apps/web/dist — build it first since jobs don't share a filesystem.
+      - run: npm run build -w @quincy/web
       - run: npx vitest run --config packages/shared/vitest.config.ts
       - run: npx vitest run --config workers/app/vitest.config.ts
       - run: npx vitest run --config workers/app/vitest.dev.config.ts
