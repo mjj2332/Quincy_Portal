@@ -38,17 +38,18 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
   - **2** `feat/capture-count-and-dropbox-mirror` — durable manifest-based capture count, manual
     RAW uploads now mirror to Dropbox. **Live.**
   - **3** `feat/dropbox-webhook-automation` — event-driven Dropbox intake, dual root-scoped
-    monitors, AutoHDR handoff/claim/versioning model. **Deployed but dormant by design**: all
-    three new automation flags (`DROPBOX_RAW_AUTOMATION_ENABLED`, `DROPBOX_AUTOHDR_AUTOMATION_ENABLED`,
-    `DROPBOX_HANDOFF_V2_ENABLED`) default `"0"` in production, confirmed via `wrangler deploy`
-    output. The legacy hourly cron is deliberately still present as a safety net — do not remove
-    it in the same deploy that enables the new monitors. An independent review caught and a
+    monitors, AutoHDR handoff/claim/versioning model. Shipped dormant, then **progressively
+    enabled 2026-07-25**: `DROPBOX_RAW_AUTOMATION_ENABLED="1"` and
+    `DROPBOX_AUTOHDR_AUTOMATION_ENABLED="1"` are now live; `DROPBOX_HANDOFF_V2_ENABLED` is the
+    last one still `"0"` and is **required** to complete AutoHDR auto-fetch — see the
+    webhook-triggered auto-fetch entry under "Open, not yet fixed" for the sequenced plan.
+    The legacy hourly cron is deliberately still present as a safety net — do not remove it in
+    the same deploy that enables the new monitors. An independent review caught and a
     follow-up fix pass resolved 8 real races/gaps before this was considered done — see
     `docs/lessons.md` for the two most reusable patterns (partial-unique-index backstop for
     "exactly one current row"; never retire a legacy safety mechanism in the same deploy that
-    defaults its replacement off). **Still outstanding, not blocking:** four rollout doc updates
-    (`docs/Dropbox-Setup.md`, `docs/Implementation-Plan.md` — the plan's step 8 checklist) and
-    the deliberate decision of *when* to flip the automation flags on.
+    defaults its replacement off). **Still outstanding:** four rollout doc updates
+    (`docs/Dropbox-Setup.md`, `docs/Implementation-Plan.md` — the plan's step 8 checklist).
 
 - **Branch `fix/gate-manual-edited-upload-on-raw-folder` (2026-07-25) — not yet merged or
   deployed.** Manual *edited* uploads were accepted (presign 200 → R2 bytes → D1 row → 202) on
@@ -110,25 +111,38 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
 - [ ] **Operator action:** fix the `TRANSFORM_SOURCE_SECRET` drift between `workers/app` and
   `workers/background` (`wrangler secret put` in both) — the root cause behind the rendition DLQ
   incident below. The DLQ monitoring/replay tooling is live, but the drift itself is unfixed.
-- [ ] **`DROPBOX_HANDOFF_V2_ENABLED` — decided 2026-07-25 to wait, with a specific
-  precondition.** AutoHDR *automation* (`DROPBOX_AUTOHDR_AUTOMATION_ENABLED="1"`, live) is
-  **structurally inert until this flag is on**: the monitor routes finals by matching them
-  against `autohdr_path_claims`/`autohdr_output_mappings`, and those rows are only created by
-  the V2 send path. With V2 off, `startAutoHdr`/`fetchEditedFromAutoHdr` fall through to the
-  legacy branches (`workers/background/src/index.ts:122`, `:158`), which never create claims —
-  so the AutoHDR monitor scans every webhook and always reports `matched_count: 0`. Dropping
-  files into an AutoHDR folder will never auto-fetch; the manual "Fetch edited from autoHDR"
-  button (legacy path) is the only route.
-  **Why not flipped yet:** V2's fetch requires an output mapping joined to a `started` handoff
-  and *throws* `"No started AutoHDR handoff mapping exists for this project"` otherwise. As of
-  2026-07-25 prod has **0 handoffs and 0 output mappings** but **5 projects live in
-  `editing_autohdr`** (4 McGowen Ave, 6/120 Beach St, 168 Botany St, 4 McGowen Avenue,
-  12 Brompton Rd) — all sent via legacy. Flipping now breaks the fetch button for all five;
-  recovery means re-sending each through V2, re-copying their selected RAW to Dropbox.
-  **Precondition to flip:** wait until those in-flight projects have completed their round-trip
-  (fetched edited, moved past `editing_autohdr`), then enable so only new sends use V2. Verify
-  with `SELECT count(*) FROM projects WHERE archived_at IS NULL AND stage_key='editing_autohdr';`
-  The send path is already V2-compatible (`projects.ts:242` passes `initiatedBy`).
+- [ ] **Webhook-triggered auto-fetch for RAW *and* AutoHDR edited — REQUIRED FEATURE
+  (user direction, 2026-07-25). Not optional, not to be descoped.** Target behaviour: a new
+  file landing in either a Tonomo RAW folder or an AutoHDR `04-FINAL-Photos` folder is ingested
+  automatically off the Dropbox webhook, with no button press.
+  - **RAW half: DONE and live.** `DROPBOX_RAW_AUTOMATION_ENABLED="1"`; the RAW monitor matches
+    changed paths against `projects.raw_folder_path` directly, so it needs no claims. Verified
+    2026-07-25 (an image dropped into 12 Brompton's folder ingested on its own).
+  - **AutoHDR half: BLOCKED ON `DROPBOX_HANDOFF_V2_ENABLED="1"` — this is the only remaining
+    work.** `DROPBOX_AUTOHDR_AUTOMATION_ENABLED="1"` is already live but **structurally inert**
+    without V2: the monitor routes finals by matching `autohdr_path_claims` /
+    `autohdr_output_mappings`, and only the V2 send path creates those rows. With V2 off,
+    `startAutoHdr`/`fetchEditedFromAutoHdr` fall through to the legacy branches
+    (`workers/background/src/index.ts:122`, `:158`), which never create claims — so the monitor
+    scans every webhook and always reports `matched_count: 0`.
+  - **Why V2 rather than path-derived routing:** routing finals by deriving the folder name from
+    `raw_folder_path` (the way RAW works) has no collision detection. On 2026-07-25 two live
+    projects derived to the same AutoHDR folder differing only in case (Dropbox paths are
+    case-insensitive), which would have cross-ingested one client's finals into another's
+    gallery. `autohdr_path_claims`' unique index catches exactly this and parks it in
+    `blocked_collision` for a human. Do not build a parallel path-based mechanism.
+  - **Sequenced precondition (not a reason to drop the feature):** V2's fetch requires an output
+    mapping joined to a `started` handoff and *throws* otherwise. Prod has 0 handoffs/0 mappings
+    but projects still live in `editing_autohdr` (was 5 on 2026-07-25; one duplicate deleted by
+    the user, leaving 4) — all sent via legacy, so flipping mid-flight breaks their fetch button.
+    Let them finish on the legacy path, then flip. Check with
+    `SELECT count(*) FROM projects WHERE archived_at IS NULL AND stage_key='editing_autohdr';`
+    The send path is already V2-compatible (`projects.ts:242` passes `initiatedBy`).
+  - **Expectation once enabled:** auto-fetch applies to projects *sent through V2*. Anything sent
+    on the legacy path has no claim and will always need the manual button — auto-fetch starts
+    with the next shoot sent after the flip.
+  - **Optional backstop, safe only after V2:** an hourly cron sweep over `editing_autohdr`
+    projects as a missed-webhook safety net (claims make folder→project ownership unambiguous).
 
 ## Resolved incidents (kept for pattern-recognition; see `docs/lessons.md` for mechanics)
 
