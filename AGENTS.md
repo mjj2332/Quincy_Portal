@@ -35,7 +35,8 @@ supersedes `docs/Implementation-Proposal.md` — notably auth is **Google OAuth*
 Cloudflare Access, and renditions use the **remote Image Transformation** path, not a
 Container.
 
-To-do and lessons live in **`docs/`**, not a top-level `tasks/`.
+To-do and lessons live in **`docs/`**, not a top-level `tasks/`. Before delegating work to
+Codex or Agy subagents, read `docs/Subagent-Orchestration.md`.
 
 ## Verify before committing (from `portal/`)
 
