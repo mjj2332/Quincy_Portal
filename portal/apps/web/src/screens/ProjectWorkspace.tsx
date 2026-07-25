@@ -99,7 +99,7 @@ export function ProjectWorkspace({ projectId, notice, onNoticeShown }: { project
           setData(project); setAssets(raw.assets); setRawAssets(raw.assets); setIngest(status); setJobs(jobList?.jobs ?? []);
           // Editors land straight on the collection they actually work in during these stages,
           // rather than always defaulting to RAW (which is done being reviewed by then).
-          if (canViewEdited && (project.stageKey === "editing_autohdr" || project.stageKey === "edited_review")) setActiveTab("edited");
+          if (canViewEdited && (project.stageKey === "editing_autohdr" || project.stageKey === "edited_review" || project.stageKey === "delivered")) setActiveTab("edited");
         }
       })
       .catch((reason: unknown) => { if (!controller.signal.aborted && currentProjectIdRef.current === projectIdAtStart) setError(reason instanceof Error ? reason.message : "Project details could not be loaded."); })
