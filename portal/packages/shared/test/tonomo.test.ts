@@ -28,6 +28,22 @@ describe("parseTonomoOrder", () => {
     });
   });
 
+  it("uses property_address formatted_address when street is missing", () => {
+    const order = parseTonomoOrder({
+      order_id: "formatted-address",
+      property_address: {
+        formatted_address: "17 Oxford St, Bondi Junction NSW 2022, Australia",
+        city: "Bondi Junction",
+        zipcode: "2022",
+      },
+    });
+    expect(order).toMatchObject({
+      street: "17 Oxford St, Bondi Junction NSW 2022, Australia",
+      suburb: "Bondi Junction",
+      postcode: "2022",
+    });
+  });
+
   it("collects unknown services without rejecting the order", () => {
     expect(parseTonomoOrder({ id: "7", street: "7 Test St", line_items: ["Photography", "Drone"] })).toMatchObject({
       services: [{ kind: "raw" }], unrecognisedServices: ["Drone"],
