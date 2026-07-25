@@ -111,48 +111,38 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
 - [ ] **Operator action:** fix the `TRANSFORM_SOURCE_SECRET` drift between `workers/app` and
   `workers/background` (`wrangler secret put` in both) — the root cause behind the rendition DLQ
   incident below. The DLQ monitoring/replay tooling is live, but the drift itself is unfixed.
-- [ ] **Webhook-triggered auto-fetch for RAW *and* AutoHDR edited — REQUIRED FEATURE
-  (user direction, 2026-07-25). Not optional, not to be descoped.** Target behaviour: a new
-  file landing in either a Tonomo RAW folder or an AutoHDR `04-FINAL-Photos` folder is ingested
-  automatically off the Dropbox webhook, with no button press.
-  - **RAW half: DONE and live.** `DROPBOX_RAW_AUTOMATION_ENABLED="1"`; the RAW monitor matches
-    changed paths against `projects.raw_folder_path` directly, so it needs no claims. Verified
-    2026-07-25 (an image dropped into 12 Brompton's folder ingested on its own).
-  - **AutoHDR half: `DROPBOX_HANDOFF_V2_ENABLED="1"` enabled 2026-07-25 — awaiting first
-    end-to-end confirmation.** Before this, `DROPBOX_AUTOHDR_AUTOMATION_ENABLED="1"` was live but
-    **structurally inert**: the monitor routes finals by matching `autohdr_path_claims` /
-    `autohdr_output_mappings`, and only the V2 send path creates those rows. With V2 off,
-    `startAutoHdr`/`fetchEditedFromAutoHdr` fell through to the legacy branches
-    (`workers/background/src/index.ts:122`, `:158`), which never create claims — so the monitor
-    scanned every webhook and always reported `matched_count: 0` (measured: a file added to
-    12 Brompton's `04-FINAL-Photos` fired the webhook and a scan within ~1s, matched nothing).
-    **Still to verify:** send a project to AutoHDR through V2, confirm a handoff + mapping +
-    path claim row appear, then drop a file in its finals folder and confirm auto-fetch with no
-    button press.
-  - **Why V2 rather than path-derived routing:** routing finals by deriving the folder name from
-    `raw_folder_path` (the way RAW works) has no collision detection. On 2026-07-25 two live
-    projects derived to the same AutoHDR folder differing only in case (Dropbox paths are
-    case-insensitive), which would have cross-ingested one client's finals into another's
-    gallery. `autohdr_path_claims`' unique index catches exactly this and parks it in
-    `blocked_collision` for a human. Do not build a parallel path-based mechanism.
-  - **Precondition — SATISFIED 2026-07-25 before the flip.** V2's fetch requires an output
-    mapping joined to a `started` handoff and *throws* otherwise, so any project left in
-    `editing_autohdr` from the legacy path would have had its fetch button break. Started at 5;
-    one duplicate deleted by the user; the remaining 4 were drained to 0 via
-    `POST /api/projects/:id/stage` (validated + audit-logged, 4 `stage.set` entries) — 168 Botany,
-    4 McGowen Avenue and 6/120 Beach to `raw_review` (they had RAW but 0 edited, so
-    `editing_autohdr` was inaccurate), 12 Brompton to `edited_review` (20 edited already fetched).
-    Re-check before any future flip with
-    `SELECT count(*) FROM projects WHERE archived_at IS NULL AND stage_key='editing_autohdr';`
-    The send path was already V2-compatible (`projects.ts:242` passes `initiatedBy`).
-  - **Gap found while draining:** stage only auto-advances out of `editing_autohdr` when at least
-    one RAW asset is in `selected_for_editing` *and* every selected asset has a matching edited
-    asset (`autohdr-fetch.ts` `advance-stage`). All 4 had **zero** selections, so they could never
-    advance no matter how many times fetch ran. A project sent to AutoHDR without selections is
-    permanently stuck at that stage — worth a guard or a surfaced warning.
-  - **Expectation once enabled:** auto-fetch applies to projects *sent through V2*. Anything sent
-    on the legacy path has no claim and will always need the manual button — auto-fetch starts
-    with the next shoot sent after the flip.
+- [x] **Webhook-triggered auto-fetch for RAW *and* AutoHDR edited — DONE and verified live
+  end-to-end, 2026-07-25 (user-required feature).** A new file landing in either a Tonomo RAW
+  folder or an AutoHDR `04-FINAL-Photos` folder is now ingested automatically off the Dropbox
+  webhook, no button press. Both flags live: `DROPBOX_RAW_AUTOMATION_ENABLED="1"`,
+  `DROPBOX_AUTOHDR_AUTOMATION_ENABLED="1"`, `DROPBOX_HANDOFF_V2_ENABLED="1"`.
+  - **RAW**: the monitor matches changed paths against `projects.raw_folder_path` directly, no
+    claims needed. Verified: a file dropped into 12 Brompton's folder ingested unprompted.
+  - **AutoHDR**: routes via `autohdr_path_claims`/`autohdr_output_mappings`, created only by the
+    V2 send path — chosen over deriving the folder name from `raw_folder_path` (the RAW
+    approach) specifically because that has no collision detection, and two live projects were
+    found sharing a folder name differing only in case (Dropbox paths are case-insensitive).
+    `autohdr_path_claims`' unique index catches exactly that and parks it in `blocked_collision`
+    for a human — do not replace this with path-derived routing.
+  - **Verified end-to-end 2026-07-25**: sent 168 Botany to AutoHDR via V2 → path claim +
+    output mapping created (`pending`/`pending_discovery`) → dropped `places-04.jpg` into its
+    `04-FINAL-Photos` → claim resolved to `active`, mapping's `final_path` populated, a
+    `fetch_edited` job appeared on its own (`trigger: "dropbox_delta"` in its payload, not a
+    click) → asset ingested with 2 renditions within 10 seconds.
+  - **Scope**: auto-fetch applies to projects *sent through V2*. A project sent on the legacy
+    path has no claim and always needs the manual button.
+  - **Real bug hit and fixed along the way** — see `docs/lessons.md`: both V2 Workflow instance
+    ids used `:`, which Cloudflare rejects (`instance.invalid_id`). Broke V2 send *and* fetch;
+    stayed invisible until the day V2 was actually switched on, because the legacy paths use a
+    bare UUID and never exercised the bad format. Fixed with a regression test.
+  - **Also found while getting there** (kept as open follow-ups, not blocking):
+    - A project sent to AutoHDR with **zero** RAW assets in `selected_for_editing` can never
+      leave `editing_autohdr` — `advance-stage` requires `selectedRawAssets.length > 0` before
+      it will even check readiness. Worth a guard or a surfaced warning at send time.
+    - The account was found to be on the Workers **Free** plan (50 subrequests/request, 100k
+      requests/day), which made the whole pipeline unable to run reliably at real volume.
+      Upgraded to Workers Paid 2026-07-25 — see `docs/lessons.md` for how much this looked like
+      unrelated application bugs before the plan tier was checked.
   - **Optional backstop, safe only after V2:** an hourly cron sweep over `editing_autohdr`
     projects as a missed-webhook safety net (claims make folder→project ownership unambiguous).
 
