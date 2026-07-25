@@ -202,7 +202,7 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
 account's default) is now a second, independent build pipeline alongside Codex. Requires
 `--mode accept-edits` (no `--sandbox` — combined with accept-edits it silently blocks writes
 with zero error) and `--add-dir "<repo root>"` (writes outside Agy's `trustedWorkspaces`
-allowlist are silent no-ops otherwise). Full mechanics in `docs/Subagent-Orchestration.md` §3a.
+allowlist are silent no-ops otherwise). Full mechanics in `docs/subagents/agy-cli.md`.
 
 ## Implemented plans (see `docs/plans/implemented/`)
 
