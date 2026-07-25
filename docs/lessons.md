@@ -320,6 +320,30 @@
   would still silently drop after 3 retries; this residual gap is intentionally left for a future
   pass rather than adding infrastructure speculatively.
 
+## Cloudflare Free plan + per-invocation subrequest budget (2026-07-25)
+
+- **This account is on the Workers Free plan — a `limits` block is rejected and fails the whole
+  deploy.** Adding `"limits": { "subrequests": 10000 }` to `workers/background/wrangler.jsonc`
+  passed `wrangler deploy --dry-run` and CI, then failed the real deploy with *"CPU limits are
+  not supported for the Free plan"* (code 100328) — briefly leaving `main` carrying an
+  undeployable config. **Rules:** (1) `--dry-run` does not validate plan-gated fields; only a
+  real deploy does, so never merge a `wrangler.jsonc` change on dry-run evidence alone. (2) The
+  subrequest ceiling **cannot be raised on this account** — the only lever is doing less work
+  per invocation.
+- **A per-run download cap is really a subrequest budget, and it fans out ~10×.** Each RAW file
+  costs roughly 9-10 subrequests (2 Dropbox content calls, an R2 put, a rendition enqueue,
+  several D1 statements), so `MAX_DOWNLOADS_PER_RUN = 150` put one invocation at ~1,350-1,500
+  and it died mid-run with "Too many subrequests by single Worker invocation." Lowered to 40.
+  **Rule:** when sizing a per-run cap, multiply by the real per-item subrequest cost — the file
+  count is not the budget. Rely on the continuation/re-enqueue path for the remainder rather
+  than raising the cap.
+- **Diagnose the ceiling before theorising about which default applies.** This was mis-diagnosed
+  twice: first as queue batching alone (`max_batch_size: 10` → `1`, a real contributor but not
+  sufficient — a *single* project still blew the budget), then as a paid account still on the
+  pre-Feb-2026 1,000 default. The actual answer (Free plan, ceiling not raisable) only surfaced
+  from the deploy API's own error. **Rule:** when a platform limit is hit, get the plan/tier
+  confirmed from the platform itself before designing around an assumed limit value.
+
 ## Dropbox 429 burst amplification + Tonomo formatted_address fallback (2026-07-25)
 
 - **A cursor-reset re-list can turn "one new file" into a Dropbox traffic-limit ban.** One
