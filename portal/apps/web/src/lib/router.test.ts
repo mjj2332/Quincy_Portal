@@ -103,13 +103,20 @@ describe("one-time OAuth return fallback", () => {
     const saved = memoryStorage(`/projects/${projectId}`);
     expect(consumeSignInDestinationFrom(saved)).toBe(`/projects/${projectId}`);
     expect(saved.value()).toBeNull();
-    expect(consumeSignInDestinationFrom(saved)).toBe("/");
+    expect(consumeSignInDestinationFrom(saved)).toBeNull();
     expect(consumeSignInDestinationFrom(memoryStorage("/api/projects"))).toBe("/");
+  });
+
+  it("returns null (does not redirect) when nothing was ever stored", () => {
+    // The real-world case: a fresh tab, refresh, bookmark, or shared link where no sign-in
+    // flow just happened. Must not be treated the same as an invalid stored candidate.
+    expect(consumeSignInDestinationFrom(memoryStorage())).toBeNull();
+    expect(consumeSignInDestinationFrom(null)).toBeNull();
   });
 
   it("tolerates unavailable storage and clears a failed sign-in fallback", async () => {
     const unavailable = { getItem: () => { throw new Error("disabled"); }, setItem: () => { throw new Error("disabled"); }, removeItem: () => { throw new Error("disabled"); } };
-    expect(consumeSignInDestinationFrom(unavailable)).toBe("/");
+    expect(consumeSignInDestinationFrom(unavailable)).toBeNull();
     const saved = memoryStorage();
     await expect(beginSignIn(`/projects/${projectId}`, { signIn: { social: async () => ({ error: { message: "Nope" } }) } }, saved)).rejects.toThrow("Nope");
     expect(saved.value()).toBeNull();

@@ -44,7 +44,7 @@ function Shell({ user }: { user: SessionUser }) {
     if (restored.current) return;
     restored.current = true;
     const destination = consumeSignInDestination();
-    if (destination !== pathname) history.replace(destination);
+    if (destination !== null && destination !== pathname) history.replace(destination);
   }, [history, pathname]);
 
   useEffect(() => {
