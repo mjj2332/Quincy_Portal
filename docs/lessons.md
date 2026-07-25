@@ -320,29 +320,38 @@
   would still silently drop after 3 retries; this residual gap is intentionally left for a future
   pass rather than adding infrastructure speculatively.
 
-## Cloudflare Free plan + per-invocation subrequest budget (2026-07-25)
+## Workers plan tier was the root cause of a whole day of "bugs" (2026-07-25)
 
-- **This account is on the Workers Free plan — a `limits` block is rejected and fails the whole
-  deploy.** Adding `"limits": { "subrequests": 10000 }` to `workers/background/wrangler.jsonc`
-  passed `wrangler deploy --dry-run` and CI, then failed the real deploy with *"CPU limits are
-  not supported for the Free plan"* (code 100328) — briefly leaving `main` carrying an
-  undeployable config. **Rules:** (1) `--dry-run` does not validate plan-gated fields; only a
-  real deploy does, so never merge a `wrangler.jsonc` change on dry-run evidence alone. (2) The
-  subrequest ceiling **cannot be raised on this account** — the only lever is doing less work
-  per invocation.
-- **A per-run download cap is really a subrequest budget, and it fans out ~10×.** Each RAW file
-  costs roughly 9-10 subrequests (2 Dropbox content calls, an R2 put, a rendition enqueue,
-  several D1 statements), so `MAX_DOWNLOADS_PER_RUN = 150` put one invocation at ~1,350-1,500
-  and it died mid-run with "Too many subrequests by single Worker invocation." Lowered to 40.
-  **Rule:** when sizing a per-run cap, multiply by the real per-item subrequest cost — the file
-  count is not the budget. Rely on the continuation/re-enqueue path for the remainder rather
-  than raising the cap.
-- **Diagnose the ceiling before theorising about which default applies.** This was mis-diagnosed
-  twice: first as queue batching alone (`max_batch_size: 10` → `1`, a real contributor but not
-  sufficient — a *single* project still blew the budget), then as a paid account still on the
-  pre-Feb-2026 1,000 default. The actual answer (Free plan, ceiling not raisable) only surfaced
-  from the deploy API's own error. **Rule:** when a platform limit is hit, get the plan/tier
-  confirmed from the platform itself before designing around an assumed limit value.
+**Resolved by upgrading to Workers Paid.** This entry is kept because the *diagnostic* failure
+was expensive: three wrong root causes were shipped before the plan page was ever opened.
+
+- **The account was on Workers Free, whose limits made this app structurally unable to run.**
+  Free caps **subrequests at 50 per request** (Paid: 10,000), requests at **100,000/day**, and
+  CPU at 10 ms/invocation. A RAW file costs ~9-10 subrequests (2 Dropbox content calls, an R2
+  put, a rendition enqueue, several D1 statements), so **~5 images exceeded a whole invocation's
+  budget**. Every "Too many subrequests by single Worker invocation" failure traces here.
+- **Exhausting the daily request quota looks like unrelated application bugs.** Once the
+  100k/day cap was hit (~14:57 UTC, after a 192-image import plus hundreds of renditions plus a
+  60s DO alarm), *all* queue writes started throwing at once: `Rendition enqueue failed`
+  (`RENDITION_QUEUE.send()`), `Dropbox root monitor failed` every 60s (`INGEST_QUEUE.send()` in
+  the DO alarm), and `Worker's code had hung and would never generate a response`. Renditions
+  stopped dead for ~8 hours with **queue backlog 0** and nothing in the DLQ — because the
+  messages were never accepted, not because a consumer had died. **Rule:** when *multiple
+  independent* subsystems fail simultaneously and the queue backlog is empty, suspect the
+  platform/account tier before the application.
+- **A `limits` block is rejected on Free and fails the entire deploy** — *"CPU limits are not
+  supported for the Free plan"* (code 100328) — after passing `wrangler deploy --dry-run` and
+  CI, briefly leaving `main` undeployable. **Rule:** `--dry-run` does not validate plan-gated
+  fields; never merge a `wrangler.jsonc` change on dry-run evidence alone.
+- **Check the plan page first.** This was mis-diagnosed three times — queue batching
+  (`max_batch_size` 10 → 1), then a paid account on the pre-Feb-2026 1,000-subrequest default,
+  then a dead queue consumer. Each was plausible, each produced a shipped change, none was the
+  cause. The answer took ~30 seconds once the Workers plans page was opened. **Rule:** when a
+  platform limit is hit, read the account's actual plan and its published limits *before*
+  designing around an assumed value — and treat "I inferred the limit" as an untested premise.
+- **Sizing note that still stands:** a per-run cap is really a subrequest budget and fans out
+  ~10× per file. `MAX_DOWNLOADS_PER_RUN` is 40 (≈400 subrequests), comfortable under Paid's
+  10,000 but far over Free's 50. Rely on the continuation/re-enqueue path for the remainder.
 
 ## Dropbox 429 burst amplification + Tonomo formatted_address fallback (2026-07-25)
 
