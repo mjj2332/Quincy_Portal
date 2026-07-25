@@ -130,6 +130,14 @@ export class AutoHdrFetch extends WorkflowEntrypoint<Env, AutoHdrFetchInput> {
             .get();
           if (existing) {
             skipped += 1;
+            // Re-enqueue renditions for an already-ingested final, mirroring the claimed path's
+            // "autohdr-existing-final" behaviour. enqueueRenditionSafely swallows send failures,
+            // and this step retries from the top after any mid-loop throw — so an asset inserted
+            // by an earlier attempt would otherwise be skipped here forever and never get its
+            // renditions, leaving the tile stuck on "Processing preview…" with a green job and
+            // nothing in the DLQ. Generation is idempotent (it heads existing objects first),
+            // so re-running this on every fetch is safe and makes the button self-healing.
+            await enqueueRenditionSafely(this.env, existing.id, "autohdr-existing-final");
             continue;
           }
 
