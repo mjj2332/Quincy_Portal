@@ -10,7 +10,12 @@ import { createDropboxClientContext, download, getSharedLinkMetadata, listFolder
 import { normalisePath } from "./paths";
 import { dropboxPathKey } from "./paths";
 
-const MAX_DOWNLOADS_PER_RUN = 150;
+// Each downloaded file costs ~9-10 subrequests (2 Dropbox content calls, an R2 put, a
+// rendition enqueue, and several D1 statements), so this cap is really a per-invocation
+// subrequest budget. 150 overran Cloudflare's limit and failed the whole run mid-way; 40
+// keeps a run comfortably under even the pre-2026 1,000-subrequest default. Larger backlogs
+// are not lost — the continuation below re-enqueues whatever this run did not reach.
+const MAX_DOWNLOADS_PER_RUN = 40;
 const RAW_CLAIM_LEASE_MS = 15 * 60_000;
 
 export { normalisePath } from "./paths";
