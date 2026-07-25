@@ -17,7 +17,7 @@
   ],
   "queues": {
     "consumers": [
-      { "queue": "quincy-ingest", "max_batch_size": 10, "max_concurrency": 1, "max_retries": 3 },
+      { "queue": "quincy-ingest", "max_batch_size": 1, "max_concurrency": 1, "max_retries": 3 },
       { "queue": "quincy-renditions", "max_batch_size": 1, "max_concurrency": 1, "max_retries": 3, "dead_letter_queue": "quincy-renditions-dlq" },
       { "queue": "quincy-renditions-dlq", "max_batch_size": 10, "max_retries": 3 }
     ],
@@ -57,7 +57,7 @@
     "APP_ENV": "production",
     "APP_ORIGIN": "https://quincy.flamingfire.my",
     "RENDITIONS_ENABLED": true,
-    "DROPBOX_RAW_AUTOMATION_ENABLED": "1",
+    "DROPBOX_RAW_AUTOMATION_ENABLED": "0",
     "DROPBOX_AUTOHDR_AUTOMATION_ENABLED": "1",
     "DROPBOX_HANDOFF_V2_ENABLED": "0"
   }
