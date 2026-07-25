@@ -383,3 +383,27 @@
   `manual_raw_publish` jobs and audits but never change the RAW asset's ready state or turn a
   successful upload response into a failure. Persist the exact Dropbox destination in
   `source_path` only after provider success.
+
+- **The `secrets` context is not allowed in a job-level `if:` in GitHub Actions.** Using it there
+  (e.g. `if: ${{ ... && secrets.FOO != '' }}` on a job) doesn't fail loudly — it invalidates the
+  *entire* workflow file. Every run then shows "This run likely failed because of a workflow file
+  issue" with zero jobs created (`.../actions/runs/<id>/jobs` returns `{"jobs":[]}`), for *every*
+  job in the file, not just the one with the bad condition. This silently broke `portal.yml` for
+  4 days (2026-07-21 → 2026-07-25, commit `143575d`) across every push/PR/merge to `main`, and
+  looked exactly like an Actions-minutes/billing exhaustion (private repo, 0 jobs, ambiguous
+  message) until cross-checked against the account's billing page (0/2000 min used) and
+  githubstatus.com (all operational) ruled that out. **Rule:** never reference `secrets` in a
+  job-level `if:`; gate on a job-level `env:` var instead (`env:` *can* read secrets; `if:`
+  cannot). When `gh run view <id>` says "workflow file issue" but `python -c "import yaml;
+  yaml.safe_load(...)"` says the YAML is valid, suspect a *semantic* validation rule like this one,
+  not a syntax error — check every job's `if:` for context values it can't use (`secrets`, and
+  `env` values scoped to the same job's `env:` block are also unavailable at job level).
+
+- **CI jobs don't share a filesystem — a sibling job's build output isn't there for you.**
+  `workers/app`'s tests serve the SPA through the Assets binding (`apps/web/dist`), but the `test`
+  job only ran `npm ci`, never `npm run build -w @quincy/web`; the sibling `build-web` job builds
+  it, but each GitHub Actions job gets its own fresh runner/checkout. Locally this was invisible
+  because a stale `dist/` from a previous manual build was already sitting there. **Rule:** any
+  job whose tests read another workspace's build artifacts must build that artifact itself (or via
+  `actions/upload-artifact` + `download-artifact`), never rely on a sibling job having produced it.
+  To catch this class of bug locally, `rm -rf apps/web/dist` before running `workers/app` tests.
