@@ -10,10 +10,10 @@
 
 | # | Item | Doc | Scope |
 |---|---|---|---|
-| 1 | Dropbox Webhook Automation | `docs/Dropbox-Webhook-Automation-Plan.md` | Large — new DO monitor split, claim/mapping tables, AutoHDR versioning, retires legacy cron |
-| 2 | Staff routing + deep links | `docs/staff-routing-and-deep-link-plan.md` | Frontend-only SPA router + narrow Worker `/d/*` reservation |
-| 3 | Capture-count manifest verification | `docs/capture-count-manifest-verification-plan.md` | Fixes false "Capture count needs attention" banner |
-| 4 | Cloudflare Images pilot | `docs/Cloudflare-Images-Pilot-Plan.md` | **Deprioritized** — outage that motivated it resolved; not a cost saving. Conditional on Terry's go-ahead. |
+| 1 | Dropbox Webhook Automation | `docs/plans/implemented/Dropbox-Webhook-Automation-Plan.md` | Large — new DO monitor split, claim/mapping tables, AutoHDR versioning, retires legacy cron |
+| 2 | Staff routing + deep links | `docs/plans/implemented/staff-routing-and-deep-link-plan.md` | Frontend-only SPA router + narrow Worker `/d/*` reservation |
+| 3 | Capture-count manifest verification | `docs/plans/implemented/capture-count-manifest-verification-plan.md` | Fixes false "Capture count needs attention" banner |
+| 4 | Cloudflare Images pilot | `docs/plans/Cloudflare-Images-Pilot-Plan.md` | **Deprioritized** — outage that motivated it resolved; not a cost saving. Conditional on Terry's go-ahead. |
 | 5 | R2 rendition purge on project delete | new, this doc | Bugfix — renditions leak into R2 forever on delete |
 | 6 | Mirror manual uploads to Dropbox | new, this doc | Gap — manual RAW/Edited uploads have no Dropbox backup copy |
 
@@ -99,7 +99,7 @@ Confirmed by Terry manually wiping both R2 prefixes to reclaim space.
 separate migrations landing back-to-back on the same hot path, and avoids the awkwardness of
 whoever ships second having to rebase around the first's schema change mid-flight.
 
-**2a-i. Capture-count fix:** full spec already in `docs/capture-count-manifest-verification-plan.md`
+**2a-i. Capture-count fix:** full spec already in `docs/plans/implemented/capture-count-manifest-verification-plan.md`
 (the durable `assets.manifest_id` + manifest lifecycle design, v3 — do not resurrect v1/v2,
 both were independently rejected with reasons recorded in that doc).
 
@@ -135,7 +135,7 @@ spurious auto-reconciliation of a folder the automation wasn't watching for that
 
 ### 3. Dropbox Webhook Automation (item 1)
 
-Full spec in `docs/Dropbox-Webhook-Automation-Plan.md` — its own internal 8-step sequence
+Full spec in `docs/plans/implemented/Dropbox-Webhook-Automation-Plan.md` — its own internal 8-step sequence
 (shared contracts → mapping/claim schema → root-scoped monitors → RAW reconciliation →
 AutoHDR claims → versioning → tests → rollout) stays intact; this wave is only about *when* the
 whole thing starts relative to everything else in this document.
@@ -153,7 +153,7 @@ whole thing starts relative to everything else in this document.
 
 ### 4. Cloudflare Images pilot (item 4)
 
-Full context and recommendation in `docs/Cloudflare-Images-Pilot-Plan.md`: **not recommended to
+Full context and recommendation in `docs/plans/Cloudflare-Images-Pilot-Plan.md`: **not recommended to
 proceed now.** The outage that originally motivated it has resolved on its own, and the cost
 analysis (independently confirmed by two reviewers) shows Hosted Images could cost *more* than
 the R2 originals it would touch, with real reliability/immutability trade-offs and no proven

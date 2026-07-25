@@ -26,9 +26,8 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
   matrix re-run independently every time (agent sandboxes can't run vitest — always report
   tests "couldn't start"; never trust that as a pass). Deploy order: background →
   webhook-ingress → app.
-- **Master sequencing plan ready for review**: `docs/Implementation-Sequencing-Plan.md` ties
-  together every pending item below into waves with builder/reviewer assignment and
-  dependencies — read that first before picking up any individual item.
+- **Plan docs live in `docs/plans/`** (`docs/plans/implemented/` for shipped ones) — see
+  "Implemented plans" and "Open plans" below.
 - **Waves 1a, 1b, 2, 3 merged to `main` and deployed to production (2026-07-24).** PRs #12–#15
   (docs housekeeping was #11). Deploy order `background → webhook-ingress → app` completed;
   migrations `0012`–`0014` applied to prod; smoke-tested (`/`, `/api/session`, `/d` reservation
@@ -134,36 +133,27 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
   retries. The sticky-error-status behavior mentioned in the original report is unverified —
   recheck separately if it resurfaces.
 
-## New findings (2026-07-24)
-
-**Bug: rendition R2 objects never purged on project deletion.** `DELETE /projects/:id`
-([projects.ts:351](../portal/workers/app/src/routes/projects.ts)) purges R2 only under
-`projects/${id}/`. Rendition objects are keyed by **asset ID**, not project ID —
-`renditions/${assetId}/${contentHash}/${specVersion}/${variant}/${digest}.${ext}` — so every
-deletion has leaked its renditions into R2 forever. Discovered when Terry manually wiped both
-prefixes to reclaim space. Fix + backfill decision spec'd in
-`docs/Implementation-Sequencing-Plan.md` Wave 1b.
-
-**Gap: manual RAW/Edited uploads never mirror to Dropbox.** Only manual Edited uploads publish
-to Dropbox (`publishManualEditedUpload`, gated on `collection === "edited"` at
-[uploads.ts:66](../portal/workers/app/src/routes/uploads.ts)). Manual RAW uploads go to R2
-only — no backup copy, though Terry expects one. Spec'd in `docs/Implementation-Sequencing-Plan.md`
-Wave 2a-ii; needs a destination-path decision before it starts.
-
 **Agy can build, not just plan.** Confirmed 2026-07-24: Agy (`gemini-3.6-flash-high`, this
 account's default) is now a second, independent build pipeline alongside Codex. Requires
 `--mode accept-edits` (no `--sandbox` — combined with accept-edits it silently blocks writes
 with zero error) and `--add-dir "<repo root>"` (writes outside Agy's `trustedWorkspaces`
 allowlist are silent no-ops otherwise). Full mechanics in `docs/Subagent-Orchestration.md` §3a.
 
-## Pending plans (built in worktrees, see "Current state" above for status — see
-## `docs/Implementation-Sequencing-Plan.md` for how they all fit together)
+## Implemented plans (see `docs/plans/implemented/`)
 
-- **`docs/Dropbox-Webhook-Automation-Plan.md`** — Wave 3, built and verified, not merged. See
-  "Current state" above.
-- **`docs/staff-routing-and-deep-link-plan.md`** — Wave 1a, built and verified, not merged.
-- **`docs/capture-count-manifest-verification-plan.md`** — Wave 2, built and verified, not merged.
-- **`docs/Cloudflare-Images-Pilot-Plan.md`** — renditions-only Cloudflare Images pilot.
+- **`Dropbox-Webhook-Automation-Plan.md`** — Wave 3: event-driven Dropbox intake, dual
+  root-scoped monitors, AutoHDR handoff/versioning. Live (automation flags off by default).
+- **`staff-routing-and-deep-link-plan.md`** — Wave 1a: SPA History-API router, `/d/*` Worker
+  reservation. Live.
+- **`capture-count-manifest-verification-plan.md`** — Wave 2: fixed the false "Capture count
+  needs attention" banner on top-up uploads; manual RAW uploads now mirror to Dropbox. Live.
+- **`Implementation-Sequencing-Plan.md`** — the master plan that sequenced all of the above
+  (plus the R2 rendition-purge fix, Wave 1b, which had no standalone plan doc) into
+  dependency-ordered waves. Kept for provenance now that every wave has shipped.
+
+## Open plans (see `docs/plans/`)
+
+- **`Cloudflare-Images-Pilot-Plan.md`** — renditions-only Cloudflare Images pilot.
   **Not recommended to proceed now**: the outage that motivated it resolved on its own, and an
   independent two-reviewer debate (Agy + Sol) on a related idea (moving originals to Dropbox)
   concluded reject — Hosted Images could cost more than the R2 storage it would touch.

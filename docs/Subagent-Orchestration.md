@@ -1,10 +1,11 @@
 # Subagent Orchestration Guide
 
-> Reference for how this session (the main agent, Claude) spawns and coordinates CLI-based
-> subagents on the Quincy Portal build. This is a **living document, not a one-time policy
-> snapshot** — refine it whenever a session learns a new mechanic, hits a new failure mode,
-> or the user changes the process. Two independent CLI tools are in play, each spawned as a
-> plain OS subprocess via `Bash`, never through an in-harness agent mechanism:
+> Reference for how this session (the main agent, Claude) spawns and coordinates subagents on
+> the Quincy Portal build. This is a **living document, not a one-time policy snapshot** —
+> refine it whenever a session learns a new mechanic, hits a new failure mode, or the user
+> changes the process. Two independent CLI tools do the plan/build/review loop, each spawned
+> as a plain OS subprocess via `Bash`; a third, in-harness mechanism supplies one specific
+> role (the final draft reviewer, §1a):
 >
 > - **Agy** — Google's Antigravity CLI (binary `agy`, symlink `antigravity`), model
 >   `gemini-3.6-flash-high` (this account's configured default). Drafts plans, **and can
@@ -12,12 +13,16 @@
 >   alongside Codex.
 > - **Sol / Terra / Luna** — OpenAI's Codex CLI (`codex exec`, models `gpt-5.6-*`). Review
 >   and build.
+> - **Opus reviewer** — an in-harness Claude subagent (`Agent` tool, `model: opus`), not a CLI
+>   subprocess. Read-only final-draft review only, one step before this session's own gate —
+>   see §1a for exactly when to spawn it and when it's redundant to.
 >
-> Policy last updated 2026-07-24 per user direction (plan-drafting moved from the main
-> agent to Agy; this doc genericized from a Codex-only guide once Agy — a non-Codex tool —
-> joined the roster; Agy authorized as a second build pipeline in addition to Codex). Codex
-> CLI mechanics verified live 2026-07-19; Agy CLI mechanics verified live 2026-07-24,
-> including a real accept-edits build smoke test.
+> Policy last updated 2026-07-25 per user direction (added the Opus 5 final-draft-reviewer
+> role, §1a). Prior update 2026-07-24 (plan-drafting moved from the main agent to Agy; this
+> doc genericized from a Codex-only guide once Agy — a non-Codex tool — joined the roster;
+> Agy authorized as a second build pipeline in addition to Codex). Codex CLI mechanics
+> verified live 2026-07-19; Agy CLI mechanics verified live 2026-07-24, including a real
+> accept-edits build smoke test.
 >
 > **Agy is a separate CLI tool, not a Codex model — do not guess `gpt-5.6-agy` again.** An
 > earlier draft of this doc guessed that model id, following the `gpt-5.6-sol/terra/luna`
@@ -43,9 +48,12 @@
 | **Sol** | `codex exec` (OpenAI) | `gpt-5.6-sol` | Reviews Agy's plans, then later reviews the built diff | Only when explicitly requested by the user, or for security/auth/payments/migrations and (at the user's discretion) large cross-system changes — see routing table |
 | **Terra** | `codex exec` (OpenAI) | `gpt-5.6-terra` | Default builder; this account's default Codex model | Yes — default builder for normal feature/refactor work |
 | **Luna** | `codex exec` (OpenAI) | `gpt-5.6-luna` | Cheap/high-volume builder | Yes — small, mechanical, strongly-tested work |
+| **Opus reviewer** | `Agent` tool (in-harness Claude subagent, not a CLI subprocess) | `opus` (Claude Opus 5), high effort | **Final draft reviewer** — the last review pass before this session's own independent-verification gate (§5) | No — read-only review only, never assign it build work |
 
 Sol/Terra/Luna run at `model_reasoning_effort=high` unless a task specifically calls for
-something else; Agy runs at `--effort high` likewise.
+something else; Agy runs at `--effort high` likewise. The `Agent` tool has no separate
+reasoning-effort dial for Claude subagents — "high effort" for the Opus reviewer means
+instructing it explicitly in the prompt to review at maximum thoroughness/rigor (see §1a).
 
 **Agy as a builder — how to use it:** Agy is now a genuine second, independent build
 pipeline (different vendor/model family from Codex), useful for running two unrelated,
@@ -57,6 +65,27 @@ lower stakes; normal feature → fine either way), and always still route the *r
 Sol regardless of which pipeline built it. See §3a for the exact flags required to build
 successfully — getting them wrong doesn't error, it **silently no-ops** (see the
 trusted-workspace gotcha below).
+
+### 1a. Opus 5 final-draft review — when to use it, when to skip it
+
+**Purpose:** after Sol's diff review and fix loop are done, and before this session
+independently gates the work (§5), spawn one more review pass — a fresh Claude Opus 5
+subagent, reading only the final diff (not the build history), looking for anything Sol's
+review and this session's own read-through might both have missed. This is a genuine second
+model family's judgment on the same diff, not a rubber stamp.
+
+**Skip this step when the main session itself is already running as Opus 5.** The point of
+this role is to get a review from a *different, typically stronger* model than whatever
+normally drives the session (this account's default driver is Sonnet 5). If the session
+itself is currently running on Opus 5, it already **is** that reviewer — spawning a second
+Opus 5 subagent to review the same session's own work adds no new judgment, just latency and
+cost. In that case, the main session's own independent-verification pass (§5) already carries
+the "Opus-level final look" this role exists to provide. Check which model is driving the
+current session before deciding whether to spawn this step — do not spawn it reflexively on
+every task regardless of driver.
+
+This step is a **review of judgment/correctness**, not a substitute for §5's mechanical
+verification (typecheck/tests/build) — do both; neither replaces the other.
 
 ---
 
@@ -76,7 +105,11 @@ trusted-workspace gotcha below).
    assign `gpt-5.6-sol` to a build task** unless the user explicitly asks for it for that
    specific task, or the work falls in a "Sol builds" row of the routing table below. Sol
    reviews regardless of which pipeline built the diff.
-3. Deploy and commit only after this session's own independent verification passes (§5) —
+3. **Opus 5 (high effort) is the final draft reviewer, one step before this session's own
+   gate** — spawned via the `Agent` tool (`model: opus`), reading the final diff after Sol's
+   review/fix loop is done. **Skip this step if the main session is already running as
+   Opus 5** — see §1a for why. This step never builds, only reviews.
+4. Deploy and commit only after this session's own independent verification passes (§5) —
    never on an agent's self-report alone.
 
 ### Reference pipeline
@@ -90,6 +123,12 @@ The full plan → build → review → fix cycle, in order:
 5. **Sol, fresh context** — review the actual diff (not the plan).
 6. **Terra** — apply clearly identified fixes from the review.
 7. **Sol** — final focused review for unresolved high-severity issues.
+8. **Opus 5 (high effort), via `Agent` tool** — final draft review of the diff, fresh
+   perspective from a different model family than whatever drove the build/review loop.
+   **Skip if this session is already Opus 5** (§1a).
+9. **This session** — independent verification gate (§5): re-run typecheck/tests/build
+   directly, read security/correctness-critical parts of the diff personally. Only after this
+   passes: deploy and commit.
 
 ### Routing table
 
@@ -111,10 +150,16 @@ the explicit exception referenced in rule 2 — not a default to fall back to ca
 `codex exec` spawns the real **Codex CLI as a subprocess via `Bash`** — it is a separate
 process running on OpenAI's model, not the `Agent` tool. There is a second, distinct
 mechanism in this harness for spawning a *Claude* subagent (`Agent` tool,
-`subagent_type: general-purpose`, `model: sonnet`); use that only when the user
-specifically asks for a Claude-side builder instead of a Codex one. There is no first-class
-"Codex subagent" tool — Codex is invoked as a plain CLI subprocess, with its own sandboxing
-and file access, and its output is read back from a file.
+`subagent_type: general-purpose`). Two standing uses for it in this project:
+
+- `model: opus` — the final-draft-reviewer role (§1a), spawned automatically as part of the
+  reference pipeline (skip only per the condition in §1a), not something that needs the user
+  to ask for it each time.
+- `model: sonnet` — a Claude-side **builder**, used only when the user specifically asks for
+  one instead of a Codex/Agy build (see the historical example in the appendix).
+
+There is no first-class "Codex subagent" tool — Codex is invoked as a plain CLI subprocess,
+with its own sandboxing and file access, and its output is read back from a file.
 
 ```bash
 codex exec --sandbox read-only -m gpt-5.6-sol -c model_reasoning_effort=high "..."
