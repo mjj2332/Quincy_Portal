@@ -41,6 +41,37 @@ async function fixture() {
   return { connectionId, userId, projectId };
 }
 
+/** Cloudflare rejects Workflow instance ids outside this alphabet at create() time with
+ *  "(instance.invalid_id) Instance has invalid id" — a ":" separator shipped and broke every V2
+ *  send and fetch in production. Guard both id builders here so it cannot silently return. */
+const WORKFLOW_INSTANCE_ID = /^[a-zA-Z0-9_][a-zA-Z0-9-_]*$/;
+
+describe("AutoHDR workflow instance ids", () => {
+  it("send and fetch ids use only characters Cloudflare accepts", async () => {
+    const data = await fixture();
+    const localEnv = { DB: database.DB } as never;
+
+    const owner = await claimAutoHdrHandoff(localEnv, data.projectId, data.userId);
+    expect(owner.workflowId).toMatch(WORKFLOW_INSTANCE_ID);
+
+    await database.DB.prepare("UPDATE autohdr_handoffs SET state = 'started' WHERE id = ?").bind(owner.handoffId).run();
+    const mapping = await database.DB.prepare("SELECT id, generation, connection_id FROM autohdr_output_mappings WHERE handoff_id = ?")
+      .bind(owner.handoffId).first<{ id: string; generation: number; connection_id: string }>();
+    const route: RoutedAutoHdrMapping = {
+      projectId: data.projectId,
+      handoffId: owner.handoffId,
+      mappingId: mapping!.id,
+      generation: mapping!.generation,
+      connectionId: mapping!.connection_id,
+      finalPath: "/AutoHDR/Id guard/04-FINAL-Photos",
+      finalPathKey: "/autohdr/id guard/04-final-photos",
+      representativeChangedPath: "/autohdr/id guard/04-final-photos/a.jpg",
+    };
+    const fetchOwner = await claimAutoHdrFetch(localEnv, route, { trigger: "dropbox_delta" });
+    expect(fetchOwner.workflowId).toMatch(WORKFLOW_INSTANCE_ID);
+  });
+});
+
 describe("atomic AutoHDR ownership", () => {
   it("concurrent sends create one frozen handoff/mapping and return its owner", async () => {
     const data = await fixture();

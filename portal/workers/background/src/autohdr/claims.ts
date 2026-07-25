@@ -122,7 +122,10 @@ export async function claimAutoHdrHandoff(
   const handoffId = crypto.randomUUID();
   const mappingId = crypto.randomUUID();
   const jobId = crypto.randomUUID();
-  const workflowId = `autohdr-send:${handoffId}`;
+  // Workflow instance ids must match ^[a-zA-Z0-9_][a-zA-Z0-9-_]*$ — a ":" separator is rejected
+  // at create() with "(instance.invalid_id) Instance has invalid id". Use "-": handoffId is a
+  // UUID, so the result stays within the allowed alphabet.
+  const workflowId = `autohdr-send-${handoffId}`;
   const lease = new Date(now.getTime() + START_LEASE_MS);
   try {
     await dependencies.beforeClaimBatch?.();
@@ -238,7 +241,8 @@ export async function claimAutoHdrFetch(
     eq(autoHdrFetchClaims.projectId, route.projectId),
     eq(autoHdrFetchClaims.mappingGeneration, route.generation),
   )).get();
-  const workflowId = `autohdr-fetch:${route.projectId}:${route.generation}:${Number(priorCount?.count ?? 0) + 1}`;
+  // Same instance-id constraint as the send path above: "-" separators only, never ":".
+  const workflowId = `autohdr-fetch-${route.projectId}-${route.generation}-${Number(priorCount?.count ?? 0) + 1}`;
   const input: import("../workflows/autohdr-fetch").AutoHdrFetchInput = {
     projectId: route.projectId,
     jobId,
