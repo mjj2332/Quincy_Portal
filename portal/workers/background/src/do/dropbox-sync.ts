@@ -89,7 +89,8 @@ export class DropboxSyncDO extends DurableObject<Env> {
           .from(projects).where(isNull(projects.archivedAt));
         const affected = changedProjectIds(page.entries, projectPaths, identity.watchedRoot);
         matchedCount = affected.length;
-        for (const projectId of affected) {
+        for (const [index, projectId] of affected.entries()) {
+          if (index > 0) await new Promise<void>((resolve) => setTimeout(resolve, 500));
           const jobId = await createJob(db, {
             kind: "dropbox_sync",
             projectId,
