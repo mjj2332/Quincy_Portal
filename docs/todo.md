@@ -110,6 +110,25 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
 - [ ] **Operator action:** fix the `TRANSFORM_SOURCE_SECRET` drift between `workers/app` and
   `workers/background` (`wrangler secret put` in both) — the root cause behind the rendition DLQ
   incident below. The DLQ monitoring/replay tooling is live, but the drift itself is unfixed.
+- [ ] **`DROPBOX_HANDOFF_V2_ENABLED` — decided 2026-07-25 to wait, with a specific
+  precondition.** AutoHDR *automation* (`DROPBOX_AUTOHDR_AUTOMATION_ENABLED="1"`, live) is
+  **structurally inert until this flag is on**: the monitor routes finals by matching them
+  against `autohdr_path_claims`/`autohdr_output_mappings`, and those rows are only created by
+  the V2 send path. With V2 off, `startAutoHdr`/`fetchEditedFromAutoHdr` fall through to the
+  legacy branches (`workers/background/src/index.ts:122`, `:158`), which never create claims —
+  so the AutoHDR monitor scans every webhook and always reports `matched_count: 0`. Dropping
+  files into an AutoHDR folder will never auto-fetch; the manual "Fetch edited from autoHDR"
+  button (legacy path) is the only route.
+  **Why not flipped yet:** V2's fetch requires an output mapping joined to a `started` handoff
+  and *throws* `"No started AutoHDR handoff mapping exists for this project"` otherwise. As of
+  2026-07-25 prod has **0 handoffs and 0 output mappings** but **5 projects live in
+  `editing_autohdr`** (4 McGowen Ave, 6/120 Beach St, 168 Botany St, 4 McGowen Avenue,
+  12 Brompton Rd) — all sent via legacy. Flipping now breaks the fetch button for all five;
+  recovery means re-sending each through V2, re-copying their selected RAW to Dropbox.
+  **Precondition to flip:** wait until those in-flight projects have completed their round-trip
+  (fetched edited, moved past `editing_autohdr`), then enable so only new sends use V2. Verify
+  with `SELECT count(*) FROM projects WHERE archived_at IS NULL AND stage_key='editing_autohdr';`
+  The send path is already V2-compatible (`projects.ts:242` passes `initiatedBy`).
 
 ## Resolved incidents (kept for pattern-recognition; see `docs/lessons.md` for mechanics)
 
