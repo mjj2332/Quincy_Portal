@@ -16,15 +16,19 @@ function storage(): SessionStorageLike | null {
   try { return window.sessionStorage; } catch { return null; }
 }
 
-export function consumeSignInDestinationFrom(saved: SessionStorageLike | null): string {
-  if (!saved) return "/";
+/** Returns null when there is nothing genuine to restore (no sign-in flow just completed) —
+ *  callers must not redirect in that case. A stored-but-invalid candidate still falls back
+ *  to "/", since a real sign-in return did just happen. */
+export function consumeSignInDestinationFrom(saved: SessionStorageLike | null): string | null {
+  if (!saved) return null;
   let candidate: string | null = null;
   try { candidate = saved.getItem(returnPathKey); } catch { /* Storage can be disabled. */ }
   try { saved.removeItem(returnPathKey); } catch { /* A failed cleanup still falls back safely. */ }
+  if (candidate === null) return null;
   return safeStaffDestination(candidate) ?? "/";
 }
 
-export function consumeSignInDestination(): string {
+export function consumeSignInDestination(): string | null {
   return consumeSignInDestinationFrom(storage());
 }
 
