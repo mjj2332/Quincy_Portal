@@ -320,6 +320,27 @@
   would still silently drop after 3 retries; this residual gap is intentionally left for a future
   pass rather than adding infrastructure speculatively.
 
+## A dormant Workflow-id bug that only a feature flag could expose (2026-07-25)
+
+- **Cloudflare Workflow instance ids must match `^[a-zA-Z0-9_][a-zA-Z0-9-_]*$` — `:` is
+  rejected outright at `create()`** with `(instance.invalid_id) Instance has invalid id`, no
+  compile-time or type-level warning. Both V2 AutoHDR id builders in
+  `workers/background/src/autohdr/claims.ts` used `:` as a separator
+  (`` `autohdr-send:${handoffId}` ``, `` `autohdr-fetch:${projectId}:${generation}:${n}` ``) —
+  present since the feature was written, but never exercised because `DROPBOX_HANDOFF_V2_ENABLED`
+  defaulted `"0"`. The legacy AutoHDR paths pass a bare UUID `jobId` and never touched this code,
+  so nothing caught it until the very first real V2 send in production. **This meant AutoHDR
+  auto-fetch could never have worked in any configuration reachable before that day** — send and
+  fetch were both broken, just invisibly, for the entire time V2 existed.
+  **Rule:** when a feature is built behind a flag that defaults off, its unique code paths get
+  **zero** production exercise until flip day — treat "the flag has been off since this shipped"
+  as "this code is untested," not "this code is stable." A unit test asserting the id format
+  against the platform's actual constraint (not just "it doesn't throw") would have caught this
+  before the flag was ever touched; one was added as part of the fix.
+  **Recovery note:** the claim/handoff/mapping rows created before the `create()` call are
+  correct and don't need to be discarded — only the `workflow_id` stored on the handoff needs
+  repairing (it's reused verbatim on retry) before re-sending.
+
 ## Workers plan tier was the root cause of a whole day of "bugs" (2026-07-25)
 
 **Resolved by upgrading to Workers Paid.** This entry is kept because the *diagnostic* failure
