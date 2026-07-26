@@ -471,6 +471,17 @@ was expensive: three wrong root causes were shipped before the plan page was eve
   created. Recovery lookups for an explicit send must therefore require an eligible active
   state and a real `initiated_by` identity before returning that workflow ID.
 
+- **"Never had a handoff" is not the same as "eligible for implicit AutoHDR."** Picking a live
+  project to test the manual-drop auto-detect feature (2026-07-26), a project with zero
+  `autohdr_handoffs` rows turned out to already be at `stage_key = 'edited_review'` — it had gone
+  through the *pre-V2 legacy* send/fetch flow, which never wrote to the V2 handoff tables at all,
+  so the absence of a handoff row didn't mean "untouched." Dropping a file into its
+  `04-MANUAL-Photos` correctly matched the scaffold-claim router (`matched_count` incremented) but
+  `claimImplicitAutoHdrHandoff()`'s own `stage_key IN ('raw_review','editing_autohdr')` guard
+  correctly refused it — a silent, correct no-op, not a bug. **Rule:** when picking or querying for
+  an implicit-eligible project, filter on `stage_key` explicitly in addition to handoff absence;
+  a project can be fully processed and still show zero V2 handoff rows if it predates this feature.
+
 - **The `secrets` context is not allowed in a job-level `if:` in GitHub Actions.** Using it there
   (e.g. `if: ${{ ... && secrets.FOO != '' }}` on a job) doesn't fail loudly — it invalidates the
   *entire* workflow file. Every run then shows "This run likely failed because of a workflow file

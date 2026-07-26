@@ -1,6 +1,6 @@
 import { Hono, type Context } from "hono";
 import { createDb, schema } from "@quincy/db";
-import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, isNotNull, isNull, notExists, sql } from "drizzle-orm";
 import { enqueueRenditionSafely, parseTonomoOrder, renditionsEnabled, ROLE_CAPABILITIES } from "@quincy/shared";
 import { z } from "zod";
 import type { AppEnv } from "../env";
@@ -17,6 +17,7 @@ const stagePatch = z.object({ label: z.string().trim().min(1).optional(), active
 const stageMove = z.object({ direction: z.enum(["up", "down"]) });
 const renditionBackfill = z.object({ dryRun: z.boolean().optional(), cursor: z.string().uuid().optional(), limit: z.number().int().min(1).max(100).optional(), confirmProduction: z.literal(true).optional() });
 const autohdrBackfillInput = z.object({ dryRun: z.boolean().optional(), limit: z.number().int().min(1).max(100).optional(), cursor: z.string().uuid().optional() });
+const autohdrScaffoldBackfillInput = z.object({ dryRun: z.boolean().optional(), limit: z.number().int().min(1).max(200).optional() });
 const optionalQuery = <T extends z.ZodTypeAny>(schema: T) => z.preprocess((value) => value === "" ? undefined : value, schema.optional());
 const eventsQuery = z.object({ source: optionalQuery(z.literal("tonomo")), status: optionalQuery(z.enum(["received", "processed", "poison"])), offset: optionalQuery(z.coerce.number().int().min(0)), limit: optionalQuery(z.coerce.number().int().min(1).max(100)) });
 const idCheck = (value: string) => z.string().uuid().safeParse(value).success;
@@ -55,6 +56,47 @@ adminRoutes.post("/admin/autohdr/backfill", async (c) => {
   const result = await c.env.BACKGROUND.backfillAutoHdrV2(input);
   await audit(c.env, c.get("user").id, "admin.autohdr_backfill", "system", "backfill", { result });
   return c.json(result);
+});
+
+// One-off operator tool for projects whose raw_folder_path predates the implicit-scaffolding
+// rollout: ensureAutoHdrScaffold() only fires on a WRITE to raw_folder_path (project create,
+// Tonomo, PATCH, Dropbox reconciliation), so a project that already had a path set before that
+// code shipped never got scaffolded automatically. Kept as a real route (not a throwaway script)
+// since a future data path could plausibly hit the same gap. Bounded and re-runnable: a project
+// already actively scaffolded is naturally skipped by ensureAutoHdrScaffold()'s own idempotent
+// convergence, so calling this again is always safe.
+adminRoutes.post("/admin/autohdr/scaffold-backfill", async (c) => {
+  if (!adminAllowed(c)) return c.json({ error: "Forbidden", capability: "adminBackend" }, 403);
+  const input = await jsonInput(c, autohdrScaffoldBackfillInput);
+  if (input instanceof Response) return input;
+  const db = createDb(c.env.DB);
+  const limit = input.limit ?? 50;
+  const candidates = await db.select({ id: schema.projects.id, street: schema.projects.street })
+    .from(schema.projects)
+    .where(and(
+      isNotNull(schema.projects.rawFolderPath),
+      sql`${schema.projects.rawFolderPath} != ''`,
+      isNull(schema.projects.archivedAt),
+      notExists(db.select({ id: schema.autohdrScaffoldClaims.id }).from(schema.autohdrScaffoldClaims)
+        .where(and(eq(schema.autohdrScaffoldClaims.projectId, schema.projects.id), eq(schema.autohdrScaffoldClaims.state, "active")))),
+    ))
+    .limit(limit).all();
+  if (input.dryRun) {
+    await audit(c.env, c.get("user").id, "admin.autohdr_scaffold_backfill.dry_run", "system", "scaffold-backfill", { candidateCount: candidates.length });
+    return c.json({ dryRun: true, candidateCount: candidates.length, candidates });
+  }
+  const items: { projectId: string; street: string; jobId?: string; error?: string }[] = [];
+  for (const [index, project] of candidates.entries()) {
+    if (index > 0) await new Promise<void>((resolve) => setTimeout(resolve, 250));
+    try {
+      const { jobId } = await c.env.BACKGROUND.ensureAutoHdrScaffold(project.id);
+      items.push({ projectId: project.id, street: project.street, jobId });
+    } catch (error) {
+      items.push({ projectId: project.id, street: project.street, error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  await audit(c.env, c.get("user").id, "admin.autohdr_scaffold_backfill", "system", "scaffold-backfill", { triggeredCount: items.length, items });
+  return c.json({ dryRun: false, triggeredCount: items.length, items });
 });
 
 // Messages the quincy-renditions consumer's DLQ actually received (see background queue()'s

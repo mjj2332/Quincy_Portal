@@ -229,7 +229,17 @@ allowlist are silent no-ops otherwise). Full mechanics in `docs/subagents/agy-cl
   verification outside the builder's own sandbox caught and fixed three issues the build missed:
   a typecheck regression, migration 0015 originally using `CREATE TEMP TABLE` (a documented,
   broken Cloudflare D1 limitation that would have failed against real D1 entirely), and a flaky
-  cross-test-pollution bug in a test fixture — see `docs/lessons.md`.
+  cross-test-pollution bug in a test fixture — see `docs/lessons.md`. A new
+  `POST /admin/autohdr/scaffold-backfill` route (dry-run capable) was added same-day to retroactively
+  scaffold the 21 pre-rollout projects that already had `raw_folder_path` set before the automatic
+  trigger existed — run once against prod 2026-07-26, all 21 succeeded, zero failures. **Verified
+  end-to-end live 2026-07-26** on 29 Stanley Street: a manual drop into `04-MANUAL-Photos` was
+  picked up by the Dropbox webhook within seconds, auto-created the handoff, advanced the project
+  raw_review → editing_autohdr, fetched the file, and published it to the Edited collection — no
+  button ever clicked. RAW-side webhook auto-fetch reconfirmed working on the same project. See
+  `docs/lessons.md` for a gotcha hit while picking a test project (a project can have zero
+  `autohdr_handoffs` rows yet still be ineligible, if it went through the pre-V2 legacy flow and is
+  already past `raw_review`/`editing_autohdr` — check `stage_key` too, not just handoff absence).
 
 ## Open plans (see `docs/plans/`)
 
