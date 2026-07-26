@@ -5,6 +5,7 @@ import { auditLog, collectionLinks, collections, projectMembers, projects, user,
 
 import type { Env } from "../env";
 import { dbFor } from "../lib/db";
+import { enqueueAutoHdrScaffold } from "../autohdr/scaffold";
 
 type Project = typeof projects.$inferSelect;
 
@@ -99,6 +100,8 @@ async function createProject(env: Env, order: TonomoOrder): Promise<string> {
     rawFolderLink: order.rawFolderLink, rawFolderPath: order.rawFolderPath,
     stageKey: "awaiting_raw", createdAt: now, updatedAt: now,
   });
+  await enqueueAutoHdrScaffold(env, id).catch((error) =>
+    console.error("AutoHDR scaffold trigger failed", { projectId: id, error }));
   return id;
 }
 
@@ -120,6 +123,10 @@ async function updateProject(env: Env, project: Project, linkedByAddress: boolea
   if (!project.rawFolderLink && order.rawFolderLink) changes.rawFolderLink = order.rawFolderLink;
   if (!project.rawFolderPath && order.rawFolderPath) changes.rawFolderPath = order.rawFolderPath;
   await db.update(projects).set(changes).where(eq(projects.id, project.id));
+  if (changes.rawFolderPath !== undefined) {
+    await enqueueAutoHdrScaffold(env, project.id).catch((error) =>
+      console.error("AutoHDR scaffold trigger failed", { projectId: project.id, error }));
+  }
   return project.id;
 }
 

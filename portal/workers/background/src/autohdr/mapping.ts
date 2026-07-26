@@ -24,7 +24,7 @@ export type RoutedAutoHdrMapping = {
 export type ClaimRoute = {
   claimId: string;
   mappingId: string;
-  candidate: "final" | "finals";
+  candidate: "final" | "finals" | "manual";
   path: string;
   pathKey: string;
   claimState: "pending" | "active" | "blocked" | "tombstone";

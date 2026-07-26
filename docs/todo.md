@@ -218,7 +218,8 @@ allowlist are silent no-ops otherwise). Full mechanics in `docs/subagents/agy-cl
 
 ## Open plans (see `docs/plans/`)
 
-- **`AutoHDR-Implicit-Scaffolding-Plan.md`** — ready for implementation, not yet started.
+- **`AutoHDR-Implicit-Scaffolding-Plan.md`** — implemented locally 2026-07-26; pending the
+  independent verification/deploy gate.
   Two-part plan: (1) remove the legacy pre-V2 AutoHDR fetch/send code paths so nobody can
   accidentally fall back to them, and (2) scaffold AutoHDR intake folders at project-create time
   and auto-detect edited content that bypasses the "Send to AutoHDR" button — whether dropped in
@@ -228,8 +229,8 @@ allowlist are silent no-ops otherwise). Full mechanics in `docs/subagents/agy-cl
   Went through 6 rounds of Agy/Terra-Sol review plus an independent Opus final pass (verdict:
   APPROVE WITH CORRECTIONS, all applied) — read `AutoHDR-Implicit-Scaffolding-Plan.md` together
   with its `-Base-R6.md` companion (the base plan it patches) before implementing; the
-  `-Opus-Review.md` companion has the full reasoning behind each correction, including a
-  Free-plan subrequest-budget hazard the review caught that the earlier rounds missed.
+  `-Opus-Review.md` companion has the full reasoning behind each correction. Migration 0015 has
+  been created but has not been applied remotely.
 - **`Cloudflare-Images-Pilot-Plan.md`** — renditions-only Cloudflare Images pilot.
   **Not recommended to proceed now**: the outage that motivated it resolved on its own, and an
   independent two-reviewer debate (Agy + Sol) on a related idea (moving originals to Dropbox)

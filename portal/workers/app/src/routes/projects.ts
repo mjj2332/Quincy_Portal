@@ -135,6 +135,10 @@ projectsRoutes.post("/projects", requireCapability("createProject"), async (c) =
   const data = await jsonInput(c, projectFields); if (data instanceof Response) return data;
   const db = createDb(c.env.DB); const id = newId(); const { orderedServices, photographerUserIds, editorUserIds, ...fields } = data;
   await db.insert(schema.projects).values({ id, ...fields, stageKey: "awaiting_raw", createdAt: new Date(), updatedAt: new Date() });
+  if (fields.rawFolderPath !== undefined) {
+    await c.env.BACKGROUND.ensureAutoHdrScaffold(id).catch((error) =>
+      console.error("AutoHDR scaffold trigger failed", { projectId: id, error }));
+  }
   const services = await addCollections(db, id, orderedServices);
   await addMembers(db, id, photographerUserIds, "photographer"); await addMembers(db, id, editorUserIds, "editor");
   await audit(c.env, c.get("user").id, "project.create", "project", id, { orderedServices: [...services] });
@@ -191,7 +195,13 @@ projectsRoutes.patch("/projects/:id", async (c) => {
     }
     if (photographerUserIds !== undefined) auditMeta.photographerMembers = await syncMembers(db, id, photographerUserIds, "photographer");
     if (editorUserIds !== undefined) auditMeta.editorMembers = await syncMembers(db, id, editorUserIds, "editor");
-    await db.update(schema.projects).set({ ...projectUpdates, updatedAt: new Date() }).where(eq(schema.projects.id, id)); await audit(c.env, c.get("user").id, "project.update", "project", id, auditMeta); return c.json(await details(db, id, c.get("user").role));
+    await db.update(schema.projects).set({ ...projectUpdates, updatedAt: new Date() }).where(eq(schema.projects.id, id));
+    if (projectUpdates.rawFolderPath !== undefined) {
+      await c.env.BACKGROUND.ensureAutoHdrScaffold(id).catch((error) =>
+        console.error("AutoHDR scaffold trigger failed", { projectId: id, error }));
+    }
+    await audit(c.env, c.get("user").id, "project.update", "project", id, auditMeta);
+    return c.json(await details(db, id, c.get("user").role));
   }
 });
 projectsRoutes.post("/projects/:id/cover", async (c) => {
@@ -239,9 +249,15 @@ projectsRoutes.post("/projects/:id/send-to-autohdr", requireCapability("adminBac
     .where(eq(schema.selections.state, "selected_for_editing"))
     .get();
   if (!selected) return c.json({ error: "Select at least one RAW asset before sending to autoHDR" }, 400);
-  const { jobId } = await c.env.BACKGROUND.startAutoHdr(id, c.get("user").id);
-  await audit(c.env, c.get("user").id, "project.send_to_autohdr", "project", id, { jobId });
-  return c.json({ jobId });
+  const result = await c.env.BACKGROUND.startAutoHdr(id, c.get("user").id);
+  if (!result.ok) {
+    return c.json(
+      { error: result.message, code: result.code },
+      result.code === "ERR_NO_RAW_SELECTION" ? 400 : 409,
+    );
+  }
+  await audit(c.env, c.get("user").id, "project.send_to_autohdr", "project", id, { jobId: result.jobId });
+  return c.json({ jobId: result.jobId });
 });
 
 projectsRoutes.post("/projects/:id/fetch-edited", requireCapability("adminBackend"), async (c) => {
@@ -250,9 +266,15 @@ projectsRoutes.post("/projects/:id/fetch-edited", requireCapability("adminBacken
   if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   const target = await createDb(c.env.DB).select({ archivedAt: schema.projects.archivedAt }).from(schema.projects).where(eq(schema.projects.id, id)).get();
   if (target?.archivedAt) return c.json({ error: "Project is archived" }, 409);
-  const { jobId } = await c.env.BACKGROUND.fetchEditedFromAutoHdr(id);
-  await audit(c.env, c.get("user").id, "project.fetch_edited", "project", id, { jobId });
-  return c.json({ jobId });
+  const result = await c.env.BACKGROUND.fetchEditedFromAutoHdr(id);
+  if (!result.ok) {
+    return c.json(
+      { error: result.message, code: result.code },
+      result.code === "ERR_NO_RAW_SELECTION" ? 400 : 409,
+    );
+  }
+  await audit(c.env, c.get("user").id, "project.fetch_edited", "project", id, { jobId: result.jobId });
+  return c.json({ jobId: result.jobId });
 });
 
 projectsRoutes.get("/projects/:id/autohdr-status", requireCapability("adminBackend"), async (c) => {
@@ -377,8 +399,9 @@ projectsRoutes.get("/projects/:id/jobs", requireCapability("adminBackend"), asyn
   if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   const rows = await createDb(c.env.DB).select({
     id: schema.jobs.id, kind: schema.jobs.kind, status: schema.jobs.status, error: schema.jobs.error,
+    correlationId: schema.jobs.correlationId,
     createdAt: schema.jobs.createdAt, updatedAt: schema.jobs.updatedAt,
-  }).from(schema.jobs).where(and(eq(schema.jobs.projectId, id), inArray(schema.jobs.kind, ["autohdr", "fetch_edited", "manual_edited_publish", "manual_raw_publish"]))).orderBy(desc(schema.jobs.createdAt)).limit(20).all();
+  }).from(schema.jobs).where(and(eq(schema.jobs.projectId, id), inArray(schema.jobs.kind, ["autohdr", "fetch_edited", "autohdr_scaffold", "manual_edited_publish", "manual_raw_publish"]))).orderBy(desc(schema.jobs.createdAt)).limit(20).all();
   return c.json({ jobs: rows });
 });
 
@@ -387,18 +410,27 @@ projectsRoutes.post("/jobs/:id/retry", requireCapability("adminBackend"), async 
   if (!idCheck(id)) return c.json({ error: "Invalid job id" }, 400);
   const job = await createDb(c.env.DB).select({ id: schema.jobs.id, projectId: schema.jobs.projectId, kind: schema.jobs.kind, status: schema.jobs.status, payloadJson: schema.jobs.payloadJson })
     .from(schema.jobs).where(eq(schema.jobs.id, id)).get();
-  if (!job || !job.projectId || !["autohdr", "fetch_edited", "manual_edited_publish", "manual_raw_publish"].includes(job.kind)) return c.json({ error: "Background job not found" }, 404);
+  if (!job || !job.projectId || !["autohdr", "fetch_edited", "autohdr_scaffold", "manual_edited_publish", "manual_raw_publish"].includes(job.kind)) return c.json({ error: "Background job not found" }, 404);
   if (!await hasProjectAccess(c, job.projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   if (job.status !== "stuck" && job.status !== "failed") return c.json({ error: "Only stuck or failed background jobs can be retried" }, 409);
   const isManualPublish = job.kind === "manual_edited_publish" || job.kind === "manual_raw_publish";
   const manualAssetId = isManualPublish ? (() => { try { const payload = JSON.parse(job.payloadJson ?? "{}"); return typeof payload.assetId === "string" ? payload.assetId : null; } catch { return null; } })() : null;
   if (isManualPublish && !manualAssetId) return c.json({ error: "Manual upload job has no asset" }, 409);
-  const { jobId } = job.kind === "autohdr"
+  const outcome = job.kind === "autohdr"
     ? await c.env.BACKGROUND.startAutoHdr(job.projectId, c.get("user").id)
     : job.kind === "fetch_edited"
       ? await c.env.BACKGROUND.fetchEditedFromAutoHdr(job.projectId)
-      : await c.env.BACKGROUND.publishManualUpload(job.projectId, manualAssetId!);
-  await audit(c.env, c.get("user").id, job.kind === "autohdr" ? "project.retry_autohdr" : job.kind === "fetch_edited" ? "project.retry_fetch_edited" : job.kind === "manual_raw_publish" ? "project.retry_manual_raw_publish" : "project.retry_manual_edited_publish", "project", job.projectId, { previousJobId: id, jobId });
+      : job.kind === "autohdr_scaffold"
+        ? { ok: true as const, jobId: await c.env.BACKGROUND.ensureAutoHdrScaffold(job.projectId).then((result) => result.jobId) }
+        : { ok: true as const, jobId: await c.env.BACKGROUND.publishManualUpload(job.projectId, manualAssetId!).then((result) => result.jobId) };
+  if (!outcome.ok) {
+    return c.json(
+      { error: outcome.message, code: outcome.code },
+      outcome.code === "ERR_NO_RAW_SELECTION" ? 400 : 409,
+    );
+  }
+  const jobId = outcome.jobId;
+  await audit(c.env, c.get("user").id, job.kind === "autohdr" ? "project.retry_autohdr" : job.kind === "fetch_edited" ? "project.retry_fetch_edited" : job.kind === "autohdr_scaffold" ? "project.retry_autohdr_scaffold" : job.kind === "manual_raw_publish" ? "project.retry_manual_raw_publish" : "project.retry_manual_edited_publish", "project", job.projectId, { previousJobId: id, jobId });
   return c.json({ jobId });
 });
 

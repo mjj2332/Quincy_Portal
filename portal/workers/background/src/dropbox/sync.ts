@@ -9,6 +9,7 @@ import { createJob, setJobStatus } from "../lib/jobs";
 import { createDropboxClientContext, download, getSharedLinkMetadata, listFolder, listFolderContinue, recordDropboxSuccess, type DropboxClientContext, type DropboxFile } from "./client";
 import { normalisePath } from "./paths";
 import { dropboxPathKey } from "./paths";
+import { enqueueAutoHdrScaffold } from "../autohdr/scaffold";
 
 // Each downloaded file costs ~9-10 subrequests (2 Dropbox content calls, an R2 put, a
 // rendition enqueue, and several D1 statements), so this cap is really a per-invocation
@@ -293,7 +294,11 @@ export async function syncProjectRawFolder(
         updatedAt: new Date(),
       }).where(eq(jobs.id, trackingJobId));
     }
-    if (project.rawFolderPath !== rawFolderPath) await db.update(projects).set({ rawFolderPath, updatedAt: new Date() }).where(eq(projects.id, projectId));
+    if (project.rawFolderPath !== rawFolderPath) {
+      await db.update(projects).set({ rawFolderPath, updatedAt: new Date() }).where(eq(projects.id, projectId));
+      await enqueueAutoHdrScaffold(env, projectId).catch((error) =>
+        console.error("AutoHDR scaffold trigger failed", { projectId, error }));
+    }
     const currentRawAvailable = Boolean(await db.select({ id: assets.id }).from(assets)
       .where(and(eq(assets.collectionId, collection.id), sql`${assets.supersededAt} IS NULL`)).get());
     if (currentRawAvailable) {

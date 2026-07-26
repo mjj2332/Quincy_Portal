@@ -20,7 +20,7 @@ export type XmpRating = -1 | 0 | 1 | 2 | 3 | 4 | 5;
 export function parseXmpRating(headerBytes: ArrayBuffer | Uint8Array): XmpRating | null {
   const bytes = headerBytes instanceof Uint8Array ? headerBytes : new Uint8Array(headerBytes);
   // XMP packets are UTF-8 XML; decode leniently and search textually.
-  const text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+  const text = new TextDecoder("utf-8", { fatal: false, ignoreBOM: false }).decode(bytes);
 
   const packetStart = text.indexOf("<x:xmpmeta");
   if (packetStart === -1) return null;

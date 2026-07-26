@@ -17,6 +17,11 @@ describe("queue-name dispatch", () => {
     expect(parseQueueBody(RENDITION_QUEUE_NAME, { type: "dropbox_sync", projectId: "p" })).toBeNull();
     expect(parseQueueBody(INGEST_QUEUE_NAME, { type: "autohdr_check", projectId: "p" })).toBeNull();
     expect(parseQueueBody(INGEST_QUEUE_NAME, { type: "autohdr_check", jobId: "job-1" })).toEqual({ queue: INGEST_QUEUE_NAME, body: { type: "autohdr_check", jobId: "job-1" } });
+    expect(parseQueueBody(INGEST_QUEUE_NAME, { type: "autohdr_scaffold", projectId: "p", jobId: "job-1" })).toEqual({
+      queue: INGEST_QUEUE_NAME,
+      body: { type: "autohdr_scaffold", projectId: "p", jobId: "job-1" },
+    });
+    expect(parseQueueBody(INGEST_QUEUE_NAME, { type: "autohdr_scaffold", projectId: "p" })).toBeNull();
     expect(parseQueueBody("unknown", { type: "asset_ingested", assetId: "asset-1" })).toBeNull();
   });
 

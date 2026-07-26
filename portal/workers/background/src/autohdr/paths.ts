@@ -6,10 +6,15 @@ export { AUTOHDR_ROOT } from "../dropbox/paths";
 export { deriveAutoHdrFolderName } from "@quincy/shared";
 export const AUTOHDR_RAW_SUBFOLDER = "01-RAW-Photos";
 export const AUTOHDR_FINAL_SUBFOLDER_CANDIDATES = ["04-FINAL-Photos", "04-FINALS-Photos"] as const;
+export const AUTOHDR_MANUAL_DROP_SUBFOLDER = "04-MANUAL-Photos";
 export const AUTOHDR_MANUAL_UPLOADS_SUBFOLDER = "Manual-Uploads";
 
 export function autoHdrRawInputPath(folderName: string): string {
   return `${AUTOHDR_ROOT}/${folderName}/${AUTOHDR_RAW_SUBFOLDER}`;
+}
+
+export function autoHdrManualDropPath(folderName: string): string {
+  return `${AUTOHDR_ROOT}/${folderName}/${AUTOHDR_MANUAL_DROP_SUBFOLDER}`;
 }
 
 /** Rebuilds a legacy Dropbox source path when the asset predates `assets.source_path`.

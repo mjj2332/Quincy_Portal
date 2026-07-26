@@ -18,6 +18,10 @@ import { changedProjectIds } from "../dropbox/delta";
 import { canRecoverAggregateMonitorHealth, monitorAutomationEnabled, shouldKeepMonitorAlarm } from "../dropbox/monitor-state";
 import { parseDropboxMonitorIdentity } from "../dropbox/paths";
 import { routeAutoHdrDelta } from "../autohdr/mapping";
+import {
+  routeAutoHdrManualDropDelta,
+  routeAutoHdrProviderDelta,
+} from "../autohdr/routers";
 import { claimAutoHdrFetch, startClaimedFetch } from "../autohdr/claims";
 
 const CURSOR_KEY = "cursor";
@@ -117,9 +121,29 @@ export class DropboxSyncDO extends DurableObject<Env> {
           routedProjectCount += 1;
         }
       } else {
-        const routed = await routeAutoHdrDelta(db, identity.connectionId, page.entries);
-        matchedCount = routed.matched;
-        for (const [index, route] of routed.routes.entries()) {
+        const explicitRouted = await routeAutoHdrDelta(
+          db,
+          identity.connectionId,
+          page.entries,
+        );
+        const manualRouted = await routeAutoHdrManualDropDelta(
+          this.env,
+          identity.connectionId,
+          page.entries,
+        );
+        const providerRouted = await routeAutoHdrProviderDelta(
+          this.env,
+          identity.connectionId,
+          page.entries,
+        );
+        const allRoutes = [
+          ...explicitRouted.routes,
+          ...manualRouted.routes,
+          ...providerRouted.routes,
+        ];
+        matchedCount =
+          explicitRouted.matched + manualRouted.matched + providerRouted.matched;
+        for (const [index, route] of allRoutes.entries()) {
           if (index > 0) await new Promise<void>((resolve) => setTimeout(resolve, 250));
           const owner = await claimAutoHdrFetch(this.env, route, {
             trigger: "dropbox_delta",

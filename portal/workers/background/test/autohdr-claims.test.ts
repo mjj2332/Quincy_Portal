@@ -1,8 +1,11 @@
 import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it, vi } from "vitest";
-import { claimAutoHdrFetch, claimAutoHdrHandoff, confirmAutoHdrHandoff } from "../src/autohdr/claims";
+import { claimAutoHdrFetch, claimAutoHdrHandoff, claimBackfillAutoHdrHandoff, claimImplicitAutoHdrHandoff, confirmAutoHdrHandoff } from "../src/autohdr/claims";
 import { routeAutoHdrDelta, type RoutedAutoHdrMapping } from "../src/autohdr/mapping";
+import { routeAutoHdrManualDropDelta, routeAutoHdrProviderDelta } from "../src/autohdr/routers";
+import { ensureScaffold } from "../src/autohdr/scaffold";
 import { dbFor } from "../src/lib/db";
+import { canonicalDropboxConnectionId } from "../src/dropbox/connection";
 import QuincyBackground from "../src";
 
 declare const __PORTAL_MIGRATION_SQL__: string;
@@ -38,7 +41,14 @@ async function fixture() {
     ...assetIds.map((assetId, index) => database.DB.prepare("INSERT INTO selections (id, asset_id, selected_by, state, bracket_group, created_at) VALUES (?, ?, ?, 'selected_for_editing', ?, ?)")
       .bind(crypto.randomUUID(), assetId, userId, index === 0 ? "bracket-a" : null, now)),
   ]);
-  return { connectionId, userId, projectId };
+  // Production code under test resolves its own connection via canonicalDropboxConnectionId()
+  // ("oldest live Dropbox connection"), not via whatever id this fixture happened to generate.
+  // Across a full-file run, many fixture() calls each insert their own connection row with none
+  // ever cleaned up, so the canonical one is whichever ran first in the file — not necessarily
+  // this call's own row. Return the ACTUAL canonical id so callers that assert against it match
+  // what the code under test really resolves, regardless of test execution order.
+  const canonicalConnectionId = await canonicalDropboxConnectionId(dbFor({ DB: database.DB } as never));
+  return { connectionId: canonicalConnectionId, userId, projectId };
 }
 
 /** Cloudflare rejects Workflow instance ids outside this alphabet at create() time with
@@ -73,6 +83,168 @@ describe("AutoHDR workflow instance ids", () => {
 });
 
 describe("atomic AutoHDR ownership", () => {
+  it("deduplicates an implicit manual drop by folder and advances the project once", async () => {
+    const data = await fixture();
+    const scaffoldPath = `/AutoHDR/Implicit-${data.projectId}`;
+    const scaffoldPathKey = scaffoldPath.toLowerCase();
+    const now = Date.now();
+    await database.DB.prepare(
+      "INSERT INTO autohdr_scaffold_claims (id, project_id, connection_id, scaffold_path, scaffold_path_key, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'active', ?, ?)",
+    ).bind(
+      crypto.randomUUID(),
+      data.projectId,
+      data.connectionId,
+      scaffoldPath,
+      scaffoldPathKey,
+      now,
+      now,
+    ).run();
+    const entries = ["one.jpg", "two.jpg"].map((name, index) => ({
+      ".tag": "file" as const,
+      id: `id:manual-${index}`,
+      name,
+      size: 1,
+      path_lower: `${scaffoldPathKey}/04-manual-photos/${name}`,
+      path_display: `${scaffoldPath}/04-MANUAL-Photos/${name}`,
+    }));
+
+    const manual = await routeAutoHdrManualDropDelta(
+      { DB: database.DB } as never,
+      data.connectionId,
+      entries,
+    );
+    expect(manual).toMatchObject({ matched: 1 });
+    expect(manual.routes).toHaveLength(1);
+    const provider = await routeAutoHdrProviderDelta(
+      { DB: database.DB } as never,
+      data.connectionId,
+      [{
+        ".tag": "file",
+        id: "id:provider",
+        name: "final.jpg",
+        size: 1,
+        path_lower: `${scaffoldPathKey}/04-final-photos/final.jpg`,
+        path_display: `${scaffoldPath}/04-FINAL-Photos/final.jpg`,
+      }],
+    );
+    expect(provider).toEqual({ matched: 0, routes: [] });
+
+    const state = await database.DB.prepare(
+      "SELECT p.stage_key, h.initiated_by, h.expected_origin_stage, h.state, h.readiness_units_json, m.state mapping_state, pc.candidate " +
+      "FROM projects p JOIN autohdr_handoffs h ON h.project_id = p.id JOIN autohdr_output_mappings m ON m.handoff_id = h.id " +
+      "JOIN autohdr_path_claims pc ON pc.handoff_id = h.id WHERE p.id = ?",
+    ).bind(data.projectId).first();
+    expect(state).toEqual({
+      stage_key: "editing_autohdr",
+      initiated_by: null,
+      expected_origin_stage: "raw_review",
+      state: "started",
+      readiness_units_json: "[]",
+      mapping_state: "active",
+      candidate: "manual",
+    });
+    const audits = await database.DB.prepare(
+      "SELECT count(*) count FROM audit_log WHERE target_id = ? AND action = 'stage.auto_advance'",
+    ).bind(data.projectId).first<{ count: number }>();
+    expect(audits?.count).toBe(1);
+  });
+
+  it("retires an implicit collision without advancing Raw Review", async () => {
+    const owner = await fixture();
+    const explicit = await claimAutoHdrHandoff(
+      { DB: database.DB } as never,
+      owner.projectId,
+      owner.userId,
+    );
+    const occupied = await database.DB.prepare(
+      "SELECT path FROM autohdr_path_claims WHERE handoff_id = ? ORDER BY candidate LIMIT 1",
+    ).bind(explicit.handoffId).first<{ path: string }>();
+    const contender = await fixture();
+
+    const result = await claimImplicitAutoHdrHandoff(
+      { DB: database.DB } as never,
+      contender.projectId,
+      owner.connectionId,
+      occupied!.path,
+    );
+    expect(result).toMatchObject({ isCollision: true });
+    const state = await database.DB.prepare(
+      "SELECT p.stage_key, h.state, m.state mapping_state FROM projects p " +
+      "JOIN autohdr_handoffs h ON h.project_id = p.id JOIN autohdr_output_mappings m ON m.handoff_id = h.id WHERE p.id = ?",
+    ).bind(contender.projectId).first();
+    expect(state).toEqual({
+      stage_key: "raw_review",
+      state: "retired",
+      mapping_state: "blocked_collision",
+    });
+  });
+
+  it("backfill reactivates a tombstoned claim onto a new generation atomically", async () => {
+    const data = await fixture();
+    const first = await claimAutoHdrHandoff(
+      { DB: database.DB } as never,
+      data.projectId,
+      data.userId,
+    );
+    const oldClaim = await database.DB.prepare(
+      "SELECT id, path FROM autohdr_path_claims WHERE handoff_id = ? ORDER BY candidate LIMIT 1",
+    ).bind(first.handoffId).first<{ id: string; path: string }>();
+    await database.DB.batch([
+      database.DB.prepare("UPDATE autohdr_handoffs SET state = 'failed' WHERE id = ?").bind(first.handoffId),
+      database.DB.prepare("UPDATE autohdr_output_mappings SET state = 'retired' WHERE handoff_id = ?").bind(first.handoffId),
+      database.DB.prepare("UPDATE autohdr_path_claims SET state = 'tombstone' WHERE handoff_id = ?").bind(first.handoffId),
+    ]);
+
+    const result = await claimBackfillAutoHdrHandoff(
+      { DB: database.DB } as never,
+      data.projectId,
+      data.connectionId,
+      oldClaim!.path,
+      "id:observed-folder",
+    );
+    expect(result).toMatchObject({ ok: true, handoff: { generation: 2 } });
+    if (!result.ok) throw new Error(result.reason);
+    const rebound = await database.DB.prepare(
+      "SELECT id, handoff_id, mapping_id, folder_id, state FROM autohdr_path_claims WHERE id = ?",
+    ).bind(oldClaim!.id).first();
+    expect(rebound).toEqual({
+      id: oldClaim!.id,
+      handoff_id: result.handoff.handoffId,
+      mapping_id: result.handoff.mappingId,
+      folder_id: "id:observed-folder",
+      state: "active",
+    });
+    const project = await database.DB.prepare(
+      "SELECT stage_key FROM projects WHERE id = ?",
+    ).bind(data.projectId).first();
+    expect(project).toEqual({ stage_key: "editing_autohdr" });
+  });
+
+  it("retires a stale scaffold when the live project path is cleared", async () => {
+    const data = await fixture();
+    const now = Date.now();
+    const jobId = crypto.randomUUID();
+    const claimId = crypto.randomUUID();
+    await database.DB.batch([
+      database.DB.prepare("UPDATE projects SET raw_folder_path = NULL WHERE id = ?").bind(data.projectId),
+      database.DB.prepare(
+        "INSERT INTO jobs (id, kind, status, project_id, retries, created_at, updated_at) VALUES (?, 'autohdr_scaffold', 'queued', ?, 0, ?, ?)",
+      ).bind(jobId, data.projectId, now, now),
+      database.DB.prepare(
+        "INSERT INTO autohdr_scaffold_claims (id, project_id, connection_id, scaffold_path, scaffold_path_key, state, created_at, updated_at) VALUES (?, ?, ?, '/AutoHDR/Stale', '/autohdr/stale', 'active', ?, ?)",
+      ).bind(claimId, data.projectId, data.connectionId, now, now),
+    ]);
+    await ensureScaffold(
+      { DB: database.DB } as never,
+      jobId,
+      data.projectId,
+    );
+    const state = await database.DB.prepare(
+      "SELECT sc.state, j.status FROM autohdr_scaffold_claims sc JOIN jobs j ON j.id = ? WHERE sc.id = ?",
+    ).bind(jobId, claimId).first();
+    expect(state).toEqual({ state: "retired", status: "done" });
+  });
+
   it("concurrent sends create one frozen handoff/mapping and return its owner", async () => {
     const data = await fixture();
     const localEnv = { DB: database.DB } as never;
@@ -153,12 +325,16 @@ describe("atomic AutoHDR ownership", () => {
     const create = vi.fn(async () => { throw new Error("Workflow unavailable"); });
     const service = new QuincyBackground({} as ExecutionContext, {
       DB: database.DB,
-      DROPBOX_HANDOFF_V2_ENABLED: "1",
       AUTOHDR_WORKFLOW: { create },
     } as never);
-    await expect(service.startAutoHdr(data.projectId, data.userId)).rejects.toThrow("Workflow unavailable");
+    await expect(service.startAutoHdr(data.projectId, data.userId)).resolves.toMatchObject({
+      ok: false,
+      message: "Workflow unavailable",
+    });
     const project = await database.DB.prepare("SELECT stage_key FROM projects WHERE id = ?").bind(data.projectId).first();
     expect(project).toEqual({ stage_key: "raw_review" });
+    const job = await database.DB.prepare("SELECT status, error FROM jobs WHERE project_id = ? AND kind = 'autohdr'").bind(data.projectId).first();
+    expect(job).toEqual({ status: "failed", error: "Workflow unavailable" });
     expect(create).toHaveBeenCalledOnce();
   });
 

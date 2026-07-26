@@ -29,6 +29,18 @@ export function parseQueueBody(queue: string, body: unknown): QueueBody | null {
         (value.trigger === undefined || ["dropbox_delta", "manual_dropbox_sync", "queue_retry"].includes(String(value.trigger)))) {
       return { queue, body: value as IngestMessage };
     }
+    if (value.type === "autohdr_scaffold" &&
+        typeof value.projectId === "string" && value.projectId.length > 0 &&
+        typeof value.jobId === "string" && value.jobId.length > 0) {
+      return {
+        queue,
+        body: {
+          type: "autohdr_scaffold",
+          projectId: value.projectId,
+          jobId: value.jobId,
+        },
+      };
+    }
     if (value.type === "autohdr_check" && typeof value.jobId === "string") return { queue, body: { type: "autohdr_check", jobId: value.jobId } };
   }
   return null;

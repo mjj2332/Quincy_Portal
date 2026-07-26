@@ -21,7 +21,7 @@ import type { RoutedAutoHdrMapping } from "./mapping";
 
 const START_LEASE_MS = 10 * 60_000;
 
-function isUniqueConflict(error: unknown): boolean {
+export function isUniqueConflict(error: unknown): boolean {
   for (let cause: unknown = error; cause instanceof Error; cause = cause.cause) {
     if (/UNIQUE constraint failed/i.test(cause.message)) return true;
   }
@@ -42,6 +42,20 @@ async function sha256(value: string): Promise<string> {
 
 export type HandoffOwner = { handoffId: string; jobId: string; workflowId: string; reused: boolean };
 export type HandoffClaimDependencies = { beforeClaimBatch?: () => void | Promise<void> };
+export type ImplicitHandoffResult = {
+  handoffId: string;
+  jobId: string;
+  workflowId: string;
+  reused: boolean;
+  generation: number;
+  mappingId: string;
+  finalPath: string;
+  finalPathKey: string;
+  isCollision: boolean;
+};
+export type BackfillHandoffClaim =
+  | { ok: true; handoff: ImplicitHandoffResult }
+  | { ok: false; reason: string };
 
 export async function confirmAutoHdrHandoff(
   env: Env,
@@ -183,6 +197,470 @@ export async function claimAutoHdrHandoff(
     throw error;
   }
   return { handoffId, jobId, workflowId, reused: false };
+}
+
+function candidateForPath(targetPath: string): "manual" | "final" | "finals" {
+  const lowerPath = targetPath.toLowerCase();
+  return lowerPath.endsWith("/04-manual-photos")
+    ? "manual"
+    : lowerPath.endsWith("/04-finals-photos")
+      ? "finals"
+      : "final";
+}
+
+/** Creates the first, single-leaf handoff when a scaffolded project receives edited content. */
+export async function claimImplicitAutoHdrHandoff(
+  env: Env,
+  projectId: string,
+  connectionId: string,
+  targetPath: string,
+): Promise<ImplicitHandoffResult | null> {
+  const db = (await import("../lib/db")).dbFor(env);
+  const now = new Date();
+  const nowMs = now.getTime();
+  const targetPathKey = dropboxPathKey(targetPath);
+  const activeWinner = await db.select({
+    handoffId: autoHdrHandoffs.id,
+    jobId: autoHdrHandoffs.jobId,
+    workflowId: autoHdrHandoffs.workflowId,
+    generation: autoHdrHandoffs.generation,
+    mappingId: autoHdrOutputMappings.id,
+    finalPath: autoHdrOutputMappings.finalPath,
+    finalPathKey: autoHdrOutputMappings.finalPathKey,
+    handoffState: autoHdrHandoffs.state,
+  }).from(autoHdrHandoffs)
+    .innerJoin(autoHdrOutputMappings, eq(autoHdrHandoffs.id, autoHdrOutputMappings.handoffId))
+    .where(and(
+      eq(autoHdrHandoffs.projectId, projectId),
+      inArray(autoHdrHandoffs.state, ["starting", "started", "blocked"]),
+    )).get();
+  if (activeWinner?.finalPath && activeWinner.finalPathKey) {
+    return {
+      handoffId: activeWinner.handoffId,
+      jobId: activeWinner.jobId,
+      workflowId: activeWinner.workflowId,
+      reused: true,
+      generation: activeWinner.generation,
+      mappingId: activeWinner.mappingId,
+      finalPath: activeWinner.finalPath,
+      finalPathKey: activeWinner.finalPathKey,
+      isCollision: activeWinner.handoffState === "blocked",
+    };
+  }
+
+  const collidingClaim = await db.select({
+    id: autoHdrPathClaims.id,
+    projectId: autoHdrPathClaims.projectId,
+    state: autoHdrPathClaims.state,
+  }).from(autoHdrPathClaims).where(and(
+    eq(autoHdrPathClaims.connectionId, connectionId),
+    eq(autoHdrPathClaims.pathKey, targetPathKey),
+  )).get();
+  const isCollision = Boolean(collidingClaim && collidingClaim.projectId !== projectId);
+  const diagnostic = isCollision
+    ? `AutoHDR path collision at ${targetPathKey}; owned by project ${collidingClaim!.projectId}.`
+    : null;
+  const handoffId = crypto.randomUUID();
+  const mappingId = crypto.randomUUID();
+  const jobId = crypto.randomUUID();
+  const workflowId = `autohdr-implicit-${projectId}-g1`;
+  const candidate = candidateForPath(targetPath);
+  const metaJson = JSON.stringify({
+    from: "raw_review",
+    to: "editing_autohdr",
+    trigger: "autohdr_implicit_handoff",
+    handoffId,
+    jobId,
+    mappingGeneration: 1,
+    connectionId,
+    targetPath,
+  });
+
+  const batchStatements: ReturnType<typeof env.DB.prepare>[] = [
+    env.DB.prepare(`
+      INSERT INTO jobs (id, kind, status, correlation_id, project_id, payload_json, retries, error, created_at, updated_at)
+      SELECT ?, 'autohdr', ?, ?, ?, ?, 0, ?, ?, ?
+      WHERE EXISTS (
+        SELECT 1 FROM projects
+        WHERE id = ? AND archived_at IS NULL AND stage_key IN ('raw_review', 'editing_autohdr')
+      ) AND NOT EXISTS (
+        SELECT 1 FROM autohdr_handoffs WHERE project_id = ?
+      )
+    `).bind(
+      jobId,
+      isCollision ? "failed" : "done",
+      `autohdr:implicit:${projectId}:1`,
+      projectId,
+      JSON.stringify({ implicit: true, targetPath, isCollision }),
+      diagnostic,
+      nowMs,
+      nowMs,
+      projectId,
+      projectId,
+    ),
+    env.DB.prepare(`
+      INSERT INTO autohdr_handoffs (
+        id, project_id, connection_id, generation, manifest_version, selection_hash,
+        selected_asset_ids_json, readiness_units_json, frozen_raw_folder_path,
+        initiated_by, expected_origin_stage, state, workflow_id, job_id,
+        lease_expires_at, started_at, last_error, created_at, updated_at
+      ) SELECT
+        ?, ?, ?, 1, 1, 'implicit-autodetect',
+        '[]', '[]', COALESCE(raw_folder_path, ''),
+        NULL, 'raw_review', ?, ?, ?,
+        ?, ?, ?, ?, ?
+      FROM projects
+      WHERE id = ? AND archived_at IS NULL AND stage_key IN ('raw_review', 'editing_autohdr')
+        AND EXISTS (SELECT 1 FROM jobs WHERE id = ?)
+        AND NOT EXISTS (SELECT 1 FROM autohdr_handoffs WHERE project_id = ?)
+    `).bind(
+      handoffId,
+      projectId,
+      connectionId,
+      isCollision ? "retired" : "started",
+      workflowId,
+      jobId,
+      nowMs + 86_400_000,
+      nowMs,
+      diagnostic,
+      nowMs,
+      nowMs,
+      projectId,
+      jobId,
+      projectId,
+    ),
+    env.DB.prepare(`
+      INSERT INTO autohdr_output_mappings (
+        id, project_id, handoff_id, connection_id, generation,
+        state, final_path, final_path_key, diagnostic, observed_at, created_at, updated_at
+      ) SELECT
+        ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?
+      WHERE EXISTS (SELECT 1 FROM autohdr_handoffs WHERE id = ?)
+    `).bind(
+      mappingId,
+      projectId,
+      handoffId,
+      connectionId,
+      isCollision ? "blocked_collision" : "active",
+      targetPath,
+      targetPathKey,
+      diagnostic,
+      nowMs,
+      nowMs,
+      nowMs,
+      handoffId,
+    ),
+  ];
+  const handoffInsertIndex = 1;
+
+  if (!isCollision && collidingClaim?.projectId === projectId) {
+    batchStatements.push(env.DB.prepare(`
+      UPDATE autohdr_path_claims
+      SET state = 'active', handoff_id = ?, mapping_id = ?, diagnostic = NULL, updated_at = ?
+      WHERE id = ?
+        AND state IN ('tombstone', 'blocked')
+        AND EXISTS (SELECT 1 FROM autohdr_output_mappings WHERE id = ?)
+    `).bind(handoffId, mappingId, nowMs, collidingClaim.id, mappingId));
+  } else if (!isCollision) {
+    batchStatements.push(env.DB.prepare(`
+      INSERT INTO autohdr_path_claims (
+        id, mapping_id, handoff_id, project_id, connection_id, candidate,
+        path, path_key, state, created_at, updated_at
+      ) SELECT ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?
+      WHERE EXISTS (SELECT 1 FROM autohdr_output_mappings WHERE id = ?)
+    `).bind(
+      crypto.randomUUID(),
+      mappingId,
+      handoffId,
+      projectId,
+      connectionId,
+      candidate,
+      targetPath,
+      targetPathKey,
+      nowMs,
+      nowMs,
+      mappingId,
+    ));
+  }
+
+  batchStatements.push(
+    env.DB.prepare(`
+      UPDATE projects
+      SET stage_key = 'editing_autohdr', updated_at = ?
+      WHERE id = ? AND stage_key = 'raw_review' AND archived_at IS NULL
+        AND ? = 0
+        AND EXISTS (SELECT 1 FROM autohdr_handoffs WHERE id = ?)
+    `).bind(nowMs, projectId, isCollision ? 1 : 0, handoffId),
+    env.DB.prepare(`
+      INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
+      SELECT ?, NULL, 'stage.auto_advance', 'project', ?, ?, ?
+      WHERE changes() = 1
+    `).bind(crypto.randomUUID(), projectId, metaJson, nowMs),
+  );
+
+  const results = await env.DB.batch(batchStatements);
+  if ((results[handoffInsertIndex]?.meta.changes ?? 0) !== 1) return null;
+  return {
+    handoffId,
+    jobId,
+    workflowId,
+    reused: false,
+    generation: 1,
+    mappingId,
+    finalPath: targetPath,
+    finalPathKey: targetPathKey,
+    isCollision,
+  };
+}
+
+/** Atomically creates an observed provider mapping for an operator-driven stranded-project scan. */
+export async function claimBackfillAutoHdrHandoff(
+  env: Env,
+  projectId: string,
+  connectionId: string,
+  targetPath: string,
+  folderId: string,
+): Promise<BackfillHandoffClaim> {
+  const db = (await import("../lib/db")).dbFor(env);
+  const now = new Date();
+  const nowMs = now.getTime();
+  const targetPathKey = dropboxPathKey(targetPath);
+  const activeHandoff = await db.select({ id: autoHdrHandoffs.id }).from(autoHdrHandoffs)
+    .where(and(
+      eq(autoHdrHandoffs.projectId, projectId),
+      inArray(autoHdrHandoffs.state, ["starting", "started", "blocked"]),
+    )).get();
+  if (activeHandoff) return { ok: false, reason: "An active AutoHDR handoff already exists" };
+
+  const collidingClaim = await db.select({
+    id: autoHdrPathClaims.id,
+    projectId: autoHdrPathClaims.projectId,
+    state: autoHdrPathClaims.state,
+  }).from(autoHdrPathClaims).where(and(
+    eq(autoHdrPathClaims.connectionId, connectionId),
+    eq(autoHdrPathClaims.pathKey, targetPathKey),
+  )).get();
+  if (collidingClaim && collidingClaim.projectId !== projectId) {
+    return {
+      ok: false,
+      reason: `AutoHDR path collision at ${targetPathKey}; owned by project ${collidingClaim.projectId}`,
+    };
+  }
+  if (collidingClaim && !["tombstone", "blocked"].includes(collidingClaim.state)) {
+    return {
+      ok: false,
+      reason: `Existing AutoHDR path claim is ${collidingClaim.state} and cannot be reactivated`,
+    };
+  }
+
+  const maxGenRow = await db.select({ maxGen: sql<number>`COALESCE(MAX(${autoHdrHandoffs.generation}), 0)` })
+    .from(autoHdrHandoffs).where(eq(autoHdrHandoffs.projectId, projectId)).get();
+  const generation = Number(maxGenRow?.maxGen ?? 0) + 1;
+  const handoffId = crypto.randomUUID();
+  const mappingId = crypto.randomUUID();
+  const jobId = crypto.randomUUID();
+  const workflowId = `autohdr-backfill-${projectId}-g${generation}`;
+  const candidate = candidateForPath(targetPath);
+  const eligibility = `
+    id = ? AND archived_at IS NULL AND stage_key IN ('raw_review', 'editing_autohdr')
+    AND NOT EXISTS (
+      SELECT 1 FROM autohdr_handoffs
+      WHERE project_id = ? AND state IN ('starting', 'started', 'blocked')
+    )
+  `;
+  const batchStatements: ReturnType<typeof env.DB.prepare>[] = [
+    env.DB.prepare(`
+      INSERT INTO jobs (id, kind, status, correlation_id, project_id, payload_json, retries, created_at, updated_at)
+      SELECT ?, 'autohdr', 'done', ?, ?, ?, 0, ?, ?
+      FROM projects WHERE ${eligibility}
+    `).bind(
+      jobId,
+      `autohdr:backfill:${projectId}:${generation}`,
+      projectId,
+      JSON.stringify({ backfill: true, targetPath }),
+      nowMs,
+      nowMs,
+      projectId,
+      projectId,
+    ),
+    env.DB.prepare(`
+      INSERT INTO autohdr_handoffs (
+        id, project_id, connection_id, generation, manifest_version, selection_hash,
+        selected_asset_ids_json, readiness_units_json, frozen_raw_folder_path,
+        initiated_by, expected_origin_stage, state, workflow_id, job_id,
+        lease_expires_at, started_at, created_at, updated_at
+      ) SELECT
+        ?, ?, ?, ?, 1, 'backfill-v2',
+        '[]', '[]', COALESCE(raw_folder_path, ''),
+        NULL, 'raw_review', 'started', ?, ?,
+        ?, ?, ?, ?
+      FROM projects
+      WHERE ${eligibility}
+        AND EXISTS (SELECT 1 FROM jobs WHERE id = ?)
+    `).bind(
+      handoffId,
+      projectId,
+      connectionId,
+      generation,
+      workflowId,
+      jobId,
+      nowMs + 86_400_000,
+      nowMs,
+      nowMs,
+      nowMs,
+      projectId,
+      projectId,
+      jobId,
+    ),
+    env.DB.prepare(`
+      INSERT INTO autohdr_output_mappings (
+        id, project_id, handoff_id, connection_id, generation,
+        state, final_path, final_path_key, folder_id, observed_at, created_at, updated_at
+      ) SELECT ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?
+      WHERE EXISTS (SELECT 1 FROM autohdr_handoffs WHERE id = ?)
+    `).bind(
+      mappingId,
+      projectId,
+      handoffId,
+      connectionId,
+      generation,
+      targetPath,
+      targetPathKey,
+      folderId,
+      nowMs,
+      nowMs,
+      nowMs,
+      handoffId,
+    ),
+  ];
+  const handoffInsertIndex = 1;
+  if (collidingClaim) {
+    batchStatements.push(env.DB.prepare(`
+      UPDATE autohdr_path_claims
+      SET state = 'active', handoff_id = ?, mapping_id = ?, folder_id = ?, diagnostic = NULL, updated_at = ?
+      WHERE id = ?
+        AND state IN ('tombstone', 'blocked')
+        AND EXISTS (SELECT 1 FROM autohdr_output_mappings WHERE id = ?)
+    `).bind(handoffId, mappingId, folderId, nowMs, collidingClaim.id, mappingId));
+  } else {
+    batchStatements.push(env.DB.prepare(`
+      INSERT INTO autohdr_path_claims (
+        id, mapping_id, handoff_id, project_id, connection_id, candidate,
+        path, path_key, folder_id, state, created_at, updated_at
+      ) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?
+      WHERE EXISTS (SELECT 1 FROM autohdr_output_mappings WHERE id = ?)
+    `).bind(
+      crypto.randomUUID(),
+      mappingId,
+      handoffId,
+      projectId,
+      connectionId,
+      candidate,
+      targetPath,
+      targetPathKey,
+      folderId,
+      nowMs,
+      nowMs,
+      mappingId,
+    ));
+  }
+  batchStatements.push(
+    env.DB.prepare(`
+      UPDATE projects
+      SET stage_key = 'editing_autohdr', updated_at = ?
+      WHERE id = ? AND stage_key = 'raw_review' AND archived_at IS NULL
+        AND EXISTS (SELECT 1 FROM autohdr_handoffs WHERE id = ?)
+    `).bind(nowMs, projectId, handoffId),
+    env.DB.prepare(`
+      INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
+      SELECT ?, NULL, 'stage.auto_advance', 'project', ?, ?, ?
+      WHERE changes() = 1
+    `).bind(
+      crypto.randomUUID(),
+      projectId,
+      JSON.stringify({
+        from: "raw_review",
+        to: "editing_autohdr",
+        trigger: "autohdr_backfill",
+        handoffId,
+        jobId,
+        mappingGeneration: generation,
+        connectionId,
+        targetPath,
+      }),
+      nowMs,
+    ),
+  );
+
+  let results: D1Result[];
+  try {
+    results = await env.DB.batch(batchStatements);
+  } catch (error) {
+    if (!isUniqueConflict(error)) throw error;
+    const concurrent = await db.select({ id: autoHdrHandoffs.id }).from(autoHdrHandoffs)
+      .where(and(
+        eq(autoHdrHandoffs.projectId, projectId),
+        inArray(autoHdrHandoffs.state, ["starting", "started", "blocked"]),
+      )).get();
+    if (concurrent && concurrent.id !== handoffId) {
+      return {
+        ok: false,
+        reason: "A concurrent handoff claimed this project during backfill — skipping, it's no longer stranded",
+      };
+    }
+    const holder = await db.select({ projectId: autoHdrPathClaims.projectId }).from(autoHdrPathClaims)
+      .where(and(
+        eq(autoHdrPathClaims.connectionId, connectionId),
+        eq(autoHdrPathClaims.pathKey, targetPathKey),
+      )).get();
+    if (holder && holder.projectId !== projectId) {
+      return {
+        ok: false,
+        reason: `AutoHDR path collision at ${targetPathKey}; owned by project ${holder.projectId}`,
+      };
+    }
+    throw error;
+  }
+
+  if ((results[handoffInsertIndex]?.meta.changes ?? 0) !== 1) {
+    const current = await db.select({
+      archivedAt: projects.archivedAt,
+      stageKey: projects.stageKey,
+    }).from(projects).where(eq(projects.id, projectId)).get();
+    if (current?.archivedAt) {
+      return { ok: false, reason: "Project was archived between selection and write" };
+    }
+    const concurrent = await db.select({ id: autoHdrHandoffs.id }).from(autoHdrHandoffs)
+      .where(and(
+        eq(autoHdrHandoffs.projectId, projectId),
+        inArray(autoHdrHandoffs.state, ["starting", "started", "blocked"]),
+      )).get();
+    if (concurrent) {
+      return {
+        ok: false,
+        reason: "A concurrent handoff claimed this project during backfill — skipping, it's no longer stranded",
+      };
+    }
+    return {
+      ok: false,
+      reason: `Project is no longer eligible for backfill${current ? ` (stage ${current.stageKey})` : ""}`,
+    };
+  }
+
+  return {
+    ok: true,
+    handoff: {
+      handoffId,
+      jobId,
+      workflowId,
+      reused: false,
+      generation,
+      mappingId,
+      finalPath: targetPath,
+      finalPathKey: targetPathKey,
+      isCollision: false,
+    },
+  };
 }
 
 export type FetchTrigger = {

@@ -16,6 +16,7 @@ const agentPatch = agentFields.partial();
 const stagePatch = z.object({ label: z.string().trim().min(1).optional(), active: z.boolean().optional() });
 const stageMove = z.object({ direction: z.enum(["up", "down"]) });
 const renditionBackfill = z.object({ dryRun: z.boolean().optional(), cursor: z.string().uuid().optional(), limit: z.number().int().min(1).max(100).optional(), confirmProduction: z.literal(true).optional() });
+const autohdrBackfillInput = z.object({ dryRun: z.boolean().optional(), limit: z.number().int().min(1).max(100).optional(), cursor: z.string().uuid().optional() });
 const optionalQuery = <T extends z.ZodTypeAny>(schema: T) => z.preprocess((value) => value === "" ? undefined : value, schema.optional());
 const eventsQuery = z.object({ source: optionalQuery(z.literal("tonomo")), status: optionalQuery(z.enum(["received", "processed", "poison"])), offset: optionalQuery(z.coerce.number().int().min(0)), limit: optionalQuery(z.coerce.number().int().min(1).max(100)) });
 const idCheck = (value: string) => z.string().uuid().safeParse(value).success;
@@ -45,6 +46,15 @@ adminRoutes.post("/admin/renditions/backfill", async (c) => {
   } catch (error) {
     return c.json({ error: error instanceof Error ? error.message : "Rendition backfill failed" }, 409);
   }
+});
+
+adminRoutes.post("/admin/autohdr/backfill", async (c) => {
+  if (!adminAllowed(c)) return c.json({ error: "Forbidden", capability: "adminBackend" }, 403);
+  const input = await jsonInput(c, autohdrBackfillInput);
+  if (input instanceof Response) return input;
+  const result = await c.env.BACKGROUND.backfillAutoHdrV2(input);
+  await audit(c.env, c.get("user").id, "admin.autohdr_backfill", "system", "backfill", { result });
+  return c.json(result);
 });
 
 // Messages the quincy-renditions consumer's DLQ actually received (see background queue()'s

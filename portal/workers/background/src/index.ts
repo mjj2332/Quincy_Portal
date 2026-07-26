@@ -1,6 +1,6 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { and, eq, gt, inArray, sql } from "drizzle-orm";
-import { assets, autoHdrFinalAssociations, autoHdrHandoffs, autoHdrOutputMappings, autoHdrPathClaims, collections, dropboxMonitorHealth, jobs, projects, renditionDlqEvents, selections } from "@quincy/db/schema";
+import { assets, autoHdrFinalAssociations, autoHdrHandoffs, autoHdrOutputMappings, autoHdrPathClaims, collections, dropboxMonitorHealth, jobs, projects, renditionDlqEvents } from "@quincy/db/schema";
 import { enqueueRenditionSafely, renditionsEnabled, type RenditionMessage } from "@quincy/shared";
 
 import { DropboxSyncDO } from "./do/dropbox-sync";
@@ -20,17 +20,20 @@ import { AutoHdrSend } from "./workflows/autohdr";
 import { AutoHdrFetch } from "./workflows/autohdr-fetch";
 import { ManualEditedPublish } from "./workflows/manual-edited-publish";
 import { canonicalDropboxConnectionId } from "./dropbox/connection";
-import { automationFlag } from "./dropbox/monitor-state";
 import { dropboxPathKey, monitorName } from "./dropbox/paths";
-import { claimAutoHdrFetch, claimAutoHdrHandoff, isWorkflowAlreadyExists, startClaimedFetch } from "./autohdr/claims";
+import { claimAutoHdrFetch, claimAutoHdrHandoff, isWorkflowAlreadyExists, startClaimedFetch, type HandoffOwner } from "./autohdr/claims";
 import { routeAutoHdrDelta, type RoutedAutoHdrMapping } from "./autohdr/mapping";
 import { getMetadata, listFolderIfExists } from "./dropbox/client";
 import { autoHdrFinalPathCandidates, deriveAutoHdrFolderName } from "./autohdr/paths";
 import { reconcileAwaitingRawProjects } from "./reconcile-awaiting-raw";
+import { backfillAutoHdrV2 as backfillAutoHdrV2Impl, type BackfillParams, type BackfillResult } from "./autohdr/backfill";
+import { enqueueAutoHdrScaffold, ensureScaffold } from "./autohdr/scaffold";
+import type { AutoHdrErrorCode, AutoHdrFetchResult, AutoHdrResult } from "./autohdr/errors";
 
 export { AutoHdrFetch, AutoHdrSend, ManualEditedPublish, DropboxSyncDO, TonomoProcessorDO };
 
 type DropboxSyncMessage = Extract<IngestMessage, { type: "dropbox_sync" }>;
+const INGEST_QUEUE_MAX_ATTEMPTS = 4;
 export type RenditionBackfillInput = { dryRun?: boolean; cursor?: string; limit?: number; confirmProduction?: boolean };
 export type RenditionBackfillResult = { scanned: number; wouldEnqueue: number; enqueued: number; skipped: number; nextCursor: string | null; dryRun: boolean };
 
@@ -61,69 +64,26 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
     }
   }
 
-  private async startAutoHdrLegacy(projectId: string): Promise<{ jobId: string }> {
-    const db = dbFor(this.env);
-    const selected = await db
-      .select({ assetId: assets.id })
-      .from(selections)
-      .innerJoin(assets, eq(selections.assetId, assets.id))
-      .innerJoin(collections, eq(assets.collectionId, collections.id))
-      .where(and(
-        eq(selections.state, "selected_for_editing"),
-        eq(collections.projectId, projectId),
-        eq(collections.kind, "raw"),
-      ));
-    const assetIds = selected.map((row) => row.assetId);
-    if (assetIds.length === 0) throw new Error("No RAW assets are selected for editing");
-
-    const jobId = await createJob(db, {
-      kind: "autohdr",
-      projectId,
-      payload: { projectId, assetIds },
-      correlationId: `autohdr:${projectId}`,
-    });
-    try {
-      await this.env.AUTOHDR_WORKFLOW.create({ id: jobId, params: { projectId, assetIds, jobId } });
-      // Surface the hand-off immediately; the workflow owns terminal stage and job updates.
-      await db.update(projects).set({ stageKey: "editing_autohdr", updatedAt: new Date() }).where(eq(projects.id, projectId));
-      return { jobId };
-    } catch (error) {
-      await setJobStatus(db, jobId, "failed", error instanceof Error ? error.message : String(error));
-      throw error;
-    }
+  async ensureAutoHdrScaffold(projectId: string): Promise<{ jobId: string }> {
+    return enqueueAutoHdrScaffold(this.env, projectId);
   }
 
-  private async fetchEditedFromAutoHdrLegacy(projectId: string): Promise<{ jobId: string }> {
-    const db = dbFor(this.env);
-    // Single-flight: an in-progress fetch already covers this project. Returning it avoids two
-    // concurrent workflows double-inserting the same finals (no unique constraint on edited assets).
-    const active = await db
-      .select({ id: jobs.id })
-      .from(jobs)
-      .where(and(eq(jobs.projectId, projectId), eq(jobs.kind, "fetch_edited"), inArray(jobs.status, ["queued", "running"])))
-      .get();
-    if (active) return { jobId: active.id };
-    const jobId = await createJob(db, {
-      kind: "fetch_edited",
-      projectId,
-      payload: { projectId },
-      correlationId: `fetch_edited:${projectId}`,
-    });
-    try {
-      await this.env.AUTOHDR_FETCH_WORKFLOW.create({ id: jobId, params: { projectId, jobId } });
-      return { jobId };
-    } catch (error) {
-      await setJobStatus(db, jobId, "failed", error instanceof Error ? error.message : String(error));
-      throw error;
-    }
+  async backfillAutoHdrV2(params: BackfillParams): Promise<BackfillResult> {
+    return backfillAutoHdrV2Impl(this.env, params);
   }
 
-  async startAutoHdr(projectId: string, initiatedBy?: string): Promise<{ jobId: string }> {
-    if (!automationFlag(this.env.DROPBOX_HANDOFF_V2_ENABLED)) return this.startAutoHdrLegacy(projectId);
-    if (!initiatedBy) throw new Error("AutoHDR handoff requires an initiating staff identity");
-    const owner = await claimAutoHdrHandoff(this.env, projectId, initiatedBy);
+  async startAutoHdr(projectId: string, initiatedBy?: string): Promise<AutoHdrResult> {
+    if (!initiatedBy) {
+      return {
+        ok: false,
+        code: "ERR_HANDOFF_BLOCKED",
+        message: "AutoHDR handoff requires an initiating staff identity",
+      };
+    }
     const db = dbFor(this.env);
+    let owner: HandoffOwner | undefined;
     try {
+      owner = await claimAutoHdrHandoff(this.env, projectId, initiatedBy);
       const handoff = await db.select({
         assetIdsJson: autoHdrHandoffs.selectedAssetIdsJson,
         connectionId: autoHdrHandoffs.connectionId,
@@ -131,8 +91,28 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
         initiatedBy: autoHdrHandoffs.initiatedBy,
         state: autoHdrHandoffs.state,
       }).from(autoHdrHandoffs).where(eq(autoHdrHandoffs.id, owner.handoffId)).get();
-      if (!handoff) throw new Error("Claimed AutoHDR handoff disappeared");
-      if (handoff.state === "started") return { jobId: owner.jobId };
+      if (!handoff) {
+        return {
+          ok: false,
+          code: "ERR_HANDOFF_DISAPPEARED",
+          message: "Claimed AutoHDR handoff disappeared",
+        };
+      }
+      if (!handoff.initiatedBy) {
+        return {
+          ok: false,
+          code: "ERR_HANDOFF_BLOCKED",
+          message: "The active AutoHDR handoff was auto-detected and cannot be used as an explicit send",
+        };
+      }
+      if (handoff.state === "started") {
+        return {
+          ok: true,
+          jobId: owner.jobId,
+          handoffId: owner.handoffId,
+          workflowId: owner.workflowId,
+        };
+      }
       if (handoff.state === "blocked") throw new Error("AutoHDR handoff is blocked for staff resolution");
       await this.env.AUTOHDR_WORKFLOW.create({
         id: owner.workflowId,
@@ -146,16 +126,53 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
           initiatedBy: handoff.initiatedBy,
         },
       });
-      return { jobId: owner.jobId };
+      return {
+        ok: true,
+        jobId: owner.jobId,
+        handoffId: owner.handoffId,
+        workflowId: owner.workflowId,
+      };
     } catch (error) {
-      if (isWorkflowAlreadyExists(error)) return { jobId: owner.jobId };
-      await setJobStatus(db, owner.jobId, "failed", error instanceof Error ? error.message : String(error));
-      throw error;
+      if (isWorkflowAlreadyExists(error) && owner) {
+        const existing = await db.select({
+          initiatedBy: autoHdrHandoffs.initiatedBy,
+          state: autoHdrHandoffs.state,
+        }).from(autoHdrHandoffs).where(and(
+          eq(autoHdrHandoffs.id, owner.handoffId),
+          inArray(autoHdrHandoffs.state, ["starting", "started"]),
+        )).get();
+        if (existing?.initiatedBy) {
+          return {
+            ok: true,
+            jobId: owner.jobId,
+            handoffId: owner.handoffId,
+            workflowId: owner.workflowId,
+          };
+        }
+      }
+      if (owner) {
+        await setJobStatus(
+          db,
+          owner.jobId,
+          "failed",
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      const code: AutoHdrErrorCode = /archived/i.test(message)
+        ? "ERR_PROJECT_ARCHIVED"
+        : /no raw assets|no raw selection|selected for editing/i.test(message)
+          ? "ERR_NO_RAW_SELECTION"
+          : /collision|mapping/i.test(message)
+            ? "ERR_MAPPING_BLOCKED"
+            : /blocked/i.test(message)
+              ? "ERR_HANDOFF_BLOCKED"
+              : "ERR_HANDOFF_DISAPPEARED";
+      return { ok: false, code, message };
     }
   }
 
-  async fetchEditedFromAutoHdr(projectId: string): Promise<{ jobId: string }> {
-    if (!automationFlag(this.env.DROPBOX_HANDOFF_V2_ENABLED)) return this.fetchEditedFromAutoHdrLegacy(projectId);
+  async fetchEditedFromAutoHdr(projectId: string): Promise<AutoHdrFetchResult> {
     const db = dbFor(this.env);
     const mapping = await db.select({
       mappingId: autoHdrOutputMappings.id,
@@ -166,11 +183,28 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
       state: autoHdrOutputMappings.state,
       finalPath: autoHdrOutputMappings.finalPath,
       finalPathKey: autoHdrOutputMappings.finalPathKey,
+      handoffState: autoHdrHandoffs.state,
     }).from(autoHdrOutputMappings)
       .innerJoin(autoHdrHandoffs, eq(autoHdrOutputMappings.handoffId, autoHdrHandoffs.id))
-      .where(and(eq(autoHdrOutputMappings.projectId, projectId), eq(autoHdrHandoffs.state, "started")))
+      .where(and(
+        eq(autoHdrOutputMappings.projectId, projectId),
+        inArray(autoHdrHandoffs.state, ["started", "blocked"]),
+      ))
       .get();
-    if (!mapping) throw new Error("No started AutoHDR handoff mapping exists for this project");
+    if (!mapping) {
+      return {
+        ok: false,
+        code: "ERR_FOLDER_NOT_READY",
+        message: "No active AutoHDR handoff mapping exists for this project",
+      };
+    }
+    if (mapping.state === "blocked_collision" || mapping.handoffState === "blocked") {
+      return {
+        ok: false,
+        code: "ERR_MAPPING_BLOCKED",
+        message: "AutoHDR output mapping is blocked for staff resolution",
+      };
+    }
     let route: RoutedAutoHdrMapping | undefined;
     if (mapping.state === "active" && mapping.finalPath && mapping.finalPathKey) {
       route = {
@@ -200,13 +234,26 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
       route = (await routeAutoHdrDelta(db, mapping.connectionId, observed)).routes[0];
     }
     if (!route) {
-      throw new Error(mapping.state === "blocked_collision"
-        ? "AutoHDR output mapping is blocked for staff resolution"
-        : "AutoHDR final folder is not ready");
+      return {
+        ok: false,
+        code: "ERR_FOLDER_NOT_READY",
+        message: "AutoHDR final folder is not ready",
+      };
     }
-    const owner = await claimAutoHdrFetch(this.env, route, { trigger: "manual", representativeChangedPath: route.finalPath });
-    await startClaimedFetch(this.env, owner);
-    return { jobId: owner.jobId };
+    try {
+      const owner = await claimAutoHdrFetch(this.env, route, {
+        trigger: "manual",
+        representativeChangedPath: route.finalPath,
+      });
+      await startClaimedFetch(this.env, owner);
+      return { ok: true, jobId: owner.jobId, fetchClaimId: owner.claimId };
+    } catch (error) {
+      return {
+        ok: false,
+        code: "ERR_FOLDER_NOT_READY",
+        message: error instanceof Error ? error.message : String(error),
+      };
+    }
   }
 
   async publishManualUpload(projectId: string, assetId: string): Promise<{ jobId: string }> {
@@ -548,6 +595,28 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
               (parsed.body as DropboxSyncMessage).trigger ?? "queue_retry",
             );
             message.ack();
+            break;
+          case "autohdr_scaffold":
+            try {
+              await ensureScaffold(
+                this.env,
+                parsed.body.jobId,
+                parsed.body.projectId,
+              );
+              message.ack();
+            } catch (error) {
+              if (message.attempts >= INGEST_QUEUE_MAX_ATTEMPTS) {
+                await setJobStatus(
+                  dbFor(this.env),
+                  parsed.body.jobId,
+                  "failed",
+                  error instanceof Error ? error.message : String(error),
+                );
+                message.ack();
+              } else {
+                throw error;
+              }
+            }
             break;
           case "autohdr_check":
             // Reserved for the future on-demand return-file fetch flow.

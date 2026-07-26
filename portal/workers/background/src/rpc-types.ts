@@ -1,10 +1,14 @@
 import type { WorkerEntrypoint } from "cloudflare:workers";
+import type { BackfillParams, BackfillResult } from "./autohdr/backfill";
+import type { AutoHdrFetchResult, AutoHdrResult } from "./autohdr/errors";
 
 /** Public, serializable surface exposed over the BACKGROUND service binding. */
 export declare abstract class QuincyBackground extends WorkerEntrypoint {
   abstract triggerDropboxSync(projectId: string): Promise<{ jobId: string }>;
-  abstract startAutoHdr(projectId: string, initiatedBy?: string): Promise<{ jobId: string }>;
-  abstract fetchEditedFromAutoHdr(projectId: string): Promise<{ jobId: string }>;
+  abstract ensureAutoHdrScaffold(projectId: string): Promise<{ jobId: string }>;
+  abstract startAutoHdr(projectId: string, initiatedBy?: string): Promise<AutoHdrResult>;
+  abstract fetchEditedFromAutoHdr(projectId: string): Promise<AutoHdrFetchResult>;
+  abstract backfillAutoHdrV2(params: BackfillParams): Promise<BackfillResult>;
   abstract inspectDropboxMonitor(scope: "raw" | "autohdr"): Promise<Record<string, unknown>>;
   abstract resetDropboxMonitor(scope: "raw" | "autohdr"): Promise<Record<string, unknown>>;
   abstract resolveAutoHdrMapping(mappingId: string, chosenPathKey: string, verifiedFolderId: string, actorId: string): Promise<Record<string, unknown>>;

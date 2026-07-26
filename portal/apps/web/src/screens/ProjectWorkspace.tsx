@@ -15,8 +15,18 @@ type Project = { id: string; street: string; suburb: string | null; postcode: st
 type ProjectResponse = Project & { collections: Collection[]; members: Member[] };
 type AssetsResponse = { assets: WorkspaceAsset[] };
 type IngestStatus = { expectedCount: number | null; receivedCount: number; mismatch: boolean };
-type Job = { id: string; kind: "autohdr" | "fetch_edited" | "manual_edited_publish"; status: "queued" | "running" | "done" | "failed" | "stuck"; error: string | null; createdAt: string; updatedAt: string };
+type Job = { id: string; kind: "autohdr" | "fetch_edited" | "autohdr_scaffold" | "manual_edited_publish"; status: "queued" | "running" | "done" | "failed" | "stuck"; error: string | null; correlationId: string | null; createdAt: string; updatedAt: string };
 type JobsResponse = { jobs: Job[] };
+interface AutoHdrStatusResponse {
+  handoff: {
+    id: string;
+    generation: number;
+    state: "starting" | "started" | "blocked" | "retired" | "failed";
+    mappingState: "pending_discovery" | "active" | "blocked_collision" | "retired";
+    finalPath: string | null;
+    diagnostic: string | null;
+  } | null;
+}
 type Toast = { id: number; message: string; tone: "success" | "error" };
 
 function date(value: string | null) { return value ? new Intl.DateTimeFormat("en-AU", { day: "numeric", month: "short", year: "numeric" }).format(new Date(value)) : "Shoot date pending"; }
@@ -34,6 +44,7 @@ export function ProjectWorkspace({ projectId, notice, onNoticeShown }: { project
   const [rawAssets, setRawAssets] = useState<WorkspaceAsset[]>([]);
   const [ingest, setIngest] = useState<IngestStatus | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
+  const [autohdrStatus, setAutohdrStatus] = useState<AutoHdrStatusResponse["handoff"]>(null);
   const [activeTab, setActiveTab] = useState<Collection["kind"]>("raw");
   const [openAssetId, setOpenAssetId] = useState<string | null>(null);
   // Snapshot of the grid's displayed order (Captures then alphabetical sections) at open time — ids only,
@@ -48,6 +59,7 @@ export function ProjectWorkspace({ projectId, notice, onNoticeShown }: { project
   const currentProjectIdRef = useRef(projectId);
   const currentTabRef = useRef(activeTab);
   const rawAssetsRef = useRef(rawAssets);
+  const autohdrObservedRef = useRef<{ handoffId: string; jobId: string } | null>(null);
   const assetRequestRef = useRef<{ generation: number; controller: AbortController | null }>({ generation: 0, controller: null });
   currentProjectIdRef.current = projectId;
   currentTabRef.current = activeTab;
@@ -77,7 +89,12 @@ export function ProjectWorkspace({ projectId, notice, onNoticeShown }: { project
     if (kind === "raw") setRawAssets(response.assets);
   }, [activeTab, projectId]);
   const refreshIngest = useCallback(async () => { if (projectId) setIngest(await apiGet<IngestStatus>(`/api/projects/${projectId}/ingest-status`)); }, [projectId]);
-  const refreshJobs = useCallback(async () => { if (projectId && canAdminBackend) setJobs((await apiGet<JobsResponse>(`/api/projects/${projectId}/jobs`)).jobs); }, [canAdminBackend, projectId]);
+  const refreshJobs = useCallback(async (): Promise<Job[]> => {
+    if (!projectId || !canAdminBackend) return [];
+    const fetched = (await apiGet<JobsResponse>(`/api/projects/${projectId}/jobs`)).jobs;
+    setJobs(fetched);
+    return fetched;
+  }, [canAdminBackend, projectId]);
   const refresh = useCallback(async () => { await Promise.all([refreshAssets(), refreshIngest(), ...(canAdminBackend ? [refreshJobs()] : [])]); }, [canAdminBackend, refreshAssets, refreshIngest, refreshJobs]);
 
   useEffect(() => {
@@ -124,6 +141,54 @@ export function ProjectWorkspace({ projectId, notice, onNoticeShown }: { project
     const interval = window.setInterval(refreshUntilTerminal, 5_000);
     return () => window.clearInterval(interval);
   }, [canAdminBackend, jobs, projectId, refreshAssets, refreshJobs, refreshProject]);
+
+  useEffect(() => {
+    setAutohdrStatus(null);
+    autohdrObservedRef.current = null;
+  }, [projectId]);
+
+  useEffect(() => {
+    if (!canAdminBackend || !projectId || data?.id !== projectId || (data.stageKey !== "raw_review" && data.stageKey !== "editing_autohdr")) return;
+    let isMounted = true;
+    let timer: number | undefined;
+    const poll = async () => {
+      try {
+        const { handoff } = await apiGet<AutoHdrStatusResponse>(`/api/projects/${projectId}/autohdr-status`);
+        if (!isMounted) return;
+        setAutohdrStatus(handoff);
+        const isActive = handoff?.state === "started" && handoff.mappingState === "active";
+        if (isActive) {
+          const freshJobs = await refreshJobs();
+          if (!isMounted) return;
+          const fetchJob = freshJobs.find((job) =>
+            job.kind === "fetch_edited" &&
+            job.correlationId === `fetch_edited:${projectId}:${handoff.generation}`);
+          const alreadyObserved =
+            autohdrObservedRef.current?.handoffId === handoff.id &&
+            autohdrObservedRef.current?.jobId === fetchJob?.id;
+          if (fetchJob && !alreadyObserved) {
+            if (fetchJob.status === "queued" || fetchJob.status === "running") {
+              autohdrObservedRef.current = { handoffId: handoff.id, jobId: fetchJob.id };
+            } else if (fetchJob.status === "done" || fetchJob.status === "failed" || fetchJob.status === "stuck") {
+              void refreshAssets("edited");
+              autohdrObservedRef.current = { handoffId: handoff.id, jobId: fetchJob.id };
+            }
+          }
+        }
+        if (handoff && data.stageKey === "raw_review") void refreshProject();
+        const terminal = handoff !== null && (handoff.state === "retired" || handoff.state === "failed");
+        const blocked = handoff?.state === "blocked" || handoff?.mappingState === "blocked_collision";
+        if (isMounted && !terminal && !blocked) timer = window.setTimeout(poll, 5_000);
+      } catch {
+        if (isMounted) timer = window.setTimeout(poll, 5_000);
+      }
+    };
+    void poll();
+    return () => {
+      isMounted = false;
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [canAdminBackend, data?.id, data?.stageKey, projectId, refreshAssets, refreshJobs, refreshProject]);
 
   const updateReview = useCallback(async (assetId: string, patch: ReviewPatch) => {
     const before = assets.find((asset) => asset.id === assetId); if (!before) return;
@@ -200,6 +265,15 @@ export function ProjectWorkspace({ projectId, notice, onNoticeShown }: { project
   // Every Dropbox destination is derived from the RAW folder, and an edited upload stays invisible
   // until it is published there. Without one the API refuses the upload, so never offer the picker.
   const hasRawFolder = Boolean(project.rawFolderPath || project.rawFolderLink);
+  const autohdrTerminal = autohdrStatus?.state === "retired" || autohdrStatus?.state === "failed";
+  const autohdrBlocked = !autohdrTerminal && (autohdrStatus?.state === "blocked" || autohdrStatus?.mappingState === "blocked_collision");
+  const autohdrLabel = isFetching ? "Fetching…"
+    : autohdrBlocked ? "Blocked — staff resolution needed"
+      : autohdrStatus?.state === "started" && autohdrStatus.mappingState !== "active" ? "Discover & fetch"
+        : "Fetch edited from autoHDR";
+  const autohdrMessage = autohdrBlocked
+    ? (autohdrStatus?.diagnostic ?? "AutoHDR output needs staff resolution before it can be fetched.")
+    : "Pull finished edits from autoHDR's 04-FINAL-Photos into this collection.";
 
   return <main className="work">
     <aside className="rail"><div style={{ marginBottom: 10 }}><StatusBadge stageKey={project.stageKey} /></div><h2 className="serif">{project.street}</h2><div className="ey" style={{ marginTop: 8 }}>{[project.suburb, project.postcode].filter(Boolean).join(" · ")}</div>
@@ -212,14 +286,14 @@ export function ProjectWorkspace({ projectId, notice, onNoticeShown }: { project
       {ingest?.mismatch && <div className="ingest-warning" role="alert"><strong>Capture count needs attention.</strong> Expected {ingest.expectedCount}, received {ingest.receivedCount}.</div>}
       {activeTab === "raw" || activeTab === "edited" ? <><div className="workspace-intro"><div><div className="ey">{activeTab === "raw" ? "Capture QA" : "Edited QA"}</div><h1 className="serif">{activeTab === "raw" ? "RAW frames" : "Edited frames"}</h1></div><div className="muted">{activeTab === "raw" ? "Ratings from XMP are shown at ingest. Select the strongest frames for editing." : "Review delivered edits before they move to client delivery."}</div></div>
         {canAdminBackend && activeTab === "raw" && canSelect && <div className="hdr"><div className="grow"><strong>autoHDR hand-off</strong><div className="muted">{selectionCount} selected RAW frame{selectionCount === 1 ? "" : "s"} will be sent for editing.</div></div><div className="row gap2"><button className="button button--secondary" type="button" disabled={selectionCount === 0} onClick={downloadSelectedRaw}>{`Download ${selectionCount} selected (zip)`}</button><button className="button" type="button" disabled={selectionCount === 0 || isSending} onClick={() => void sendToAutoHdr()}>{isSending ? "Sending…" : `Send ${selectionCount} selected to autoHDR`}</button></div></div>}
-        {canAdminBackend && activeTab === "edited" && canSelect && <div className="hdr"><div className="grow"><strong>Fetch from autoHDR</strong><div className="muted">Pull finished edits from autoHDR's 04-FINAL-Photos into this collection.</div></div><button className="button" type="button" disabled={isFetching} onClick={() => void fetchEdited()}>{isFetching ? "Fetching…" : "Fetch edited from autoHDR"}</button></div>}
+        {canAdminBackend && activeTab === "edited" && canSelect && <div className="hdr"><div className="grow"><strong>Fetch from autoHDR</strong><div className="muted">{autohdrMessage}</div></div><button className="button" type="button" disabled={isFetching || autohdrBlocked} onClick={() => void fetchEdited()}>{autohdrLabel}</button></div>}
         {activeTab === "raw" && canUpload && <div className="workgrid"><UploadDropzone projectId={projectId} onComplete={refresh} onToast={toast} /></div>}
         {activeTab === "edited" && can("uploadEdited") && <div className="workgrid">{hasRawFolder
           ? <UploadDropzone projectId={projectId} collection="edited" onComplete={async () => { await Promise.all([refreshAssets("edited"), refreshProject()]); }} onToast={toast} />
           : <div className="empty" role="status"><span className="serif">No Dropbox RAW folder for this shoot.</span>Edited uploads are published to Dropbox before they appear here, and every destination is derived from the RAW folder. Create the shoot folder in Tonomo, then set the RAW folder on this project{canEdit ? " under Edit details" : ""}.</div>}</div>}
         <PhotoGrid assets={assets} showSections={activeTab === "raw" || activeTab === "edited"} canReview={canReview} canRecommend={canRecommend} canSelect={activeTab === "raw" && canSelect} canSetCover={canEdit && (activeTab === "raw" || activeTab === "edited")} coverAssetId={project.effectiveCoverAssetId} storedCoverAssetId={project.coverAssetId} onSetCover={updateCover} onOpen={(asset, orderedAssets) => { setLightboxOrderIds(orderedAssets.map((item) => item.id)); setOpenAssetId(asset.id); }} onReview={updateReview} onSelection={updateSelection} />
       </> : <CollectionPanel projectId={projectId} collection={activeTab} assets={assets} canManage={canManageCollections} canApprove={can("reviewEdited")} onReview={updateReview} onChanged={async () => { await Promise.all([refreshAssets(activeTab), refreshProject()]); }} onToast={toast} />}
-      {canAdminBackend && jobs.length > 0 && <div className="workgrid"><section className="hdr" style={{ alignItems: "flex-start", flexDirection: "column" }}><div><strong>autoHDR status</strong><div className="muted">Recent hand-offs, fetches, and manual-upload publishes for this project.</div></div>{jobs.map((job) => <div className="kv" style={{ width: "100%" }} key={job.id}><span className="k">{new Date(job.createdAt).toLocaleString("en-AU")}</span><span className="vv"><span className="k">{job.kind === "fetch_edited" ? "Fetch" : job.kind === "manual_edited_publish" ? "Manual upload" : "Send"}</span>{" "}<span className={`statetag st-${job.status}`}>{job.status}</span>{job.error ? ` ${job.error}` : ""}{(job.status === "stuck" || job.status === "failed") && <button className="chip" style={{ marginLeft: 8 }} type="button" onClick={() => void retryAutoHdr(job.id)}>Retry</button>}</span></div>)}</section></div>}
+      {canAdminBackend && jobs.length > 0 && <div className="workgrid"><section className="hdr" style={{ alignItems: "flex-start", flexDirection: "column" }}><div><strong>autoHDR status</strong><div className="muted">Recent hand-offs, fetches, and manual-upload publishes for this project.</div></div>{jobs.map((job) => <div className="kv" style={{ width: "100%" }} key={job.id}><span className="k">{new Date(job.createdAt).toLocaleString("en-AU")}</span><span className="vv"><span className="k">{job.kind === "fetch_edited" ? "Fetch" : job.kind === "autohdr_scaffold" ? "Scaffold" : job.kind === "manual_edited_publish" ? "Manual upload" : "Send"}</span>{" "}<span className={`statetag st-${job.status}`}>{job.status}</span>{job.error ? ` ${job.error}` : ""}{(job.status === "stuck" || job.status === "failed") && <button className="chip" style={{ marginLeft: 8 }} type="button" onClick={() => void retryAutoHdr(job.id)}>Retry</button>}</span></div>)}</section></div>}
     </section>
     {openAssetId && <Lightbox assets={lightboxOrderIds ? lightboxOrderIds.map((id) => assets.find((asset) => asset.id === id)).filter((asset): asset is WorkspaceAsset => Boolean(asset)) : assets} rawAssets={rawAssets} initialAssetId={openAssetId} collectionKind={activeTab === "edited" ? "edited" : "raw"} canReview={canReview} canRecommend={canRecommend} canAnnotate={canAnnotate} onClose={() => { setOpenAssetId(null); setLightboxOrderIds(null); }} onReview={updateReview} onToast={toast} />}
     <div className="toasts">{toasts.map((item) => <div className={`toast ${item.tone === "error" ? "toast--error" : ""}`} key={item.id}>{item.tone === "error" ? "!" : "✓"}<span>{item.message}</span></div>)}</div>

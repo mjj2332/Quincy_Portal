@@ -412,7 +412,7 @@ export const autoHdrHandoffs = sqliteTable(
     selectedAssetIdsJson: text("selected_asset_ids_json").notNull(),
     readinessUnitsJson: text("readiness_units_json").notNull(),
     frozenRawFolderPath: text("frozen_raw_folder_path").notNull(),
-    initiatedBy: text("initiated_by").notNull().references(() => user.id),
+    initiatedBy: text("initiated_by").references(() => user.id),
     expectedOriginStage: text("expected_origin_stage").notNull().default("raw_review"),
     state: text("state", { enum: ["starting", "started", "blocked", "retired", "failed"] }).notNull().default("starting"),
     workflowId: text("workflow_id").notNull().unique(),
@@ -428,6 +428,27 @@ export const autoHdrHandoffs = sqliteTable(
     uniqueIndex("autohdr_handoffs_active_project_unique").on(t.projectId)
       .where(sql`${t.state} in ('starting', 'started', 'blocked')`),
     index("autohdr_handoffs_connection_idx").on(t.connectionId),
+  ],
+);
+
+/** Folder-scaffolding ownership for one Portal-managed `/AutoHDR/<folderName>` workspace. */
+export const autohdrScaffoldClaims = sqliteTable(
+  "autohdr_scaffold_claims",
+  {
+    id: id(),
+    projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+    connectionId: text("connection_id").notNull().references(() => integrationConnections.id),
+    scaffoldPath: text("scaffold_path").notNull(),
+    scaffoldPathKey: text("scaffold_path_key").notNull(),
+    state: text("state", { enum: ["active", "retired", "tombstone"] }).notNull().default("active"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex("autohdr_scaffold_claims_connection_path_key_unique").on(t.connectionId, t.scaffoldPathKey),
+    uniqueIndex("autohdr_scaffold_claims_active_project_unique").on(t.projectId)
+      .where(sql`${t.state} = 'active'`),
+    index("autohdr_scaffold_claims_project_idx").on(t.projectId),
   ],
 );
 
@@ -465,7 +486,7 @@ export const autoHdrPathClaims = sqliteTable(
     handoffId: text("handoff_id").notNull().references(() => autoHdrHandoffs.id, { onDelete: "restrict" }),
     projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "restrict" }),
     connectionId: text("connection_id").notNull().references(() => integrationConnections.id),
-    candidate: text("candidate", { enum: ["final", "finals"] }).notNull(),
+    candidate: text("candidate", { enum: ["final", "finals", "manual"] }).notNull(),
     path: text("path").notNull(),
     pathKey: text("path_key").notNull(),
     folderId: text("folder_id"),

@@ -18,7 +18,6 @@ export interface Env {
   RENDITIONS_ENABLED?: boolean;
   DROPBOX_RAW_AUTOMATION_ENABLED?: string | boolean;
   DROPBOX_AUTOHDR_AUTOMATION_ENABLED?: string | boolean;
-  DROPBOX_HANDOFF_V2_ENABLED?: string | boolean;
   /** Production mutation is blocked unless this deployment-time flag is exactly "1". */
   ALLOW_PRODUCTION_RENDITION_BACKFILL?: string;
   APP_ORIGIN: string;

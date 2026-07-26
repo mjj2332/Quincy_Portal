@@ -457,6 +457,20 @@ was expensive: three wrong root causes were shipped before the plan page was eve
   loudly instead of being conjured. **Rule:** derive the chain from the destination path itself,
   so the folders created are provably the parents of the object written and cannot drift.
 
+- **Queued reconciliation messages should carry identity, not mutable snapshots.** AutoHDR
+  scaffold jobs originally looked simple enough to carry `raw_folder_path`, but PATCH, Tonomo,
+  and Dropbox reconciliation can all update that field while an older delivery is waiting or
+  retrying. The safe contract is only `{projectId, jobId}`: re-read the project row at execution
+  time and fence every claim mutation against that same live value. A guarded UPDATE returning
+  zero changes is a stale read, not success; restart the bounded read-decide-write sequence.
+
+- **An auto-detected AutoHDR handoff is evidence, not a frozen send manifest.** Implicit
+  handoffs intentionally store empty `selected_asset_ids_json` and `readiness_units_json`; any
+  coverage UI must call that “auto-detected — no frozen manifest,” never “0 of 0 covered.”
+  Their `workflow_id` is also an ownership placeholder, not a Workflow instance that was
+  created. Recovery lookups for an explicit send must therefore require an eligible active
+  state and a real `initiated_by` identity before returning that workflow ID.
+
 - **The `secrets` context is not allowed in a job-level `if:` in GitHub Actions.** Using it there
   (e.g. `if: ${{ ... && secrets.FOO != '' }}` on a job) doesn't fail loudly — it invalidates the
   *entire* workflow file. Every run then shows "This run likely failed because of a workflow file

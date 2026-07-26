@@ -18,7 +18,7 @@ export interface AutoHdrInput {
   handoffId?: string;
   connectionId?: string;
   mappingGeneration?: number;
-  initiatedBy?: string;
+  initiatedBy?: string | null;
 }
 
 interface RawAsset {
