@@ -81,3 +81,17 @@ None of these print an error. All of them look like success.
 So: check **stderr**, not just whether the report file has content, and confirm every Agy build
 actually touched disk (`git status`, read the file back) before trusting its self-report. Then
 run the full §5 gate as with any other builder.
+
+## Passing a large prompt safely — `-p` has no stdin equivalent
+
+Agy's `-p` takes a positional argument only; unlike `codex exec`, there is no stdin mode to fall
+back to (see [codex-cli.md](codex-cli.md)'s stdin-hang failure mode for why that matters there).
+For a large prompt, `-p "$(cat "$SCRATCH/prompt.md")"` is safe **as long as the entire argument
+is that one substitution and nothing else** — command-substitution output is not re-scanned for
+further `$`/backtick expansion, so backticks or `${...}` inside the file pass through literally
+(verified live: a file containing `` `writeAutoHdrFinal()` `` and `${assetId}` came through
+unexpanded). The danger is mixing hand-typed prose into the *same* double-quoted argument as the
+substitution — e.g. `"$(cat a)... some ${literal} text ...$(cat b)"` — since that hand-typed
+`${literal}` is parsed as a real expansion by the outer quotes, not as inert text. Keep each `-p`
+argument to a single clean substitution (concatenate multiple source files into one scratchpad
+file first, then `cat` that one file) rather than assembling the prompt inline.

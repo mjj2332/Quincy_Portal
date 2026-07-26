@@ -9,14 +9,25 @@ sandbox, output read back from a file. It is not the `Agent` tool.
 codex exec --sandbox read-only -m gpt-5.6-sol -c model_reasoning_effort=high "..."
 ```
 
-Full spawn shape, with the spec in a scratchpad file and the report captured separately:
+Full spawn shape, with the spec in a scratchpad file and the report captured separately.
+**Pipe the prompt via stdin — do not embed it as a `"$(cat ...)"` positional argument** (see
+the stdin-hang failure mode below for why):
 
 ```bash
 SCRATCH=".../scratchpad"
-cd "<repo root>" && codex exec \
+cd "<repo root>" && cat "$SCRATCH/wp-x-taskname.md" | codex exec \
   --sandbox workspace-write \
   --output-last-message "$SCRATCH/wp-x-report.md" \
-  "$(cat "$SCRATCH/wp-x-taskname.md")" \
+  > "$SCRATCH/wp-x-run.log" 2>&1
+```
+
+To pipe multiple files in as one prompt (e.g. instructions plus reference docs), concatenate
+them into the pipe rather than interpolating any of them into a quoted argument:
+
+```bash
+{ cat "$SCRATCH/wp-x-prompt.md"; cat "$SCRATCH/wp-x-reference-a.md"; cat "$SCRATCH/wp-x-reference-b.md"; } \
+  | codex exec --sandbox read-only -m gpt-5.6-sol -c model_reasoning_effort=high \
+    --output-last-message "$SCRATCH/wp-x-report.md" \
   > "$SCRATCH/wp-x-run.log" 2>&1
 ```
 
@@ -43,3 +54,25 @@ cd "<repo root>" && codex exec \
 it cannot grant non-interactively, so the call fails while read-only calls to the same server
 succeed in the same run. Don't keep tuning the invocation — fall back to an already
 authenticated CLI (e.g. `wrangler` for Cloudflare) and perform the write directly.
+
+## Failure mode: silent stdin hang from shell-argument corruption
+
+If the prompt is passed as a positional `"$(cat file)..."` argument inside a double-quoted
+Bash string — especially one that also has hand-typed prose quoting real code (e.g. a review
+brief that quotes `${assetId}`-style snippets from the file being reviewed) — bash expands
+those literal `${...}` sequences as shell variable references *before* `codex exec` ever sees
+them, silently evaluating unset ones to empty strings and corrupting the argument. `codex exec`
+then falls back to reading its prompt from stdin, prints `Reading additional input from
+stdin...` in its log, and hangs forever, because a backgrounded/redirected invocation has no
+interactive stdin to read. CPU stays near-idle and the process just sits there — it looks like
+a slow model call, not a hang, unless you check the log for that specific line.
+
+**Diagnose**: `ps aux | grep codex` (process alive, low accumulated CPU time relative to wall
+clock) plus `grep "Reading additional input from stdin" <run.log>`.
+
+**Fix**: never interpolate prompt text — especially anything containing `${` or backticks —
+into a quoted shell argument. Pipe it via stdin instead, with no positional `PROMPT` argument
+at all (`codex exec` reads its entire prompt from stdin when none is given): `cat file | codex
+exec [flags] > out.log 2>&1`, or `{ cat a; cat b; } | codex exec [flags] > out.log 2>&1` for
+multiple files. `cat`'s output is inert to the shell — it is never re-scanned for `${...}` or
+backtick expansion. See the spawn-shape examples above, which use this pattern.
