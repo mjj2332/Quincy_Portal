@@ -215,22 +215,24 @@ allowlist are silent no-ops otherwise). Full mechanics in `docs/subagents/agy-cl
 - **`Implementation-Sequencing-Plan.md`** — the master plan that sequenced all of the above
   (plus the R2 rendition-purge fix, Wave 1b, which had no standalone plan doc) into
   dependency-ordered waves. Kept for provenance now that every wave has shipped.
+- **`AutoHDR-Implicit-Scaffolding-Plan.md`** — legacy pre-V2 AutoHDR send/fetch paths and their
+  feature flag removed; AutoHDR intake folders now scaffold automatically at project-create/
+  RAW-path-set time (five real writers converging on a fenced, concurrency-safe D1 write), and a
+  Dropbox drop into `04-MANUAL-Photos` or `04-FINAL(S)-Photos` auto-detects and claims the handoff
+  with no button click, closing the auto-fetch scope gap noted above. Operator backfill
+  (`POST /admin/autohdr/backfill`) covers projects sent through the legacy path before V2
+  existed. Migration 0015 (`autohdr_scaffold_claims`, widened `candidate` enum) applied to prod
+  2026-07-26; all three Workers redeployed same day (background → webhook-ingress → app), smoke
+  test clean. Went through 9 rounds of Terra pre-build review (rounds 7-15 of the plan doc, after
+  the earlier 6 Agy/Terra-Sol rounds plus an independent Opus pass — read all three doc files
+  together for full provenance) plus a separate fresh-context diff review. Independent
+  verification outside the builder's own sandbox caught and fixed three issues the build missed:
+  a typecheck regression, migration 0015 originally using `CREATE TEMP TABLE` (a documented,
+  broken Cloudflare D1 limitation that would have failed against real D1 entirely), and a flaky
+  cross-test-pollution bug in a test fixture — see `docs/lessons.md`.
 
 ## Open plans (see `docs/plans/`)
 
-- **`AutoHDR-Implicit-Scaffolding-Plan.md`** — implemented locally 2026-07-26; pending the
-  independent verification/deploy gate.
-  Two-part plan: (1) remove the legacy pre-V2 AutoHDR fetch/send code paths so nobody can
-  accidentally fall back to them, and (2) scaffold AutoHDR intake folders at project-create time
-  and auto-detect edited content that bypasses the "Send to AutoHDR" button — whether dropped in
-  the AutoHDR app's own `04-FINAL-Photos`/`04-FINALS-Photos` output, or a new
-  `04-MANUAL-Photos` folder for manual uploads. Closes the gap noted above ("A project sent on
-  the legacy path has no claim and always needs the manual button" / auto-fetch scope note).
-  Went through 6 rounds of Agy/Terra-Sol review plus an independent Opus final pass (verdict:
-  APPROVE WITH CORRECTIONS, all applied) — read `AutoHDR-Implicit-Scaffolding-Plan.md` together
-  with its `-Base-R6.md` companion (the base plan it patches) before implementing; the
-  `-Opus-Review.md` companion has the full reasoning behind each correction. Migration 0015 has
-  been created but has not been applied remotely.
 - **`Cloudflare-Images-Pilot-Plan.md`** — renditions-only Cloudflare Images pilot.
   **Not recommended to proceed now**: the outage that motivated it resolved on its own, and an
   independent two-reviewer debate (Agy + Sol) on a related idea (moving originals to Dropbox)
