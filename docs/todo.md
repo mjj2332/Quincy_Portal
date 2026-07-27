@@ -347,8 +347,11 @@ allowlist are silent no-ops otherwise). Full mechanics in `docs/subagents/agy-cl
   of the actual build was clean; independent verification (this session) found and fixed one more
   test-only bug (a test omitting its Dropbox-download mock, unrelated to the lease logic itself).
   `npm run typecheck`, the web build, and all four workspace/shared test suites (300 tests total:
-  150 background, 101+1 skip app, 13 webhook-ingress, 35 shared) are green. Migration `0017` and
-  prod deploy pending.
+  150 background, 101+1 skip app, 13 webhook-ingress, 35 shared) are green. Migration `0017`
+  applied to prod D1 and all three Workers redeployed 2026-07-27 (background → webhook-ingress →
+  app). Basic connectivity verified post-deploy; the manual-supplement-independence flow itself has
+  not been live-smoke-tested against a real project (would need an actual stuck-round project and a
+  real Dropbox drop into `04-MANUAL-Photos`).
 
 ## Open plans (see `docs/plans/`)
 
