@@ -173,6 +173,7 @@ export class DropboxSyncDO extends DurableObject<Env> {
             monitorScope: "autohdr",
             monitorRoot: "/AutoHDR",
           });
+          if ("routeNoLongerValid" in owner) continue;
           await startClaimedFetch(this.env, owner);
           routedProjectCount += 1;
         }

@@ -163,6 +163,11 @@ export async function backfillAutoHdrV2(
         trigger: "manual",
         representativeChangedPath: targetPath,
       });
+      if ("routeNoLongerValid" in fetchOwner) {
+        items.push({ projectId: project.id, action: "skipped", reason: fetchOwner.reason });
+        skippedCount += 1;
+        continue;
+      }
       await startClaimedFetch(env, fetchOwner);
       items.push({
         projectId: project.id,

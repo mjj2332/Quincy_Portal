@@ -75,6 +75,14 @@ export type DropboxCopyBatchResult = DropboxCopyBatchCompleteResult | DropboxCop
 
 export type DropboxCopyBatchCheckResult = DropboxCopyBatchCompleteResult | { ".tag": "in_progress" };
 
+export interface DropboxDeleteBatchSuccessEntry { ".tag": "success" }
+export interface DropboxDeleteBatchFailureEntry { ".tag": "failure"; failure: Record<string, unknown> }
+export type DropboxDeleteBatchEntryResult = DropboxDeleteBatchSuccessEntry | DropboxDeleteBatchFailureEntry;
+export interface DropboxDeleteBatchCompleteResult { ".tag": "complete"; entries: DropboxDeleteBatchEntryResult[] }
+export interface DropboxDeleteBatchAsyncResult { ".tag": "async_job_id"; async_job_id: string }
+export type DropboxDeleteBatchResult = DropboxDeleteBatchCompleteResult | DropboxDeleteBatchAsyncResult;
+export type DropboxDeleteBatchCheckResult = DropboxDeleteBatchCompleteResult | { ".tag": "in_progress" } | { ".tag": "failed"; failure?: Record<string, unknown> };
+
 export class DropboxCursorResetError extends Error {}
 
 export class DropboxRateLimitError extends Error {
@@ -259,6 +267,49 @@ function parseCopyBatchCheckResult(value: unknown): DropboxCopyBatchCheckResult 
   if (tag === "complete") return parseCopyBatchComplete(value);
   if (tag === "in_progress") return { ".tag": "in_progress" };
   throw new Error(`Dropbox returned unsupported copy_batch check response type ${tag}`);
+}
+
+function parseDeleteBatchEntry(value: unknown): DropboxDeleteBatchEntryResult {
+  if (!isRecord(value)) throw new Error("Dropbox returned an invalid delete_batch entry");
+  const tag = asString(value[".tag"], ".tag");
+  if (tag === "success") return { ".tag": "success" };
+  if (tag === "failure") {
+    if (!isRecord(value.failure)) throw new Error("Dropbox returned an invalid delete_batch failure");
+    return { ".tag": "failure", failure: value.failure };
+  }
+  throw new Error(`Dropbox returned unsupported delete_batch entry type ${tag}`);
+}
+
+function parseDeleteBatchComplete(value: Record<string, unknown>): DropboxDeleteBatchCompleteResult {
+  const source = isRecord(value.complete) ? value.complete : value;
+  if (!Array.isArray(source.entries)) throw new Error("Dropbox returned an invalid delete_batch completion response");
+  return { ".tag": "complete", entries: source.entries.map(parseDeleteBatchEntry) };
+}
+
+export function parseDeleteBatchResult(value: unknown): DropboxDeleteBatchResult {
+  if (!isRecord(value)) throw new Error("Dropbox returned an invalid delete_batch response");
+  const tag = asString(value[".tag"], ".tag");
+  if (tag === "complete") return parseDeleteBatchComplete(value);
+  if (tag === "async_job_id") return { ".tag": "async_job_id", async_job_id: asString(value.async_job_id, "async_job_id") };
+  throw new Error(`Dropbox returned unsupported delete_batch response type ${tag}`);
+}
+
+export function parseDeleteBatchCheckResult(value: unknown): DropboxDeleteBatchCheckResult {
+  if (!isRecord(value)) throw new Error("Dropbox returned an invalid delete_batch check response");
+  const tag = asString(value[".tag"], ".tag");
+  if (tag === "complete") return parseDeleteBatchComplete(value);
+  if (tag === "in_progress") return { ".tag": "in_progress" };
+  if (tag === "failed") return { ".tag": "failed", failure: isRecord(value.failed) ? value.failed : undefined };
+  throw new Error(`Dropbox returned unsupported delete_batch check response type ${tag}`);
+}
+
+/** Dropbox may wrap path_lookup/not_found at several union levels. Keep this parser permissive. */
+export function isDropboxPathNotFound(value: unknown): boolean {
+  if (typeof value === "string") return /(?:path_lookup[\\/])?not_found|path[\\/]not_found/i.test(value);
+  if (!isRecord(value)) return false;
+  return Object.entries(value).some(([key, child]) =>
+    /not_found/i.test(key) || isDropboxPathNotFound(child),
+  );
 }
 
 async function getConnection(db: Database, connectionId?: string): Promise<DropboxConnection> {
@@ -610,6 +661,26 @@ export async function copyBatchCheck(
   return parseCopyBatchCheckResult(await authorisedJson(env, db, "/files/copy_batch/check_v2", {
     async_job_id: asyncJobId,
   }, connectionId, client));
+}
+
+export async function deleteBatch(
+  env: Env,
+  db: Database,
+  entries: { path: string }[],
+  connectionId?: string,
+  client?: DropboxClientContext,
+): Promise<DropboxDeleteBatchResult> {
+  return parseDeleteBatchResult(await authorisedJson(env, db, "/files/delete_batch", { entries }, connectionId, client));
+}
+
+export async function deleteBatchCheck(
+  env: Env,
+  db: Database,
+  asyncJobId: string,
+  connectionId?: string,
+  client?: DropboxClientContext,
+): Promise<DropboxDeleteBatchCheckResult> {
+  return parseDeleteBatchCheckResult(await authorisedJson(env, db, "/files/delete_batch/check", { async_job_id: asyncJobId }, connectionId, client));
 }
 
 export async function download(

@@ -502,6 +502,23 @@ export const autoHdrPathClaims = sqliteTable(
   ],
 );
 
+/** Provenance for files a specific AutoHDR generation confirmed writing to Dropbox. */
+export const autoHdrSentFiles = sqliteTable(
+  "autohdr_sent_files",
+  {
+    id: id(),
+    handoffId: text("handoff_id").notNull().references(() => autoHdrHandoffs.id, { onDelete: "cascade" }),
+    assetId: text("asset_id").notNull().references(() => assets.id, { onDelete: "cascade" }),
+    dropboxPath: text("dropbox_path").notNull(),
+    dropboxPathKey: text("dropbox_path_key").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex("autohdr_sent_files_handoff_asset_unique").on(t.handoffId, t.assetId),
+    index("autohdr_sent_files_handoff_idx").on(t.handoffId),
+  ],
+);
+
 /** Active workflow ownership is DB-backed; deterministic Workflow IDs are only a second fence. */
 export const autoHdrFetchClaims = sqliteTable(
   "autohdr_fetch_claims",

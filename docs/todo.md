@@ -261,6 +261,55 @@ allowlist are silent no-ops otherwise). Full mechanics in `docs/subagents/agy-cl
   (would need an actual Dropbox drop) — verified instead via the real test suite and direct code
   read of the atomic D1 guard, dedup, and `mapping.ts` scoping.
 
+- **`AutoHDR-Repeat-Send-Plan.md`** — fixes "Send N selected to autoHDR" silently doing nothing for
+  any project's *second* send. Root cause: `claimAutoHdrHandoff()` short-circuits to the stale
+  existing handoff whenever one is already `starting`/`started`/`blocked` for the project, and
+  nothing in the codebase ever retires a handoff except archiving the whole project — confirmed live
+  on `225-227 Victoria Road` (3 identical stale-jobId audit entries for what looked like 3 separate
+  sends). **The hardest plan of this session — 8 Terra review rounds**, most finding real
+  correctness gaps (not just polish): a non-partial unique index meaning a repeat send must
+  *reactivate* the same `autohdr_path_claims` rows rather than insert fresh ones; the fresh-claim
+  path's `raw_review`-only stage gate; a genuine quarantine risk for an in-flight fetch and a
+  cross-generation filename-collision/asset-overwrite risk if retirement isn't gated correctly; six
+  distinct D1 `changes()`-chaining mistakes across rounds 3-6 (partial retirement, an un-atomic
+  per-candidate reactivation, a missing `jobs` insert violating a `NOT NULL` FK, a wrong
+  compensating-batch shape); and, in round 7, a real regression this plan would have introduced in
+  the existing stuck-job retry route (`POST /jobs/:id/retry`) if shipped as first drafted. **§7
+  (added post-approval, user-requested)**: repeat-sending after deselecting a previously-sent asset
+  now also removes that asset's file from the AutoHDR Dropbox folder — needed its own 4-round review
+  after round 1 found the naive design (remove-by-selection-membership) could delete the wrong file
+  under a filename collision or a stale/re-derived path. Fixed with a new `autohdr_sent_files`
+  provenance table (this plan's one schema addition, migration `0016`) recording exactly what each
+  generation's own send confirmed it wrote, plus a dual-fence (retirement-side + writer-side, same
+  pattern as §4/§5) closing a race where the retiring generation's own still-in-flight send could
+  write content after cleanup already ran. Built by Terra, diff-reviewed in fresh context across 3
+  rounds: round 1 found the non-fatal `"remove-deselected"` step could skip its own audit-log write
+  and that most of §7's required test coverage was missing (fixed); round 2 found several of those
+  new tests didn't actually test what they claimed — a collision test whose mock made every path
+  not-found, a combined test that never reached its own poll-exhaustion assertion, and a fresh
+  instance of a recurring type-narrowing anti-pattern inside a test the same fix round had just
+  added (all fixed, plus a new test exercising a Workflow's `run()` end-to-end via a hand-rolled
+  `WorkflowStep` shim — no prior test in this codebase had done that for any `WorkflowEntrypoint`);
+  round 3 found a genuine High-severity bug — retrying a failed repeat-send via the existing
+  `POST /jobs/:id/retry` route lost `retiredHandoffId` (the `resumeExisting` path never carried it
+  forward), silently skipping deselected-file cleanup on retry. Fixed by persisting it in the job's
+  `payload_json` rather than the tempting-but-unsound shortcut of deriving it from `generation - 1`
+  (project-archive and scaffold code can also mark a handoff `'retired'` with no successor
+  generation, so that alone isn't a reliable signal) — plus a mid-run retirement test was added.
+  Independent verification (this session, outside any Terra sandbox) then caught 4 more real bugs
+  no review round could have found: Codex's own sandbox blocks Miniflare's `127.0.0.1` bind, so the
+  real `workers/background` Vitest suite (139 tests) had never actually executed until this gate
+  ran it directly. Found: a genuine production off-by-one in the delete-batch poll loop (it checked
+  the *initial* submission's response tag to decide whether to keep polling, so it silently gave up
+  after one check instead of the intended 45 — fixed to match the copy-loop's existing sentinel
+  pattern); two tests that never activated their `autohdr_output_mappings` row before calling the
+  fetch-claim path (fixed); three tests that never closed out the prior round's readiness units, so
+  they tripped an unrelated overlap guard before reaching what they were meant to test — that guard
+  itself had zero coverage until a dedicated test was added; and one flaky test asserting a fixed
+  row order from a query sorted by a random UUID (fixed). `npm run typecheck`, the web build, and
+  all four workspace/shared test suites (253 tests total) are green. Migration `0016` and prod
+  deploy pending.
+
 ## Open plans (see `docs/plans/`)
 
 - **`Cloudflare-Images-Pilot-Plan.md`** — renditions-only Cloudflare Images pilot.

@@ -1745,6 +1745,22 @@ describe("staff app API", () => {
     await expect(response.json()).resolves.toMatchObject({ jobId: expect.any(String) });
   });
 
+  it("routes a failed AutoHDR retry through startAutoHdr with resumeExisting", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const project = await createUploadProject(cookie, `AutoHDR route retry ${crypto.randomUUID()}`);
+    const jobId = crypto.randomUUID();
+    const now = Date.now();
+    await database.DB.prepare("INSERT INTO jobs (id, kind, status, project_id, correlation_id, payload_json, retries, error, created_at, updated_at) VALUES (?, 'autohdr', 'failed', ?, ?, '{}', 0, 'Workflow failed', ?, ?)")
+      .bind(jobId, project.id, `autohdr:${project.id}`, now, now).run();
+
+    const response = await SELF.fetch(`https://portal.test/api/jobs/${jobId}/retry`, {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+    });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ jobId: `resumed-${project.id}` });
+  });
+
   it("uses current-only edited readers while keeping history explicitly available to staff", async () => {
     const cookie = await sessionCookie(adminToken);
     const project = await createUploadProject(cookie, `Current edited ${crypto.randomUUID()}`);

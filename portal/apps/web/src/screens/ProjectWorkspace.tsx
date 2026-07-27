@@ -5,7 +5,7 @@ import { Lightbox } from "../components/Lightbox";
 import { PhotoGrid, type Review, type ReviewPatch, type WorkspaceAsset } from "../components/PhotoGrid";
 import { UploadDropzone } from "../components/UploadDropzone";
 import { CollectionPanel } from "../components/CollectionPanel";
-import { apiGet, apiPost } from "../lib/api";
+import { ApiError, apiGet, apiPost } from "../lib/api";
 import { useCapabilities } from "../lib/capabilities";
 import { InternalLink } from "../components/InternalLink";
 
@@ -248,8 +248,37 @@ export function ProjectWorkspace({ projectId, notice, onNoticeShown }: { project
   async function sendToAutoHdr() {
     if (!projectId || !canAdminBackend) return;
     setIsSending(true);
-    try { const response = await apiPost<{ jobId: string }, Record<string, never>>(`/api/projects/${projectId}/send-to-autohdr`, {}); await Promise.all([refreshJobs(), refreshProject()]); toast(`Sent to autoHDR (${response.jobId.slice(0, 8)}).`); }
-    catch (reason) { toast(reason instanceof Error ? reason.message : "autoHDR could not be started.", "error"); }
+    try {
+      const response = await apiPost<{ jobId: string }, { startNewRound?: boolean; removalSetHash?: string }>(`/api/projects/${projectId}/send-to-autohdr`, {});
+      await Promise.all([refreshJobs(), refreshProject()]);
+      toast(`Sent to autoHDR (${response.jobId.slice(0, 8)}).`);
+    } catch (reason) {
+      const payload = reason instanceof ApiError && reason.details && typeof reason.details === "object" ? reason.details as Record<string, unknown> : null;
+      if (payload?.code === "ERR_HANDOFF_ALREADY_ACTIVE") {
+        const count = typeof payload.removalCount === "number" ? payload.removalCount : 0;
+        const hash = typeof payload.removalSetHash === "string" ? payload.removalSetHash : undefined;
+        const removalCopy = count === 0
+          ? "No previously-sent images are currently eligible for removal."
+          : `This will also remove ${count} previously-sent image${count === 1 ? "" : "s"} from the AutoHDR folder because ${count === 1 ? "it is" : "they are"} no longer selected.`;
+        const confirmed = window.confirm(`Any AutoHDR output for the previous round that's still being delivered may be lost. Wait until it's finished before starting a new round.\n\n${removalCopy}\n\nContinue?`);
+        if (confirmed) {
+          try {
+            const response = await apiPost<{ jobId: string }, { startNewRound: true; removalSetHash?: string }>(`/api/projects/${projectId}/send-to-autohdr`, { startNewRound: true, removalSetHash: hash });
+            await Promise.all([refreshJobs(), refreshProject()]);
+            toast(`Sent new round to autoHDR (${response.jobId.slice(0, 8)}).`);
+          } catch (retryReason) {
+            const retryPayload = retryReason instanceof ApiError && retryReason.details && typeof retryReason.details === "object" ? retryReason.details as Record<string, unknown> : null;
+            if (retryPayload?.code === "ERR_REMOVAL_SET_CHANGED") {
+              await sendToAutoHdr();
+            } else {
+              toast(retryReason instanceof Error ? retryReason.message : "The new AutoHDR round could not be started.", "error");
+            }
+          }
+        }
+      } else {
+        toast(reason instanceof Error ? reason.message : "autoHDR could not be started.", "error");
+      }
+    }
     finally { setIsSending(false); }
   }
   function downloadSelectedRaw() {

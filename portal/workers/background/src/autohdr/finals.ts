@@ -45,11 +45,11 @@ export type FinalWriteDependencies = {
   afterD1Commit?: () => void | Promise<void>;
 };
 
-function plainBasename(filename: string): string {
+export function plainBasename(filename: string): string {
   return filename.replace(/\.[^.]+$/, "").toLowerCase();
 }
 
-function strippedBasename(filename: string): string {
+export function strippedBasename(filename: string): string {
   return plainBasename(filename).replace(/[ _-]+(?:vs|staged)$/i, "");
 }
 

@@ -28,6 +28,7 @@ import { autoHdrFinalPathCandidates, deriveAutoHdrFolderName } from "./autohdr/p
 import { reconcileAwaitingRawProjects } from "./reconcile-awaiting-raw";
 import { backfillAutoHdrV2 as backfillAutoHdrV2Impl, type BackfillParams, type BackfillResult } from "./autohdr/backfill";
 import { enqueueAutoHdrScaffold, ensureScaffold } from "./autohdr/scaffold";
+import { AutoHdrClaimError } from "./autohdr/errors";
 import type { AutoHdrErrorCode, AutoHdrFetchResult, AutoHdrResult } from "./autohdr/errors";
 
 export { AutoHdrFetch, AutoHdrSend, ManualEditedPublish, DropboxSyncDO, TonomoProcessorDO };
@@ -72,7 +73,7 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
     return backfillAutoHdrV2Impl(this.env, params);
   }
 
-  async startAutoHdr(projectId: string, initiatedBy?: string): Promise<AutoHdrResult> {
+  async startAutoHdr(projectId: string, initiatedBy?: string, options: { startNewRound?: boolean; resumeExisting?: boolean; removalSetHash?: string } = {}): Promise<AutoHdrResult> {
     if (!initiatedBy) {
       return {
         ok: false,
@@ -83,7 +84,7 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
     const db = dbFor(this.env);
     let owner: HandoffOwner | undefined;
     try {
-      owner = await claimAutoHdrHandoff(this.env, projectId, initiatedBy);
+      owner = await claimAutoHdrHandoff(this.env, projectId, initiatedBy, options);
       const handoff = await db.select({
         assetIdsJson: autoHdrHandoffs.selectedAssetIdsJson,
         connectionId: autoHdrHandoffs.connectionId,
@@ -124,6 +125,7 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
           connectionId: handoff.connectionId,
           mappingGeneration: handoff.generation,
           initiatedBy: handoff.initiatedBy,
+          retiredHandoffId: owner.retiredHandoffId,
         },
       });
       return {
@@ -159,7 +161,8 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
         );
       }
       const message = error instanceof Error ? error.message : String(error);
-      const code: AutoHdrErrorCode = /archived/i.test(message)
+      const claimError = error instanceof AutoHdrClaimError ? error : null;
+      const code: AutoHdrErrorCode = claimError?.code ?? (/archived/i.test(message)
         ? "ERR_PROJECT_ARCHIVED"
         : /no raw assets|no raw selection|selected for editing/i.test(message)
           ? "ERR_NO_RAW_SELECTION"
@@ -167,8 +170,8 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
             ? "ERR_MAPPING_BLOCKED"
             : /blocked/i.test(message)
               ? "ERR_HANDOFF_BLOCKED"
-              : "ERR_HANDOFF_DISAPPEARED";
-      return { ok: false, code, message };
+              : "ERR_HANDOFF_DISAPPEARED");
+      return { ok: false, code, message, ...claimError?.details };
     }
   }
 
@@ -245,6 +248,7 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
         trigger: "manual",
         representativeChangedPath: route.finalPath,
       });
+      if ("routeNoLongerValid" in owner) return { ok: false, code: "ERR_FOLDER_NOT_READY", message: owner.reason };
       await startClaimedFetch(this.env, owner);
       return { ok: true, jobId: owner.jobId, fetchClaimId: owner.claimId };
     } catch (error) {

@@ -4,6 +4,7 @@ import { claimAutoHdrFetch, claimAutoHdrHandoff, claimBackfillAutoHdrHandoff, cl
 import { routeAutoHdrDelta, type RoutedAutoHdrMapping } from "../src/autohdr/mapping";
 import { routeAutoHdrManualDropDelta, routeAutoHdrProviderDelta } from "../src/autohdr/routers";
 import { ensureScaffold } from "../src/autohdr/scaffold";
+import { recordSentFiles, removeDeselected, throwOnCopyFailures } from "../src/workflows/autohdr";
 import { dbFor } from "../src/lib/db";
 import { canonicalDropboxConnectionId } from "../src/dropbox/connection";
 import QuincyBackground from "../src";
@@ -48,7 +49,7 @@ async function fixture() {
   // this call's own row. Return the ACTUAL canonical id so callers that assert against it match
   // what the code under test really resolves, regardless of test execution order.
   const canonicalConnectionId = await canonicalDropboxConnectionId(dbFor({ DB: database.DB } as never));
-  return { connectionId: canonicalConnectionId, userId, projectId };
+  return { connectionId: canonicalConnectionId, userId, projectId, assetIds };
 }
 
 /** Cloudflare rejects Workflow instance ids outside this alphabet at create() time with
@@ -65,6 +66,7 @@ describe("AutoHDR workflow instance ids", () => {
     expect(owner.workflowId).toMatch(WORKFLOW_INSTANCE_ID);
 
     await database.DB.prepare("UPDATE autohdr_handoffs SET state = 'started' WHERE id = ?").bind(owner.handoffId).run();
+    await database.DB.prepare("UPDATE autohdr_output_mappings SET state = 'active' WHERE handoff_id = ?").bind(owner.handoffId).run();
     const mapping = await database.DB.prepare("SELECT id, generation, connection_id FROM autohdr_output_mappings WHERE handoff_id = ?")
       .bind(owner.handoffId).first<{ id: string; generation: number; connection_id: string }>();
     const route: RoutedAutoHdrMapping = {
@@ -78,6 +80,7 @@ describe("AutoHDR workflow instance ids", () => {
       representativeChangedPath: "/autohdr/id guard/04-final-photos/a.jpg",
     };
     const fetchOwner = await claimAutoHdrFetch(localEnv, route, { trigger: "dropbox_delta" });
+    if ("routeNoLongerValid" in fetchOwner) throw new Error(fetchOwner.reason);
     expect(fetchOwner.workflowId).toMatch(WORKFLOW_INSTANCE_ID);
   });
 });
@@ -297,6 +300,7 @@ describe("atomic AutoHDR ownership", () => {
     const data = await fixture();
     const owner = await claimAutoHdrHandoff({ DB: database.DB } as never, data.projectId, data.userId);
     await database.DB.prepare("UPDATE autohdr_handoffs SET state = 'started' WHERE id = ?").bind(owner.handoffId).run();
+    await database.DB.prepare("UPDATE autohdr_output_mappings SET state = 'active' WHERE handoff_id = ?").bind(owner.handoffId).run();
     const mapping = await database.DB.prepare("SELECT id, generation, connection_id FROM autohdr_output_mappings WHERE handoff_id = ?")
       .bind(owner.handoffId).first<{ id: string; generation: number; connection_id: string }>();
     const route: RoutedAutoHdrMapping = {
@@ -314,10 +318,15 @@ describe("atomic AutoHDR ownership", () => {
       claimAutoHdrFetch({ DB: database.DB } as never, route, { trigger: "dropbox_delta" }),
       claimAutoHdrFetch({ DB: database.DB } as never, route, { trigger: "dropbox_delta" }),
     ]);
-    expect(new Set(callers.map((claim) => claim.claimId)).size).toBe(1);
-    await database.DB.prepare("UPDATE autohdr_fetch_claims SET lease_expires_at = 0 WHERE id = ?").bind(callers[0]!.claimId).run();
+    const validCallers = callers.map((claim) => {
+      if ("routeNoLongerValid" in claim) throw new Error(claim.reason);
+      return claim;
+    });
+    expect(new Set(validCallers.map((claim) => claim.claimId)).size).toBe(1);
+    await database.DB.prepare("UPDATE autohdr_fetch_claims SET lease_expires_at = 0 WHERE id = ?").bind(validCallers[0]!.claimId).run();
     const recovered = await claimAutoHdrFetch({ DB: database.DB } as never, route, { trigger: "dropbox_delta" });
-    expect(recovered).toMatchObject({ claimId: callers[0]!.claimId, workflowId: callers[0]!.workflowId, reused: true });
+    if ("routeNoLongerValid" in recovered) throw new Error(recovered.reason);
+    expect(recovered).toMatchObject({ claimId: validCallers[0]!.claimId, workflowId: validCallers[0]!.workflowId, reused: true });
   });
 
   it("a v2 Workflow start failure leaves Raw Review unchanged", async () => {
@@ -442,5 +451,371 @@ describe("atomic AutoHDR ownership", () => {
       "SELECT count(*) count FROM autohdr_output_mappings WHERE project_id in (?, ?) AND state = 'blocked_collision'",
     ).bind(first.projectId, second.projectId).first<{ count: number }>();
     expect(blocked?.count).toBe(2);
+  });
+});
+
+describe("repeat AutoHDR sends", () => {
+  async function activeRound(stage = "editing_autohdr", closeAssociations = true) {
+    const data = await fixture();
+    const localEnv = { DB: database.DB } as never;
+    const first = await claimAutoHdrHandoff(localEnv, data.projectId, data.userId);
+    const now = Date.now();
+    const setup = [
+      database.DB.prepare("UPDATE projects SET stage_key = ? WHERE id = ?").bind(stage, data.projectId),
+      database.DB.prepare("UPDATE jobs SET status = 'done' WHERE id = ?").bind(first.jobId),
+      database.DB.prepare("UPDATE autohdr_handoffs SET state = 'started' WHERE id = ?").bind(first.handoffId),
+      database.DB.prepare("UPDATE autohdr_output_mappings SET state = 'active', final_path = '/AutoHDR/Repeat/04-FINAL-Photos', final_path_key = '/autohdr/repeat/04-final-photos' WHERE handoff_id = ?").bind(first.handoffId),
+      database.DB.prepare("UPDATE autohdr_path_claims SET state = 'active' WHERE handoff_id = ?").bind(first.handoffId),
+    ];
+    if (closeAssociations) {
+      setup.push(...data.assetIds.map((assetId, index) => database.DB.prepare(
+        "INSERT INTO autohdr_final_associations (id, handoff_id, asset_id, readiness_unit_key, match_kind, created_at) VALUES (?, ?, ?, ?, 'exact', ?)",
+      ).bind(crypto.randomUUID(), first.handoffId, assetId, index === 0 ? "bracket:bracket-a" : `asset:${assetId}`, now)));
+    }
+    await database.DB.batch(setup);
+    return { data, localEnv, first, now };
+  }
+
+  async function emptyRemovalHash() {
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode("[]"));
+    return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  }
+
+  async function insertSentFile(handoffId: string, assetId: string, filename: string) {
+    await database.DB.prepare(
+      "INSERT INTO autohdr_sent_files (id, handoff_id, asset_id, dropbox_path, dropbox_path_key, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+    ).bind(crypto.randomUUID(), handoffId, assetId, `/AutoHDR/Repeat/${filename}`, `/autohdr/repeat/${filename.toLowerCase()}`, Date.now()).run();
+  }
+
+  async function insertNextLiveHandoff(data: Awaited<ReturnType<typeof fixture>>, first: { handoffId: string }, connectionId: string) {
+    const now = Date.now();
+    const jobId = crypto.randomUUID();
+    const handoffId = crypto.randomUUID();
+    await database.DB.batch([
+      database.DB.prepare("UPDATE autohdr_handoffs SET state = 'retired', updated_at = ? WHERE id = ?").bind(now, first.handoffId),
+      database.DB.prepare("INSERT INTO jobs (id, kind, status, project_id, retries, created_at, updated_at) VALUES (?, 'autohdr', 'done', ?, 0, ?, ?)").bind(jobId, data.projectId, now, now),
+      database.DB.prepare("INSERT INTO autohdr_handoffs (id, project_id, connection_id, generation, manifest_version, selection_hash, selected_asset_ids_json, readiness_units_json, frozen_raw_folder_path, initiated_by, expected_origin_stage, state, workflow_id, job_id, lease_expires_at, created_at, updated_at) VALUES (?, ?, ?, 2, 1, 'next', '[]', '[]', ?, ?, 'editing_autohdr', 'started', ?, ?, ?, ?, ?)")
+        .bind(handoffId, data.projectId, connectionId, `/Tonomo/Raw Files/Studio/${data.projectId}`, data.userId, `autohdr-send-${handoffId}`, jobId, now + 600000, now, now),
+    ]);
+    return { handoffId, jobId };
+  }
+
+  it("keeps a same-selection started handoff idempotent and resumes selection drift explicitly", async () => {
+    const { data, localEnv, first } = await activeRound();
+    await expect(claimAutoHdrHandoff(localEnv, data.projectId, data.userId)).resolves.toMatchObject({ handoffId: first.handoffId, reused: true });
+    await database.DB.prepare("DELETE FROM selections WHERE asset_id = (SELECT asset_id FROM selections WHERE selected_by = ? LIMIT 1)").bind(data.userId).run();
+    await expect(claimAutoHdrHandoff(localEnv, data.projectId, data.userId, { resumeExisting: true })).resolves.toMatchObject({ handoffId: first.handoffId, reused: true });
+  });
+
+  it("persists repeat-send retirement provenance when the starting handoff is resumed", async () => {
+    const { data, localEnv, first } = await activeRound("edited_review");
+    const next = await claimAutoHdrHandoff(localEnv, data.projectId, data.userId, {
+      startNewRound: true,
+      removalSetHash: await emptyRemovalHash(),
+    });
+    expect(next.retiredHandoffId).toBe(first.handoffId);
+
+    await expect(claimAutoHdrHandoff(localEnv, data.projectId, data.userId, { resumeExisting: true }))
+      .resolves.toMatchObject({
+        handoffId: next.handoffId,
+        jobId: next.jobId,
+        reused: true,
+        retiredHandoffId: first.handoffId,
+      });
+  });
+
+  it("does not infer retirement provenance for a normal first-time handoff", async () => {
+    const data = await fixture();
+    const localEnv = { DB: database.DB } as never;
+    const first = await claimAutoHdrHandoff(localEnv, data.projectId, data.userId);
+
+    await expect(claimAutoHdrHandoff(localEnv, data.projectId, data.userId, { resumeExisting: true }))
+      .resolves.toMatchObject({ handoffId: first.handoffId, reused: true, retiredHandoffId: undefined });
+  });
+
+  it("returns one confirmation outcome for a changed selection and refuses pending discovery", async () => {
+    const { data, localEnv, first } = await activeRound();
+    await database.DB.prepare("DELETE FROM selections WHERE asset_id = (SELECT asset_id FROM selections WHERE selected_by = ? LIMIT 1)").bind(data.userId).run();
+    await expect(claimAutoHdrHandoff(localEnv, data.projectId, data.userId)).rejects.toMatchObject({ code: "ERR_HANDOFF_ALREADY_ACTIVE" });
+    await database.DB.prepare("UPDATE autohdr_output_mappings SET state = 'pending_discovery' WHERE handoff_id = ?").bind(first.handoffId).run();
+    await expect(claimAutoHdrHandoff(localEnv, data.projectId, data.userId, { startNewRound: true, removalSetHash: await emptyRemovalHash() }))
+      .rejects.toMatchObject({ code: "ERR_HANDOFF_BLOCKED" });
+  });
+
+  it("fences an in-flight fetch before retirement and reclaims the same path rows after coverage closes", async () => {
+    const { data, localEnv, first } = await activeRound("edited_review");
+    const mapping = await database.DB.prepare("SELECT id, generation, connection_id FROM autohdr_output_mappings WHERE handoff_id = ?").bind(first.handoffId).first<{ id: string; generation: number; connection_id: string }>();
+    const route = { projectId: data.projectId, handoffId: first.handoffId, mappingId: mapping!.id, generation: mapping!.generation, connectionId: mapping!.connection_id, finalPath: "/AutoHDR/Repeat/04-FINAL-Photos", finalPathKey: "/autohdr/repeat/04-final-photos", representativeChangedPath: "/AutoHDR/Repeat/04-FINAL-Photos/a.jpg" };
+    const fetch = await claimAutoHdrFetch(localEnv, route, { trigger: "dropbox_delta" });
+    if ("routeNoLongerValid" in fetch) throw new Error(fetch.reason);
+    await expect(claimAutoHdrHandoff(localEnv, data.projectId, data.userId, { startNewRound: true, removalSetHash: await emptyRemovalHash() }))
+      .rejects.toMatchObject({ code: "ERR_FETCH_IN_PROGRESS" });
+    await database.DB.prepare("UPDATE autohdr_fetch_claims SET state = 'done' WHERE id = ?").bind(fetch.claimId).run();
+    const next = await claimAutoHdrHandoff(localEnv, data.projectId, data.userId, { startNewRound: true, removalSetHash: await emptyRemovalHash() });
+    expect(next.reused).toBe(false);
+    expect(next.retiredHandoffId).toBe(first.handoffId);
+    const state = await database.DB.prepare("SELECT state FROM autohdr_handoffs WHERE id = ?").bind(first.handoffId).first();
+    expect(state).toEqual({ state: "retired" });
+    const claims = await database.DB.prepare("SELECT id, state, handoff_id FROM autohdr_path_claims WHERE project_id = ? ORDER BY candidate").bind(data.projectId).all<{ id: string; state: string; handoff_id: string }>();
+    expect(claims.results).toHaveLength(2);
+    expect(claims.results.every((claim) => claim.state === "pending" && claim.handoff_id === next.handoffId)).toBe(true);
+  });
+
+  it("returns route-no-longer-valid and leaves no orphan job for a retired fetch route", async () => {
+    const { data, localEnv, first } = await activeRound();
+    const mapping = await database.DB.prepare("SELECT id, generation, connection_id FROM autohdr_output_mappings WHERE handoff_id = ?").bind(first.handoffId).first<{ id: string; generation: number; connection_id: string }>();
+    const route = { projectId: data.projectId, handoffId: first.handoffId, mappingId: mapping!.id, generation: mapping!.generation, connectionId: mapping!.connection_id, finalPath: "/AutoHDR/Repeat/04-FINAL-Photos", finalPathKey: "/autohdr/repeat/04-final-photos", representativeChangedPath: "/AutoHDR/Repeat/04-FINAL-Photos/a.jpg" };
+    await database.DB.batch([
+      database.DB.prepare("UPDATE autohdr_output_mappings SET state = 'retired' WHERE id = ?").bind(mapping!.id),
+      database.DB.prepare("UPDATE autohdr_handoffs SET state = 'retired' WHERE id = ?").bind(first.handoffId),
+    ]);
+    const result = await claimAutoHdrFetch(localEnv, route, { trigger: "manual" });
+    expect(result).toMatchObject({ routeNoLongerValid: true });
+    const jobs = await database.DB.prepare("SELECT count(*) count FROM jobs WHERE project_id = ? AND kind = 'fetch_edited'").bind(data.projectId).first<{ count: number }>();
+    expect(jobs?.count).toBe(0);
+  });
+
+  it("returns the distinct removal-set-changed code for a stale confirmation hash", async () => {
+    const { data, localEnv } = await activeRound();
+    await expect(claimAutoHdrHandoff(localEnv, data.projectId, data.userId, {
+      startNewRound: true, removalSetHash: "stale-confirmation-hash",
+    })).rejects.toMatchObject({ code: "ERR_REMOVAL_SET_CHANGED" });
+  });
+
+  it("rejects a repeat send that overlaps an open prior delivery", async () => {
+    const { data, localEnv } = await activeRound("edited_review", false);
+    await expect(claimAutoHdrHandoff(localEnv, data.projectId, data.userId, {
+      startNewRound: true, removalSetHash: await emptyRemovalHash(),
+    })).rejects.toMatchObject({ code: "ERR_SELECTION_OVERLAPS_OPEN_DELIVERY" });
+  });
+
+  it("fences retirement when the old send job is still active and when its sent-file count changed", async () => {
+    const firstCase = await activeRound();
+    await database.DB.prepare("UPDATE jobs SET status = 'running' WHERE id = ?").bind(firstCase.first.jobId).run();
+    await expect(claimAutoHdrHandoff(firstCase.localEnv, firstCase.data.projectId, firstCase.data.userId, {
+      startNewRound: true, removalSetHash: await emptyRemovalHash(),
+    })).rejects.toMatchObject({ code: "ERR_HANDOFF_BLOCKED" });
+    await expect(database.DB.prepare("SELECT state FROM autohdr_handoffs WHERE id = ?").bind(firstCase.first.handoffId).first())
+      .resolves.toEqual({ state: "started" });
+
+    const secondCase = await activeRound();
+    await database.DB.prepare("DELETE FROM selections WHERE asset_id = ?").bind(secondCase.data.assetIds[0]).run();
+    await insertSentFile(secondCase.first.handoffId, secondCase.data.assetIds[0]!, "capture-0.jpg");
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify([secondCase.data.assetIds[0]])));
+    const hash = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+    await expect(claimAutoHdrHandoff(secondCase.localEnv, secondCase.data.projectId, secondCase.data.userId, {
+      startNewRound: true, removalSetHash: hash,
+    }, {
+      beforeRepeatBatch: async () => { await insertSentFile(secondCase.first.handoffId, secondCase.data.assetIds[1]!, "capture-1.jpg"); },
+    })).rejects.toMatchObject({ code: "ERR_HANDOFF_BLOCKED" });
+    await expect(database.DB.prepare("SELECT state FROM autohdr_handoffs WHERE id = ?").bind(secondCase.first.handoffId).first())
+      .resolves.toEqual({ state: "started" });
+  });
+
+  it("records successful copy entries before a mixed batch failure and is safe to retry", async () => {
+    const { data, first } = await activeRound();
+    const input = { projectId: data.projectId, assetIds: data.assetIds, jobId: first.jobId, handoffId: first.handoffId };
+    const entries = [
+      { ".tag": "success" as const },
+      { ".tag": "failure" as const, failure: { ".tag": "from_lookup", reason: "missing source" } },
+    ];
+    await recordSentFiles({ DB: database.DB } as never, input, entries, [
+      { assetId: data.assetIds[0]!, toPath: "/AutoHDR/Repeat/capture-0.jpg" },
+      { assetId: data.assetIds[1]!, toPath: "/AutoHDR/Repeat/capture-1.jpg" },
+    ]);
+    expect(() => throwOnCopyFailures(entries, [
+      { from_path: "/raw/capture-0.jpg", to_path: "/AutoHDR/Repeat/capture-0.jpg" },
+      { from_path: "/raw/capture-1.jpg", to_path: "/AutoHDR/Repeat/capture-1.jpg" },
+    ])).toThrow("copy_batch_v2 failed");
+    await recordSentFiles({ DB: database.DB } as never, input, entries, [
+      { assetId: data.assetIds[0]!, toPath: "/AutoHDR/Repeat/capture-0.jpg" },
+      { assetId: data.assetIds[1]!, toPath: "/AutoHDR/Repeat/capture-1.jpg" },
+    ]);
+    await expect(database.DB.prepare("SELECT asset_id, dropbox_path FROM autohdr_sent_files WHERE handoff_id = ? ORDER BY asset_id").bind(first.handoffId).all())
+      .resolves.toMatchObject({ results: [{ asset_id: data.assetIds[0], dropbox_path: "/AutoHDR/Repeat/capture-0.jpg" }] });
+  });
+
+  it("records a fallback upload immediately after upload success", async () => {
+    const { data, first } = await activeRound();
+    await recordSentFiles({ DB: database.DB } as never, {
+      projectId: data.projectId, assetIds: data.assetIds, jobId: first.jobId, handoffId: first.handoffId,
+    }, [{ ".tag": "success" }], [{ assetId: data.assetIds[1]!, toPath: "/AutoHDR/Repeat/fallback.jpg" }]);
+    await expect(database.DB.prepare("SELECT asset_id, dropbox_path FROM autohdr_sent_files WHERE handoff_id = ?").bind(first.handoffId).all())
+      .resolves.toMatchObject({ results: [{ asset_id: data.assetIds[1], dropbox_path: "/AutoHDR/Repeat/fallback.jpg" }] });
+  });
+
+  it("stops writer-side provenance after the handoff is retired", async () => {
+    const { data, first } = await activeRound();
+    await database.DB.prepare("UPDATE autohdr_handoffs SET state = 'retired' WHERE id = ?").bind(first.handoffId).run();
+    await recordSentFiles({ DB: database.DB } as never, {
+      projectId: data.projectId, assetIds: data.assetIds, jobId: first.jobId, handoffId: first.handoffId,
+    }, [{ ".tag": "success" }], [{ assetId: data.assetIds[0]!, toPath: "/AutoHDR/Repeat/late.jpg" }]);
+    await expect(database.DB.prepare("SELECT count(*) count FROM autohdr_sent_files WHERE handoff_id = ?").bind(first.handoffId).first())
+      .resolves.toEqual({ count: 0 });
+  });
+
+  it("deletes only deselected provenance, uses the retiring connection, and audits the outcome", async () => {
+    const { data, first } = await activeRound();
+    await insertSentFile(first.handoffId, data.assetIds[0]!, "capture-0.jpg");
+    await insertSentFile(first.handoffId, data.assetIds[1]!, "capture-1.jpg");
+    const folder = new Set(["/autohdr/repeat/capture-0.jpg", "/autohdr/repeat/capture-1.jpg"]);
+    const calls: { path: string; connectionId?: string }[] = [];
+    const audit: unknown[] = [];
+    const result = await removeDeselected({ DB: database.DB } as never, {
+      projectId: data.projectId, assetIds: [data.assetIds[1]!], jobId: first.jobId,
+      handoffId: first.handoffId, retiredHandoffId: first.handoffId,
+    }, {
+      getMetadata: async (_env, _db, path, connectionId) => {
+        calls.push({ path, connectionId });
+        if (!folder.has(path)) throw new Error("path_lookup/not_found");
+        return { ".tag": "file", name: "capture-0.jpg", path_lower: path, id: "id:file", size: 1 };
+      },
+      deleteBatch: async (_env, _db, entries, connectionId) => {
+        calls.push({ path: entries[0]!.path, connectionId });
+        for (const entry of entries) folder.delete(entry.path.toLowerCase());
+        return { ".tag": "complete", entries: [{ ".tag": "success" }] };
+      },
+      writeAuditLog: async (summary) => { audit.push(summary); },
+    });
+    expect(result).toEqual({ removed: 1, alreadyGone: 0, failed: 0 });
+    expect(calls).toEqual([
+      { path: "/autohdr/repeat/capture-0.jpg", connectionId: data.connectionId },
+      { path: "/AutoHDR/Repeat/capture-0.jpg", connectionId: data.connectionId },
+    ]);
+    expect(audit).toMatchObject([{ removed: 1, alreadyGone: 0, failed: [] }]);
+    expect([...folder]).toEqual(["/autohdr/repeat/capture-1.jpg"]);
+  });
+
+  it("uses the retiring generation connection when generations have different connections", async () => {
+    const { data, first } = await activeRound();
+    const retiringConnection = data.connectionId;
+    const nextConnection = crypto.randomUUID();
+    await database.DB.prepare("INSERT INTO integration_connections (id, provider, status, created_at, updated_at) VALUES (?, 'dropbox', 'connected', ?, ?)")
+      .bind(nextConnection, Date.now(), Date.now()).run();
+    const next = await insertNextLiveHandoff(data, first, nextConnection);
+    await insertSentFile(first.handoffId, data.assetIds[0]!, "capture-0.jpg");
+    const used: string[] = [];
+    await removeDeselected({ DB: database.DB } as never, {
+      projectId: data.projectId, assetIds: [], jobId: next.jobId,
+      handoffId: next.handoffId, retiredHandoffId: first.handoffId,
+    }, {
+      getMetadata: async (_env, _db, _path, connectionId) => {
+        used.push(connectionId ?? "missing");
+        return { ".tag": "file", name: "capture-0.jpg", path_lower: "/autohdr/repeat/capture-0.jpg", id: "id:file", size: 1 };
+      },
+      deleteBatch: async (_env, _db, _entries, connectionId) => {
+        used.push(connectionId ?? "missing");
+        return { ".tag": "complete", entries: [{ ".tag": "success" }] };
+      },
+      writeAuditLog: async () => undefined,
+    });
+    expect(used).toEqual([retiringConnection, retiringConnection]);
+    expect(used).not.toContain(nextConnection);
+  });
+
+  it("excludes an existing filename collision, buckets not-found as alreadyGone, and never deletes a folder", async () => {
+    const { data, first } = await activeRound();
+    const collidingId = crypto.randomUUID();
+    const now = Date.now();
+    const collection = await database.DB.prepare("SELECT id FROM collections WHERE project_id = ? AND kind = 'raw'").bind(data.projectId).first<{ id: string }>();
+    await database.DB.prepare("INSERT INTO assets (id, collection_id, r2_key, original_filename, bytes, source, created_at, updated_at) VALUES (?, ?, ?, 'capture-0.jpg', 1, 'upload', ?, ?)")
+      .bind(collidingId, collection!.id, `tests/${collidingId}.jpg`, now, now).run();
+    await insertSentFile(first.handoffId, data.assetIds[0]!, "capture-0.jpg");
+    await insertSentFile(first.handoffId, data.assetIds[1]!, "capture-1.jpg");
+    const metadataLookups: string[] = [];
+    const deleted: string[] = [];
+    const result = await removeDeselected({ DB: database.DB } as never, {
+      projectId: data.projectId, assetIds: [collidingId], jobId: first.jobId,
+      handoffId: first.handoffId, retiredHandoffId: first.handoffId,
+    }, {
+      getMetadata: async (_env, _db, path) => {
+        metadataLookups.push(path);
+        if (path.toLowerCase().endsWith("/capture-0.jpg")) {
+          return { ".tag": "file", name: "capture-0.jpg", path_lower: path.toLowerCase(), id: "id:collision", size: 1 };
+        }
+        throw new Error("path_lookup/not_found");
+      },
+      deleteBatch: async (_env, _db, entries) => { deleted.push(...entries.map((entry) => entry.path)); return { ".tag": "complete", entries: entries.map(() => ({ ".tag": "success" as const })) }; },
+      writeAuditLog: async () => undefined,
+    });
+    expect(result).toEqual({ removed: 0, alreadyGone: 1, failed: 0 });
+    expect(metadataLookups).toEqual(["/autohdr/repeat/capture-1.jpg"]);
+    expect(metadataLookups).not.toContain("/autohdr/repeat/capture-0.jpg");
+    expect(deleted).toEqual([]);
+  });
+
+  it("treats a recorded folder as failed and never sends it to delete_batch", async () => {
+    const { data, first } = await activeRound();
+    await insertSentFile(first.handoffId, data.assetIds[0]!, "capture-0.jpg");
+    const deleted: string[] = [];
+    const result = await removeDeselected({ DB: database.DB } as never, {
+      projectId: data.projectId, assetIds: [], jobId: first.jobId,
+      handoffId: first.handoffId, retiredHandoffId: first.handoffId,
+    }, {
+      getMetadata: async (_env, _db, path) => ({ ".tag": "folder", name: "capture-0.jpg", path_lower: path, id: "id:folder" }),
+      deleteBatch: async (_env, _db, entries) => { deleted.push(...entries.map((entry) => entry.path)); return { ".tag": "complete", entries: [] }; },
+      writeAuditLog: async () => undefined,
+    });
+    expect(result).toEqual({ removed: 0, alreadyGone: 0, failed: 1 });
+    expect(deleted).toEqual([]);
+  });
+
+  it("skips cleanup after archive and contains its audit-write failure", async () => {
+    const { data, first } = await activeRound();
+    await insertSentFile(first.handoffId, data.assetIds[0]!, "capture-0.jpg");
+    await database.DB.prepare("UPDATE projects SET archived_at = ? WHERE id = ?").bind(Date.now(), data.projectId).run();
+    const deleteBatch = vi.fn(async () => ({ ".tag": "async_job_id" as const, async_job_id: "never" }));
+    const deleteBatchCheck = vi.fn(async () => ({ ".tag": "in_progress" as const }));
+    const getMetadata = vi.fn(async (_env: unknown, _db: unknown, path: string) => ({ ".tag": "file" as const, name: "capture-0.jpg", path_lower: path, id: "id:file", size: 1 }));
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const result = await removeDeselected({ DB: database.DB } as never, {
+        projectId: data.projectId, assetIds: [], jobId: first.jobId,
+        handoffId: first.handoffId, retiredHandoffId: first.handoffId,
+      }, { getMetadata, deleteBatch, deleteBatchCheck, writeAuditLog: async () => { throw new Error("audit unavailable"); } });
+      expect(result.failed).toBe(1);
+      expect(getMetadata).toHaveBeenCalledTimes(1);
+      expect(deleteBatch).not.toHaveBeenCalled();
+      expect(deleteBatchCheck).not.toHaveBeenCalled();
+      expect(errorSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it("contains delete poll exhaustion and its audit-write failure", async () => {
+    const { data, first } = await activeRound();
+    await insertSentFile(first.handoffId, data.assetIds[0]!, "capture-0.jpg");
+    const deleteBatch = vi.fn(async () => ({ ".tag": "async_job_id" as const, async_job_id: "never" }));
+    const deleteBatchCheck = vi.fn(async () => ({ ".tag": "in_progress" as const }));
+    const getMetadata = vi.fn(async (_env: unknown, _db: unknown, path: string) => ({ ".tag": "file" as const, name: "capture-0.jpg", path_lower: path, id: "id:file", size: 1 }));
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const result = await removeDeselected({ DB: database.DB } as never, {
+        projectId: data.projectId, assetIds: [], jobId: first.jobId,
+        handoffId: first.handoffId, retiredHandoffId: first.handoffId,
+      }, { getMetadata, deleteBatch, deleteBatchCheck, writeAuditLog: async () => { throw new Error("audit unavailable"); } });
+      expect(result).toEqual({ removed: 0, alreadyGone: 0, failed: 1 });
+      expect(getMetadata).toHaveBeenCalledTimes(1);
+      expect(deleteBatch).toHaveBeenCalledTimes(1);
+      expect(deleteBatchCheck).toHaveBeenCalledTimes(45);
+      expect(errorSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it("audits a removal-set query failure instead of returning before the summary write", async () => {
+    const { data, first } = await activeRound();
+    const audit: unknown[] = [];
+    const result = await removeDeselected({ DB: database.DB } as never, {
+      projectId: data.projectId, assetIds: data.assetIds, jobId: first.jobId,
+      handoffId: first.handoffId, retiredHandoffId: first.handoffId,
+    }, {
+      loadSent: async () => { throw new Error("sent-file query failed"); },
+      writeAuditLog: async (summary) => { audit.push(summary); },
+    });
+    expect(result).toEqual({ removed: 0, alreadyGone: 0, failed: 1 });
+    expect(audit).toMatchObject([{ failed: [{ assetId: "remove-deselected", reason: "sent-file query failed" }] }]);
   });
 });

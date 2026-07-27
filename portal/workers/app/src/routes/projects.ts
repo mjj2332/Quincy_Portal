@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import { createDb, schema } from "@quincy/db";
 import { and, asc, desc, eq, exists, inArray, isNotNull, isNull, notExists, sql } from "drizzle-orm";
-import { COLLECTION_KINDS, isStageKey, ROLE_CAPABILITIES, type CollectionKind } from "@quincy/shared";
+import { COLLECTION_KINDS, computeRemovalAssetIds, isStageKey, ROLE_CAPABILITIES, type CollectionKind } from "@quincy/shared";
 import { z } from "zod";
 import type { AppEnv } from "../env";
 import { hasProjectAccess, requireCapability } from "../middleware/capability";
@@ -301,17 +301,33 @@ projectsRoutes.post("/projects/:id/send-to-autohdr", requireCapability("adminBac
   const db = createDb(c.env.DB);
   const target = await db.select({ archivedAt: schema.projects.archivedAt }).from(schema.projects).where(eq(schema.projects.id, id)).get();
   if (target?.archivedAt) return c.json({ error: "Project is archived" }, 409);
-  const selected = await db.select({ id: schema.selections.id })
+  const body = await c.req.json().catch(() => ({}));
+  const parsedBody = z.object({ startNewRound: z.boolean().optional(), removalSetHash: z.string().min(1).optional() }).safeParse(body);
+  if (!parsedBody.success) return c.json({ error: "Invalid input", details: parsedBody.error.flatten() }, 400);
+  const selectedAssets = await db.select({ assetId: schema.assets.id, filename: schema.assets.originalFilename })
     .from(schema.selections)
     .innerJoin(schema.assets, eq(schema.selections.assetId, schema.assets.id))
     .innerJoin(schema.collections, and(eq(schema.assets.collectionId, schema.collections.id), eq(schema.collections.projectId, id), eq(schema.collections.kind, "raw")))
-    .where(eq(schema.selections.state, "selected_for_editing"))
-    .get();
-  if (!selected) return c.json({ error: "Select at least one RAW asset before sending to autoHDR" }, 400);
-  const result = await c.env.BACKGROUND.startAutoHdr(id, c.get("user").id);
+    .where(and(eq(schema.selections.state, "selected_for_editing"), sql`${schema.assets.supersededAt} IS NULL`));
+  if (!selectedAssets.length) return c.json({ error: "Select at least one RAW asset before sending to autoHDR" }, 400);
+  let removalInfo: { count: number; hash: string } | undefined;
+  const activeHandoff = await db.select({ id: schema.autoHdrHandoffs.id }).from(schema.autoHdrHandoffs)
+    .where(and(eq(schema.autoHdrHandoffs.projectId, id), inArray(schema.autoHdrHandoffs.state, ["starting", "started", "blocked"]))).get();
+  if (activeHandoff) {
+    const sentFiles = await db.select({ assetId: schema.autoHdrSentFiles.assetId, dropboxPathKey: schema.autoHdrSentFiles.dropboxPathKey })
+      .from(schema.autoHdrSentFiles).where(eq(schema.autoHdrSentFiles.handoffId, activeHandoff.id));
+    const removalIds = computeRemovalAssetIds(sentFiles, selectedAssets);
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(removalIds)));
+    removalInfo = { count: removalIds.length, hash: [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("") };
+  }
+  const result = await c.env.BACKGROUND.startAutoHdr(id, c.get("user").id, parsedBody.data);
   if (!result.ok) {
+    const details = result.code === "ERR_HANDOFF_ALREADY_ACTIVE" ? {
+      removalCount: result.removalCount ?? removalInfo?.count ?? 0,
+      removalSetHash: result.removalSetHash ?? removalInfo?.hash,
+    } : {};
     return c.json(
-      { error: result.message, code: result.code },
+      { error: result.message, code: result.code, ...details },
       result.code === "ERR_NO_RAW_SELECTION" ? 400 : 409,
     );
   }
@@ -476,7 +492,7 @@ projectsRoutes.post("/jobs/:id/retry", requireCapability("adminBackend"), async 
   const manualAssetId = isManualPublish ? (() => { try { const payload = JSON.parse(job.payloadJson ?? "{}"); return typeof payload.assetId === "string" ? payload.assetId : null; } catch { return null; } })() : null;
   if (isManualPublish && !manualAssetId) return c.json({ error: "Manual upload job has no asset" }, 409);
   const outcome = job.kind === "autohdr"
-    ? await c.env.BACKGROUND.startAutoHdr(job.projectId, c.get("user").id)
+    ? await c.env.BACKGROUND.startAutoHdr(job.projectId, c.get("user").id, { resumeExisting: true })
     : job.kind === "fetch_edited"
       ? await c.env.BACKGROUND.fetchEditedFromAutoHdr(job.projectId)
       : job.kind === "autohdr_scaffold"

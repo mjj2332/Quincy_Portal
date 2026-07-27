@@ -8,3 +8,4 @@ export * from "./transform-source";
 export * from "./renditions";
 export * from "./staff-routes";
 export * from "./dropbox-paths";
+export * from "./autohdr";
