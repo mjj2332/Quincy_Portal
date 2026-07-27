@@ -1,6 +1,7 @@
 import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { claimAutoHdrFetch, claimAutoHdrHandoff, claimBackfillAutoHdrHandoff, claimImplicitAutoHdrHandoff, confirmAutoHdrHandoff } from "../src/autohdr/claims";
+import { acquireManualIngestLease, refreshManualIngestLease, releaseManualIngestLease } from "../src/autohdr/manual-supplement";
 import { routeAutoHdrDelta, type RoutedAutoHdrMapping } from "../src/autohdr/mapping";
 import { routeAutoHdrManualDropDelta, routeAutoHdrProviderDelta } from "../src/autohdr/routers";
 import { ensureScaffold } from "../src/autohdr/scaffold";
@@ -559,6 +560,55 @@ describe("repeat AutoHDR sends", () => {
     const claims = await database.DB.prepare("SELECT id, state, handoff_id FROM autohdr_path_claims WHERE project_id = ? ORDER BY candidate").bind(data.projectId).all<{ id: string; state: string; handoff_id: string }>();
     expect(claims.results).toHaveLength(2);
     expect(claims.results.every((claim) => claim.state === "pending" && claim.handoff_id === next.handoffId)).toBe(true);
+  });
+
+  it("fences an in-flight manual ingest, reports its pinned error, and retires after release", async () => {
+    const { data, localEnv, first } = await activeRound("edited_review");
+    const mapping = await database.DB.prepare("SELECT id FROM autohdr_output_mappings WHERE handoff_id = ?")
+      .bind(first.handoffId).first<{ id: string }>();
+    const ownerToken = await acquireManualIngestLease(localEnv, mapping!.id);
+    expect(ownerToken).toEqual(expect.any(String));
+    await expect(claimAutoHdrHandoff(localEnv, data.projectId, data.userId, {
+      startNewRound: true,
+      removalSetHash: await emptyRemovalHash(),
+    })).rejects.toMatchObject({ code: "ERR_MANUAL_INGEST_IN_PROGRESS" });
+    await releaseManualIngestLease(localEnv, mapping!.id, ownerToken!);
+    await expect(claimAutoHdrHandoff(localEnv, data.projectId, data.userId, {
+      startNewRound: true,
+      removalSetHash: await emptyRemovalHash(),
+    })).resolves.toMatchObject({ retiredHandoffId: first.handoffId });
+  });
+
+  it("does not acquire for a mapping retired before acquisition", async () => {
+    const { data, localEnv, first } = await activeRound("edited_review");
+    const mapping = await database.DB.prepare("SELECT id FROM autohdr_output_mappings WHERE handoff_id = ?")
+      .bind(first.handoffId).first<{ id: string }>();
+    await expect(claimAutoHdrHandoff(localEnv, data.projectId, data.userId, {
+      startNewRound: true,
+      removalSetHash: await emptyRemovalHash(),
+    })).resolves.toMatchObject({ retiredHandoffId: first.handoffId });
+    await expect(acquireManualIngestLease(localEnv, mapping!.id)).resolves.toBeNull();
+  });
+
+  it("lets an unrelated mapping retire and lets an expired lease recover", async () => {
+    const firstCase = await activeRound("edited_review");
+    const firstMapping = await database.DB.prepare("SELECT id FROM autohdr_output_mappings WHERE handoff_id = ?")
+      .bind(firstCase.first.handoffId).first<{ id: string }>();
+    const firstToken = await acquireManualIngestLease(firstCase.localEnv, firstMapping!.id);
+
+    const secondCase = await activeRound("edited_review");
+    await expect(claimAutoHdrHandoff(secondCase.localEnv, secondCase.data.projectId, secondCase.data.userId, {
+      startNewRound: true,
+      removalSetHash: await emptyRemovalHash(),
+    })).resolves.toMatchObject({ retiredHandoffId: secondCase.first.handoffId });
+
+    await database.DB.prepare("UPDATE autohdr_manual_ingest_leases SET lease_expires_at = ? WHERE mapping_id = ?")
+      .bind(Date.now() - 1, firstMapping!.id).run();
+    await expect(refreshManualIngestLease(firstCase.localEnv, firstMapping!.id, firstToken!, Date.now(), Date.now() + 60_000)).resolves.toBe(false);
+    await expect(claimAutoHdrHandoff(firstCase.localEnv, firstCase.data.projectId, firstCase.data.userId, {
+      startNewRound: true,
+      removalSetHash: await emptyRemovalHash(),
+    })).resolves.toMatchObject({ retiredHandoffId: firstCase.first.handoffId });
   });
 
   it("returns route-no-longer-valid and leaves no orphan job for a retired fetch route", async () => {

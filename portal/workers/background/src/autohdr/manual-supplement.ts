@@ -24,6 +24,41 @@ export type ManualSupplementResult =
   | { status: "created" | "already_ingested"; assetId: string }
   | { status: "skipped" };
 
+const MANUAL_INGEST_LEASE_TTL_MS = 2 * 60_000;
+
+export async function acquireManualIngestLease(env: Env, mappingId: string): Promise<string | null> {
+  const ownerToken = crypto.randomUUID();
+  const now = Date.now();
+  const result = await env.DB.prepare(
+    "INSERT INTO autohdr_manual_ingest_leases (mapping_id, owner_token, lease_expires_at, created_at, updated_at) " +
+    "SELECT ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM autohdr_output_mappings WHERE id = ? AND state IN ('pending_discovery', 'active')) " +
+    "ON CONFLICT (mapping_id) DO UPDATE SET owner_token = excluded.owner_token, " +
+    "lease_expires_at = excluded.lease_expires_at, updated_at = excluded.updated_at " +
+    "WHERE autohdr_manual_ingest_leases.lease_expires_at <= excluded.created_at",
+  ).bind(mappingId, ownerToken, now + MANUAL_INGEST_LEASE_TTL_MS, now, now, mappingId).run();
+  return result.meta.changes === 1 ? ownerToken : null;
+}
+
+export async function refreshManualIngestLease(
+  env: Env,
+  mappingId: string,
+  ownerToken: string,
+  now: number,
+  newExpiry: number,
+): Promise<boolean> {
+  const result = await env.DB.prepare(
+    "UPDATE autohdr_manual_ingest_leases SET lease_expires_at = ?, updated_at = ? " +
+    "WHERE mapping_id = ? AND owner_token = ? AND lease_expires_at > ?",
+  ).bind(newExpiry, now, mappingId, ownerToken, now).run();
+  return result.meta.changes === 1;
+}
+
+export async function releaseManualIngestLease(env: Env, mappingId: string, ownerToken: string): Promise<void> {
+  await env.DB.prepare(
+    "DELETE FROM autohdr_manual_ingest_leases WHERE mapping_id = ? AND owner_token = ?",
+  ).bind(mappingId, ownerToken).run();
+}
+
 const COLLECTION_RECEIVED_COUNT_AFTER_INSERT_SQL = COLLECTION_RECEIVED_COUNT_SQL.replace(
   "WHERE id = ?",
   "WHERE id = ? AND changes() = 1",
@@ -101,12 +136,14 @@ export async function ingestManualSupplement(
   mappingId: string,
   connectionId: string,
   file: DropboxFile,
-  dependencies: ManualSupplementDependencies = {},
+  dependencies: ManualSupplementDependencies,
+  ownerToken: string,
 ): Promise<ManualSupplementResult> {
   const sourcePath = file.path_display ?? file.path_lower;
   const sourcePathKey = dropboxPathKey(file.path_lower);
   const identityKey = `manual-supplement:${sourcePathKey}`;
   const { manualFolderKey, scaffoldPathKey } = sourcePathParent(sourcePathKey);
+  const finalPath = sourcePath.slice(0, sourcePath.lastIndexOf("/"));
   const assetId = crypto.randomUUID();
   const r2Key = `projects/${projectId}/edited/dropbox/manual-supplement/${assetId}/${file.name}`;
   const db = dbFor(env);
@@ -117,6 +154,33 @@ export async function ingestManualSupplement(
   const collectionId = await ensureEditedCollection(env, projectId);
   const now = Date.now();
   const statements = [
+    env.DB.prepare(
+      "UPDATE autohdr_output_mappings SET state = 'active', final_path = ?, final_path_key = ?, folder_id = NULL, " +
+      "observed_at = ?, diagnostic = NULL, updated_at = ? WHERE id = ? AND state = 'pending_discovery' " +
+      "AND EXISTS (SELECT 1 FROM projects p " +
+      "JOIN autohdr_handoffs h ON h.project_id = p.id " +
+      "JOIN autohdr_output_mappings m ON m.handoff_id = h.id AND m.project_id = p.id " +
+      "JOIN autohdr_scaffold_claims s ON s.project_id = p.id " +
+      "WHERE p.id = ? AND p.archived_at IS NULL AND p.stage_key IN ('editing_autohdr', 'edited_review') " +
+      "AND h.id = ? AND h.connection_id = ? AND h.state = 'started' " +
+      "AND m.id = ? AND m.connection_id = ? " +
+      "AND s.connection_id = ? AND s.state = 'active' AND s.scaffold_path_key = ? " +
+      "AND ? = s.scaffold_path_key || '/04-manual-photos')",
+    ).bind(
+      finalPath,
+      manualFolderKey,
+      now,
+      now,
+      mappingId,
+      projectId,
+      handoffId,
+      connectionId,
+      mappingId,
+      connectionId,
+      connectionId,
+      scaffoldPathKey,
+      manualFolderKey,
+    ),
     env.DB.prepare(
       "INSERT INTO assets (id, collection_id, kind, r2_key, original_filename, bytes, content_hash, source, source_path, source_path_key, section, publish_status, autohdr_handoff_id, created_at, updated_at) " +
       "SELECT ?, ?, 'photo', ?, ?, ?, ?, 'dropbox', ?, ?, 'AutoHDR', 'ready', ?, ?, ? " +
@@ -183,9 +247,19 @@ export async function ingestManualSupplement(
   ];
 
   await dependencies.beforeBatch?.();
+  const refreshedAt = Date.now();
+  const refreshed = await refreshManualIngestLease(
+    env,
+    mappingId,
+    ownerToken,
+    refreshedAt,
+    refreshedAt + MANUAL_INGEST_LEASE_TTL_MS,
+  );
+  if (!refreshed) throw new Error(`Manual ingest lease expired before commit for mapping ${mappingId}`);
   try {
     const result = await env.DB.batch(statements);
-    if ((result[0]?.meta.changes ?? 0) === 0) {
+    // Promotion is result[0]; the asset insert is result[1], whose changes decide creation.
+    if ((result[1]?.meta.changes ?? 0) === 0) {
       console.warn("AutoHDR manual supplement skipped: write-time guard rejected", {
         projectId,
         handoffId,

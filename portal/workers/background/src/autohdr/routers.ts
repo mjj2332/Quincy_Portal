@@ -157,7 +157,7 @@ export async function routeAutoHdrManualSupplementDelta(
         eq(autoHdrHandoffs.state, "started"),
         eq(autoHdrOutputMappings.projectId, projects.id),
         eq(autoHdrOutputMappings.connectionId, connectionId),
-        eq(autoHdrOutputMappings.state, "active"),
+        inArray(autoHdrOutputMappings.state, ["pending_discovery", "active"]),
       ))
       .get();
     if (!owner) continue;

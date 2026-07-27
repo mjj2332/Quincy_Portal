@@ -477,6 +477,17 @@ export const autoHdrOutputMappings = sqliteTable(
   ],
 );
 
+/** Keeps a whole Dropbox manual-supplement batch from being retired mid-ingest. */
+export const autoHdrManualIngestLeases = sqliteTable("autohdr_manual_ingest_leases", {
+  mappingId: text("mapping_id")
+    .primaryKey()
+    .references(() => autoHdrOutputMappings.id, { onDelete: "cascade" }),
+  ownerToken: text("owner_token").notNull(),
+  leaseExpiresAt: integer("lease_expires_at", { mode: "timestamp_ms" }).notNull(),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
 /** Permanent connection-scoped ownership. Rows are tombstoned, never deleted on archive. */
 export const autoHdrPathClaims = sqliteTable(
   "autohdr_path_claims",

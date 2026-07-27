@@ -314,6 +314,41 @@ allowlist are silent no-ops otherwise). Full mechanics in `docs/subagents/agy-cl
   been live-smoke-tested against a real project — doing so would delete a real file from a real
   client's AutoHDR Dropbox folder, so it needs a deliberately-chosen test project, not a
   unilaterally-picked one.
+- **`AutoHDR-Repeat-Send-Overlap-Guard-Removed.md`** — a separate, concurrent session removed
+  `claimAutoHdrRepeatSend()`'s basename-overlap check (`ERR_SELECTION_OVERLAPS_OPEN_DELIVERY`),
+  since staff need to resend a *changed* raw selection before AutoHDR returns the previous round's
+  edits, and the final writer already replaces same-path deliveries in place. Replaced with an
+  explicit `ERR_SEND_IN_PROGRESS` gate on the previous round's own raw-copy job. Shipped as commit
+  `33d56d0`, deployed same day the change landed.
+- **`AutoHDR-Manual-Supplement-Independence-Plan.md`** — root-caused live on `6/120 Beach Street`:
+  AutoHDR's automated pipeline never delivered anything for that project's first round (still
+  `pending_discovery` after 24+ hours), and `04-MANUAL-Photos` — built earlier this session
+  specifically to *supplement* an already-delivered round — had no way to be the delivery for a
+  round that was never discovered at all, by a deliberate, reviewed decision in that earlier plan.
+  §§1-3 (2 Terra rounds): let the first manual file promote a `pending_discovery` mapping to
+  `active`, using the manual folder itself as the canonical path — same mechanics
+  `routeAutoHdrDelta()` already uses for FINAL/FINALS. Round 1 found a real regression risk
+  (shifting the asset-insert's D1-batch result index without updating the code that reads it,
+  which would have silently broken rendition-enqueueing for the common already-active-mapping
+  case) plus 4 smaller fixes. §4 (added after a diff review of the built §§1-3 code, cross-checked
+  against the concurrently-landed `33d56d0` above): closes a real data-loss race — a repeat send
+  could retire a mapping mid-way through a Dropbox-delta batch of manual files, silently and
+  permanently losing every file processed after the retirement, now made easier to hit by
+  `33d56d0` loosening the guard that used to make it rare. Took 3 plan-review rounds to get right:
+  round 1 found a pre-acquisition race, lease theft (no true mutual exclusion), an insufficient
+  fixed TTL, and a deferred error code; round 2 (after fixing all of round 1) found the refresh
+  didn't check its own expiry, a single slow file's download could outlast a refresh taken only at
+  file-start, a non-lease `skipped` result wasn't treated as a page failure, and the release
+  try/finally didn't cover the acquisition phase; round 3 found no further race, independently
+  executed the lease's conditional-acquire SQL against real SQLite to confirm its semantics, and
+  confirmed the mechanism (a new `autohdr_manual_ingest_leases` table, ownership-tokened,
+  mirroring the existing `autohdr_fetch_claims` pattern) is proportionate — a same-DO lock can't
+  coordinate with repeat-send retirement, which happens in a separate Worker entirely. Diff review
+  of the actual build was clean; independent verification (this session) found and fixed one more
+  test-only bug (a test omitting its Dropbox-download mock, unrelated to the lease logic itself).
+  `npm run typecheck`, the web build, and all four workspace/shared test suites (300 tests total:
+  150 background, 101+1 skip app, 13 webhook-ingress, 35 shared) are green. Migration `0017` and
+  prod deploy pending.
 
 ## Open plans (see `docs/plans/`)
 

@@ -24,9 +24,15 @@ import {
   routeAutoHdrManualSupplementDelta,
   routeAutoHdrManualDropDelta,
   routeAutoHdrProviderDelta,
+  type ManualSupplementRoute,
 } from "../autohdr/routers";
 import { claimAutoHdrFetch, startClaimedFetch } from "../autohdr/claims";
-import { ingestManualSupplement } from "../autohdr/manual-supplement";
+import {
+  acquireManualIngestLease,
+  ingestManualSupplement,
+  releaseManualIngestLease,
+  type ManualSupplementDependencies,
+} from "../autohdr/manual-supplement";
 
 const CURSOR_KEY = "cursor";
 const KICK_GENERATION_KEY = "kick-generation";
@@ -59,6 +65,46 @@ export async function routeAutoHdrPage(
   const manualRouted = await routeAutoHdrManualDropDelta(env, connectionId, entries);
   const providerRouted = await routeAutoHdrProviderDelta(env, connectionId, entries);
   return { manualSupplementRouted, explicitRouted, manualRouted, providerRouted };
+}
+
+/** Processes the manual routes as one alarm-level lease scope, including acquisition. */
+export async function processManualSupplementRoutes(
+  env: Env,
+  routes: readonly ManualSupplementRoute[],
+  initialWorkIndex = 0,
+  dependencies: ManualSupplementDependencies = {},
+): Promise<{ routedProjectCount: number; nextWorkIndex: number }> {
+  let workIndex = initialWorkIndex;
+  let routedProjectCount = 0;
+  const distinctMappingIds = [...new Set(routes.map((route) => route.mappingId))];
+  const acquired = new Map<string, string>();
+  try {
+    for (const mappingId of distinctMappingIds) {
+      const token = await acquireManualIngestLease(env, mappingId);
+      if (!token) throw new Error(`manual ingest lease unavailable for mapping ${mappingId}`);
+      acquired.set(mappingId, token);
+    }
+    for (const route of routes) {
+      if (workIndex++ > 0) await new Promise<void>((resolve) => setTimeout(resolve, 250));
+      const result = await ingestManualSupplement(
+        env,
+        route.projectId,
+        route.handoffId,
+        route.mappingId,
+        route.connectionId,
+        route.file,
+        dependencies,
+        acquired.get(route.mappingId)!,
+      );
+      if (result.status === "skipped") throw new Error(`manual ingest fenced out for mapping ${route.mappingId}`);
+      routedProjectCount += 1;
+    }
+  } finally {
+    await Promise.allSettled(
+      [...acquired].map(([mappingId, token]) => releaseManualIngestLease(env, mappingId, token)),
+    );
+  }
+  return { routedProjectCount, nextWorkIndex: workIndex };
 }
 
 /** Two named objects per connection: `<connection>:raw` and `<connection>:autohdr`. */
@@ -153,18 +199,13 @@ export class DropboxSyncDO extends DurableObject<Env> {
         matchedCount =
           manualSupplementRouted.matched + explicitRouted.matched + manualRouted.matched + providerRouted.matched;
         let workIndex = 0;
-        for (const route of manualSupplementRouted.routes) {
-          if (workIndex++ > 0) await new Promise<void>((resolve) => setTimeout(resolve, 250));
-          await ingestManualSupplement(
-            this.env,
-            route.projectId,
-            route.handoffId,
-            route.mappingId,
-            route.connectionId,
-            route.file,
-          );
-          routedProjectCount += 1;
-        }
+        const manualSupplementWork = await processManualSupplementRoutes(
+          this.env,
+          manualSupplementRouted.routes,
+          workIndex,
+        );
+        workIndex = manualSupplementWork.nextWorkIndex;
+        routedProjectCount += manualSupplementWork.routedProjectCount;
         for (const route of allRoutes) {
           if (workIndex++ > 0) await new Promise<void>((resolve) => setTimeout(resolve, 250));
           const owner = await claimAutoHdrFetch(this.env, route, {

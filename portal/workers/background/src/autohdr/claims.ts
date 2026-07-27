@@ -1,9 +1,10 @@
-import { and, desc, eq, inArray, lt, sql } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, lt, sql } from "drizzle-orm";
 import {
   assets,
   autoHdrFetchClaims,
   autoHdrFinalAssociations,
   autoHdrHandoffs,
+  autoHdrManualIngestLeases,
   autoHdrOutputMappings,
   autoHdrPathClaims,
   autoHdrSentFiles,
@@ -346,8 +347,8 @@ async function claimAutoHdrRepeatSend(
   let results: Awaited<ReturnType<Env["DB"]["batch"]>>;
   try {
     results = await env.DB.batch([
-      env.DB.prepare("UPDATE autohdr_output_mappings SET state = 'retired', retired_at = ?, updated_at = ? WHERE id = ? AND handoff_id = ? AND state IN ('active', 'blocked_collision') AND EXISTS (SELECT 1 FROM autohdr_handoffs WHERE id = ? AND project_id = ? AND state IN ('starting','started','blocked')) AND EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at IS NULL AND stage_key IN ('editing_autohdr','edited_review')) AND NOT EXISTS (SELECT 1 FROM autohdr_fetch_claims WHERE mapping_id = ? AND state IN ('starting','running')) AND (SELECT COUNT(*) FROM autohdr_final_associations WHERE handoff_id = ?) = ? AND (SELECT COUNT(*) FROM autohdr_sent_files WHERE handoff_id = ?) = ? AND (SELECT COUNT(*) FROM autohdr_path_claims WHERE mapping_id = ? AND state IN ('active','pending','blocked')) = 2 AND EXISTS (SELECT 1 FROM autohdr_handoffs h JOIN jobs j ON j.id = h.job_id WHERE h.id = ? AND j.status NOT IN ('queued','running'))")
-        .bind(nowMs, nowMs, mappingId, active.id, active.id, projectId, projectId, mappingId, active.id, associationCountAtCheck, active.id, sentFilesCountAtCheck, mappingId, active.id),
+      env.DB.prepare("UPDATE autohdr_output_mappings SET state = 'retired', retired_at = ?, updated_at = ? WHERE id = ? AND handoff_id = ? AND state IN ('active', 'blocked_collision') AND EXISTS (SELECT 1 FROM autohdr_handoffs WHERE id = ? AND project_id = ? AND state IN ('starting','started','blocked')) AND EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at IS NULL AND stage_key IN ('editing_autohdr','edited_review')) AND NOT EXISTS (SELECT 1 FROM autohdr_fetch_claims WHERE mapping_id = ? AND state IN ('starting','running')) AND NOT EXISTS (SELECT 1 FROM autohdr_manual_ingest_leases WHERE mapping_id = ? AND lease_expires_at > ?) AND (SELECT COUNT(*) FROM autohdr_final_associations WHERE handoff_id = ?) = ? AND (SELECT COUNT(*) FROM autohdr_sent_files WHERE handoff_id = ?) = ? AND (SELECT COUNT(*) FROM autohdr_path_claims WHERE mapping_id = ? AND state IN ('active','pending','blocked')) = 2 AND EXISTS (SELECT 1 FROM autohdr_handoffs h JOIN jobs j ON j.id = h.job_id WHERE h.id = ? AND j.status NOT IN ('queued','running'))")
+        .bind(nowMs, nowMs, mappingId, active.id, active.id, projectId, projectId, mappingId, mappingId, nowMs, active.id, associationCountAtCheck, active.id, sentFilesCountAtCheck, mappingId, active.id),
       env.DB.prepare("UPDATE autohdr_handoffs SET state = 'retired', updated_at = ? WHERE id = ? AND state IN ('starting','started','blocked') AND changes() = 1")
         .bind(nowMs, active.id),
       env.DB.prepare("UPDATE autohdr_path_claims SET state = 'tombstone', updated_at = ? WHERE mapping_id = ? AND state IN ('active','pending','blocked') AND changes() = 1")
@@ -381,6 +382,14 @@ async function claimAutoHdrRepeatSend(
   if ((results[0]?.meta.changes ?? 0) !== 1) {
     const stillFetching = await db.select({ id: autoHdrFetchClaims.id }).from(autoHdrFetchClaims).where(and(eq(autoHdrFetchClaims.mappingId, mappingId), inArray(autoHdrFetchClaims.state, ["starting", "running"]))).get();
     if (stillFetching) throw new AutoHdrClaimError("ERR_FETCH_IN_PROGRESS", "An AutoHDR fetch is still in progress for the current round; wait for it to finish before starting a new round");
+    const stillIngesting = await db.select({ mappingId: autoHdrManualIngestLeases.mappingId })
+      .from(autoHdrManualIngestLeases)
+      .where(and(
+        eq(autoHdrManualIngestLeases.mappingId, mappingId),
+        gt(autoHdrManualIngestLeases.leaseExpiresAt, new Date(nowMs)),
+      ))
+      .get();
+    if (stillIngesting) throw new AutoHdrClaimError("ERR_MANUAL_INGEST_IN_PROGRESS", "A manual AutoHDR ingest is still in progress for the current round; wait for it to finish before starting a new round");
     throw new AutoHdrClaimError("ERR_HANDOFF_BLOCKED", "The current AutoHDR round changed while the repeat send was starting; try again");
   }
   const reactivationResults = results.slice(8, 10);
