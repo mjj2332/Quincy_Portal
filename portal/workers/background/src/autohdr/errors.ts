@@ -8,7 +8,7 @@ export type AutoHdrErrorCode =
   | "ERR_FETCH_CLAIM_FAILED"
   | "ERR_HANDOFF_ALREADY_ACTIVE"
   | "ERR_FETCH_IN_PROGRESS"
-  | "ERR_SELECTION_OVERLAPS_OPEN_DELIVERY"
+  | "ERR_SEND_IN_PROGRESS"
   | "ERR_REMOVAL_SET_CHANGED";
 
 export class AutoHdrClaimError extends Error {

@@ -21,7 +21,6 @@ import { dropboxPathKey, pathEqualsOrIsBelow } from "../dropbox/paths";
 import { canonicalDropboxConnectionId } from "../dropbox/connection";
 import { setJobStatus } from "../lib/jobs";
 import type { RoutedAutoHdrMapping } from "./mapping";
-import { plainBasename, strippedBasename } from "./finals";
 import { AutoHdrClaimError } from "./errors";
 
 const START_LEASE_MS = 10 * 60_000;
@@ -296,20 +295,15 @@ async function claimAutoHdrRepeatSend(
   const mappingId = active.mappingId;
   const now = new Date();
   const nowMs = now.getTime();
-  const oldUnits = JSON.parse(active.readinessUnitsJson) as { key: string; assetIds: string[] }[];
+  // The prior round's raw-copy Workflow writes rows (autohdr_sent_files) and the eventual
+  // retirement batch below reclaims its two path-claim rows; both race with a still-running
+  // copy, so require it to have finished (done or failed) before a new round can start.
+  const sendJob = await db.select({ status: jobs.status }).from(jobs).where(eq(jobs.id, active.jobId)).get();
+  if (sendJob && ["queued", "running"].includes(sendJob.status)) {
+    throw new AutoHdrClaimError("ERR_SEND_IN_PROGRESS", "The previous AutoHDR send is still copying files to Dropbox; wait for it to finish before starting a new round");
+  }
   const associations = await db.select({ readinessUnitKey: autoHdrFinalAssociations.readinessUnitKey })
     .from(autoHdrFinalAssociations).where(eq(autoHdrFinalAssociations.handoffId, active.id));
-  const associatedUnits = new Set(associations.map((row) => row.readinessUnitKey));
-  const openAssetIds = oldUnits.filter((unit) => !associatedUnits.has(unit.key)).flatMap((unit) => unit.assetIds);
-  const oldRaws = openAssetIds.length
-    ? await db.select({ id: assets.id, filename: assets.originalFilename }).from(assets).where(inArray(assets.id, openAssetIds))
-    : [];
-  const oldBasenames = new Set(oldRaws.flatMap((raw) => [plainBasename(raw.filename), strippedBasename(raw.filename)]));
-  const overlapping = selection.rows.some((raw) => oldBasenames.has(plainBasename(raw.filename)) || oldBasenames.has(strippedBasename(raw.filename)));
-  if (overlapping) {
-    throw new AutoHdrClaimError("ERR_SELECTION_OVERLAPS_OPEN_DELIVERY", "The new selection overlaps an open AutoHDR delivery by normalized filename; wait for that delivery to resolve before resending");
-  }
-
   const associationCountAtCheck = associations.length;
   const sentFiles = await db.select({ assetId: autoHdrSentFiles.assetId, dropboxPathKey: autoHdrSentFiles.dropboxPathKey })
     .from(autoHdrSentFiles).where(eq(autoHdrSentFiles.handoffId, active.id));

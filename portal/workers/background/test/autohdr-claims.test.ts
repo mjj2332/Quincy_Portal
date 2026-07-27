@@ -582,11 +582,13 @@ describe("repeat AutoHDR sends", () => {
     })).rejects.toMatchObject({ code: "ERR_REMOVAL_SET_CHANGED" });
   });
 
-  it("rejects a repeat send that overlaps an open prior delivery", async () => {
-    const { data, localEnv } = await activeRound("edited_review", false);
-    await expect(claimAutoHdrHandoff(localEnv, data.projectId, data.userId, {
+  it("allows a repeat send that overlaps an open prior delivery once the prior send job has finished", async () => {
+    const { data, localEnv, first } = await activeRound("edited_review", false);
+    const next = await claimAutoHdrHandoff(localEnv, data.projectId, data.userId, {
       startNewRound: true, removalSetHash: await emptyRemovalHash(),
-    })).rejects.toMatchObject({ code: "ERR_SELECTION_OVERLAPS_OPEN_DELIVERY" });
+    });
+    expect(next.reused).toBe(false);
+    expect(next.retiredHandoffId).toBe(first.handoffId);
   });
 
   it("fences retirement when the old send job is still active and when its sent-file count changed", async () => {
@@ -594,7 +596,7 @@ describe("repeat AutoHDR sends", () => {
     await database.DB.prepare("UPDATE jobs SET status = 'running' WHERE id = ?").bind(firstCase.first.jobId).run();
     await expect(claimAutoHdrHandoff(firstCase.localEnv, firstCase.data.projectId, firstCase.data.userId, {
       startNewRound: true, removalSetHash: await emptyRemovalHash(),
-    })).rejects.toMatchObject({ code: "ERR_HANDOFF_BLOCKED" });
+    })).rejects.toMatchObject({ code: "ERR_SEND_IN_PROGRESS" });
     await expect(database.DB.prepare("SELECT state FROM autohdr_handoffs WHERE id = ?").bind(firstCase.first.handoffId).first())
       .resolves.toEqual({ state: "started" });
 
