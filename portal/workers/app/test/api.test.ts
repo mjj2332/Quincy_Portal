@@ -74,6 +74,26 @@ async function createUploadProject(cookie: string, street: string): Promise<{ id
   return response.json() as Promise<{ id: string }>;
 }
 
+async function seedSyncDropboxProject(id: string, rawFolderPath: string | null, photographerId?: string) {
+  const now = Date.now();
+  await database.DB.batch([
+    database.DB.prepare("INSERT INTO projects (id, street, stage_key, raw_folder_path, created_at, updated_at) VALUES (?, ?, 'awaiting_raw', ?, ?, ?)")
+      .bind(id, `Unified Dropbox ${id.slice(-4)}`, rawFolderPath, now, now),
+    database.DB.prepare("INSERT INTO collections (id, project_id, kind, status, received_count, created_at, updated_at) VALUES (?, ?, 'raw', 'empty', 0, ?, ?)")
+      .bind(crypto.randomUUID(), id, now, now),
+    ...(photographerId ? [database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'photographer', ?)")
+      .bind(crypto.randomUUID(), id, photographerId, now)] : []),
+  ]);
+}
+
+async function syncDropbox(cookie: string, projectId: string): Promise<{ response: Response; body: unknown }> {
+  const response = await SELF.fetch(`https://portal.test/api/projects/${projectId}/sync-dropbox`, {
+    method: "POST",
+    headers: { cookie, "content-type": "application/json" },
+  });
+  return { response, body: await response.json() };
+}
+
 async function createRawManifest(cookie: string, projectId: string, filenames: string[]): Promise<string> {
   const response = await SELF.fetch(`https://portal.test/api/projects/${projectId}/upload-manifest`, {
     method: "POST",
@@ -1768,6 +1788,106 @@ describe("staff app API", () => {
     await expect(database.DB.prepare("SELECT status FROM jobs WHERE correlation_id = ?").bind(`manual_edited_publish:${assetId}`).first()).resolves.toEqual({ status: "failed" });
     expect(await authEnv.MEDIA.get(key)).not.toBeNull();
   });
+
+  describe("unified Dropbox fetch", () => {
+    it("queues RAW only for an editor and never calls the admin-only edited fetch", async () => {
+      const projectId = "00000000-0000-4000-8000-0000000000e9";
+      await seedSyncDropboxProject(projectId, "/Tonomo/Raw Files/Editor only");
+      const { response, body } = await syncDropbox(await sessionCookie(editorToken), projectId);
+      expect(response.status).toBe(200);
+      expect(body).toEqual({ raw: { jobId: `raw-${projectId}` }, edited: { skipped: "not_admin" } });
+    });
+
+    it("queues RAW only for an assigned photographer", async () => {
+      const projectId = "00000000-0000-4000-8000-0000000000ea";
+      await seedSyncDropboxProject(projectId, "/Tonomo/Raw Files/Photographer only", firstPhotographerId);
+      const { response, body } = await syncDropbox(await sessionCookie(firstPhotographerToken), projectId);
+      expect(response.status).toBe(200);
+      expect(body).toEqual({ raw: { jobId: `raw-${projectId}` }, edited: { skipped: "not_admin" } });
+    });
+
+    it("queues both sources for an administrator with an active AutoHDR mapping and audits both jobs", async () => {
+      const projectId = "00000000-0000-4000-8000-0000000000e2";
+      await seedSyncDropboxProject(projectId, "/Tonomo/Raw Files/Active mapping");
+      const { response, body } = await syncDropbox(await sessionCookie(adminToken), projectId);
+      expect(response.status).toBe(200);
+      expect(body).toEqual({ raw: { jobId: `raw-${projectId}` }, edited: { jobId: `edited-${projectId}` } });
+      const audits = await database.DB.prepare("SELECT action FROM audit_log WHERE target_id = ? AND action IN ('project.dropbox_sync', 'project.fetch_edited') ORDER BY action")
+        .bind(projectId).all<{ action: string }>();
+      expect(audits.results.map((audit) => audit.action)).toEqual(["project.dropbox_sync", "project.fetch_edited"]);
+    });
+
+    it("keeps a blocked AutoHDR result visible while returning the accepted RAW job", async () => {
+      const projectId = "00000000-0000-4000-8000-0000000000e3";
+      await seedSyncDropboxProject(projectId, "/Tonomo/Raw Files/Blocked mapping");
+      const { response, body } = await syncDropbox(await sessionCookie(adminToken), projectId);
+      expect(response.status).toBe(200);
+      expect(body).toEqual({
+        raw: { jobId: `raw-${projectId}` },
+        edited: { blocked: { code: "ERR_MAPPING_BLOCKED", message: "AutoHDR output mapping is blocked for staff resolution" } },
+      });
+    });
+
+    it("reports an AutoHDR handoff that is not ready without turning the RAW success into a 409", async () => {
+      const projectId = "00000000-0000-4000-8000-0000000000e4";
+      await seedSyncDropboxProject(projectId, "/Tonomo/Raw Files/No handoff");
+      const { response, body } = await syncDropbox(await sessionCookie(adminToken), projectId);
+      expect(response.status).toBe(200);
+      expect(body).toEqual({ raw: { jobId: `raw-${projectId}` }, edited: { skipped: "not_ready" } });
+    });
+
+    it("returns 409 only when neither source is applicable", async () => {
+      const projectId = "00000000-0000-4000-8000-0000000000e5";
+      await seedSyncDropboxProject(projectId, null);
+      const { response, body } = await syncDropbox(await sessionCookie(editorToken), projectId);
+      expect(response.status).toBe(409);
+      expect(body).toEqual({
+        error: "Nothing available to sync right now",
+        result: { raw: { skipped: "no_raw_folder" }, edited: { skipped: "not_admin" } },
+      });
+    });
+
+    it("allows an administrator to queue edited-only fetch when no RAW folder is configured", async () => {
+      const projectId = "00000000-0000-4000-8000-0000000000e6";
+      await seedSyncDropboxProject(projectId, null);
+      const { response, body } = await syncDropbox(await sessionCookie(adminToken), projectId);
+      expect(response.status).toBe(200);
+      expect(body).toEqual({ raw: { skipped: "no_raw_folder" }, edited: { jobId: `edited-${projectId}` } });
+    });
+
+    it("returns a RAW runtime failure as a structured 200 result", async () => {
+      const projectId = "00000000-0000-4000-8000-0000000000e1";
+      await seedSyncDropboxProject(projectId, "/Tonomo/Raw Files/RAW failure");
+      const { response, body } = await syncDropbox(await sessionCookie(adminToken), projectId);
+      expect(response.status).toBe(200);
+      expect(body).toEqual({ raw: { skipped: "error", message: "RAW Dropbox unavailable" }, edited: { jobId: `edited-${projectId}` } });
+    });
+
+    it("does not let a RAW audit failure erase the accepted job and preserves fetch-claim errors", async () => {
+      const projectId = "00000000-0000-4000-8000-0000000000e8";
+      await seedSyncDropboxProject(projectId, "/Tonomo/Raw Files/Audit failure");
+      await database.DB.exec(`CREATE TRIGGER sync_raw_audit_failure BEFORE INSERT ON audit_log WHEN NEW.action = 'project.dropbox_sync' AND NEW.target_id = '${projectId}' BEGIN SELECT RAISE(ABORT, 'audit unavailable'); END;`);
+      try {
+        const { response, body } = await syncDropbox(await sessionCookie(adminToken), projectId);
+        expect(response.status).toBe(200);
+        expect(body).toEqual({ raw: { jobId: `raw-${projectId}` }, edited: { skipped: "error", message: "Dropbox fetch claim failed" } });
+      } finally {
+        await database.DB.exec("DROP TRIGGER sync_raw_audit_failure;");
+      }
+    });
+
+    it("surfaces a blocked AutoHDR mapping even when RAW is not applicable", async () => {
+      const projectId = "00000000-0000-4000-8000-0000000000e7";
+      await seedSyncDropboxProject(projectId, null);
+      const { response, body } = await syncDropbox(await sessionCookie(adminToken), projectId);
+      expect(response.status).toBe(200);
+      expect(body).toEqual({
+        raw: { skipped: "no_raw_folder" },
+        edited: { blocked: { code: "ERR_MAPPING_BLOCKED", message: "AutoHDR output mapping is blocked for staff resolution" } },
+      });
+    });
+  });
+
   it("projects AutoHDR state and restricts operational routes to the admin backend", async () => {
     const adminCookie = await sessionCookie(adminToken);
     const created = await SELF.fetch("https://portal.test/api/projects", {

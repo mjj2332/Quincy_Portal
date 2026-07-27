@@ -95,6 +95,7 @@ export async function routeAutoHdrDelta(
     .innerJoin(projects, eq(autoHdrPathClaims.projectId, projects.id))
     .where(and(
       eq(autoHdrPathClaims.connectionId, connectionId),
+      inArray(autoHdrPathClaims.candidate, ["final", "finals"]),
       inArray(autoHdrPathClaims.state, ["pending", "active"]),
       inArray(autoHdrOutputMappings.state, ["pending_discovery", "active"]),
       eq(autoHdrHandoffs.state, "started"),

@@ -1,6 +1,11 @@
 import { isAcceptedPhotoFilename } from "@quincy/shared";
-import { autohdrScaffoldClaims } from "@quincy/db/schema";
-import { and, eq, sql } from "drizzle-orm";
+import {
+  autoHdrHandoffs,
+  autoHdrOutputMappings,
+  autohdrScaffoldClaims,
+  projects,
+} from "@quincy/db/schema";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { Env } from "../env";
 import { dbFor } from "../lib/db";
 import type { DropboxEntry, DropboxFile } from "../dropbox/client";
@@ -8,6 +13,19 @@ import { claimImplicitAutoHdrHandoff } from "./claims";
 import type { RoutedAutoHdrMapping } from "./mapping";
 
 type RouterResult = { matched: number; routes: RoutedAutoHdrMapping[] };
+
+export type ManualSupplementRoute = {
+  projectId: string;
+  handoffId: string;
+  mappingId: string;
+  connectionId: string;
+  file: DropboxFile;
+};
+
+export type ManualSupplementRouterResult = {
+  matched: number;
+  routes: ManualSupplementRoute[];
+};
 
 function directChildFiles(
   entries: readonly DropboxEntry[],
@@ -104,4 +122,47 @@ export function routeAutoHdrProviderDelta(
     connectionId,
     directChildFiles(entries, new Set(["04-final-photos", "04-finals-photos"])),
   );
+}
+
+/** Routes manual-photo supplements only after an AutoHDR handoff already owns the project. */
+export async function routeAutoHdrManualSupplementDelta(
+  env: Env,
+  connectionId: string,
+  entries: readonly DropboxEntry[],
+): Promise<ManualSupplementRouterResult> {
+  const db = dbFor(env);
+  const files = directChildFiles(entries, new Set(["04-manual-photos"]));
+  const routes: ManualSupplementRoute[] = [];
+
+  for (const file of files) {
+    const parts = file.path_lower.split("/");
+    const scaffoldPathKey = parts.slice(0, -2).join("/");
+    const owner = await db
+      .select({
+        projectId: projects.id,
+        handoffId: autoHdrHandoffs.id,
+        mappingId: autoHdrOutputMappings.id,
+      })
+      .from(autohdrScaffoldClaims)
+      .innerJoin(projects, eq(autohdrScaffoldClaims.projectId, projects.id))
+      .innerJoin(autoHdrHandoffs, eq(autoHdrHandoffs.projectId, projects.id))
+      .innerJoin(autoHdrOutputMappings, eq(autoHdrOutputMappings.handoffId, autoHdrHandoffs.id))
+      .where(and(
+        eq(autohdrScaffoldClaims.connectionId, connectionId),
+        eq(autohdrScaffoldClaims.scaffoldPathKey, scaffoldPathKey),
+        eq(autohdrScaffoldClaims.state, "active"),
+        isNull(projects.archivedAt),
+        inArray(projects.stageKey, ["editing_autohdr", "edited_review"]),
+        eq(autoHdrHandoffs.connectionId, connectionId),
+        eq(autoHdrHandoffs.state, "started"),
+        eq(autoHdrOutputMappings.projectId, projects.id),
+        eq(autoHdrOutputMappings.connectionId, connectionId),
+        eq(autoHdrOutputMappings.state, "active"),
+      ))
+      .get();
+    if (!owner) continue;
+    routes.push({ ...owner, connectionId, file });
+  }
+
+  return { matched: routes.length, routes };
 }

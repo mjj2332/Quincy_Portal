@@ -243,6 +243,19 @@ allowlist are silent no-ops otherwise). Full mechanics in `docs/subagents/agy-cl
 
 ## Open plans (see `docs/plans/`)
 
+- **`Mobile-Lightbox-Plan.md`**, **`Unified-Dropbox-Fetch-Plan.md`**,
+  **`AutoHDR-Manual-Supplement-Fetch-Plan.md`** — three Terra-approved, not-yet-built plans the
+  user intends to implement together: (1) a mobile-phone bottom-sheet redesign of the review
+  Lightbox (currently a desktop-only side panel that covers ~85-90% of a phone screen), (2) a
+  single unified "Sync from Dropbox" fetch button replacing the three scattered fetch buttons
+  (RAW sync, edited-from-AutoHDR, project-panel sync), and (3) extending Dropbox
+  `04-MANUAL-Photos` monitoring — today only auto-detected for a project with **no** prior AutoHDR
+  handoff — to also work for a project that already has an active handoff (explicit or implicit),
+  closing a real production gap confirmed on `225-227 Victoria Road` and `6/120 Beach Street`.
+  Plan 3 requires a small, scoped change to existing `autohdr/mapping.ts` (narrowing
+  `routeAutoHdrDelta()`'s claim-candidate filter), not just new additive files — see its own
+  "Files touched" section. All three went through multi-round Terra pre-build review (4, 7, and 6
+  rounds respectively) and are ready to build; none has been started.
 - **`Cloudflare-Images-Pilot-Plan.md`** — renditions-only Cloudflare Images pilot.
   **Not recommended to proceed now**: the outage that motivated it resolved on its own, and an
   independent two-reviewer debate (Agy + Sol) on a related idea (moving originals to Dropbox)

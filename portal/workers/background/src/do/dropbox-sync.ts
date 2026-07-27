@@ -1,5 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import { and, eq, isNull, sql } from "drizzle-orm";
+import type { Database } from "@quincy/db";
 import { dropboxMonitorHealth, projects } from "@quincy/db/schema";
 
 import type { Env } from "../env";
@@ -12,6 +13,7 @@ import {
   listFolderContinue,
   recordDropboxError,
   recordDropboxSuccess,
+  type DropboxEntry,
   type DropboxFolderPage,
 } from "../dropbox/client";
 import { changedProjectIds } from "../dropbox/delta";
@@ -19,10 +21,12 @@ import { canRecoverAggregateMonitorHealth, monitorAutomationEnabled, shouldKeepM
 import { parseDropboxMonitorIdentity } from "../dropbox/paths";
 import { routeAutoHdrDelta } from "../autohdr/mapping";
 import {
+  routeAutoHdrManualSupplementDelta,
   routeAutoHdrManualDropDelta,
   routeAutoHdrProviderDelta,
 } from "../autohdr/routers";
 import { claimAutoHdrFetch, startClaimedFetch } from "../autohdr/claims";
+import { ingestManualSupplement } from "../autohdr/manual-supplement";
 
 const CURSOR_KEY = "cursor";
 const KICK_GENERATION_KEY = "kick-generation";
@@ -41,6 +45,20 @@ export function alarmRetryDelay(error: unknown, baseDelayMs: number): number {
 async function cursorFingerprint(cursor: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(cursor));
   return [...new Uint8Array(digest).slice(0, 8)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+/** The supplement route must observe state before the implicit router can create a handoff. */
+export async function routeAutoHdrPage(
+  env: Env,
+  db: Database,
+  connectionId: string,
+  entries: readonly DropboxEntry[],
+) {
+  const manualSupplementRouted = await routeAutoHdrManualSupplementDelta(env, connectionId, entries);
+  const explicitRouted = await routeAutoHdrDelta(db, connectionId, entries);
+  const manualRouted = await routeAutoHdrManualDropDelta(env, connectionId, entries);
+  const providerRouted = await routeAutoHdrProviderDelta(env, connectionId, entries);
+  return { manualSupplementRouted, explicitRouted, manualRouted, providerRouted };
 }
 
 /** Two named objects per connection: `<connection>:raw` and `<connection>:autohdr`. */
@@ -121,30 +139,34 @@ export class DropboxSyncDO extends DurableObject<Env> {
           routedProjectCount += 1;
         }
       } else {
-        const explicitRouted = await routeAutoHdrDelta(
-          db,
-          identity.connectionId,
-          page.entries,
-        );
-        const manualRouted = await routeAutoHdrManualDropDelta(
-          this.env,
-          identity.connectionId,
-          page.entries,
-        );
-        const providerRouted = await routeAutoHdrProviderDelta(
-          this.env,
-          identity.connectionId,
-          page.entries,
-        );
+        const {
+          manualSupplementRouted,
+          explicitRouted,
+          manualRouted,
+          providerRouted,
+        } = await routeAutoHdrPage(this.env, db, identity.connectionId, page.entries);
         const allRoutes = [
           ...explicitRouted.routes,
           ...manualRouted.routes,
           ...providerRouted.routes,
         ];
         matchedCount =
-          explicitRouted.matched + manualRouted.matched + providerRouted.matched;
-        for (const [index, route] of allRoutes.entries()) {
-          if (index > 0) await new Promise<void>((resolve) => setTimeout(resolve, 250));
+          manualSupplementRouted.matched + explicitRouted.matched + manualRouted.matched + providerRouted.matched;
+        let workIndex = 0;
+        for (const route of manualSupplementRouted.routes) {
+          if (workIndex++ > 0) await new Promise<void>((resolve) => setTimeout(resolve, 250));
+          await ingestManualSupplement(
+            this.env,
+            route.projectId,
+            route.handoffId,
+            route.mappingId,
+            route.connectionId,
+            route.file,
+          );
+          routedProjectCount += 1;
+        }
+        for (const route of allRoutes) {
+          if (workIndex++ > 0) await new Promise<void>((resolve) => setTimeout(resolve, 250));
           const owner = await claimAutoHdrFetch(this.env, route, {
             trigger: "dropbox_delta",
             representativeChangedPath: route.representativeChangedPath,

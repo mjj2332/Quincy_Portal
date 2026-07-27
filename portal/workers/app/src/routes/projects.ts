@@ -20,6 +20,11 @@ const editFields = projectFields.partial();
 const coverInput = z.object({ assetId: z.string().uuid().nullable() });
 const idCheck = (v: string) => z.string().uuid().safeParse(v).success;
 
+type DropboxSyncResult = {
+  raw: { jobId: string } | { skipped: "no_raw_folder" | "not_permitted" | "error"; message?: string };
+  edited: { jobId: string } | { skipped: "not_ready" | "not_admin" | "error"; message?: string } | { blocked: { code: string; message: string } };
+};
+
 const dashboardProjectOrder = [
   asc(sql`case when ${schema.projects.shootDate} is null then 1 else 0 end`),
   desc(schema.projects.shootDate),
@@ -233,6 +238,60 @@ projectsRoutes.post("/projects/:id/dropbox-sync", async (c) => {
   const { jobId } = await c.env.BACKGROUND.triggerDropboxSync(id);
   await audit(c.env, user.id, "project.dropbox_sync", "project", id, { jobId });
   return c.json({ ok: true, jobId });
+});
+
+projectsRoutes.post("/projects/:id/sync-dropbox", async (c) => {
+  const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
+  if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
+  const user = c.get("user");
+  const hasUploadRaw = ROLE_CAPABILITIES[user.role].includes("uploadRaw");
+  const isAdmin = ROLE_CAPABILITIES[user.role].includes("adminBackend");
+  if (!hasUploadRaw && !isAdmin) return c.json({ error: "Forbidden" }, 403);
+  const db = createDb(c.env.DB);
+  const project = await db.select({ rawFolderPath: schema.projects.rawFolderPath, rawFolderLink: schema.projects.rawFolderLink, archivedAt: schema.projects.archivedAt })
+    .from(schema.projects).where(eq(schema.projects.id, id)).get();
+  if (!project) return c.json({ error: "Project not found" }, 404);
+  if (project.archivedAt) return c.json({ error: "Project is archived" }, 409);
+
+  const hasRawFolder = Boolean(project.rawFolderPath || project.rawFolderLink);
+  const result: DropboxSyncResult = {
+    raw: { skipped: hasUploadRaw ? "no_raw_folder" : "not_permitted" },
+    edited: { skipped: isAdmin ? "not_ready" : "not_admin" },
+  };
+
+  if (hasUploadRaw && hasRawFolder) {
+    try {
+      const raw = await c.env.BACKGROUND.triggerDropboxSync(id);
+      result.raw = { jobId: raw.jobId };
+      await audit(c.env, user.id, "project.dropbox_sync", "project", id, { jobId: raw.jobId })
+        .catch((error) => console.error("sync-dropbox: RAW audit write failed", { projectId: id, error }));
+    } catch (error) {
+      result.raw = { skipped: "error", message: error instanceof Error ? error.message : String(error) };
+    }
+  }
+  if (isAdmin) {
+    try {
+      const fetchResult = await c.env.BACKGROUND.fetchEditedFromAutoHdr(id);
+      if (fetchResult.ok) {
+        result.edited = { jobId: fetchResult.jobId };
+        await audit(c.env, user.id, "project.fetch_edited", "project", id, { jobId: fetchResult.jobId })
+          .catch((error) => console.error("sync-dropbox: edited audit write failed", { projectId: id, error }));
+      } else if (fetchResult.code === "ERR_FOLDER_NOT_READY") {
+        result.edited = { skipped: "not_ready" };
+      } else if (fetchResult.code === "ERR_FETCH_CLAIM_FAILED") {
+        result.edited = { skipped: "error", message: fetchResult.message };
+      } else {
+        result.edited = { blocked: { code: fetchResult.code, message: fetchResult.message } };
+      }
+    } catch (error) {
+      result.edited = { skipped: "error", message: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  const rawNotApplicable = "skipped" in result.raw && (result.raw.skipped === "no_raw_folder" || result.raw.skipped === "not_permitted");
+  const editedNotApplicable = "skipped" in result.edited && (result.edited.skipped === "not_ready" || result.edited.skipped === "not_admin");
+  if (rawNotApplicable && editedNotApplicable) return c.json({ error: "Nothing available to sync right now", result }, 409);
+  return c.json(result);
 });
 
 projectsRoutes.post("/projects/:id/send-to-autohdr", requireCapability("adminBackend"), async (c) => {

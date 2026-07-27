@@ -4,7 +4,8 @@ export type AutoHdrErrorCode =
   | "ERR_MAPPING_BLOCKED"
   | "ERR_HANDOFF_BLOCKED"
   | "ERR_HANDOFF_DISAPPEARED"
-  | "ERR_FOLDER_NOT_READY";
+  | "ERR_FOLDER_NOT_READY"
+  | "ERR_FETCH_CLAIM_FAILED";
 
 export type AutoHdrResult =
   | { ok: true; jobId: string; handoffId: string; workflowId: string }

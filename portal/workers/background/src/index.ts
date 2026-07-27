@@ -250,7 +250,7 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
     } catch (error) {
       return {
         ok: false,
-        code: "ERR_FOLDER_NOT_READY",
+        code: "ERR_FETCH_CLAIM_FAILED",
         message: error instanceof Error ? error.message : String(error),
       };
     }

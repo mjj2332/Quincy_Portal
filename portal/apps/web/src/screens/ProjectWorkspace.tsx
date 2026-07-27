@@ -17,6 +17,10 @@ type AssetsResponse = { assets: WorkspaceAsset[] };
 type IngestStatus = { expectedCount: number | null; receivedCount: number; mismatch: boolean };
 type Job = { id: string; kind: "autohdr" | "fetch_edited" | "autohdr_scaffold" | "manual_edited_publish"; status: "queued" | "running" | "done" | "failed" | "stuck"; error: string | null; correlationId: string | null; createdAt: string; updatedAt: string };
 type JobsResponse = { jobs: Job[] };
+type DropboxSyncResponse = {
+  raw: { jobId: string } | { skipped: "no_raw_folder" | "not_permitted" | "error"; message?: string };
+  edited: { jobId: string } | { skipped: "not_ready" | "not_admin" | "error"; message?: string } | { blocked: { code: string; message: string } };
+};
 interface AutoHdrStatusResponse {
   handoff: {
     id: string;
@@ -54,7 +58,6 @@ export function ProjectWorkspace({ projectId, notice, onNoticeShown }: { project
   const [isLoading, setIsLoading] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
   const [isSending, setIsSending] = useState(false);
-  const [isFetching, setIsFetching] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const currentProjectIdRef = useRef(projectId);
   const currentTabRef = useRef(activeTab);
@@ -96,6 +99,17 @@ export function ProjectWorkspace({ projectId, notice, onNoticeShown }: { project
     return fetched;
   }, [canAdminBackend, projectId]);
   const refresh = useCallback(async () => { await Promise.all([refreshAssets(), refreshIngest(), ...(canAdminBackend ? [refreshJobs()] : [])]); }, [canAdminBackend, refreshAssets, refreshIngest, refreshJobs]);
+  const refreshEditedCollection = useCallback(async () => {
+    if (!projectId || !canViewEdited) return;
+    const response = await apiGet<AssetsResponse>(`/api/projects/${projectId}/assets?collection=edited`);
+    if (currentProjectIdRef.current === projectId && currentTabRef.current === "edited") setAssets(response.assets);
+  }, [canViewEdited, projectId]);
+  const refreshAutohdrStatus = useCallback(async () => {
+    if (!projectId || !canAdminBackend) return null;
+    const response = await apiGet<AutoHdrStatusResponse>(`/api/projects/${projectId}/autohdr-status`);
+    if (currentProjectIdRef.current === projectId) setAutohdrStatus(response.handoff);
+    return response.handoff;
+  }, [canAdminBackend, projectId]);
 
   useEffect(() => {
     if (!projectId) { setIsLoading(false); return; }
@@ -153,9 +167,8 @@ export function ProjectWorkspace({ projectId, notice, onNoticeShown }: { project
     let timer: number | undefined;
     const poll = async () => {
       try {
-        const { handoff } = await apiGet<AutoHdrStatusResponse>(`/api/projects/${projectId}/autohdr-status`);
+        const handoff = await refreshAutohdrStatus();
         if (!isMounted) return;
-        setAutohdrStatus(handoff);
         const isActive = handoff?.state === "started" && handoff.mappingState === "active";
         if (isActive) {
           const freshJobs = await refreshJobs();
@@ -188,7 +201,7 @@ export function ProjectWorkspace({ projectId, notice, onNoticeShown }: { project
       isMounted = false;
       if (timer) window.clearTimeout(timer);
     };
-  }, [canAdminBackend, data?.id, data?.stageKey, projectId, refreshAssets, refreshJobs, refreshProject]);
+  }, [canAdminBackend, data?.id, data?.stageKey, projectId, refreshAssets, refreshAutohdrStatus, refreshJobs, refreshProject]);
 
   const updateReview = useCallback(async (assetId: string, patch: ReviewPatch) => {
     const before = assets.find((asset) => asset.id === assetId); if (!before) return;
@@ -219,7 +232,16 @@ export function ProjectWorkspace({ projectId, notice, onNoticeShown }: { project
   async function syncDropbox() {
     if (!projectId) return;
     setIsSyncing(true);
-    try { const response = await apiPost<{ jobId: string }, Record<string, never>>(`/api/projects/${projectId}/dropbox-sync`, {}); toast("Dropbox sync started."); for (let count = 0; count < 6; count += 1) { await new Promise<void>((resolve) => window.setTimeout(resolve, 2500)); await refresh(); } toast(`Dropbox sync ${response.jobId.slice(0, 8)} checked for new frames.`); }
+    try {
+      const response = await apiPost<DropboxSyncResponse, Record<string, never>>(`/api/projects/${projectId}/sync-dropbox`, {});
+      for (let count = 0; count < 6; count += 1) {
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 2500));
+        await Promise.all([refresh(), refreshEditedCollection(), refreshAutohdrStatus()]);
+      }
+      const queued = [response.raw, response.edited].filter((source) => "jobId" in source).length;
+      const needsAttention = [response.raw, response.edited].some((source) => "blocked" in source || ("skipped" in source && source.skipped === "error"));
+      toast(needsAttention ? "Dropbox check complete — some sources need attention." : queued ? `Dropbox check complete — ${queued} source${queued === 1 ? "" : "s"} queued.` : "Dropbox check complete.", needsAttention ? "error" : "success");
+    }
     catch (reason) { toast(reason instanceof Error ? reason.message : "Dropbox sync could not be started.", "error"); }
     finally { setIsSyncing(false); }
   }
@@ -229,13 +251,6 @@ export function ProjectWorkspace({ projectId, notice, onNoticeShown }: { project
     try { const response = await apiPost<{ jobId: string }, Record<string, never>>(`/api/projects/${projectId}/send-to-autohdr`, {}); await Promise.all([refreshJobs(), refreshProject()]); toast(`Sent to autoHDR (${response.jobId.slice(0, 8)}).`); }
     catch (reason) { toast(reason instanceof Error ? reason.message : "autoHDR could not be started.", "error"); }
     finally { setIsSending(false); }
-  }
-  async function fetchEdited() {
-    if (!projectId || !canAdminBackend || isFetching) return;
-    setIsFetching(true);
-    try { const response = await apiPost<{ jobId: string }, Record<string, never>>(`/api/projects/${projectId}/fetch-edited`, {}); await refreshJobs(); toast(`Fetch queued (${response.jobId.slice(0, 8)}). The Edited collection refreshes when it completes.`); }
-    catch (reason) { toast(reason instanceof Error ? reason.message : "Edited photos could not be fetched.", "error"); }
-    finally { setIsFetching(false); }
   }
   function downloadSelectedRaw() {
     if (!projectId || selectionCount === 0) return;
@@ -267,10 +282,11 @@ export function ProjectWorkspace({ projectId, notice, onNoticeShown }: { project
   const hasRawFolder = Boolean(project.rawFolderPath || project.rawFolderLink);
   const autohdrTerminal = autohdrStatus?.state === "retired" || autohdrStatus?.state === "failed";
   const autohdrBlocked = !autohdrTerminal && (autohdrStatus?.state === "blocked" || autohdrStatus?.mappingState === "blocked_collision");
-  const autohdrLabel = isFetching ? "Fetching…"
-    : autohdrBlocked ? "Blocked — staff resolution needed"
-      : autohdrStatus?.state === "started" && autohdrStatus.mappingState !== "active" ? "Discover & fetch"
-        : "Fetch edited from autoHDR";
+  const autohdrStatusLabel = autohdrBlocked ? "Blocked — staff resolution needed"
+    : isSyncing ? "Checking Dropbox…"
+      : autohdrStatus?.mappingState === "active" ? "Fetched"
+        : autohdrStatus?.state === "started" ? "Waiting for AutoHDR output"
+          : "Not yet sent to autoHDR";
   const autohdrMessage = autohdrBlocked
     ? (autohdrStatus?.diagnostic ?? "AutoHDR output needs staff resolution before it can be fetched.")
     : "Pull finished edits from autoHDR's 04-FINAL-Photos into this collection.";
@@ -280,13 +296,13 @@ export function ProjectWorkspace({ projectId, notice, onNoticeShown }: { project
       <div className="rail__sec"><div className="kv"><span className="k">Agency</span><span className="vv">{project.agencyName ?? "—"}</span></div><div className="kv"><span className="k">Agent</span><span className="vv">{project.agentName ?? "—"}</span></div><div className="kv"><span className="k">Shoot</span><span className="vv">{date(project.shootDate)}</span></div><div className="kv"><span className="k">Stage</span><span className="vv">{stage?.label ?? project.stageKey}</span></div>{canEdit && <InternalLink className="button button--secondary rail__edit" to={`/projects/${encodeURIComponent(projectId)}/edit`}>Edit details</InternalLink>}</div>
       <div className="rail__sec"><div className="ey" style={{ marginBottom: 10 }}>Photographers</div>{photographers.length ? photographers.map((member) => <div className="member" key={member.id}>{member.name || member.email}</div>) : <div className="muted">Not assigned</div>}</div>
       <div className="rail__sec"><div className="ey" style={{ marginBottom: 10 }}>Collections</div><div className="filterlist">{availableTabs.map((tab) => { const collection = collections.find((item) => item.kind === tab); return <button className={`frow ${activeTab === tab ? "is-active" : ""}`} type="button" key={tab} onClick={() => setActiveTab(tab)}><span>{collectionLabel(tab)}</span><span className="cnt">{collection ? collection.receivedCount : "—"}</span></button>; })}</div></div>
-      {canUpload && hasRawFolder && <div className="rail__sec"><div className="ey" style={{ marginBottom: 10 }}>Dropbox RAW folder</div><button className="dropcard" type="button" disabled={isSyncing} onClick={() => void syncDropbox()}><span>◈</span><span>{isSyncing ? "Syncing Dropbox…" : "Sync from Dropbox"}</span></button></div>}
+      {canUpload && (hasRawFolder || canAdminBackend) && <div className="rail__sec"><div className="ey" style={{ marginBottom: 10 }}>Dropbox</div><button className="dropcard" type="button" disabled={isSyncing} onClick={() => void syncDropbox()}><span>◈</span><span>{isSyncing ? "Syncing Dropbox…" : "Sync from Dropbox"}</span>{autohdrBlocked && <span className="statetag st-flagged">Blocked</span>}</button></div>}
     </aside>
-    <section className="workmain"><div className="wsbar"><InternalLink className="chip" to="/">← Dashboard</InternalLink><span className="ey">{activeTab === "raw" ? `RAW capture · ${rawCollection?.receivedCount ?? 0} received` : `${collectionLabel(activeTab)} collection`}</span><div className="grow" />{canUpload && activeTab === "raw" && <button className="chip" type="button" disabled={isSyncing || !hasRawFolder} onClick={() => void syncDropbox()}>Sync Dropbox</button>}</div>
+    <section className="workmain"><div className="wsbar"><InternalLink className="chip" to="/">← Dashboard</InternalLink><span className="ey">{activeTab === "raw" ? `RAW capture · ${rawCollection?.receivedCount ?? 0} received` : `${collectionLabel(activeTab)} collection`}</span><div className="grow" /></div>
       {ingest?.mismatch && <div className="ingest-warning" role="alert"><strong>Capture count needs attention.</strong> Expected {ingest.expectedCount}, received {ingest.receivedCount}.</div>}
       {activeTab === "raw" || activeTab === "edited" ? <><div className="workspace-intro"><div><div className="ey">{activeTab === "raw" ? "Capture QA" : "Edited QA"}</div><h1 className="serif">{activeTab === "raw" ? "RAW frames" : "Edited frames"}</h1></div><div className="muted">{activeTab === "raw" ? "Ratings from XMP are shown at ingest. Select the strongest frames for editing." : "Review delivered edits before they move to client delivery."}</div></div>
         {canAdminBackend && activeTab === "raw" && canSelect && <div className="hdr"><div className="grow"><strong>autoHDR hand-off</strong><div className="muted">{selectionCount} selected RAW frame{selectionCount === 1 ? "" : "s"} will be sent for editing.</div></div><div className="row gap2"><button className="button button--secondary" type="button" disabled={selectionCount === 0} onClick={downloadSelectedRaw}>{`Download ${selectionCount} selected (zip)`}</button><button className="button" type="button" disabled={selectionCount === 0 || isSending} onClick={() => void sendToAutoHdr()}>{isSending ? "Sending…" : `Send ${selectionCount} selected to autoHDR`}</button></div></div>}
-        {canAdminBackend && activeTab === "edited" && canSelect && <div className="hdr"><div className="grow"><strong>Fetch from autoHDR</strong><div className="muted">{autohdrMessage}</div></div><button className="button" type="button" disabled={isFetching || autohdrBlocked} onClick={() => void fetchEdited()}>{autohdrLabel}</button></div>}
+        {canAdminBackend && activeTab === "edited" && <div className="hdr" role="status"><div className="grow"><strong>autoHDR status</strong><div className={`muted${autohdrBlocked ? " notice" : ""}`}>{autohdrStatusLabel}</div><div className="muted">{autohdrMessage}</div></div></div>}
         {activeTab === "raw" && canUpload && <div className="workgrid"><UploadDropzone projectId={projectId} onComplete={refresh} onToast={toast} /></div>}
         {activeTab === "edited" && can("uploadEdited") && <div className="workgrid">{hasRawFolder
           ? <UploadDropzone projectId={projectId} collection="edited" onComplete={async () => { await Promise.all([refreshAssets("edited"), refreshProject()]); }} onToast={toast} />
