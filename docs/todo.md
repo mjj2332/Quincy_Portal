@@ -307,8 +307,13 @@ allowlist are silent no-ops otherwise). Full mechanics in `docs/subagents/agy-cl
   they tripped an unrelated overlap guard before reaching what they were meant to test — that guard
   itself had zero coverage until a dedicated test was added; and one flaky test asserting a fixed
   row order from a query sorted by a random UUID (fixed). `npm run typecheck`, the web build, and
-  all four workspace/shared test suites (253 tests total) are green. Migration `0016` and prod
-  deploy pending.
+  all four workspace/shared test suites (253 tests total) are green. Migration `0016` applied to
+  prod D1 2026-07-27; all three Workers redeployed same day (background → webhook-ingress → app).
+  Basic connectivity verified post-deploy (site loads, an authenticated API route returns 401 as
+  expected rather than erroring). The repeat-send + deselected-asset-removal flow itself has not
+  been live-smoke-tested against a real project — doing so would delete a real file from a real
+  client's AutoHDR Dropbox folder, so it needs a deliberately-chosen test project, not a
+  unilaterally-picked one.
 
 ## Open plans (see `docs/plans/`)
 
