@@ -240,22 +240,29 @@ allowlist are silent no-ops otherwise). Full mechanics in `docs/subagents/agy-cl
   `docs/lessons.md` for a gotcha hit while picking a test project (a project can have zero
   `autohdr_handoffs` rows yet still be ineligible, if it went through the pre-V2 legacy flow and is
   already past `raw_review`/`editing_autohdr` — check `stage_key` too, not just handoff absence).
+- **`Mobile-Lightbox-Plan.md`**, **`Unified-Dropbox-Fetch-Plan.md`**,
+  **`AutoHDR-Manual-Supplement-Fetch-Plan.md`** — three independent plans (4/7/6 Terra
+  pre-build rounds respectively), built in parallel by three separate Terra invocations, each
+  diff-reviewed in fresh context, fixed, and independently re-verified (typecheck, build, all
+  four workspace/shared test suites — the parallel-build sandbox's own `EPERM` test failures were
+  a Codex sandbox networking limitation, not real; the real environment passed clean: workers/app
+  100/101+1 skip, workers/background 116/116, webhook-ingress 13/13, shared 33/33). Diff review
+  found and fixed 4 real issues: AutoHDR manual-supplement guard-skips weren't logged (added);
+  Mobile Lightbox's `aria-hidden` was incorrectly hiding the visible phone peek bar from assistive
+  tech while leaving it focusable (High — fixed), "Compare with RAW" wasn't disabled at phone
+  width and would visibly break the layout (Medium — fixed), and focus restoration could target
+  the wrong trigger across a viewport-band change (Low — fixed). Unified Dropbox Fetch's diff was
+  clean on first review. Deployed 2026-07-27 (background → webhook-ingress → app) and smoke-tested
+  live: the unified "Sync from Dropbox" button (rail heading renamed from "Dropbox RAW folder" to
+  "Dropbox") posts to the new route and returns 200; the Edited-tab autoHDR status block renders
+  correctly in place of the removed button; the phone-width Lightbox shows the new peek bar
+  (Approve/Flag/rating/Review handle) which expands to the full existing review-panel content in a
+  bottom sheet. AutoHDR manual-supplement itself is webhook-driven and wasn't live-smoke-tested
+  (would need an actual Dropbox drop) — verified instead via the real test suite and direct code
+  read of the atomic D1 guard, dedup, and `mapping.ts` scoping.
 
 ## Open plans (see `docs/plans/`)
 
-- **`Mobile-Lightbox-Plan.md`**, **`Unified-Dropbox-Fetch-Plan.md`**,
-  **`AutoHDR-Manual-Supplement-Fetch-Plan.md`** — three Terra-approved, not-yet-built plans the
-  user intends to implement together: (1) a mobile-phone bottom-sheet redesign of the review
-  Lightbox (currently a desktop-only side panel that covers ~85-90% of a phone screen), (2) a
-  single unified "Sync from Dropbox" fetch button replacing the three scattered fetch buttons
-  (RAW sync, edited-from-AutoHDR, project-panel sync), and (3) extending Dropbox
-  `04-MANUAL-Photos` monitoring — today only auto-detected for a project with **no** prior AutoHDR
-  handoff — to also work for a project that already has an active handoff (explicit or implicit),
-  closing a real production gap confirmed on `225-227 Victoria Road` and `6/120 Beach Street`.
-  Plan 3 requires a small, scoped change to existing `autohdr/mapping.ts` (narrowing
-  `routeAutoHdrDelta()`'s claim-candidate filter), not just new additive files — see its own
-  "Files touched" section. All three went through multi-round Terra pre-build review (4, 7, and 6
-  rounds respectively) and are ready to build; none has been started.
 - **`Cloudflare-Images-Pilot-Plan.md`** — renditions-only Cloudflare Images pilot.
   **Not recommended to proceed now**: the outage that motivated it resolved on its own, and an
   independent two-reviewer debate (Agy + Sol) on a related idea (moving originals to Dropbox)
