@@ -10,9 +10,9 @@
   // Account is on Workers Paid (upgraded 2026-07-25), so the default 10,000 subrequests/request
   // applies and a "limits" block is accepted if ever needed. It is deliberately omitted: nothing
   // here needs a non-default ceiling, and MAX_DOWNLOADS_PER_RUN (src/dropbox/sync.ts) already
-  // keeps a run near ~400 subrequests. Note a "limits" block is rejected outright on the Free
-  // plan ("CPU limits are not supported for the Free plan", code 100328) and fails the entire
-  // deploy — and `wrangler deploy --dry-run` does NOT catch it. See docs/lessons.md.
+  // keeps a run near ~1,080-1,200 subrequests. Note a "limits" block is rejected outright on the
+  // Free plan ("CPU limits are not supported for the Free plan", code 100328) and fails the
+  // entire deploy — and `wrangler deploy --dry-run` does NOT catch it. See docs/lessons.md.
   // Intentionally retained until Dropbox RAW automation is verified live before a later retirement deploy.
   "triggers": { "crons": ["0 * * * *"] },
   "d1_databases": [

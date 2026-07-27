@@ -12,11 +12,17 @@ import { dropboxPathKey } from "./paths";
 import { enqueueAutoHdrScaffold } from "../autohdr/scaffold";
 
 // Each downloaded file costs ~9-10 subrequests (2 Dropbox content calls, an R2 put, a
-// rendition enqueue, and several D1 statements), so this cap is really a per-invocation
-// subrequest budget. 150 overran Cloudflare's limit and failed the whole run mid-way; 40
-// keeps a run comfortably under even the pre-2026 1,000-subrequest default. Larger backlogs
-// are not lost — the continuation below re-enqueues whatever this run did not reach.
-const MAX_DOWNLOADS_PER_RUN = 40;
+// rendition enqueue, and several D1 statements) — 150 once overran the pre-2026 Free-tier
+// 1,000-subrequest default and failed the whole run mid-way, which is why this was 40 for a
+// long time. The account has been on Workers Paid (10,000 subrequests/invocation default)
+// since 2026-07-25, so 120 downloads (~1,080-1,200 subrequests) has ample subrequest margin.
+// The binding constraint now is Cloudflare's 15-minute wall-clock limit for Queue consumer
+// invocations, not subrequests: at a measured ~4.1-4.2s/file this is ~8-8.5 minutes of active
+// download time, leaving real margin for the initial full-folder listing and the D1 round-trip
+// every reconciliation-only file costs even though it doesn't count toward this cap (see the
+// loop below). Larger backlogs are not lost — the continuation re-enqueues whatever a run did
+// not reach. See docs/plans/Dropbox-RAW-Fetch-Speedup-Plan.md for the sizing rationale.
+const MAX_DOWNLOADS_PER_RUN = 120;
 const RAW_CLAIM_LEASE_MS = 15 * 60_000;
 
 export { normalisePath } from "./paths";
