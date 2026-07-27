@@ -77,11 +77,15 @@ here. It's a pure count change to an existing, already-idempotent continuation l
 
 ---
 
-## Deferred work (not in this change) — kept for the future concurrency project
+## Deferred work (not in this change)
 
-The rest of this document is the design work from revisions 1-2, kept as a starting point for
-whenever `quincy-ingest` concurrency is picked up as its own properly-scoped change. **None of it
-ships now.**
+The `quincy-ingest` `max_concurrency` change and everything it depends on (claim-contention fix,
+DLQ-or-outbox decision, wall-clock cutoff, multi-page regression coverage) has moved to its own
+document: [Dropbox-Ingest-Concurrency-Safety-Plan.md](Dropbox-Ingest-Concurrency-Safety-Plan.md)
+— marked **low priority, not scheduled**, with a suggested trigger for when to revisit it. The
+revision history below is kept here since it's specifically about *this* plan's review rounds;
+the design requirements for the deferred work itself now live in that other document instead of
+being duplicated here.
 
 ### Revision history
 
@@ -124,19 +128,8 @@ bug, which this session verified directly against the code:
    *time*-based platform limit. Terra's suggestion: either a lower count (100-120, adopted above
    for this change) or a genuine wall-clock cutoff inside the loop as a more robust long-term fix.
 
-### What a future concurrency change needs to include
-
-- A decision on the DLQ-vs-outbox question raised in revision 2 finding 3, made deliberately
-  rather than picked to unblock a smaller change.
-- The Change 0 ack/claim fix from revision 1-2 (still correct in principle), with the
-  retry-delay formula fixed (proper margin retained regardless of remaining lease length; add
-  jitter) and tested against the "owner completes between the collision check and the retry
-  firing" case specifically, per Terra's round-2 note.
-- Regression coverage for the multi-page/multi-kick scenario Terra flagged in round 2, not just
-  the single-continuation scenario revision 2's test covered.
-- Consider a wall-clock-based continuation cutoff instead of (or alongside) a fixed download
-  count, so the safety margin against the 15-minute limit doesn't depend on assumptions about
-  reconciliation-scan volume per project.
-- Re-verify the OAuth-refresh and `autohdr_scaffold`-claim safety arguments still hold — both
-  were confirmed sound in round 2 and don't need re-litigating, just re-checking if the
-  surrounding code has changed by the time this is picked up.
+The full set of design requirements for picking this back up — DLQ-vs-outbox decision, the
+ack/claim fix with its jitter/margin bug fixed, the wall-clock-cutoff idea, and the multi-page
+regression coverage Terra's round 2 called for — now lives in
+[Dropbox-Ingest-Concurrency-Safety-Plan.md](Dropbox-Ingest-Concurrency-Safety-Plan.md), along
+with a suggested trigger for when it's worth scheduling. Not duplicated here.
