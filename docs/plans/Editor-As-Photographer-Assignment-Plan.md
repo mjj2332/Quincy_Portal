@@ -1,6 +1,11 @@
 # Editor-as-Photographer Assignment — Plan
 
-**Status: APPROVED by Terra (round 3, 2026-07-28). Ready to build whenever the user authorizes it — not yet built.**
+**Status: BUILT and verified (2026-07-28).** Plan approved by Terra (round 3). Built directly in
+this session (small/mechanical routing). Terra diff review (fresh context) **APPROVED on first
+pass**. Full verify sequence green: typecheck (all six workspaces), `apps/web` build, all four
+workspace test suites plus the separately-invoked `packages/shared` suite, including new tests
+(`ProjectFields.dom.test.tsx` and a new two-assertion regression test in
+`workers/app/test/api.test.ts`). Not yet committed — awaiting the user's go-ahead.
 
 User request: some staff are both photographer and editor in practice; editors should be
 assignable to a project's *photographer* slot, not just the editor slot.

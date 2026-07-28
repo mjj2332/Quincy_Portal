@@ -451,8 +451,8 @@ allowlist are silent no-ops otherwise). Full mechanics in `docs/subagents/agy-cl
   Terra diff review (2 rounds) approved. Full verify sequence green.
 - **`Editor-As-Photographer-Assignment-Plan.md`** — broaden `ProjectFields.tsx`'s photographer
   picker to include editor-role staff (backend already supports it; only the picker filtered
-  them out). **Status: APPROVED by Terra (round 3, 2026-07-28). Ready to build when authorized;
-  not yet built.**
+  them out). **Status: BUILT and verified (2026-07-28), not yet committed — awaiting user
+  go-ahead.** Terra diff review approved on first pass. Full verify sequence green.
 - **`Photographer-Stage-Visibility-Plan.md`** — restrict photographer project visibility to
   `awaiting_raw`/`raw_review` via `hasProjectAccess`. **Verified NOT implemented today** —
   photographers currently see assigned projects at every stage (D-02 only restricts RAW-vs-

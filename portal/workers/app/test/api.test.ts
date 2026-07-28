@@ -829,6 +829,37 @@ describe("staff app API", () => {
     expect(updated.members.filter((member) => member.roleOnProject === "editor").map((member) => member.userId)).toEqual([editorId]);
   });
 
+  it("accepts an editor-role user in the photographer slot, and confirms their access is unaffected by that membership row", async () => {
+    const adminCookie = await sessionCookie(adminToken);
+
+    // (a) Data correctness: an editor-role user's id is accepted in photographerUserIds and
+    // produces a project_members row tagged with the photographer slot for that user — not
+    // silently rejected or coerced into the editor slot.
+    const created = await SELF.fetch("https://portal.test/api/projects", {
+      method: "POST",
+      headers: { cookie: adminCookie, "content-type": "application/json" },
+      body: JSON.stringify({ street: "Editor as photographer", orderedServices: [], photographerUserIds: [editorId] }),
+    });
+    expect(created.status).toBe(201);
+    const project = await created.json() as { id: string; members: Array<{ userId: string; roleOnProject: string }> };
+    expect(project.members.filter((member) => member.roleOnProject === "photographer").map((member) => member.userId)).toEqual([editorId]);
+
+    // (b) Access, kept as a separate assertion: an editor already has project access via
+    // viewAllProjects regardless of any project_members row, not because of it — proven here
+    // against a project the editor is NOT assigned to in either slot.
+    const unassigned = await SELF.fetch("https://portal.test/api/projects", {
+      method: "POST",
+      headers: { cookie: adminCookie, "content-type": "application/json" },
+      body: JSON.stringify({ street: "Editor not assigned", orderedServices: [] }),
+    });
+    expect(unassigned.status).toBe(201);
+    const unassignedProject = await unassigned.json() as { id: string };
+    const editorAccess = await SELF.fetch(`https://portal.test/api/projects/${unassignedProject.id}`, {
+      headers: { cookie: await sessionCookie(editorToken) },
+    });
+    expect(editorAccess.status).toBe(200);
+  });
+
   it("sets a project cover, reflects it in the project list, and can clear it", async () => {
     const cookie = await sessionCookie(adminToken);
     const created = await SELF.fetch("https://portal.test/api/projects", { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ street: "Cover set and clear", orderedServices: [] }) });
