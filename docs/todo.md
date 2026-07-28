@@ -9,6 +9,11 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
 
 ## Current state (2026-07-24)
 
+- **Resuming the 6-feature batch (priority/reorder, notifications, notice board, select-all,
+  editor-as-photographer, photographer visibility)?** Read
+  `docs/Build-Handoff-6-Feature-Plans.md` first — recommended build order, a cross-plan
+  coordination point between two of the six, and which decisions are already settled vs. still
+  open. All six plans are Terra-approved and pushed to `main`; none are built yet.
 - **`main` is source of truth** — `build/phase-0-2` merged via PR #3. Production live at
   `quincy.flamingfire.my` (staging + prototype on their own hostnames). Branch off `main` for
   new work.
