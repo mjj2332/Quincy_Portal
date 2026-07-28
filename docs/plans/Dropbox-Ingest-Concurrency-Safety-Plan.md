@@ -1,14 +1,14 @@
 # Dropbox Ingest Concurrency Safety — Plan
 
 **Priority: LOW. Not scheduled — do not implement without a fresh trigger check (see below).**
-Deferred out of [Dropbox-RAW-Fetch-Speedup-Plan.md](Dropbox-RAW-Fetch-Speedup-Plan.md) after two
+Deferred out of [Dropbox-RAW-Fetch-Speedup-Plan.md](implemented/Dropbox-RAW-Fetch-Speedup-Plan.md) after two
 rounds of Terra review rejected raising `quincy-ingest`'s `max_concurrency` without this work
 landing first. This document exists so the reasoning and the review history aren't lost between
 now and whenever it's picked up — not to schedule it.
 
-Read alongside [Dropbox-RAW-Fetch-Performance-Analysis.md](Dropbox-RAW-Fetch-Performance-Analysis.md)
+Read alongside [Dropbox-RAW-Fetch-Performance-Analysis.md](implemented/Dropbox-RAW-Fetch-Performance-Analysis.md)
 (the original measurement) and the "Revision history" in
-[Dropbox-RAW-Fetch-Speedup-Plan.md](Dropbox-RAW-Fetch-Speedup-Plan.md) (both rejections, in full).
+[Dropbox-RAW-Fetch-Speedup-Plan.md](implemented/Dropbox-RAW-Fetch-Speedup-Plan.md) (both rejections, in full).
 
 ## What this is, in one paragraph
 

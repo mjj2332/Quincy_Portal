@@ -215,6 +215,15 @@ allowlist are silent no-ops otherwise). Full mechanics in `docs/subagents/agy-cl
 - **`Implementation-Sequencing-Plan.md`** — the master plan that sequenced all of the above
   (plus the R2 rendition-purge fix, Wave 1b, which had no standalone plan doc) into
   dependency-ordered waves. Kept for provenance now that every wave has shipped.
+- **`Dropbox-RAW-Fetch-Speedup-Plan.md`** (with its basis doc
+  `Dropbox-RAW-Fetch-Performance-Analysis.md`) — narrowed-scope fix for RAW-sync idle time found
+  on two real projects (28/40 Victoria Street, 3/9 Chicago Avenue) that lost time to hitting the
+  old 40-file-per-run download cap. **Change 1 only**: raised `MAX_DOWNLOADS_PER_RUN` in
+  `portal/workers/background/src/dropbox/sync.ts` from 40 to 120, sized against Cloudflare's
+  15-minute Queue-consumer wall-clock limit at the measured ~4.1-4.2s/file. Two earlier revisions
+  also proposed raising `quincy-ingest`'s `max_concurrency`; both were rejected by Terra review
+  and that work deferred to its own plan — see `Dropbox-Ingest-Concurrency-Safety-Plan.md` under
+  "Open plans". Shipped as commit `9c17af3`.
 - **`AutoHDR-Implicit-Scaffolding-Plan.md`** — legacy pre-V2 AutoHDR send/fetch paths and their
   feature flag removed; AutoHDR intake folders now scaffold automatically at project-create/
   RAW-path-set time (five real writers converging on a fenced, concurrency-safe D1 write), and a
@@ -382,6 +391,15 @@ allowlist are silent no-ops otherwise). Full mechanics in `docs/subagents/agy-cl
 
 ## Open plans (see `docs/plans/`)
 
+- **`Dropbox-Ingest-Concurrency-Safety-Plan.md`** — raising `quincy-ingest`'s
+  `max_concurrency` above 1 so independent projects' RAW syncs can overlap. **Priority LOW, not
+  scheduled**: deferred out of the RAW-Fetch speedup work above after two Terra review rounds
+  found it exposes a real data-loss race (a `dropbox_sync` message for a project already
+  mid-sync gets acked and dropped instead of retried). Needs a fresh trigger check before
+  picking back up — see the doc for the ack fix and DLQ safety-net this would require.
+- **`Notifications-Plan.md`** — in-app notifications v1 (bell icon surfacing project-progress
+  events, staff-only for v1, polling not push). **Status: DRAFT, user-requested exploration,
+  not yet reviewed or built.**
 - **`Cloudflare-Images-Pilot-Plan.md`** — renditions-only Cloudflare Images pilot.
   **Not recommended to proceed now**: the outage that motivated it resolved on its own, and an
   independent two-reviewer debate (Agy + Sol) on a related idea (moving originals to Dropbox)

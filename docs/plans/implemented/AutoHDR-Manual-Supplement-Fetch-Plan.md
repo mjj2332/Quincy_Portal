@@ -307,7 +307,7 @@ to produce a fresh delta entry. Captured as a Non-Goal below, not left as an imp
   processing attempts for the same file race (e.g. a duplicate delta observation before the first
   attempt's D1 conflict has resolved), a key that doesn't vary per-attempt could have the second
   attempt overwrite the first attempt's still-in-use R2 object before the D1 uniqueness conflict
-  ever returns `already_ingested` for it — violating [CLAUDE.md](../../CLAUDE.md)'s "media in R2
+  ever returns `already_ingested` for it — violating [CLAUDE.md](../../../CLAUDE.md)'s "media in R2
   is never deleted... write a new immutable key" rule. Including `assetId` (generated fresh per
   attempt, before the download) guarantees no two attempts can ever target the same R2 key, so a
   losing attempt's D1 rollback simply leaves an orphaned-but-harmless R2 object rather than
@@ -460,7 +460,7 @@ render whatever's in that collection with no changes.
 
 - `npm run typecheck` (all six workspaces) and `npm run build -w @quincy/web` must be green, as
   always. **Terra round-1 correction:** also run the full test suites required by
-  [CLAUDE.md](../../CLAUDE.md) before considering the build round done — `npm run test
+  [CLAUDE.md](../../../CLAUDE.md) before considering the build round done — `npm run test
   --workspaces` **and**, separately, `npx vitest run --config packages/shared/vitest.config.ts`
   (the former silently misses `packages/shared`).
 - New test coverage in `workers/background/test/` for `ingestManualSupplement()` and the new

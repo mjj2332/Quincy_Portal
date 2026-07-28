@@ -14,7 +14,7 @@ Motivated by, and should be read alongside,
 
 ### Raise `MAX_DOWNLOADS_PER_RUN`: 40 → 120
 
-File: [`portal/workers/background/src/dropbox/sync.ts:19`](../../portal/workers/background/src/dropbox/sync.ts)
+File: [`portal/workers/background/src/dropbox/sync.ts:19`](../../../portal/workers/background/src/dropbox/sync.ts)
 
 ```diff
 - const MAX_DOWNLOADS_PER_RUN = 40;
@@ -81,7 +81,7 @@ here. It's a pure count change to an existing, already-idempotent continuation l
 
 The `quincy-ingest` `max_concurrency` change and everything it depends on (claim-contention fix,
 DLQ-or-outbox decision, wall-clock cutoff, multi-page regression coverage) has moved to its own
-document: [Dropbox-Ingest-Concurrency-Safety-Plan.md](Dropbox-Ingest-Concurrency-Safety-Plan.md)
+document: [Dropbox-Ingest-Concurrency-Safety-Plan.md](../Dropbox-Ingest-Concurrency-Safety-Plan.md)
 — marked **low priority, not scheduled**, with a suggested trigger for when to revisit it. The
 revision history below is kept here since it's specifically about *this* plan's review rounds;
 the design requirements for the deferred work itself now live in that other document instead of
@@ -131,5 +131,5 @@ bug, which this session verified directly against the code:
 The full set of design requirements for picking this back up — DLQ-vs-outbox decision, the
 ack/claim fix with its jitter/margin bug fixed, the wall-clock-cutoff idea, and the multi-page
 regression coverage Terra's round 2 called for — now lives in
-[Dropbox-Ingest-Concurrency-Safety-Plan.md](Dropbox-Ingest-Concurrency-Safety-Plan.md), along
+[Dropbox-Ingest-Concurrency-Safety-Plan.md](../Dropbox-Ingest-Concurrency-Safety-Plan.md), along
 with a suggested trigger for when it's worth scheduling. Not duplicated here.
