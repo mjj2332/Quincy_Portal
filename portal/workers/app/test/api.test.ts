@@ -192,35 +192,6 @@ beforeAll(async () => {
   ).bind("test-other-admin-session", now + 60 * 60 * 1000, otherAdminToken, "test-other-admin", now, now).run();
 });
 
-async function createEditableComment() {
-  const adminCookie = await sessionCookie(adminToken);
-  const projectResponse = await SELF.fetch("https://portal.test/api/projects", {
-    method: "POST",
-    headers: { cookie: adminCookie, "content-type": "application/json" },
-    body: JSON.stringify({
-      street: `Edit comment ${crypto.randomUUID()}`,
-      orderedServices: [],
-      photographerUserIds: [firstPhotographerId, secondPhotographerId],
-    }),
-  });
-  expect(projectResponse.status).toBe(201);
-  const project = await projectResponse.json() as { id: string };
-  const collection = await database.DB.prepare("SELECT id FROM collections WHERE project_id = ? AND kind = 'raw'").bind(project.id).first<{ id: string }>();
-  expect(collection).toBeDefined();
-  const assetId = crypto.randomUUID();
-  const now = Date.now();
-  await database.DB.prepare(
-    "INSERT INTO assets (id, collection_id, r2_key, original_filename, bytes, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-  ).bind(assetId, collection!.id, `tests/${assetId}.jpg`, "edit-comment.jpg", 1024, "upload", now, now).run();
-  const commentResponse = await SELF.fetch(`https://portal.test/api/assets/${assetId}/comments`, {
-    method: "POST",
-    headers: { cookie: await sessionCookie(firstPhotographerToken), "content-type": "application/json" },
-    body: JSON.stringify({ body: "Original comment" }),
-  });
-  expect(commentResponse.status).toBe(201);
-  return { projectId: project.id, assetId, commentId: (await commentResponse.json() as { id: string }).id };
-}
-
 async function createEditableAnnotation(strokes: Array<{ points: Array<{ x: number; y: number }>; color: string; width: number }>) {
   const adminCookie = await sessionCookie(adminToken);
   const projectResponse = await SELF.fetch("https://portal.test/api/projects", {
@@ -248,10 +219,10 @@ async function createEditableAnnotation(strokes: Array<{ points: Array<{ x: numb
   });
   expect(annotationResponse.status).toBe(201);
   const created = await annotationResponse.json() as { id: string; strokeR2Key: string | null };
-  return { assetId, annotationId: created.id, strokeR2Key: created.strokeR2Key };
+  return { projectId: project.id, assetId, annotationId: created.id, strokeR2Key: created.strokeR2Key };
 }
 
-type VisibilityFixture = { projectId: string; assetId: string; annotationId: string; commentId: string };
+type VisibilityFixture = { projectId: string; assetId: string; annotationId: string };
 
 async function createVisibilityFixture(): Promise<VisibilityFixture> {
   const adminCookie = await sessionCookie(adminToken);
@@ -286,14 +257,7 @@ async function createVisibilityFixture(): Promise<VisibilityFixture> {
   });
   expect(annotationResponse.status).toBe(201);
   const annotation = await annotationResponse.json() as { id: string };
-  const commentResponse = await SELF.fetch(`https://portal.test/api/assets/${assetId}/comments`, {
-    method: "POST",
-    headers: { cookie: photographerCookie, "content-type": "application/json" },
-    body: JSON.stringify({ body: "Stage visibility comment" }),
-  });
-  expect(commentResponse.status).toBe(201);
-  const comment = await commentResponse.json() as { id: string };
-  return { projectId: project.id, assetId, annotationId: annotation.id, commentId: comment.id };
+  return { projectId: project.id, assetId, annotationId: annotation.id };
 }
 
 async function setFixtureStage(fixture: VisibilityFixture, stageKey: string) {
@@ -310,6 +274,25 @@ async function jsonRequest(path: string, cookie: string, method: "GET" | "POST" 
 }
 
 describe("staff app API", () => {
+  it("returns annotations without comments and removes the comment routes", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const { assetId, annotationId } = await createEditableAnnotation([{ points: [{ x: 0.1, y: 0.1 }], color: "#000", width: 2 }]);
+    const annotationsResponse = await SELF.fetch(`https://portal.test/api/assets/${assetId}/annotations`, { headers: { cookie } });
+    expect(annotationsResponse.status).toBe(200);
+    const body = await annotationsResponse.json() as { annotations: Array<{ id: string }> };
+    expect(Object.keys(body)).toEqual(["annotations"]);
+    expect(body).toEqual({ annotations: [expect.objectContaining({ id: annotationId })] });
+
+    const [post, patch, del] = await Promise.all([
+      SELF.fetch(`https://portal.test/api/assets/${assetId}/comments`, { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ body: "gone" }) }),
+      SELF.fetch(`https://portal.test/api/comments/${crypto.randomUUID()}`, { method: "PATCH", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ body: "gone" }) }),
+      SELF.fetch(`https://portal.test/api/comments/${crypto.randomUUID()}`, { method: "DELETE", headers: { cookie } }),
+    ]);
+    expect(post.status).toBe(404);
+    expect(patch.status).toBe(404);
+    expect(del.status).toBe(404);
+  });
+
   it("verifies a fresh manual RAW batch from its durable manifest attribution", async () => {
     const cookie = await sessionCookie(adminToken);
     const project = await createUploadProject(cookie, `Fresh manifest ${crypto.randomUUID()}`);
@@ -618,22 +601,6 @@ describe("staff app API", () => {
       expectStageStatus(await jsonRequest(`/api/annotations/${fixture.annotationId}`, photographerCookie, "PATCH", { noteText: `edited ${stageKey}` }), visible ? 200 : 403);
       if (!visible) expectStageStatus(await jsonRequest(`/api/annotations/${fixture.annotationId}`, photographerCookie, "DELETE"), 403);
 
-      const createdComment = await jsonRequest(`/api/assets/${fixture.assetId}/comments`, photographerCookie, "POST", { body: `stage ${stageKey}` });
-      expectStageStatus(createdComment, visible ? 201 : 403);
-      if (visible) {
-        const created = await createdComment.json() as { id: string };
-        expectStageStatus(await jsonRequest(`/api/comments/${created.id}`, photographerCookie, "DELETE"), 200);
-      }
-      expectStageStatus(await jsonRequest(`/api/comments/${fixture.commentId}`, photographerCookie, "PATCH", { body: `edited ${stageKey}` }), visible ? 200 : 403);
-      expectStageStatus(await jsonRequest(`/api/comments/${fixture.commentId}`, photographerCookie, "DELETE"), visible ? 200 : 403);
-      if (visible) {
-        // Restore the fixture comment for the next stage; deletion itself is also covered here.
-        const restored = await jsonRequest(`/api/assets/${fixture.assetId}/comments`, photographerCookie, "POST", { body: `restored ${stageKey}` });
-        expect(restored.status).toBe(201);
-        const replacement = await restored.json() as { id: string };
-        fixture.commentId = replacement.id;
-      }
-
       expectStageStatus(await jsonRequest(`/api/projects/${fixture.projectId}/upload-manifest`, photographerCookie, "POST", { filenames: [`stage-${stageKey}.jpg`] }), visible ? 200 : 403);
       expectStageStatus(await jsonRequest("/api/uploads/presign", photographerCookie, "POST", { projectId: fixture.projectId, filename: "stage.jpg", bytes: 10, collection: "raw" }), visible ? 503 : 403);
       const uploadAssetId = crypto.randomUUID();
@@ -686,8 +653,6 @@ describe("staff app API", () => {
         jsonRequest(`/api/assets/${fixture.assetId}/annotations`, nonMemberCookie, "GET"),
         jsonRequest(`/api/annotations/${fixture.annotationId}`, nonMemberCookie, "PATCH", { noteText: "non-member" }),
         jsonRequest(`/api/annotations/${fixture.annotationId}`, nonMemberCookie, "DELETE"),
-        jsonRequest(`/api/comments/${fixture.commentId}`, nonMemberCookie, "PATCH", { body: "non-member" }),
-        jsonRequest(`/api/comments/${fixture.commentId}`, nonMemberCookie, "DELETE"),
         jsonRequest(`/api/projects/${fixture.projectId}/assets?collection=raw`, nonMemberCookie, "GET"),
         jsonRequest(`/api/assets/${fixture.assetId}/review`, nonMemberCookie, "POST", { recommended: true }),
         jsonRequest(`/api/assets/${fixture.assetId}/annotations`, nonMemberCookie, "POST", { noteText: "non-member" }),
@@ -725,7 +690,6 @@ describe("staff app API", () => {
     // visible stage, proving delete routes are live for assigned photographers before cutoff.
     await setFixtureStage(fixture, "raw_review");
     expect((await jsonRequest(`/api/annotations/${fixture.annotationId}`, photographerCookie, "DELETE")).status).toBe(200);
-    expect((await jsonRequest(`/api/comments/${fixture.commentId}`, photographerCookie, "DELETE")).status).toBe(200);
     expect((await jsonRequest(`/api/projects/${fixture.projectId}`, photographerCookie, "GET")).status).toBe(200);
   }, 30_000);
 
@@ -926,7 +890,7 @@ describe("staff app API", () => {
   });
 
   it("does not expose delivery links to an assigned photographer", async () => {
-    const { projectId } = await createEditableComment();
+    const { projectId } = await createEditableAnnotation([{ points: [{ x: 0.1, y: 0.1 }], color: "#000", width: 2 }]);
     const response = await SELF.fetch(`https://portal.test/api/projects/${projectId}/links?collection=video`, {
       headers: { cookie: await sessionCookie(firstPhotographerToken) },
     });
@@ -1530,78 +1494,6 @@ describe("staff app API", () => {
     expect(await database.DB.prepare("SELECT id FROM projects WHERE id = ?").bind(project.id).first()).not.toBeNull();
   });
 
-  it("allows an author to edit their own comment", async () => {
-    const { commentId } = await createEditableComment();
-    const response = await SELF.fetch(`https://portal.test/api/comments/${commentId}`, {
-      method: "PATCH",
-      headers: { cookie: await sessionCookie(firstPhotographerToken), "content-type": "application/json" },
-      body: JSON.stringify({ body: "Updated comment" }),
-    });
-
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({ id: commentId, body: "Updated comment", editedAt: expect.any(String) });
-    const stored = await database.DB.prepare("SELECT body, edited_at FROM comments WHERE id = ?").bind(commentId).first<{ body: string; edited_at: number | null }>();
-    expect(stored).toEqual(expect.objectContaining({ body: "Updated comment", edited_at: expect.any(Number) }));
-  });
-
-  it("prevents a different user from editing another author's comment", async () => {
-    const { commentId } = await createEditableComment();
-    const response = await SELF.fetch(`https://portal.test/api/comments/${commentId}`, {
-      method: "PATCH",
-      headers: { cookie: await sessionCookie(secondPhotographerToken), "content-type": "application/json" },
-      body: JSON.stringify({ body: "Attempted overwrite" }),
-    });
-
-    expect(response.status).toBe(403);
-    await expect(response.json()).resolves.toMatchObject({ error: "Forbidden: only the author can edit this comment." });
-    const stored = await database.DB.prepare("SELECT body, edited_at FROM comments WHERE id = ?").bind(commentId).first<{ body: string; edited_at: number | null }>();
-    expect(stored).toEqual({ body: "Original comment", edited_at: null });
-  });
-
-  it("deletes an author's comment and its reply subtree", async () => {
-    const { assetId, commentId } = await createEditableComment();
-    const replyResponse = await SELF.fetch(`https://portal.test/api/assets/${assetId}/comments`, {
-      method: "POST",
-      headers: { cookie: await sessionCookie(secondPhotographerToken), "content-type": "application/json" },
-      body: JSON.stringify({ body: "Reply", parentId: commentId }),
-    });
-    expect(replyResponse.status).toBe(201);
-    const replyId = (await replyResponse.json() as { id: string }).id;
-
-    const response = await SELF.fetch(`https://portal.test/api/comments/${commentId}`, {
-      method: "DELETE",
-      headers: { cookie: await sessionCookie(firstPhotographerToken) },
-    });
-
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ ok: true, deletedCount: 2 });
-    const stored = await database.DB.prepare("SELECT id FROM comments WHERE id IN (?, ?)").bind(commentId, replyId).all();
-    expect(stored.results).toHaveLength(0);
-  });
-
-  it("prevents a fellow project member from deleting another author's comment", async () => {
-    const { commentId } = await createEditableComment();
-    const response = await SELF.fetch(`https://portal.test/api/comments/${commentId}`, {
-      method: "DELETE",
-      headers: { cookie: await sessionCookie(secondPhotographerToken) },
-    });
-
-    expect(response.status).toBe(403);
-    await expect(response.json()).resolves.toMatchObject({ error: "Forbidden: only the author can delete this comment." });
-    const stored = await database.DB.prepare("SELECT id FROM comments WHERE id = ?").bind(commentId).first<{ id: string }>();
-    expect(stored).toEqual({ id: commentId });
-  });
-
-  it("returns not found before checking access for an unknown comment deletion", async () => {
-    const response = await SELF.fetch(`https://portal.test/api/comments/${crypto.randomUUID()}`, {
-      method: "DELETE",
-      headers: { cookie: await sessionCookie(firstPhotographerToken) },
-    });
-
-    expect(response.status).toBe(404);
-    await expect(response.json()).resolves.toMatchObject({ error: "Comment not found" });
-  });
-
   it("allows an author to replace their annotation's strokes and republishes a new R2 object", async () => {
     const initialStrokes = [{ points: [{ x: 0.1, y: 0.1 }, { x: 0.2, y: 0.3 }], color: "#e64b3c", width: 4 }];
     const { annotationId, strokeR2Key: originalKey } = await createEditableAnnotation(initialStrokes);
@@ -1884,7 +1776,6 @@ describe("staff app API", () => {
       ...["original", "thumb", "web"].map((variant) => SELF.fetch(`https://portal.test/media/asset/${pendingId}/${variant}`, { headers: { cookie } })),
       SELF.fetch(`https://portal.test/api/assets/${pendingId}/review`, { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ stars: 5 }) }),
       SELF.fetch(`https://portal.test/api/assets/${pendingId}/annotations`, { headers: { cookie } }),
-      SELF.fetch(`https://portal.test/api/assets/${pendingId}/comments`, { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ body: "not yet" }) }),
       SELF.fetch(`https://portal.test/api/projects/${project.id}/cover`, { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ assetId: pendingId }) }),
     ]);
     for (const response of blocked) expect(response.status).toBe(404);

@@ -1,5 +1,12 @@
 # Lightbox — Allow Comments While Markup Is Active
 
+**SUPERSEDED (2026-07-28) by `docs/plans/Lightbox-Always-On-Drawing-Plan.md`.** After this plan was
+built and deployed, the user clarified this was a scoping mistake: the "Comments" thread this plan
+unlocked was the wrong field entirely — the studio doesn't need a separate comment thread alongside
+the per-annotation "Optional note for this markup…" field, and it's being removed, along with the
+"Draw" toggle this plan left in place. Kept here for history/rationale, not as current design or a
+build target — see the superseding plan for what's actually being built next.
+
 **User request** (2026-07-28): in the review lightbox, clicking "Draw" enters a mode where the user
 can draw but cannot type in the sidebar comment box at all. The user wants to be able to comment
 without leaving drawing mode.

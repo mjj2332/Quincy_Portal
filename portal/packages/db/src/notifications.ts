@@ -29,7 +29,7 @@ export function notificationCopy(type: NotificationType, projectLabel = "Project
     case "sent_to_editing": return { title: "Moved to editing", body: `${projectLabel} has moved to editing.` };
     case "autohdr_stalled": return { title: "Editing round taking longer than expected", body: `${projectLabel} has an editing round that may need attention.` };
     case "delivered": return { title: "Project delivered", body: `${projectLabel} has been marked delivered.` };
-    case "comment_added": return { title: "New review comment", body: `${projectLabel} has new review feedback.` };
+    case "comment_added": return { title: "New review feedback", body: `${projectLabel} has new review feedback.` };
   }
 }
 

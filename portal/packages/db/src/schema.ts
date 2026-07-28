@@ -697,25 +697,6 @@ export const annotations = sqliteTable(
   (t) => [index("annotations_asset_idx").on(t.assetId)],
 );
 
-export const comments = sqliteTable(
-  "comments",
-  {
-    id: id(),
-    assetId: text("asset_id")
-      .notNull()
-      .references(() => assets.id, { onDelete: "cascade" }),
-    parentId: text("parent_id"),
-    authorId: text("author_id")
-      .notNull()
-      .references(() => user.id),
-    authorRole: text("author_role", { enum: ["admin", "photographer", "editor"] }).notNull(),
-    body: text("body").notNull(),
-    createdAt: createdAt(),
-    editedAt: integer("edited_at", { mode: "timestamp_ms" }),
-  },
-  (t) => [index("comments_asset_idx").on(t.assetId)],
-);
-
 export const noticeBoardPosts = sqliteTable(
   "notice_board_posts",
   {

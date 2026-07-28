@@ -92,7 +92,7 @@ describe("ProjectWorkspace cross-tab asset/selection/lightbox safety", () => {
       if (path.includes("/ingest-status")) return Promise.resolve({ expectedCount: null, receivedCount: 2, mismatch: false });
       if (path.includes("/assets?collection=raw")) return Promise.resolve({ assets: rawAssets });
       if (path.includes("/assets?collection=edited")) return editedFetch.promise;
-      if (path.includes("/annotations")) return Promise.resolve({ annotations: [], comments: [] });
+      if (path.includes("/annotations")) return Promise.resolve({ annotations: [] });
       return Promise.resolve({});
     });
   });

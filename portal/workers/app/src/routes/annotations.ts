@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { createDb, schema } from "@quincy/db";
-import { and, asc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, eq, isNull } from "drizzle-orm";
 import { roleHasCapability } from "@quincy/shared";
 import { z } from "zod";
 import type { Context } from "hono";
@@ -12,7 +12,6 @@ import { jsonInput } from "./helpers";
 import { isUserVisibleAsset, unpublishedAssetResponse } from "../lib/asset-visibility";
 import { notifyProject } from "../lib/notifications";
 
-const commentInput = z.object({ body: z.string().trim().min(1).max(10_000), parentId: z.string().uuid().optional() });
 const strokeInput = z.object({
   points: z.array(z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) })).min(1).max(2000),
   color: z.string().trim().min(1).max(32),
@@ -24,7 +23,6 @@ const annotationInput = z.object({ strokes: z.array(strokeInput).max(200).option
   .refine((value) => (value.strokes?.length ?? 0) > 0 || Boolean(value.noteText), { message: "A markup or note is required" });
 const annotationEditInput = z.object({ noteText: z.string().trim().max(10_000).nullable().optional(), strokes: z.array(strokeInput).max(200).optional() })
   .refine((value) => value.noteText !== undefined || value.strokes !== undefined, { message: "A note or markup change is required" });
-const commentEditInput = z.object({ body: z.string().trim().min(1).max(10_000) });
 
 // .length counts UTF-16 code units, not bytes — a JSON string full of multibyte
 // characters (e.g. non-ASCII color names) could pass a .length check while exceeding
@@ -64,29 +62,14 @@ annotationsRoutes.get("/assets/:id/annotations", async (c) => {
   if (!asset) return c.json({ error: "Asset not found" }, 404);
   const denied = await canViewAsset(c, asset); if (denied) return denied;
   const db = createDb(c.env.DB);
-  const [annotationRows, commentRows] = await Promise.all([
-    db.select({ annotation: schema.annotations, author: schema.user }).from(schema.annotations)
-      .innerJoin(schema.user, eq(schema.annotations.authorId, schema.user.id))
-      .where(eq(schema.annotations.assetId, assetId)).orderBy(asc(schema.annotations.createdAt)).all(),
-    db.select({ comment: schema.comments, author: schema.user }).from(schema.comments)
-      .innerJoin(schema.user, eq(schema.comments.authorId, schema.user.id))
-      .where(eq(schema.comments.assetId, assetId)).orderBy(asc(schema.comments.createdAt)).all(),
-  ]);
-  const comments = commentRows.map(({ comment, author }) => ({
-    id: comment.id, parentId: comment.parentId, authorId: comment.authorId, body: comment.body, author: { id: author.id, name: author.name, role: comment.authorRole }, createdAt: comment.createdAt, editedAt: comment.editedAt, replies: [] as unknown[],
-  }));
-  const byId = new Map(comments.map((comment) => [comment.id, comment]));
-  const roots: typeof comments = [];
-  for (const comment of comments) {
-    const parent = comment.parentId ? byId.get(comment.parentId) : undefined;
-    if (parent) (parent.replies as typeof comments).push(comment); else roots.push(comment);
-  }
+  const annotationRows = await db.select({ annotation: schema.annotations, author: schema.user }).from(schema.annotations)
+    .innerJoin(schema.user, eq(schema.annotations.authorId, schema.user.id))
+    .where(eq(schema.annotations.assetId, assetId)).orderBy(asc(schema.annotations.createdAt)).all();
   return c.json({
     annotations: annotationRows.map(({ annotation, author }) => ({
       id: annotation.id, authorId: annotation.authorId, author: { id: author.id, name: author.name, role: annotation.authorRole }, scope: annotation.scope,
       strokeR2Key: annotation.strokeR2Key, noteText: annotation.noteText, createdAt: annotation.createdAt, editedAt: annotation.editedAt,
     })),
-    comments: roots,
   });
 });
 
@@ -115,68 +98,6 @@ annotationsRoutes.post("/assets/:id/annotations", async (c) => {
   await notifyProject(c.env, asset.projectId, "comment_added", { editorOnly: true, excludeUserId: c.get("user").id });
   const user = c.get("user");
   return c.json({ id, authorId: user.id, author: { id: user.id, name: user.name, role: user.role }, scope, strokeR2Key, noteText: data.noteText || null, createdAt: createdAt.toISOString(), editedAt: null }, 201);
-});
-
-annotationsRoutes.post("/assets/:id/comments", async (c) => {
-  const assetId = c.req.param("id");
-  if (!z.string().uuid().safeParse(assetId).success) return c.json({ error: "Invalid asset id" }, 400);
-  const asset = await assetContext(c, assetId);
-  if (!asset) return c.json({ error: "Asset not found" }, 404);
-  if (!await hasProjectAccess(c, asset.projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
-  const scope = scopeForAsset(c, asset); if (scope instanceof Response) return scope;
-  const data = await jsonInput(c, commentInput); if (data instanceof Response) return data;
-  const db = createDb(c.env.DB);
-  if (data.parentId) {
-    const parent = await db.select({ id: schema.comments.id }).from(schema.comments)
-      .where(and(eq(schema.comments.id, data.parentId), eq(schema.comments.assetId, assetId))).get();
-    if (!parent) return c.json({ error: "Comment parent was not found on this asset" }, 400);
-  }
-  const id = newId();
-  const createdAt = new Date();
-  await db.insert(schema.comments).values({ id, assetId, parentId: data.parentId ?? null, authorId: c.get("user").id, authorRole: c.get("user").role, body: data.body, createdAt });
-  await audit(c.env, c.get("user").id, "asset.comment", "asset", assetId, { commentId: id, parentId: data.parentId ?? null, scope });
-  await notifyProject(c.env, asset.projectId, "comment_added", { editorOnly: true, excludeUserId: c.get("user").id });
-  const user = c.get("user");
-  return c.json({ id, parentId: data.parentId ?? null, authorId: user.id, body: data.body, author: { id: user.id, name: user.name, role: user.role }, createdAt: createdAt.toISOString(), editedAt: null, replies: [] }, 201);
-});
-
-annotationsRoutes.patch("/comments/:id", async (c) => {
-  const id = c.req.param("id");
-  if (!z.string().uuid().safeParse(id).success) return c.json({ error: "Invalid comment id" }, 400);
-  const db = createDb(c.env.DB);
-  const comment = await db.select().from(schema.comments).where(eq(schema.comments.id, id)).get();
-  if (!comment) return c.json({ error: "Comment not found" }, 404);
-  const asset = await assetContext(c, comment.assetId);
-  if (!asset) return c.json({ error: "Asset not found" }, 404);
-  if (!await hasProjectAccess(c, asset.projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
-  const scope = scopeForAsset(c, asset); if (scope instanceof Response) return scope;
-  if (comment.authorId !== c.get("user").id) return c.json({ error: "Forbidden: only the author can edit this comment." }, 403);
-  const data = await jsonInput(c, commentEditInput); if (data instanceof Response) return data;
-  const editedAt = new Date();
-  const updated = await db.update(schema.comments).set({ body: data.body, editedAt }).where(eq(schema.comments.id, id)).returning().get();
-  await audit(c.env, c.get("user").id, "comment.edit", "comment", id, { assetId: asset.assetId, scope });
-  return c.json(updated);
-});
-
-annotationsRoutes.delete("/comments/:id", async (c) => {
-  const id = c.req.param("id");
-  if (!z.string().uuid().safeParse(id).success) return c.json({ error: "Invalid comment id" }, 400);
-  const db = createDb(c.env.DB);
-  const comment = await db.select().from(schema.comments).where(eq(schema.comments.id, id)).get();
-  if (!comment) return c.json({ error: "Comment not found" }, 404);
-  const asset = await assetContext(c, comment.assetId);
-  if (!asset) return c.json({ error: "Asset not found" }, 404);
-  if (!await hasProjectAccess(c, asset.projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
-  const scope = scopeForAsset(c, asset); if (scope instanceof Response) return scope;
-  if (comment.authorId !== c.get("user").id) return c.json({ error: "Forbidden: only the author can delete this comment." }, 403);
-  const rows = await db.select({ id: schema.comments.id, parentId: schema.comments.parentId }).from(schema.comments).where(eq(schema.comments.assetId, comment.assetId)).all();
-  const children = new Map<string, string[]>();
-  for (const row of rows) if (row.parentId) children.set(row.parentId, [...(children.get(row.parentId) ?? []), row.id]);
-  const ids = [id];
-  for (let cursor = 0; cursor < ids.length; cursor += 1) ids.push(...(children.get(ids[cursor]!) ?? []));
-  await db.delete(schema.comments).where(inArray(schema.comments.id, ids));
-  await audit(c.env, c.get("user").id, "comment.delete", "comment", id, { assetId: asset.assetId, scope, deletedReplies: ids.length - 1 });
-  return c.json({ ok: true, deletedCount: ids.length });
 });
 
 annotationsRoutes.delete("/annotations/:id", async (c) => {

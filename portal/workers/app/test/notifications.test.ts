@@ -1,6 +1,7 @@
 import { env, SELF as workerSelf } from "cloudflare:test";
 import { makeSignature } from "better-auth/crypto";
 import { beforeAll, describe, expect, it } from "vitest";
+import { notificationCopy } from "@quincy/db";
 import { createAuth } from "../src/auth";
 import type { Env } from "../src/env";
 import { notifyProject } from "../src/lib/notifications";
@@ -65,6 +66,7 @@ describe("notifications API and recipient selection", () => {
   });
 
   it("notifies only active non-actor editors, including no recipient for an actor-only project", async () => {
+    expect(notificationCopy("comment_added", "Example").title).toBe("New review feedback");
     const projectId = crypto.randomUUID();
     const now = Date.now();
     const inactiveEditor = crypto.randomUUID();
