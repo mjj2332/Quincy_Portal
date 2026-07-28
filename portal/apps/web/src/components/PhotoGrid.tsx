@@ -50,6 +50,12 @@ export function workspaceAssetIdsBetween(assets: WorkspaceAsset[], firstId: stri
   if (first < 0 || last < 0) return [];
   return assets.slice(Math.min(first, last), Math.max(first, last) + 1).map((asset) => asset.id);
 }
+export function updateFailedThumbnailState(current: Set<string>, assetId: string, failed: boolean): Set<string> {
+  if (failed === current.has(assetId)) return current;
+  const next = new Set(current);
+  if (failed) next.add(assetId); else next.delete(assetId);
+  return next;
+}
 
 export function PhotoGrid({ assets, showSections, canReview, canRecommend, canSelect, canSetCover, coverAssetId, storedCoverAssetId, onSetCover, onOpen, onReview, onSelection }: PhotoGridProps) {
   const [filter, setFilter] = useState("all");
@@ -102,7 +108,7 @@ export function PhotoGrid({ assets, showSections, canReview, canRecommend, canSe
       const previewPending = asset.renditionStatus === "processing";
       const activate = () => previewPending ? undefined : failedThumbnails.has(asset.id) ? retryThumbnail(asset.id) : onOpen(asset, displayOrder);
       return <div className={`tile ${marked ? "is-selected" : ""} ${state ? `st-${state}` : ""} ${rating(asset) ? "has-rating" : ""} ${asset.selected ? "has-state" : ""} ${previewPending ? "is-processing" : ""}`} key={asset.id} role="button" tabIndex={previewPending ? -1 : 0} aria-disabled={previewPending || undefined} aria-label={previewPending ? `${asset.originalFilename} is processing` : failedThumbnails.has(asset.id) ? `Retry thumbnail for ${asset.originalFilename}` : undefined} onClick={activate} onKeyDown={(event) => { if (!previewPending && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); activate(); } }}>
-        {previewPending ? <div className="project-cover-placeholder lazy-image-placeholder" role="status" aria-label={`Processing preview for ${asset.originalFilename}`}><span>Processing preview…</span></div> : <LazyImage src={`/media/asset/${encodeURIComponent(asset.id)}/thumb`} alt={asset.originalFilename} retryToken={thumbnailRetries[asset.id]} onFailedChange={(failed) => setFailedThumbnails((current) => { const next = new Set(current); if (failed) next.add(asset.id); else next.delete(asset.id); return next; })} />}<div className="tile__scrim" />
+        {previewPending ? <div className="project-cover-placeholder lazy-image-placeholder" role="status" aria-label={`Processing preview for ${asset.originalFilename}`}><span>Processing preview…</span></div> : <LazyImage preload="background" assetId={asset.id} alt={asset.originalFilename} retryToken={thumbnailRetries[asset.id]} onFailedChange={(failed) => setFailedThumbnails((current) => updateFailedThumbnailState(current, asset.id, failed))} />}<div className="tile__scrim" />
         <button className="selbox" type="button" aria-label={`Select ${asset.originalFilename}`} onClick={(event) => { event.stopPropagation(); toggleMulti(asset, event.shiftKey); }}>✓</button>
         <span className="tile__num">{asset.originalFilename}</span>
         {review?.colorLabel && <span style={{ position: "absolute", top: 13, left: 42, zIndex: 4 }}><LabelDot color={LABELS.find((item) => item.value === review.colorLabel)?.color ?? "#fff"} name={labelName(review.colorLabel)} /></span>}

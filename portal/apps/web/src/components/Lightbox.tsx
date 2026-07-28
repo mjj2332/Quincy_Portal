@@ -56,7 +56,7 @@ function FilmstripThumbnail({ asset, active, onSelect }: { asset: WorkspaceAsset
   const [failed, setFailed] = useState(false);
   const [retryToken, setRetryToken] = useState(0);
   function activate() { if (failed) { setFailed(false); setRetryToken((current) => current + 1); } else onSelect(); }
-  return <button className={`strip__button ${active ? "is-active" : ""}`} type="button" onClick={activate} title={failed ? `Retry ${asset.originalFilename}` : asset.originalFilename} aria-label={failed ? `Retry thumbnail for ${asset.originalFilename}` : asset.originalFilename}><LazyImage className="strip__t" src={`/media/asset/${encodeURIComponent(asset.id)}/thumb`} alt={asset.originalFilename} retryToken={retryToken} onFailedChange={setFailed} /></button>;
+  return <button className={`strip__button ${active ? "is-active" : ""}`} type="button" onClick={activate} title={failed ? `Retry ${asset.originalFilename}` : asset.originalFilename} aria-label={failed ? `Retry thumbnail for ${asset.originalFilename}` : asset.originalFilename}><LazyImage className="strip__t" preload="background" assetId={asset.id} alt={asset.originalFilename} retryToken={retryToken} onFailedChange={setFailed} /></button>;
 }
 
 export function Lightbox({ assets, rawAssets, initialAssetId, collectionKind, canReview, canRecommend, canAnnotate, onClose, onReview, onToast }: LightboxProps) {

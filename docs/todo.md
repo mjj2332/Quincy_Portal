@@ -353,8 +353,30 @@ allowlist are silent no-ops otherwise). Full mechanics in `docs/subagents/agy-cl
   not been live-smoke-tested against a real project (would need an actual stuck-round project and a
   real Dropbox drop into `04-MANUAL-Photos`).
 
+- **`Gallery-Eager-Background-Preload-Plan.md`** — background preload for the RAW/Edited grid,
+  lightbox filmstrip, and dashboard project covers: visible images still load first, but the rest
+  of a gallery now keeps loading via a priority-aware scheduler using idle browser time, without
+  requiring the user to scroll. Went through 7 plan-review rounds (Terra) before approval — most
+  found real concurrency bugs (a reserved-headroom guarantee that didn't hold at drain time, a
+  self-contradicting future-consumer rule, a process-global test-override that wasn't safe under
+  concurrent tests) — then 2 diff-review rounds (the first caught an unauthorized doc
+  reorganization the builder made on its own initiative, reverted) plus an Opus final-draft review
+  that found and fixed one more real bug (`succeed()`/`fail()` ownership-check asymmetry that
+  could permanently wedge a tile on its loading placeholder). Added a `thumb`-scale-only
+  type-level guard (background preload can't request `web`/`original`), a new `happy-dom` DOM
+  test environment for `apps/web` (previously untestable — `npm run test --workspaces` silently
+  skipped it, same class of gap as `packages/shared`), and 52 tests. `npm run typecheck`, the web
+  build, and the full six-workspace test suite are green.
+
 ## Open plans (see `docs/plans/`)
 
+- **`Lightbox-Neighbor-Preload-Plan.md`** — prefetch the lightbox's next/prev `/web` image ahead
+  of navigation, via its own small dedicated scheduler (separate from the grid's). Split out of
+  the gallery background-preload plan above per Terra's round-4 recommendation. **Not yet
+  reviewed** — has 4 still-open findings from the combined plan's review to fix first (a missing
+  one-shot completion guard, an unhandled 1-2-image collection edge case, a corrected 8-way
+  worst-case concurrency count, and a corrected description of how it relates to `LazyImage`),
+  then its own testing section to write, before it goes through the plan-review loop.
 - **`Cloudflare-Images-Pilot-Plan.md`** — renditions-only Cloudflare Images pilot.
   **Not recommended to proceed now**: the outage that motivated it resolved on its own, and an
   independent two-reviewer debate (Agy + Sol) on a related idea (moving originals to Dropbox)

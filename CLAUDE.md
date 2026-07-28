@@ -45,7 +45,9 @@ green. For tests, `npm run test --workspaces` **silently misses `packages/shared
 vitest config but no `test` script — so also run
 `npx vitest run --config packages/shared/vitest.config.ts`. That suite validates against real
 fixtures in `test-data/` and skips cleanly when the media (gitignored, 614 MB) is absent, so
-CI stays green without it.
+CI stays green without it. `apps/web` now has its own `test` script (a Node config for plain
+logic plus a `happy-dom` config for component tests, chained together) and is correctly picked
+up by `npm run test --workspaces` — no separate invocation needed for it.
 
 ## Gotchas
 

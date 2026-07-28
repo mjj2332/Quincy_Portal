@@ -1,7 +1,7 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { PhotoGrid, groupWorkspaceAssetsBySection, workspaceAssetIdsBetween, workspaceSectionKey, type WorkspaceAsset } from "./PhotoGrid";
+import { PhotoGrid, groupWorkspaceAssetsBySection, updateFailedThumbnailState, workspaceAssetIdsBetween, workspaceSectionKey, type WorkspaceAsset } from "./PhotoGrid";
 import { cycleLightboxIndex } from "../lib/lightbox-navigation";
 
 function asset(id: string, section: string | null): WorkspaceAsset {
@@ -78,5 +78,12 @@ describe("groupWorkspaceAssetsBySection", () => {
     expect(markup).not.toContain("Captures");
     expect(markup).not.toContain(">Kitchen<");
     expect((markup.match(/workspace-photo-grid/g) ?? []).length).toBe(1);
+  });
+
+  it("keeps the failed-thumbnail Set reference when membership is unchanged", () => {
+    const current = new Set(["failed"]);
+    expect(updateFailedThumbnailState(current, "failed", true)).toBe(current);
+    expect(updateFailedThumbnailState(current, "ready", false)).toBe(current);
+    expect(updateFailedThumbnailState(current, "ready", true)).not.toBe(current);
   });
 });

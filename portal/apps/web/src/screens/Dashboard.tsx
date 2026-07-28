@@ -29,12 +29,8 @@ interface ProjectsResponse {
 type ProjectScope = "active" | "archived";
 type Toast = { id: number; message: string; tone: "success" | "error" };
 
-function coverUrl(assetId: string): string {
-  return `/media/asset/${encodeURIComponent(assetId)}/thumb`;
-}
-
 function CoverMedia({ project, className = "", inlinePlaceholder = false, retryToken, onFailedChange }: { project: ProjectSummary; className?: string; inlinePlaceholder?: boolean; retryToken?: number; onFailedChange?: (failed: boolean) => void }) {
-  if (project.coverAssetId) return <LazyImage className={className} src={coverUrl(project.coverAssetId)} alt={`Preview of ${project.street}`} retryToken={retryToken} onFailedChange={onFailedChange} />;
+  if (project.coverAssetId) return <LazyImage className={className} preload="background" assetId={project.coverAssetId} alt={`Preview of ${project.street}`} retryToken={retryToken} onFailedChange={onFailedChange} />;
   const content = project.street.trim().charAt(0).toUpperCase() || "Q";
   return inlinePlaceholder ? <span className={`project-cover-placeholder ${className}`} aria-hidden="true">{content}</span> : <div className={`project-cover-placeholder ${className}`} aria-hidden="true">{content}</div>;
 }
