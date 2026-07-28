@@ -6,7 +6,8 @@ plan, not yet Terra-reviewed. Explicit user decision (2026-07-28): pick this up 
 
 ## Origin
 
-Found by Terra during round 3/4 plan review of `docs/plans/PhotoGrid-Select-All-Plan.md`, while
+Found by Terra during round 3/4 plan review of `docs/plans/implemented/PhotoGrid-Select-All-Plan.md`
+(shipped 2026-07-28), while
 verifying a `key={activeTab}`-based fix for a cross-tab stale-selection bug in
 `portal/apps/web/src/screens/ProjectWorkspace.tsx`. Not caused by that fix — pre-existing.
 

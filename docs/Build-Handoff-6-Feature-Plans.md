@@ -1,6 +1,14 @@
 # Build Handoff — 6 Approved Feature Plans
 
-**Purpose**: resume implementation of six already-planned, already-Terra-approved features on a
+**COMPLETED 2026-07-28 — all six plans built, verified, committed, migrated, and deployed to
+production.** See `docs/todo.md`'s "Implemented plans" section for the final summary (commits,
+bugs found/fixed, the real production migration-0020 failure and fix) and
+`docs/plans/implemented/` for the plan docs themselves (moved there from `docs/plans/` once
+shipped). Kept below for historical/provenance reference only — the recommended build order and
+cross-plan coordination notes it describes are what was actually followed, but nothing in this
+batch is still pending.
+
+**Purpose (historical)**: resume implementation of six already-planned, already-Terra-approved features on a
 different machine/session without re-deriving context. Read this first, then
 `docs/Subagent-Orchestration.md` for the mechanics of actually running the pipeline.
 
