@@ -81,14 +81,29 @@ export function PhotoGrid({ assets, showSections, canReview, canRecommend, canSe
   ];
 
   function toggleMulti(asset: WorkspaceAsset, shifted: boolean) {
+    // Capture the anchor before calling setMulti, not inside the updater: React can defer
+    // invoking a functional updater until after this function's remaining synchronous code
+    // (including the lastSelected.current write below) has already run, so reading the ref
+    // from inside the updater can see this call's own asset.id instead of the real prior
+    // anchor, silently turning a shift-click range-select into a same-item no-op.
+    const anchor = lastSelected.current;
     setMulti((current) => {
       const next = new Set(current);
-      if (shifted && lastSelected.current !== null) {
-        for (const id of workspaceAssetIdsBetween(displayOrder, lastSelected.current, asset.id)) next.add(id);
+      if (shifted && anchor !== null) {
+        for (const id of workspaceAssetIdsBetween(displayOrder, anchor, asset.id)) next.add(id);
       } else if (next.has(asset.id)) next.delete(asset.id); else next.add(asset.id);
       return next;
     });
     lastSelected.current = asset.id;
+  }
+  const allVisibleSelected = displayOrder.length > 0 && displayOrder.every((asset) => multi.has(asset.id));
+  function selectAll() {
+    setMulti((current) => new Set([...current, ...displayOrder.map((asset) => asset.id)]));
+    lastSelected.current = null;
+  }
+  function deselectAll() {
+    setMulti((current) => { const next = new Set(current); for (const asset of displayOrder) next.delete(asset.id); return next; });
+    lastSelected.current = null;
   }
   function retryThumbnail(assetId: string) {
     setFailedThumbnails((current) => { const next = new Set(current); next.delete(assetId); return next; });
@@ -99,6 +114,7 @@ export function PhotoGrid({ assets, showSections, canReview, canRecommend, canSe
     const patch = action === "approve" ? { decision: "approved" as const } : action === "flag" ? { decision: "flagged" as const } : action === "recommend" ? { recommended: true } : action === "rate" ? { stars: 5 } : { colorLabel: "select" as const };
     await Promise.all(ids.map((id) => action === "select" ? onSelection(id, true) : onReview(id, patch)));
     setMulti(new Set());
+    lastSelected.current = null;
   }
   function renderGrid(gridAssets: WorkspaceAsset[]) {
     return <div className="grid workspace-photo-grid">{gridAssets.map((asset) => {
@@ -131,10 +147,10 @@ export function PhotoGrid({ assets, showSections, canReview, canRecommend, canSe
   }
 
   return <>
-    <div className="worktools"><div className="filter-chips">{filters.map((item) => <button type="button" className={`chip ${filter === item.id ? "is-active" : ""}`} key={item.id} onClick={() => setFilter(item.id)}>{item.label}<span className="cnt">{item.id === "all" ? assets.length : assets.filter((asset) => item.id === "recommended" ? asset.review?.recommended : item.id === "rated" ? rating(asset) > 0 : item.id === "labeled" ? Boolean(asset.review?.colorLabel) : asset.selected).length}</span></button>)}</div><div className="grow" /><span className="prog">{assets.length} frames</span></div>
+    <div className="worktools"><div className="filter-chips">{filters.map((item) => <button type="button" className={`chip ${filter === item.id ? "is-active" : ""}`} key={item.id} onClick={() => setFilter(item.id)}>{item.label}<span className="cnt">{item.id === "all" ? assets.length : assets.filter((asset) => item.id === "recommended" ? asset.review?.recommended : item.id === "rated" ? rating(asset) > 0 : item.id === "labeled" ? Boolean(asset.review?.colorLabel) : asset.selected).length}</span></button>)}{displayOrder.length > 0 && <button type="button" className={`chip ${allVisibleSelected ? "is-active" : ""}`} onClick={allVisibleSelected ? deselectAll : selectAll}>{allVisibleSelected ? "Deselect all" : "Select all"}</button>}</div><div className="grow" /><span className="prog">{assets.length} frames</span></div>
     <div className="workgrid">
       {visible.length === 0 ? <div className="empty"><span className="serif">No frames in this view.</span>Choose another filter or upload the capture set.</div> : showSections ? sectionGroups.map((group, index) => <section className="workspace-section" key={workspaceSectionKey(group.section)}><div className="ey" style={{ margin: index === 0 ? "4px 0 10px" : "22px 0 10px" }}>{group.label}</div>{renderGrid(group.assets)}</section>) : renderGrid(visible)}
     </div>
-    {multi.size > 0 && <div className="actionbar"><span className="n">{multi.size}</span><span className="lbl">selected</span><span className="vline" />{canReview && <><button className="barbtn" type="button" onClick={() => void bulk("rate")}>Rate 5</button><button className="barbtn" type="button" onClick={() => void bulk("label")}>Label</button><button className="barbtn barbtn--solid" type="button" onClick={() => void bulk("approve")}>Approve</button><button className="barbtn" type="button" onClick={() => void bulk("flag")}>Flag</button></>}{canRecommend && <button className="barbtn barbtn--solid" type="button" onClick={() => void bulk("recommend")}>Recommend</button>}{canSelect && <button className="barbtn" type="button" onClick={() => void bulk("select")}>Select for editing</button>}<button className="barbtn" type="button" onClick={() => setMulti(new Set())}>Clear</button></div>}
+    {multi.size > 0 && <div className="actionbar"><span className="n">{multi.size}</span><span className="lbl">selected</span><span className="vline" />{canReview && <><button className="barbtn" type="button" onClick={() => void bulk("rate")}>Rate 5</button><button className="barbtn" type="button" onClick={() => void bulk("label")}>Label</button><button className="barbtn barbtn--solid" type="button" onClick={() => void bulk("approve")}>Approve</button><button className="barbtn" type="button" onClick={() => void bulk("flag")}>Flag</button></>}{canRecommend && <button className="barbtn barbtn--solid" type="button" onClick={() => void bulk("recommend")}>Recommend</button>}{canSelect && <button className="barbtn" type="button" onClick={() => void bulk("select")}>Select for editing</button>}<button className="barbtn" type="button" onClick={() => { setMulti(new Set()); lastSelected.current = null; }}>Clear</button></div>}
   </>;
 }

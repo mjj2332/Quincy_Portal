@@ -140,9 +140,18 @@ export function ProjectWorkspace({ projectId, notice, onNoticeShown }: { project
 
   useEffect(() => {
     if (!projectId) return;
-    // Restore the RAW collection synchronously, then refresh it under the same generation
-    // guard as every other tab. This never leaves Edited assets under RAW-only controls.
-    if (activeTab === "raw") setAssets(rawAssetsRef.current);
+    // Restore the RAW collection synchronously, or clear to empty for every other tab (no
+    // equivalent cache exists for Edited/video/floorplan/copy) — then refresh under the same
+    // generation guard as every other tab. This never leaves one collection's assets under
+    // another collection's controls once the refresh below settles. A residual single-render
+    // window remains (React commits this render with the new activeTab before this effect runs)
+    // — not fully closed here by design, see docs/plans/ProjectWorkspace-Asset-Tab-Sync-Plan.md.
+    setAssets(activeTab === "raw" ? rawAssetsRef.current : []);
+    // A lightbox left open across a tab switch would either show the wrong collection's asset
+    // or, once assets clears above, crash on an out-of-range index (Lightbox.tsx dereferences
+    // assets[index] without a bounds check) — close it rather than try to keep it valid.
+    setOpenAssetId(null);
+    setLightboxOrderIds(null);
     void refreshAssets(activeTab).catch((reason: unknown) => {
       if (reason instanceof Error && reason.name === "AbortError") return;
       toast(reason instanceof Error ? reason.message : "Collection could not be loaded.", "error");
@@ -336,7 +345,7 @@ export function ProjectWorkspace({ projectId, notice, onNoticeShown }: { project
         {activeTab === "edited" && can("uploadEdited") && <div className="workgrid">{hasRawFolder
           ? <UploadDropzone projectId={projectId} collection="edited" onComplete={async () => { await Promise.all([refreshAssets("edited"), refreshProject()]); }} onToast={toast} />
           : <div className="empty" role="status"><span className="serif">No Dropbox RAW folder for this shoot.</span>Edited uploads are published to Dropbox before they appear here, and every destination is derived from the RAW folder. Create the shoot folder in Tonomo, then set the RAW folder on this project{canEdit ? " under Edit details" : ""}.</div>}</div>}
-        <PhotoGrid assets={assets} showSections={activeTab === "raw" || activeTab === "edited"} canReview={canReview} canRecommend={canRecommend} canSelect={activeTab === "raw" && canSelect} canSetCover={canEdit && (activeTab === "raw" || activeTab === "edited")} coverAssetId={project.effectiveCoverAssetId} storedCoverAssetId={project.coverAssetId} onSetCover={updateCover} onOpen={(asset, orderedAssets) => { setLightboxOrderIds(orderedAssets.map((item) => item.id)); setOpenAssetId(asset.id); }} onReview={updateReview} onSelection={updateSelection} />
+        <PhotoGrid key={activeTab} assets={assets} showSections={activeTab === "raw" || activeTab === "edited"} canReview={canReview} canRecommend={canRecommend} canSelect={activeTab === "raw" && canSelect} canSetCover={canEdit && (activeTab === "raw" || activeTab === "edited")} coverAssetId={project.effectiveCoverAssetId} storedCoverAssetId={project.coverAssetId} onSetCover={updateCover} onOpen={(asset, orderedAssets) => { setLightboxOrderIds(orderedAssets.map((item) => item.id)); setOpenAssetId(asset.id); }} onReview={updateReview} onSelection={updateSelection} />
       </> : <CollectionPanel projectId={projectId} collection={activeTab} assets={assets} canManage={canManageCollections} canApprove={can("reviewEdited")} onReview={updateReview} onChanged={async () => { await Promise.all([refreshAssets(activeTab), refreshProject()]); }} onToast={toast} />}
       {canAdminBackend && jobs.length > 0 && <div className="workgrid"><section className="hdr" style={{ alignItems: "flex-start", flexDirection: "column" }}><div><strong>autoHDR status</strong><div className="muted">Recent hand-offs, fetches, and manual-upload publishes for this project.</div></div>{jobs.map((job) => <div className="kv" style={{ width: "100%" }} key={job.id}><span className="k">{new Date(job.createdAt).toLocaleString("en-AU")}</span><span className="vv"><span className="k">{job.kind === "fetch_edited" ? "Fetch" : job.kind === "autohdr_scaffold" ? "Scaffold" : job.kind === "manual_edited_publish" ? "Manual upload" : "Send"}</span>{" "}<span className={`statetag st-${job.status}`}>{job.status}</span>{job.error ? ` ${job.error}` : ""}{(job.status === "stuck" || job.status === "failed") && <button className="chip" style={{ marginLeft: 8 }} type="button" onClick={() => void retryAutoHdr(job.id)}>Retry</button>}</span></div>)}</section></div>}
     </section>

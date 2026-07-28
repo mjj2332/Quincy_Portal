@@ -396,6 +396,13 @@ allowlist are silent no-ops otherwise). Full mechanics in `docs/subagents/agy-cl
 
 ## Open plans (see `docs/plans/`)
 
+- **`ProjectWorkspace-Asset-Tab-Sync-Plan.md`** — stub only, not yet drafted as a full plan.
+  `ProjectWorkspace.tsx`'s `assets` state is shared across every collection tab and only updates
+  once the new tab's fetch resolves, so a render can show one collection's assets under another
+  collection's controls for a window; `PhotoGrid-Select-All-Plan.md` shipped a pragmatic mitigation
+  (synchronous clear-to-empty + Lightbox close-on-switch) but not the fully synchronous fix (derive
+  displayed assets from a tracked `assetsKind` at render time). **Deferred by explicit user
+  decision: pick up after the current 6-feature batch, not before.**
 - **`Dropbox-Ingest-Concurrency-Safety-Plan.md`** — raising `quincy-ingest`'s
   `max_concurrency` above 1 so independent projects' RAW syncs can overlap. **Priority LOW, not
   scheduled**: deferred out of the RAW-Fetch speedup work above after two Terra review rounds
@@ -432,8 +439,16 @@ allowlist are silent no-ops otherwise). Full mechanics in `docs/subagents/agy-cl
   build when authorized; not yet built.** One open item needs the user's confirmation before
   building: global vs. project-scoped board (plan defaults to global).
 - **`PhotoGrid-Select-All-Plan.md`** — select-all button for the images grid, scoped to the
-  currently visible/filtered set. **Status: APPROVED by Terra (round 2, 2026-07-28). Ready to
-  build when authorized; not yet built.**
+  currently visible/filtered set. **Status: BUILT and verified (2026-07-28), not yet committed —
+  awaiting user go-ahead.** Plan needed 5 Terra review rounds (the handoff doc's original "2
+  rounds, APPROVED" summary was stale/wrong) and grew to include three pre-existing bug fixes
+  found along the way: a cross-tab stale-selection bug, a tab-switch fetch-gap race plus a
+  resulting Lightbox crash, and a real shift-click anchor race in `toggleMulti` found by this
+  build's own DOM tests (a mutable ref read inside a `setState` functional updater, raced against
+  a same-function mutation of that ref) — see the plan doc for details. A fuller architectural fix
+  for the fetch-gap race was deliberately deferred — see
+  `docs/plans/ProjectWorkspace-Asset-Tab-Sync-Plan.md` (stub, pick up after this 6-feature batch).
+  Terra diff review (2 rounds) approved. Full verify sequence green.
 - **`Editor-As-Photographer-Assignment-Plan.md`** — broaden `ProjectFields.tsx`'s photographer
   picker to include editor-role staff (backend already supports it; only the picker filtered
   them out). **Status: APPROVED by Terra (round 3, 2026-07-28). Ready to build when authorized;
