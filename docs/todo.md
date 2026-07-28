@@ -397,9 +397,13 @@ allowlist are silent no-ops otherwise). Full mechanics in `docs/subagents/agy-cl
   found it exposes a real data-loss race (a `dropbox_sync` message for a project already
   mid-sync gets acked and dropped instead of retried). Needs a fresh trigger check before
   picking back up — see the doc for the ack fix and DLQ safety-net this would require.
-- **`Notifications-Plan.md`** — in-app notifications v1 (bell icon surfacing project-progress
-  events, staff-only for v1, polling not push). **Status: DRAFT, user-requested exploration,
-  not yet reviewed or built.**
+- **`Notifications-Plan.md`** — in-app + email notifications v1 (bell icon surfacing
+  project-progress events plus a comment/annotation-to-assigned-editor event, staff-only for
+  v1, polling not push; Cloudflare Email Service folded in — sending to a small set of
+  pre-verified staff addresses is free on every plan, no Workers Paid blocker). **Status:
+  APPROVED by Terra (round 8, 2026-07-28) — the deepest review of this batch, since the real
+  AutoHDR trigger surface was far more scattered than first assumed. Ready to build when
+  authorized; not yet built.**
 - **`Cloudflare-Images-Pilot-Plan.md`** — renditions-only Cloudflare Images pilot.
   **Not recommended to proceed now**: the outage that motivated it resolved on its own, and an
   independent two-reviewer debate (Agy + Sol) on a related idea (moving originals to Dropbox)
@@ -411,6 +415,31 @@ allowlist are silent no-ops otherwise). Full mechanics in `docs/subagents/agy-cl
   `photographer`'s, so setting that person's `role` to `"editor"` works today. Kept as a
   ready-to-execute reference in case the workaround's tradeoffs (unscoped project visibility,
   lost photographer-only review restriction) become a real problem.
+- **`Kanban-Priority-And-Manual-Ordering-Plan.md`** — project priority (1-10, admin-set) that
+  repositions only the edited card among its column siblings (per explicit user decision, not a
+  full-column resort) plus admin-only manual up/down reordering, via a `boardPosition` sort key.
+  **Status: APPROVED by Terra (round 9, 2026-07-28) — tied with `Notifications-Plan.md` for the
+  deepest review in this batch (the real project-stage-writer surface across both
+  `workers/background` and `workers/app` was far more scattered than first assumed). Ready to
+  build when authorized; not yet built.**
+- **`Notice-Board-Plan.md`** — collapsible dashboard panel, chat-box-style staff message board,
+  polling-based, author-only delete. **Status: APPROVED by Terra (round 3, 2026-07-28). Ready to
+  build when authorized; not yet built.** One open item needs the user's confirmation before
+  building: global vs. project-scoped board (plan defaults to global).
+- **`PhotoGrid-Select-All-Plan.md`** — select-all button for the images grid, scoped to the
+  currently visible/filtered set. **Status: APPROVED by Terra (round 2, 2026-07-28). Ready to
+  build when authorized; not yet built.**
+- **`Editor-As-Photographer-Assignment-Plan.md`** — broaden `ProjectFields.tsx`'s photographer
+  picker to include editor-role staff (backend already supports it; only the picker filtered
+  them out). **Status: APPROVED by Terra (round 3, 2026-07-28). Ready to build when authorized;
+  not yet built.**
+- **`Photographer-Stage-Visibility-Plan.md`** — restrict photographer project visibility to
+  `awaiting_raw`/`raw_review` via `hasProjectAccess`. **Verified NOT implemented today** —
+  photographers currently see assigned projects at every stage (D-02 only restricts RAW-vs-
+  Edited media, not stage). **Status: APPROVED by Terra (round 4, 2026-07-28, max effort
+  throughout — security-relevant). Ready to build when authorized; not yet built.** The blanket
+  access cutoff (no read-only access to a photographer's own past contributions after the
+  cutoff) is confirmed as the intended design, per explicit user decision.
 
 ## Reference: infra & credentials (stable, rarely changes)
 
