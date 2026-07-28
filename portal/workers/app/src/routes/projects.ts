@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import { createDb, schema } from "@quincy/db";
 import { and, asc, desc, eq, exists, inArray, isNotNull, isNull, notExists, sql } from "drizzle-orm";
-import { COLLECTION_KINDS, computeRemovalAssetIds, isStageKey, ROLE_CAPABILITIES, type CollectionKind } from "@quincy/shared";
+import { COLLECTION_KINDS, computeRemovalAssetIds, isStageKey, PHOTOGRAPHER_VISIBLE_STAGES, ROLE_CAPABILITIES, type CollectionKind } from "@quincy/shared";
 import { z } from "zod";
 import type { AppEnv } from "../env";
 import { hasProjectAccess, requireCapability } from "../middleware/capability";
@@ -129,7 +129,7 @@ projectsRoutes.get("/projects", async (c) => {
   const archivedFilter = archived ? isNotNull(schema.projects.archivedAt) : isNull(schema.projects.archivedAt);
   const base = db.select({ project: schema.projects, receivedCount: schema.collections.receivedCount, expectedCount: schema.collections.expectedCount }).from(schema.projects).leftJoin(schema.collections, and(eq(schema.collections.projectId, schema.projects.id), eq(schema.collections.kind, "raw")));
   const rows = user.role === "photographer"
-    ? await base.where(and(archivedFilter, exists(db.select({ id: schema.projectMembers.id }).from(schema.projectMembers).where(and(eq(schema.projectMembers.projectId, schema.projects.id), eq(schema.projectMembers.userId, user.id)))))).orderBy(...dashboardProjectOrder).all()
+    ? await base.where(and(archivedFilter, exists(db.select({ id: schema.projectMembers.id }).from(schema.projectMembers).where(and(eq(schema.projectMembers.projectId, schema.projects.id), eq(schema.projectMembers.userId, user.id)))), inArray(schema.projects.stageKey, PHOTOGRAPHER_VISIBLE_STAGES))).orderBy(...dashboardProjectOrder).all()
     : await base.where(archivedFilter).orderBy(...dashboardProjectOrder).all();
   const orderedRows = orderDashboardStreetTies(rows);
   const projectIds = orderedRows.map(({ project }) => project.id);
@@ -232,7 +232,7 @@ projectsRoutes.post("/projects/:id/dropbox-sync", async (c) => {
   const id = c.req.param("id");
   const user = c.get("user");
   if (!ROLE_CAPABILITIES[user.role].includes("uploadRaw")) return c.json({ error: "Forbidden", capability: "uploadRaw" }, 403);
-  if (!(await hasProjectAccess(c, id))) return c.json({ error: "Not found" }, 404);
+  if (!(await hasProjectAccess(c, id))) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   const project = await createDb(c.env.DB).select({ rawFolderPath: schema.projects.rawFolderPath, rawFolderLink: schema.projects.rawFolderLink }).from(schema.projects).where(eq(schema.projects.id, id)).get();
   if (!project?.rawFolderPath && !project?.rawFolderLink) return c.json({ error: "No Dropbox folder configured for this project" }, 400);
   const { jobId } = await c.env.BACKGROUND.triggerDropboxSync(id);

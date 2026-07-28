@@ -251,6 +251,64 @@ async function createEditableAnnotation(strokes: Array<{ points: Array<{ x: numb
   return { assetId, annotationId: created.id, strokeR2Key: created.strokeR2Key };
 }
 
+type VisibilityFixture = { projectId: string; assetId: string; annotationId: string; commentId: string };
+
+async function createVisibilityFixture(): Promise<VisibilityFixture> {
+  const adminCookie = await sessionCookie(adminToken);
+  const projectResponse = await SELF.fetch("https://portal.test/api/projects", {
+    method: "POST",
+    headers: { cookie: adminCookie, "content-type": "application/json" },
+    body: JSON.stringify({
+      street: `Stage visibility ${crypto.randomUUID()}`,
+      orderedServices: ["video", "floorplan", "copy"],
+      photographerUserIds: [firstPhotographerId],
+      editorUserIds: [editorId],
+    }),
+  });
+  expect(projectResponse.status).toBe(201);
+  const project = await projectResponse.json() as { id: string };
+  const collection = await database.DB.prepare("SELECT id FROM collections WHERE project_id = ? AND kind = 'raw'")
+    .bind(project.id).first<{ id: string }>();
+  expect(collection).toBeDefined();
+  const assetId = crypto.randomUUID();
+  const key = `projects/${project.id}/raw/${assetId}/visibility.jpg`;
+  const now = Date.now();
+  await authEnv.MEDIA.put(key, "stage-visibility-asset", { httpMetadata: { contentType: "image/jpeg" } });
+  await database.DB.prepare(
+    "INSERT INTO assets (id, collection_id, r2_key, original_filename, bytes, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+  ).bind(assetId, collection!.id, key, "visibility.jpg", 22, "upload", now, now).run();
+
+  const photographerCookie = await sessionCookie(firstPhotographerToken);
+  const annotationResponse = await SELF.fetch(`https://portal.test/api/assets/${assetId}/annotations`, {
+    method: "POST",
+    headers: { cookie: photographerCookie, "content-type": "application/json" },
+    body: JSON.stringify({ strokes: [{ points: [{ x: 0.1, y: 0.2 }], color: "#3f5b3a", width: 2 }], noteText: "Stage visibility annotation" }),
+  });
+  expect(annotationResponse.status).toBe(201);
+  const annotation = await annotationResponse.json() as { id: string };
+  const commentResponse = await SELF.fetch(`https://portal.test/api/assets/${assetId}/comments`, {
+    method: "POST",
+    headers: { cookie: photographerCookie, "content-type": "application/json" },
+    body: JSON.stringify({ body: "Stage visibility comment" }),
+  });
+  expect(commentResponse.status).toBe(201);
+  const comment = await commentResponse.json() as { id: string };
+  return { projectId: project.id, assetId, annotationId: annotation.id, commentId: comment.id };
+}
+
+async function setFixtureStage(fixture: VisibilityFixture, stageKey: string) {
+  await database.DB.prepare("UPDATE projects SET stage_key = ?, updated_at = ? WHERE id = ?")
+    .bind(stageKey, Date.now(), fixture.projectId).run();
+}
+
+async function jsonRequest(path: string, cookie: string, method: "GET" | "POST" | "PATCH" | "DELETE", body?: unknown) {
+  return SELF.fetch(`https://portal.test${path}`, {
+    method,
+    headers: { cookie, ...(body === undefined ? {} : { "content-type": "application/json" }) },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+}
+
 describe("staff app API", () => {
   it("verifies a fresh manual RAW batch from its durable manifest attribution", async () => {
     const cookie = await sessionCookie(adminToken);
@@ -528,6 +586,168 @@ describe("staff app API", () => {
       expect.objectContaining({ id: older, receivedCount: 2, expectedCount: 3 }),
     ]);
   });
+
+  it("enforces photographer stage visibility across every access-gated route family", async () => {
+    const fixture = await createVisibilityFixture();
+    const photographerCookie = await sessionCookie(firstPhotographerToken);
+    const nonMemberCookie = await sessionCookie(photographerToken);
+    const stages = ["awaiting_raw", "raw_review", "editing_autohdr", "edited_review", "delivered"] as const;
+    const expectStageStatus = (response: Response, allowed: number | number[]) => {
+      const expected = Array.isArray(allowed) ? allowed : [allowed];
+      expect(expected).toContain(response.status);
+    };
+    const annotationBody = { strokes: [{ points: [{ x: 0.2, y: 0.3 }], color: "#9a6a1f", width: 2 }] };
+
+    for (const [index, stageKey] of stages.entries()) {
+      await setFixtureStage(fixture, stageKey);
+      const visible = index < 2;
+      const accessStatus = visible ? 200 : 403;
+      expectStageStatus(await jsonRequest(`/api/projects/${fixture.projectId}`, photographerCookie, "GET"), accessStatus);
+      expectStageStatus(await jsonRequest(`/media/asset/${fixture.assetId}/original`, photographerCookie, "GET"), accessStatus);
+      expectStageStatus(await jsonRequest(`/api/assets/${fixture.assetId}/annotations`, photographerCookie, "GET"), accessStatus);
+      expectStageStatus(await jsonRequest(`/media/annotation/${fixture.annotationId}`, photographerCookie, "GET"), accessStatus);
+      expectStageStatus(await jsonRequest(`/api/projects/${fixture.projectId}/assets?collection=raw`, photographerCookie, "GET"), accessStatus);
+      expectStageStatus(await jsonRequest(`/api/assets/${fixture.assetId}/review`, photographerCookie, "POST", { recommended: true }), accessStatus);
+
+      const createdAnnotation = await jsonRequest(`/api/assets/${fixture.assetId}/annotations`, photographerCookie, "POST", { ...annotationBody, noteText: `stage ${stageKey}` });
+      expectStageStatus(createdAnnotation, visible ? 201 : 403);
+      if (visible) {
+        const created = await createdAnnotation.json() as { id: string };
+        expectStageStatus(await jsonRequest(`/api/annotations/${created.id}`, photographerCookie, "DELETE"), 200);
+      }
+      expectStageStatus(await jsonRequest(`/api/annotations/${fixture.annotationId}`, photographerCookie, "PATCH", { noteText: `edited ${stageKey}` }), visible ? 200 : 403);
+      if (!visible) expectStageStatus(await jsonRequest(`/api/annotations/${fixture.annotationId}`, photographerCookie, "DELETE"), 403);
+
+      const createdComment = await jsonRequest(`/api/assets/${fixture.assetId}/comments`, photographerCookie, "POST", { body: `stage ${stageKey}` });
+      expectStageStatus(createdComment, visible ? 201 : 403);
+      if (visible) {
+        const created = await createdComment.json() as { id: string };
+        expectStageStatus(await jsonRequest(`/api/comments/${created.id}`, photographerCookie, "DELETE"), 200);
+      }
+      expectStageStatus(await jsonRequest(`/api/comments/${fixture.commentId}`, photographerCookie, "PATCH", { body: `edited ${stageKey}` }), visible ? 200 : 403);
+      expectStageStatus(await jsonRequest(`/api/comments/${fixture.commentId}`, photographerCookie, "DELETE"), visible ? 200 : 403);
+      if (visible) {
+        // Restore the fixture comment for the next stage; deletion itself is also covered here.
+        const restored = await jsonRequest(`/api/assets/${fixture.assetId}/comments`, photographerCookie, "POST", { body: `restored ${stageKey}` });
+        expect(restored.status).toBe(201);
+        const replacement = await restored.json() as { id: string };
+        fixture.commentId = replacement.id;
+      }
+
+      expectStageStatus(await jsonRequest(`/api/projects/${fixture.projectId}/upload-manifest`, photographerCookie, "POST", { filenames: [`stage-${stageKey}.jpg`] }), visible ? 200 : 403);
+      expectStageStatus(await jsonRequest("/api/uploads/presign", photographerCookie, "POST", { projectId: fixture.projectId, filename: "stage.jpg", bytes: 10, collection: "raw" }), visible ? 503 : 403);
+      const uploadAssetId = crypto.randomUUID();
+      expectStageStatus(await jsonRequest("/api/uploads/complete", photographerCookie, "POST", { projectId: fixture.projectId, key: `projects/${fixture.projectId}/raw/${uploadAssetId}/stage.jpg`, originalFilename: "stage.jpg", collection: "raw" }), visible ? 409 : 403);
+      expectStageStatus(await jsonRequest(`/api/projects/${fixture.projectId}/ingest-status`, photographerCookie, "GET"), visible ? 200 : 403);
+      // Production intentionally rejects the dev-only direct PUT before authorization;
+      // retain this assertion so the fifth upload route cannot silently drift into production.
+      const directUpload = await SELF.fetch(`https://portal.test/api/uploads/direct?key=projects/${fixture.projectId}/raw/${crypto.randomUUID()}/stage.jpg`, {
+        method: "PUT", headers: { cookie: photographerCookie }, body: "stage",
+      });
+      expect(directUpload.status).toBe(404);
+
+      // Photographers reach these collection routes only while assigned, then fail their
+      // existing capability check; after the cutoff the central access check is the first 403.
+      expectStageStatus(await jsonRequest(`/api/projects/${fixture.projectId}/links?collection=video`, photographerCookie, "GET"), 403);
+      expectStageStatus(await jsonRequest(`/api/projects/${fixture.projectId}/links`, photographerCookie, "POST", { collection: "video", url: `https://example.com/${crypto.randomUUID()}` }), 403);
+      expectStageStatus(await jsonRequest(`/api/projects/${fixture.projectId}/links/${crypto.randomUUID()}`, photographerCookie, "DELETE"), 403);
+      expectStageStatus(await jsonRequest(`/api/projects/${fixture.projectId}/documents/presign`, photographerCookie, "POST", { kind: "copy_pdf", pdf: { filename: "stage.pdf", bytes: 10, contentType: "application/pdf" } }), 403);
+      expectStageStatus(await jsonRequest(`/api/projects/${fixture.projectId}/documents/complete`, photographerCookie, "POST", { sessionId: crypto.randomUUID(), pdf: {} }), 403);
+      expectStageStatus(await jsonRequest(`/api/projects/${fixture.projectId}/documents/${crypto.randomUUID()}/abort`, photographerCookie, "POST"), 403);
+      const directDocument = await SELF.fetch(`https://portal.test/api/projects/${fixture.projectId}/documents/direct/${crypto.randomUUID()}/pdf`, {
+        method: "PUT", headers: { cookie: photographerCookie }, body: "stage",
+      });
+      expect(directDocument.status).toBe(404);
+
+      expectStageStatus(await jsonRequest(`/api/projects/${fixture.projectId}`, photographerCookie, "PATCH", { notes: `stage ${stageKey}` }), 403);
+      expectStageStatus(await jsonRequest(`/api/projects/${fixture.projectId}/cover`, photographerCookie, "POST", { assetId: null }), 403);
+      expectStageStatus(await jsonRequest(`/api/projects/${fixture.projectId}/dropbox-sync`, photographerCookie, "POST"), visible ? 400 : 403);
+      expectStageStatus(await jsonRequest(`/api/projects/${fixture.projectId}/sync-dropbox`, photographerCookie, "POST"), visible ? 409 : 403);
+      expectStageStatus(await jsonRequest(`/api/projects/${fixture.projectId}/manual-upload-jobs`, photographerCookie, "GET"), visible ? 200 : 403);
+      expectStageStatus(await jsonRequest(`/api/projects/${fixture.projectId}/selected-raw.zip`, photographerCookie, "GET"), 403);
+
+      // These routes retain their existing adminBackend middleware; the photographer is denied
+      // before that route's hasProjectAccess call, but every live call site remains exercised.
+      expectStageStatus(await jsonRequest(`/api/projects/${fixture.projectId}/send-to-autohdr`, photographerCookie, "POST", {}), 403);
+      expectStageStatus(await jsonRequest(`/api/projects/${fixture.projectId}/fetch-edited`, photographerCookie, "POST"), 403);
+      expectStageStatus(await jsonRequest(`/api/projects/${fixture.projectId}/autohdr-status`, photographerCookie, "GET"), 403);
+      expectStageStatus(await jsonRequest(`/api/projects/${fixture.projectId}/autohdr-history`, photographerCookie, "GET"), 403);
+      expectStageStatus(await jsonRequest(`/api/projects/${fixture.projectId}/autohdr-coverage`, photographerCookie, "POST", { handoffId: crypto.randomUUID(), assetId: fixture.assetId, readinessUnitKey: "stage" }), 403);
+      expectStageStatus(await jsonRequest(`/api/projects/${fixture.projectId}/jobs`, photographerCookie, "GET"), 403);
+      expectStageStatus(await jsonRequest(`/api/projects/${fixture.projectId}/stage`, photographerCookie, "POST", { stageKey: "raw_review" }), 403);
+      expectStageStatus(await jsonRequest(`/api/jobs/${crypto.randomUUID()}/retry`, photographerCookie, "POST"), 403);
+
+      // Non-members must remain denied at every stage, even while the project itself is visible
+      // to an assigned photographer in the first two stages.
+      for (const response of await Promise.all([
+        jsonRequest(`/api/projects/${fixture.projectId}`, nonMemberCookie, "GET"),
+        jsonRequest(`/media/asset/${fixture.assetId}/original`, nonMemberCookie, "GET"),
+        jsonRequest(`/media/annotation/${fixture.annotationId}`, nonMemberCookie, "GET"),
+        jsonRequest(`/api/assets/${fixture.assetId}/annotations`, nonMemberCookie, "GET"),
+        jsonRequest(`/api/annotations/${fixture.annotationId}`, nonMemberCookie, "PATCH", { noteText: "non-member" }),
+        jsonRequest(`/api/annotations/${fixture.annotationId}`, nonMemberCookie, "DELETE"),
+        jsonRequest(`/api/comments/${fixture.commentId}`, nonMemberCookie, "PATCH", { body: "non-member" }),
+        jsonRequest(`/api/comments/${fixture.commentId}`, nonMemberCookie, "DELETE"),
+        jsonRequest(`/api/projects/${fixture.projectId}/assets?collection=raw`, nonMemberCookie, "GET"),
+        jsonRequest(`/api/assets/${fixture.assetId}/review`, nonMemberCookie, "POST", { recommended: true }),
+        jsonRequest(`/api/assets/${fixture.assetId}/annotations`, nonMemberCookie, "POST", { noteText: "non-member" }),
+        jsonRequest(`/api/projects/${fixture.projectId}/upload-manifest`, nonMemberCookie, "POST", { filenames: ["non-member.jpg"] }),
+        jsonRequest(`/api/projects/${fixture.projectId}/ingest-status`, nonMemberCookie, "GET"),
+        jsonRequest(`/api/projects/${fixture.projectId}/links?collection=video`, nonMemberCookie, "GET"),
+        jsonRequest(`/api/projects/${fixture.projectId}/documents/presign`, nonMemberCookie, "POST", { kind: "copy_pdf", pdf: { filename: "non-member.pdf", bytes: 10, contentType: "application/pdf" } }),
+      ])) expect(response.status).toBe(403);
+    }
+
+    // Admin's explicit backward stage change must be observed immediately by the next request.
+    await setFixtureStage(fixture, "editing_autohdr");
+    expect((await jsonRequest(`/api/projects/${fixture.projectId}`, photographerCookie, "GET")).status).toBe(403);
+    const reverted = await jsonRequest(`/api/projects/${fixture.projectId}/stage`, await sessionCookie(adminToken), "POST", { stageKey: "raw_review" });
+    expect(reverted.status).toBe(200);
+    expect((await jsonRequest(`/api/projects/${fixture.projectId}`, photographerCookie, "GET")).status).toBe(200);
+
+    // Editor and admin retain access at every stage; this guards the viewAllProjects short-circuit
+    // and the editor's existing unrestricted project visibility.
+    for (const stageKey of stages) {
+      await setFixtureStage(fixture, stageKey);
+      for (const cookie of [await sessionCookie(editorToken), await sessionCookie(adminToken)]) {
+        expect((await jsonRequest(`/api/projects/${fixture.projectId}`, cookie, "GET")).status).toBe(200);
+        expect((await jsonRequest(`/media/asset/${fixture.assetId}/original`, cookie, "GET")).status).toBe(200);
+        expect((await jsonRequest(`/api/assets/${fixture.assetId}/annotations`, cookie, "GET")).status).toBe(200);
+        expect((await jsonRequest(`/api/projects/${fixture.projectId}/assets?collection=raw`, cookie, "GET")).status).toBe(200);
+        expect((await jsonRequest(`/api/projects/${fixture.projectId}/ingest-status`, cookie, "GET")).status).toBe(200);
+        expect((await jsonRequest(`/api/assets/${fixture.assetId}/review`, cookie, "POST", { recommended: true })).status).toBe(200);
+        expect((await jsonRequest(`/api/assets/${fixture.assetId}/select`, cookie, "POST")).status).toBe(200);
+        expect((await jsonRequest(`/api/assets/${fixture.assetId}/select`, cookie, "DELETE")).status).toBe(200);
+      }
+    }
+
+    // Final author cleanup is deliberately performed while the photographer is still in a
+    // visible stage, proving delete routes are live for assigned photographers before cutoff.
+    await setFixtureStage(fixture, "raw_review");
+    expect((await jsonRequest(`/api/annotations/${fixture.annotationId}`, photographerCookie, "DELETE")).status).toBe(200);
+    expect((await jsonRequest(`/api/comments/${fixture.commentId}`, photographerCookie, "DELETE")).status).toBe(200);
+    expect((await jsonRequest(`/api/projects/${fixture.projectId}`, photographerCookie, "GET")).status).toBe(200);
+  }, 30_000);
+
+  it("filters the photographer dashboard by live stage while leaving editor/admin lists intact", async () => {
+    const fixture = await createVisibilityFixture();
+    const adminCookie = await sessionCookie(adminToken);
+    const editorCookie = await sessionCookie(editorToken);
+    const photographerCookie = await sessionCookie(firstPhotographerToken);
+    const listedIds = async (cookie: string) => (await (await jsonRequest("/api/projects", cookie, "GET")).json() as { projects: Array<{ id: string }> }).projects.map((project) => project.id);
+
+    for (const [index, stageKey] of ["awaiting_raw", "raw_review", "editing_autohdr", "edited_review", "delivered"].entries()) {
+      await setFixtureStage(fixture, stageKey);
+      if (index < 2) expect(await listedIds(photographerCookie)).toContain(fixture.projectId);
+      else expect(await listedIds(photographerCookie)).not.toContain(fixture.projectId);
+      expect(await listedIds(editorCookie)).toContain(fixture.projectId);
+      expect(await listedIds(adminCookie)).toContain(fixture.projectId);
+    }
+    await setFixtureStage(fixture, "editing_autohdr");
+    const reverted = await jsonRequest(`/api/projects/${fixture.projectId}/stage`, adminCookie, "POST", { stageKey: "raw_review" });
+    expect(reverted.status).toBe(200);
+    expect(await listedIds(photographerCookie)).toContain(fixture.projectId);
+  }, 15_000);
 
   it("requires the exact configured Origin for custom API mutations while leaving safe and auth routes alone", async () => {
     const cookie = await sessionCookie(adminToken);
@@ -1960,10 +2180,16 @@ describe("staff app API", () => {
     const stageFor = async (response: Response) => (await response.json() as { projects: Array<{ id: string; stageKey: string }> }).projects.find((item) => item.id === project.id)?.stageKey;
     await expect(stageFor(adminList)).resolves.toBe("editing_autohdr");
     await expect(stageFor(editorList)).resolves.toBe("editing");
-    await expect(stageFor(photographerList)).resolves.toBe("editing");
+    // Per Photographer-Stage-Visibility-Plan.md, a photographer's assigned project drops out of
+    // their dashboard list entirely once it passes raw_review — editing_autohdr is well beyond
+    // that cutoff, so the project is absent from their list rather than present with a mapped
+    // "editing" stage key.
+    await expect(stageFor(photographerList)).resolves.toBeUndefined();
     await expect(adminDetail.json()).resolves.toMatchObject({ stageKey: "editing_autohdr" });
     await expect(editorDetail.json()).resolves.toMatchObject({ stageKey: "editing" });
-    await expect(photographerDetail.json()).resolves.toMatchObject({ stageKey: "editing" });
+    // Same cutoff applies to the direct-fetch route: the photographer is denied outright rather
+    // than seeing the project's (mapped) stage.
+    expect(photographerDetail.status).toBe(403);
     for (const response of [adminStages, editorStages, photographerStages]) expect(response.status).toBe(200);
     const stageKeys = async (response: Response) => (await response.json() as { stages: Array<{ key: string; label: string }> }).stages;
     await expect(stageKeys(adminStages)).resolves.toEqual(expect.arrayContaining([expect.objectContaining({ key: "editing_autohdr" })]));

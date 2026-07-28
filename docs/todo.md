@@ -454,12 +454,16 @@ allowlist are silent no-ops otherwise). Full mechanics in `docs/subagents/agy-cl
   them out). **Status: BUILT and verified (2026-07-28), not yet committed — awaiting user
   go-ahead.** Terra diff review approved on first pass. Full verify sequence green.
 - **`Photographer-Stage-Visibility-Plan.md`** — restrict photographer project visibility to
-  `awaiting_raw`/`raw_review` via `hasProjectAccess`. **Verified NOT implemented today** —
-  photographers currently see assigned projects at every stage (D-02 only restricts RAW-vs-
-  Edited media, not stage). **Status: APPROVED by Terra (round 4, 2026-07-28, max effort
-  throughout — security-relevant). Ready to build when authorized; not yet built.** The blanket
-  access cutoff (no read-only access to a photographer's own past contributions after the
-  cutoff) is confirmed as the intended design, per explicit user decision.
+  `awaiting_raw`/`raw_review` via `hasProjectAccess`. **Status: BUILT and verified (2026-07-28),
+  not yet committed — awaiting user go-ahead.** Built by Terra (max effort); the Cloudflare Worker
+  integration suites Terra's own sandbox couldn't run (Miniflare `127.0.0.1` EPERM) were run
+  independently in this session and caught two real bugs — a pre-existing 404-vs-403
+  inconsistency on `dropbox-sync` the new stage gate made reachable for the first time, and a
+  pre-existing test asserting the old photographer-visibility behavior — both fixed. Terra diff
+  review (fresh context, max effort) approved. Full verify sequence green (typecheck, build, all
+  four workspace suites, `packages/shared`). The blanket access cutoff (no read-only access to a
+  photographer's own past contributions after the cutoff) remains the confirmed design, per
+  explicit user decision.
 
 ## Reference: infra & credentials (stable, rarely changes)
 

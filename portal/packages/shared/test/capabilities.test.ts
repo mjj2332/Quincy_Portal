@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ROLE_CAPABILITIES, roleHasCapability } from "../src/capabilities";
-import { STAGE_KEYS, STAGE_TRANSITIONS } from "../src/stages";
+import { PHOTOGRAPHER_VISIBLE_STAGES, STAGE_KEYS, STAGE_TRANSITIONS } from "../src/stages";
 
 describe("PRD §4 capability matrix", () => {
   it("keeps photographers strictly RAW-only", () => {
@@ -33,6 +33,10 @@ describe("PRD §4 capability matrix", () => {
 });
 
 describe("pipeline stage transitions", () => {
+  it("limits photographer visibility to the two RAW stages", () => {
+    expect(PHOTOGRAPHER_VISIBLE_STAGES).toEqual(["awaiting_raw", "raw_review"]);
+  });
+
   it("forms the shipped linear chain without client_review", () => {
     expect(STAGE_TRANSITIONS).toEqual({
       awaiting_raw: ["raw_review"],

@@ -1,15 +1,20 @@
 # Photographer Stage-Visibility Restriction — Plan
 
-**Status: APPROVED by Terra (round 4, 2026-07-28, max effort throughout given the
-authorization-security nature of this change). Ready to build whenever the user authorizes it —
-not yet built.** §5's blanket-cutoff design is an explicit approval checkpoint the user should
-confirm before building, not something to infer from silence (see §5).
+**Status: BUILT and verified (2026-07-28).** Plan approved by Terra (round 4, max effort). Built
+by Terra (max effort, security/auth routing); independent verification in this session found and
+fixed two real bugs the build's own sandbox couldn't catch (Miniflare integration tests don't run
+there) — a pre-existing 404-vs-403 inconsistency on `dropbox-sync` the new stage gate made
+reachable for the first time, and a pre-existing test asserting the old, now-intentionally-changed
+photographer-visibility behavior. Terra diff review (fresh context, max effort) **APPROVED**. Full
+verify sequence green. §5's blanket-cutoff design was an explicit approval checkpoint the user
+confirmed before this build, not inferred from silence. Not yet committed — awaiting the user's
+go-ahead.
 
 User request: double-confirm that photographers can only see their assigned projects while
 those projects are in `awaiting_raw`/`raw_review`, and cannot see them once they've progressed
 further — implement it if it's missing.
 
-## Verification result: this is NOT implemented today — confirmed by direct read
+## Pre-build verification: this was NOT implemented — confirmed by direct read
 
 - **Decision-Sheet D-02** (`docs/Decision-Sheet.md:18`) decided photographer access as "assigned
   projects only, **RAW-only**" — a restriction on *which media kind* they can view (RAW, never

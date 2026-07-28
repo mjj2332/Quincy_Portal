@@ -14,6 +14,10 @@ export const STAGE_KEYS = [
 ] as const;
 export type StageKey = (typeof STAGE_KEYS)[number];
 
+/** Stages a photographer's assigned project remains visible in. Beyond this, they lose all
+ * access to that project — not just Edited-media visibility (see D-02), the project itself. */
+export const PHOTOGRAPHER_VISIBLE_STAGES: readonly StageKey[] = ["awaiting_raw", "raw_review"];
+
 export interface StageDefinition {
   key: StageKey;
   label: string;

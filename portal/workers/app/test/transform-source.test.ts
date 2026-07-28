@@ -6,7 +6,11 @@ import type { Env } from "../src/env";
 const env = { TRANSFORM_SOURCE_SECRET: "test-transform-source-secret-32-bytes" } as Env;
 
 describe("private transform source signatures", () => {
-  it("binds the key and a versioned expiry", async () => {
+  // This is intentionally a bearer-token contract test, not a new project-stage
+  // authorization test: the transform-source route has no project context and remains
+  // outside hasProjectAccess by design. Stage access is enforced on /media before issuing
+  // the URL; already-issued transform URLs are not immediately revocable.
+  it("keeps canonical query, cache-version, expiry, and key-bound HMAC validation", async () => {
     const key = "projects/test/raw/asset/photo.jpg";
     const now = 1_800_000_000;
     const expiresAt = now + 300;
