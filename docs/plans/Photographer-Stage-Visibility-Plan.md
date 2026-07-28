@@ -7,8 +7,12 @@ there) — a pre-existing 404-vs-403 inconsistency on `dropbox-sync` the new sta
 reachable for the first time, and a pre-existing test asserting the old, now-intentionally-changed
 photographer-visibility behavior. Terra diff review (fresh context, max effort) **APPROVED**. Full
 verify sequence green. §5's blanket-cutoff design was an explicit approval checkpoint the user
-confirmed before this build, not inferred from silence. Not yet committed — awaiting the user's
-go-ahead.
+confirmed before this build, not inferred from silence. **Committed (`57f87a6`) and deployed to
+production (2026-07-28)** — `workers/app` only (the only worker touching `hasProjectAccess`/the
+dashboard query), no migration needed. Post-deploy smoke: site loads (200), unauthenticated API
+route correctly 401. Full manual smoke (photographer account losing dashboard visibility/getting
+403 on direct navigation once a project passes `raw_review`) not yet run against a real staff
+account.
 
 User request: double-confirm that photographers can only see their assigned projects while
 those projects are in `awaiting_raw`/`raw_review`, and cannot see them once they've progressed

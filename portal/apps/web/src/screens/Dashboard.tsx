@@ -7,6 +7,7 @@ import { useCapabilities } from "../lib/capabilities";
 import { type ProjectStageKey, useStages } from "../lib/stages";
 import { formatDashboardDate, initializeDashboardView, type DashboardView } from "./dashboard-helpers";
 import { InternalLink } from "../components/InternalLink";
+import { NoticeBoard } from "../components/NoticeBoard";
 
 export interface ProjectSummary {
   id: string;
@@ -78,12 +79,13 @@ function ProjectListRow({ project }: { project: ProjectSummary }) {
   </div>;
 }
 
-export function Dashboard() {
+export function Dashboard({ currentUserId }: { currentUserId: string }) {
   const { can } = useCapabilities();
   const { stages } = useStages();
   const canCreateProject = can("createProject");
   const canMoveStages = can("selectForEditing");
   const canViewArchived = can("adminBackend");
+  const canViewNoticeBoard = can("viewNoticeBoard");
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [projectScope, setProjectScope] = useState<ProjectScope>("active");
   const [query, setQuery] = useState("");
@@ -186,6 +188,8 @@ export function Dashboard() {
           {canCreateProject && <InternalLink className="button" to="/projects/new">New shoot</InternalLink>}
         </div>
       </div>
+
+      {canViewNoticeBoard && <NoticeBoard currentUserId={currentUserId} />}
 
       {!viewingArchived && <div className="stats" aria-label="Project summary">
         <div className="stat"><div className="v">{activeCount}</div><div className="l">Active shoots</div></div>

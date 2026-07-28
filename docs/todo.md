@@ -435,12 +435,14 @@ allowlist are silent no-ops otherwise). Full mechanics in `docs/subagents/agy-cl
   `workers/background` and `workers/app` was far more scattered than first assumed). Ready to
   build when authorized; not yet built.**
 - **`Notice-Board-Plan.md`** — collapsible dashboard panel, chat-box-style staff message board,
-  polling-based, author-only delete. **Status: APPROVED by Terra (round 3, 2026-07-28). Ready to
-  build when authorized; not yet built.** One open item needs the user's confirmation before
-  building: global vs. project-scoped board (plan defaults to global).
+  polling-based, author-only delete, global (not project-scoped, per explicit user decision),
+  visible to admin+editor only via a new `viewNoticeBoard` capability (photographers excluded, per
+  the same decision). **Status: BUILT and verified (2026-07-28), not yet committed — awaiting user
+  go-ahead.** Built by Terra; full verify sequence green on the first real run (no bugs found).
+  Terra diff review approved on first pass. Migration `0018` (`notice_board_posts`).
 - **`PhotoGrid-Select-All-Plan.md`** — select-all button for the images grid, scoped to the
-  currently visible/filtered set. **Status: BUILT and verified (2026-07-28), not yet committed —
-  awaiting user go-ahead.** Plan needed 5 Terra review rounds (the handoff doc's original "2
+  currently visible/filtered set. **Status: BUILT, verified, and COMMITTED (`ad2b60b`,
+  2026-07-28), not yet deployed.** Plan needed 5 Terra review rounds (the handoff doc's original "2
   rounds, APPROVED" summary was stale/wrong) and grew to include three pre-existing bug fixes
   found along the way: a cross-tab stale-selection bug, a tab-switch fetch-gap race plus a
   resulting Lightbox crash, and a real shift-click anchor race in `toggleMulti` found by this
@@ -451,11 +453,13 @@ allowlist are silent no-ops otherwise). Full mechanics in `docs/subagents/agy-cl
   Terra diff review (2 rounds) approved. Full verify sequence green.
 - **`Editor-As-Photographer-Assignment-Plan.md`** — broaden `ProjectFields.tsx`'s photographer
   picker to include editor-role staff (backend already supports it; only the picker filtered
-  them out). **Status: BUILT and verified (2026-07-28), not yet committed — awaiting user
-  go-ahead.** Terra diff review approved on first pass. Full verify sequence green.
+  them out). **Status: BUILT, verified, and COMMITTED (`99b7509`, 2026-07-28), not yet deployed.**
+  Terra diff review approved on first pass. Full verify sequence green.
 - **`Photographer-Stage-Visibility-Plan.md`** — restrict photographer project visibility to
-  `awaiting_raw`/`raw_review` via `hasProjectAccess`. **Status: BUILT and verified (2026-07-28),
-  not yet committed — awaiting user go-ahead.** Built by Terra (max effort); the Cloudflare Worker
+  `awaiting_raw`/`raw_review` via `hasProjectAccess`. **Status: BUILT, verified, committed
+  (`57f87a6`), and DEPLOYED to production (2026-07-28)** — `workers/app` only, no migration.
+  Post-deploy smoke clean (site loads, unauth API 401); full manual smoke against a real
+  photographer account not yet run. Built by Terra (max effort); the Cloudflare Worker
   integration suites Terra's own sandbox couldn't run (Miniflare `127.0.0.1` EPERM) were run
   independently in this session and caught two real bugs — a pre-existing 404-vs-403
   inconsistency on `dropbox-sync` the new stage gate made reachable for the first time, and a

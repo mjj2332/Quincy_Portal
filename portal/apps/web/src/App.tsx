@@ -12,7 +12,7 @@ import { CreateProject } from "./screens/CreateProject";
 import { EditProject } from "./screens/EditProject";
 import { StagesProvider } from "./lib/stages";
 
-type SessionUser = { id?: string | null; name?: string | null; email?: string | null };
+type SessionUser = { id: string; name?: string | null; email?: string | null };
 type Notice = { path: string; message: string } | null;
 
 function viewFor(route: StaffRoute): AppView {
@@ -62,7 +62,7 @@ function Shell({ user }: { user: SessionUser }) {
     <div className="app">
       <Topbar activeView={activeView} canAccessAdmin={canAccessAdmin} user={user} />
       {blocked && <main className="page"><div className="empty" role="status"><span className="serif">Returning to dashboard.</span></div></main>}
-      {!blocked && route.kind === "dashboard" && <Dashboard />}
+      {!blocked && route.kind === "dashboard" && <Dashboard currentUserId={user.id} />}
       {!blocked && route.kind === "project" && <ProjectWorkspace key={route.projectId} projectId={route.projectId} notice={notice?.path === pathname ? notice.message : null} onNoticeShown={() => setNotice(null)} />}
       {!blocked && route.kind === "create-project" && <CreateProject onNavigate={navigate} />}
       {!blocked && route.kind === "edit-project" && <EditProject key={route.projectId} projectId={route.projectId} onNavigate={navigate} />}

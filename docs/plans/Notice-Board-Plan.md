@@ -1,9 +1,12 @@
 # Dashboard Notice Board — Plan
 
-**Status: APPROVED by Terra (round 3, 2026-07-28). Ready to build whenever the user authorizes
-it — not yet built.** One item still needs a user decision first: see "Open question" below
-(global vs. project-scoped board) — Terra approved the plan *as designed* (global), but that
-choice is the user's to confirm, not something to infer from silence.
+**Status: BUILT and verified (2026-07-28).** Plan approved by Terra (round 3, plus a focused
+capability-gating delta round). Built by Terra (normal-feature routing). Full verify sequence
+green on the first real run (typecheck, `apps/web` build, all four workspace test suites plus the
+separately-invoked `packages/shared` suite) — no bugs found, independently re-verified outside the
+build's own sandbox (which couldn't run the Cloudflare Worker integration suite). Terra diff
+review (fresh context) **APPROVED on first pass**. Migration `0018` generated
+(`notice_board_posts`). Not yet committed — awaiting the user's go-ahead.
 
 User request: a collapsible panel on the dashboard where staff can post messages to each other,
 like a lightweight chat box.
@@ -74,15 +77,39 @@ not silently rewritten keeps the audit trail simple; add edit later only if it t
 matter (same "don't build for a hypothetical" reasoning used elsewhere in this codebase's own
 plans).
 
-**Open question, raised by Terra round 1 — needs a user decision before this is built**: is this
-board meant to be a single global stream (no `projectId`, as designed above), or should posts
-optionally attach to a project? The original request ("a collapsible panel on the dashboard...
-like a chat box") reads most naturally as global to the drafting session, and a global design is
-simpler to build and matches "chat box" better than a per-project comment thread would — but the
-request doesn't explicitly rule out project association, and Terra correctly flagged that this
-plan shouldn't quietly decide that on the user's behalf. **Proceeding with the global,
-no-`projectId` design as the default** unless told otherwise; this is the one open item blocking
-a clean approval, not a build blocker in the sense of needing rework — just needs a yes/no.
+**Open question, raised by Terra round 1 — RESOLVED by the user, 2026-07-28**: is this board meant
+to be a single global stream (no `projectId`, as designed above), or should posts optionally
+attach to a project? **User confirmed: global, no `projectId`** — matching the design above.
+
+**New requirement from the same 2026-07-28 confirmation, not present in Terra's round-3
+approval**: the board is visible to **admin and editor only — photographers must not see or
+access it at all**, front or back end. The user framed the feature as a staff notice board, not a
+chat box, and was explicit that photographers are excluded. This needs a dedicated capability
+(see §1a and §2 below) rather than the "any authenticated user" access Terra approved in round 3.
+Delete was also reconfirmed as author-only, no admin exemption — this matches what the plan
+already specified (see §2's `DELETE` route and "Explicitly out of scope" below); no change needed
+there.
+
+### 1a. Capability (`packages/shared/src/capabilities.ts`)
+
+New capability `viewNoticeBoard`, added to `CAPABILITIES` and granted to `admin` and `editor`
+only — **not** added to `photographer`'s list. This follows the existing pattern used for
+`viewAllProjects` (also admin+editor, not photographer) rather than overloading an unrelated
+existing capability; the notice board is its own concern and deserves its own named permission,
+matching how every other capability in this file maps to one concern. Backend gates the whole
+router on it — **both**
+`noticeBoardRoutes.use("/notice-board", requireCapability("viewNoticeBoard"))` **and**
+`noticeBoardRoutes.use("/notice-board/*", requireCapability("viewNoticeBoard"))`, matching the
+exact two-line pattern at `users.ts:15-17` (corrected after this delta's Terra review, 2026-07-28:
+the bare, non-wildcard form alone doesn't cover descendant routes like `/posts` — a photographer
+would 403 on `/notice-board` itself but not on the actual endpoints underneath it). Skipping this
+would be the mirror image of this repo's own documented Hono gotcha in `CLAUDE.md` (mounting only
+`"*"` leaks middleware onto siblings; mounting only the bare path leaves descendants ungated —
+both lines are required, not either/or). Rather than gating each route individually, this
+whole-router gate means a photographer gets a 403 on every notice-board endpoint, including
+`POST`/`DELETE`, not just a hidden `GET`. Frontend gates rendering of `<NoticeBoard />` in
+`Dashboard.tsx` on `useCapabilities().can("viewNoticeBoard")`, matching the `canMoveStages`
+pattern already at `Dashboard.tsx:82-86`.
 
 ### 2. API (`workers/app/src/routes/notice-board.ts`, new file, same shape as `annotations.ts`'s
 comment routes)
@@ -100,8 +127,9 @@ comment routes)
   ```ts
   { posts: { id: string; authorId: string; authorName: string; body: string; createdAt: string }[] }
   ```
-  Any authenticated user (no capability gate — matches the notifications API's reasoning:
-  nothing here is project-scoped or role-sensitive).
+  **Gated on `viewNoticeBoard` (corrected 2026-07-28 — the user confirmed this board excludes
+  photographers, unlike the notifications API this originally matched reasoning against). See
+  §1a.**
 - `GET /api/notice-board/posts/latest` — added per Terra round 1's polling-gap finding (§3 below):
   returns just `{ id: string | null, createdAt: string | null }` for the single newest post, cheap
   enough to poll slowly even while the panel is collapsed.
@@ -117,7 +145,9 @@ comment routes)
 
 - **New component** `NoticeBoard.tsx` (`apps/web/src/components/`), rendered in `Dashboard.tsx`
   near the top (`pagehead`/`stats` area — exact placement is a layout call for the build, not a
-  planning blocker).
+  planning blocker). **Rendered only when `useCapabilities().can("viewNoticeBoard")` is true**
+  (added 2026-07-28 — see §1a); photographers get no `<NoticeBoard />` in the tree at all, not
+  just a hidden one, since the backend also 403s them.
 - **Current-user wiring** (added per Terra round 1, which found `Dashboard` currently receives no
   user data at all — `App.tsx` renders it as bare `<Dashboard />`): thread a `currentUserId`
   prop down the same way `Shell` already does for `Admin` (`App.tsx`: `<Admin
@@ -183,7 +213,15 @@ comment routes)
    (including admin — no bypass); body length validation (empty, over 2000 chars) rejected;
    `GET` returns newest-first with a deterministic `id` tie-break for same-millisecond posts,
    capped at 50 regardless of a larger requested `limit`; `GET /posts/latest` returns the correct
-   newest post (and a null id when the board is empty).
+   newest post (and a null id when the board is empty). **A photographer account gets 403 on every
+   route (`GET /posts`, `GET /posts/latest`, `POST /posts`, `DELETE /posts/:id`)** — added
+   2026-07-28 per the capability gate in §1a/§2. **An editor account succeeds on every route**
+   (explicit positive-path test, added per this delta's Terra review — the photographer-denial
+   cases alone don't confirm the gate isn't over-broad and blocking editor too).
+   **`packages/shared/test/capabilities.test.ts`**: assert `roleHasCapability("admin",
+   "viewNoticeBoard")` and `roleHasCapability("editor", "viewNoticeBoard")` are `true`,
+   `roleHasCapability("photographer", "viewNoticeBoard")` is `false` — added per this delta's
+   Terra review.
 2. `apps/web`: collapsed-by-default on first visit, persists the toggle across a remount
    (matching the existing `initializeDashboardView`-style test coverage); the slow "latest post"
    poll runs while collapsed and the full-list poll runs while expanded, never both at once (a
@@ -194,6 +232,8 @@ comment routes)
    fetch fails (no optimistic clear against a stale cached value); the last-seen storage key is
    scoped per `currentUserId` (a second account on the same browser sees its own unread state, not
    the first account's); delete control only rendered when `post.authorId === currentUserId`.
+   **A photographer account never renders `<NoticeBoard />` at all** — added 2026-07-28, matching
+   the `can("viewNoticeBoard")` gate in §3.
 
 ## Verification (per CLAUDE.md / Subagent-Orchestration.md §5, once built)
 

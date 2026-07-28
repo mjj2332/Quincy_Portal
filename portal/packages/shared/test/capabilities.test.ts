@@ -30,6 +30,12 @@ describe("PRD §4 capability matrix", () => {
   it("reserves the admin backend for admins", () => {
     expect(roleHasCapability("admin", "adminBackend")).toBe(true);
   });
+
+  it("limits the notice board to admins and editors", () => {
+    expect(roleHasCapability("admin", "viewNoticeBoard")).toBe(true);
+    expect(roleHasCapability("editor", "viewNoticeBoard")).toBe(true);
+    expect(roleHasCapability("photographer", "viewNoticeBoard")).toBe(false);
+  });
 });
 
 describe("pipeline stage transitions", () => {

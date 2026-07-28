@@ -713,6 +713,17 @@ export const comments = sqliteTable(
   (t) => [index("comments_asset_idx").on(t.assetId)],
 );
 
+export const noticeBoardPosts = sqliteTable(
+  "notice_board_posts",
+  {
+    id: id(),
+    authorId: text("author_id").notNull().references(() => user.id),
+    body: text("body").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [index("notice_board_posts_created_idx").on(t.createdAt)],
+);
+
 /* ------------------------------------------------------ publish & links */
 
 export const publishes = sqliteTable(
