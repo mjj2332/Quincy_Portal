@@ -1,7 +1,7 @@
-import { useEffect, useId, useState, type FormEvent } from "react";
+import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { apiDelete, apiGet, apiPost } from "../lib/api";
 
-const COLLAPSE_KEY = "quincy:dashboard:noticeboard";
+const COLLAPSE_KEY = "quincy:dashboard:noticeboard:v2";
 const SEEN_KEY_PREFIX = "quincy:dashboard:noticeboard:seen:";
 const COLLAPSED_POLL_MS = 60_000;
 const EXPANDED_POLL_MS = 25_000;
@@ -21,7 +21,7 @@ function readStorage(key: string): string | null {
   try { return window.localStorage.getItem(key); } catch { return null; }
 }
 
-function readOpen(): boolean { return readStorage(COLLAPSE_KEY) === "true"; }
+function readOpen(): boolean { return readStorage(COLLAPSE_KEY) !== "false"; }
 
 function relativeTime(value: string): string {
   const timestamp = new Date(value).valueOf();
@@ -41,6 +41,7 @@ export function NoticeBoard({ currentUserId }: { currentUserId: string }) {
   const panelId = useId();
   const seenStorageKey = `${SEEN_KEY_PREFIX}${currentUserId}`;
   const [open, setOpen] = useState(readOpen);
+  const lastPersisted = useRef(open);
   const [seenId, setSeenId] = useState<string | null>(() => readStorage(seenStorageKey));
   const [latestId, setLatestId] = useState<string | null>(null);
   const [posts, setPosts] = useState<NoticeBoardPost[]>([]);
@@ -51,6 +52,8 @@ export function NoticeBoard({ currentUserId }: { currentUserId: string }) {
   useEffect(() => { setSeenId(readStorage(seenStorageKey)); }, [seenStorageKey]);
 
   useEffect(() => {
+    if (lastPersisted.current === open) return;
+    lastPersisted.current = open;
     try { window.localStorage.setItem(COLLAPSE_KEY, String(open)); } catch { /* Storage can be disabled. */ }
   }, [open]);
 

@@ -1,18 +1,132 @@
 # Kanban Project Priority + Manual Ordering — Plan
 
-**Status: BUILT and verified (2026-07-28) — the sixth and final plan of this batch.** Plan approved
-by Terra (round 9). Built by Terra, which confirmed the coordination point with
-`Notifications-Plan.md` worked as designed: found `workflows/autohdr.ts:277-279` already guarded
-(built immediately before this one) and spliced `boardPosition` into the existing guarded statement
-rather than re-adding the guard. Independent verification in this session (the Cloudflare Worker
-integration suites Terra's own sandbox couldn't run) passed clean on the first real run — no bugs
-found, unlike the two preceding plans in this batch. Terra diff review (fresh context) found one
-test-coverage gap on first pass — the `CHECK` constraint was only verified against `node:sqlite`,
-not this repo's actual D1/Miniflare test harness — fixed with a proper Miniflare-backed test.
-Second-pass diff review **APPROVED**. Full verify sequence green: typecheck (6 workspaces),
-`apps/web` build, all five workspace test suites plus the separately-invoked `packages/shared`
-suite. Migration `0020`. Not yet committed — awaiting the user's go-ahead. Tied with the sibling
-`Notifications-Plan.md` (approved at round 8) for the
+## Amendment (2026-07-28) — move the priority/order controls visually inside the card
+
+**Status: PLANNING — moved out of `docs/plans/implemented/` back to `docs/plans/` for this
+amendment. Not yet Terra-reviewed. The base feature below (§1-§5) is already built, verified, and
+live in production — this amendment changes only where the priority dropdown and up/down buttons
+visually sit, nothing about the ordering logic, API, schema, or capability.**
+
+**User request**: the priority dropdown and up/down arrow buttons should appear inside the project
+card, not outside/underneath it.
+
+**Current state (verified against the live code, not assumed)**: `KanbanCard`
+(`apps/web/src/screens/Dashboard.tsx:47-83`) renders `.kcard-controls` (the priority `<select>`
+plus the two arrow `<button>`s) as a **sibling** of `<InternalLink className="kcard">`, both inside
+`.kcard-wrap`:
+
+```tsx
+<div className="kcard-wrap ...">
+  <InternalLink className="kcard" to={...}>...media, address, meta, footer...</InternalLink>
+  {canPrioritize && <div className="kcard-controls" ...>...select, up, down...</div>}
+  {coverFailed && <button className="kcard__retry" ...>Retry cover image</button>}
+</div>
+```
+
+This placement is deliberate, not an oversight — the *original* plan (§5, "Control placement")
+already explains why: `.kcard` is the entire clickable navigation target
+(`<InternalLink>`, an anchor), and nesting a `<select>`/`<button>` inside an `<a>` is invalid HTML
+that behaves inconsistently across browsers. The controls were placed as **siblings** of the
+anchor specifically to avoid that — following the same precedent as the pre-existing "Retry cover
+image" button, which uses the identical sibling pattern. **That constraint hasn't changed and this
+amendment doesn't relax it** — the controls still cannot become DOM children of the `<a>`. What
+*has* changed is user expectation: "sibling of the anchor" was implemented as "a separate row
+rendered below the card," visually reading as *outside* the card, which isn't what was wanted.
+
+**Root cause, confirmed by reading the actual CSS** (`apps/web/src/styles/app.css:435-450`):
+`.kcard-wrap` (the true DOM parent of everything, including the controls) carries no visual
+styling at all (`position: relative` only) — the card's visible border and background
+(`background: var(--paper-000); border: 1px solid var(--border-hairline);`, plus its hover state)
+belong to `.kcard` (the anchor) alone. Since `.kcard-controls` sits *outside* `.kcard`'s own box
+but *inside* the unstyled `.kcard-wrap`, it visually renders below the bordered card with no
+shared background — exactly "outside and underneath."
+
+**Proposed fix — a CSS-only change, no DOM/JSX restructuring, no new invalid-HTML risk**: move
+the border/background/hover ownership from `.kcard` to `.kcard-wrap`, so the wrapper itself becomes
+the visible card boundary and everything inside it — the anchor *and* the controls, still siblings,
+still no DOM change — renders inside that same visual box:
+
+- `.kcard-wrap`: gains `background: var(--paper-000); border: 1px solid var(--border-hairline);`
+  (moved from `.kcard`) plus a small amount of its own transition for the hover states below.
+- `.kcard`: loses its own `background`/`border` (becomes visually transparent/seamless against the
+  wrap), keeps everything else (`cursor: pointer`, `display: block`, etc.).
+- **Hover state**: `.kcard:hover { background: ...; border-color: ...; }` currently only fires when
+  hovering the anchor itself. Moving the visual box to the wrap means the natural equivalent is
+  `.kcard-wrap:hover { background: ...; border-color: ...; }` — hovering *anywhere* in the card,
+  including the priority select or arrow buttons, shows the same "card is interactive" highlight.
+  **This is a real behavior change worth confirming, not an incidental detail**: today, hovering
+  the controls area does nothing visually to the card; after this change, it would. This seems like
+  the more coherent result (the whole block now reads as one card), but it's a judgment call worth
+  Terra's second look and the user's own eyes once built, not something to declare correct by
+  assertion.
+- **Drag state**: `.kcard-wrap.is-dragging .kcard { opacity: .4; }` dims only the anchor today
+  (the controls stay fully opaque, oddly, while the card fades) — becomes
+  `.kcard-wrap.is-dragging { opacity: .4; }`, dimming the whole visual card uniformly, which is
+  more correct than today's actual behavior, not just a side effect to tolerate.
+- **Spacing**: `.kcard-controls` currently has no horizontal padding (`margin-top: 6px` only) since
+  it never needed to sit inside a bordered box before. Needs `padding: 0 12px 10px;` (or similar,
+  matching `.kcard__b`'s existing `11px 12px 12px` horizontal rhythm) so it doesn't sit flush
+  against the new border — `padding` is correct here since `.kcard-controls` is a plain flex
+  container div, not an element with its own visible internal spacing to disturb.
+  **`.kcard__retry` needs the equivalent inset via `margin`, not `padding` — corrected per Terra
+  review**: it's a `<button className="kcard__retry button button--secondary">`, so padding on it
+  would change the *button's own* internal text spacing (and could be overridden by the later
+  `.button` rule) rather than moving the button away from the wrapper's border. Use
+  `margin: 8px 12px 10px;` (or similar) instead. **Scope this to `.kcard__retry` alone, splitting
+  it out of the current shared rule** (`apps/web/src/styles/app.css:450`:
+  `.kcard__retry, .prow__retry { margin-top: var(--space-2); }`) — `.prow__retry` is a different
+  usage elsewhere (the List-view row) and must not pick up this Kanban-card-specific inset.
+  Confirm visually once built that neither control looks cramped or misaligned against the new
+  border.
+
+**Verified low blast radius**: `.kcard`/`.kcard-wrap`/`.kcard-controls`/`.kcard__*` classes are
+used nowhere outside `Dashboard.tsx` and its own test file (`dashboard-routing.test.ts`) — grepped
+directly, not assumed. The two existing DOM-order assertions in that test file
+(`` `<a class="kcard"...>...</a><button` `` for the retry case,
+`` `<a class="kcard"...>...</a><div class="kcard-controls"` `` for the controls case) assert on
+DOM *order*, which this CSS-only change does not touch — they should keep passing unmodified. No
+other screen, component, or List-view row uses these classes.
+
+**Explicitly out of scope for this amendment**: no change to the ordering logic, the
+`/priority`/`/board-position` API routes, the `prioritizeProjects` capability, drag-and-drop stage
+movement, or anything else in the base plan below — this is a pure visual-placement fix.
+
+**Testing requirements for this amendment's build**:
+1. `apps/web`: the two existing DOM-order assertions in `dashboard-routing.test.ts` still pass
+   unmodified (proves the DOM structure genuinely didn't change, only CSS).
+2. Manual/visual verification once built (per `CLAUDE.md`'s "start the dev server and use the
+   feature in a browser before reporting done" — this is a pure visual change, so this step is not
+   optional here): the priority select and arrow buttons render visibly inside the card's bordered
+   box on the Kanban board; hovering the card (including over the controls) shows the expected
+   highlight; dragging a card dims the whole card uniformly; the retry-cover button (when it
+   appears) still looks correctly spaced, not flush against the border.
+
+**Routing**: small, single-file CSS + no JSX change, contained blast radius — but a live-in-production
+visual component the user explicitly wants extra care on. Terra plan review at normal effort, then
+(once approved and the user authorizes) build directly in-session (matches the base plan's own
+"too small to delegate" precedent for comparably-sized changes elsewhere in this batch), verify
+visually in a browser, Terra diff review, §5 gate, then commit/deploy.
+
+---
+
+**Status: BUILT, verified, committed (`bdcf612`), and DEPLOYED to production (2026-07-28) — the
+sixth and final plan of the original batch.** Plan approved by Terra (round 9). Built by Terra,
+which confirmed the coordination point with `Notifications-Plan.md` worked as designed: found
+`workflows/autohdr.ts:277-279` already guarded (built immediately before this one) and spliced
+`boardPosition` into the existing guarded statement rather than re-adding the guard. Independent
+verification in this session (the Cloudflare Worker integration suites Terra's own sandbox
+couldn't run) passed clean on the first real run — no bugs found, unlike the two preceding plans
+in this batch. Terra diff review (fresh context) found one test-coverage gap on first pass — the
+`CHECK` constraint was only verified against `node:sqlite`, not this repo's actual D1/Miniflare
+test harness — fixed with a proper Miniflare-backed test. Second-pass diff review **APPROVED**.
+Full verify sequence green: typecheck (6 workspaces), `apps/web` build, all five workspace test
+suites plus the separately-invoked `packages/shared` suite. Migration `0020` applied to prod — its
+originally-generated table-rebuild form failed against real production data (a genuine Cloudflare
+D1 limitation, `PRAGMA foreign_keys=OFF` not persisting across remote migration execution) and was
+rewritten to a bare `ALTER TABLE ADD COLUMN` form; see `docs/lessons.md` and commit `222b037`.
+**This base feature is live** — see the "Amendment (2026-07-28)" section at the top of this doc
+for the currently-in-planning follow-up change to the priority/order controls' visual placement,
+not yet built. Tied with the sibling `Notifications-Plan.md` (approved at round 8) for the
 deepest review in this batch of 6 plans. Substantially reworked at every round: the writer
 inventory kept growing (§3a mandates a build-time exhaustive re-grep rather than trusting this
 plan's own enumeration — treat that as a required pre-implementation step); the atomic-write
