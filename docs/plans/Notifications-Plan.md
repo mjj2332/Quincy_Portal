@@ -1,5 +1,111 @@
 # In-App + Email Notifications (v1) — Plan
 
+## Amendment (2026-07-28) — fix: notification bell not visible on mobile
+
+**Status: PLANNING — moved out of `docs/plans/implemented/` back to `docs/plans/` for this fix.
+The base feature below is already built, verified, committed, and deployed to production.**
+
+**User report**: the notification bell isn't visible on a mobile phone.
+
+**Root cause, confirmed by direct read of `apps/web/src/styles/app.css` and
+`apps/web/src/components/Topbar.tsx` (not assumed)**: the bell (`.topbar__notifications`, a child
+of `.topbar__user` — confirmed at `Topbar.tsx:138-139`) is hidden by a genuine CSS cascade bug, not
+a display/layout logic error. Two separate `@media (max-width: 720px)` blocks in `app.css` both
+target `.topbar__user`, with conflicting rules, and the later one wins by source order (same
+specificity, same media query — CSS resolves ties by which rule appears later in the file):
+
+- `app.css:699-700` (added in `bb6dca9`, the Notifications build itself): `.topbar__user { display:
+  flex; margin-left: auto; }`, then explicitly hides only the identity/avatar/sign-out-button
+  children (`.topbar__user > .topbar__identity, .topbar__user > .avatar, .topbar__user > .button {
+  display: none; }`) — this rule was deliberately written to keep the bell visible on mobile while
+  hiding the rest of the account block.
+- `app.css:957` (pre-existing, confirmed via `git log -S` to predate the bell by several commits —
+  from `143575d`, an unrelated QA sweep): `.topbar__user { display: none; }` — a blanket
+  small-screen rule that hides the entire block, including the bell inside it.
+
+Because `957` appears later in the file than `699-700`, it wins the cascade and the whole
+`.topbar__user` — bell included — is `display: none` on any viewport ≤720px. This is the sole
+cause: `grep -n '\.topbar__user\b\|\.topbar__notifications\b' app.css` finds exactly these three
+`.topbar__user` rule blocks and one `.topbar__notifications` rule (`position: relative` only, no
+visibility concern) — no other conflicting selector exists.
+
+**Fix**: delete the single `.topbar__user { display: none; }` declaration at `app.css:957` (leaving
+every other selector in that same media-query block — `.signin__panel`, `.admin-provision`, etc. —
+untouched; they are unrelated to this bug). The earlier, deliberate rule at `699-700` already fully
+specifies mobile `.topbar__user` behavior (visible, flexed, right-aligned, only the bell shown) and
+becomes the sole rule governing this selector at this breakpoint once the conflicting one is
+removed. No JSX/DOM change — CSS-only, one line deleted.
+
+**Layout check (confirmed, not assumed)**: `.topbar { display: flex; align-items: center; gap:
+var(--space-6); }` (`app.css:36-38`) and `.topbar__menu-trigger` also carries `margin-left: auto`
+(`app.css:702`) — with `.topbar__user` restored to `display: flex`, the bell and the hamburger menu
+trigger sit as normal flex siblings at the end of the row (DOM order confirmed at
+`Topbar.tsx:138-160`: `.topbar__user` renders before `.topbar__menu-trigger`), not stacked or
+overlapping. The notification dropdown menu itself already has a mobile-specific position rule
+(`app.css:701`: `.topbar__notification-menu { position: fixed; top: 58px; right: 10px; }`), so
+opening it on a phone is unaffected by this fix — that positioning was already correct, only the
+trigger button itself was invisible.
+
+**Blast radius**: no component markup outside `Topbar.tsx` uses the `.topbar__user` or
+`.topbar__notifications` classes (grepped directly across `apps/web/src`) — the only other place
+either class name appears at all is `app.css` itself, as the CSS selectors being discussed here.
+No test currently asserts on mobile visibility of the
+bell — this is a genuine test-coverage gap the build must close (below), not a regression from
+existing test coverage silently passing.
+
+**Why this wasn't caught at build time**: the Notifications plan's own testing requirements
+(§ Testing requirements, item 10, above) covered dropdown open/close/focus/`Escape`/outside-click
+behavior, but never asserted the trigger button's actual `display`/visibility at a narrow viewport
+— jsdom-based component tests don't apply real CSS cascade rules from `app.css` at all (they test
+React behavior, not stylesheet rendering), so this class of bug is invisible to that test suite
+regardless of coverage. The only way to catch it is a real browser render at a mobile viewport
+width, which is why this is being fixed via direct inspection now rather than a failing test
+surfacing it.
+
+## Testing requirements for this fix
+
+1. Visual verification in a real browser (per CLAUDE.md's UI-change rule), using the built app with
+   its real stylesheet loaded (not a jsdom/Happy DOM component test, which cannot apply CSS cascade
+   rules at all), at exactly the 720px/721px boundary: at 720px (mobile), confirm the bell renders,
+   is clickable, its unread badge (if any) is visible, and opening the dropdown positions correctly
+   on screen without overlapping the hamburger menu; at 721px (desktop), confirm the full account
+   block (identity, avatar, sign-out button, bell) renders as it does today.
+2. No regression at wider viewports generally: confirm `.topbar__user`'s desktop appearance is
+   unchanged above 720px — this fix only removes a rule scoped to `max-width: 720px`, so nothing
+   above that breakpoint should be affected, but verify visually since this was never actually
+   visually checked before either.
+3. No regression to the other selectors sharing the `max-width: 720px` block being edited
+   (`.signin__panel`, `.admin-provision`, `.admin-stage`, `.create-project__*`, `.collection-link-form`,
+   `.document-group`, `.document-preview`) — confirm a spot-check of at least one of these (e.g. the
+   admin page) still renders correctly on mobile, since this is a shared media-query block and the
+   edit must remove only the one conflicting declaration, not the block itself.
+
+## Verification (per CLAUDE.md / Subagent-Orchestration.md §5)
+
+- `npm run typecheck` (all six workspaces) and `npm run build -w @quincy/web` — expected to be
+  unaffected (CSS-only change) but run anyway per the standard sequence.
+- `npm run test --workspaces` plus the two configs it silently skips — expected unaffected, but run
+  to confirm no incidental breakage.
+- Manual/visual verification in a browser at a mobile viewport width — required per CLAUDE.md,
+  and the only real way to catch this class of bug (see "Why this wasn't caught at build time"
+  above).
+
+## Rollout
+
+Single-file CSS change (`apps/web/src/styles/app.css`) — no migration, no worker change. Deploy is
+the app worker only (it bundles `apps/web/dist` as static assets), same as the two most recent
+deploys this session.
+
+## Routing (per Subagent-Orchestration.md §2 routing table)
+
+Too small to be worth delegating — Sonnet 5 (this session) builds directly once the plan is
+approved, Terra reviews the diff, §5 gate, matching the routing used for this session's two most
+recent CSS/behavior fixes.
+
+---
+
+
+
 **Status: BUILT and verified (2026-07-28).** Plan approved by Terra (round 8). Built by Terra.
 Independent verification in this session (the Cloudflare Worker integration suites Terra's own
 sandbox couldn't run — Miniflare EPERM) found and fixed three real bugs before diff review: an

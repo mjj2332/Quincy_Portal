@@ -954,7 +954,6 @@ button { font-family: var(--font-sans); }
 
 @media (max-width: 720px) {
   .signin__panel { padding: var(--space-6); }
-  .topbar__user { display: none; }
   .admin-provision, .integration-grid, .admin-directory-form, .admin-agent-form { grid-template-columns: 1fr; }
   .admin-stage { grid-template-columns: 28px 1fr; }
   .admin-stage .admin-field, .admin-stage__actions { grid-column: 1 / -1; }
