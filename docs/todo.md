@@ -29,8 +29,13 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
 - **Phases 0–4 shipped and live**: foundations/auth/infra; capture ingest + RAW QA; AutoHDR +
   Edited QA + review lightbox; Tonomo intake + dashboard (Kanban/List) + admin backend;
   video/floorplan/copy collections.
-- **D1 migrations: `0000`–`0014` confirmed applied to prod (2026-07-24).** Next available
-  migration number is `0015`.
+- **D1 migrations: `0000`–`0020` confirmed applied to prod (2026-07-28).** Next available
+  migration number is `0021`. Migration `0020`'s originally-generated table-rebuild form failed
+  against real prod data (`PRAGMA foreign_keys=OFF` doesn't reliably persist across D1's remote
+  migration execution, even though every local/Miniflare check passed) — replaced with a bare
+  `ALTER TABLE ADD COLUMN ... CHECK(...)` form and re-applied successfully; production was left
+  clean by the failed attempt (D1 only marks a migration applied on success). See `docs/lessons.md`
+  for the full mechanics — worth reading before generating any future table-rebuild migration.
 - **Rendition pipeline is live and working**: background queue generates thumb/web WebP on
   ingest/AutoHDR-return, served from R2 with a live-transform fallback (the "thumbnail
   rendition cache" plan from 2026-07-21 — Phases 1–3 all shipped as part of the 2026-07-24

@@ -1,12 +1,41 @@
 # Lessons — Quincy Portal build
 
-- **Verify generated SQLite table-rebuild migrations against the pre-migration schema.** Drizzle
-  correctly generated the new `CHECK`, but its 0020 copy `SELECT` also referenced the newly-added
-  `priority` and `board_position` columns before they existed, so the migration failed on a real
-  old `projects` table. Rule: run the full migration chain against a local SQLite/D1 fixture and
-  replace new-column copy expressions with their defaults (`NULL`/`0`) when the generator emits
-  an invalid pre-schema projection; then test the database constraint itself, including fractional
-  values that API validation would normally reject.
+- **`PRAGMA foreign_keys=OFF` does not reliably persist across statements in D1's remote migration
+  execution, even though it worked fine against local Miniflare — a real production migration
+  attempt (0020) failed on `DROP TABLE projects` with `FOREIGN KEY constraint failed`, even though
+  the migration correctly opened with `PRAGMA foreign_keys=OFF` and every local
+  test/`--local`-flag run passed clean.** This is `drizzle-kit generate`'s default table-rebuild
+  form for a schema change requiring a `CHECK` constraint (recreate table, copy rows, drop old,
+  rename new, `PRAGMA foreign_keys=ON`) — the correct, portable SQLite pattern, and it worked
+  perfectly in every sandboxed/local check because none of those environments has real
+  foreign-key-referencing rows across the many tables that reference `projects` the way production
+  does. **The Miniflare-simulated D1 used by this repo's own test suites and `wrangler ... --local`
+  did not reproduce this failure — a migration passing every local/sandboxed check is not proof it
+  will apply cleanly against real remote D1.** Root-cause fix, not a workaround: avoid the
+  table-rebuild path entirely when possible. SQLite (and D1) support adding a column with an
+  inline `CHECK` constraint via a bare `ALTER TABLE ADD COLUMN col TYPE CHECK(...)`, **provided
+  the check references only that same column and existing rows satisfy it under the column's
+  default** (confirmed directly against `wrangler d1 execute --local` before ever touching prod
+  again: a nullable column with a `... IS NULL OR (...)` check, defaulting new rows to `NULL`,
+  passes trivially) — no `DROP TABLE`, no FK risk, no `PRAGMA` toggle needed at all. Prefer this
+  over the generator's table-rebuild default whenever the check is single-column and
+  NULL-satisfiable; verify the swap against a real local D1 (or, for something this consequential,
+  a scratch table on the actual remote database) before applying to prod. Production was left in a
+  clean, consistent state by the failed attempt (D1 migrations only mark a file applied on success;
+  `projects`' schema and `d1_migrations` table were both unaffected) — always confirm that before
+  re-attempting a fix, don't assume a failed remote migration rolled back cleanly.
+
+- **Verify generated SQLite table-rebuild migrations against the pre-migration schema, if you do
+  use one.** Drizzle correctly generated the new `CHECK`, but its 0020 copy `SELECT` also
+  referenced the newly-added `priority` and `board_position` columns before they existed, so the
+  migration would have failed on a real old `projects` table even before the FK issue above.
+  Rule: run the full migration chain against a local SQLite/D1 fixture and replace new-column copy
+  expressions with their defaults (`NULL`/`0`) when the generator emits an invalid pre-schema
+  projection; then test the database constraint itself, including fractional values that API
+  validation would normally reject. (This specific migration was ultimately replaced by the bare
+  `ALTER TABLE` form above, which sidesteps this class of bug entirely — kept here since the
+  underlying gotcha still applies to any table-rebuild migration this codebase generates in the
+  future.)
 
 - **Notification trigger correctness depends on each writer's own affected-row result.** The
   stage-transition surface is split between guarded helper calls, inline D1 batches, and ORM

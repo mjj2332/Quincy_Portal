@@ -22,7 +22,12 @@ describe("migration 0020 priority check", () => {
     const db = localSqlite();
     applyMigrations(db);
     const table = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'projects'").get() as { sql: string };
-    expect(table.sql).toContain("projects_priority_check");
+    // The applied migration uses a bare (unnamed) inline CHECK — see docs/lessons.md on why
+    // this replaced drizzle-kit's originally-generated named-constraint table-rebuild form
+    // (PRAGMA foreign_keys=OFF doesn't reliably persist across D1's remote migration
+    // execution). Assert on the check clause's content, not a constraint name that no longer
+    // exists in the actual applied SQL.
+    expect(table.sql).toContain("typeof(\"projects\".\"priority\") = 'integer'");
     const insert = db.prepare("INSERT INTO projects (id, street, priority, created_at, updated_at) VALUES (?, ?, ?, ?, ?)");
     for (const priority of [0, 11, 5.5]) {
       expect(() => insert.run(crypto.randomUUID(), `invalid-${priority}`, priority, Date.now(), Date.now())).toThrow(/CHECK constraint failed/);
