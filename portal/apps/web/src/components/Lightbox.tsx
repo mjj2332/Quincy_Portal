@@ -5,6 +5,7 @@ import type { ReviewPatch, WorkspaceAsset } from "./PhotoGrid";
 import { LazyImage } from "./LazyImage";
 import { clampZoom, initialZoom, panBy, zoomBy, type ZoomBounds, type ZoomTransform } from "../lib/lightbox-zoom";
 import { cycleLightboxIndex } from "../lib/lightbox-navigation";
+import { useLightboxNeighborPreload } from "../lib/lightbox-neighbor-preload";
 
 const labels = [
   { value: "hero", name: "Hero", color: "#9a6a1f" }, { value: "select", name: "Select", color: "#3f5b3a" }, { value: "maybe", name: "Maybe", color: "#2f3b4d" }, { value: "cut", name: "Cut", color: "#7a2420" },
@@ -63,6 +64,7 @@ export function Lightbox({ assets, rawAssets, initialAssetId, collectionKind, ca
   const session = useSession();
   const currentUserId = (session.data?.user as { id?: string | null } | undefined)?.id ?? null;
   const [index, setIndex] = useState(() => Math.max(0, assets.findIndex((asset) => asset.id === initialAssetId)));
+  useLightboxNeighborPreload(assets, index);
   const [showRawCompare, setShowRawCompare] = useState(false);
   const [markup, setMarkup] = useState(false);
   const [markupVisible, setMarkupVisible] = useState(true);
