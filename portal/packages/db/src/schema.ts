@@ -147,6 +147,8 @@ export const projects = sqliteTable(
     shootDate: text("shoot_date"),
     timeWindow: text("time_window"),
     stageKey: text("stage_key").notNull().default("awaiting_raw"),
+    priority: integer("priority"),
+    boardPosition: real("board_position").notNull().default(0),
     orderNo: text("order_no"),
     orderId: text("order_id"),
     invoiceAmount: real("invoice_amount"),
@@ -164,6 +166,7 @@ export const projects = sqliteTable(
     index("projects_stage_idx").on(t.stageKey),
     index("projects_order_idx").on(t.orderId),
     index("projects_archived_idx").on(t.archivedAt),
+    check("projects_priority_check", sql`${t.priority} IS NULL OR (typeof(${t.priority}) = 'integer' AND ${t.priority} >= 1 AND ${t.priority} <= 10)`),
   ],
 );
 

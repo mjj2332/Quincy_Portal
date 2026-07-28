@@ -24,8 +24,8 @@ export async function guardedStageTransition(
   const auditId = input.auditId ?? crypto.randomUUID();
   const result = await d1.batch([
     d1.prepare(
-      "UPDATE projects SET stage_key = ?, updated_at = ? WHERE id = ? AND stage_key = ? AND archived_at IS NULL",
-    ).bind(input.to, now.getTime(), input.projectId, input.from),
+      "UPDATE projects SET stage_key = ?, board_position = (SELECT COALESCE(MAX(board_position) + 1024, 0) FROM projects WHERE stage_key = ? AND archived_at IS NULL AND id != ?), updated_at = ? WHERE id = ? AND stage_key = ? AND archived_at IS NULL",
+    ).bind(input.to, input.to, input.projectId, now.getTime(), input.projectId, input.from),
     d1.prepare(
       "INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) " +
       "SELECT ?, ?, ?, 'project', ?, ?, ? WHERE changes() = 1",

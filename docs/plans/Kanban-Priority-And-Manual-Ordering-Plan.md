@@ -1,7 +1,18 @@
 # Kanban Project Priority + Manual Ordering — Plan
 
-**Status: APPROVED by Terra (round 9, 2026-07-28). Ready to build whenever the user authorizes it
-— not yet built.** Tied with the sibling `Notifications-Plan.md` (approved at round 8) for the
+**Status: BUILT and verified (2026-07-28) — the sixth and final plan of this batch.** Plan approved
+by Terra (round 9). Built by Terra, which confirmed the coordination point with
+`Notifications-Plan.md` worked as designed: found `workflows/autohdr.ts:277-279` already guarded
+(built immediately before this one) and spliced `boardPosition` into the existing guarded statement
+rather than re-adding the guard. Independent verification in this session (the Cloudflare Worker
+integration suites Terra's own sandbox couldn't run) passed clean on the first real run — no bugs
+found, unlike the two preceding plans in this batch. Terra diff review (fresh context) found one
+test-coverage gap on first pass — the `CHECK` constraint was only verified against `node:sqlite`,
+not this repo's actual D1/Miniflare test harness — fixed with a proper Miniflare-backed test.
+Second-pass diff review **APPROVED**. Full verify sequence green: typecheck (6 workspaces),
+`apps/web` build, all five workspace test suites plus the separately-invoked `packages/shared`
+suite. Migration `0020`. Not yet committed — awaiting the user's go-ahead. Tied with the sibling
+`Notifications-Plan.md` (approved at round 8) for the
 deepest review in this batch of 6 plans. Substantially reworked at every round: the writer
 inventory kept growing (§3a mandates a build-time exhaustive re-grep rather than trusting this
 plan's own enumeration — treat that as a required pre-implementation step); the atomic-write

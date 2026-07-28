@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
-import { createDb, schema } from "@quincy/db";
+import { appendToStageBottomExpr, computeInsertPosition, createDb, dashboardProjectOrder, orderDashboardStreetTies, schema } from "@quincy/db";
 import { and, asc, desc, eq, exists, inArray, isNotNull, isNull, notExists, sql } from "drizzle-orm";
 import { COLLECTION_KINDS, computeRemovalAssetIds, isStageKey, PHOTOGRAPHER_VISIBLE_STAGES, ROLE_CAPABILITIES, type CollectionKind } from "@quincy/shared";
 import { z } from "zod";
@@ -14,42 +14,59 @@ import { jsonInput } from "./helpers";
 import { ensurePipelineStages, projectStageForRole } from "./stages";
 import { abortMultipart } from "../lib/r2s3";
 import { isUserVisibleAsset } from "../lib/asset-visibility";
+import { manualInsertNeighbors, needsPositionRenumber, orderedBoardRows, priorityInsertNeighbors, renumberedInsertPosition, type BoardRow } from "../lib/kanban-ordering";
 
 const nullable = <T extends z.ZodTypeAny>(item: T) => item.nullable().optional();
 const projectFields = z.object({ street: z.string().min(1), suburb: nullable(z.string()), postcode: nullable(z.string()), agencyName: nullable(z.string()), agentName: nullable(z.string()), agentEmail: nullable(z.string().email()), agentPhone: nullable(z.string()), agencyId: nullable(z.string().uuid()), agentId: nullable(z.string().uuid()), shootDate: nullable(z.string()), timeWindow: nullable(z.string()), orderNo: nullable(z.string()), orderId: nullable(z.string()), invoiceAmount: nullable(z.number()), paymentStatus: nullable(z.string()), notes: nullable(z.string()), rawFolderLink: nullable(z.string().url()), rawFolderPath: nullable(z.string()), orderedServices: z.array(z.enum(COLLECTION_KINDS)).optional(), photographerUserIds: z.array(z.string().uuid()).optional(), editorUserIds: z.array(z.string().uuid()).optional() });
 const editFields = projectFields.partial();
 const coverInput = z.object({ assetId: z.string().uuid().nullable() });
+const priorityInput = z.object({ priority: z.number().int().min(1).max(10).nullable() });
+const boardPositionInput = z.object({ direction: z.enum(["up", "down"]) });
 const idCheck = (v: string) => z.string().uuid().safeParse(v).success;
+
+async function guardedBoardUpdate(
+  db: ReturnType<typeof createDb>,
+  d1: D1Database,
+  target: BoardRow,
+  rows: BoardRow[],
+  beforeId: string | null,
+  afterId: string | null,
+  position: number,
+  newPriority: number | null | undefined,
+) {
+  const before = beforeId ? rows.find((row) => row.id === beforeId)?.boardPosition ?? null : null;
+  const after = afterId ? rows.find((row) => row.id === afterId)?.boardPosition ?? null : null;
+  const renumber = needsPositionRenumber(position, before, after);
+  const snapshot = target.stageKey;
+
+  if (!renumber) {
+    const values = newPriority === undefined
+      ? { boardPosition: position, updatedAt: new Date() }
+      : { priority: newPriority, boardPosition: position, updatedAt: new Date() };
+    const result = await db.update(schema.projects).set(values).where(and(eq(schema.projects.id, target.id), eq(schema.projects.stageKey, snapshot), isNull(schema.projects.archivedAt))).returning({ priority: schema.projects.priority, boardPosition: schema.projects.boardPosition }).all();
+    return result[0] ?? null;
+  }
+
+  const { renumbered, position: recomputedPosition } = renumberedInsertPosition(rows, beforeId, afterId);
+  const sorted = orderedBoardRows(rows);
+  const statements = sorted.map((row) => d1.prepare(
+    "UPDATE projects SET board_position = ? WHERE id = ? AND stage_key = ? AND archived_at IS NULL AND EXISTS (SELECT 1 FROM projects WHERE id = ? AND stage_key = ? AND archived_at IS NULL)",
+  ).bind(renumbered.get(row.id), row.id, snapshot, target.id, snapshot));
+  const finalSql = newPriority === undefined
+    ? "UPDATE projects SET board_position = ?, updated_at = ? WHERE id = ? AND stage_key = ? AND archived_at IS NULL"
+    : "UPDATE projects SET priority = ?, board_position = ?, updated_at = ? WHERE id = ? AND stage_key = ? AND archived_at IS NULL";
+  const finalStatement = newPriority === undefined
+    ? d1.prepare(finalSql).bind(recomputedPosition, Date.now(), target.id, snapshot)
+    : d1.prepare(finalSql).bind(newPriority, recomputedPosition, Date.now(), target.id, snapshot);
+  const result = await d1.batch([...statements, finalStatement]);
+  if ((result.at(-1)?.meta.changes ?? 0) !== 1) return null;
+  return { priority: newPriority === undefined ? target.priority : newPriority, boardPosition: recomputedPosition };
+}
 
 type DropboxSyncResult = {
   raw: { jobId: string } | { skipped: "no_raw_folder" | "not_permitted" | "error"; message?: string };
   edited: { jobId: string } | { skipped: "not_ready" | "not_admin" | "error"; message?: string } | { blocked: { code: string; message: string } };
 };
-
-const dashboardProjectOrder = [
-  asc(sql`case when ${schema.projects.shootDate} is null then 1 else 0 end`),
-  desc(schema.projects.shootDate),
-] as const;
-
-// SQLite's lower() only provides ASCII case folding. Keep shoot-date/null
-// ordering in D1, then correct same-date ties with the Unicode-aware rule.
-const dashboardStreetCollator = new Intl.Collator("en-AU", { sensitivity: "accent" });
-
-function orderDashboardStreetTies<T extends { project: { id: string; street: string; shootDate: string | null } }>(rows: T[]): T[] {
-  const ordered: T[] = [];
-  for (let start = 0; start < rows.length;) {
-    const shootDate = rows[start]!.project.shootDate;
-    let end = start + 1;
-    while (end < rows.length && rows[end]!.project.shootDate === shootDate) end += 1;
-    ordered.push(...rows.slice(start, end).sort((left, right) => {
-      const byStreet = dashboardStreetCollator.compare(left.project.street, right.project.street);
-      if (byStreet !== 0) return byStreet;
-      return left.project.id < right.project.id ? -1 : left.project.id > right.project.id ? 1 : 0;
-    }));
-    start = end;
-  }
-  return ordered;
-}
 
 function chunked<T>(items: T[], size = 80): T[][] {
   const chunks: T[][] = [];
@@ -140,7 +157,7 @@ projectsRoutes.get("/projects", async (c) => {
 projectsRoutes.post("/projects", requireCapability("createProject"), async (c) => {
   const data = await jsonInput(c, projectFields); if (data instanceof Response) return data;
   const db = createDb(c.env.DB); const id = newId(); const { orderedServices, photographerUserIds, editorUserIds, ...fields } = data;
-  await db.insert(schema.projects).values({ id, ...fields, stageKey: "awaiting_raw", createdAt: new Date(), updatedAt: new Date() });
+  await db.insert(schema.projects).values({ id, ...fields, stageKey: "awaiting_raw", boardPosition: appendToStageBottomExpr("awaiting_raw", id), createdAt: new Date(), updatedAt: new Date() });
   if (fields.rawFolderPath !== undefined) {
     await c.env.BACKGROUND.ensureAutoHdrScaffold(id).catch((error) =>
       console.error("AutoHDR scaffold trigger failed", { projectId: id, error }));
@@ -149,6 +166,49 @@ projectsRoutes.post("/projects", requireCapability("createProject"), async (c) =
   await addMembers(db, id, photographerUserIds, "photographer"); await addMembers(db, id, editorUserIds, "editor");
   await audit(c.env, c.get("user").id, "project.create", "project", id, { orderedServices: [...services] });
   return c.json(await details(db, id, c.get("user").role), 201);
+});
+
+projectsRoutes.post("/projects/:id/priority", async (c) => {
+  const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
+  if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
+  if (!ROLE_CAPABILITIES[c.get("user").role].includes("prioritizeProjects")) return c.json({ error: "Forbidden", capability: "prioritizeProjects" }, 403);
+  const data = await jsonInput(c, priorityInput); if (data instanceof Response) return data;
+  const db = createDb(c.env.DB);
+  const target = await db.select({ id: schema.projects.id, stageKey: schema.projects.stageKey, priority: schema.projects.priority, boardPosition: schema.projects.boardPosition })
+    .from(schema.projects).where(and(eq(schema.projects.id, id), isNull(schema.projects.archivedAt))).get() as BoardRow | undefined;
+  if (!target) return c.json({ error: "Project not found" }, 404);
+  const others = await db.select({ id: schema.projects.id, stageKey: schema.projects.stageKey, priority: schema.projects.priority, boardPosition: schema.projects.boardPosition })
+    .from(schema.projects).where(and(eq(schema.projects.stageKey, target.stageKey), isNull(schema.projects.archivedAt), sql`${schema.projects.id} <> ${id}`)).all() as BoardRow[];
+  const desiredPriority = data.priority;
+  const neighbors = priorityInsertNeighbors([target, ...others], id, desiredPriority);
+  const { beforeId, afterId, before, after } = neighbors;
+  const position = computeInsertPosition(before, after);
+  const result = await guardedBoardUpdate(db, c.env.DB, target, [target, ...others], beforeId, afterId, position, data.priority);
+  if (!result) return c.json({ error: "Project stage changed while priority was being updated" }, 409);
+  await audit(c.env, c.get("user").id, "project.priority_set", "project", id, { from: target.priority, to: data.priority });
+  return c.json({ priority: result.priority, boardPosition: result.boardPosition });
+});
+
+projectsRoutes.post("/projects/:id/board-position", async (c) => {
+  const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
+  if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
+  if (!ROLE_CAPABILITIES[c.get("user").role].includes("prioritizeProjects")) return c.json({ error: "Forbidden", capability: "prioritizeProjects" }, 403);
+  const data = await jsonInput(c, boardPositionInput); if (data instanceof Response) return data;
+  const db = createDb(c.env.DB);
+  const rows = await db.select({ id: schema.projects.id, stageKey: schema.projects.stageKey, priority: schema.projects.priority, boardPosition: schema.projects.boardPosition })
+    .from(schema.projects).where(and(isNull(schema.projects.archivedAt), eq(schema.projects.id, id))).get();
+  if (!rows) return c.json({ error: "Project not found" }, 404);
+  const target = rows as BoardRow;
+  const column = orderedBoardRows(await db.select({ id: schema.projects.id, stageKey: schema.projects.stageKey, priority: schema.projects.priority, boardPosition: schema.projects.boardPosition })
+    .from(schema.projects).where(and(eq(schema.projects.stageKey, target.stageKey), isNull(schema.projects.archivedAt))).all() as BoardRow[]);
+  const neighbors = manualInsertNeighbors(column, id, data.direction);
+  if (!neighbors) return c.json({ boardPosition: target.boardPosition });
+  const { beforeId, afterId, before, after } = neighbors;
+  const position = computeInsertPosition(before, after);
+  const result = await guardedBoardUpdate(db, c.env.DB, target, column, beforeId, afterId, position, undefined);
+  if (!result) return c.json({ error: "Project stage changed while board position was being updated" }, 409);
+  await audit(c.env, c.get("user").id, "project.board_position_set", "project", id, { direction: data.direction });
+  return c.json({ boardPosition: result.boardPosition });
 });
 projectsRoutes.patch("/projects/:id", async (c) => {
   const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
@@ -594,10 +654,10 @@ projectsRoutes.post("/projects/:id/stage", async (c) => {
     await ensurePipelineStages(db);
     const target = await db.select({ active: schema.pipelineStages.active }).from(schema.pipelineStages).where(eq(schema.pipelineStages.key, data.stageKey)).get();
     if (!target?.active) return c.json({ error: "Stage is deactivated" }, 409);
-    await db.update(schema.projects).set({ stageKey: data.stageKey, updatedAt: new Date() }).where(eq(schema.projects.id, id));
+    const updated = await db.update(schema.projects).set({ stageKey: data.stageKey, boardPosition: appendToStageBottomExpr(data.stageKey, id), updatedAt: new Date() }).where(eq(schema.projects.id, id)).returning({ boardPosition: schema.projects.boardPosition }).all();
     await audit(c.env, c.get("user").id, "stage.set", "project", id, { from: project.stageKey, to: data.stageKey });
     if (project.stageKey !== "delivered" && data.stageKey === "delivered") await notifyProject(c.env, id, "delivered");
-    return c.json({ ok: true, stageKey: data.stageKey });
+    return c.json({ ok: true, stageKey: data.stageKey, boardPosition: updated[0]?.boardPosition ?? 0 });
   }
 });
 projectsRoutes.get("/projects/:id", async (c) => {

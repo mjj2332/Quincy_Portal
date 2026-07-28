@@ -21,6 +21,12 @@ export interface ProjectSummary {
   coverAssetId: string | null;
   receivedCount: number;
   expectedCount: number | null;
+  priority: number | null;
+  boardPosition: number;
+}
+
+export function sortKanbanProjects(projects: ProjectSummary[]): ProjectSummary[] {
+  return [...projects].sort((left, right) => left.boardPosition - right.boardPosition || left.id.localeCompare(right.id));
 }
 
 interface ProjectsResponse {
@@ -38,12 +44,15 @@ function CoverMedia({ project, className = "", inlinePlaceholder = false, retryT
 
 function location(project: ProjectSummary) { return [project.suburb, project.postcode].filter(Boolean).join(" · ") || "Location pending"; }
 
-export function KanbanCard({ project, canMove, isDragging, onDragStart, onDragEnd, initialCoverFailed = false }: {
+export function KanbanCard({ project, canMove, isDragging, onDragStart, onDragEnd, initialCoverFailed = false, canPrioritize = false, onPriorityChange, onBoardPosition }: {
   project: ProjectSummary;
   canMove: boolean;
   isDragging: boolean;
   onDragStart: (project: ProjectSummary, event: DragEvent<HTMLAnchorElement>) => void;
   onDragEnd: () => void;
+  canPrioritize?: boolean;
+  onPriorityChange?: (project: ProjectSummary, priority: number | null) => void;
+  onBoardPosition?: (project: ProjectSummary, direction: "up" | "down") => void;
   /** Used by the Node markup test; normal cards begin with their cover available. */
   initialCoverFailed?: boolean;
 }) {
@@ -57,9 +66,18 @@ export function KanbanCard({ project, canMove, isDragging, onDragStart, onDragEn
         <div className="kcard__addr serif">{project.street}</div>
         <div className="kcard__meta">{location(project)}</div>
         <div className="kcard__meta">{project.agencyName || "Agency pending"}</div>
-        <div className="kcard__foot"><span className="ey">{rawCount}</span></div>
+        <div className="kcard__foot"><span className="ey">{rawCount}</span>{project.priority !== null && <span className="ey">Priority {project.priority}</span>}</div>
       </div>
     </InternalLink>
+    {canPrioritize && <div className="kcard-controls" aria-label={`Order controls for ${project.street}`}>
+      <label className="sr-only" htmlFor={`priority-${project.id}`}>Priority</label>
+      <select id={`priority-${project.id}`} value={project.priority ?? ""} aria-label="Priority" onChange={(event) => onPriorityChange?.(project, event.target.value === "" ? null : Number(event.target.value))}>
+        <option value="">—</option>
+        {Array.from({ length: 10 }, (_, index) => index + 1).map((value) => <option value={value} key={value}>{value}</option>)}
+      </select>
+      <button type="button" className="kcard-controls__arrow" aria-label="Move project up" onClick={() => onBoardPosition?.(project, "up")}>↑</button>
+      <button type="button" className="kcard-controls__arrow" aria-label="Move project down" onClick={() => onBoardPosition?.(project, "down")}>↓</button>
+    </div>}
     {coverFailed && <button className="kcard__retry button button--secondary" type="button" onClick={() => { setCoverFailed(false); setCoverRetry((current) => current + 1); }}>Retry cover image</button>}
   </div>;
 }
@@ -84,6 +102,7 @@ export function Dashboard({ currentUserId }: { currentUserId: string }) {
   const { stages } = useStages();
   const canCreateProject = can("createProject");
   const canMoveStages = can("selectForEditing");
+  const canPrioritize = can("prioritizeProjects");
   const canViewArchived = can("adminBackend");
   const canViewNoticeBoard = can("viewNoticeBoard");
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
@@ -95,6 +114,7 @@ export function Dashboard({ currentUserId }: { currentUserId: string }) {
   }));
   const [dragging, setDragging] = useState<ProjectSummary>();
   const [pendingMoves, setPendingMoves] = useState<Set<string>>(new Set());
+  const [pendingOrdering, setPendingOrdering] = useState<Set<string>>(new Set());
   const [dropStage, setDropStage] = useState<StageKey>();
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [error, setError] = useState<string>();
@@ -161,14 +181,46 @@ export function Dashboard({ currentUserId }: { currentUserId: string }) {
     setProjects((current) => current.map((item) => item.id === project.id ? { ...item, stageKey } : item));
     setPendingMoves((current) => new Set(current).add(project.id));
     try {
-      await apiPost<{ ok: true; stageKey: StageKey }, { stageKey: StageKey }>(`/api/projects/${project.id}/stage`, { stageKey });
+      const response = await apiPost<{ ok: true; stageKey: StageKey; boardPosition: number }, { stageKey: StageKey }>(`/api/projects/${project.id}/stage`, { stageKey });
+      setProjects((current) => current.map((item) => item.id === project.id && item.stageKey === stageKey ? { ...item, boardPosition: response.boardPosition } : item));
       const label = stages.find((stage) => stage.key === stageKey)?.label ?? stageKey;
       toast(`Moved to ${label}.`);
     } catch (reason) {
-      setProjects((current) => current.map((item) => item.id === project.id && item.stageKey === stageKey ? { ...item, stageKey: project.stageKey } : item));
+      setProjects((current) => current.map((item) => item.id === project.id && item.stageKey === stageKey ? { ...item, stageKey: project.stageKey, boardPosition: project.boardPosition } : item));
       toast(reason instanceof Error ? reason.message : "The stage could not be updated.", "error");
     } finally {
       setPendingMoves((current) => { const next = new Set(current); next.delete(project.id); return next; });
+    }
+  }
+
+  async function setProjectPriority(project: ProjectSummary, priority: number | null) {
+    if (pendingOrdering.has(project.id)) return;
+    setProjects((current) => current.map((item) => item.id === project.id ? { ...item, priority } : item));
+    setPendingOrdering((current) => new Set(current).add(project.id));
+    try {
+      const response = await apiPost<{ priority: number | null; boardPosition: number }, { priority: number | null }>(`/api/projects/${project.id}/priority`, { priority });
+      setProjects((current) => current.map((item) => item.id === project.id ? { ...item, priority: response.priority, boardPosition: response.boardPosition } : item));
+    } catch (reason) {
+      setProjects((current) => current.map((item) => item.id === project.id && item.priority === priority ? { ...item, priority: project.priority, boardPosition: project.boardPosition } : item));
+      toast(reason instanceof Error ? reason.message : "The project priority could not be updated.", "error");
+    } finally {
+      setPendingOrdering((current) => { const next = new Set(current); next.delete(project.id); return next; });
+    }
+  }
+
+  async function moveProjectPosition(project: ProjectSummary, direction: "up" | "down") {
+    if (pendingOrdering.has(project.id)) return;
+    const optimistic = direction === "up" ? project.boardPosition - 1024 : project.boardPosition + 1024;
+    setProjects((current) => current.map((item) => item.id === project.id ? { ...item, boardPosition: optimistic } : item));
+    setPendingOrdering((current) => new Set(current).add(project.id));
+    try {
+      const response = await apiPost<{ boardPosition: number }, { direction: "up" | "down" }>(`/api/projects/${project.id}/board-position`, { direction });
+      setProjects((current) => current.map((item) => item.id === project.id ? { ...item, boardPosition: response.boardPosition } : item));
+    } catch (reason) {
+      setProjects((current) => current.map((item) => item.id === project.id && item.boardPosition === optimistic ? { ...item, boardPosition: project.boardPosition } : item));
+      toast(reason instanceof Error ? reason.message : "The project position could not be updated.", "error");
+    } finally {
+      setPendingOrdering((current) => { const next = new Set(current); next.delete(project.id); return next; });
     }
   }
 
@@ -244,7 +296,7 @@ export function Dashboard({ currentUserId }: { currentUserId: string }) {
       {!isLoading && !error && !viewingArchived && filteredProjects.length > 0 && view === "kanban" && (
         <div className="kanban" aria-label="Project pipeline board">
           {activeStages.map((stage) => {
-            const stageProjects = filteredProjects.filter((project) => project.stageKey === stage.key);
+            const stageProjects = sortKanbanProjects(filteredProjects.filter((project) => project.stageKey === stage.key));
             const stageKey = stage.key === "editing" ? "editing_autohdr" : stage.key;
             const canDropStage = canMoveStages && (canViewArchived || stage.key !== "editing");
             const isDropTarget = canDropStage && dropStage === stageKey;
@@ -252,7 +304,7 @@ export function Dashboard({ currentUserId }: { currentUserId: string }) {
               <div className="kcol__head"><span className="row gap2"><StatusBadge stageKey={stage.key} /></span><span className="cnt">{stageProjects.length}</span></div>
               <div className="kcol__body">
                 {stageProjects.length === 0 && <div className="kcol__empty">—</div>}
-                {stageProjects.map((project) => <KanbanCard key={project.id} project={project} canMove={canMoveStages && !pendingMoves.has(project.id)} isDragging={dragging?.id === project.id} onDragStart={beginDrag} onDragEnd={() => { setDragging(undefined); setDropStage(undefined); }} />)}
+                {stageProjects.map((project) => <KanbanCard key={project.id} project={project} canMove={canMoveStages && !pendingMoves.has(project.id)} canPrioritize={canPrioritize && !pendingOrdering.has(project.id)} isDragging={dragging?.id === project.id} onPriorityChange={setProjectPriority} onBoardPosition={moveProjectPosition} onDragStart={beginDrag} onDragEnd={() => { setDragging(undefined); setDropStage(undefined); }} />)}
               </div>
             </section>;
           })}

@@ -50,7 +50,7 @@ export function dueAwaitingRawProjects(projects: AwaitingRawProject[], businessD
 
 export const RECONCILE_AWAITING_RAW_UPDATE_SQL = `
   UPDATE projects
-  SET stage_key = 'raw_review', updated_at = ?
+  SET stage_key = 'raw_review', board_position = (SELECT COALESCE(MAX(board_position) + 1024, 0) FROM projects WHERE stage_key = 'raw_review' AND archived_at IS NULL AND id != ?), updated_at = ?
   WHERE id = ?
     AND stage_key = 'awaiting_raw'
     AND archived_at IS NULL
@@ -97,7 +97,7 @@ export async function advanceAwaitingRawProject(database: D1Database, project: D
     to: "raw_review",
   });
   const result = await database.batch([
-    database.prepare(RECONCILE_AWAITING_RAW_UPDATE_SQL).bind(now, project.id, project.shootDate),
+    database.prepare(RECONCILE_AWAITING_RAW_UPDATE_SQL).bind(project.id, now, project.id, project.shootDate),
     database.prepare(RECONCILE_AWAITING_RAW_AUDIT_SQL).bind(crypto.randomUUID(), project.id, metadata, now),
   ]);
   const changed = result[0]?.meta.changes === 1;

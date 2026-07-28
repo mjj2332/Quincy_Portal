@@ -118,8 +118,8 @@ export async function confirmAutoHdrHandoff(
 ): Promise<boolean> {
   const now = Date.now();
   const result = await env.DB.batch([
-    env.DB.prepare("UPDATE projects SET stage_key = 'editing_autohdr', updated_at = ? WHERE id = ? AND stage_key = 'raw_review' AND archived_at IS NULL")
-      .bind(now, input.projectId),
+    env.DB.prepare("UPDATE projects SET stage_key = 'editing_autohdr', board_position = (SELECT COALESCE(MAX(board_position) + 1024, 0) FROM projects WHERE stage_key = 'editing_autohdr' AND archived_at IS NULL AND id != ?), updated_at = ? WHERE id = ? AND stage_key = 'raw_review' AND archived_at IS NULL")
+      .bind(input.projectId, now, input.projectId),
     env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, ?, 'stage.auto_advance', 'project', ?, ?, ? WHERE changes() = 1")
       .bind(crypto.randomUUID(), input.initiatedBy, input.projectId, JSON.stringify({ from: "raw_review", to: "editing_autohdr", trigger: "autohdr_handoff", handoffId: input.handoffId, jobId: input.jobId, mappingGeneration: input.mappingGeneration, connectionId: input.connectionId }), now),
     env.DB.prepare("UPDATE autohdr_handoffs SET state = 'started', started_at = coalesce(started_at, ?), updated_at = ? WHERE id = ? AND project_id = ? AND connection_id = ? AND generation = ? AND state in ('starting','started') AND EXISTS (SELECT 1 FROM projects WHERE id = ? AND stage_key = 'editing_autohdr' AND archived_at IS NULL)")
@@ -370,8 +370,8 @@ async function claimAutoHdrRepeatSend(
         .bind(handoffId, projectId, connectionId, active.generation + 1, selection.selectionHash, JSON.stringify(selection.ids), JSON.stringify(selection.readinessUnits), project.rawFolderPath, initiatedBy, project.stageKey, workflowId, jobId, lease.getTime(), nowMs, nowMs, projectId),
       env.DB.prepare("INSERT INTO autohdr_output_mappings (id, project_id, handoff_id, connection_id, generation, state, created_at, updated_at) SELECT ?, ?, ?, ?, ?, 'pending_discovery', ?, ? WHERE changes() = 1 AND EXISTS (SELECT 1 FROM autohdr_handoffs WHERE id = ?)")
         .bind(mappingNewId, projectId, handoffId, connectionId, active.generation + 1, nowMs, nowMs, handoffId),
-      env.DB.prepare("UPDATE projects SET stage_key = 'editing_autohdr', updated_at = ? WHERE id = ? AND stage_key = 'edited_review' AND archived_at IS NULL AND EXISTS (SELECT 1 FROM autohdr_output_mappings WHERE id = ?)")
-        .bind(nowMs, projectId, mappingNewId),
+      env.DB.prepare("UPDATE projects SET stage_key = 'editing_autohdr', board_position = (SELECT COALESCE(MAX(board_position) + 1024, 0) FROM projects WHERE stage_key = 'editing_autohdr' AND archived_at IS NULL AND id != ?), updated_at = ? WHERE id = ? AND stage_key = 'edited_review' AND archived_at IS NULL AND EXISTS (SELECT 1 FROM autohdr_output_mappings WHERE id = ?)")
+        .bind(projectId, nowMs, projectId, mappingNewId),
       env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, ?, 'stage.auto_advance', 'project', ?, ?, ? WHERE changes() = 1")
         .bind(crypto.randomUUID(), initiatedBy, projectId, JSON.stringify({ from: "edited_review", to: "editing_autohdr", trigger: "autohdr_repeat_send", handoffId, jobId, mappingGeneration: active.generation + 1, connectionId }), nowMs),
       ...candidates.map((candidate, index) => {
@@ -603,11 +603,11 @@ export async function claimImplicitAutoHdrHandoff(
   batchStatements.push(
     env.DB.prepare(`
       UPDATE projects
-      SET stage_key = 'editing_autohdr', updated_at = ?
+      SET stage_key = 'editing_autohdr', board_position = (SELECT COALESCE(MAX(board_position) + 1024, 0) FROM projects WHERE stage_key = 'editing_autohdr' AND archived_at IS NULL AND id != ?), updated_at = ?
       WHERE id = ? AND stage_key = 'raw_review' AND archived_at IS NULL
         AND ? = 0
         AND EXISTS (SELECT 1 FROM autohdr_handoffs WHERE id = ?)
-    `).bind(nowMs, projectId, isCollision ? 1 : 0, handoffId),
+    `).bind(projectId, nowMs, projectId, isCollision ? 1 : 0, handoffId),
     env.DB.prepare(`
       INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
       SELECT ?, NULL, 'stage.auto_advance', 'project', ?, ?, ?
@@ -786,10 +786,10 @@ export async function claimBackfillAutoHdrHandoff(
   batchStatements.push(
     env.DB.prepare(`
       UPDATE projects
-      SET stage_key = 'editing_autohdr', updated_at = ?
+      SET stage_key = 'editing_autohdr', board_position = (SELECT COALESCE(MAX(board_position) + 1024, 0) FROM projects WHERE stage_key = 'editing_autohdr' AND archived_at IS NULL AND id != ?), updated_at = ?
       WHERE id = ? AND stage_key = 'raw_review' AND archived_at IS NULL
         AND EXISTS (SELECT 1 FROM autohdr_handoffs WHERE id = ?)
-    `).bind(nowMs, projectId, handoffId),
+    `).bind(projectId, nowMs, projectId, handoffId),
     env.DB.prepare(`
       INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
       SELECT ?, NULL, 'stage.auto_advance', 'project', ?, ?, ?

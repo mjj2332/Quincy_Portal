@@ -1,5 +1,5 @@
 import { and, eq, isNull, sql } from "drizzle-orm";
-import { COLLECTION_RECEIVED_COUNT_SQL, collectionReceivedCountBindings } from "@quincy/db";
+import { COLLECTION_RECEIVED_COUNT_SQL, appendToStageBottomExpr, collectionReceivedCountBindings } from "@quincy/db";
 import { COLLECTION_KINDS, normaliseAddressKey, parseTonomoOrder, TonomoParseError, type CollectionKind, type TonomoOrder } from "@quincy/shared";
 import { auditLog, collectionLinks, collections, projectMembers, projects, user, webhookEvents } from "@quincy/db/schema";
 
@@ -98,7 +98,7 @@ async function createProject(env: Env, order: TonomoOrder): Promise<string> {
     shootDate: order.shootDate, timeWindow: order.timeWindow, orderNo: order.orderNo, orderId: order.orderId,
     invoiceAmount: order.invoiceAmount, paymentStatus: order.paymentStatus, notes: order.notes,
     rawFolderLink: order.rawFolderLink, rawFolderPath: order.rawFolderPath,
-    stageKey: "awaiting_raw", createdAt: now, updatedAt: now,
+    stageKey: "awaiting_raw", boardPosition: appendToStageBottomExpr("awaiting_raw", id), createdAt: now, updatedAt: now,
   });
   await enqueueAutoHdrScaffold(env, id).catch((error) =>
     console.error("AutoHDR scaffold trigger failed", { projectId: id, error }));

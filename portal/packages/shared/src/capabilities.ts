@@ -32,6 +32,7 @@ export const CAPABILITIES = [
   "managePipelineConfig",
   "manageDirectory",
   "viewNoticeBoard",
+  "prioritizeProjects",
 ] as const;
 export type Capability = (typeof CAPABILITIES)[number];
 
@@ -68,6 +69,7 @@ export const ROLE_CAPABILITIES: Record<Role, readonly Capability[]> = {
     "managePipelineConfig",
     "manageDirectory",
     "viewNoticeBoard",
+    "prioritizeProjects",
   ],
   editor: [
     "viewAllProjects",

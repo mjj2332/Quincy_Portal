@@ -1,5 +1,13 @@
 # Lessons — Quincy Portal build
 
+- **Verify generated SQLite table-rebuild migrations against the pre-migration schema.** Drizzle
+  correctly generated the new `CHECK`, but its 0020 copy `SELECT` also referenced the newly-added
+  `priority` and `board_position` columns before they existed, so the migration failed on a real
+  old `projects` table. Rule: run the full migration chain against a local SQLite/D1 fixture and
+  replace new-column copy expressions with their defaults (`NULL`/`0`) when the generator emits
+  an invalid pre-schema projection; then test the database constraint itself, including fractional
+  values that API validation would normally reject.
+
 - **Notification trigger correctness depends on each writer's own affected-row result.** The
   stage-transition surface is split between guarded helper calls, inline D1 batches, and ORM
   updates; a sibling `changes()` result can be successful while the stage write was fenced out.

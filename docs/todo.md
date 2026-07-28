@@ -7,13 +7,22 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
 > counts, full diagnostic transcripts) has been cut in favor of what/when/deploy-state. See
 > `docs/lessons.md` for incident mechanics, and `docs/reviews/` for full QA-sweep detail.
 
-## Current state (2026-07-24)
+## Current state (2026-07-24, batch status updated 2026-07-28)
 
-- **Resuming the 6-feature batch (priority/reorder, notifications, notice board, select-all,
-  editor-as-photographer, photographer visibility)?** Read
-  `docs/Build-Handoff-6-Feature-Plans.md` first — recommended build order, a cross-plan
-  coordination point between two of the six, and which decisions are already settled vs. still
-  open. All six plans are Terra-approved and pushed to `main`; none are built yet.
+- **The 6-feature batch (priority/reorder, notifications, notice board, select-all,
+  editor-as-photographer, photographer visibility) is fully built and verified as of
+  2026-07-28.** All six plans are Terra plan-reviewed, built (five by Terra, one — PhotoGrid
+  Select-All — directly in-session per its small-task routing), independently re-verified in this
+  session (catching and fixing real bugs Terra's own sandbox couldn't find, since it can't run the
+  Miniflare-backed Worker integration suites), and Terra diff-reviewed. Status:
+  `Photographer-Stage-Visibility-Plan.md` is **committed (`57f87a6`) and deployed to production**;
+  `PhotoGrid-Select-All-Plan.md` (`ad2b60b`), `Editor-As-Photographer-Assignment-Plan.md`
+  (`99b7509`), `Notice-Board-Plan.md` (`dcc3213`), and `Notifications-Plan.md` (`bb6dca9`) are
+  **committed but not yet deployed**; `Kanban-Priority-And-Manual-Ordering-Plan.md` is **built and
+  verified, not yet committed** — see its own entry below. See each plan doc for build-specific
+  detail (bugs found/fixed, deviations, coordination-point outcomes).
+  `docs/Build-Handoff-6-Feature-Plans.md` has the original recommended build order and cross-plan
+  coordination notes, now all resolved.
 - **`main` is source of truth** — `build/phase-0-2` merged via PR #3. Production live at
   `quincy.flamingfire.my` (staging + prototype on their own hostnames). Branch off `main` for
   new work.
@@ -438,10 +447,14 @@ allowlist are silent no-ops otherwise). Full mechanics in `docs/subagents/agy-cl
 - **`Kanban-Priority-And-Manual-Ordering-Plan.md`** — project priority (1-10, admin-set) that
   repositions only the edited card among its column siblings (per explicit user decision, not a
   full-column resort) plus admin-only manual up/down reordering, via a `boardPosition` sort key.
-  **Status: APPROVED by Terra (round 9, 2026-07-28) — tied with `Notifications-Plan.md` for the
-  deepest review in this batch (the real project-stage-writer surface across both
-  `workers/background` and `workers/app` was far more scattered than first assumed). Ready to
-  build when authorized; not yet built.**
+  **Status: BUILT and verified (2026-07-28), not yet committed — awaiting user go-ahead.** Tied
+  with `Notifications-Plan.md` for the deepest review in this batch. Terra's build confirmed the
+  cross-plan coordination point at `workflows/autohdr.ts:277-279` worked as designed (found the
+  guard Notifications' build added already in place, spliced `boardPosition` into it). Full suite
+  passed clean on the first independent verification run — no bugs found, unlike the two preceding
+  plans in this batch. Terra diff review found one test-coverage gap (the `CHECK` constraint only
+  verified against `node:sqlite`, not the real D1/Miniflare harness) — fixed, second pass approved.
+  Migration `0020`.
 - **`Notice-Board-Plan.md`** — collapsible dashboard panel, chat-box-style staff message board,
   polling-based, author-only delete, global (not project-scoped, per explicit user decision),
   visible to admin+editor only via a new `viewNoticeBoard` capability (photographers excluded, per

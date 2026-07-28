@@ -433,6 +433,9 @@ button { font-family: var(--font-sans); }
 .kcol__body { display: flex; flex-direction: column; gap: 10px; padding: 12px; min-height: 120px; }
 .kcol__empty { text-align: center; color: var(--greige-300); padding: 18px 0; font-size: 20px; }
 .kcard-wrap { position: relative; }
+.kcard-controls { display: flex; align-items: center; gap: 4px; margin-top: 6px; }
+.kcard-controls select { min-width: 48px; }
+.kcard-controls__arrow { width: 28px; height: 26px; padding: 0; }
 .kcard { width: 100%; display: block; padding: 0; color: inherit; text-align: left; font: inherit; text-decoration: none; background: var(--paper-000); border: 1px solid var(--border-hairline); cursor: pointer; transition: background var(--dur-fast), border-color var(--dur-fast), transform var(--dur-fast); }
 .kcard:hover { background: var(--paper-100); border-color: var(--greige-300); }
 .kcard[draggable="true"] { cursor: grab; }

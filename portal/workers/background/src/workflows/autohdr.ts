@@ -1,5 +1,6 @@
 import { WorkflowEntrypoint } from "cloudflare:workers";
 import type { WorkflowEvent, WorkflowStep } from "cloudflare:workers";
+import { appendToStageBottomExpr } from "@quincy/db";
 import { assets, autoHdrHandoffs, autoHdrSentFiles, collections, projects } from "@quincy/db/schema";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { computeRemovalAssetIds } from "@quincy/shared";
@@ -275,7 +276,7 @@ export class AutoHdrSend extends WorkflowEntrypoint<Env, AutoHdrInput> {
             throw new Error("AutoHDR handoff confirmation lost its stage/ownership guard");
           }
         } else {
-          const result = await db.update(projects).set({ stageKey: "editing_autohdr", updatedAt: new Date() })
+          const result = await db.update(projects).set({ stageKey: "editing_autohdr", boardPosition: appendToStageBottomExpr("editing_autohdr", input.projectId), updatedAt: new Date() })
             .where(and(eq(projects.id, input.projectId), eq(projects.stageKey, "raw_review"), sql`${projects.archivedAt} IS NULL`)).run();
           if ((result.meta.changes ?? 0) === 1) {
             await notifyProject(this.env, input.projectId, "sent_to_editing");

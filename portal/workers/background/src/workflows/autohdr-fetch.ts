@@ -1,6 +1,6 @@
 import { WorkflowEntrypoint } from "cloudflare:workers";
 import type { WorkflowEvent, WorkflowStep } from "cloudflare:workers";
-import { COLLECTION_RECEIVED_COUNT_SQL, collectionReceivedCountBindings } from "@quincy/db";
+import { COLLECTION_RECEIVED_COUNT_SQL, appendToStageBottomExpr, collectionReceivedCountBindings } from "@quincy/db";
 import { assets, autoHdrFetchClaims, collections, projects, selections } from "@quincy/db/schema";
 import { enqueueRenditionSafely, isAcceptedPhotoFilename } from "@quincy/shared";
 import { and, eq, inArray } from "drizzle-orm";
@@ -179,7 +179,7 @@ export class AutoHdrFetch extends WorkflowEntrypoint<Env, AutoHdrFetchInput> {
         if (readyForReview) {
           // Only advance from the canonical predecessor so a re-fetch on a delivered project
           // never silently regresses its stage.
-          const result = await db.update(projects).set({ stageKey: "edited_review", updatedAt: new Date() }).where(and(eq(projects.id, input.projectId), eq(projects.stageKey, "editing_autohdr"))).run();
+          const result = await db.update(projects).set({ stageKey: "edited_review", boardPosition: appendToStageBottomExpr("edited_review", input.projectId), updatedAt: new Date() }).where(and(eq(projects.id, input.projectId), eq(projects.stageKey, "editing_autohdr"))).run();
           const stageAdvanced = (result.meta.changes ?? 0) === 1;
           if (stageAdvanced) await notifyProject(this.env, input.projectId, "edited_landed");
           return { stageAdvanced };

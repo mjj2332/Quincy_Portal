@@ -36,6 +36,12 @@ describe("PRD §4 capability matrix", () => {
     expect(roleHasCapability("editor", "viewNoticeBoard")).toBe(true);
     expect(roleHasCapability("photographer", "viewNoticeBoard")).toBe(false);
   });
+
+  it("allows project prioritization only for admins", () => {
+    expect(ROLE_CAPABILITIES.admin).toContain("prioritizeProjects");
+    expect(ROLE_CAPABILITIES.editor).not.toContain("prioritizeProjects");
+    expect(ROLE_CAPABILITIES.photographer).not.toContain("prioritizeProjects");
+  });
 });
 
 describe("pipeline stage transitions", () => {
