@@ -12,6 +12,7 @@ import type { Env } from "../env";
 import { dbFor, errorMessage } from "../lib/db";
 import { setJobStatus } from "../lib/jobs";
 import { confirmAutoHdrHandoff } from "../autohdr/claims";
+import { notifyProject } from "../notifications";
 
 export interface AutoHdrInput {
   projectId: string;
@@ -274,8 +275,17 @@ export class AutoHdrSend extends WorkflowEntrypoint<Env, AutoHdrInput> {
             throw new Error("AutoHDR handoff confirmation lost its stage/ownership guard");
           }
         } else {
-          await db.update(projects).set({ stageKey: "editing_autohdr", updatedAt: new Date() })
-            .where(eq(projects.id, input.projectId));
+          const result = await db.update(projects).set({ stageKey: "editing_autohdr", updatedAt: new Date() })
+            .where(and(eq(projects.id, input.projectId), eq(projects.stageKey, "raw_review"), sql`${projects.archivedAt} IS NULL`)).run();
+          if ((result.meta.changes ?? 0) === 1) {
+            await notifyProject(this.env, input.projectId, "sent_to_editing");
+          } else {
+            const current = await db.select({ stageKey: projects.stageKey, archivedAt: projects.archivedAt })
+              .from(projects).where(eq(projects.id, input.projectId)).get();
+            if (!current || current.archivedAt || current.stageKey !== "editing_autohdr") {
+              throw new Error("AutoHDR send stage guard was lost before the transfer started");
+            }
+          }
         }
         return { status: "running", stageKey: "editing_autohdr" };
       });

@@ -8,6 +8,7 @@ import type { AppEnv } from "../env";
 import { hasProjectAccess, requireCapability } from "../middleware/capability";
 import { audit } from "../lib/audit";
 import { newId } from "../lib/ids";
+import { notifyProject } from "../lib/notifications";
 import { createZipStream } from "../lib/zip-stream";
 import { jsonInput } from "./helpers";
 import { ensurePipelineStages, projectStageForRole } from "./stages";
@@ -593,7 +594,10 @@ projectsRoutes.post("/projects/:id/stage", async (c) => {
     await ensurePipelineStages(db);
     const target = await db.select({ active: schema.pipelineStages.active }).from(schema.pipelineStages).where(eq(schema.pipelineStages.key, data.stageKey)).get();
     if (!target?.active) return c.json({ error: "Stage is deactivated" }, 409);
-    await db.update(schema.projects).set({ stageKey: data.stageKey, updatedAt: new Date() }).where(eq(schema.projects.id, id)); await audit(c.env, c.get("user").id, "stage.set", "project", id, { from: project.stageKey, to: data.stageKey }); return c.json({ ok: true, stageKey: data.stageKey });
+    await db.update(schema.projects).set({ stageKey: data.stageKey, updatedAt: new Date() }).where(eq(schema.projects.id, id));
+    await audit(c.env, c.get("user").id, "stage.set", "project", id, { from: project.stageKey, to: data.stageKey });
+    if (project.stageKey !== "delivered" && data.stageKey === "delivered") await notifyProject(c.env, id, "delivered");
+    return c.json({ ok: true, stageKey: data.stageKey });
   }
 });
 projectsRoutes.get("/projects/:id", async (c) => {

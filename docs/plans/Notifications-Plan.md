@@ -1,7 +1,26 @@
 # In-App + Email Notifications (v1) — Plan
 
-**Status: APPROVED by Terra (round 8, 2026-07-28). Ready to build whenever the user authorizes it
-— not yet built.** By far the largest revision of the 6 plans in this batch — 8 rounds, since the
+**Status: BUILT and verified (2026-07-28).** Plan approved by Terra (round 8). Built by Terra.
+Independent verification in this session (the Cloudflare Worker integration suites Terra's own
+sandbox couldn't run — Miniflare EPERM) found and fixed three real bugs before diff review: an
+invalid SQL conflict-clause position in the stalled-scan dedup insert (drizzle's
+`onConflictDoNothing` placed a partial-index predicate after `DO NOTHING`, which SQLite rejects —
+fixed with raw SQL for that one statement), a return-value regression in `confirmAutoHdrHandoff`
+that broke an existing concurrency test (the plan's own instruction to switch which batch
+statement gates the notification didn't account for the function's pre-existing dual-purpose
+return value — fixed by tracking both signals independently), and an incomplete test fixture. Terra
+diff review (fresh context) found one more real bug on its first pass — a notification in
+`autohdr/finals.ts`'s "new asset" path could be permanently lost if a downstream rendition-enqueue
+side effect failed after the stage transition already committed, since a retry would find the
+project already past the guarded stage — fixed by reordering to notify immediately at commit,
+matching the sibling code path's already-correct pattern. Second-pass diff review **APPROVED**.
+Full verify sequence green: typecheck (6 workspaces), `apps/web` build, all five workspace test
+suites (including the new `packages/db` suite this build added) plus the separately-invoked
+`packages/shared` suite. Migration `0019` (`notifications`). Cloudflare Email Service is
+deliberately **not yet configured** — email sends will no-op/fail into `email_error` until you
+follow `docs/Cloudflare-Email-Service-Setup.md`; in-app notifications work regardless. Not yet
+committed — awaiting the user's go-ahead. By far the largest revision of the 6 plans in this
+batch — 8 rounds, since the
 real trigger surface turned out far more scattered than the original draft assumed, one event was
 miscategorized for 4 rounds before being caught, and one of this plan's own fixes (round 5)
 introduced a fresh TOCTOU race that took another round to surface. The events table still
@@ -410,6 +429,36 @@ their own project), the recipient set is correctly empty — no notification, no
 count as new comments** (clarified per Terra round 1): a reply (`parentId` set) uses the same
 trigger and the same recipient computation as a top-level comment — it is not exempted just
 because it's nested; the only exclusion is the actor, same as any other comment.
+
+## Decisions confirmed by the user, 2026-07-28 (don't re-litigate)
+
+- **Recipient scope (was open question 1)**: `project_members` only — not every admin/editor via
+  `viewAllProjects`. Matches the plan's own recommendation.
+- **v1 event set (was open question 2)**: RAW-ready, edited-landed, and AutoHDR-stalled (the
+  plan's recommended set), **plus comment/annotation** — the latter was already a mandatory part
+  of this plan's design (user-requested in the original amendment, not one of the open "starter
+  events"), so this confirms it ships, it doesn't add new scope. "Sent to AutoHDR," "repeat round
+  started," and "delivered" stay out of v1's default set (repeat-round-started was already
+  out-of-scope entirely per the plan; "sent to AutoHDR" and "delivered" are simply not part of the
+  confirmed default set — build their mechanism per the plan's design since the trigger sites are
+  shared infrastructure either way, but they don't need to be in `EMAIL_ENABLED_EVENTS` or
+  presented as "on" if that turns out to add meaningful scope — use judgment at build time,
+  RAW-ready/edited-landed/AutoHDR-stalled/comment-annotation are the confirmed set).
+- **Cloudflare Email Service setup status (was open question 7)**: **not yet set up.** Build the
+  full email-sending mechanism now, with mocked `env.EMAIL.send` in tests per the plan's existing
+  testing requirements — this doesn't block the build. The actual hands-on Cloudflare dashboard
+  setup (Email Routing, sender-domain onboarding, staff destination-address verification) and a
+  real end-to-end send test happen separately, after this build, following
+  `docs/Cloudflare-Email-Service-Setup.md` (new, written alongside this plan for the user to
+  follow). In-app notifications work immediately regardless of email setup status — email sends
+  will fail (or simply never attempt if you leave the `send_email` binding unconfigured until
+  setup is done) and land in `email_error`/an unset `email_sent_at`, exactly the "best-effort,
+  logged, no automatic retry" behavior the plan already designs for.
+
+Remaining open questions (3, 4, 5, 6, 8, 9 below) were not individually confirmed — build per the
+plan's own stated recommendation for each (poll interval 20-30s, retention 90 days, no per-user
+mute in v1, both "sent to AutoHDR" call sites notify identically, 3-hour stalled threshold); these
+are tuning parameters, easy to adjust later, not treated as blocking.
 
 ## Open questions (recommendations given, not yet decided)
 

@@ -151,4 +151,28 @@ describe("AutoHdrSend.run orchestration", () => {
       .bind(input.handoffId).all();
     expect(sent.results).toEqual([{ asset_id: input.assetIds[0] }]);
   });
+
+  it("continues an idempotent legacy guard miss when the project is already editing", async () => {
+    const { localEnv, input } = await round();
+    const legacyInput = { ...input, handoffId: undefined, connectionId: undefined, mappingGeneration: undefined, initiatedBy: undefined };
+    vi.mocked(createFolder).mockResolvedValue(undefined);
+    vi.mocked(listFolderIfExists).mockResolvedValue({ entries: [], has_more: false, cursor: "empty" } as never);
+    vi.mocked(copyBatch).mockResolvedValue({ ".tag": "complete", entries: [{ ".tag": "success" }] } as never);
+    vi.mocked(upload).mockResolvedValue({ ".tag": "file", id: "id:fallback", name: "fallback.jpg", path_lower: "/autohdr/run/fallback.jpg", size: 1 } as never);
+    // assetIds[0] has a Dropbox source_path (goes via copyBatch); assetIds[1] is an "upload"
+    // source with no source_path (goes via the fallback R2-read-then-upload path) — the
+    // continuing Workflow processes both, so both transfer paths' fixtures are needed here,
+    // matching the "records both copy-loop and fallback-loop writes" test's setup.
+    await database.MEDIA.put(`tests/${input.assetIds[1]}.jpg`, new Uint8Array([1]));
+    await workflow(localEnv).run({ payload: legacyInput, timestamp: new Date(), instanceId: "legacy-idempotent", workflowName: "autohdr" }, directStep() as never);
+    expect(copyBatch).toHaveBeenCalled();
+  });
+
+  it("throws on a stale legacy guard miss and does not start the transfer", async () => {
+    const { localEnv, input } = await round();
+    const legacyInput = { ...input, handoffId: undefined, connectionId: undefined, mappingGeneration: undefined, initiatedBy: undefined };
+    await database.DB.prepare("UPDATE projects SET stage_key = 'edited_review' WHERE id = ?").bind(input.projectId).run();
+    await expect(workflow(localEnv).run({ payload: legacyInput, timestamp: new Date(), instanceId: "legacy-stale", workflowName: "autohdr" }, directStep() as never)).rejects.toThrow("stage guard");
+    expect(copyBatch).not.toHaveBeenCalled();
+  });
 });

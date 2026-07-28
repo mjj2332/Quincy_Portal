@@ -23,6 +23,8 @@ export interface Env {
   R2_S3_SECRET_ACCESS_KEY?: string;
   DROPBOX_APP_KEY?: string;
   DROPBOX_APP_SECRET?: string;
+  EMAIL?: SendEmail;
+  NOTIFICATIONS_FROM_ADDRESS?: string;
 }
 
 export type SessionUser = { id: string; email: string; name: string; role: Role; active: boolean };

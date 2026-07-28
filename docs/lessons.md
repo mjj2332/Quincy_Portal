@@ -1,5 +1,12 @@
 # Lessons — Quincy Portal build
 
+- **Notification trigger correctness depends on each writer's own affected-row result.** The
+  stage-transition surface is split between guarded helper calls, inline D1 batches, and ORM
+  updates; a sibling `changes()` result can be successful while the stage write was fenced out.
+  Rule: attach the shared post-success hook only to the helper's real transition, and at every
+  inline site capture that statement's own result before fanout. Periodic stalled scans also need
+  a partial unique source-key backstop so a repeated healthy cron tick is a true no-op.
+
 - **Cron schedules are UTC; business rules may not be.** Cloudflare cron expressions fire in
   UTC, so a scheduled rule tied to a local operating day must derive that date from the scheduled
   instant with `Intl.DateTimeFormat(..., { timeZone: "Australia/Sydney" }).formatToParts()`.

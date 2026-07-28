@@ -10,6 +10,7 @@ import { audit } from "../lib/audit";
 import { newId } from "../lib/ids";
 import { jsonInput } from "./helpers";
 import { isUserVisibleAsset, unpublishedAssetResponse } from "../lib/asset-visibility";
+import { notifyProject } from "../lib/notifications";
 
 const commentInput = z.object({ body: z.string().trim().min(1).max(10_000), parentId: z.string().uuid().optional() });
 const strokeInput = z.object({
@@ -111,6 +112,7 @@ annotationsRoutes.post("/assets/:id/annotations", async (c) => {
     strokeR2Key, noteText: data.noteText || null, createdAt,
   });
   await audit(c.env, c.get("user").id, "asset.annotate", "asset", assetId, { annotationId: id, scope, hasStrokes: Boolean(strokeR2Key) });
+  await notifyProject(c.env, asset.projectId, "comment_added", { editorOnly: true, excludeUserId: c.get("user").id });
   const user = c.get("user");
   return c.json({ id, authorId: user.id, author: { id: user.id, name: user.name, role: user.role }, scope, strokeR2Key, noteText: data.noteText || null, createdAt: createdAt.toISOString(), editedAt: null }, 201);
 });
@@ -133,6 +135,7 @@ annotationsRoutes.post("/assets/:id/comments", async (c) => {
   const createdAt = new Date();
   await db.insert(schema.comments).values({ id, assetId, parentId: data.parentId ?? null, authorId: c.get("user").id, authorRole: c.get("user").role, body: data.body, createdAt });
   await audit(c.env, c.get("user").id, "asset.comment", "asset", assetId, { commentId: id, parentId: data.parentId ?? null, scope });
+  await notifyProject(c.env, asset.projectId, "comment_added", { editorOnly: true, excludeUserId: c.get("user").id });
   const user = c.get("user");
   return c.json({ id, parentId: data.parentId ?? null, authorId: user.id, body: data.body, author: { id: user.id, name: user.name, role: user.role }, createdAt: createdAt.toISOString(), editedAt: null, replies: [] }, 201);
 });

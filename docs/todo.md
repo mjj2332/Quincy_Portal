@@ -412,10 +412,18 @@ allowlist are silent no-ops otherwise). Full mechanics in `docs/subagents/agy-cl
 - **`Notifications-Plan.md`** — in-app + email notifications v1 (bell icon surfacing
   project-progress events plus a comment/annotation-to-assigned-editor event, staff-only for
   v1, polling not push; Cloudflare Email Service folded in — sending to a small set of
-  pre-verified staff addresses is free on every plan, no Workers Paid blocker). **Status:
-  APPROVED by Terra (round 8, 2026-07-28) — the deepest review of this batch, since the real
-  AutoHDR trigger surface was far more scattered than first assumed. Ready to build when
-  authorized; not yet built.**
+  pre-verified staff addresses is free on every plan, no Workers Paid blocker). **Status: BUILT
+  and verified (2026-07-28), not yet committed — awaiting user go-ahead.** Migration `0019`. The
+  Cloudflare Worker integration suites Terra's own sandbox couldn't run (Miniflare EPERM) were
+  run independently in this session and caught three real bugs before diff review (an invalid
+  SQL conflict-clause position, a return-value regression breaking an existing concurrency test,
+  an incomplete test fixture) — all fixed. Terra diff review then caught one more (a notification
+  that could be permanently lost if a downstream side effect failed after its stage transition
+  already committed) — also fixed, second-pass review approved. Full verify sequence green
+  (typecheck, build, all five workspace suites including the new `packages/db` suite this build
+  added, plus `packages/shared`). Cloudflare Email Service is deliberately not yet configured —
+  see `docs/Cloudflare-Email-Service-Setup.md` for the separate hands-on setup step; in-app
+  notifications work regardless.
 - **`Cloudflare-Images-Pilot-Plan.md`** — renditions-only Cloudflare Images pilot.
   **Not recommended to proceed now**: the outage that motivated it resolved on its own, and an
   independent two-reviewer debate (Agy + Sol) on a related idea (moving originals to Dropbox)

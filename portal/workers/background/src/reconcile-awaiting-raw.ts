@@ -87,7 +87,7 @@ export async function scanAwaitingRawProjects(database: D1Database, businessDate
   return result.results;
 }
 
-export async function advanceAwaitingRawProject(database: D1Database, project: DueAwaitingRawProject, businessDate: string, now = Date.now()): Promise<boolean> {
+export async function advanceAwaitingRawProject(database: D1Database, project: DueAwaitingRawProject, businessDate: string, now = Date.now(), onSuccess?: () => void | Promise<void>): Promise<boolean> {
   const metadata = JSON.stringify({
     actor: "system",
     trigger: "hourly-awaiting-raw-reconciliation",
@@ -100,7 +100,9 @@ export async function advanceAwaitingRawProject(database: D1Database, project: D
     database.prepare(RECONCILE_AWAITING_RAW_UPDATE_SQL).bind(now, project.id, project.shootDate),
     database.prepare(RECONCILE_AWAITING_RAW_AUDIT_SQL).bind(crypto.randomUUID(), project.id, metadata, now),
   ]);
-  return result[0]?.meta.changes === 1;
+  const changed = result[0]?.meta.changes === 1;
+  if (changed) await onSuccess?.();
+  return changed;
 }
 
 export type ReconciliationSummary = { attempted: number; advanced: number; skipped: number; failures: number };
@@ -119,11 +121,11 @@ export async function reconcileAwaitingRaw(store: ReconciliationStore, businessD
   return { attempted: candidates.length, advanced, skipped: candidates.length - advanced - failures, failures };
 }
 
-export async function reconcileAwaitingRawProjects(database: D1Database, scheduledTime: Date | number): Promise<ReconciliationSummary> {
+export async function reconcileAwaitingRawProjects(database: D1Database, scheduledTime: Date | number, onAdvanced?: (projectId: string) => void | Promise<void>): Promise<ReconciliationSummary> {
   const businessDate = australiaSydneyBusinessDate(scheduledTime);
   const summary = await reconcileAwaitingRaw({
     scan: (date) => scanAwaitingRawProjects(database, date),
-    advance: (project, date) => advanceAwaitingRawProject(database, project, date),
+    advance: (project, date) => advanceAwaitingRawProject(database, project, date, Date.now(), () => onAdvanced?.(project.id)),
   }, businessDate);
   console.log("Awaiting RAW reconciliation", { businessDate, ...summary });
   return summary;

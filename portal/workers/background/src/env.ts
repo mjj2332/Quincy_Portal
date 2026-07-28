@@ -29,4 +29,6 @@ export interface Env {
   INTEGRATION_KEK: string;
   DROPBOX_APP_KEY: string;
   DROPBOX_APP_SECRET: string;
+  EMAIL?: SendEmail;
+  NOTIFICATIONS_FROM_ADDRESS?: string;
 }

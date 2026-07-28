@@ -1,0 +1,89 @@
+import { env, SELF as workerSelf } from "cloudflare:test";
+import { makeSignature } from "better-auth/crypto";
+import { beforeAll, describe, expect, it } from "vitest";
+import { createAuth } from "../src/auth";
+import type { Env } from "../src/env";
+import { notifyProject } from "../src/lib/notifications";
+
+const database = env as unknown as { DB: D1Database };
+const baseEnv = env as unknown as Env;
+const authSecret = baseEnv.BETTER_AUTH_SECRET ?? "dev-only-replace-better-auth-secret-32-bytes";
+const userA = crypto.randomUUID();
+const userB = crypto.randomUUID();
+const tokenA = `notifications-a-${crypto.randomUUID()}`;
+const tokenB = `notifications-b-${crypto.randomUUID()}`;
+declare const __PORTAL_MIGRATION_SQL__: string;
+
+async function executeSql(source: string) {
+  for (const chunk of source.split("--> statement-breakpoint")) {
+    const sql = chunk.split("\n").filter((line) => !line.trim().startsWith("--")).join("\n");
+    for (const statement of sql.split(";")) {
+      const flat = statement.replace(/\s+/g, " ").trim();
+      if (flat) await database.DB.exec(`${flat};`);
+    }
+  }
+}
+
+async function cookie(token: string) {
+  const context = await createAuth(baseEnv).$context;
+  return `${context.authCookies.sessionToken.name}=${token}.${await makeSignature(token, authSecret)}`;
+}
+
+async function request(path: string, token: string, method: "GET" | "POST" = "GET") {
+  const headers = new Headers({ cookie: await cookie(token), origin: baseEnv.APP_ORIGIN });
+  return workerSelf.fetch(`https://portal.test${path}`, { method, headers });
+}
+
+beforeAll(async () => {
+  await executeSql(__PORTAL_MIGRATION_SQL__);
+  const now = Date.now();
+  const projectId = crypto.randomUUID();
+  await database.DB.batch([
+    database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, 'Notification A', ?, 1, 'editor', 1, ?, ?), (?, 'Notification B', ?, 1, 'editor', 1, ?, ?)").bind(userA, `${userA}@example.test`, now, now, userB, `${userB}@example.test`, now, now),
+    database.DB.prepare("INSERT INTO session (id, expires_at, token, user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?)").bind(crypto.randomUUID(), now + 3_600_000, tokenA, userA, now, now, crypto.randomUUID(), now + 3_600_000, tokenB, userB, now, now),
+    database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'Comment Street', 'edited_review', ?, ?)").bind(projectId, now, now),
+    database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?), (?, ?, ?, 'editor', ?)").bind(crypto.randomUUID(), projectId, userA, now, crypto.randomUUID(), projectId, userB, now),
+  ]);
+  await database.DB.batch([
+    database.DB.prepare("INSERT INTO notifications (id, user_id, project_id, type, title, body, created_at) VALUES (?, ?, ?, 'raw_ready', 'A notification', 'Body', ?)").bind(crypto.randomUUID(), userA, projectId, now),
+    database.DB.prepare("INSERT INTO notifications (id, user_id, project_id, type, title, body, created_at) VALUES (?, ?, ?, 'raw_ready', 'B notification', 'Body', ?)").bind(crypto.randomUUID(), userB, projectId, now),
+  ]);
+});
+
+describe("notifications API and recipient selection", () => {
+  it("scopes listing and read mutations to the authenticated user", async () => {
+    const list = await request("/api/notifications", tokenA);
+    expect(list.status).toBe(200);
+    expect(await list.json()).toMatchObject({ unreadCount: 1, notifications: [expect.objectContaining({ title: "A notification" })] });
+
+    const otherId = (await database.DB.prepare("SELECT id FROM notifications WHERE user_id = ?").bind(userB).first<{ id: string }>())!.id;
+    expect((await request(`/api/notifications/${otherId}/read`, tokenA, "POST")).status).toBe(404);
+    expect((await request("/api/notifications/read-all", tokenA, "POST")).status).toBe(200);
+    const after = await request("/api/notifications", tokenA);
+    expect((await after.json() as { unreadCount: number }).unreadCount).toBe(0);
+    expect((await request("/api/notifications", tokenB)).status).toBe(200);
+  });
+
+  it("notifies only active non-actor editors, including no recipient for an actor-only project", async () => {
+    const projectId = crypto.randomUUID();
+    const now = Date.now();
+    const inactiveEditor = crypto.randomUUID();
+    const actor = crypto.randomUUID();
+    await database.DB.batch([
+      database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, 'Inactive', ?, 1, 'editor', 0, ?, ?), (?, 'Actor', ?, 1, 'editor', 1, ?, ?)").bind(inactiveEditor, `${inactiveEditor}@example.test`, now, now, actor, `${actor}@example.test`, now, now),
+      database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'Actor Street', 'edited_review', ?, ?)").bind(projectId, now, now),
+      database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?), (?, ?, ?, 'editor', ?), (?, ?, ?, 'photographer', ?)").bind(crypto.randomUUID(), projectId, userB, now, crypto.randomUUID(), projectId, inactiveEditor, now, crypto.randomUUID(), projectId, actor, now),
+    ]);
+    await notifyProject(baseEnv, projectId, "comment_added", { editorOnly: true, excludeUserId: actor });
+    const rows = await database.DB.prepare("SELECT user_id FROM notifications WHERE project_id = ? AND type = 'comment_added'").bind(projectId).all<{ user_id: string }>();
+    expect(rows.results).toEqual([{ user_id: userB }]);
+  });
+
+  it("records a mocked email failure without failing the notification write", async () => {
+    const project = await database.DB.prepare("SELECT id FROM projects WHERE street = 'Comment Street'").first<{ id: string }>();
+    const send = async () => { throw new Error("mock email unavailable"); };
+    await notifyProject({ DB: database.DB, EMAIL: { send }, NOTIFICATIONS_FROM_ADDRESS: "studio@example.test" } as unknown as Env, project!.id, "edited_landed");
+    const row = await database.DB.prepare("SELECT email_error FROM notifications WHERE project_id = ? AND type = 'edited_landed' LIMIT 1").bind(project!.id).first<{ email_error: string }>();
+    expect(row?.email_error).toContain("mock email unavailable");
+  });
+});

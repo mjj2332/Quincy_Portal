@@ -10,6 +10,7 @@ import { createDropboxClientContext, download, getSharedLinkMetadata, listFolder
 import { normalisePath } from "./paths";
 import { dropboxPathKey } from "./paths";
 import { enqueueAutoHdrScaffold } from "../autohdr/scaffold";
+import { notifyProject } from "../notifications";
 
 // Each downloaded file costs ~9-10 subrequests (2 Dropbox content calls, an R2 put, a
 // rendition enqueue, and several D1 statements) — 150 once overran the pre-2026 Free-tier
@@ -319,6 +320,7 @@ export async function syncProjectRawFolder(
           connectionId: connectionId ?? null,
           durableRawEvidence: { newlyImported, currentRawAvailable },
         },
+        onSuccess: () => notifyProject(env, projectId, "raw_ready"),
       });
     }
     const completedAt = Date.now();

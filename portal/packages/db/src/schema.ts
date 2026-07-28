@@ -851,3 +851,27 @@ export const auditLog = sqliteTable(
   },
   (t) => [index("audit_actor_idx").on(t.actorId), index("audit_target_idx").on(t.targetType, t.targetId)],
 );
+
+export const notifications = sqliteTable(
+  "notifications",
+  {
+    id: id(),
+    userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+    projectId: text("project_id").references(() => projects.id, { onDelete: "cascade" }),
+    type: text("type").notNull(),
+    title: text("title").notNull(),
+    body: text("body"),
+    readAt: integer("read_at", { mode: "timestamp_ms" }),
+    emailSentAt: integer("email_sent_at", { mode: "timestamp_ms" }),
+    emailError: text("email_error"),
+    emailMessageId: text("email_message_id"),
+    sourceKey: text("source_key"),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index("notifications_user_unread_idx").on(t.userId, t.readAt, t.createdAt),
+    uniqueIndex("notifications_source_key_unique")
+      .on(t.type, t.sourceKey, t.userId)
+      .where(sql`${t.sourceKey} IS NOT NULL`),
+  ],
+);

@@ -18,6 +18,9 @@
   "r2_buckets": [
     { "binding": "MEDIA", "bucket_name": "quincy-portal-media" }
   ],
+  "send_email": [
+    { "name": "EMAIL" }
+  ],
   "kv_namespaces": [
     { "binding": "SESSIONS", "id": "1344f43c2da84b28bc8729ac15c36925" }
   ],

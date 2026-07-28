@@ -23,6 +23,7 @@ import { canonicalDropboxConnectionId } from "../dropbox/connection";
 import { setJobStatus } from "../lib/jobs";
 import type { RoutedAutoHdrMapping } from "./mapping";
 import { AutoHdrClaimError } from "./errors";
+import { notifyProject } from "../notifications";
 
 const START_LEASE_MS = 10 * 60_000;
 
@@ -124,7 +125,17 @@ export async function confirmAutoHdrHandoff(
     env.DB.prepare("UPDATE autohdr_handoffs SET state = 'started', started_at = coalesce(started_at, ?), updated_at = ? WHERE id = ? AND project_id = ? AND connection_id = ? AND generation = ? AND state in ('starting','started') AND EXISTS (SELECT 1 FROM projects WHERE id = ? AND stage_key = 'editing_autohdr' AND archived_at IS NULL)")
       .bind(now, now, input.handoffId, input.projectId, input.connectionId, input.mappingGeneration, input.projectId),
   ]);
-  return (result[2]?.meta.changes ?? 0) === 1;
+  // Two distinct signals from the same batch, used for two distinct purposes: `stageAdvanced`
+  // (statement 1, the project update) is true only for whichever concurrent caller actually
+  // performed the transition — gates the notification so concurrent callers never double-notify.
+  // `confirmed` (statement 3, the handoff-state update, gated on the project already being in
+  // the target stage regardless of who put it there) is this function's original idempotent
+  // "is the handoff now confirmed" signal that existing callers/tests already depend on — both
+  // concurrent callers see `confirmed === true` once either one wins, by design.
+  const stageAdvanced = (result[0]?.meta.changes ?? 0) === 1;
+  const confirmed = (result[2]?.meta.changes ?? 0) === 1;
+  if (stageAdvanced) await notifyProject(env, input.projectId, "sent_to_editing");
+  return confirmed;
 }
 
 /** Creates the frozen send owner and both permanent candidate claims before Workflow creation. */
@@ -603,9 +614,11 @@ export async function claimImplicitAutoHdrHandoff(
       WHERE changes() = 1
     `).bind(crypto.randomUUID(), projectId, metaJson, nowMs),
   );
+  const stageUpdateIndex = batchStatements.length - 2;
 
   const results = await env.DB.batch(batchStatements);
   if ((results[handoffInsertIndex]?.meta.changes ?? 0) !== 1) return null;
+  if ((results[stageUpdateIndex]?.meta.changes ?? 0) === 1) await notifyProject(env, projectId, "sent_to_editing");
   return {
     handoffId,
     jobId,
@@ -797,6 +810,7 @@ export async function claimBackfillAutoHdrHandoff(
       nowMs,
     ),
   );
+  const stageUpdateIndex = batchStatements.length - 2;
 
   let results: D1Result[];
   try {
@@ -852,6 +866,8 @@ export async function claimBackfillAutoHdrHandoff(
       reason: `Project is no longer eligible for backfill${current ? ` (stage ${current.stageKey})` : ""}`,
     };
   }
+
+  if ((results[stageUpdateIndex]?.meta.changes ?? 0) === 1) await notifyProject(env, projectId, "sent_to_editing");
 
   return {
     ok: true,

@@ -30,6 +30,7 @@ import { backfillAutoHdrV2 as backfillAutoHdrV2Impl, type BackfillParams, type B
 import { enqueueAutoHdrScaffold, ensureScaffold } from "./autohdr/scaffold";
 import { AutoHdrClaimError } from "./autohdr/errors";
 import type { AutoHdrErrorCode, AutoHdrFetchResult, AutoHdrResult } from "./autohdr/errors";
+import { notifyProject, pruneNotifications, scanStalledAutoHdr } from "./notifications";
 
 export { AutoHdrFetch, AutoHdrSend, ManualEditedPublish, DropboxSyncDO, TonomoProcessorDO };
 
@@ -45,7 +46,14 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
 
   // Temporary safety net: retire only after Dropbox RAW automation has been verified live in a later deploy.
   async scheduled(controller: ScheduledController): Promise<void> {
-    await reconcileAwaitingRawProjects(this.env.DB, controller.scheduledTime);
+    await reconcileAwaitingRawProjects(this.env.DB, controller.scheduledTime, (projectId) => notifyProject(this.env, projectId, "raw_ready"));
+    try {
+      const emitted = await scanStalledAutoHdr(this.env, controller.scheduledTime);
+      console.log("AutoHDR stalled notification scan", { emitted });
+    } catch (error) {
+      console.error("AutoHDR stalled notification scan failed", { error });
+    }
+    await pruneNotifications(this.env, controller.scheduledTime);
   }
 
   async triggerDropboxSync(projectId: string): Promise<{ jobId: string }> {

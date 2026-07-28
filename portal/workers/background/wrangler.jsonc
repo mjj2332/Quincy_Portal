@@ -21,6 +21,9 @@
   "r2_buckets": [
     { "binding": "MEDIA", "bucket_name": "quincy-portal-media" }
   ],
+  "send_email": [
+    { "name": "EMAIL" }
+  ],
   "queues": {
     "consumers": [
       { "queue": "quincy-ingest", "max_batch_size": 1, "max_concurrency": 1, "max_retries": 3 },

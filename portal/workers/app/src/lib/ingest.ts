@@ -3,6 +3,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { enqueueRenditionSafely, parseXmpRating, XMP_SCAN_BYTES, xmpRatingToStars } from "@quincy/shared";
 import type { Env } from "../env";
 import { audit } from "./audit";
+import { notifyProject } from "./notifications";
 
 export type FinalizeIngestDependencies = { beforeMetadataBatch?: () => void | Promise<void> };
 
@@ -114,6 +115,7 @@ export async function finalizeIngest(
         manifestId: input.manifestId ?? null,
         durableRawEvidence: { newlyImported: inserted, currentRawAvailable },
       },
+      onSuccess: () => notifyProject(env, input.projectId, "raw_ready"),
     });
   }
   const mirrored = await db.select({ sourcePath: schema.assets.sourcePath }).from(schema.assets).where(eq(schema.assets.id, effectiveAssetId)).get();

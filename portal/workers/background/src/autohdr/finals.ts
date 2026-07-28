@@ -15,6 +15,7 @@ import type { Env } from "../env";
 import { dbFor } from "../lib/db";
 import { download, type DropboxFile } from "../dropbox/client";
 import { dropboxPathKey, pathEqualsOrIsBelow } from "../dropbox/paths";
+import { notifyProject } from "../notifications";
 
 export type FrozenReadinessUnit = { key: string; assetIds: string[] };
 export type FinalWriteContext = {
@@ -199,6 +200,7 @@ export async function writeAutoHdrFinal(
         sourcePathKey,
         credibleCoverage: coverage.unitKey,
       },
+      onSuccess: () => notifyProject(env, context.projectId, "edited_landed"),
     }) : false;
     // A Workflow can fail after the D1 version commit but before its rendition handoff. Replays
     // deliberately re-enqueue the current winner; rendition generation is itself idempotent.
@@ -250,9 +252,18 @@ export async function writeAutoHdrFinal(
       if ((result[1]?.meta.changes ?? 0) !== 1) {
         return quarantine(env, context, file, "Final writer fence changed before first-version metadata commit");
       }
+      // Notify immediately once the D1 batch confirms the transition, before any other
+      // best-effort side effect — matching the sibling replacement-path's guardedStageTransition
+      // onSuccess hook below, which already fires at commit time. Emitting after enqueue would
+      // mean an enqueue failure (or any future change to it that starts throwing) could skip the
+      // notification on this attempt, and a retry would find the project already in
+      // edited_review (this guarded update only matches stage_key = 'editing_autohdr'), so the
+      // notification would never fire at all — not delayed, permanently lost.
+      const stageAdvanced = (result.at(-2)?.meta.changes ?? 0) === 1;
+      if (stageAdvanced) await notifyProject(env, context.projectId, "edited_landed");
       await dependencies.afterD1Commit?.();
       await (dependencies.enqueue ?? enqueueRenditionSafely)(env, assetId, "autohdr-fetch");
-      return { status: "created", assetId, coveredUnit: coverage?.unitKey, stageAdvanced: (result.at(-2)?.meta.changes ?? 0) === 1 };
+      return { status: "created", assetId, coveredUnit: coverage?.unitKey, stageAdvanced };
     }
 
     if (fence.stageKey !== "editing_autohdr" && fence.stageKey !== "edited_review") return quarantine(env, context, file, "Project stage does not permit replacement");
@@ -294,6 +305,7 @@ export async function writeAutoHdrFinal(
         sourcePathKey,
         credibleCoverage: coverage.unitKey,
       },
+      onSuccess: () => notifyProject(env, context.projectId, "edited_landed"),
     }) : false;
     await dependencies.afterD1Commit?.();
     await (dependencies.enqueue ?? enqueueRenditionSafely)(env, assetId, "autohdr-replacement");

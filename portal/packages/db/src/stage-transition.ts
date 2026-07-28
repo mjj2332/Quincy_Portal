@@ -8,6 +8,8 @@ export type GuardedStageTransitionInput = {
   /** The caller may preallocate this to make a replay use the same audit identity. */
   auditId?: string;
   now?: Date;
+  /** Best-effort work that runs only after the guarded update really changed a row. */
+  onSuccess?: (input: GuardedStageTransitionInput) => void | Promise<void>;
 };
 
 /**
@@ -36,5 +38,13 @@ export async function guardedStageTransition(
       now.getTime(),
     ),
   ]);
-  return (result[0]?.meta.changes ?? 0) === 1;
+  const changed = (result[0]?.meta.changes ?? 0) === 1;
+  if (changed && input.onSuccess) {
+    try {
+      await input.onSuccess(input);
+    } catch (error) {
+      console.error("Guarded stage transition post-success hook failed", { projectId: input.projectId, from: input.from, to: input.to, error });
+    }
+  }
+  return changed;
 }

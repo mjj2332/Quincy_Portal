@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState, type MouseEvent } from "react";
 import { signOut } from "../lib/auth";
+import { apiGet, apiPost } from "../lib/api";
 import { InternalLink } from "./InternalLink";
 
 export type AppView = "dashboard" | "project" | "create-project" | "edit-project" | "admin" | "not-found";
@@ -8,7 +9,12 @@ interface TopbarProps {
   activeView: AppView;
   canAccessAdmin: boolean;
   user: { name?: string | null; email?: string | null };
+  notificationPollMs?: number;
 }
+
+export const NOTIFICATION_POLL_MS = 25_000;
+type NotificationItem = { id: string; projectId: string | null; type: string; title: string; body: string | null; readAt: string | null; createdAt: string };
+type NotificationsResponse = { notifications: NotificationItem[]; unreadCount: number };
 
 function initials(name: string): string {
   return name
@@ -20,13 +26,19 @@ function initials(name: string): string {
     .toUpperCase();
 }
 
-export function Topbar({ activeView, canAccessAdmin, user }: TopbarProps) {
+export function Topbar({ activeView, canAccessAdmin, user, notificationPollMs = NOTIFICATION_POLL_MS }: TopbarProps) {
   const displayName = user.name || user.email || "Quincy user";
   const [menuOpen, setMenuOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const menuId = useId();
   const [signOutError, setSignOutError] = useState<string | null>(null);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const notificationTriggerRef = useRef<HTMLButtonElement>(null);
+  const notificationsRef = useRef<HTMLDivElement>(null);
+  const notificationsId = useId();
 
   function closeMenu(returnFocus = false) {
     setMenuOpen(false);
@@ -45,6 +57,50 @@ export function Topbar({ activeView, canAccessAdmin, user }: TopbarProps) {
     window.addEventListener("pointerdown", onPointerDown);
     return () => { window.removeEventListener("keydown", onKeyDown); window.removeEventListener("pointerdown", onPointerDown); };
   }, [menuOpen]);
+
+  function closeNotifications(returnFocus = false) {
+    setNotificationsOpen(false);
+    if (returnFocus) window.setTimeout(() => notificationTriggerRef.current?.focus(), 0);
+  }
+
+  useEffect(() => {
+    if (!notificationsOpen) return;
+    window.setTimeout(() => notificationsRef.current?.querySelector<HTMLElement>('[role="menuitem"], [tabindex="-1"]')?.focus(), 0);
+    function onKeyDown(event: KeyboardEvent) { if (event.key === "Escape") { event.preventDefault(); closeNotifications(true); } }
+    function onPointerDown(event: PointerEvent) {
+      const target = event.target as Node;
+      if (!notificationsRef.current?.contains(target) && !notificationTriggerRef.current?.contains(target)) closeNotifications();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("pointerdown", onPointerDown);
+    return () => { window.removeEventListener("keydown", onKeyDown); window.removeEventListener("pointerdown", onPointerDown); };
+  }, [notificationsOpen]);
+
+  useEffect(() => {
+    let active = true;
+    const loadNotifications = async () => {
+      try {
+        const response = await apiGet<NotificationsResponse>("/api/notifications?limit=25");
+        if (active) { setNotifications(response.notifications); setUnreadCount(response.unreadCount); }
+      } catch { /* The bell is best effort and should not disrupt the app shell. */ }
+    };
+    void loadNotifications();
+    const timer = window.setInterval(() => void loadNotifications(), notificationPollMs);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [notificationPollMs]);
+
+  async function markNotificationRead(notification: NotificationItem) {
+    if (notification.readAt) return;
+    setNotifications((current) => current.map((item) => item.id === notification.id ? { ...item, readAt: new Date().toISOString() } : item));
+    setUnreadCount((current) => Math.max(0, current - 1));
+    try { await apiPost("/api/notifications/" + encodeURIComponent(notification.id) + "/read", {}); } catch { /* The next poll restores server state. */ }
+  }
+
+  async function markAllNotificationsRead() {
+    setNotifications((current) => current.map((item) => ({ ...item, readAt: item.readAt ?? new Date().toISOString() })));
+    setUnreadCount(0);
+    try { await apiPost("/api/notifications/read-all", {}); } catch { /* The next poll restores server state. */ }
+  }
 
   async function handleSignOut(event: MouseEvent<HTMLButtonElement>) {
     const button = event.currentTarget;
@@ -80,6 +136,17 @@ export function Topbar({ activeView, canAccessAdmin, user }: TopbarProps) {
       </nav>
       <div className="grow" />
       <div className="topbar__user">
+        <div className="topbar__notifications">
+          <button ref={notificationTriggerRef} className="topbar__notification-trigger" type="button" aria-label={unreadCount ? `${unreadCount} unread notifications` : "Notifications"} aria-haspopup="menu" aria-expanded={notificationsOpen} aria-controls={notificationsId} onClick={() => setNotificationsOpen((current) => !current)}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9ZM10 21h4" strokeLinecap="round" strokeLinejoin="round" /></svg>
+            <span className="sr-only">Notifications</span>
+            {unreadCount > 0 && <span className="topbar__notification-badge" aria-label={`${unreadCount} unread`}>{unreadCount > 99 ? "99+" : unreadCount}</span>}
+          </button>
+          {notificationsOpen && <div ref={notificationsRef} id={notificationsId} className="topbar__notification-menu" role="menu" aria-label="Notifications" tabIndex={-1}>
+            <div className="topbar__notification-head"><strong>Notifications</strong>{unreadCount > 0 && <button type="button" onClick={() => void markAllNotificationsRead()}>Mark all read</button>}</div>
+            {notifications.length === 0 ? <div className="topbar__notification-empty">You’re all caught up.</div> : notifications.map((notification) => <button key={notification.id} role="menuitem" type="button" className={`topbar__notification-item ${notification.readAt ? "" : "is-unread"}`} onClick={() => void markNotificationRead(notification)}><strong>{notification.title}</strong>{notification.body && <span>{notification.body}</span>}<small>{new Date(notification.createdAt).toLocaleString()}</small></button>)}
+          </div>}
+        </div>
         <div className="topbar__identity">
           <strong>{displayName}</strong>
           {user.email && user.name && <span className="ey">{user.email}</span>}

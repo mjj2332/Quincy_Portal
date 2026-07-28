@@ -12,6 +12,7 @@ import type { Env } from "../env";
 import { dbFor, errorMessage } from "../lib/db";
 import { setJobStatus } from "../lib/jobs";
 import { writeAutoHdrFinal, type FinalWriteContext } from "../autohdr/finals";
+import { notifyProject } from "../notifications";
 
 export interface AutoHdrFetchInput {
   projectId: string;
@@ -178,9 +179,12 @@ export class AutoHdrFetch extends WorkflowEntrypoint<Env, AutoHdrFetchInput> {
         if (readyForReview) {
           // Only advance from the canonical predecessor so a re-fetch on a delivered project
           // never silently regresses its stage.
-          await db.update(projects).set({ stageKey: "edited_review", updatedAt: new Date() }).where(and(eq(projects.id, input.projectId), eq(projects.stageKey, "editing_autohdr")));
+          const result = await db.update(projects).set({ stageKey: "edited_review", updatedAt: new Date() }).where(and(eq(projects.id, input.projectId), eq(projects.stageKey, "editing_autohdr"))).run();
+          const stageAdvanced = (result.meta.changes ?? 0) === 1;
+          if (stageAdvanced) await notifyProject(this.env, input.projectId, "edited_landed");
+          return { stageAdvanced };
         }
-        return { stageAdvanced: readyForReview };
+        return { stageAdvanced: false };
       });
 
       await step.do("complete-fetch", async () => {
