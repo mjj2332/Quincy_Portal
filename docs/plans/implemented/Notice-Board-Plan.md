@@ -2,10 +2,11 @@
 
 ## Amendment (2026-07-28) — default to visible (expanded), not collapsed
 
-**Status: PLANNING COMPLETE, Terra-APPROVED (9 review rounds; round 9, 2026-07-28, found no
-remaining issues) — not yet built. The base feature below is already built, verified, and live in
-production. Scope, corrected after this amendment's own review process found it larger than first
-framed**: changes the panel's default open/closed state on first visit, **plus** the
+**Status: BUILT, verified, committed (`3da5b31`), and DEPLOYED to production (2026-07-28).**
+Terra-APPROVED after 9 plan-review rounds before build. The base feature below is already built,
+verified, and live in production. **Scope, corrected after this amendment's own review process
+found it larger than first framed**: changes the panel's default open/closed state on first visit,
+**plus** the
 `localStorage` persistence logic (fixing a real pre-existing mount-write bug that would otherwise
 make the default-flip invisible to almost every real user) **and** the storage key name itself (the
 old key is abandoned, not migrated). Nothing about the schema, API, capability, or polling

@@ -2,10 +2,10 @@
 
 ## Amendment (2026-07-28) — move the priority/order controls visually inside the card
 
-**Status: PLANNING — moved out of `docs/plans/implemented/` back to `docs/plans/` for this
-amendment. Not yet Terra-reviewed. The base feature below (§1-§5) is already built, verified, and
-live in production — this amendment changes only where the priority dropdown and up/down buttons
-visually sit, nothing about the ordering logic, API, schema, or capability.**
+**Status: BUILT, verified, committed (`3da5b31`), and DEPLOYED to production (2026-07-28).** Terra
+plan review APPROVED (round 2) before build. The base feature below (§1-§5) is already built,
+verified, and live in production — this amendment changed only where the priority dropdown and
+up/down buttons visually sit, nothing about the ordering logic, API, schema, or capability.
 
 **User request**: the priority dropdown and up/down arrow buttons should appear inside the project
 card, not outside/underneath it.

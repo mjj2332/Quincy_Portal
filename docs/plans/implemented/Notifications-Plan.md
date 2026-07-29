@@ -2,8 +2,9 @@
 
 ## Amendment (2026-07-28) — fix: notification bell not visible on mobile
 
-**Status: PLANNING — moved out of `docs/plans/implemented/` back to `docs/plans/` for this fix.
-The base feature below is already built, verified, committed, and deployed to production.**
+**Status: BUILT, verified, committed (`14756d0`), and DEPLOYED to production (2026-07-28).**
+Terra-approved round 1 before build. The base feature below is already built, verified, committed,
+and deployed to production.
 
 **User report**: the notification bell isn't visible on a mobile phone.
 

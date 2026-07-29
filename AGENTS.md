@@ -38,6 +38,13 @@ Container.
 To-do and lessons live in **`docs/`**, not a top-level `tasks/`. Before delegating work to
 Codex or Agy subagents, read `docs/Subagent-Orchestration.md`.
 
+Plan docs live in `docs/plans/`. Once a plan's change is built, verified, committed, **and**
+deployed to production, update its own status line to say so (with the commit hash) and move the
+file to `docs/plans/implemented/` (`git mv`, to keep history). Leave a plan in `docs/plans/` while
+it's still drafted/not built, or explicitly superseded/historical (its own status line will say
+so) — `implemented/` means "matches what's live in production right now," not "was built at some
+point."
+
 ## Verify before committing (from `portal/`)
 
 `npm run typecheck` (covers all six workspaces) and `npm run build -w @quincy/web` must be
@@ -57,8 +64,9 @@ up by `npm run test --workspaces` — no separate invocation needed for it.
 - **Hono:** never `router.use("*", mw)` on a router mounted at `/` — it leaks the middleware
   onto sibling routers (this shipped a 403 bug once). Path-scope instead:
   `use("/x", mw); use("/x/*", mw)`.
-- Comment/annotation edit and delete are **author-only** — admins are *not* exempt — for audit
-  integrity. Every mutation is audit-logged.
+- Annotation edit and delete are **author-only** — admins are *not* exempt — for audit
+  integrity. Every mutation is audit-logged. (The separate "Comments" thread feature existed
+  briefly and was removed 2026-07-29 — annotations' own note field covers that need.)
 - Media in R2 is **never deleted** on edit or delete: write a new immutable key and retain the
   old object.
 - `portal/workers/app/.dev.vars` holds local dev secrets and is gitignored — never commit it.
@@ -68,8 +76,8 @@ up by `npm run test --workspaces` — no separate invocation needed for it.
 Order matters, because service bindings resolve at deploy time: **background →
 webhook-ingress → app**, each via `cd portal/workers/<x> && npx wrangler deploy`. Hosts:
 `quincy.flamingfire.my` (prod), `staging.quincy.flamingfire.my`. Prod config lives in Worker
-secrets. D1 migrations 0000–0020 are confirmed applied to prod (verified against the remote
-`d1_migrations` table 2026-07-28) — next available number is **0021**. Branch off `main`.
+secrets. D1 migrations 0000–0021 are confirmed applied to prod (0021 dropped the `comments` table,
+applied 2026-07-29) — next available number is **0022**. Branch off `main`.
 **Prefer a bare `ALTER TABLE ADD COLUMN col TYPE CHECK(...)` over `drizzle-kit generate`'s
 table-rebuild form when the check is single-column and NULL-satisfiable** — the rebuild form's
 `PRAGMA foreign_keys=OFF` doesn't reliably persist across D1's remote migration execution even

@@ -1,5 +1,9 @@
 # Lightbox — Remove Comments, Draw Without a Toggle
 
+**Status: BUILT, verified, committed (`f59965c`), and DEPLOYED to production (2026-07-29 —
+code-then-migration order per § Rollout).** Terra-approved after 7 plan-review rounds and 4
+diff-review rounds before/after build.
+
 **User request** (2026-07-28, superseding `docs/plans/Lightbox-Comment-Box-During-Markup-Plan.md`,
 which is now obsolete and should be folded into this plan's history rather than built further): the
 user reports that after the last deploy they still have to click "Draw" to draw, and still can't
