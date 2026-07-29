@@ -1,14 +1,29 @@
 # User-Clearable Notification Deletion — Plan
 
-**Status: approved, ready to build — parent plan and addendum both cleared.** Parent (dismiss
-route/UI): cleared 2 Terra review rounds (cap) plus an Opus plan-tier review, which spent 1 of its
-2 Terra reverts adding the keyboard-focus-handoff design and test (Design step 3, Testing item 2's
-third case), then self-approved. Addendum (durable AutoHDR stalled-notification guard, required
-before this feature deploys — see its own section below): cleared 2 Terra review rounds (cap) plus
-an Opus plan-tier review, which spent 1 of its 2 Terra reverts fixing a TOCTOU claim-predicate gap,
-a scope-decision wording contradiction, a test-fixture isolation gap, and a migration-test baseline
-regex bug, then self-approved. Both must ship in the sequenced rollout the addendum specifies
-(migration + background deploy before app deploy) — see the addendum's Rollout section.
+**Status: implemented and deployed to production (commit `82143b2`, migration
+`0023_autohdr_stalled_notification_guard.sql` applied, deployed 2026-07-30 — background → app,
+webhook-ingress unaffected).** Parent (dismiss route/UI): cleared 2 Terra review rounds (cap) plus
+an Opus plan-tier review, which spent 1 of its 2 Terra reverts adding the keyboard-focus-handoff
+design and test (Design step 3, Testing item 2's third case), then self-approved. Addendum (durable
+AutoHDR stalled-notification guard): cleared 2 Terra review rounds (cap) plus an Opus plan-tier
+review, which spent 1 of its 2 Terra reverts fixing a TOCTOU claim-predicate gap, a scope-decision
+wording contradiction, a test-fixture isolation gap, and a migration-test baseline regex bug, then
+self-approved. Opus final-draft review of the built diff approved it and prompted two more fixes,
+applied directly in-session: a missing `drizzle-kit` snapshot for `0023` (confirmed by reproducing
+the predicted duplicate-migration failure, then fixed with drizzle-kit's own correctly-computed
+snapshot output) and a missing log line for the zero-recipient one-shot case.
+
+**Live rollout, executed 2026-07-30:** migration `0023` applied cleanly to production D1 (confirmed
+the new nullable `stalled_notified_at` column exists); `background` then `app` deployed in that
+order per the addendum's mandated sequencing; post-deploy smoke clean (site 200, unauth
+`/api/notifications` correctly 401). Live acceptance test: dismissed a real, pre-existing
+`autohdr_stalled` notification (17 Oxford Street) via the bell UI — removed immediately with
+correct keyboard-focus handoff to the next row, and confirmed gone from the server after a full
+page reload (a real deletion, not just local state). Confirmed the corresponding
+`autohdr_handoffs.stalled_notified_at` is still `null` for that handoff, as expected: it predates
+the guard's deployment, so the next hourly scan will claim and mark it once under the new code
+(one final legitimate re-notification for that specific pre-existing stall) before the guard
+governs it permanently — a self-healing transition, not a regression.
 
 ## User request
 

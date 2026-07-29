@@ -76,9 +76,9 @@ up by `npm run test --workspaces` — no separate invocation needed for it.
 Order matters, because service bindings resolve at deploy time: **background →
 webhook-ingress → app**, each via `cd portal/workers/<x> && npx wrangler deploy`. Hosts:
 `quincy.flamingfire.my` (prod), `staging.quincy.flamingfire.my`. Prod config lives in Worker
-secrets. D1 migrations 0000–0022 are confirmed applied to prod (0021 dropped the `comments` table;
-0022 migrated the seed admin's id to a real UUID, applied 2026-07-29) — next available number is
-**0023**. Branch off `main`.
+secrets. D1 migrations 0000–0023 are confirmed applied to prod (0021 dropped the `comments` table;
+0022 migrated the seed admin's id to a real UUID; 0023 added `autohdr_handoffs.stalled_notified_at`,
+applied 2026-07-30) — next available number is **0024**. Branch off `main`.
 **Prefer a bare `ALTER TABLE ADD COLUMN col TYPE CHECK(...)` over `drizzle-kit generate`'s
 table-rebuild form when the check is single-column and NULL-satisfiable** — the rebuild form's
 `PRAGMA foreign_keys=OFF` doesn't reliably persist across D1's remote migration execution even

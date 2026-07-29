@@ -7,8 +7,25 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
 > counts, full diagnostic transcripts) has been cut in favor of what/when/deploy-state. See
 > `docs/lessons.md` for incident mechanics, and `docs/reviews/` for full QA-sweep detail.
 
-## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29, seed-admin UUID migration 2026-07-29)
+## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29, seed-admin UUID migration 2026-07-29, notification dismiss + stalled-guard 2026-07-30)
 
+- **User-clearable notifications + AutoHDR stalled-notification guard, deployed 2026-07-30
+  (`Notification-Dismiss-Delete-Plan.md`, migration `0023_autohdr_stalled_notification_guard.sql`,
+  commit `82143b2`).** Added a dismiss control to the bell dropdown (`DELETE
+  /api/notifications/:id`) so a notification is permanently removed from the database instead of
+  accumulating forever. The final review of that route found a real side effect: `autohdr_stalled`
+  is the only notification type deduplicated purely by row existence, so dismissing one while its
+  AutoHDR handoff is still genuinely stalled would let the next hourly scan silently re-insert and
+  re-email it. Fixed with a new nullable `autohdr_handoffs.stalled_notified_at` column and a
+  claim-before-emit redesign of `scanStalledAutoHdr` — each candidate is claimed via an atomic
+  conditional `UPDATE` that re-validates all five original eligibility predicates before any
+  emission, closing a real TOCTOU/concurrency race two Terra review rounds and an Opus plan-tier
+  review caught and fixed. Also independently caught and fixed in this session: a `drizzle-kit`
+  snapshot gap that would have made the next `drizzle-kit generate` regenerate a duplicate,
+  prod-breaking migration (confirmed by reproducing the failure, then fixed with drizzle-kit's own
+  correctly-computed snapshot output). Live rollout: migration applied, `background` then `app`
+  deployed, post-deploy smoke clean, and a real production dismissal verified end-to-end (removed
+  immediately with correct focus handoff, confirmed gone from the server after a full reload).
 - **Seed admin UUID migration, applied to production 2026-07-29 15:12 UTC
   (`Seed-Admin-UUID-Migration-Plan.md`, migration `0022_seed_admin_uuid.sql`, commit `3897501`).**
   The studio admin's `user.id` was the literal string `seed-admin` (a seed-script artifact, not a
