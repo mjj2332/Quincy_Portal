@@ -2,6 +2,8 @@ import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import type { Env } from "../src/env";
 import { notifyProject, scanStalledAutoHdr } from "../src/notifications";
+import { emitNotifications } from "@quincy/db";
+import { dbFor } from "../src/lib/db";
 
 const database = env as unknown as { DB: D1Database };
 declare const __PORTAL_MIGRATION_SQL__: string;
@@ -56,6 +58,39 @@ describe("notification fanout and stalled scan", () => {
     expect(await scanStalledAutoHdr(localEnv, now)).toBe(1);
     expect(await scanStalledAutoHdr(localEnv, now + 60 * 60 * 1000)).toBe(0);
     const rows = await database.DB.prepare("SELECT id FROM notifications WHERE source_key = ?").bind(handoffId).all();
+    expect(rows.results).toHaveLength(1);
+  });
+
+  it("skips both the duplicate row and the duplicate email on a repeated sourceKey", async () => {
+    const now = Date.now();
+    const projectId = crypto.randomUUID();
+    const userId = crypto.randomUUID();
+    const sourceKey = crypto.randomUUID();
+    await database.DB.batch([
+      database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, 'SourceKey editor', ?, 1, 'editor', 1, ?, ?)").bind(userId, `${userId}@example.test`, now, now),
+      database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'Source Key Street', 'awaiting_raw', ?, ?)").bind(projectId, now, now),
+      database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)").bind(crypto.randomUUID(), projectId, userId, now),
+    ]);
+    const db = dbFor({ DB: database.DB } as unknown as Env);
+    const recipients = [{ userId, email: `${userId}@example.test`, name: "SourceKey editor" }];
+
+    const firstSend = vi.fn().mockResolvedValue({ messageId: "message-1" });
+    const firstCount = await emitNotifications(db, {
+      projectId, type: "autohdr_stalled", recipients, sourceKey,
+      email: { send: firstSend }, fromAddress: "studio@example.test",
+    });
+    expect(firstCount).toBe(1);
+    expect(firstSend).toHaveBeenCalledTimes(1);
+
+    const secondSend = vi.fn().mockResolvedValue({ messageId: "message-2" });
+    const secondCount = await emitNotifications(db, {
+      projectId, type: "autohdr_stalled", recipients, sourceKey,
+      email: { send: secondSend }, fromAddress: "studio@example.test",
+    });
+    expect(secondCount).toBe(0);
+    expect(secondSend).not.toHaveBeenCalled();
+
+    const rows = await database.DB.prepare("SELECT id FROM notifications WHERE source_key = ?").bind(sourceKey).all();
     expect(rows.results).toHaveLength(1);
   });
 });

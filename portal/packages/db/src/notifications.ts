@@ -10,7 +10,9 @@ export type NotificationType =
   | "delivered"
   | "comment_added";
 
-export const EMAIL_ENABLED_EVENTS: readonly NotificationType[] = ["raw_ready", "edited_landed", "autohdr_stalled"];
+export const EMAIL_ENABLED_EVENTS: readonly NotificationType[] = [
+  "raw_ready", "edited_landed", "sent_to_editing", "autohdr_stalled", "delivered", "comment_added",
+];
 export const STALLED_NOTIFICATION_AGE_MS = 3 * 60 * 60 * 1000;
 export const READ_NOTIFICATION_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
 
