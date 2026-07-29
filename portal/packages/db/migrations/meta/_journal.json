@@ -162,6 +162,13 @@
       "when": 1785334751140,
       "tag": "0022_seed_admin_uuid",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "6",
+      "when": 1785362260192,
+      "tag": "0023_autohdr_stalled_notification_guard",
+      "breakpoints": true
     }
   ]
 }

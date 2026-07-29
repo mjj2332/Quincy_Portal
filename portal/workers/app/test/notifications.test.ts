@@ -30,7 +30,7 @@ async function cookie(token: string) {
   return `${context.authCookies.sessionToken.name}=${token}.${await makeSignature(token, authSecret)}`;
 }
 
-async function request(path: string, token: string, method: "GET" | "POST" = "GET") {
+async function request(path: string, token: string, method: "GET" | "POST" | "DELETE" = "GET") {
   const headers = new Headers({ cookie: await cookie(token), origin: baseEnv.APP_ORIGIN });
   return workerSelf.fetch(`https://portal.test${path}`, { method, headers });
 }
@@ -63,6 +63,23 @@ describe("notifications API and recipient selection", () => {
     const after = await request("/api/notifications", tokenA);
     expect((await after.json() as { unreadCount: number }).unreadCount).toBe(0);
     expect((await request("/api/notifications", tokenB)).status).toBe(200);
+  });
+
+  it("deletes only the caller's notification and audits the successful deletion", async () => {
+    const otherId = (await database.DB.prepare("SELECT id FROM notifications WHERE user_id = ?").bind(userB).first<{ id: string }>())!.id;
+    expect((await request(`/api/notifications/${otherId}`, tokenA, "DELETE")).status).toBe(404);
+    expect(await database.DB.prepare("SELECT id FROM notifications WHERE id = ?").bind(otherId).first()).toEqual({ id: otherId });
+
+    const id = crypto.randomUUID();
+    const project = await database.DB.prepare("SELECT id FROM projects WHERE street = 'Comment Street'").first<{ id: string }>();
+    await database.DB.prepare("INSERT INTO notifications (id, user_id, project_id, type, title, body, created_at) VALUES (?, ?, ?, 'raw_ready', 'Delete me', 'Unread notification', ?)").bind(id, userA, project!.id, Date.now()).run();
+    const deleted = await request(`/api/notifications/${id}`, tokenA, "DELETE");
+    expect(deleted.status).toBe(200);
+    expect(await deleted.json()).toEqual({ ok: true });
+    expect(await database.DB.prepare("SELECT id, read_at FROM notifications WHERE id = ?").bind(id).first()).toBeNull();
+    expect((await request(`/api/notifications/${id}`, tokenA, "DELETE")).status).toBe(404);
+    expect((await request(`/api/notifications/${crypto.randomUUID()}`, tokenA, "DELETE")).status).toBe(404);
+    expect(await database.DB.prepare("SELECT actor_id, action, target_type, target_id, meta_json FROM audit_log WHERE action = ? AND target_id = ?").bind("notification.delete", id).first()).toEqual({ actor_id: userA, action: "notification.delete", target_type: "notification", target_id: id, meta_json: null });
   });
 
   it("notifies only active non-actor editors, including no recipient for an actor-only project", async () => {

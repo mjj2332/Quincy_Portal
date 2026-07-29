@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type MouseEvent } from "react";
 import { signOut } from "../lib/auth";
-import { apiGet, apiPost } from "../lib/api";
+import { apiDelete, apiGet, apiPost } from "../lib/api";
 import { InternalLink } from "./InternalLink";
 
 export type AppView = "dashboard" | "project" | "create-project" | "edit-project" | "admin" | "not-found";
@@ -102,6 +102,19 @@ export function Topbar({ activeView, canAccessAdmin, user, notificationPollMs = 
     try { await apiPost("/api/notifications/read-all", {}); } catch { /* The next poll restores server state. */ }
   }
 
+  async function dismissNotification(notification: NotificationItem) {
+    const notificationIndex = notifications.findIndex((item) => item.id === notification.id);
+    const focusTargetId = notificationIndex < 0 ? null : notifications[notificationIndex + 1]?.id ?? notifications[notificationIndex - 1]?.id ?? null;
+    setNotifications((current) => current.filter((item) => item.id !== notification.id));
+    if (!notification.readAt) setUnreadCount((current) => Math.max(0, current - 1));
+    window.setTimeout(() => {
+      const menu = notificationsRef.current;
+      const target = focusTargetId ? menu?.querySelector<HTMLButtonElement>(`[data-notification-dismiss="${CSS.escape(focusTargetId)}"]`) : null;
+      (target ?? menu)?.focus();
+    }, 0);
+    try { await apiDelete("/api/notifications/" + encodeURIComponent(notification.id)); } catch { /* The next poll restores server state. */ }
+  }
+
   async function handleSignOut(event: MouseEvent<HTMLButtonElement>) {
     const button = event.currentTarget;
     button.disabled = true;
@@ -144,7 +157,7 @@ export function Topbar({ activeView, canAccessAdmin, user, notificationPollMs = 
           </button>
           {notificationsOpen && <div ref={notificationsRef} id={notificationsId} className="topbar__notification-menu" role="menu" aria-label="Notifications" tabIndex={-1}>
             <div className="topbar__notification-head"><strong>Notifications</strong>{unreadCount > 0 && <button type="button" onClick={() => void markAllNotificationsRead()}>Mark all read</button>}</div>
-            {notifications.length === 0 ? <div className="topbar__notification-empty">You’re all caught up.</div> : notifications.map((notification) => <button key={notification.id} role="menuitem" type="button" className={`topbar__notification-item ${notification.readAt ? "" : "is-unread"}`} onClick={() => void markNotificationRead(notification)}><strong>{notification.title}</strong>{notification.body && <span>{notification.body}</span>}<small>{new Date(notification.createdAt).toLocaleString()}</small></button>)}
+            {notifications.length === 0 ? <div className="topbar__notification-empty" role="none">You’re all caught up.</div> : notifications.map((notification) => <div key={notification.id} role="none" className={`topbar__notification-row ${notification.readAt ? "" : "is-unread"}`}><button role="menuitem" type="button" className="topbar__notification-item" onClick={() => void markNotificationRead(notification)}><strong>{notification.title}</strong>{notification.body && <span>{notification.body}</span>}<small>{new Date(notification.createdAt).toLocaleString()}</small></button><button role="menuitem" type="button" className="topbar__notification-dismiss" aria-label={`Dismiss notification: ${notification.title}`} data-notification-dismiss={notification.id} onClick={() => void dismissNotification(notification)}><span aria-hidden="true">×</span></button></div>)}
           </div>}
         </div>
         <div className="topbar__identity">

@@ -14,7 +14,7 @@ const migrations = await Promise.all(migrationNames.map(async (name) => ({
 const migrationSql = migrations.map(({ sql }) => sql)
   .join("\n--> statement-breakpoint\n");
 const migrationSqlBefore0015 = migrations
-  .filter(({ name }) => !name.startsWith("0015_"))
+  .filter(({ name }) => name < "0015_")
   .map(({ sql }) => sql)
   .join("\n--> statement-breakpoint\n");
 const migration0015Sql = migrations.find(({ name }) => name.startsWith("0015_"))?.sql ?? "";

@@ -5,9 +5,10 @@ import { Topbar } from "./Topbar";
 
 const apiGetMock = vi.fn<(path: string) => Promise<unknown>>();
 const apiPostMock = vi.fn<(path: string, body: unknown) => Promise<unknown>>();
+const apiDeleteMock = vi.fn<(path: string) => Promise<unknown>>();
 vi.mock("../lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/api")>();
-  return { ...actual, apiGet: (path: string) => apiGetMock(path), apiPost: (path: string, body: unknown) => apiPostMock(path, body) };
+  return { ...actual, apiGet: (path: string) => apiGetMock(path), apiPost: (path: string, body: unknown) => apiPostMock(path, body), apiDelete: (path: string) => apiDeleteMock(path) };
 });
 
 let root: Root | null = null;
@@ -25,6 +26,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   apiGetMock.mockReset();
   apiPostMock.mockReset().mockResolvedValue({ ok: true });
+  apiDeleteMock.mockReset().mockResolvedValue({ ok: true });
   apiGetMock.mockResolvedValue({ notifications: [{ id: "n-1", projectId: "p-1", type: "raw_ready", title: "RAW ready for review", body: "12 King Street has RAW images ready for review.", readAt: null, createdAt: "2026-07-28T00:00:00.000Z" }], unreadCount: 1 });
   const host = document.createElement("div");
   document.body.appendChild(host);
@@ -65,5 +67,56 @@ describe("Topbar notifications", () => {
     await click(trigger);
     await act(async () => { document.body.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true })); await Promise.resolve(); });
     expect(host.querySelector('[role="menu"]')).toBeNull();
+  });
+
+  it("dismisses an unread notification optimistically without marking it read", async () => {
+    let resolveDelete: ((value: unknown) => void) | undefined;
+    apiDeleteMock.mockImplementation(() => new Promise((resolve) => { resolveDelete = resolve; }));
+    const host = document.body.firstElementChild as HTMLElement;
+    await render(host);
+    await click(host.querySelector<HTMLButtonElement>(".topbar__notification-trigger")!);
+    await click(host.querySelector<HTMLButtonElement>('[aria-label="Dismiss notification: RAW ready for review"]')!);
+    expect(host.querySelector('[aria-label="Dismiss notification: RAW ready for review"]')).toBeNull();
+    expect(host.querySelector(".topbar__notification-empty")).not.toBeNull();
+    expect(host.querySelector(".topbar__notification-badge")).toBeNull();
+    expect(host.querySelector<HTMLButtonElement>(".topbar__notification-trigger")!.getAttribute("aria-label")).toBe("Notifications");
+    expect(apiDeleteMock).toHaveBeenCalledWith("/api/notifications/n-1");
+    expect(apiPostMock).not.toHaveBeenCalled();
+    resolveDelete?.({ ok: true });
+  });
+
+  it("does not decrement unread count when dismissing an already-read notification", async () => {
+    apiGetMock.mockResolvedValue({ notifications: [
+      { id: "n-unread", projectId: "p-1", type: "raw_ready", title: "Unread notification", body: null, readAt: null, createdAt: "2026-07-28T00:00:00.000Z" },
+      { id: "n-read", projectId: "p-1", type: "raw_ready", title: "Read notification", body: null, readAt: "2026-07-28T01:00:00.000Z", createdAt: "2026-07-28T01:00:00.000Z" },
+    ], unreadCount: 1 });
+    const host = document.body.firstElementChild as HTMLElement;
+    await render(host);
+    await click(host.querySelector<HTMLButtonElement>(".topbar__notification-trigger")!);
+    await click(host.querySelector<HTMLButtonElement>('[aria-label="Dismiss notification: Read notification"]')!);
+    expect(host.querySelector('[aria-label="Dismiss notification: Unread notification"]')).not.toBeNull();
+    expect(host.querySelector(".topbar__notification-badge")?.textContent).toBe("1");
+    expect(host.querySelector<HTMLButtonElement>(".topbar__notification-trigger")!.getAttribute("aria-label")).toBe("1 unread notifications");
+  });
+
+  it("hands focus to the next dismiss button, then the open menu when it becomes empty", async () => {
+    apiGetMock.mockResolvedValue({ notifications: [
+      { id: "n-1", projectId: "p-1", type: "raw_ready", title: "First notification", body: null, readAt: null, createdAt: "2026-07-28T00:00:00.000Z" },
+      { id: "n-2", projectId: "p-1", type: "raw_ready", title: "Second notification", body: null, readAt: null, createdAt: "2026-07-28T01:00:00.000Z" },
+    ], unreadCount: 2 });
+    const host = document.body.firstElementChild as HTMLElement;
+    await render(host);
+    await click(host.querySelector<HTMLButtonElement>(".topbar__notification-trigger")!);
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    await click(host.querySelector<HTMLButtonElement>('[aria-label="Dismiss notification: First notification"]')!);
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    const secondDismiss = host.querySelector<HTMLButtonElement>('[data-notification-dismiss="n-2"]')!;
+    expect(document.activeElement).toBe(secondDismiss);
+    await click(secondDismiss);
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    const menu = host.querySelector<HTMLElement>('[role="menu"]')!;
+    expect(document.activeElement).toBe(menu);
+    expect(menu).not.toBeNull();
+    expect(host.querySelector(".topbar__notification-empty")).not.toBeNull();
   });
 });

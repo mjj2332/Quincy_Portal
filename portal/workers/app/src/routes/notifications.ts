@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { and, desc, eq, isNull, lt, sql } from "drizzle-orm";
 import { createDb, schema } from "@quincy/db";
 import type { AppEnv } from "../env";
+import { audit } from "../lib/audit";
 
 const MAX_LIMIT = 50;
 
@@ -37,6 +38,17 @@ notificationsRoutes.post("/notifications/:id/read", async (c) => {
     .where(and(eq(schema.notifications.id, id), eq(schema.notifications.userId, userId), isNull(schema.notifications.readAt)))
     .run();
   if ((result.meta.changes ?? 0) !== 1) return c.json({ error: "Notification not found" }, 404);
+  return c.json({ ok: true });
+});
+
+notificationsRoutes.delete("/notifications/:id", async (c) => {
+  const id = c.req.param("id");
+  const userId = c.get("user").id;
+  const result = await createDb(c.env.DB).delete(schema.notifications)
+    .where(and(eq(schema.notifications.id, id), eq(schema.notifications.userId, userId)))
+    .run();
+  if ((result.meta.changes ?? 0) !== 1) return c.json({ error: "Notification not found" }, 404);
+  await audit(c.env, userId, "notification.delete", "notification", id);
   return c.json({ ok: true });
 });
 

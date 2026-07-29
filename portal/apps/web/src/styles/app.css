@@ -65,11 +65,14 @@ button { font-family: var(--font-sans); }
 .topbar__notification-menu { position: absolute; top: calc(100% + 10px); right: 0; z-index: 60; display: grid; width: min(360px, calc(100vw - 24px)); max-height: min(520px, calc(100vh - 90px)); overflow: auto; border: 1px solid var(--border-hairline); background: var(--paper-050); box-shadow: var(--shadow-lg); }
 .topbar__notification-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 13px 14px; border-bottom: 1px solid var(--border-hairline); }
 .topbar__notification-head button { border: 0; background: transparent; color: var(--text-secondary); font: var(--type-label); font-size: 10px; text-transform: uppercase; letter-spacing: var(--tracking-wide); cursor: pointer; }
-.topbar__notification-item { display: grid; gap: 4px; padding: 12px 14px; border: 0; border-bottom: 1px solid var(--border-hairline); background: transparent; color: var(--text-primary); text-align: left; cursor: pointer; }
-.topbar__notification-item:hover, .topbar__notification-item.is-unread { background: var(--paper-100); }
+.topbar__notification-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; border-bottom: 1px solid var(--border-hairline); background: transparent; }
+.topbar__notification-row:hover, .topbar__notification-row.is-unread { background: var(--paper-100); }
+.topbar__notification-item { display: grid; gap: 4px; padding: 12px 0 12px 14px; border: 0; background: transparent; color: var(--text-primary); text-align: left; cursor: pointer; }
 .topbar__notification-item strong { font-size: 13px; font-weight: 500; }
 .topbar__notification-item span { color: var(--text-secondary); font-size: 12px; line-height: 1.4; }
 .topbar__notification-item small { color: var(--text-tertiary); font-size: 10px; }
+.topbar__notification-dismiss { width: 34px; border: 0; background: transparent; color: var(--text-secondary); cursor: pointer; font-size: 18px; line-height: 1; }
+.topbar__notification-head button:hover, .topbar__notification-dismiss:hover { color: var(--text-primary); }
 .topbar__notification-empty { padding: 20px 14px; color: var(--text-secondary); font-size: 13px; }
 
 .avatar {

@@ -422,6 +422,7 @@ export const autoHdrHandoffs = sqliteTable(
     jobId: text("job_id").notNull().references(() => jobs.id),
     leaseExpiresAt: integer("lease_expires_at", { mode: "timestamp_ms" }).notNull(),
     startedAt: integer("started_at", { mode: "timestamp_ms" }),
+    stalledNotifiedAt: integer("stalled_notified_at", { mode: "timestamp_ms" }),
     lastError: text("last_error"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
