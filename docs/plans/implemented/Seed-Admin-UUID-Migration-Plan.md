@@ -1,22 +1,36 @@
 # Seed Admin UUID Migration — Plan
 
-**Status: built, tested, and fully reviewed; ready for the production rollout runbook below — not
-yet applied to production.** Cleared the full `docs/Subagent-Orchestration.md` §2 policy 1
-sequence: Terra draft → 2 Terra review rounds → Opus plan-tier review (spent 1 of its 2 Terra
-reverts adding the **Failure and recovery** section, the drained-window procedure, and the exact
-preflight/postflight SQL; made two direct operator-safety edits itself) → Terra build → fresh Terra
-diff review (found and the builder fixed two gaps: a non-reproducible local-D1 verification, and an
-incomplete reopen-durability check) → final focused Terra pass (approved) → Opus final-draft review
-of the built diff. That last pass found one **Medium** issue in the runbook text (not the code):
-the original "consequence" analysis claimed any racing write aborts the migration, but re-derived
-live against the exact shipped `0022` file, the four `ON DELETE CASCADE` tables (`session`,
-`account`, `project_members`, `notifications`) behave differently — a race there completes silently
-via cascade-delete rather than aborting, undetectable by the original count-only postflight. The
-rollout section below has been corrected accordingly and a window-scoped postflight probe added;
-this was a documentation correction, not a code or SQL change — the migration file itself was
-independently re-verified correct with no unsafe interleaving. No production database writes,
-Worker deployment, or commit have been performed. The migration test, the local-D1 verification
-script (`portal/packages/db/verify-0022-local-d1.sh`), and the full repo verify sequence all pass.
+**Status: implemented and deployed to production (migration `0022_seed_admin_uuid.sql`, commit
+`3897501`, applied 2026-07-29 15:12:20 UTC).** Cleared the full `docs/Subagent-Orchestration.md`
+§2 policy 1 sequence: Terra draft → 2 Terra review rounds → Opus plan-tier review (spent 1 of its 2
+Terra reverts adding the **Failure and recovery** section, the drained-window procedure, and the
+exact preflight/postflight SQL; made two direct operator-safety edits itself) → Terra build →
+fresh Terra diff review (found and the builder fixed two gaps: a non-reproducible local-D1
+verification, and an incomplete reopen-durability check) → final focused Terra pass (approved) →
+Opus final-draft review of the built diff. That last pass found one **Medium** issue in the runbook
+text (not the code): the original "consequence" analysis claimed any racing write aborts the
+migration, but re-derived live against the exact shipped `0022` file, the four `ON DELETE CASCADE`
+tables (`session`, `account`, `project_members`, `notifications`) behave differently — a race there
+completes silently via cascade-delete rather than aborting, undetectable by the original count-only
+postflight. The rollout section below was corrected accordingly and a window-scoped postflight
+probe added; this was a documentation correction, not a code or SQL change — the migration file
+itself was independently re-verified correct with no unsafe interleaving.
+
+**Live rollout, executed 2026-07-29:** AutoHDR Workflow gate found zero live instances (all 6
+old-initiator handoffs' workflows independently confirmed `✅ Completed`); Dropbox OAuth KV prefix
+confirmed empty; 60-second drain window observed with the operator's and the assisting session's
+own browser sessions closed/navigated away; preflight matched the recorded snapshot exactly across
+all 14 tables; `wrangler d1 migrations apply quincy-portal --remote` applied `0022` cleanly;
+postflight confirmed exactly one UUID user with the real email, zero old references anywhere,
+`foreign_key_check` empty, `quick_check` ok, and the window-scoped probe on `notifications`/
+`project_members` found **zero** rows in the drain window — no race occurred at all. Session
+continuity confirmed live: a pre-migration session token resolved to the new UUID with no
+re-login required. Acceptance test confirmed live: POST + PATCH assigned the migrated UUID as both
+photographer and editor successfully (200, both membership rows created) — the original "Invalid
+input" bug is fixed. The controlled test project was archived and deleted through the app's normal
+endpoints afterward. No Worker deployment was needed or performed — this was a pure D1 data
+operation, exactly as the plan predicted. The migration test, the local-D1 verification script
+(`portal/packages/db/verify-0022-local-d1.sh`), and the full repo verify sequence all pass.
 
 **User decision:** repair the inconsistent production identity rather than weakening input
 validation. The existing strict UUID validation for project photographer/editor assignment remains

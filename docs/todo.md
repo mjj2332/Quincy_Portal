@@ -7,8 +7,25 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
 > counts, full diagnostic transcripts) has been cut in favor of what/when/deploy-state. See
 > `docs/lessons.md` for incident mechanics, and `docs/reviews/` for full QA-sweep detail.
 
-## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29)
+## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29, seed-admin UUID migration 2026-07-29)
 
+- **Seed admin UUID migration, applied to production 2026-07-29 15:12 UTC
+  (`Seed-Admin-UUID-Migration-Plan.md`, migration `0022_seed_admin_uuid.sql`, commit `3897501`).**
+  The studio admin's `user.id` was the literal string `seed-admin` (a seed-script artifact, not a
+  UUID like every other user), which failed the strict `.uuid()` validator on project
+  photographer/editor assignment ("Invalid input"). Repaired the data rather than relaxing
+  validation: migrated to a real UUID (`6b851dc8-14cf-4f90-bd29-ce6c27f86385`) across all 14
+  FK-referencing tables plus Better Auth's `session`/`account`. Terra plan-reviewed across 2 rounds
+  (caught and fixed a real `UNIQUE`-constraint SQL bug in the email-swap sequence) plus an Opus
+  plan-tier review (added a full failure/recovery runbook for interrupted-migration states), built
+  by Terra, Terra diff-reviewed (fixed two gaps: a non-reproducible local-D1 verification and an
+  incomplete durability check), and Opus final-draft reviewed (corrected the runbook's
+  race-condition analysis for `CASCADE`-configured tables, added a window-scoped detection probe).
+  Live rollout executed with a 60-second drain window: zero races detected, session continuity
+  confirmed (pre-migration session token resolved to the new UUID, no re-login needed), and the
+  original assignment bug confirmed fixed live (POST+PATCH both succeeded). No Worker redeploy
+  needed — pure D1 data operation. D1 migrations 0000-0022 now applied to prod; next available
+  number is 0023.
 - **Admin notification visibility + assignment alerts, deployed 2026-07-29
   (`Admin-Notification-Visibility-And-Assignment-Alerts-Plan.md`, commit `bc3c18f`).** Diagnosed
   live in-session (direct production D1 queries) that admins received zero notifications ever,
