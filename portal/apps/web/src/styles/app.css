@@ -397,6 +397,7 @@ button { font-family: var(--font-sans); }
    --------------------------------------------------------------------- */
 .kanban { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(244px, 1fr); gap: 1px; background: var(--border-hairline); border: 1px solid var(--border-hairline); overflow-x: auto; }
 .dashboard-viewbar { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin: calc(var(--space-7) * -1) 0 var(--space-4); }
+.dashboard-sort select { min-width: 128px; }
 
 /* ---------------------------------------------------------------------
    Staff notice board

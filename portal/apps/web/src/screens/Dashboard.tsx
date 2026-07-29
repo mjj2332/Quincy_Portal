@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from "react";
-import { type StageKey } from "@quincy/shared";
+import { compareByStreetThenId, type StageKey } from "@quincy/shared";
 import { StatusBadge } from "../components/atoms";
 import { LazyImage } from "../components/LazyImage";
 import { apiGet, apiPost } from "../lib/api";
 import { useCapabilities } from "../lib/capabilities";
 import { type ProjectStageKey, useStages } from "../lib/stages";
-import { formatDashboardDate, initializeDashboardView, type DashboardView } from "./dashboard-helpers";
+import { formatDashboardDate, initializeDashboardView, initializeKanbanSortMode, isCanonicalShootDate, type DashboardView, type KanbanSortMode } from "./dashboard-helpers";
 import { InternalLink } from "../components/InternalLink";
 import { NoticeBoard } from "../components/NoticeBoard";
 
@@ -25,8 +25,26 @@ export interface ProjectSummary {
   boardPosition: number;
 }
 
-export function sortKanbanProjects(projects: ProjectSummary[]): ProjectSummary[] {
-  return [...projects].sort((left, right) => left.boardPosition - right.boardPosition || left.id.localeCompare(right.id));
+function sortKanbanProjectsByShootDate(projects: ProjectSummary[], mode: "shootDate-asc" | "shootDate-desc"): ProjectSummary[] {
+  const direction = mode === "shootDate-asc" ? 1 : -1;
+  return [...projects].sort((left, right) => {
+    const leftDate = isCanonicalShootDate(left.shootDate) ? left.shootDate : null;
+    const rightDate = isCanonicalShootDate(right.shootDate) ? right.shootDate : null;
+    if (leftDate === null || rightDate === null) {
+      if (leftDate === rightDate) return compareByStreetThenId(left, right); // both null or both non-canonical
+      return leftDate === null ? 1 : -1; // no usable date sorts last, either direction
+    }
+    if (leftDate !== rightDate) return direction * (leftDate < rightDate ? -1 : 1);
+    return compareByStreetThenId(left, right);
+  });
+}
+
+export function sortKanbanProjects(projects: ProjectSummary[], sort: KanbanSortMode = "board"): ProjectSummary[] {
+  if (sort !== "board") return sortKanbanProjectsByShootDate(projects, sort);
+  return [...projects].sort((left, right) =>
+    (left.priority === null ? 1 : 0) - (right.priority === null ? 1 : 0)
+    || left.boardPosition - right.boardPosition
+    || left.id.localeCompare(right.id));
 }
 
 interface ProjectsResponse {
@@ -44,13 +62,14 @@ function CoverMedia({ project, className = "", inlinePlaceholder = false, retryT
 
 function location(project: ProjectSummary) { return [project.suburb, project.postcode].filter(Boolean).join(" · ") || "Location pending"; }
 
-export function KanbanCard({ project, canMove, isDragging, onDragStart, onDragEnd, initialCoverFailed = false, canPrioritize = false, onPriorityChange, onBoardPosition }: {
+export function KanbanCard({ project, canMove, isDragging, onDragStart, onDragEnd, initialCoverFailed = false, canPrioritize = false, canReorder = false, onPriorityChange, onBoardPosition }: {
   project: ProjectSummary;
   canMove: boolean;
   isDragging: boolean;
   onDragStart: (project: ProjectSummary, event: DragEvent<HTMLAnchorElement>) => void;
   onDragEnd: () => void;
   canPrioritize?: boolean;
+  canReorder?: boolean;
   onPriorityChange?: (project: ProjectSummary, priority: number | null) => void;
   onBoardPosition?: (project: ProjectSummary, direction: "up" | "down") => void;
   /** Used by the Node markup test; normal cards begin with their cover available. */
@@ -75,8 +94,10 @@ export function KanbanCard({ project, canMove, isDragging, onDragStart, onDragEn
         <option value="">—</option>
         {Array.from({ length: 10 }, (_, index) => index + 1).map((value) => <option value={value} key={value}>{value}</option>)}
       </select>
-      <button type="button" className="kcard-controls__arrow" aria-label="Move project up" onClick={() => onBoardPosition?.(project, "up")}>↑</button>
-      <button type="button" className="kcard-controls__arrow" aria-label="Move project down" onClick={() => onBoardPosition?.(project, "down")}>↓</button>
+      {canReorder && <>
+        <button type="button" className="kcard-controls__arrow" aria-label="Move project up" onClick={() => onBoardPosition?.(project, "up")}>↑</button>
+        <button type="button" className="kcard-controls__arrow" aria-label="Move project down" onClick={() => onBoardPosition?.(project, "down")}>↓</button>
+      </>}
     </div>}
     {coverFailed && <button className="kcard__retry button button--secondary" type="button" onClick={() => { setCoverFailed(false); setCoverRetry((current) => current + 1); }}>Retry cover image</button>}
   </div>;
@@ -111,6 +132,10 @@ export function Dashboard({ currentUserId }: { currentUserId: string }) {
   const [view, setView] = useState<DashboardView>(() => initializeDashboardView({
     read: () => window.localStorage.getItem("quincy:dashboard:view"),
     write: (next) => window.localStorage.setItem("quincy:dashboard:view", next),
+  }));
+  const [kanbanSort, setKanbanSort] = useState<KanbanSortMode>(() => initializeKanbanSortMode({
+    read: () => window.localStorage.getItem("quincy:dashboard:kanbanSort"),
+    write: (next) => window.localStorage.setItem("quincy:dashboard:kanbanSort", next),
   }));
   const [dragging, setDragging] = useState<ProjectSummary>();
   const [pendingMoves, setPendingMoves] = useState<Set<string>>(new Set());
@@ -164,6 +189,11 @@ export function Dashboard({ currentUserId }: { currentUserId: string }) {
   function selectView(next: DashboardView) {
     setView(next);
     try { window.localStorage.setItem("quincy:dashboard:view", next); } catch { /* Storage can be disabled by the browser. */ }
+  }
+
+  function selectKanbanSort(next: KanbanSortMode) {
+    setKanbanSort(next);
+    try { window.localStorage.setItem("quincy:dashboard:kanbanSort", next); } catch { /* Storage can be disabled by the browser. */ }
   }
 
   function beginDrag(project: ProjectSummary, event: DragEvent<HTMLAnchorElement>) {
@@ -265,6 +295,16 @@ export function Dashboard({ currentUserId }: { currentUserId: string }) {
           <button className={view === "list" ? "is-active" : ""} type="button" onClick={() => selectView("list")}>List</button>
           <button className={view === "kanban" ? "is-active" : ""} type="button" onClick={() => selectView("kanban")}>Kanban</button>
         </div>
+        {!viewingArchived && view === "kanban" && (
+          <label className="dashboard-sort">
+            <span className="sr-only">Sort Kanban board</span>
+            <select value={kanbanSort} onChange={(event) => selectKanbanSort(event.target.value as KanbanSortMode)}>
+              <option value="board">Board order</option>
+              <option value="shootDate-asc">Shoot date ↑</option>
+              <option value="shootDate-desc">Shoot date ↓</option>
+            </select>
+          </label>
+        )}
         </>}
       </div>
 
@@ -296,7 +336,7 @@ export function Dashboard({ currentUserId }: { currentUserId: string }) {
       {!isLoading && !error && !viewingArchived && filteredProjects.length > 0 && view === "kanban" && (
         <div className="kanban" aria-label="Project pipeline board">
           {activeStages.map((stage) => {
-            const stageProjects = sortKanbanProjects(filteredProjects.filter((project) => project.stageKey === stage.key));
+            const stageProjects = sortKanbanProjects(filteredProjects.filter((project) => project.stageKey === stage.key), kanbanSort);
             const stageKey = stage.key === "editing" ? "editing_autohdr" : stage.key;
             const canDropStage = canMoveStages && (canViewArchived || stage.key !== "editing");
             const isDropTarget = canDropStage && dropStage === stageKey;
@@ -304,7 +344,7 @@ export function Dashboard({ currentUserId }: { currentUserId: string }) {
               <div className="kcol__head"><span className="row gap2"><StatusBadge stageKey={stage.key} /></span><span className="cnt">{stageProjects.length}</span></div>
               <div className="kcol__body">
                 {stageProjects.length === 0 && <div className="kcol__empty">—</div>}
-                {stageProjects.map((project) => <KanbanCard key={project.id} project={project} canMove={canMoveStages && !pendingMoves.has(project.id)} canPrioritize={canPrioritize && !pendingOrdering.has(project.id)} isDragging={dragging?.id === project.id} onPriorityChange={setProjectPriority} onBoardPosition={moveProjectPosition} onDragStart={beginDrag} onDragEnd={() => { setDragging(undefined); setDropStage(undefined); }} />)}
+                {stageProjects.map((project) => <KanbanCard key={project.id} project={project} canMove={canMoveStages && !pendingMoves.has(project.id)} canPrioritize={canPrioritize && !pendingOrdering.has(project.id)} canReorder={canPrioritize && kanbanSort === "board" && !pendingOrdering.has(project.id)} isDragging={dragging?.id === project.id} onPriorityChange={setProjectPriority} onBoardPosition={moveProjectPosition} onDragStart={beginDrag} onDragEnd={() => { setDragging(undefined); setDropStage(undefined); }} />)}
               </div>
             </section>;
           })}

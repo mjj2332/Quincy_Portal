@@ -9,3 +9,4 @@ export * from "./renditions";
 export * from "./staff-routes";
 export * from "./dropbox-paths";
 export * from "./autohdr";
+export * from "./dashboard-order";
