@@ -1,7 +1,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { ReactNode } from "react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PhotoGrid, type WorkspaceAsset } from "./PhotoGrid";
 
 function asset(id: string, overrides: Partial<WorkspaceAsset> = {}): WorkspaceAsset {
@@ -205,5 +205,52 @@ describe("PhotoGrid select-all / deselect-all", () => {
     expect(isSelected(host, "b")).toBe(true);
     expect(isSelected(host, "a")).toBe(false);
     expect(isSelected(host, "c")).toBe(false);
+  });
+});
+
+describe("PhotoGrid deletion controls", () => {
+  let host: HTMLElement;
+  beforeEach(() => { host = mount(); window.confirm = vi.fn(() => true); });
+  afterEach(async () => { await unmount(); host.remove(); });
+
+  it("confirms a single delete and prunes that id from multi", async () => {
+    const onDelete = vi.fn(async () => undefined);
+    await render(<PhotoGrid {...baseProps} canDelete onDelete={onDelete} assets={[asset("one"), asset("two")]} />);
+    await click(selBox(host, "one"));
+    await click(host.querySelector('[aria-label="Delete one.jpg"]')!);
+    expect(window.confirm).toHaveBeenCalledWith("Permanently delete one.jpg? This cannot be undone.");
+    expect(onDelete).toHaveBeenCalledWith("one");
+    expect(host.querySelector(".actionbar")).toBeNull();
+  });
+
+  it("uses count-inclusive bulk confirmation and retains only failed ids", async () => {
+    const onBulkDelete = vi.fn(async () => ({ succeededIds: ["one"], failedIds: ["two"] }));
+    await render(<PhotoGrid {...baseProps} canDelete onBulkDelete={onBulkDelete} assets={[asset("one"), asset("two")]} />);
+    await click(selBox(host, "one")); await click(selBox(host, "two"));
+    await click([...host.querySelectorAll<HTMLButtonElement>(".actionbar .barbtn")].find((button) => button.textContent === "Delete 2")!);
+    expect(window.confirm).toHaveBeenCalledWith("Permanently delete 2 selected assets? This cannot be undone.");
+    expect(onBulkDelete).toHaveBeenCalledWith(["one", "two"]);
+    expect(host.querySelector(".actionbar")?.textContent).toContain("1");
+    expect(isSelected(host, "two")).toBe(true);
+  });
+
+  it("leaves selection and calls untouched when a confirmation is declined", async () => {
+    window.confirm = vi.fn(() => false);
+    const onDelete = vi.fn(async () => undefined);
+    await render(<PhotoGrid {...baseProps} canDelete onDelete={onDelete} assets={[asset("one")]} />);
+    await click(selBox(host, "one")); await click(host.querySelector('[aria-label="Delete one.jpg"]')!);
+    expect(onDelete).not.toHaveBeenCalled();
+    expect(isSelected(host, "one")).toBe(true);
+  });
+
+  it("leaves the whole selection untouched when a bulk confirmation is declined", async () => {
+    window.confirm = vi.fn(() => false);
+    const onBulkDelete = vi.fn(async () => ({ succeededIds: [], failedIds: [] }));
+    await render(<PhotoGrid {...baseProps} canDelete onBulkDelete={onBulkDelete} assets={[asset("one"), asset("two")]} />);
+    await click(selBox(host, "one")); await click(selBox(host, "two"));
+    await click([...host.querySelectorAll<HTMLButtonElement>(".actionbar .barbtn")].find((button) => button.textContent === "Delete 2")!);
+    expect(onBulkDelete).not.toHaveBeenCalled();
+    expect(isSelected(host, "one")).toBe(true); expect(isSelected(host, "two")).toBe(true);
+    expect(host.querySelector(".actionbar")?.textContent).toContain("2");
   });
 });

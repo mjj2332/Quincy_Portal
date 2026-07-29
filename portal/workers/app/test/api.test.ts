@@ -2161,9 +2161,29 @@ describe("staff app API", () => {
     expect(await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE action = ? AND target_id = ?").bind("tonomo_event.discard", poisonId).first()).toEqual(auditCount);
   });
 
+  // `rendition_dlq_events.assetId` carries no FK — DLQ events can be recorded for a malformed
+  // payload with no real asset behind it at all — but the replay endpoint now requires the asset
+  // to actually still exist (see the DLQ replay asset-existence guard), so these tests need a real
+  // seeded row, not just a synthetic UUID standing in for one.
+  async function seedMinimalAsset() {
+    const adminCookie = await sessionCookie(adminToken);
+    const projectResponse = await SELF.fetch("https://portal.test/api/projects", {
+      method: "POST",
+      headers: { cookie: adminCookie, "content-type": "application/json" },
+      body: JSON.stringify({ street: `DLQ replay ${crypto.randomUUID()}`, orderedServices: [], photographerUserIds: [firstPhotographerId] }),
+    });
+    expect(projectResponse.status).toBe(201);
+    const project = await projectResponse.json() as { id: string };
+    const collection = await database.DB.prepare("SELECT id FROM collections WHERE project_id = ? AND kind = 'raw'").bind(project.id).first<{ id: string }>();
+    const assetId = crypto.randomUUID(); const now = Date.now();
+    await database.DB.prepare("INSERT INTO assets (id, collection_id, r2_key, original_filename, bytes, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+      .bind(assetId, collection!.id, `tests/${assetId}.jpg`, "dlq-replay.jpg", 1024, "upload", now, now).run();
+    return assetId;
+  }
+
   it("lists, replays, and discards rendition dead-letter events, gated to admin", async () => {
     const cookie = await sessionCookie(adminToken);
-    const openId = crypto.randomUUID(); const assetId = crypto.randomUUID(); const now = Date.now();
+    const openId = crypto.randomUUID(); const assetId = await seedMinimalAsset(); const now = Date.now();
     await database.DB.prepare("INSERT INTO rendition_dlq_events (id, asset_id, status, received_at) VALUES (?, ?, 'open', ?)").bind(openId, assetId, now).run();
 
     const photographerCookie = await sessionCookie(photographerToken);
@@ -2197,7 +2217,7 @@ describe("staff app API", () => {
 
   it("lets only one of two concurrent rendition-DLQ replays claim the same open row", async () => {
     const cookie = await sessionCookie(adminToken);
-    const raceId = crypto.randomUUID(); const raceAsset = crypto.randomUUID();
+    const raceId = crypto.randomUUID(); const raceAsset = await seedMinimalAsset();
     await database.DB.prepare("INSERT INTO rendition_dlq_events (id, asset_id, status, received_at) VALUES (?, ?, 'open', ?)").bind(raceId, raceAsset, Date.now()).run();
     const replay = () => SELF.fetch(`https://portal.test/api/admin/renditions-dlq/${raceId}/replay`, { method: "POST", headers: { cookie } });
     const [first, second] = await Promise.all([replay(), replay()]);
@@ -2230,7 +2250,7 @@ describe("staff app API", () => {
 
   it("reverts a claimed rendition-DLQ replay back to open when the queue send itself fails", async () => {
     const cookie = await sessionCookie(adminToken);
-    const failId = crypto.randomUUID(); const failAsset = crypto.randomUUID();
+    const failId = crypto.randomUUID(); const failAsset = await seedMinimalAsset();
     await database.DB.prepare("INSERT INTO rendition_dlq_events (id, asset_id, status, received_at) VALUES (?, ?, 'open', ?)").bind(failId, failAsset, Date.now()).run();
     // A per-request env override (bypassing SELF.fetch's fixed worker binding) is the only way
     // to make just this one request's queue send throw while every other test keeps a working

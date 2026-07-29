@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { LabelDot, Stars } from "./atoms";
 import { LazyImage } from "./LazyImage";
 
@@ -18,6 +18,7 @@ interface PhotoGridProps {
   canRecommend: boolean;
   canSelect: boolean;
   canSetCover: boolean;
+  canDelete?: boolean;
   /** Effective cover (stored-if-valid else automatic) — drives the "Cover" tag. */
   coverAssetId: string | null;
   /** Explicitly stored cover — its tile's button clears instead of sets. */
@@ -26,6 +27,8 @@ interface PhotoGridProps {
   onOpen: (asset: WorkspaceAsset, orderedAssets: WorkspaceAsset[]) => void;
   onReview: (assetId: string, patch: ReviewPatch) => Promise<void>;
   onSelection: (assetId: string, selected: boolean) => Promise<void>;
+  onDelete?: (assetId: string) => Promise<void>;
+  onBulkDelete?: (assetIds: string[]) => Promise<{ succeededIds: string[]; failedIds: string[] }>;
 }
 
 function rating(asset: WorkspaceAsset) { return asset.review?.stars ?? asset.ratingFromMetadata ?? 0; }
@@ -57,12 +60,19 @@ export function updateFailedThumbnailState(current: Set<string>, assetId: string
   return next;
 }
 
-export function PhotoGrid({ assets, showSections, canReview, canRecommend, canSelect, canSetCover, coverAssetId, storedCoverAssetId, onSetCover, onOpen, onReview, onSelection }: PhotoGridProps) {
+export function PhotoGrid({ assets, showSections, canReview, canRecommend, canSelect, canSetCover, canDelete = false, coverAssetId, storedCoverAssetId, onSetCover, onOpen, onReview, onSelection, onDelete, onBulkDelete }: PhotoGridProps) {
   const [filter, setFilter] = useState("all");
   const [multi, setMulti] = useState<Set<string>>(new Set());
   const [failedThumbnails, setFailedThumbnails] = useState<Set<string>>(new Set());
   const [thumbnailRetries, setThumbnailRetries] = useState<Record<string, number>>({});
   const lastSelected = useRef<string | null>(null);
+  useEffect(() => {
+    const ids = new Set(assets.map((asset) => asset.id));
+    setMulti((current) => {
+      const next = new Set([...current].filter((id) => ids.has(id)));
+      return next.size === current.size ? current : next;
+    });
+  }, [assets]);
   const visible = useMemo(() => assets.filter((asset) => {
     if (filter === "recommended") return asset.review?.recommended;
     if (filter === "rated") return rating(asset) > 0;
@@ -116,6 +126,21 @@ export function PhotoGrid({ assets, showSections, canReview, canRecommend, canSe
     setMulti(new Set());
     lastSelected.current = null;
   }
+  async function deleteOne(asset: WorkspaceAsset) {
+    if (!onDelete || !window.confirm(`Permanently delete ${asset.originalFilename}? This cannot be undone.`)) return;
+    await onDelete(asset.id);
+    setMulti((current) => { if (!current.has(asset.id)) return current; const next = new Set(current); next.delete(asset.id); return next; });
+    lastSelected.current = null;
+  }
+  async function deleteMany() {
+    if (!onBulkDelete) return;
+    const ids = [...multi];
+    if (!window.confirm(`Permanently delete ${ids.length} selected asset${ids.length === 1 ? "" : "s"}? This cannot be undone.`)) return;
+    const result = await onBulkDelete(ids);
+    const succeeded = new Set(result.succeededIds);
+    setMulti((current) => { const next = new Set([...current].filter((id) => !succeeded.has(id))); return next.size === current.size ? current : next; });
+    lastSelected.current = null;
+  }
   function renderGrid(gridAssets: WorkspaceAsset[]) {
     return <div className="grid workspace-photo-grid">{gridAssets.map((asset) => {
       const review = asset.review;
@@ -133,6 +158,7 @@ export function PhotoGrid({ assets, showSections, canReview, canRecommend, canSe
           {canRecommend && <button className="icbtn icbtn--ondark" type="button" title="Recommend" onClick={(event) => { event.stopPropagation(); void onReview(asset.id, { recommended: !review?.recommended }); }}>★</button>}
           {canSelect && <button className="icbtn icbtn--ondark" type="button" title="Select for editing" onClick={(event) => { event.stopPropagation(); void onSelection(asset.id, !asset.selected); }}>↗</button>}
           {canSetCover && <button className="icbtn icbtn--ondark" type="button" title={storedCoverAssetId === asset.id ? "Remove as cover (use first RAW frame)" : "Use as project cover"} onClick={(event) => { event.stopPropagation(); void onSetCover(storedCoverAssetId === asset.id ? null : asset.id); }}>◈</button>}
+          {canDelete && onDelete && <button className="icbtn icbtn--ondark" type="button" title="Delete asset" aria-label={`Delete ${asset.originalFilename}`} onClick={(event) => { event.stopPropagation(); void deleteOne(asset).catch(() => undefined); }}>×</button>}
         </div>
         <div className="statetags">
           {asset.selected && <span className="statetag st-editing">For editing</span>}
@@ -151,6 +177,6 @@ export function PhotoGrid({ assets, showSections, canReview, canRecommend, canSe
     <div className="workgrid">
       {visible.length === 0 ? <div className="empty"><span className="serif">No frames in this view.</span>Choose another filter or upload the capture set.</div> : showSections ? sectionGroups.map((group, index) => <section className="workspace-section" key={workspaceSectionKey(group.section)}><div className="ey" style={{ margin: index === 0 ? "4px 0 10px" : "22px 0 10px" }}>{group.label}</div>{renderGrid(group.assets)}</section>) : renderGrid(visible)}
     </div>
-    {multi.size > 0 && <div className="actionbar"><span className="n">{multi.size}</span><span className="lbl">selected</span><span className="vline" />{canReview && <><button className="barbtn" type="button" onClick={() => void bulk("rate")}>Rate 5</button><button className="barbtn" type="button" onClick={() => void bulk("label")}>Label</button><button className="barbtn barbtn--solid" type="button" onClick={() => void bulk("approve")}>Approve</button><button className="barbtn" type="button" onClick={() => void bulk("flag")}>Flag</button></>}{canRecommend && <button className="barbtn barbtn--solid" type="button" onClick={() => void bulk("recommend")}>Recommend</button>}{canSelect && <button className="barbtn" type="button" onClick={() => void bulk("select")}>Select for editing</button>}<button className="barbtn" type="button" onClick={() => { setMulti(new Set()); lastSelected.current = null; }}>Clear</button></div>}
+    {multi.size > 0 && <div className="actionbar"><span className="n">{multi.size}</span><span className="lbl">selected</span><span className="vline" />{canReview && <><button className="barbtn" type="button" onClick={() => void bulk("rate")}>Rate 5</button><button className="barbtn" type="button" onClick={() => void bulk("label")}>Label</button><button className="barbtn barbtn--solid" type="button" onClick={() => void bulk("approve")}>Approve</button><button className="barbtn" type="button" onClick={() => void bulk("flag")}>Flag</button></>}{canRecommend && <button className="barbtn barbtn--solid" type="button" onClick={() => void bulk("recommend")}>Recommend</button>}{canSelect && <button className="barbtn" type="button" onClick={() => void bulk("select")}>Select for editing</button>}{canDelete && onBulkDelete && <button className="barbtn" type="button" onClick={() => void deleteMany().catch(() => undefined)}>Delete {multi.size}</button>}<button className="barbtn" type="button" onClick={() => { setMulti(new Set()); lastSelected.current = null; }}>Clear</button></div>}
   </>;
 }

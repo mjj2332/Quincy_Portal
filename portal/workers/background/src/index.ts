@@ -11,7 +11,8 @@ import { createJob, setJobStatus } from "./lib/jobs";
 import type { IngestMessage } from "./messages";
 import { generateRenditions } from "./renditions";
 import { publishStatusAfterWorkflowCreateFailure } from "./manual-edited-renditions";
-import { syncProjectRawFolder } from "./dropbox/sync";
+import { deleteBatch, deleteBatchCheck, isDropboxPathNotFound, type DropboxDeleteBatchCheckResult, type DropboxDeleteBatchResult } from "./dropbox/client";
+import { renewRawReconciliationClaim, syncProjectRawFolder } from "./dropbox/sync";
 import { fanOutDropboxKicks } from "./dropbox/webhook";
 import { canMutateRenditionBackfill } from "./backfill-gate";
 import { safeRenditionFailure } from "./rendition-diagnostics";
@@ -70,6 +71,41 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
     } catch (error) {
       await setJobStatus(db, jobId, "failed", error instanceof Error ? error.message : String(error));
       throw error;
+    }
+  }
+
+  async renewDropboxDeletionClaim(claimId: string, ownerJobId: string): Promise<boolean> {
+    return renewRawReconciliationClaim(this.env.DB, claimId, ownerJobId);
+  }
+
+  async deleteDropboxSourceFile(path: string, claimId: string, ownerJobId: string): Promise<
+    | { outcome: "removed" }
+    | { outcome: "alreadyGone" }
+    | { outcome: "claimLost" }
+    | { outcome: "failed"; reason: string }
+  > {
+    const DELETE_BATCH_MAX_POLLS = 45;
+    const db = dbFor(this.env);
+    try {
+      if (!await renewRawReconciliationClaim(this.env.DB, claimId, ownerJobId)) return { outcome: "claimLost" };
+      let result: DropboxDeleteBatchResult | DropboxDeleteBatchCheckResult = await deleteBatch(this.env, db, [{ path }]);
+      let asyncJobId = result[".tag"] === "async_job_id" ? result.async_job_id : null;
+      for (let poll = 1; asyncJobId && poll <= DELETE_BATCH_MAX_POLLS; poll += 1) {
+        if (!await renewRawReconciliationClaim(this.env.DB, claimId, ownerJobId)) return { outcome: "claimLost" };
+        result = await deleteBatchCheck(this.env, db, asyncJobId);
+        if (result[".tag"] !== "in_progress") asyncJobId = null;
+      }
+      if (asyncJobId) return { outcome: "failed", reason: `did not complete after ${DELETE_BATCH_MAX_POLLS} checks` };
+      if (result[".tag"] === "failed") return { outcome: "failed", reason: "Dropbox delete_batch failed" };
+      if (result[".tag"] === "complete") {
+        const entry = result.entries[0];
+        if (entry?.[".tag"] === "success") return { outcome: "removed" };
+        if (entry?.[".tag"] === "failure" && isDropboxPathNotFound(entry.failure)) return { outcome: "alreadyGone" };
+        return { outcome: "failed", reason: "Dropbox delete_batch entry failed" };
+      }
+      return { outcome: "failed", reason: "unexpected Dropbox response shape" };
+    } catch (error) {
+      return { outcome: "failed", reason: error instanceof Error ? error.message : String(error) };
     }
   }
 

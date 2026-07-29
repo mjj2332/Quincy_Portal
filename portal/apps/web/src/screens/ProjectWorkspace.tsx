@@ -5,7 +5,7 @@ import { Lightbox } from "../components/Lightbox";
 import { PhotoGrid, type Review, type ReviewPatch, type WorkspaceAsset } from "../components/PhotoGrid";
 import { UploadDropzone } from "../components/UploadDropzone";
 import { CollectionPanel } from "../components/CollectionPanel";
-import { ApiError, apiGet, apiPost } from "../lib/api";
+import { ApiError, apiDelete, apiGet, apiPost } from "../lib/api";
 import { useCapabilities } from "../lib/capabilities";
 import { InternalLink } from "../components/InternalLink";
 
@@ -14,6 +14,7 @@ type Member = { id: string; userId: string; roleOnProject: "photographer" | "edi
 type Project = { id: string; street: string; suburb: string | null; postcode: string | null; agencyName: string | null; agentName: string | null; shootDate: string | null; stageKey: ProjectStageKey; rawFolderPath: string | null; rawFolderLink: string | null; coverAssetId: string | null; effectiveCoverAssetId: string | null };
 type ProjectResponse = Project & { collections: Collection[]; members: Member[] };
 type AssetsResponse = { assets: WorkspaceAsset[] };
+type AssetDeleteResponse = { ok: boolean; deletedAssetIds: string[]; deletedObjects: number; dropboxDeleted: boolean; dropboxOutcome?: "removed" | "alreadyGone" | "claimLost" | "failed"; dropboxReason?: string };
 type IngestStatus = { expectedCount: number | null; receivedCount: number; mismatch: boolean };
 type Job = { id: string; kind: "autohdr" | "fetch_edited" | "autohdr_scaffold" | "manual_edited_publish"; status: "queued" | "running" | "done" | "failed" | "stuck"; error: string | null; correlationId: string | null; createdAt: string; updatedAt: string };
 type JobsResponse = { jobs: Job[] };
@@ -37,6 +38,34 @@ function date(value: string | null) { return value ? new Intl.DateTimeFormat("en
 function collectionLabel(value: string) { return value === "raw" ? "RAW" : value.charAt(0).toUpperCase() + value.slice(1); }
 function emptyReview(): Review { return { stars: null, colorLabel: null, decision: null, recommended: false }; }
 function activeJob(job: Job) { return job.status === "queued" || job.status === "running"; }
+
+/** Post-delete refreshes are independent requests: an unrelated tab refresh may abort one. */
+export async function refreshAfterAssetDelete(refreshAssets: () => Promise<unknown>, refreshProject: () => Promise<unknown>): Promise<void> {
+  let refreshFailure: unknown;
+  await refreshAssets().catch((reason: unknown) => { if (!(reason instanceof Error && reason.name === "AbortError")) refreshFailure ??= reason; });
+  await refreshProject().catch((reason: unknown) => { if (!(reason instanceof Error && reason.name === "AbortError")) refreshFailure ??= reason; });
+  if (refreshFailure) throw refreshFailure;
+}
+
+export function deletedAssetClosesLightbox(openAssetId: string | null, deletedAssetIds: string[]): boolean {
+  return openAssetId !== null && deletedAssetIds.includes(openAssetId);
+}
+
+type AssetDeleteResult = { deletedAssetIds: string[]; dropboxOutcome?: "removed" | "alreadyGone" | "claimLost" | "failed" };
+
+/** Pure outcome computation for a bulk delete, kept separate from the component so a rejected
+ * request can be tested independently of the network/toast/refresh side effects around it. */
+export function computeBulkDeleteOutcome(assetIds: string[], results: PromiseSettledResult<AssetDeleteResult>[]) {
+  // Only a FULFILLED result's own server-confirmed ids count as succeeded — a rejected request's
+  // originally-requested id must land in failedIds, not be silently treated as successful.
+  const succeededIds = results.flatMap((result) => result.status === "fulfilled" ? result.value.deletedAssetIds : []);
+  const succeededSet = new Set(succeededIds);
+  const failedIds = assetIds.filter((id) => !succeededSet.has(id));
+  const dropboxCleanupWarnings = results.filter((result) =>
+    result.status === "fulfilled" && (result.value.dropboxOutcome === "failed" || result.value.dropboxOutcome === "claimLost"),
+  ).length;
+  return { succeededIds: [...succeededSet], failedIds, dropboxCleanupWarnings };
+}
 
 export function ProjectWorkspace({ projectId, notice, onNoticeShown }: { projectId: string; notice?: string | null; onNoticeShown?: () => void }) {
   const { can } = useCapabilities();
@@ -238,6 +267,34 @@ export function ProjectWorkspace({ projectId, notice, onNoticeShown }: { project
     } catch (reason) { toast(reason instanceof Error ? reason.message : "The project cover could not be updated.", "error"); }
   }, [projectId, refreshProject, toast]);
 
+  const deleteAsset = useCallback(async (assetId: string) => {
+    try {
+      const response = await apiDelete<AssetDeleteResponse>(`/api/assets/${encodeURIComponent(assetId)}`);
+      // Close only once the delete is confirmed — a blocked/failed request (e.g. a 409 from a
+      // premium unlock) must not close the lightbox on an asset that's still live. Closing here,
+      // before the refetch below, still avoids Lightbox dereferencing a since-filtered-out asset.
+      if (deletedAssetClosesLightbox(openAssetId, response.deletedAssetIds)) { setOpenAssetId(null); setLightboxOrderIds(null); }
+      await refreshAfterAssetDelete(refreshAssets, refreshProject);
+      const needsAttention = response.dropboxOutcome === "failed" || response.dropboxOutcome === "claimLost";
+      toast(needsAttention ? "Asset deleted, but Dropbox cleanup needs attention." : "Asset deleted.", needsAttention ? "error" : "success");
+    } catch (reason) {
+      toast(reason instanceof Error ? reason.message : "The asset could not be deleted.", "error");
+      throw reason;
+    }
+  }, [openAssetId, refreshAssets, refreshProject, toast]);
+
+  const deleteAssets = useCallback(async (assetIds: string[]) => {
+    const results = await Promise.allSettled(assetIds.map((assetId) => apiDelete<AssetDeleteResponse>(`/api/assets/${encodeURIComponent(assetId)}`)));
+    const { succeededIds, failedIds, dropboxCleanupWarnings } = computeBulkDeleteOutcome(assetIds, results);
+    if (deletedAssetClosesLightbox(openAssetId, succeededIds)) { setOpenAssetId(null); setLightboxOrderIds(null); }
+    try { await refreshAfterAssetDelete(refreshAssets, refreshProject); }
+    catch (refreshFailure) { toast(refreshFailure instanceof Error ? refreshFailure.message : "The project could not be refreshed after deletion.", "error"); throw refreshFailure; }
+    if (failedIds.length) toast(`${failedIds.length} asset${failedIds.length === 1 ? "" : "s"} could not be deleted.`, "error");
+    else if (dropboxCleanupWarnings) toast(`Deleted, but Dropbox cleanup needs attention for ${dropboxCleanupWarnings} asset${dropboxCleanupWarnings === 1 ? "" : "s"}.`, "error");
+    else toast("Selected assets deleted.");
+    return { succeededIds, failedIds };
+  }, [openAssetId, refreshAssets, refreshProject, toast]);
+
   async function syncDropbox() {
     if (!projectId) return;
     setIsSyncing(true);
@@ -307,7 +364,7 @@ export function ProjectWorkspace({ projectId, notice, onNoticeShown }: { project
   const project = data;
   const { collections, members } = data;
   const stage = stages.find((item) => item.key === presentationStageKey(project.stageKey));
-  const canUpload = can("uploadRaw"), canSelect = can("selectForEditing"), canEdit = can("editProject"), canManageCollections = can("editProject") || can("manageExtras"), isEdited = activeTab === "edited";
+  const canUpload = can("uploadRaw"), canSelect = can("selectForEditing"), canEdit = can("editProject"), canManageCollections = can("editProject") || can("manageExtras"), canDeleteAssets = can("adminBackend"), isEdited = activeTab === "edited";
   const canReview = isEdited ? can("reviewEdited") : can("selectForEditing");
   const canRecommend = activeTab === "raw" && can("recommendRaw");
   const canAnnotate = activeTab === "raw" ? can("annotateRaw") : isEdited && can("annotateEdited");
@@ -345,8 +402,8 @@ export function ProjectWorkspace({ projectId, notice, onNoticeShown }: { project
         {activeTab === "edited" && can("uploadEdited") && <div className="workgrid">{hasRawFolder
           ? <UploadDropzone projectId={projectId} collection="edited" onComplete={async () => { await Promise.all([refreshAssets("edited"), refreshProject()]); }} onToast={toast} />
           : <div className="empty" role="status"><span className="serif">No Dropbox RAW folder for this shoot.</span>Edited uploads are published to Dropbox before they appear here, and every destination is derived from the RAW folder. Create the shoot folder in Tonomo, then set the RAW folder on this project{canEdit ? " under Edit details" : ""}.</div>}</div>}
-        <PhotoGrid key={activeTab} assets={assets} showSections={activeTab === "raw" || activeTab === "edited"} canReview={canReview} canRecommend={canRecommend} canSelect={activeTab === "raw" && canSelect} canSetCover={canEdit && (activeTab === "raw" || activeTab === "edited")} coverAssetId={project.effectiveCoverAssetId} storedCoverAssetId={project.coverAssetId} onSetCover={updateCover} onOpen={(asset, orderedAssets) => { setLightboxOrderIds(orderedAssets.map((item) => item.id)); setOpenAssetId(asset.id); }} onReview={updateReview} onSelection={updateSelection} />
-      </> : <CollectionPanel projectId={projectId} collection={activeTab} assets={assets} canManage={canManageCollections} canApprove={can("reviewEdited")} onReview={updateReview} onChanged={async () => { await Promise.all([refreshAssets(activeTab), refreshProject()]); }} onToast={toast} />}
+        <PhotoGrid key={activeTab} assets={assets} showSections={activeTab === "raw" || activeTab === "edited"} canReview={canReview} canRecommend={canRecommend} canSelect={activeTab === "raw" && canSelect} canSetCover={canEdit && (activeTab === "raw" || activeTab === "edited")} canDelete={canDeleteAssets} coverAssetId={project.effectiveCoverAssetId} storedCoverAssetId={project.coverAssetId} onSetCover={updateCover} onOpen={(asset, orderedAssets) => { setLightboxOrderIds(orderedAssets.map((item) => item.id)); setOpenAssetId(asset.id); }} onReview={updateReview} onSelection={updateSelection} onDelete={deleteAsset} onBulkDelete={deleteAssets} />
+      </> : <CollectionPanel projectId={projectId} collection={activeTab} assets={assets} canManage={canManageCollections} canDelete={canDeleteAssets} canApprove={can("reviewEdited")} onReview={updateReview} onDelete={deleteAsset} onChanged={async () => { await Promise.all([refreshAssets(activeTab), refreshProject()]); }} onToast={toast} />}
       {canAdminBackend && jobs.length > 0 && <div className="workgrid"><section className="hdr" style={{ alignItems: "flex-start", flexDirection: "column" }}><div><strong>autoHDR status</strong><div className="muted">Recent hand-offs, fetches, and manual-upload publishes for this project.</div></div>{jobs.map((job) => <div className="kv" style={{ width: "100%" }} key={job.id}><span className="k">{new Date(job.createdAt).toLocaleString("en-AU")}</span><span className="vv"><span className="k">{job.kind === "fetch_edited" ? "Fetch" : job.kind === "autohdr_scaffold" ? "Scaffold" : job.kind === "manual_edited_publish" ? "Manual upload" : "Send"}</span>{" "}<span className={`statetag st-${job.status}`}>{job.status}</span>{job.error ? ` ${job.error}` : ""}{(job.status === "stuck" || job.status === "failed") && <button className="chip" style={{ marginLeft: 8 }} type="button" onClick={() => void retryAutoHdr(job.id)}>Retry</button>}</span></div>)}</section></div>}
     </section>
     {openAssetId && <Lightbox assets={lightboxOrderIds ? lightboxOrderIds.map((id) => assets.find((asset) => asset.id === id)).filter((asset): asset is WorkspaceAsset => Boolean(asset)) : assets} rawAssets={rawAssets} initialAssetId={openAssetId} collectionKind={activeTab === "edited" ? "edited" : "raw"} canReview={canReview} canRecommend={canRecommend} canAnnotate={canAnnotate} onClose={() => { setOpenAssetId(null); setLightboxOrderIds(null); }} onReview={updateReview} onToast={toast} />}

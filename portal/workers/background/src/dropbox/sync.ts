@@ -1,4 +1,4 @@
-import { COLLECTION_RECEIVED_COUNT_SQL, collectionReceivedCountBindings, guardedStageTransition } from "@quincy/db";
+import { COLLECTION_RECEIVED_COUNT_SQL, RAW_CLAIM_LEASE_MS, collectionReceivedCountBindings, guardedStageTransition } from "@quincy/db";
 import { assetIngestIdentities, assets, collections, jobs, projects, rawReconciliationClaims } from "@quincy/db/schema";
 import { enqueueRenditionSafely, isAcceptedPhotoFilename, parseXmpRating, XMP_SCAN_BYTES, xmpRatingToStars } from "@quincy/shared";
 import { and, eq, isNull, sql } from "drizzle-orm";
@@ -24,7 +24,6 @@ import { notifyProject } from "../notifications";
 // loop below). Larger backlogs are not lost — the continuation re-enqueues whatever a run did
 // not reach. See docs/plans/Dropbox-RAW-Fetch-Speedup-Plan.md for the sizing rationale.
 const MAX_DOWNLOADS_PER_RUN = 120;
-const RAW_CLAIM_LEASE_MS = 15 * 60_000;
 
 export { normalisePath } from "./paths";
 

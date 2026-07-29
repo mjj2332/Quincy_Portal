@@ -171,6 +171,9 @@ adminRoutes.post("/admin/renditions-dlq/:id/replay", async (c) => {
   // A malformed DLQ body (see background queue()'s fallback assetId) has nothing real to
   // re-enqueue; only "discard" is meaningful for it.
   if (!idCheck(event.assetId)) return c.json({ error: "This event has no valid asset to replay — discard it instead" }, 409);
+  if (!await db.select({ id: schema.assets.id }).from(schema.assets).where(eq(schema.assets.id, event.assetId)).get()) {
+    return c.json({ error: "This event refers to an asset that has already been deleted — discard it instead" }, 409);
+  }
   // enqueueRenditionSafely already checks the queue binding; a replay is a single
   // operator-identified asset, the same blast radius as the ungated webhook-event retry below,
   // so it does not need the bulk backfill's extra production flag. The gate is checked here too

@@ -5,6 +5,13 @@ import type { AutoHdrFetchResult, AutoHdrResult } from "./autohdr/errors";
 /** Public, serializable surface exposed over the BACKGROUND service binding. */
 export declare abstract class QuincyBackground extends WorkerEntrypoint {
   abstract triggerDropboxSync(projectId: string): Promise<{ jobId: string }>;
+  abstract renewDropboxDeletionClaim(claimId: string, ownerJobId: string): Promise<boolean>;
+  abstract deleteDropboxSourceFile(path: string, claimId: string, ownerJobId: string): Promise<
+    | { outcome: "removed" }
+    | { outcome: "alreadyGone" }
+    | { outcome: "claimLost" }
+    | { outcome: "failed"; reason: string }
+  >;
   abstract ensureAutoHdrScaffold(projectId: string): Promise<{ jobId: string }>;
   abstract startAutoHdr(projectId: string, initiatedBy?: string, options?: {
     startNewRound?: boolean;
