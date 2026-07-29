@@ -10,6 +10,7 @@
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run --config vitest.config.ts",
     "generate": "drizzle-kit generate",
-    "migrate:local": "wrangler d1 migrations apply quincy-portal --local --config ../../workers/app/wrangler.jsonc"
+    "migrate:local": "wrangler d1 migrations apply quincy-portal --local --config ../../workers/app/wrangler.jsonc",
+    "verify:migration-0022:local-d1": "bash ./verify-0022-local-d1.sh"
   }
 }

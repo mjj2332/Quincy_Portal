@@ -1,5 +1,6 @@
 import { env } from "cloudflare:test";
 import { makeSignature } from "better-auth/crypto";
+import { handleOAuthUserInfo } from "better-auth/oauth2";
 import { beforeAll, describe, expect, it } from "vitest";
 import app from "../src/index";
 import { createAuth } from "../src/auth";
@@ -10,6 +11,7 @@ const baseEnv = env as unknown as Env;
 const authSecret = baseEnv.BETTER_AUTH_SECRET ?? "dev-only-replace-better-auth-secret-32-bytes";
 const adminToken = "test-integrations-admin-session-token";
 const photographerToken = "test-integrations-photographer-session-token";
+const seedAdminId = "6b851dc8-14cf-4f90-bd29-ce6c27f86385";
 const kek = btoa("k".repeat(32));
 declare const __PORTAL_MIGRATION_SQL__: string;
 declare const __PORTAL_SEED_SQL__: string;
@@ -32,12 +34,29 @@ async function request(path: string, token: string, method: "GET" | "POST" = "GE
 beforeAll(async () => {
   await executeSql(__PORTAL_MIGRATION_SQL__); await executeSql(__PORTAL_SEED_SQL__);
   const now = Date.now();
-  await database.DB.prepare("INSERT INTO session (id, expires_at, token, user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)").bind("test-integrations-admin-session", now + 60 * 60 * 1000, adminToken, "seed-admin", now, now).run();
+  await database.DB.prepare("INSERT INTO session (id, expires_at, token, user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)").bind("test-integrations-admin-session", now + 60 * 60 * 1000, adminToken, seedAdminId, now, now).run();
   await database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").bind("test-integrations-photographer", "Integrations Photographer", "integrations-photographer@example.test", 1, "photographer", 1, now, now).run();
   await database.DB.prepare("INSERT INTO session (id, expires_at, token, user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)").bind("test-integrations-photographer-session", now + 60 * 60 * 1000, photographerToken, "test-integrations-photographer", now, now).run();
 });
 
 describe("Dropbox integrations", () => {
+  it("links Better Auth's verified Google identity to the UUID-keyed seeded admin", async () => {
+    const auth = createAuth({ ...requestEnv, GOOGLE_CLIENT_ID: "test-google-client", GOOGLE_CLIENT_SECRET: "test-google-secret" });
+    const context = await auth.$context;
+    const result = await handleOAuthUserInfo({ context } as Parameters<typeof handleOAuthUserInfo>[0], {
+      userInfo: { id: "google-integrations-admin-subject", name: "Quincy Admin", email: "mjj2332@gmail.com", emailVerified: true, image: null },
+      account: { providerId: "google", accountId: "google-integrations-admin-subject", accessToken: "test-access-token" },
+      callbackURL: "/",
+      disableSignUp: true,
+    });
+
+    expect(result.error).toBeNull();
+    expect(result.data?.user.id).toBe(seedAdminId);
+    expect(result.data?.session.userId).toBe(seedAdminId);
+    await expect(database.DB.prepare("SELECT provider_id, account_id, user_id FROM account WHERE account_id = ?").bind("google-integrations-admin-subject").first())
+      .resolves.toEqual({ provider_id: "google", account_id: "google-integrations-admin-subject", user_id: seedAdminId });
+  });
+
   it("returns an offline Dropbox authorize URL with one-time user-bound state", async () => {
     const response = await request("/api/integrations/dropbox/connect-url", adminToken, "POST");
     expect(response.status).toBe(200);
@@ -48,7 +67,7 @@ describe("Dropbox integrations", () => {
     expect(url.searchParams.get("redirect_uri")).toBe(`${requestEnv.APP_ORIGIN}/api/integrations/dropbox/callback`);
     const state = url.searchParams.get("state");
     expect(state).toMatch(/^[a-f0-9]{32}$/);
-    await expect(baseEnv.SESSIONS.get(`dropbox_oauth_state:${state}`)).resolves.toBe("seed-admin");
+    await expect(baseEnv.SESSIONS.get(`dropbox_oauth_state:${state}`)).resolves.toBe(seedAdminId);
   });
 
   it("rejects missing and forged OAuth state before creating a connection", async () => {

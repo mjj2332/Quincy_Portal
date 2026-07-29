@@ -23,6 +23,7 @@ const adminToken = "test-admin-session-token";
 const secondPhotographerToken = "test-second-photographer-session-token";
 const editorToken = "test-editor-session-token";
 const otherAdminToken = "test-other-admin-session-token";
+const seedAdminId = "6b851dc8-14cf-4f90-bd29-ce6c27f86385";
 // First photographer IS a member of the editable-comment project; the plain
 // photographerToken user is deliberately NOT (D-02 assigned-only scoping).
 const firstPhotographerToken = "test-first-photographer-session-token";
@@ -136,8 +137,8 @@ async function seedAutoHdrGraph(projectId: string, assetId: string) {
   await database.DB.batch([
     database.DB.prepare("INSERT INTO integration_connections (id, provider, status, created_at, updated_at) VALUES (?, 'dropbox', 'connected', ?, ?)").bind(connectionId, now, now),
     database.DB.prepare("INSERT INTO jobs (id, kind, status, project_id, retries, created_at, updated_at) VALUES (?, 'autohdr', 'done', ?, 0, ?, ?)").bind(jobId, projectId, now, now),
-    database.DB.prepare("INSERT INTO autohdr_handoffs (id, project_id, connection_id, generation, manifest_version, selection_hash, selected_asset_ids_json, readiness_units_json, frozen_raw_folder_path, initiated_by, state, workflow_id, job_id, lease_expires_at, created_at, updated_at) VALUES (?, ?, ?, 1, 1, 'selection', ?, ?, ?, 'seed-admin', 'starting', ?, ?, ?, ?, ?)")
-      .bind(handoffId, projectId, connectionId, JSON.stringify([assetId]), JSON.stringify([{ key: `asset:${assetId}`, assetIds: [assetId] }]), `/Raw/${projectId}`, `send:${handoffId}`, jobId, now + 60_000, now, now),
+    database.DB.prepare("INSERT INTO autohdr_handoffs (id, project_id, connection_id, generation, manifest_version, selection_hash, selected_asset_ids_json, readiness_units_json, frozen_raw_folder_path, initiated_by, state, workflow_id, job_id, lease_expires_at, created_at, updated_at) VALUES (?, ?, ?, 1, 1, 'selection', ?, ?, ?, ?, 'starting', ?, ?, ?, ?, ?)")
+      .bind(handoffId, projectId, connectionId, JSON.stringify([assetId]), JSON.stringify([{ key: `asset:${assetId}`, assetIds: [assetId] }]), `/Raw/${projectId}`, seedAdminId, `send:${handoffId}`, jobId, now + 60_000, now, now),
     database.DB.prepare("INSERT INTO autohdr_output_mappings (id, project_id, handoff_id, connection_id, generation, state, created_at, updated_at) VALUES (?, ?, ?, ?, 1, 'pending_discovery', ?, ?)")
       .bind(mappingId, projectId, handoffId, connectionId, now, now),
     database.DB.prepare("INSERT INTO autohdr_path_claims (id, mapping_id, handoff_id, project_id, connection_id, candidate, path, path_key, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'final', ?, ?, 'pending', ?, ?)")
@@ -168,7 +169,7 @@ beforeAll(async () => {
   ).bind("test-photographer-session", now + 60 * 60 * 1000, photographerToken, "test-photographer", now, now).run();
   await database.DB.prepare(
     "INSERT INTO session (id, expires_at, token, user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-  ).bind("test-admin-session", now + 60 * 60 * 1000, adminToken, "seed-admin", now, now).run();
+  ).bind("test-admin-session", now + 60 * 60 * 1000, adminToken, seedAdminId, now, now).run();
   for (const [id, name, email, role] of [
     [firstPhotographerId, "First Photographer", "first-photographer@example.test", "photographer"],
     [secondPhotographerId, "Second Photographer", "second-photographer@example.test", "photographer"],
@@ -755,6 +756,15 @@ describe("staff app API", () => {
     await expect(response.json()).resolves.toEqual({ projects: [] });
   });
 
+  it("returns the migrated UUID from the existing signed Quincy Admin session", async () => {
+    const response = await SELF.fetch("https://portal.test/api/auth/get-session", {
+      headers: { cookie: await sessionCookie(adminToken) },
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ user: { id: seedAdminId }, session: { userId: seedAdminId } });
+  });
+
   it("keeps API and media misses out of the SPA fallback", async () => {
     const cookie = await sessionCookie(photographerToken);
     const [api, media, spa] = await Promise.all([
@@ -926,12 +936,12 @@ describe("staff app API", () => {
     });
 
     expect(result.error).toBeNull();
-    expect(result.data?.user.id).toBe("seed-admin");
-    expect(result.data?.session.userId).toBe("seed-admin");
+    expect(result.data?.user.id).toBe(seedAdminId);
+    expect(result.data?.session.userId).toBe(seedAdminId);
     const users = await database.DB.prepare("SELECT id FROM user WHERE email = ?").bind("mjj2332@gmail.com").all();
-    const accounts = await database.DB.prepare("SELECT provider_id, account_id, user_id FROM account WHERE user_id = ?").bind("seed-admin").all();
+    const accounts = await database.DB.prepare("SELECT provider_id, account_id, user_id FROM account WHERE user_id = ?").bind(seedAdminId).all();
     expect(users.results).toHaveLength(1);
-    expect(accounts.results).toEqual([expect.objectContaining({ provider_id: "google", account_id: "google-admin-subject", user_id: "seed-admin" })]);
+    expect(accounts.results).toEqual([expect.objectContaining({ provider_id: "google", account_id: "google-admin-subject", user_id: seedAdminId })]);
   });
 
   it("does not create an unknown Google user when signup is disabled", async () => {
@@ -1016,6 +1026,30 @@ describe("staff app API", () => {
     expect(updated.members.filter((member) => member.roleOnProject === "editor").map((member) => member.userId)).toEqual([editorId]);
   });
 
+  it("accepts the migrated UUID in photographer and editor membership inputs", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const created = await SELF.fetch("https://portal.test/api/projects", {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ street: "UUID membership seed", orderedServices: [], photographerUserIds: [seedAdminId] }),
+    });
+    expect(created.status).toBe(201);
+    const project = await created.json() as { id: string; members: Array<{ userId: string; roleOnProject: string }> };
+    expect(project.members).toContainEqual(expect.objectContaining({ userId: seedAdminId, roleOnProject: "photographer" }));
+
+    const updated = await SELF.fetch(`https://portal.test/api/projects/${project.id}`, {
+      method: "PATCH",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ editorUserIds: [seedAdminId] }),
+    });
+    expect(updated.status).toBe(200);
+    const body = await updated.json() as { members: Array<{ userId: string; roleOnProject: string }> };
+    expect(body.members).toEqual(expect.arrayContaining([
+      expect.objectContaining({ userId: seedAdminId, roleOnProject: "photographer" }),
+      expect.objectContaining({ userId: seedAdminId, roleOnProject: "editor" }),
+    ]));
+  });
+
   it("emits assignment alerts only for confirmed active role assignments", async () => {
     const cookie = await sessionCookie(adminToken);
     const inactiveId = crypto.randomUUID();
@@ -1039,7 +1073,7 @@ describe("staff app API", () => {
       { user_id: firstPhotographerId, body: "You have been assigned as the photographer for Assignment alerts." },
       { user_id: editorId, body: "You have been assigned as the editor for Assignment alerts." },
     ]);
-    expect((await assignmentRows()).results.map((row) => row.user_id)).not.toContain("seed-admin");
+    expect((await assignmentRows()).results.map((row) => row.user_id)).not.toContain(seedAdminId);
     expect((await assignmentRows()).results.map((row) => row.user_id)).not.toContain(inactiveId);
     expect((await database.DB.prepare("SELECT user_id FROM project_members WHERE project_id = ? AND user_id = ?").bind(project.id, inactiveId).all()).results).toHaveLength(1);
 
@@ -1340,7 +1374,7 @@ describe("staff app API", () => {
     const project = await created.json() as { id: string };
     const edited = await database.DB.prepare("SELECT id FROM collections WHERE project_id = ? AND kind = 'edited'").bind(project.id).first<{ id: string }>();
     await database.DB.prepare("INSERT INTO upload_manifests (id, collection_id, expected_count, filenames_json, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)")
-      .bind(crypto.randomUUID(), edited!.id, 1, "[\"pending.jpg\"]", "seed-admin", Date.now()).run();
+      .bind(crypto.randomUUID(), edited!.id, 1, "[\"pending.jpg\"]", seedAdminId, Date.now()).run();
 
     const response = await SELF.fetch(`https://portal.test/api/projects/${project.id}`, {
       method: "PATCH",
@@ -1501,7 +1535,7 @@ describe("staff app API", () => {
     const copy = await database.DB.prepare("SELECT id FROM collections WHERE project_id = ? AND kind = 'copy'").bind(project.id).first<{ id: string }>();
     expect((await SELF.fetch(`https://portal.test/api/projects/${project.id}/archive`, { method: "POST", headers: { cookie, "content-type": "application/json" }, body: "{}" })).status).toBe(200);
     const now = Date.now();
-    await database.DB.prepare("INSERT INTO document_uploads (id, project_id, collection_id, created_by, kind, version_group_id, version, pdf_asset_id, pdf_key, pdf_filename, pdf_bytes, pdf_content_type, status, expires_at, completion_audit_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(crypto.randomUUID(), project.id, copy!.id, "seed-admin", "copy_pdf", crypto.randomUUID(), 1, crypto.randomUUID(), `projects/${project.id}/copy/pending.pdf`, "pending.pdf", 1, "application/pdf", "pending", now + 60_000, crypto.randomUUID(), now, now).run();
+    await database.DB.prepare("INSERT INTO document_uploads (id, project_id, collection_id, created_by, kind, version_group_id, version, pdf_asset_id, pdf_key, pdf_filename, pdf_bytes, pdf_content_type, status, expires_at, completion_audit_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(crypto.randomUUID(), project.id, copy!.id, seedAdminId, "copy_pdf", crypto.randomUUID(), 1, crypto.randomUUID(), `projects/${project.id}/copy/pending.pdf`, "pending.pdf", 1, "application/pdf", "pending", now + 60_000, crypto.randomUUID(), now, now).run();
 
     const response = await SELF.fetch(`https://portal.test/api/projects/${project.id}`, { method: "DELETE", headers: { cookie } });
     expect(response.status).toBe(409);
@@ -1928,7 +1962,7 @@ describe("staff app API", () => {
     await authEnv.MEDIA.put(directKey, "direct-race", { httpMetadata: { contentType: "image/jpeg" } });
     await authEnv.MEDIA.put(dropboxKey, "dropbox-race", { httpMetadata: { contentType: "image/jpeg" } });
     const completed = await finalizeIngest(authEnv, {
-      actorId: "seed-admin",
+      actorId: seedAdminId,
       projectId: project.id,
       assetId: directAssetId,
       key: directKey,

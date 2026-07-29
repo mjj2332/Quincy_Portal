@@ -9,6 +9,7 @@ const database = env as unknown as { DB: D1Database };
 const baseEnv = env as unknown as Env;
 const adminToken = "asset-delete-admin-session-token";
 const editorToken = "asset-delete-editor-session-token";
+const seedAdminId = "6b851dc8-14cf-4f90-bd29-ce6c27f86385";
 declare const __PORTAL_MIGRATION_SQL__: string;
 declare const __PORTAL_SEED_SQL__: string;
 
@@ -63,7 +64,7 @@ beforeAll(async () => {
   await database.DB.batch([
     database.DB.prepare("INSERT OR IGNORE INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES ('asset-delete-editor', 'Asset Editor', 'asset-editor@example.test', 1, 'editor', 1, ?, ?)").bind(now, now),
     database.DB.prepare("INSERT OR IGNORE INTO session (id, expires_at, token, user_id, created_at, updated_at) VALUES ('asset-delete-editor-session', ?, ?, 'asset-delete-editor', ?, ?)").bind(now + 3_600_000, editorToken, now, now),
-    database.DB.prepare("INSERT OR IGNORE INTO session (id, expires_at, token, user_id, created_at, updated_at) VALUES ('asset-delete-admin-session', ?, ?, 'seed-admin', ?, ?)").bind(now + 3_600_000, adminToken, now, now),
+    database.DB.prepare("INSERT OR IGNORE INTO session (id, expires_at, token, user_id, created_at, updated_at) VALUES ('asset-delete-admin-session', ?, ?, ?, ?, ?)").bind(now + 3_600_000, adminToken, seedAdminId, now, now),
   ]);
 });
 
@@ -73,8 +74,8 @@ describe("admin asset deletion", () => {
     for (const kind of ["photo", "edited", "video", "copy_pdf"]) {
       const asset = await seedAsset(project, kind); const key = `renditions/${asset.id}/web`; const annotationKey = `projects/${project.projectId}/annotations/${asset.id}.json`;
       await baseEnv.MEDIA.put(asset.r2Key, "original"); await baseEnv.MEDIA.put(key, "rendition"); await baseEnv.MEDIA.put(annotationKey, "annotation");
-      await database.DB.prepare("INSERT INTO annotations (id, asset_id, author_id, author_role, scope, stroke_r2_key, created_at) VALUES (?, ?, 'seed-admin', 'admin', 'raw', ?, ?)").bind(crypto.randomUUID(), asset.id, annotationKey, Date.now()).run();
-      await database.DB.prepare("INSERT INTO selections (id, asset_id, selected_by, state, created_at) VALUES (?, ?, 'seed-admin', 'selected_for_editing', ?)").bind(crypto.randomUUID(), asset.id, Date.now()).run().catch(() => undefined);
+      await database.DB.prepare("INSERT INTO annotations (id, asset_id, author_id, author_role, scope, stroke_r2_key, created_at) VALUES (?, ?, ?, 'admin', 'raw', ?, ?)").bind(crypto.randomUUID(), asset.id, seedAdminId, annotationKey, Date.now()).run();
+      await database.DB.prepare("INSERT INTO selections (id, asset_id, selected_by, state, created_at) VALUES (?, ?, ?, 'selected_for_editing', ?)").bind(crypto.randomUUID(), asset.id, seedAdminId, Date.now()).run().catch(() => undefined);
       const response = await deleteAsset(asset.id); expect(response.status).toBe(200);
       await expect(response.json()).resolves.toMatchObject({ ok: true, deletedAssetIds: [asset.id], deletedObjects: 2, dropboxDeleted: true });
       await expect(baseEnv.MEDIA.get(asset.r2Key)).resolves.toBeNull(); await expect(baseEnv.MEDIA.get(key)).resolves.toBeNull(); await expect(baseEnv.MEDIA.get(annotationKey)).resolves.not.toBeNull();

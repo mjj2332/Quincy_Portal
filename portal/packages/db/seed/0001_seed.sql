@@ -12,7 +12,7 @@ INSERT OR IGNORE INTO pipeline_stages (key, label, display_order, active) VALUES
 -- succeeds for users that exist and are active (closed system).
 INSERT OR IGNORE INTO user (id, name, email, email_verified, role, active, created_at, updated_at)
 VALUES (
-  'seed-admin',
+  '6b851dc8-14cf-4f90-bd29-ce6c27f86385',
   'Quincy Admin',
   'mjj2332@gmail.com',
   0,
