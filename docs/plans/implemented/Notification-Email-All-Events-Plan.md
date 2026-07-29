@@ -1,5 +1,8 @@
 # Send Email for All 6 Notification Types — Plan
 
+**Status: implemented and deployed to production** (commit `934eece`, deployed 2026-07-29 —
+`background` then `app`, per the Rollout section below).
+
 **User request** (2026-07-29): after confirming the Cloudflare Email Sending configuration works
 (a live test email was sent and received), the user wants every notification type to send an
 email, not just the 3 currently enabled — explicitly asked for this to go through the plan-review
