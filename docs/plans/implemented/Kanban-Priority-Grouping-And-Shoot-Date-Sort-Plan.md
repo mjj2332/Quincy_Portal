@@ -1,5 +1,12 @@
 # Kanban Priority Grouping + Shoot-Date Sort — Plan
 
+**Status: implemented and deployed to production** (commit `0323dc7`, deployed 2026-07-29 — only
+`workers/app` needed redeploying, since this change touches only `apps/web` and `packages/shared`,
+no Worker runtime/API code). Plan approved by Terra on round 4; built by Terra; diff review
+APPROVED with no blocking findings. Full verify sequence (typecheck, `apps/web` build, all
+workspace tests including the separately-invoked `packages/shared` and `packages/db` suites)
+independently confirmed green in this session.
+
 ## Revision (round 2) — corrected per Terra round 1
 
 Round 1 found the plan's central assumption — "`shootDate` is always `null` or well-formed
