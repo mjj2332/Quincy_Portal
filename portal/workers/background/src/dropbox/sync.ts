@@ -278,7 +278,59 @@ export async function syncProjectRawFolder(
           .bind(crypto.randomUUID(), assetId, JSON.stringify({ projectId, trigger, jobId: trackingJobId, reconciliationClaimId: claimId, connectionId: client.connectionId, sourcePathKey }), now.getTime(), collection.id, identityKey, assetId),
         env.DB.prepare(COLLECTION_RECEIVED_COUNT_SQL).bind(...collectionReceivedCountBindings(collection.id, now.getTime())),
       ]);
-      if ((results[0]?.meta.changes ?? 0) === 0) continue; // reconciliation already ran in this batch
+      if ((results[0]?.meta.changes ?? 0) === 0) {
+        const staleOccupant = await db.select({ id: assets.id })
+          .from(assets)
+          .where(and(
+            eq(assets.collectionId, collection.id),
+            eq(assets.sourcePathKey, sourcePathKey),
+            isNull(assets.supersededAt),
+          ))
+          .get();
+        if (!staleOccupant) continue; // reconciliation already ran in this batch
+
+        const retryResults = await env.DB.batch([
+          env.DB.prepare("UPDATE assets SET superseded_at = ?, replaced_by_asset_id = ?, updated_at = ? WHERE id = ? AND collection_id = ? AND source_path_key = ? AND superseded_at IS NULL")
+            .bind(now.getTime(), assetId, now.getTime(), staleOccupant.id, collection.id, sourcePathKey),
+          env.DB.prepare("INSERT INTO assets (id, collection_id, kind, r2_key, original_filename, bytes, content_hash, source, source_path, source_path_key, rating_from_metadata, section, is_premium, supersedes_asset_id, created_at, updated_at) SELECT ?, ?, 'photo', ?, ?, ?, ?, 'dropbox', ?, ?, ?, ?, 0, ?, ?, ? WHERE EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at IS NULL) ON CONFLICT DO NOTHING")
+            .bind(assetId, collection.id, r2Key, file.name, file.size, file.content_hash ?? null, sourcePath, sourcePathKey, rating, section, staleOccupant.id, now.getTime(), now.getTime(), projectId),
+          env.DB.prepare("INSERT INTO asset_ingest_identities (id, collection_id, identity_key, asset_id, created_at) SELECT ?, ?, ?, ?, ? WHERE changes() = 1 ON CONFLICT DO NOTHING")
+            .bind(crypto.randomUUID(), collection.id, identityKey, assetId, now.getTime()),
+          env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, NULL, 'asset.ingested', 'asset', ?, ?, ? WHERE EXISTS (SELECT 1 FROM asset_ingest_identities WHERE collection_id = ? AND identity_key = ? AND asset_id = ?)")
+            .bind(crypto.randomUUID(), assetId, JSON.stringify({ projectId, trigger, jobId: trackingJobId, reconciliationClaimId: claimId, connectionId: client.connectionId, sourcePathKey, supersedesAssetId: staleOccupant.id }), now.getTime(), collection.id, identityKey, assetId),
+          env.DB.prepare(COLLECTION_RECEIVED_COUNT_SQL).bind(...collectionReceivedCountBindings(collection.id, now.getTime())),
+        ]);
+        const supersedeResult = (retryResults[0]?.meta.changes ?? 0);
+        const retryInsertResult = (retryResults[1]?.meta.changes ?? 0);
+        if (supersedeResult === 1 && retryInsertResult === 0) {
+          await env.DB.batch([
+            env.DB.prepare(
+              "UPDATE assets SET superseded_at = CASE WHEN NOT EXISTS (SELECT 1 FROM assets a2 WHERE a2.collection_id = ? AND a2.source_path_key = ? AND a2.superseded_at IS NULL AND a2.id != assets.id) THEN NULL ELSE superseded_at END, replaced_by_asset_id = CASE WHEN NOT EXISTS (SELECT 1 FROM assets a2 WHERE a2.collection_id = ? AND a2.source_path_key = ? AND a2.superseded_at IS NULL AND a2.id != assets.id) THEN NULL ELSE (SELECT a3.id FROM assets a3 WHERE a3.collection_id = ? AND a3.source_path_key = ? AND a3.superseded_at IS NULL AND a3.id != assets.id LIMIT 1) END, updated_at = ? WHERE id = ? AND superseded_at IS ?",
+            ).bind(
+              collection.id, sourcePathKey,
+              collection.id, sourcePathKey,
+              collection.id, sourcePathKey,
+              now.getTime(), staleOccupant.id, now.getTime(),
+            ),
+            env.DB.prepare(COLLECTION_RECEIVED_COUNT_SQL).bind(...collectionReceivedCountBindings(collection.id, now.getTime())),
+          ]);
+        }
+        if (retryInsertResult === 0) continue;
+        if ((retryResults[2]?.meta.changes ?? 0) === 0) {
+          await env.DB.batch([
+            env.DB.prepare("DELETE FROM assets WHERE id = ? AND collection_id = ? AND supersedes_asset_id = ?")
+              .bind(assetId, collection.id, staleOccupant.id),
+            env.DB.prepare(
+              "UPDATE assets SET replaced_by_asset_id = COALESCE((SELECT winner.id FROM asset_ingest_identities winner_identity JOIN assets winner ON winner.id = winner_identity.asset_id WHERE winner_identity.collection_id = ? AND winner_identity.identity_key = ? AND winner.collection_id = ? AND winner.superseded_at IS NULL AND winner.id != ? LIMIT 1), replaced_by_asset_id), updated_at = ? WHERE id = ? AND collection_id = ? AND replaced_by_asset_id = ?",
+            ).bind(collection.id, identityKey, collection.id, assetId, now.getTime(), staleOccupant.id, collection.id, assetId),
+            env.DB.prepare(COLLECTION_RECEIVED_COUNT_SQL).bind(...collectionReceivedCountBindings(collection.id, now.getTime())),
+          ]);
+          continue;
+        }
+        await enqueueRenditionSafely(env, assetId, "dropbox-ingest");
+        newlyImported += 1;
+        continue;
+      }
       if ((results[1]?.meta.changes ?? 0) === 0) {
         // Another intake path won the identity after our external write. Preserve R2, remove only
         // the unowned metadata, and accept the winner on replay.
