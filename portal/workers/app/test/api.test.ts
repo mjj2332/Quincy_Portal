@@ -1,7 +1,7 @@
 import { env, SELF as workerSelf } from "cloudflare:test";
 import { makeSignature } from "better-auth/crypto";
 import { handleOAuthUserInfo } from "better-auth/oauth2";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import app from "../src/index";
 import { createAuth } from "../src/auth";
 import type { Env } from "../src/env";
@@ -9,8 +9,11 @@ import { createZipStream } from "../src/lib/zip-stream";
 import { signTransformSource } from "../src/lib/transform-source";
 import { liveTransformLocation } from "../src/routes/media";
 import { RENDITION_SPEC_VERSION } from "@quincy/shared";
+import { createDb } from "@quincy/db";
 import { uniqueVersionError } from "../src/routes/collections";
 import { finalizeIngest } from "../src/lib/ingest";
+import { notifyProjectAssignments } from "../src/lib/notifications";
+import { insertProjectMembers, syncMembers } from "../src/lib/project-members";
 
 const database = env as unknown as { DB: D1Database };
 const authEnv = env as unknown as Env;
@@ -1011,6 +1014,93 @@ describe("staff app API", () => {
     expect(updated.collections.map((collection) => collection.kind).sort()).toEqual(["edited", "raw", "video"]);
     expect(updated.members.filter((member) => member.roleOnProject === "photographer").map((member) => member.userId)).toEqual([secondPhotographerId]);
     expect(updated.members.filter((member) => member.roleOnProject === "editor").map((member) => member.userId)).toEqual([editorId]);
+  });
+
+  it("emits assignment alerts only for confirmed active role assignments", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const inactiveId = crypto.randomUUID();
+    const now = Date.now();
+    await database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, 'Inactive assignee', ?, 1, 'editor', 0, ?, ?)")
+      .bind(inactiveId, `${inactiveId}@example.test`, now, now).run();
+    const created = await SELF.fetch("https://portal.test/api/projects", {
+      method: "POST", headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({
+        street: "Assignment alerts",
+        orderedServices: [],
+        photographerUserIds: [firstPhotographerId, inactiveId],
+        editorUserIds: [editorId, firstPhotographerId],
+      }),
+    });
+    expect(created.status).toBe(201);
+    const project = await created.json() as { id: string };
+    const assignmentRows = async () => database.DB.prepare("SELECT user_id, body FROM notifications WHERE project_id = ? AND type = 'assigned_to_project' ORDER BY user_id, body").bind(project.id).all<{ user_id: string; body: string }>();
+    expect((await assignmentRows()).results).toEqual([
+      { user_id: firstPhotographerId, body: "You have been assigned as the editor for Assignment alerts." },
+      { user_id: firstPhotographerId, body: "You have been assigned as the photographer for Assignment alerts." },
+      { user_id: editorId, body: "You have been assigned as the editor for Assignment alerts." },
+    ]);
+    expect((await assignmentRows()).results.map((row) => row.user_id)).not.toContain("seed-admin");
+    expect((await assignmentRows()).results.map((row) => row.user_id)).not.toContain(inactiveId);
+    expect((await database.DB.prepare("SELECT user_id FROM project_members WHERE project_id = ? AND user_id = ?").bind(project.id, inactiveId).all()).results).toHaveLength(1);
+
+    const same = await SELF.fetch(`https://portal.test/api/projects/${project.id}`, {
+      method: "PATCH", headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ photographerUserIds: [firstPhotographerId, inactiveId], editorUserIds: [editorId, firstPhotographerId] }),
+    });
+    expect(same.status).toBe(200);
+    expect((await assignmentRows()).results).toHaveLength(3);
+
+    const added = await SELF.fetch(`https://portal.test/api/projects/${project.id}`, {
+      method: "PATCH", headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ photographerUserIds: [firstPhotographerId, secondPhotographerId], editorUserIds: [editorId, firstPhotographerId] }),
+    });
+    expect(added.status).toBe(200);
+    expect((await assignmentRows()).results.filter((row) => row.user_id === secondPhotographerId)).toEqual([
+      { user_id: secondPhotographerId, body: "You have been assigned as the photographer for Assignment alerts." },
+    ]);
+
+    const removed = await SELF.fetch(`https://portal.test/api/projects/${project.id}`, {
+      method: "PATCH", headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ photographerUserIds: [secondPhotographerId], editorUserIds: [editorId] }),
+    });
+    expect(removed.status).toBe(200);
+    expect((await assignmentRows()).results).toHaveLength(4);
+  });
+
+  it("returns database-confirmed membership inserts and emits one matching assignment alert", async () => {
+    const now = Date.now();
+    const projectId = crypto.randomUUID();
+    const userId = crypto.randomUUID();
+    await database.DB.batch([
+      database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, 'Contested target', ?, 1, 'editor', 1, ?, ?)").bind(userId, `${userId}@example.test`, now, now),
+      database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'Contested assignment', 'awaiting_raw', ?, ?)").bind(projectId, now, now),
+    ]);
+    const db = createDb(database.DB);
+    const first = await insertProjectMembers(db, projectId, [userId], "editor");
+    const second = await insertProjectMembers(db, projectId, [userId], "editor");
+    expect([...first, ...second]).toEqual([userId]);
+    expect((await database.DB.prepare("SELECT id FROM project_members WHERE project_id = ? AND user_id = ? AND role_on_project = 'editor'").bind(projectId, userId).all()).results).toHaveLength(1);
+    const send = vi.fn().mockResolvedValue({ messageId: "test-message" });
+    const testEnv = { DB: database.DB, EMAIL: { send }, NOTIFICATIONS_FROM_ADDRESS: "studio@example.test" } as unknown as Env;
+    for (const userIds of [first, second]) {
+      await notifyProjectAssignments(testEnv, projectId, userIds.map((assignedUserId) => ({ userId: assignedUserId, roleOnProject: "editor" as const })));
+    }
+    expect((await database.DB.prepare("SELECT id FROM notifications WHERE project_id = ? AND type = 'assigned_to_project'").bind(projectId).all()).results).toHaveLength(1);
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not report an addition from a stale empty syncMembers snapshot", async () => {
+    const now = Date.now();
+    const projectId = crypto.randomUUID();
+    const userId = crypto.randomUUID();
+    await database.DB.batch([
+      database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, 'Stale target', ?, 1, 'editor', 1, ?, ?)").bind(userId, `${userId}@example.test`, now, now),
+      database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'Stale membership', 'awaiting_raw', ?, ?)").bind(projectId, now, now),
+    ]);
+    const db = createDb(database.DB);
+    expect(await insertProjectMembers(db, projectId, [userId], "editor")).toEqual([userId]);
+    expect(await syncMembers(db, projectId, [], [userId], "editor")).toEqual({ added: [], removed: [] });
+    expect((await database.DB.prepare("SELECT id FROM project_members WHERE project_id = ? AND user_id = ? AND role_on_project = 'editor'").bind(projectId, userId).all()).results).toHaveLength(1);
   });
 
   it("accepts an editor-role user in the photographer slot, and confirms their access is unaffected by that membership row", async () => {

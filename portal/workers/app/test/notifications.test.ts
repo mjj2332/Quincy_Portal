@@ -1,10 +1,10 @@
 import { env, SELF as workerSelf } from "cloudflare:test";
 import { makeSignature } from "better-auth/crypto";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import { notificationCopy } from "@quincy/db";
 import { createAuth } from "../src/auth";
 import type { Env } from "../src/env";
-import { notifyProject } from "../src/lib/notifications";
+import { notifyProject, notifyProjectAssignments } from "../src/lib/notifications";
 
 const database = env as unknown as { DB: D1Database };
 const baseEnv = env as unknown as Env;
@@ -79,6 +79,66 @@ describe("notifications API and recipient selection", () => {
     await notifyProject(baseEnv, projectId, "comment_added", { editorOnly: true, excludeUserId: actor });
     const rows = await database.DB.prepare("SELECT user_id FROM notifications WHERE project_id = ? AND type = 'comment_added'").bind(projectId).all<{ user_id: string }>();
     expect(rows.results).toEqual([{ user_id: userB }]);
+  });
+
+  it("deduplicates an admin who is also a project member", async () => {
+    const now = Date.now();
+    const projectId = crypto.randomUUID();
+    const adminId = crypto.randomUUID();
+    await database.DB.batch([
+      database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, 'Member admin', ?, 1, 'admin', 1, ?, ?)").bind(adminId, `${adminId}@example.test`, now, now),
+      database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'Admin dedupe', 'awaiting_raw', ?, ?)").bind(projectId, now, now),
+      database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'photographer', ?)").bind(crypto.randomUUID(), projectId, adminId, now),
+    ]);
+    const send = vi.fn().mockResolvedValue({ messageId: "test-message" });
+    const testEnv = { DB: database.DB, EMAIL: { send }, NOTIFICATIONS_FROM_ADDRESS: "studio@example.test" } as unknown as Env;
+    await notifyProject(testEnv, projectId, "raw_ready");
+    expect((await database.DB.prepare("SELECT user_id FROM notifications WHERE project_id = ? AND type = 'raw_ready'").bind(projectId).all<{ user_id: string }>()).results).toEqual([{ user_id: adminId }]);
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("includes active admins for every project event, but only explicit active targets for assignments", async () => {
+    const now = Date.now();
+    const projectId = crypto.randomUUID();
+    const activeAdmin = crypto.randomUUID();
+    const inactiveAdmin = crypto.randomUUID();
+    const editor = crypto.randomUUID();
+    const photographer = crypto.randomUUID();
+    const assignedActive = crypto.randomUUID();
+    const assignedInactive = crypto.randomUUID();
+    await database.DB.batch([
+      database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, 'Active admin', ?, 1, 'admin', 1, ?, ?), (?, 'Inactive admin', ?, 1, 'admin', 0, ?, ?), (?, 'Editor', ?, 1, 'editor', 1, ?, ?), (?, 'Photographer', ?, 1, 'photographer', 1, ?, ?), (?, 'Assigned active', ?, 1, 'editor', 1, ?, ?), (?, 'Assigned inactive', ?, 1, 'editor', 0, ?, ?)")
+        .bind(activeAdmin, `${activeAdmin}@example.test`, now, now, inactiveAdmin, `${inactiveAdmin}@example.test`, now, now, editor, `${editor}@example.test`, now, now, photographer, `${photographer}@example.test`, now, now, assignedActive, `${assignedActive}@example.test`, now, now, assignedInactive, `${assignedInactive}@example.test`, now, now),
+      database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'Admin recipients', 'edited_review', ?, ?)").bind(projectId, now, now),
+      database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?), (?, ?, ?, 'photographer', ?)")
+        .bind(crypto.randomUUID(), projectId, editor, now, crypto.randomUUID(), projectId, photographer, now),
+    ]);
+    const send = vi.fn().mockResolvedValue({ messageId: "test-message" });
+    const testEnv = { DB: database.DB, EMAIL: { send }, NOTIFICATIONS_FROM_ADDRESS: "studio@example.test" } as unknown as Env;
+    for (const type of ["raw_ready", "edited_landed", "sent_to_editing", "autohdr_stalled", "delivered", "comment_added"] as const) {
+      await notifyProject(testEnv, projectId, type, type === "comment_added" ? { editorOnly: true } : {});
+    }
+    const existing = await database.DB.prepare("SELECT user_id, type FROM notifications WHERE project_id = ? AND type <> 'assigned_to_project'").bind(projectId).all<{ user_id: string; type: string }>();
+    expect(existing.results.filter((row) => row.user_id === activeAdmin)).toHaveLength(6);
+    expect(existing.results.filter((row) => row.user_id === inactiveAdmin)).toHaveLength(0);
+    expect(existing.results.filter((row) => row.type === "comment_added" && row.user_id === photographer)).toHaveLength(0);
+    expect(existing.results.filter((row) => row.type === "comment_added" && row.user_id === activeAdmin)).toHaveLength(1);
+
+    await notifyProject(testEnv, projectId, "raw_ready", { excludeUserId: activeAdmin });
+    const excluded = await database.DB.prepare("SELECT user_id FROM notifications WHERE project_id = ? AND type = 'raw_ready'").bind(projectId).all<{ user_id: string }>();
+    expect(excluded.results.filter((row) => row.user_id === activeAdmin)).toHaveLength(1);
+    expect(excluded.results.map((row) => row.user_id)).toContain(editor);
+    expect(excluded.results.filter((row) => row.user_id === editor)).toHaveLength(2);
+
+    const sendsBeforeAssignments = send.mock.calls.length;
+    await notifyProjectAssignments(testEnv, projectId, [
+      { userId: assignedActive, roleOnProject: "photographer" },
+      { userId: assignedInactive, roleOnProject: "editor" },
+    ]);
+    const assignmentRows = await database.DB.prepare("SELECT user_id, body FROM notifications WHERE project_id = ? AND type = 'assigned_to_project'").bind(projectId).all<{ user_id: string; body: string }>();
+    expect(assignmentRows.results).toEqual([expect.objectContaining({ user_id: assignedActive, body: "You have been assigned as the photographer for Admin recipients." })]);
+    expect(send.mock.calls.length - sendsBeforeAssignments).toBe(1);
+    expect(assignmentRows.results.map((row) => row.user_id)).not.toContain(activeAdmin);
   });
 
   it("records a mocked email failure without failing the notification write", async () => {

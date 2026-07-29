@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { EMAIL_ENABLED_EVENTS, emitNotifications, type NotificationEmail, type NotificationType } from "./notifications";
+import { EMAIL_ENABLED_EVENTS, emitNotifications, notificationCopy, type NotificationEmail, type NotificationType } from "./notifications";
 import type { Database } from "./index";
 
 const ALL_TYPES: NotificationType[] = [
-  "raw_ready", "edited_landed", "sent_to_editing", "autohdr_stalled", "delivered", "comment_added",
+  "raw_ready", "edited_landed", "sent_to_editing", "autohdr_stalled", "delivered", "comment_added", "assigned_to_project",
 ];
 
 /** Mocks the Drizzle chainable `insert().values()` / `update().set().where()` shape
@@ -39,13 +39,13 @@ function recipient(userId: string, email: string): { userId: string; email: stri
 }
 
 describe("EMAIL_ENABLED_EVENTS", () => {
-  it("includes all 6 notification types", () => {
+  it("includes all 7 notification types", () => {
     expect([...EMAIL_ENABLED_EVENTS].sort()).toEqual([...ALL_TYPES].sort());
   });
 });
 
 describe("emitNotifications email gating", () => {
-  it("attempts an email send for each of the 6 enabled types", async () => {
+  it("attempts an email send for each of the 7 enabled types", async () => {
     for (const type of ALL_TYPES) {
       const { db } = mockDb();
       const email = fakeEmail(async () => ({ messageId: "m1" }));
@@ -53,10 +53,17 @@ describe("emitNotifications email gating", () => {
         type,
         recipients: [recipient("u1", "u1@example.com")],
         email,
-        fromAddress: "noreply@flamingfire.my",
+        fromAddress: "studio@example.test",
       });
       expect(email.send).toHaveBeenCalledTimes(1);
     }
+  });
+
+  it("uses role-specific assignment copy", () => {
+    expect(notificationCopy("assigned_to_project", "12 Kings Road", "photographer").body)
+      .toBe("You have been assigned as the photographer for 12 Kings Road.");
+    expect(notificationCopy("assigned_to_project", "12 Kings Road", "editor").body)
+      .toBe("You have been assigned as the editor for 12 Kings Road.");
   });
 
   it("does not attempt an email send when `email` or `fromAddress` is omitted", async () => {
@@ -64,7 +71,7 @@ describe("emitNotifications email gating", () => {
     await emitNotifications(dbNoEmail, {
       type: "raw_ready",
       recipients: [recipient("u1", "u1@example.com")],
-      fromAddress: "noreply@flamingfire.my",
+      fromAddress: "studio@example.test",
     });
     expect(insertsNoEmail).toHaveLength(1);
 
@@ -86,10 +93,10 @@ describe("emitNotifications email gating", () => {
       return { messageId: "m1" };
     });
     await emitNotifications(db, {
-      type: "edited_landed",
+      type: "assigned_to_project",
       recipients: [recipient("u1", "fails@example.com"), recipient("u2", "succeeds@example.com")],
       email,
-      fromAddress: "noreply@flamingfire.my",
+      fromAddress: "studio@example.test",
     });
 
     expect(insertCalls).toHaveLength(2);

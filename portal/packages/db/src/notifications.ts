@@ -8,10 +8,11 @@ export type NotificationType =
   | "sent_to_editing"
   | "autohdr_stalled"
   | "delivered"
-  | "comment_added";
+  | "comment_added"
+  | "assigned_to_project";
 
 export const EMAIL_ENABLED_EVENTS: readonly NotificationType[] = [
-  "raw_ready", "edited_landed", "sent_to_editing", "autohdr_stalled", "delivered", "comment_added",
+  "raw_ready", "edited_landed", "sent_to_editing", "autohdr_stalled", "delivered", "comment_added", "assigned_to_project",
 ];
 export const STALLED_NOTIFICATION_AGE_MS = 3 * 60 * 60 * 1000;
 export const READ_NOTIFICATION_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
@@ -24,7 +25,11 @@ export type NotificationEmail = {
 export type NotificationCopy = { title: string; body: string };
 
 /** Shared copy deliberately hides the implementation vendor from every staff recipient. */
-export function notificationCopy(type: NotificationType, projectLabel = "Project"): NotificationCopy {
+export function notificationCopy(
+  type: NotificationType,
+  projectLabel = "Project",
+  assignmentRole?: "photographer" | "editor",
+): NotificationCopy {
   switch (type) {
     case "raw_ready": return { title: "RAW ready for review", body: `${projectLabel} has RAW images ready for review.` };
     case "edited_landed": return { title: "Edited images ready for review", body: `${projectLabel} has edited images ready for review.` };
@@ -32,6 +37,9 @@ export function notificationCopy(type: NotificationType, projectLabel = "Project
     case "autohdr_stalled": return { title: "Editing round taking longer than expected", body: `${projectLabel} has an editing round that may need attention.` };
     case "delivered": return { title: "Project delivered", body: `${projectLabel} has been marked delivered.` };
     case "comment_added": return { title: "New review feedback", body: `${projectLabel} has new review feedback.` };
+    case "assigned_to_project": return assignmentRole
+      ? { title: "Assigned to project", body: `You have been assigned as the ${assignmentRole} for ${projectLabel}.` }
+      : { title: "Assigned to project", body: `You have been assigned to ${projectLabel}.` };
   }
 }
 
@@ -40,7 +48,7 @@ export async function projectNotificationRecipients(
   projectId: string,
   options: { editorOnly?: boolean; excludeUserId?: string } = {},
 ): Promise<NotificationRecipient[]> {
-  const rows = await db.selectDistinct({
+  const memberRows = await db.selectDistinct({
     userId: schema.user.id,
     email: schema.user.email,
     name: schema.user.name,
@@ -51,7 +59,13 @@ export async function projectNotificationRecipients(
       eq(schema.user.active, true),
       options.editorOnly ? eq(schema.projectMembers.roleOnProject, "editor") : undefined,
     )).all();
-  return rows.filter((row) => row.userId !== options.excludeUserId);
+  const adminRows = await db.select({
+    userId: schema.user.id,
+    email: schema.user.email,
+    name: schema.user.name,
+  }).from(schema.user).where(and(eq(schema.user.role, "admin"), eq(schema.user.active, true))).all();
+  return [...new Map([...memberRows, ...adminRows].map((row) => [row.userId, row])).values()]
+    .filter((row) => row.userId !== options.excludeUserId);
 }
 
 export type EmitNotificationInput = {

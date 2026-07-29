@@ -8,7 +8,8 @@ import type { AppEnv } from "../env";
 import { hasProjectAccess, requireCapability } from "../middleware/capability";
 import { audit } from "../lib/audit";
 import { newId } from "../lib/ids";
-import { notifyProject } from "../lib/notifications";
+import { notifyProject, notifyProjectAssignments } from "../lib/notifications";
+import { insertProjectMembers, syncMembers } from "../lib/project-members";
 import { createZipStream } from "../lib/zip-stream";
 import { jsonInput } from "./helpers";
 import { ensurePipelineStages, projectStageForRole } from "./stages";
@@ -100,21 +101,10 @@ async function coverMaps(db: ReturnType<typeof createDb>, projectIds: string[], 
   return { storedByProject, automaticByProject };
 }
 
-async function addMembers(db: ReturnType<typeof createDb>, projectId: string, ids: string[] | undefined, roleOnProject: "photographer" | "editor") {
-  for (const userId of [...new Set(ids ?? [])]) await db.insert(schema.projectMembers).values({ id: newId(), projectId, userId, roleOnProject, createdAt: new Date() }).onConflictDoNothing();
-}
 async function addCollections(db: ReturnType<typeof createDb>, projectId: string, orderedServices: CollectionKind[] | undefined) {
   const services = new Set<CollectionKind>(["raw", ...(orderedServices ?? [])]);
   for (const kind of services) await db.insert(schema.collections).values({ id: newId(), projectId, kind, status: "empty", receivedCount: 0, createdAt: new Date(), updatedAt: new Date() }).onConflictDoNothing();
   return services;
-}
-async function syncMembers(db: ReturnType<typeof createDb>, projectId: string, ids: string[], roleOnProject: "photographer" | "editor") {
-  const desired = [...new Set(ids)];
-  const existing = await db.select({ id: schema.projectMembers.id, userId: schema.projectMembers.userId }).from(schema.projectMembers).where(and(eq(schema.projectMembers.projectId, projectId), eq(schema.projectMembers.roleOnProject, roleOnProject))).all();
-  await addMembers(db, projectId, desired, roleOnProject);
-  const removed = existing.filter((member) => !desired.includes(member.userId));
-  for (const member of removed) await db.delete(schema.projectMembers).where(eq(schema.projectMembers.id, member.id));
-  return { added: desired.filter((userId) => !existing.some((member) => member.userId === userId)), removed: removed.map((member) => member.userId) };
 }
 async function abortActiveDocumentSessions(c: Context<AppEnv>, projectId: string) {
   const db = createDb(c.env.DB); const now = new Date();
@@ -163,7 +153,12 @@ projectsRoutes.post("/projects", requireCapability("createProject"), async (c) =
       console.error("AutoHDR scaffold trigger failed", { projectId: id, error }));
   }
   const services = await addCollections(db, id, orderedServices);
-  await addMembers(db, id, photographerUserIds, "photographer"); await addMembers(db, id, editorUserIds, "editor");
+  const photographerAdded = await insertProjectMembers(db, id, photographerUserIds ?? [], "photographer");
+  const editorAdded = await insertProjectMembers(db, id, editorUserIds ?? [], "editor");
+  await notifyProjectAssignments(c.env, id, [
+    ...photographerAdded.map((userId) => ({ userId, roleOnProject: "photographer" as const })),
+    ...editorAdded.map((userId) => ({ userId, roleOnProject: "editor" as const })),
+  ]);
   await audit(c.env, c.get("user").id, "project.create", "project", id, { orderedServices: [...services] });
   return c.json(await details(db, id, c.get("user").role), 201);
 });
@@ -259,9 +254,19 @@ projectsRoutes.patch("/projects/:id", async (c) => {
       auditMeta.servicesAdded = [...services].filter((kind) => !existingKinds.has(kind));
       auditMeta.servicesRemoved = removedCollections.map((collection) => collection.kind);
     }
-    if (photographerUserIds !== undefined) auditMeta.photographerMembers = await syncMembers(db, id, photographerUserIds, "photographer");
-    if (editorUserIds !== undefined) auditMeta.editorMembers = await syncMembers(db, id, editorUserIds, "editor");
+    const [existingPhotographers, existingEditors] = await Promise.all([
+      photographerUserIds === undefined ? Promise.resolve(undefined) : db.select({ id: schema.projectMembers.id, userId: schema.projectMembers.userId }).from(schema.projectMembers).where(and(eq(schema.projectMembers.projectId, id), eq(schema.projectMembers.roleOnProject, "photographer"))).all(),
+      editorUserIds === undefined ? Promise.resolve(undefined) : db.select({ id: schema.projectMembers.id, userId: schema.projectMembers.userId }).from(schema.projectMembers).where(and(eq(schema.projectMembers.projectId, id), eq(schema.projectMembers.roleOnProject, "editor"))).all(),
+    ]);
+    const photographerResult = photographerUserIds === undefined ? undefined : await syncMembers(db, id, existingPhotographers!, photographerUserIds, "photographer");
+    const editorResult = editorUserIds === undefined ? undefined : await syncMembers(db, id, existingEditors!, editorUserIds, "editor");
+    if (photographerResult) auditMeta.photographerMembers = photographerResult;
+    if (editorResult) auditMeta.editorMembers = editorResult;
     await db.update(schema.projects).set({ ...projectUpdates, updatedAt: new Date() }).where(eq(schema.projects.id, id));
+    await notifyProjectAssignments(c.env, id, [
+      ...(photographerResult?.added ?? []).map((userId) => ({ userId, roleOnProject: "photographer" as const })),
+      ...(editorResult?.added ?? []).map((userId) => ({ userId, roleOnProject: "editor" as const })),
+    ]);
     if (projectUpdates.rawFolderPath !== undefined) {
       await c.env.BACKGROUND.ensureAutoHdrScaffold(id).catch((error) =>
         console.error("AutoHDR scaffold trigger failed", { projectId: id, error }));

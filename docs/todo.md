@@ -32,8 +32,13 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
   doesn't reliably persist across D1's remote migration execution. Production was left clean by the
   failed attempt (verified directly). Fixed by replacing it with a bare
   `ALTER TABLE ADD COLUMN ... CHECK(...)` form (verified locally first), re-applied successfully.
-  Cloudflare Email Service (for `Notifications-Plan.md`'s email sends) is still **not configured** —
-  follow `docs/Cloudflare-Email-Service-Setup.md` when ready; in-app notifications already work.
+  **Cloudflare Email Service is now configured and confirmed live (2026-07-29)** — verified by
+  querying production D1 directly: real `notifications` rows for both the `delivered` type
+  (`workers/app`'s send path) and `autohdr_stalled` (`workers/background`'s send path) show
+  `email_sent_at` populated with a real `email_message_id` and no `email_error`, so both workers'
+  identical email code paths are proven working end-to-end in prod, not just `background`'s as
+  earlier noted. `docs/Cloudflare-Email-Service-Setup.md` remains useful background on the setup
+  steps already completed, not a pending TODO.
   **Not yet done:** live manual smoke test of each feature as a real staff account (photographer
   losing dashboard visibility, notice board post round-trip, Kanban priority/reorder, notification
   bell) — the automated verification is thorough but no one has clicked through the actual UI yet.
@@ -431,8 +436,9 @@ allowlist are silent no-ops otherwise). Full mechanics in `docs/subagents/agy-cl
   Select-All — directly in-session), independently re-verified against real Miniflare (catching
   real bugs in four of the six that the build sandboxes couldn't find), Terra diff-reviewed,
   migrated (`0018`-`0020`), and deployed (background → webhook-ingress → app). Cloudflare Email
-  Service for `Notifications-Plan.md`'s email sends is still not configured — see
-  `docs/Cloudflare-Email-Service-Setup.md`. `ProjectWorkspace-Asset-Tab-Sync-Plan.md` (the fuller
+  Service for `Notifications-Plan.md`'s email sends is now confirmed configured and live as of
+  2026-07-29 (see "Current state" above) — `docs/Cloudflare-Email-Service-Setup.md` documents
+  completed setup, not a pending step. `ProjectWorkspace-Asset-Tab-Sync-Plan.md` (the fuller
   architectural fix deferred out of `PhotoGrid-Select-All-Plan.md`) remains in "Open plans" below,
   not implemented.
 
