@@ -1,5 +1,12 @@
 # Dropbox Delete-Then-Reupload Reconciliation — Plan
 
+**Status: BUILT, verified, committed (`9baec1e`), and DEPLOYED to production (2026-07-29 —
+`workers/background` only, single-worker deploy).** Terra-approved after 5 plan-review rounds and
+1 diff-review round; the diff review's own build had two real bugs (a compensation guard bound to
+the wrong, always-null timestamp, making that whole path dead code; a repoint query referencing a
+nonexistent `assets.asset_id` column that would throw at runtime) plus several test-construction
+issues, all found and fixed in-session before commit. 166/166 tests passing.
+
 **User request** (2026-07-29): "Very often, users deleted an image and then uploaded an updated
 image in the same filename. So I want Quincy Portal to be able to fetch the previously deleted
 files, if the file is added to Dropbox by users." Confirmed scope: a **replace-in-place**

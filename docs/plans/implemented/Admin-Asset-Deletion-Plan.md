@@ -1,5 +1,16 @@
 # Admin Asset (Image) Deletion — Plan
 
+**Status: BUILT, verified, committed (`9e51878`), and DEPLOYED to production (2026-07-29 —
+background then app, per the documented deploy order).** Terra-approved after 10 plan-review
+rounds — most spent narrowing, then finally closing, a cross-plan race with Dropbox sync by
+reusing `raw_reconciliation_claims` as a continuously-renewed lease rather than a point-in-time
+check — plus 3 diff-review rounds after building, which caught a cross-Worker source import that
+would have bundled `workers/background`'s module graph into `workers/app` (moved the shared lease
+constant into `packages/db` instead), a self-blocking bug in bulk-deleting multiple Dropbox-sourced
+assets (fixed with a bounded retry against a sibling claim), a lightbox-closes-before-confirming-
+success UI bug, and a bulk-delete bug that silently reported a real per-item failure as success.
+489 tests passing across every workspace.
+
 **User request** (2026-07-29): allow admins to permanently delete individual images from a
 project.
 
