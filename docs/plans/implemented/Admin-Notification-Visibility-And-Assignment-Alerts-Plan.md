@@ -1,7 +1,8 @@
 # Admin Notification Visibility and Assignment Alerts — Plan
 
-Status: built and verified (typecheck, web build, all real test suites green; Terra diff-reviewed
-and Opus final-draft reviewed, both approved) — not yet deployed or committed
+Status: implemented and deployed to production (commit `bc3c18f`, deployed 2026-07-29 —
+background → webhook-ingress → app, post-deploy smoke clean: site 200, unauth `/api/notifications`
+and `/api/projects` both correctly 401).
 
 ## User request
 

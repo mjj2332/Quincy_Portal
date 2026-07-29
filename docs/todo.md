@@ -7,8 +7,23 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
 > counts, full diagnostic transcripts) has been cut in favor of what/when/deploy-state. See
 > `docs/lessons.md` for incident mechanics, and `docs/reviews/` for full QA-sweep detail.
 
-## Current state (2026-07-24, batch status updated 2026-07-28)
+## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29)
 
+- **Admin notification visibility + assignment alerts, deployed 2026-07-29
+  (`Admin-Notification-Visibility-And-Assignment-Alerts-Plan.md`, commit `bc3c18f`).** Diagnosed
+  live in-session (direct production D1 queries) that admins received zero notifications ever,
+  because recipient resolution only reads `project_members`, which has no admin role — the send
+  pipeline itself was already proven working via two real Kanban stage-transitions to `delivered`
+  during diagnosis. Fixed by having admins implicitly receive every project notification
+  (deduped against real membership, `excludeUserId` still honored), and separately added a new
+  `assigned_to_project` notification fired when a user is newly assigned as photographer/editor —
+  previously silent for everyone. Terra plan-reviewed across 5 rounds (caught and fixed a real
+  concurrent-PATCH double-notification race via `INSERT ... ON CONFLICT DO NOTHING RETURNING`
+  instead of a stale pre-read snapshot), built by Terra, independently re-verified in this session
+  (one stale test assertion caught and fixed — Terra's own sandbox couldn't run the Miniflare
+  suites at all), Terra diff-reviewed, and Opus final-draft reviewed. All green: typecheck, web
+  build, and all real test suites (D1, app, background, webhook-ingress, shared, web — 516 tests).
+  Deployed background → webhook-ingress → app; post-deploy smoke clean.
 - **The 6-feature batch (priority/reorder, notifications, notice board, select-all,
   editor-as-photographer, photographer visibility) is fully built, verified, committed, migrated,
   and DEPLOYED to production as of 2026-07-28.** All six plans Terra plan-reviewed, built (five by
