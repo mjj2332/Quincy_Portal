@@ -1,14 +1,25 @@
 # Dropbox RAW Incomplete Folder Listing — Diagnosis + Fix Plan
 
-**Status: NOT READY TO BUILD — and most likely never will be, because the evidence now points at
-an operational fix rather than a code change.** 4 Terra rounds + a final Opus 5 session review
-(2026-07-29) that re-queried production instead of re-reading the text; it corrected two factual
-errors all four Terra rounds carried and added a cross-project comparison that eliminated Branch C
-and demoted B and E to long shots. **Branch A (the configured folder is real but is not where the
-capture set lives) is now the leading hypothesis — its fix is a corrected `raw_folder_path` and a
-re-sync, no code.** Do not build against Branch B on the strength of this document. Start with the
-two-minute "Fast path" check at the top of the diagnostic section; it may close this out entirely.
-See "Review history" for what each round found.
+**RESOLVED, 2026-07-29 — not a bug, no fix needed.** Confirmed by the user: the RAW files hadn't
+finished syncing to Dropbox yet at the time of ingest. Quincy Portal correctly ingested everything
+that was actually present in Dropbox at sync time (25 files); the other 230 arrived later and just
+need a fresh "Sync from Dropbox" click to be picked up, same as any project. This matches the
+"Branch F" theory below — kept for the diagnostic trail, not because further action is needed.
+Everything below this line is the investigation history, not an active task.
+
+**Status (superseded, kept for history): NOT READY TO BUILD, and the fast path has now actually
+been run — see "Live Dropbox
+check" below, which overturns this doc's most recent conclusion.** 4 Terra rounds + an Opus 5
+session review re-ranked the branches from D1 evidence alone and landed on "Branch A, no code
+needed." **That ranking is now falsified**: the user has local filesystem (synced Dropbox) access
+to the exact configured folder, and it contains all 255 files, exactly matching the report — the
+path is correct, not stale. 230 of those files were never ingested. The leading working theory is
+now **the batch (5.4GB) was still uploading when the one-time sync ran, and nothing has re-synced
+since** — a zero-code fix (re-run "Sync from Dropbox") if true, but unconfirmed. **The single
+highest-value next action is to trigger a fresh manual sync for this project and see what
+happens** — that one observation discriminates between "just re-sync" and "there's a real
+listing/visibility bug," which is otherwise still blocked on live Dropbox API access this session
+doesn't have. See "Live Dropbox check" and "Review history" below.
 
 Filed against a live bug report: on the "17 Oxford Street" project workspace
 (`https://quincy.flamingfire.my/projects/6ff8beae-51bf-4e19-b082-f69e359d039c`), only 25 RAW
@@ -209,6 +220,85 @@ A June shoot's folder received July drone derivatives.
 **Consequence for build readiness: the most likely outcome of the diagnostic is now that no code
 change is required at all** — this looks like a data/operations problem, not an ingestion bug.
 Do not build anything against Branch B on the strength of this document.
+
+**⚠ SUPERSEDED — see "Live Dropbox check" immediately below.** This section's reasoning was sound
+given what D1 alone could show, but the premise it rests on (no project has content outside
+`Listing Images/`) turned out to be wrong for this specific project once someone actually looked.
+Keeping this section intact rather than deleting it, because the *methodology* — compare against
+healthy projects before deep-diving the broken one — remains a real lesson (see "Review history"),
+even though its conclusion here didn't hold up against ground truth.
+
+## Live Dropbox check (2026-07-29) — the fast path was run; it falsifies Branch A
+
+The user has the studio's Dropbox mounted locally (Business Team account, confirmed via
+`~/.dropbox/info.json`: `is_team: true`, root `/Quincy Productions Dropbox`) and pointed this
+session at the exact configured path:
+
+```
+/Tonomo/Raw Files/Igor Melo/12-06-2026/17 Oxford St, Bondi Junction NSW 2022, Australia/
+```
+
+**`find . -iname "*.jpg" | wc -l` → exactly 255.** Matches the reporter's number precisely. This
+is decisive: the path is correct and complete, not stale or wrong. Full breakdown:
+
+| Location | JPEGs | Size | Status in D1 |
+|---|---|---|---|
+| `NOTES/` | 7 | 3.4M | **ingested** (all 7 present) |
+| `PROOFSHEET/` | 18 | 10M | **ingested** (all 18 present) |
+| root (`SELE.*.jpg`) | 30 | 705M | **not ingested** |
+| `ALL PHOTOS/` (`SELE.*.jpg`) | 115 | 2.7G | **not ingested** |
+| `EXTRAS/` (`EXTR.*.jpg`) | 85 | 2.0G | **not ingested** |
+| `Listing Images/` | 0 | — | empty (exists, contrary to the cross-project section above) |
+| `2D Floorplans/`, `Cinematic Videography/`, `Drone Images - Daylight/` | 0 each | — | empty |
+
+7 + 18 = **25**, exactly the ingested count, exactly matching NOTES/PROOFSHEET with **zero gap
+and zero extra** inside those two folders. The other 230 files (root + `ALL PHOTOS` + `EXTRAS`,
+5.4GB total) were never ingested, with no error and no skip telemetry on any of the four listing
+runs. All files use a consistent 4-letter category-prefix naming (`SELE`/`EXTR`/`NOTE`/`PROO`),
+consistent with a single AI photo-culling tool's batch output — this is one coherent upload, not
+several unrelated ones.
+
+**This falsifies Branch A outright, not just narrows it.** The configured path is exactly right
+and contains everything. It also weakens Branch D — every file is a genuine, distinct JPEG (no
+extension mismatch, no filename overlap with the ingested 25 that would suggest dedup collapse).
+
+**Comparison against a working project, to rule out "this session just misread the convention
+again":** `Igor Melo/20-07-2026/4 McGowen Ave, Malabar NSW 2036, Australia/` (119 raw assets
+ingested successfully) has `Listing Images/` (56 entries, populated) plus `2D Floorplans/` and
+`Drone Images - Daylight/` — the studio's ordinary convention, working exactly as the earlier
+cross-project section assumed. **17 Oxford Street's `SELE`/`EXTR`/`ALL PHOTOS` structure is
+genuinely anomalous** compared to a sibling project on the same photographer's same root, not an
+artifact of this session's D1-only view being incomplete.
+
+**Leading working theory, testable and falsifiable, not yet confirmed:** the batch is large
+(5.4GB) and mixed with the small proofing batch in time — `find . -newer PROOFSHEET -type f`
+shows 123 of the 230 missing files have local mtimes *after* `PROOFSHEET/`'s last file, i.e. the
+large batch was still arriving after the small one had already finished. Local mtimes reflect
+Dropbox's `client_modified` field (the source device's file time), not confirmed upload-to-cloud
+completion time, so this doesn't prove the theory — but it's consistent with: **the small
+NOTES/PROOFSHEET batch finished uploading to Dropbox's cloud first; the large SELE/EXTR batch was
+still uploading when `fe829763…` ran its listing at 23:30-23:31 on 2026-07-28; nothing has
+re-synced this project since.** If true, the fix is exactly zero code — the files are now fully
+present (confirmed: no `.dropbox.cache`/`.part`/partial markers anywhere in the local mirror,
+Dropbox processes idle, this Mac's copy is complete) — a fresh "Sync from Dropbox" click should
+pick up all 230 remaining files immediately.
+
+**This is now the single highest-value next action, and it's cheap:** trigger a manual sync for
+this project (`POST /api/projects/:id/sync-dropbox`, the existing "Sync from Dropbox" button) and
+observe the result.
+- **If it ingests the remaining ~230 files** → mystery solved, this was a one-time upload-timing
+  gap with no bug anywhere, nothing to fix or harden beyond what Fix branch A's hardening
+  subsection already proposes (a mismatch banner so a stalled project doesn't go unnoticed this
+  long again).
+- **If it still returns only ~25** → that's real, first-class evidence for Branch B or E: the
+  connected account/API genuinely cannot see this content that a full team member can see locally,
+  which the Business-Team-account confirmation above makes newly plausible (worth checking whether
+  the app's connected Dropbox integration is itself a full team member of "Quincy Productions" or
+  a narrower share) — proceed to the full diagnostic protocol below in that case, prioritizing
+  Branch E's account-membership check.
+
+This session cannot trigger that sync itself — it requires either an authenticated session in the
+deployed app or direct Dropbox API access, neither available here.
 
 ## Root causes not yet ruled out — the "255" figure itself is unverified
 
