@@ -1431,6 +1431,95 @@ describe("staff app API", () => {
     expect(forbidden.status).toBe(403);
   });
 
+  it("creates a revalidated ticket and streams exactly the selected RAW or Edited bytes", async () => {
+    const adminCookie = await sessionCookie(adminToken); const editorCookie = await sessionCookie(editorToken);
+    const created = await SELF.fetch("https://portal.test/api/projects", {
+      method: "POST", headers: { cookie: adminCookie, "content-type": "application/json" },
+      body: JSON.stringify({ street: "Selection ticket street", orderedServices: ["edited"], photographerUserIds: [firstPhotographerId], editorUserIds: [editorId] }),
+    });
+    expect(created.status).toBe(201); const project = await created.json() as { id: string };
+    const collections = await database.DB.prepare("SELECT id, kind FROM collections WHERE project_id = ?").bind(project.id).all<{ id: string; kind: string }>();
+    const rawId = collections.results.find((row) => row.kind === "raw")!.id;
+    const editedId = collections.results.find((row) => row.kind === "edited")!.id;
+    const media = env as unknown as { MEDIA: R2Bucket }; const now = Date.now();
+    const rawAssets: Array<{ id: string; body: string; name: string }> = [];
+    for (const [name, body] of [["first.jpg", "first distinct RAW payload"], ["second.jpg", "second distinct RAW payload"]] as const) {
+      const id = crypto.randomUUID(); const key = `tests/${project.id}/${id}`; rawAssets.push({ id, body, name }); await media.MEDIA.put(key, body);
+      await database.DB.prepare("INSERT INTO assets (id, collection_id, r2_key, original_filename, bytes, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'upload', ?, ?)").bind(id, rawId, key, name, body.length, now, now).run();
+    }
+    const editedIdAsset = crypto.randomUUID(); const editedBody = "distinct final edited payload"; const editedKey = `tests/${project.id}/${editedIdAsset}`;
+    await media.MEDIA.put(editedKey, editedBody);
+    await database.DB.prepare("INSERT INTO assets (id, collection_id, r2_key, original_filename, bytes, source, publish_status, created_at, updated_at) VALUES (?, ?, ?, 'final.jpg', ?, 'upload', 'ready', ?, ?)").bind(editedIdAsset, editedId, editedKey, editedBody.length, now, now).run();
+    const post = async (cookie: string, assetIds: string[]) => SELF.fetch(`https://portal.test/api/projects/${project.id}/download-selection`, { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ assetIds }) });
+
+    const rawTicket = await post(editorCookie, rawAssets.map((asset) => asset.id));
+    expect(rawTicket.status).toBe(201); const rawPayload = await rawTicket.json() as { downloadUrl: string };
+    expect(rawPayload.downloadUrl).toMatch(new RegExp(`^/api/projects/${project.id}/download-selection/[0-9a-f-]{36}/archive\\.zip$`));
+    const rawZip = await SELF.fetch(`https://portal.test${rawPayload.downloadUrl}`, { headers: { cookie: editorCookie } });
+    expect(rawZip.status).toBe(200); expect(rawZip.headers.get("content-type")).toContain("application/zip"); expect(rawZip.headers.get("content-disposition")).toContain("selection-raw.zip");
+    const rawBytes = new Uint8Array(await rawZip.arrayBuffer()); expect(rawBytes.slice(0, 4)).toEqual(new Uint8Array([0x50, 0x4b, 0x03, 0x04]));
+    const rawText = new TextDecoder().decode(rawBytes); for (const asset of rawAssets) { expect(rawText).toContain(asset.name); expect(rawText).toContain(asset.body); }
+    const audit = await database.DB.prepare("SELECT action, meta_json FROM audit_log WHERE target_id = ? AND action = 'project.download_selection' ORDER BY created_at DESC LIMIT 1").bind(project.id).first<{ action: string; meta_json: string }>();
+    expect(audit?.action).toBe("project.download_selection"); expect(JSON.parse(audit!.meta_json)).toEqual(expect.objectContaining({ collection: "raw", count: 2, totalBytes: rawAssets.reduce((sum, asset) => sum + asset.body.length, 0), assetIds: rawAssets.map((asset) => asset.id) }));
+
+    const editedTicket = await post(editorCookie, [editedIdAsset]); expect(editedTicket.status).toBe(201);
+    const editedZip = await SELF.fetch(`https://portal.test${(await editedTicket.json() as { downloadUrl: string }).downloadUrl}`, { headers: { cookie: editorCookie } });
+    expect(editedZip.status).toBe(200); expect(editedZip.headers.get("content-disposition")).toContain("selection-edited.zip"); expect(new TextDecoder().decode(await editedZip.arrayBuffer())).toContain(editedBody);
+
+    expect((await post(await sessionCookie(photographerToken), [rawAssets[0]!.id])).status).toBe(403); // specifically unassigned photographer
+    const photographerRaw = await post(await sessionCookie(firstPhotographerToken), [rawAssets[0]!.id]); expect(photographerRaw.status).toBe(403); await expect(photographerRaw.json()).resolves.toMatchObject({ capability: "selectForEditing" });
+    const photographerEdited = await post(await sessionCookie(firstPhotographerToken), [editedIdAsset]); expect(photographerEdited.status).toBe(403); await expect(photographerEdited.json()).resolves.toMatchObject({ capability: "downloadFinal" });
+    expect((await post(adminCookie, [rawAssets[0]!.id])).status).toBe(201); expect((await post(adminCookie, [editedIdAsset])).status).toBe(201);
+    await database.DB.prepare("UPDATE projects SET stage_key = 'editing_autohdr' WHERE id = ?").bind(project.id).run();
+    const pastPhotographerCutoff = await post(await sessionCookie(firstPhotographerToken), [rawAssets[0]!.id]);
+    expect(pastPhotographerCutoff.status).toBe(403); await expect(pastPhotographerCutoff.json()).resolves.toEqual({ error: "Forbidden: you are not assigned to this project" });
+  });
+
+  it("keeps selection validation all-or-nothing through chunks, limits, tickets, and fresh principals", async () => {
+    const adminCookie = await sessionCookie(adminToken); const created = await SELF.fetch("https://portal.test/api/projects", { method: "POST", headers: { cookie: adminCookie, "content-type": "application/json" }, body: JSON.stringify({ street: "Selection validation", orderedServices: ["edited", "video"], editorUserIds: [editorId] }) });
+    expect(created.status).toBe(201); const project = await created.json() as { id: string }; const editorCookie = await sessionCookie(editorToken);
+    const rows = await database.DB.prepare("SELECT id, kind FROM collections WHERE project_id = ?").bind(project.id).all<{ id: string; kind: string }>(); const rawId = rows.results.find((row) => row.kind === "raw")!.id; const editedId = rows.results.find((row) => row.kind === "edited")!.id; const videoId = rows.results.find((row) => row.kind === "video")!.id; const now = Date.now(); const media = env as unknown as { MEDIA: R2Bucket };
+    const add = async (collectionId: string, options: { body?: string; bytes?: number; publish?: string; kind?: string; superseded?: number | null } = {}) => { const id = crypto.randomUUID(); const key = `tests/${id}`; const body = options.body ?? "x"; await media.MEDIA.put(key, body); await database.DB.prepare("INSERT INTO assets (id, collection_id, kind, r2_key, original_filename, bytes, source, publish_status, superseded_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'upload', ?, ?, ?, ?)").bind(id, collectionId, options.kind ?? "photo", key, `${id}.jpg`, options.bytes ?? body.length, options.publish ?? "ready", options.superseded ?? null, now, now).run(); return id; };
+    const raw = await add(rawId); const pending = await add(editedId, { publish: "pending" }); const superseded = await add(rawId, { superseded: now }); const nonPhoto = await add(videoId, { kind: "video" }); const overLimit = await add(rawId, { bytes: 256 * 1024 * 1024 + 1 });
+    const post = async (assetIds: unknown, cookie = editorCookie) => SELF.fetch(`https://portal.test/api/projects/${project.id}/download-selection`, { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ assetIds }) });
+    const expectNoPostSideEffects = async () => {
+      await expect(database.DB.prepare("SELECT count(*) AS count FROM download_selection_tickets WHERE project_id = ?").bind(project.id).first<{ count: number }>()).resolves.toEqual({ count: 0 });
+      await expect(database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE target_id = ? AND action = 'project.download_selection'").bind(project.id).first<{ count: number }>()).resolves.toEqual({ count: 0 });
+    };
+    const expectPostFailure = async (assetIds: unknown, status: number) => { expect((await post(assetIds)).status).toBe(status); await expectNoPostSideEffects(); };
+    const malformed = await SELF.fetch(`https://portal.test/api/projects/${project.id}/download-selection`, { method: "POST", headers: { cookie: editorCookie, "content-type": "application/json" }, body: "{not valid json" });
+    expect(malformed.status).toBe(400); await expectNoPostSideEffects();
+    for (const ids of [[], [raw, raw], Array.from({ length: 501 }, () => crypto.randomUUID())]) await expectPostFailure(ids, 400);
+    const extraKey = await SELF.fetch(`https://portal.test/api/projects/${project.id}/download-selection`, { method: "POST", headers: { cookie: editorCookie, "content-type": "application/json" }, body: JSON.stringify({ assetIds: [raw], unexpected: true }) });
+    expect(extraKey.status).toBe(400); await expectNoPostSideEffects();
+    const otherCreated = await SELF.fetch("https://portal.test/api/projects", { method: "POST", headers: { cookie: adminCookie, "content-type": "application/json" }, body: JSON.stringify({ street: "Other selection project", orderedServices: [] }) }); const otherProject = await otherCreated.json() as { id: string }; const otherRaw = await database.DB.prepare("SELECT id FROM collections WHERE project_id = ? AND kind = 'raw'").bind(otherProject.id).first<{ id: string }>(); const foreign = await add(otherRaw!.id);
+    await expectPostFailure([raw, foreign], 404); await expectPostFailure([raw, crypto.randomUUID()], 404); await expectPostFailure([raw, pending], 404); await expectPostFailure([superseded], 404);
+    await expectPostFailure([raw, await add(editedId)], 400); await expectPostFailure([nonPhoto], 400); await expectPostFailure([overLimit], 413);
+
+    const chunkAssets: Array<{ id: string; body: string }> = []; for (let index = 0; index < 500; index += 1) { const body = `chunk-payload-${index}`; chunkAssets.push({ id: await add(rawId, { body }), body }); }
+    const chunkIds = chunkAssets.map((asset) => asset.id);
+    // Submitted in non-DB-natural order (reversed) so this proves the response is re-ordered by
+    // the submitted assetIds, not merely reflecting query/insertion order.
+    for (const ids of [[...chunkIds.slice(0, 100)].reverse(), [...chunkIds].reverse()]) { const ticket = await post(ids); expect(ticket.status).toBe(201); const url = (await ticket.json() as { downloadUrl: string }).downloadUrl; const zip = await SELF.fetch(`https://portal.test${url}`, { headers: { cookie: editorCookie } }); expect(zip.status).toBe(200); const text = new TextDecoder().decode(await zip.arrayBuffer()); let previous = -1; for (const id of ids) { const asset = chunkAssets.find((candidate) => candidate.id === id)!; const position = text.indexOf(`${id}.jpg`); expect(position).toBeGreaterThan(previous); expect(text).toContain(asset.body); previous = position; } }
+    const valid = await post([raw]); const validUrl = (await valid.json() as { downloadUrl: string }).downloadUrl; const ticketId = validUrl.split("/")[5]!;
+    expect((await SELF.fetch(`https://portal.test${validUrl}`, { headers: { cookie: adminCookie } })).status).toBe(404); // wrong user
+    await database.DB.prepare("UPDATE download_selection_tickets SET expires_at = ? WHERE id = ?").bind(now - 1, ticketId).run(); expect((await SELF.fetch(`https://portal.test${validUrl}`, { headers: { cookie: editorCookie } })).status).toBe(404);
+    expect((await SELF.fetch(`https://portal.test/api/projects/${project.id}/download-selection/${crypto.randomUUID()}/archive.zip`, { headers: { cookie: editorCookie } })).status).toBe(404);
+    const replay = await post([raw]); const replayUrl = (await replay.json() as { downloadUrl: string }).downloadUrl; await database.DB.prepare("UPDATE assets SET superseded_at = ? WHERE id = ?").bind(Date.now(), raw).run(); expect((await SELF.fetch(`https://portal.test${replayUrl}`, { headers: { cookie: editorCookie } })).status).toBe(404);
+    const becomesPending = await add(editedId); const pendingReplay = await post([becomesPending]); const pendingReplayUrl = (await pendingReplay.json() as { downloadUrl: string }).downloadUrl; await database.DB.prepare("UPDATE assets SET publish_status = 'pending' WHERE id = ?").bind(becomesPending).run(); expect((await SELF.fetch(`https://portal.test${pendingReplayUrl}`, { headers: { cookie: editorCookie } })).status).toBe(404);
+    const deletedAsset = await add(rawId); const deletedReplay = await post([deletedAsset]); const deletedReplayUrl = (await deletedReplay.json() as { downloadUrl: string }).downloadUrl; await database.DB.prepare("DELETE FROM assets WHERE id = ?").bind(deletedAsset).run(); const deletedGet = await SELF.fetch(`https://portal.test${deletedReplayUrl}`, { headers: { cookie: editorCookie } }); expect(deletedGet.status).toBe(404); await expect(deletedGet.json()).resolves.toEqual({ error: "One or more selected assets are not available in this project" });
+
+    const changingUserId = crypto.randomUUID(); const changingToken = `selection-revalidate-${crypto.randomUUID()}`;
+    await database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, 'Selection Editor', ?, 1, 'editor', 1, ?, ?)").bind(changingUserId, `${changingUserId}@example.test`, now, now).run();
+    await database.DB.prepare("INSERT INTO session (id, expires_at, token, user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)").bind(crypto.randomUUID(), now + 60 * 60 * 1000, changingToken, changingUserId, now, now).run();
+    await database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'photographer', ?)").bind(crypto.randomUUID(), project.id, changingUserId, now).run();
+    const changingCookie = await sessionCookie(changingToken); const changingPost = async () => SELF.fetch(`https://portal.test/api/projects/${project.id}/download-selection`, { method: "POST", headers: { cookie: changingCookie, "content-type": "application/json" }, body: JSON.stringify({ assetIds: [chunkIds[0]] }) });
+    const downgradeTicket = await changingPost(); expect(downgradeTicket.status).toBe(201); const downgradeUrl = (await downgradeTicket.json() as { downloadUrl: string }).downloadUrl;
+    await database.DB.prepare("UPDATE user SET role = 'photographer' WHERE id = ?").bind(changingUserId).run(); const downgraded = await SELF.fetch(`https://portal.test${downgradeUrl}`, { headers: { cookie: changingCookie } }); expect(downgraded.status).toBe(403); await expect(downgraded.json()).resolves.toMatchObject({ capability: "selectForEditing" });
+    await database.DB.prepare("UPDATE user SET role = 'editor' WHERE id = ?").bind(changingUserId).run(); const inactiveTicket = await changingPost(); expect(inactiveTicket.status).toBe(201); const inactiveUrl = (await inactiveTicket.json() as { downloadUrl: string }).downloadUrl;
+    await database.DB.prepare("UPDATE user SET active = 0 WHERE id = ?").bind(changingUserId).run(); expect((await SELF.fetch(`https://portal.test${inactiveUrl}`, { headers: { cookie: changingCookie } })).status).toBe(401);
+  });
+
   it("permanently deletes an archived project, its jobs, project R2 media, and asset renditions", async () => {
     const cookie = await sessionCookie(adminToken);
     const created = await SELF.fetch("https://portal.test/api/projects", {

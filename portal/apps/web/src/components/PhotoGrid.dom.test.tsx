@@ -254,3 +254,52 @@ describe("PhotoGrid deletion controls", () => {
     expect(host.querySelector(".actionbar")?.textContent).toContain("2");
   });
 });
+
+describe("PhotoGrid download selection", () => {
+  let host: HTMLElement;
+  beforeEach(() => { host = mount(); });
+  afterEach(async () => { await unmount(); host.remove(); });
+
+  it("appends Download selection after Clear and sends the current checked ids without clearing them", async () => {
+    const onDownloadSelection = vi.fn(async () => undefined);
+    await render(<PhotoGrid {...baseProps} canDownloadSelection onDownloadSelection={onDownloadSelection} assets={[asset("one"), asset("two")]} />);
+    await click(selBox(host, "one")); await click(selBox(host, "two"));
+    const buttons = [...host.querySelectorAll<HTMLButtonElement>(".actionbar .barbtn")];
+    expect(buttons.slice(-2).map((button) => button.textContent)).toEqual(["Clear", "Download selection"]);
+    await click(buttons.at(-1)!);
+    expect(onDownloadSelection).toHaveBeenCalledTimes(1);
+    expect(onDownloadSelection).toHaveBeenCalledWith(["one", "two"]);
+    expect(isSelected(host, "one")).toBe(true); expect(isSelected(host, "two")).toBe(true);
+  });
+
+  it("keeps the action bar and selection on an error, and exposes only its own pending state", async () => {
+    let reject!: (reason: Error) => void;
+    const onDownloadSelection = vi.fn(() => new Promise<void>((_, fail) => { reject = fail; }));
+    await render(<PhotoGrid {...baseProps} canDownloadSelection onDownloadSelection={onDownloadSelection} assets={[asset("one")]} />);
+    await click(selBox(host, "one"));
+    const download = [...host.querySelectorAll<HTMLButtonElement>(".actionbar .barbtn")].find((button) => button.textContent === "Download selection")!;
+    await click(download);
+    expect(download.disabled).toBe(true); expect(download.textContent).toBe("Preparing download…");
+    expect([...host.querySelectorAll<HTMLButtonElement>(".actionbar .barbtn")].find((button) => button.textContent === "Clear")?.disabled).toBe(false);
+    await act(async () => { reject(new Error("nope")); await Promise.resolve(); });
+    await flush();
+    expect(host.querySelector(".actionbar")).not.toBeNull(); expect(isSelected(host, "one")).toBe(true);
+  });
+
+  it("hides the control without capability and disables it for count or byte overages", async () => {
+    await render(<PhotoGrid {...baseProps} assets={[asset("one")]} />);
+    await click(selBox(host, "one"));
+    expect(host.textContent).not.toContain("Download selection");
+
+    const many = Array.from({ length: 501 }, (_, index) => asset(`many-${index}`));
+    await render(<PhotoGrid {...baseProps} canDownloadSelection onDownloadSelection={async () => undefined} assets={many} />);
+    await click(selectAllButton(host));
+    const tooMany = [...host.querySelectorAll<HTMLButtonElement>(".actionbar .barbtn")].find((button) => button.textContent === "Download selection")!;
+    expect(tooMany.disabled).toBe(true); expect(tooMany.title).toContain("500 assets / 256 MiB");
+
+    await render(<PhotoGrid {...baseProps} canDownloadSelection onDownloadSelection={async () => undefined} assets={[asset("large", { bytes: 256 * 1024 * 1024 + 1 })]} />);
+    await click(selBox(host, "large"));
+    const tooLarge = [...host.querySelectorAll<HTMLButtonElement>(".actionbar .barbtn")].find((button) => button.textContent === "Download selection")!;
+    expect(tooLarge.disabled).toBe(true);
+  });
+});

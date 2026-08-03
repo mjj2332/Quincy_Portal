@@ -169,6 +169,13 @@
       "when": 1785362260192,
       "tag": "0023_autohdr_stalled_notification_guard",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1785793002067,
+      "tag": "0024_download_selection_tickets",
+      "breakpoints": true
     }
   ]
 }

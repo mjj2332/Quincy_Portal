@@ -36,6 +36,10 @@ export const CAPABILITIES = [
 ] as const;
 export type Capability = (typeof CAPABILITIES)[number];
 
+/** Foreground ZIP-selection limits shared by the API and its preflight UI. */
+export const DOWNLOAD_SELECTION_MAX_ASSETS = 500;
+export const DOWNLOAD_SELECTION_MAX_BYTES = 256 * 1024 * 1024;
+
 /**
  * PRD §4 matrix (with contract decisions from Implementation-Plan §3):
  * - RAW upload: Admin + Photographer + Editor (PRD wins over Sitemap).

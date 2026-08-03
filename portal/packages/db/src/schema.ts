@@ -189,6 +189,24 @@ export const projectMembers = sqliteTable(
   ],
 );
 
+/** Short-lived, user-scoped handoff from a selection POST to a streamed ZIP GET. */
+export const downloadSelectionTickets = sqliteTable(
+  "download_selection_tickets",
+  {
+    id: id(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    assetIdsJson: text("asset_ids_json").notNull(),
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [index("download_selection_tickets_expires_at_idx").on(t.expiresAt)],
+);
+
 /* ------------------------------------------------------- media pipeline */
 
 export const collections = sqliteTable(

@@ -5,14 +5,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ProjectWorkspace } from "./ProjectWorkspace";
 import type { WorkspaceAsset } from "../components/PhotoGrid";
 
+const authState = vi.hoisted(() => ({ role: "editor" }));
 vi.mock("../lib/auth", () => ({
-  useSession: () => ({ data: { user: { id: "user-1", role: "editor" } }, isPending: false }),
+  useSession: () => ({ data: { user: { id: "user-1", role: authState.role } }, isPending: false }),
 }));
 
 const apiGetMock = vi.fn<(path: string, init?: unknown) => Promise<unknown>>();
+const apiPostMock = vi.fn<(path: string, body: unknown) => Promise<unknown>>();
 vi.mock("../lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/api")>();
-  return { ...actual, apiGet: (path: string, init?: unknown) => apiGetMock(path, init) };
+  return { ...actual, apiGet: (path: string, init?: unknown) => apiGetMock(path, init), apiPost: (path: string, body: unknown) => apiPostMock(path, body) };
 });
 
 function workspaceAsset(id: string, overrides: Partial<WorkspaceAsset> = {}): WorkspaceAsset {
@@ -84,9 +86,11 @@ describe("ProjectWorkspace cross-tab asset/selection/lightbox safety", () => {
 
   beforeEach(() => {
     host = mount();
+    authState.role = "editor";
     rawAssets = [workspaceAsset("raw-1"), workspaceAsset("raw-2")];
     editedFetch = deferredPromise();
     apiGetMock.mockReset();
+    apiPostMock.mockReset();
     apiGetMock.mockImplementation((path: string) => {
       if (path === "/api/projects/p1") return Promise.resolve(projectFixture());
       if (path.includes("/ingest-status")) return Promise.resolve({ expectedCount: null, receivedCount: 2, mismatch: false });
@@ -152,5 +156,64 @@ describe("ProjectWorkspace cross-tab asset/selection/lightbox safety", () => {
     await flush();
 
     expect(host.querySelector(".viewer__close")).toBeNull();
+  });
+});
+
+describe("ProjectWorkspace selection download", () => {
+  let host: HTMLElement;
+  beforeEach(() => {
+    host = mount();
+    authState.role = "editor";
+    apiGetMock.mockReset(); apiPostMock.mockReset();
+    apiGetMock.mockImplementation((path: string) => {
+      if (path === "/api/projects/p1") return Promise.resolve(projectFixture());
+      if (path.includes("/ingest-status")) return Promise.resolve({ expectedCount: null, receivedCount: 2, mismatch: false });
+      if (path.includes("/assets?collection=raw")) return Promise.resolve({ assets: [workspaceAsset("raw-1"), workspaceAsset("raw-2")] });
+      if (path.includes("/assets?collection=edited")) return Promise.resolve({ assets: [] });
+      return Promise.resolve({});
+    });
+  });
+  afterEach(async () => { await unmount(); host.remove(); vi.restoreAllMocks(); });
+
+  it("POSTs the captured ids, then uses the returned ticket URL in a native anchor download", async () => {
+    apiPostMock.mockResolvedValue({ downloadUrl: "/api/projects/p1/download-selection/ticket/archive.zip" });
+    const append = vi.spyOn(document.body, "append");
+    const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+    const anchorRemove = vi.spyOn(HTMLAnchorElement.prototype, "remove");
+    await render(<ProjectWorkspace projectId="p1" />); await flush();
+    await click(host.querySelectorAll<HTMLButtonElement>(".selbox")[0]!);
+    const button = [...host.querySelectorAll<HTMLButtonElement>(".actionbar .barbtn")].find((item) => item.textContent === "Download selection")!;
+    await click(button); await flush();
+    expect(apiPostMock).toHaveBeenCalledWith("/api/projects/p1/download-selection", { assetIds: ["raw-1"] });
+    const anchor = append.mock.calls.map(([node]) => node).find((node): node is HTMLAnchorElement => node instanceof HTMLAnchorElement)!;
+    expect(anchor.href).toBe("http://localhost:3000/api/projects/p1/download-selection/ticket/archive.zip"); expect(anchor.hasAttribute("download")).toBe(true); expect(anchorClick).toHaveBeenCalled(); expect(anchorRemove).toHaveBeenCalledWith(); expect(anchor.isConnected).toBe(false);
+  });
+
+  it("keeps the AutoHDR toolbar on the persisted selected-raw ZIP route and removes its anchor", async () => {
+    authState.role = "admin";
+    apiGetMock.mockImplementation((path: string) => {
+      if (path === "/api/projects/p1") return Promise.resolve({ ...projectFixture(), stageKey: "awaiting_raw" });
+      if (path.includes("/ingest-status")) return Promise.resolve({ expectedCount: null, receivedCount: 2, mismatch: false });
+      if (path.includes("/assets?collection=raw")) return Promise.resolve({ assets: [workspaceAsset("raw-selected", { selected: true })] });
+      if (path.includes("/jobs")) return Promise.resolve({ jobs: [] });
+      return Promise.resolve({});
+    });
+    const append = vi.spyOn(document.body, "append");
+    const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+    const anchorRemove = vi.spyOn(HTMLAnchorElement.prototype, "remove");
+    await render(<ProjectWorkspace projectId="p1" />); await flush();
+    const button = [...host.querySelectorAll<HTMLButtonElement>(".hdr .button")].find((item) => item.textContent === "Download 1 selected (zip)")!;
+    await click(button);
+    const anchor = append.mock.calls.map(([node]) => node).find((node): node is HTMLAnchorElement => node instanceof HTMLAnchorElement)!;
+    expect(anchor.href).toBe("http://localhost:3000/api/projects/p1/selected-raw.zip"); expect(anchor.href).not.toContain("download-selection"); expect(anchorClick).toHaveBeenCalled(); expect(anchorRemove).toHaveBeenCalledWith(); expect(anchor.isConnected).toBe(false);
+  });
+
+  it("toasts POST errors without removing the checked tile", async () => {
+    apiPostMock.mockRejectedValue(new Error("Selection unavailable"));
+    await render(<ProjectWorkspace projectId="p1" />); await flush();
+    await click(host.querySelectorAll<HTMLButtonElement>(".selbox")[0]!);
+    await click([...host.querySelectorAll<HTMLButtonElement>(".actionbar .barbtn")].find((item) => item.textContent === "Download selection")!); await flush();
+    expect(host.textContent).toContain("Selection unavailable");
+    expect(host.querySelector(".tile")?.classList.contains("is-selected")).toBe(true);
   });
 });

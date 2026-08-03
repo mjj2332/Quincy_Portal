@@ -1,11 +1,11 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { appendToStageBottomExpr, computeInsertPosition, createDb, dashboardProjectOrder, orderDashboardStreetTies, schema } from "@quincy/db";
-import { and, asc, desc, eq, exists, inArray, isNotNull, isNull, notExists, sql } from "drizzle-orm";
-import { COLLECTION_KINDS, computeRemovalAssetIds, isStageKey, PHOTOGRAPHER_VISIBLE_STAGES, ROLE_CAPABILITIES, type CollectionKind } from "@quincy/shared";
+import { and, asc, desc, eq, exists, gt, inArray, isNotNull, isNull, lte, notExists, sql } from "drizzle-orm";
+import { COLLECTION_KINDS, computeRemovalAssetIds, DOWNLOAD_SELECTION_MAX_ASSETS, DOWNLOAD_SELECTION_MAX_BYTES, isStageKey, PHOTOGRAPHER_VISIBLE_STAGES, ROLE_CAPABILITIES, roleHasCapability, type CollectionKind } from "@quincy/shared";
 import { z } from "zod";
 import type { AppEnv } from "../env";
-import { hasProjectAccess, requireCapability } from "../middleware/capability";
+import { hasProjectAccess, hasProjectAccessForUser, requireCapability } from "../middleware/capability";
 import { audit } from "../lib/audit";
 import { newId } from "../lib/ids";
 import { notifyProject, notifyProjectAssignments } from "../lib/notifications";
@@ -23,7 +23,16 @@ const editFields = projectFields.partial();
 const coverInput = z.object({ assetId: z.string().uuid().nullable() });
 const priorityInput = z.object({ priority: z.number().int().min(1).max(10).nullable() });
 const boardPositionInput = z.object({ direction: z.enum(["up", "down"]) });
+const downloadSelectionInput = z.object({
+  assetIds: z.array(z.string().uuid()).min(1).max(DOWNLOAD_SELECTION_MAX_ASSETS)
+    .superRefine((assetIds, ctx) => {
+      if (new Set(assetIds).size !== assetIds.length) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Asset IDs must be unique" });
+    }),
+}).strict();
 const idCheck = (v: string) => z.string().uuid().safeParse(v).success;
+const DOWNLOAD_SELECTION_TICKET_MS = 5 * 60 * 1000;
+const unavailableSelectionError = "One or more selected assets are not available in this project";
+const unsupportedSelectionError = "Download Selection supports one RAW or Edited photo selection";
 
 async function guardedBoardUpdate(
   db: ReturnType<typeof createDb>,
@@ -73,6 +82,78 @@ function chunked<T>(items: T[], size = 80): T[][] {
   const chunks: T[][] = [];
   for (let index = 0; index < items.length; index += size) chunks.push(items.slice(index, index + size));
   return chunks;
+}
+
+type DownloadSelectionEntry = {
+  id: string;
+  r2Key: string;
+  originalFilename: string;
+  bytes: number;
+  collectionKind: "raw" | "edited";
+};
+
+type ValidatedDownloadSelection = {
+  entries: DownloadSelectionEntry[];
+  collection: "raw" | "edited";
+  totalBytes: number;
+  principal: { id: string; role: AppEnv["Variables"]["user"]["role"] };
+};
+
+/**
+ * Revalidates every condition at POST and GET time. Tickets deliberately contain only ids, so
+ * a later role change, deactivation, asset replacement, or unpublished edit cannot replay an
+ * authorization decision that was true at ticket creation.
+ */
+async function validateDownloadSelection(c: Context<AppEnv>, projectId: string, assetIds: string[]): Promise<ValidatedDownloadSelection | Response> {
+  const db = createDb(c.env.DB);
+  const principal = await db.select({ id: schema.user.id, role: schema.user.role, active: schema.user.active })
+    .from(schema.user).where(eq(schema.user.id, c.get("user").id)).get();
+  if (!principal?.active) return c.json({ error: "Authentication required" }, 401);
+  if (!await hasProjectAccessForUser(c.env, principal, projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
+
+  const rows: Array<{
+    id: string; r2Key: string; originalFilename: string; bytes: number; collectionKind: string; publishStatus: string; assetKind: string;
+  }> = [];
+  // Sequential chunks are intentional: D1 has a 100-bind limit and only six simultaneous
+  // connections. Do not make this a Promise.all.
+  for (const assetIdChunk of chunked(assetIds, 80)) {
+    rows.push(...await db.select({
+      id: schema.assets.id,
+      r2Key: schema.assets.r2Key,
+      originalFilename: schema.assets.originalFilename,
+      bytes: schema.assets.bytes,
+      collectionKind: schema.collections.kind,
+      publishStatus: schema.assets.publishStatus,
+      assetKind: schema.assets.kind,
+    }).from(schema.assets)
+      .innerJoin(schema.collections, and(eq(schema.assets.collectionId, schema.collections.id), eq(schema.collections.projectId, projectId)))
+      .where(and(inArray(schema.assets.id, assetIdChunk), isNull(schema.assets.supersededAt)))
+      .all());
+  }
+
+  if (rows.length !== assetIds.length || rows.some((row) => !isUserVisibleAsset(row.collectionKind, row.publishStatus))) {
+    return c.json({ error: unavailableSelectionError }, 404);
+  }
+  if (rows.some((row) => row.assetKind !== "photo") || !rows.every((row) => row.collectionKind === "raw" || row.collectionKind === "edited") || new Set(rows.map((row) => row.collectionKind)).size !== 1) {
+    return c.json({ error: unsupportedSelectionError }, 400);
+  }
+
+  const collection = rows[0]!.collectionKind as "raw" | "edited";
+  const capability = collection === "raw" ? "selectForEditing" : "downloadFinal";
+  if (!roleHasCapability(principal.role, capability)) return c.json({ error: "Forbidden", capability }, 403);
+
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  const entries = assetIds.map((assetId) => byId.get(assetId)!).map((row) => ({
+    id: row.id, r2Key: row.r2Key, originalFilename: row.originalFilename, bytes: row.bytes,
+    collectionKind: row.collectionKind as "raw" | "edited",
+  }));
+  let totalBytes = 0;
+  for (const entry of entries) {
+    if (!Number.isSafeInteger(entry.bytes) || entry.bytes < 0 || totalBytes > Number.MAX_SAFE_INTEGER - entry.bytes) return c.json({ error: unavailableSelectionError }, 404);
+    totalBytes += entry.bytes;
+  }
+  if (totalBytes > DOWNLOAD_SELECTION_MAX_BYTES) return c.json({ error: "Selected assets exceed the 256 MiB download limit" }, 413);
+  return { entries, collection, totalBytes, principal: { id: principal.id, role: principal.role } };
 }
 
 async function coverMaps(db: ReturnType<typeof createDb>, projectIds: string[], photographersOnlySeeRaw = false) {
@@ -522,6 +603,79 @@ projectsRoutes.get("/projects/:id/selected-raw.zip", async (c) => {
   }
   await audit(c.env, c.get("user").id, "project.download_selected", "project", id, { count: selected.length });
   return new Response(createZipStream(entries()), { headers: { "content-type": "application/zip", "content-disposition": `attachment; filename="${filename}"` } });
+});
+
+projectsRoutes.post("/projects/:id/download-selection", async (c) => {
+  const projectId = c.req.param("id");
+  if (!idCheck(projectId)) return c.json({ error: "Invalid project id" }, 400);
+  const data = await jsonInput(c, downloadSelectionInput); if (data instanceof Response) return data;
+  const validated = await validateDownloadSelection(c, projectId, data.assetIds); if (validated instanceof Response) return validated;
+  const db = createDb(c.env.DB);
+  const now = new Date();
+  const ticket = newId();
+  await db.delete(schema.downloadSelectionTickets).where(lte(schema.downloadSelectionTickets.expiresAt, now));
+  await db.insert(schema.downloadSelectionTickets).values({
+    id: ticket,
+    userId: validated.principal.id,
+    projectId,
+    assetIdsJson: JSON.stringify(data.assetIds),
+    expiresAt: new Date(now.getTime() + DOWNLOAD_SELECTION_TICKET_MS),
+    createdAt: now,
+  });
+  return c.json({ downloadUrl: `/api/projects/${projectId}/download-selection/${ticket}/archive.zip` }, 201);
+});
+
+// `archive.zip` must remain a static path segment: in Hono, `:ticket.zip` creates a
+// parameter named "ticket.zip", rather than a `ticket` parameter with a literal suffix.
+projectsRoutes.get("/projects/:id/download-selection/:ticket/archive.zip", async (c) => {
+  const projectId = c.req.param("id");
+  const ticketId = c.req.param("ticket");
+  if (!idCheck(projectId)) return c.json({ error: "Invalid project id" }, 400);
+  if (!idCheck(ticketId)) return c.json({ error: "Download selection not found" }, 404);
+  const db = createDb(c.env.DB);
+  const ticket = await db.select({ assetIdsJson: schema.downloadSelectionTickets.assetIdsJson })
+    .from(schema.downloadSelectionTickets)
+    .where(and(
+      eq(schema.downloadSelectionTickets.id, ticketId),
+      eq(schema.downloadSelectionTickets.projectId, projectId),
+      eq(schema.downloadSelectionTickets.userId, c.get("user").id),
+      gt(schema.downloadSelectionTickets.expiresAt, new Date()),
+    )).get();
+  if (!ticket) return c.json({ error: "Download selection not found" }, 404);
+  let assetIds: string[];
+  try {
+    const parsed: unknown = JSON.parse(ticket.assetIdsJson);
+    const result = downloadSelectionInput.safeParse({ assetIds: parsed });
+    if (!result.success) throw new Error("invalid ticket asset ids");
+    assetIds = result.data.assetIds;
+  } catch {
+    return c.json({ error: "Download selection not found" }, 404);
+  }
+  const validated = await validateDownloadSelection(c, projectId, assetIds); if (validated instanceof Response) return validated;
+  const { entries: validatedEntries, collection, principal, totalBytes } = validated;
+  const project = await db.select({ street: schema.projects.street }).from(schema.projects).where(eq(schema.projects.id, projectId)).get();
+  const safeName = (project?.street || projectId).replace(/[^a-z0-9._-]+/gi, "-").replace(/^-+|-+$/g, "") || projectId;
+  const filename = `${safeName}-selection-${collection}.zip`;
+  async function* entries() {
+    for (const asset of validatedEntries) {
+      const object = await c.env.MEDIA.get(asset.r2Key);
+      if (!object) throw new Error(`Media object not found for download selection ${ticketId}: ${asset.r2Key}`);
+      if (object.size !== asset.bytes) throw new Error(`Media object size mismatch for download selection ${ticketId}: ${asset.r2Key}`);
+      yield { name: asset.originalFilename, size: asset.bytes, stream: object.body as ReadableStream<Uint8Array> };
+    }
+  }
+  // This is an authorization/initiation audit, intentionally written before the streaming
+  // response; a stream cannot truthfully establish that every byte reached the client.
+  await audit(c.env, principal.id, "project.download_selection", "project", projectId, {
+    collection, count: validatedEntries.length, totalBytes, assetIds,
+  });
+  return new Response(createZipStream(entries()), {
+    headers: {
+      "content-type": "application/zip",
+      "content-disposition": `attachment; filename="${filename}"`,
+      "cache-control": "private, no-store",
+    },
+  });
 });
 
 projectsRoutes.get("/projects/:id/manual-upload-jobs", async (c) => {

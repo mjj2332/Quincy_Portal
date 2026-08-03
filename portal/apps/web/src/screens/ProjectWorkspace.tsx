@@ -14,6 +14,7 @@ type Member = { id: string; userId: string; roleOnProject: "photographer" | "edi
 type Project = { id: string; street: string; suburb: string | null; postcode: string | null; agencyName: string | null; agentName: string | null; shootDate: string | null; stageKey: ProjectStageKey; rawFolderPath: string | null; rawFolderLink: string | null; coverAssetId: string | null; effectiveCoverAssetId: string | null };
 type ProjectResponse = Project & { collections: Collection[]; members: Member[] };
 type AssetsResponse = { assets: WorkspaceAsset[] };
+type DownloadSelectionResponse = { downloadUrl: string };
 type AssetDeleteResponse = { ok: boolean; deletedAssetIds: string[]; deletedObjects: number; dropboxDeleted: boolean; dropboxOutcome?: "removed" | "alreadyGone" | "claimLost" | "failed"; dropboxReason?: string };
 type IngestStatus = { expectedCount: number | null; receivedCount: number; mismatch: boolean };
 type Job = { id: string; kind: "autohdr" | "fetch_edited" | "autohdr_scaffold" | "manual_edited_publish"; status: "queued" | "running" | "done" | "failed" | "stuck"; error: string | null; correlationId: string | null; createdAt: string; updatedAt: string };
@@ -352,6 +353,17 @@ export function ProjectWorkspace({ projectId, notice, onNoticeShown }: { project
     toast("Preparing your download…");
     const link = document.createElement("a"); link.href = `/api/projects/${encodeURIComponent(projectId)}/selected-raw.zip`; link.download = ""; document.body.append(link); link.click(); link.remove();
   }
+  const downloadSelection = useCallback(async (assetIds: string[]) => {
+    if (!projectId) return;
+    try {
+      toast("Preparing your download…");
+      const response = await apiPost<DownloadSelectionResponse, { assetIds: string[] }>(`/api/projects/${encodeURIComponent(projectId)}/download-selection`, { assetIds });
+      const link = document.createElement("a"); link.href = response.downloadUrl; link.download = ""; document.body.append(link); link.click(); link.remove();
+    } catch (reason) {
+      toast(reason instanceof ApiError ? reason.message : reason instanceof Error ? reason.message : "Your download could not be prepared.", "error");
+      throw reason;
+    }
+  }, [projectId, toast]);
   async function retryAutoHdr(jobId: string) {
     if (!canAdminBackend) return;
     try { await apiPost<{ jobId: string }, Record<string, never>>(`/api/jobs/${jobId}/retry`, {}); await Promise.all([refreshJobs(), refreshProject()]); toast("Background job retry started."); }
@@ -402,7 +414,7 @@ export function ProjectWorkspace({ projectId, notice, onNoticeShown }: { project
         {activeTab === "edited" && can("uploadEdited") && <div className="workgrid">{hasRawFolder
           ? <UploadDropzone projectId={projectId} collection="edited" onComplete={async () => { await Promise.all([refreshAssets("edited"), refreshProject()]); }} onToast={toast} />
           : <div className="empty" role="status"><span className="serif">No Dropbox RAW folder for this shoot.</span>Edited uploads are published to Dropbox before they appear here, and every destination is derived from the RAW folder. Create the shoot folder in Tonomo, then set the RAW folder on this project{canEdit ? " under Edit details" : ""}.</div>}</div>}
-        <PhotoGrid key={activeTab} assets={assets} showSections={activeTab === "raw" || activeTab === "edited"} canReview={canReview} canRecommend={canRecommend} canSelect={activeTab === "raw" && canSelect} canSetCover={canEdit && (activeTab === "raw" || activeTab === "edited")} canDelete={canDeleteAssets} coverAssetId={project.effectiveCoverAssetId} storedCoverAssetId={project.coverAssetId} onSetCover={updateCover} onOpen={(asset, orderedAssets) => { setLightboxOrderIds(orderedAssets.map((item) => item.id)); setOpenAssetId(asset.id); }} onReview={updateReview} onSelection={updateSelection} onDelete={deleteAsset} onBulkDelete={deleteAssets} />
+        <PhotoGrid key={activeTab} assets={assets} showSections={activeTab === "raw" || activeTab === "edited"} canReview={canReview} canRecommend={canRecommend} canSelect={activeTab === "raw" && canSelect} canSetCover={canEdit && (activeTab === "raw" || activeTab === "edited")} canDelete={canDeleteAssets} canDownloadSelection={activeTab === "raw" ? can("selectForEditing") : can("downloadFinal")} coverAssetId={project.effectiveCoverAssetId} storedCoverAssetId={project.coverAssetId} onSetCover={updateCover} onOpen={(asset, orderedAssets) => { setLightboxOrderIds(orderedAssets.map((item) => item.id)); setOpenAssetId(asset.id); }} onReview={updateReview} onSelection={updateSelection} onDelete={deleteAsset} onBulkDelete={deleteAssets} onDownloadSelection={downloadSelection} />
       </> : <CollectionPanel projectId={projectId} collection={activeTab} assets={assets} canManage={canManageCollections} canDelete={canDeleteAssets} canApprove={can("reviewEdited")} onReview={updateReview} onDelete={deleteAsset} onChanged={async () => { await Promise.all([refreshAssets(activeTab), refreshProject()]); }} onToast={toast} />}
       {canAdminBackend && jobs.length > 0 && <div className="workgrid"><section className="hdr" style={{ alignItems: "flex-start", flexDirection: "column" }}><div><strong>autoHDR status</strong><div className="muted">Recent hand-offs, fetches, and manual-upload publishes for this project.</div></div>{jobs.map((job) => <div className="kv" style={{ width: "100%" }} key={job.id}><span className="k">{new Date(job.createdAt).toLocaleString("en-AU")}</span><span className="vv"><span className="k">{job.kind === "fetch_edited" ? "Fetch" : job.kind === "autohdr_scaffold" ? "Scaffold" : job.kind === "manual_edited_publish" ? "Manual upload" : "Send"}</span>{" "}<span className={`statetag st-${job.status}`}>{job.status}</span>{job.error ? ` ${job.error}` : ""}{(job.status === "stuck" || job.status === "failed") && <button className="chip" style={{ marginLeft: 8 }} type="button" onClick={() => void retryAutoHdr(job.id)}>Retry</button>}</span></div>)}</section></div>}
     </section>

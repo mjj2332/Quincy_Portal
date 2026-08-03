@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { DOWNLOAD_SELECTION_MAX_ASSETS, DOWNLOAD_SELECTION_MAX_BYTES } from "@quincy/shared";
 import { LabelDot, Stars } from "./atoms";
 import { LazyImage } from "./LazyImage";
 
@@ -29,6 +30,8 @@ interface PhotoGridProps {
   onSelection: (assetId: string, selected: boolean) => Promise<void>;
   onDelete?: (assetId: string) => Promise<void>;
   onBulkDelete?: (assetIds: string[]) => Promise<{ succeededIds: string[]; failedIds: string[] }>;
+  canDownloadSelection?: boolean;
+  onDownloadSelection?: (assetIds: string[]) => Promise<void>;
 }
 
 function rating(asset: WorkspaceAsset) { return asset.review?.stars ?? asset.ratingFromMetadata ?? 0; }
@@ -60,11 +63,12 @@ export function updateFailedThumbnailState(current: Set<string>, assetId: string
   return next;
 }
 
-export function PhotoGrid({ assets, showSections, canReview, canRecommend, canSelect, canSetCover, canDelete = false, coverAssetId, storedCoverAssetId, onSetCover, onOpen, onReview, onSelection, onDelete, onBulkDelete }: PhotoGridProps) {
+export function PhotoGrid({ assets, showSections, canReview, canRecommend, canSelect, canSetCover, canDelete = false, coverAssetId, storedCoverAssetId, onSetCover, onOpen, onReview, onSelection, onDelete, onBulkDelete, canDownloadSelection = false, onDownloadSelection }: PhotoGridProps) {
   const [filter, setFilter] = useState("all");
   const [multi, setMulti] = useState<Set<string>>(new Set());
   const [failedThumbnails, setFailedThumbnails] = useState<Set<string>>(new Set());
   const [thumbnailRetries, setThumbnailRetries] = useState<Record<string, number>>({});
+  const [isPreparingDownload, setIsPreparingDownload] = useState(false);
   const lastSelected = useRef<string | null>(null);
   useEffect(() => {
     const ids = new Set(assets.map((asset) => asset.id));
@@ -81,6 +85,7 @@ export function PhotoGrid({ assets, showSections, canReview, canRecommend, canSe
     return true;
   }), [assets, filter]);
   const sectionGroups = useMemo(() => groupWorkspaceAssetsBySection(visible), [visible]);
+  const bytesById = useMemo(() => new Map(assets.map((asset) => [asset.id, asset.bytes])), [assets]);
   const displayOrder = showSections ? sectionGroups.flatMap((group) => group.assets) : visible;
   const filters = [
     { id: "all", label: "All" },
@@ -141,6 +146,13 @@ export function PhotoGrid({ assets, showSections, canReview, canRecommend, canSe
     setMulti((current) => { const next = new Set([...current].filter((id) => !succeeded.has(id))); return next.size === current.size ? current : next; });
     lastSelected.current = null;
   }
+  async function downloadSelection() {
+    if (!onDownloadSelection) return;
+    const ids = [...multi];
+    setIsPreparingDownload(true);
+    try { await onDownloadSelection(ids); }
+    finally { setIsPreparingDownload(false); }
+  }
   function renderGrid(gridAssets: WorkspaceAsset[]) {
     return <div className="grid workspace-photo-grid">{gridAssets.map((asset) => {
       const review = asset.review;
@@ -177,6 +189,11 @@ export function PhotoGrid({ assets, showSections, canReview, canRecommend, canSe
     <div className="workgrid">
       {visible.length === 0 ? <div className="empty"><span className="serif">No frames in this view.</span>Choose another filter or upload the capture set.</div> : showSections ? sectionGroups.map((group, index) => <section className="workspace-section" key={workspaceSectionKey(group.section)}><div className="ey" style={{ margin: index === 0 ? "4px 0 10px" : "22px 0 10px" }}>{group.label}</div>{renderGrid(group.assets)}</section>) : renderGrid(visible)}
     </div>
-    {multi.size > 0 && <div className="actionbar"><span className="n">{multi.size}</span><span className="lbl">selected</span><span className="vline" />{canReview && <><button className="barbtn" type="button" onClick={() => void bulk("rate")}>Rate 5</button><button className="barbtn" type="button" onClick={() => void bulk("label")}>Label</button><button className="barbtn barbtn--solid" type="button" onClick={() => void bulk("approve")}>Approve</button><button className="barbtn" type="button" onClick={() => void bulk("flag")}>Flag</button></>}{canRecommend && <button className="barbtn barbtn--solid" type="button" onClick={() => void bulk("recommend")}>Recommend</button>}{canSelect && <button className="barbtn" type="button" onClick={() => void bulk("select")}>Select for editing</button>}{canDelete && onBulkDelete && <button className="barbtn" type="button" onClick={() => void deleteMany().catch(() => undefined)}>Delete {multi.size}</button>}<button className="barbtn" type="button" onClick={() => { setMulti(new Set()); lastSelected.current = null; }}>Clear</button></div>}
+    {multi.size > 0 && <div className="actionbar"><span className="n">{multi.size}</span><span className="lbl">selected</span><span className="vline" />{canReview && <><button className="barbtn" type="button" onClick={() => void bulk("rate")}>Rate 5</button><button className="barbtn" type="button" onClick={() => void bulk("label")}>Label</button><button className="barbtn barbtn--solid" type="button" onClick={() => void bulk("approve")}>Approve</button><button className="barbtn" type="button" onClick={() => void bulk("flag")}>Flag</button></>}{canRecommend && <button className="barbtn barbtn--solid" type="button" onClick={() => void bulk("recommend")}>Recommend</button>}{canSelect && <button className="barbtn" type="button" onClick={() => void bulk("select")}>Select for editing</button>}{canDelete && onBulkDelete && <button className="barbtn" type="button" onClick={() => void deleteMany().catch(() => undefined)}>Delete {multi.size}</button>}<button className="barbtn" type="button" onClick={() => { setMulti(new Set()); lastSelected.current = null; }}>Clear</button>{canDownloadSelection && onDownloadSelection && (() => {
+      const totalBytes = [...multi].reduce((total, id) => total + (bytesById.get(id) ?? 0), 0);
+      const exceedsLimit = multi.size > DOWNLOAD_SELECTION_MAX_ASSETS || totalBytes > DOWNLOAD_SELECTION_MAX_BYTES;
+      const maxMiB = Math.floor(DOWNLOAD_SELECTION_MAX_BYTES / (1024 * 1024));
+      return <button className="barbtn" type="button" disabled={isPreparingDownload || exceedsLimit} title={exceedsLimit ? `Download up to ${DOWNLOAD_SELECTION_MAX_ASSETS} assets / ${maxMiB} MiB` : undefined} onClick={() => void downloadSelection().catch(() => undefined)}>{isPreparingDownload ? "Preparing download…" : "Download selection"}</button>;
+    })()}</div>}
   </>;
 }
