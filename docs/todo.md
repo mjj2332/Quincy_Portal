@@ -7,8 +7,29 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
 > counts, full diagnostic transcripts) has been cut in favor of what/when/deploy-state. See
 > `docs/lessons.md` for incident mechanics, and `docs/reviews/` for full QA-sweep detail.
 
-## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29, seed-admin UUID migration 2026-07-29, notification dismiss + stalled-guard 2026-07-30)
+## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29, seed-admin UUID migration 2026-07-29, notification dismiss + stalled-guard 2026-07-30, download selection 2026-08-04)
 
+- **"Download selection" multi-select button, deployed 2026-08-04
+  (`Download-Selection-Plan.md`, migration `0024_download_selection_tickets.sql`, commit
+  `538a020`).** Lets a user download an ad-hoc ZIP of just their checked RAW or Edited photos from
+  the photo grid's multi-select action bar, separate from the existing persisted "selected for
+  editing" ZIP route. `POST /api/projects/:id/download-selection` validates the selection
+  (chunked ownership/visibility queries to stay under D1's bound-parameter limit, all-or-nothing
+  generic 404, 500-item/256 MiB caps) and writes a short-lived D1-backed ticket — not KV, which is
+  only eventually consistent across edge PoPs and could 404 an immediate first download. `GET
+  .../download-selection/:ticket/archive.zip` reloads the current principal and re-validates
+  everything live before streaming, so a role downgrade or deactivation between ticket creation
+  and download is honored rather than replaying a frozen decision. Capability split: RAW requires
+  `selectForEditing`, Edited requires `downloadFinal`. Cleared 2 Terra plan rounds, an Opus
+  plan-tier review (1 of 2 reverts used — caught a real Hono routing bug: `:ticket.zip` parses as
+  a param literally named `ticket.zip`, not "param plus literal suffix"; corrected route is
+  `.../download-selection/:ticket/archive.zip`), a Terra diff review (found missing
+  malformed-JSON/asset-deletion test coverage and a schema-strictness gap, fixed), and an Opus
+  final-draft review (approved with should-fix notes only — memoize the selection byte total,
+  derive the disabled-button caption from the shared byte constant, strengthen two tests that
+  weren't actually discriminating — all applied). Live rollout: migration applied, app Worker
+  deployed, and a real production download verified end-to-end (correct ZIP magic bytes, filename,
+  and byte count, both via the browser UI and direct API calls).
 - **User-clearable notifications + AutoHDR stalled-notification guard, deployed 2026-07-30
   (`Notification-Dismiss-Delete-Plan.md`, migration `0023_autohdr_stalled_notification_guard.sql`,
   commit `82143b2`).** Added a dismiss control to the bell dropdown (`DELETE

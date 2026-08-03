@@ -1,8 +1,12 @@
 # Download Selection — Plan
 
-**Status: APPROVED for build — Opus plan-tier review returned the plan to Terra once (1 of the 2
-allowed reverts); all five Opus findings are resolved in Terra revision round 1 and re-verified by
-Opus. Not yet built.**
+**Status: BUILT AND DEPLOYED — migration `0024_download_selection_tickets.sql` applied to
+production 2026-08-04, app Worker deployed same day, commit `538a020`.** Cleared 2 Terra plan
+rounds, an Opus plan-tier review (1 of 2 reverts used, to fix a real Hono routing bug), a Terra
+diff review (found missing malformed-JSON/asset-deletion test coverage and a schema-strictness
+gap, fixed), and an Opus final-draft review (approved with should-fix notes only, applied). Live
+production smoke test after deploy confirmed a real ZIP download end-to-end (correct filename,
+ZIP magic bytes, byte count) via the browser and direct API calls.
 
 ## User request
 
