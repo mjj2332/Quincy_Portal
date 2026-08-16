@@ -5,6 +5,7 @@ import { useSession } from "../lib/auth";
 import { RichTextContent } from "./RichTextContent";
 import { RichTextEditor } from "./RichTextEditor";
 import type { MentionableUser } from "./MentionAutocomplete";
+import { SubtaskChecklist } from "./SubtaskChecklist";
 
 type Comment = { id: string; author: { id: string; name: string }; body: string; content: RichTextDoc; createdAt: string; editedAt: string | null };
 type CommentResponse = { project: { id: string; street: string }; comments: Comment[]; nextCursor?: string };
@@ -78,6 +79,7 @@ export function ProjectCollaborationPanel({ projectId }: { projectId: string }) 
       <aside id={`project-collaboration-${projectId}`} className={`edit-project__collaboration${narrow ? " edit-project__collaboration--drawer" : ""}`} aria-label="Project collaboration">
         <div className="edit-project__collaboration-head"><div><div className="ey">Collaboration</div><h2 className="serif">{project?.street ?? "Project comments"}</h2></div>{narrow && <button type="button" className="button button--secondary" onClick={close}>Close</button>}</div>
         {error && <div className="notice" role="alert">{error}</div>}
+        <SubtaskChecklist projectId={projectId} />
         {loading ? <div className="edit-project__collaboration-state" role="status">Loading comments…</div> : <>
           {nextCursor && <button className="button button--secondary" type="button" disabled={loadingOlder} onClick={() => void load(nextCursor)}>{loadingOlder ? "Loading…" : "Load older comments"}</button>}
           <div className="edit-project__comments">{comments.length ? comments.map((comment) => <article key={comment.id} className="edit-project__comment"><header><strong>{comment.author.name}</strong><time dateTime={comment.createdAt}>{new Date(comment.createdAt).toLocaleString()}</time></header>{editing?.id === comment.id ? <><RichTextEditor value={editing.content} onChange={(value) => setEditing({ id: comment.id, content: value })} limit={10_000} disabled={saving} loadMentionables={loadMentionables} placeholder="Edit comment…" onSubmit={() => void saveEdit()} /><div className="edit-project__comment-actions"><button className="button button--secondary" type="button" disabled={saving} onClick={() => setEditing(undefined)}>Cancel</button><button className="button" type="button" disabled={saving} onClick={() => void saveEdit()}>Save</button></div></> : <><RichTextContent content={comment.content} />{comment.editedAt && <small>Edited</small>}{comment.author.id === currentUserId && <div className="edit-project__comment-actions"><button type="button" className="button button--secondary" onClick={() => setEditing({ id: comment.id, content: comment.content })}>Edit</button><button type="button" className="button button--secondary" disabled={saving} onClick={() => void remove(comment)}>Delete</button></div>}</>}</article>) : <div className="edit-project__collaboration-state">No comments yet.</div>}</div>

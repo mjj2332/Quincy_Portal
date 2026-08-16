@@ -70,7 +70,7 @@ button { font-family: var(--font-sans); }
 .topbar__notification-item { display: grid; gap: 4px; padding: 12px 0 12px 14px; border: 0; background: transparent; color: var(--text-primary); text-align: left; cursor: pointer; }
 .topbar__notification-item strong { font-size: 13px; font-weight: 500; }
 .topbar__notification-item span { color: var(--text-secondary); font-size: 12px; line-height: 1.4; }
-.topbar__notification-item small { color: var(--text-tertiary); font-size: 10px; }
+.topbar__notification-item small { color: var(--text-muted); font-size: 10px; }
 .topbar__notification-dismiss { width: 34px; border: 0; background: transparent; color: var(--text-secondary); cursor: pointer; font-size: 18px; line-height: 1; }
 .topbar__notification-head button:hover, .topbar__notification-dismiss:hover { color: var(--text-primary); }
 .topbar__notification-empty { padding: 20px 14px; color: var(--text-secondary); font-size: 13px; }
@@ -1016,11 +1016,23 @@ button { font-family: var(--font-sans); }
 .edit-project__comment { display: grid; gap: var(--space-2); padding: var(--space-3); border: 1px solid var(--border-hairline); background: var(--paper-000); }
 .edit-project__comment header { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-2); }
 .edit-project__comment header strong { font-size: 13px; font-weight: 500; }
-.edit-project__comment time, .edit-project__comment small { color: var(--text-tertiary); font-size: 10px; }
+.edit-project__comment time, .edit-project__comment small { color: var(--text-muted); font-size: 10px; }
 .edit-project__comment-actions { display: flex; justify-content: flex-end; gap: var(--space-2); }
 .edit-project__comment-actions .button { min-height: 30px; padding: 5px 8px; font-size: 10px; }
 .edit-project__comment-compose { display: grid; gap: var(--space-2); padding-top: var(--space-3); border-top: 1px solid var(--border-hairline); }
 .edit-project__comment-compose > div:last-child { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); color: var(--text-secondary); font-size: 11px; }
+.subtask-checklist { display: grid; gap: var(--space-3); padding-bottom: var(--space-4); border-bottom: 1px solid var(--border-hairline); }
+.subtask-checklist__head { display: flex; justify-content: space-between; align-items: end; }
+.subtask-checklist__head h3 { margin: 4px 0 0; font: var(--type-h3); font-size: 17px; }
+.subtask-checklist__notice { min-height: 0; color: var(--signal-critical); font-size: 12px; }
+.subtask-checklist__items { display: grid; gap: var(--space-2); }
+.subtask-checklist__item { display: grid; grid-template-columns: auto minmax(0, 1fr) minmax(118px, .6fr) 128px auto; align-items: center; gap: var(--space-2); padding: var(--space-2); border: 1px solid var(--border-hairline); background: var(--paper-000); }
+.subtask-checklist__item--done .subtask-checklist__title { color: var(--text-muted); text-decoration: line-through; }
+.subtask-checklist__done { display: grid; place-items: center; }
+.subtask-checklist__title, .subtask-checklist select, .subtask-checklist input[type="date"], .subtask-checklist__add input { min-width: 0; width: 100%; padding: 7px 8px; border: 1px solid var(--border-hairline); background: var(--paper-000); color: var(--text-primary); font: inherit; font-size: 12px; }
+.subtask-checklist__actions { display: flex; gap: 4px; }
+.subtask-checklist__actions .button { min-height: 30px; padding: 5px 7px; font-size: 10px; }
+.subtask-checklist__add { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-2); }
 .edit-project__collaboration-scrim { display: none; }
 .edit-project__archived { display: inline-flex; margin-top: var(--space-3); padding: 5px 8px; border: 1px solid color-mix(in srgb, var(--signal-caution) 45%, var(--border-hairline)); background: color-mix(in srgb, var(--signal-caution) 8%, var(--paper-000)); color: var(--signal-caution); font: var(--type-eyebrow); font-size: 10px; letter-spacing: var(--tracking-wide); text-transform: uppercase; }
 .danger-zone { display: grid; gap: var(--space-5); margin-top: var(--space-8); padding: var(--space-5); border: 1px solid color-mix(in srgb, var(--signal-critical) 48%, var(--border-hairline)); background: color-mix(in srgb, var(--signal-critical) 4%, var(--paper-000)); }
@@ -1032,4 +1044,4 @@ button { font-family: var(--font-sans); }
 .danger-zone__button { border-color: var(--signal-critical); background: var(--signal-critical); }
 .danger-zone__button:hover:not(:disabled) { border-color: color-mix(in srgb, var(--signal-critical) 84%, var(--ink-900)); background: color-mix(in srgb, var(--signal-critical) 84%, var(--ink-900)); }
 .danger-zone__notice { padding: var(--space-3); color: var(--signal-positive); background: color-mix(in srgb, var(--signal-positive) 8%, var(--paper-000)); font-size: var(--text-sm); }
-@media (max-width: 720px) { .edit-project__layout { display: block; } .edit-project__collaboration-wrap { margin-top: var(--space-5); } .edit-project__collaboration-scrim { position: fixed; inset: 0; z-index: 69; display: block; background: rgba(10,10,10,.52); } .edit-project__collaboration--drawer { position: fixed; inset: 0 0 0 auto; z-index: 70; width: min(440px, 94vw); overflow: auto; box-shadow: var(--shadow-lg); } .danger-zone__action, .danger-zone__delete { align-items: stretch; grid-template-columns: 1fr; } .danger-zone__action { flex-direction: column; } .danger-zone__action .button, .danger-zone__delete .button { width: 100%; } }
+@media (max-width: 720px) { .edit-project__layout { display: block; } .edit-project__collaboration-wrap { margin-top: var(--space-5); } .edit-project__collaboration-scrim { position: fixed; inset: 0; z-index: 69; display: block; background: rgba(10,10,10,.52); } .edit-project__collaboration--drawer { position: fixed; inset: 0 0 0 auto; z-index: 70; width: min(440px, 94vw); overflow: auto; box-shadow: var(--shadow-lg); } .subtask-checklist__item { grid-template-columns: auto minmax(0, 1fr); } .subtask-checklist__item select, .subtask-checklist__item input[type="date"], .subtask-checklist__actions { grid-column: 2; } .subtask-checklist__actions { justify-content: flex-start; } .danger-zone__action, .danger-zone__delete { align-items: stretch; grid-template-columns: 1fr; } .danger-zone__action { flex-direction: column; } .danger-zone__action .button, .danger-zone__delete .button { width: 100%; } }
