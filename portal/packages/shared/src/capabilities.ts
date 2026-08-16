@@ -99,6 +99,7 @@ export const ROLE_CAPABILITIES: Record<Role, readonly Capability[]> = {
     "annotateRaw",
     "recommendRaw",
     "compareFrames",
+    "viewNoticeBoard",
   ],
 };
 

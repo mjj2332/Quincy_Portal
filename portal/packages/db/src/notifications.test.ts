@@ -3,7 +3,7 @@ import { EMAIL_ENABLED_EVENTS, emitNotifications, notificationCopy, type Notific
 import type { Database } from "./index";
 
 const ALL_TYPES: NotificationType[] = [
-  "raw_ready", "edited_landed", "sent_to_editing", "autohdr_stalled", "delivered", "comment_added", "assigned_to_project",
+  "raw_ready", "edited_landed", "sent_to_editing", "autohdr_stalled", "delivered", "comment_added", "assigned_to_project", "mentioned", "subtask_assigned",
 ];
 
 /** Mocks the Drizzle chainable `insert().values()` / `update().set().where()` shape
@@ -39,13 +39,13 @@ function recipient(userId: string, email: string): { userId: string; email: stri
 }
 
 describe("EMAIL_ENABLED_EVENTS", () => {
-  it("includes all 7 notification types", () => {
+  it("includes all 9 notification types", () => {
     expect([...EMAIL_ENABLED_EVENTS].sort()).toEqual([...ALL_TYPES].sort());
   });
 });
 
 describe("emitNotifications email gating", () => {
-  it("attempts an email send for each of the 7 enabled types", async () => {
+  it("attempts an email send for each of the 9 enabled types", async () => {
     for (const type of ALL_TYPES) {
       const { db } = mockDb();
       const email = fakeEmail(async () => ({ messageId: "m1" }));
@@ -64,6 +64,11 @@ describe("emitNotifications email gating", () => {
       .toBe("You have been assigned as the photographer for 12 Kings Road.");
     expect(notificationCopy("assigned_to_project", "12 Kings Road", "editor").body)
       .toBe("You have been assigned as the editor for 12 Kings Road.");
+  });
+
+  it("has stable fallback copy for collaboration events", () => {
+    expect(notificationCopy("mentioned")).toEqual({ title: "You were mentioned", body: "You were mentioned." });
+    expect(notificationCopy("subtask_assigned", "12 Kings Road")).toEqual({ title: "Subtask assigned", body: "You have been assigned a subtask in 12 Kings Road." });
   });
 
   it("does not attempt an email send when `email` or `fromAddress` is omitted", async () => {

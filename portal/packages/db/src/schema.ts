@@ -722,9 +722,22 @@ export const noticeBoardPosts = sqliteTable(
     id: id(),
     authorId: text("author_id").notNull().references(() => user.id),
     body: text("body").notNull(),
+    contentJson: text("content_json"),
     createdAt: createdAt(),
+    editedAt: integer("edited_at", { mode: "timestamp_ms" }),
   },
   (t) => [index("notice_board_posts_created_idx").on(t.createdAt)],
+);
+
+export const noticeBoardPostMentions = sqliteTable(
+  "notice_board_post_mentions",
+  {
+    id: id(),
+    postId: text("post_id").notNull().references(() => noticeBoardPosts.id, { onDelete: "cascade" }),
+    mentionedUserId: text("mentioned_user_id").notNull().references(() => user.id),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("notice_board_post_mentions_unique").on(t.postId, t.mentionedUserId)],
 );
 
 /* ------------------------------------------------------ publish & links */

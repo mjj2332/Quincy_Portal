@@ -10,7 +10,7 @@ vi.mock("../lib/api", async (importOriginal) => {
   return { ...actual, apiGet: (path: string) => apiGetMock(path) };
 });
 vi.mock("../lib/capabilities", () => ({
-  useCapabilities: () => ({ role: "photographer", capabilities: ["viewRaw"], can: () => false }),
+  useCapabilities: () => ({ role: "photographer", capabilities: ["viewRaw", "viewNoticeBoard"], can: (capability: string) => capability === "viewNoticeBoard" }),
 }));
 
 let root: Root | null = null;
@@ -23,7 +23,12 @@ async function render(value: ReactNode) {
 describe("Dashboard notice-board capability gate", () => {
   beforeEach(() => {
     apiGetMock.mockReset();
-    apiGetMock.mockImplementation((path) => path === "/api/projects" ? Promise.resolve({ projects: [] }) : Promise.resolve({ stages: [] }));
+    apiGetMock.mockImplementation((path) => {
+      if (path === "/api/projects") return Promise.resolve({ projects: [] });
+      if (path.startsWith("/api/notice-board/posts/latest")) return Promise.resolve({ id: null, createdAt: null });
+      if (path.startsWith("/api/notice-board/posts")) return Promise.resolve({ posts: [] });
+      return Promise.resolve({ stages: [] });
+    });
     const host = document.createElement("div");
     document.body.appendChild(host);
     root = createRoot(host);
@@ -34,8 +39,8 @@ describe("Dashboard notice-board capability gate", () => {
     document.body.replaceChildren();
   });
 
-  it("does not render NoticeBoard for a photographer", async () => {
+  it("renders NoticeBoard for a photographer", async () => {
     await render(<Dashboard currentUserId="photographer-1" />);
-    expect(document.querySelector('[aria-label="Notice board"]')).toBeNull();
+    expect(document.querySelector('[aria-label="Notice board"]')).not.toBeNull();
   });
 });

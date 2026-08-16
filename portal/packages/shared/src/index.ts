@@ -10,3 +10,4 @@ export * from "./staff-routes";
 export * from "./dropbox-paths";
 export * from "./autohdr";
 export * from "./dashboard-order";
+export * from "./rich-text";

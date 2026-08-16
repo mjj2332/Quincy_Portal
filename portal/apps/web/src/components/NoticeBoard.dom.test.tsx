@@ -7,13 +7,15 @@ import { NoticeBoard, type NoticeBoardPost } from "./NoticeBoard";
 const apiGetMock = vi.fn<(path: string) => Promise<unknown>>();
 const apiPostMock = vi.fn<(path: string, body: unknown) => Promise<unknown>>();
 const apiDeleteMock = vi.fn<(path: string) => Promise<unknown>>();
+const apiPatchMock = vi.fn<(path: string, body: unknown) => Promise<unknown>>();
 vi.mock("../lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/api")>();
-  return { ...actual, apiGet: (path: string) => apiGetMock(path), apiPost: (path: string, body: unknown) => apiPostMock(path, body), apiDelete: (path: string) => apiDeleteMock(path) };
+  return { ...actual, apiGet: (path: string) => apiGetMock(path), apiPost: (path: string, body: unknown) => apiPostMock(path, body), apiPatch: (path: string, body: unknown) => apiPatchMock(path, body), apiDelete: (path: string) => apiDeleteMock(path) };
 });
 
-const oldPost: NoticeBoardPost = { id: "post-old", authorId: "user-a", authorName: "A", body: "Old notice", createdAt: "2026-07-28T00:00:00.000Z" };
-const newPost: NoticeBoardPost = { id: "post-new", authorId: "user-b", authorName: "B", body: "New notice", createdAt: "2026-07-28T00:00:01.000Z" };
+const doc = (text: string) => ({ type: "doc" as const, content: [{ type: "paragraph" as const, content: [{ type: "text" as const, text }] }] });
+const oldPost: NoticeBoardPost = { id: "post-old", authorId: "user-a", authorName: "A", body: "Old notice", content: doc("Old notice"), createdAt: "2026-07-28T00:00:00.000Z", editedAt: null };
+const newPost: NoticeBoardPost = { id: "post-new", authorId: "user-b", authorName: "B", body: "New notice", content: doc("New notice"), createdAt: "2026-07-28T00:00:01.000Z", editedAt: null };
 let root: Root | null = null;
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -36,6 +38,22 @@ async function click(element: Element) {
   await act(async () => { element.dispatchEvent(new MouseEvent("click", { bubbles: true })); await Promise.resolve(); await Promise.resolve(); });
 }
 
+async function typeIntoEditor(editor: HTMLElement, text: string) {
+  await act(async () => {
+    editor.focus();
+    editor.textContent = text;
+    editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: text }));
+    await Promise.resolve(); await Promise.resolve();
+  });
+}
+
+async function keydown(editor: HTMLElement, key: string, modifiers: KeyboardEventInit = {}) {
+  await act(async () => {
+    editor.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key, ...modifiers }));
+    await Promise.resolve(); await Promise.resolve();
+  });
+}
+
 async function advance(milliseconds: number) {
   await act(async () => { await vi.advanceTimersByTimeAsync(milliseconds); });
 }
@@ -53,8 +71,10 @@ beforeEach(() => {
   apiGetMock.mockReset();
   apiPostMock.mockReset();
   apiDeleteMock.mockReset();
+  apiPatchMock.mockReset();
   apiPostMock.mockResolvedValue(newPost);
   apiDeleteMock.mockResolvedValue({ ok: true });
+  apiPatchMock.mockResolvedValue({ ...oldPost, body: "Edited", content: doc("Edited"), editedAt: "2026-07-28T00:01:00.000Z" });
 });
 
 afterEach(async () => {
@@ -178,7 +198,7 @@ describe("NoticeBoard disclosure and polling", () => {
     expect(host.querySelector('[aria-label="New notice"]')).not.toBeNull();
   });
 
-  it("scopes the seen cursor per account and only offers author deletes", async () => {
+  it("scopes the seen cursor per account and only offers author controls", async () => {
     window.localStorage.setItem("quincy:dashboard:noticeboard:seen:user-a", newPost.id);
     window.localStorage.setItem("quincy:dashboard:noticeboard:v2", "true");
     apiGetMock.mockResolvedValue({ posts: [newPost, { ...oldPost, authorId: "user-a" }] });
@@ -186,7 +206,147 @@ describe("NoticeBoard disclosure and polling", () => {
     await render(<NoticeBoard currentUserId="user-b" />);
     expect(window.localStorage.getItem("quincy:dashboard:noticeboard:seen:user-b")).toBe(newPost.id);
     expect(host.querySelectorAll(".notice-board__delete")).toHaveLength(1);
+    expect(host.querySelectorAll(".notice-board__edit")).toHaveLength(1);
     await click(host.querySelector(".notice-board__delete")!);
     expect(apiDeleteMock).toHaveBeenCalledWith("/api/notice-board/posts/post-new");
+  });
+
+  it("opens an author edit composer and cancels without sending a PATCH", async () => {
+    apiGetMock.mockResolvedValue({ posts: [oldPost] });
+    const host = mount();
+    await render(<NoticeBoard currentUserId="user-a" />);
+    await click(host.querySelector(".notice-board__edit")!);
+    expect(host.textContent).toContain("Save");
+    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Cancel")!);
+    expect(apiPatchMock).not.toHaveBeenCalled();
+  });
+
+  it("renders rich lists and safe external links", async () => {
+    const formatted: NoticeBoardPost = {
+      ...oldPost,
+      content: {
+        type: "doc",
+        content: [
+          { type: "bulletList", content: [{ type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "Bullet" }] }] }] },
+          { type: "orderedList", content: [{ type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "First" }] }] }] },
+          { type: "paragraph", content: [{ type: "text", text: "Studio", marks: [{ type: "link", href: "https://example.test/guide" }] }] },
+        ],
+      },
+    };
+    apiGetMock.mockResolvedValue({ posts: [formatted] });
+    const host = mount();
+    await render(<NoticeBoard currentUserId="user-b" />);
+    expect(host.querySelector(".notice-board__post ul")?.textContent).toContain("Bullet");
+    expect(host.querySelector(".notice-board__post ol")?.textContent).toContain("First");
+    const link = host.querySelector<HTMLAnchorElement>('.notice-board__post a[href="https://example.test/guide"]')!;
+    expect(link).not.toBeNull();
+    expect(link.target).toBe("_blank");
+    expect(link.rel).toBe("noopener noreferrer");
+  });
+
+  it("posts the typed rich-text document payload", async () => {
+    apiGetMock.mockResolvedValue({ posts: [] });
+    const host = mount();
+    await render(<NoticeBoard currentUserId="user-a" />);
+    const editor = host.querySelector<HTMLElement>('[contenteditable="true"]')!;
+    await typeIntoEditor(editor, "A typed notice");
+    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Post notice")!);
+    expect(apiPostMock).toHaveBeenCalledWith("/api/notice-board/posts", { content: doc("A typed notice") });
+  });
+
+  it("saves an author edit with the edited rich-text PATCH payload", async () => {
+    apiGetMock.mockResolvedValue({ posts: [oldPost] });
+    const host = mount();
+    await render(<NoticeBoard currentUserId="user-a" />);
+    await click(host.querySelector(".notice-board__edit")!);
+    const editor = host.querySelector<HTMLElement>('[contenteditable="true"]')!;
+    await typeIntoEditor(editor, "Saved edit");
+    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Save")!);
+    expect(apiPatchMock).toHaveBeenCalledWith("/api/notice-board/posts/post-old", { content: doc("Saved edit") });
+  });
+
+  it("selects a mention with the keyboard and includes it in the submitted document", async () => {
+    apiGetMock.mockImplementation((path) => path.includes("mentionable-users")
+      ? Promise.resolve({ users: [{ id: "user-mention", name: "Nora Mention", role: "editor" }] })
+      : Promise.resolve({ posts: [] }));
+    const host = mount();
+    await render(<NoticeBoard currentUserId="user-a" />);
+    const editor = host.querySelector<HTMLElement>('[contenteditable="true"]')!;
+    await typeIntoEditor(editor, "hi @Nor");
+    await flush();
+    const listbox = host.querySelector<HTMLElement>('[role="listbox"]')!;
+    expect(listbox).not.toBeNull();
+    expect(editor.getAttribute("role")).toBe("combobox");
+    expect(editor.getAttribute("aria-controls")).toBe(listbox.id);
+    expect(editor.getAttribute("aria-activedescendant")).toBe(listbox.querySelector('[role="option"]')?.id);
+    await keydown(editor, "ArrowDown");
+    await keydown(editor, "Enter");
+    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Post notice")!);
+    expect(apiPostMock).toHaveBeenCalledWith("/api/notice-board/posts", {
+      content: {
+        type: "doc",
+        content: [{
+          type: "paragraph",
+          content: [
+            { type: "text", text: "hi " },
+            { type: "mention", attrs: { id: "user-mention", label: "Nora Mention" } },
+            { type: "text", text: " " },
+          ],
+        }],
+      },
+    });
+  });
+
+  it("accepts a bare @ mention with Enter without adding a paragraph", async () => {
+    apiGetMock.mockImplementation((path) => path.includes("mentionable-users")
+      ? Promise.resolve({ users: [{ id: "user-mention", name: "Nora Mention", role: "editor" }] })
+      : Promise.resolve({ posts: [] }));
+    const host = mount();
+    await render(<NoticeBoard currentUserId="user-a" />);
+    const editor = host.querySelector<HTMLElement>('[contenteditable="true"]')!;
+    await typeIntoEditor(editor, "@");
+    await flush();
+    await keydown(editor, "Enter");
+    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Post notice")!);
+    expect(apiPostMock).toHaveBeenCalledWith("/api/notice-board/posts", {
+      content: {
+        type: "doc",
+        content: [{
+          type: "paragraph",
+          content: [
+            { type: "mention", attrs: { id: "user-mention", label: "Nora Mention" } },
+            { type: "text", text: " " },
+          ],
+        }],
+      },
+    });
+  });
+
+  it("submits with Cmd or Ctrl+Enter without adding a paragraph", async () => {
+    apiGetMock.mockResolvedValue({ posts: [] });
+    const host = mount();
+    await render(<NoticeBoard currentUserId="user-a" />);
+    const editor = host.querySelector<HTMLElement>('[contenteditable="true"]')!;
+    await typeIntoEditor(editor, "Submit this");
+    await keydown(editor, "Enter", { metaKey: true });
+    expect(apiPostMock).toHaveBeenCalledWith("/api/notice-board/posts", { content: doc("Submit this") });
+    expect(editor.querySelectorAll("p")).toHaveLength(1);
+    apiPostMock.mockClear();
+    await typeIntoEditor(editor, "Submit with Ctrl");
+    await keydown(editor, "Enter", { ctrlKey: true });
+    expect(apiPostMock).toHaveBeenCalledWith("/api/notice-board/posts", { content: doc("Submit with Ctrl") });
+    expect(editor.querySelectorAll("p")).toHaveLength(1);
+  });
+
+  it("keeps the draft and shows an error when publishing fails", async () => {
+    apiGetMock.mockResolvedValue({ posts: [] });
+    apiPostMock.mockRejectedValue(new Error("Publishing is unavailable."));
+    const host = mount();
+    await render(<NoticeBoard currentUserId="user-a" />);
+    const editor = host.querySelector<HTMLElement>('[contenteditable="true"]')!;
+    await typeIntoEditor(editor, "Draft survives");
+    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Post notice")!);
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain("Publishing is unavailable.");
+    expect(editor.textContent).toContain("Draft survives");
   });
 });
