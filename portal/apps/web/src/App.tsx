@@ -36,9 +36,10 @@ function Shell({ user }: { user: SessionUser }) {
   const canAccessAdmin = can("adminBackend");
   const canCreateProject = can("createProject");
   const canEditProject = can("editProject");
+  const canCollaborateOnProject = can("collaborateOnProject");
   const blocked = (route.kind === "admin" && !canAccessAdmin)
     || (route.kind === "create-project" && !canCreateProject)
-    || (route.kind === "edit-project" && !canEditProject);
+    || (route.kind === "edit-project" && !canEditProject && !canCollaborateOnProject);
 
   useEffect(() => {
     if (restored.current) return;

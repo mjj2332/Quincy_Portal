@@ -119,4 +119,25 @@ describe("Topbar notifications", () => {
     expect(menu).not.toBeNull();
     expect(host.querySelector(".topbar__notification-empty")).not.toBeNull();
   });
+
+  it("uses real project-collaboration links only for project mentions and subtask assignments, then marks them read without waiting", async () => {
+    const projectId = "11111111-1111-4111-8111-111111111111";
+    apiGetMock.mockResolvedValue({ notifications: [
+      { id: "project-mention", projectId, type: "mentioned", title: "You were mentioned", body: "Comment", readAt: null, createdAt: "2026-08-17T00:00:00.000Z" },
+      { id: "board-mention", projectId: null, type: "mentioned", title: "You were mentioned", body: "Notice", readAt: null, createdAt: "2026-08-17T00:00:00.000Z" },
+      { id: "project-subtask", projectId, type: "subtask_assigned", title: "Subtask assigned", body: "Checklist", readAt: null, createdAt: "2026-08-17T00:00:00.000Z" },
+      { id: "project-delivered", projectId, type: "delivered", title: "Delivered", body: null, readAt: null, createdAt: "2026-08-17T00:00:00.000Z" },
+    ], unreadCount: 4 });
+    const host = document.body.firstElementChild as HTMLElement;
+    await render(host); await click(host.querySelector<HTMLButtonElement>(".topbar__notification-trigger")!);
+    const links = host.querySelectorAll<HTMLAnchorElement>(`a[href="/projects/${projectId}/edit"]`);
+    expect(links).toHaveLength(2); expect([...links].map((link) => link.textContent)).toEqual(expect.arrayContaining([expect.stringContaining("You were mentioned"), expect.stringContaining("Subtask assigned")]));
+    const link = links[0]!;
+    expect(link.getAttribute("role")).toBe("menuitem");
+    expect([...host.querySelectorAll("button.topbar__notification-item")].map((button) => button.textContent)).toEqual(expect.arrayContaining([expect.stringContaining("You were mentioned"), expect.stringContaining("Delivered")]));
+    expect(host.querySelectorAll("button.topbar__notification-item")).toHaveLength(2);
+    await click(link);
+    expect(apiPostMock).toHaveBeenCalledWith("/api/notifications/project-mention/read", {});
+    expect(host.querySelector('[role="menu"]')).toBeNull();
+  });
 });

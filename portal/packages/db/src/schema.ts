@@ -189,6 +189,32 @@ export const projectMembers = sqliteTable(
   ],
 );
 
+/** Shared discussion scoped to explicit project participants and active admins. */
+export const projectComments = sqliteTable(
+  "project_comments",
+  {
+    id: id(),
+    projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+    authorId: text("author_id").notNull().references(() => user.id),
+    body: text("body").notNull(),
+    contentJson: text("content_json").notNull(),
+    createdAt: createdAt(),
+    editedAt: integer("edited_at", { mode: "timestamp_ms" }),
+  },
+  (t) => [index("project_comments_project_created_idx").on(t.projectId, t.createdAt, t.id)],
+);
+
+export const projectCommentMentions = sqliteTable(
+  "project_comment_mentions",
+  {
+    id: id(),
+    commentId: text("comment_id").notNull().references(() => projectComments.id, { onDelete: "cascade" }),
+    mentionedUserId: text("mentioned_user_id").notNull().references(() => user.id),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("project_comment_mentions_unique").on(t.commentId, t.mentionedUserId)],
+);
+
 /** Short-lived, user-scoped handoff from a selection POST to a streamed ZIP GET. */
 export const downloadSelectionTickets = sqliteTable(
   "download_selection_tickets",

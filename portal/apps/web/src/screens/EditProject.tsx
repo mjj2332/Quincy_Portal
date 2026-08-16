@@ -4,6 +4,7 @@ import { ProjectFields, emptyProjectForm, type ProjectFieldError, type ProjectFo
 import { apiGet, apiPatch, apiPost } from "../lib/api";
 import { useCapabilities } from "../lib/capabilities";
 import { InternalLink } from "../components/InternalLink";
+import { ProjectCollaborationPanel } from "../components/ProjectCollaborationPanel";
 
 type ProjectResponse = {
   id: string; street: string; suburb: string | null; postcode: string | null; agencyName: string | null; agentName: string | null; agentEmail: string | null; agentPhone: string | null;
@@ -32,6 +33,7 @@ export function editProjectPayload(form: ProjectForm): Record<string, unknown> {
 
 export function EditProject({ projectId, onNavigate }: { projectId: string; onNavigate: (path: string, notice?: string, replace?: boolean) => void }) {
   const { can } = useCapabilities();
+  const canEditProject = can("editProject");
   const [project, setProject] = useState<ProjectResponse>();
   const [form, setForm] = useState<ProjectForm>(emptyProjectForm);
   const [errors, setErrors] = useState<FormErrors>({});
@@ -44,11 +46,12 @@ export function EditProject({ projectId, onNavigate }: { projectId: string; onNa
   const [isDangerAction, setIsDangerAction] = useState(false);
 
   useEffect(() => {
+    if (!canEditProject) return;
     let alive = true;
     setLoadError(undefined);
     void apiGet<ProjectResponse>(`/api/projects/${projectId}`).then((response) => { if (alive) { setProject(response); setForm(formFromProject(response)); } }).catch((reason: unknown) => { if (alive) setLoadError(reason instanceof Error ? reason.message : "Project details could not be loaded."); });
     return () => { alive = false; };
-  }, [projectId]);
+  }, [canEditProject, projectId]);
 
   function updateField(field: ProjectTextField, value: string) {
     setForm((current) => ({ ...current, [field]: value }));
@@ -102,20 +105,20 @@ export function EditProject({ projectId, onNavigate }: { projectId: string; onNa
     } catch (reason) { setDangerError(reason instanceof Error ? reason.message : "The project could not be deleted."); setIsDangerAction(false); }
   }
 
-  if (loadError) return <main className="page"><div className="pagehead"><h1 className="serif">Edit shoot</h1><InternalLink className="button button--secondary" to={`/projects/${encodeURIComponent(projectId)}`}>Back to workspace</InternalLink></div><div className="empty" role="alert"><span className="serif">Project unavailable.</span>{loadError}</div></main>;
-  if (!project) return <main className="page"><div className="empty"><span className="serif">Loading shoot details.</span>Preparing the form.</div></main>;
-
-  const archived = Boolean(project.archivedAt);
-  const deleteMatchesStreet = deleteConfirmation.trim().toLocaleLowerCase() === project.street.trim().toLocaleLowerCase();
+  const archived = Boolean(project?.archivedAt);
+  const deleteMatchesStreet = deleteConfirmation.trim().toLocaleLowerCase() === project?.street.trim().toLocaleLowerCase();
 
   return <main className="page create-project edit-project">
-    <div className="pagehead"><div><div className="ey" style={{ marginBottom: 14 }}>Production desk</div><h1 className="serif">Edit shoot</h1>{archived && <div className="edit-project__archived" role="status">Archived — hidden from the dashboard</div>}</div><InternalLink className="button button--secondary" to={`/projects/${encodeURIComponent(projectId)}`}>Cancel</InternalLink></div>
-    <form className="create-project__form" onSubmit={(event) => void submit(event)} noValidate>
+    <div className="pagehead"><div><div className="ey" style={{ marginBottom: 14 }}>Production desk</div><h1 className="serif">{canEditProject ? "Edit shoot" : "Project collaboration"}</h1>{archived && <div className="edit-project__archived" role="status">Archived — hidden from the dashboard</div>}</div><InternalLink className="button button--secondary" to={canEditProject ? `/projects/${encodeURIComponent(projectId)}` : "/"}>{canEditProject ? "Cancel" : "Dashboard"}</InternalLink></div>
+    <div className="edit-project__layout">
+    {canEditProject && (project ? <form className="create-project__form" onSubmit={(event) => void submit(event)} noValidate>
       {submitError && <div className="notice" role="alert">{submitError}</div>}
       <section className="create-project__section" aria-labelledby="property-heading"><div className="create-project__section-head"><div className="ey">Property</div><h2 className="serif" id="property-heading">Where is the shoot?</h2></div><div className="create-project__fields create-project__fields--property"><label className="admin-field create-project__field--wide"><span>Street *</span><input required value={form.street} onChange={(event) => updateField("street", event.target.value)} aria-invalid={Boolean(errors.street)} />{errors.street && <small>{errors.street}</small>}</label><label className="admin-field"><span>Suburb</span><input value={form.suburb} onChange={(event) => updateField("suburb", event.target.value)} /></label><label className="admin-field"><span>Postcode</span><input inputMode="numeric" value={form.postcode} onChange={(event) => updateField("postcode", event.target.value)} /></label></div></section>
       <ProjectFields form={form} errors={errors} existingCollections={project.collections.map((collection) => collection.kind)} mode="edit" onChange={updateField} onToggle={toggleValue} />
       <div className="create-project__actions"><InternalLink className="button button--secondary" to={`/projects/${encodeURIComponent(projectId)}`} aria-disabled={isSubmitting}>Cancel</InternalLink><button className="button" type="submit" disabled={isSubmitting}>{isSubmitting ? "Saving details…" : "Save changes"}</button></div>
-    </form>
-    {can("adminBackend") && <section className="danger-zone" aria-labelledby="danger-zone-heading"><div><div className="ey">Danger zone</div><h2 className="serif" id="danger-zone-heading">Project lifecycle</h2></div>{dangerError && <div className="notice" role="alert">{dangerError}</div>}{dangerNotice && <div className="danger-zone__notice" role="status">{dangerNotice}</div>}{!archived ? <div className="danger-zone__action"><div><strong>Archive project</strong><p>Archived projects are hidden from the dashboard but remain recoverable.</p></div><button className="button button--secondary" type="button" disabled={isDangerAction} onClick={() => void archiveProject()}>{isDangerAction ? "Archiving…" : "Archive project"}</button></div> : <><div className="danger-zone__action"><div><strong>Restore project</strong><p>Return this project to the dashboard and active production work.</p></div><button className="button button--secondary" type="button" disabled={isDangerAction} onClick={() => void restoreProject()}>{isDangerAction ? "Restoring…" : "Restore project"}</button></div><div className="danger-zone__delete"><div><strong>Delete project permanently</strong><p>All media in cloud storage will be erased. This cannot be undone.</p></div><label className="admin-field"><span>Type “{project.street}” to confirm</span><input value={deleteConfirmation} onChange={(event) => setDeleteConfirmation(event.target.value)} autoComplete="off" /></label><button className="button danger-zone__button" type="button" disabled={isDangerAction || !deleteMatchesStreet} onClick={() => void deleteProject()}>{isDangerAction ? "Deleting…" : "Delete project permanently"}</button></div></>}</section>}
+    </form> : <div className="empty" role={loadError ? "alert" : "status"}><span className="serif">{loadError ? "Project details unavailable." : "Loading shoot details."}</span>{loadError ?? "Preparing the form."}</div>)}
+    <ProjectCollaborationPanel projectId={projectId} />
+    </div>
+    {canEditProject && project && can("adminBackend") && <section className="danger-zone" aria-labelledby="danger-zone-heading"><div><div className="ey">Danger zone</div><h2 className="serif" id="danger-zone-heading">Project lifecycle</h2></div>{dangerError && <div className="notice" role="alert">{dangerError}</div>}{dangerNotice && <div className="danger-zone__notice" role="status">{dangerNotice}</div>}{!archived ? <div className="danger-zone__action"><div><strong>Archive project</strong><p>Archived projects are hidden from the dashboard but remain recoverable.</p></div><button className="button button--secondary" type="button" disabled={isDangerAction} onClick={() => void archiveProject()}>{isDangerAction ? "Archiving…" : "Archive project"}</button></div> : <><div className="danger-zone__action"><div><strong>Restore project</strong><p>Return this project to the dashboard and active production work.</p></div><button className="button button--secondary" type="button" disabled={isDangerAction} onClick={() => void restoreProject()}>{isDangerAction ? "Restoring…" : "Restore project"}</button></div><div className="danger-zone__delete"><div><strong>Delete project permanently</strong><p>All media in cloud storage will be erased. This cannot be undone.</p></div><label className="admin-field"><span>Type “{project.street}” to confirm</span><input value={deleteConfirmation} onChange={(event) => setDeleteConfirmation(event.target.value)} autoComplete="off" /></label><button className="button danger-zone__button" type="button" disabled={isDangerAction || !deleteMatchesStreet} onClick={() => void deleteProject()}>{isDangerAction ? "Deleting…" : "Delete project permanently"}</button></div></>}</section>}
   </main>;
 }
