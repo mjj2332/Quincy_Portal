@@ -1,8 +1,8 @@
 # Collaboration Rich Text, Mentions, and Subtasks — Plan
 
-> **Status: Phases 1 and 2 implemented, reviewed, and deployed to production 2026-08-17 (Phase 1
-> commit `df4844e`, migration `0025`; Phase 2 commit `6525ed1`, migration `0026`). Phase 3 not
-> started — this plan stays in `docs/plans/` until all three phases ship.**
+> **Status: IMPLEMENTED — all three phases deployed to production 2026-08-17 (Phase 1 commit
+> `df4844e`, migration `0025`; Phase 2 commit `6525ed1`, migration `0026`; Phase 3 commit
+> `10d88de`, migration `0027`). Filed to `docs/plans/implemented/`.**
 > Planning history: Terra draft → two Terra self-review rounds → two independent Opus plan-tier
 > reviews, each reverted to Terra for revision (reverts 1 and 2 of at most 2, exhausted) → a third
 > Opus review that found 5 required and 2 optional wording-level issues, resolved by a direct Opus
@@ -40,6 +40,27 @@
 > applied to `quincy-portal` remote D1 (schema confirmed via direct query), `app` Worker deployed,
 > and a live production smoke check confirmed `GET /api/projects/:id/comments` responding 200 with
 > the panel rendering correctly and no console errors.
+>
+> **Phase 3 build history (highest risk — refactored the already-shipped
+> `syncMembers()`/project-PATCH membership path):** Terra build → the orchestrating session's own
+> test run caught a real bug in the build's own test suite (a duplicate-row test-setup error that
+> made the single most important test in this phase fail outright; fixed by removing the redundant
+> insert) and personally read the atomic membership-sync/subtask-clear refactor line-by-line before
+> trusting it → a fresh Terra diff review independently confirmed that refactor sound and found one
+> other issue (a frontend reconciliation bug: reordering a subtask left the swapped neighbor's
+> local position stale until a reload) → fixed and re-verified → an Opus final-draft review
+> re-derived the refactor's correctness from scratch a third time — including running the
+> move-endpoint's swap SQL against real SQLite to rule out a partial-update race — and approved
+> with 9 non-blocking findings. Two were real bugs, fixed directly by the orchestrating session
+> (two undefined CSS custom-property references — `--type-h4`, `--text-tertiary` — and an
+> `aria-live` region pulled out of the accessibility tree while empty); the highest-value remaining
+> gap (a missing test for the "removed from one role, added to another in the same request" case —
+> the one specific scenario that exercises the atomic batch's insert-before-clear ordering) was
+> closed with a fourth independent confirmation the refactor is correct, which now passes for real.
+> Live rollout: migration applied to `quincy-portal` remote D1 (schema confirmed via direct query),
+> `app` Worker deployed, and a full live production smoke test (add → render with working
+> assignee/due-date/move/delete controls → delete) completed cleanly with no console errors and no
+> test data left behind.
 
 ## Outcome and boundaries
 

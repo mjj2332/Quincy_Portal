@@ -7,8 +7,41 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
 > counts, full diagnostic transcripts) has been cut in favor of what/when/deploy-state. See
 > `docs/lessons.md` for incident mechanics, and `docs/reviews/` for full QA-sweep detail.
 
-## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29, seed-admin UUID migration 2026-07-29, notification dismiss + stalled-guard 2026-07-30, download selection 2026-08-04, notice-board rich text + mentions 2026-08-17, project comments + collaboration panel 2026-08-17)
+## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29, seed-admin UUID migration 2026-07-29, notification dismiss + stalled-guard 2026-07-30, download selection 2026-08-04, notice-board rich text + mentions 2026-08-17, project comments + collaboration panel 2026-08-17, project subtasks/checklist 2026-08-17)
 
+- **Project subtasks/checklist (Phase 3 of 3 — collaboration plan complete), deployed 2026-08-17
+  (`Collaboration-Rich-Text-Mentions-Subtasks-Plan.md`, migration `0027_project_subtasks.sql`,
+  commit `10d88de`).** A flat, ordered checklist per project inside Phase 2's collaboration panel:
+  title, done state, optional single assignee (current project members/admins only), optional
+  due date (validated as a calendar-real `YYYY-MM-DD` string, never `Date`-parsed). Subtasks are
+  shared project state — any current participant or admin can create/complete/edit/reorder/delete
+  any item, deliberately not author-only like Phase 1/2's posts and comments. Assignment
+  notifies (in-app + email, versioned/retry-safe source key); completion does not.
+  The highest-risk piece: refactoring the already-shipped, production `syncMembers()`/project-PATCH
+  membership path into a single atomic D1 batch that also clears a user's subtask assignments when
+  they lose their last project role in that same request — without disturbing the existing
+  `notifyProjectAssignments()` contract. Deactivation and admin-role-demotion deliberately stay
+  outside that scrub (a stale, non-notifying assignee reference), per the plan's own scoped
+  judgment call. This refactor was independently re-derived as correct **four separate times**:
+  by this session's own line-by-line read, by a fresh Terra diff review, by an Opus final-draft
+  review that additionally ran the move-endpoint's swap SQL against real SQLite to rule out a
+  partial-update race, and by a final regression test (added after Opus flagged it as the one
+  remaining untested branch) that exercises the exact "removed from one role, added to another in
+  the same request" case and passes for real. Along the way: this session's own test run caught a
+  real bug in the build's own test suite (a duplicate-row test-setup error that made the single
+  most important test in this phase fail outright — fixed by removing the redundant insert, since
+  the membership already existed from `beforeAll`); a fresh Terra diff review found and a fix
+  closed a frontend bug where reordering a subtask left the swapped neighbor's local position
+  stale until a reload; and this session directly fixed two small bugs an Opus review flagged as
+  non-blocking (two CSS custom-property typos — `--type-h4` and `--text-tertiary` don't exist in
+  this app's token set — and an `aria-live` region that was pulled out of the accessibility tree
+  while empty via `:empty { display: none }`, which could cause the first error announcement to be
+  missed). Live rollout: migration applied to `quincy-portal` remote D1 (schema confirmed via
+  direct query), `app` Worker deployed, and a full live production smoke test — add a subtask,
+  confirm it renders with working assignee/due-date/move/delete controls, delete it — completed
+  cleanly with no console errors and no test data left behind. **All three phases of the
+  collaboration plan are now live**; see
+  `docs/plans/implemented/Collaboration-Rich-Text-Mentions-Subtasks-Plan.md` for full history.
 - **Project comments + EditProject collaboration panel (Phase 2 of 3), deployed 2026-08-17
   (`Collaboration-Rich-Text-Mentions-Subtasks-Plan.md`, migration `0026_project_comments.sql`,
   commit `6525ed1`).** Reuses Phase 1's rich-text editor/renderer/mention infrastructure unchanged;
