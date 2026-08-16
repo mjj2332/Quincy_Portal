@@ -1,7 +1,7 @@
 # Collaboration Rich Text, Mentions, and Subtasks — Plan
 
-> **Status: Phase 1 implemented, reviewed, and deployed to production 2026-08-17 (commit
-> `df4844e`, migration `0025_collaboration_rich_text_notice_mentions.sql`). Phases 2 and 3 not
+> **Status: Phases 1 and 2 implemented, reviewed, and deployed to production 2026-08-17 (Phase 1
+> commit `df4844e`, migration `0025`; Phase 2 commit `6525ed1`, migration `0026`). Phase 3 not
 > started — this plan stays in `docs/plans/` until all three phases ship.**
 > Planning history: Terra draft → two Terra self-review rounds → two independent Opus plan-tier
 > reviews, each reverted to Terra for revision (reverts 1 and 2 of at most 2, exhausted) → a third
@@ -24,6 +24,22 @@
 > remote D1 (schema confirmed via direct query), `app` Worker deployed, and a live production smoke
 > check confirmed the new endpoint responding 200 with the rich-text UI rendering correctly and no
 > console errors.
+>
+> **Phase 2 build history:** Terra build → a fresh Terra diff review confirmed the
+> access-before-existence ordering was correct on every route (the same class of ordering mistake
+> was Phase 1's own blocking Opus finding) but found test coverage thin in three places (mentions/
+> pagination/inactive-targets in the Worker suite; no DOM test at all for the new collaboration
+> panel or its collaboration-only render path; only one of two allowed notification deep-link
+> types tested) → a test-only fix pass closed all three, independently re-verified → a final
+> read-only Terra pass approved (one remaining nitpick judged already-satisfied by the
+> orchestrating session rather than looped on — see `docs/todo.md`). An Opus final-draft review
+> re-verified the access-before-existence ordering line-by-line in all five route handlers, traced
+> the FK cascade against the live production hard-delete path, and approved with only non-blocking
+> nits — two applied directly (a CSS grid-column bug affecting the panel's width for
+> collaboration-only users; a stale `CLAUDE.md` migration-range note). Live rollout: migration
+> applied to `quincy-portal` remote D1 (schema confirmed via direct query), `app` Worker deployed,
+> and a live production smoke check confirmed `GET /api/projects/:id/comments` responding 200 with
+> the panel rendering correctly and no console errors.
 
 ## Outcome and boundaries
 
