@@ -7,8 +7,42 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
 > counts, full diagnostic transcripts) has been cut in favor of what/when/deploy-state. See
 > `docs/lessons.md` for incident mechanics, and `docs/reviews/` for full QA-sweep detail.
 
-## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29, seed-admin UUID migration 2026-07-29, notification dismiss + stalled-guard 2026-07-30, download selection 2026-08-04)
+## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29, seed-admin UUID migration 2026-07-29, notification dismiss + stalled-guard 2026-07-30, download selection 2026-08-04, notice-board rich text + mentions 2026-08-17)
 
+- **Notice-board rich text + @mentions (Phase 1 of 3), deployed 2026-08-17
+  (`Collaboration-Rich-Text-Mentions-Subtasks-Plan.md`, migration
+  `0025_collaboration_rich_text_notice_mentions.sql`, commit `df4844e`).** Staff notice board gets
+  a shared, server-validated rich-text format (bold/italic/lists/links/@mentions — a small JSON
+  contract in `packages/shared/src/rich-text.ts`, not raw HTML; the parser is a strict whitelist
+  that rebuilds every node fresh rather than trusting client structure), a reusable TipTap
+  editor/renderer pair, and an active-staff mention lookup endpoint (`{id,name,role}`, never
+  email). `viewNoticeBoard` now opens both viewing and posting to every active staff role,
+  including photographers. Mentions notify in-app + email through the existing pipeline, with
+  send-time eligibility re-checks and versioned/mapping-row source keys so retries can't
+  double-deliver. Posts gain author-only edit (admins not exempt) alongside the existing delete.
+  Cleared Terra draft → 2 Terra self-reviews → 2 Opus plan-tier review-and-revert rounds → an Opus
+  self-edit (revert budget exhausted) → final Opus plan approval, then build → a fresh Terra diff
+  review (found and fixed: a missing `drizzle-kit` snapshot that would have let the next
+  `generate` regenerate a duplicate migration — same failure class as the 2026-07-30 incident
+  below; a mention-autocomplete accessibility bug with `aria-activedescendant` on a non-focused
+  element; missing required test coverage) → a Terra final pass (approved) → an Opus final-draft
+  review, which found one real blocker: pressing **Enter** to accept a mention corrupted the post,
+  because ProseMirror's own native `keydown` listener on the contenteditable fires before React's
+  synthetic `onKeyDown` on a wrapper element ever runs, so PM's default paragraph-split had already
+  applied by the time the React handler tried to intercept it — fixed by moving the interception
+  into TipTap's own `editorProps.handleKeyDown` hook, which runs inside PM's own event pipeline.
+  Also independently caught and fixed in this session: a fabricated `@tiptap/*` npm version
+  (`2.26.2`, which doesn't exist on the registry) corrected to the real latest 2.x release
+  (`2.27.2`), and a test-mock shape bug that crashed `NoticeBoard` in tests. One Terra sub-agent
+  run genuinely stalled for ~2.5 hours retrying a Workers/Miniflare test command its own sandbox
+  structurally can't run (repeating log content, near-zero CPU relative to wall clock) — killed,
+  its actual code changes verified correct on disk, and the fix confirmed independently instead of
+  waiting on it. Live rollout: migration applied to `quincy-portal` remote D1 (confirmed via direct
+  schema query), `app` Worker deployed, and a live production smoke check confirmed the new
+  `GET /api/notice-board/posts` endpoint responding 200 with the new rich-text UI rendering
+  correctly (toolbar, mention hint, author-only Edit/Delete) and no console errors. Phases 2
+  (project comments) and 3 (subtasks/checklist) remain unbuilt; the plan stays in `docs/plans/`
+  until all three ship.
 - **"Download selection" multi-select button, deployed 2026-08-04
   (`Download-Selection-Plan.md`, migration `0024_download_selection_tickets.sql`, commit
   `538a020`).** Lets a user download an ad-hoc ZIP of just their checked RAW or Edited photos from

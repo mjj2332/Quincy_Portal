@@ -1,14 +1,29 @@
 # Collaboration Rich Text, Mentions, and Subtasks — Plan
 
-> **Status: APPROVED — plan only; not implemented, committed, migrated, or deployed.**
-> History: Terra draft → two Terra self-review rounds → two independent Opus plan-tier reviews,
-> each reverted to Terra for revision (reverts 1 and 2 of at most 2, now exhausted) → a third Opus
-> review that found 5 required and 2 optional wording-level issues. Because the two-revert budget
-> was spent, those issues were resolved by the direct Opus self-edit permitted as the terminal case
-> in [`docs/Subagent-Orchestration.md`](../Subagent-Orchestration.md) §2 policy 1/4, scoped strictly
-> to this plan document and touching no implementation code. A final, fresh Opus self-review
-> approved that edit on 2026-08-16 with no further changes required. The plan is ready for
-> implementation; no phase has started yet.
+> **Status: Phase 1 implemented, reviewed, and deployed to production 2026-08-17 (commit
+> `df4844e`, migration `0025_collaboration_rich_text_notice_mentions.sql`). Phases 2 and 3 not
+> started — this plan stays in `docs/plans/` until all three phases ship.**
+> Planning history: Terra draft → two Terra self-review rounds → two independent Opus plan-tier
+> reviews, each reverted to Terra for revision (reverts 1 and 2 of at most 2, exhausted) → a third
+> Opus review that found 5 required and 2 optional wording-level issues, resolved by a direct Opus
+> self-edit (the terminal case in
+> [`docs/Subagent-Orchestration.md`](../Subagent-Orchestration.md) §2 policy 1/4) → a final, fresh
+> Opus self-review approved that edit on 2026-08-16.
+>
+> **Phase 1 build history:** Terra build → a fresh Terra diff review found and a fix pass resolved
+> 3 issues (a missing `drizzle-kit` migration snapshot, a mention-autocomplete accessibility bug,
+> missing required test coverage) → a Terra final pass approved → an Opus final-draft review found
+> 1 real blocker (pressing Enter to accept a mention corrupted the post — ProseMirror's own native
+> keydown handling ran before React's synthetic interception could stop it) plus a minor
+> LIKE-wildcard escaping nit, both fixed and independently re-verified → a final read-only Terra
+> pass approved. The orchestrating session independently ran the full verification suite
+> (typecheck, build, both test suites) at every stage and personally read the security-critical
+> diff (the rich-text parser trust boundary, the notice-board route guards) before deploying. See
+> `docs/lessons.md` for the ProseMirror/React event-ordering bug and a `codex exec` sandbox-stall
+> failure mode recorded during this build. Live rollout: migration applied to `quincy-portal`
+> remote D1 (schema confirmed via direct query), `app` Worker deployed, and a live production smoke
+> check confirmed the new endpoint responding 200 with the rich-text UI rendering correctly and no
+> console errors.
 
 ## Outcome and boundaries
 
