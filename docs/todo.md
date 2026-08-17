@@ -7,7 +7,28 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
 > counts, full diagnostic transcripts) has been cut in favor of what/when/deploy-state. See
 > `docs/lessons.md` for incident mechanics, and `docs/reviews/` for full QA-sweep detail.
 
-## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29, seed-admin UUID migration 2026-07-29, notification dismiss + stalled-guard 2026-07-30, download selection 2026-08-04, notice-board rich text + mentions 2026-08-17, project comments + collaboration panel 2026-08-17, project subtasks/checklist 2026-08-17, collaboration panel relocated to Project page 2026-08-17, collaboration panel UI fixes + due-time reminder 2026-08-17, notification click navigation 2026-08-17)
+## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29, seed-admin UUID migration 2026-07-29, notification dismiss + stalled-guard 2026-07-30, download selection 2026-08-04, notice-board rich text + mentions 2026-08-17, project comments + collaboration panel 2026-08-17, project subtasks/checklist 2026-08-17, collaboration panel relocated to Project page 2026-08-17, collaboration panel UI fixes + due-time reminder 2026-08-17, notification click navigation 2026-08-17, comment ordering + Shift+Enter soft breaks 2026-08-17)
+
+- **Project comments now show newest-first, and Shift+Enter inserts a soft line break inside
+  bullet/numbered list items in both project comments and the notice board, deployed 2026-08-17
+  (`docs/plans/implemented/Comment-Input-Shift-Enter-And-Message-Order-Plan.md`, commits `d1d6bd3`
+  then a follow-up on `main`, no migration).** Shipped as two separate, isolated deploys per the
+  plan's own Sequencing section. Feature B (ordering) flipped `project-comments.ts` to stop
+  reversing its already-descending query, and flipped `ProjectCollaborationPanel.tsx`'s
+  prepend/append and "Load older comments" button position to match — the notice board already
+  worked this way and needed no change. Feature A (soft breaks) registers Tiptap's `HardBreak`
+  node scoped to list items via a custom keyboard shortcut in the shared `RichTextEditor.tsx`, and
+  widens `@quincy/shared`'s rich-text document schema to accept `hardBreak` in any paragraph — not
+  gated to list items — because the node is also reachable via paste or lifting a list item out of
+  its list, and a list-item-gated server rule would 400 an ordinary paste with no way for the user
+  to recover. Also fixes a real regression the schema change would otherwise have introduced:
+  `mentionQuery`'s leaf-text separator didn't match its own mention-detection regex for the new
+  inline node, silently breaking `@`-mention autocomplete immediately after a soft break. Went
+  through the full plan pipeline from `docs/Subagent-Orchestration.md` (Terra draft, two Terra
+  review rounds, three Opus plan-tier review rounds — round 3, after the Terra-revert budget was
+  exhausted, found and fixed the mention regression directly, then a fresh Opus self-review
+  approved it) before any code was written, then each feature separately through
+  build → fresh-Terra-diff-review → Opus-final-draft-review → independent §5 gate.
 
 - **Notifications are now clickable to their project, in-app and by email, deployed 2026-08-17
   (`Notification-Click-Navigation-Plan.md`, commit `2285093`, no migration).** Previously only 2
