@@ -9,7 +9,7 @@ import { hasProjectAccess, hasProjectAccessForUser, requireCapability } from "..
 import { audit } from "../lib/audit";
 import { newId } from "../lib/ids";
 import { notifyProject, notifyProjectAssignments } from "../lib/notifications";
-import { insertProjectMembers, syncMembers } from "../lib/project-members";
+import { insertProjectMembers, syncProjectMembersAndClearSubtaskAssignments } from "../lib/project-members";
 import { createZipStream } from "../lib/zip-stream";
 import { jsonInput } from "./helpers";
 import { ensurePipelineStages, projectStageForRole } from "./stages";
@@ -339,10 +339,21 @@ projectsRoutes.patch("/projects/:id", async (c) => {
       photographerUserIds === undefined ? Promise.resolve(undefined) : db.select({ id: schema.projectMembers.id, userId: schema.projectMembers.userId }).from(schema.projectMembers).where(and(eq(schema.projectMembers.projectId, id), eq(schema.projectMembers.roleOnProject, "photographer"))).all(),
       editorUserIds === undefined ? Promise.resolve(undefined) : db.select({ id: schema.projectMembers.id, userId: schema.projectMembers.userId }).from(schema.projectMembers).where(and(eq(schema.projectMembers.projectId, id), eq(schema.projectMembers.roleOnProject, "editor"))).all(),
     ]);
-    const photographerResult = photographerUserIds === undefined ? undefined : await syncMembers(db, id, existingPhotographers!, photographerUserIds, "photographer");
-    const editorResult = editorUserIds === undefined ? undefined : await syncMembers(db, id, existingEditors!, editorUserIds, "editor");
+    // Derive both role diffs before making a write. The one D1 batch then performs every
+    // membership INSERT...RETURNING / DELETE plus the post-diff subtask scrub atomically.
+    const membershipPlans = [
+      ...(photographerUserIds === undefined ? [] : [{ existing: existingPhotographers!, desired: photographerUserIds, roleOnProject: "photographer" as const }]),
+      ...(editorUserIds === undefined ? [] : [{ existing: existingEditors!, desired: editorUserIds, roleOnProject: "editor" as const }]),
+    ];
+    const membershipSync = membershipPlans.length
+      ? await syncProjectMembersAndClearSubtaskAssignments(db, id, membershipPlans)
+      : undefined;
+    let resultIndex = 0;
+    const photographerResult = photographerUserIds === undefined ? undefined : membershipSync!.results[resultIndex++];
+    const editorResult = editorUserIds === undefined ? undefined : membershipSync!.results[resultIndex++];
     if (photographerResult) auditMeta.photographerMembers = photographerResult;
     if (editorResult) auditMeta.editorMembers = editorResult;
+    if (membershipSync) auditMeta.subtaskAssignmentsCleared = membershipSync.subtaskAssignmentsCleared;
     await db.update(schema.projects).set({ ...projectUpdates, updatedAt: new Date() }).where(eq(schema.projects.id, id));
     await notifyProjectAssignments(c.env, id, [
       ...(photographerResult?.added ?? []).map((userId) => ({ userId, roleOnProject: "photographer" as const })),

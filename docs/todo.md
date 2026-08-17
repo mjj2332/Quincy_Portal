@@ -7,8 +7,110 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
 > counts, full diagnostic transcripts) has been cut in favor of what/when/deploy-state. See
 > `docs/lessons.md` for incident mechanics, and `docs/reviews/` for full QA-sweep detail.
 
-## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29, seed-admin UUID migration 2026-07-29, notification dismiss + stalled-guard 2026-07-30, download selection 2026-08-04)
+## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29, seed-admin UUID migration 2026-07-29, notification dismiss + stalled-guard 2026-07-30, download selection 2026-08-04, notice-board rich text + mentions 2026-08-17, project comments + collaboration panel 2026-08-17, project subtasks/checklist 2026-08-17)
 
+- **Project subtasks/checklist (Phase 3 of 3 — collaboration plan complete), deployed 2026-08-17
+  (`Collaboration-Rich-Text-Mentions-Subtasks-Plan.md`, migration `0027_project_subtasks.sql`,
+  commit `10d88de`).** A flat, ordered checklist per project inside Phase 2's collaboration panel:
+  title, done state, optional single assignee (current project members/admins only), optional
+  due date (validated as a calendar-real `YYYY-MM-DD` string, never `Date`-parsed). Subtasks are
+  shared project state — any current participant or admin can create/complete/edit/reorder/delete
+  any item, deliberately not author-only like Phase 1/2's posts and comments. Assignment
+  notifies (in-app + email, versioned/retry-safe source key); completion does not.
+  The highest-risk piece: refactoring the already-shipped, production `syncMembers()`/project-PATCH
+  membership path into a single atomic D1 batch that also clears a user's subtask assignments when
+  they lose their last project role in that same request — without disturbing the existing
+  `notifyProjectAssignments()` contract. Deactivation and admin-role-demotion deliberately stay
+  outside that scrub (a stale, non-notifying assignee reference), per the plan's own scoped
+  judgment call. This refactor was independently re-derived as correct **four separate times**:
+  by this session's own line-by-line read, by a fresh Terra diff review, by an Opus final-draft
+  review that additionally ran the move-endpoint's swap SQL against real SQLite to rule out a
+  partial-update race, and by a final regression test (added after Opus flagged it as the one
+  remaining untested branch) that exercises the exact "removed from one role, added to another in
+  the same request" case and passes for real. Along the way: this session's own test run caught a
+  real bug in the build's own test suite (a duplicate-row test-setup error that made the single
+  most important test in this phase fail outright — fixed by removing the redundant insert, since
+  the membership already existed from `beforeAll`); a fresh Terra diff review found and a fix
+  closed a frontend bug where reordering a subtask left the swapped neighbor's local position
+  stale until a reload; and this session directly fixed two small bugs an Opus review flagged as
+  non-blocking (two CSS custom-property typos — `--type-h4` and `--text-tertiary` don't exist in
+  this app's token set — and an `aria-live` region that was pulled out of the accessibility tree
+  while empty via `:empty { display: none }`, which could cause the first error announcement to be
+  missed). Live rollout: migration applied to `quincy-portal` remote D1 (schema confirmed via
+  direct query), `app` Worker deployed, and a full live production smoke test — add a subtask,
+  confirm it renders with working assignee/due-date/move/delete controls, delete it — completed
+  cleanly with no console errors and no test data left behind. **All three phases of the
+  collaboration plan are now live**; see
+  `docs/plans/implemented/Collaboration-Rich-Text-Mentions-Subtasks-Plan.md` for full history.
+- **Project comments + EditProject collaboration panel (Phase 2 of 3), deployed 2026-08-17
+  (`Collaboration-Rich-Text-Mentions-Subtasks-Plan.md`, migration `0026_project_comments.sql`,
+  commit `6525ed1`).** Reuses Phase 1's rich-text editor/renderer/mention infrastructure unchanged;
+  adds a new `hasProjectCollaborationAccess()` rule (active admin → every project; everyone else →
+  a real `project_members` row) deliberately distinct from the existing
+  `hasProjectAccess()`/`viewAllProjects` shortcut and photographer stage-visibility gate — an
+  assigned photographer can now collaborate on a project even when it's outside their normal
+  stage-visible dashboard window, while an unassigned editor with blanket `viewAllProjects` cannot.
+  Comments are project-scoped (mentions draw from project members + admins, not all staff),
+  author-only edit/delete (admins not exempt), and deliberately comments-only — no automatic
+  activity/audit feed, per the plan's explicit scope boundary. A new `collaborateOnProject`
+  capability (UI-route-guard only, never checked by any API endpoint) opens the existing
+  EditProject screen to every staff role; a `ProjectCollaborationPanel` renders there open by
+  default, restructured so a collaboration-only user's render never triggers the stage-gated
+  `GET /projects/:id` or the admin-only `GET /api/users` that the existing form/`ProjectFields`
+  depend on. Reachability for a stage-hidden collaborator comes from new Topbar notification deep
+  links (`mentioned`/`subtask_assigned` types with a project id become real links to the edit
+  screen; every other notification type, and these two types when project-null, stay plain
+  mark-read buttons) — there is no project-workspace rail entry, by design. Cleared Terra build → a
+  fresh Terra diff review, which confirmed the security-critical property first (collaboration
+  access checked *before* project-existence on every route, so a non-member can't use 403-vs-404
+  as a project-existence oracle — the same class of ordering mistake was Phase 1's own blocking
+  Opus finding) but found test coverage thin in three places (mention/pagination/inactive-target
+  coverage in the Worker suite; no DOM test at all for the new panel or the collaboration-only
+  render path; only one of two allowed notification deep-link types tested) → a test-only fix pass
+  closed all three → a final Terra pass approved. An Opus final-draft review re-verified the
+  access-before-existence ordering line-by-line in all five places, confirmed the FK cascade on
+  comment deletion is real (traced against the production hard-delete route, which relies on it
+  live), and approved with only non-blocking nits — two were worth fixing and applied directly:
+  a CSS grid-column bug that would have rendered the collaboration panel in the wrong-width column
+  for users without the editable form, and a stale `CLAUDE.md` migration-range note. Live rollout:
+  migration applied to `quincy-portal` remote D1 (confirmed via direct schema query), `app` Worker
+  deployed, and a live production smoke check confirmed `GET /api/projects/:id/comments` responding
+  200 with the panel rendering correctly (project street, empty state, rich-text composer) and no
+  console errors. Phase 3 (subtasks/checklist) remains unbuilt; the plan stays in `docs/plans/`
+  until all three ship.
+- **Notice-board rich text + @mentions (Phase 1 of 3), deployed 2026-08-17
+  (`Collaboration-Rich-Text-Mentions-Subtasks-Plan.md`, migration
+  `0025_collaboration_rich_text_notice_mentions.sql`, commit `df4844e`).** Staff notice board gets
+  a shared, server-validated rich-text format (bold/italic/lists/links/@mentions — a small JSON
+  contract in `packages/shared/src/rich-text.ts`, not raw HTML; the parser is a strict whitelist
+  that rebuilds every node fresh rather than trusting client structure), a reusable TipTap
+  editor/renderer pair, and an active-staff mention lookup endpoint (`{id,name,role}`, never
+  email). `viewNoticeBoard` now opens both viewing and posting to every active staff role,
+  including photographers. Mentions notify in-app + email through the existing pipeline, with
+  send-time eligibility re-checks and versioned/mapping-row source keys so retries can't
+  double-deliver. Posts gain author-only edit (admins not exempt) alongside the existing delete.
+  Cleared Terra draft → 2 Terra self-reviews → 2 Opus plan-tier review-and-revert rounds → an Opus
+  self-edit (revert budget exhausted) → final Opus plan approval, then build → a fresh Terra diff
+  review (found and fixed: a missing `drizzle-kit` snapshot that would have let the next
+  `generate` regenerate a duplicate migration — same failure class as the 2026-07-30 incident
+  below; a mention-autocomplete accessibility bug with `aria-activedescendant` on a non-focused
+  element; missing required test coverage) → a Terra final pass (approved) → an Opus final-draft
+  review, which found one real blocker: pressing **Enter** to accept a mention corrupted the post,
+  because ProseMirror's own native `keydown` listener on the contenteditable fires before React's
+  synthetic `onKeyDown` on a wrapper element ever runs, so PM's default paragraph-split had already
+  applied by the time the React handler tried to intercept it — fixed by moving the interception
+  into TipTap's own `editorProps.handleKeyDown` hook, which runs inside PM's own event pipeline.
+  Also independently caught and fixed in this session: a fabricated `@tiptap/*` npm version
+  (`2.26.2`, which doesn't exist on the registry) corrected to the real latest 2.x release
+  (`2.27.2`), and a test-mock shape bug that crashed `NoticeBoard` in tests. One Terra sub-agent
+  run genuinely stalled for ~2.5 hours retrying a Workers/Miniflare test command its own sandbox
+  structurally can't run (repeating log content, near-zero CPU relative to wall clock) — killed,
+  its actual code changes verified correct on disk, and the fix confirmed independently instead of
+  waiting on it. Live rollout: migration applied to `quincy-portal` remote D1 (confirmed via direct
+  schema query), `app` Worker deployed, and a live production smoke check confirmed the new
+  `GET /api/notice-board/posts` endpoint responding 200 with the new rich-text UI rendering
+  correctly (toolbar, mention hint, author-only Edit/Delete) and no console errors. See the Phase 2
+  entry above for the next milestone; Phase 3 (subtasks/checklist) remains unbuilt.
 - **"Download selection" multi-select button, deployed 2026-08-04
   (`Download-Selection-Plan.md`, migration `0024_download_selection_tickets.sql`, commit
   `538a020`).** Lets a user download an ad-hoc ZIP of just their checked RAW or Edited photos from

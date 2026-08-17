@@ -189,6 +189,54 @@ export const projectMembers = sqliteTable(
   ],
 );
 
+/** Shared discussion scoped to explicit project participants and active admins. */
+export const projectComments = sqliteTable(
+  "project_comments",
+  {
+    id: id(),
+    projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+    authorId: text("author_id").notNull().references(() => user.id),
+    body: text("body").notNull(),
+    contentJson: text("content_json").notNull(),
+    createdAt: createdAt(),
+    editedAt: integer("edited_at", { mode: "timestamp_ms" }),
+  },
+  (t) => [index("project_comments_project_created_idx").on(t.projectId, t.createdAt, t.id)],
+);
+
+export const projectCommentMentions = sqliteTable(
+  "project_comment_mentions",
+  {
+    id: id(),
+    commentId: text("comment_id").notNull().references(() => projectComments.id, { onDelete: "cascade" }),
+    mentionedUserId: text("mentioned_user_id").notNull().references(() => user.id),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("project_comment_mentions_unique").on(t.commentId, t.mentionedUserId)],
+);
+
+/** A shared, ordered checklist item owned by a project. Due dates are date-only strings. */
+export const projectSubtasks = sqliteTable(
+  "project_subtasks",
+  {
+    id: id(),
+    projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    done: integer("done", { mode: "boolean" }).notNull().default(false),
+    position: integer("position").notNull(),
+    assigneeId: text("assignee_id").references(() => user.id, { onDelete: "set null" }),
+    assignmentVersion: integer("assignment_version").notNull().default(0),
+    dueDate: text("due_date"),
+    createdBy: text("created_by").notNull().references(() => user.id),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    index("project_subtasks_project_position_idx").on(t.projectId, t.position, t.id),
+    index("project_subtasks_assignee_idx").on(t.assigneeId),
+  ],
+);
+
 /** Short-lived, user-scoped handoff from a selection POST to a streamed ZIP GET. */
 export const downloadSelectionTickets = sqliteTable(
   "download_selection_tickets",
@@ -722,9 +770,22 @@ export const noticeBoardPosts = sqliteTable(
     id: id(),
     authorId: text("author_id").notNull().references(() => user.id),
     body: text("body").notNull(),
+    contentJson: text("content_json"),
     createdAt: createdAt(),
+    editedAt: integer("edited_at", { mode: "timestamp_ms" }),
   },
   (t) => [index("notice_board_posts_created_idx").on(t.createdAt)],
+);
+
+export const noticeBoardPostMentions = sqliteTable(
+  "notice_board_post_mentions",
+  {
+    id: id(),
+    postId: text("post_id").notNull().references(() => noticeBoardPosts.id, { onDelete: "cascade" }),
+    mentionedUserId: text("mentioned_user_id").notNull().references(() => user.id),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("notice_board_post_mentions_unique").on(t.postId, t.mentionedUserId)],
 );
 
 /* ------------------------------------------------------ publish & links */

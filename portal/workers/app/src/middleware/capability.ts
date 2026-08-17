@@ -19,6 +19,19 @@ export async function hasProjectAccess(c: { env: AppEnv["Bindings"]; get: (key: 
   return hasProjectAccessForUser(c.env, c.get("user"), projectId);
 }
 
+/**
+ * Collaboration is intentionally narrower than ordinary project visibility:
+ * active admins participate everywhere; every other staff member needs an
+ * explicit project_members row, regardless of role or pipeline stage.
+ */
+export async function hasProjectCollaborationAccess(c: { env: AppEnv["Bindings"]; get: (key: "user") => AppEnv["Variables"]["user"] }, projectId: string) {
+  const currentUser = c.get("user");
+  if (currentUser.role === "admin" && currentUser.active) return true;
+  const db = createDb(c.env.DB);
+  return Boolean(await db.select({ id: schema.projectMembers.id }).from(schema.projectMembers)
+    .where(and(eq(schema.projectMembers.projectId, projectId), eq(schema.projectMembers.userId, currentUser.id))).get());
+}
+
 /** Use when a route has reloaded the principal and must not trust session-cached role state. */
 export async function hasProjectAccessForUser(env: AppEnv["Bindings"], user: Pick<SessionUser, "id" | "role">, projectId: string) {
   if (roleHasCapability(user.role, "viewAllProjects")) return true;

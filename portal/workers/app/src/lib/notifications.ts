@@ -73,3 +73,83 @@ export async function notifyProjectAssignments(
     console.error("Project assignment notification emission failed", { projectId, error });
   }
 }
+
+type MentionMap = { id: string; mentionedUserId: string };
+
+/**
+ * Emits direct rich-text mention notifications. The mapping id is intentionally
+ * the source key: a removed and later re-added mention is a new event, while a
+ * retry of the same persisted map cannot duplicate a notice or an email.
+ */
+export async function notifyMentions(
+  env: AppEnv["Bindings"],
+  input: (
+    { scope: "notice-board"; actorId: string; mentions: MentionMap[] }
+    | { scope: "project-comment"; actorId: string; projectId: string; mentions: MentionMap[] }
+  ),
+): Promise<void> {
+  try {
+    const db = createDb(env.DB);
+    const mentionIds = [...new Set(input.mentions.map((mention) => mention.mentionedUserId).filter((id) => id !== input.actorId))];
+    if (!mentionIds.length) return;
+    let recipients: Map<string, { userId: string; email: string; name: string }>;
+    if (input.scope === "notice-board") {
+      // Re-check active status at emission time; the map may have been written
+      // before a user was deactivated.
+      const activeStaff = await db.select({ userId: user.id, email: user.email, name: user.name })
+        .from(user).where(and(inArray(user.id, mentionIds), eq(user.active, true))).all();
+      recipients = new Map(activeStaff.map((target) => [target.userId, target]));
+    } else {
+      const activeRecipients = await projectNotificationRecipients(db, input.projectId, { excludeUserId: input.actorId });
+      recipients = new Map(activeRecipients.map((target) => [target.userId, target]));
+    }
+    const copy = input.scope === "notice-board"
+      ? { title: "You were mentioned", body: "You were mentioned in a notice-board post." }
+      : { title: "You were mentioned", body: "You were mentioned in a project comment." };
+    for (const mention of input.mentions) {
+      if (mention.mentionedUserId === input.actorId) continue;
+      const recipient = recipients.get(mention.mentionedUserId);
+      if (!recipient) continue;
+      await emitNotifications(db, {
+        ...(input.scope === "project-comment" ? { projectId: input.projectId } : {}),
+        type: "mentioned",
+        recipients: [recipient],
+        title: copy.title,
+        body: copy.body,
+        sourceKey: mention.id,
+        email: env.EMAIL,
+        fromAddress: env.NOTIFICATIONS_FROM_ADDRESS,
+      });
+    }
+  } catch (error) {
+    console.error("Mention notification emission failed", { scope: input.scope, error });
+  }
+}
+
+/** Defined in Phase 1 with the shared enum; Phase 3 wires its first caller. */
+export async function notifySubtaskAssignee(
+  env: AppEnv["Bindings"],
+  input: { projectId: string; actorId: string; assigneeId: string | null; subtaskId: string; assignmentVersion: number },
+): Promise<void> {
+  if (!input.assigneeId || input.assigneeId === input.actorId) return;
+  try {
+    const db = createDb(env.DB);
+    // Project recipients includes active current members and active admins, so
+    // this is also the required emission-time eligibility re-check.
+    const recipient = (await projectNotificationRecipients(db, input.projectId, { excludeUserId: input.actorId }))
+      .find((candidate) => candidate.userId === input.assigneeId);
+    if (!recipient) return;
+    await emitNotifications(db, {
+      projectId: input.projectId,
+      type: "subtask_assigned",
+      recipients: [recipient],
+      title: "Subtask assigned",
+      body: "You have been assigned a project subtask.",
+      sourceKey: `subtask-assignment:${input.subtaskId}:${input.assignmentVersion}`,
+      email: env.EMAIL,
+      fromAddress: env.NOTIFICATIONS_FROM_ADDRESS,
+    });
+  } catch (error) {
+    console.error("Subtask assignment notification emission failed", { projectId: input.projectId, error });
+  }
+}

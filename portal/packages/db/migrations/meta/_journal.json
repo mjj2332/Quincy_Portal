@@ -176,6 +176,27 @@
       "when": 1785793002067,
       "tag": "0024_download_selection_tickets",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1786978800000,
+      "tag": "0025_collaboration_rich_text_notice_mentions",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "6",
+      "when": 1786916215312,
+      "tag": "0026_project_comments",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "6",
+      "when": 1786919000005,
+      "tag": "0027_project_subtasks",
+      "breakpoints": true
     }
   ]
 }

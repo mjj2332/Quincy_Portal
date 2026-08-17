@@ -10,6 +10,8 @@ describe("PRD §4 capability matrix", () => {
       "annotateRaw",
       "recommendRaw",
       "compareFrames",
+      "viewNoticeBoard",
+      "collaborateOnProject",
     ]);
     for (const capability of ["viewEdited", "publish", "selectForEditing", "adminBackend"] as const) {
       expect(roleHasCapability("photographer", capability)).toBe(false);
@@ -31,10 +33,16 @@ describe("PRD §4 capability matrix", () => {
     expect(roleHasCapability("admin", "adminBackend")).toBe(true);
   });
 
-  it("limits the notice board to admins and editors", () => {
+  it("opens the notice board to all active staff roles", () => {
     expect(roleHasCapability("admin", "viewNoticeBoard")).toBe(true);
     expect(roleHasCapability("editor", "viewNoticeBoard")).toBe(true);
-    expect(roleHasCapability("photographer", "viewNoticeBoard")).toBe(false);
+    expect(roleHasCapability("photographer", "viewNoticeBoard")).toBe(true);
+  });
+
+  it("offers the collaboration route affordance to every staff role", () => {
+    expect(roleHasCapability("admin", "collaborateOnProject")).toBe(true);
+    expect(roleHasCapability("editor", "collaborateOnProject")).toBe(true);
+    expect(roleHasCapability("photographer", "collaborateOnProject")).toBe(true);
   });
 
   it("allows project prioritization only for admins", () => {

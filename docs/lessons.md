@@ -549,3 +549,51 @@ was expensive: three wrong root causes were shipped before the plan page was eve
   job whose tests read another workspace's build artifacts must build that artifact itself (or via
   `actions/upload-artifact` + `download-artifact`), never rely on a sibling job having produced it.
   To catch this class of bug locally, `rm -rf apps/web/dist` before running `workers/app` tests.
+
+- **A TipTap/ProseMirror editor's own native `keydown` listener fires before a React `onKeyDown`
+  prop on a wrapper element, even though the wrapper visually contains the editor.** React 18
+  delegates synthetic events to the root container and dispatches them during the event's bubble
+  phase; TipTap attaches ProseMirror's listener directly to the actual contenteditable DOM node
+  via `addEventListener`, which is the event's *target* — so it runs during the target phase,
+  before the event ever bubbles to where React's synthetic dispatch happens. Concretely: the
+  notice-board rich-text editor (`RichTextEditor.tsx`) intercepted `Enter` for mention-selection
+  and Cmd/Ctrl+Enter submit via a wrapper `onKeyDown` prop; since `Enter` is a key ProseMirror's
+  default keymap already handles (`splitBlock`), PM had already split the paragraph and moved the
+  selection before the React handler's `event.preventDefault()` ever ran — corrupting the
+  document (stray leftover query text, or a spurious extra paragraph) on every Enter-accepted
+  mention, the default way users accept an autocomplete suggestion. Mouse-click selection and Tab
+  were both unaffected (click never goes through PM's keymap at all; Tab has no default PM
+  binding), which is exactly why a loose `expect.objectContaining`/`arrayContaining` test assertion
+  passed anyway — it tolerated the corrupted leftover node instead of catching it. **Rule:** any
+  key interception meant to run *before* or *instead of* ProseMirror's own default handling for
+  that key must go through `editorProps.handleKeyDown` in the `useEditor(...)` options (TipTap's
+  documented hook for this — it runs inside PM's own keymap resolution and can suppress default
+  behavior by returning `true`), never a React-level `onKeyDown` on a wrapper element. Since
+  `handleKeyDown` is captured once at editor construction, anything it reads from props/state that
+  can change later (submit callback, char limit, disabled flag) needs a ref, not a closed-over
+  value. And test this class of interception with a strict/exact assertion on the resulting
+  document — a loose matcher can pass right through a real corruption bug.
+
+- **A `codex exec` sub-agent can get stuck in a long, silent retry loop trying to run a command its
+  own sandbox structurally can't support, instead of giving up and reporting the failure** — a
+  distinct failure mode from the documented stdin-hang (`docs/subagents/codex-cli.md`), which prints
+  a specific log line. Here, a fix-pass Codex instance tried repeatedly to run the `workers/app`
+  Vitest suite (which needs Miniflare/wrangler) inside its own restricted sandbox, hit `EPERM`
+  writing wrangler's own log file and a `Cannot find package 'cloudflare:test'` resolution error,
+  and kept retrying rather than stopping — for **2.5 hours of wall-clock time while accumulating
+  only ~2.8 seconds of CPU time**, with the run log showing the same file's full content dumped
+  repeatedly rather than steady new progress. The actual code fix it had already written was
+  correct and had already landed on disk via `apply_patch` (which persists immediately, independent
+  of whatever the session does afterward) — only the post-fix *verification* attempt was looping.
+  **Diagnose:** `ps -o pid,lstart,etime,time -p <pid>` — elapsed time wildly out of proportion to
+  accumulated CPU time, especially past 30-45 min (normal `codex exec` rounds in this repo run
+  15-30 min), is the signal; then check the run log for repeated/looping content (e.g.
+  `grep -c "<a distinctive line from the file>" run.log` returning many hits) rather than forward
+  progress. **Fix:** kill the process (`kill <pid pid pid>` for the shell/node/codex trio), confirm
+  via `git status`/reading the changed files directly that the actual code edits are already
+  correct and complete (don't assume a stuck session means bad output — `apply_patch` writes
+  survive a later hang), then run the real verification suite yourself in a normal shell rather
+  than trusting the sub-agent's own sandboxed attempt. For any Codex invocation whose *only* job is
+  confirming a fix (not building it), explicitly forbid it from running
+  Workers/Miniflare-dependent commands in the prompt — read-only code review doesn't need to
+  execute them, and telling it not to try avoids this exact trap.
