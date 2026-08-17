@@ -1,9 +1,26 @@
 # Rich-Text Link Edit Round-Trip Fix — Plan
 
-**Status: approved — not built, verified, committed, or deployed.** Cleared the full
-`docs/Subagent-Orchestration.md` §2 policy 1 sequence: Terra draft → fresh Terra review (approved,
-one trivial citation-range fix applied directly) → Opus plan-tier review (approved, with two
-non-blocking implementation notes folded into the plan below).
+**Status: implemented and deployed to production (commit `f096b60`, `app` Worker version
+`06c0aa98-583e-4830-bfab-60719a3b32a8`, deployed 2026-08-18).** Cleared the full
+`docs/Subagent-Orchestration.md` §2 policy 1/2/3 sequence: Terra draft → fresh Terra review
+(approved, one trivial citation-range fix applied directly) → Opus plan-tier review (approved, with
+two non-blocking implementation notes folded into the plan below) → Terra build (confirmed the
+regression by temporarily reverting the fix and watching the new test fail with a null href, then
+restored it; typecheck, `apps/web` build, and every runnable test suite passed) → fresh Terra diff
+review (approved, no correctness findings) → Opus final-draft review of the diff (approved,
+independently re-ran the full verify sequence itself, two non-blocking nits noted only) → this
+session's §5 gate (independently re-ran typecheck, the `@quincy/web` build, `npm run test
+--workspaces`, and the `packages/shared` suite the root script skips — all green, 391 tests
+passing including `worker-app`/`worker-background`, which Terra's own sandbox couldn't run due to
+an environment `EPERM` restriction).
+
+**Live verification, 2026-08-18:** reproduced the exact reported bug against the live project
+(`projects/ec2d92bf-2340-458c-b1a3-c05c74904fd8`) before fixing, then re-checked after deploy —
+clicking Edit on the real multi-link comment loaded all three Vimeo review links with correct
+`href` values in the editable DOM (confirmed via direct DOM inspection, not just visually), a
+harmless edit saved successfully with no validation-error banner, and the links and their exact
+original URLs persisted after save. The test edit was reverted afterward to restore the comment's
+original wording; only the link-mark handling was exercised, not the comment content.
 
 ## Current state — code inspection and drafting-time snapshot, 2026-08-18
 
