@@ -7,7 +7,45 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
 > counts, full diagnostic transcripts) has been cut in favor of what/when/deploy-state. See
 > `docs/lessons.md` for incident mechanics, and `docs/reviews/` for full QA-sweep detail.
 
-## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29, seed-admin UUID migration 2026-07-29, notification dismiss + stalled-guard 2026-07-30, download selection 2026-08-04, notice-board rich text + mentions 2026-08-17, project comments + collaboration panel 2026-08-17, project subtasks/checklist 2026-08-17)
+## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29, seed-admin UUID migration 2026-07-29, notification dismiss + stalled-guard 2026-07-30, download selection 2026-08-04, notice-board rich text + mentions 2026-08-17, project comments + collaboration panel 2026-08-17, project subtasks/checklist 2026-08-17, collaboration panel relocated to Project page 2026-08-17)
+
+- **Collaboration panel relocated from EditProject to the Project page, deployed 2026-08-17
+  (`Project-Collaboration-Panel-Relocation-Plan.md`, commit `15528f7`, no migration).** Comments +
+  subtask checklist (still one unit — not split) moved from the `EditProject` form screen to
+  `ProjectWorkspace` (the Project page) as a fixed, non-modal, right-edge overlay toggled by a
+  vertical edge tab: collapsed by default, uniform behavior at every viewport width (no separate
+  mobile scrim/drawer, unlike the old EditProject drawer it replaces), and it never disturbs
+  `.work`'s two-column grid layout while open. Mention/subtask-assignment notifications now deep-
+  link to the Project page and auto-open the panel via a typed, one-shot `collaborationOpenSignal`
+  transported through a new `?collaboration=open` route intent (not a boolean — a monotonic
+  counter, so a repeat notification to an already-open or already-closed panel still reopens/re-
+  acknowledges correctly).
+  The plan-drafting process itself is worth noting: a Terra draft, two Terra self-review rounds,
+  and two full Opus plan-tier review/revert cycles plus a terminal Opus edit pass caught a real
+  access-control gap the original brief missed entirely — `hasProjectCollaborationAccess()` grants
+  a project member comments/subtasks access regardless of pipeline stage, but `hasProjectAccess()`
+  (gating the Project page's actual data reads) blocks a photographer whose project sits in a stage
+  outside `PHOTOGRAPHER_VISIBLE_STAGES`. Resolved (user's explicit choice) with a collaboration-only
+  fallback: the Project route detects this via a comments-endpoint probe after the project-details
+  request 403s, and renders comments/subtasks only — never the full workspace or an error page —
+  preserving the exact pre-existing media/visibility policy. The same review pipeline also caught
+  and fixed, before any code was written: a global `Escape` listener that would have closed the
+  panel out from under an open Lightbox or a mention-autocomplete dropdown; a tab-effect "consumed"
+  marker that could be silently eaten by an unrelated stage-driven Edited-tab switch, breaking a
+  later manual RAW refresh; z-index gaps that would have covered the topbar's notification dropdown
+  and PhotoGrid's multi-select action bar; a wrong "frontend-only" rollout claim (`
+  safeStaffDestination()` is also bundled into the `app` Worker for OAuth callback validation —
+  turned out to still be one atomic `wrangler deploy`, not an ordered pair, since the Worker serves
+  the web build via its `ASSETS` binding); and a signal-leak bug that would have auto-opened the
+  panel on a plain return visit to a project. The build itself then caught two more real bugs in a
+  fresh diff review — the comments-probe fallback firing on any request failure in the load
+  sequence (not just a details-request 403) and the collaboration wrapper still participating in
+  `.work`'s CSS grid instead of using `display: contents` — both fixed and re-verified. Live
+  rollout: `app` Worker deployed (version `02cd2e3d-5704-46a3-aec1-644672230aec`), and a full live
+  production smoke test — default-collapsed edge tab, non-modal overlay confirmed by switching
+  collection tabs with the panel open, a real subtask added and deleted with no residue, EditProject
+  confirmed to no longer render the panel — completed cleanly with zero console errors. See
+  `docs/plans/implemented/Project-Collaboration-Panel-Relocation-Plan.md` for full history.
 
 - **Project subtasks/checklist (Phase 3 of 3 — collaboration plan complete), deployed 2026-08-17
   (`Collaboration-Rich-Text-Mentions-Subtasks-Plan.md`, migration `0027_project_subtasks.sql`,
