@@ -1,6 +1,17 @@
 # Notification Click Navigation — Plan
 
-> **Status: DRAFT — not yet built.**
+> **Status: IMPLEMENTED — deployed to production 2026-08-17 (commit `2285093`). No migration.
+> Deployed as `background` then `app` (which also bundles the web build).**
+>
+> §5 gate: typecheck, build, and the full test suite (db 20, web unit 65, web dom 117, app worker
+> 153 + 1 pre-existing skip, background 180, webhook-ingress 13, shared 45) all passed with no new
+> failures. All seven `emitNotifications` call sites, `projectNotificationRoute`, and the
+> `Topbar.tsx` rendering change were read directly against the deployed code, not taken on a
+> builder's or reviewer's word. Live smoke test on production confirmed the notification dropdown
+> renders correctly with no console errors; no notification happened to be pending at smoke-test
+> time to click through live, so that specific path relies on the passing `Topbar.dom.test.tsx`
+> coverage (which explicitly asserts the click-to-link behavior, including the notice-board
+> plain-button fallback) plus the direct code read, rather than a live click.
 >
 > Drafted directly by this session (Sonnet 5) per `docs/Subagent-Orchestration.md` §1/§2 policy 2:
 > no migration, no new access-control surface, no new state machine — a mechanical extension of

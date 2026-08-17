@@ -7,7 +7,25 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
 > counts, full diagnostic transcripts) has been cut in favor of what/when/deploy-state. See
 > `docs/lessons.md` for incident mechanics, and `docs/reviews/` for full QA-sweep detail.
 
-## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29, seed-admin UUID migration 2026-07-29, notification dismiss + stalled-guard 2026-07-30, download selection 2026-08-04, notice-board rich text + mentions 2026-08-17, project comments + collaboration panel 2026-08-17, project subtasks/checklist 2026-08-17, collaboration panel relocated to Project page 2026-08-17, collaboration panel UI fixes + due-time reminder 2026-08-17)
+## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29, seed-admin UUID migration 2026-07-29, notification dismiss + stalled-guard 2026-07-30, download selection 2026-08-04, notice-board rich text + mentions 2026-08-17, project comments + collaboration panel 2026-08-17, project subtasks/checklist 2026-08-17, collaboration panel relocated to Project page 2026-08-17, collaboration panel UI fixes + due-time reminder 2026-08-17, notification click navigation 2026-08-17)
+
+- **Notifications are now clickable to their project, in-app and by email, deployed 2026-08-17
+  (`Notification-Click-Navigation-Plan.md`, commit `2285093`, no migration).** Previously only 2
+  of 10 notification types (`mentioned`, `subtask_assigned`) linked anywhere; the other 8 were
+  plain mark-as-read buttons. Added a single shared `projectNotificationRoute` helper in
+  `@quincy/shared` — `mentioned`/`subtask_assigned`/`subtask_due_today` deep-link into the
+  collaboration panel (`?collaboration=open`), every other project-scoped type links to the plain
+  project page — reused by both the `Topbar.tsx` click handler and the new email-link builder so
+  the grouping can't drift out of sync between the two surfaces. Notification emails now carry a
+  clickable link in both `text` and `html` bodies. Threaded through all seven production
+  `emitNotifications` call sites (four in `workers/app`, three in `workers/background`, including
+  two separately-implemented `notifyProject` functions a first review-round draft undercounted as
+  one). A `/grill-me` round explicitly scoped this to the bare project page, not tab- or
+  asset-specific deep-linking (e.g. `edited_landed` → Edited tab, `comment_added` → the exact
+  commented asset) — flagged as a natural, larger follow-up if wanted later. Two Terra review
+  rounds caught a wrong test-file path, an undercounted call-site list, and several test fixtures
+  missing `APP_ORIGIN` that would have made new link assertions silently pass against broken
+  `undefined/projects/...` strings.
 
 - **Collaboration panel UI fixes + subtask due-time/reminder, deployed 2026-08-17
   (`Collaboration-Panel-UI-Fixes-Plan.md`, commit `aab76e5`, migration `0028` — additive nullable
