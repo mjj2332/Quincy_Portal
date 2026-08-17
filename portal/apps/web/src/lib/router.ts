@@ -1,6 +1,6 @@
-import { parseStaffLocation, parseStaffPathname, safeStaffDestination, staffPathFor, type StaffRoute } from "@quincy/shared";
+import { parseStaffLocation, parseStaffPathname, projectNotificationRoute, safeStaffDestination, staffPathFor, type StaffRoute } from "@quincy/shared";
 
-export { parseStaffLocation, parseStaffPathname, safeStaffDestination, staffPathFor, type StaffRoute };
+export { parseStaffLocation, parseStaffPathname, projectNotificationRoute, safeStaffDestination, staffPathFor, type StaffRoute };
 
 export type HistorySource = {
   location: Pick<Location, "pathname" | "search">;

@@ -6,6 +6,7 @@ import {
 } from "@quincy/db";
 import { createDb } from "@quincy/db";
 import { projects, user } from "@quincy/db/schema";
+import { projectNotificationRoute, staffPathFor } from "@quincy/shared";
 import { and, eq, inArray } from "drizzle-orm";
 import type { AppEnv } from "../env";
 
@@ -22,12 +23,15 @@ export async function notifyProject(
       projectNotificationRecipients(db, projectId, options),
     ]);
     const copy = notificationCopy(type, project?.street || "Project");
+    const route = projectNotificationRoute(projectId, type);
+    const link = route?.kind === "project" ? `${env.APP_ORIGIN}${staffPathFor(route)}` : undefined;
     await emitNotifications(db, {
       projectId,
       type,
       recipients,
       title: copy.title,
       body: copy.body,
+      link,
       email: env.EMAIL,
       fromAddress: env.NOTIFICATIONS_FROM_ADDRESS,
     });
@@ -52,6 +56,8 @@ export async function notifyProjectAssignments(
     ]);
     const activeRecipients = new Map(activeUsers.map((target) => [target.userId, target]));
     const projectLabel = project?.street || "Project";
+    const route = projectNotificationRoute(projectId, "assigned_to_project");
+    const link = route?.kind === "project" ? `${env.APP_ORIGIN}${staffPathFor(route)}` : undefined;
     for (const roleOnProject of ["photographer", "editor"] as const) {
       const recipients = assignments
         .filter((assignment) => assignment.roleOnProject === roleOnProject)
@@ -65,6 +71,7 @@ export async function notifyProjectAssignments(
         recipients,
         title: copy.title,
         body: copy.body,
+        link,
         email: env.EMAIL,
         fromAddress: env.NOTIFICATIONS_FROM_ADDRESS,
       });
@@ -106,6 +113,8 @@ export async function notifyMentions(
     const copy = input.scope === "notice-board"
       ? { title: "You were mentioned", body: "You were mentioned in a notice-board post." }
       : { title: "You were mentioned", body: "You were mentioned in a project comment." };
+    const route = projectNotificationRoute(input.scope === "project-comment" ? input.projectId : null, "mentioned");
+    const link = route?.kind === "project" ? `${env.APP_ORIGIN}${staffPathFor(route)}` : undefined;
     for (const mention of input.mentions) {
       if (mention.mentionedUserId === input.actorId) continue;
       const recipient = recipients.get(mention.mentionedUserId);
@@ -117,6 +126,7 @@ export async function notifyMentions(
         title: copy.title,
         body: copy.body,
         sourceKey: mention.id,
+        link,
         email: env.EMAIL,
         fromAddress: env.NOTIFICATIONS_FROM_ADDRESS,
       });
@@ -139,6 +149,8 @@ export async function notifySubtaskAssignee(
     const recipient = (await projectNotificationRecipients(db, input.projectId, { excludeUserId: input.actorId }))
       .find((candidate) => candidate.userId === input.assigneeId);
     if (!recipient) return;
+    const route = projectNotificationRoute(input.projectId, "subtask_assigned");
+    const link = route?.kind === "project" ? `${env.APP_ORIGIN}${staffPathFor(route)}` : undefined;
     await emitNotifications(db, {
       projectId: input.projectId,
       type: "subtask_assigned",
@@ -146,6 +158,7 @@ export async function notifySubtaskAssignee(
       title: "Subtask assigned",
       body: "You have been assigned a project subtask.",
       sourceKey: `subtask-assignment:${input.subtaskId}:${input.assignmentVersion}`,
+      link,
       email: env.EMAIL,
       fromAddress: env.NOTIFICATIONS_FROM_ADDRESS,
     });

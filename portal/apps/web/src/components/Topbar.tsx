@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState, type MouseEvent } from "react";
 import { signOut } from "../lib/auth";
 import { apiDelete, apiGet, apiPost } from "../lib/api";
 import { InternalLink } from "./InternalLink";
-import { staffPathFor } from "@quincy/shared";
+import { projectNotificationRoute, staffPathFor } from "@quincy/shared";
 
 export type AppView = "dashboard" | "project" | "create-project" | "edit-project" | "admin" | "not-found";
 
@@ -158,7 +158,10 @@ export function Topbar({ activeView, canAccessAdmin, user, notificationPollMs = 
           </button>
           {notificationsOpen && <div ref={notificationsRef} id={notificationsId} className="topbar__notification-menu" role="menu" aria-label="Notifications" tabIndex={-1}>
             <div className="topbar__notification-head"><strong>Notifications</strong>{unreadCount > 0 && <button type="button" onClick={() => void markAllNotificationsRead()}>Mark all read</button>}</div>
-            {notifications.length === 0 ? <div className="topbar__notification-empty" role="none">You’re all caught up.</div> : notifications.map((notification) => <div key={notification.id} role="none" className={`topbar__notification-row ${notification.readAt ? "" : "is-unread"}`}>{(notification.projectId && (notification.type === "mentioned" || notification.type === "subtask_assigned")) ? <InternalLink role="menuitem" className="topbar__notification-item" to={staffPathFor({ kind: "project", projectId: notification.projectId, collaboration: "open" })} onClick={() => { void markNotificationRead(notification); closeNotifications(); }}><strong>{notification.title}</strong>{notification.body && <span>{notification.body}</span>}<small>{new Date(notification.createdAt).toLocaleString()}</small></InternalLink> : <button role="menuitem" type="button" className="topbar__notification-item" onClick={() => void markNotificationRead(notification)}><strong>{notification.title}</strong>{notification.body && <span>{notification.body}</span>}<small>{new Date(notification.createdAt).toLocaleString()}</small></button>}<button role="menuitem" type="button" className="topbar__notification-dismiss" aria-label={`Dismiss notification: ${notification.title}`} data-notification-dismiss={notification.id} onClick={() => void dismissNotification(notification)}><span aria-hidden="true">×</span></button></div>)}
+            {notifications.length === 0 ? <div className="topbar__notification-empty" role="none">You’re all caught up.</div> : notifications.map((notification) => {
+              const route = projectNotificationRoute(notification.projectId, notification.type);
+              return <div key={notification.id} role="none" className={`topbar__notification-row ${notification.readAt ? "" : "is-unread"}`}>{route?.kind === "project" ? <InternalLink role="menuitem" className="topbar__notification-item" to={staffPathFor(route)} onClick={() => { void markNotificationRead(notification); closeNotifications(); }}><strong>{notification.title}</strong>{notification.body && <span>{notification.body}</span>}<small>{new Date(notification.createdAt).toLocaleString()}</small></InternalLink> : <button role="menuitem" type="button" className="topbar__notification-item" onClick={() => void markNotificationRead(notification)}><strong>{notification.title}</strong>{notification.body && <span>{notification.body}</span>}<small>{new Date(notification.createdAt).toLocaleString()}</small></button>}<button role="menuitem" type="button" className="topbar__notification-dismiss" aria-label={`Dismiss notification: ${notification.title}`} data-notification-dismiss={notification.id} onClick={() => void dismissNotification(notification)}><span aria-hidden="true">×</span></button></div>;
+            })}
           </div>}
         </div>
         <div className="topbar__identity">

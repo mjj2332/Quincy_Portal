@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createHistoryAdapter, parseStaffLocation, parseStaffPathname, safeStaffDestination, staffPathFor, shouldInterceptInternalLink } from "./router";
+import { createHistoryAdapter, parseStaffLocation, parseStaffPathname, projectNotificationRoute, safeStaffDestination, staffPathFor, shouldInterceptInternalLink } from "./router";
 import { beginSignIn, consumeSignInDestinationFrom } from "./auth";
 
 const projectId = "123e4567-e89b-42d3-a456-426614174000";
@@ -51,6 +51,17 @@ describe("staff route contract", () => {
 
   it("keeps the one-shot query strict", () => {
     for (const location of [`/projects/${projectId}?collaboration=close`, `/projects/${projectId}?collaboration=open&x=1`, `/projects/${projectId}?collaboration=open&collaboration=open`, `/admin?tab=users`, `/projects/${projectId}?x=collaboration%3Dopen`, `/projects/${projectId}?collaboration=open#x`]) expect(parseStaffLocation(location)).toEqual({ kind: "not-found" });
+  });
+
+  it("projects notification destinations consistently", () => {
+    for (const type of ["mentioned", "subtask_assigned", "subtask_due_today"]) {
+      expect(projectNotificationRoute(projectId, type)).toEqual({ kind: "project", projectId, collaboration: "open" });
+    }
+    for (const type of ["raw_ready", "edited_landed", "sent_to_editing", "autohdr_stalled", "delivered", "comment_added", "assigned_to_project", "other"]) {
+      expect(projectNotificationRoute(projectId, type)).toEqual({ kind: "project", projectId });
+    }
+    expect(projectNotificationRoute(null, "mentioned")).toBeUndefined();
+    expect(projectNotificationRoute(null, "raw_ready")).toBeUndefined();
   });
 });
 

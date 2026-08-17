@@ -14,6 +14,7 @@ export type StaffRoute =
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const reservedRoots = new Set(["api", "media", "__transform-source", "d"]);
+const COLLABORATION_NOTIFICATION_TYPES = new Set(["mentioned", "subtask_assigned", "subtask_due_today"]);
 
 function unsafeText(value: string): boolean {
   return /[\\\u0000-\u001f\u007f]/.test(value);
@@ -70,6 +71,13 @@ export function staffPathFor(route: Exclude<StaffRoute, { kind: "not-found" } | 
     case "edit-project": return `/projects/${encodeURIComponent(route.projectId)}/edit`;
     case "admin": return "/admin";
   }
+}
+
+/** The canonical staff-app destination for a project-scoped notification, or undefined if the
+ * notification has no project (e.g. a notice-board mention). */
+export function projectNotificationRoute(projectId: string | null, type: string): StaffRoute | undefined {
+  if (!projectId) return undefined;
+  return { kind: "project", projectId, ...(COLLABORATION_NOTIFICATION_TYPES.has(type) ? { collaboration: "open" as const } : {}) };
 }
 
 /** Only canonical, relative staff locations are valid OAuth return destinations. */

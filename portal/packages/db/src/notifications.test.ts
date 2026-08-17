@@ -92,6 +92,26 @@ describe("emitNotifications email gating", () => {
     expect(email.send).not.toHaveBeenCalled();
   });
 
+  it("includes a project link in email text and HTML only when supplied", async () => {
+    const { db: linkedDb } = mockDb();
+    const linkedEmail = fakeEmail(async () => ({ messageId: "m1" }));
+    const link = "https://portal.test/projects/project-1";
+    await emitNotifications(linkedDb, {
+      type: "raw_ready", recipients: [recipient("u1", "u1@example.com")], email: linkedEmail, fromAddress: "studio@example.test", link,
+    });
+    expect(linkedEmail.send).toHaveBeenCalledWith(expect.objectContaining({
+      text: "Project has RAW images ready for review.\n\nhttps://portal.test/projects/project-1",
+      html: '<p>Project has RAW images ready for review.</p><p><a href="https://portal.test/projects/project-1">View project</a></p>',
+    }));
+
+    const { db: unlinkedDb } = mockDb();
+    const unlinkedEmail = fakeEmail(async () => ({ messageId: "m2" }));
+    await emitNotifications(unlinkedDb, {
+      type: "mentioned", recipients: [recipient("u1", "u1@example.com")], email: unlinkedEmail, fromAddress: "studio@example.test",
+    });
+    expect(unlinkedEmail.send).toHaveBeenCalledWith(expect.objectContaining({ text: "You were mentioned.", html: "<p>You were mentioned.</p>" }));
+  });
+
   it("records emailError for a failing recipient without blocking the remaining recipients", async () => {
     const { db, insertCalls, updateCalls } = mockDb();
     const email = fakeEmail(async (message) => {

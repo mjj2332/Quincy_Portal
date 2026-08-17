@@ -74,7 +74,7 @@ async function seedDueSubtask(now: number, dueDate: string, options: { assigned?
 const sydneyEightAm = (year: number, month: number, day: number) => Date.UTC(year, month - 1, day - 1, 22);
 
 function notificationEnv(send: ReturnType<typeof vi.fn>): Env {
-  return { DB: database.DB, EMAIL: { send }, NOTIFICATIONS_FROM_ADDRESS: "studio@example.test" } as unknown as Env;
+  return { DB: database.DB, EMAIL: { send }, NOTIFICATIONS_FROM_ADDRESS: "studio@example.test", APP_ORIGIN: "https://portal.test" } as unknown as Env;
 }
 
 describe("notification fanout and stalled scan", () => {
@@ -88,11 +88,12 @@ describe("notification fanout and stalled scan", () => {
       database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'photographer', ?), (?, ?, ?, 'editor', ?)").bind(crypto.randomUUID(), projectId, userId, now, crypto.randomUUID(), projectId, userId, now),
     ]);
     const send = vi.fn().mockResolvedValue({ messageId: "message-1" });
-    await notifyProject({ DB: database.DB, EMAIL: { send }, NOTIFICATIONS_FROM_ADDRESS: "studio@example.test" } as unknown as Env, projectId, "raw_ready");
+    await notifyProject({ DB: database.DB, EMAIL: { send }, NOTIFICATIONS_FROM_ADDRESS: "studio@example.test", APP_ORIGIN: "https://portal.test" } as unknown as Env, projectId, "raw_ready");
     const row = await database.DB.prepare("SELECT user_id, email_sent_at, email_message_id FROM notifications WHERE project_id = ? AND type = 'raw_ready'").bind(projectId).all();
     expect(row.results).toHaveLength(1);
     expect(row.results[0]).toMatchObject({ user_id: userId, email_message_id: "message-1" });
     expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ text: expect.stringContaining(`https://portal.test/projects/${projectId}`) }));
   });
 
   it("finds stalled handoffs and makes a second scan a true no-op", async () => {
@@ -114,7 +115,7 @@ describe("notification fanout and stalled scan", () => {
       database.DB.prepare("INSERT INTO autohdr_output_mappings (id, project_id, handoff_id, connection_id, generation, state, created_at, updated_at) VALUES (?, ?, ?, ?, 1, 'pending_discovery', ?, ?)").bind(crypto.randomUUID(), projectId, handoffId, connectionId, now, now),
     ]);
     const send = vi.fn().mockResolvedValue({ messageId: "test-message" });
-    const localEnv = { DB: database.DB, EMAIL: { send }, NOTIFICATIONS_FROM_ADDRESS: "studio@example.test" } as unknown as Env;
+    const localEnv = { DB: database.DB, EMAIL: { send }, NOTIFICATIONS_FROM_ADDRESS: "studio@example.test", APP_ORIGIN: "https://portal.test" } as unknown as Env;
     expect(await scanStalledAutoHdr(localEnv, now)).toBe(2);
     expect(await scanStalledAutoHdr(localEnv, now + 60 * 60 * 1000)).toBe(0);
     const rows = await database.DB.prepare("SELECT user_id FROM notifications WHERE source_key = ?").bind(handoffId).all<{ user_id: string }>();
@@ -122,6 +123,7 @@ describe("notification fanout and stalled scan", () => {
     expect(rows.results.map((row) => row.user_id)).toContain(activeAdmin);
     expect(rows.results.map((row) => row.user_id)).not.toContain(inactiveAdmin);
     expect(send).toHaveBeenCalledTimes(2);
+    for (const [message] of send.mock.calls) expect(message).toMatchObject({ text: expect.stringContaining(`https://portal.test/projects/${projectId}`) });
   });
 
   it("skips both the duplicate row and the duplicate email on a repeated sourceKey", async () => {
@@ -279,6 +281,7 @@ describe("notification fanout and stalled scan", () => {
       expect(await database.DB.prepare("SELECT due_reminder_sent_at FROM project_subtasks WHERE id = ?").bind(assigned.subtaskId).first()).toEqual({ due_reminder_sent_at: now });
       expect(await database.DB.prepare("SELECT due_reminder_sent_at FROM project_subtasks WHERE id = ?").bind(unassigned.subtaskId).first()).toEqual({ due_reminder_sent_at: null });
       expect(send).toHaveBeenCalledTimes(1);
+      expect(send).toHaveBeenCalledWith(expect.objectContaining({ text: expect.stringContaining(`https://portal.test/projects/${assigned.projectId}?collaboration=open`) }));
     });
   });
 

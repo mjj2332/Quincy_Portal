@@ -8,6 +8,7 @@ import {
 } from "@quincy/db";
 import { projects } from "@quincy/db/schema";
 import { eq } from "drizzle-orm";
+import { projectNotificationRoute, staffPathFor } from "@quincy/shared";
 import type { Env } from "./env";
 import { dbFor } from "./lib/db";
 
@@ -24,6 +25,8 @@ export async function notifyProject(
       projectNotificationRecipients(db, projectId),
     ]);
     const copy = notificationCopy(type, project?.street || "Project");
+    const route = projectNotificationRoute(projectId, type);
+    const link = route?.kind === "project" ? `${env.APP_ORIGIN}${staffPathFor(route)}` : undefined;
     await emitNotifications(db, {
       projectId,
       type,
@@ -31,6 +34,7 @@ export async function notifyProject(
       title: copy.title,
       body: copy.body,
       sourceKey: options.sourceKey,
+      link,
       email: env.EMAIL,
       fromAddress: env.NOTIFICATIONS_FROM_ADDRESS,
     });
@@ -91,6 +95,8 @@ export async function processDueSubtaskCandidate(
     const recipients = (await projectNotificationRecipients(db, row.projectId)).filter((recipient) => recipient.userId === row.assigneeId);
     const project = await db.select({ street: projects.street }).from(projects).where(eq(projects.id, row.projectId)).get();
     const copy = notificationCopy("subtask_due_today", project?.street || "Project");
+    const route = projectNotificationRoute(row.projectId, "subtask_due_today");
+    const link = route?.kind === "project" ? `${env.APP_ORIGIN}${staffPathFor(route)}` : undefined;
     const emitted = await emitNotifications(db, {
       projectId: row.projectId,
       type: "subtask_due_today",
@@ -98,6 +104,7 @@ export async function processDueSubtaskCandidate(
       title: copy.title,
       body: copy.body,
       sourceKey: `subtask-due:${row.subtaskId}:${row.dueDate}`,
+      link,
       email: env.EMAIL,
       fromAddress: env.NOTIFICATIONS_FROM_ADDRESS,
     });
@@ -175,6 +182,8 @@ export async function processStalledAutoHdrCandidate(
     const recipients = await projectNotificationRecipients(db, row.projectId);
     const project = await db.select({ street: projects.street }).from(projects).where(eq(projects.id, row.projectId)).get();
     const copy = notificationCopy("autohdr_stalled", project?.street || "Project");
+    const route = projectNotificationRoute(row.projectId, "autohdr_stalled");
+    const link = route?.kind === "project" ? `${env.APP_ORIGIN}${staffPathFor(route)}` : undefined;
     const emitted = await emitNotifications(db, {
       projectId: row.projectId,
       type: "autohdr_stalled",
@@ -182,6 +191,7 @@ export async function processStalledAutoHdrCandidate(
       title: copy.title,
       body: copy.body,
       sourceKey: row.handoffId,
+      link,
       email: env.EMAIL,
       fromAddress: env.NOTIFICATIONS_FROM_ADDRESS,
     });

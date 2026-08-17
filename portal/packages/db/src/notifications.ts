@@ -81,6 +81,7 @@ export type EmitNotificationInput = {
   title?: string;
   body?: string;
   sourceKey?: string;
+  link?: string;
   email?: NotificationEmail;
   fromAddress?: string;
 };
@@ -132,8 +133,8 @@ export async function emitNotifications(
         from: input.fromAddress,
         to: recipient.email,
         subject: copy.title,
-        text: copy.body,
-        html: `<p>${copy.body}</p>`,
+        text: input.link ? `${copy.body}\n\n${input.link}` : copy.body,
+        html: input.link ? `<p>${copy.body}</p><p><a href="${input.link}">View project</a></p>` : `<p>${copy.body}</p>`,
       });
       await db.update(schema.notifications).set({ emailSentAt: new Date(), emailMessageId: result.messageId }).where(eq(schema.notifications.id, inserted.id));
     } catch (error) {

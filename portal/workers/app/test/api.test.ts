@@ -1115,12 +1115,13 @@ describe("staff app API", () => {
     expect([...first, ...second]).toEqual([userId]);
     expect((await database.DB.prepare("SELECT id FROM project_members WHERE project_id = ? AND user_id = ? AND role_on_project = 'editor'").bind(projectId, userId).all()).results).toHaveLength(1);
     const send = vi.fn().mockResolvedValue({ messageId: "test-message" });
-    const testEnv = { DB: database.DB, EMAIL: { send }, NOTIFICATIONS_FROM_ADDRESS: "studio@example.test" } as unknown as Env;
+    const testEnv = { DB: database.DB, EMAIL: { send }, NOTIFICATIONS_FROM_ADDRESS: "studio@example.test", APP_ORIGIN: "https://portal.test" } as unknown as Env;
     for (const userIds of [first, second]) {
       await notifyProjectAssignments(testEnv, projectId, userIds.map((assignedUserId) => ({ userId: assignedUserId, roleOnProject: "editor" as const })));
     }
     expect((await database.DB.prepare("SELECT id FROM notifications WHERE project_id = ? AND type = 'assigned_to_project'").bind(projectId).all()).results).toHaveLength(1);
     expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ text: expect.stringContaining(`https://portal.test/projects/${projectId}`) }));
   });
 
   it("does not report an addition from a stale empty syncMembers snapshot", async () => {

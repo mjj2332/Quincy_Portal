@@ -58,7 +58,6 @@ describe("Topbar notifications", () => {
     expect(apiPostMock).toHaveBeenCalledWith("/api/notifications/n-1/read", {});
 
     await click(trigger);
-    await click(trigger);
     await act(async () => { window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); await Promise.resolve(); });
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
     expect(host.querySelector('[role="menu"]')).toBeNull();
@@ -120,22 +119,30 @@ describe("Topbar notifications", () => {
     expect(host.querySelector(".topbar__notification-empty")).not.toBeNull();
   });
 
-  it("uses real project-collaboration links only for project mentions and subtask assignments, then marks them read without waiting", async () => {
+  it("links every project notification, opening collaboration only for collaboration notifications, then marks them read without waiting", async () => {
     const projectId = "11111111-1111-4111-8111-111111111111";
     apiGetMock.mockResolvedValue({ notifications: [
       { id: "project-mention", projectId, type: "mentioned", title: "You were mentioned", body: "Comment", readAt: null, createdAt: "2026-08-17T00:00:00.000Z" },
       { id: "board-mention", projectId: null, type: "mentioned", title: "You were mentioned", body: "Notice", readAt: null, createdAt: "2026-08-17T00:00:00.000Z" },
       { id: "project-subtask", projectId, type: "subtask_assigned", title: "Subtask assigned", body: "Checklist", readAt: null, createdAt: "2026-08-17T00:00:00.000Z" },
+      { id: "project-due", projectId, type: "subtask_due_today", title: "Due today", body: "Checklist", readAt: null, createdAt: "2026-08-17T00:00:00.000Z" },
+      { id: "project-raw", projectId, type: "raw_ready", title: "RAW", body: null, readAt: null, createdAt: "2026-08-17T00:00:00.000Z" },
+      { id: "project-edited", projectId, type: "edited_landed", title: "Edited", body: null, readAt: null, createdAt: "2026-08-17T00:00:00.000Z" },
+      { id: "project-editing", projectId, type: "sent_to_editing", title: "Editing", body: null, readAt: null, createdAt: "2026-08-17T00:00:00.000Z" },
+      { id: "project-stalled", projectId, type: "autohdr_stalled", title: "Stalled", body: null, readAt: null, createdAt: "2026-08-17T00:00:00.000Z" },
       { id: "project-delivered", projectId, type: "delivered", title: "Delivered", body: null, readAt: null, createdAt: "2026-08-17T00:00:00.000Z" },
-    ], unreadCount: 4 });
+      { id: "project-comment", projectId, type: "comment_added", title: "Comment", body: null, readAt: null, createdAt: "2026-08-17T00:00:00.000Z" },
+      { id: "project-assigned", projectId, type: "assigned_to_project", title: "Assigned", body: null, readAt: null, createdAt: "2026-08-17T00:00:00.000Z" },
+    ], unreadCount: 11 });
     const host = document.body.firstElementChild as HTMLElement;
     await render(host); await click(host.querySelector<HTMLButtonElement>(".topbar__notification-trigger")!);
     const links = host.querySelectorAll<HTMLAnchorElement>(`a[href="/projects/${projectId}?collaboration=open"]`);
-    expect(links).toHaveLength(2); expect([...links].map((link) => link.textContent)).toEqual(expect.arrayContaining([expect.stringContaining("You were mentioned"), expect.stringContaining("Subtask assigned")]));
+    expect(links).toHaveLength(3); expect([...links].map((link) => link.textContent)).toEqual(expect.arrayContaining([expect.stringContaining("You were mentioned"), expect.stringContaining("Subtask assigned"), expect.stringContaining("Due today")]));
+    expect(host.querySelectorAll(`a[href="/projects/${projectId}"]`)).toHaveLength(7);
     const link = links[0]!;
     expect(link.getAttribute("role")).toBe("menuitem");
-    expect([...host.querySelectorAll("button.topbar__notification-item")].map((button) => button.textContent)).toEqual(expect.arrayContaining([expect.stringContaining("You were mentioned"), expect.stringContaining("Delivered")]));
-    expect(host.querySelectorAll("button.topbar__notification-item")).toHaveLength(2);
+    expect([...host.querySelectorAll("button.topbar__notification-item")].map((button) => button.textContent)).toEqual([expect.stringContaining("You were mentioned")]);
+    expect(host.querySelectorAll("button.topbar__notification-item")).toHaveLength(1);
     await click(link);
     expect(apiPostMock).toHaveBeenCalledWith("/api/notifications/project-mention/read", {});
     expect(host.querySelector('[role="menu"]')).toBeNull();

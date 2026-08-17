@@ -4,7 +4,7 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 import { notificationCopy } from "@quincy/db";
 import { createAuth } from "../src/auth";
 import type { Env } from "../src/env";
-import { notifyProject, notifyProjectAssignments } from "../src/lib/notifications";
+import { notifyMentions, notifyProject, notifyProjectAssignments, notifySubtaskAssignee } from "../src/lib/notifications";
 
 const database = env as unknown as { DB: D1Database };
 const baseEnv = env as unknown as Env;
@@ -108,10 +108,11 @@ describe("notifications API and recipient selection", () => {
       database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'photographer', ?)").bind(crypto.randomUUID(), projectId, adminId, now),
     ]);
     const send = vi.fn().mockResolvedValue({ messageId: "test-message" });
-    const testEnv = { DB: database.DB, EMAIL: { send }, NOTIFICATIONS_FROM_ADDRESS: "studio@example.test" } as unknown as Env;
+    const testEnv = { DB: database.DB, EMAIL: { send }, NOTIFICATIONS_FROM_ADDRESS: "studio@example.test", APP_ORIGIN: "https://portal.test" } as unknown as Env;
     await notifyProject(testEnv, projectId, "raw_ready");
     expect((await database.DB.prepare("SELECT user_id FROM notifications WHERE project_id = ? AND type = 'raw_ready'").bind(projectId).all<{ user_id: string }>()).results).toEqual([{ user_id: adminId }]);
     expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ text: expect.stringContaining(`https://portal.test/projects/${projectId}`) }));
   });
 
   it("includes active admins for every project event, but only explicit active targets for assignments", async () => {
@@ -131,7 +132,7 @@ describe("notifications API and recipient selection", () => {
         .bind(crypto.randomUUID(), projectId, editor, now, crypto.randomUUID(), projectId, photographer, now),
     ]);
     const send = vi.fn().mockResolvedValue({ messageId: "test-message" });
-    const testEnv = { DB: database.DB, EMAIL: { send }, NOTIFICATIONS_FROM_ADDRESS: "studio@example.test" } as unknown as Env;
+    const testEnv = { DB: database.DB, EMAIL: { send }, NOTIFICATIONS_FROM_ADDRESS: "studio@example.test", APP_ORIGIN: "https://portal.test" } as unknown as Env;
     for (const type of ["raw_ready", "edited_landed", "sent_to_editing", "autohdr_stalled", "delivered", "comment_added"] as const) {
       await notifyProject(testEnv, projectId, type, type === "comment_added" ? { editorOnly: true } : {});
     }
@@ -161,8 +162,26 @@ describe("notifications API and recipient selection", () => {
   it("records a mocked email failure without failing the notification write", async () => {
     const project = await database.DB.prepare("SELECT id FROM projects WHERE street = 'Comment Street'").first<{ id: string }>();
     const send = async () => { throw new Error("mock email unavailable"); };
-    await notifyProject({ DB: database.DB, EMAIL: { send }, NOTIFICATIONS_FROM_ADDRESS: "studio@example.test" } as unknown as Env, project!.id, "edited_landed");
+    await notifyProject({ DB: database.DB, EMAIL: { send }, NOTIFICATIONS_FROM_ADDRESS: "studio@example.test", APP_ORIGIN: "https://portal.test" } as unknown as Env, project!.id, "edited_landed");
     const row = await database.DB.prepare("SELECT email_error FROM notifications WHERE project_id = ? AND type = 'edited_landed' LIMIT 1").bind(project!.id).first<{ email_error: string }>();
     expect(row?.email_error).toContain("mock email unavailable");
+  });
+
+  it("uses collaboration-open links for project mentions and subtask assignments", async () => {
+    const now = Date.now();
+    const projectId = crypto.randomUUID();
+    const actorId = crypto.randomUUID();
+    const assigneeId = crypto.randomUUID();
+    await database.DB.batch([
+      database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, 'Mention actor', ?, 1, 'editor', 1, ?, ?), (?, 'Mention assignee', ?, 1, 'editor', 1, ?, ?)").bind(actorId, `${actorId}@example.test`, now, now, assigneeId, `${assigneeId}@example.test`, now, now),
+      database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'Collaboration links', 'edited_review', ?, ?)").bind(projectId, now, now),
+      database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?), (?, ?, ?, 'editor', ?)").bind(crypto.randomUUID(), projectId, actorId, now, crypto.randomUUID(), projectId, assigneeId, now),
+    ]);
+    const send = vi.fn().mockResolvedValue({ messageId: "collaboration-link" });
+    const testEnv = { DB: database.DB, EMAIL: { send }, NOTIFICATIONS_FROM_ADDRESS: "studio@example.test", APP_ORIGIN: "https://portal.test" } as unknown as Env;
+    await notifyMentions(testEnv, { scope: "project-comment", actorId, projectId, mentions: [{ id: crypto.randomUUID(), mentionedUserId: assigneeId }] });
+    await notifySubtaskAssignee(testEnv, { projectId, actorId, assigneeId, subtaskId: crypto.randomUUID(), assignmentVersion: 1 });
+    expect(send).toHaveBeenCalledTimes(2);
+    for (const [message] of send.mock.calls) expect(message).toMatchObject({ text: expect.stringContaining(`https://portal.test/projects/${projectId}?collaboration=open`) });
   });
 });
