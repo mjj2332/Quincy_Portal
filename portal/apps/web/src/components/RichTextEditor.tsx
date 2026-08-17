@@ -7,7 +7,23 @@ import Mention from "@tiptap/extension-mention";
 import { richTextPlainText, type RichTextDoc } from "@quincy/shared";
 import { MentionAutocomplete, type MentionAutocompleteHandle, type MentionableUser } from "./MentionAutocomplete";
 
-function toTiptap(doc: RichTextDoc): Record<string, unknown> { return JSON.parse(JSON.stringify(doc)) as Record<string, unknown>; }
+function toTiptap(doc: RichTextDoc): Record<string, unknown> {
+  const copy = (node: unknown): unknown => {
+    if (!node || typeof node !== "object" || Array.isArray(node)) return node;
+    const valueNode = node as Record<string, unknown>;
+    if (valueNode.type === "text") return {
+      type: "text",
+      text: valueNode.text,
+      ...(Array.isArray(valueNode.marks) ? { marks: valueNode.marks.map((mark) => {
+        const current = mark as Record<string, unknown>;
+        return current.type === "link" ? { type: "link", attrs: { href: current.href } } : { ...current };
+      }) } : {}),
+    };
+    if (valueNode.type === "mention") return { type: "mention", attrs: { ...(valueNode.attrs as Record<string, unknown>) } };
+    return { type: valueNode.type, ...(Array.isArray(valueNode.content) ? { content: valueNode.content.map(copy) } : {}) };
+  };
+  return copy(doc) as Record<string, unknown>;
+}
 
 const ListItemHardBreak = HardBreak.extend({
   addKeyboardShortcuts() {

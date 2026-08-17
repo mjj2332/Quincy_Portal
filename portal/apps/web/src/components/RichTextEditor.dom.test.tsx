@@ -146,4 +146,32 @@ describe("RichTextEditor hard breaks", () => {
       content: [{ type: "bulletList", content: [{ type: "listItem", content: [{ type: "paragraph", content: [{ type: "hardBreak" }, { type: "text", text: "before" }, { type: "hardBreak" }, { type: "text", text: "after" }] }] }] }],
     });
   });
+
+  it("round-trips loaded links through TipTap while preserving mentions", async () => {
+    const href = "https://example.test/linked-resource";
+    const mention = { id: "11111111-1111-4111-8111-111111111111", label: "Nora Mention" };
+    const value: RichTextDoc = {
+      type: "doc",
+      content: [{ type: "paragraph", content: [
+        { type: "text", text: "Read this", marks: [{ type: "link", href }] },
+        { type: "text", text: " with " },
+        { type: "mention", attrs: mention },
+        { type: "text", text: " today" },
+      ] }],
+    };
+    const host = mount(); const onChange = vi.fn();
+    const { editor } = await render(host, value, onChange);
+    expect(editor.querySelector("a")?.getAttribute("href")).toBe(href);
+    onChange.mockClear();
+    await typeAfterCurrentContent(editor, "!");
+    expect(onChange).toHaveBeenLastCalledWith({
+      type: "doc",
+      content: [{ type: "paragraph", content: [
+        { type: "text", text: "Read this", marks: [{ type: "link", href }] },
+        { type: "text", text: " with " },
+        { type: "mention", attrs: mention },
+        { type: "text", text: " today!" },
+      ] }],
+    });
+  });
 });
