@@ -597,3 +597,35 @@ was expensive: three wrong root causes were shipped before the plan page was eve
   confirming a fix (not building it), explicitly forbid it from running
   Workers/Miniflare-dependent commands in the prompt — read-only code review doesn't need to
   execute them, and telling it not to try avoids this exact trap.
+
+## Rich-text link marks silently lost on edit-load, not just on submit (2026-08-18)
+
+- **A one-way JSON clone is not a schema translation, even when both shapes look almost
+  identical.** The portable `RichTextDoc` contract stores a link mark flat —
+  `{type:"link", href}` (`packages/shared/src/rich-text.ts:6`) — while TipTap/ProseMirror's `Link`
+  mark schema treats `href` as a node **attribute**: `{type:"link", attrs:{href}}`. `toTiptap()` in
+  `RichTextEditor.tsx` (shared by project comments and notice-board posts) was `JSON.parse(JSON.
+  stringify(doc))` — a deep clone, not a shape conversion — so loading a comment that already
+  contained a link fed ProseMirror a mark with no `attrs` key at all. `Mark.fromJSON` then calls
+  `type.create(undefined)`, which falls back to the schema default (`href: null`) for every
+  attribute; the link rendered with no `href`, reading to the user as "the link disappeared."
+  Editing after that round-tripped the null straight back to the server, where `parseMarks()`'s
+  `httpUrl()` check rejected it and the PATCH failed with 400 — so "the link vanished" and "I can't
+  save" were the *same* bug, not two.
+- **The reverse direction (`tiptapToRichTextDoc`) was already correct and had been for a while** —
+  it reads `attrs.href` back out into the flat stored shape on every `onUpdate`. That asymmetry is
+  exactly why *creating* a brand-new link via the toolbar's `setLink()` always worked (TipTap's own
+  command populates `attrs.href` through its API, bypassing `toTiptap()` entirely) while *editing
+  an existing* linked comment never did — the bug only bites on the load path, so it's easy to
+  miss if your manual test is "type a link and save" rather than "open something that already has
+  one."
+- **Rule:** whenever a component owns a bidirectional conversion between a stored/wire format and
+  a third-party editor's in-memory schema, treat both directions as independent code paths that
+  need their own explicit mapping and their own test — a clone that happens to satisfy one
+  direction is not evidence the other direction is a no-op too. If the two shapes differ only in
+  *where* a value lives (top-level vs. nested under `attrs`), that's exactly the kind of mismatch
+  that produces no type error (both are `Record<string, unknown>` as far as TypeScript is
+  concerned) and no crash (the schema just silently substitutes its default) — so it has to be
+  caught by a round-trip test that mounts the real editor, not by types or by testing serialization
+  in only one direction. See the fix and its regression test:
+  `docs/plans/implemented/RichText-Link-Edit-Roundtrip-Fix-Plan.md`.
