@@ -36,7 +36,7 @@ describe("project comments API", () => {
     expect((await request(`/api/projects/${projectId}/comments`, "comments-outsider-token")).status).toBe(403);
   });
 
-  it("creates normalized project mentions, pages ascending, and preserves author-only project-scoped edits and deletes", async () => {
+  it("creates normalized project mentions, pages newest-first, and preserves author-only project-scoped edits and deletes", async () => {
     const firstResponse = await request(`/api/projects/${projectId}/comments`, "comments-editor-token", "POST", { content: mentionDoc(adminId, "Forged admin label") });
     expect(firstResponse.status).toBe(201); const first = await firstResponse.json() as { id: string; body: string; content: { content: Array<{ content: Array<{ attrs?: { label: string } }> }> } };
     const secondResponse = await request(`/api/projects/${projectId}/comments`, "comments-editor-token", "POST", { content: doc("Second comment") });
@@ -50,9 +50,9 @@ describe("project comments API", () => {
     expect(mention.mentioned_user_id).toBe(adminId);
     expect(await database.DB.prepare("SELECT type, source_key, project_id FROM notifications WHERE user_id = ? AND source_key = ?").bind(adminId, mention.id).first()).toMatchObject({ type: "mentioned", source_key: mention.id, project_id: projectId });
     const full = await request(`/api/projects/${projectId}/comments?limit=3`, "comments-editor-token"); const fullPage = await full.json() as { project: { street: string }; comments: Array<{ id: string }> };
-    expect(fullPage.project.street).toBe("Comment Street"); expect(fullPage.comments.map((comment) => comment.id)).toEqual([first.id, second.id, third.id]);
+    expect(fullPage.project.street).toBe("Comment Street"); expect(fullPage.comments.map((comment) => comment.id)).toEqual([third.id, second.id, first.id]);
     const limited = await request(`/api/projects/${projectId}/comments?limit=2`, "comments-editor-token"); const limitedPage = await limited.json() as { comments: Array<{ id: string }>; nextCursor?: string };
-    expect(limitedPage.comments.map((comment) => comment.id)).toEqual([second.id, third.id]); expect(limitedPage.nextCursor).toEqual(expect.any(String));
+    expect(limitedPage.comments.map((comment) => comment.id)).toEqual([third.id, second.id]); expect(limitedPage.nextCursor).toEqual(expect.any(String));
     const older = await request(`/api/projects/${projectId}/comments?limit=2&before=${encodeURIComponent(limitedPage.nextCursor!)}`, "comments-editor-token");
     expect((await older.json() as { comments: Array<{ id: string }> }).comments.map((comment) => comment.id)).toEqual([first.id]);
     expect((await request(`/api/projects/${projectId}/comments?before=not-a-cursor`, "comments-editor-token")).status).toBe(400);

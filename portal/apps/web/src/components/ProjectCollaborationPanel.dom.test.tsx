@@ -173,6 +173,31 @@ describe("ProjectCollaborationPanel", () => {
     expect(apiGetMock).toHaveBeenCalledWith(`/api/mentionable-users?projectId=${projectId}&q=Nor`);
   });
 
+  it("renders newest-first comments, prepends posts, and appends older pages below the list", async () => {
+    const oldestComment = { id: "comment-oldest", author: { id: "user-other", name: "Oldest person" }, body: "Oldest comment", content: doc("Oldest comment"), createdAt: "2026-08-16T23:59:00.000Z", editedAt: null };
+    apiGetMock.mockImplementation((path) => path.includes("subtasks")
+      ? Promise.resolve({ subtasks: [] })
+      : path.includes("before=older-page")
+        ? Promise.resolve(comments([oldestComment]))
+        : Promise.resolve({ ...comments([otherComment, ownComment]), nextCursor: "older-page" }));
+    const host = mount();
+    await render(<ProjectCollaborationPanel projectId={projectId} openSignal={1} />);
+
+    const list = host.querySelector<HTMLElement>(".project-collaboration__comments")!;
+    const loadOlder = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Load older comments")!;
+    const composer = host.querySelector<HTMLElement>(".project-collaboration__comment-compose")!;
+    expect([...list.querySelectorAll("article")].map((article) => article.querySelector("p")?.textContent)).toEqual(["Other comment", "My comment"]);
+    expect(list.nextElementSibling).toBe(loadOlder); expect(loadOlder.nextElementSibling).toBe(composer);
+
+    const editor = composer.querySelector<HTMLElement>('[contenteditable="true"]')!;
+    await typeIntoEditor(editor, "Posted comment");
+    await click(composer.querySelector<HTMLButtonElement>('button[type="submit"]')!);
+    expect([...list.querySelectorAll("article")].map((article) => article.querySelector("p")?.textContent)).toEqual(["Posted comment", "Other comment", "My comment"]);
+
+    await click(loadOlder);
+    expect([...list.querySelectorAll("article")].map((article) => article.querySelector("p")?.textContent)).toEqual(["Posted comment", "Other comment", "My comment", "Oldest comment"]);
+  });
+
   it("keeps EditProject form-only with no collaboration panel or two-column wrapper", async () => {
     capabilities = new Set(["editProject"]);
     apiGetMock.mockReset().mockImplementation((path) => path === `/api/projects/${projectId}` ? Promise.resolve(project) : path.startsWith("/api/projects/") ? Promise.resolve(comments()) : Promise.resolve({ users: [] }));

@@ -72,7 +72,7 @@ projectCommentsRoutes.get("/projects/:projectId/comments", async (c) => {
     .where(and(eq(schema.projectComments.projectId, projectId), cursor ? or(lt(schema.projectComments.createdAt, before!), and(eq(schema.projectComments.createdAt, before!), lt(schema.projectComments.id, cursor.id))) : undefined))
     .orderBy(desc(schema.projectComments.createdAt), desc(schema.projectComments.id)).limit(parsed.data.limit ?? MAX_LIMIT).all();
   const oldest = rows.at(-1)?.comment;
-  return c.json({ project: access, comments: rows.reverse().map(serializeComment), ...(oldest && rows.length === (parsed.data.limit ?? MAX_LIMIT) ? { nextCursor: encodeCursor(oldest) } : {}) });
+  return c.json({ project: access, comments: rows.map(serializeComment), ...(oldest && rows.length === (parsed.data.limit ?? MAX_LIMIT) ? { nextCursor: encodeCursor(oldest) } : {}) });
 });
 
 projectCommentsRoutes.post("/projects/:projectId/comments", async (c) => {
