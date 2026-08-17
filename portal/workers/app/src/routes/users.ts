@@ -31,6 +31,9 @@ usersRoutes.patch("/users/:id", async (c) => {
   if (!existing) return c.json({ error: "User not found" }, 404);
   await db.update(schema.user).set({ ...data, updatedAt: new Date() }).where(eq(schema.user.id, id));
   if (data.active === false) await db.delete(schema.session).where(eq(schema.session.userId, id));
-  await audit(c.env, c.get("user").id, data.active === false ? "user.deactivate" : "user.update", "user", id, data);
+  const didRename = data.name !== undefined && data.name !== existing.name;
+  const action = data.active === false ? "user.deactivate" : didRename ? "user.rename" : "user.update";
+  const meta = didRename ? { ...data, previousName: existing.name } : data;
+  await audit(c.env, c.get("user").id, action, "user", id, meta);
   return c.json({ ok: true });
 });
