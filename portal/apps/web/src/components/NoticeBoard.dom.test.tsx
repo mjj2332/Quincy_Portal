@@ -227,7 +227,7 @@ describe("NoticeBoard disclosure and polling", () => {
       content: {
         type: "doc",
         content: [
-          { type: "bulletList", content: [{ type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "Bullet" }] }] }] },
+          { type: "bulletList", content: [{ type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "Bullet" }, { type: "hardBreak" }, { type: "text", text: "continued" }] }] }] },
           { type: "orderedList", content: [{ type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "First" }] }] }] },
           { type: "paragraph", content: [{ type: "text", text: "Studio", marks: [{ type: "link", href: "https://example.test/guide" }] }] },
         ],
@@ -237,6 +237,7 @@ describe("NoticeBoard disclosure and polling", () => {
     const host = mount();
     await render(<NoticeBoard currentUserId="user-b" />);
     expect(host.querySelector(".notice-board__post ul")?.textContent).toContain("Bullet");
+    expect(host.querySelector(".notice-board__post ul br")).not.toBeNull();
     expect(host.querySelector(".notice-board__post ol")?.textContent).toContain("First");
     const link = host.querySelector<HTMLAnchorElement>('.notice-board__post a[href="https://example.test/guide"]')!;
     expect(link).not.toBeNull();

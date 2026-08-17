@@ -4,6 +4,7 @@ import {
   RICH_TEXT_MAX_NESTING,
   RichTextValidationError,
   legacyBodyToRichTextDoc,
+  normalizeRichTextMentionLabels,
   parseRichTextDoc,
   richTextMentionIds,
   richTextPlainText,
@@ -50,6 +51,32 @@ describe("rich-text contract", () => {
       { type: "mention", attrs: { id: userId, label: "A" } },
     ] }] });
     expect(richTextMentionIds(doc)).toEqual([userId, secondId]);
+  });
+
+  it("accepts hard breaks in list and top-level paragraphs, preserving text and mentions", () => {
+    const secondId = "22222222-2222-4222-8222-222222222222";
+    const input = {
+      type: "doc",
+      content: [
+        { type: "paragraph", content: [{ type: "text", text: "Top" }, { type: "hardBreak" }, { type: "text", text: "level" }] },
+        { type: "bulletList", content: [{ type: "listItem", content: [{ type: "paragraph", content: [{ type: "mention", attrs: { id: userId, label: "Forged" } }, { type: "hardBreak" }, { type: "mention", attrs: { id: secondId, label: "Second" } }] }] }] },
+      ],
+    };
+    const parsed = parseRichTextDoc(input);
+    expect(parsed).toEqual(input);
+    expect(richTextPlainText(parsed)).toBe("Top\nlevel\nForged\nSecond");
+    expect(richTextMentionIds(parsed)).toEqual([userId, secondId]);
+    expect(normalizeRichTextMentionLabels(parsed, new Map([[userId, "First"], [secondId, "Second normalized"]]))).toEqual({
+      type: "doc",
+      content: [
+        { type: "paragraph", content: [{ type: "text", text: "Top" }, { type: "hardBreak" }, { type: "text", text: "level" }] },
+        { type: "bulletList", content: [{ type: "listItem", content: [{ type: "paragraph", content: [{ type: "mention", attrs: { id: userId, label: "First" } }, { type: "hardBreak" }, { type: "mention", attrs: { id: secondId, label: "Second normalized" } }] }] }] },
+      ],
+    });
+  });
+
+  it("rejects attributes on hard breaks", () => {
+    expect(() => parseRichTextDoc({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "No" }, { type: "hardBreak", attrs: {} }] }] })).toThrow(RichTextValidationError);
   });
 
   it("wraps legacy plain body values in a paragraph", () => {

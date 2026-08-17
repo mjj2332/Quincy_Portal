@@ -62,6 +62,13 @@ describe("project comments API", () => {
     expect(await database.DB.prepare("SELECT action FROM audit_log WHERE target_id = ? ORDER BY created_at").bind(first.id).all()).toMatchObject({ results: [{ action: "project_comment.create" }, { action: "project_comment.edit" }, { action: "project_comment.delete" }] });
   });
 
+  it("accepts a list item containing a hard break", async () => {
+    const content = { type: "doc", content: [{ type: "bulletList", content: [{ type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "First" }, { type: "hardBreak" }, { type: "text", text: "second" }] }] }] }] };
+    const response = await request(`/api/projects/${projectId}/comments`, "comments-editor-token", "POST", { content });
+    expect(response.status).toBe(201);
+    expect((await response.json() as { content: unknown; body: string })).toMatchObject({ content, body: "First\nsecond" });
+  });
+
   it("rejects forged or inactive targets without auditing, keeps nested comment IDs project-scoped, and validates lookup after access then existence", async () => {
     expect((await request(`/api/projects/${projectId}/comments/${crypto.randomUUID()}`, "comments-editor-token", "DELETE")).status).toBe(404);
     await database.DB.prepare("UPDATE user SET active = 0 WHERE id = ?").bind(adminId).run();

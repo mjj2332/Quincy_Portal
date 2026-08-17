@@ -102,6 +102,16 @@ describe("notice board API", () => {
     expect(posts[0]).toMatchObject({ id: legacyId, content: textDoc("Legacy body"), editedAt: null });
   });
 
+  it("preserves a list-item hard break through post and list retrieval", async () => {
+    const content = { type: "doc", content: [{ type: "bulletList", content: [{ type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "First" }, { type: "hardBreak" }, { type: "text", text: "second" }] }] }] }] };
+    const created = await request("/api/notice-board/posts", editorToken, "POST", { content });
+    expect(created.status).toBe(201);
+    const { id } = await created.json() as { id: string };
+    const listed = await request("/api/notice-board/posts?limit=50", editorToken);
+    const posts = (await listed.json() as { posts: Array<{ id: string; content: unknown }> }).posts;
+    expect(posts.find((post) => post.id === id)?.content).toEqual(content);
+  });
+
   it("serves the active staff mention lookup without email or a manage-users dependency", async () => {
     for (let index = 0; index < 24; index += 1) { const id = `77777777-7777-4777-8777-${index.toString(16).padStart(12, "0")}`; await database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, ?, ?, 1, 'editor', 1, ?, ?)").bind(id, `Same Name ${index}`, `mention-${index}@example.test`, Date.now(), Date.now()).run(); }
     const response = await request("/api/mentionable-users?scope=notice-board&q=same%20name", photographerToken);

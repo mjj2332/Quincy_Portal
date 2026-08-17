@@ -12,6 +12,7 @@ function marked(node: ReactNode, marks: RichTextMark[] | undefined): ReactNode {
 
 function inline(node: RichTextInline, index: number): ReactNode {
   if (node.type === "mention") return <span className="rich-text__mention" key={index}>@{node.attrs.label}</span>;
+  if (node.type === "hardBreak") return <br key={index} />;
   return <Fragment key={index}>{marked(node.text, node.marks)}</Fragment>;
 }
 

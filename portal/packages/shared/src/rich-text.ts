@@ -6,7 +6,8 @@
 export type RichTextMark = { type: "bold" | "italic" } | { type: "link"; href: string };
 export type RichTextText = { type: "text"; text: string; marks?: RichTextMark[] };
 export type RichTextMention = { type: "mention"; attrs: { id: string; label: string } };
-export type RichTextInline = RichTextText | RichTextMention;
+export type RichTextHardBreak = { type: "hardBreak" };
+export type RichTextInline = RichTextText | RichTextMention | RichTextHardBreak;
 export type RichTextParagraph = { type: "paragraph"; content?: RichTextInline[] };
 export type RichTextListItem = { type: "listItem"; content: Array<RichTextParagraph | RichTextBulletList | RichTextOrderedList> };
 export type RichTextBulletList = { type: "bulletList"; content: RichTextListItem[] };
@@ -74,6 +75,10 @@ function parseInline(value: unknown): RichTextInline {
     if (typeof attrs.label !== "string" || !attrs.label.trim() || attrs.label.length > STAFF_NAME_MAX_LENGTH) throw new RichTextValidationError("Mention label is invalid");
     return { type: "mention", attrs: { id: attrs.id, label: attrs.label } };
   }
+  if (node.type === "hardBreak") {
+    onlyKeys(node, ["type"], "Hard break");
+    return { type: "hardBreak" };
+  }
   throw new RichTextValidationError("Unsupported inline node");
 }
 
@@ -122,7 +127,7 @@ export function parseRichTextDoc(value: unknown): RichTextDoc {
 }
 
 function textFromBlock(block: RichTextBlock | RichTextListItem): string {
-  if (block.type === "paragraph") return (block.content ?? []).map((node) => node.type === "text" ? node.text : node.attrs.label).join("");
+  if (block.type === "paragraph") return (block.content ?? []).map((node) => node.type === "text" ? node.text : node.type === "hardBreak" ? "\n" : node.attrs.label).join("");
   if (block.type === "listItem") return block.content.map(textFromBlock).filter(Boolean).join("\n");
   return block.content.map(textFromBlock).filter(Boolean).join("\n");
 }
@@ -137,7 +142,7 @@ export function richTextMentionIds(doc: RichTextDoc): string[] {
   const ids: string[] = [];
   const visit = (node: RichTextBlock | RichTextListItem | RichTextInline) => {
     if (node.type === "mention") { if (!ids.includes(node.attrs.id)) ids.push(node.attrs.id); return; }
-    if (node.type === "text") return;
+    if (node.type === "text" || node.type === "hardBreak") return;
     if (node.type === "paragraph") { for (const child of node.content ?? []) visit(child); return; }
     for (const child of node.content) visit(child);
   };
@@ -154,6 +159,7 @@ export function normalizeRichTextMentionLabels(doc: RichTextDoc, namesById: Read
       return { type: "mention", attrs: { id: node.attrs.id, label: label.slice(0, STAFF_NAME_MAX_LENGTH) } };
     }
     if (node.type === "text") return node.marks ? { ...node, marks: node.marks.map((mark) => ({ ...mark })) } : { ...node };
+    if (node.type === "hardBreak") return { ...node };
     if (node.type === "paragraph") return { type: "paragraph", ...(node.content ? { content: node.content.map(normalize) as RichTextInline[] } : {}) };
     return { type: node.type, content: node.content.map(normalize) as never } as RichTextBlock | RichTextListItem;
   };

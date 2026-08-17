@@ -20,6 +20,7 @@
   },
   "dependencies": {
     "aws4fetch": "^1.0.20",
+    "@tiptap/extension-hard-break": "2.27.2",
     "@tiptap/extension-link": "2.27.2",
     "@tiptap/extension-mention": "2.27.2",
     "@tiptap/react": "2.27.2",

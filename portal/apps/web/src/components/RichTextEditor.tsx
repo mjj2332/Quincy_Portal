@@ -1,12 +1,24 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
+import HardBreak from "@tiptap/extension-hard-break";
 import Link from "@tiptap/extension-link";
 import Mention from "@tiptap/extension-mention";
 import { richTextPlainText, type RichTextDoc } from "@quincy/shared";
 import { MentionAutocomplete, type MentionAutocompleteHandle, type MentionableUser } from "./MentionAutocomplete";
 
 function toTiptap(doc: RichTextDoc): Record<string, unknown> { return JSON.parse(JSON.stringify(doc)) as Record<string, unknown>; }
+
+const ListItemHardBreak = HardBreak.extend({
+  addKeyboardShortcuts() {
+    return {
+      "Shift-Enter": () => {
+        if (!this.editor.isActive("listItem")) return true;
+        return this.editor.commands.setHardBreak();
+      },
+    };
+  },
+});
 
 /** Removes TipTap-only attributes before data leaves the browser. */
 export function tiptapToRichTextDoc(value: unknown): RichTextDoc {
@@ -28,7 +40,7 @@ export function tiptapToRichTextDoc(value: unknown): RichTextDoc {
 
 function mentionQuery(editor: NonNullable<ReturnType<typeof useEditor>>): string | null {
   const { from } = editor.state.selection;
-  const before = editor.state.doc.textBetween(Math.max(0, from - 160), from, "\n", "\0");
+  const before = editor.state.doc.textBetween(Math.max(0, from - 160), from, "\n", (node) => node.type.name === "hardBreak" ? "\n" : "\0");
   const match = before.match(/(?:^|\s)@([^\s@]*)$/u);
   return match ? match[1]! : null;
 }
@@ -53,6 +65,7 @@ export function RichTextEditor({ value, onChange, limit, disabled = false, loadM
   const [mentionA11y, setMentionA11y] = useState<{ listboxId: string; activeId?: string; expanded: boolean } | null>(null);
   const extensions = useMemo(() => [
     StarterKit.configure({ heading: false, blockquote: false, codeBlock: false, horizontalRule: false, hardBreak: false, strike: false, code: false }),
+    ListItemHardBreak,
     Link.configure({ openOnClick: false, autolink: false, linkOnPaste: false }),
     Mention.configure({ HTMLAttributes: { class: "rich-text__mention" }, suggestion: { items: () => [] } }),
   ], []);
