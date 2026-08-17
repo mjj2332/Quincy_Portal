@@ -80,6 +80,8 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
   const [agentForm, setAgentForm] = useState({ name: "", email: "", phone: "" });
   const [editingAgency, setEditingAgency] = useState<string>();
   const [editingAgent, setEditingAgent] = useState<string>();
+  const [editingUserId, setEditingUserId] = useState<string>();
+  const [userNameDraft, setUserNameDraft] = useState("");
   const [stageError, setStageError] = useState<string>();
   const [payload, setPayload] = useState<{ id: string; json: string }>();
   const [directoryError, setDirectoryError] = useState<string>();
@@ -195,14 +197,16 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
     }
   }
 
-  async function updateUser(user: User, patch: { role?: Role; active?: boolean }) {
+  async function updateUser(user: User, patch: { role?: Role; active?: boolean; name?: string }) {
     setUpdatingUserId(user.id);
     try {
       await apiPatch<{ ok: true }, typeof patch>(`/api/users/${user.id}`, patch);
       await loadUsers();
-      toast(patch.active === false ? `${user.name} has been deactivated and signed out everywhere.` : patch.active === true ? `${user.name} has been reactivated.` : "Role updated.");
+      toast(patch.active === false ? `${user.name} has been deactivated and signed out everywhere.` : patch.active === true ? `${user.name} has been reactivated.` : patch.name !== undefined ? "Name updated." : "Role updated.");
+      return true;
     } catch (reason) {
       toast(reason instanceof Error ? reason.message : "The user could not be updated.", "error");
+      return false;
     } finally {
       setUpdatingUserId(undefined);
     }
@@ -212,6 +216,17 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
     const action = user.active ? "deactivate" : "reactivate";
     const detail = user.active ? " This signs them out everywhere immediately." : "";
     if (window.confirm(`Are you sure you want to ${action} ${user.name}?${detail}`)) void updateUser(user, { active: !user.active });
+  }
+
+  function startEditingUserName(user: User) {
+    setEditingUserId(user.id);
+    setUserNameDraft(user.name);
+  }
+
+  async function saveUserName(user: User) {
+    const name = userNameDraft.trim();
+    if (!name) return;
+    if (await updateUser(user, { name })) setEditingUserId(undefined);
   }
 
   async function connectDropbox() {
@@ -307,7 +322,8 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
         {!isLoadingUsers && !usersError && users.length > 0 && <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Access</th><th>Created</th><th><span className="sr-only">Actions</span></th></tr></thead><tbody>{users.map((user) => {
           const isSelf = user.id === currentUserId;
           const isUpdating = updatingUserId === user.id;
-          return <tr key={user.id}><td data-label="Name"><strong>{user.name}</strong></td><td data-label="Email">{user.email}</td><td data-label="Role"><label className="sr-only" htmlFor={`role-${user.id}`}>Role for {user.name}</label><select id={`role-${user.id}`} className="admin-role-select" value={user.role} disabled={isUpdating} onChange={(event) => void updateUser(user, { role: event.target.value as Role })}>{ROLES.map((role) => <option key={role} value={role}>{roleLabel(role)}</option>)}</select></td><td data-label="Access"><span className={`admin-status admin-status--${user.active ? "active" : "inactive"}`}>{user.active ? "Active" : "Inactive"}</span></td><td data-label="Created">{formatDate(user.createdAt)}</td><td className="admin-table__action"><button className="button button--secondary" type="button" disabled={isUpdating || isSelf} title={isSelf ? "You cannot deactivate your own account." : undefined} onClick={() => toggleActive(user)}>{user.active ? "Deactivate" : "Reactivate"}</button></td></tr>;
+          const isEditingName = editingUserId === user.id;
+          return <tr key={user.id}><td data-label="Name">{isEditingName ? <input className="admin-inline-input" value={userNameDraft} onChange={(event) => setUserNameDraft(event.target.value)} aria-label={`Name for ${user.name}`} /> : <strong>{user.name}</strong>}</td><td data-label="Email">{user.email}</td><td data-label="Role"><label className="sr-only" htmlFor={`role-${user.id}`}>Role for {user.name}</label><select id={`role-${user.id}`} className="admin-role-select" value={user.role} disabled={isUpdating} onChange={(event) => void updateUser(user, { role: event.target.value as Role })}>{ROLES.map((role) => <option key={role} value={role}>{roleLabel(role)}</option>)}</select></td><td data-label="Access"><span className={`admin-status admin-status--${user.active ? "active" : "inactive"}`}>{user.active ? "Active" : "Inactive"}</span></td><td data-label="Created">{formatDate(user.createdAt)}</td><td className="admin-table__action">{isEditingName ? <><button className="button button--secondary" type="button" disabled={isUpdating} onClick={() => void saveUserName(user)}>Save</button><button className="button button--text" type="button" onClick={() => setEditingUserId(undefined)}>Cancel</button></> : <><button className="button button--text" type="button" disabled={isUpdating} onClick={() => startEditingUserName(user)}>Edit</button><button className="button button--secondary" type="button" disabled={isUpdating || isSelf} title={isSelf ? "You cannot deactivate your own account." : undefined} onClick={() => toggleActive(user)}>{user.active ? "Deactivate" : "Reactivate"}</button></>}</td></tr>;
         })}</tbody></table></div>}
       </section>}
 
