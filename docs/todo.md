@@ -7,7 +7,29 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
 > counts, full diagnostic transcripts) has been cut in favor of what/when/deploy-state. See
 > `docs/lessons.md` for incident mechanics, and `docs/reviews/` for full QA-sweep detail.
 
-## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29, seed-admin UUID migration 2026-07-29, notification dismiss + stalled-guard 2026-07-30, download selection 2026-08-04, notice-board rich text + mentions 2026-08-17, project comments + collaboration panel 2026-08-17, project subtasks/checklist 2026-08-17, collaboration panel relocated to Project page 2026-08-17)
+## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29, seed-admin UUID migration 2026-07-29, notification dismiss + stalled-guard 2026-07-30, download selection 2026-08-04, notice-board rich text + mentions 2026-08-17, project comments + collaboration panel 2026-08-17, project subtasks/checklist 2026-08-17, collaboration panel relocated to Project page 2026-08-17, collaboration panel UI fixes + due-time reminder 2026-08-17)
+
+- **Collaboration panel UI fixes + subtask due-time/reminder, deployed 2026-08-17
+  (`Collaboration-Panel-UI-Fixes-Plan.md`, commit `aab76e5`, migration `0028` — additive nullable
+  `project_subtasks.due_reminder_sent_at` column).** Three UI bugs reported against the just-shipped
+  collaboration panel: the checklist item's row layout was broken at every width (a viewport media
+  query never matched the panel's actual fixed width — fixed by restructuring into three explicit
+  rows, checkbox+title / assignee+actions / date+time, sized to fit without any conditional CSS);
+  the panel defaulted closed instead of open; and the close button read "Close collaboration"
+  instead of a terser "Hide ›". A `/grill-me` round mid-plan added a real feature: subtask due dates
+  gain an optional time (backward-compatible — bare `YYYY-MM-DD` stays valid forever), stored as a
+  literal Sydney wall-clock string, plus a due-day-morning reminder notification built on the exact
+  claim-then-guarded-rollback pattern the stalled-AutoHDR-handoff scan already uses, driven by the
+  same existing hourly cron. Deliberately minimal v1 (one-shot, no escalation) — a more complete
+  reminder system is separate future work. Five Terra review rounds across the plan (arithmetic,
+  `display: contents` container-query gotcha, and — most seriously — a reminder-state bug where
+  rescheduling a subtask never cleared its "already reminded" marker, so it could never remind
+  again) plus a diff review that caught a CSS regression (the new wide-panel width rule accidentally
+  also shrank the unrelated stage-hidden-photographer standalone fallback view) and a missing
+  Drizzle migration snapshot. The §5 gate itself then caught a test-isolation bug the diff review
+  missed: a new reschedule test left a subtask assigned to a shared fixture user with no cleanup,
+  inflating an unrelated test's count. Live production smoke test on the exact project from the bug
+  report confirmed the fix directly.
 
 - **Collaboration panel relocated from EditProject to the Project page, deployed 2026-08-17
   (`Project-Collaboration-Panel-Relocation-Plan.md`, commit `15528f7`, no migration).** Comments +

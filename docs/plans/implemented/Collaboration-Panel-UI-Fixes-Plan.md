@@ -1,6 +1,21 @@
 # Collaboration Panel UI Fixes — Plan
 
-> **Status: DRAFT — not yet built. Scope grew mid-plan; see below.**
+> **Status: IMPLEMENTED — deployed to production 2026-08-17 (commit `aab76e5`). Migration `0028`
+> applied to prod D1. Deployed as `background` then `app` (which bundles the web build via its
+> `ASSETS` binding, so web + `app` API/validator changes ship as one atomic `wrangler deploy`).**
+>
+> §5 gate caught one real bug the diff review hadn't: the new reschedule test left a subtask
+> assigned to a shared fixture user with no cleanup, which inflated an unrelated test's
+> assignment-clearing count from 1 to 2. Fixed with a one-line cleanup matching the file's
+> existing convention; full suite re-verified green afterward (db 19, web unit 64, web dom 117,
+> app worker 152 + 1 pre-existing skip, background 180, webhook-ingress 13, shared 45).
+>
+> Live production smoke test on the exact project from the original bug report screenshot
+> confirmed: default-open panel, `Hide ›` button copy, and the three-row checklist layout with no
+> clipped or missing fields — the direct fix for what the screenshot showed broken. CSS was also
+> verified by injecting the real markup against the real deployed stylesheet at all three target
+> widths (1200px → 560px panel / 492px content; 900px → 460px / 392px; 375px mobile preset →
+> 351px / 283px) with zero overflow at any width, matching Terra's arithmetic exactly.
 >
 > Started as three small, low-ambiguity UI fixes to the collaboration panel that shipped
 > 2026-08-17 (`docs/plans/implemented/Project-Collaboration-Panel-Relocation-Plan.md`), drafted
