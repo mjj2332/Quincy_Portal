@@ -1,9 +1,9 @@
-import { parseStaffPathname, safeStaffDestination, staffPathFor, type StaffRoute } from "@quincy/shared";
+import { parseStaffLocation, parseStaffPathname, safeStaffDestination, staffPathFor, type StaffRoute } from "@quincy/shared";
 
-export { parseStaffPathname, safeStaffDestination, staffPathFor, type StaffRoute };
+export { parseStaffLocation, parseStaffPathname, safeStaffDestination, staffPathFor, type StaffRoute };
 
 export type HistorySource = {
-  location: Pick<Location, "pathname">;
+  location: Pick<Location, "pathname" | "search">;
   history: Pick<History, "pushState" | "replaceState">;
   addEventListener(type: "popstate", listener: () => void): void;
   removeEventListener(type: "popstate", listener: () => void): void;
@@ -15,7 +15,7 @@ export function createHistoryAdapter(source: HistorySource) {
   const onPopState = () => notify();
 
   return {
-    getPathname: () => source.location.pathname,
+    getLocation: () => `${source.location.pathname}${source.location.search}`,
     subscribe(listener: () => void) {
       listeners.add(listener);
       if (listeners.size === 1) source.addEventListener("popstate", onPopState);
@@ -24,13 +24,13 @@ export function createHistoryAdapter(source: HistorySource) {
         if (listeners.size === 0) source.removeEventListener("popstate", onPopState);
       };
     },
-    push(pathname: string) {
-      const destination = safeStaffDestination(pathname) ?? "/";
+    push(location: string) {
+      const destination = safeStaffDestination(location) ?? "/";
       source.history.pushState(null, "", destination);
       notify();
     },
-    replace(pathname: string) {
-      const destination = safeStaffDestination(pathname) ?? "/";
+    replace(location: string) {
+      const destination = safeStaffDestination(location) ?? "/";
       source.history.replaceState(null, "", destination);
       notify();
     },
@@ -62,7 +62,7 @@ export function shouldInterceptInternalLink(event: LinkClick, origin: string): b
   if (anchor.target || anchor.download) return false;
   try {
     const url = new URL(anchor.href, origin);
-    return url.origin === origin && safeStaffDestination(url.pathname) !== null;
+    return url.origin === origin && safeStaffDestination(`${url.pathname}${url.search}`) !== null;
   } catch {
     return false;
   }

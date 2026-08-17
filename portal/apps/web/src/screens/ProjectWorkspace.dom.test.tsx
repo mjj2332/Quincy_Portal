@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ProjectWorkspace } from "./ProjectWorkspace";
 import type { WorkspaceAsset } from "../components/PhotoGrid";
+import { ApiError } from "../lib/api";
 
 const authState = vi.hoisted(() => ({ role: "editor" }));
 vi.mock("../lib/auth", () => ({
@@ -21,9 +22,9 @@ function workspaceAsset(id: string, overrides: Partial<WorkspaceAsset> = {}): Wo
   return { id, section: null, collectionId: "collection", kind: "photo", originalFilename: `${id}.jpg`, bytes: 1, width: null, height: null, ratingFromMetadata: null, renditionStatus: "ready", createdAt: "2026-07-21T00:00:00.000Z", sourceRawAssetId: null, version: 1, versionGroupId: null, supersedesAssetId: null, review: null, selected: false, ...overrides };
 }
 
-function projectFixture() {
+function projectFixture(id = "p1") {
   return {
-    id: "p1", street: "12 Example St", suburb: "Suburbia", postcode: "2000",
+    id, street: id === "p1" ? "12 Example St" : "34 Second Street", suburb: "Suburbia", postcode: "2000",
     agencyName: null, agentName: null, shootDate: null, stageKey: "raw_review",
     rawFolderPath: null, rawFolderLink: null, coverAssetId: null, effectiveCoverAssetId: null,
     collections: [
@@ -215,5 +216,133 @@ describe("ProjectWorkspace selection download", () => {
     await click([...host.querySelectorAll<HTMLButtonElement>(".actionbar .barbtn")].find((item) => item.textContent === "Download selection")!); await flush();
     expect(host.textContent).toContain("Selection unavailable");
     expect(host.querySelector(".tile")?.classList.contains("is-selected")).toBe(true);
+  });
+});
+
+describe("ProjectWorkspace collaboration relocation", () => {
+  let host: HTMLElement;
+  beforeEach(() => { host = mount(); authState.role = "editor"; apiGetMock.mockReset(); apiPostMock.mockReset(); });
+  afterEach(async () => { await unmount(); host.remove(); });
+
+  it("keeps the overlay out of the workspace grid, forwards every arrival, and preserves it over a lightbox", async () => {
+    apiGetMock.mockImplementation((path: string) => {
+      if (path === "/api/projects/p1") return Promise.resolve(projectFixture());
+      if (path.includes("/assets?collection=raw")) return Promise.resolve({ assets: [workspaceAsset("raw-1")] });
+      if (path.includes("ingest-status")) return Promise.resolve({ expectedCount: null, receivedCount: 1, mismatch: false });
+      if (path.includes("comments")) return Promise.resolve({ project: { id: "p1", street: "12 Example St" }, comments: [] });
+      if (path.includes("annotations")) return Promise.resolve({ annotations: [] });
+      if (path.includes("subtasks")) return Promise.resolve({ subtasks: [] });
+      if (path.includes("mentionable-users")) return Promise.resolve({ users: [] });
+      return Promise.resolve({});
+    });
+    const consumed: number[] = [];
+    await render(<ProjectWorkspace projectId="p1" collaborationOpenSignal={1} onCollaborationOpenSignalConsumed={(signal) => consumed.push(signal)} />); await flush();
+    const panel = host.querySelector<HTMLElement>(".project-collaboration")!;
+    const workspace = panel.closest<HTMLElement>(".work")!;
+    const wrap = host.querySelector<HTMLElement>(".project-collaboration__wrap")!;
+    expect(panel).not.toBeNull(); expect(workspace.firstElementChild?.classList.contains("rail")).toBe(true); expect(panel.closest(".rail, .workmain")).toBeNull();
+    expect(panel.closest(".project-collaboration__wrap")).toBe(wrap); expect(consumed).toEqual([1]);
+    await click(host.querySelector<HTMLElement>(".tile")!); await flush();
+    expect(host.querySelector(".viewer")).not.toBeNull(); expect(host.querySelector(".project-collaboration")).not.toBeNull();
+    await render(<ProjectWorkspace projectId="p1" collaborationOpenSignal={2} onCollaborationOpenSignalConsumed={(signal) => consumed.push(signal)} />); await flush();
+    expect(consumed).toEqual([1, 2]);
+    await click(host.querySelector<HTMLButtonElement>(".project-collaboration__head button")!); await flush();
+    expect(host.querySelector(".project-collaboration")).toBeNull();
+    await render(<ProjectWorkspace projectId="p1" collaborationOpenSignal={3} onCollaborationOpenSignalConsumed={(signal) => consumed.push(signal)} />); await flush();
+    expect(host.querySelector(".project-collaboration")).not.toBeNull(); expect(consumed).toEqual([1, 2, 3]);
+  });
+
+  it("uses the comments probe for a 403 collaborator without starting workspace reads", async () => {
+    apiGetMock.mockImplementation((path: string) => {
+      if (path === "/api/projects/p1") return Promise.reject(new ApiError("Forbidden", 403));
+      if (path.includes("/comments?limit=50")) return Promise.resolve({ project: { id: "p1", street: "Hidden Street" }, comments: [] });
+      if (path.includes("subtasks")) return Promise.resolve({ subtasks: [] });
+      if (path.includes("mentionable-users")) return Promise.resolve({ users: [] });
+      return Promise.resolve({});
+    });
+    const consumed: number[] = [];
+    await render(<ProjectWorkspace projectId="p1" collaborationOpenSignal={7} onCollaborationOpenSignalConsumed={(signal) => consumed.push(signal)} />); await flush();
+    expect(host.querySelector(".project-collaboration-only")).not.toBeNull(); expect(host.textContent).toContain("Hidden Street"); expect(host.querySelector(".work, .rail, .workmain")).toBeNull();
+    expect(apiGetMock.mock.calls.map(([path]) => path)).not.toEqual(expect.arrayContaining([expect.stringContaining("/assets?collection=raw"), expect.stringContaining("/ingest-status")]));
+    expect(consumed).toEqual([7]); expect(host.querySelector(".project-collaboration--standalone")).not.toBeNull();
+  });
+
+  it("defers all workspace reads until details succeeds, then owns one initial RAW batch and stays collapsed", async () => {
+    authState.role = "admin";
+    const details = deferredPromise<ReturnType<typeof projectFixture>>();
+    apiGetMock.mockImplementation((path: string) => {
+      if (path === "/api/projects/p1") return details.promise;
+      if (path.includes("/assets?collection=raw")) return Promise.resolve({ assets: [workspaceAsset("raw-1")] });
+      if (path.includes("ingest-status")) return Promise.resolve({ expectedCount: null, receivedCount: 1, mismatch: false });
+      return Promise.resolve({});
+    });
+    await render(<ProjectWorkspace projectId="p1" />); await flush();
+    expect(apiGetMock.mock.calls.map(([path]) => path)).toEqual(["/api/projects/p1"]);
+    await act(async () => { details.resolve(projectFixture()); await Promise.resolve(); }); await flush();
+    expect(apiGetMock.mock.calls.filter(([path]) => path.includes("/assets?collection=raw"))).toHaveLength(1);
+    expect(apiGetMock.mock.calls.map(([path]) => path)).toEqual(expect.arrayContaining([expect.stringContaining("/ingest-status")]));
+    expect(apiGetMock.mock.calls.map(([path]) => path)).toEqual(expect.arrayContaining([expect.stringContaining("/jobs")]));
+    expect(host.querySelector(".project-collaboration__toggle")?.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("never probes comments after a successful details response when the workspace batch fails", async () => {
+    apiGetMock.mockImplementation((path: string) => {
+      if (path === "/api/projects/p1") return Promise.resolve(projectFixture());
+      if (path.includes("/assets?collection=raw")) return Promise.reject(new ApiError("RAW forbidden", 403));
+      if (path.includes("ingest-status")) return Promise.resolve({ expectedCount: null, receivedCount: 1, mismatch: false });
+      if (path.includes("comments")) return Promise.resolve({ project: { id: "p1", street: "Leaked Street" }, comments: [] });
+      return Promise.resolve({});
+    });
+    await render(<ProjectWorkspace projectId="p1" />); await flush();
+    expect(host.textContent).toContain("Project unavailable.");
+    expect(apiGetMock.mock.calls.map(([path]) => path)).not.toEqual(expect.arrayContaining([expect.stringContaining("/comments?limit=50")]));
+  });
+
+  it("acknowledges terminal 403-probe and direct-failure signals exactly once without mounting a panel", async () => {
+    const consumed: number[] = [];
+    apiGetMock.mockImplementation((path: string) => path === "/api/projects/p1"
+      ? Promise.reject(new ApiError("Forbidden", 403))
+      : path.includes("comments?limit=50") ? Promise.reject(new ApiError("Forbidden", 403)) : Promise.resolve({}));
+    await render(<ProjectWorkspace projectId="p1" collaborationOpenSignal={11} onCollaborationOpenSignalConsumed={(signal) => consumed.push(signal)} />); await flush();
+    expect(host.textContent).toContain("Project unavailable."); expect(host.querySelector(".project-collaboration")).toBeNull(); expect(consumed).toEqual([11]);
+
+    apiGetMock.mockReset().mockImplementation((path: string) => path === "/api/projects/p2" ? Promise.reject(new ApiError("Server failed", 500)) : Promise.resolve({}));
+    await render(<ProjectWorkspace projectId="p2" collaborationOpenSignal={12} onCollaborationOpenSignalConsumed={(signal) => consumed.push(signal)} />); await flush();
+    expect(host.textContent).toContain("Project unavailable."); expect(consumed).toEqual([11, 12]);
+    expect(apiGetMock.mock.calls.map(([path]) => path)).not.toEqual(expect.arrayContaining([expect.stringContaining("comments?limit=50")]));
+  });
+
+  it("ignores a late comments probe after navigation and keeps the next project on its own load run", async () => {
+    const probe = deferredPromise<{ project: { id: string; street: string }; comments: [] }>();
+    let probeSignal: AbortSignal | undefined;
+    apiGetMock.mockImplementation((path: string, init?: unknown) => {
+      if (path === "/api/projects/p1") return Promise.reject(new ApiError("Forbidden", 403));
+      if (path.includes("p1/comments?limit=50")) { probeSignal = (init as { signal?: AbortSignal } | undefined)?.signal; return probe.promise; }
+      if (path === "/api/projects/p2") return Promise.resolve(projectFixture("p2"));
+      if (path.includes("p2/assets?collection=raw")) return Promise.resolve({ assets: [workspaceAsset("p2-raw")] });
+      if (path.includes("p2/ingest-status")) return Promise.resolve({ expectedCount: null, receivedCount: 1, mismatch: false });
+      return Promise.resolve({});
+    });
+    await render(<ProjectWorkspace projectId="p1" />); await flush();
+    expect(probeSignal).toBeDefined();
+    await render(<ProjectWorkspace projectId="p2" />); await flush();
+    expect(probeSignal?.aborted).toBe(true); expect(host.textContent).toContain("34 Second Street");
+    await act(async () => { probe.resolve({ project: { id: "p1", street: "Hidden Street" }, comments: [] }); await Promise.resolve(); }); await flush();
+    expect(host.textContent).toContain("34 Second Street"); expect(host.textContent).not.toContain("Hidden Street"); expect(host.querySelector(".project-collaboration-only")).toBeNull();
+  });
+
+  it("refreshes RAW after an initial Edited-stage selection", async () => {
+    apiGetMock.mockImplementation((path: string) => {
+      if (path === "/api/projects/p1") return Promise.resolve({ ...projectFixture(), stageKey: "edited_review" });
+      if (path.includes("/assets?collection=raw")) return Promise.resolve({ assets: [workspaceAsset("raw-1")] });
+      if (path.includes("/assets?collection=edited")) return Promise.resolve({ assets: [workspaceAsset("edited-1")] });
+      if (path.includes("ingest-status")) return Promise.resolve({ expectedCount: null, receivedCount: 1, mismatch: false });
+      return Promise.resolve({});
+    });
+    await render(<ProjectWorkspace projectId="p1" />); await flush();
+    expect(host.textContent).toContain("Edited frames");
+    await click([...host.querySelectorAll<HTMLButtonElement>(".frow")].find((item) => item.textContent?.includes("RAW"))!); await flush();
+    expect(host.textContent).toContain("RAW frames");
+    expect(apiGetMock.mock.calls.filter(([path]) => path.includes("/assets?collection=raw"))).toHaveLength(2);
   });
 });

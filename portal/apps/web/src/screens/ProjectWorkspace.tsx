@@ -8,6 +8,7 @@ import { CollectionPanel } from "../components/CollectionPanel";
 import { ApiError, apiDelete, apiGet, apiPost } from "../lib/api";
 import { useCapabilities } from "../lib/capabilities";
 import { InternalLink } from "../components/InternalLink";
+import { ProjectCollaborationPanel, type CommentResponse } from "../components/ProjectCollaborationPanel";
 
 type Collection = { id: string; kind: "raw" | "edited" | "video" | "floorplan" | "copy"; status: string; expectedCount: number | null; receivedCount: number };
 type Member = { id: string; userId: string; roleOnProject: "photographer" | "editor"; name: string; email: string };
@@ -68,7 +69,7 @@ export function computeBulkDeleteOutcome(assetIds: string[], results: PromiseSet
   return { succeededIds: [...succeededSet], failedIds, dropboxCleanupWarnings };
 }
 
-export function ProjectWorkspace({ projectId, notice, onNoticeShown }: { projectId: string; notice?: string | null; onNoticeShown?: () => void }) {
+export function ProjectWorkspace({ projectId, notice, onNoticeShown, collaborationOpenSignal, onCollaborationOpenSignalConsumed }: { projectId: string; notice?: string | null; onNoticeShown?: () => void; collaborationOpenSignal?: number; onCollaborationOpenSignalConsumed?: (signal: number) => void }) {
   const { can } = useCapabilities();
   const { presentationStageKey, stages } = useStages();
   const canAdminBackend = can("adminBackend");
@@ -85,7 +86,8 @@ export function ProjectWorkspace({ projectId, notice, onNoticeShown }: { project
   // so the lightbox still reads live review/selection state from `assets`.
   const [lightboxOrderIds, setLightboxOrderIds] = useState<string[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [viewState, setViewState] = useState<"loading" | "full-workspace" | "collaboration-only" | "unavailable">("loading");
+  const [fallbackComments, setFallbackComments] = useState<CommentResponse>();
   const [isSyncing, setIsSyncing] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
@@ -94,6 +96,9 @@ export function ProjectWorkspace({ projectId, notice, onNoticeShown }: { project
   const rawAssetsRef = useRef(rawAssets);
   const autohdrObservedRef = useRef<{ handoffId: string; jobId: string } | null>(null);
   const assetRequestRef = useRef<{ generation: number; controller: AbortController | null }>({ generation: 0, controller: null });
+  const loadRunRef = useRef(0);
+  const workspaceReadyRunRef = useRef<{ projectId: string; run: number } | null>(null);
+  const initialRawTabHandledRef = useRef<number | null>(null);
   currentProjectIdRef.current = projectId;
   currentTabRef.current = activeTab;
   rawAssetsRef.current = rawAssets;
@@ -108,9 +113,10 @@ export function ProjectWorkspace({ projectId, notice, onNoticeShown }: { project
     toast(notice);
     onNoticeShown?.();
   }, [notice, onNoticeShown, toast]);
-  const refreshProject = useCallback(async () => { if (projectId) setData(await apiGet<ProjectResponse>(`/api/projects/${projectId}`)); }, [projectId]);
+  const ready = useCallback(() => workspaceReadyRunRef.current?.projectId === projectId && workspaceReadyRunRef.current.run === loadRunRef.current && viewState === "full-workspace", [projectId, viewState]);
+  const refreshProject = useCallback(async () => { if (projectId && ready()) setData(await apiGet<ProjectResponse>(`/api/projects/${projectId}`)); }, [projectId, ready]);
   const refreshAssets = useCallback(async (kind = activeTab) => {
-    if (!projectId) return;
+    if (!projectId || !ready()) return;
     const request = assetRequestRef.current;
     request.controller?.abort();
     const controller = new AbortController();
@@ -120,56 +126,83 @@ export function ProjectWorkspace({ projectId, notice, onNoticeShown }: { project
     if (assetRequestRef.current.generation !== generation || currentProjectIdRef.current !== projectId || currentTabRef.current !== kind) return;
     setAssets(response.assets);
     if (kind === "raw") setRawAssets(response.assets);
-  }, [activeTab, projectId]);
-  const refreshIngest = useCallback(async () => { if (projectId) setIngest(await apiGet<IngestStatus>(`/api/projects/${projectId}/ingest-status`)); }, [projectId]);
+  }, [activeTab, projectId, ready]);
+  const refreshIngest = useCallback(async () => { if (projectId && ready()) setIngest(await apiGet<IngestStatus>(`/api/projects/${projectId}/ingest-status`)); }, [projectId, ready]);
   const refreshJobs = useCallback(async (): Promise<Job[]> => {
-    if (!projectId || !canAdminBackend) return [];
+    if (!projectId || !canAdminBackend || !ready()) return [];
     const fetched = (await apiGet<JobsResponse>(`/api/projects/${projectId}/jobs`)).jobs;
     setJobs(fetched);
     return fetched;
-  }, [canAdminBackend, projectId]);
+  }, [canAdminBackend, projectId, ready]);
   const refresh = useCallback(async () => { await Promise.all([refreshAssets(), refreshIngest(), ...(canAdminBackend ? [refreshJobs()] : [])]); }, [canAdminBackend, refreshAssets, refreshIngest, refreshJobs]);
   const refreshEditedCollection = useCallback(async () => {
-    if (!projectId || !canViewEdited) return;
+    if (!projectId || !canViewEdited || !ready()) return;
     const response = await apiGet<AssetsResponse>(`/api/projects/${projectId}/assets?collection=edited`);
     if (currentProjectIdRef.current === projectId && currentTabRef.current === "edited") setAssets(response.assets);
-  }, [canViewEdited, projectId]);
+  }, [canViewEdited, projectId, ready]);
   const refreshAutohdrStatus = useCallback(async () => {
-    if (!projectId || !canAdminBackend) return null;
+    if (!projectId || !canAdminBackend || !ready()) return null;
     const response = await apiGet<AutoHdrStatusResponse>(`/api/projects/${projectId}/autohdr-status`);
     if (currentProjectIdRef.current === projectId) setAutohdrStatus(response.handoff);
     return response.handoff;
-  }, [canAdminBackend, projectId]);
+  }, [canAdminBackend, projectId, ready]);
 
   useEffect(() => {
-    if (!projectId) { setIsLoading(false); return; }
+    const run = ++loadRunRef.current;
     const controller = new AbortController();
-    const projectIdAtStart = projectId;
-    setIsLoading(true); setError(null); setActiveTab("raw");
-    const jobsRequest: Promise<JobsResponse | null> = canAdminBackend
-      ? apiGet<JobsResponse>(`/api/projects/${projectId}/jobs`, { signal: controller.signal })
-      : Promise.resolve(null);
-    Promise.all([
-      apiGet<ProjectResponse>(`/api/projects/${projectId}`, { signal: controller.signal }),
-      apiGet<AssetsResponse>(`/api/projects/${projectId}/assets?collection=raw`, { signal: controller.signal }),
-      apiGet<IngestStatus>(`/api/projects/${projectId}/ingest-status`, { signal: controller.signal }),
-      jobsRequest,
-    ])
-      .then(([project, raw, status, jobList]) => {
-        if (!controller.signal.aborted && currentProjectIdRef.current === projectIdAtStart) {
-          setData(project); setAssets(raw.assets); setRawAssets(raw.assets); setIngest(status); setJobs(jobList?.jobs ?? []);
-          // Editors land straight on the collection they actually work in during these stages,
-          // rather than always defaulting to RAW (which is done being reviewed by then).
-          if (canViewEdited && (project.stageKey === "editing_autohdr" || project.stageKey === "edited_review" || project.stageKey === "delivered")) setActiveTab("edited");
-        }
-      })
-      .catch((reason: unknown) => { if (!controller.signal.aborted && currentProjectIdRef.current === projectIdAtStart) setError(reason instanceof Error ? reason.message : "Project details could not be loaded."); })
-      .finally(() => { if (!controller.signal.aborted && currentProjectIdRef.current === projectIdAtStart) setIsLoading(false); });
-    return () => { controller.abort(); };
+    const current = () => !controller.signal.aborted && loadRunRef.current === run && currentProjectIdRef.current === projectId;
+    assetRequestRef.current.controller?.abort();
+    workspaceReadyRunRef.current = null; initialRawTabHandledRef.current = null;
+    setData(null); setAssets([]); setRawAssets([]); setIngest(null); setJobs([]); setFallbackComments(undefined); setAutohdrStatus(null);
+    setOpenAssetId(null); setLightboxOrderIds(null); setActiveTab("raw"); setError(null); setViewState("loading");
+    if (!projectId) { setViewState("unavailable"); return () => controller.abort(); }
+    const load = async () => {
+      let project: ProjectResponse;
+      try {
+        project = await apiGet<ProjectResponse>(`/api/projects/${projectId}`, { signal: controller.signal });
+      } catch (reason) {
+        if (!current()) return;
+        if (reason instanceof ApiError && reason.status === 403) {
+          try {
+            const response = await apiGet<CommentResponse>(`/api/projects/${projectId}/comments?limit=50`, { signal: controller.signal });
+            if (!current()) return;
+            setFallbackComments(response); setViewState("collaboration-only");
+          } catch {
+            if (current()) { setError(reason.message); setViewState("unavailable"); }
+          }
+        } else { setError(reason instanceof Error ? reason.message : "Project details could not be loaded."); setViewState("unavailable"); }
+        return;
+      }
+      if (!current()) return;
+      try {
+        const jobsRequest: Promise<JobsResponse | null> = canAdminBackend ? apiGet<JobsResponse>(`/api/projects/${projectId}/jobs`, { signal: controller.signal }) : Promise.resolve(null);
+        const [raw, status, jobList] = await Promise.all([
+          apiGet<AssetsResponse>(`/api/projects/${projectId}/assets?collection=raw`, { signal: controller.signal }),
+          apiGet<IngestStatus>(`/api/projects/${projectId}/ingest-status`, { signal: controller.signal }), jobsRequest,
+        ]);
+        if (!current()) return;
+        setData(project); setAssets(raw.assets); setRawAssets(raw.assets); setIngest(status); setJobs(jobList?.jobs ?? []);
+        initialRawTabHandledRef.current = run;
+        workspaceReadyRunRef.current = { projectId, run };
+        if (canViewEdited && (project.stageKey === "editing_autohdr" || project.stageKey === "edited_review" || project.stageKey === "delivered")) setActiveTab("edited");
+        setViewState("full-workspace");
+      } catch (reason) {
+        if (!current()) return;
+        setError(reason instanceof Error ? reason.message : "Project workspace could not be loaded.");
+        setViewState("unavailable");
+      }
+    };
+    void load();
+    return () => controller.abort();
   }, [canAdminBackend, canViewEdited, projectId]);
 
   useEffect(() => {
-    if (!projectId) return;
+    const readyRun = workspaceReadyRunRef.current;
+    if (viewState !== "full-workspace" || !readyRun || readyRun.projectId !== projectId || readyRun.run !== loadRunRef.current) return;
+    if (initialRawTabHandledRef.current === readyRun.run) {
+      initialRawTabHandledRef.current = null;
+      if (activeTab === "raw") return;
+    }
     // Restore the RAW collection synchronously, or clear to empty for every other tab (no
     // equivalent cache exists for Edited/video/floorplan/copy) — then refresh under the same
     // generation guard as every other tab. This never leaves one collection's assets under
@@ -186,14 +219,14 @@ export function ProjectWorkspace({ projectId, notice, onNoticeShown }: { project
       if (reason instanceof Error && reason.name === "AbortError") return;
       toast(reason instanceof Error ? reason.message : "Collection could not be loaded.", "error");
     });
-  }, [activeTab, projectId, refreshAssets, toast]);
+  }, [activeTab, projectId, refreshAssets, toast, viewState]);
 
   useEffect(() => {
-    if (!canAdminBackend || !projectId || !jobs.some(activeJob)) return;
+    if (viewState !== "full-workspace" || !canAdminBackend || !projectId || !jobs.some(activeJob)) return;
     const refreshUntilTerminal = () => { void Promise.all([refreshJobs(), refreshAssets("edited"), refreshProject()]).catch(() => undefined); };
     const interval = window.setInterval(refreshUntilTerminal, 5_000);
     return () => window.clearInterval(interval);
-  }, [canAdminBackend, jobs, projectId, refreshAssets, refreshJobs, refreshProject]);
+  }, [canAdminBackend, jobs, projectId, refreshAssets, refreshJobs, refreshProject, viewState]);
 
   useEffect(() => {
     setAutohdrStatus(null);
@@ -201,7 +234,7 @@ export function ProjectWorkspace({ projectId, notice, onNoticeShown }: { project
   }, [projectId]);
 
   useEffect(() => {
-    if (!canAdminBackend || !projectId || data?.id !== projectId || (data.stageKey !== "raw_review" && data.stageKey !== "editing_autohdr")) return;
+    if (viewState !== "full-workspace" || !canAdminBackend || !projectId || data?.id !== projectId || (data.stageKey !== "raw_review" && data.stageKey !== "editing_autohdr")) return;
     let isMounted = true;
     let timer: number | undefined;
     const poll = async () => {
@@ -240,7 +273,14 @@ export function ProjectWorkspace({ projectId, notice, onNoticeShown }: { project
       isMounted = false;
       if (timer) window.clearTimeout(timer);
     };
-  }, [canAdminBackend, data?.id, data?.stageKey, projectId, refreshAssets, refreshAutohdrStatus, refreshJobs, refreshProject]);
+  }, [canAdminBackend, data?.id, data?.stageKey, projectId, refreshAssets, refreshAutohdrStatus, refreshJobs, refreshProject, viewState]);
+
+  const consumedTerminalSignalRef = useRef<number>();
+  useEffect(() => {
+    if ((viewState !== "collaboration-only" && viewState !== "unavailable") || collaborationOpenSignal === undefined || collaborationOpenSignal === consumedTerminalSignalRef.current) return;
+    consumedTerminalSignalRef.current = collaborationOpenSignal;
+    onCollaborationOpenSignalConsumed?.(collaborationOpenSignal);
+  }, [collaborationOpenSignal, onCollaborationOpenSignalConsumed, viewState]);
 
   const updateReview = useCallback(async (assetId: string, patch: ReviewPatch) => {
     const before = assets.find((asset) => asset.id === assetId); if (!before) return;
@@ -370,8 +410,9 @@ export function ProjectWorkspace({ projectId, notice, onNoticeShown }: { project
     catch (reason) { toast(reason instanceof Error ? reason.message : "Background job retry could not be started.", "error"); }
   }
 
-  if (isLoading) return <main className="page"><div className="empty"><span className="serif">Loading project.</span>Preparing the workspace.</div><div className="toasts">{toasts.map((item) => <div className={`toast ${item.tone === "error" ? "toast--error" : ""}`} key={item.id}>{item.tone === "error" ? "!" : "✓"}<span>{item.message}</span></div>)}</div></main>;
-  if (error || !data) return <main className="page"><div className="pagehead"><h1 className="serif">Project workspace</h1><InternalLink className="button button--secondary" to="/">Back to dashboard</InternalLink></div><div className="empty" role="alert"><span className="serif">Project unavailable.</span>{error ?? "No project was selected."}</div><div className="toasts">{toasts.map((item) => <div className={`toast ${item.tone === "error" ? "toast--error" : ""}`} key={item.id}>{item.tone === "error" ? "!" : "✓"}<span>{item.message}</span></div>)}</div></main>;
+  if (viewState === "loading") return <main className="page"><div className="empty"><span className="serif">Loading project.</span>Preparing the workspace.</div><div className="toasts">{toasts.map((item) => <div className={`toast ${item.tone === "error" ? "toast--error" : ""}`} key={item.id}>{item.tone === "error" ? "!" : "✓"}<span>{item.message}</span></div>)}</div></main>;
+  if (viewState === "collaboration-only" && fallbackComments) return <main className="page project-collaboration-only"><div className="pagehead"><div><div className="ey">Collaboration</div><h1 className="serif">{fallbackComments.project.street}</h1></div><InternalLink className="button button--secondary" to="/">Back to dashboard</InternalLink></div><ProjectCollaborationPanel projectId={projectId} mode="standalone" initialComments={fallbackComments} /></main>;
+  if (viewState !== "full-workspace" || error || !data) return <main className="page"><div className="pagehead"><h1 className="serif">Project workspace</h1><InternalLink className="button button--secondary" to="/">Back to dashboard</InternalLink></div><div className="empty" role="alert"><span className="serif">Project unavailable.</span>{error ?? "No project was selected."}</div><div className="toasts">{toasts.map((item) => <div className={`toast ${item.tone === "error" ? "toast--error" : ""}`} key={item.id}>{item.tone === "error" ? "!" : "✓"}<span>{item.message}</span></div>)}</div></main>;
 
   const project = data;
   const { collections, members } = data;
@@ -418,6 +459,7 @@ export function ProjectWorkspace({ projectId, notice, onNoticeShown }: { project
       </> : <CollectionPanel projectId={projectId} collection={activeTab} assets={assets} canManage={canManageCollections} canDelete={canDeleteAssets} canApprove={can("reviewEdited")} onReview={updateReview} onDelete={deleteAsset} onChanged={async () => { await Promise.all([refreshAssets(activeTab), refreshProject()]); }} onToast={toast} />}
       {canAdminBackend && jobs.length > 0 && <div className="workgrid"><section className="hdr" style={{ alignItems: "flex-start", flexDirection: "column" }}><div><strong>autoHDR status</strong><div className="muted">Recent hand-offs, fetches, and manual-upload publishes for this project.</div></div>{jobs.map((job) => <div className="kv" style={{ width: "100%" }} key={job.id}><span className="k">{new Date(job.createdAt).toLocaleString("en-AU")}</span><span className="vv"><span className="k">{job.kind === "fetch_edited" ? "Fetch" : job.kind === "autohdr_scaffold" ? "Scaffold" : job.kind === "manual_edited_publish" ? "Manual upload" : "Send"}</span>{" "}<span className={`statetag st-${job.status}`}>{job.status}</span>{job.error ? ` ${job.error}` : ""}{(job.status === "stuck" || job.status === "failed") && <button className="chip" style={{ marginLeft: 8 }} type="button" onClick={() => void retryAutoHdr(job.id)}>Retry</button>}</span></div>)}</section></div>}
     </section>
+    <ProjectCollaborationPanel projectId={projectId} openSignal={collaborationOpenSignal} onOpenSignalConsumed={onCollaborationOpenSignalConsumed} />
     {openAssetId && <Lightbox assets={lightboxOrderIds ? lightboxOrderIds.map((id) => assets.find((asset) => asset.id === id)).filter((asset): asset is WorkspaceAsset => Boolean(asset)) : assets} rawAssets={rawAssets} initialAssetId={openAssetId} collectionKind={activeTab === "edited" ? "edited" : "raw"} canReview={canReview} canRecommend={canRecommend} canAnnotate={canAnnotate} onClose={() => { setOpenAssetId(null); setLightboxOrderIds(null); }} onReview={updateReview} onToast={toast} />}
     <div className="toasts">{toasts.map((item) => <div className={`toast ${item.tone === "error" ? "toast--error" : ""}`} key={item.id}>{item.tone === "error" ? "!" : "✓"}<span>{item.message}</span></div>)}</div>
   </main>;

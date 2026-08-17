@@ -130,7 +130,7 @@ describe("Topbar notifications", () => {
     ], unreadCount: 4 });
     const host = document.body.firstElementChild as HTMLElement;
     await render(host); await click(host.querySelector<HTMLButtonElement>(".topbar__notification-trigger")!);
-    const links = host.querySelectorAll<HTMLAnchorElement>(`a[href="/projects/${projectId}/edit"]`);
+    const links = host.querySelectorAll<HTMLAnchorElement>(`a[href="/projects/${projectId}?collaboration=open"]`);
     expect(links).toHaveLength(2); expect([...links].map((link) => link.textContent)).toEqual(expect.arrayContaining([expect.stringContaining("You were mentioned"), expect.stringContaining("Subtask assigned")]));
     const link = links[0]!;
     expect(link.getAttribute("role")).toBe("menuitem");

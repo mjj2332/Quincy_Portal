@@ -6,7 +6,7 @@
 export type StaffRoute =
   | { kind: "dashboard" }
   | { kind: "create-project" }
-  | { kind: "project"; projectId: string }
+  | { kind: "project"; projectId: string; collaboration?: "open" }
   | { kind: "edit-project"; projectId: string }
   | { kind: "admin" }
   | { kind: "not-found" }
@@ -49,11 +49,24 @@ export function parseStaffPathname(pathname: string): StaffRoute {
   return { kind: "not-found" };
 }
 
+/** Parse the complete, canonical relative staff location. Queries stay closed except for
+ * the one-shot collaboration arrival intent on an otherwise canonical project route. */
+export function parseStaffLocation(location: string): StaffRoute {
+  if (typeof location !== "string" || unsafeText(location) || location.includes("#")) return { kind: "not-found" };
+  const question = location.indexOf("?");
+  if (question === -1) return parseStaffPathname(location);
+  const pathname = location.slice(0, question);
+  const query = location.slice(question + 1);
+  const route = parseStaffPathname(pathname);
+  if (route.kind !== "project" || query !== "collaboration=open") return { kind: "not-found" };
+  return { ...route, collaboration: "open" };
+}
+
 export function staffPathFor(route: Exclude<StaffRoute, { kind: "not-found" } | { kind: "reserved" }>): string {
   switch (route.kind) {
     case "dashboard": return "/";
     case "create-project": return "/projects/new";
-    case "project": return `/projects/${encodeURIComponent(route.projectId)}`;
+    case "project": return `/projects/${encodeURIComponent(route.projectId)}${route.collaboration === "open" ? "?collaboration=open" : ""}`;
     case "edit-project": return `/projects/${encodeURIComponent(route.projectId)}/edit`;
     case "admin": return "/admin";
   }
@@ -61,8 +74,8 @@ export function staffPathFor(route: Exclude<StaffRoute, { kind: "not-found" } | 
 
 /** Only canonical, relative staff locations are valid OAuth return destinations. */
 export function safeStaffDestination(value: unknown): string | null {
-  if (typeof value !== "string" || unsafeText(value) || value.includes("?") || value.includes("#") || !value.startsWith("/") || value.startsWith("//")) return null;
-  const route = parseStaffPathname(value);
+  if (typeof value !== "string" || unsafeText(value) || value.includes("#") || !value.startsWith("/") || value.startsWith("//")) return null;
+  const route = parseStaffLocation(value);
   return route.kind === "dashboard" || route.kind === "create-project" || route.kind === "project" || route.kind === "edit-project" || route.kind === "admin"
     ? staffPathFor(route)
     : null;

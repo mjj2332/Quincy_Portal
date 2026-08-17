@@ -98,8 +98,8 @@ export function SubtaskChecklist({ projectId }: { projectId: string }) {
   return <section className="subtask-checklist" aria-label="Project checklist">
     <header className="subtask-checklist__head"><div><div className="ey">Checklist</div><h3>{subtasks.filter((item) => item.done).length}/{subtasks.length} complete</h3></div></header>
     <div className="subtask-checklist__notice" aria-live="polite">{notice}</div>
-    {loading ? <div className="edit-project__collaboration-state" aria-live="polite">Loading checklist…</div> : <>
-      {!subtasks.length && <div className="edit-project__collaboration-state">No subtasks yet.</div>}
+    {loading ? <div className="project-collaboration__state" aria-live="polite">Loading checklist…</div> : <>
+      {!subtasks.length && <div className="project-collaboration__state">No subtasks yet.</div>}
       <div className="subtask-checklist__items">
         {subtasks.map((item, index) => {
           const title = draftTitles[item.id] ?? item.title;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createHistoryAdapter, parseStaffPathname, safeStaffDestination, staffPathFor, shouldInterceptInternalLink } from "./router";
+import { createHistoryAdapter, parseStaffLocation, parseStaffPathname, safeStaffDestination, staffPathFor, shouldInterceptInternalLink } from "./router";
 import { beginSignIn, consumeSignInDestinationFrom } from "./auth";
 
 const projectId = "123e4567-e89b-42d3-a456-426614174000";
@@ -12,6 +12,8 @@ describe("staff route contract", () => {
     expect(parseStaffPathname(`/projects/${projectId}/edit`)).toEqual({ kind: "edit-project", projectId });
     expect(parseStaffPathname("/admin")).toEqual({ kind: "admin" });
     expect(staffPathFor({ kind: "project", projectId })).toBe(`/projects/${projectId}`);
+    expect(parseStaffLocation(`/projects/${projectId}?collaboration=open`)).toEqual({ kind: "project", projectId, collaboration: "open" });
+    expect(staffPathFor({ kind: "project", projectId, collaboration: "open" })).toBe(`/projects/${projectId}?collaboration=open`);
     expect(staffPathFor({ kind: "edit-project", projectId })).toBe(`/projects/${projectId}/edit`);
   });
 
@@ -39,35 +41,40 @@ describe("staff route contract", () => {
 
   it("only accepts canonical pathname-only OAuth destinations", () => {
     expect(safeStaffDestination(`/projects/${projectId}/edit`)).toBe(`/projects/${projectId}/edit`);
+    expect(safeStaffDestination(`/projects/${projectId}?collaboration=open`)).toBe(`/projects/${projectId}?collaboration=open`);
     for (const destination of [
       "https://quincy.flamingfire.my/admin", "//attacker.example", "\\admin", "/admin?next=/api", "/admin#x",
       "/d/token", "/api/projects", "/unknown", `/projects/${projectId.toUpperCase()}`,
       "/projects/%6eew", "/admin\u0000",
     ]) expect(safeStaffDestination(destination)).toBeNull();
   });
+
+  it("keeps the one-shot query strict", () => {
+    for (const location of [`/projects/${projectId}?collaboration=close`, `/projects/${projectId}?collaboration=open&x=1`, `/projects/${projectId}?collaboration=open&collaboration=open`, `/admin?tab=users`, `/projects/${projectId}?x=collaboration%3Dopen`, `/projects/${projectId}?collaboration=open#x`]) expect(parseStaffLocation(location)).toEqual({ kind: "not-found" });
+  });
 });
 
 describe("History adapter", () => {
   it("pushes, replaces, and observes browser back/forward without creating entries on popstate", () => {
-    let pathname = "/";
+    let pathname = "/"; let search = "";
     const calls: string[] = [];
     let popstate: (() => void) | undefined;
     const history = createHistoryAdapter({
-      location: { get pathname() { return pathname; } } as Location,
+      location: { get pathname() { return pathname; }, get search() { return search; } } as Location,
       history: {
-        pushState: (_state, _title, path) => { pathname = String(path); calls.push(`push:${pathname}`); },
-        replaceState: (_state, _title, path) => { pathname = String(path); calls.push(`replace:${pathname}`); },
+        pushState: (_state, _title, path) => { const [nextPathname, nextSearch] = String(path).split("?"); pathname = nextPathname ?? "/"; search = nextSearch ? `?${nextSearch}` : ""; calls.push(`push:${pathname}${search}`); },
+        replaceState: (_state, _title, path) => { const [nextPathname, nextSearch] = String(path).split("?"); pathname = nextPathname ?? "/"; search = nextSearch ? `?${nextSearch}` : ""; calls.push(`replace:${pathname}${search}`); },
       } as History,
       addEventListener: (_type, listener) => { popstate = listener; },
       removeEventListener: () => { popstate = undefined; },
     });
     const snapshots: string[] = [];
-    const unsubscribe = history.subscribe(() => snapshots.push(history.getPathname()));
-    history.push("/admin"); history.replace(`/projects/${projectId}`);
-    pathname = "/"; popstate?.();
+    const unsubscribe = history.subscribe(() => snapshots.push(history.getLocation()));
+    history.push("/admin"); history.replace(`/projects/${projectId}?collaboration=open`);
+    pathname = "/"; search = ""; popstate?.();
     unsubscribe();
-    expect(calls).toEqual(["push:/admin", `replace:/projects/${projectId}`]);
-    expect(snapshots).toEqual(["/admin", `/projects/${projectId}`, "/"]);
+    expect(calls).toEqual(["push:/admin", `replace:/projects/${projectId}?collaboration=open`]);
+    expect(snapshots).toEqual(["/admin", `/projects/${projectId}?collaboration=open`, "/"]);
   });
 });
 
