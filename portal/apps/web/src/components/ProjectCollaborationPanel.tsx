@@ -20,7 +20,7 @@ export function ProjectCollaborationPanel({ projectId, openSignal, onOpenSignalC
   const closeRef = useRef<HTMLButtonElement>(null);
   const lastConsumedSignalRef = useRef<number>();
   const pendingSignalRef = useRef<number>();
-  const [overlayOpen, setOverlayOpen] = useState(false);
+  const [overlayOpen, setOverlayOpen] = useState(true);
   const open = overlay ? overlayOpen : true;
   const [project, setProject] = useState<CommentResponse["project"] | undefined>(initialComments?.project);
   const [comments, setComments] = useState<Comment[]>(initialComments?.comments ?? []);
@@ -57,7 +57,7 @@ export function ProjectCollaborationPanel({ projectId, openSignal, onOpenSignalC
     try {
       const response = await apiGet<CommentResponse>(`/api/projects/${encodeURIComponent(projectId)}/comments?limit=50${before ? `&before=${encodeURIComponent(before)}` : ""}`);
       setProject(response.project); setNextCursor(response.nextCursor);
-      setComments((current) => before ? [...response.comments, ...current] : response.comments);
+      setComments((current) => before ? [...(response.comments ?? []), ...current] : (response.comments ?? []));
       setLoadedInitial(true);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Comments could not be loaded."); }
     finally { if (before) setLoadingOlder(false); else setLoading(false); }
@@ -84,7 +84,7 @@ export function ProjectCollaborationPanel({ projectId, openSignal, onOpenSignalC
   async function remove(comment: Comment) { if (!window.confirm("Delete this comment?")) return; setSaving(true); setError(undefined); try { await apiDelete(`/api/projects/${encodeURIComponent(projectId)}/comments/${encodeURIComponent(comment.id)}`); setComments((current) => current.filter((item) => item.id !== comment.id)); if (editing?.id === comment.id) setEditing(undefined); } catch (reason) { setError(reason instanceof Error ? reason.message : "Comment could not be deleted."); } finally { setSaving(false); } }
 
   const contentMarkup = <>
-    <div className="project-collaboration__head"><div><div className="ey">Collaboration</div><h2 className="serif">{project?.street ?? "Project comments"}</h2></div>{overlay && <button ref={closeRef} type="button" className="button button--secondary" onClick={close}>Close collaboration</button>}</div>
+    <div className="project-collaboration__head"><div><div className="ey">Collaboration</div><h2 className="serif">{project?.street ?? "Project comments"}</h2></div>{overlay && <button ref={closeRef} type="button" className="button button--secondary" onClick={close}>Hide ›</button>}</div>
     {error && <div className="notice" role="alert">{error}</div>}
     <SubtaskChecklist projectId={projectId} />
     {loading ? <div className="project-collaboration__state" role="status">Loading comments…</div> : <>

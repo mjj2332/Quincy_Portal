@@ -267,7 +267,7 @@ describe("ProjectWorkspace collaboration relocation", () => {
     expect(consumed).toEqual([7]); expect(host.querySelector(".project-collaboration--standalone")).not.toBeNull();
   });
 
-  it("defers all workspace reads until details succeeds, then owns one initial RAW batch and stays collapsed", async () => {
+  it("defers all workspace reads until details succeeds, then owns one initial RAW batch and starts collaboration open", async () => {
     authState.role = "admin";
     const details = deferredPromise<ReturnType<typeof projectFixture>>();
     apiGetMock.mockImplementation((path: string) => {
@@ -282,7 +282,7 @@ describe("ProjectWorkspace collaboration relocation", () => {
     expect(apiGetMock.mock.calls.filter(([path]) => path.includes("/assets?collection=raw"))).toHaveLength(1);
     expect(apiGetMock.mock.calls.map(([path]) => path)).toEqual(expect.arrayContaining([expect.stringContaining("/ingest-status")]));
     expect(apiGetMock.mock.calls.map(([path]) => path)).toEqual(expect.arrayContaining([expect.stringContaining("/jobs")]));
-    expect(host.querySelector(".project-collaboration__toggle")?.getAttribute("aria-expanded")).toBe("false");
+    expect(host.querySelector(".project-collaboration__toggle")?.getAttribute("aria-expanded")).toBe("true");
   });
 
   it("never probes comments after a successful details response when the workspace batch fails", async () => {

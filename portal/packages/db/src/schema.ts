@@ -215,7 +215,7 @@ export const projectCommentMentions = sqliteTable(
   (t) => [uniqueIndex("project_comment_mentions_unique").on(t.commentId, t.mentionedUserId)],
 );
 
-/** A shared, ordered checklist item owned by a project. Due dates are date-only strings. */
+/** A shared, ordered checklist item owned by a project. Due dates are literal calendar strings. */
 export const projectSubtasks = sqliteTable(
   "project_subtasks",
   {
@@ -227,6 +227,7 @@ export const projectSubtasks = sqliteTable(
     assigneeId: text("assignee_id").references(() => user.id, { onDelete: "set null" }),
     assignmentVersion: integer("assignment_version").notNull().default(0),
     dueDate: text("due_date"),
+    dueReminderSentAt: integer("due_reminder_sent_at", { mode: "timestamp_ms" }),
     createdBy: text("created_by").notNull().references(() => user.id),
     createdAt: createdAt(),
     updatedAt: updatedAt(),

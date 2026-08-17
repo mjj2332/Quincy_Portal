@@ -1,8 +1,9 @@
 import { env, SELF as workerSelf } from "cloudflare:test";
 import { makeSignature } from "better-auth/crypto";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import { createAuth } from "../src/auth";
 import type { Env } from "../src/env";
+import { scanDueSubtasks } from "../../background/src/notifications";
 
 const database = env as unknown as { DB: D1Database };
 const baseEnv = env as unknown as Env;
@@ -33,6 +34,7 @@ describe("project subtasks API", () => {
     expect((await request(`/api/projects/${projectId}/subtasks`, "subtasks-photographer-token")).status).toBe(200);
     expect((await request(`/api/projects/${projectId}/subtasks`, "subtasks-outsider-token")).status).toBe(403);
     expect((await request(`/api/projects/${projectId}/subtasks`, "subtasks-editor-token", "POST", { title: " ", dueDate: "2026-02-29" })).status).toBe(400);
+    expect((await request(`/api/projects/${projectId}/subtasks`, "subtasks-editor-token", "POST", { title: "Bad time", dueDate: "2028-02-29T24:00" })).status).toBe(400);
     expect((await request(`/api/projects/${projectId}/subtasks`, "subtasks-editor-token", "POST", { title: "Bad assignee", assigneeId: outsiderId })).status).toBe(400);
     const firstResponse = await request(`/api/projects/${projectId}/subtasks`, "subtasks-editor-token", "POST", { title: "First", assigneeId: photographerId, dueDate: "2028-02-29" });
     expect(firstResponse.status).toBe(201); const first = await firstResponse.json() as { id: string; position: number; assignmentVersion: number; dueDate: string | null };
@@ -72,6 +74,21 @@ describe("project subtasks API", () => {
     }
     expect((await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE target_id = ?").bind(missingTask).first<{ count: number }>())!.count).toBe(before);
     expect((await request(`/api/projects/${missingProject}/subtasks`, "subtasks-outsider-token")).status).toBe(403);
+  });
+
+  it("accepts literal due times and clears a sent reminder when the due date is rescheduled", async () => {
+    const firstMorning = Date.UTC(2026, 7, 17, 22);
+    const nextMorning = Date.UTC(2026, 7, 18, 22);
+    const due = await (await request(`/api/projects/${projectId}/subtasks`, "subtasks-editor-token", "POST", { title: "Reschedule reminder", assigneeId: photographerId, dueDate: "2026-08-18T14:30" })).json() as { id: string; dueDate: string };
+    expect(due.dueDate).toBe("2026-08-18T14:30");
+    const reminderEnv = { ...baseEnv, DB: database.DB, EMAIL: { send: vi.fn().mockResolvedValue({ messageId: "reschedule" }) }, NOTIFICATIONS_FROM_ADDRESS: "studio@example.test" } as unknown as Env;
+    expect(await scanDueSubtasks(reminderEnv, firstMorning)).toBe(1);
+    expect(await database.DB.prepare("SELECT due_reminder_sent_at FROM project_subtasks WHERE id = ?").bind(due.id).first()).toEqual({ due_reminder_sent_at: firstMorning });
+    expect((await request(`/api/projects/${projectId}/subtasks/${due.id}`, "subtasks-editor-token", "PATCH", { dueDate: "2026-08-19" })).status).toBe(200);
+    expect(await database.DB.prepare("SELECT due_reminder_sent_at FROM project_subtasks WHERE id = ?").bind(due.id).first()).toEqual({ due_reminder_sent_at: null });
+    expect(await scanDueSubtasks(reminderEnv, nextMorning)).toBe(1);
+    expect((await database.DB.prepare("SELECT count(*) AS count FROM notifications WHERE type = 'subtask_due_today' AND project_id = ? AND user_id = ?").bind(projectId, photographerId).first<{ count: number }>())!.count).toBe(2);
+    expect((await request(`/api/projects/${projectId}/subtasks/${due.id}`, "subtasks-editor-token", "DELETE")).status).toBe(200);
   });
 
   it("clears only final-role non-admin assignees as part of the project membership batch", async () => {

@@ -10,6 +10,11 @@ type ChecklistResponse = { subtasks?: Subtask[] };
 
 function message(error: unknown, fallback: string) { return error instanceof Error ? error.message : fallback; }
 
+function dueDateParts(value: string | null) {
+  const [date = "", time = ""] = (value ?? "").split("T");
+  return { date, time };
+}
+
 export function SubtaskChecklist({ projectId }: { projectId: string }) {
   const [subtasks, setSubtasks] = useState<Subtask[]>([]);
   const [users, setUsers] = useState<MentionableUser[]>([]);
@@ -103,13 +108,12 @@ export function SubtaskChecklist({ projectId }: { projectId: string }) {
       <div className="subtask-checklist__items">
         {subtasks.map((item, index) => {
           const title = draftTitles[item.id] ?? item.title;
+          const due = dueDateParts(item.dueDate);
           const itemBusy = [...busy].some((key) => key.startsWith(`${item.id}:`));
           return <article key={item.id} ref={itemRef(item.id)} className={`subtask-checklist__item${item.done ? " subtask-checklist__item--done" : ""}`}>
-            <label className="subtask-checklist__done"><input type="checkbox" checked={item.done} disabled={itemBusy} onChange={(event) => void update(item, { done: event.target.checked }, "done")} /><span className="sr-only">Mark {item.title} complete</span></label>
-            <input className="subtask-checklist__title" aria-label="Subtask title" value={title} disabled={itemBusy} onChange={(event) => setDraftTitles((current) => ({ ...current, [item.id]: event.target.value }))} onBlur={() => { if (title !== item.title && title.trim()) void update(item, { title }, "title"); }} onKeyDown={(event) => { if (event.key === "Enter") { event.currentTarget.blur(); } if (event.key === "Escape") { setDraftTitles((current) => ({ ...current, [item.id]: item.title })); event.currentTarget.blur(); } }} />
-            <select aria-label={`Assignee for ${item.title}`} value={item.assignee?.id ?? ""} disabled={itemBusy} onChange={(event) => void update(item, { assigneeId: event.target.value || null }, "assignee")}><option value="">Unassigned</option>{users.map((user) => <option key={user.id} value={user.id}>{user.name} · {user.role}</option>)}</select>
-            <input aria-label={`Due date for ${item.title}`} type="date" value={item.dueDate ?? ""} disabled={itemBusy} onChange={(event) => void update(item, { dueDate: event.target.value || null }, "due-date")} />
-            <div className="subtask-checklist__actions"><button type="button" className="button button--secondary" data-move="up" aria-label={`Move ${item.title} up`} disabled={itemBusy || index === 0} onClick={() => void move(item, "up")}>↑</button><button type="button" className="button button--secondary" data-move="down" aria-label={`Move ${item.title} down`} disabled={itemBusy || index === subtasks.length - 1} onClick={() => void move(item, "down")}>↓</button><button type="button" className="button button--secondary" disabled={itemBusy} onClick={() => void remove(item, index)}>Delete</button></div>
+            <div className="subtask-checklist__item-title"><label className="subtask-checklist__done"><input type="checkbox" checked={item.done} disabled={itemBusy} onChange={(event) => void update(item, { done: event.target.checked }, "done")} /><span className="sr-only">Mark {item.title} complete</span></label><input className="subtask-checklist__title" aria-label="Subtask title" value={title} disabled={itemBusy} onChange={(event) => setDraftTitles((current) => ({ ...current, [item.id]: event.target.value }))} onBlur={() => { if (title !== item.title && title.trim()) void update(item, { title }, "title"); }} onKeyDown={(event) => { if (event.key === "Enter") { event.currentTarget.blur(); } if (event.key === "Escape") { setDraftTitles((current) => ({ ...current, [item.id]: item.title })); event.currentTarget.blur(); } }} /></div>
+            <div className="subtask-checklist__item-assignment"><select aria-label={`Assignee for ${item.title}`} value={item.assignee?.id ?? ""} disabled={itemBusy} onChange={(event) => void update(item, { assigneeId: event.target.value || null }, "assignee")}><option value="">Unassigned</option>{users.map((user) => <option key={user.id} value={user.id}>{user.name} · {user.role}</option>)}</select><div className="subtask-checklist__actions"><button type="button" className="button button--secondary" data-move="up" aria-label={`Move ${item.title} up`} disabled={itemBusy || index === 0} onClick={() => void move(item, "up")}>↑</button><button type="button" className="button button--secondary" data-move="down" aria-label={`Move ${item.title} down`} disabled={itemBusy || index === subtasks.length - 1} onClick={() => void move(item, "down")}>↓</button><button type="button" className="button button--secondary" disabled={itemBusy} onClick={() => void remove(item, index)}>Delete</button></div></div>
+            <div className="subtask-checklist__item-due"><input aria-label={`Due date for ${item.title}`} type="date" value={due.date} disabled={itemBusy} onChange={(event) => { const date = event.target.value; void update(item, { dueDate: date ? `${date}${due.time ? `T${due.time}` : ""}` : null }, "due-date"); }} /><input aria-label={`Due time for ${item.title}`} type="time" value={due.time} disabled={itemBusy || !due.date} onChange={(event) => { if (!due.date) return; void update(item, { dueDate: `${due.date}${event.target.value ? `T${event.target.value}` : ""}` }, "due-time"); }} /></div>
           </article>;
         })}
       </div>

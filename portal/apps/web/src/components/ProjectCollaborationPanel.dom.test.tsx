@@ -71,18 +71,21 @@ afterEach(async () => {
 });
 
 describe("ProjectCollaborationPanel", () => {
-  it("starts collapsed, opens as a fixed overlay, and closes with focused Escape", async () => {
+  it("starts open without stealing focus, toggles, and closes with focused Escape", async () => {
     const host = mount();
+    const sentinel = document.createElement("button"); sentinel.textContent = "Page control"; document.body.appendChild(sentinel); sentinel.focus();
     await render(<ProjectCollaborationPanel projectId={projectId} />);
     const toggle = host.querySelector<HTMLButtonElement>(".project-collaboration__toggle")!;
-    expect(toggle.getAttribute("aria-expanded")).toBe("false"); expect(host.querySelector('[aria-label="Project collaboration"]')).toBeNull();
-    await click(toggle); expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(document.activeElement).toBe(sentinel); expect(toggle.getAttribute("aria-expanded")).toBe("true");
     const panel = host.querySelector<HTMLElement>(".project-collaboration")!;
     expect(panel).not.toBeNull(); expect(host.querySelector(".project-collaboration__scrim")).toBeNull();
-    panel.querySelector<HTMLButtonElement>("button")?.focus();
+    await click(toggle); expect(toggle.getAttribute("aria-expanded")).toBe("false"); expect(host.querySelector('[aria-label="Project collaboration"]')).toBeNull();
+    await click(toggle); expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    const reopened = host.querySelector<HTMLElement>(".project-collaboration")!;
+    reopened.querySelector<HTMLButtonElement>("button")?.focus();
     await act(async () => { window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", cancelable: true })); await Promise.resolve(); });
     await waitForTimer();
-    expect(host.querySelector('[aria-label="Project collaboration"]')).toBeNull(); expect(document.activeElement).toBe(toggle);
+    expect(host.querySelector('[aria-label="Project collaboration"]')).toBeNull(); expect(document.activeElement).toBe(toggle); sentinel.remove();
   });
 
   it("shows loading, empty, and failed comment states", async () => {

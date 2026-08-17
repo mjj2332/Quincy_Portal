@@ -31,7 +31,7 @@ import { backfillAutoHdrV2 as backfillAutoHdrV2Impl, type BackfillParams, type B
 import { enqueueAutoHdrScaffold, ensureScaffold } from "./autohdr/scaffold";
 import { AutoHdrClaimError } from "./autohdr/errors";
 import type { AutoHdrErrorCode, AutoHdrFetchResult, AutoHdrResult } from "./autohdr/errors";
-import { notifyProject, pruneNotifications, scanStalledAutoHdr } from "./notifications";
+import { notifyProject, pruneNotifications, scanDueSubtasks, scanStalledAutoHdr } from "./notifications";
 
 export { AutoHdrFetch, AutoHdrSend, ManualEditedPublish, DropboxSyncDO, TonomoProcessorDO };
 
@@ -53,6 +53,12 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
       console.log("AutoHDR stalled notification scan", { emitted });
     } catch (error) {
       console.error("AutoHDR stalled notification scan failed", { error });
+    }
+    try {
+      const emitted = await scanDueSubtasks(this.env, controller.scheduledTime);
+      console.log("Due subtask notification scan", { emitted });
+    } catch (error) {
+      console.error("Due subtask notification scan failed", { error });
     }
     await pruneNotifications(this.env, controller.scheduledTime);
   }

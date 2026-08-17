@@ -11,10 +11,11 @@ export type NotificationType =
   | "comment_added"
   | "assigned_to_project"
   | "mentioned"
-  | "subtask_assigned";
+  | "subtask_assigned"
+  | "subtask_due_today";
 
 export const EMAIL_ENABLED_EVENTS: readonly NotificationType[] = [
-  "raw_ready", "edited_landed", "sent_to_editing", "autohdr_stalled", "delivered", "comment_added", "assigned_to_project", "mentioned", "subtask_assigned",
+  "raw_ready", "edited_landed", "sent_to_editing", "autohdr_stalled", "delivered", "comment_added", "assigned_to_project", "mentioned", "subtask_assigned", "subtask_due_today",
 ];
 export const STALLED_NOTIFICATION_AGE_MS = 3 * 60 * 60 * 1000;
 export const READ_NOTIFICATION_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
@@ -44,6 +45,7 @@ export function notificationCopy(
       : { title: "Assigned to project", body: `You have been assigned to ${projectLabel}.` };
     case "mentioned": return { title: "You were mentioned", body: "You were mentioned." };
     case "subtask_assigned": return { title: "Subtask assigned", body: `You have been assigned a subtask in ${projectLabel}.` };
+    case "subtask_due_today": return { title: "Subtask due today", body: `A subtask assigned to you in ${projectLabel} is due today.` };
   }
 }
 

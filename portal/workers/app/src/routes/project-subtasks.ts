@@ -14,17 +14,22 @@ const idParam = z.string().uuid();
 const TITLE_MAX_LENGTH = 500;
 const POSITION_STEP = 1024;
 
-function isCalendarDate(value: string) {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+function isCalendarDateTime(value: string) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2}))?$/.exec(value);
   if (!match) return false;
   const year = Number(match[1]); const month = Number(match[2]); const day = Number(match[3]);
   if (month < 1 || month > 12 || day < 1) return false;
   const daysInMonth = [31, (year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0)) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-  return day <= daysInMonth[month - 1]!;
+  if (day > daysInMonth[month - 1]!) return false;
+  if (match[4] !== undefined) {
+    const hour = Number(match[4]); const minute = Number(match[5]);
+    if (hour > 23 || minute > 59) return false;
+  }
+  return true;
 }
 
 const titleInput = z.string().trim().min(1).max(TITLE_MAX_LENGTH);
-const dueDateInput = z.string().refine(isCalendarDate, "Expected a calendar-valid YYYY-MM-DD date");
+const dueDateInput = z.string().refine(isCalendarDateTime, "Expected a calendar-valid YYYY-MM-DD date or YYYY-MM-DDTHH:MM date-time");
 const createInput = z.object({ title: titleInput, assigneeId: idParam.optional(), dueDate: dueDateInput.optional() }).strict();
 const updateInput = z.object({
   title: titleInput.optional(), done: z.boolean().optional(), assigneeId: idParam.nullable().optional(), dueDate: dueDateInput.nullable().optional(),
@@ -97,7 +102,7 @@ projectSubtasksRoutes.patch("/projects/:projectId/subtasks/:subtaskId", async (c
   const values: Record<string, unknown> = {};
   if (has("title") && data.title !== existing.subtask.title) { values.title = data.title; changed.push("title"); }
   if (has("done") && data.done !== existing.subtask.done) { values.done = data.done; changed.push("done"); }
-  if (has("dueDate") && data.dueDate !== existing.subtask.dueDate) { values.dueDate = data.dueDate; changed.push("dueDate"); }
+  if (has("dueDate") && data.dueDate !== existing.subtask.dueDate) { values.dueDate = data.dueDate; values.dueReminderSentAt = null; changed.push("dueDate"); }
   const assignmentChanged = has("assigneeId") && data.assigneeId !== existing.subtask.assigneeId;
   if (assignmentChanged) { values.assigneeId = data.assigneeId; values.assignmentVersion = sql`${schema.projectSubtasks.assignmentVersion} + 1`; changed.push("assigneeId"); }
   if (!changed.length) return c.json(serializeSubtask(existing));

@@ -1,7 +1,7 @@
 import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import type { Env } from "../src/env";
-import { notifyProject, processStalledAutoHdrCandidate, scanStalledAutoHdr } from "../src/notifications";
+import { notifyProject, processDueSubtaskCandidate, processStalledAutoHdrCandidate, scanDueSubtasks, scanStalledAutoHdr } from "../src/notifications";
 import { emitNotifications } from "@quincy/db";
 import { dbFor } from "../src/lib/db";
 
@@ -57,6 +57,21 @@ async function seedStalledHandoff(now: number, options: { withMember?: boolean }
   }
   return { projectId, userId, handoffId };
 }
+
+async function seedDueSubtask(now: number, dueDate: string, options: { assigned?: boolean; done?: boolean } = {}) {
+  const projectId = crypto.randomUUID();
+  const userId = crypto.randomUUID();
+  const subtaskId = crypto.randomUUID();
+  await database.DB.batch([
+    database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'Due Fixture Street', 'editing_autohdr', ?, ?)").bind(projectId, now, now),
+    database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, 'Due recipient', ?, 1, 'editor', 1, ?, ?)").bind(userId, `${userId}@example.test`, now, now),
+    database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)").bind(crypto.randomUUID(), projectId, userId, now),
+    database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignee_id, assignment_version, due_date, created_by, created_at, updated_at) VALUES (?, ?, 'Due task', ?, 1024, ?, 1, ?, ?, ?, ?)").bind(subtaskId, projectId, options.done ? 1 : 0, options.assigned === false ? null : userId, dueDate, userId, now, now),
+  ]);
+  return { projectId, userId, subtaskId, dueDate };
+}
+
+const sydneyEightAm = (year: number, month: number, day: number) => Date.UTC(year, month - 1, day - 1, 22);
 
 function notificationEnv(send: ReturnType<typeof vi.fn>): Env {
   return { DB: database.DB, EMAIL: { send }, NOTIFICATIONS_FROM_ADDRESS: "studio@example.test" } as unknown as Env;
@@ -251,5 +266,65 @@ describe("notification fanout and stalled scan", () => {
       expect(await database.DB.prepare("SELECT email_error FROM notifications WHERE source_key = ?").bind(fixture.handoffId).first()).toEqual({ email_error: "mail unavailable" });
       expect(send).toHaveBeenCalledTimes(1);
     });
+  });
+
+  it("claims a due subtask once and skips unassigned subtasks", async () => {
+    await withActiveAdminsSuppressed(async () => {
+      const now = sydneyEightAm(2026, 8, 18);
+      const assigned = await seedDueSubtask(now, "2026-08-18");
+      const unassigned = await seedDueSubtask(now, "2026-08-18", { assigned: false });
+      const send = vi.fn().mockResolvedValue({ messageId: "due-once" });
+      expect(await scanDueSubtasks(notificationEnv(send), now)).toBe(1);
+      expect(await scanDueSubtasks(notificationEnv(send), now)).toBe(0);
+      expect(await database.DB.prepare("SELECT due_reminder_sent_at FROM project_subtasks WHERE id = ?").bind(assigned.subtaskId).first()).toEqual({ due_reminder_sent_at: now });
+      expect(await database.DB.prepare("SELECT due_reminder_sent_at FROM project_subtasks WHERE id = ?").bind(unassigned.subtaskId).first()).toEqual({ due_reminder_sent_at: null });
+      expect(send).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("is a no-op outside Sydney's 8am hour and catches up overdue subtasks on a later morning", async () => {
+    await withActiveAdminsSuppressed(async () => {
+      const wrongHour = Date.UTC(2026, 7, 18, 21);
+      const fixture = await seedDueSubtask(wrongHour, "2026-08-18");
+      const send = vi.fn().mockResolvedValue({ messageId: "due-catchup" });
+      expect(await scanDueSubtasks(notificationEnv(send), wrongHour)).toBe(0);
+      expect(await database.DB.prepare("SELECT due_reminder_sent_at FROM project_subtasks WHERE id = ?").bind(fixture.subtaskId).first()).toEqual({ due_reminder_sent_at: null });
+      const catchup = sydneyEightAm(2026, 8, 19);
+      expect(await scanDueSubtasks(notificationEnv(send), catchup)).toBe(1);
+      expect(send).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("rejects a concurrent due-subtask candidate after the first claim", async () => {
+    await withActiveAdminsSuppressed(async () => {
+      const now = sydneyEightAm(2026, 8, 18);
+      const fixture = await seedDueSubtask(now, "2026-08-18T14:30");
+      const candidate = { subtaskId: fixture.subtaskId, projectId: fixture.projectId, assigneeId: fixture.userId, dueDate: fixture.dueDate };
+      const env = notificationEnv(vi.fn().mockResolvedValue({ messageId: "due-race" }));
+      expect(await processDueSubtaskCandidate(env, candidate, now, "2026-08-18")).toEqual({ claimed: true, emitted: 1 });
+      expect(await processDueSubtaskCandidate(env, candidate, now, "2026-08-18")).toEqual({ claimed: false, emitted: 0 });
+    });
+  });
+
+  it("rolls back a failed due-subtask insertion so it can retry", async () => {
+    await withActiveAdminsSuppressed(async () => {
+      const now = sydneyEightAm(2026, 8, 18);
+      const fixture = await seedDueSubtask(now, "2026-08-18");
+      const send = vi.fn().mockResolvedValue({ messageId: "due-retry" });
+      await database.DB.exec(`CREATE TRIGGER fail_due_notification BEFORE INSERT ON notifications WHEN NEW.source_key = 'subtask-due:${fixture.subtaskId}:2026-08-18' BEGIN SELECT RAISE(ABORT, 'forced due notification insert failure'); END`);
+      expect(await scanDueSubtasks(notificationEnv(send), now)).toBe(0);
+      await database.DB.exec("DROP TRIGGER fail_due_notification");
+      expect(await database.DB.prepare("SELECT due_reminder_sent_at FROM project_subtasks WHERE id = ?").bind(fixture.subtaskId).first()).toEqual({ due_reminder_sent_at: null });
+      expect(await scanDueSubtasks(notificationEnv(send), now + 1)).toBe(1);
+      expect(send).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("uses Australia/Sydney runtime timezone data across both 2026 DST transitions", () => {
+    const parts = (instant: number) => Object.fromEntries(new Intl.DateTimeFormat("en-AU", { timeZone: "Australia/Sydney", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(new Date(instant)).filter((part) => part.type !== "literal").map((part) => [part.type, part.value]));
+    expect(parts(Date.UTC(2026, 3, 4, 15, 59))).toMatchObject({ year: "2026", month: "04", day: "05", hour: "02", minute: "59" });
+    expect(parts(Date.UTC(2026, 3, 4, 16, 0))).toMatchObject({ year: "2026", month: "04", day: "05", hour: "02", minute: "00" });
+    expect(parts(Date.UTC(2026, 9, 3, 15, 59))).toMatchObject({ year: "2026", month: "10", day: "04", hour: "01", minute: "59" });
+    expect(parts(Date.UTC(2026, 9, 3, 16, 0))).toMatchObject({ year: "2026", month: "10", day: "04", hour: "03", minute: "00" });
   });
 });
