@@ -86,6 +86,24 @@ describe("CollectionPanel version history deletion wiring", () => {
     expect(host.textContent).not.toContain("Edit");
   });
 
+  it("scopes stacked title/source tile structure to video anchors and plain links only", async () => {
+    const plain = { id: "plain-video-link", url: "http://example.test/not-safe", label: "Client portal", source: "manual" as const, createdAt: "2026-08-03T00:00:00.000Z" };
+    apiGetMock.mockImplementation((path) => Promise.resolve(path.includes("collection=video") ? { links: [...videoLinks(), plain] } : { links: videoLinks() }));
+    await renderVideoPanel();
+    const videoLinksParent = host.querySelector<HTMLElement>(".collection-links")!;
+    expect(videoLinksParent.classList.contains("collection-links--video")).toBe(true);
+    for (const contentParent of host.querySelectorAll<HTMLElement>(".collection-links--video .collection-link > a, .collection-links--video .collection-link__plain")) {
+      expect([...contentParent.children].map((child) => child.className)).toEqual(["collection-link__name", "chip"]);
+      expect(contentParent.parentElement?.querySelector(".collection-link__meta")).not.toBeNull();
+    }
+    expect(host.querySelector(".collection-link__plain")?.textContent).toContain("Client portal");
+    expect(host.querySelector(".collection-link-form:not(.collection-link-editor) input[placeholder='https://vimeo.com/…']")).not.toBeNull();
+    await act(async () => { root!.render(createElement(CollectionPanel, { ...props, collection: "floorplan", assets: [], canManage: false })); await Promise.resolve(); await Promise.resolve(); });
+    expect(host.querySelector(".collection-links")?.classList.contains("collection-links--video")).toBe(false);
+    await act(async () => { root!.render(createElement(CollectionPanel, { ...props, collection: "copy", assets: [], canManage: false })); await Promise.resolve(); await Promise.resolve(); });
+    expect(host.querySelector(".collection-links")?.classList.contains("collection-links--video")).toBe(false);
+  });
+
   it("opens the inline editor and cancels without PATCH, restoring the original tile", async () => {
     await renderVideoPanel();
     await click(linkTile(host, 0).querySelector<HTMLButtonElement>("button")!);

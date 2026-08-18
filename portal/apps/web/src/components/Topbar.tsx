@@ -3,6 +3,7 @@ import { signOut } from "../lib/auth";
 import { apiDelete, apiGet, apiPost } from "../lib/api";
 import { InternalLink } from "./InternalLink";
 import { projectNotificationRoute, staffPathFor } from "@quincy/shared";
+import { initials } from "../lib/initials";
 
 export type AppView = "dashboard" | "project" | "create-project" | "edit-project" | "admin" | "not-found";
 
@@ -16,16 +17,6 @@ interface TopbarProps {
 export const NOTIFICATION_POLL_MS = 25_000;
 type NotificationItem = { id: string; projectId: string | null; type: string; title: string; body: string | null; readAt: string | null; createdAt: string };
 type NotificationsResponse = { notifications: NotificationItem[]; unreadCount: number };
-
-function initials(name: string): string {
-  return name
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((part) => part[0])
-    .join("")
-    .slice(0, 2)
-    .toUpperCase();
-}
 
 export function Topbar({ activeView, canAccessAdmin, user, notificationPollMs = NOTIFICATION_POLL_MS }: TopbarProps) {
   const displayName = user.name || user.email || "Quincy user";

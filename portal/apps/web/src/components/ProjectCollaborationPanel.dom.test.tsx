@@ -88,6 +88,31 @@ describe("ProjectCollaborationPanel", () => {
     expect(host.querySelector('[aria-label="Project collaboration"]')).toBeNull(); expect(document.activeElement).toBe(toggle); sentinel.remove();
   });
 
+  it("uses an overlay-only fixed head and inner scroller while standalone content remains unwrapped", async () => {
+    apiGetMock.mockImplementation((path) => path.includes("subtasks") ? Promise.resolve({ subtasks: [] }) : path.includes("mentionable-users") ? Promise.resolve({ users: [] }) : Promise.resolve(comments()));
+    const host = mount(); await render(<ProjectCollaborationPanel projectId={projectId} />);
+    const overlay = host.querySelector<HTMLElement>(".project-collaboration")!;
+    expect(overlay.classList.contains("project-collaboration--overlay")).toBe(true);
+    expect(overlay.firstElementChild).toBe(overlay.querySelector(".project-collaboration__head"));
+    const scroll = overlay.querySelector<HTMLElement>(".project-collaboration__scroll")!;
+    expect(overlay.children[1]).toBe(scroll); expect(scroll.querySelector(".subtask-checklist")).not.toBeNull(); expect(scroll.querySelector(".project-collaboration__comment-compose")).not.toBeNull();
+    await unmount(); host.remove(); const standalone = mount(); await render(<ProjectCollaborationPanel projectId={projectId} mode="standalone" initialComments={comments()} />);
+    const panel = standalone.querySelector<HTMLElement>(".project-collaboration")!;
+    expect(panel.classList.contains("project-collaboration--overlay")).toBe(false); expect(panel.querySelector(".project-collaboration__scroll")).toBeNull(); expect(panel.querySelector(".subtask-checklist")).not.toBeNull();
+  });
+
+  it("keeps the overlay open when checklist edit and overflow Escape consume the event", async () => {
+    const subtask = { id: "task-1", title: "Call client", done: false, position: 1024, assignee: null, assignmentVersion: 0, dueDate: null, createdBy: "user", createdAt: "2026-08-17T00:00:00.000Z", updatedAt: "2026-08-17T00:00:00.000Z" };
+    apiGetMock.mockImplementation((path) => path.includes("subtasks") ? Promise.resolve({ subtasks: [subtask] }) : path.includes("mentionable-users") ? Promise.resolve({ users: [] }) : Promise.resolve(comments()));
+    const host = mount(); await render(<ProjectCollaborationPanel projectId={projectId} />);
+    const panel = host.querySelector(".project-collaboration")!;
+    const title = host.querySelector<HTMLButtonElement>(".subtask-checklist__title-trigger")!; await click(title);
+    const input = host.querySelector<HTMLInputElement>(".subtask-checklist__title")!; input.focus(); await act(async () => { input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await Promise.resolve(); });
+    expect(host.querySelector(".project-collaboration")).toBe(panel); expect(host.querySelector(".subtask-checklist__title-trigger")).not.toBeNull();
+    const overflow = host.querySelector<HTMLButtonElement>("[data-subtask-actions-trigger]")!; await click(overflow); const group = host.querySelector<HTMLElement>(".subtask-checklist__overflow-actions")!; group.querySelector("button")!.focus(); await act(async () => { group.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await Promise.resolve(); });
+    expect(host.querySelector(".project-collaboration")).toBe(panel); expect(host.querySelector(".subtask-checklist__overflow-actions")).toBeNull();
+  });
+
   it("shows loading, empty, and failed comment states", async () => {
     let resolveLoad: ((value: unknown) => void) | undefined;
     apiGetMock.mockImplementation(() => new Promise((resolve) => { resolveLoad = resolve; }));

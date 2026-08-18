@@ -21,13 +21,14 @@ function DocumentPreview({ preview, latest }: { preview: WorkspaceAsset; latest:
   return <a className="document-preview" href={assetUrl(latest)} target="_blank" rel="noreferrer" aria-label={failed ? `Retry preview of ${latest.originalFilename}` : undefined} onClick={(event) => { if (!failed) return; event.preventDefault(); setFailed(false); setRetryToken((current) => current + 1); }}><LazyImage src={assetUrl(preview)} alt={`Preview of ${latest.originalFilename}`} retryToken={retryToken} onFailedChange={setFailed} /></a>;
 }
 
-function LinkTiles({ links, onRemove, onEdit, editingLinkId, editDraft, editError, savingEdit, onEditDraftChange, onSaveEdit, onCancelEdit }: {
+function LinkTiles({ links, video = false, onRemove, onEdit, editingLinkId, editDraft, editError, savingEdit, onEditDraftChange, onSaveEdit, onCancelEdit }: {
   links: Link[]; onRemove?: (link: Link) => void; onEdit?: (link: Link) => void; editingLinkId?: string | null;
+  video?: boolean;
   editDraft?: { url: string; label: string }; editError?: string; savingEdit?: boolean;
   onEditDraftChange?: (draft: { url: string; label: string }) => void; onSaveEdit?: (event: FormEvent) => void; onCancelEdit?: () => void;
 }) {
   if (!links.length) return null;
-  return <div className="collection-links">{links.map((link) => {
+  return <div className={`collection-links${video ? " collection-links--video" : ""}`}>{links.map((link) => {
     const safeUrl = httpsUrl(link.url); const title = link.label || hostLabel(link.url); const content = <><span className="collection-link__name">{title}</span><span className="chip">{hostLabel(link.url)}</span></>;
     const isEditing = editingLinkId === link.id;
     const errorId = `collection-link-edit-error-${link.id}`;
@@ -88,7 +89,7 @@ export function CollectionPanel({ projectId, collection, assets, canManage, canD
     } catch (error) { if (sessionId) void apiPost(`/api/projects/${projectId}/documents/${sessionId}/abort`, {}).catch(() => undefined); onToast(error instanceof Error ? error.message : "The floorplan could not be uploaded.", "error"); } finally { setUploading(false); }
   }
 
-  if (collection === "video") return <div className="collection-panel"><div className="workspace-intro"><div><div className="ey">Video delivery</div><h1 className="serif">Video links</h1></div><div className="muted">External delivery links remain connected to the project, ready for the final hand-off.</div></div><div className="collection-content"><LinkTiles links={links} onEdit={canManage ? startEdit : undefined} onRemove={canManage ? removeLink : undefined} editingLinkId={editingLinkId} editDraft={editDraft} editError={editError} savingEdit={savingEdit} onEditDraftChange={setEditDraft} onSaveEdit={(event) => void saveEdit(event)} onCancelEdit={cancelEdit} />{!links.length && <div className="empty"><span className="serif">No video link yet.</span>{canManage ? "Add the first delivery link below." : "Delivered video will appear here."}</div>}{canManage && <form className="collection-link-form" onSubmit={(event) => void addLink(event)}><label><span>Link URL</span><input required type="url" placeholder="https://vimeo.com/…" value={url} onChange={(event) => setUrl(event.target.value)} /></label><label><span>Label <em>optional</em></span><input placeholder="Final walkthrough" value={label} onChange={(event) => setLabel(event.target.value)} /></label><button className="button" disabled={savingLink}>{savingLink ? "Adding…" : "Add link"}</button></form>}</div></div>;
+  if (collection === "video") return <div className="collection-panel"><div className="workspace-intro"><div><div className="ey">Video delivery</div><h1 className="serif">Video links</h1></div><div className="muted">External delivery links remain connected to the project, ready for the final hand-off.</div></div><div className="collection-content"><LinkTiles video links={links} onEdit={canManage ? startEdit : undefined} onRemove={canManage ? removeLink : undefined} editingLinkId={editingLinkId} editDraft={editDraft} editError={editError} savingEdit={savingEdit} onEditDraftChange={setEditDraft} onSaveEdit={(event) => void saveEdit(event)} onCancelEdit={cancelEdit} />{!links.length && <div className="empty"><span className="serif">No video link yet.</span>{canManage ? "Add the first delivery link below." : "Delivered video will appear here."}</div>}{canManage && <form className="collection-link-form" onSubmit={(event) => void addLink(event)}><label><span>Link URL</span><input required type="url" placeholder="https://vimeo.com/…" value={url} onChange={(event) => setUrl(event.target.value)} /></label><label><span>Label <em>optional</em></span><input placeholder="Final walkthrough" value={label} onChange={(event) => setLabel(event.target.value)} /></label><button className="button" disabled={savingLink}>{savingLink ? "Adding…" : "Add link"}</button></form>}</div></div>;
 
   const pdfKind = collection === "floorplan" ? "floorplan_pdf" : "copy_pdf";
   const groups = [...new Set(assets.filter((asset) => asset.kind === pdfKind).map((asset) => asset.versionGroupId ?? asset.id))].map((groupId) => {
