@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import type { WorkspaceAsset } from "./PhotoGrid";
-import { apiDelete, apiGet, apiPatch, apiPost } from "../lib/api";
+import { apiDelete, apiGet, apiPatch, apiPost, apiPostWithStatus } from "../lib/api";
 import { uploadMultipartFile, type MultipartPresign } from "../lib/multipart-upload";
 import { LazyImage } from "./LazyImage";
 
@@ -44,7 +44,22 @@ export function CollectionPanel({ projectId, collection, assets, canManage, canD
   const [editingLinkId, setEditingLinkId] = useState<string | null>(null); const [editDraft, setEditDraft] = useState({ url: "", label: "" }); const [editError, setEditError] = useState(""); const [savingEdit, setSavingEdit] = useState(false);
   const [uploadGroupId, setUploadGroupId] = useState<string | undefined>(); const [uploading, setUploading] = useState(false); const copyInput = useRef<HTMLInputElement>(null); const floorplanInput = useRef<HTMLInputElement>(null);
   useEffect(() => { let active = true; void apiGet<{ links: Link[] }>(`/api/projects/${projectId}/links?collection=${collection}`).then((response) => { if (active) setLinks(response.links); }).catch((error: unknown) => { if (active) onToast(error instanceof Error ? error.message : "Delivered links could not be loaded.", "error"); }); return () => { active = false; }; }, [collection, onToast, projectId]);
-  async function addLink(event: FormEvent) { event.preventDefault(); setSavingLink(true); try { const link = await apiPost<Link, { collection: CollectionKind; url: string; label?: string }>(`/api/projects/${projectId}/links`, { collection, url, label: label.trim() || undefined }); setLinks((current) => [...current.filter((item) => item.id !== link.id), link]); setUrl(""); setLabel(""); await onChanged(); onToast("Link added."); } catch (error) { onToast(error instanceof Error ? error.message : "The link could not be added.", "error"); } finally { setSavingLink(false); } }
+  async function addLink(event: FormEvent) {
+    event.preventDefault(); setSavingLink(true);
+    try {
+      const { data: link, status } = await apiPostWithStatus<Link, { collection: CollectionKind; url: string; label?: string }>(`/api/projects/${projectId}/links`, { collection, url, label: label.trim() || undefined });
+      if (status === 201) {
+        setLinks((current) => [...current.filter((item) => item.id !== link.id), link]);
+        setUrl(""); setLabel(""); await onChanged(); onToast("Link added.");
+      } else {
+        // Nothing was written server-side, so don't move the existing tile to the end of the
+        // list the way a real append would — only fill it in if this client didn't have it yet.
+        setLinks((current) => current.some((item) => item.id === link.id) ? current.map((item) => item.id === link.id ? link : item) : [...current, link]);
+        onToast("This link is already in the list.", "error");
+      }
+    } catch (error) { onToast(error instanceof Error ? error.message : "The link could not be added.", "error"); }
+    finally { setSavingLink(false); }
+  }
   async function removeLink(link: Link) { try { await apiDelete<void>(`/api/projects/${projectId}/links/${link.id}`); setLinks((current) => current.filter((item) => item.id !== link.id)); onToast("Manual link removed."); await onChanged(); } catch (error) { onToast(error instanceof Error ? error.message : "The link could not be removed.", "error"); } }
   function startEdit(link: Link) { setEditingLinkId(link.id); setEditDraft({ url: link.url, label: link.label ?? "" }); setEditError(""); }
   function cancelEdit() { setEditingLinkId(null); setEditDraft({ url: "", label: "" }); setEditError(""); }

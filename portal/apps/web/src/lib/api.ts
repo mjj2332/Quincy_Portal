@@ -23,7 +23,7 @@ function messageFromPayload(payload: unknown, fallback: string): string {
   return fallback;
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+async function requestWithStatus<T>(path: string, init: RequestInit = {}): Promise<{ data: T; status: number }> {
   let response: Response;
 
   try {
@@ -54,7 +54,11 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     );
   }
 
-  return payload as T;
+  return { data: payload as T, status: response.status };
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  return (await requestWithStatus<T>(path, init)).data;
 }
 
 export function apiGet<T>(path: string, init?: Pick<RequestInit, "signal">): Promise<T> {
@@ -63,6 +67,16 @@ export function apiGet<T>(path: string, init?: Pick<RequestInit, "signal">): Pro
 
 export function apiPost<T, TBody>(path: string, body: TBody): Promise<T> {
   return request<T>(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+/** Like apiPost, but keeps the response status so callers can tell e.g. a 200 "already exists"
+ * apart from a 201 "created" when the server distinguishes them in the same success payload. */
+export function apiPostWithStatus<T, TBody>(path: string, body: TBody): Promise<{ data: T; status: number }> {
+  return requestWithStatus<T>(path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),

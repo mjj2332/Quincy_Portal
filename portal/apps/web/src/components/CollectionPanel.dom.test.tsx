@@ -8,9 +8,10 @@ import type { WorkspaceAsset } from "./PhotoGrid";
 
 const apiGetMock = vi.fn<(path: string) => Promise<unknown>>();
 const apiPatchMock = vi.fn<(path: string, body: unknown) => Promise<unknown>>();
+const apiPostWithStatusMock = vi.fn<(path: string, body: unknown) => Promise<{ data: unknown; status: number }>>();
 vi.mock("../lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/api")>();
-  return { ...actual, apiGet: (path: string) => apiGetMock(path), apiPatch: (path: string, body: unknown) => apiPatchMock(path, body) };
+  return { ...actual, apiGet: (path: string) => apiGetMock(path), apiPatch: (path: string, body: unknown) => apiPatchMock(path, body), apiPostWithStatus: (path: string, body: unknown) => apiPostWithStatusMock(path, body) };
 });
 
 function asset(id: string, version: number): WorkspaceAsset {
@@ -53,6 +54,7 @@ describe("CollectionPanel version history deletion wiring", () => {
     window.confirm = vi.fn(() => true);
     apiGetMock.mockReset().mockImplementation((path) => Promise.resolve(path.includes("collection=video") ? { links: videoLinks() } : { links: [] }));
     apiPatchMock.mockReset();
+    apiPostWithStatusMock.mockReset();
   });
   afterEach(async () => { await act(async () => { root!.unmount(); await Promise.resolve(); }); root = null; host.remove(); });
 
@@ -163,6 +165,65 @@ describe("CollectionPanel version history deletion wiring", () => {
     expect(editor.querySelector('[role="alert"]')?.textContent).toBe("Enter an HTTPS URL.");
     expect(editor.querySelectorAll<HTMLInputElement>("input")[0]!.value).toBe("Collision draft");
     expect(editor.querySelectorAll<HTMLInputElement>("input")[1]!.value).toBe("http://vimeo.com/not-https");
+  });
+
+  it("adds a new link on a 201, clearing the form and toasting success", async () => {
+    const onChanged = vi.fn(async () => undefined);
+    const onToast = vi.fn();
+    const created = { id: "new-video-link", url: "https://vimeo.com/new", label: "New cut", source: "manual" as const, createdAt: "2026-08-04T00:00:00.000Z" };
+    apiPostWithStatusMock.mockResolvedValueOnce({ data: created, status: 201 });
+    await renderVideoPanel({ onChanged, onToast });
+    const form = host.querySelector<HTMLFormElement>(".collection-link-form:not(.collection-link-editor)")!;
+    const inputs = form.querySelectorAll<HTMLInputElement>("input");
+    await typeInto(inputs[0]!, "https://vimeo.com/new");
+    await typeInto(inputs[1]!, "New cut");
+    await click(form.querySelector("button")!);
+
+    expect(apiPostWithStatusMock).toHaveBeenCalledWith("/api/projects/project/links", { collection: "video", url: "https://vimeo.com/new", label: "New cut" });
+    expect(tile(host, "New cut")).toBeDefined();
+    expect(inputs[0]!.value).toBe(""); expect(inputs[1]!.value).toBe("");
+    expect(onChanged).toHaveBeenCalledTimes(1);
+    expect(onToast).toHaveBeenCalledWith("Link added.");
+  });
+
+  it("on a 200 for a link already shown locally, keeps its tile position, shows the duplicate error, keeps the typed values, and does not call onChanged", async () => {
+    const onChanged = vi.fn(async () => undefined);
+    const onToast = vi.fn();
+    const existing = videoLinks()[0]!; // "Walkthrough", currently the first tile
+    apiPostWithStatusMock.mockResolvedValueOnce({ data: existing, status: 200 });
+    await renderVideoPanel({ onChanged, onToast });
+    const form = host.querySelector<HTMLFormElement>(".collection-link-form:not(.collection-link-editor)")!;
+    const inputs = form.querySelectorAll<HTMLInputElement>("input");
+    await typeInto(inputs[0]!, existing.url);
+    await typeInto(inputs[1]!, "Attempted duplicate");
+    await click(form.querySelector("button")!);
+
+    expect(onToast).toHaveBeenCalledWith("This link is already in the list.", "error");
+    expect(onToast).not.toHaveBeenCalledWith("Link added.");
+    expect(inputs[0]!.value).toBe(existing.url); expect(inputs[1]!.value).toBe("Attempted duplicate");
+    expect(onChanged).not.toHaveBeenCalled();
+    // No server mutation happened, so the tile must not jump to the end of the list.
+    expect(linkTile(host, 0).textContent).toContain("Walkthrough");
+    expect(linkTile(host, 1).textContent).toContain("Tonomo delivery");
+  });
+
+  it("on a 200 for a link this client didn't have yet (created concurrently), appends it defensively without a false success toast", async () => {
+    const onChanged = vi.fn(async () => undefined);
+    const onToast = vi.fn();
+    apiGetMock.mockImplementation((path) => Promise.resolve(path.includes("collection=video") ? { links: [videoLinks()[1]] } : { links: [] })); // only "Tonomo delivery" preloaded
+    const concurrentlyCreated = { id: "elsewhere-created-link", url: "https://vimeo.com/elsewhere", label: "Elsewhere", source: "manual" as const, createdAt: "2026-08-05T00:00:00.000Z" };
+    apiPostWithStatusMock.mockResolvedValueOnce({ data: concurrentlyCreated, status: 200 });
+    await renderVideoPanel({ onChanged, onToast });
+    const form = host.querySelector<HTMLFormElement>(".collection-link-form:not(.collection-link-editor)")!;
+    const inputs = form.querySelectorAll<HTMLInputElement>("input");
+    await typeInto(inputs[0]!, concurrentlyCreated.url);
+    await click(form.querySelector("button")!);
+
+    // Appended after the preloaded tile, not prepended, replacing it, or otherwise reordered.
+    expect(linkTile(host, 0).textContent).toContain("Tonomo delivery");
+    expect(linkTile(host, 1).textContent).toContain("Elsewhere");
+    expect(onToast).toHaveBeenCalledWith("This link is already in the list.", "error");
+    expect(onChanged).not.toHaveBeenCalled();
   });
 
   it("targets the clicked version's own id, not the other version's, even though both render the same 'Delete' label", async () => {
