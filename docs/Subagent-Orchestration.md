@@ -4,19 +4,8 @@ How this session spawns and coordinates subagents on the Quincy Portal build.
 
 **Living document.** When a session learns a new mechanic, hits a new failure mode, or the
 user changes the process, write it here (or in the CLI reference this points at) rather than
-leaving it in a transcript. Section numbers §1–§6 are stable — other docs link to them.
-
-Verified live: Codex mechanics 2026-07-19, Agy mechanics 2026-07-24 (including a real
-accept-edits build test — kept for reference even though Agy no longer builds by default, see
-§1). Policy changed 2026-07-26: Terra replaces Sol as the default reviewer, Sonnet 5
-(this session) drafts the first plan instead of Agy, and Agy's pipeline role is reduced to ad
-hoc groundwork. Policy changed again 2026-07-29: Terra (not Sonnet 5) now drafts the first plan,
-and plan approval became a two-tier process — Terra reviews its own draft first (capped at 2
-rounds), then a separate Opus tier reviews the result, with its own capped Terra-revert budget
-before Opus takes the plan over directly (see §2 policy 1). Policy changed again 2026-07-29:
-diagnostic and testing tasks can be routed straight to Terra or Luna outside the full pipeline
-(split by difficulty), and both have their own local Chrome browser and OpenCLI skill access on
-this machine (see §2 policy 8).
+leaving it in a transcript. Section numbers §1–§6 are stable — other docs link to them. History
+of *how* the policy evolved belongs in `git log -p` on this file, not in the file itself.
 
 ---
 
@@ -26,7 +15,7 @@ this machine (see §2 policy 8).
 |---|---|---|---|---|
 | **Sonnet 5** | this session, directly — no subprocess | Claude Sonnet 5 | Orchestrates the full pipeline (spawns and sequences Terra/Opus, runs the §5 gate); may draft/build a task itself instead of delegating | Yes, at this session's discretion for tasks too small to be worth handing off |
 | **Terra** | `codex exec` — [§3](subagents/codex-cli.md) | `gpt-5.6-terra`, high effort | Drafts the first plan and reviews it (fresh context, capped at 2 rounds — see §2 policy 1); default builder; also reviews the diff; harder diagnostic/testing tasks | Yes |
-| **Luna** | `codex exec` | `gpt-5.6-luna` | Cheap/high-volume builder; straightforward diagnostic/testing tasks | Yes |
+| **Luna** | `codex exec` | `gpt-5.6-luna` | Cheap/high-volume builder; straightforward diagnostic/testing tasks; only agent permitted danger-mode testing (§2 policy 9) | Yes |
 | **Agy** | `agy` CLI subprocess — [§3a](subagents/agy-cli.md) | `gemini-3.6-flash-high` | Ad hoc simple groundwork only (quick investigation, one-off scaffolding) — no longer plans or builds pipeline work | Only for that groundwork, never a pipeline step |
 | **Opus reviewer** | `Agent` tool, `model: opus` | Claude Opus 5 | Reviews the plan (new tier, §2 policy 1) and the final diff before the §5 gate | No code, ever — narrow plan-document exception below |
 | **Sol** | `codex exec` | `gpt-5.6-sol` | No default role — spawn only if the user explicitly asks for it on a specific task | N/A |
@@ -41,6 +30,13 @@ process can drive the local Chrome browser directly and call the `opencli` skill
 browser-based reproduction of a bug, automated UI testing, or anything else that needs an actual
 browser rather than just reading code. State this explicitly in a diagnostic/testing task's
 prompt when it would help — don't assume Codex will reach for it unprompted.
+
+**Danger-mode testing is Luna-only** (§2 policy 9 has the full rule). In short: for testing
+tasks exclusively, Luna may run at max reasoning effort with `--sandbox danger-full-access` plus
+Chrome-control — never computer-use/full-desktop-control, never Terra, never a build task. It
+exists because Luna's default `workspace-write` sandbox blocks things a real test needs (e.g. a
+local server's `127.0.0.1` bind), traded for full machine access and Luna's real logged-in
+Chrome sessions — scope every invocation deliberately.
 
 **Diagnostic and testing tasks don't need the full plan→review pipeline.** Investigation,
 bug reproduction, or writing/running tests outside a full build can go straight to Terra or Luna
@@ -88,14 +84,13 @@ correctness, never a substitute for §5's mechanical verification.
 
 ## 2. Policy
 
-1. **Terra (high effort) drafts the first plan.** A separate, fresh Terra (high effort) reviews
-   it; loop draft → review → revise, capped at a **maximum of 2 Terra review rounds** — don't
-   loop indefinitely waiting for Terra's approval. Whatever plan results (Terra-approved within
-   the cap, or not) then goes to a fresh **Opus** subagent for a second, independent review tier:
-   Opus approves it, or requests changes and the plan reverts to a fresh Terra spawn for
-   revision — capped at a **maximum of 2 such Opus→Terra reverts**. After that cap, Opus edits
-   the plan document itself, then a fresh Opus self-review approves it. Only after this full
-   sequence resolves does any build start.
+1. **Plan review is two-tier, each capped.** Terra (high effort) drafts the first plan; a fresh
+   Terra reviews it, capped at a **maximum of 2 Terra review rounds** — don't loop indefinitely
+   waiting for approval. The result then goes to a fresh **Opus** subagent: approve, or revert
+   to a fresh Terra spawn for revision, capped at a **maximum of 2 Opus→Terra reverts**. Past
+   that cap, Opus edits the plan document itself and a fresh Opus self-review approves it —
+   the only place a reviewer may write anything, and only the plan document, never code. Build
+   starts only after this sequence resolves.
 2. **Build tasks go to Terra or Luna — or Sonnet 5 builds directly** when a task is small and
    mechanical enough that delegating it isn't worth the overhead. Use judgment; don't delegate
    reflexively, and don't inline something substantial just to dodge the overhead.
@@ -114,17 +109,28 @@ correctness, never a substitute for §5's mechanical verification.
    or Luna via `codex exec`, split by difficulty (Luna for simple checks, Terra for harder
    investigation or testing) — see §1. Codex agents have their own local Chrome browser and
    OpenCLI skills available for this; mention them in the task prompt when relevant.
+9. **Danger-mode testing is Luna-only, testing-only.** `--sandbox danger-full-access` plus
+   Chrome-control (never computer-use) is permitted for Luna, at max reasoning effort, on
+   testing tasks exclusively — never build/implementation, never Terra or any other agent.
+   Luna's local Chrome carries the operator's real logged-in sessions (Google account, real
+   Quincy Portal staff login), so a danger-mode click is a real staff action, not a sandboxed
+   one. Mutating test flows (create/edit/delete through the UI) run on **staging only**;
+   production access is **passive verification only** — page loads, feature renders, console/
+   network clean, the deployed change is actually live — never a create/edit/delete action,
+   even to clean up the agent's own test data. Every danger-mode task prompt must state,
+   verbatim or equivalent: *"You have full machine access via the `danger-full-access` sandbox
+   and Chrome with real logged-in sessions. Any create, edit, or delete action must target
+   staging only. Production access is read-only verification — confirm pages load and the
+   feature renders; never create, edit, or delete anything in production."* Don't rely on a
+   prior task's phrasing carrying forward — restate it every time.
 
 ### Pipeline
 
-Terra drafts a plan → a fresh Terra reviews it (loop capped at 2 rounds) → a fresh Opus reviews
-the resulting plan, either approving it or reverting to a fresh Terra spawn for revision (capped
-at 2 reverts, after which Opus edits the plan itself and self-approves) → Terra or Luna
-implements and runs tests, or Sonnet 5 builds directly for a small task → builder self-checks the
-diff against every plan item → **Terra reviews the diff itself, in a fresh separate invocation,
-not the plan** → builder applies clearly identified fixes → Terra does a final focused pass for
-unresolved high-severity findings → Opus final-draft review of the diff (skip per §1) → **§5 gate
-in this session** → deploy and commit.
+Terra draft → Terra review (≤2 rounds) → Opus plan review → Terra revise (≤2 reverts, then Opus
+self-edits and self-approves) → Terra/Luna build, or Sonnet 5 direct for a small task → builder
+self-checks the diff against every plan item → **fresh Terra diff review** → builder applies
+fixes → Terra final focused pass → Opus final-draft review (skip per §1 when the session itself
+is Opus 5) → **§5 gate** → deploy and commit.
 
 Fix loops go back to the *same* agent with per-finding instructions — resume it rather than
 starting cold, and never hand back a vague "address the review comments."
@@ -140,6 +146,7 @@ starting cold, and never hand back a vague "address the review comments."
 | Large cross-system change | Terra | Terra, max effort |
 | Cheap high-volume implementation | Luna, escalate failures | Terra |
 | Diagnostic / testing only, no build | Luna (simple) or Terra (harder) | Verify directly in this session (§5) — no separate reviewer pass |
+| Live/production-adjacent testing (danger-mode) | Luna, max effort, `danger-full-access` + Chrome-only (§2 policy 9) | Verify directly in this session (§5); production stays passive-only, mutating flows on staging |
 
 Sol has no row — it's the explicit-request exception from §1, not a default. Route Agy work
 only as ad hoc groundwork outside this table, never as a plan or build step.
@@ -179,8 +186,9 @@ done inline with the session's own tools, no subprocess involved.
    the agent works and a notification arrives on exit.
 3. **Read the report file, not the raw transcript** — Codex's `--output-last-message` exists
    for exactly this; the full JSONL transcript can overflow context.
-4. **Choose sandbox mode by intent** — write access only for implementation tasks. Per-tool
-   flags are in the §3 references.
+4. **Choose sandbox mode by intent** — write access only for implementation tasks; danger-mode
+   only for a Luna testing task, and only with the §2 policy 9 restriction restated in the
+   prompt. Per-tool flags are in the §3 references.
 
 ---
 
@@ -195,9 +203,13 @@ claims, verify in this session directly:
   author-only guards, anything touching money, migrations, or deletion.
 - If an Agy groundwork task was supposed to touch disk, confirm it actually did (`git status`,
   read the file back) before believing it — see §3a.
+- If a danger-mode testing task touched production, confirm it was genuinely passive — no rows
+  changed, nothing created/edited/deleted — don't take the report's word for it.
 
 Only after this passes: deploy and commit. This gate has caught real bugs reported as fine —
-e.g. a guard comparing two values from the same closure, which could never fire.
+e.g. a guard comparing two values from the same closure, which could never fire, and a
+race-condition test whose own fault injection broke its assertion math while the code under test
+was correct.
 
 ---
 
@@ -211,3 +223,8 @@ e.g. a guard comparing two values from the same closure, which could never fire.
 - **Agy silent no-ops.** Two separate misconfigurations make an Agy write task report success
   while changing nothing on disk. Both are in [subagents/agy-cli.md](subagents/agy-cli.md) —
   read it rather than debugging from scratch.
+- **Danger-mode scope creep.** Luna's testing-only `danger-full-access` plus real Chrome
+  sessions (§1, §2 policy 9) has no sandbox to fall back on if a task prompt forgets to restate
+  the staging/production split — the prompt-level restriction is the only guard, since
+  `codex exec` also runs unattended with no human-approval checkpoint mid-run. Always restate
+  it explicitly per task; never assume a prior session's phrasing carries forward.
