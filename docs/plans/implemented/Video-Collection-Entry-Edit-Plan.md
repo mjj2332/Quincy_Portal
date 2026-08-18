@@ -1,7 +1,7 @@
 # Video Collection Entry Edit — Plan
 
-**Status: BUILT AND VERIFIED (Terra implementation, Luna max-effort test suite, Sonnet 5 §5 gate
-all green) — not yet committed or deployed.**
+**Status: IMPLEMENTED. Committed 372b9b3, deployed to production 2026-08-18 (quincy-portal-app
+version 5f2122b2-0472-45f2-a278-ed2f7a527734).**
 
 ## Problem and scope
 
