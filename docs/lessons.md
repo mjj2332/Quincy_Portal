@@ -342,7 +342,7 @@
   `workers/background` issues/signs transform-source URLs (`renditions.ts`) using the *same*
   shared secret, set independently via `wrangler secret put TRANSFORM_SOURCE_SECRET` in each
   Worker. There is no automation, no CI step, and (before this entry) no doc beyond one line in
-  `docs/QA-Staging-Matrix.md`. Drift between the two isn't a partial degradation — it's a 100%
+  the now-removed staging QA matrix doc. Drift between the two isn't a partial degradation — it's a 100%
   signature-rejection failure of every rendition job, indistinguishable at the UI layer from any
   other rendition failure (frames just show "Processing preview…" forever). **Rule:** when
   rendition generation fails for every asset (not just some), check secret parity across workers

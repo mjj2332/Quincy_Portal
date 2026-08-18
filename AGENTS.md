@@ -74,9 +74,10 @@ up by `npm run test --workspaces` — no separate invocation needed for it.
 ## Deploy
 
 Order matters, because service bindings resolve at deploy time: **background →
-webhook-ingress → app**, each via `cd portal/workers/<x> && npx wrangler deploy`. Hosts:
-`quincy.flamingfire.my` (prod), `staging.quincy.flamingfire.my`. Prod config lives in Worker
-secrets. D1 migrations 0000–0024 are confirmed applied to prod (0021 dropped the `comments` table;
+webhook-ingress → app**, each via `cd portal/workers/<x> && npx wrangler deploy`. Host:
+`quincy.flamingfire.my` (prod) — there is no staging environment (removed 2026-08-18; it shared
+production's D1/R2/`APP_ORIGIN`, so it offered no real isolation and its Google OAuth never
+worked). Prod config lives in Worker secrets. D1 migrations 0000–0024 are confirmed applied to prod (0021 dropped the `comments` table;
 0022 migrated the seed admin's id to a real UUID; 0023 added `autohdr_handoffs.stalled_notified_at`,
 applied 2026-07-30; 0024 added the `download_selection_tickets` table, applied 2026-08-04) —
 next available number is **0025**. Branch off `main`.

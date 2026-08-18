@@ -314,8 +314,11 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
   losing dashboard visibility, notice board post round-trip, Kanban priority/reorder, notification
   bell) — the automated verification is thorough but no one has clicked through the actual UI yet.
 - **`main` is source of truth** — `build/phase-0-2` merged via PR #3. Production live at
-  `quincy.flamingfire.my` (staging + prototype on their own hostnames). Branch off `main` for
-  new work.
+  `quincy.flamingfire.my` (prototype on its own hostname). Branch off `main` for new work.
+  **2026-08-18: the staging environment was removed** — it shared production's D1/R2/`APP_ORIGIN`
+  and never had working Google OAuth, so it offered no real isolation. See
+  `docs/Subagent-Orchestration.md` §2 policy 9 for the downstream consequence: danger-mode UI
+  testing no longer has a mutation-safe target and is passive-only everywhere now.
 - **Phases 0–4 shipped and live**: foundations/auth/infra; capture ingest + RAW QA; AutoHDR +
   Edited QA + review lightbox; Tonomo intake + dashboard (Kanban/List) + admin backend;
   video/floorplan/copy collections.
@@ -380,8 +383,7 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
 
 - [ ] Configure Tonomo with the webhook URL:
   `https://quincy-portal-webhook-ingress.mjj2332.workers.dev/webhooks/tonomo?token=<see .prod-secrets.local>`.
-- [ ] Real interactive Google browser login check at `https://quincy.flamingfire.my` (staging
-  sign-in bounces to prod origin — single `APP_ORIGIN`; use prod for this check).
+- [ ] Real interactive Google browser login check at `https://quincy.flamingfire.my`.
 - [ ] Rotate/retire production `BETTER_AUTH_SECRET`: still sits in gitignored
   `portal/workers/app/.prod-secrets.local` — move to password manager, delete the file.
 - [x] Dropbox app registered, secrets uploaded, `sharing.read` scope added + connection
@@ -393,8 +395,6 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
   in `Lightbox.tsx` have no `catch` (unlike their edit-handler siblings). Annotation create
   schema is `z.unknown()` for strokes while edit validates properly
   (`workers/app/src/routes/annotations.ts`).
-- [ ] **P1** No mutation-safe staging QA corpus / E2E test matrix for RAW↔Edited compare,
-  collections/PDF versioning, Extras ingest, or background Dropbox sync.
 - [ ] **P2** Narrow-screen (≤720px) nav loses Admin + Sign-out, no mobile-menu replacement.
 - [ ] **P2** Floorplan PDF+preview version pairing not enforced (independent per-kind
   counters); external collection links never bump `receivedCount`; collection tab-switch race

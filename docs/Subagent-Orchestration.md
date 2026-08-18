@@ -109,20 +109,23 @@ correctness, never a substitute for §5's mechanical verification.
    or Luna via `codex exec`, split by difficulty (Luna for simple checks, Terra for harder
    investigation or testing) — see §1. Codex agents have their own local Chrome browser and
    OpenCLI skills available for this; mention them in the task prompt when relevant.
-9. **Danger-mode testing is Luna-only, testing-only.** `--sandbox danger-full-access` plus
-   Chrome-control (never computer-use) is permitted for Luna, at max reasoning effort, on
-   testing tasks exclusively — never build/implementation, never Terra or any other agent.
-   Luna's local Chrome carries the operator's real logged-in sessions (Google account, real
-   Quincy Portal staff login), so a danger-mode click is a real staff action, not a sandboxed
-   one. Mutating test flows (create/edit/delete through the UI) run on **staging only**;
-   production access is **passive verification only** — page loads, feature renders, console/
-   network clean, the deployed change is actually live — never a create/edit/delete action,
-   even to clean up the agent's own test data. Every danger-mode task prompt must state,
-   verbatim or equivalent: *"You have full machine access via the `danger-full-access` sandbox
-   and Chrome with real logged-in sessions. Any create, edit, or delete action must target
-   staging only. Production access is read-only verification — confirm pages load and the
-   feature renders; never create, edit, or delete anything in production."* Don't rely on a
-   prior task's phrasing carrying forward — restate it every time.
+9. **Danger-mode testing is Luna-only, testing-only, passive-only.** `--sandbox
+   danger-full-access` plus Chrome-control (never computer-use) is permitted for Luna, at max
+   reasoning effort, on testing tasks exclusively — never build/implementation, never Terra or
+   any other agent. Luna's local Chrome carries the operator's real logged-in sessions (Google
+   account, real Quincy Portal staff login), so a danger-mode click is a real staff action, not a
+   sandboxed one. **There is no staging environment** (removed 2026-08-18 — it shared
+   production's D1/R2/`APP_ORIGIN`, so it offered no real isolation and its Google OAuth never
+   worked), so danger-mode has no environment where a mutation is safe: production access is
+   **passive verification only** — page loads, feature renders, console/network clean, the
+   deployed change is actually live — never a create/edit/delete action, even to clean up the
+   agent's own test data. A task that genuinely needs a mutating UI walkthrough is not a
+   danger-mode task; route it to local dev instead (see the known `redirect_uri_mismatch`
+   limitation in §6) or have a human do it. Every danger-mode task prompt must state, verbatim
+   or equivalent: *"You have full machine access via the `danger-full-access` sandbox and Chrome
+   with real logged-in sessions. Production access is read-only verification only — confirm
+   pages load and the feature renders; never create, edit, or delete anything in production."*
+   Don't rely on a prior task's phrasing carrying forward — restate it every time.
 
 ### Pipeline
 
@@ -146,7 +149,7 @@ starting cold, and never hand back a vague "address the review comments."
 | Large cross-system change | Terra | Terra, max effort |
 | Cheap high-volume implementation | Luna, escalate failures | Terra |
 | Diagnostic / testing only, no build | Luna (simple) or Terra (harder) | Verify directly in this session (§5) — no separate reviewer pass |
-| Live/production-adjacent testing (danger-mode) | Luna, max effort, `danger-full-access` + Chrome-only (§2 policy 9) | Verify directly in this session (§5); production stays passive-only, mutating flows on staging |
+| Live/production-adjacent testing (danger-mode) | Luna, max effort, `danger-full-access` + Chrome-only (§2 policy 9) | Verify directly in this session (§5); production is passive-only — no mutating flows permitted under danger-mode |
 
 Sol has no row — it's the explicit-request exception from §1, not a default. Route Agy work
 only as ad hoc groundwork outside this table, never as a plan or build step.
@@ -225,7 +228,7 @@ was correct.
   read it rather than debugging from scratch.
 - **Danger-mode scope creep.** Luna's testing-only `danger-full-access` plus real Chrome
   sessions (§1, §2 policy 9) has no sandbox to fall back on if a task prompt forgets to restate
-  the staging/production split — the prompt-level restriction is the only guard, since
+  the passive-only restriction — the prompt-level restriction is the only guard, since
   `codex exec` also runs unattended with no human-approval checkpoint mid-run. Always restate
   it explicitly per task; never assume a prior session's phrasing carries forward.
 - **Danger-mode auth bypass instead of reporting a blocker.** Told to sign in via real Google
