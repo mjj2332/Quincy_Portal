@@ -826,6 +826,9 @@ button { font-family: var(--font-sans); }
 .collection-link-form em { color: var(--text-muted); font-style: normal; }
 .collection-link-form input { min-width: 0; min-height: 38px; padding: 8px 10px; border: 1px solid var(--border-hairline); border-radius: var(--radius-sm); background: var(--paper-050); color: var(--text-primary); font: var(--type-body); font-size: 14px; }
 .collection-link-form input:focus { outline: none; border-color: var(--ink-900); }
+.collection-link-editor { grid-template-columns: 1fr; padding: 0; border: 0; background: transparent; }
+.collection-link-editor__actions { display: flex; gap: var(--space-2); }
+.collection-link-editor__error { margin: 0; color: var(--signal-critical); font: var(--type-body); font-size: 13px; }
 .collection-delivered { display: grid; gap: var(--space-3); }
 .document-group { display: grid; grid-template-columns: minmax(0, 190px) minmax(0, 1fr); border: 1px solid var(--border-hairline); background: var(--paper-000); }
 .document-group.is-approved { border-left: 3px solid var(--signal-positive); }

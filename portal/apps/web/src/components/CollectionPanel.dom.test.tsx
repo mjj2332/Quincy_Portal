@@ -2,13 +2,15 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ApiError } from "../lib/api";
 import { CollectionPanel } from "./CollectionPanel";
 import type { WorkspaceAsset } from "./PhotoGrid";
 
-const apiGetMock = vi.fn<(path: string) => Promise<unknown>>(async () => ({ links: [] }));
+const apiGetMock = vi.fn<(path: string) => Promise<unknown>>();
+const apiPatchMock = vi.fn<(path: string, body: unknown) => Promise<unknown>>();
 vi.mock("../lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/api")>();
-  return { ...actual, apiGet: (path: string) => apiGetMock(path) };
+  return { ...actual, apiGet: (path: string) => apiGetMock(path), apiPatch: (path: string, body: unknown) => apiPatchMock(path, body) };
 });
 
 function asset(id: string, version: number): WorkspaceAsset {
@@ -19,6 +21,11 @@ const props = {
   projectId: "project", collection: "copy" as const, assets: [asset("v1", 1), asset("v2", 2)], canManage: false, canApprove: false,
   onReview: vi.fn(async () => undefined), onDelete: vi.fn(async () => undefined), onChanged: vi.fn(async () => undefined), onToast: vi.fn(),
 };
+const videoLinks = () => [
+  { id: "manual-video-link", url: "https://vimeo.com/manual", label: "Walkthrough", source: "manual" as const, createdAt: "2026-08-01T00:00:00.000Z" },
+  { id: "tonomo-video-link", url: "https://dropbox.com/s/tonomo", label: "Tonomo delivery", source: "tonomo" as const, createdAt: "2026-08-02T00:00:00.000Z" },
+];
+const videoProps = { ...props, collection: "video" as const, assets: [], canManage: true };
 
 describe("CollectionPanel version history deletion markup", () => {
   it("keeps delete buttons as siblings of links and targets each version independently", () => {
@@ -44,8 +51,101 @@ describe("CollectionPanel version history deletion wiring", () => {
   beforeEach(() => {
     host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
     window.confirm = vi.fn(() => true);
+    apiGetMock.mockReset().mockImplementation((path) => Promise.resolve(path.includes("collection=video") ? { links: videoLinks() } : { links: [] }));
+    apiPatchMock.mockReset();
   });
   afterEach(async () => { await act(async () => { root!.unmount(); await Promise.resolve(); }); root = null; host.remove(); });
+
+  async function renderVideoPanel(overrides: Partial<typeof videoProps> = {}) {
+    await act(async () => { root!.render(createElement(CollectionPanel, { ...videoProps, ...overrides })); await Promise.resolve(); await Promise.resolve(); await new Promise((resolve) => window.setTimeout(resolve, 0)); });
+  }
+  async function click(element: Element) {
+    await act(async () => { element.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); await new Promise((resolve) => window.setTimeout(resolve, 0)); });
+  }
+  async function typeInto(element: HTMLInputElement, value: string) {
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
+    await act(async () => { setter.call(element, value); element.dispatchEvent(new Event("input", { bubbles: true })); await Promise.resolve(); });
+  }
+  function tile(hostElement: HTMLElement, text: string) {
+    const result = [...hostElement.querySelectorAll<HTMLElement>(".collection-link")].find((element) => element.textContent?.includes(text));
+    if (!result) throw new Error(`No collection link tile containing ${text}`);
+    return result;
+  }
+  function linkTile(hostElement: HTMLElement, index: number) {
+    const result = hostElement.querySelectorAll<HTMLElement>(".collection-link")[index];
+    if (!result) throw new Error(`No collection link tile at index ${index}`);
+    return result;
+  }
+
+  it("shows Edit only for manageable manual video links", async () => {
+    await renderVideoPanel();
+    expect(tile(host, "Walkthrough").textContent).toContain("Edit");
+    expect(tile(host, "Tonomo delivery").textContent).not.toContain("Edit");
+
+    await renderVideoPanel({ canManage: false });
+    expect(host.textContent).not.toContain("Edit");
+  });
+
+  it("opens the inline editor and cancels without PATCH, restoring the original tile", async () => {
+    await renderVideoPanel();
+    await click(linkTile(host, 0).querySelector<HTMLButtonElement>("button")!);
+    const editor = linkTile(host, 0).querySelector<HTMLFormElement>(".collection-link-editor")!;
+    const inputs = editor.querySelectorAll<HTMLInputElement>("input");
+    expect(inputs).toHaveLength(2);
+    expect(inputs[0]!.value).toBe("Walkthrough");
+    expect(inputs[1]!.value).toBe("https://vimeo.com/manual");
+    expect([...editor.querySelectorAll("button")].find((button) => button.textContent === "Save")).toBeDefined();
+    expect([...editor.querySelectorAll("button")].some((button) => button.textContent === "Cancel")).toBe(true);
+
+    await typeInto(inputs[0]!, "Unsaved draft");
+    await click([...editor.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Cancel")!);
+    expect(host.querySelector(".collection-link-editor")).toBeNull();
+    expect(tile(host, "Walkthrough").querySelector("a")?.getAttribute("href")).toBe("https://vimeo.com/manual");
+    expect(apiPatchMock).not.toHaveBeenCalled();
+  });
+
+  it("PATCHes the selected link, replaces only that tile from the response, and leaves other links intact", async () => {
+    const onChanged = vi.fn(async () => undefined);
+    const responseLink = { id: "manual-video-link", url: "https://vimeo.com/updated", label: "Final cut", source: "manual" as const, createdAt: "2026-08-01T00:00:00.000Z" };
+    apiPatchMock.mockResolvedValueOnce(responseLink);
+    await renderVideoPanel({ onChanged });
+    await click(linkTile(host, 0).querySelector<HTMLButtonElement>("button")!);
+    const editor = linkTile(host, 0).querySelector<HTMLFormElement>(".collection-link-editor")!;
+    const inputs = editor.querySelectorAll<HTMLInputElement>("input");
+    await typeInto(inputs[0]!, " Final cut ");
+    await typeInto(inputs[1]!, "https://vimeo.com/updated");
+    await click([...editor.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Save")!);
+
+    expect(apiPatchMock).toHaveBeenCalledWith("/api/projects/project/links/manual-video-link", { url: "https://vimeo.com/updated", label: "Final cut" });
+    expect(host.querySelector(".collection-link-editor")).toBeNull();
+    expect(tile(host, "Final cut").textContent).toContain("Manual");
+    expect(tile(host, "Final cut").querySelector("a")?.getAttribute("href")).toBe("https://vimeo.com/updated");
+    expect(tile(host, "Tonomo delivery").textContent).toContain("Tonomo");
+    expect(tile(host, "Tonomo delivery").textContent).not.toContain("Edit");
+    expect(onChanged).not.toHaveBeenCalled();
+  });
+
+  it("shows ApiError inline and retains the draft after a rejected save, including local HTTPS validation", async () => {
+    apiPatchMock.mockRejectedValueOnce(new ApiError("A link with this URL already exists in this collection", 409));
+    await renderVideoPanel();
+    await click(linkTile(host, 0).querySelector<HTMLButtonElement>("button")!);
+    const editor = linkTile(host, 0).querySelector<HTMLFormElement>(".collection-link-editor")!;
+    const inputs = editor.querySelectorAll<HTMLInputElement>("input");
+    await typeInto(inputs[0]!, "Collision draft");
+    await typeInto(inputs[1]!, "https://vimeo.com/collision");
+    await click([...editor.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Save")!);
+    expect(editor.querySelector('[role="alert"]')?.textContent).toBe("A link with this URL already exists in this collection");
+    expect(editor.querySelectorAll<HTMLInputElement>("input")[0]!.value).toBe("Collision draft");
+    expect(editor.querySelectorAll<HTMLInputElement>("input")[1]!.value).toBe("https://vimeo.com/collision");
+
+    apiPatchMock.mockClear();
+    await typeInto(editor.querySelectorAll<HTMLInputElement>("input")[1]!, "http://vimeo.com/not-https");
+    await click([...editor.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Save")!);
+    expect(apiPatchMock).not.toHaveBeenCalled();
+    expect(editor.querySelector('[role="alert"]')?.textContent).toBe("Enter an HTTPS URL.");
+    expect(editor.querySelectorAll<HTMLInputElement>("input")[0]!.value).toBe("Collision draft");
+    expect(editor.querySelectorAll<HTMLInputElement>("input")[1]!.value).toBe("http://vimeo.com/not-https");
+  });
 
   it("targets the clicked version's own id, not the other version's, even though both render the same 'Delete' label", async () => {
     const onDelete = vi.fn(async () => undefined);

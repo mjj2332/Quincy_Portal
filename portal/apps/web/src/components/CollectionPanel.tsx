@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import type { WorkspaceAsset } from "./PhotoGrid";
-import { apiDelete, apiGet, apiPost } from "../lib/api";
+import { apiDelete, apiGet, apiPatch, apiPost } from "../lib/api";
 import { uploadMultipartFile, type MultipartPresign } from "../lib/multipart-upload";
 import { LazyImage } from "./LazyImage";
 
@@ -21,11 +21,17 @@ function DocumentPreview({ preview, latest }: { preview: WorkspaceAsset; latest:
   return <a className="document-preview" href={assetUrl(latest)} target="_blank" rel="noreferrer" aria-label={failed ? `Retry preview of ${latest.originalFilename}` : undefined} onClick={(event) => { if (!failed) return; event.preventDefault(); setFailed(false); setRetryToken((current) => current + 1); }}><LazyImage src={assetUrl(preview)} alt={`Preview of ${latest.originalFilename}`} retryToken={retryToken} onFailedChange={setFailed} /></a>;
 }
 
-function LinkTiles({ links, onRemove }: { links: Link[]; onRemove?: (link: Link) => void }) {
+function LinkTiles({ links, onRemove, onEdit, editingLinkId, editDraft, editError, savingEdit, onEditDraftChange, onSaveEdit, onCancelEdit }: {
+  links: Link[]; onRemove?: (link: Link) => void; onEdit?: (link: Link) => void; editingLinkId?: string | null;
+  editDraft?: { url: string; label: string }; editError?: string; savingEdit?: boolean;
+  onEditDraftChange?: (draft: { url: string; label: string }) => void; onSaveEdit?: (event: FormEvent) => void; onCancelEdit?: () => void;
+}) {
   if (!links.length) return null;
   return <div className="collection-links">{links.map((link) => {
     const safeUrl = httpsUrl(link.url); const title = link.label || hostLabel(link.url); const content = <><span className="collection-link__name">{title}</span><span className="chip">{hostLabel(link.url)}</span></>;
-    return <div className="collection-link" key={link.id}>{safeUrl ? <a href={safeUrl.href} target="_blank" rel="noopener noreferrer">{content}</a> : <div className="collection-link__plain">{content}</div>}<div className="collection-link__meta"><span className={`statetag ${link.source === "tonomo" ? "st-editing" : ""}`}>{link.source === "tonomo" ? "Tonomo" : "Manual"}</span>{onRemove && link.source === "manual" && <button type="button" className="button button--text" onClick={() => onRemove(link)}>Remove</button>}</div></div>;
+    const isEditing = editingLinkId === link.id;
+    const errorId = `collection-link-edit-error-${link.id}`;
+    return <div className="collection-link" key={link.id}>{isEditing && editDraft && onEditDraftChange && onSaveEdit && onCancelEdit ? <form className="collection-link-form collection-link-editor" onSubmit={onSaveEdit}><label><span>Label <em>optional</em></span><input aria-describedby={editError ? errorId : undefined} placeholder="Final walkthrough" value={editDraft.label} onChange={(event) => onEditDraftChange({ ...editDraft, label: event.target.value })} /></label><label><span>Link URL</span><input required type="url" aria-describedby={editError ? errorId : undefined} placeholder="https://vimeo.com/…" value={editDraft.url} onChange={(event) => onEditDraftChange({ ...editDraft, url: event.target.value })} /></label>{editError && <p id={errorId} className="collection-link-editor__error" role="alert">{editError}</p>}<div className="collection-link-editor__actions"><button className="button" disabled={savingEdit}>{savingEdit ? "Saving…" : "Save"}</button><button className="button button--secondary" type="button" disabled={savingEdit} onClick={onCancelEdit}>Cancel</button></div></form> : <>{safeUrl ? <a href={safeUrl.href} target="_blank" rel="noopener noreferrer">{content}</a> : <div className="collection-link__plain">{content}</div>}<div className="collection-link__meta"><span className={`statetag ${link.source === "tonomo" ? "st-editing" : ""}`}>{link.source === "tonomo" ? "Tonomo" : "Manual"}</span>{onEdit && link.source === "manual" && <button type="button" className="button button--text" onClick={() => onEdit(link)}>Edit</button>}{onRemove && link.source === "manual" && <button type="button" className="button button--text" onClick={() => onRemove(link)}>Remove</button>}</div></>}</div>;
   })}</div>;
 }
 
@@ -34,10 +40,23 @@ export function CollectionPanel({ projectId, collection, assets, canManage, canD
   onReview: (assetId: string, patch: { decision: "approved" | null }) => Promise<void>; onDelete?: (assetId: string) => Promise<void>; onChanged: () => Promise<void>; onToast: (message: string, tone?: "success" | "error") => void;
 }) {
   const [links, setLinks] = useState<Link[]>([]); const [url, setUrl] = useState(""); const [label, setLabel] = useState(""); const [savingLink, setSavingLink] = useState(false);
+  const [editingLinkId, setEditingLinkId] = useState<string | null>(null); const [editDraft, setEditDraft] = useState({ url: "", label: "" }); const [editError, setEditError] = useState(""); const [savingEdit, setSavingEdit] = useState(false);
   const [uploadGroupId, setUploadGroupId] = useState<string | undefined>(); const [uploading, setUploading] = useState(false); const copyInput = useRef<HTMLInputElement>(null); const floorplanInput = useRef<HTMLInputElement>(null);
   useEffect(() => { let active = true; void apiGet<{ links: Link[] }>(`/api/projects/${projectId}/links?collection=${collection}`).then((response) => { if (active) setLinks(response.links); }).catch((error: unknown) => { if (active) onToast(error instanceof Error ? error.message : "Delivered links could not be loaded.", "error"); }); return () => { active = false; }; }, [collection, onToast, projectId]);
   async function addLink(event: FormEvent) { event.preventDefault(); setSavingLink(true); try { const link = await apiPost<Link, { collection: CollectionKind; url: string; label?: string }>(`/api/projects/${projectId}/links`, { collection, url, label: label.trim() || undefined }); setLinks((current) => [...current.filter((item) => item.id !== link.id), link]); setUrl(""); setLabel(""); await onChanged(); onToast("Link added."); } catch (error) { onToast(error instanceof Error ? error.message : "The link could not be added.", "error"); } finally { setSavingLink(false); } }
   async function removeLink(link: Link) { try { await apiDelete<void>(`/api/projects/${projectId}/links/${link.id}`); setLinks((current) => current.filter((item) => item.id !== link.id)); onToast("Manual link removed."); await onChanged(); } catch (error) { onToast(error instanceof Error ? error.message : "The link could not be removed.", "error"); } }
+  function startEdit(link: Link) { setEditingLinkId(link.id); setEditDraft({ url: link.url, label: link.label ?? "" }); setEditError(""); }
+  function cancelEdit() { setEditingLinkId(null); setEditDraft({ url: "", label: "" }); setEditError(""); }
+  async function saveEdit(event: FormEvent) {
+    event.preventDefault(); if (!editingLinkId) return;
+    if (!httpsUrl(editDraft.url)) { setEditError("Enter an HTTPS URL."); return; }
+    setSavingEdit(true); setEditError("");
+    try {
+      const link = await apiPatch<Link, { url: string; label?: string }>(`/api/projects/${projectId}/links/${editingLinkId}`, { url: editDraft.url, label: editDraft.label.trim() || undefined });
+      setLinks((current) => current.map((item) => item.id === link.id ? link : item)); cancelEdit(); onToast("Link updated.");
+    } catch (error) { setEditError(error instanceof Error ? error.message : "The link could not be updated."); }
+    finally { setSavingEdit(false); }
+  }
   async function deleteVersion(document: WorkspaceAsset) {
     if (!onDelete || !window.confirm(`Permanently delete version ${document.version}? This cannot be undone.`)) return;
     try { await onDelete(document.id); }
@@ -69,7 +88,7 @@ export function CollectionPanel({ projectId, collection, assets, canManage, canD
     } catch (error) { if (sessionId) void apiPost(`/api/projects/${projectId}/documents/${sessionId}/abort`, {}).catch(() => undefined); onToast(error instanceof Error ? error.message : "The floorplan could not be uploaded.", "error"); } finally { setUploading(false); }
   }
 
-  if (collection === "video") return <div className="collection-panel"><div className="workspace-intro"><div><div className="ey">Video delivery</div><h1 className="serif">Video links</h1></div><div className="muted">External delivery links remain connected to the project, ready for the final hand-off.</div></div><div className="collection-content"><LinkTiles links={links} onRemove={canManage ? removeLink : undefined} />{!links.length && <div className="empty"><span className="serif">No video link yet.</span>{canManage ? "Add the first delivery link below." : "Delivered video will appear here."}</div>}{canManage && <form className="collection-link-form" onSubmit={(event) => void addLink(event)}><label><span>Link URL</span><input required type="url" placeholder="https://vimeo.com/…" value={url} onChange={(event) => setUrl(event.target.value)} /></label><label><span>Label <em>optional</em></span><input placeholder="Final walkthrough" value={label} onChange={(event) => setLabel(event.target.value)} /></label><button className="button" disabled={savingLink}>{savingLink ? "Adding…" : "Add link"}</button></form>}</div></div>;
+  if (collection === "video") return <div className="collection-panel"><div className="workspace-intro"><div><div className="ey">Video delivery</div><h1 className="serif">Video links</h1></div><div className="muted">External delivery links remain connected to the project, ready for the final hand-off.</div></div><div className="collection-content"><LinkTiles links={links} onEdit={canManage ? startEdit : undefined} onRemove={canManage ? removeLink : undefined} editingLinkId={editingLinkId} editDraft={editDraft} editError={editError} savingEdit={savingEdit} onEditDraftChange={setEditDraft} onSaveEdit={(event) => void saveEdit(event)} onCancelEdit={cancelEdit} />{!links.length && <div className="empty"><span className="serif">No video link yet.</span>{canManage ? "Add the first delivery link below." : "Delivered video will appear here."}</div>}{canManage && <form className="collection-link-form" onSubmit={(event) => void addLink(event)}><label><span>Link URL</span><input required type="url" placeholder="https://vimeo.com/…" value={url} onChange={(event) => setUrl(event.target.value)} /></label><label><span>Label <em>optional</em></span><input placeholder="Final walkthrough" value={label} onChange={(event) => setLabel(event.target.value)} /></label><button className="button" disabled={savingLink}>{savingLink ? "Adding…" : "Add link"}</button></form>}</div></div>;
 
   const pdfKind = collection === "floorplan" ? "floorplan_pdf" : "copy_pdf";
   const groups = [...new Set(assets.filter((asset) => asset.kind === pdfKind).map((asset) => asset.versionGroupId ?? asset.id))].map((groupId) => {

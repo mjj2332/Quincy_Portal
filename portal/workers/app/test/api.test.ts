@@ -10,7 +10,7 @@ import { signTransformSource } from "../src/lib/transform-source";
 import { liveTransformLocation } from "../src/routes/media";
 import { RENDITION_SPEC_VERSION } from "@quincy/shared";
 import { createDb } from "@quincy/db";
-import { uniqueVersionError } from "../src/routes/collections";
+import { collectionLinkUrlConflict, uniqueVersionError } from "../src/routes/collections";
 import { finalizeIngest } from "../src/lib/ingest";
 import { notifyProjectAssignments } from "../src/lib/notifications";
 import { insertProjectMembers, syncMembers } from "../src/lib/project-members";
@@ -275,6 +275,33 @@ async function jsonRequest(path: string, cookie: string, method: "GET" | "POST" 
     headers: { cookie, ...(body === undefined ? {} : { "content-type": "application/json" }) },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
+}
+
+const testExecutionContext = { waitUntil: () => undefined, passThroughOnException: () => undefined, props: undefined } as unknown as ExecutionContext;
+
+async function requestWithDbBatchFault(path: string, cookie: string, body: unknown, fault: (db: D1Database) => Promise<void>) {
+  let injected = false;
+  const faultDb = new Proxy(authEnv.DB, {
+    get(target, property, receiver) {
+      if (property !== "batch") return Reflect.get(target, property, receiver);
+      return async (statements: unknown[]) => {
+        if (!injected) {
+          injected = true;
+          await fault(database.DB);
+        }
+        return (target.batch as unknown as (items: unknown[]) => Promise<unknown>)(statements);
+      };
+    },
+  }) as unknown as D1Database;
+  return app.fetch(
+    new Request(`https://portal.test${path}`, {
+      method: "PATCH",
+      headers: { cookie, origin: authEnv.APP_ORIGIN, "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+    { ...authEnv, DB: faultDb },
+    testExecutionContext,
+  );
 }
 
 describe("staff app API", () => {
@@ -2480,30 +2507,162 @@ describe("staff app API", () => {
     expect(await database.DB.prepare("SELECT status, resolved_at FROM rendition_dlq_events WHERE id = ?").bind(failId).first()).toEqual({ status: "open", resolved_at: null });
   });
 
-  it("manages manual collection links while preserving immutable Tonomo links", async () => {
+  it("manages and edits manual collection links while preserving immutable Tonomo links", async () => {
+    type LinkRow = { id: string; collection_id: string; url: string; label: string | null; source: string; created_at: number; updated_at: number };
+    type UpdateAudit = { actor_id: string | null; action: string; target_type: string; target_id: string | null; meta_json: string | null };
     const adminCookie = await sessionCookie(adminToken);
-    const created = await SELF.fetch("https://portal.test/api/projects", { method: "POST", headers: { cookie: adminCookie, "content-type": "application/json" }, body: JSON.stringify({ street: "Link collection", orderedServices: ["video"], photographerUserIds: [firstPhotographerId] }) });
+    const created = await SELF.fetch("https://portal.test/api/projects", { method: "POST", headers: { cookie: adminCookie, "content-type": "application/json" }, body: JSON.stringify({ street: `Link collection ${crypto.randomUUID()}`, orderedServices: ["video"], photographerUserIds: [firstPhotographerId] }) });
     expect(created.status).toBe(201); const project = await created.json() as { id: string };
-    const manual = await SELF.fetch(`https://portal.test/api/projects/${project.id}/links`, { method: "POST", headers: { cookie: adminCookie, "content-type": "application/json" }, body: JSON.stringify({ collection: "video", url: "https://vimeo.com/123456", label: "Walkthrough" }) });
-    expect(manual.status).toBe(201); const manualLink = await manual.json() as { id: string; source: string };
-    expect(manualLink.source).toBe("manual");
-    expect(await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE action = ? AND target_id = ?").bind("collection_link.create", manualLink.id).first()).toEqual({ count: 1 });
+    const patchLink = (projectId: string, linkId: string, body: unknown, cookie = adminCookie) => SELF.fetch(`https://portal.test/api/projects/${projectId}/links/${linkId}`, { method: "PATCH", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify(body) });
+    const addLink = async (projectId: string, collection: "video" | "floorplan" | "copy", url: string, label?: string) => {
+      const response = await SELF.fetch(`https://portal.test/api/projects/${projectId}/links`, { method: "POST", headers: { cookie: adminCookie, "content-type": "application/json" }, body: JSON.stringify({ collection, url, ...(label === undefined ? {} : { label }) }) });
+      expect(response.status).toBe(201);
+      return response.json() as Promise<{ id: string; url: string; label: string | null; source: string; createdAt: string }>;
+    };
+    const readLink = (linkId: string) => database.DB.prepare("SELECT id, collection_id, url, label, source, created_at, updated_at FROM collection_links WHERE id = ?").bind(linkId).first<LinkRow>();
+    const updateAudits = (linkId: string) => database.DB.prepare("SELECT actor_id, action, target_type, target_id, meta_json FROM audit_log WHERE action = 'collection_link.update' AND target_id = ? ORDER BY rowid").bind(linkId).all<UpdateAudit>();
+    const expectUnchanged = async (projectId: string, linkId: string, body: unknown, status: number, cookie = adminCookie) => {
+      const before = await readLink(linkId); const beforeAudits = (await updateAudits(linkId)).results.length;
+      const response = await patchLink(projectId, linkId, body, cookie);
+      expect(response.status).toBe(status);
+      expect(await readLink(linkId)).toEqual(before);
+      expect((await updateAudits(linkId)).results).toHaveLength(beforeAudits);
+      return response;
+    };
+    const manual = await addLink(project.id, "video", "https://vimeo.com/123456", "Walkthrough");
+    expect(manual.source).toBe("manual");
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE action = ? AND target_id = ?").bind("collection_link.create", manual.id).first()).toEqual({ count: 1 });
     const video = await database.DB.prepare("SELECT id FROM collections WHERE project_id = ? AND kind = ?").bind(project.id, "video").first<{ id: string }>();
-    expect(await database.DB.prepare("SELECT received_count, status FROM collections WHERE id = ?").bind(video!.id).first()).toEqual({ received_count: 1, status: "received" });
-    expect((await SELF.fetch(`https://portal.test/api/projects/${project.id}/links/${manualLink.id}`, { method: "DELETE", headers: { cookie: adminCookie } })).status).toBe(204);
-    expect(await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE action = ? AND target_id = ?").bind("collection_link.delete", manualLink.id).first()).toEqual({ count: 1 });
-    expect(await database.DB.prepare("SELECT status FROM collections WHERE id = ?").bind(video!.id).first()).toEqual({ status: "empty" });
+    const initialCollectionState = await database.DB.prepare("SELECT received_count, status FROM collections WHERE id = ?").bind(video!.id).first<{ received_count: number; status: string }>();
+    expect(initialCollectionState).toEqual({ received_count: 1, status: "received" });
+
+    const fixedCreatedAt = Date.UTC(2020, 0, 2);
+    const updatedUrl = "https://vimeo.com/123457";
+    await database.DB.prepare("UPDATE collection_links SET created_at = ?, updated_at = ? WHERE id = ?").bind(fixedCreatedAt, 1, manual.id).run();
+    const firstPatch = await patchLink(project.id, manual.id, { url: updatedUrl, label: "Final walkthrough" });
+    expect(firstPatch.status).toBe(200);
+    await expect(firstPatch.json()).resolves.toEqual({ id: manual.id, url: updatedUrl, label: "Final walkthrough", source: "manual", createdAt: new Date(fixedCreatedAt).toISOString() });
+    const firstSaved = await readLink(manual.id);
+    expect(firstSaved).toMatchObject({ id: manual.id, url: updatedUrl, label: "Final walkthrough", source: "manual", created_at: fixedCreatedAt });
+    expect(firstSaved!.updated_at).toBeGreaterThan(1);
+    expect(await database.DB.prepare("SELECT received_count, status FROM collections WHERE id = ?").bind(video!.id).first()).toEqual(initialCollectionState);
+    const firstAudits = await updateAudits(manual.id);
+    expect(firstAudits.results).toHaveLength(1);
+    expect(firstAudits.results[0]).toMatchObject({ actor_id: seedAdminId, action: "collection_link.update", target_type: "collection_link", target_id: manual.id });
+    expect(JSON.parse(firstAudits.results[0]!.meta_json!)).toEqual({ projectId: project.id, previous: { url: "https://vimeo.com/123456", label: "Walkthrough" }, updated: { url: updatedUrl, label: "Final walkthrough" } });
+
+    await database.DB.prepare("UPDATE collection_links SET updated_at = ? WHERE id = ?").bind(1, manual.id).run();
+    const clearLabel = await patchLink(project.id, manual.id, { url: updatedUrl });
+    expect(clearLabel.status).toBe(200);
+    await expect(clearLabel.json()).resolves.toMatchObject({ id: manual.id, url: updatedUrl, label: null, source: "manual", createdAt: new Date(fixedCreatedAt).toISOString() });
+    expect((await readLink(manual.id))!.label).toBeNull();
+    expect((await updateAudits(manual.id)).results).toHaveLength(2);
+    expect(JSON.parse((await updateAudits(manual.id)).results[1]!.meta_json!)).toEqual({ projectId: project.id, previous: { url: updatedUrl, label: "Final walkthrough" }, updated: { url: updatedUrl, label: null } });
+
+    await database.DB.prepare("UPDATE collection_links SET updated_at = ? WHERE id = ?").bind(1, manual.id).run();
+    const labelOnly = await patchLink(project.id, manual.id, { url: updatedUrl, label: "Corrected label" });
+    expect(labelOnly.status).toBe(200);
+    const labelOnlySaved = await readLink(manual.id);
+    expect(labelOnlySaved).toMatchObject({ url: updatedUrl, label: "Corrected label", created_at: fixedCreatedAt });
+    expect(labelOnlySaved!.updated_at).toBeGreaterThan(1);
+    const labelOnlyAudits = await updateAudits(manual.id);
+    expect(labelOnlyAudits.results).toHaveLength(3);
+    expect(JSON.parse(labelOnlyAudits.results[2]!.meta_json!)).toEqual({ projectId: project.id, previous: { url: updatedUrl, label: null }, updated: { url: updatedUrl, label: "Corrected label" } });
+
+    for (const invalidLabel of ["", "   ", null]) {
+      await expectUnchanged(project.id, manual.id, { url: updatedUrl, label: invalidLabel }, 400);
+    }
+    await expectUnchanged(project.id, manual.id, { url: "http://vimeo.com/not-https", label: "Still valid" }, 400);
+    await expectUnchanged(project.id, manual.id, { url: updatedUrl, label: "Photographer cannot edit" }, 403, await sessionCookie(firstPhotographerToken));
+
+    const outsideProjectResponse = await SELF.fetch("https://portal.test/api/projects", { method: "POST", headers: { cookie: adminCookie, "content-type": "application/json" }, body: JSON.stringify({ street: `Outside link ${crypto.randomUUID()}`, orderedServices: ["video"] }) });
+    expect(outsideProjectResponse.status).toBe(201); const outsideProject = await outsideProjectResponse.json() as { id: string };
+    const outsideLink = await addLink(outsideProject.id, "video", "https://vimeo.com/outside", "Outside");
+    await expectUnchanged(project.id, outsideLink.id, { url: "https://vimeo.com/outside-new", label: "No access" }, 404);
+
+    const floorplanLink = await addLink(project.id, "floorplan", "https://example.com/floorplan", "Floorplan");
+    await expectUnchanged(project.id, floorplanLink.id, { url: "https://example.com/floorplan-new", label: "Still floorplan" }, 404);
+
+    const tonomoId = crypto.randomUUID(); const tonomoNow = Date.now();
+    await database.DB.prepare("INSERT INTO collection_links (id, collection_id, url, label, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)").bind(tonomoId, video!.id, "https://dropbox.com/s/finished", "Tonomo delivery", "tonomo", tonomoNow, tonomoNow).run();
+    const tonomoPatch = await expectUnchanged(project.id, tonomoId, { url: "https://dropbox.com/s/finished-new", label: "No edit" }, 409);
+    await expect(tonomoPatch.json()).resolves.toEqual({ error: "Tonomo delivery links are immutable" });
+
+    const collision = await addLink(project.id, "video", "https://vimeo.com/collision", "Other link");
+    const manualBeforeCollision = await readLink(manual.id); const collisionBefore = await readLink(collision.id);
+    const manualCollisionAudits = (await updateAudits(manual.id)).results.length; const collisionAudits = (await updateAudits(collision.id)).results.length;
+    const collisionResponse = await patchLink(project.id, manual.id, { url: collision.url, label: "Collision" });
+    expect(collisionResponse.status).toBe(409);
+    await expect(collisionResponse.json()).resolves.toEqual({ error: "A link with this URL already exists in this collection" });
+    expect(await readLink(manual.id)).toEqual(manualBeforeCollision);
+    expect(await readLink(collision.id)).toEqual(collisionBefore);
+    expect((await updateAudits(manual.id)).results).toHaveLength(manualCollisionAudits);
+    expect((await updateAudits(collision.id)).results).toHaveLength(collisionAudits);
+
+    const deletedRace = await addLink(project.id, "video", "https://vimeo.com/race-delete", "Delete me");
+    const deletedRaceResponse = await requestWithDbBatchFault(`/api/projects/${project.id}/links/${deletedRace.id}`, adminCookie, { url: "https://vimeo.com/race-delete-new", label: "Too late" }, async (db) => {
+      await db.prepare("DELETE FROM collection_links WHERE id = ?").bind(deletedRace.id).run();
+    });
+    expect(deletedRaceResponse.status).toBe(404);
+    await expect(deletedRaceResponse.json()).resolves.toEqual({ error: "Link not found" });
+    expect(await readLink(deletedRace.id)).toBeNull();
+    expect((await updateAudits(deletedRace.id)).results).toHaveLength(0);
+
+    const sourceRace = await addLink(project.id, "video", "https://vimeo.com/race-source", "Source changes");
+    const sourceBeforeRace = await readLink(sourceRace.id);
+    const sourceRaceResponse = await requestWithDbBatchFault(`/api/projects/${project.id}/links/${sourceRace.id}`, adminCookie, { url: "https://vimeo.com/race-source-new", label: "Too late" }, async (db) => {
+      await db.prepare("UPDATE collection_links SET source = 'tonomo' WHERE id = ?").bind(sourceRace.id).run();
+    });
+    expect(sourceRaceResponse.status).toBe(409);
+    await expect(sourceRaceResponse.json()).resolves.toEqual({ error: "Tonomo delivery links are immutable" });
+    expect(await readLink(sourceRace.id)).toEqual({ ...sourceBeforeRace, source: "tonomo" });
+    expect((await updateAudits(sourceRace.id)).results).toHaveLength(0);
+
+    const snapshotRace = await addLink(project.id, "video", "https://vimeo.com/race-snapshot", "Snapshot before");
+    const snapshotRaceResponse = await requestWithDbBatchFault(`/api/projects/${project.id}/links/${snapshotRace.id}`, adminCookie, { url: "https://vimeo.com/race-snapshot-new", label: "Request value" }, async (db) => {
+      await db.prepare("UPDATE collection_links SET label = ?, updated_at = ? WHERE id = ?").bind("Concurrent value", 7, snapshotRace.id).run();
+    });
+    expect(snapshotRaceResponse.status).toBe(409);
+    await expect(snapshotRaceResponse.json()).resolves.toEqual({ error: "This link changed while you were editing; reload and try again" });
+    expect(await readLink(snapshotRace.id)).toMatchObject({ url: "https://vimeo.com/race-snapshot", label: "Concurrent value", source: "manual" });
+    expect((await updateAudits(snapshotRace.id)).results).toHaveLength(0);
+
+    const concurrentCollision = await addLink(project.id, "video", "https://vimeo.com/race-collision-original", "Original");
+    const concurrentCollisionTarget = "https://vimeo.com/race-collision-target";
+    const concurrentCollisionResponse = await requestWithDbBatchFault(`/api/projects/${project.id}/links/${concurrentCollision.id}`, adminCookie, { url: concurrentCollisionTarget, label: "Request value" }, async (db) => {
+      const now = Date.now();
+      await db.prepare("INSERT INTO collection_links (id, collection_id, url, label, source, created_at, updated_at) VALUES (?, ?, ?, ?, 'manual', ?, ?)").bind(crypto.randomUUID(), video!.id, concurrentCollisionTarget, "Concurrent winner", now, now).run();
+    });
+    expect(concurrentCollisionResponse.status).toBe(409);
+    await expect(concurrentCollisionResponse.json()).resolves.toEqual({ error: "A link with this URL already exists in this collection" });
+    expect(await readLink(concurrentCollision.id)).toMatchObject({ url: "https://vimeo.com/race-collision-original", label: "Original", source: "manual" });
+    expect((await updateAudits(concurrentCollision.id)).results).toHaveLength(0);
+
+    // The concurrentCollision race case above injects an extra row directly via raw SQL
+    // (simulating a concurrent writer), which never passes through a receivedCount recompute.
+    // The cached `collections.received_count` is therefore stale by that one row, so the
+    // post-delete expectation must be derived from a live row count, not `cached - 1`.
+    const linksBeforeManualDelete = await database.DB.prepare("SELECT count(*) AS count FROM collection_links WHERE collection_id = ?").bind(video!.id).first<{ count: number }>();
+    expect((await SELF.fetch(`https://portal.test/api/projects/${project.id}/links/${manual.id}`, { method: "DELETE", headers: { cookie: adminCookie } })).status).toBe(204);
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE action = ? AND target_id = ?").bind("collection_link.delete", manual.id).first()).toEqual({ count: 1 });
+    const beforeManualDelete = { received_count: linksBeforeManualDelete!.count - 1 };
+    expect(await database.DB.prepare("SELECT received_count FROM collections WHERE id = ?").bind(video!.id).first()).toEqual({ received_count: beforeManualDelete.received_count });
     const replacement = await SELF.fetch(`https://portal.test/api/projects/${project.id}/links`, { method: "POST", headers: { cookie: adminCookie, "content-type": "application/json" }, body: JSON.stringify({ collection: "video", url: "https://vimeo.com/123456", label: "Walkthrough" }) });
     expect(replacement.status).toBe(201); const replacementLink = await replacement.json() as { id: string };
-    const tonomoId = crypto.randomUUID(); const now = Date.now();
-    await database.DB.prepare("INSERT INTO collection_links (id, collection_id, url, label, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)").bind(tonomoId, video!.id, "https://dropbox.com/s/finished", "Tonomo floor", "tonomo", now, now).run();
     const listed = await SELF.fetch(`https://portal.test/api/projects/${project.id}/links?collection=video`, { headers: { cookie: adminCookie } });
     await expect(listed.json()).resolves.toMatchObject({ links: expect.arrayContaining([expect.objectContaining({ id: replacementLink.id, source: "manual" }), expect.objectContaining({ id: tonomoId, source: "tonomo" })]) });
     expect((await SELF.fetch(`https://portal.test/api/projects/${project.id}/links/${replacementLink.id}`, { method: "DELETE", headers: { cookie: adminCookie } })).status).toBe(204);
-    expect(await database.DB.prepare("SELECT received_count, status FROM collections WHERE id = ?").bind(video!.id).first()).toEqual({ received_count: 1, status: "received" });
+    // replacement was added then deleted, netting to the same count as right after manual's delete.
+    expect(await database.DB.prepare("SELECT received_count, status FROM collections WHERE id = ?").bind(video!.id).first()).toEqual({ received_count: beforeManualDelete.received_count, status: "received" });
     expect((await SELF.fetch(`https://portal.test/api/projects/${project.id}/links/${tonomoId}`, { method: "DELETE", headers: { cookie: adminCookie } })).status).toBe(409);
     const photographer = await SELF.fetch(`https://portal.test/api/projects/${project.id}/links`, { method: "POST", headers: { cookie: await sessionCookie(firstPhotographerToken), "content-type": "application/json" }, body: JSON.stringify({ collection: "video", url: "https://vimeo.com/forbidden" }) });
     expect(photographer.status).toBe(403);
+  });
+
+  it("recognizes a collection-link unique conflict in a nested D1 cause", () => {
+    const nested = Object.assign(new Error("Failed query"), { cause: new Error("UNIQUE constraint failed: collection_links.collection_id, collection_links.url") });
+    expect(collectionLinkUrlConflict(nested)).toBe(true);
+    expect(collectionLinkUrlConflict(new Error("UNIQUE constraint failed: other_table.value"))).toBe(false);
   });
 
   const documentDirectIt = process.env.DOCUMENT_DIRECT_TEST === "true" ? it : it.skip;

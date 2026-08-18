@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { COLLECTION_RECEIVED_COUNT_SQL, collectionReceivedCountBindings, createDb, schema } from "@quincy/db";
-import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, ne, sql } from "drizzle-orm";
 import { ROLE_CAPABILITIES, type CollectionKind } from "@quincy/shared";
 import { z } from "zod";
 import type { AppEnv } from "../env";
@@ -24,6 +24,7 @@ const linkInput = z.object({
   url: z.string().url().refine((value) => { try { return new URL(value).protocol === "https:"; } catch { return false; } }, "URL must use HTTPS"),
   label: z.string().trim().min(1).max(240).optional(),
 });
+const linkEditInput = linkInput.pick({ url: true, label: true });
 const PDF_MAX_BYTES = 50 * 1024 * 1024;
 const PREVIEW_MAX_BYTES = 10 * 1024 * 1024;
 const DOCUMENT_UPLOAD_TTL_MS = 60 * 60 * 1000;
@@ -109,6 +110,13 @@ export function uniqueVersionError(error: unknown): boolean {
   return false;
 }
 
+export function collectionLinkUrlConflict(error: unknown): boolean {
+  for (let e: unknown = error; e instanceof Error; e = e.cause) {
+    if (/UNIQUE constraint failed:\s*collection_links\.collection_id,\s*collection_links\.url/i.test(e.message)) return true;
+  }
+  return false;
+}
+
 function responseFor(upload: DocumentUpload) {
   const pdf = { id: upload.pdfAssetId, kind: upload.kind === "floorplan" ? "floorplan_pdf" : "copy_pdf", originalFilename: upload.pdfFilename, bytes: upload.pdfBytes, version: upload.version, versionGroupId: upload.versionGroupId, supersedesAssetId: upload.pdfSupersedesAssetId, createdAt: upload.createdAt };
   const preview = upload.kind === "floorplan" ? { id: upload.previewAssetId!, kind: "floorplan_preview", originalFilename: upload.previewFilename!, bytes: upload.previewBytes!, version: upload.version, versionGroupId: upload.versionGroupId, supersedesAssetId: upload.previewSupersedesAssetId, createdAt: upload.createdAt } : null;
@@ -168,6 +176,51 @@ collectionsRoutes.post("/projects/:id/links", async (c) => {
   const saved = await db.select().from(schema.collectionLinks).where(and(eq(schema.collectionLinks.collectionId, collection.id), eq(schema.collectionLinks.url, data.url))).get();
   if (!saved) return c.json({ error: "Could not save collection link" }, 409);
   return c.json({ id: saved.id, url: saved.url, label: saved.label, source: saved.source, createdAt: saved.createdAt }, saved.id === id ? 201 : 200);
+});
+
+collectionsRoutes.patch("/projects/:id/links/:linkId", async (c) => {
+  const projectId = c.req.param("id"), linkId = c.req.param("linkId");
+  if (!z.string().uuid().safeParse(projectId).success || !z.string().uuid().safeParse(linkId).success) return c.json({ error: "Invalid project or link id" }, 400);
+  if (!await hasProjectAccess(c, projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
+  if (!canManageCollection(c)) return forbidden(c);
+  const data = await jsonInput(c, linkEditInput); if (data instanceof Response) return data;
+  const db = createDb(c.env.DB);
+  const link = await db.select({ id: schema.collectionLinks.id, source: schema.collectionLinks.source, collectionId: schema.collectionLinks.collectionId, url: schema.collectionLinks.url, label: schema.collectionLinks.label, createdAt: schema.collectionLinks.createdAt })
+    .from(schema.collectionLinks).innerJoin(schema.collections, eq(schema.collectionLinks.collectionId, schema.collections.id))
+    .where(and(eq(schema.collectionLinks.id, linkId), eq(schema.collections.projectId, projectId), eq(schema.collections.kind, "video"))).get();
+  if (!link) return c.json({ error: "Link not found" }, 404);
+  if (link.source !== "manual") return c.json({ error: "Tonomo delivery links are immutable" }, 409);
+
+  const updatedLabel = data.label ?? null;
+  const existing = await db.select({ id: schema.collectionLinks.id }).from(schema.collectionLinks).where(and(
+    eq(schema.collectionLinks.collectionId, link.collectionId), eq(schema.collectionLinks.url, data.url), ne(schema.collectionLinks.id, linkId),
+  )).get();
+  if (existing) return c.json({ error: "A link with this URL already exists in this collection" }, 409);
+
+  const now = new Date();
+  let results: D1Result[];
+  try {
+    results = await c.env.DB.batch([
+      c.env.DB.prepare(`UPDATE collection_links SET url = ?, label = ?, updated_at = ?
+        WHERE id = ? AND collection_id = ? AND source = 'manual' AND url = ? AND label IS ?
+          AND EXISTS (SELECT 1 FROM collections WHERE id = collection_links.collection_id AND project_id = ? AND kind = 'video')`)
+        .bind(data.url, updatedLabel, now.getTime(), linkId, link.collectionId, link.url, link.label, projectId),
+      c.env.DB.prepare(`INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
+        SELECT ?, ?, 'collection_link.update', 'collection_link', ?, ?, ? WHERE changes() > 0`)
+        .bind(newId(), c.get("user").id, linkId, JSON.stringify({ projectId, previous: { url: link.url, label: link.label }, updated: { url: data.url, label: updatedLabel } }), now.getTime()),
+    ]);
+  } catch (error) {
+    if (collectionLinkUrlConflict(error)) return c.json({ error: "A link with this URL already exists in this collection" }, 409);
+    throw error;
+  }
+  if ((results[0]?.meta.changes ?? 0) > 0) return c.json({ id: link.id, url: data.url, label: updatedLabel, source: "manual", createdAt: link.createdAt });
+
+  const current = await db.select({ source: schema.collectionLinks.source }).from(schema.collectionLinks)
+    .innerJoin(schema.collections, eq(schema.collectionLinks.collectionId, schema.collections.id))
+    .where(and(eq(schema.collectionLinks.id, linkId), eq(schema.collections.projectId, projectId), eq(schema.collections.kind, "video"))).get();
+  if (!current) return c.json({ error: "Link not found" }, 404);
+  if (current.source !== "manual") return c.json({ error: "Tonomo delivery links are immutable" }, 409);
+  return c.json({ error: "This link changed while you were editing; reload and try again" }, 409);
 });
 
 collectionsRoutes.delete("/projects/:id/links/:linkId", async (c) => {
