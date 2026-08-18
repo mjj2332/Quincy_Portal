@@ -101,7 +101,7 @@ describe("ProjectCollaborationPanel", () => {
     expect(panel.classList.contains("project-collaboration--overlay")).toBe(false); expect(panel.querySelector(".project-collaboration__scroll")).toBeNull(); expect(panel.querySelector(".subtask-checklist")).not.toBeNull();
   });
 
-  it("keeps the overlay open when checklist edit and overflow Escape consume the event", async () => {
+  it("keeps the overlay open when checklist title, all popovers, and composer Escape consume the event", async () => {
     const subtask = { id: "task-1", title: "Call client", done: false, position: 1024, assignee: null, assignmentVersion: 0, dueDate: null, createdBy: "user", createdAt: "2026-08-17T00:00:00.000Z", updatedAt: "2026-08-17T00:00:00.000Z" };
     apiGetMock.mockImplementation((path) => path.includes("subtasks") ? Promise.resolve({ subtasks: [subtask] }) : path.includes("mentionable-users") ? Promise.resolve({ users: [] }) : Promise.resolve(comments()));
     const host = mount(); await render(<ProjectCollaborationPanel projectId={projectId} />);
@@ -109,8 +109,22 @@ describe("ProjectCollaborationPanel", () => {
     const title = host.querySelector<HTMLButtonElement>(".subtask-checklist__title-trigger")!; await click(title);
     const input = host.querySelector<HTMLInputElement>(".subtask-checklist__title")!; input.focus(); await act(async () => { input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await Promise.resolve(); });
     expect(host.querySelector(".project-collaboration")).toBe(panel); expect(host.querySelector(".subtask-checklist__title-trigger")).not.toBeNull();
-    const overflow = host.querySelector<HTMLButtonElement>("[data-subtask-actions-trigger]")!; await click(overflow); const group = host.querySelector<HTMLElement>(".subtask-checklist__overflow-actions")!; group.querySelector("button")!.focus(); await act(async () => { group.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await Promise.resolve(); });
-    expect(host.querySelector(".project-collaboration")).toBe(panel); expect(host.querySelector(".subtask-checklist__overflow-actions")).toBeNull();
+    const dispatchEscape = async (element: Element) => { const event = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }); await act(async () => { element.dispatchEvent(event); await Promise.resolve(); }); expect(event.defaultPrevented).toBe(true); expect(host.querySelector(".project-collaboration")).toBe(panel); };
+    for (const label of ["Due date for Call client", "Assignee for Call client", "Actions for Call client"] as const) {
+      const trigger = host.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`); expect(trigger, host.innerHTML).not.toBeNull(); await click(trigger!);
+      const focused = label.startsWith("Assignee") ? document.querySelector<HTMLInputElement>('input[type="search"]')! : trigger;
+      await dispatchEscape(focused!);
+      expect(document.getElementById(`subtask-popover-task-1-${label.startsWith("Due") ? "due" : label.startsWith("Assignee") ? "assignee" : "actions"}`)).toBeNull();
+    }
+    await click(host.querySelector<HTMLButtonElement>(`#subtask-add-${projectId}`)!);
+    const composer = host.querySelector<HTMLInputElement>(`#subtask-composer-${projectId}`)!;
+    for (const label of ["Due date for new subtask", "Assignee for new subtask"] as const) {
+      const trigger = host.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`)!; await click(trigger);
+      await dispatchEscape(label.startsWith("Assignee") ? document.querySelector<HTMLInputElement>('input[type="search"]')! : trigger);
+      expect(document.getElementById(`subtask-popover-composer-${label.startsWith("Due") ? "due" : "assignee"}`)).toBeNull();
+      expect(host.querySelector(`#subtask-composer-${projectId}`)).toBe(composer);
+    }
+    await dispatchEscape(composer); expect(host.querySelector(`#subtask-composer-${projectId}`)).toBeNull();
   });
 
   it("shows loading, empty, and failed comment states", async () => {

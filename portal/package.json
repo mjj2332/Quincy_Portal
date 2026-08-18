@@ -19,6 +19,10 @@
     "db:migrate:local": "npm run migrate:local -w @quincy/db"
   },
   "dependencies": {
+    "@dnd-kit/core": "6.3.1",
+    "@dnd-kit/sortable": "10.0.0",
+    "@dnd-kit/utilities": "3.2.2",
+    "@floating-ui/react": "0.27.16",
     "aws4fetch": "^1.0.20",
     "@tiptap/extension-hard-break": "2.27.2",
     "@tiptap/extension-link": "2.27.2",

@@ -29,7 +29,7 @@ beforeAll(async () => {
 });
 
 describe("project subtasks API", () => {
-  it("uses collaboration access, validates scoped input, orders/moves tasks, and emits assignment notices only for real assignment changes", async () => {
+  it("uses collaboration access, validates scoped input, orders/reorders tasks, and emits assignment notices only for real assignment changes", async () => {
     expect((await request(`/api/projects/${projectId}/subtasks`, "subtasks-admin-token")).status).toBe(200);
     expect((await request(`/api/projects/${projectId}/subtasks`, "subtasks-photographer-token")).status).toBe(200);
     expect((await request(`/api/projects/${projectId}/subtasks`, "subtasks-outsider-token")).status).toBe(403);
@@ -54,13 +54,13 @@ describe("project subtasks API", () => {
     const reassignedAgain = await request(`/api/projects/${projectId}/subtasks/${first.id}`, "subtasks-editor-token", "PATCH", { assigneeId: adminId });
     expect(await reassignedAgain.json()).toMatchObject({ assignmentVersion: 4 }); expect(await notificationCount()).toBe(3);
     expect((await database.DB.prepare("SELECT source_key FROM notifications WHERE type = 'subtask_assigned' AND project_id = ? ORDER BY source_key").bind(projectId).all()).results.map((row) => (row as { source_key: string }).source_key)).toEqual(expect.arrayContaining([`subtask-assignment:${first.id}:2`, `subtask-assignment:${first.id}:4`]));
-    const moved = await request(`/api/projects/${projectId}/subtasks/${second.id}/move`, "subtasks-editor-token", "POST", { direction: "up" });
-    expect(await moved.json()).toEqual({ position: 1024 });
+    const moved = await request(`/api/projects/${projectId}/subtasks/${second.id}/reorder`, "subtasks-editor-token", "POST", { beforeId: null, afterId: first.id });
+    expect(await moved.json()).toEqual({ position: 0 });
     const listed = await (await request(`/api/projects/${projectId}/subtasks`, "subtasks-editor-token")).json() as { subtasks: Array<{ id: string }> };
     expect(listed.subtasks.slice(0, 2).map((item) => item.id)).toEqual([second.id, first.id]);
     expect((await request(`/api/projects/${projectId}/subtasks/${first.id}`, "subtasks-photographer-token", "DELETE")).status).toBe(200);
     const auditActions = (await database.DB.prepare("SELECT action FROM audit_log WHERE target_id IN (?, ?) ORDER BY created_at").bind(first.id, second.id).all()).results.map((row) => (row as { action: string }).action);
-    expect(auditActions).toEqual(expect.arrayContaining(["project_subtask.create", "project_subtask.update", "project_subtask.move", "project_subtask.delete"]));
+    expect(auditActions).toEqual(expect.arrayContaining(["project_subtask.create", "project_subtask.update", "project_subtask.reorder", "project_subtask.delete"]));
   });
 
   it("keeps absent optional fields unchanged, does access-before-existence checks, and never audits missing mutations", async () => {
@@ -69,11 +69,65 @@ describe("project subtasks API", () => {
     expect(unchanged.dueDate).toBe("2026-12-01");
     const missingProject = crypto.randomUUID(); const missingTask = crypto.randomUUID();
     const before = (await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE target_id = ?").bind(missingTask).first<{ count: number }>())!.count;
-    for (const [method, suffix, body] of [["POST", "", { title: "No" }], ["PATCH", `/${missingTask}`, { done: true }], ["POST", `/${missingTask}/move`, { direction: "up" }], ["DELETE", `/${missingTask}`, undefined]] as const) {
+    for (const [method, suffix, body] of [["POST", "", { title: "No" }], ["PATCH", `/${missingTask}`, { done: true }], ["POST", `/${missingTask}/reorder`, { beforeId: null, afterId: null }], ["DELETE", `/${missingTask}`, undefined]] as const) {
       expect((await request(`/api/projects/${missingProject}/subtasks${suffix}`, "subtasks-admin-token", method, body)).status).toBe(404);
     }
     expect((await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE target_id = ?").bind(missingTask).first<{ count: number }>())!.count).toBe(before);
     expect((await request(`/api/projects/${missingProject}/subtasks`, "subtasks-outsider-token")).status).toBe(403);
+  });
+
+  it("rejects invalid or stale reorder neighbors and rebases tied snapshots, including a 24-item checklist", async () => {
+    const now = Date.now(); const guardedProject = crypto.randomUUID(); const targetId = crypto.randomUUID(); const beforeId = crypto.randomUUID(); const afterId = crypto.randomUUID(); const betweenId = crypto.randomUUID(); const otherProject = crypto.randomUUID(); const foreignId = crypto.randomUUID();
+    for (const id of [guardedProject, otherProject]) await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES (?, ?, 'editing_autohdr', 0, ?, ?)").bind(id, `Reorder ${id}`, now, now).run();
+    for (const [id, position] of [[beforeId, 1024], [afterId, 2048], [targetId, 3072], [betweenId, 4096]] as const) await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, created_by, created_at, updated_at) VALUES (?, ?, ?, 0, ?, 0, ?, ?, ?)").bind(id, guardedProject, id, position, editorId, now, now).run();
+    await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, created_by, created_at, updated_at) VALUES (?, ?, 'foreign', 0, 1024, 0, ?, ?, ?)").bind(foreignId, otherProject, editorId, now, now).run();
+    for (const body of [{ beforeId: "not-a-uuid", afterId: null }, { beforeId: 42, afterId: null }, { beforeId: null }, { beforeId: null, afterId: null, position: 1 }]) expect((await request(`/api/projects/${guardedProject}/subtasks/${targetId}/reorder`, "subtasks-admin-token", "POST", body)).status).toBe(400);
+    expect((await request(`/api/projects/${guardedProject}/subtasks/${targetId}/reorder`, "subtasks-admin-token", "POST", { beforeId: targetId, afterId })).status).toBe(400);
+    expect((await request(`/api/projects/${guardedProject}/subtasks/${targetId}/reorder`, "subtasks-admin-token", "POST", { beforeId, afterId: beforeId })).status).toBe(400);
+    expect((await request(`/api/projects/${guardedProject}/subtasks/${targetId}/reorder`, "subtasks-admin-token", "POST", { beforeId: foreignId, afterId })).status).toBe(404);
+    await database.DB.prepare("UPDATE project_subtasks SET position = 1500 WHERE id = ?").bind(betweenId).run();
+    const beforeAudit = (await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE target_id = ? AND action = 'project_subtask.reorder'").bind(targetId).first<{ count: number }>())!.count;
+    expect((await request(`/api/projects/${guardedProject}/subtasks/${targetId}/reorder`, "subtasks-admin-token", "POST", { beforeId, afterId })).status).toBe(409);
+    expect((await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE target_id = ? AND action = 'project_subtask.reorder'").bind(targetId).first<{ count: number }>())!.count).toBe(beforeAudit);
+
+    const tiedProject = crypto.randomUUID(); const tiedBefore = "81000000-0000-4000-8000-000000000001"; const tiedAfter = "81000000-0000-4000-8000-000000000002"; const tiedTarget = "81000000-0000-4000-8000-000000000003";
+    await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES (?, 'Tied rebase', 'editing_autohdr', 0, ?, ?)").bind(tiedProject, now, now).run();
+    for (const [id, position] of [[tiedBefore, 1024], [tiedAfter, 1024], [tiedTarget, 4096]] as const) await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, created_by, created_at, updated_at) VALUES (?, ?, ?, 0, ?, 0, ?, ?, ?)").bind(id, tiedProject, id, position, editorId, now, now).run();
+    expect(await (await request(`/api/projects/${tiedProject}/subtasks/${tiedTarget}/reorder`, "subtasks-admin-token", "POST", { beforeId: tiedBefore, afterId: tiedAfter })).json()).toEqual({ position: 2048 });
+    expect((await database.DB.prepare("SELECT id, position FROM project_subtasks WHERE project_id = ? ORDER BY position, id").bind(tiedProject).all()).results).toEqual([{ id: tiedBefore, position: 1024 }, { id: tiedTarget, position: 2048 }, { id: tiedAfter, position: 3072 }]);
+
+    const longProject = crypto.randomUUID(); await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES (?, 'Long tied rebase', 'editing_autohdr', 0, ?, ?)").bind(longProject, now, now).run();
+    const ids = Array.from({ length: 24 }, (_, index) => `82000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`);
+    for (const [index, id] of ids.entries()) await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, created_by, created_at, updated_at) VALUES (?, ?, ?, 0, ?, 0, ?, ?, ?)").bind(id, longProject, id, index === 10 ? 10 * 1024 : (index + 1) * 1024, editorId, now, now).run();
+    const longTarget = ids[23]!; const longBefore = ids[9]!; const longAfter = ids[10]!;
+    expect((await request(`/api/projects/${longProject}/subtasks/${longTarget}/reorder`, "subtasks-admin-token", "POST", { beforeId: longBefore, afterId: longAfter })).status).toBe(200);
+    const longRows = (await database.DB.prepare("SELECT id, position FROM project_subtasks WHERE project_id = ? ORDER BY position, id").bind(longProject).all()).results as Array<{ id: string; position: number }>;
+    expect(longRows.map((row) => row.id)).toEqual([...ids.slice(0, 10), longTarget, ...ids.slice(10, 23)]); expect(longRows.map((row) => row.position)).toEqual(Array.from({ length: 24 }, (_, index) => (index + 1) * 1024));
+  });
+
+  it("reorders at beginning, middle, and end without restamping neighbors, auditing twice, or notifying", async () => {
+    const now = 1; const ordinaryProject = crypto.randomUUID(); const a = crypto.randomUUID(); const b = crypto.randomUUID(); const c = crypto.randomUUID();
+    await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES (?, 'Ordinary reorders', 'editing_autohdr', 0, ?, ?)").bind(ordinaryProject, now, now).run();
+    for (const [id, position] of [[a, 1024], [b, 2048], [c, 3072]] as const) await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, created_by, created_at, updated_at) VALUES (?, ?, ?, 0, ?, 0, ?, ?, ?)").bind(id, ordinaryProject, id, position, editorId, now, now).run();
+    const assignments = async () => (await database.DB.prepare("SELECT count(*) AS count FROM notifications WHERE project_id = ? AND type = 'subtask_assigned'").bind(ordinaryProject).first<{ count: number }>())!.count;
+    const reorder = async (target: string, beforeId: string | null, afterId: string | null, expectedPosition: number, expectedOrder: string[]) => {
+      const previous = (await database.DB.prepare("SELECT id, updated_at FROM project_subtasks WHERE project_id = ?").bind(ordinaryProject).all()).results as Array<{ id: string; updated_at: number }>;
+      const priorAudit = (await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE target_id = ? AND action = 'project_subtask.reorder'").bind(target).first<{ count: number }>())!.count; const priorNotices = await assignments();
+      const response = await request(`/api/projects/${ordinaryProject}/subtasks/${target}/reorder`, "subtasks-admin-token", "POST", { beforeId, afterId }); expect(response.status).toBe(200); expect(await response.json()).toEqual({ position: expectedPosition });
+      const rows = (await database.DB.prepare("SELECT id, position, updated_at FROM project_subtasks WHERE project_id = ? ORDER BY position, id").bind(ordinaryProject).all()).results as Array<{ id: string; position: number; updated_at: number }>;
+      expect(rows.map((row) => row.id)).toEqual(expectedOrder); expect(rows.find((row) => row.id === target)?.updated_at).not.toBe(previous.find((row) => row.id === target)?.updated_at); for (const row of rows.filter((row) => row.id !== target)) expect(row.updated_at).toBe(previous.find((candidate) => candidate.id === row.id)?.updated_at);
+      expect((await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE target_id = ? AND action = 'project_subtask.reorder'").bind(target).first<{ count: number }>())!.count).toBe(priorAudit + 1); expect(await assignments()).toBe(priorNotices);
+    };
+    await reorder(c, null, a, 0, [c, a, b]); await reorder(b, c, a, 512, [c, b, a]); await reorder(c, a, null, 2048, [b, a, c]);
+  });
+
+  it("keeps a non-integral ordinary midpoint without rebasing its neighbors", async () => {
+    const now = 1; const midpointProject = crypto.randomUUID(); const before = crypto.randomUUID(); const after = crypto.randomUUID(); const target = crypto.randomUUID();
+    await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES (?, 'Fractional midpoint', 'editing_autohdr', 0, ?, ?)").bind(midpointProject, now, now).run();
+    for (const [id, position] of [[before, 1024], [after, 1025], [target, 4096]] as const) await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, created_by, created_at, updated_at) VALUES (?, ?, ?, 0, ?, 0, ?, ?, ?)").bind(id, midpointProject, id, position, editorId, now, now).run();
+    const response = await request(`/api/projects/${midpointProject}/subtasks/${target}/reorder`, "subtasks-admin-token", "POST", { beforeId: before, afterId: after }); expect(response.status).toBe(200); expect(await response.json()).toEqual({ position: 1024.5 });
+    expect(await database.DB.prepare("SELECT position FROM project_subtasks WHERE id = ?").bind(target).first()).toEqual({ position: 1024.5 });
+    expect((await database.DB.prepare("SELECT id, position, updated_at FROM project_subtasks WHERE project_id = ? ORDER BY position, id").bind(midpointProject).all()).results).toEqual([{ id: before, position: 1024, updated_at: now }, { id: target, position: 1024.5, updated_at: expect.any(Number) }, { id: after, position: 1025, updated_at: now }]);
   });
 
   it("accepts literal due times and clears a sent reminder when the due date is rescheduled", async () => {

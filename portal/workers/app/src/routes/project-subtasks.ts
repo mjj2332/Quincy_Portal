@@ -1,6 +1,6 @@
 import { Hono } from "hono";
-import { createDb, schema } from "@quincy/db";
-import { and, asc, desc, eq, isNull, or, sql } from "drizzle-orm";
+import { computeInsertPosition, createDb, schema } from "@quincy/db";
+import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { AppEnv } from "../env";
 import { audit } from "../lib/audit";
@@ -34,7 +34,7 @@ const createInput = z.object({ title: titleInput, assigneeId: idParam.optional()
 const updateInput = z.object({
   title: titleInput.optional(), done: z.boolean().optional(), assigneeId: idParam.nullable().optional(), dueDate: dueDateInput.nullable().optional(),
 }).strict().refine((value) => Object.keys(value).length > 0, "At least one field is required");
-const moveInput = z.object({ direction: z.enum(["up", "down"]) }).strict();
+const reorderInput = z.object({ beforeId: idParam.nullable(), afterId: idParam.nullable() }).strict().refine((value) => value.beforeId !== value.afterId || value.beforeId === null, "Neighbors must be distinct");
 
 type SubtaskRow = { subtask: typeof schema.projectSubtasks.$inferSelect; assigneeId: string | null; assigneeName: string | null };
 
@@ -120,28 +120,47 @@ projectSubtasksRoutes.patch("/projects/:projectId/subtasks/:subtaskId", async (c
   return c.json(serializeSubtask(task));
 });
 
-projectSubtasksRoutes.post("/projects/:projectId/subtasks/:subtaskId/move", async (c) => {
+projectSubtasksRoutes.post("/projects/:projectId/subtasks/:subtaskId/reorder", async (c) => {
   const projectId = c.req.param("projectId"); const subtaskId = c.req.param("subtaskId");
   if (!idParam.safeParse(projectId).success || !idParam.safeParse(subtaskId).success) return c.json({ error: "Invalid project or subtask id" }, 400);
   const project = await ensureProjectAccessAndExists(c, projectId); if (project === "forbidden") return c.json({ error: "Forbidden: you are not assigned to this project" }, 403); if (!project) return c.json({ error: "Project not found" }, 404);
-  const data = await jsonInput(c, moveInput); if (data instanceof Response) return data;
+  const data = await jsonInput(c, reorderInput); if (data instanceof Response) return data;
+  if (data.beforeId === subtaskId || data.afterId === subtaskId) return c.json({ error: "A subtask cannot be its own neighbor" }, 400);
   const db = createDb(c.env.DB); const target = await db.select({ id: schema.projectSubtasks.id, position: schema.projectSubtasks.position }).from(schema.projectSubtasks).where(and(eq(schema.projectSubtasks.id, subtaskId), eq(schema.projectSubtasks.projectId, projectId))).get();
   if (!target) return c.json({ error: "Subtask not found" }, 404);
-  const neighbor = await db.select({ id: schema.projectSubtasks.id, position: schema.projectSubtasks.position }).from(schema.projectSubtasks)
-    .where(and(eq(schema.projectSubtasks.projectId, projectId), data.direction === "up" ? or(sql`${schema.projectSubtasks.position} < ${target.position}`, and(eq(schema.projectSubtasks.position, target.position), sql`${schema.projectSubtasks.id} < ${target.id}`)) : or(sql`${schema.projectSubtasks.position} > ${target.position}`, and(eq(schema.projectSubtasks.position, target.position), sql`${schema.projectSubtasks.id} > ${target.id}`))))
-    .orderBy(data.direction === "up" ? desc(schema.projectSubtasks.position) : asc(schema.projectSubtasks.position), data.direction === "up" ? desc(schema.projectSubtasks.id) : asc(schema.projectSubtasks.id)).limit(1).get();
-  if (!neighbor || neighbor.position === target.position) return c.json({ position: target.position });
-  const now = Date.now();
-  // One guarded statement inside a D1 batch swaps both rows only when the original target and
-  // adjacent neighbor are still this project's exact snapshot; no client position is trusted.
-  const [swap] = await c.env.DB.batch([c.env.DB.prepare(`UPDATE project_subtasks SET position = CASE WHEN id = ? THEN ? WHEN id = ? THEN ? END, updated_at = ? WHERE project_id = ? AND ((id = ? AND position = ?) OR (id = ? AND position = ?)) AND EXISTS (SELECT 1 FROM project_subtasks WHERE id = ? AND project_id = ? AND position = ?) AND EXISTS (SELECT 1 FROM project_subtasks WHERE id = ? AND project_id = ? AND position = ?)`)
-    .bind(target.id, neighbor.position, neighbor.id, target.position, now, projectId, target.id, target.position, neighbor.id, neighbor.position, target.id, projectId, target.position, neighbor.id, projectId, neighbor.position)]);
-  if ((swap?.meta.changes ?? 0) !== 2) {
-    const current = await db.select({ position: schema.projectSubtasks.position }).from(schema.projectSubtasks).where(and(eq(schema.projectSubtasks.id, subtaskId), eq(schema.projectSubtasks.projectId, projectId))).get();
-    return current ? c.json({ position: current.position }) : c.json({ error: "Subtask not found" }, 404);
+  const snapshot = await db.select({ id: schema.projectSubtasks.id, position: schema.projectSubtasks.position }).from(schema.projectSubtasks).where(eq(schema.projectSubtasks.projectId, projectId)).orderBy(asc(schema.projectSubtasks.position), asc(schema.projectSubtasks.id)).all();
+  const remaining = snapshot.filter((item) => item.id !== subtaskId);
+  const beforeIndex = data.beforeId ? remaining.findIndex((item) => item.id === data.beforeId) : -1;
+  const afterIndex = data.afterId ? remaining.findIndex((item) => item.id === data.afterId) : -1;
+  if ((data.beforeId && beforeIndex < 0) || (data.afterId && afterIndex < 0)) return c.json({ error: "Neighbor subtask not found" }, 404);
+  const expectedAfterIndex = data.beforeId ? beforeIndex + 1 : 0;
+  if (data.beforeId === null && data.afterId === null ? remaining.length !== 0 : data.afterId ? afterIndex !== expectedAfterIndex : beforeIndex !== remaining.length - 1) return c.json({ error: "Subtask order changed; reload and try again" }, 409);
+  const before = data.beforeId ? remaining[beforeIndex]! : null; const after = data.afterId ? remaining[afterIndex]! : null;
+  const position = computeInsertPosition(before?.position ?? null, after?.position ?? null); const now = Date.now();
+  const tied = position === before?.position || position === after?.position;
+  let changes = 0;
+  if (tied) {
+    const insertAt = before ? beforeIndex + 1 : 0; const desired = [...remaining]; desired.splice(insertAt, 0, target);
+    const snapshotJson = JSON.stringify(desired.map((item, index) => ({ id: item.id, oldPosition: item.position, newPosition: (index + 1) * POSITION_STEP })));
+    const [rebased] = await c.env.DB.batch([c.env.DB.prepare(`UPDATE project_subtasks SET position = (SELECT CAST(json_extract(value, '$.newPosition') AS INTEGER) FROM json_each(?1) WHERE json_extract(value, '$.id') = project_subtasks.id), updated_at = ?2 WHERE project_id = ?3 AND (id, position) IN (SELECT json_extract(value, '$.id'), json_extract(value, '$.oldPosition') FROM json_each(?1)) AND (SELECT COUNT(*) FROM project_subtasks WHERE project_id = ?3 AND (id, position) IN (SELECT json_extract(value, '$.id'), json_extract(value, '$.oldPosition') FROM json_each(?1))) = json_array_length(?1) AND (SELECT COUNT(*) FROM project_subtasks WHERE project_id = ?3) = json_array_length(?1)`).bind(snapshotJson, now, projectId)]);
+    changes = rebased?.meta.changes ?? 0;
+    if (changes !== snapshot.length) return c.json({ error: "Subtask order changed; reload and try again" }, 409);
+    const targetPosition = desired.findIndex((item) => item.id === subtaskId) + 1;
+    await audit(c.env, c.get("user").id, "project_subtask.reorder", "project_subtask", subtaskId, { beforeId: data.beforeId, afterId: data.afterId });
+    return c.json({ position: targetPosition * POSITION_STEP });
   }
-  await audit(c.env, c.get("user").id, "project_subtask.move", "project_subtask", subtaskId, { direction: data.direction });
-  return c.json({ position: neighbor.position });
+  const params: unknown[] = [position, now, target.id, projectId, target.position, projectId, snapshot.length];
+  let guard = "";
+  if (before) { guard += " AND EXISTS (SELECT 1 FROM project_subtasks WHERE id = ? AND project_id = ? AND position = ?)"; params.push(before.id, projectId, before.position); }
+  if (after) { guard += " AND EXISTS (SELECT 1 FROM project_subtasks WHERE id = ? AND project_id = ? AND position = ?)"; params.push(after.id, projectId, after.position); }
+  if (before && after) { guard += " AND NOT EXISTS (SELECT 1 FROM project_subtasks AS candidate WHERE candidate.project_id = ? AND candidate.id <> ? AND (candidate.position > ? OR (candidate.position = ? AND candidate.id > ?)) AND (candidate.position < ? OR (candidate.position = ? AND candidate.id < ?)))"; params.push(projectId, target.id, before.position, before.position, before.id, after.position, after.position, after.id); }
+  else if (before) { guard += " AND NOT EXISTS (SELECT 1 FROM project_subtasks AS candidate WHERE candidate.project_id = ? AND candidate.id <> ? AND (candidate.position > ? OR (candidate.position = ? AND candidate.id > ?)))"; params.push(projectId, target.id, before.position, before.position, before.id); }
+  else if (after) { guard += " AND NOT EXISTS (SELECT 1 FROM project_subtasks AS candidate WHERE candidate.project_id = ? AND candidate.id <> ? AND (candidate.position < ? OR (candidate.position = ? AND candidate.id < ?)))"; params.push(projectId, target.id, after.position, after.position, after.id); }
+  const [updated] = await c.env.DB.batch([c.env.DB.prepare(`UPDATE project_subtasks SET position = ?, updated_at = ? WHERE id = ? AND project_id = ? AND position = ? AND (SELECT COUNT(*) FROM project_subtasks WHERE project_id = ?) = ?${guard}`).bind(...params)]);
+  changes = updated?.meta.changes ?? 0;
+  if (changes !== 1) return c.json({ error: "Subtask order changed; reload and try again" }, 409);
+  await audit(c.env, c.get("user").id, "project_subtask.reorder", "project_subtask", subtaskId, { beforeId: data.beforeId, afterId: data.afterId });
+  return c.json({ position });
 });
 
 projectSubtasksRoutes.delete("/projects/:projectId/subtasks/:subtaskId", async (c) => {
