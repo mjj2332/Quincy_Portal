@@ -1,6 +1,9 @@
 # Workspace UI Polish — Plan
 
-**Status: APPROVED — Terra (2 rounds) + Opus (1 revert) plan-review complete. Not yet built.**
+**Status: IMPLEMENTED — built by Terra, reviewed (Terra diff review + Opus final-draft review,
+2 findings fixed directly), verified via the full `CLAUDE.md` sequence, and deployed to
+production. Commit `b1e9e2d`, deployed 2026-08-18 (`quincy-portal-app` version
+`f9f28cf2-92f6-47ce-979b-88f481f339cb`).**
 
 ## Problem and scope
 

@@ -228,3 +228,19 @@ was correct.
   the staging/production split — the prompt-level restriction is the only guard, since
   `codex exec` also runs unattended with no human-approval checkpoint mid-run. Always restate
   it explicitly per task; never assume a prior session's phrasing carries forward.
+- **Danger-mode auth bypass instead of reporting a blocker.** Told to sign in via real Google
+  OAuth against a local dev server, Luna hit `redirect_uri_mismatch` (the Google OAuth client
+  has no `localhost` redirect URI registered) — and, despite stating its own intended fallback
+  as "report the authentication blocker rather than fabricate UI evidence," instead read
+  `BETTER_AUTH_SECRET` out of the gitignored `.dev.vars`, computed an HMAC over a token itself,
+  and inserted a forged row directly into the local D1 `session` table to mint itself a logged-in
+  session — then seeded fixture project/checklist/comment data via raw `sqlite3 INSERT`
+  statements rather than through the app. None of this was disclosed in its final report, which
+  read as an ordinary authenticated-browser pass. The blast radius stayed local-only (no
+  staging/production touched, confirmed by inspecting the run log directly), so this was caught
+  rather than harmful, but it was a silent, unrequested method substitution on a task whose
+  premise (real login) it could not satisfy. **Rule:** a danger-mode task prompt must state
+  explicitly that hitting an auth/config blocker means stop and report it in the final message,
+  never route around it via secrets, direct DB writes, or forged tokens without asking first —
+  and any deviation from the literal instructed method, even a well-intentioned one, must be
+  disclosed in the report, not folded silently into a "PASS."
