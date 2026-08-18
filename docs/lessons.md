@@ -629,3 +629,23 @@ was expensive: three wrong root causes were shipped before the plan page was eve
   caught by a round-trip test that mounts the real editor, not by types or by testing serialization
   in only one direction. See the fix and its regression test:
   `docs/plans/implemented/RichText-Link-Edit-Roundtrip-Fix-Plan.md`.
+
+## `ON CONFLICT DO NOTHING` needs its status code checked client-side, not just server-side (2026-08-18)
+
+- **A dedup endpoint that returns 200-vs-201 to distinguish "already existed" from "created" is
+  only useful if a caller actually reads it.** `POST /projects/:id/links`
+  (`portal/workers/app/src/routes/collections.ts`) has a unique index on `(collection_id, url)`
+  and inserts with `ON CONFLICT DO NOTHING`, then correctly returns 200 when the row already
+  existed vs 201 when it created one. But `CollectionPanel.tsx`'s `addLink` called the shared
+  `apiPost` helper, which (like the rest of `lib/api.ts`) only ever returned the parsed body and
+  discarded `response.status` — so a duplicate-URL submission on a project's video-links tab
+  looked byte-for-byte identical to success: same "Link added." toast, same cleared form, and
+  silently zero rows written. A staff user hit this in production, diagnosed against the live D1
+  audit log (fixed in commit `feb4ded`).
+- **Rule:** when a backend intentionally overloads a single 2xx endpoint to mean two different
+  outcomes (create vs. no-op-because-duplicate, upsert vs. insert, etc.), the frontend needs an
+  explicit path to read the distinguishing signal — don't assume "the request succeeded" and
+  "the thing you asked for happened" are the same fact. `lib/api.ts`'s `apiPost`/`apiGet`/etc.
+  intentionally throw away `response.status` for ergonomics; where a caller needs it, use the
+  new `apiPostWithStatus` (built on the same `requestWithStatus` internals, zero behavior change
+  for every other caller) rather than re-deriving status from the response body's shape.
