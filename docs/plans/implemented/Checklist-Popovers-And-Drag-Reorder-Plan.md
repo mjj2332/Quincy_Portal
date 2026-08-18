@@ -1,6 +1,16 @@
 # Checklist popovers and drag reorder — Plan
 
-**Status: APPROVED — Terra (2 rounds) + Opus (2 reverts) plan-review complete. Not yet built.**
+**Status: IMPLEMENTED — built by Terra, 4 fresh-context Terra diff-review rounds + 2 Opus
+final-draft review rounds (caught and fixed a Tab-order regression, a composer Escape bug, a
+real downward/end drag-direction bug, a Floating UI ref/style split that mis-anchored popovers on
+scroll, and a focus-guard bug that made popover contents unreachable by keyboard). Committed
+`f87fa5b`, deployed to production. Live-verified in production (real session, `Tez-Test-2026.08.04`
+test project): popover scroll-anchoring, full keyboard Tab traversal into due-date popover,
+Escape containment, assignee autofocus, Delete-only popover with confirm(false) no-op, grip ARIA
+markers, hover reveal, composer single-POST create, and a real physical pointer drag producing a
+correct `/reorder` request. Not independently verified: the dnd-kit keyboard Space/Arrow/Space
+completion sequence (automation-tool limitation, not a known defect — recommend a real keyboard/
+screen-reader spot-check next time someone is in the app).**
 
 ## Problem and scope
 
