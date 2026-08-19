@@ -1,7 +1,20 @@
 # Video-link tile drag-and-drop reorder plan
 
-**Status:** Plan APPROVED (Terra draft → 2 fresh Terra review rounds → Opus plan-tier review, all
-clean/approved). Not yet built, committed, or deployed.
+**Status: IMPLEMENTED — built by Terra, 2 fresh-context Terra plan-review rounds + 1 Opus
+plan-tier review, 2 fresh-context Terra diff-review rounds (caught and fixed a missing bound
+D1 parameter that 500'd every non-tied reorder, a migration test that never applied the D1
+bundle, incomplete test coverage against the plan's own requirements, a `.all()`-shape
+assertion bug in two new race tests, and a frontend "non-optimistic" test that didn't actually
+prove non-optimism) + 1 Opus final-draft review (caught and fixed a lost stale-response guard
+in `CollectionPanel`'s `loadLinks()`, and a missing both-null/multi-row test case). Committed
+`b044585`, deployed to production 2026-08-19. Live-verified in production (`Tez-Test-2026.08.04`
+test project): grid renders with grip handles on both manual and existing tiles, no console
+errors. Local-dev verified by Luna in danger-mode (`http://localhost:8787`, real Chrome, real
+mouse/touch/keyboard): mouse drag, touch drag (confirmed `touch-action: none` prevents page
+scroll during a touch drag), and keyboard Space/Arrow/Space all reorder correctly and persist
+across reload; Edit/Remove remain unaffected by the grip. Real touch/mouse/keyboard verification
+required registering a localhost OAuth redirect URI on the Google client — see
+`docs/lessons.md` for that fix, now a durable part of local dev setup.**
 
 ## Problem and scope
 
