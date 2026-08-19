@@ -88,8 +88,9 @@ applied 2026-07-30; 0024 added the `download_selection_tickets` table, applied 2
 added notice-board rich text/mention columns and the `notice_board_post_mentions` table, applied
 2026-08-17; 0026 added `project_comments`/`project_comment_mentions`, applied 2026-08-17; 0027
 added `project_subtasks`, applied 2026-08-17; 0028 added `project_subtasks.due_reminder_sent_at`,
-applied 2026-08-17). Migration 0029 adds persisted `collection_links.position`; it is locally
-verified and pending production deployment. Branch off `main`.
+applied 2026-08-17; 0029 added persisted `collection_links.position` with a per-collection
+`created_at, id` backfill, applied 2026-08-19) — next available number is **0030**. Branch off
+`main`.
 **Prefer a bare `ALTER TABLE ADD COLUMN col TYPE CHECK(...)` over `drizzle-kit generate`'s
 table-rebuild form when the check is single-column and NULL-satisfiable** — the rebuild form's
 `PRAGMA foreign_keys=OFF` doesn't reliably persist across D1's remote migration execution even
