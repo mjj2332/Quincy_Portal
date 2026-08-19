@@ -822,6 +822,11 @@ button { font-family: var(--font-sans); }
 .collection-link__name { font: var(--type-h3); font-size: 21px; letter-spacing: var(--tracking-tight); overflow-wrap: anywhere; }
 .collection-link__meta { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); margin-top: var(--space-4); }
 .collection-link__meta .button--text { margin-left: auto; }
+.collection-link__grip { display: grid; flex: none; place-items: center; min-width: 34px; min-height: 34px; padding: 6px; border: 0; background: transparent; color: var(--text-secondary); font: 18px/1 sans-serif; cursor: grab; touch-action: none; }
+.collection-link__grip:active { cursor: grabbing; }
+.collection-link__grip:focus-visible { outline: 2px solid var(--ink-900); outline-offset: 2px; }
+.collection-link__grip[aria-disabled="true"] { cursor: default; opacity: .5; }
+.collection-link--dragging { opacity: .45; box-shadow: var(--shadow-sm); }
 .collection-link-form { display: grid; grid-template-columns: minmax(220px, 1.5fr) minmax(180px, 1fr) auto; gap: var(--space-3); align-items: end; padding: var(--space-4); border: 1px solid var(--border-hairline); background: var(--paper-100); }
 .collection-link-form label { display: grid; gap: 6px; color: var(--text-secondary); font: var(--type-eyebrow); font-size: 10px; letter-spacing: var(--tracking-wide); text-transform: uppercase; }
 .collection-link-form em { color: var(--text-muted); font-style: normal; }

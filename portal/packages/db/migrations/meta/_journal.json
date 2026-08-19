@@ -204,6 +204,13 @@
       "when": 1786946263466,
       "tag": "0028_project_subtasks_due_reminder",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "6",
+      "when": 1787094138976,
+      "tag": "0029_collection_link_positions",
+      "breakpoints": true
     }
   ]
 }

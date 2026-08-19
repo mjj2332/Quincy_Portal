@@ -18,6 +18,8 @@ const migrationSqlBefore0015 = migrations
   .map(({ sql }) => sql)
   .join("\n--> statement-breakpoint\n");
 const migration0015Sql = migrations.find(({ name }) => name.startsWith("0015_"))?.sql ?? "";
+const migrationSqlBefore0029 = migrations.filter(({ name }) => name < "0029_").map(({ sql }) => sql).join("\n--> statement-breakpoint\n");
+const migration0029Sql = migrations.find(({ name }) => name.startsWith("0029_"))?.sql ?? "";
 const wranglerConfig = await readFile(new URL("./wrangler.jsonc", import.meta.url), "utf8");
 
 export default defineConfig({
@@ -26,6 +28,8 @@ export default defineConfig({
     __PORTAL_MIGRATION_SQL__: JSON.stringify(migrationSql),
     __PORTAL_MIGRATION_SQL_BEFORE_0015__: JSON.stringify(migrationSqlBefore0015),
     __PORTAL_MIGRATION_0015_SQL__: JSON.stringify(migration0015Sql),
+    __PORTAL_MIGRATION_SQL_BEFORE_0029__: JSON.stringify(migrationSqlBefore0029),
+    __PORTAL_MIGRATION_0029_SQL__: JSON.stringify(migration0029Sql),
     __BACKGROUND_WRANGLER_CONFIG__: JSON.stringify(wranglerConfig),
   },
   plugins: [cloudflareTest({ wrangler: { configPath: "./wrangler.jsonc" } })],

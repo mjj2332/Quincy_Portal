@@ -1,5 +1,29 @@
 # Lessons — Quincy Portal build
 
+- **Local dev Google OAuth was broken because `APP_ORIGIN` had no local override — better-auth
+  derives its callback URL, `trustedOrigins`, and CORS/origin checks entirely from that one env
+  var, not from the browser's actual address.** `wrangler.jsonc`'s base `vars.APP_ORIGIN` is the
+  production URL, and nothing overrode it for local `wrangler dev`, so any local sign-in attempt
+  tried to redirect through `https://quincy.flamingfire.my`'s callback — `redirect_uri_mismatch`
+  at best. Fixed (2026-08-19) by adding `APP_ORIGIN=http://localhost:8787` to
+  `portal/workers/app/.dev.vars` (gitignored) and registering `http://localhost:8787` as an
+  Authorized JavaScript origin plus `http://localhost:8787/api/auth/callback/google` as an
+  Authorized redirect URI on the existing "Quincy Portal" OAuth client (Google Cloud project
+  `keen-virtue-502912-m2`) — both additive; the production entries were untouched. **Rule: browse
+  `http://localhost:8787` directly for any local auth-gated testing, not the Vite dev server on
+  `5173`** — `wrangler dev` serves the built SPA (`npm run build -w @quincy/web` first) and the API
+  on one origin, so the browser's actual `Origin` header, better-auth's computed `redirect_uri`,
+  and `APP_ORIGIN` all agree; splitting across Vite's proxy and the worker's own port works for
+  ordinary API calls but adds an avoidable cross-origin variable to a flow that's already finicky
+  to debug.
+  Separately: this is a **closed staff system** — Google sign-up is disabled
+  (`disableSignUp: true` in `workers/app/src/auth.ts`, enforced again by a `user.create` database
+  hook that unconditionally throws), so only a user row that already exists in D1 can ever sign
+  in. Local D1's only seeded user is the admin account from `packages/db/seed/0001_seed.sql`
+  (`mjj2332@gmail.com`) — a real Google account, not a placeholder — so local browser testing that
+  needs authentication can only ever be done by (or as) that account; there is no way to
+  provision a second local test user without editing the seed.
+
 - **`PRAGMA foreign_keys=OFF` does not reliably persist across statements in D1's remote migration
   execution, even though it worked fine against local Miniflare — a real production migration
   attempt (0020) failed on `DROP TABLE projects` with `FOREIGN KEY constraint failed`, even though

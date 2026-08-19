@@ -5,6 +5,7 @@ import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from
 import { AnchoredPopover, useAnchoredPopover } from "./AnchoredPopover";
 import { ApiError, apiDelete, apiGet, apiPatch, apiPost } from "../lib/api";
 import { initials } from "../lib/initials";
+import { reorderNeighbors } from "../lib/reorder-neighbors";
 import type { MentionableUser } from "./MentionAutocomplete";
 
 type Subtask = { id: string; title: string; done: boolean; position: number; assignee: { id: string; name: string } | null; assignmentVersion: number; dueDate: string | null; createdBy: string; createdAt: string; updatedAt: string; };
@@ -22,15 +23,6 @@ function formatDueDate(value: string) {
   if (monthIndex < 0 || monthIndex > 11 || Number(day) < 1 || Number(day) > maxDay || (time && !/^([01]\d|2[0-3]):[0-5]\d$/.test(time))) return value;
   const display = `${Number(day)} ${MONTHS[monthIndex]}${Number(year) === new Date().getFullYear() ? "" : ` ${year}`}`;
   return time ? `${display} · ${time}` : display;
-}
-
-export function reorderNeighbors(ids: string[], activeId: string, overId: string | null) {
-  if (!overId || overId === activeId) return null;
-  const activeIndex = ids.indexOf(activeId); const overIndex = ids.indexOf(overId);
-  if (activeIndex < 0 || overIndex < 0) return null;
-  const desired = [...ids]; desired.splice(activeIndex, 1); desired.splice(overIndex, 0, activeId);
-  const destinationIndex = desired.indexOf(activeId);
-  return { beforeId: desired[destinationIndex - 1] ?? null, afterId: desired[destinationIndex + 1] ?? null, destinationIndex };
 }
 
 export function scheduleReorderFocus(grips: Map<string, HTMLButtonElement>, id: string, formerIndex: number, composerOpen: boolean, composerInput: HTMLInputElement | null, projectId: string, isBusy: () => boolean = () => false) {

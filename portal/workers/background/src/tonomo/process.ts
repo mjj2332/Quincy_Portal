@@ -47,7 +47,7 @@ async function attachServiceLinks(env: Env, order: TonomoOrder, collectionByKind
     // Redeliveries and concurrent manual additions use one logical-link constraint. The
     // count reconciliation shares this D1 batch even when the insert dedupes.
     await env.DB.batch([
-      env.DB.prepare("INSERT INTO collection_links (id, collection_id, url, label, source, created_at, updated_at) VALUES (?, ?, ?, ?, 'tonomo', ?, ?) ON CONFLICT(collection_id, url) DO NOTHING").bind(crypto.randomUUID(), collection.id, service.url, service.label ?? null, now.getTime(), now.getTime()),
+      env.DB.prepare("INSERT INTO collection_links (id, collection_id, url, label, source, position, created_at, updated_at) VALUES (?, ?, ?, ?, 'tonomo', COALESCE((SELECT MAX(position) FROM collection_links WHERE collection_id = ?), 0) + 1024, ?, ?) ON CONFLICT(collection_id, url) DO NOTHING").bind(crypto.randomUUID(), collection.id, service.url, service.label ?? null, collection.id, now.getTime(), now.getTime()),
       env.DB.prepare(COLLECTION_RECEIVED_COUNT_SQL).bind(...collectionReceivedCountBindings(collection.id, now.getTime())),
     ]);
   }

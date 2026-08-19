@@ -70,6 +70,11 @@ up by `npm run test --workspaces` — no separate invocation needed for it.
 - Media in R2 is **never deleted** on edit or delete: write a new immutable key and retain the
   old object.
 - `portal/workers/app/.dev.vars` holds local dev secrets and is gitignored — never commit it.
+- **Local dev Google sign-in works as of 2026-08-19**: `.dev.vars` sets
+  `APP_ORIGIN=http://localhost:8787`, and that origin/redirect is registered on the OAuth client.
+  Browse `http://localhost:8787` directly (build `apps/web` first) — not the Vite 5173 proxy — and
+  sign in as the seeded admin (`mjj2332@gmail.com`; this is a closed system, `disableSignUp: true`,
+  no other account works locally). See `docs/lessons.md` for why.
 
 ## Deploy
 
@@ -77,13 +82,14 @@ Order matters, because service bindings resolve at deploy time: **background →
 webhook-ingress → app**, each via `cd portal/workers/<x> && npx wrangler deploy`. Host:
 `quincy.flamingfire.my` (prod) — there is no staging environment (removed 2026-08-18; it shared
 production's D1/R2/`APP_ORIGIN`, so it offered no real isolation and its Google OAuth never
-worked). Prod config lives in Worker secrets. D1 migrations 0000–0027 are confirmed applied to prod (0021 dropped the `comments` table;
+worked). Prod config lives in Worker secrets. D1 migrations 0000–0028 are confirmed applied to prod (0021 dropped the `comments` table;
 0022 migrated the seed admin's id to a real UUID; 0023 added `autohdr_handoffs.stalled_notified_at`,
 applied 2026-07-30; 0024 added the `download_selection_tickets` table, applied 2026-08-04; 0025
 added notice-board rich text/mention columns and the `notice_board_post_mentions` table, applied
 2026-08-17; 0026 added `project_comments`/`project_comment_mentions`, applied 2026-08-17; 0027
-added `project_subtasks`, applied 2026-08-17) — next available number is **0028**. Branch off
-`main`.
+added `project_subtasks`, applied 2026-08-17; 0028 added `project_subtasks.due_reminder_sent_at`,
+applied 2026-08-17). Migration 0029 adds persisted `collection_links.position`; it is locally
+verified and pending production deployment. Branch off `main`.
 **Prefer a bare `ALTER TABLE ADD COLUMN col TYPE CHECK(...)` over `drizzle-kit generate`'s
 table-rebuild form when the check is single-column and NULL-satisfiable** — the rebuild form's
 `PRAGMA foreign_keys=OFF` doesn't reliably persist across D1's remote migration execution even

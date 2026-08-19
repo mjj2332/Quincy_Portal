@@ -1,7 +1,8 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { reorderNeighbors, scheduleReorderFocus, SubtaskChecklist } from "./SubtaskChecklist";
+import { scheduleReorderFocus, SubtaskChecklist } from "./SubtaskChecklist";
+import { reorderNeighbors } from "../lib/reorder-neighbors";
 
 const apiGetMock = vi.fn<(path: string) => Promise<unknown>>(); const apiPostMock = vi.fn<(path: string, body: unknown) => Promise<unknown>>(); const apiPatchMock = vi.fn<(path: string, body: unknown) => Promise<unknown>>(); const apiDeleteMock = vi.fn<(path: string) => Promise<unknown>>();
 vi.mock("../lib/api", async (importOriginal) => { const actual = await importOriginal<typeof import("../lib/api")>(); return { ...actual, apiGet: (path: string) => apiGetMock(path), apiPost: (path: string, body: unknown) => apiPostMock(path, body), apiPatch: (path: string, body: unknown) => apiPatchMock(path, body), apiDelete: (path: string) => apiDeleteMock(path) }; });

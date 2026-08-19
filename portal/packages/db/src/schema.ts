@@ -287,11 +287,13 @@ export const collectionLinks = sqliteTable(
     url: text("url").notNull(),
     label: text("label"),
     source: text("source", { enum: ["tonomo", "manual"] }).notNull(),
+    position: integer("position").notNull().default(0),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
   (t) => [
     index("collection_links_collection_idx").on(t.collectionId),
+    index("collection_links_collection_position_idx").on(t.collectionId, t.position, t.id),
     uniqueIndex("collection_links_collection_url_unique").on(t.collectionId, t.url),
   ],
 );

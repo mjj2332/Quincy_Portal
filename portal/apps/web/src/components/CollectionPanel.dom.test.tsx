@@ -3,15 +3,24 @@ import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../lib/api";
+import { reorderNeighbors } from "../lib/reorder-neighbors";
 import { CollectionPanel } from "./CollectionPanel";
 import type { WorkspaceAsset } from "./PhotoGrid";
 
+const dnd = vi.hoisted(() => ({ handlers: [] as Array<(event: { active: { id: string }; over: { id: string } | null }) => void> }));
+vi.mock("@dnd-kit/core", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@dnd-kit/core")>();
+  const { createElement } = await import("react");
+  return { ...actual, DndContext: (props: Parameters<typeof actual.DndContext>[0]) => { dnd.handlers.push(props.onDragEnd as (event: { active: { id: string }; over: { id: string } | null }) => void); return createElement(actual.DndContext, props); } };
+});
+
 const apiGetMock = vi.fn<(path: string) => Promise<unknown>>();
 const apiPatchMock = vi.fn<(path: string, body: unknown) => Promise<unknown>>();
+const apiPostMock = vi.fn<(path: string, body: unknown) => Promise<unknown>>();
 const apiPostWithStatusMock = vi.fn<(path: string, body: unknown) => Promise<{ data: unknown; status: number }>>();
 vi.mock("../lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/api")>();
-  return { ...actual, apiGet: (path: string) => apiGetMock(path), apiPatch: (path: string, body: unknown) => apiPatchMock(path, body), apiPostWithStatus: (path: string, body: unknown) => apiPostWithStatusMock(path, body) };
+  return { ...actual, apiGet: (path: string) => apiGetMock(path), apiPatch: (path: string, body: unknown) => apiPatchMock(path, body), apiPost: (path: string, body: unknown) => apiPostMock(path, body), apiPostWithStatus: (path: string, body: unknown) => apiPostWithStatusMock(path, body) };
 });
 
 function asset(id: string, version: number): WorkspaceAsset {
@@ -23,10 +32,20 @@ const props = {
   onReview: vi.fn(async () => undefined), onDelete: vi.fn(async () => undefined), onChanged: vi.fn(async () => undefined), onToast: vi.fn(),
 };
 const videoLinks = () => [
-  { id: "manual-video-link", url: "https://vimeo.com/manual", label: "Walkthrough", source: "manual" as const, createdAt: "2026-08-01T00:00:00.000Z" },
-  { id: "tonomo-video-link", url: "https://dropbox.com/s/tonomo", label: "Tonomo delivery", source: "tonomo" as const, createdAt: "2026-08-02T00:00:00.000Z" },
+  { id: "manual-video-link", url: "https://vimeo.com/manual", label: "Walkthrough", source: "manual" as const, position: 1024, createdAt: "2026-08-01T00:00:00.000Z" },
+  { id: "tonomo-video-link", url: "https://dropbox.com/s/tonomo", label: "Tonomo delivery", source: "tonomo" as const, position: 2048, createdAt: "2026-08-02T00:00:00.000Z" },
 ];
 const videoProps = { ...props, collection: "video" as const, assets: [], canManage: true };
+
+describe("Video link reorder neighbors", () => {
+  it("derives immediate neighbors for first, middle, and last moves and ignores no-ops", () => {
+    expect(reorderNeighbors(["a", "b", "c", "d"], "d", "a")).toMatchObject({ beforeId: null, afterId: "a" });
+    expect(reorderNeighbors(["a", "b", "c", "d"], "a", "c")).toMatchObject({ beforeId: "c", afterId: "d" });
+    expect(reorderNeighbors(["a", "b", "c", "d"], "a", "d")).toMatchObject({ beforeId: "d", afterId: null });
+    expect(reorderNeighbors(["a", "b"], "a", null)).toBeNull();
+    expect(reorderNeighbors(["a", "b"], "a", "a")).toBeNull();
+  });
+});
 
 describe("CollectionPanel version history deletion markup", () => {
   it("keeps delete buttons as siblings of links and targets each version independently", () => {
@@ -52,8 +71,10 @@ describe("CollectionPanel version history deletion wiring", () => {
   beforeEach(() => {
     host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
     window.confirm = vi.fn(() => true);
+    dnd.handlers.length = 0;
     apiGetMock.mockReset().mockImplementation((path) => Promise.resolve(path.includes("collection=video") ? { links: videoLinks() } : { links: [] }));
     apiPatchMock.mockReset();
+    apiPostMock.mockReset();
     apiPostWithStatusMock.mockReset();
   });
   afterEach(async () => { await act(async () => { root!.unmount(); await Promise.resolve(); }); root = null; host.remove(); });
@@ -67,6 +88,11 @@ describe("CollectionPanel version history deletion wiring", () => {
   async function typeInto(element: HTMLInputElement, value: string) {
     const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
     await act(async () => { setter.call(element, value); element.dispatchEvent(new Event("input", { bubbles: true })); await Promise.resolve(); });
+  }
+  async function dragEnd(activeId: string, overId: string | null) {
+    const handler = dnd.handlers.at(-1);
+    if (!handler) throw new Error("No DndContext drag-end handler was rendered");
+    await act(async () => { handler({ active: { id: activeId }, over: overId ? { id: overId } : null }); await Promise.resolve(); await new Promise((resolve) => window.setTimeout(resolve, 0)); });
   }
   function tile(hostElement: HTMLElement, text: string) {
     const result = [...hostElement.querySelectorAll<HTMLElement>(".collection-link")].find((element) => element.textContent?.includes(text));
@@ -88,8 +114,21 @@ describe("CollectionPanel version history deletion wiring", () => {
     expect(host.textContent).not.toContain("Edit");
   });
 
+  it("exposes Video-only labelled grips without changing anchors or manual controls", async () => {
+    await renderVideoPanel();
+    expect(host.querySelector<HTMLButtonElement>("button[aria-label='Reorder Walkthrough']")).not.toBeNull();
+    expect(host.querySelector<HTMLButtonElement>("button[aria-label='Reorder Tonomo delivery']")).not.toBeNull();
+    expect(tile(host, "Walkthrough").querySelector("a")?.getAttribute("href")).toBe("https://vimeo.com/manual");
+    expect([...tile(host, "Walkthrough").querySelectorAll("button")].some((button) => button.textContent === "Edit")).toBe(true);
+    expect([...tile(host, "Walkthrough").querySelectorAll("button")].some((button) => button.textContent === "Remove")).toBe(true);
+    await renderVideoPanel({ canManage: false });
+    expect(host.querySelector(".collection-link__grip")).toBeNull();
+    await act(async () => { root!.render(createElement(CollectionPanel, { ...props, collection: "floorplan", assets: [], canManage: true })); await Promise.resolve(); await Promise.resolve(); });
+    expect(host.querySelector(".collection-link__grip")).toBeNull();
+  });
+
   it("scopes stacked title/source tile structure to video anchors and plain links only", async () => {
-    const plain = { id: "plain-video-link", url: "http://example.test/not-safe", label: "Client portal", source: "manual" as const, createdAt: "2026-08-03T00:00:00.000Z" };
+    const plain = { id: "plain-video-link", url: "http://example.test/not-safe", label: "Client portal", source: "manual" as const, position: 3072, createdAt: "2026-08-03T00:00:00.000Z" };
     apiGetMock.mockImplementation((path) => Promise.resolve(path.includes("collection=video") ? { links: [...videoLinks(), plain] } : { links: videoLinks() }));
     await renderVideoPanel();
     const videoLinksParent = host.querySelector<HTMLElement>(".collection-links")!;
@@ -108,8 +147,9 @@ describe("CollectionPanel version history deletion wiring", () => {
 
   it("opens the inline editor and cancels without PATCH, restoring the original tile", async () => {
     await renderVideoPanel();
-    await click(linkTile(host, 0).querySelector<HTMLButtonElement>("button")!);
+    await click([...linkTile(host, 0).querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Edit")!);
     const editor = linkTile(host, 0).querySelector<HTMLFormElement>(".collection-link-editor")!;
+    expect(editor.parentElement?.querySelector(".collection-link__grip")).toBeNull();
     const inputs = editor.querySelectorAll<HTMLInputElement>("input");
     expect(inputs).toHaveLength(2);
     expect(inputs[0]!.value).toBe("Walkthrough");
@@ -126,10 +166,10 @@ describe("CollectionPanel version history deletion wiring", () => {
 
   it("PATCHes the selected link, replaces only that tile from the response, and leaves other links intact", async () => {
     const onChanged = vi.fn(async () => undefined);
-    const responseLink = { id: "manual-video-link", url: "https://vimeo.com/updated", label: "Final cut", source: "manual" as const, createdAt: "2026-08-01T00:00:00.000Z" };
+    const responseLink = { id: "manual-video-link", url: "https://vimeo.com/updated", label: "Final cut", source: "manual" as const, position: 1024, createdAt: "2026-08-01T00:00:00.000Z" };
     apiPatchMock.mockResolvedValueOnce(responseLink);
     await renderVideoPanel({ onChanged });
-    await click(linkTile(host, 0).querySelector<HTMLButtonElement>("button")!);
+    await click([...linkTile(host, 0).querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Edit")!);
     const editor = linkTile(host, 0).querySelector<HTMLFormElement>(".collection-link-editor")!;
     const inputs = editor.querySelectorAll<HTMLInputElement>("input");
     await typeInto(inputs[0]!, " Final cut ");
@@ -148,7 +188,7 @@ describe("CollectionPanel version history deletion wiring", () => {
   it("shows ApiError inline and retains the draft after a rejected save, including local HTTPS validation", async () => {
     apiPatchMock.mockRejectedValueOnce(new ApiError("A link with this URL already exists in this collection", 409));
     await renderVideoPanel();
-    await click(linkTile(host, 0).querySelector<HTMLButtonElement>("button")!);
+    await click([...linkTile(host, 0).querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Edit")!);
     const editor = linkTile(host, 0).querySelector<HTMLFormElement>(".collection-link-editor")!;
     const inputs = editor.querySelectorAll<HTMLInputElement>("input");
     await typeInto(inputs[0]!, "Collision draft");
@@ -170,7 +210,7 @@ describe("CollectionPanel version history deletion wiring", () => {
   it("adds a new link on a 201, clearing the form and toasting success", async () => {
     const onChanged = vi.fn(async () => undefined);
     const onToast = vi.fn();
-    const created = { id: "new-video-link", url: "https://vimeo.com/new", label: "New cut", source: "manual" as const, createdAt: "2026-08-04T00:00:00.000Z" };
+    const created = { id: "new-video-link", url: "https://vimeo.com/new", label: "New cut", source: "manual" as const, position: 3072, createdAt: "2026-08-04T00:00:00.000Z" };
     apiPostWithStatusMock.mockResolvedValueOnce({ data: created, status: 201 });
     await renderVideoPanel({ onChanged, onToast });
     const form = host.querySelector<HTMLFormElement>(".collection-link-form:not(.collection-link-editor)")!;
@@ -211,7 +251,7 @@ describe("CollectionPanel version history deletion wiring", () => {
     const onChanged = vi.fn(async () => undefined);
     const onToast = vi.fn();
     apiGetMock.mockImplementation((path) => Promise.resolve(path.includes("collection=video") ? { links: [videoLinks()[1]] } : { links: [] })); // only "Tonomo delivery" preloaded
-    const concurrentlyCreated = { id: "elsewhere-created-link", url: "https://vimeo.com/elsewhere", label: "Elsewhere", source: "manual" as const, createdAt: "2026-08-05T00:00:00.000Z" };
+    const concurrentlyCreated = { id: "elsewhere-created-link", url: "https://vimeo.com/elsewhere", label: "Elsewhere", source: "manual" as const, position: 3072, createdAt: "2026-08-05T00:00:00.000Z" };
     apiPostWithStatusMock.mockResolvedValueOnce({ data: concurrentlyCreated, status: 200 });
     await renderVideoPanel({ onChanged, onToast });
     const form = host.querySelector<HTMLFormElement>(".collection-link-form:not(.collection-link-editor)")!;
@@ -224,6 +264,71 @@ describe("CollectionPanel version history deletion wiring", () => {
     expect(linkTile(host, 1).textContent).toContain("Elsewhere");
     expect(onToast).toHaveBeenCalledWith("This link is already in the list.", "error");
     expect(onChanged).not.toHaveBeenCalled();
+  });
+
+  it("POSTs the immediate reorder neighbors and reloads the server's canonical order instead of reordering locally", async () => {
+    const initial = [...videoLinks(), { id: "concurrently-moved-link", url: "https://vimeo.com/concurrent", label: "Concurrent cut", source: "manual" as const, position: 3072, createdAt: "2026-08-03T00:00:00.000Z" }];
+    const canonical = [
+      { ...initial[2]!, position: 1024 },
+      { ...initial[0]!, position: 2048 },
+      { ...initial[1]!, position: 3072 },
+    ];
+    let resolveReorder!: (value: unknown) => void;
+    const reorderResponse = new Promise<unknown>((resolve) => { resolveReorder = resolve; });
+    apiGetMock.mockReset()
+      .mockResolvedValueOnce({ links: initial })
+      .mockResolvedValueOnce({ links: canonical });
+    apiPostMock.mockReturnValueOnce(reorderResponse);
+    await renderVideoPanel();
+
+    await dragEnd("tonomo-video-link", "manual-video-link");
+
+    expect(apiPostMock).toHaveBeenCalledWith("/api/projects/project/links/tonomo-video-link/reorder", { beforeId: null, afterId: "manual-video-link" });
+    expect(apiGetMock).toHaveBeenCalledTimes(1);
+    expect(linkTile(host, 0).textContent).toContain("Walkthrough");
+    expect(linkTile(host, 1).textContent).toContain("Tonomo delivery");
+    expect(linkTile(host, 2).textContent).toContain("Concurrent cut");
+
+    await act(async () => { resolveReorder({ position: 1024 }); await Promise.resolve(); await Promise.resolve(); await new Promise((resolve) => window.setTimeout(resolve, 0)); });
+
+    expect(apiGetMock).toHaveBeenCalledTimes(2);
+    expect(linkTile(host, 0).textContent).toContain("Concurrent cut");
+    expect(linkTile(host, 1).textContent).toContain("Walkthrough");
+    expect(linkTile(host, 2).textContent).toContain("Tonomo delivery");
+  });
+
+  it("reloads canonical links and shows a retryable error when reorder conflicts", async () => {
+    const initial = videoLinks();
+    const canonical = [
+      { ...initial[1]!, position: 1024 },
+      { ...initial[0]!, position: 2048 },
+    ];
+    const onToast = vi.fn();
+    apiGetMock.mockReset()
+      .mockResolvedValueOnce({ links: initial })
+      .mockResolvedValueOnce({ links: canonical });
+    apiPostMock.mockRejectedValueOnce(new ApiError("Link order changed; reload and try again", 409));
+    await renderVideoPanel({ onToast });
+
+    await dragEnd("tonomo-video-link", "manual-video-link");
+
+    expect(apiGetMock).toHaveBeenCalledTimes(2);
+    expect(linkTile(host, 0).textContent).toContain("Tonomo delivery");
+    expect(linkTile(host, 1).textContent).toContain("Walkthrough");
+    expect(onToast).toHaveBeenCalledWith("Link order changed; reload and try again", "error");
+  });
+
+  it("retains the current links and shows an ordinary error for a non-conflict reorder failure", async () => {
+    const onToast = vi.fn();
+    apiPostMock.mockRejectedValueOnce(new ApiError("Reorder service unavailable", 500));
+    await renderVideoPanel({ onToast });
+
+    await dragEnd("tonomo-video-link", "manual-video-link");
+
+    expect(apiGetMock).toHaveBeenCalledTimes(1);
+    expect(linkTile(host, 0).textContent).toContain("Walkthrough");
+    expect(linkTile(host, 1).textContent).toContain("Tonomo delivery");
+    expect(onToast).toHaveBeenCalledWith("Reorder service unavailable", "error");
   });
 
   it("targets the clicked version's own id, not the other version's, even though both render the same 'Delete' label", async () => {

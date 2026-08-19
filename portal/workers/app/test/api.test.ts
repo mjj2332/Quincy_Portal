@@ -279,7 +279,7 @@ async function jsonRequest(path: string, cookie: string, method: "GET" | "POST" 
 
 const testExecutionContext = { waitUntil: () => undefined, passThroughOnException: () => undefined, props: undefined } as unknown as ExecutionContext;
 
-async function requestWithDbBatchFault(path: string, cookie: string, body: unknown, fault: (db: D1Database) => Promise<void>) {
+async function requestWithDbBatchFault(path: string, cookie: string, body: unknown, fault: (db: D1Database) => Promise<void>, method: "POST" | "PATCH" = "PATCH") {
   let injected = false;
   const faultDb = new Proxy(authEnv.DB, {
     get(target, property, receiver) {
@@ -295,11 +295,38 @@ async function requestWithDbBatchFault(path: string, cookie: string, body: unkno
   }) as unknown as D1Database;
   return app.fetch(
     new Request(`https://portal.test${path}`, {
-      method: "PATCH",
+      method,
       headers: { cookie, origin: authEnv.APP_ORIGIN, "content-type": "application/json" },
       body: JSON.stringify(body),
     }),
     { ...authEnv, DB: faultDb },
+    testExecutionContext,
+  );
+}
+
+async function requestWithRebaseBindSpy(path: string, cookie: string, body: unknown, bindCounts: number[]) {
+  const spyDb = new Proxy(authEnv.DB, {
+    get(target, property, receiver) {
+      if (property !== "prepare") return Reflect.get(target, property, receiver);
+      return (sql: string) => {
+        const statement = target.prepare(sql);
+        if (!sql.includes("UPDATE collection_links SET position = (SELECT CAST(json_extract(value, '$.newPosition')")) return statement;
+        return new Proxy(statement, {
+          get(statementTarget, statementProperty, statementReceiver) {
+            if (statementProperty !== "bind") return Reflect.get(statementTarget, statementProperty, statementReceiver);
+            return (...values: unknown[]) => { bindCounts.push(values.length); return statementTarget.bind(...values); };
+          },
+        }) as unknown as D1PreparedStatement;
+      };
+    },
+  }) as unknown as D1Database;
+  return app.fetch(
+    new Request(`https://portal.test${path}`, {
+      method: "POST",
+      headers: { cookie, origin: authEnv.APP_ORIGIN, "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+    { ...authEnv, DB: spyDb },
     testExecutionContext,
   );
 }
@@ -2508,7 +2535,7 @@ describe("staff app API", () => {
   });
 
   it("manages and edits manual collection links while preserving immutable Tonomo links", async () => {
-    type LinkRow = { id: string; collection_id: string; url: string; label: string | null; source: string; created_at: number; updated_at: number };
+    type LinkRow = { id: string; collection_id: string; url: string; label: string | null; source: string; position: number; created_at: number; updated_at: number };
     type UpdateAudit = { actor_id: string | null; action: string; target_type: string; target_id: string | null; meta_json: string | null };
     const adminCookie = await sessionCookie(adminToken);
     const created = await SELF.fetch("https://portal.test/api/projects", { method: "POST", headers: { cookie: adminCookie, "content-type": "application/json" }, body: JSON.stringify({ street: `Link collection ${crypto.randomUUID()}`, orderedServices: ["video"], photographerUserIds: [firstPhotographerId] }) });
@@ -2517,9 +2544,9 @@ describe("staff app API", () => {
     const addLink = async (projectId: string, collection: "video" | "floorplan" | "copy", url: string, label?: string) => {
       const response = await SELF.fetch(`https://portal.test/api/projects/${projectId}/links`, { method: "POST", headers: { cookie: adminCookie, "content-type": "application/json" }, body: JSON.stringify({ collection, url, ...(label === undefined ? {} : { label }) }) });
       expect(response.status).toBe(201);
-      return response.json() as Promise<{ id: string; url: string; label: string | null; source: string; createdAt: string }>;
+      return response.json() as Promise<{ id: string; url: string; label: string | null; source: string; position: number; createdAt: string }>;
     };
-    const readLink = (linkId: string) => database.DB.prepare("SELECT id, collection_id, url, label, source, created_at, updated_at FROM collection_links WHERE id = ?").bind(linkId).first<LinkRow>();
+    const readLink = (linkId: string) => database.DB.prepare("SELECT id, collection_id, url, label, source, position, created_at, updated_at FROM collection_links WHERE id = ?").bind(linkId).first<LinkRow>();
     const updateAudits = (linkId: string) => database.DB.prepare("SELECT actor_id, action, target_type, target_id, meta_json FROM audit_log WHERE action = 'collection_link.update' AND target_id = ? ORDER BY rowid").bind(linkId).all<UpdateAudit>();
     const expectUnchanged = async (projectId: string, linkId: string, body: unknown, status: number, cookie = adminCookie) => {
       const before = await readLink(linkId); const beforeAudits = (await updateAudits(linkId)).results.length;
@@ -2541,7 +2568,7 @@ describe("staff app API", () => {
     await database.DB.prepare("UPDATE collection_links SET created_at = ?, updated_at = ? WHERE id = ?").bind(fixedCreatedAt, 1, manual.id).run();
     const firstPatch = await patchLink(project.id, manual.id, { url: updatedUrl, label: "Final walkthrough" });
     expect(firstPatch.status).toBe(200);
-    await expect(firstPatch.json()).resolves.toEqual({ id: manual.id, url: updatedUrl, label: "Final walkthrough", source: "manual", createdAt: new Date(fixedCreatedAt).toISOString() });
+    await expect(firstPatch.json()).resolves.toEqual({ id: manual.id, url: updatedUrl, label: "Final walkthrough", source: "manual", position: manual.position, createdAt: new Date(fixedCreatedAt).toISOString() });
     const firstSaved = await readLink(manual.id);
     expect(firstSaved).toMatchObject({ id: manual.id, url: updatedUrl, label: "Final walkthrough", source: "manual", created_at: fixedCreatedAt });
     expect(firstSaved!.updated_at).toBeGreaterThan(1);
@@ -2554,7 +2581,7 @@ describe("staff app API", () => {
     await database.DB.prepare("UPDATE collection_links SET updated_at = ? WHERE id = ?").bind(1, manual.id).run();
     const clearLabel = await patchLink(project.id, manual.id, { url: updatedUrl });
     expect(clearLabel.status).toBe(200);
-    await expect(clearLabel.json()).resolves.toMatchObject({ id: manual.id, url: updatedUrl, label: null, source: "manual", createdAt: new Date(fixedCreatedAt).toISOString() });
+    await expect(clearLabel.json()).resolves.toMatchObject({ id: manual.id, url: updatedUrl, label: null, source: "manual", position: manual.position, createdAt: new Date(fixedCreatedAt).toISOString() });
     expect((await readLink(manual.id))!.label).toBeNull();
     expect((await updateAudits(manual.id)).results).toHaveLength(2);
     expect(JSON.parse((await updateAudits(manual.id)).results[1]!.meta_json!)).toEqual({ projectId: project.id, previous: { url: updatedUrl, label: "Final walkthrough" }, updated: { url: updatedUrl, label: null } });
@@ -2663,6 +2690,145 @@ describe("staff app API", () => {
     const nested = Object.assign(new Error("Failed query"), { cause: new Error("UNIQUE constraint failed: collection_links.collection_id, collection_links.url") });
     expect(collectionLinkUrlConflict(nested)).toBe(true);
     expect(collectionLinkUrlConflict(new Error("UNIQUE constraint failed: other_table.value"))).toBe(false);
+  });
+
+  it("reorders mixed Video links with guarded canonical positions and rejects stale snapshots", async () => {
+    const adminCookie = await sessionCookie(adminToken);
+    const created = await SELF.fetch("https://portal.test/api/projects", { method: "POST", headers: { cookie: adminCookie, "content-type": "application/json" }, body: JSON.stringify({ street: `Reorder collection ${crypto.randomUUID()}`, orderedServices: ["video"], photographerUserIds: [firstPhotographerId] }) });
+    expect(created.status).toBe(201); const project = await created.json() as { id: string };
+    const add = async (url: string) => {
+      const response = await SELF.fetch(`https://portal.test/api/projects/${project.id}/links`, { method: "POST", headers: { cookie: adminCookie, "content-type": "application/json" }, body: JSON.stringify({ collection: "video", url }) });
+      expect(response.status).toBe(201); return response.json() as Promise<{ id: string; position: number }>;
+    };
+    const first = await add("https://example.test/first"); const second = await add("https://example.test/second");
+    const video = await database.DB.prepare("SELECT id, received_count FROM collections WHERE project_id = ? AND kind = 'video'").bind(project.id).first<{ id: string; received_count: number }>();
+    const tonomoId = crypto.randomUUID(); const now = Date.now();
+    await database.DB.prepare("INSERT INTO collection_links (id, collection_id, url, label, source, position, created_at, updated_at) VALUES (?, ?, ?, 'Tonomo', 'tonomo', 3072, ?, ?)").bind(tonomoId, video!.id, "https://example.test/tonomo", now, now).run();
+    await database.DB.prepare("UPDATE collections SET received_count = 3 WHERE id = ?").bind(video!.id).run();
+    const reorder = (linkId: string, beforeId: string | null, afterId: string | null) => SELF.fetch(`https://portal.test/api/projects/${project.id}/links/${linkId}/reorder`, { method: "POST", headers: { cookie: adminCookie, "content-type": "application/json" }, body: JSON.stringify({ beforeId, afterId }) });
+    const middle = await reorder(tonomoId, first.id, second.id);
+    expect(middle.status).toBe(200); await expect(middle.json()).resolves.toEqual({ position: 1536 });
+    const listed = await SELF.fetch(`https://portal.test/api/projects/${project.id}/links?collection=video`, { headers: { cookie: adminCookie } });
+    await expect(listed.json()).resolves.toMatchObject({ links: [{ id: first.id, position: 1024 }, { id: tonomoId, position: 1536 }, { id: second.id, position: 2048 }] });
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE action = 'collection_link.reorder' AND target_id = ?").bind(tonomoId).first()).toEqual({ count: 1 });
+    expect(await database.DB.prepare("SELECT url, label, source FROM collection_links WHERE id = ?").bind(tonomoId).first()).toEqual({ url: "https://example.test/tonomo", label: "Tonomo", source: "tonomo" });
+    expect(await database.DB.prepare("SELECT received_count FROM collections WHERE id = ?").bind(video!.id).first()).toEqual({ received_count: 3 });
+    expect((await reorder(tonomoId, second.id, null)).status).toBe(200);
+    expect((await reorder(tonomoId, null, first.id)).status).toBe(200);
+    expect((await reorder(tonomoId, first.id, tonomoId)).status).toBe(400);
+    expect((await reorder(tonomoId, first.id, first.id)).status).toBe(400);
+    expect((await SELF.fetch(`https://portal.test/api/projects/${project.id}/links/${tonomoId}`, { method: "PATCH", headers: { cookie: adminCookie, "content-type": "application/json" }, body: JSON.stringify({ url: "https://example.test/no", label: "No" }) })).status).toBe(409);
+    const stale = await requestWithDbBatchFault(`/api/projects/${project.id}/links/${first.id}/reorder`, adminCookie, { beforeId: null, afterId: second.id }, async (db) => {
+      await db.prepare("UPDATE collection_links SET position = 9999 WHERE id = ?").bind(second.id).run();
+    }, "POST");
+    expect(stale.status).toBe(409);
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE action = 'collection_link.reorder' AND target_id = ?").bind(first.id).first()).toEqual({ count: 0 });
+
+    // Equal adjacent positions can arrive from concurrent appends. A single JSON-snapshot UPDATE
+    // rebases the mixed-source collection atomically instead of issuing one update per row.
+    await database.DB.prepare("UPDATE collection_links SET position = 1024 WHERE collection_id = ?").bind(video!.id).run();
+    const tiedRows = await database.DB.prepare("SELECT id FROM collection_links WHERE collection_id = ? ORDER BY position, id").bind(video!.id).all<{ id: string }>();
+    const rebase = await reorder(tiedRows.results[0]!.id, tiedRows.results[1]!.id, tiedRows.results[2]!.id);
+    expect(rebase.status).toBe(200);
+    expect(await database.DB.prepare("SELECT position FROM collection_links WHERE collection_id = ? ORDER BY position, id").bind(video!.id).all()).toMatchObject({ results: [{ position: 1024 }, { position: 2048 }, { position: 3072 }] });
+  });
+
+  it("rebases tied Video links with a constant parameter count independent of row count", async () => {
+    const adminCookie = await sessionCookie(adminToken);
+    const createTiedCollection = async (count: number) => {
+      const created = await SELF.fetch("https://portal.test/api/projects", { method: "POST", headers: { cookie: adminCookie, "content-type": "application/json" }, body: JSON.stringify({ street: `Bound rebase ${count} ${crypto.randomUUID()}`, orderedServices: ["video"], photographerUserIds: [firstPhotographerId] }) });
+      expect(created.status).toBe(201); const project = await created.json() as { id: string };
+      const collection = await database.DB.prepare("SELECT id FROM collections WHERE project_id = ? AND kind = 'video'").bind(project.id).first<{ id: string }>();
+      const now = Date.now(); const ids = Array.from({ length: count }, () => crypto.randomUUID());
+      await database.DB.batch(ids.map((id, index) => database.DB.prepare("INSERT INTO collection_links (id, collection_id, url, label, source, position, created_at, updated_at) VALUES (?, ?, ?, ?, 'manual', 1024, ?, ?)").bind(id, collection!.id, `https://example.test/bound-${count}-${index}`, `Bound ${index}`, now, now)));
+      return { project, collection: collection!, ids: (await database.DB.prepare("SELECT id FROM collection_links WHERE collection_id = ? ORDER BY position, id").bind(collection!.id).all<{ id: string }>()).results };
+    };
+    const small = await createTiedCollection(3); const large = await createTiedCollection(24);
+    const bindCounts: number[] = [];
+    const reorder = async ({ project, ids }: { project: { id: string }; ids: { id: string }[] }) => requestWithRebaseBindSpy(`/api/projects/${project.id}/links/${ids[0]!.id}/reorder`, adminCookie, { beforeId: ids[1]!.id, afterId: ids[2]!.id }, bindCounts);
+
+    expect((await reorder(small)).status).toBe(200);
+    expect((await reorder(large)).status).toBe(200);
+    expect(bindCounts).toHaveLength(2);
+    expect(bindCounts[1]).toBe(bindCounts[0]);
+    expect(bindCounts[0]).toBeGreaterThan(0);
+    const ordered = await database.DB.prepare("SELECT id, position FROM collection_links WHERE collection_id = ? ORDER BY position, id").bind(large.collection.id).all<{ id: string; position: number }>();
+    expect(ordered.results).toEqual([
+      { id: large.ids[1]!.id, position: 1024 },
+      { id: large.ids[0]!.id, position: 2048 },
+      ...large.ids.slice(2).map((row, index) => ({ id: row.id, position: (index + 3) * 1024 })),
+    ]);
+  });
+
+  it("rejects a tied-rebase race atomically without changing positions or writing an audit record", async () => {
+    const adminCookie = await sessionCookie(adminToken);
+    const created = await SELF.fetch("https://portal.test/api/projects", { method: "POST", headers: { cookie: adminCookie, "content-type": "application/json" }, body: JSON.stringify({ street: `Tied rebase race ${crypto.randomUUID()}`, orderedServices: ["video"], photographerUserIds: [firstPhotographerId] }) });
+    expect(created.status).toBe(201); const project = await created.json() as { id: string };
+    const video = await database.DB.prepare("SELECT id FROM collections WHERE project_id = ? AND kind = 'video'").bind(project.id).first<{ id: string }>();
+    const now = Date.now(); const ids = Array.from({ length: 3 }, () => crypto.randomUUID());
+    await database.DB.batch(ids.map((id, index) => database.DB.prepare("INSERT INTO collection_links (id, collection_id, url, label, source, position, created_at, updated_at) VALUES (?, ?, ?, ?, 'manual', 1024, ?, ?)").bind(id, video!.id, `https://example.test/tied-race-${index}`, null, now, now)));
+    const orderedIds = (await database.DB.prepare("SELECT id FROM collection_links WHERE collection_id = ? ORDER BY position, id").bind(video!.id).all<{ id: string }>()).results.map((row) => row.id);
+    let positionsAtUpdate: { id: string; position: number }[] = [];
+    const response = await requestWithDbBatchFault(`/api/projects/${project.id}/links/${orderedIds[0]!}/reorder`, adminCookie, { beforeId: orderedIds[1]!, afterId: orderedIds[2]! }, async (db) => {
+      await db.prepare("INSERT INTO collection_links (id, collection_id, url, label, source, position, created_at, updated_at) VALUES (?, ?, ?, NULL, 'manual', 1024, ?, ?)").bind(crypto.randomUUID(), video!.id, "https://example.test/tied-race-concurrent", now, now).run();
+      positionsAtUpdate = (await db.prepare("SELECT id, position FROM collection_links WHERE collection_id = ? ORDER BY position, id").bind(video!.id).all<{ id: string; position: number }>()).results;
+    }, "POST");
+
+    expect(response.status).toBe(409);
+    expect((await database.DB.prepare("SELECT id, position FROM collection_links WHERE collection_id = ? ORDER BY position, id").bind(video!.id).all<{ id: string; position: number }>()).results).toEqual(positionsAtUpdate);
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE action = 'collection_link.reorder' AND target_id = ?").bind(orderedIds[0]!).first()).toEqual({ count: 0 });
+  });
+
+  it("validates Video reorder inputs, access, scope, and stale non-adjacent neighbor pairs", async () => {
+    const adminCookie = await sessionCookie(adminToken); const photographerCookie = await sessionCookie(firstPhotographerToken);
+    const created = await SELF.fetch("https://portal.test/api/projects", { method: "POST", headers: { cookie: adminCookie, "content-type": "application/json" }, body: JSON.stringify({ street: `Reorder validation ${crypto.randomUUID()}`, orderedServices: ["video"], photographerUserIds: [firstPhotographerId] }) });
+    expect(created.status).toBe(201); const project = await created.json() as { id: string };
+    const add = async (collection: "video" | "floorplan" | "copy", suffix: string) => {
+      const response = await SELF.fetch(`https://portal.test/api/projects/${project.id}/links`, { method: "POST", headers: { cookie: adminCookie, "content-type": "application/json" }, body: JSON.stringify({ collection, url: `https://example.test/${suffix}` }) });
+      expect(response.status).toBe(201); return response.json() as Promise<{ id: string }>;
+    };
+    const first = await add("video", "validation-first"); const second = await add("video", "validation-second"); const third = await add("video", "validation-third"); const fourth = await add("video", "validation-fourth");
+    const floorplan = await add("floorplan", "validation-floorplan"); const copy = await add("copy", "validation-copy");
+    const reorder = (linkId: string, body: unknown, cookie = adminCookie) => SELF.fetch(`https://portal.test/api/projects/${project.id}/links/${linkId}/reorder`, { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify(body) });
+    expect((await reorder(first.id, {})).status).toBe(400);
+    expect((await reorder(first.id, { beforeId: "not-a-uuid", afterId: null })).status).toBe(400);
+    expect((await reorder(first.id, { beforeId: null, afterId: null }, photographerCookie)).status).toBe(403);
+    expect((await reorder(first.id, { beforeId: crypto.randomUUID(), afterId: null })).status).toBe(404);
+    // Both-null claims "I'm the only link left" — reject it against this 4-link collection
+    // instead of only exercising both-null via the 403/404 cases above.
+    expect((await reorder(first.id, { beforeId: null, afterId: null })).status).toBe(409);
+    const otherCreated = await SELF.fetch("https://portal.test/api/projects", { method: "POST", headers: { cookie: adminCookie, "content-type": "application/json" }, body: JSON.stringify({ street: `Cross-project neighbor ${crypto.randomUUID()}`, orderedServices: ["video"], photographerUserIds: [firstPhotographerId] }) });
+    expect(otherCreated.status).toBe(201); const otherProject = await otherCreated.json() as { id: string };
+    const otherLinkResponse = await SELF.fetch(`https://portal.test/api/projects/${otherProject.id}/links`, { method: "POST", headers: { cookie: adminCookie, "content-type": "application/json" }, body: JSON.stringify({ collection: "video", url: "https://example.test/cross-project-neighbor" }) });
+    expect(otherLinkResponse.status).toBe(201); const otherLink = await otherLinkResponse.json() as { id: string };
+    expect((await reorder(first.id, { beforeId: otherLink.id, afterId: null })).status).toBe(404);
+    expect((await reorder(floorplan.id, { beforeId: null, afterId: null })).status).toBe(404);
+    expect((await reorder(copy.id, { beforeId: null, afterId: null })).status).toBe(404);
+    await database.DB.prepare("UPDATE collection_links SET position = 1536 WHERE id = ?").bind(third.id).run();
+    const stale = await reorder(fourth.id, { beforeId: first.id, afterId: second.id });
+    expect(stale.status).toBe(409);
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE action = 'collection_link.reorder' AND target_id = ?").bind(fourth.id).first()).toEqual({ count: 0 });
+  });
+
+  it("rejects an ordinary guarded-update race without changing any positions or writing an audit record", async () => {
+    const adminCookie = await sessionCookie(adminToken);
+    const created = await SELF.fetch("https://portal.test/api/projects", { method: "POST", headers: { cookie: adminCookie, "content-type": "application/json" }, body: JSON.stringify({ street: `Ordinary reorder race ${crypto.randomUUID()}`, orderedServices: ["video"], photographerUserIds: [firstPhotographerId] }) });
+    expect(created.status).toBe(201); const project = await created.json() as { id: string };
+    const add = async (suffix: string) => {
+      const response = await SELF.fetch(`https://portal.test/api/projects/${project.id}/links`, { method: "POST", headers: { cookie: adminCookie, "content-type": "application/json" }, body: JSON.stringify({ collection: "video", url: `https://example.test/ordinary-race-${suffix}` }) });
+      expect(response.status).toBe(201); return response.json() as Promise<{ id: string }>;
+    };
+    const first = await add("first"); await add("second"); const third = await add("third");
+    const video = await database.DB.prepare("SELECT id FROM collections WHERE project_id = ? AND kind = 'video'").bind(project.id).first<{ id: string }>();
+    let positionsAtUpdate: { id: string; position: number }[] = [];
+    const response = await requestWithDbBatchFault(`/api/projects/${project.id}/links/${third.id}/reorder`, adminCookie, { beforeId: null, afterId: first.id }, async (db) => {
+      await db.prepare("INSERT INTO collection_links (id, collection_id, url, label, source, position, created_at, updated_at) VALUES (?, ?, ?, NULL, 'manual', 4096, ?, ?)").bind(crypto.randomUUID(), video!.id, "https://example.test/ordinary-race-concurrent", Date.now(), Date.now()).run();
+      positionsAtUpdate = (await db.prepare("SELECT id, position FROM collection_links WHERE collection_id = ? ORDER BY position, id").bind(video!.id).all<{ id: string; position: number }>()).results;
+    }, "POST");
+
+    expect(response.status).toBe(409);
+    expect((await database.DB.prepare("SELECT id, position FROM collection_links WHERE collection_id = ? ORDER BY position, id").bind(video!.id).all<{ id: string; position: number }>()).results).toEqual(positionsAtUpdate);
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE action = 'collection_link.reorder' AND target_id = ?").bind(third.id).first()).toEqual({ count: 0 });
   });
 
   const documentDirectIt = process.env.DOCUMENT_DIRECT_TEST === "true" ? it : it.skip;
