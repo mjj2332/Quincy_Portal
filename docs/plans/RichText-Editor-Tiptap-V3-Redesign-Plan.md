@@ -1,6 +1,32 @@
 # Rich-text editor Tiptap v3 redesign plan
 
-**Status: Phase 1 IMPLEMENTED — built by Terra, fresh Terra diff review (approved, one commit-
+**Status: Phase 2A IMPLEMENTED — built by Terra at max effort (this sub-deploy touches the shared
+rich-text trust boundary, routed per this plan's own Routing and review section through the
+"Security, auth, payments, migrations" tier), max-effort fresh-Terra diff review (found and fixed a
+real gap: the Link dialog claimed `aria-modal="true"` but wasn't actually focus-contained, plus
+several under-tested paths), a Terra final focused pass (found two still-missing test assertions,
+fixed), Opus final-draft review (approved — pinned all claimed fixes with 16 mutation tests, proved
+zero Phase 2B/2C leakage by mounting the component and inspecting the live ProseMirror schema, and
+proved `normalizeRichTextMentionLabels`'s rewritten attrs-preservation by executing it against
+constructed heading/taskItem-shaped nodes) plus several of its non-blocking cleanup notes applied
+directly (an accidental export reverted, dead code removed, a redundant focus-restore timeout
+dropped, `aria-pressed` no longer emitted on non-toggle buttons) → this session's §5 gate
+(independently re-ran the full verify sequence — 658 tests green across every workspace plus the 50
+in the `packages/shared` suite the root script skips) → **a live manual browser walkthrough that
+caught a real bug Opus had flagged as worth checking but hadn't itself confirmed**: applying a link
+at a collapsed cursor left DOM focus on the toolbar trigger button instead of the editor, so nearly
+all subsequent keystrokes were silently dropped — not caught by the DOM/happy-dom test suite, which
+doesn't model real browser focus behavior precisely enough. Fixed (Apply/Remove now explicitly
+`.focus()` the editor and restore the ProseMirror selection before mutating; only Cancel/Escape/×
+return focus to the trigger) and re-verified live against the running dev server — typed text
+immediately after Apply now correctly inherits the link mark and persists correctly — before this
+sub-deploy was committed. Committed `ee1faad`, deployed to production (`quincy-portal-app` version
+`2b1feeff-f789-45a7-922f-c07ea2b88fd3`), 2026-08-20. Passive production verification: new 9-control
+toolbar renders, all requests 200, zero console errors.
+
+---
+
+**Prior status: Phase 1 IMPLEMENTED — built by Terra, fresh Terra diff review (approved, one commit-
 hygiene note about unrelated pre-existing dirty files, no code findings), Opus final-draft review
 (approved — mutation-tested each of the four fixes by removing it and confirming the corresponding
 test fails, and inspected the live ProseMirror schema at runtime to prove zero Phase 2 leakage) →
