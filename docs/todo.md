@@ -7,7 +7,23 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
 > counts, full diagnostic transcripts) has been cut in favor of what/when/deploy-state. See
 > `docs/lessons.md` for incident mechanics, and `docs/reviews/` for full QA-sweep detail.
 
-## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29, seed-admin UUID migration 2026-07-29, notification dismiss + stalled-guard 2026-07-30, download selection 2026-08-04, notice-board rich text + mentions 2026-08-17, project comments + collaboration panel 2026-08-17, project subtasks/checklist 2026-08-17, collaboration panel relocated to Project page 2026-08-17, collaboration panel UI fixes + due-time reminder 2026-08-17, notification click navigation 2026-08-17, comment ordering + Shift+Enter soft breaks 2026-08-17)
+## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29, seed-admin UUID migration 2026-07-29, notification dismiss + stalled-guard 2026-07-30, download selection 2026-08-04, notice-board rich text + mentions 2026-08-17, project comments + collaboration panel 2026-08-17, project subtasks/checklist 2026-08-17, collaboration panel relocated to Project page 2026-08-17, collaboration panel UI fixes + due-time reminder 2026-08-17, notification click navigation 2026-08-17, comment ordering + Shift+Enter soft breaks 2026-08-17, mention-email content 2026-08-20)
+
+- **Mention-triggered emails for project comments and notice-board posts now carry the author's
+  name and a 400-char, surrogate-safe excerpt of the actual comment/post body, deployed 2026-08-20
+  (`docs/plans/implemented/Comment-Notification-Email-Content-Plan.md`, commit `5b55d64`, no
+  migration).** Previously every mention email used a generic "You were mentioned..." line
+  regardless of scope. HTML output goes through a single-pass `escapeHtml` helper in `@quincy/db`;
+  the plain-text excerpt is truncated in `@quincy/shared`'s new `truncateForEmail` before escaping,
+  never after. The project-comment email keeps its existing "View project" link; notice-board
+  mentions structurally never show one — a fresh Terra diff review caught and fixed a case where
+  the notice-board formatter would have shown that link block had any future caller passed one, even
+  though no live caller does today. The in-app notification bell is unchanged (email-only
+  enrichment, user-confirmed scope). Went through the full plan pipeline (two Terra plan
+  self-review rounds, two Opus plan-tier review rounds) before any code was written, then build →
+  fresh-Terra-diff-review → Terra fix round → Terra final focused pass → Opus final-draft review
+  (approved after mutation-testing the new tests) → an independent §5 gate re-running the full
+  verify sequence, including the two Worker test suites Codex's own sandbox cannot run.
 
 - **Project comments now show newest-first, and Shift+Enter inserts a soft line break inside
   bullet/numbered list items in both project comments and the notice board, deployed 2026-08-17
