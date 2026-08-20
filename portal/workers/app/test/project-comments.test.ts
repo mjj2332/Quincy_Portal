@@ -17,6 +17,7 @@ declare const __PORTAL_MIGRATION_SQL__: string; declare const __PORTAL_SEED_SQL_
 
 const doc = (text: string) => ({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text }] }] });
 const mentionDoc = (id: string, label: string) => ({ type: "doc", content: [{ type: "paragraph", content: [{ type: "mention", attrs: { id, label } }] }] });
+const markedDoc = (type: "underline" | "strike") => ({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: `${type} text`, marks: [{ type }] }] }] });
 async function executeSql(sql: string) { for (const chunk of sql.split("--> statement-breakpoint")) for (const statement of chunk.split("\n").filter((line) => !line.trim().startsWith("--")).join("\n").split(";")) { const flat = statement.replace(/\s+/g, " ").trim(); if (flat) await database.DB.exec(`${flat};`); } }
 async function cookie(token: string) { const context = await createAuth(baseEnv).$context; return `${context.authCookies.sessionToken.name}=${token}.${await makeSignature(token, authSecret)}`; }
 async function request(path: string, token: string, method: "GET" | "POST" | "PATCH" | "DELETE" = "GET", body?: unknown) { const headers = new Headers({ cookie: await cookie(token) }); if (body !== undefined) headers.set("content-type", "application/json"); if (method !== "GET") headers.set("origin", baseEnv.APP_ORIGIN); return workerSelf.fetch(`https://portal.test${path}`, { method, headers, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }); }
@@ -89,5 +90,19 @@ describe("project comments API", () => {
     expect((await request(`/api/mentionable-users?projectId=${projectId}`, "comments-editor-token")).status).toBe(200);
     expect((await request(`/api/mentionable-users?projectId=${crypto.randomUUID()}`, "comments-editor-token")).status).toBe(403);
     expect((await request(`/api/mentionable-users?projectId=${crypto.randomUUID()}`, "comments-admin-token")).status).toBe(404);
+  });
+
+  it("stores underline and strike through both POST and author PATCH, rejecting malformed mark attributes", async () => {
+    for (const type of ["underline", "strike"] as const) {
+      const content = markedDoc(type);
+      const created = await request(`/api/projects/${projectId}/comments`, "comments-editor-token", "POST", { content });
+      expect(created.status).toBe(201); const comment = await created.json() as { id: string; content: unknown };
+      expect(comment.content).toEqual(content);
+      const edited = await request(`/api/projects/${projectId}/comments/${comment.id}`, "comments-editor-token", "PATCH", { content });
+      expect(edited.status).toBe(200); expect((await edited.json() as { content: unknown }).content).toEqual(content);
+      const malformed = { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Bad", marks: [{ type, attrs: {} }] }] }] };
+      expect((await request(`/api/projects/${projectId}/comments`, "comments-editor-token", "POST", { content: malformed })).status).toBe(400);
+      expect((await request(`/api/projects/${projectId}/comments/${comment.id}`, "comments-editor-token", "PATCH", { content: malformed })).status).toBe(400);
+    }
   });
 });

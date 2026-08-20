@@ -14,6 +14,7 @@ declare const __PORTAL_MIGRATION_SQL__: string; declare const __PORTAL_SEED_SQL_
 
 const doc = (content: Array<Record<string, unknown>>) => ({ type: "doc", content: [{ type: "paragraph", content }] });
 const textDoc = (text: string) => doc([{ type: "text", text }]);
+const markedDoc = (type: "underline" | "strike") => doc([{ type: "text", text: `${type} text`, marks: [{ type }] }]);
 async function executeSql(sql: string) { for (const chunk of sql.split("--> statement-breakpoint")) for (const statement of chunk.split("\n").filter((line) => !line.trim().startsWith("--")).join("\n").split(";")) { const flat = statement.replace(/\s+/g, " ").trim(); if (flat) await database.DB.exec(`${flat};`); } }
 async function sessionCookie(token: string) { const context = await createAuth(baseEnv).$context; return `${context.authCookies.sessionToken.name}=${token}.${await makeSignature(token, authSecret)}`; }
 async function request(path: string, token: string, method: "GET" | "POST" | "PATCH" | "DELETE" = "GET", body?: unknown) {
@@ -29,6 +30,20 @@ beforeAll(async () => {
 
 describe("notice board API", () => {
   it("returns an empty latest cursor before the first post", async () => expect(await (await request("/api/notice-board/posts/latest", editorToken)).json()).toEqual({ id: null, createdAt: null }));
+
+  it("stores underline and strike through both POST and author PATCH, rejecting malformed mark attributes", async () => {
+    for (const type of ["underline", "strike"] as const) {
+      const content = markedDoc(type);
+      const created = await request("/api/notice-board/posts", editorToken, "POST", { content });
+      expect(created.status).toBe(201); const post = await created.json() as { id: string; content: unknown };
+      expect(post.content).toEqual(content);
+      const edited = await request(`/api/notice-board/posts/${post.id}`, editorToken, "PATCH", { content });
+      expect(edited.status).toBe(200); expect((await edited.json() as { content: unknown }).content).toEqual(content);
+      const malformed = doc([{ type: "text", text: "Bad", marks: [{ type, attrs: {} }] }]);
+      expect((await request("/api/notice-board/posts", editorToken, "POST", { content: malformed })).status).toBe(400);
+      expect((await request(`/api/notice-board/posts/${post.id}`, editorToken, "PATCH", { content: malformed })).status).toBe(400);
+    }
+  });
 
   it("creates rich content, derives a body, normalizes forged labels, maps mentions, and notifies", async () => {
     const response = await request("/api/notice-board/posts", editorToken, "POST", { content: doc([{ type: "text", text: "Hello " }, { type: "mention", attrs: { id: adminId, label: "Pretend client name" } }]) });
@@ -100,6 +115,22 @@ describe("notice board API", () => {
     await database.DB.prepare("INSERT INTO notice_board_posts (id, author_id, body, created_at) VALUES (?, ?, ?, ?)").bind(legacyId, editorId, "Legacy body", now).run();
     const listed = await request("/api/notice-board/posts?limit=50", editorToken); const posts = (await listed.json() as { posts: Array<{ id: string; content: unknown; editedAt: unknown }> }).posts;
     expect(posts[0]).toMatchObject({ id: legacyId, content: textDoc("Legacy body"), editedAt: null });
+  });
+
+  it("re-parses persisted underline and strike documents instead of using the legacy fallback", async () => {
+    const now = Date.now() + 20_000;
+    const fixtures = [
+      { id: "00000000-0000-4000-8000-000000000026", content: markedDoc("underline"), body: "Legacy underline fallback" },
+      { id: "00000000-0000-4000-8000-000000000027", content: markedDoc("strike"), body: "Legacy strike fallback" },
+    ];
+    for (const fixture of fixtures) await database.DB.prepare("INSERT INTO notice_board_posts (id, author_id, body, content_json, created_at) VALUES (?, ?, ?, ?, ?)").bind(fixture.id, editorId, fixture.body, JSON.stringify(fixture.content), now).run();
+    const malformedId = "00000000-0000-4000-8000-000000000028";
+    await database.DB.prepare("INSERT INTO notice_board_posts (id, author_id, body, content_json, created_at) VALUES (?, ?, ?, ?, ?)").bind(malformedId, editorId, "Malformed fallback", "{not json", now).run();
+
+    const listed = await request("/api/notice-board/posts?limit=50", editorToken);
+    const posts = (await listed.json() as { posts: Array<{ id: string; content: unknown }> }).posts;
+    for (const fixture of fixtures) expect(posts.find((post) => post.id === fixture.id)?.content).toEqual(fixture.content);
+    expect(posts.find((post) => post.id === malformedId)?.content).toEqual(textDoc("Malformed fallback"));
   });
 
   it("preserves a list-item hard break through post and list retrieval", async () => {

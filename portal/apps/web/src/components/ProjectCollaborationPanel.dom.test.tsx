@@ -45,6 +45,9 @@ async function unmount() {
 async function click(element: Element) {
   await act(async () => { element.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); await Promise.resolve(); await Promise.resolve(); });
 }
+async function flush() {
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+}
 async function typeIntoEditor(editor: HTMLElement, text: string) {
   await act(async () => {
     editor.focus(); editor.textContent = text;
@@ -56,6 +59,17 @@ async function appendToEditor(editor: HTMLElement, text: string) {
   await act(async () => {
     editor.querySelector("p")!.append(document.createTextNode(text));
     editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: text }));
+    await Promise.resolve(); await Promise.resolve();
+  });
+}
+async function selectText(editor: HTMLElement, node: Node, start: number, end: number) {
+  await act(async () => {
+    editor.focus();
+    const range = document.createRange();
+    range.setStart(node, start); range.setEnd(node, end);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges(); selection.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
     await Promise.resolve(); await Promise.resolve();
   });
 }
@@ -78,6 +92,39 @@ afterEach(async () => {
 });
 
 describe("ProjectCollaborationPanel", () => {
+  it("posts newly underlined and struck-through comment content through the composer", async () => {
+    const content = { type: "doc" as const, content: [{ type: "paragraph" as const, content: [{ type: "text" as const, text: "Marked comment", marks: [{ type: "strike" as const }, { type: "underline" as const }] }] }] };
+    const posted = { ...ownComment, id: "comment-marked", body: "Marked comment", content };
+    apiPostMock.mockResolvedValue(posted);
+    const host = mount(); await render(<ProjectCollaborationPanel projectId={projectId} />);
+    const editor = host.querySelector<HTMLElement>('[contenteditable="true"]')!;
+    await typeIntoEditor(editor, "Marked comment");
+    await selectText(editor, editor.querySelector("p")!.firstChild!, 0, "Marked comment".length);
+    await click(host.querySelector<HTMLButtonElement>('[aria-label="Underline"]')!);
+    await click(host.querySelector<HTMLButtonElement>('[aria-label="Strikethrough"]')!);
+    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Post comment")!);
+    await flush();
+    expect(apiPostMock).toHaveBeenCalledWith(`/api/projects/${projectId}/comments`, { content });
+    expect(host.querySelector("u")?.textContent).toBe("Marked comment"); expect(host.querySelector("s")?.textContent).toBe("Marked comment");
+  });
+
+  it("renders and preserves underline and strike through an author edit", async () => {
+    const marked = { ...ownComment, content: { type: "doc" as const, content: [{ type: "paragraph" as const, content: [
+      { type: "text" as const, text: "Under", marks: [{ type: "underline" as const }] },
+      { type: "text" as const, text: " strike", marks: [{ type: "strike" as const }] },
+    ] }] } };
+    apiGetMock.mockImplementation((path) => path.includes("subtasks") ? Promise.resolve({ subtasks: [] }) : Promise.resolve(comments([marked])));
+    const host = mount(); await render(<ProjectCollaborationPanel projectId={projectId} />);
+    expect(host.querySelector("u")?.textContent).toBe("Under"); expect(host.querySelector("s")?.textContent).toBe(" strike");
+    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Edit")!);
+    await appendToEditor(host.querySelector<HTMLElement>('[contenteditable="true"]')!, "!");
+    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Save")!);
+    expect(apiPatchMock).toHaveBeenCalledWith(`/api/projects/${projectId}/comments/${marked.id}`, { content: { type: "doc", content: [{ type: "paragraph", content: [
+      { type: "text", text: "Under", marks: [{ type: "underline" }] },
+      { type: "text", text: " strike!", marks: [{ type: "strike" }] },
+    ] }] } });
+  });
+
   it("starts open without stealing focus, toggles, and closes with focused Escape", async () => {
     const host = mount();
     const sentinel = document.createElement("button"); sentinel.textContent = "Page control"; document.body.appendChild(sentinel); sentinel.focus();

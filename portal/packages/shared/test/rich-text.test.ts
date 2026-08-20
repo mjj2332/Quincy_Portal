@@ -3,6 +3,7 @@ import {
   RICH_TEXT_JSON_MAX_BYTES,
   RICH_TEXT_MAX_NESTING,
   RichTextValidationError,
+  isHttpUrl,
   legacyBodyToRichTextDoc,
   normalizeRichTextMentionLabels,
   parseRichTextDoc,
@@ -77,6 +78,39 @@ describe("rich-text contract", () => {
 
   it("rejects attributes on hard breaks", () => {
     expect(() => parseRichTextDoc({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "No" }, { type: "hardBreak", attrs: {} }] }] })).toThrow(RichTextValidationError);
+  });
+
+  it("accepts underline and strike marks, while rejecting mark attributes", () => {
+    const input = { type: "doc", content: [{ type: "paragraph", content: [
+      { type: "text", text: "Underlined", marks: [{ type: "underline" }] },
+      { type: "text", text: " struck", marks: [{ type: "strike" }] },
+    ] }] };
+    expect(parseRichTextDoc(input)).toEqual(input);
+    for (const mark of [{ type: "underline", attrs: {} }, { type: "strike", href: "https://example.test" }]) {
+      expect(() => parseRichTextDoc({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "No", marks: [mark] }] }] })).toThrow(RichTextValidationError);
+    }
+  });
+
+  it("shares HTTP(S) link classification without changing server validation messages", () => {
+    expect(isHttpUrl("https://example.test/path")).toBe(true);
+    expect(isHttpUrl("http://example.test")).toBe(true);
+    expect(isHttpUrl("")).toBe(false);
+    expect(isHttpUrl("/relative")).toBe(false);
+    expect(isHttpUrl("mailto:hello@example.test")).toBe(false);
+    const withHref = (href: unknown) => ({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Link", marks: [{ type: "link", href }] }] }] });
+    expect(() => parseRichTextDoc(withHref(""))).toThrow("Link href must be a non-empty string");
+    expect(() => parseRichTextDoc(withHref("/relative"))).toThrow("Link href must be an absolute HTTP(S) URL");
+    expect(() => parseRichTextDoc(withHref("mailto:hello@example.test"))).toThrow("Link href must use HTTP(S)");
+  });
+
+  it("preserves every own key when normalizing future block shapes", () => {
+    const futureShape = {
+      type: "doc",
+      content: [{ type: "heading", attrs: { level: 2 }, content: [{ type: "text", text: "Future" }] }],
+    } as unknown as ReturnType<typeof parseRichTextDoc>;
+    expect(normalizeRichTextMentionLabels(futureShape, new Map())).toEqual(futureShape);
+    expect(richTextPlainText({ type: "doc", content: [{ type: "heading", attrs: { level: 2 } }] } as unknown as ReturnType<typeof parseRichTextDoc>)).toBe("");
+    expect(richTextMentionIds({ type: "doc", content: [{ type: "heading", attrs: { level: 2 } }] } as unknown as ReturnType<typeof parseRichTextDoc>)).toEqual([]);
   });
 
   it("wraps legacy plain body values in a paragraph", () => {

@@ -53,6 +53,17 @@ async function appendToEditor(editor: HTMLElement, text: string) {
     await Promise.resolve(); await Promise.resolve();
   });
 }
+async function selectText(editor: HTMLElement, node: Node, start: number, end: number) {
+  await act(async () => {
+    editor.focus();
+    const range = document.createRange();
+    range.setStart(node, start); range.setEnd(node, end);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges(); selection.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+    await Promise.resolve(); await Promise.resolve();
+  });
+}
 
 async function keydown(editor: HTMLElement, key: string, modifiers: KeyboardEventInit = {}) {
   await act(async () => {
@@ -92,6 +103,38 @@ afterEach(async () => {
 });
 
 describe("NoticeBoard disclosure and polling", () => {
+  it("posts newly underlined and struck-through notice content through the composer", async () => {
+    const content = { type: "doc" as const, content: [{ type: "paragraph" as const, content: [{ type: "text" as const, text: "Marked notice", marks: [{ type: "strike" as const }, { type: "underline" as const }] }] }] };
+    apiGetMock.mockResolvedValue({ posts: [] }); apiPostMock.mockResolvedValue({ ...newPost, body: "Marked notice", content });
+    const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
+    const editor = host.querySelector<HTMLElement>('[contenteditable="true"]')!;
+    await typeIntoEditor(editor, "Marked notice");
+    await selectText(editor, editor.querySelector("p")!.firstChild!, 0, "Marked notice".length);
+    await click(host.querySelector<HTMLButtonElement>('[aria-label="Underline"]')!);
+    await click(host.querySelector<HTMLButtonElement>('[aria-label="Strikethrough"]')!);
+    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Post notice")!);
+    await flush();
+    expect(apiPostMock).toHaveBeenCalledWith("/api/notice-board/posts", { content });
+    expect(host.querySelector("u")?.textContent).toBe("Marked notice"); expect(host.querySelector("s")?.textContent).toBe("Marked notice");
+  });
+
+  it("renders and preserves underline and strike through an author edit", async () => {
+    const marked = { ...oldPost, content: { type: "doc" as const, content: [{ type: "paragraph" as const, content: [
+      { type: "text" as const, text: "Under", marks: [{ type: "underline" as const }] },
+      { type: "text" as const, text: " strike", marks: [{ type: "strike" as const }] },
+    ] }] } };
+    apiGetMock.mockResolvedValue({ posts: [marked] });
+    const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
+    expect(host.querySelector("u")?.textContent).toBe("Under"); expect(host.querySelector("s")?.textContent).toBe(" strike");
+    await click(host.querySelector<HTMLButtonElement>(".notice-board__edit")!);
+    await appendToEditor(host.querySelector<HTMLElement>('[contenteditable="true"]')!, "!");
+    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Save")!);
+    expect(apiPatchMock).toHaveBeenCalledWith(`/api/notice-board/posts/${marked.id}`, { content: { type: "doc", content: [{ type: "paragraph", content: [
+      { type: "text", text: "Under", marks: [{ type: "underline" }] },
+      { type: "text", text: " strike!", marks: [{ type: "strike" }] },
+    ] }] } });
+  });
+
   it("starts expanded, persists the toggle, and switches polling modes without overlap", async () => {
     let listCalls = 0;
     apiGetMock.mockImplementation((path) => {

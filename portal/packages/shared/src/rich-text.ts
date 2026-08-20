@@ -3,7 +3,7 @@
  * This intentionally describes JSON, not HTML: browser editors are convenience
  * clients while this parser remains the trust boundary for every write.
  */
-export type RichTextMark = { type: "bold" | "italic" } | { type: "link"; href: string };
+export type RichTextMark = { type: "bold" | "italic" | "underline" | "strike" } | { type: "link"; href: string };
 export type RichTextText = { type: "text"; text: string; marks?: RichTextMark[] };
 export type RichTextMention = { type: "mention"; attrs: { id: string; label: string } };
 export type RichTextHardBreak = { type: "hardBreak" };
@@ -35,20 +35,30 @@ function onlyKeys(value: Record<string, unknown>, keys: readonly string[], label
   if (Object.keys(value).some((key) => !keys.includes(key))) throw new RichTextValidationError(`${label} contains an unsupported attribute`);
 }
 
-function httpUrl(value: unknown): string {
-  if (typeof value !== "string" || !value) throw new RichTextValidationError("Link href must be a non-empty string");
+function classifyHref(value: unknown): "ok" | "empty" | "relative" | "protocol" {
+  if (typeof value !== "string" || !value) return "empty";
   let url: URL;
-  try { url = new URL(value); } catch { throw new RichTextValidationError("Link href must be an absolute HTTP(S) URL"); }
-  if (url.protocol !== "http:" && url.protocol !== "https:") throw new RichTextValidationError("Link href must use HTTP(S)");
-  return value;
+  try { url = new URL(value); } catch { return "relative"; }
+  return url.protocol === "http:" || url.protocol === "https:" ? "ok" : "protocol";
 }
+
+function httpUrl(value: unknown): string {
+  const classification = classifyHref(value);
+  if (classification === "empty") throw new RichTextValidationError("Link href must be a non-empty string");
+  if (classification === "relative") throw new RichTextValidationError("Link href must be an absolute HTTP(S) URL");
+  if (classification === "protocol") throw new RichTextValidationError("Link href must use HTTP(S)");
+  return value as string;
+}
+
+/** Browser-safe counterpart to the server validator; server errors remain specific. */
+export function isHttpUrl(value: unknown): boolean { return classifyHref(value) === "ok"; }
 
 function parseMarks(value: unknown): RichTextMark[] | undefined {
   if (value === undefined) return undefined;
   if (!Array.isArray(value)) throw new RichTextValidationError("Text marks must be an array");
   return value.map((item) => {
     const mark = record(item, "Mark");
-    if (mark.type === "bold" || mark.type === "italic") {
+    if (mark.type === "bold" || mark.type === "italic" || mark.type === "underline" || mark.type === "strike") {
       onlyKeys(mark, ["type"], "Mark");
       return { type: mark.type };
     }
@@ -128,8 +138,8 @@ export function parseRichTextDoc(value: unknown): RichTextDoc {
 
 function textFromBlock(block: RichTextBlock | RichTextListItem): string {
   if (block.type === "paragraph") return (block.content ?? []).map((node) => node.type === "text" ? node.text : node.type === "hardBreak" ? "\n" : node.attrs.label).join("");
-  if (block.type === "listItem") return block.content.map(textFromBlock).filter(Boolean).join("\n");
-  return block.content.map(textFromBlock).filter(Boolean).join("\n");
+  if (block.type === "listItem") return (block.content ?? []).map(textFromBlock).filter(Boolean).join("\n");
+  return (block.content ?? []).map(textFromBlock).filter(Boolean).join("\n");
 }
 
 /** Plain text is used for searchable legacy fallbacks and semantic character limits. */
@@ -144,7 +154,7 @@ export function richTextMentionIds(doc: RichTextDoc): string[] {
     if (node.type === "mention") { if (!ids.includes(node.attrs.id)) ids.push(node.attrs.id); return; }
     if (node.type === "text" || node.type === "hardBreak") return;
     if (node.type === "paragraph") { for (const child of node.content ?? []) visit(child); return; }
-    for (const child of node.content) visit(child);
+    for (const child of node.content ?? []) visit(child);
   };
   for (const block of doc.content) visit(block);
   return ids;
@@ -161,7 +171,7 @@ export function normalizeRichTextMentionLabels(doc: RichTextDoc, namesById: Read
     if (node.type === "text") return node.marks ? { ...node, marks: node.marks.map((mark) => ({ ...mark })) } : { ...node };
     if (node.type === "hardBreak") return { ...node };
     if (node.type === "paragraph") return { type: "paragraph", ...(node.content ? { content: node.content.map(normalize) as RichTextInline[] } : {}) };
-    return { type: node.type, content: node.content.map(normalize) as never } as RichTextBlock | RichTextListItem;
+    return Object.fromEntries(Object.entries(node).map(([key, value]) => [key, key === "content" && Array.isArray(value) ? value.map(normalize) : value])) as RichTextBlock | RichTextListItem;
   };
   return { type: "doc", content: doc.content.map(normalize) as RichTextBlock[] };
 }

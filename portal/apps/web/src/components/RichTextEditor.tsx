@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import HardBreak from "@tiptap/extension-hard-break";
 import Mention from "@tiptap/extension-mention";
-import { richTextPlainText, type RichTextDoc } from "@quincy/shared";
+import { isHttpUrl, richTextPlainText, type RichTextDoc } from "@quincy/shared";
 import { MentionAutocomplete, type MentionAutocompleteHandle, type MentionableUser } from "./MentionAutocomplete";
 
 function toTiptap(doc: RichTextDoc): Record<string, unknown> {
@@ -34,6 +34,16 @@ const ListItemHardBreak = HardBreak.extend({
     };
   },
 });
+
+function ToolbarGroup({ children }: { children: ReactNode }) {
+  return <div className="rich-text__toolbar-group">{children}</div>;
+}
+
+function ToolbarButton({ label, active, disabled, onClick, children }: { label: string; active?: boolean; disabled: boolean; onClick: () => void; children: ReactNode }) {
+  return <button type="button" className="rich-text__toolbar-button" aria-label={label} {...(active === undefined ? {} : { "aria-pressed": active })} disabled={disabled} onMouseDown={(event) => event.preventDefault()} onClick={onClick}>{children}</button>;
+}
+
+function ToolbarDivider() { return <span className="rich-text__toolbar-divider" aria-hidden="true" />; }
 
 /** Removes TipTap-only attributes before data leaves the browser. */
 export function tiptapToRichTextDoc(value: unknown): RichTextDoc {
@@ -76,8 +86,17 @@ export function RichTextEditor({ value, onChange, limit, disabled = false, loadM
   const limitRef = useRef(limit); limitRef.current = limit;
   const disabledRef = useRef(disabled); disabledRef.current = disabled;
   const menu = useRef<MentionAutocompleteHandle>(null);
+  const linkTrigger = useRef<HTMLButtonElement>(null);
+  const linkInput = useRef<HTMLInputElement>(null);
+  const linkDialog = useRef<HTMLDivElement>(null);
+  const linkSelection = useRef<{ from: number; to: number }>();
+  const linkWasActive = useRef(false);
+  const returnFocusToLinkTrigger = useRef(false);
   const [query, setQuery] = useState<string | null>(null);
   const [mentionA11y, setMentionA11y] = useState<{ listboxId: string; activeId?: string; expanded: boolean } | null>(null);
+  const [linkOpen, setLinkOpen] = useState(false);
+  const [linkHref, setLinkHref] = useState("");
+  const [linkError, setLinkError] = useState<string | null>(null);
   const extensions = useMemo(() => [
     StarterKit.configure({
       heading: false,
@@ -85,9 +104,9 @@ export function RichTextEditor({ value, onChange, limit, disabled = false, loadM
       codeBlock: false,
       horizontalRule: false,
       hardBreak: false,
-      strike: false,
+      strike: {},
       code: false,
-      underline: false,
+      underline: {},
       listKeymap: false,
       trailingNode: false,
       undoRedo: {},
@@ -139,6 +158,22 @@ export function RichTextEditor({ value, onChange, limit, disabled = false, loadM
     if (mentionA11y.activeId) dom.setAttribute("aria-activedescendant", mentionA11y.activeId);
     else dom.removeAttribute("aria-activedescendant");
   }, [editor, mentionA11y]);
+  useEffect(() => {
+    if (!linkOpen) {
+      if (returnFocusToLinkTrigger.current) {
+        returnFocusToLinkTrigger.current = false;
+        linkTrigger.current?.focus();
+      }
+      return;
+    }
+    linkInput.current?.focus();
+    const containFocus = (event: FocusEvent) => {
+      const dialog = linkDialog.current;
+      if (dialog && event.target instanceof Node && !dialog.contains(event.target)) linkInput.current?.focus();
+    };
+    document.addEventListener("focusin", containFocus);
+    return () => document.removeEventListener("focusin", containFocus);
+  }, [linkOpen]);
   if (!editor) return null;
   const plainText = richTextPlainText(value);
   const selectMention = (user: MentionableUser) => {
@@ -147,21 +182,72 @@ export function RichTextEditor({ value, onChange, limit, disabled = false, loadM
     editor.chain().focus().insertContentAt({ from, to: editor.state.selection.from }, { type: "mention", attrs: { id: user.id, label: user.name } }).insertContent(" ").run();
     setQuery(null);
   };
-  const setLink = () => {
-    const href = window.prompt("Link URL (HTTP or HTTPS)");
-    if (!href) return;
-    try { const url = new URL(href); if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error(); }
-    catch { return; }
-    editor.chain().focus().setLink({ href }).run();
+  const openLinkDialog = () => {
+    const href = editor.getAttributes("link").href;
+    const { from, to } = editor.state.selection;
+    linkSelection.current = { from, to };
+    linkWasActive.current = editor.isActive("link");
+    setLinkHref(typeof href === "string" ? href : "");
+    setLinkError(null);
+    setLinkOpen(true);
+  };
+  const closeLinkDialog = ({ returnFocus = true }: { returnFocus?: boolean } = {}) => {
+    returnFocusToLinkTrigger.current = returnFocus;
+    setLinkOpen(false); setLinkError(null);
+  };
+  const applyLink = () => {
+    const href = linkInput.current?.value ?? linkHref;
+    if (!isHttpUrl(href)) { setLinkError("Enter a non-empty absolute HTTP(S) URL."); return; }
+    const chain = editor.chain().focus();
+    if (linkSelection.current) chain.setTextSelection(linkSelection.current);
+    if (linkWasActive.current) chain.extendMarkRange("link");
+    chain.setLink({ href }).run();
+    closeLinkDialog({ returnFocus: false });
+  };
+  const removeLink = () => {
+    const chain = editor.chain().focus();
+    if (linkSelection.current) chain.setTextSelection(linkSelection.current);
+    chain.unsetLink().run();
+    closeLinkDialog({ returnFocus: false });
+  };
+  const handleLinkDialogKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "Escape") { event.preventDefault(); closeLinkDialog(); return; }
+    if (event.key !== "Tab") return;
+    const focusable = Array.from(linkDialog.current?.querySelectorAll<HTMLElement>('input:not([disabled]), button:not([disabled])') ?? []);
+    if (!focusable.length) return;
+    const index = focusable.indexOf(document.activeElement as HTMLElement);
+    const next = event.shiftKey ? (index <= 0 ? focusable.length - 1 : index - 1) : (index === focusable.length - 1 ? 0 : index + 1);
+    event.preventDefault(); focusable[next]?.focus();
   };
   return <div className={`rich-text-editor${disabled ? " is-disabled" : ""}`}>
     <div className="rich-text__toolbar" role="toolbar" aria-label="Formatting">
-      <button type="button" aria-label="Bold" aria-pressed={editor.isActive("bold")} disabled={disabled} onClick={() => editor.chain().focus().toggleBold().run()}><strong>B</strong></button>
-      <button type="button" aria-label="Italic" aria-pressed={editor.isActive("italic")} disabled={disabled} onClick={() => editor.chain().focus().toggleItalic().run()}><em>I</em></button>
-      <button type="button" aria-label="Link" aria-pressed={editor.isActive("link")} disabled={disabled} onClick={setLink}>Link</button>
-      <button type="button" aria-label="Bullet list" aria-pressed={editor.isActive("bulletList")} disabled={disabled} onClick={() => editor.chain().focus().toggleBulletList().run()}>• List</button>
-      <button type="button" aria-label="Ordered list" aria-pressed={editor.isActive("orderedList")} disabled={disabled} onClick={() => editor.chain().focus().toggleOrderedList().run()}>1. List</button>
+      <ToolbarGroup>
+        <ToolbarButton label="Bold" active={editor.isActive("bold")} disabled={disabled || !editor.can().toggleBold()} onClick={() => editor.chain().focus().toggleBold().run()}><strong>B</strong></ToolbarButton>
+        <ToolbarButton label="Italic" active={editor.isActive("italic")} disabled={disabled || !editor.can().toggleItalic()} onClick={() => editor.chain().focus().toggleItalic().run()}><em>I</em></ToolbarButton>
+        <ToolbarButton label="Underline" active={editor.isActive("underline")} disabled={disabled || !editor.can().toggleUnderline()} onClick={() => editor.chain().focus().toggleUnderline().run()}><u>U</u></ToolbarButton>
+        <ToolbarButton label="Strikethrough" active={editor.isActive("strike")} disabled={disabled || !editor.can().toggleStrike()} onClick={() => editor.chain().focus().toggleStrike().run()}><s>S</s></ToolbarButton>
+      </ToolbarGroup>
+      <ToolbarDivider />
+      <ToolbarGroup>
+        <button ref={linkTrigger} type="button" className="rich-text__toolbar-button" aria-label="Link" aria-pressed={editor.isActive("link")} disabled={disabled || !editor.can().setLink({ href: "https://example.com" })} onMouseDown={(event) => event.preventDefault()} onClick={openLinkDialog}>Link</button>
+        <ToolbarButton label="Bullet list" active={editor.isActive("bulletList")} disabled={disabled || !editor.can().toggleBulletList()} onClick={() => editor.chain().focus().toggleBulletList().run()}>• List</ToolbarButton>
+        <ToolbarButton label="Ordered list" active={editor.isActive("orderedList")} disabled={disabled || !editor.can().toggleOrderedList()} onClick={() => editor.chain().focus().toggleOrderedList().run()}>1. List</ToolbarButton>
+      </ToolbarGroup>
+      <ToolbarDivider />
+      <ToolbarGroup>
+        <ToolbarButton label="Undo" disabled={disabled || !editor.can().undo()} onClick={() => editor.chain().focus().undo().run()}>Undo</ToolbarButton>
+        <ToolbarButton label="Redo" disabled={disabled || !editor.can().redo()} onClick={() => editor.chain().focus().redo().run()}>Redo</ToolbarButton>
+      </ToolbarGroup>
     </div>
+    {linkOpen && <div className="rich-text__link-modal">
+      <div className="rich-text__link-backdrop" aria-hidden="true" onMouseDown={(event) => event.preventDefault()} />
+      <div ref={linkDialog} className="rich-text__link-dialog" role="dialog" aria-modal="true" aria-labelledby="rich-text-link-title" onKeyDown={handleLinkDialogKeyDown}>
+        <div className="rich-text__link-dialog-head"><strong id="rich-text-link-title">{linkWasActive.current ? "Edit link" : "Add link"}</strong><button type="button" aria-label="Close link dialog" onClick={() => closeLinkDialog()}>×</button></div>
+        <label>URL<input ref={linkInput} type="url" value={linkHref} onInput={(event) => { setLinkHref(event.currentTarget.value); setLinkError(null); }} onChange={(event) => { setLinkHref(event.target.value); setLinkError(null); }} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); applyLink(); } }} placeholder="https://example.com" /></label>
+        {linkError && <p className="rich-text__link-error" role="alert">{linkError}</p>}
+        <div className="rich-text__link-dialog-actions">{linkWasActive.current && <button type="button" className="button button--secondary" onClick={removeLink}>Remove link</button>}<span /><button type="button" className="button button--secondary" onClick={() => closeLinkDialog()}>Cancel</button><button type="button" className="button" onClick={applyLink}>Apply link</button></div>
+      </div>
+    </div>}
     <EditorContent editor={editor} />
     <MentionAutocomplete ref={menu} query={query} loadMentionables={loadMentionables} onSelect={selectMention} onAccessibilityChange={setMentionA11y} />
     <div className={`rich-text__counter${plainText.length > limit ? " is-over" : ""}`} aria-live="polite">{plainText.length}/{limit}</div>
