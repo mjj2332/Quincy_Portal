@@ -65,6 +65,14 @@ async function selectText(editor: HTMLElement, node: Node, start: number, end: n
   });
 }
 
+async function selectOption(select: HTMLSelectElement, value: string) {
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!.call(select, value);
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+    await Promise.resolve(); await Promise.resolve();
+  });
+}
+
 async function keydown(editor: HTMLElement, key: string, modifiers: KeyboardEventInit = {}) {
   await act(async () => {
     editor.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key, ...modifiers }));
@@ -103,6 +111,19 @@ afterEach(async () => {
 });
 
 describe("NoticeBoard disclosure and polling", () => {
+  it("posts and renders a Section heading through the shared composer", async () => {
+    const content = { type: "doc" as const, content: [{ type: "heading" as const, attrs: { level: 2 as const }, content: [{ type: "text" as const, text: "Notice section" }] }] };
+    apiGetMock.mockResolvedValue({ posts: [] }); apiPostMock.mockResolvedValue({ ...newPost, body: "Notice section", content });
+    const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
+    const editor = host.querySelector<HTMLElement>('[contenteditable="true"]')!;
+    await typeIntoEditor(editor, "Notice section");
+    await selectOption(host.querySelector<HTMLSelectElement>('[aria-label="Heading"]')!, "2");
+    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Post notice")!);
+    await flush();
+    expect(apiPostMock).toHaveBeenCalledWith("/api/notice-board/posts", { content });
+    expect(host.querySelector(".notice-board__post h2")?.textContent).toBe("Notice section");
+  });
+
   it("posts newly underlined and struck-through notice content through the composer", async () => {
     const content = { type: "doc" as const, content: [{ type: "paragraph" as const, content: [{ type: "text" as const, text: "Marked notice", marks: [{ type: "strike" as const }, { type: "underline" as const }] }] }] };
     apiGetMock.mockResolvedValue({ posts: [] }); apiPostMock.mockResolvedValue({ ...newPost, body: "Marked notice", content });

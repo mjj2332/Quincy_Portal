@@ -31,6 +31,10 @@ function fallbackText(node: unknown): string {
 
 function block(node: RichTextBlock | RichTextListItem, key: number): ReactNode {
   if (node.type === "paragraph") return <p key={key}>{(node.content ?? []).map(inline)}</p>;
+  if (node.type === "heading") {
+    const Heading = node.attrs.level === 2 ? "h2" : "h3";
+    return <Heading key={key}>{(node.content ?? []).map(inline)}</Heading>;
+  }
   if (node.type === "listItem") return <li key={key}>{(node.content ?? []).map(block)}</li>;
   if (node.type === "bulletList" || node.type === "orderedList") {
     const List = node.type === "bulletList" ? "ul" : "ol";

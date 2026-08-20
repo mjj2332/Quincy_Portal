@@ -9,10 +9,11 @@ export type RichTextMention = { type: "mention"; attrs: { id: string; label: str
 export type RichTextHardBreak = { type: "hardBreak" };
 export type RichTextInline = RichTextText | RichTextMention | RichTextHardBreak;
 export type RichTextParagraph = { type: "paragraph"; content?: RichTextInline[] };
+export type RichTextHeading = { type: "heading"; attrs: { level: 2 | 3 }; content?: RichTextInline[] };
 export type RichTextListItem = { type: "listItem"; content: Array<RichTextParagraph | RichTextBulletList | RichTextOrderedList> };
 export type RichTextBulletList = { type: "bulletList"; content: RichTextListItem[] };
 export type RichTextOrderedList = { type: "orderedList"; content: RichTextListItem[] };
-export type RichTextBlock = RichTextParagraph | RichTextBulletList | RichTextOrderedList;
+export type RichTextBlock = RichTextParagraph | RichTextHeading | RichTextBulletList | RichTextOrderedList;
 export type RichTextDoc = { type: "doc"; content: RichTextBlock[] };
 
 export const RICH_TEXT_JSON_MAX_BYTES = 32 * 1024;
@@ -97,7 +98,7 @@ function contentArray(value: unknown, label: string): unknown[] {
   return value;
 }
 
-function parseBlock(value: unknown, depth: number, inListItem = false): RichTextBlock | RichTextListItem {
+function parseBlock(value: unknown, depth: number, mayBeListItem = false, insideListItem = false): RichTextBlock | RichTextListItem {
   if (depth > RICH_TEXT_MAX_NESTING) throw new RichTextValidationError("Rich-text nesting is too deep");
   const node = record(value, "Rich-text node");
   if (node.type === "paragraph") {
@@ -105,16 +106,24 @@ function parseBlock(value: unknown, depth: number, inListItem = false): RichText
     if (node.content === undefined) return { type: "paragraph" };
     return { type: "paragraph", content: contentArray(node.content, "Paragraph").map(parseInline) };
   }
+  if (node.type === "heading") {
+    if (insideListItem) throw new RichTextValidationError("Headings may not be inside list items");
+    onlyKeys(node, ["type", "attrs", "content"], "Heading");
+    const attrs = record(node.attrs, "Heading attributes");
+    onlyKeys(attrs, ["level"], "Heading attributes");
+    if (attrs.level !== 2 && attrs.level !== 3) throw new RichTextValidationError("Heading level must be 2 or 3");
+    return { type: "heading", attrs: { level: attrs.level }, ...(node.content === undefined ? {} : { content: contentArray(node.content, "Heading").map(parseInline) }) };
+  }
   if (node.type === "bulletList" || node.type === "orderedList") {
     onlyKeys(node, ["type", "content"], "List");
-    const content = contentArray(node.content, "List").map((item) => parseBlock(item, depth + 1, true));
+    const content = contentArray(node.content, "List").map((item) => parseBlock(item, depth + 1, true, insideListItem));
     if (!content.length || content.some((item) => item.type !== "listItem")) throw new RichTextValidationError("Lists may contain only list items");
     return { type: node.type, content: content as RichTextListItem[] };
   }
   if (node.type === "listItem") {
-    if (!inListItem) throw new RichTextValidationError("List items must be inside a list");
+    if (!mayBeListItem) throw new RichTextValidationError("List items must be inside a list");
     onlyKeys(node, ["type", "content"], "List item");
-    const content = contentArray(node.content, "List item").map((item) => parseBlock(item, depth + 1));
+    const content = contentArray(node.content, "List item").map((item) => parseBlock(item, depth + 1, false, true));
     if (!content.length || content.some((item) => item.type === "listItem")) throw new RichTextValidationError("List items may contain paragraphs and nested lists only");
     return { type: "listItem", content: content as RichTextListItem["content"] };
   }
@@ -137,7 +146,7 @@ export function parseRichTextDoc(value: unknown): RichTextDoc {
 }
 
 function textFromBlock(block: RichTextBlock | RichTextListItem): string {
-  if (block.type === "paragraph") return (block.content ?? []).map((node) => node.type === "text" ? node.text : node.type === "hardBreak" ? "\n" : node.attrs.label).join("");
+  if (block.type === "paragraph" || block.type === "heading") return (block.content ?? []).map((node) => node.type === "text" ? node.text : node.type === "hardBreak" ? "\n" : node.attrs.label).join("");
   if (block.type === "listItem") return (block.content ?? []).map(textFromBlock).filter(Boolean).join("\n");
   return (block.content ?? []).map(textFromBlock).filter(Boolean).join("\n");
 }
@@ -153,7 +162,7 @@ export function richTextMentionIds(doc: RichTextDoc): string[] {
   const visit = (node: RichTextBlock | RichTextListItem | RichTextInline) => {
     if (node.type === "mention") { if (!ids.includes(node.attrs.id)) ids.push(node.attrs.id); return; }
     if (node.type === "text" || node.type === "hardBreak") return;
-    if (node.type === "paragraph") { for (const child of node.content ?? []) visit(child); return; }
+    if (node.type === "paragraph" || node.type === "heading") { for (const child of node.content ?? []) visit(child); return; }
     for (const child of node.content ?? []) visit(child);
   };
   for (const block of doc.content) visit(block);
@@ -171,6 +180,7 @@ export function normalizeRichTextMentionLabels(doc: RichTextDoc, namesById: Read
     if (node.type === "text") return node.marks ? { ...node, marks: node.marks.map((mark) => ({ ...mark })) } : { ...node };
     if (node.type === "hardBreak") return { ...node };
     if (node.type === "paragraph") return { type: "paragraph", ...(node.content ? { content: node.content.map(normalize) as RichTextInline[] } : {}) };
+    if (node.type === "heading") return { type: "heading", attrs: { ...node.attrs }, ...(node.content ? { content: node.content.map(normalize) as RichTextInline[] } : {}) };
     return Object.fromEntries(Object.entries(node).map(([key, value]) => [key, key === "content" && Array.isArray(value) ? value.map(normalize) : value])) as RichTextBlock | RichTextListItem;
   };
   return { type: "doc", content: doc.content.map(normalize) as RichTextBlock[] };

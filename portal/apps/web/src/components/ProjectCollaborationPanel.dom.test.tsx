@@ -73,6 +73,13 @@ async function selectText(editor: HTMLElement, node: Node, start: number, end: n
     await Promise.resolve(); await Promise.resolve();
   });
 }
+async function selectOption(select: HTMLSelectElement, value: string) {
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!.call(select, value);
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+    await Promise.resolve(); await Promise.resolve();
+  });
+}
 async function keydown(editor: HTMLElement, key: string) {
   await act(async () => { editor.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key })); await Promise.resolve(); await Promise.resolve(); });
 }
@@ -92,6 +99,20 @@ afterEach(async () => {
 });
 
 describe("ProjectCollaborationPanel", () => {
+  it("posts and renders a Subsection heading through the shared composer", async () => {
+    const content = { type: "doc" as const, content: [{ type: "heading" as const, attrs: { level: 3 as const }, content: [{ type: "text" as const, text: "Comment subsection" }] }] };
+    const posted = { ...ownComment, id: "comment-heading", body: "Comment subsection", content };
+    apiPostMock.mockResolvedValue(posted);
+    const host = mount(); await render(<ProjectCollaborationPanel projectId={projectId} />);
+    const editor = host.querySelector<HTMLElement>('[contenteditable="true"]')!;
+    await typeIntoEditor(editor, "Comment subsection");
+    await selectOption(host.querySelector<HTMLSelectElement>('[aria-label="Heading"]')!, "3");
+    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Post comment")!);
+    await flush();
+    expect(apiPostMock).toHaveBeenCalledWith(`/api/projects/${projectId}/comments`, { content });
+    expect(host.querySelector(".project-collaboration__comments h3")?.textContent).toBe("Comment subsection");
+  });
+
   it("posts newly underlined and struck-through comment content through the composer", async () => {
     const content = { type: "doc" as const, content: [{ type: "paragraph" as const, content: [{ type: "text" as const, text: "Marked comment", marks: [{ type: "strike" as const }, { type: "underline" as const }] }] }] };
     const posted = { ...ownComment, id: "comment-marked", body: "Marked comment", content };

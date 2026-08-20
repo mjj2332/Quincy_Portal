@@ -1,14 +1,16 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { Editor } from "@tiptap/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { RichTextDoc, RichTextInline } from "@quincy/shared";
-import { RichTextEditor } from "./RichTextEditor";
+import { createRichTextEditorExtensions, RichTextEditor } from "./RichTextEditor";
 import { RichTextContent } from "./RichTextContent";
 
 let root: Root | null = null;
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const text = (value: string): RichTextDoc => ({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: value }] }] });
+const empty = (): RichTextDoc => ({ type: "doc", content: [{ type: "paragraph" }] });
 const list = (content: RichTextInline[]): RichTextDoc => ({
   type: "doc",
   content: [{ type: "bulletList", content: [{ type: "listItem", content: [{ type: "paragraph", ...(content.length ? { content } : {}) }] }] }],
@@ -88,6 +90,20 @@ async function setInput(input: HTMLInputElement, value: string) {
     input.dispatchEvent(new Event("change", { bubbles: true }));
     await Promise.resolve(); await Promise.resolve();
   });
+}
+
+async function selectOption(select: HTMLSelectElement, value: string) {
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!.call(select, value);
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+    await Promise.resolve(); await Promise.resolve();
+  });
+}
+
+async function pasteHtml(editor: HTMLElement, html: string) {
+  const event = new Event("paste", { bubbles: true, cancelable: true }) as ClipboardEvent;
+  Object.defineProperty(event, "clipboardData", { value: { getData: (type: string) => type === "text/html" ? html : "" } });
+  await act(async () => { editor.dispatchEvent(event); await Promise.resolve(); await Promise.resolve(); });
 }
 
 async function typeIntoFocusedEditor(value: string) {
@@ -347,6 +363,107 @@ describe("RichTextEditor hard breaks", () => {
     ] }] });
   });
 
+  it("converts and renders only named Section/Subsection headings", async () => {
+    const value: RichTextDoc = { type: "doc", content: [
+      { type: "heading", attrs: { level: 2 }, content: [{ type: "text", text: "Section" }] },
+      { type: "heading", attrs: { level: 3 }, content: [{ type: "text", text: "Subsection" }] },
+    ] };
+    const host = mount(); const onChange = vi.fn(); const { editor } = await render(host, value, onChange);
+    const heading = host.querySelector<HTMLSelectElement>('[aria-label="Heading"]')!;
+    expect([...heading.options].map((option) => option.text)).toEqual(["Paragraph", "Section", "Subsection"]);
+    expect(editor.querySelector("h2")?.textContent).toBe("Section"); expect(editor.querySelector("h3")?.textContent).toBe("Subsection");
+    await moveCaret(editor, editor.querySelector("h2")!.firstChild!);
+    expect(heading.value).toBe("2");
+    onChange.mockClear(); await act(async () => {
+      editor.querySelector("h2")!.append(document.createTextNode("!"));
+      editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: "!" }));
+      await Promise.resolve(); await Promise.resolve();
+    });
+    expect(onChange).toHaveBeenLastCalledWith({ type: "doc", content: [
+      { type: "heading", attrs: { level: 2 }, content: [{ type: "text", text: "Section!" }] },
+      { type: "heading", attrs: { level: 3 }, content: [{ type: "text", text: "Subsection" }] },
+    ] });
+
+    await act(async () => { root!.unmount(); await Promise.resolve(); }); root = null; host.remove();
+    const plainHost = mount(); const change = vi.fn(); await render(plainHost, text("Convert me"), change);
+    await selectOption(plainHost.querySelector<HTMLSelectElement>('[aria-label="Heading"]')!, "3");
+    expect(change).toHaveBeenLastCalledWith({ type: "doc", content: [{ type: "heading", attrs: { level: 3 }, content: [{ type: "text", text: "Convert me" }] }] });
+    await act(async () => { root!.unmount(); await Promise.resolve(); }); root = null; plainHost.remove();
+  });
+
+  it("keeps heading Markdown input rules at h2/h3 in their load-bearing order", async () => {
+    for (const [source, expected] of [["## ", 2], ["### ", 3], ["# ", null], ["#### ", null], ["##### ", null], ["###### ", null]] as const) {
+      const host = mount(); const onChange = vi.fn(); const { editor } = await render(host, empty(), onChange);
+      onChange.mockClear(); await typeAfterCurrentContent(editor, source);
+      const emitted = onChange.mock.calls.at(-1)?.[0] as RichTextDoc | undefined;
+      if (expected === null) expect(emitted?.content[0]?.type).toBe("paragraph");
+      else expect(emitted?.content[0]).toMatchObject({ type: "heading", attrs: { level: expected } });
+      await act(async () => { root!.unmount(); await Promise.resolve(); }); root = null; host.remove();
+    }
+  });
+
+  it("accepts only h2/h3 from pasted heading HTML", async () => {
+    for (const [tag, expected] of [["h2", 2], ["h3", 3], ["h1", null], ["h4", null], ["h5", null], ["h6", null]] as const) {
+      const host = mount(); const onChange = vi.fn(); const { editor } = await render(host, empty(), onChange);
+      onChange.mockClear(); await pasteHtml(editor, `<${tag}>Pasted ${tag}</${tag}>`);
+      const emitted = onChange.mock.calls.at(-1)?.[0] as RichTextDoc | undefined;
+      if (expected === null) expect(emitted?.content[0]?.type).toBe("paragraph");
+      else expect(emitted?.content[0]).toMatchObject({ type: "heading", attrs: { level: expected } });
+      await act(async () => { root!.unmount(); await Promise.resolve(); }); root = null; host.remove();
+    }
+  });
+
+  it("makes the heading control unavailable inside ordinary list items", async () => {
+    const host = mount(); const onChange = vi.fn(); const value = list([{ type: "text", text: "List item" }]);
+    const { editor } = await render(host, value, onChange);
+    await moveCaret(editor, editor.querySelector("li p")!.firstChild!);
+    const heading = host.querySelector<HTMLSelectElement>('[aria-label="Heading"]')!;
+    expect(heading.disabled).toBe(true);
+    onChange.mockClear();
+    await selectOption(heading, "2");
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("builds a paragraph-only list-item schema that rejects heading commands in bullet and ordered lists", () => {
+    for (const listType of ["bulletList", "orderedList"] as const) {
+      const tiptap = new Editor({
+        extensions: createRichTextEditorExtensions(),
+        content: { type: "doc", content: [{ type: listType, content: [{ type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "List item" }] }] }] }] },
+      });
+      try {
+        expect(tiptap.schema.nodes.listItem?.spec.content).toBe("paragraph (paragraph|bulletList|orderedList)*");
+        let paragraphPosition: number | undefined;
+        tiptap.state.doc.descendants((node, position) => {
+          if (node.type.name === "paragraph") { paragraphPosition = position; return false; }
+          return true;
+        });
+        expect(paragraphPosition).toBeDefined();
+        tiptap.commands.setTextSelection(paragraphPosition! + 1);
+
+        const before = tiptap.getJSON();
+        expect(tiptap.commands.toggleHeading({ level: 2 })).toBe(false);
+        expect(tiptap.getJSON()).toEqual(before);
+        tiptap.commands.setNode("heading", { level: 2 });
+        expect(tiptap.getJSON()).toEqual(before);
+        tiptap.commands.toggleNode("heading", "paragraph", { level: 2 });
+        expect(tiptap.getJSON()).toEqual(before);
+      } finally {
+        tiptap.destroy();
+      }
+    }
+  });
+
+  it("fits pasted list-item headings outside the list-item schema boundary", async () => {
+    const host = mount(); const onChange = vi.fn(); const { editor } = await render(host, empty(), onChange);
+    onChange.mockClear(); await pasteHtml(editor, "<ul><li><h2>Pasted section</h2><p>Remaining item text</p></li></ul>");
+    const emitted = onChange.mock.calls.at(-1)?.[0] as RichTextDoc;
+    expect(emitted).toEqual({ type: "doc", content: [
+      { type: "bulletList", content: [{ type: "listItem", content: [{ type: "paragraph" }] }] },
+      { type: "heading", attrs: { level: 2 }, content: [{ type: "text", text: "Pasted section" }] },
+      { type: "paragraph", content: [{ type: "text", text: "Remaining item text" }] },
+    ] });
+  });
+
   it("creates, updates, and removes links through the dialog with flat stored hrefs", async () => {
     const host = mount(); const onChange = vi.fn(); const { editor } = await render(host, text("Link me"), onChange);
     const linkButton = () => host.querySelector<HTMLButtonElement>('[aria-label="Link"]')!;
@@ -496,6 +613,23 @@ describe("RichTextEditor hard breaks", () => {
       ] }] });
       await act(async () => { root!.unmount(); await Promise.resolve(); }); root = null; host.remove();
       mentionables.mockClear();
+    }
+  });
+
+  it("keeps mention lookup and selection working immediately after each heading level", async () => {
+    for (const level of [2, 3] as const) {
+      const value: RichTextDoc = { type: "doc", content: [{ type: "heading", attrs: { level }, content: [{ type: "text", text: "Heading " }] }] };
+      const host = mount(); let current = value; let submitted: RichTextDoc | undefined;
+      const onChange = vi.fn((next: RichTextDoc) => { current = next; }); const onSubmit = vi.fn(() => { submitted = current; });
+      const { editor } = await render(host, value, onChange, onSubmit);
+      const textNode = editor.querySelector(`h${level}`)!.firstChild!;
+      await moveCaret(editor, textNode, "Heading ".length);
+      await act(async () => { textNode.parentElement!.append(document.createTextNode("@Nor")); editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: "@Nor" })); await Promise.resolve(); await Promise.resolve(); });
+      await moveCaret(editor, editor.querySelector(`h${level}`)!.lastChild!, "Heading @Nor".length);
+      expect(mentionables).toHaveBeenLastCalledWith("Nor"); await click(host.querySelector<HTMLButtonElement>('[role="listbox"] button')!);
+      await keydown(editor, "Enter", { metaKey: true });
+      expect(submitted).toMatchObject({ content: [{ type: "heading", attrs: { level }, content: [{ type: "text", text: "Heading " }, { type: "mention", attrs: { id: "11111111-1111-4111-8111-111111111111", label: "Nora Mention" } }, { type: "text", text: " " }] }] });
+      await act(async () => { root!.unmount(); await Promise.resolve(); }); root = null; host.remove(); mentionables.mockClear();
     }
   });
 

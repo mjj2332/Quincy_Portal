@@ -15,6 +15,13 @@ declare const __PORTAL_MIGRATION_SQL__: string; declare const __PORTAL_SEED_SQL_
 const doc = (content: Array<Record<string, unknown>>) => ({ type: "doc", content: [{ type: "paragraph", content }] });
 const textDoc = (text: string) => doc([{ type: "text", text }]);
 const markedDoc = (type: "underline" | "strike") => doc([{ type: "text", text: `${type} text`, marks: [{ type }] }]);
+const headingDoc = (level: 2 | 3) => ({ type: "doc", content: [{ type: "heading", attrs: { level }, content: [{ type: "text", text: level === 2 ? "Notice section" : "Notice subsection" }] }] });
+const malformedHeadingDocs = () => [
+  { type: "doc", content: [{ type: "heading", attrs: { level: 1 }, content: [{ type: "text", text: "Invalid h1" }] }] },
+  { type: "doc", content: [{ type: "heading", attrs: { level: 4 }, content: [{ type: "text", text: "Invalid h4" }] }] },
+  { type: "doc", content: [{ type: "heading", attrs: { level: 2, extra: true }, content: [{ type: "text", text: "Extra attributes" }] }] },
+  { type: "doc", content: [{ type: "heading", attrs: { level: 3 }, content: [{ type: "paragraph", content: [{ type: "text", text: "Block content" }] }] }] },
+];
 async function executeSql(sql: string) { for (const chunk of sql.split("--> statement-breakpoint")) for (const statement of chunk.split("\n").filter((line) => !line.trim().startsWith("--")).join("\n").split(";")) { const flat = statement.replace(/\s+/g, " ").trim(); if (flat) await database.DB.exec(`${flat};`); } }
 async function sessionCookie(token: string) { const context = await createAuth(baseEnv).$context; return `${context.authCookies.sessionToken.name}=${token}.${await makeSignature(token, authSecret)}`; }
 async function request(path: string, token: string, method: "GET" | "POST" | "PATCH" | "DELETE" = "GET", body?: unknown) {
@@ -156,5 +163,28 @@ describe("notice board API", () => {
     const literalUnderscore = await request("/api/mentionable-users?scope=notice-board&q=_", photographerToken);
     expect((await literalUnderscore.json() as { users: unknown[] }).users).toEqual([]);
     expect((await request("/api/mentionable-users?scope=wrong", photographerToken)).status).toBe(400);
+  });
+
+  it("stores h2 and h3 through POST/PATCH and re-parses persisted headings on GET", async () => {
+    for (const level of [2, 3] as const) {
+      const content = headingDoc(level);
+      const created = await request("/api/notice-board/posts", editorToken, "POST", { content });
+      expect(created.status).toBe(201); const post = await created.json() as { id: string; content: unknown };
+      expect(post.content).toEqual(content);
+      const edited = await request(`/api/notice-board/posts/${post.id}`, editorToken, "PATCH", { content });
+      expect(edited.status).toBe(200); expect((await edited.json() as { content: unknown }).content).toEqual(content);
+      const listed = await request("/api/notice-board/posts?limit=50", editorToken);
+      expect((await listed.json() as { posts: Array<{ id: string; content: unknown }> }).posts.find((item) => item.id === post.id)?.content).toEqual(content);
+    }
+  });
+
+  it("rejects malformed headings on both POST and PATCH", async () => {
+    const created = await request("/api/notice-board/posts", editorToken, "POST", { content: headingDoc(2) });
+    expect(created.status).toBe(201);
+    const post = await created.json() as { id: string };
+    for (const content of malformedHeadingDocs()) {
+      expect((await request("/api/notice-board/posts", editorToken, "POST", { content })).status).toBe(400);
+      expect((await request(`/api/notice-board/posts/${post.id}`, editorToken, "PATCH", { content })).status).toBe(400);
+    }
   });
 });

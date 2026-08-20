@@ -91,6 +91,36 @@ describe("rich-text contract", () => {
     }
   });
 
+  it("accepts only h2 and h3 document headings, preserving their inline content", () => {
+    const input = { type: "doc", content: [
+      { type: "heading", attrs: { level: 2 }, content: [{ type: "text", text: "Section" }, { type: "mention", attrs: { id: userId, label: "Terry" } }] },
+      { type: "heading", attrs: { level: 3 }, content: [{ type: "text", text: "Subsection" }] },
+    ] };
+    const parsed = parseRichTextDoc(input);
+    expect(parsed).toEqual(input);
+    expect(richTextPlainText(parsed)).toBe("SectionTerry\nSubsection");
+    expect(richTextMentionIds(parsed)).toEqual([userId]);
+    for (const heading of [
+      { type: "heading", attrs: { level: 1 }, content: [{ type: "text", text: "No" }] },
+      { type: "heading", attrs: { level: 4 }, content: [{ type: "text", text: "No" }] },
+      { type: "heading", attrs: { level: 2, extra: true }, content: [{ type: "text", text: "No" }] },
+      { type: "heading", attrs: { level: 2 }, extra: true, content: [{ type: "text", text: "No" }] },
+      { type: "heading", attrs: { level: 2 }, content: [{ type: "paragraph", content: [{ type: "text", text: "No" }] }] },
+    ]) expect(() => parseRichTextDoc({ type: "doc", content: [heading] })).toThrow(RichTextValidationError);
+  });
+
+  it("rejects headings inside list items without narrowing legacy nested-list-first data", () => {
+    const headingInList = { type: "doc", content: [{ type: "bulletList", content: [{ type: "listItem", content: [{ type: "heading", attrs: { level: 2 }, content: [{ type: "text", text: "No" }] }] }] }] };
+    expect(() => parseRichTextDoc(headingInList)).toThrow(RichTextValidationError);
+    const headingInNestedList = { type: "doc", content: [{ type: "bulletList", content: [{ type: "listItem", content: [
+      { type: "paragraph", content: [{ type: "text", text: "Outer item" }] },
+      { type: "bulletList", content: [{ type: "listItem", content: [{ type: "heading", attrs: { level: 3 }, content: [{ type: "text", text: "Nested heading" }] }] }] },
+    ] }] }] };
+    expect(() => parseRichTextDoc(headingInNestedList)).toThrow(RichTextValidationError);
+    const legacyNestedFirst = { type: "doc", content: [{ type: "bulletList", content: [{ type: "listItem", content: [{ type: "bulletList", content: [{ type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "Still accepted" }] }] }] }] }] }] };
+    expect(parseRichTextDoc(legacyNestedFirst)).toEqual(legacyNestedFirst);
+  });
+
   it("shares HTTP(S) link classification without changing server validation messages", () => {
     expect(isHttpUrl("https://example.test/path")).toBe(true);
     expect(isHttpUrl("http://example.test")).toBe(true);
@@ -103,14 +133,28 @@ describe("rich-text contract", () => {
     expect(() => parseRichTextDoc(withHref("mailto:hello@example.test"))).toThrow("Link href must use HTTP(S)");
   });
 
-  it("preserves every own key when normalizing future block shapes", () => {
-    const futureShape = {
+  it("preserves heading attrs through parse, normalization, and re-parse", () => {
+    const headingDoc = {
       type: "doc",
-      content: [{ type: "heading", attrs: { level: 2 }, content: [{ type: "text", text: "Future" }] }],
-    } as unknown as ReturnType<typeof parseRichTextDoc>;
-    expect(normalizeRichTextMentionLabels(futureShape, new Map())).toEqual(futureShape);
-    expect(richTextPlainText({ type: "doc", content: [{ type: "heading", attrs: { level: 2 } }] } as unknown as ReturnType<typeof parseRichTextDoc>)).toBe("");
-    expect(richTextMentionIds({ type: "doc", content: [{ type: "heading", attrs: { level: 2 } }] } as unknown as ReturnType<typeof parseRichTextDoc>)).toEqual([]);
+      content: [
+        { type: "heading", attrs: { level: 2 }, content: [{ type: "mention", attrs: { id: userId, label: "Forged" } }] },
+        { type: "heading", attrs: { level: 3 }, content: [{ type: "text", text: "Subsection" }] },
+      ],
+    };
+    const parsed = parseRichTextDoc(headingDoc);
+    const normalized = normalizeRichTextMentionLabels(parsed, new Map([[userId, "Terry normalized"]]));
+    expect(normalized.content[0]).toMatchObject({ type: "heading", attrs: { level: 2 }, content: [{ type: "mention", attrs: { id: userId, label: "Terry normalized" } }] });
+    expect(normalized.content[1]).toMatchObject({ type: "heading", attrs: { level: 3 } });
+    expect(parseRichTextDoc(normalized)).toEqual({
+      ...headingDoc,
+      content: [
+        { type: "heading", attrs: { level: 2 }, content: [{ type: "mention", attrs: { id: userId, label: "Terry normalized" } }] },
+        headingDoc.content[1],
+      ],
+    });
+    const contentless = { type: "doc", content: [{ type: "heading", attrs: { level: 2 } }] } as unknown as ReturnType<typeof parseRichTextDoc>;
+    expect(richTextPlainText(contentless)).toBe("");
+    expect(richTextMentionIds(contentless)).toEqual([]);
   });
 
   it("wraps legacy plain body values in a paragraph", () => {

@@ -18,6 +18,13 @@ declare const __PORTAL_MIGRATION_SQL__: string; declare const __PORTAL_SEED_SQL_
 const doc = (text: string) => ({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text }] }] });
 const mentionDoc = (id: string, label: string) => ({ type: "doc", content: [{ type: "paragraph", content: [{ type: "mention", attrs: { id, label } }] }] });
 const markedDoc = (type: "underline" | "strike") => ({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: `${type} text`, marks: [{ type }] }] }] });
+const headingDoc = (level: 2 | 3) => ({ type: "doc", content: [{ type: "heading", attrs: { level }, content: [{ type: "text", text: level === 2 ? "Comment section" : "Comment subsection" }] }] });
+const malformedHeadingDocs = () => [
+  { type: "doc", content: [{ type: "heading", attrs: { level: 1 }, content: [{ type: "text", text: "Invalid h1" }] }] },
+  { type: "doc", content: [{ type: "heading", attrs: { level: 4 }, content: [{ type: "text", text: "Invalid h4" }] }] },
+  { type: "doc", content: [{ type: "heading", attrs: { level: 2, extra: true }, content: [{ type: "text", text: "Extra attributes" }] }] },
+  { type: "doc", content: [{ type: "heading", attrs: { level: 3 }, content: [{ type: "paragraph", content: [{ type: "text", text: "Block content" }] }] }] },
+];
 async function executeSql(sql: string) { for (const chunk of sql.split("--> statement-breakpoint")) for (const statement of chunk.split("\n").filter((line) => !line.trim().startsWith("--")).join("\n").split(";")) { const flat = statement.replace(/\s+/g, " ").trim(); if (flat) await database.DB.exec(`${flat};`); } }
 async function cookie(token: string) { const context = await createAuth(baseEnv).$context; return `${context.authCookies.sessionToken.name}=${token}.${await makeSignature(token, authSecret)}`; }
 async function request(path: string, token: string, method: "GET" | "POST" | "PATCH" | "DELETE" = "GET", body?: unknown) { const headers = new Headers({ cookie: await cookie(token) }); if (body !== undefined) headers.set("content-type", "application/json"); if (method !== "GET") headers.set("origin", baseEnv.APP_ORIGIN); return workerSelf.fetch(`https://portal.test${path}`, { method, headers, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }); }
@@ -103,6 +110,27 @@ describe("project comments API", () => {
       const malformed = { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Bad", marks: [{ type, attrs: {} }] }] }] };
       expect((await request(`/api/projects/${projectId}/comments`, "comments-editor-token", "POST", { content: malformed })).status).toBe(400);
       expect((await request(`/api/projects/${projectId}/comments/${comment.id}`, "comments-editor-token", "PATCH", { content: malformed })).status).toBe(400);
+    }
+  });
+
+  it("stores h2 and h3 through POST and author PATCH", async () => {
+    for (const level of [2, 3] as const) {
+      const content = headingDoc(level);
+      const created = await request(`/api/projects/${projectId}/comments`, "comments-editor-token", "POST", { content });
+      expect(created.status).toBe(201); const comment = await created.json() as { id: string; content: unknown };
+      expect(comment.content).toEqual(content);
+      const edited = await request(`/api/projects/${projectId}/comments/${comment.id}`, "comments-editor-token", "PATCH", { content });
+      expect(edited.status).toBe(200); expect((await edited.json() as { content: unknown }).content).toEqual(content);
+    }
+  });
+
+  it("rejects malformed headings on both POST and author PATCH", async () => {
+    const created = await request(`/api/projects/${projectId}/comments`, "comments-editor-token", "POST", { content: headingDoc(2) });
+    expect(created.status).toBe(201);
+    const comment = await created.json() as { id: string };
+    for (const content of malformedHeadingDocs()) {
+      expect((await request(`/api/projects/${projectId}/comments`, "comments-editor-token", "POST", { content })).status).toBe(400);
+      expect((await request(`/api/projects/${projectId}/comments/${comment.id}`, "comments-editor-token", "PATCH", { content })).status).toBe(400);
     }
   });
 });

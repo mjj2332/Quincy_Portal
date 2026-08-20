@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import { Extension } from "@tiptap/core";
+import { setBlockType } from "@tiptap/pm/commands";
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import HardBreak from "@tiptap/extension-hard-break";
 import Mention from "@tiptap/extension-mention";
+import { ListItem } from "@tiptap/extension-list";
 import { isHttpUrl, richTextPlainText, type RichTextDoc } from "@quincy/shared";
 import { MentionAutocomplete, type MentionAutocompleteHandle, type MentionableUser } from "./MentionAutocomplete";
 
@@ -19,6 +22,7 @@ function toTiptap(doc: RichTextDoc): Record<string, unknown> {
       }) } : {}),
     };
     if (valueNode.type === "mention") return { type: "mention", attrs: { ...(valueNode.attrs as Record<string, unknown>) } };
+    if (valueNode.type === "heading") return { type: "heading", attrs: { ...(valueNode.attrs as Record<string, unknown>) }, ...(Array.isArray(valueNode.content) ? { content: valueNode.content.map(copy) } : {}) };
     return { type: valueNode.type, ...(Array.isArray(valueNode.content) ? { content: valueNode.content.map(copy) } : {}) };
   };
   return copy(doc) as Record<string, unknown>;
@@ -34,6 +38,49 @@ const ListItemHardBreak = HardBreak.extend({
     };
   },
 });
+
+/** Tiptap's generic block commands otherwise lift a list item before making it a heading. */
+const ListItemHeadingCommandBoundary = Extension.create({
+  addCommands() {
+    return {
+      setNode: (typeOrName, attributes = {}) => (props) => {
+        if ((typeof typeOrName === "string" ? typeOrName : typeOrName.name) === "heading" && this.editor.isActive("listItem")) return false;
+        const type = typeof typeOrName === "string" ? props.state.schema.nodes[typeOrName] : typeOrName;
+        if (!type?.isTextblock) return false;
+        const attributesToCopy = props.state.selection.$anchor.sameParent(props.state.selection.$head) ? props.state.selection.$anchor.parent.attrs : undefined;
+        return props.chain()
+          .command(({ commands }) => setBlockType(type, { ...attributesToCopy, ...attributes })(props.state) || commands.clearNodes())
+          .command(({ state }) => setBlockType(type, { ...attributesToCopy, ...attributes })(state, props.dispatch))
+          .run();
+      },
+    };
+  },
+});
+
+/** The Phase 2B editor schema, shared with direct schema regression tests. */
+export function createRichTextEditorExtensions() {
+  return [
+    StarterKit.configure({
+      heading: { levels: [2, 3] },
+      blockquote: false,
+      codeBlock: false,
+      horizontalRule: false,
+      hardBreak: false,
+      strike: {},
+      code: false,
+      underline: {},
+      listItem: false,
+      listKeymap: false,
+      trailingNode: false,
+      undoRedo: {},
+      link: { openOnClick: false, autolink: false, linkOnPaste: false },
+    }),
+    ListItem.extend({ content: "paragraph (paragraph|bulletList|orderedList)*" }),
+    ListItemHardBreak,
+    Mention.configure({ HTMLAttributes: { class: "rich-text__mention" }, suggestion: { items: () => [] } }),
+    ListItemHeadingCommandBoundary,
+  ];
+}
 
 function ToolbarGroup({ children }: { children: ReactNode }) {
   return <div className="rich-text__toolbar-group">{children}</div>;
@@ -57,6 +104,10 @@ export function tiptapToRichTextDoc(value: unknown): RichTextDoc {
     if (valueNode.type === "mention") {
       const attrs = valueNode.attrs as Record<string, unknown> | undefined;
       return { type: "mention", attrs: { id: attrs?.id, label: attrs?.label } };
+    }
+    if (valueNode.type === "heading") {
+      const attrs = valueNode.attrs as Record<string, unknown> | undefined;
+      return { type: "heading", attrs: { level: attrs?.level }, ...(Array.isArray(valueNode.content) ? { content: valueNode.content.map(copy) } : {}) };
     }
     return { type: valueNode.type, ...(Array.isArray(valueNode.content) ? { content: valueNode.content.map(copy) } : {}) };
   };
@@ -97,24 +148,7 @@ export function RichTextEditor({ value, onChange, limit, disabled = false, loadM
   const [linkOpen, setLinkOpen] = useState(false);
   const [linkHref, setLinkHref] = useState("");
   const [linkError, setLinkError] = useState<string | null>(null);
-  const extensions = useMemo(() => [
-    StarterKit.configure({
-      heading: false,
-      blockquote: false,
-      codeBlock: false,
-      horizontalRule: false,
-      hardBreak: false,
-      strike: {},
-      code: false,
-      underline: {},
-      listKeymap: false,
-      trailingNode: false,
-      undoRedo: {},
-      link: { openOnClick: false, autolink: false, linkOnPaste: false },
-    }),
-    ListItemHardBreak,
-    Mention.configure({ HTMLAttributes: { class: "rich-text__mention" }, suggestion: { items: () => [] } }),
-  ], []);
+  const extensions = useMemo(createRichTextEditorExtensions, []);
   const editor = useEditor({
     extensions,
     shouldRerenderOnTransaction: true,
@@ -210,6 +244,7 @@ export function RichTextEditor({ value, onChange, limit, disabled = false, loadM
     chain.unsetLink().run();
     closeLinkDialog({ returnFocus: false });
   };
+  const canUseHeading = !disabled && (editor.can().toggleHeading({ level: 2 }) || editor.can().toggleHeading({ level: 3 }));
   const handleLinkDialogKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (event.key === "Escape") { event.preventDefault(); closeLinkDialog(); return; }
     if (event.key !== "Tab") return;
@@ -229,6 +264,16 @@ export function RichTextEditor({ value, onChange, limit, disabled = false, loadM
       </ToolbarGroup>
       <ToolbarDivider />
       <ToolbarGroup>
+        <select className="rich-text__toolbar-select" aria-label="Heading" value={editor.isActive("heading", { level: 2 }) ? "2" : editor.isActive("heading", { level: 3 }) ? "3" : ""} disabled={!canUseHeading} onChange={(event) => {
+          if (!canUseHeading) return;
+          const level = event.currentTarget.value;
+          if (level === "2" || level === "3") editor.chain().focus().toggleHeading({ level: Number(level) as 2 | 3 }).run();
+          else editor.chain().focus().setParagraph().run();
+        }}>
+          <option value="">Paragraph</option>
+          <option value="2">Section</option>
+          <option value="3">Subsection</option>
+        </select>
         <button ref={linkTrigger} type="button" className="rich-text__toolbar-button" aria-label="Link" aria-pressed={editor.isActive("link")} disabled={disabled || !editor.can().setLink({ href: "https://example.com" })} onMouseDown={(event) => event.preventDefault()} onClick={openLinkDialog}>Link</button>
         <ToolbarButton label="Bullet list" active={editor.isActive("bulletList")} disabled={disabled || !editor.can().toggleBulletList()} onClick={() => editor.chain().focus().toggleBulletList().run()}>• List</ToolbarButton>
         <ToolbarButton label="Ordered list" active={editor.isActive("orderedList")} disabled={disabled || !editor.can().toggleOrderedList()} onClick={() => editor.chain().focus().toggleOrderedList().run()}>1. List</ToolbarButton>
