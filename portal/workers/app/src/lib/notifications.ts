@@ -6,7 +6,7 @@ import {
 } from "@quincy/db";
 import { createDb } from "@quincy/db";
 import { projects, user } from "@quincy/db/schema";
-import { projectNotificationRoute, staffPathFor } from "@quincy/shared";
+import { projectNotificationRoute, staffPathFor, truncateForEmail } from "@quincy/shared";
 import { and, eq, inArray } from "drizzle-orm";
 import type { AppEnv } from "../env";
 
@@ -91,8 +91,8 @@ type MentionMap = { id: string; mentionedUserId: string };
 export async function notifyMentions(
   env: AppEnv["Bindings"],
   input: (
-    { scope: "notice-board"; actorId: string; mentions: MentionMap[] }
-    | { scope: "project-comment"; actorId: string; projectId: string; mentions: MentionMap[] }
+    { scope: "notice-board"; actorId: string; authorName: string; body: string; mentions: MentionMap[] }
+    | { scope: "project-comment"; actorId: string; authorName: string; body: string; projectId: string; projectStreet: string; mentions: MentionMap[] }
   ),
 ): Promise<void> {
   try {
@@ -113,6 +113,10 @@ export async function notifyMentions(
     const copy = input.scope === "notice-board"
       ? { title: "You were mentioned", body: "You were mentioned in a notice-board post." }
       : { title: "You were mentioned", body: "You were mentioned in a project comment." };
+    const excerpt = truncateForEmail(input.body);
+    const mentionEmail = input.scope === "notice-board"
+      ? { scope: "notice-board" as const, authorName: input.authorName, excerpt }
+      : { scope: "project-comment" as const, authorName: input.authorName, projectLabel: input.projectStreet, excerpt };
     const route = projectNotificationRoute(input.scope === "project-comment" ? input.projectId : null, "mentioned");
     const link = route?.kind === "project" ? `${env.APP_ORIGIN}${staffPathFor(route)}` : undefined;
     for (const mention of input.mentions) {
@@ -127,6 +131,7 @@ export async function notifyMentions(
         body: copy.body,
         sourceKey: mention.id,
         link,
+        mentionEmail,
         email: env.EMAIL,
         fromAddress: env.NOTIFICATIONS_FROM_ADDRESS,
       });

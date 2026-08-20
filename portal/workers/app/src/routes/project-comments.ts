@@ -84,7 +84,7 @@ projectCommentsRoutes.post("/projects/:projectId/comments", async (c) => {
   const mentions = prepared.mentionIds.map((mentionedUserId) => ({ id: newId(), commentId: id, mentionedUserId, createdAt }));
   await db.batch([db.insert(schema.projectComments).values({ id, projectId, authorId: currentUser.id, body: prepared.body, contentJson: JSON.stringify(prepared.content), createdAt }), ...mentions.map((mention) => db.insert(schema.projectCommentMentions).values(mention))] as [never, ...never[]]);
   await audit(c.env, currentUser.id, "project_comment.create", "project_comment", id);
-  await notifyMentions(c.env, { scope: "project-comment", projectId, actorId: currentUser.id, mentions });
+  await notifyMentions(c.env, { scope: "project-comment", projectId, projectStreet: access.street, actorId: currentUser.id, authorName: currentUser.name, body: prepared.body, mentions });
   const comment = await findComment(db, projectId, id); if (!comment) return c.json({ error: "Comment could not be created" }, 500);
   return c.json(serializeComment(comment), 201);
 });
@@ -100,7 +100,7 @@ projectCommentsRoutes.patch("/projects/:projectId/comments/:commentId", async (c
   const added = prepared.mentionIds.filter((mentionedUserId) => !existingIds.has(mentionedUserId)).map((mentionedUserId) => ({ id: newId(), commentId, mentionedUserId, createdAt }));
   await db.batch([db.update(schema.projectComments).set({ body: prepared.body, contentJson: JSON.stringify(prepared.content), editedAt: createdAt }).where(eq(schema.projectComments.id, commentId)), ...maps.filter((map) => !wanted.has(map.mentionedUserId)).map((map) => db.delete(schema.projectCommentMentions).where(eq(schema.projectCommentMentions.id, map.id))), ...added.map((map) => db.insert(schema.projectCommentMentions).values(map))] as [never, ...never[]]);
   await audit(c.env, currentUser.id, "project_comment.edit", "project_comment", commentId);
-  await notifyMentions(c.env, { scope: "project-comment", projectId, actorId: currentUser.id, mentions: added });
+  await notifyMentions(c.env, { scope: "project-comment", projectId, projectStreet: access.street, actorId: currentUser.id, authorName: currentUser.name, body: prepared.body, mentions: added });
   const comment = await findComment(db, projectId, commentId); if (!comment) return c.json({ error: "Comment could not be updated" }, 500);
   return c.json(serializeComment(comment));
 });

@@ -66,9 +66,9 @@ describe("notice board API", () => {
     await database.DB.prepare("DELETE FROM notifications WHERE source_key = ?").bind(mention.id).run();
     const send = vi.fn().mockResolvedValue({ messageId: "mention-email" });
     await notifyMentions({ DB: database.DB, EMAIL: { send }, NOTIFICATIONS_FROM_ADDRESS: "studio@example.test", APP_ORIGIN: "https://portal.test" } as unknown as Env, {
-      scope: "notice-board", actorId: editorId, mentions: [{ id: mention.id, mentionedUserId: mention.mentioned_user_id }],
+      scope: "notice-board", actorId: editorId, authorName: "Notice Editor", body: "Hello Notice Admin", mentions: [{ id: mention.id, mentionedUserId: mention.mentioned_user_id }],
     });
-    expect(send).toHaveBeenCalledWith(expect.objectContaining({ to: "notice-admin@example.test", subject: "You were mentioned", text: "You were mentioned in a notice-board post.", html: "<p>You were mentioned in a notice-board post.</p>" }));
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ to: "notice-admin@example.test", subject: "You were mentioned", text: "Notice Editor mentioned you in a notice-board post:\n\n“Hello Notice Admin”", html: "<p>Notice Editor mentioned you in a notice-board post:</p><p>“Hello Notice Admin”</p>" }));
     expect(await database.DB.prepare("SELECT email_sent_at, email_message_id FROM notifications WHERE source_key = ?").bind(mention.id).first()).toMatchObject({ email_sent_at: expect.any(Number), email_message_id: "mention-email" });
     const audit = await database.DB.prepare("SELECT action, meta_json FROM audit_log WHERE target_id = ? ORDER BY created_at DESC LIMIT 1").bind(post.id).first<{ action: string; meta_json: string | null }>();
     expect(audit).toEqual({ action: "notice_board.post", meta_json: null });
@@ -83,7 +83,7 @@ describe("notice board API", () => {
     await database.DB.prepare("UPDATE user SET active = 0 WHERE id = ?").bind(photographerId).run();
     const send = vi.fn().mockResolvedValue({ messageId: "should-not-send" });
     await notifyMentions({ DB: database.DB, EMAIL: { send }, NOTIFICATIONS_FROM_ADDRESS: "studio@example.test", APP_ORIGIN: "https://portal.test" } as unknown as Env, {
-      scope: "notice-board", actorId: editorId, mentions: [{ id: mappingId, mentionedUserId: photographerId }],
+      scope: "notice-board", actorId: editorId, authorName: "Notice Editor", body: "Mention Notice Photographer", mentions: [{ id: mappingId, mentionedUserId: photographerId }],
     });
     expect(await database.DB.prepare("SELECT id FROM notifications WHERE source_key = ?").bind(mappingId).all()).toMatchObject({ results: [] });
     expect(send).not.toHaveBeenCalled();
@@ -98,6 +98,13 @@ describe("notice board API", () => {
     const edited = await request(`/api/notice-board/posts/${post.id}`, photographerToken, "PATCH", { content: textDoc("Photographer edited") });
     expect(edited.status).toBe(200); expect(await edited.json()).toMatchObject({ body: "Photographer edited", editedAt: expect.any(String) });
     expect((await request(`/api/notice-board/posts/${post.id}`, photographerToken, "DELETE")).status).toBe(200);
+  });
+
+  it("trims leading and trailing whitespace before accepting an at-limit body", async () => {
+    const body = "x".repeat(2_000);
+    const response = await request("/api/notice-board/posts", editorToken, "POST", { content: textDoc(`  ${body}  `) });
+    expect(response.status).toBe(201);
+    expect(await response.json()).toMatchObject({ body });
   });
 
   it("rejects malformed rich documents, overlong semantic bodies, and inactive mention targets", async () => {

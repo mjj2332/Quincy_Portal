@@ -179,9 +179,13 @@ describe("notifications API and recipient selection", () => {
     ]);
     const send = vi.fn().mockResolvedValue({ messageId: "collaboration-link" });
     const testEnv = { DB: database.DB, EMAIL: { send }, NOTIFICATIONS_FROM_ADDRESS: "studio@example.test", APP_ORIGIN: "https://portal.test" } as unknown as Env;
-    await notifyMentions(testEnv, { scope: "project-comment", actorId, projectId, mentions: [{ id: crypto.randomUUID(), mentionedUserId: assigneeId }] });
+    await notifyMentions(testEnv, { scope: "project-comment", actorId, authorName: "Mention actor", body: "Please adjust the front elevation.", projectId, projectStreet: "Collaboration links", mentions: [{ id: crypto.randomUUID(), mentionedUserId: assigneeId }] });
     await notifySubtaskAssignee(testEnv, { projectId, actorId, assigneeId, subtaskId: crypto.randomUUID(), assignmentVersion: 1 });
     expect(send).toHaveBeenCalledTimes(2);
     for (const [message] of send.mock.calls) expect(message).toMatchObject({ text: expect.stringContaining(`https://portal.test/projects/${projectId}?collaboration=open`) });
+    expect(send.mock.calls[0]![0]).toMatchObject({
+      text: `Mention actor commented on Collaboration links:\n\n“Please adjust the front elevation.”\n\nhttps://portal.test/projects/${projectId}?collaboration=open`,
+      html: `<p>Mention actor commented on Collaboration links:</p><p>“Please adjust the front elevation.”</p><p><a href="https://portal.test/projects/${projectId}?collaboration=open">View project</a></p>`,
+    });
   });
 });

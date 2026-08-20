@@ -79,6 +79,13 @@ describe("project comments API", () => {
     expect((await response.json() as { content: unknown; body: string })).toMatchObject({ content, body: "First\nsecond" });
   });
 
+  it("trims leading and trailing whitespace before accepting an at-limit body", async () => {
+    const body = "x".repeat(10_000);
+    const response = await request(`/api/projects/${projectId}/comments`, "comments-editor-token", "POST", { content: doc(`  ${body}  `) });
+    expect(response.status).toBe(201);
+    expect(await response.json()).toMatchObject({ body });
+  });
+
   it("rejects forged or inactive targets without auditing, keeps nested comment IDs project-scoped, and validates lookup after access then existence", async () => {
     expect((await request(`/api/projects/${projectId}/comments/${crypto.randomUUID()}`, "comments-editor-token", "DELETE")).status).toBe(404);
     await database.DB.prepare("UPDATE user SET active = 0 WHERE id = ?").bind(adminId).run();

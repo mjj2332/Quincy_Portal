@@ -11,3 +11,4 @@ export * from "./dropbox-paths";
 export * from "./autohdr";
 export * from "./dashboard-order";
 export * from "./rich-text";
+export * from "./email-text";

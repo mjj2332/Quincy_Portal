@@ -82,9 +82,40 @@ export type EmitNotificationInput = {
   body?: string;
   sourceKey?: string;
   link?: string;
+  mentionEmail?:
+    | {
+        scope: "project-comment";
+        authorName: string;
+        projectLabel: string;
+        excerpt: string;
+      }
+    | {
+        scope: "notice-board";
+        authorName: string;
+        excerpt: string;
+      };
   email?: NotificationEmail;
   fromAddress?: string;
 };
+
+function escapeHtml(value: string): string {
+  const entities: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+  return value.replace(/[&<>"']/g, (character) => entities[character]!);
+}
+
+function formatMentionEmail(mentionEmail: NonNullable<EmitNotificationInput["mentionEmail"]>, link?: string): { text: string; html: string } {
+  const htmlExcerpt = escapeHtml(mentionEmail.excerpt).replace(/\n/g, "<br />");
+  if (mentionEmail.scope === "project-comment") {
+    const text = `${mentionEmail.authorName} commented on ${mentionEmail.projectLabel}:\n\n“${mentionEmail.excerpt}”`;
+    const html = `<p>${escapeHtml(mentionEmail.authorName)} commented on ${escapeHtml(mentionEmail.projectLabel)}:</p><p>“${htmlExcerpt}”</p>`;
+    return link
+      ? { text: `${text}\n\n${link}`, html: `${html}<p><a href="${escapeHtml(link)}">View project</a></p>` }
+      : { text, html };
+  }
+  const text = `${mentionEmail.authorName} mentioned you in a notice-board post:\n\n“${mentionEmail.excerpt}”`;
+  const html = `<p>${escapeHtml(mentionEmail.authorName)} mentioned you in a notice-board post:</p><p>“${htmlExcerpt}”</p>`;
+  return { text, html };
+}
 
 /** Inserts one row per distinct recipient and best-effort sends enabled email events. */
 export async function emitNotifications(
@@ -129,12 +160,17 @@ export async function emitNotifications(
     insertedCount += 1;
     if (!EMAIL_ENABLED_EVENTS.includes(input.type) || !input.email || !input.fromAddress) continue;
     try {
+      const emailContent = input.mentionEmail
+        ? formatMentionEmail(input.mentionEmail, input.link)
+        : {
+            text: input.link ? `${copy.body}\n\n${input.link}` : copy.body,
+            html: input.link ? `<p>${copy.body}</p><p><a href="${input.link}">View project</a></p>` : `<p>${copy.body}</p>`,
+          };
       const result = await input.email.send({
         from: input.fromAddress,
         to: recipient.email,
         subject: copy.title,
-        text: input.link ? `${copy.body}\n\n${input.link}` : copy.body,
-        html: input.link ? `<p>${copy.body}</p><p><a href="${input.link}">View project</a></p>` : `<p>${copy.body}</p>`,
+        ...emailContent,
       });
       await db.update(schema.notifications).set({ emailSentAt: new Date(), emailMessageId: result.messageId }).where(eq(schema.notifications.id, inserted.id));
     } catch (error) {

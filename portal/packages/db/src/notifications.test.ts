@@ -112,6 +112,54 @@ describe("emitNotifications email gating", () => {
     expect(unlinkedEmail.send).toHaveBeenCalledWith(expect.objectContaining({ text: "You were mentioned.", html: "<p>You were mentioned.</p>" }));
   });
 
+  it("formats project-comment mentions with escaped HTML, preserved text, and a project link", async () => {
+    const { db } = mockDb();
+    const email = fakeEmail(async () => ({ messageId: "m1" }));
+    const authorName = "Ava & <Co>";
+    const projectLabel = "12 \"King's\" Street";
+    const excerpt = "First & <line>\n\"Second's\" line";
+    const link = 'https://portal.test/projects/project-1?tab=a&quote="quoted"';
+    await emitNotifications(db, {
+      type: "mentioned",
+      recipients: [recipient("u1", "u1@example.com")],
+      title: "You were mentioned",
+      body: "Generic body must not be used",
+      mentionEmail: { scope: "project-comment", authorName, projectLabel, excerpt },
+      link,
+      email,
+      fromAddress: "studio@example.test",
+    });
+    expect(email.send).toHaveBeenCalledWith(expect.objectContaining({
+      text: `${authorName} commented on ${projectLabel}:\n\n“${excerpt}”\n\n${link}`,
+      html: '<p>Ava &amp; &lt;Co&gt; commented on 12 &quot;King&#39;s&quot; Street:</p><p>“First &amp; &lt;line&gt;<br />&quot;Second&#39;s&quot; line”</p><p><a href="https://portal.test/projects/project-1?tab=a&amp;quote=&quot;quoted&quot;">View project</a></p>',
+    }));
+    const sent = (email.send as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    expect(sent.html).not.toContain("Generic body must not be used");
+    expect(sent.html).not.toContain("&lt;br /&gt;");
+  });
+
+  it("formats notice-board mentions without a project link, even if a caller supplies one", async () => {
+    const { db } = mockDb();
+    const email = fakeEmail(async () => ({ messageId: "m1" }));
+    await emitNotifications(db, {
+      type: "mentioned",
+      recipients: [recipient("u1", "u1@example.com")],
+      mentionEmail: { scope: "notice-board", authorName: "Jane Smith", excerpt: "Bring the floor-plan printouts." },
+      link: "https://portal.test/projects/should-not-appear",
+      email,
+      fromAddress: "studio@example.test",
+    });
+    expect(email.send).toHaveBeenCalledWith(expect.objectContaining({
+      text: "Jane Smith mentioned you in a notice-board post:\n\n“Bring the floor-plan printouts.”",
+      html: "<p>Jane Smith mentioned you in a notice-board post:</p><p>“Bring the floor-plan printouts.”</p>",
+    }));
+    const sent = (email.send as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    expect(sent.text).not.toContain("https://portal.test/projects/should-not-appear");
+    expect(sent.text).not.toContain("View project");
+    expect(sent.html).not.toContain("View project");
+    expect(sent.html).not.toContain("href=");
+  });
+
   it("records emailError for a failing recipient without blocking the remaining recipients", async () => {
     const { db, insertCalls, updateCalls } = mockDb();
     const email = fakeEmail(async (message) => {
