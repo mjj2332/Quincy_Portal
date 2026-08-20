@@ -16,6 +16,8 @@ const doc = (content: Array<Record<string, unknown>>) => ({ type: "doc", content
 const textDoc = (text: string) => doc([{ type: "text", text }]);
 const markedDoc = (type: "underline" | "strike") => doc([{ type: "text", text: `${type} text`, marks: [{ type }] }]);
 const headingDoc = (level: 2 | 3) => ({ type: "doc", content: [{ type: "heading", attrs: { level }, content: [{ type: "text", text: level === 2 ? "Notice section" : "Notice subsection" }] }] });
+const taskDoc = (checked: boolean) => ({ type: "doc", content: [{ type: "taskList", content: [{ type: "taskItem", attrs: { checked }, content: [{ type: "paragraph", content: [{ type: "text", text: checked ? "Checked notice" : "Unchecked notice" }] }] }] }] });
+const nestedTaskDoc = () => ({ type: "doc", content: [{ type: "taskList", content: [{ type: "taskItem", attrs: { checked: false }, content: [{ type: "paragraph", content: [{ type: "text", text: "Outer notice task" }] }, { type: "orderedList", content: [{ type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "Nested ordinary" }] }, { type: "taskList", content: [{ type: "taskItem", attrs: { checked: true }, content: [{ type: "paragraph", content: [{ type: "text", text: "Nested task" }] }] }] }] }] }] }] }] });
 const malformedHeadingDocs = () => [
   { type: "doc", content: [{ type: "heading", attrs: { level: 1 }, content: [{ type: "text", text: "Invalid h1" }] }] },
   { type: "doc", content: [{ type: "heading", attrs: { level: 4 }, content: [{ type: "text", text: "Invalid h4" }] }] },
@@ -185,6 +187,30 @@ describe("notice board API", () => {
     for (const content of malformedHeadingDocs()) {
       expect((await request("/api/notice-board/posts", editorToken, "POST", { content })).status).toBe(400);
       expect((await request(`/api/notice-board/posts/${post.id}`, editorToken, "PATCH", { content })).status).toBe(400);
+    }
+  });
+
+  it("stores checked and unchecked task lists through POST/PATCH and re-parses them on GET", async () => {
+    for (const content of [taskDoc(false), taskDoc(true), nestedTaskDoc()]) {
+      const created = await request("/api/notice-board/posts", editorToken, "POST", { content });
+      expect(created.status).toBe(201); const post = await created.json() as { id: string; content: unknown };
+      expect(post.content).toEqual(content);
+      expect((await request(`/api/notice-board/posts/${post.id}`, editorToken, "PATCH", { content })).status).toBe(200);
+      const listed = await request("/api/notice-board/posts?limit=50", editorToken);
+      expect((await listed.json() as { posts: Array<{ id: string; content: unknown }> }).posts.find((item) => item.id === post.id)?.content).toEqual(content);
+    }
+  });
+
+  it("rejects malformed task items on both POST and PATCH", async () => {
+    const created = await request("/api/notice-board/posts", editorToken, "POST", { content: taskDoc(false) });
+    const { id } = await created.json() as { id: string };
+    const invalid = [
+      { type: "doc", content: [{ type: "taskList", content: [{ type: "taskItem", attrs: { checked: "false" }, content: [{ type: "paragraph", content: [{ type: "text", text: "Bad" }] }] }] }] },
+      { type: "doc", content: [{ type: "taskList", content: [{ type: "taskItem", attrs: { checked: false }, content: [{ type: "heading", attrs: { level: 2 }, content: [{ type: "text", text: "Bad" }] }] }] }] },
+    ];
+    for (const content of invalid) {
+      expect((await request("/api/notice-board/posts", editorToken, "POST", { content })).status).toBe(400);
+      expect((await request(`/api/notice-board/posts/${id}`, editorToken, "PATCH", { content })).status).toBe(400);
     }
   });
 });

@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { Extension } from "@tiptap/core";
 import { setBlockType } from "@tiptap/pm/commands";
+import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
+import { Plugin } from "@tiptap/pm/state";
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import HardBreak from "@tiptap/extension-hard-break";
 import Mention from "@tiptap/extension-mention";
-import { ListItem } from "@tiptap/extension-list";
-import { isHttpUrl, richTextPlainText, type RichTextDoc } from "@quincy/shared";
+import { ListItem, TaskItem, TaskList } from "@tiptap/extension-list";
+import { isHttpUrl, RICH_TEXT_JSON_MAX_BYTES, RICH_TEXT_MAX_NESTING, richTextDocByteLength, richTextPlainText, type RichTextDoc } from "@quincy/shared";
 import { MentionAutocomplete, type MentionAutocompleteHandle, type MentionableUser } from "./MentionAutocomplete";
 
 function toTiptap(doc: RichTextDoc): Record<string, unknown> {
@@ -22,7 +24,7 @@ function toTiptap(doc: RichTextDoc): Record<string, unknown> {
       }) } : {}),
     };
     if (valueNode.type === "mention") return { type: "mention", attrs: { ...(valueNode.attrs as Record<string, unknown>) } };
-    if (valueNode.type === "heading") return { type: "heading", attrs: { ...(valueNode.attrs as Record<string, unknown>) }, ...(Array.isArray(valueNode.content) ? { content: valueNode.content.map(copy) } : {}) };
+    if (valueNode.type === "heading" || valueNode.type === "taskItem") return { type: valueNode.type, attrs: { ...(valueNode.attrs as Record<string, unknown>) }, ...(Array.isArray(valueNode.content) ? { content: valueNode.content.map(copy) } : {}) };
     return { type: valueNode.type, ...(Array.isArray(valueNode.content) ? { content: valueNode.content.map(copy) } : {}) };
   };
   return copy(doc) as Record<string, unknown>;
@@ -44,7 +46,7 @@ const ListItemHeadingCommandBoundary = Extension.create({
   addCommands() {
     return {
       setNode: (typeOrName, attributes = {}) => (props) => {
-        if ((typeof typeOrName === "string" ? typeOrName : typeOrName.name) === "heading" && this.editor.isActive("listItem")) return false;
+        if ((typeof typeOrName === "string" ? typeOrName : typeOrName.name) === "heading" && (this.editor.isActive("listItem") || this.editor.isActive("taskItem"))) return false;
         const type = typeof typeOrName === "string" ? props.state.schema.nodes[typeOrName] : typeOrName;
         if (!type?.isTextblock) return false;
         const attributesToCopy = props.state.selection.$anchor.sameParent(props.state.selection.$head) ? props.state.selection.$anchor.parent.attrs : undefined;
@@ -57,8 +59,57 @@ const ListItemHeadingCommandBoundary = Extension.create({
   },
 });
 
-/** The Phase 2B editor schema, shared with direct schema regression tests. */
+const LIST_NESTING_CONTAINERS = new Set(["bulletList", "orderedList", "taskList", "listItem", "taskItem"]);
+/** A level is a list plus its item; the server starts the outer list at depth zero. */
+const RICH_TEXT_MAX_ITEM_CONTAINER_LEVELS = Math.floor((RICH_TEXT_MAX_NESTING + 1) / 2);
+
+function isListNestingContainer(node: ProseMirrorNode): boolean {
+  return LIST_NESTING_CONTAINERS.has(node.type.name);
+}
+
+function exceedsListNestingLimit(doc: ProseMirrorNode): boolean {
+  const visit = (node: ProseMirrorNode, depth: number): boolean => {
+    if (isListNestingContainer(node) && depth > RICH_TEXT_MAX_NESTING) return true;
+    let exceeded = false;
+    // Match parseBlock(): only descending from a list or list-item consumes nesting depth.
+    node.forEach((child) => { if (!exceeded) exceeded = visit(child, depth + (isListNestingContainer(node) ? 1 : 0)); });
+    return exceeded;
+  };
+  let exceeded = false;
+  doc.forEach((child) => { if (!exceeded) exceeded = visit(child, 0); });
+  return exceeded;
+}
+
+function itemContainerDepth($from: { depth: number; node: (depth: number) => { type: { name: string } } }): number {
+  let count = 0;
+  for (let depth = 0; depth <= $from.depth; depth += 1) {
+    const name = $from.node(depth).type.name;
+    if (name === "listItem" || name === "taskItem") count += 1;
+  }
+  return count;
+}
+
+export function shouldBlockListIndent(event: Pick<KeyboardEvent, "key" | "shiftKey">, depth: number): boolean {
+  return event.key === "Tab" && !event.shiftKey && depth >= RICH_TEXT_MAX_ITEM_CONTAINER_LEVELS;
+}
+
+/** Rejects d9 list transactions before ProseMirror mutates the editor document. */
+const ListNestingBoundary = Extension.create({
+  name: "listNestingBoundary",
+  addProseMirrorPlugins() {
+    return [new Plugin({
+      filterTransaction: (transaction) => {
+        if (!transaction.docChanged || !exceedsListNestingLimit(transaction.doc)) return true;
+        this.editor.view?.dom.dispatchEvent(new Event("rich-text-nesting-blocked"));
+        return false;
+      },
+    })];
+  },
+});
+
+/** The Phase 2C editor schema, shared with direct schema regression tests. */
 export function createRichTextEditorExtensions() {
+  const itemContent = "paragraph (paragraph|bulletList|orderedList|taskList)*";
   return [
     StarterKit.configure({
       heading: { levels: [2, 3] },
@@ -75,10 +126,13 @@ export function createRichTextEditorExtensions() {
       undoRedo: {},
       link: { openOnClick: false, autolink: false, linkOnPaste: false },
     }),
-    ListItem.extend({ content: "paragraph (paragraph|bulletList|orderedList)*" }),
+    ListItem.extend({ content: itemContent }),
     ListItemHardBreak,
+    TaskList.configure({}),
+    TaskItem.extend({ content: itemContent }).configure({ nested: true }),
     Mention.configure({ HTMLAttributes: { class: "rich-text__mention" }, suggestion: { items: () => [] } }),
     ListItemHeadingCommandBoundary,
+    ListNestingBoundary,
   ];
 }
 
@@ -108,6 +162,10 @@ export function tiptapToRichTextDoc(value: unknown): RichTextDoc {
     if (valueNode.type === "heading") {
       const attrs = valueNode.attrs as Record<string, unknown> | undefined;
       return { type: "heading", attrs: { level: attrs?.level }, ...(Array.isArray(valueNode.content) ? { content: valueNode.content.map(copy) } : {}) };
+    }
+    if (valueNode.type === "taskItem") {
+      const attrs = valueNode.attrs as Record<string, unknown> | undefined;
+      return { type: "taskItem", attrs: { checked: attrs?.checked }, ...(Array.isArray(valueNode.content) ? { content: valueNode.content.map(copy) } : {}) };
     }
     return { type: valueNode.type, ...(Array.isArray(valueNode.content) ? { content: valueNode.content.map(copy) } : {}) };
   };
@@ -148,6 +206,7 @@ export function RichTextEditor({ value, onChange, limit, disabled = false, loadM
   const [linkOpen, setLinkOpen] = useState(false);
   const [linkHref, setLinkHref] = useState("");
   const [linkError, setLinkError] = useState<string | null>(null);
+  const [nestingBlocked, setNestingBlocked] = useState(false);
   const extensions = useMemo(createRichTextEditorExtensions, []);
   const editor = useEditor({
     extensions,
@@ -158,9 +217,15 @@ export function RichTextEditor({ value, onChange, limit, disabled = false, loadM
       attributes: { class: "rich-text__editor-content", "data-placeholder": placeholder, ...(id ? { id } : {}) },
       handleKeyDown: (view, event) => {
         if (menu.current?.handleKeyDown(event)) return true;
+        if (shouldBlockListIndent(event, itemContainerDepth(view.state.selection.$from))) {
+          event.preventDefault();
+          view.dom.dispatchEvent(new Event("rich-text-nesting-blocked"));
+          return true;
+        }
         if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-          const plainText = richTextPlainText(tiptapToRichTextDoc(view.state.doc.toJSON()));
-          if (plainText.trim().length > 0 && plainText.length <= limitRef.current && !disabledRef.current) {
+          const doc = tiptapToRichTextDoc(view.state.doc.toJSON());
+          const plainText = richTextPlainText(doc);
+          if (plainText.trim().length > 0 && plainText.length <= limitRef.current && richTextDocByteLength(doc) <= RICH_TEXT_JSON_MAX_BYTES && !disabledRef.current) {
             event.preventDefault();
             onSubmitRef.current?.();
             return true;
@@ -171,7 +236,7 @@ export function RichTextEditor({ value, onChange, limit, disabled = false, loadM
     },
     onUpdate: ({ editor: next }) => {
       const doc = tiptapToRichTextDoc(next.getJSON());
-      valueRef.current = JSON.stringify(doc); onChangeRef.current(doc); setQuery(mentionQuery(next));
+      valueRef.current = JSON.stringify(doc); onChangeRef.current(doc); setNestingBlocked(false); setQuery(mentionQuery(next));
     },
     onSelectionUpdate: ({ editor: next }) => setQuery(mentionQuery(next)),
   });
@@ -179,8 +244,17 @@ export function RichTextEditor({ value, onChange, limit, disabled = false, loadM
   useEffect(() => { if (editor) editor.setEditable(!disabled); }, [disabled, editor]);
   useEffect(() => {
     if (!editor) return;
+    const announce = () => setNestingBlocked(true);
+    editor.view.dom.addEventListener("rich-text-nesting-blocked", announce);
+    return () => editor.view.dom.removeEventListener("rich-text-nesting-blocked", announce);
+  }, [editor]);
+  useEffect(() => {
+    if (!editor) return;
     const serialised = JSON.stringify(value);
-    if (serialised !== valueRef.current) { valueRef.current = serialised; editor.commands.setContent(toTiptap(value), { emitUpdate: false }); }
+    if (serialised !== valueRef.current) {
+      const applied = editor.commands.setContent(toTiptap(value), { emitUpdate: false });
+      if (applied && JSON.stringify(tiptapToRichTextDoc(editor.getJSON())) === serialised) valueRef.current = serialised;
+    }
   }, [editor, value]);
   useEffect(() => {
     if (!editor || !mentionA11y) return;
@@ -210,6 +284,8 @@ export function RichTextEditor({ value, onChange, limit, disabled = false, loadM
   }, [linkOpen]);
   if (!editor) return null;
   const plainText = richTextPlainText(value);
+  const overBytes = richTextDocByteLength(value) > RICH_TEXT_JSON_MAX_BYTES;
+  const atListNestingLimit = itemContainerDepth(editor.state.selection.$from) >= RICH_TEXT_MAX_ITEM_CONTAINER_LEVELS;
   const selectMention = (user: MentionableUser) => {
     const activeQuery = query ?? "";
     const from = editor.state.selection.from - activeQuery.length - 1;
@@ -275,8 +351,9 @@ export function RichTextEditor({ value, onChange, limit, disabled = false, loadM
           <option value="3">Subsection</option>
         </select>
         <button ref={linkTrigger} type="button" className="rich-text__toolbar-button" aria-label="Link" aria-pressed={editor.isActive("link")} disabled={disabled || !editor.can().setLink({ href: "https://example.com" })} onMouseDown={(event) => event.preventDefault()} onClick={openLinkDialog}>Link</button>
-        <ToolbarButton label="Bullet list" active={editor.isActive("bulletList")} disabled={disabled || !editor.can().toggleBulletList()} onClick={() => editor.chain().focus().toggleBulletList().run()}>• List</ToolbarButton>
-        <ToolbarButton label="Ordered list" active={editor.isActive("orderedList")} disabled={disabled || !editor.can().toggleOrderedList()} onClick={() => editor.chain().focus().toggleOrderedList().run()}>1. List</ToolbarButton>
+        <ToolbarButton label="Bullet list" active={editor.isActive("bulletList")} disabled={disabled || atListNestingLimit || !editor.can().toggleBulletList()} onClick={() => editor.chain().focus().toggleBulletList().run()}>• List</ToolbarButton>
+        <ToolbarButton label="Ordered list" active={editor.isActive("orderedList")} disabled={disabled || atListNestingLimit || !editor.can().toggleOrderedList()} onClick={() => editor.chain().focus().toggleOrderedList().run()}>1. List</ToolbarButton>
+        <ToolbarButton label="Checklist" active={editor.isActive("taskList")} disabled={disabled || atListNestingLimit || !editor.can().toggleTaskList()} onClick={() => editor.chain().focus().toggleTaskList().run()}>☑ List</ToolbarButton>
       </ToolbarGroup>
       <ToolbarDivider />
       <ToolbarGroup>
@@ -295,6 +372,7 @@ export function RichTextEditor({ value, onChange, limit, disabled = false, loadM
     </div>}
     <EditorContent editor={editor} />
     <MentionAutocomplete ref={menu} query={query} loadMentionables={loadMentionables} onSelect={selectMention} onAccessibilityChange={setMentionA11y} />
-    <div className={`rich-text__counter${plainText.length > limit ? " is-over" : ""}`} aria-live="polite">{plainText.length}/{limit}</div>
+    <div className={`rich-text__counter${plainText.length > limit ? " is-over" : ""}`}>{plainText.length}/{limit}</div>
+    <div className="rich-text__validation" aria-live="polite">{overBytes ? "This formatting is too large to save; remove list items or formatting." : nestingBlocked ? "Maximum list nesting is four levels" : ""}</div>
   </div>;
 }

@@ -99,6 +99,22 @@ afterEach(async () => {
 });
 
 describe("ProjectCollaborationPanel", () => {
+  it("posts a task list and renders its posted indicator without a checkbox control", async () => {
+    const content = { type: "doc" as const, content: [{ type: "taskList" as const, content: [{ type: "taskItem" as const, attrs: { checked: false }, content: [{ type: "paragraph" as const, content: [{ type: "text" as const, text: "Comment task" }] }] }] }] };
+    apiPostMock.mockResolvedValue({ ...otherComment, id: "comment-task", body: "Comment task", content });
+    const host = mount(); await render(<ProjectCollaborationPanel projectId={projectId} />);
+    await typeIntoEditor(host.querySelector<HTMLElement>('[contenteditable="true"]')!, "Comment task");
+    await click(host.querySelector<HTMLButtonElement>('[aria-label="Checklist"]')!);
+    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Post comment")!); await flush();
+    expect(apiPostMock).toHaveBeenCalledWith(`/api/projects/${projectId}/comments`, { content });
+    expect(host.querySelector(".project-collaboration__comments input")).toBeNull();
+    apiPostMock.mockClear(); apiPatchMock.mockClear();
+    await click(host.querySelector(".project-collaboration__comments .rich-text__task-indicator")!);
+    expect(apiPostMock).not.toHaveBeenCalled(); expect(apiPatchMock).not.toHaveBeenCalled();
+    expect(host.querySelector(".project-collaboration__comments .rich-text__task-content .sr-only")?.textContent).toBe("Not completed");
+    expect(host.querySelector(".project-collaboration__comments .rich-text__task-indicator")?.closest("article")?.textContent).not.toContain("Edit");
+  });
+
   it("posts and renders a Subsection heading through the shared composer", async () => {
     const content = { type: "doc" as const, content: [{ type: "heading" as const, attrs: { level: 3 as const }, content: [{ type: "text" as const, text: "Comment subsection" }] }] };
     const posted = { ...ownComment, id: "comment-heading", body: "Comment subsection", content };

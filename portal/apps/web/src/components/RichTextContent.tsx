@@ -1,5 +1,5 @@
 import { Fragment, type ReactNode } from "react";
-import type { RichTextBlock, RichTextDoc, RichTextInline, RichTextListItem, RichTextMark } from "@quincy/shared";
+import type { RichTextBlock, RichTextDoc, RichTextInline, RichTextListItem, RichTextMark, RichTextTaskItem } from "@quincy/shared";
 
 function marked(node: ReactNode, marks: RichTextMark[] | undefined): ReactNode {
   return (marks ?? []).reduce<ReactNode>((content, mark) => {
@@ -29,7 +29,7 @@ function fallbackText(node: unknown): string {
   return Array.isArray(value.content) ? value.content.map(fallbackText).join("") : "";
 }
 
-function block(node: RichTextBlock | RichTextListItem, key: number): ReactNode {
+function block(node: RichTextBlock | RichTextListItem | RichTextTaskItem, key: number): ReactNode {
   if (node.type === "paragraph") return <p key={key}>{(node.content ?? []).map(inline)}</p>;
   if (node.type === "heading") {
     const Heading = node.attrs.level === 2 ? "h2" : "h3";
@@ -39,6 +39,14 @@ function block(node: RichTextBlock | RichTextListItem, key: number): ReactNode {
   if (node.type === "bulletList" || node.type === "orderedList") {
     const List = node.type === "bulletList" ? "ul" : "ol";
     return <List key={key}>{(node.content ?? []).map(block)}</List>;
+  }
+  if (node.type === "taskList") return <ul key={key} className="rich-text__task-list">{node.content.map(block)}</ul>;
+  if (node.type === "taskItem") {
+    const completed = node.attrs.checked;
+    return <li key={key} className={`rich-text__task-item${completed ? " is-checked" : ""}`}>
+      <span className="rich-text__task-indicator" aria-hidden="true">{completed ? "✓" : ""}</span>
+      <div className="rich-text__task-content"><span className="sr-only">{completed ? "Completed" : "Not completed"}</span>{node.content.map(block)}</div>
+    </li>;
   }
   return <Fragment key={key}>{fallbackText(node)}</Fragment>;
 }

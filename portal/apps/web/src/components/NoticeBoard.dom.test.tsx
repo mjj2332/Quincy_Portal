@@ -111,6 +111,22 @@ afterEach(async () => {
 });
 
 describe("NoticeBoard disclosure and polling", () => {
+  it("posts a task list and renders its posted indicator without a checkbox control", async () => {
+    const content = { type: "doc" as const, content: [{ type: "taskList" as const, content: [{ type: "taskItem" as const, attrs: { checked: false }, content: [{ type: "paragraph" as const, content: [{ type: "text" as const, text: "Notice task" }] }] }] }] };
+    apiGetMock.mockResolvedValue({ posts: [] }); apiPostMock.mockResolvedValue({ ...newPost, body: "Notice task", content });
+    const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
+    await typeIntoEditor(host.querySelector<HTMLElement>('[contenteditable="true"]')!, "Notice task");
+    await click(host.querySelector<HTMLButtonElement>('[aria-label="Checklist"]')!);
+    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Post notice")!); await flush();
+    expect(apiPostMock).toHaveBeenCalledWith("/api/notice-board/posts", { content });
+    expect(host.querySelector(".notice-board__post input")).toBeNull();
+    apiPostMock.mockClear(); apiPatchMock.mockClear();
+    await click(host.querySelector(".notice-board__post .rich-text__task-indicator")!);
+    expect(apiPostMock).not.toHaveBeenCalled(); expect(apiPatchMock).not.toHaveBeenCalled();
+    expect(host.querySelector(".notice-board__post .rich-text__task-content .sr-only")?.textContent).toBe("Not completed");
+    expect([...host.querySelectorAll<HTMLButtonElement>("button")].some((button) => button.textContent === "Edit")).toBe(false);
+  });
+
   it("posts and renders a Section heading through the shared composer", async () => {
     const content = { type: "doc" as const, content: [{ type: "heading" as const, attrs: { level: 2 as const }, content: [{ type: "text" as const, text: "Notice section" }] }] };
     apiGetMock.mockResolvedValue({ posts: [] }); apiPostMock.mockResolvedValue({ ...newPost, body: "Notice section", content });

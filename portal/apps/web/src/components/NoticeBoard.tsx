@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from "react";
-import type { RichTextDoc } from "@quincy/shared";
+import { RICH_TEXT_JSON_MAX_BYTES, richTextDocByteLength, type RichTextDoc } from "@quincy/shared";
 import { apiDelete, apiGet, apiPatch, apiPost } from "../lib/api";
 import { RichTextContent } from "./RichTextContent";
 import { RichTextEditor } from "./RichTextEditor";
@@ -37,6 +37,8 @@ export function NoticeBoard({ currentUserId }: { currentUserId: string }) {
     const result = await apiGet<{ users: MentionableUser[] }>(`/api/mentionable-users?scope=notice-board&q=${encodeURIComponent(query)}`);
     return result.users;
   }, []);
+  const postingOverBytes = richTextDocByteLength(content) > RICH_TEXT_JSON_MAX_BYTES;
+  const editingOverBytes = richTextDocByteLength(editingContent) > RICH_TEXT_JSON_MAX_BYTES;
 
   useEffect(() => { setSeenId(readStorage(seenStorageKey)); }, [seenStorageKey]);
   useEffect(() => { if (lastPersisted.current === open) return; lastPersisted.current = open; try { window.localStorage.setItem(COLLAPSE_KEY, String(open)); } catch { /* Storage can be disabled. */ } }, [open]);
@@ -50,13 +52,13 @@ export function NoticeBoard({ currentUserId }: { currentUserId: string }) {
   }, [open, seenStorageKey]);
 
   async function submit(event?: FormEvent) {
-    event?.preventDefault(); if (isPosting) return; setIsPosting(true);
+    event?.preventDefault(); if (isPosting || postingOverBytes) return; setIsPosting(true);
     try { const post = await apiPost<NoticeBoardPost, { content: RichTextDoc }>("/api/notice-board/posts", { content }); setPosts((current) => [post, ...current]); setLatestId(post.id); markSeen(post.id); setContent(EMPTY_DOC); setError(null); }
     catch (reason) { setError(reason instanceof Error ? reason.message : "The post could not be published."); }
     finally { setIsPosting(false); }
   }
   async function saveEdit(id: string) {
-    if (isSaving) return; setIsSaving(true);
+    if (isSaving || editingOverBytes) return; setIsSaving(true);
     try { const post = await apiPatch<NoticeBoardPost, { content: RichTextDoc }>(`/api/notice-board/posts/${encodeURIComponent(id)}`, { content: editingContent }); setPosts((current) => current.map((currentPost) => currentPost.id === id ? post : currentPost)); setEditingId(null); setError(null); }
     catch (reason) { setError(reason instanceof Error ? reason.message : "The post could not be updated."); }
     finally { setIsSaving(false); }
@@ -72,10 +74,10 @@ export function NoticeBoard({ currentUserId }: { currentUserId: string }) {
         {posts.length === 0 && <p className="notice-board__empty">No notices yet.</p>}
         {posts.map((post) => <article className="notice-board__post" key={post.id}>
           <div className="notice-board__post-head"><span className="notice-board__author">{post.authorName}</span><time dateTime={post.createdAt}>{relativeTime(post.createdAt)}</time>{post.editedAt && <span className="notice-board__edited" title={post.editedAt}>edited</span>}{post.authorId === currentUserId && <><button className="notice-board__edit" type="button" onClick={() => { setEditingId(post.id); setEditingContent(post.content); }}>Edit</button><button className="notice-board__delete" type="button" onClick={() => void deletePost(post.id)}>Delete</button></>}</div>
-          {editingId === post.id ? <div className="notice-board__composer notice-board__edit-composer"><RichTextEditor value={editingContent} onChange={setEditingContent} limit={2_000} disabled={isSaving} loadMentionables={loadMentionables} placeholder="Edit notice…" onSubmit={() => void saveEdit(post.id)} /><div className="notice-board__composer-foot"><button className="button button--secondary" type="button" disabled={isSaving} onClick={() => setEditingId(null)}>Cancel</button><button className="button" type="button" disabled={isSaving} onClick={() => void saveEdit(post.id)}>{isSaving ? "Saving…" : "Save"}</button></div></div> : <RichTextContent content={post.content} />}
+          {editingId === post.id ? <div className="notice-board__composer notice-board__edit-composer"><RichTextEditor value={editingContent} onChange={setEditingContent} limit={2_000} disabled={isSaving} loadMentionables={loadMentionables} placeholder="Edit notice…" onSubmit={() => void saveEdit(post.id)} /><div className="notice-board__composer-foot"><button className="button button--secondary" type="button" disabled={isSaving} onClick={() => setEditingId(null)}>Cancel</button><button className="button" type="button" disabled={isSaving || editingOverBytes} onClick={() => void saveEdit(post.id)}>{isSaving ? "Saving…" : "Save"}</button></div></div> : <RichTextContent content={post.content} />}
         </article>)}
       </div>
-      <form className="notice-board__composer" onSubmit={(event) => void submit(event)}><label className="sr-only" htmlFor={`${panelId}-body`}>Write a notice</label><RichTextEditor id={`${panelId}-body`} value={content} onChange={setContent} limit={2_000} disabled={isPosting} loadMentionables={loadMentionables} placeholder="Write a notice for the team…" onSubmit={() => void submit()} /><div className="notice-board__composer-foot"><span>Use @ to mention active staff</span><button className="button" type="submit" disabled={isPosting}>{isPosting ? "Posting…" : "Post notice"}</button></div></form>
+      <form className="notice-board__composer" onSubmit={(event) => void submit(event)}><label className="sr-only" htmlFor={`${panelId}-body`}>Write a notice</label><RichTextEditor id={`${panelId}-body`} value={content} onChange={setContent} limit={2_000} disabled={isPosting} loadMentionables={loadMentionables} placeholder="Write a notice for the team…" onSubmit={() => void submit()} /><div className="notice-board__composer-foot"><span>Use @ to mention active staff</span><button className="button" type="submit" disabled={isPosting || postingOverBytes}>{isPosting ? "Posting…" : "Post notice"}</button></div></form>
     </div>
   </section>;
 }

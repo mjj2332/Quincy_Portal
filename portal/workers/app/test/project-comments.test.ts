@@ -19,6 +19,8 @@ const doc = (text: string) => ({ type: "doc", content: [{ type: "paragraph", con
 const mentionDoc = (id: string, label: string) => ({ type: "doc", content: [{ type: "paragraph", content: [{ type: "mention", attrs: { id, label } }] }] });
 const markedDoc = (type: "underline" | "strike") => ({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: `${type} text`, marks: [{ type }] }] }] });
 const headingDoc = (level: 2 | 3) => ({ type: "doc", content: [{ type: "heading", attrs: { level }, content: [{ type: "text", text: level === 2 ? "Comment section" : "Comment subsection" }] }] });
+const taskDoc = (checked: boolean) => ({ type: "doc", content: [{ type: "taskList", content: [{ type: "taskItem", attrs: { checked }, content: [{ type: "paragraph", content: [{ type: "text", text: checked ? "Checked comment" : "Unchecked comment" }] }] }] }] });
+const nestedTaskDoc = () => ({ type: "doc", content: [{ type: "taskList", content: [{ type: "taskItem", attrs: { checked: false }, content: [{ type: "paragraph", content: [{ type: "text", text: "Outer comment task" }] }, { type: "orderedList", content: [{ type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "Nested ordinary" }] }, { type: "taskList", content: [{ type: "taskItem", attrs: { checked: true }, content: [{ type: "paragraph", content: [{ type: "text", text: "Nested task" }] }] }] }] }] }] }] }] });
 const malformedHeadingDocs = () => [
   { type: "doc", content: [{ type: "heading", attrs: { level: 1 }, content: [{ type: "text", text: "Invalid h1" }] }] },
   { type: "doc", content: [{ type: "heading", attrs: { level: 4 }, content: [{ type: "text", text: "Invalid h4" }] }] },
@@ -131,6 +133,29 @@ describe("project comments API", () => {
     for (const content of malformedHeadingDocs()) {
       expect((await request(`/api/projects/${projectId}/comments`, "comments-editor-token", "POST", { content })).status).toBe(400);
       expect((await request(`/api/projects/${projectId}/comments/${comment.id}`, "comments-editor-token", "PATCH", { content })).status).toBe(400);
+    }
+  });
+
+  it("stores checked and unchecked task lists through POST and author PATCH", async () => {
+    for (const content of [taskDoc(false), taskDoc(true), nestedTaskDoc()]) {
+      const created = await request(`/api/projects/${projectId}/comments`, "comments-editor-token", "POST", { content });
+      expect(created.status).toBe(201); const comment = await created.json() as { id: string; content: unknown };
+      expect(comment.content).toEqual(content);
+      const edited = await request(`/api/projects/${projectId}/comments/${comment.id}`, "comments-editor-token", "PATCH", { content });
+      expect(edited.status).toBe(200); expect((await edited.json() as { content: unknown }).content).toEqual(content);
+    }
+  });
+
+  it("rejects malformed task items on both POST and author PATCH", async () => {
+    const created = await request(`/api/projects/${projectId}/comments`, "comments-editor-token", "POST", { content: taskDoc(false) });
+    const { id } = await created.json() as { id: string };
+    const invalid = [
+      { type: "doc", content: [{ type: "taskList", content: [{ type: "taskItem", attrs: { checked: false, extra: true }, content: [{ type: "paragraph", content: [{ type: "text", text: "Bad" }] }] }] }] },
+      { type: "doc", content: [{ type: "taskList", content: [{ type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "Bad" }] }] }] }] },
+    ];
+    for (const content of invalid) {
+      expect((await request(`/api/projects/${projectId}/comments`, "comments-editor-token", "POST", { content })).status).toBe(400);
+      expect((await request(`/api/projects/${projectId}/comments/${id}`, "comments-editor-token", "PATCH", { content })).status).toBe(400);
     }
   });
 });

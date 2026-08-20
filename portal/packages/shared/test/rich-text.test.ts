@@ -7,6 +7,7 @@ import {
   legacyBodyToRichTextDoc,
   normalizeRichTextMentionLabels,
   parseRichTextDoc,
+  richTextDocByteLength,
   richTextMentionIds,
   richTextPlainText,
 } from "../src/rich-text";
@@ -19,6 +20,15 @@ const valid = {
     { type: "text", text: "!", marks: [{ type: "link", href: "https://example.test" }] },
   ] }],
 };
+
+const taskListDoc = (count = 1, checked = false) => ({
+  type: "doc" as const,
+  content: [{ type: "taskList" as const, content: Array.from({ length: count }, () => ({
+    type: "taskItem" as const,
+    attrs: { checked },
+    content: [{ type: "paragraph" as const, content: [{ type: "text" as const, text: "abc" }] }],
+  })) }],
+});
 
 describe("rich-text contract", () => {
   it("accepts the limited document model and derives mention labels as text", () => {
@@ -119,6 +129,86 @@ describe("rich-text contract", () => {
     expect(() => parseRichTextDoc(headingInNestedList)).toThrow(RichTextValidationError);
     const legacyNestedFirst = { type: "doc", content: [{ type: "bulletList", content: [{ type: "listItem", content: [{ type: "bulletList", content: [{ type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "Still accepted" }] }] }] }] }] }] };
     expect(parseRichTextDoc(legacyNestedFirst)).toEqual(legacyNestedFirst);
+  });
+
+  it("accepts checked and unchecked task items, allowed cross-list nesting, and derives their text", () => {
+    const input = {
+      type: "doc",
+      content: [{ type: "taskList", content: [{ type: "taskItem", attrs: { checked: true }, content: [
+        { type: "paragraph", content: [{ type: "text", text: "Done" }] },
+        { type: "orderedList", content: [{ type: "listItem", content: [
+          { type: "paragraph", content: [{ type: "text", text: "Nested ordinary" }] },
+          { type: "taskList", content: [{ type: "taskItem", attrs: { checked: false }, content: [{ type: "paragraph", content: [{ type: "text", text: "Nested task" }] }] }] },
+        ] }] },
+      ] }] }],
+    };
+    const parsed = parseRichTextDoc(input);
+    expect(parsed).toEqual(input);
+    expect(richTextPlainText(parsed)).toBe("Done\nNested ordinary\nNested task");
+  });
+
+  it("rejects malformed task-list shapes and task items beyond the depth-eight boundary", () => {
+    const validTask = taskListDoc();
+    const depthEight = { type: "doc", content: [{ type: "taskList", content: [{ type: "taskItem", attrs: { checked: false }, content: [
+      { type: "paragraph", content: [{ type: "text", text: "Level one" }] },
+      { type: "taskList", content: [{ type: "taskItem", attrs: { checked: false }, content: [
+        { type: "paragraph", content: [{ type: "text", text: "Level two" }] },
+        { type: "bulletList", content: [{ type: "listItem", content: [
+          { type: "paragraph", content: [{ type: "text", text: "Level three" }] },
+          { type: "taskList", content: [{ type: "taskItem", attrs: { checked: false }, content: [{ type: "paragraph", content: [{ type: "text", text: "Level four" }] }] }] },
+        ] }] },
+      ] }] },
+    ] }] }],
+    };
+    const malformed = [
+      { type: "doc", content: [{ type: "taskList", content: [{ type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "No" }] }] }] }] },
+      { type: "doc", content: [{ type: "taskItem", attrs: { checked: false }, content: [{ type: "paragraph", content: [{ type: "text", text: "Orphan" }] }] }] },
+      { type: "doc", content: [{ type: "taskList", content: [{ type: "taskItem", attrs: { checked: "false" }, content: [{ type: "paragraph", content: [{ type: "text", text: "No" }] }] }] }] },
+      { type: "doc", content: [{ type: "taskList", content: [{ type: "taskItem", attrs: { checked: false, extra: true }, content: [{ type: "paragraph", content: [{ type: "text", text: "No" }] }] }] }] },
+      { type: "doc", content: [{ type: "taskList", content: [{ type: "taskItem", attrs: { checked: false }, content: [{ type: "bulletList", content: [{ type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "No first paragraph" }] }] }] }] }] }] },
+      { type: "doc", content: [{ type: "taskList", content: [{ type: "taskItem", attrs: { checked: false }, content: [{ type: "heading", attrs: { level: 2 }, content: [{ type: "text", text: "No heading" }] }] }] }] },
+    ];
+    for (const value of malformed) expect(() => parseRichTextDoc(value)).toThrow(RichTextValidationError);
+    expect(parseRichTextDoc(validTask)).toEqual(validTask);
+    expect(parseRichTextDoc(depthEight)).toEqual(depthEight);
+    let nested: unknown = { type: "paragraph", content: [{ type: "text", text: "x" }] };
+    for (let index = 0; index <= RICH_TEXT_MAX_NESTING; index += 1) nested = { type: "taskList", content: [{ type: "taskItem", attrs: { checked: false }, content: [nested] }] };
+    expect(() => parseRichTextDoc({ type: "doc", content: [nested] })).toThrow(RichTextValidationError);
+  });
+
+  it("preserves checked attrs and mentions through normalization and re-parses the stored task document", () => {
+    const input = {
+      type: "doc",
+      content: [{ type: "taskList", content: [
+        { type: "taskItem", attrs: { checked: true }, content: [{ type: "paragraph", content: [{ type: "mention", attrs: { id: userId, label: "Forged" } }] }] },
+        { type: "taskItem", attrs: { checked: false }, content: [{ type: "paragraph", content: [{ type: "text", text: "Unchecked" }] }] },
+      ] }],
+    };
+    const parsed = parseRichTextDoc(input);
+    expect(richTextMentionIds(parsed)).toEqual([userId]);
+    const normalized = normalizeRichTextMentionLabels(parsed, new Map([[userId, "Terry normalized"]]));
+    expect(normalized).toMatchObject({ content: [{ content: [
+      { attrs: { checked: true }, content: [{ content: [{ attrs: { label: "Terry normalized" } }] }] },
+      { attrs: { checked: false } },
+    ] }] });
+    expect(parseRichTextDoc(normalized)).toEqual({
+      ...input,
+      content: [{ ...input.content[0], content: [
+        { ...input.content[0].content[0], content: [{ type: "paragraph", content: [{ type: "mention", attrs: { id: userId, label: "Terry normalized" } }] }] },
+        input.content[0].content[1],
+      ] }],
+    });
+  });
+
+  it("measures canonical task-list byte boundaries independently of the visible character limit", () => {
+    const accepted = taskListDoc(270);
+    const rejected = taskListDoc(280);
+    expect(richTextDocByteLength(accepted)).toBe(32_458);
+    expect(richTextDocByteLength(rejected)).toBe(33_658);
+    expect(richTextPlainText(accepted).length).toBe(1_079);
+    expect(richTextPlainText(rejected).length).toBe(1_119);
+    expect(parseRichTextDoc(accepted)).toEqual(accepted);
+    expect(() => parseRichTextDoc(rejected)).toThrow(RichTextValidationError);
   });
 
   it("shares HTTP(S) link classification without changing server validation messages", () => {

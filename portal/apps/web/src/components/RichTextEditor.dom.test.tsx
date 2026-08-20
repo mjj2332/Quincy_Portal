@@ -2,8 +2,8 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { Editor } from "@tiptap/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { RichTextDoc, RichTextInline } from "@quincy/shared";
-import { createRichTextEditorExtensions, RichTextEditor } from "./RichTextEditor";
+import { parseRichTextDoc, type RichTextDoc, type RichTextInline, type RichTextTaskItem, type RichTextTaskList } from "@quincy/shared";
+import { createRichTextEditorExtensions, RichTextEditor, shouldBlockListIndent } from "./RichTextEditor";
 import { RichTextContent } from "./RichTextContent";
 
 let root: Root | null = null;
@@ -15,6 +15,26 @@ const list = (content: RichTextInline[]): RichTextDoc => ({
   type: "doc",
   content: [{ type: "bulletList", content: [{ type: "listItem", content: [{ type: "paragraph", ...(content.length ? { content } : {}) }] }] }],
 });
+const taskList = (count = 1, checked = false): RichTextDoc => ({
+  type: "doc",
+  content: [{ type: "taskList", content: Array.from({ length: count }, () => ({ type: "taskItem", attrs: { checked }, content: [{ type: "paragraph", content: [{ type: "text", text: "abc" }] }] })) }],
+});
+const nestedTaskItem = (label: string, nested?: RichTextTaskList): RichTextTaskItem => ({
+  type: "taskItem", attrs: { checked: false }, content: [{ type: "paragraph", content: [{ type: "text", text: label }] }, ...(nested ? [nested] : [])],
+});
+const fourContainerTaskList = (deepestLabels = ["Four"]): RichTextDoc => {
+  let nested: RichTextTaskList = { type: "taskList", content: deepestLabels.map((label) => nestedTaskItem(label)) };
+  for (const label of ["Three", "Two", "One"]) nested = { type: "taskList", content: [nestedTaskItem(label, nested)] };
+  return { type: "doc", content: [nested, { type: "paragraph", content: [{ type: "text", text: "Shallow" }] }] };
+};
+
+function maxItemContainerDepth(value: unknown, depth = 0): number {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return depth;
+  const node = value as { type?: unknown; content?: unknown };
+  const nextDepth = node.type === "listItem" || node.type === "taskItem" ? depth + 1 : depth;
+  if (!Array.isArray(node.content)) return nextDepth;
+  return Math.max(nextDepth, ...node.content.map((child) => maxItemContainerDepth(child, nextDepth)));
+}
 const mentionables = vi.fn(async () => [{ id: "11111111-1111-4111-8111-111111111111", name: "Nora Mention", role: "editor" as const }]);
 
 function mount() {
@@ -294,8 +314,9 @@ describe("RichTextEditor hard breaks", () => {
     });
   });
 
-  it("synchronizes a new controlled value without emitting until the user edits", async () => {
-    const initial = text("Initial"); const replacement = text("Controlled");
+  it("synchronizes a server-legal four-container controlled value without emitting or desyncing", async () => {
+    const initial = text("Initial"); const replacement = fourContainerTaskList();
+    expect(parseRichTextDoc(replacement)).toEqual(replacement);
     const host = mount(); const onChange = vi.fn();
     const rendered = await render(host, initial, onChange);
     onChange.mockClear();
@@ -303,10 +324,13 @@ describe("RichTextEditor hard breaks", () => {
       root!.render(<RichTextEditor value={replacement} onChange={onChange} onSubmit={rendered.onSubmit} limit={2_000} loadMentionables={mentionables} />);
       await Promise.resolve(); await Promise.resolve();
     });
-    expect(rendered.editor.textContent).toBe("Controlled");
+    expect(rendered.editor.textContent).toContain("Shallow");
     expect(onChange).not.toHaveBeenCalled();
     await appendText(rendered.editor, " edit");
-    expect(onChange).toHaveBeenLastCalledWith(text("Controlled edit"));
+    expect(onChange).toHaveBeenLastCalledWith({
+      ...replacement,
+      content: [...replacement.content.slice(0, -1), { type: "paragraph", content: [{ type: "text", text: "Shallow edit" }] }],
+    });
   });
 
   it("updates toolbar pressed states when only the caret moves", async () => {
@@ -431,7 +455,7 @@ describe("RichTextEditor hard breaks", () => {
         content: { type: "doc", content: [{ type: listType, content: [{ type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "List item" }] }] }] }] },
       });
       try {
-        expect(tiptap.schema.nodes.listItem?.spec.content).toBe("paragraph (paragraph|bulletList|orderedList)*");
+        expect(tiptap.schema.nodes.listItem?.spec.content).toBe("paragraph (paragraph|bulletList|orderedList|taskList)*");
         let paragraphPosition: number | undefined;
         tiptap.state.doc.descendants((node, position) => {
           if (node.type.name === "paragraph") { paragraphPosition = position; return false; }
@@ -461,6 +485,18 @@ describe("RichTextEditor hard breaks", () => {
       { type: "bulletList", content: [{ type: "listItem", content: [{ type: "paragraph" }] }] },
       { type: "heading", attrs: { level: 2 }, content: [{ type: "text", text: "Pasted section" }] },
       { type: "paragraph", content: [{ type: "text", text: "Remaining item text" }] },
+    ] });
+  });
+
+  it("fits pasted task-item headings outside the task-item schema boundary", async () => {
+    const host = mount(); const onChange = vi.fn(); const { editor } = await render(host, empty(), onChange);
+    onChange.mockClear(); await pasteHtml(editor, '<ul data-type="taskList"><li data-type="taskItem" data-checked="false"><div><h2>Pasted section</h2><p>Remaining task text</p></div></li><li data-type="taskItem" data-checked="true"><div><p>Sibling task</p></div></li></ul>');
+    const emitted = onChange.mock.calls.at(-1)?.[0] as RichTextDoc;
+    expect(emitted).toEqual({ type: "doc", content: [
+      { type: "taskList", content: [{ type: "taskItem", attrs: { checked: false }, content: [{ type: "paragraph" }] }] },
+      { type: "heading", attrs: { level: 2 }, content: [{ type: "text", text: "Pasted section" }] },
+      { type: "paragraph", content: [{ type: "text", text: "Remaining task text" }] },
+      { type: "taskList", content: [{ type: "taskItem", attrs: { checked: true }, content: [{ type: "paragraph", content: [{ type: "text", text: "Sibling task" }] }] }] },
     ] });
   });
 
@@ -633,10 +669,115 @@ describe("RichTextEditor hard breaks", () => {
     }
   });
 
+  it("creates task lists and structurally rejects headings inside task items", async () => {
+    const host = mount(); const onChange = vi.fn(); const { editor } = await render(host, text("Checklist item"), onChange);
+    await click(host.querySelector<HTMLButtonElement>('[aria-label="Checklist"]')!);
+    expect(onChange).toHaveBeenLastCalledWith({ type: "doc", content: [{ type: "taskList", content: [{ type: "taskItem", attrs: { checked: false }, content: [{ type: "paragraph", content: [{ type: "text", text: "Checklist item" }] }] }] }] });
+    expect(editor.querySelector('ul[data-type="taskList"]')).not.toBeNull();
+    await moveCaret(editor, editor.querySelector("li p")!.firstChild!);
+    expect(host.querySelector<HTMLSelectElement>('[aria-label="Heading"]')!.disabled).toBe(true);
+    const tiptap = new Editor({ extensions: createRichTextEditorExtensions(), content: taskList() });
+    try {
+      expect(tiptap.schema.nodes.taskItem?.spec.content).toBe("paragraph (paragraph|bulletList|orderedList|taskList)*");
+      let paragraphPosition: number | undefined;
+      tiptap.state.doc.descendants((node, position) => { if (node.type.name === "paragraph") { paragraphPosition = position; return false; } return true; });
+      tiptap.commands.setTextSelection(paragraphPosition! + 1);
+      const before = tiptap.getJSON();
+      expect(tiptap.commands.toggleHeading({ level: 2 })).toBe(false);
+      tiptap.commands.setNode("heading", { level: 2 }); tiptap.commands.toggleNode("heading", "paragraph", { level: 2 });
+      expect(tiptap.getJSON()).toEqual(before);
+    } finally { tiptap.destroy(); }
+  });
+
+  it("renders posted task lists as static indicators with no form or mutation control", async () => {
+    const host = mount(); const content: RichTextDoc = { type: "doc", content: [{ type: "taskList", content: [
+      { type: "taskItem", attrs: { checked: true }, content: [{ type: "paragraph", content: [{ type: "text", text: "Done" }] }] },
+      { type: "taskItem", attrs: { checked: false }, content: [{ type: "paragraph", content: [{ type: "text", text: "Open" }] }] },
+    ] }] };
+    await act(async () => { root!.render(<RichTextContent content={content} />); await Promise.resolve(); });
+    const indicators = host.querySelectorAll<HTMLElement>(".rich-text__task-indicator");
+    expect(host.querySelector("input")).toBeNull(); expect(indicators).toHaveLength(2);
+    expect(host.querySelectorAll(".rich-text__task-content .sr-only")).toHaveLength(2);
+    expect(host.textContent).toContain("Completed"); expect(host.textContent).toContain("Not completed");
+    const before = host.innerHTML; await click(indicators[0]!); expect(host.innerHTML).toBe(before);
+  });
+
+  it("blocks Cmd/Ctrl+Enter with the byte-width message when formatting exceeds 32 KiB", async () => {
+    const host = mount(); const onSubmit = vi.fn(); const { editor } = await render(host, taskList(280), vi.fn(), onSubmit, 10_000);
+    expect(host.textContent).toContain("This formatting is too large to save; remove list items or formatting.");
+    await keydown(editor, "Enter", { metaKey: true }); expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("keeps every shallow edit usable in a server-legal four-container document", async () => {
+    const value = fourContainerTaskList();
+    expect(parseRichTextDoc(value)).toEqual(value);
+    const host = mount(); const onChange = vi.fn(); const { editor } = await render(host, value, onChange);
+    onChange.mockClear();
+    await appendText(editor, " edit");
+    expect(onChange).toHaveBeenLastCalledWith({
+      ...value,
+      content: [...value.content.slice(0, -1), { type: "paragraph", content: [{ type: "text", text: "Shallow edit" }] }],
+    });
+  });
+
+  it("blocks an actual fifth item-container indent attempt without changing the legal four-container document", async () => {
+    const host = mount(); const onChange = vi.fn(); const { editor } = await render(host, fourContainerTaskList(["Anchor", "Four"]), onChange);
+    const deepest = [...editor.querySelectorAll("li p")].at(-1)!.firstChild!;
+    await moveCaret(editor, deepest, "Four".length);
+    onChange.mockClear();
+    const before = editor.innerHTML;
+    const tab = await keydown(editor, "Tab");
+    expect(tab.defaultPrevented).toBe(true); expect(editor.innerHTML).toBe(before); expect(onChange).not.toHaveBeenCalled();
+    expect(host.textContent).toContain("Maximum list nesting is four levels");
+    for (const label of ["Bullet list", "Ordered list", "Checklist"]) expect(host.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`)?.disabled).toBe(true);
+  });
+
+  it("lets Shift+Tab outdent from the fourth item-container level", async () => {
+    const host = mount(); const onChange = vi.fn(); const { editor } = await render(host, fourContainerTaskList(), onChange);
+    const deepest = [...editor.querySelectorAll("li p")].at(-2)!.firstChild!;
+    await moveCaret(editor, deepest, "Four".length);
+    onChange.mockClear();
+    await keydown(editor, "Tab", { shiftKey: true });
+    const outdented = onChange.mock.calls.at(-1)?.[0] as RichTextDoc | undefined;
+    expect(outdented).toBeDefined();
+    expect(maxItemContainerDepth(outdented)).toBe(3);
+  });
+
+  it("never classifies Shift+Tab as a depth-increasing indent at the limit", () => {
+    expect(shouldBlockListIndent(new KeyboardEvent("keydown", { key: "Tab", shiftKey: true }), 4)).toBe(false);
+    expect(shouldBlockListIndent(new KeyboardEvent("keydown", { key: "Tab" }), 4)).toBe(true);
+  });
+
+  it("rejects only the d9 task-list paste transaction while the legal four-container document remains editable", async () => {
+    const host = mount(); const onChange = vi.fn(); const { editor } = await render(host, fourContainerTaskList(), onChange);
+    const before = editor.innerHTML;
+    onChange.mockClear();
+    await pasteHtml(editor, '<ul data-type="taskList"><li data-type="taskItem" data-checked="false"><div><p>One</p><ul data-type="taskList"><li data-type="taskItem" data-checked="false"><div><p>Two</p><ul><li><p>Three</p><ul data-type="taskList"><li data-type="taskItem" data-checked="false"><div><p>Four</p><ul data-type="taskList"><li data-type="taskItem" data-checked="false"><div><p>Five</p></div></li></ul></div></li></ul></li></ul></div></li></ul></div></li></ul>');
+    expect(editor.innerHTML).toBe(before); expect(onChange).not.toHaveBeenCalled();
+    expect(host.textContent).toContain("Maximum list nesting is four levels");
+  });
+
+  it("keeps mention lookup and submission working after checked and unchecked task items", async () => {
+    for (const checked of [false, true]) {
+      const value: RichTextDoc = { type: "doc", content: [{ type: "taskList", content: [{ type: "taskItem", attrs: { checked }, content: [{ type: "paragraph", content: [{ type: "text", text: "Task " }] }] }] }] };
+      const host = mount(); let current = value; let submitted: RichTextDoc | undefined;
+      const onChange = vi.fn((next: RichTextDoc) => { current = next; }); const onSubmit = vi.fn(() => { submitted = current; });
+      const { editor } = await render(host, value, onChange, onSubmit);
+      const textNode = editor.querySelector("li p")!.firstChild!;
+      await moveCaret(editor, textNode, "Task ".length);
+      await act(async () => { textNode.parentElement!.append(document.createTextNode("@Nor")); editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: "@Nor" })); await Promise.resolve(); await Promise.resolve(); });
+      await moveCaret(editor, editor.querySelector("li p")!.lastChild!, "Task @Nor".length);
+      expect(mentionables).toHaveBeenLastCalledWith("Nor"); await click(host.querySelector<HTMLButtonElement>('[role="listbox"] button')!);
+      await keydown(editor, "Enter", { metaKey: true });
+      expect(submitted).toMatchObject({ content: [{ type: "taskList", content: [{ attrs: { checked }, content: [{ type: "paragraph", content: [{ type: "text", text: "Task " }, { type: "mention", attrs: { id: "11111111-1111-4111-8111-111111111111", label: "Nora Mention" } }, { type: "text", text: " " }] }] }] }] });
+      await act(async () => { root!.unmount(); await Promise.resolve(); }); root = null; host.remove(); mentionables.mockClear();
+    }
+  });
+
   it("renders unknown future blocks as safe fallback text", async () => {
     const host = mount();
     const futureContent = { type: "doc", content: [{ type: "heading", attrs: { level: 2 }, content: [{ type: "text", text: "Fallback heading" }] }, { type: "taskList", content: [{ type: "taskItem", attrs: { checked: false }, content: [{ type: "paragraph", content: [{ type: "text", text: "Fallback task" }] }] }] }] } as unknown as RichTextDoc;
     await act(async () => { root!.render(<RichTextContent content={futureContent} />); await Promise.resolve(); });
-    expect(host.textContent).toBe("Fallback headingFallback task");
+    expect(host.textContent).toBe("Fallback headingNot completedFallback task");
   });
 });

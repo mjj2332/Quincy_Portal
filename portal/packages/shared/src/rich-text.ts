@@ -10,10 +10,12 @@ export type RichTextHardBreak = { type: "hardBreak" };
 export type RichTextInline = RichTextText | RichTextMention | RichTextHardBreak;
 export type RichTextParagraph = { type: "paragraph"; content?: RichTextInline[] };
 export type RichTextHeading = { type: "heading"; attrs: { level: 2 | 3 }; content?: RichTextInline[] };
-export type RichTextListItem = { type: "listItem"; content: Array<RichTextParagraph | RichTextBulletList | RichTextOrderedList> };
+export type RichTextListItem = { type: "listItem"; content: Array<RichTextParagraph | RichTextBulletList | RichTextOrderedList | RichTextTaskList> };
 export type RichTextBulletList = { type: "bulletList"; content: RichTextListItem[] };
 export type RichTextOrderedList = { type: "orderedList"; content: RichTextListItem[] };
-export type RichTextBlock = RichTextParagraph | RichTextHeading | RichTextBulletList | RichTextOrderedList;
+export type RichTextTaskItem = { type: "taskItem"; attrs: { checked: boolean }; content: [RichTextParagraph, ...(RichTextParagraph | RichTextBulletList | RichTextOrderedList | RichTextTaskList)[]] };
+export type RichTextTaskList = { type: "taskList"; content: RichTextTaskItem[] };
+export type RichTextBlock = RichTextParagraph | RichTextHeading | RichTextBulletList | RichTextOrderedList | RichTextTaskList;
 export type RichTextDoc = { type: "doc"; content: RichTextBlock[] };
 
 export const RICH_TEXT_JSON_MAX_BYTES = 32 * 1024;
@@ -98,7 +100,7 @@ function contentArray(value: unknown, label: string): unknown[] {
   return value;
 }
 
-function parseBlock(value: unknown, depth: number, mayBeListItem = false, insideListItem = false): RichTextBlock | RichTextListItem {
+function parseBlock(value: unknown, depth: number, itemKind: "listItem" | "taskItem" | false = false, insideListItem = false): RichTextBlock | RichTextListItem | RichTextTaskItem {
   if (depth > RICH_TEXT_MAX_NESTING) throw new RichTextValidationError("Rich-text nesting is too deep");
   const node = record(value, "Rich-text node");
   if (node.type === "paragraph") {
@@ -116,16 +118,32 @@ function parseBlock(value: unknown, depth: number, mayBeListItem = false, inside
   }
   if (node.type === "bulletList" || node.type === "orderedList") {
     onlyKeys(node, ["type", "content"], "List");
-    const content = contentArray(node.content, "List").map((item) => parseBlock(item, depth + 1, true, insideListItem));
+    const content = contentArray(node.content, "List").map((item) => parseBlock(item, depth + 1, "listItem", insideListItem));
     if (!content.length || content.some((item) => item.type !== "listItem")) throw new RichTextValidationError("Lists may contain only list items");
     return { type: node.type, content: content as RichTextListItem[] };
   }
+  if (node.type === "taskList") {
+    onlyKeys(node, ["type", "content"], "Task list");
+    const content = contentArray(node.content, "Task list").map((item) => parseBlock(item, depth + 1, "taskItem", insideListItem));
+    if (!content.length || content.some((item) => item.type !== "taskItem")) throw new RichTextValidationError("Task lists may contain only task items");
+    return { type: "taskList", content: content as RichTextTaskItem[] };
+  }
   if (node.type === "listItem") {
-    if (!mayBeListItem) throw new RichTextValidationError("List items must be inside a list");
+    if (itemKind !== "listItem") throw new RichTextValidationError("List items must be inside a list");
     onlyKeys(node, ["type", "content"], "List item");
     const content = contentArray(node.content, "List item").map((item) => parseBlock(item, depth + 1, false, true));
-    if (!content.length || content.some((item) => item.type === "listItem")) throw new RichTextValidationError("List items may contain paragraphs and nested lists only");
+    if (!content.length || content.some((item) => item.type !== "paragraph" && item.type !== "bulletList" && item.type !== "orderedList" && item.type !== "taskList")) throw new RichTextValidationError("List items may contain paragraphs and nested lists only");
     return { type: "listItem", content: content as RichTextListItem["content"] };
+  }
+  if (node.type === "taskItem") {
+    if (itemKind !== "taskItem") throw new RichTextValidationError("Task items must be inside a task list");
+    onlyKeys(node, ["type", "attrs", "content"], "Task item");
+    const attrs = record(node.attrs, "Task item attributes");
+    onlyKeys(attrs, ["checked"], "Task item attributes");
+    if (typeof attrs.checked !== "boolean") throw new RichTextValidationError("Task item checked must be a boolean");
+    const content = contentArray(node.content, "Task item").map((item) => parseBlock(item, depth + 1, false, true));
+    if (!content.length || content[0]?.type !== "paragraph" || content.some((item) => item.type !== "paragraph" && item.type !== "bulletList" && item.type !== "orderedList" && item.type !== "taskList")) throw new RichTextValidationError("Task items must start with a paragraph followed by paragraphs or nested lists");
+    return { type: "taskItem", attrs: { checked: attrs.checked }, content: content as RichTextTaskItem["content"] };
   }
   throw new RichTextValidationError("Unsupported rich-text node");
 }
@@ -139,13 +157,18 @@ export function parseRichTextDoc(value: unknown): RichTextDoc {
   onlyKeys(doc, ["type", "content"], "Rich-text document");
   if (doc.type !== "doc") throw new RichTextValidationError("Rich-text document must be a doc");
   const content = contentArray(doc.content, "Rich-text document").map((item) => parseBlock(item, 0));
-  if (!content.length || content.some((item) => item.type === "listItem")) throw new RichTextValidationError("Rich-text document must contain paragraphs or lists");
+  if (!content.length || content.some((item) => item.type === "listItem" || item.type === "taskItem")) throw new RichTextValidationError("Rich-text document must contain paragraphs or lists");
   const parsed = { type: "doc" as const, content: content as RichTextBlock[] };
   if (!richTextPlainText(parsed).trim()) throw new RichTextValidationError("Rich-text document must not be empty");
   return parsed;
 }
 
-function textFromBlock(block: RichTextBlock | RichTextListItem): string {
+/** UTF-8 serialized width used by both the client guard and the server trust boundary. */
+export function richTextDocByteLength(doc: RichTextDoc): number {
+  return encoder.encode(JSON.stringify(doc)).byteLength;
+}
+
+function textFromBlock(block: RichTextBlock | RichTextListItem | RichTextTaskItem): string {
   if (block.type === "paragraph" || block.type === "heading") return (block.content ?? []).map((node) => node.type === "text" ? node.text : node.type === "hardBreak" ? "\n" : node.attrs.label).join("");
   if (block.type === "listItem") return (block.content ?? []).map(textFromBlock).filter(Boolean).join("\n");
   return (block.content ?? []).map(textFromBlock).filter(Boolean).join("\n");
@@ -159,7 +182,7 @@ export function richTextPlainText(doc: RichTextDoc): string {
 /** Returns stable, de-duplicated mention ids in document order. */
 export function richTextMentionIds(doc: RichTextDoc): string[] {
   const ids: string[] = [];
-  const visit = (node: RichTextBlock | RichTextListItem | RichTextInline) => {
+  const visit = (node: RichTextBlock | RichTextListItem | RichTextTaskItem | RichTextInline) => {
     if (node.type === "mention") { if (!ids.includes(node.attrs.id)) ids.push(node.attrs.id); return; }
     if (node.type === "text" || node.type === "hardBreak") return;
     if (node.type === "paragraph" || node.type === "heading") { for (const child of node.content ?? []) visit(child); return; }
@@ -171,7 +194,7 @@ export function richTextMentionIds(doc: RichTextDoc): string[] {
 
 /** Replaces untrusted display labels after the server has resolved eligible users. */
 export function normalizeRichTextMentionLabels(doc: RichTextDoc, namesById: ReadonlyMap<string, string>): RichTextDoc {
-  const normalize = (node: RichTextBlock | RichTextListItem | RichTextInline): RichTextBlock | RichTextListItem | RichTextInline => {
+  const normalize = (node: RichTextBlock | RichTextListItem | RichTextTaskItem | RichTextInline): RichTextBlock | RichTextListItem | RichTextTaskItem | RichTextInline => {
     if (node.type === "mention") {
       const label = namesById.get(node.attrs.id);
       if (label === undefined) throw new RichTextValidationError("Mention target is not eligible");
@@ -181,6 +204,7 @@ export function normalizeRichTextMentionLabels(doc: RichTextDoc, namesById: Read
     if (node.type === "hardBreak") return { ...node };
     if (node.type === "paragraph") return { type: "paragraph", ...(node.content ? { content: node.content.map(normalize) as RichTextInline[] } : {}) };
     if (node.type === "heading") return { type: "heading", attrs: { ...node.attrs }, ...(node.content ? { content: node.content.map(normalize) as RichTextInline[] } : {}) };
+    if (node.type === "taskItem") return { type: "taskItem", attrs: { ...node.attrs }, content: node.content.map(normalize) as RichTextTaskItem["content"] };
     return Object.fromEntries(Object.entries(node).map(([key, value]) => [key, key === "content" && Array.isArray(value) ? value.map(normalize) : value])) as RichTextBlock | RichTextListItem;
   };
   return { type: "doc", content: doc.content.map(normalize) as RichTextBlock[] };
