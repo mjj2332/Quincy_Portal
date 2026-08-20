@@ -1,6 +1,52 @@
 # Rich-text editor Tiptap v3 redesign plan
 
-**Status: Phase 2B IMPLEMENTED — built by Terra at max effort (shared trust-boundary tier again).
+**Status: IMPLEMENTED — all four sub-deploys (Phase 1, 2A, 2B, 2C) built, reviewed, gated,
+deployed to production, and live-verified.** Phase 2C (task/checklist nodes) was the last piece and
+is recorded in full below; see the superseded status blocks further down for Phase 1/2A/2B's own
+build/review/gate/deploy evidence. Every commit landed on `main`: `0f089f5` (Phase 1), `ee1faad`
+(2A), `b0fbe94` (2B), `a209075` (2C), each with its own docs-update commit
+(`d0ac386`/`a6871c1`/`058bd19`) recording deploy evidence.
+
+**Phase 2C — built by Terra at max effort (shared trust-boundary tier).** Max-effort fresh-Terra
+diff review confirmed the parser (cross-nesting, depth counting, byte-length helper), the four-
+submit-button byte guard at the real 32,458/33,658-byte boundary, the command-boundary guard
+extending to task items, and the fully static read-only renderer were all correct on first pass —
+it only found two missing paste-regression tests (task-item heading-paste, d9 over-depth paste),
+which Terra added. **Opus final-draft review then found a serious defect neither prior round
+caught**: the editor's nesting-depth guard was counting inline text nodes as a level, which (a)
+capped real usage at 3 list/task containers instead of the 4 the shared parser allows, and (b) far
+more seriously, made any document that already legally contained 4 container levels — creatable in
+production since Phase 2B's ordinary bullet lists, before task lists even existed —
+**completely uneditable everywhere in the document**, not just in the deep branch, because the
+transaction filter judged the whole document as one unit. Opus proved this by actually measuring
+the broken behavior (typing anywhere in such a document, including in shallow unrelated paragraphs,
+was silently dropped) rather than trusting the plausible-looking guard code. It also found a related
+state-desync bug (the controlled-value sync effect could mark itself "synced" even when a filtered
+`setContent` silently failed to apply) and a Shift+Tab outdent regression the same guard had
+introduced, plus a CSS specificity bug leaving a bullet gutter on posted checklists. Terra fixed all
+four, deriving the depth-counting fix to count only actual list/task-list container descent —
+matching the server parser's own depth math exactly — and adversarially re-verified each fix by
+temporarily reverting it and confirming the corresponding test failed.
+
+This session's §5 gate independently re-ran the full verify sequence (690 tests across every
+workspace plus the 56 in the `packages/shared` suite) and, given the severity of what was found, did
+an especially thorough live manual walkthrough: inserted a legal 4-container-deep document directly
+into the local database (simulating the exact "already-existing legal document" scenario Opus's
+review identified as broken), loaded it in the real editor, confirmed the entire document loaded
+without being frozen, made a shallow edit in the top-level paragraph while the deep branch remained
+untouched elsewhere in the same document, confirmed that edit applied and persisted correctly via a
+direct database query with the deep structure fully intact, and confirmed posted checklists render
+with no bullet-marker gutter. Committed `a209075`, deployed to production (`quincy-portal-app`
+version `db003452-70d9-4504-80fa-6d59b8afe9fb`), 2026-08-20. Passive production verification: full
+toolbar including the Checklist control renders, all requests 200, zero console errors.
+
+**With Phase 2C shipped, this plan is complete.** Moving to `docs/plans/implemented/`.
+
+---
+
+**Superseded status (Phase 2B IMPLEMENTED) — kept for its own build/review/gate evidence:**
+
+Phase 2B — built by Terra at max effort (shared trust-boundary tier again).
 Max-effort fresh-Terra diff review found and fixed: `@tiptap/extension-list` as an undeclared
 transitive dependency (added as an explicit direct pin), missing nested-list-item heading-rejection
 and malformed-heading 400 coverage, and a composer-only CSS gap. A Terra final focused pass found
