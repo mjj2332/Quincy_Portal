@@ -1,6 +1,39 @@
 # Rich-text editor Tiptap v3 redesign plan
 
-**Status: APPROVED — not yet built.** Cleared the full `docs/Subagent-Orchestration.md` §2 policy-1
+**Status: Phase 1 IMPLEMENTED — built by Terra, fresh Terra diff review (approved, one commit-
+hygiene note about unrelated pre-existing dirty files, no code findings), Opus final-draft review
+(approved — mutation-tested each of the four fixes by removing it and confirming the corresponding
+test fails, and inspected the live ProseMirror schema at runtime to prove zero Phase 2 leakage) →
+this session's §5 gate (independently re-ran the full verify sequence: typecheck, `@quincy/web`
+build, `npm run test --workspaces`, and the `packages/shared` suite the root script skips — 640
+tests green across every workspace). Committed `0f089f5`, deployed to production
+(`quincy-portal-app` version `ed143d51-5892-4cb2-a597-2e0d338301aa`), 2026-08-20.
+
+**Manual verification caught and resolved a real discrepancy worth recording.** Luna's local-dev
+danger-mode walkthrough reported existing rich-text content losing all formatting on edit+save — a
+serious-looking finding that directly contradicted the automated test suite. Rather than trust or
+dismiss it, the orchestrating session traced it via direct D1 queries: the "edited" post Luna
+reported on was actually a separate duplicate post it had created to test with, not the same row as
+the correctly-formatted original, so the report couldn't distinguish a save-time bug from a
+creation-time one. The session then independently reproduced the exact scenario itself — real
+clicks and keystrokes against a locally-running dev server (not accessibility-tree/automated input)
+— on both surfaces: opened the existing correctly-formatted notice-board post, edited it, saved,
+reloaded, and confirmed via direct database query that bold/italic/link/bulletList marks survived
+byte-for-byte; separately applied a new bold mark to an existing project comment and confirmed the
+same. Zero console errors either time. The conclusion: Luna's finding was a testing-methodology
+artifact from its automated typing method, not a real defect in Phase 1's code — genuinely
+confirmed by reproducing the same scenario with reliable input rather than by re-running the
+existing automated suite (which had already passed and couldn't have caught a methodology-specific
+false positive). Passive post-deploy production verification (page load, toolbar renders identically
+at 5 buttons, all API requests 200, zero console errors) confirmed the live deploy is clean.
+
+Phases 2A, 2B, and 2C remain outstanding — each is its own isolated build/review/gate/deploy cycle
+per this plan's Rollout section. This document stays in `docs/plans/` (not `implemented/`) until
+all four sub-deploys are complete.
+
+---
+
+**Prior status: APPROVED — not yet built.** Cleared the full `docs/Subagent-Orchestration.md` §2 policy-1
 plan-tier sequence: Terra draft → two capped fresh-Terra review rounds (each found and fixed real
 issues) → two Opus plan-tier review rounds (each independently verified findings by running the
 real `packages/shared` parser/helpers and reading the real `@tiptap/*@3.30.2` package sources, and
@@ -16,8 +49,8 @@ Tiptap's docs) → a separate fresh Opus self-review then independently re-verif
 scratch (re-ran the helper defects, rebuilt all four proposed ProseMirror schemas directly to test
 their structural properties, re-derived the byte math, re-checked every CSS token value) and
 **approved**, finding only 7 non-blocking wording/sequencing nits (recorded in Review-focus
-decisions and risks below) and applying 3 mechanical citation corrections itself. Build has not
-started.
+decisions and risks below) and applying 3 mechanical citation corrections itself. (Phase 1 has
+since built, been reviewed, and deployed — see the current status above.)
 
 ## Problem and scope
 
