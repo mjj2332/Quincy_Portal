@@ -1,6 +1,28 @@
 # Rich-text editor Tiptap v3 redesign plan
 
-**Status: Phase 2A IMPLEMENTED — built by Terra at max effort (this sub-deploy touches the shared
+**Status: Phase 2B IMPLEMENTED — built by Terra at max effort (shared trust-boundary tier again).
+Max-effort fresh-Terra diff review found and fixed: `@tiptap/extension-list` as an undeclared
+transitive dependency (added as an explicit direct pin), missing nested-list-item heading-rejection
+and malformed-heading 400 coverage, and a composer-only CSS gap. A Terra final focused pass found
+the resulting command-no-op test only dry-ran `.can()` instead of executing the command and diffing
+the document — strengthened. Opus final-draft review built a control **without** the command-boundary
+guard and proved `toggleHeading` inside a list item destroys the entire list without it — the guard
+is genuinely load-bearing, not defensive theater — then found one more undeclared-dependency gap
+(`@tiptap/core`, `@tiptap/pm`, dragged in by the new guard code), fixed the same way as
+`@tiptap/extension-list`. This session's §5 gate independently re-ran the full verify sequence (672
+tests across every workspace plus the 52 in the `packages/shared` suite) and did a live manual
+browser walkthrough that specifically reproduced Opus's proven-dangerous scenario — converting to a
+heading while the cursor sits inside a bulleted list item — and confirmed it's a genuine no-op live,
+not just in the test suite: the list stayed completely intact. Normal heading creation via the
+toolbar dropdown, persistence, and re-render after reload all confirmed live too. Committed
+`b0fbe94`, deployed to production (`quincy-portal-app` version
+`c606806a-e85a-4f11-ab3f-8a716a97b620`), 2026-08-20. Passive production verification: heading
+dropdown renders (after a hard reload past a stale asset cache — not a deploy defect), all requests
+200, zero console errors.
+
+---
+
+**Prior status: Phase 2A IMPLEMENTED — built by Terra at max effort (this sub-deploy touches the shared
 rich-text trust boundary, routed per this plan's own Routing and review section through the
 "Security, auth, payments, migrations" tier), max-effort fresh-Terra diff review (found and fixed a
 real gap: the Link dialog claimed `aria-modal="true"` but wasn't actually focus-contained, plus
