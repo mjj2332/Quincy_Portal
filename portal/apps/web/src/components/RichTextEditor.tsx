@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import HardBreak from "@tiptap/extension-hard-break";
-import Link from "@tiptap/extension-link";
 import Mention from "@tiptap/extension-mention";
 import { richTextPlainText, type RichTextDoc } from "@quincy/shared";
 import { MentionAutocomplete, type MentionAutocompleteHandle, type MentionableUser } from "./MentionAutocomplete";
@@ -80,13 +79,26 @@ export function RichTextEditor({ value, onChange, limit, disabled = false, loadM
   const [query, setQuery] = useState<string | null>(null);
   const [mentionA11y, setMentionA11y] = useState<{ listboxId: string; activeId?: string; expanded: boolean } | null>(null);
   const extensions = useMemo(() => [
-    StarterKit.configure({ heading: false, blockquote: false, codeBlock: false, horizontalRule: false, hardBreak: false, strike: false, code: false }),
+    StarterKit.configure({
+      heading: false,
+      blockquote: false,
+      codeBlock: false,
+      horizontalRule: false,
+      hardBreak: false,
+      strike: false,
+      code: false,
+      underline: false,
+      listKeymap: false,
+      trailingNode: false,
+      undoRedo: {},
+      link: { openOnClick: false, autolink: false, linkOnPaste: false },
+    }),
     ListItemHardBreak,
-    Link.configure({ openOnClick: false, autolink: false, linkOnPaste: false }),
     Mention.configure({ HTMLAttributes: { class: "rich-text__mention" }, suggestion: { items: () => [] } }),
   ], []);
   const editor = useEditor({
     extensions,
+    shouldRerenderOnTransaction: true,
     content: toTiptap(value),
     editable: !disabled,
     editorProps: {
@@ -115,7 +127,7 @@ export function RichTextEditor({ value, onChange, limit, disabled = false, loadM
   useEffect(() => {
     if (!editor) return;
     const serialised = JSON.stringify(value);
-    if (serialised !== valueRef.current) { valueRef.current = serialised; editor.commands.setContent(toTiptap(value), false); }
+    if (serialised !== valueRef.current) { valueRef.current = serialised; editor.commands.setContent(toTiptap(value), { emitUpdate: false }); }
   }, [editor, value]);
   useEffect(() => {
     if (!editor || !mentionA11y) return;

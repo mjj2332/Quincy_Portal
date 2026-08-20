@@ -52,6 +52,13 @@ async function typeIntoEditor(editor: HTMLElement, text: string) {
     await Promise.resolve(); await Promise.resolve();
   });
 }
+async function appendToEditor(editor: HTMLElement, text: string) {
+  await act(async () => {
+    editor.querySelector("p")!.append(document.createTextNode(text));
+    editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: text }));
+    await Promise.resolve(); await Promise.resolve();
+  });
+}
 async function keydown(editor: HTMLElement, key: string) {
   await act(async () => { editor.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key })); await Promise.resolve(); await Promise.resolve(); });
 }
@@ -210,6 +217,26 @@ describe("ProjectCollaborationPanel", () => {
     expect(apiPatchMock).not.toHaveBeenCalled();
     await typeIntoEditor(composer, "@Nor"); await keydown(composer, "Enter");
     expect(apiGetMock).toHaveBeenCalledWith(`/api/mentionable-users?projectId=${projectId}&q=Nor`);
+  });
+
+  it("retains a stored flat-href link when an author edits unrelated comment text", async () => {
+    const href = "https://example.test/comment-link";
+    const content = { type: "doc" as const, content: [{ type: "paragraph" as const, content: [
+      { type: "text" as const, text: "Linked", marks: [{ type: "link" as const, href }] },
+      { type: "text" as const, text: " comment" },
+    ] }] };
+    apiGetMock.mockImplementation((path) => path.includes("subtasks") ? Promise.resolve({ subtasks: [] }) : Promise.resolve(comments([{ ...ownComment, content }])));
+    const host = mount();
+    await render(<ProjectCollaborationPanel projectId={projectId} openSignal={1} />);
+    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Edit")!);
+    await appendToEditor(host.querySelector<HTMLElement>('[contenteditable="true"]')!, "!");
+    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Save")!);
+    expect(apiPatchMock).toHaveBeenCalledWith(`/api/projects/${projectId}/comments/comment-own`, { content: {
+      type: "doc", content: [{ type: "paragraph", content: [
+        { type: "text", text: "Linked", marks: [{ type: "link", href }] },
+        { type: "text", text: " comment!" },
+      ] }],
+    } });
   });
 
   it("renders newest-first comments, prepends posts, and appends older pages below the list", async () => {

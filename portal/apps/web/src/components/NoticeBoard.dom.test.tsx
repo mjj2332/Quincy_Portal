@@ -46,6 +46,13 @@ async function typeIntoEditor(editor: HTMLElement, text: string) {
     await Promise.resolve(); await Promise.resolve();
   });
 }
+async function appendToEditor(editor: HTMLElement, text: string) {
+  await act(async () => {
+    editor.querySelector("p")!.append(document.createTextNode(text));
+    editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: text }));
+    await Promise.resolve(); await Promise.resolve();
+  });
+}
 
 async function keydown(editor: HTMLElement, key: string, modifiers: KeyboardEventInit = {}) {
   await act(async () => {
@@ -264,6 +271,26 @@ describe("NoticeBoard disclosure and polling", () => {
     await typeIntoEditor(editor, "Saved edit");
     await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Save")!);
     expect(apiPatchMock).toHaveBeenCalledWith("/api/notice-board/posts/post-old", { content: doc("Saved edit") });
+  });
+
+  it("retains a stored flat-href link when an author edits unrelated notice text", async () => {
+    const href = "https://example.test/notice-link";
+    const content = { type: "doc" as const, content: [{ type: "paragraph" as const, content: [
+      { type: "text" as const, text: "Linked", marks: [{ type: "link" as const, href }] },
+      { type: "text" as const, text: " notice" },
+    ] }] };
+    apiGetMock.mockResolvedValue({ posts: [{ ...oldPost, content }] });
+    const host = mount();
+    await render(<NoticeBoard currentUserId="user-a" />);
+    await click(host.querySelector(".notice-board__edit")!);
+    await appendToEditor(host.querySelector<HTMLElement>('[contenteditable="true"]')!, "!");
+    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Save")!);
+    expect(apiPatchMock).toHaveBeenCalledWith("/api/notice-board/posts/post-old", { content: {
+      type: "doc", content: [{ type: "paragraph", content: [
+        { type: "text", text: "Linked", marks: [{ type: "link", href }] },
+        { type: "text", text: " notice!" },
+      ] }],
+    } });
   });
 
   it("selects a mention with the keyboard and includes it in the submitted document", async () => {

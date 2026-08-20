@@ -43,6 +43,27 @@ async function typeAfterCurrentContent(editor: HTMLElement, value: string) {
   });
 }
 
+async function appendText(editor: HTMLElement, value: string) {
+  await act(async () => {
+    const paragraphs = editor.querySelectorAll("p");
+    paragraphs[paragraphs.length - 1]!.append(document.createTextNode(value));
+    editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: value }));
+    await Promise.resolve(); await Promise.resolve();
+  });
+}
+
+async function moveCaret(editor: HTMLElement, node: Node, offset = 1) {
+  await act(async () => {
+    editor.focus();
+    const range = document.createRange();
+    range.setStart(node, offset); range.collapse(true);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges(); selection.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+    await Promise.resolve(); await Promise.resolve();
+  });
+}
+
 afterEach(async () => {
   if (root) await act(async () => { root!.unmount(); await Promise.resolve(); });
   root = null;
@@ -105,6 +126,14 @@ describe("RichTextEditor hard breaks", () => {
     overChange.mockClear();
     await keydown(rendered.editor, "Enter", { ctrlKey: true });
     expect(overSubmit).not.toHaveBeenCalled(); expect(overChange).not.toHaveBeenCalled();
+  });
+
+  it("keeps live Markdown list conversion", async () => {
+    const host = mount(); const onChange = vi.fn();
+    const { editor } = await render(host, text(""), onChange);
+    onChange.mockClear();
+    await typeAfterCurrentContent(editor, "* ");
+    expect(onChange).toHaveBeenLastCalledWith(list([]));
   });
 
   it("lets an open mention popup consume Shift+Enter", async () => {
@@ -173,5 +202,79 @@ describe("RichTextEditor hard breaks", () => {
         { type: "text", text: " today!" },
       ] }],
     });
+  });
+
+  it("round-trips legacy paragraph, list, mention, and hard-break documents after an unrelated edit", async () => {
+    const value: RichTextDoc = {
+      type: "doc",
+      content: [
+        { type: "paragraph", content: [{ type: "text", text: "Legacy", marks: [{ type: "bold" }] }] },
+        { type: "orderedList", content: [{ type: "listItem", content: [{ type: "paragraph", content: [
+          { type: "mention", attrs: { id: "11111111-1111-4111-8111-111111111111", label: "Nora Mention" } },
+          { type: "hardBreak" },
+          { type: "text", text: "continues" },
+        ] }] }] },
+        { type: "paragraph", content: [{ type: "text", text: "Unrelated" }] },
+      ],
+    };
+    const host = mount(); const onChange = vi.fn();
+    const { editor } = await render(host, value, onChange);
+    onChange.mockClear();
+    await appendText(editor, " edit");
+    expect(onChange).toHaveBeenLastCalledWith({
+      ...value,
+      content: [...value.content!.slice(0, -1), { type: "paragraph", content: [{ type: "text", text: "Unrelated edit" }] }],
+    });
+  });
+
+  it("synchronizes a new controlled value without emitting until the user edits", async () => {
+    const initial = text("Initial"); const replacement = text("Controlled");
+    const host = mount(); const onChange = vi.fn();
+    const rendered = await render(host, initial, onChange);
+    onChange.mockClear();
+    await act(async () => {
+      root!.render(<RichTextEditor value={replacement} onChange={onChange} onSubmit={rendered.onSubmit} limit={2_000} loadMentionables={mentionables} />);
+      await Promise.resolve(); await Promise.resolve();
+    });
+    expect(rendered.editor.textContent).toBe("Controlled");
+    expect(onChange).not.toHaveBeenCalled();
+    await appendText(rendered.editor, " edit");
+    expect(onChange).toHaveBeenLastCalledWith(text("Controlled edit"));
+  });
+
+  it("updates toolbar pressed states when only the caret moves", async () => {
+    const href = "https://example.test/caret";
+    const value: RichTextDoc = {
+      type: "doc",
+      content: [
+        { type: "paragraph", content: [{ type: "text", text: "Bold", marks: [{ type: "bold" }] }] },
+        { type: "paragraph", content: [{ type: "text", text: "Italic", marks: [{ type: "italic" }] }] },
+        { type: "paragraph", content: [{ type: "text", text: "Link", marks: [{ type: "link", href }] }] },
+        { type: "bulletList", content: [{ type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "List" }] }] }] },
+      ],
+    };
+    const host = mount(); const onChange = vi.fn();
+    const { editor } = await render(host, value, onChange);
+    onChange.mockClear();
+    const button = (label: string) => host.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`)!;
+    for (const [label, node] of [
+      ["Bold", editor.querySelector("p")!.firstChild!],
+      ["Italic", editor.querySelectorAll("p")[1]!.firstChild!],
+      ["Link", editor.querySelector("a")!.firstChild!],
+      ["Bullet list", editor.querySelector("li p")!.firstChild!],
+    ] as const) {
+      await moveCaret(editor, node);
+      expect(button(label).getAttribute("aria-pressed"), label).toBe("true");
+    }
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("does not append a paragraph after a final bullet-list item", async () => {
+    const value = list([{ type: "text", text: "Final item" }]);
+    const host = mount(); const onChange = vi.fn();
+    const { editor } = await render(host, value, onChange);
+    onChange.mockClear();
+    await appendText(editor, " edited");
+    expect(onChange).toHaveBeenLastCalledWith(list([{ type: "text", text: "Final item edited" }]));
   });
 });
