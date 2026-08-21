@@ -6,15 +6,16 @@ These are scope briefs. Each bullet requires a separate current-main-aware imple
 
 | Bullet | Primary outcome | Main architectural proof |
 |---|---|---|
-| [TB0](./TB0-Integrated-Architecture-And-Baseline.md) | Approved synchronized docs and clean baseline | One coherent program/decision set |
-| [TB1](./TB1-Tailwind-Shadcn-Foundation.md) | First Quincy-branded shadcn form slice | UI platform and CSS coexistence |
+| [TB0](./TB0-Integrated-Architecture-And-Baseline.md) | Approved synchronized docs, matched visual baseline and drift register | One coherent program/decision set |
+| [TB1](./TB1-Tailwind-Shadcn-Foundation.md) | First design-conformant Quincy shadcn form slice | UI platform and CSS coexistence |
 | [TB2](./TB2-Route-Safe-Data-Freshness.md) | Project pages update without reload | Route-keyed server state |
 | [TB3](./TB3-Project-Discussion-V2.md) | Automatically refreshed project discussion/read state | Shared discussion direction |
 | [TB4](./TB4-Notification-Outbox-And-Queues.md) | Durable mention delivery | D1 outbox + Cloudflare Queue |
-| [TB5](./TB5-Kanban-Modernization.md) | Accessible, refreshed project board | dnd-kit + guarded board moves |
+| [TB5A](./TB5A-Kanban-Ordering-Model-Correction.md) | Understandable, authoritative Kanban order | One visible/persisted ordering contract |
+| [TB5B](./TB5B-Kanban-Interaction-Modernization.md) | Accessible, refreshed project board | dnd-kit + guarded board moves |
 | [TB6](./TB6-Project-Card-Detail-And-Discussion.md) | Project-card quick detail with shared discussion/activity | UI/domain reuse |
 | [TB7](./TB7-Notice-Board-Migration.md) | Server-synchronized notice board | Second discussion consumer |
-| [TB8](./TB8-Wider-UI-Migration-And-Cleanup.md) | Expand proven patterns and retire duplicates | Consolidation only after proofs |
+| [TB8](./TB8-Wider-UI-Migration-And-Cleanup.md) | Surface-by-surface design convergence and retirement of duplicates | Consolidation only after proofs |
 
 ## Dependency view
 
@@ -23,12 +24,14 @@ TB0
  └─ TB1
      └─ TB2
          ├─ TB3 ── TB4
-         └─ TB5 ── TB6
-                    └─ TB7
-                        └─ TB8
+         └─ TB5A ── TB5B ── TB6
+                              └─ TB7
+                                  └─ TB8
 ```
 
-TB3 and TB5 planning may overlap after TB2 stabilizes, but each implementation remains isolated.
+TB3 and TB5A planning may overlap after TB2 stabilizes. TB5B cannot begin until TB5A's ordering contract is approved and its required correction is live or otherwise established as the implementation baseline. Every implementation remains isolated.
+
+TB8 is an umbrella for multiple feature-surface releases, not permission for a final wholesale rewrite.
 
 ## Rules for every bullet
 
@@ -37,6 +40,7 @@ TB3 and TB5 planning may overlap after TB2 stabilizes, but each implementation r
 - Exact scope and non-goals.
 - Additive/reversible migration.
 - Targeted tests + full repository gate.
+- Matched visual evidence when UI changes.
 - Manual browser QA.
 - Independent diff review.
 - Clear stop/accept checkpoint.

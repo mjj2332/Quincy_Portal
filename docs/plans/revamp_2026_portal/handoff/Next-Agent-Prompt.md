@@ -28,7 +28,7 @@ Do not load the archive unless auditing historical decisions.
 ## Approved direction
 
 - Tailwind CSS v4 + shadcn target UI platform.
-- Quincy brand remains authoritative.
+- Design convergence is the UI outcome: Quincy design system authoritative, prototype visual/flow reference, material deviations classified.
 - One coordinated revamp, implemented through tracer bullets.
 - Keep path-based deep links.
 - Restore automatic freshness without browser reload.
@@ -37,6 +37,7 @@ Do not load the archive unless auditing historical decisions.
 - Cloudflare infrastructure is acceptable.
 - Quincy owns discussion, notification and Kanban domain data/rules.
 - Current project Kanban card is a project and reuses project discussion.
+- Kanban ordering semantics are corrected in TB5A before dnd-kit/freshness work in TB5B; current priority/position/sort behavior is not grandfathered.
 
 ## Your first task
 
@@ -44,8 +45,9 @@ Run TB0 planning only:
 
 - re-check current head and repository facts;
 - run/document baseline verification;
+- capture matched prototype/current screenshots and create the design-convergence drift register;
 - resolve pending owner decisions;
-- draft D-16/D-17 and implementation/PRD amendments;
+- draft D-16/D-17 and implementation/PRD amendments with design convergence and the TB5A-before-TB5B dependency;
 - create a repository-native TB1 implementation plan;
 - take it through `docs/Subagent-Orchestration.md`;
 - do not install dependencies or modify product source before plan approval.
@@ -53,7 +55,8 @@ Run TB0 planning only:
 ## Critical invariants
 
 - Implementation only under `portal/`.
-- `prototype/` is reference-only.
+- `prototype/` is a visual/flow reference only; never copy its application structure.
+- Current production behavior is not visual authority merely because it is live.
 - Do not weaken auth/capability/audit rules.
 - Keep direct/open-new-tab project links.
 - No cross-project cache leakage.

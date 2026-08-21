@@ -5,7 +5,7 @@
 
 ## 1. Product objective
 
-Quincy Portal must provide a consistent, deep-linkable and automatically refreshed workspace for project production, asynchronous feedback, operational notifications and project-stage Kanban management.
+Quincy Portal must converge toward its approved design system and prototype intent while providing a consistent, deep-linkable and automatically refreshed workspace for project production, asynchronous feedback, operational notifications and project-stage Kanban management.
 
 The revamp must preserve existing workflows while reducing the need to build and maintain one-off UI, comment, unread and notification mechanics.
 
@@ -48,6 +48,8 @@ The revamp must preserve existing workflows while reducing the need to build and
 - The existing project-stage board remains a first-class view of projects.
 - Cards can be moved accessibly by pointer, touch and keyboard/non-drag controls.
 - Movement persists safely and conflicts do not silently overwrite another user's newer change.
+- The visible card order and authoritative persisted order follow one documented contract.
+- A control must not report success while producing no visible effect or secretly changing manual order behind another sort mode.
 - Board changes made elsewhere appear without a browser reload.
 - A project card can expose project details, activity and the existing project discussion without creating duplicate comment storage.
 
@@ -55,6 +57,8 @@ The revamp must preserve existing workflows while reducing the need to build and
 
 - Migrated ordinary controls use a shared, source-owned component layer.
 - Quincy remains visually recognizable and does not adopt stock framework styling.
+- The Quincy design system is the visual authority; the prototype is the visual/flow reference, not an application-architecture template.
+- Material deviations from the reference are classified and approved rather than accumulating implicitly.
 - Controls remain usable at desktop, collaboration-panel and phone widths.
 - Accessibility is preserved or improved.
 
@@ -106,10 +110,12 @@ No user should need a full browser reload to observe ordinary project, board, co
 ### 3.6 Kanban movement
 
 - Project stage remains the column identity.
-- Existing priority and board-position semantics must be preserved unless explicitly redesigned.
+- TB5A must define and approve the canonical relationship between priority, manual `boardPosition`, stage movement and temporary sort modes; current behavior is not presumed correct.
+- Visible order and persisted manual order must not disagree through display-only grouping.
+- Priority or date-view changes must not secretly rewrite manual order unless the approved product contract explicitly says they are ordering commands.
 - Every drag action must have a keyboard/non-drag alternative.
 - The API must reject stale/conflicting moves safely.
-- Date-sorted views remain distinct from manual board ordering.
+- Temporary date/priority views must remain clearly distinct from manual board ordering, and manual reorder controls appear only when they can have an immediate visible effect.
 
 ### 3.7 Attachments
 
@@ -154,6 +160,8 @@ When approved:
 - Preserve Quincy fonts, colors, hairlines, radius and editorial hierarchy.
 - Do not use raw Tailwind palette classes as the feature-level brand contract.
 - Do not ship stock shadcn component appearance without Quincy customization.
+- Compare migrated surfaces against matched prototype/current evidence at approved viewports and record intentional deviations.
+- Preserve the design system's editorial hierarchy, square card geometry, restrained control radius, hairline structure, low elevation and calm motion unless a deviation is explicitly approved.
 
 ## 5. Non-goals
 
@@ -177,6 +185,7 @@ When approved:
 - Polling delay expectations.
 - Whether card detail is a route, sheet, dialog or responsive combination.
 - Whether project system activity and human comments are visually interleaved.
+- Whether priority is metadata-only, an explicit optional sort, or an ordering command; and the target-column insertion rule for a stage move.
 
 ## 7. Product-level acceptance
 
@@ -190,3 +199,5 @@ The revamp is successful when a staff member can:
 6. Read notices and have their read state follow them across devices.
 7. Receive deduplicated in-app/email events even when delivery retries occur.
 8. Continue using the existing production workflows throughout incremental migration.
+9. Recognize migrated surfaces as Quincy through approved typography, spacing, geometry, hierarchy and interaction behavior—not merely matching colors.
+10. Switch Kanban sort modes and edit priority without invisible manual-order side effects or successful no-op reorder controls.

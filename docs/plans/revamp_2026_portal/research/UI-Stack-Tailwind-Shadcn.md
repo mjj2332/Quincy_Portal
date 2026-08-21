@@ -1,6 +1,6 @@
 # Research — Tailwind CSS v4 and shadcn
 
-**Conclusion:** Strong fit as Quincy's incremental UI platform, with deliberate token mapping and global-reset control.
+**Conclusion:** Strong fit as Quincy's incremental implementation platform, provided design convergence—not framework adoption—remains the measured outcome.
 
 ## Findings
 
@@ -44,7 +44,9 @@ Risks:
 
 ## Recommendation
 
-- Tailwind v4 + shadcn approved as direction.
+- Tailwind v4 + shadcn approved as direction, but neither is a visual authority.
+- Use the Quincy design system as the visual authority and the prototype as the visual/flow reference for comparable surfaces.
+- Require a drift classification and matched visual evidence for every migrated feature surface.
 - Use Vite plugin.
 - Disable Preflight initially.
 - Map existing tokens to semantic variables.

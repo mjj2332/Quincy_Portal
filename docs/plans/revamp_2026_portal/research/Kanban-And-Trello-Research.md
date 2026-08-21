@@ -69,9 +69,9 @@ Not recommended before testing the existing board with dnd-kit.
 
 - Current board card = project.
 - Current column = project pipeline stage.
-- Preserve `priority`, `boardPosition`, stage rules and direct project links.
+- Preserve project-as-card, stage rules and direct project links, but do not automatically preserve the current relationship between `priority`, `boardPosition` and display-only sorts.
 - Reuse project discussion in the card detail.
-- Add dnd-kit and conflict-safe persistence through a bounded modernization slice.
+- Correct ordering semantics in TB5A, then add dnd-kit and conflict-safe persistence in TB5B.
 - Keep a non-drag “Move to…” control.
 
 ## Official sources
