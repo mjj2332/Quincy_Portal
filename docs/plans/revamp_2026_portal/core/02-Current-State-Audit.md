@@ -1,6 +1,7 @@
 # Current-State Audit
 
-**Baseline:** `mjj2332/Quincy_Portal` `main` at `ff01974f91f4b459a31352fbdf20981e6d38977a`  
+**Baseline:** `mjj2332/Quincy_Portal` `main` at `dfddccbaaaaeff4b0ce3146c58af338d070d345e`  
+**Code-baseline note:** the commits after `ff01974f91f4b459a31352fbdf20981e6d38977a` through this baseline changed revamp documentation, not production source.  
 **Audit date:** 2026-08-21  
 **Scope:** facts that constrain the revamp; re-check before implementation
 
@@ -101,7 +102,7 @@ Backend already provides:
 
 Frontend currently keeps comment data in component state, prepends its own newly posted comments and loads older pages manually.
 
-The same collaboration pane already hosts the checklist, whose anchored assignee and due-date popovers provide the interaction precedent for the proposed editor/deadline controls. Multiple editor memberships already exist and the Edit Project form can select several editors, but routine add/remove is not exposed in the collaboration pane. There is no distinct project-level due date/time or configurable project reminder schedule.
+The same collaboration pane already hosts the checklist, whose anchored assignee and due-date popovers provide the interaction precedent for the proposed editor/deadline controls. Multiple editor memberships already exist and the Edit Project form can select several editors, but routine add/remove is not exposed in the collaboration pane. The current `syncMembers()` path synchronizes a caller-supplied full-list snapshot; the pane must use guarded role-specific deltas rather than reuse that stale-list contract. `project_members` has a unique `(project_id, user_id, role_on_project)` key and a `created_at` value, so editor removal can preserve another project role and later recipient timing can distinguish a new assignment cycle. There is no distinct project-level due date/time or configurable project reminder schedule.
 
 ## 6. Existing notice board
 
@@ -142,7 +143,9 @@ Primary gaps:
 - no general retry/DLQ flow for request-path email failures;
 - no unified observability/admin recovery interface.
 - no editor-wide project-change event registry or guaranteed fan-out to all assigned editors;
-- no project-level deadline with multiple user-configurable advance reminders.
+- no project-level deadline with multiple user-configurable advance reminders;
+- the current `projectNotificationRecipients()` helper always appends active admins, including when `editorOnly` is requested, so the editor-wide contract needs a dedicated assigned-editor resolver rather than reusing that helper unchanged;
+- current notification uniqueness is `(type, source_key, user_id)` and does not model recipient/channel delivery state.
 
 ## 8. Existing Kanban
 

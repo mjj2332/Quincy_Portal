@@ -1,8 +1,8 @@
 # Quincy Portal Revamp — Index
 
-**Status:** Planning and research package; not yet merged into the repository authority documents.  
+**Status:** Planning and research package; not yet promoted into the repository authority documents.  
 **Prepared:** 2026-08-21  
-**Repository baseline inspected:** `mjj2332/Quincy_Portal` `main` at `ff01974f91f4b459a31352fbdf20981e6d38977a`  
+**Repository baseline inspected:** `mjj2332/Quincy_Portal` `main` at `dfddccbaaaaeff4b0ce3146c58af338d070d345e`  
 **Detailed folder:** [`revamp_2026_portal/`](./revamp_2026_portal/README.md)
 
 This is the shortest entry point for the coordinated Quincy Portal revamp. The package intentionally separates high-level decisions from detailed architecture and per-slice plans, so an agent does not need to load one very large Markdown file.
@@ -24,7 +24,9 @@ This is the shortest entry point for the coordinated Quincy Portal revamp. The p
 | Automatic refresh, routing, multi-tab behavior | [Route and data freshness](./revamp_2026_portal/core/05-Route-And-Data-Freshness.md) → [TB2](./revamp_2026_portal/roadmap/TB2-Route-Safe-Data-Freshness.md) |
 | Project comments or notice board | [Discussion architecture](./revamp_2026_portal/core/06-Discussions-And-Notice-Board.md) → [Messaging research](./revamp_2026_portal/research/Messaging-And-Commenting-Research.md) → [TB3](./revamp_2026_portal/roadmap/TB3-Project-Discussion-V2.md) or [TB7](./revamp_2026_portal/roadmap/TB7-Notice-Board-Migration.md) |
 | Notifications/email reliability | [Cloudflare notifications](./revamp_2026_portal/core/07-Notifications-On-Cloudflare.md) → [Cloudflare research](./revamp_2026_portal/research/Cloudflare-Native-Architecture-Research.md) → [TB4](./revamp_2026_portal/roadmap/TB4-Notification-Outbox-And-Queues.md) |
-| Direct editor assignment, project deadline/reminders or editor-wide change alerts | [PRD delta](./revamp_2026_portal/core/03-PRD-Delta.md) → [Cloudflare notifications](./revamp_2026_portal/core/07-Notifications-On-Cloudflare.md) → [TB4A](./revamp_2026_portal/roadmap/TB4A-Project-Coordination-Deadline-And-Editor-Notifications.md) |
+| Direct editor assignment in the collaboration pane | [PRD delta](./revamp_2026_portal/core/03-PRD-Delta.md) → [TB4A](./revamp_2026_portal/roadmap/TB4A-Collaboration-Pane-Editor-Assignment.md) |
+| Project deadline, advance reminders or Kanban due metadata | [PRD delta](./revamp_2026_portal/core/03-PRD-Delta.md) → [Cloudflare notifications](./revamp_2026_portal/core/07-Notifications-On-Cloudflare.md) → [TB4B](./revamp_2026_portal/roadmap/TB4B-Project-Deadline-And-Reminders.md) |
+| Editor-wide project-change alerts | [PRD delta](./revamp_2026_portal/core/03-PRD-Delta.md) → [Cloudflare notifications](./revamp_2026_portal/core/07-Notifications-On-Cloudflare.md) → [TB4C](./revamp_2026_portal/roadmap/TB4C-Editor-Wide-Project-Change-Notifications.md) |
 | Kanban ordering or interaction modernization | [Kanban architecture](./revamp_2026_portal/core/08-Kanban-Modernization.md) → [Kanban/Trello research](./revamp_2026_portal/research/Kanban-And-Trello-Research.md) → [TB5A ordering correction](./revamp_2026_portal/roadmap/TB5A-Kanban-Ordering-Model-Correction.md) → [TB5B interaction modernization](./revamp_2026_portal/roadmap/TB5B-Kanban-Interaction-Modernization.md) |
 | Reviewer or release owner | [Migration, rollback and verification](./revamp_2026_portal/core/09-Migration-Rollback-And-Verification.md) → the active tracer-bullet file |
 | Agent updating repository docs | [Repository document update map](./revamp_2026_portal/core/10-Repository-Document-Update-Map.md) |
@@ -58,6 +60,15 @@ docs/Decision-Sheet.md
 ```
 
 After owner approval, the relevant decisions and requirements must be incorporated into those authority documents. Each implementation tracer bullet should receive its own reviewed implementation plan before code changes begin.
+
+## Current program gate
+
+| Control | Current state |
+|---|---|
+| Repository authority | D-16, D-17 and D-18 are proposed; owner approval and authority-document promotion remain TB0 work. |
+| First implementation slice | TB1 may begin only after TB0 accepts the platform decisions, baseline evidence and drift register. |
+| Project-coordination sequence | TB4A editor assignment → TB4B deadline/reminders + Kanban due metadata → TB4C editor-wide event registry. Each receives its own reviewed implementation plan and release checkpoint. |
+| Deferred product choices | TB0 records the owning tracer bullet and deferral explicitly; it does not need to decide later-slice product details prematurely. |
 
 ## Current headline decisions
 

@@ -23,13 +23,11 @@ Then read only these package files initially:
 4. `docs/plans/revamp_2026_portal/roadmap/TB0-Integrated-Architecture-And-Baseline.md`
 5. `docs/plans/revamp_2026_portal/core/10-Repository-Document-Update-Map.md`
 
-If the active task is project coordination, deadline/reminders, editor-wide change delivery or the Kanban deadline/RAW metadata change, also read:
+If the active task is project coordination, first choose the narrow path:
 
-6. `docs/plans/revamp_2026_portal/core/03-PRD-Delta.md`
-7. `docs/plans/revamp_2026_portal/core/06-Discussions-And-Notice-Board.md`
-8. `docs/plans/revamp_2026_portal/core/07-Notifications-On-Cloudflare.md`
-9. `docs/plans/revamp_2026_portal/research/Cloudflare-Native-Architecture-Research.md`
-10. `docs/plans/revamp_2026_portal/roadmap/TB4A-Project-Coordination-Deadline-And-Editor-Notifications.md`
+- **Editor assignment:** `core/03-PRD-Delta.md` → `roadmap/TB4A-Collaboration-Pane-Editor-Assignment.md`.
+- **Deadline/reminders or Kanban due metadata:** `core/03-PRD-Delta.md` → `core/07-Notifications-On-Cloudflare.md` → `research/Cloudflare-Native-Architecture-Research.md` → `roadmap/TB4B-Project-Deadline-And-Reminders.md`.
+- **Editor-wide change delivery:** `core/03-PRD-Delta.md` → `core/07-Notifications-On-Cloudflare.md` → `research/Cloudflare-Native-Architecture-Research.md` → `roadmap/TB4C-Editor-Wide-Project-Change-Notifications.md`.
 
 Read Kanban architecture/TB5A/TB5B only when the active work touches the card metadata or subsequent board slices.
 
@@ -51,7 +49,7 @@ Do not load the archive unless auditing historical decisions.
 - Authorized users assign/remove multiple editors directly in the collaboration pane using the existing membership model.
 - Every active assigned editor, including the actor, receives a mandatory durable in-app notification for the approved finite registry of project changes; email is additional under its reliability/preference contract.
 - One project due date/time supports zero or multiple advance reminders; Kanban cards show it and omit the card-level RAW count.
-- TB4A follows the TB4 outbox proof and precedes TB5A/TB5B.
+- TB4A editor assignment → TB4B deadline/reminders + card metadata → TB4C editor-wide registry; all follow the TB4 outbox proof and precede TB5A/TB5B.
 
 ## Your first task
 
@@ -60,8 +58,8 @@ Run TB0 planning only:
 - re-check current head and repository facts;
 - run/document baseline verification;
 - capture matched prototype/current screenshots and create the design-convergence drift register;
-- resolve pending owner decisions;
-- draft D-16/D-17/D-18 and implementation/PRD amendments with design convergence, the TB4A coordination contract and the TB5A-before-TB5B dependency;
+- resolve TB0-gated owner decisions and explicitly assign later choices to their owning bullet;
+- draft D-16/D-17/D-18 and implementation/PRD amendments with design convergence, the split TB4A/TB4B/TB4C coordination sequence and the TB5A-before-TB5B dependency;
 - create a repository-native TB1 implementation plan;
 - take it through `docs/Subagent-Orchestration.md`;
 - do not install dependencies or modify product source before plan approval.

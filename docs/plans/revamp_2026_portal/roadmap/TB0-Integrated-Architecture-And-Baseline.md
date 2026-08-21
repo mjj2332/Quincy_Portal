@@ -1,6 +1,7 @@
 # TB0 — Integrated Architecture, Decisions and Baseline
 
-**User-visible change:** none
+**User-visible change:** none  
+**Decision gate:** approve the umbrella direction and TB0-owned defaults; explicitly defer later product choices to their owning tracer bullets.
 
 ## Goal
 
@@ -8,53 +9,64 @@ Turn the revamp package into approved repository decisions, a matched prototype/
 
 ## Required work
 
-- Re-read current `main`, authority docs, todo, lessons and orchestration policy.
+- Re-read current `main`, authority docs, todo and lessons.
 - Run the full pre-change gate.
 - Capture matched prototype and current-production screenshots using equivalent content at approved desktop, collaboration-panel and phone widths where each surface exists.
 - Create the design-convergence drift register from [the convergence contract](../core/11-Design-Convergence.md).
-- Classify material differences as conforming, intentional evolution, required platform/accessibility change, unwanted drift, or unassessed.
+- Classify material differences as conforming, intentional evolution, required platform/accessibility change, unwanted drift or unassessed.
 - Record current bundle/CSS output.
-- Resolve pending choices in the decision register.
-- Record that Kanban ordering correction (TB5A) precedes interaction modernization (TB5B); decide whether the detailed priority/manual/date semantics are settled in TB0 or explicitly deferred to TB5A.
-- Add/approve D-16 and D-17.
-- Add/approve D-18 for project coordination, deadlines and editor-wide notifications.
+- Approve or amend the TB0-gated rows in the [decision register](../core/01-Decision-Register.md).
+- For every later-slice choice, record the owning bullet and explicit deferral; do not decide feature details prematurely.
+- Record that TB4A editor assignment, TB4B deadline/reminders and TB4C editor-wide alerts are separate release gates after TB4.
+- Record that Kanban ordering correction (TB5A) precedes interaction modernization (TB5B); decide only the umbrella direction here and defer exact ordering semantics to TB5A if needed.
+- Add/approve D-16, D-17 and D-18.
 - Amend Implementation Plan and PRD.
 - Update AGENTS/CLAUDE identically.
 - Add an accurate todo umbrella entry.
 - Create and review the TB1 implementation plan.
 
-## Required decisions
+## Decisions TB0 must settle
 
-- Base UI or Radix.
+- Base UI or Radix for the first shadcn proof.
 - Preflight policy.
-- shadcn style/base color/icons/prefix.
-- browser support for Tailwind v4.
-- the design-convergence viewport/surface baseline and deviation-approval owner.
-- TanStack Query acceptance for TB2.
-- first discussion feature set.
-- Queue/outbox direction.
-- proposed Kanban canonical-order default or explicit deferral to TB5A.
-- dnd-kit direction for TB5B after TB5A.
-- permission for editor-roster/deadline/reminder mutations;
-- project-deadline timezone and delivery tolerance;
-- TB4A editor-wide event registry and bulk coalescing rules;
-- TB4A mandatory in-app/optional email reliability contract, newly assigned editor queued-event eligibility and past-reminder behavior;
-- TB4A IANA timezone and DST gap/fold contract;
-- TB4A custom-reminder bounds and rule-count cap;
-- D1 schedule + short Cron scan recommendation versus per-reminder Workflow.
+- shadcn style/base color/icons/prefix and component location.
+- supported browser floor for Tailwind v4.
+- design-convergence viewport/surface baseline and deviation-approval owner.
+- TanStack Query as the TB2 direction.
+- typed custom-router retention.
+- D1 outbox + Cloudflare Queue as the TB4 direction.
+- Quincy-owned project discussion reuse for Kanban cards.
+- dark-mode exclusion and icon policy.
+- D-16/D-17/D-18 wording.
+
+## Decisions TB0 records but may defer
+
+| Owning bullet | Decision family |
+|---|---|
+| TB3 | Discussion threads/replies/reactions/subscriptions and photographer collaboration visibility. |
+| TB4 | Email-provider ambiguity/idempotency and minimum replay/administration surface. |
+| TB4A | Editor-roster mutation capability. |
+| TB4B | Deadline timezone, delivery tolerance, custom reminder bounds, past-offset policy and reminder-email default. |
+| TB4C | Initial event registry, noise/coalescing, optional email and queued-event eligibility. |
+| TB5A | Priority/manual/date ordering semantics and target-stage insertion. |
+| TB5B | Final DnD choice if the dnd-kit proof exposes a measured limitation. |
+| TB6/TB7 | Card-detail/activity composition and notice-board feature choices. |
+
+A deferral is complete only when the decision register names the owning bullet. “Resolve later” without an owner is not accepted.
 
 ## Acceptance
 
 - Authority documents agree.
 - Baseline is green or failures are documented.
 - Matched prototype/current evidence and a reviewable drift register exist.
-- Every known material difference in the sampled surfaces is classified; “unassessed” items have an owner/follow-up.
-- The roadmap and authority updates do not promise to preserve current Kanban ordering semantics.
-- TB5A and TB5B have separate scope and dependency.
-- TB4A is placed after the TB4 outbox proof and before TB5A; the editor/deadline/event contracts and unresolved owner choices are recorded without changing the subtask due literal.
+- Every known material difference in the sampled surfaces is classified; unassessed items have an owner/follow-up.
+- All TB0-owned decisions are approved or amended.
+- Every later product choice has an explicit owner/gate and remains visibly unapproved.
+- The roadmap preserves separate TB4A/TB4B/TB4C release boundaries.
+- TB5A and TB5B retain separate scope and dependency.
 - No production source/dependency changes.
 - TB1 plan passes the required review pipeline.
 
 ## Stop condition
 
-Do not initialize Tailwind/shadcn, add packages, or begin Kanban interaction work before the decisions and applicable plans are approved.
+Do not initialize Tailwind/shadcn, add packages or begin later tracer-bullet implementation before TB0 authority updates and the applicable per-bullet plan are approved.

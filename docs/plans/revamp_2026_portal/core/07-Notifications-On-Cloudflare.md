@@ -1,7 +1,7 @@
 # Notifications on Cloudflare
 
 **Status:** Proposed reliable delivery architecture  
-**Related:** [Cloudflare research](../research/Cloudflare-Native-Architecture-Research.md), [TB4](../roadmap/TB4-Notification-Outbox-And-Queues.md), [TB4A](../roadmap/TB4A-Project-Coordination-Deadline-And-Editor-Notifications.md)
+**Related:** [Cloudflare research](../research/Cloudflare-Native-Architecture-Research.md), [TB4](../roadmap/TB4-Notification-Outbox-And-Queues.md), [TB4A](../roadmap/TB4A-Collaboration-Pane-Editor-Assignment.md), [TB4B](../roadmap/TB4B-Project-Deadline-And-Reminders.md), [TB4C](../roadmap/TB4C-Editor-Wide-Project-Change-Notifications.md)
 
 ## 1. Goal
 
@@ -113,7 +113,7 @@ notification_deliveries
 
 Existing `notifications` remains the recipient-facing inbox table unless a later plan deliberately replaces it.
 
-For TB4A, add a conceptual project deadline schedule (exact names belong to the reviewed implementation plan):
+For TB4B, add a conceptual project deadline schedule (exact names belong to the reviewed implementation plan):
 
 ```text
 projects
@@ -176,6 +176,8 @@ Claims use compare-and-set predicates and expiring leases: only a pending row, o
 
 ## 8. Recipient resolution
 
+The assigned-editor guarantee uses a dedicated resolver over active `project_members` editor rows. The existing general helper appends active admins even under its editor filter and must not be reused unchanged for TB4B/TB4C recipient fan-out.
+
 Resolve/recheck at processing time:
 
 - active status;
@@ -191,7 +193,7 @@ For editor-wide events, the minimum guarantee is a mandatory in-app row for ever
 
 ## 8a. Editor-wide project event registry
 
-“Every project change” must be expressed as an approved, versioned registry of user-visible domain events. The first TB4A registry should cover:
+“Every project change” must be expressed as an approved, versioned registry of user-visible domain events. The first TB4C registry should cover:
 
 - editor membership, deadline and reminder-rule changes;
 - project metadata, stage, priority and board movement;
@@ -230,9 +232,9 @@ Category                In-app       Email
 Mentions                required/on  user choice
 Replies                  user choice user choice
 Editor assignments       required/on  user choice
-TB4A registry events     required/on  user choice/digest
+TB4C registry events     required/on  user choice/digest
 Project due reminders    required/on  user choice
-Non-TB4A project events  user choice user choice/digest
+Non-TB4C project events  user choice user choice/digest
 Notice board             user choice user choice/digest
 ```
 
@@ -247,7 +249,7 @@ muted
 
 Optional email/digest and non-TB4A event defaults require product approval. Mandatory in-app delivery does not.
 
-Every TB4A registry event—including editor add/remove, project, checklist, comment and collection changes—and every project due reminder is an exception to project/thread mute while the user remains an assigned editor. Removal from the editor role ends future eligibility.
+Every TB4C registry event—including editor add/remove, project, checklist, comment and collection changes—and every TB4B project due reminder is an exception to project/thread mute while the user remains an assigned editor. Removal from the editor role ends future eligibility.
 
 ## 11. Digests and Workflows
 
@@ -300,7 +302,7 @@ A minimal admin/status view or support query may be added after the first delive
 
 TB4 should migrate only one event type first, preferably project-comment mention.
 
-TB4A begins only after the outbox envelope, idempotency and recovery pattern is accepted. Registry producers may cut over incrementally behind a cohort/feature gate, but TB4A is not accepted until every required initial checklist, comment, project and collection category is live. Maintain a producer-ownership table keyed by semantic event: exactly one old or outbox producer is authoritative at a time, and both paths share the recipient-delivery key during cutover. Keep old paths only for unrelated or explicitly unmigrated events.
+TB4A begins only after the outbox envelope, idempotency and recovery pattern is accepted. TB4B follows the proven roster contract. TB4C registry producers may cut over incrementally behind a cohort/feature gate, but TB4C is not accepted until every owner-approved initial checklist, comment, project and collection category is live. Maintain a producer-ownership table keyed by semantic event: exactly one old or outbox producer is authoritative at a time, and both paths share the recipient-delivery key during cutover. Keep old paths only for unrelated or explicitly unmigrated events.
 
 ## 14. Tests
 
@@ -308,11 +310,11 @@ TB4A begins only after the outbox envelope, idempotency and recovery pattern is 
 - pending outbox recovery republishes;
 - duplicate Queue deliveries create one in-app recipient row; email follows the documented provider idempotency/ambiguity contract;
 - access is rechecked;
-- preferences/mute are honored for optional channels while mandatory TB4A in-app events remain enabled for assigned editors;
+- preferences/mute are honored for optional channels while mandatory TB4C in-app events remain enabled for assigned editors;
 - transient failure retries;
 - persistent failure reaches DLQ/state;
 - successful message is not retried with a failed sibling batch item;
-- actor behavior matches the event contract; TB4A includes the actor in mandatory in-app delivery;
+- actor behavior matches the event contract; TB4C includes the actor only when the actor is an assigned editor;
 - email content/deep link remains correct;
 - audit/domain mutation is not duplicated.
 - all active assigned editors, including the actor, receive one mandatory in-app registered change;

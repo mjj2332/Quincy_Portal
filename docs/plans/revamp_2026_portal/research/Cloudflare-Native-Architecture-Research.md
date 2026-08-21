@@ -1,5 +1,7 @@
 # Research — Cloudflare-Native Collaboration Architecture
 
+**Official-source recheck:** 2026-08-21 — Cron Triggers still execute in UTC and support `* * * * *`; Queue retry, delay and DLQ controls remain available for the TB4 envelope.
+
 **Conclusion:** Cloudflare provides the infrastructure primitives Quincy needs without adopting a separate collaboration vendor. Quincy still owns the domain model and reliability design.
 
 ## D1
@@ -49,7 +51,7 @@ Useful for:
 - due reminder scan;
 - cleanup/retention.
 
-Cron expressions execute in UTC and support an every-minute schedule (`* * * * *`). For an editable project deadline, a short scan over indexed D1 reminder occurrences can claim due rows, validate the current deadline version and feed the same outbox/Queue path. The reviewed TB4A plan must set an explicit scheduler cadence and user-facing delivery tolerance.
+Cron expressions execute in UTC and support an every-minute schedule (`* * * * *`). For an editable project deadline, a short scan over indexed D1 reminder occurrences can claim due rows, validate the current deadline version and feed the same outbox/Queue path. The reviewed TB4B plan must set an explicit scheduler cadence and user-facing delivery tolerance.
 
 ## Workflows
 

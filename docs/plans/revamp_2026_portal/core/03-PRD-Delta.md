@@ -122,6 +122,8 @@ No user should need a full browser reload to observe ordinary project, board, co
 
 ### 3.6 Project coordination, deadline and editor event delivery
 
+These requirements ship through separate release gates: collaboration-pane editor assignment (TB4A), deadline/reminders plus Kanban due metadata (TB4B), then the editor-wide project-change registry (TB4C). Each release must remain production-coherent if later work stops.
+
 - Reuse the existing multi-editor membership model; do not create a second editor-assignment store.
 - Provide compact multi-select editor controls in the collaboration pane using the checklist assignee-picker interaction as the precedent.
 - Editor add/remove operations must be idempotent, concurrency-safe, audited and preserve any other role held by the same user.
@@ -132,7 +134,7 @@ No user should need a full browser reload to observe ordinary project, board, co
 - Rescheduling or clearing a deadline increments a schedule version and supersedes un-emitted occurrences atomically.
 - Every event producer uses a finite versioned registry. Initial categories cover editor/deadline changes, project metadata/stage/priority, checklist lifecycle and assignment/due changes, project-comment create/edit/delete, and additions/updates/removals in project collections such as photos, videos, floorplans, copy and delivery artifacts.
 - Bulk imports/background jobs emit one useful operation summary rather than one alert per internal row or asset.
-- Every user whose active editor membership began on or before the event time receives the mandatory in-app event, including the actor, provided membership/access still exists at delivery. Preferences may affect only optional channels such as email; mentions and assignment notifications remain additional targeted events.
+- Every user whose active editor membership began on or before the event time receives the mandatory in-app event, including the actor when the actor is an assigned editor, provided membership/access still exists at delivery. Resolve this audience from editor membership only; do not implicitly append administrators who are not assigned editors. Preferences may affect only optional channels such as email; mentions and assignment notifications remain additional targeted events.
 - A newly assigned editor receives the assignment event and events created after assignment; delivered history is never backfilled.
 
 ### 3.7 Kanban movement
