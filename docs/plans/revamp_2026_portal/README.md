@@ -1,12 +1,14 @@
 # `revamp_2026_portal` — Documentation Package
 
 **Status:** Coordinated research and planning package  
-**Baseline:** `main` at `ff01974f91f4b459a31352fbdf20981e6d38977a`  
+**Baseline:** `main` at `dfddccbaaaaeff4b0ce3146c58af338d070d345e`  
 **Scope:** UI platform, automatic freshness, asynchronous discussions, notifications, time-critical project coordination, and the existing project Kanban board
 
 ## Purpose
 
 This folder is intentionally modular. Agents should load the smallest set of documents required for the active task instead of reading one monolithic handoff.
+
+The 2026-08-21 plan review split the former combined TB4A into three independently reviewable releases: editor assignment (TB4A), project deadline/reminders and card metadata (TB4B), and editor-wide project-change alerts (TB4C).
 
 ## Package sections
 
@@ -52,7 +54,9 @@ Superseded material preserved only for provenance. Do not use it as active direc
 - **TB2 freshness agent:** current-state audit + route/freshness architecture + TB2.
 - **TB3 discussion agent:** discussion architecture + messaging research + TB3.
 - **TB4 notification agent:** notification architecture + Cloudflare research + TB4.
-- **TB4A project-coordination agent:** current-state audit + PRD delta + discussion architecture + notification architecture + Cloudflare research + TB4A; read Kanban architecture only for the card metadata change.
+- **TB4A editor-assignment agent:** current-state audit + PRD delta + collaboration-pane source + TB4A.
+- **TB4B deadline/reminder agent:** current-state audit + PRD delta + notification architecture + Cloudflare research + TB4B; read Kanban architecture for the card metadata change.
+- **TB4C editor-alert agent:** current-state audit + PRD delta + notification architecture + Cloudflare research + TB4C.
 - **TB5A ordering agent:** current-state audit + Kanban architecture + the two historical implemented ordering plans + TB5A.
 - **TB5B board agent:** Kanban architecture + Kanban research + approved TB5A outcome + TB5B.
 - **Reviewer:** active bullet + migration/verification + files changed by the bullet.

@@ -1,6 +1,7 @@
 # Research — Tailwind CSS v4 and shadcn
 
-**Conclusion:** Strong fit as Quincy's incremental implementation platform, provided design convergence—not framework adoption—remains the measured outcome.
+**Conclusion:** Strong fit as Quincy's incremental implementation platform, provided design convergence—not framework adoption—remains the measured outcome.  
+**Official-source recheck:** 2026-08-21 — shadcn still defaults new projects to Base UI and continues to support Radix.
 
 ## Findings
 

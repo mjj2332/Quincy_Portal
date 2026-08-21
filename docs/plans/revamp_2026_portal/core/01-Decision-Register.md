@@ -21,59 +21,52 @@ This register prevents research conclusions, owner choices and agent recommendat
 | RV-D10 | Make design convergence—not framework adoption—the UI outcome. | Approved direction | The Quincy design system is the visual authority, the prototype is the visual/flow reference, and material deviations require classification and evidence. |
 | RV-D11 | Correct Kanban ordering semantics before modernizing its interaction engine. | Approved direction | Existing priority/`boardPosition`/shoot-date behavior is not grandfathered; TB5A must establish one understandable contract before TB5B adds dnd-kit/freshness. |
 | RV-D12 | Assign or remove multiple project editors directly in the collaboration pane using an assignee-picker interaction comparable to checklist items. | Approved requirement | The Edit Project form is no longer required for routine editor roster changes; the existing multi-editor membership model remains authoritative. |
-| RV-D13 | Every active assigned editor, including the actor, receives a mandatory durable in-app notification for the approved registry of project changes, including checklist, project-comment and collection changes. | Approved requirement | TB4A must define a finite, versioned event registry and durable recipient fan-out rather than interpreting “all changes” as every database write. Email is an additional channel under its approved reliability/preference contract. |
-| RV-D14 | Add one project due date/time and allow zero, one or multiple configurable advance reminder offsets from the collaboration pane. | Approved requirement | Presets include one day, four hours and one hour; users may choose any subset, and the implementation must safely supersede reminders when the deadline changes. |
-| RV-D15 | Show the project due date/time on Kanban cards and remove the card-level RAW count. | Approved requirement | TB4A changes card metadata only; RAW counts elsewhere and Kanban ordering/sort semantics stay unchanged unless separately approved. |
+| RV-D13 | Every active assigned editor, including the actor, receives a mandatory durable in-app notification for the approved registry of project changes, including checklist, project-comment and collection changes. | Approved requirement | TB4C defines a finite, versioned event registry and durable recipient fan-out rather than interpreting “all changes” as every database write. Email is an additional channel under its approved reliability/preference contract. |
+| RV-D14 | Add one project due date/time and allow zero, one or multiple configurable advance reminder offsets from the collaboration pane. | Approved requirement | TB4B provides presets for one day, four hours and one hour; users may choose any subset, and the implementation must safely supersede reminders when the deadline changes. |
+| RV-D15 | Show the project due date/time on Kanban cards and remove the card-level RAW count. | Approved requirement | TB4B changes card metadata only; RAW counts elsewhere and Kanban ordering/sort semantics stay unchanged unless separately approved. |
 
-## B. Proposed defaults requiring approval in TB0
+## B. Proposed defaults and decision gates
 
-| ID | Proposed decision | Recommendation | Why |
-|---|---|---|---|
-| RV-P01 | shadcn primitive base | Start with Base UI; retain Radix as an alternative after a focused overlay proof. | Base UI is the current shadcn default for new projects; Quincy has no large Radix investment. |
-| RV-P02 | Tailwind Preflight | Disable initially; preserve the existing Quincy base layer. | Avoid unrelated global heading/list/border/image regressions during the first slice. |
-| RV-P03 | shadcn location | `portal/apps/web/src/components/ui/` | One production web app exists; a shared workspace is premature. |
-| RV-P04 | Theme model | CSS variables mapped to existing Quincy semantic tokens. | Keeps brand values centralized and avoids raw palette classes. |
-| RV-P05 | Server-state layer | Add `@tanstack/react-query` first on Project Workspace freshness. | The app now has real invalidation, polling, route isolation, retry and focus-refresh pressure. |
-| RV-P06 | Router | Keep the typed custom router initially. | The router already supports path parsing/history/deep links; data freshness is the current defect. |
-| RV-P07 | Discussion migration | Add a common discussion service/model through an adapter before removing current tables. | Preserves production while proving project and notice-board requirements. |
-| RV-P08 | Notification reliability | D1 transactional outbox + Cloudflare Queue + DLQ + recovery scan. | Removes direct request-path delivery fragility while staying Cloudflare-native. |
-| RV-P09 | Kanban interaction | Modernize the existing project board with dnd-kit first; compare Pragmatic DnD only if a measured limitation appears. | dnd-kit is already installed and tested elsewhere in Quincy. |
-| RV-P10 | Kanban comments | Reuse project discussion because a current Kanban card is a project. | Avoid duplicate card/project comments. |
-| RV-P11 | Date/time UI | Try shadcn-first; permit narrow MUI X fallback only if accessible minute-precise behavior is otherwise disproportionate. | Tailwind/shadcn is now the UI platform; MUI is no longer pre-approved globally. |
-| RV-P12 | Dark mode | Exclude from the revamp. | Prevent unrequested design and maintenance scope. |
-| RV-P13 | Icon policy | Use one approved icon library for new shadcn components, migrate existing icons only with their surfaces. | Avoid collateral icon rewrite. |
-| RV-P14 | Kanban ordering default | Make `boardPosition` the sole persisted manual order; treat priority as metadata unless the user selects an explicit Priority sort; keep shoot-date modes view-only. | Removes the current mismatch between display-only grouping and the flat persisted order, and prevents metadata edits from secretly rearranging manual order. |
-| RV-P15 | Editor roster mutations | Use dedicated idempotent add/remove editor operations with an expected membership version or equivalent guard. | Avoids concurrent lost updates from sending a stale full editor list and removes only the editor role when a user holds multiple project roles. |
-| RV-P16 | Reminder representation | Store shared project reminder rules as unique positive lead-time offsets, normalized to integer minutes; provide 1 day, 4 hour and 1 hour presets plus a bounded custom number/unit control. | Directly supports one or multiple user-selected reminders without treating them as a recurring frequency. |
-| RV-P17 | Project deadline scheduling | Persist a canonical deadline instant plus explicit display timezone and versioned reminder occurrences; scan due occurrences every minute and emit them through the TB4 outbox. | Editable D1 schedules are easier to cancel/reschedule/recover than one long-lived Workflow per reminder and can meet a time-critical minute-level contract. |
-| RV-P18 | Editor-wide event scope | Maintain a finite, versioned registry of user-visible project events; emit one summary for a bulk import/job rather than one event per internal row or asset. | Satisfies the broad notification outcome while keeping volume, deduplication and copy testable. |
-| RV-P19 | Recipient timing | Include the actor in mandatory in-app delivery, select only memberships created no later than the event, recheck active editor membership at delivery, and do not backfill delivered history when an editor is newly assigned. | Preserves the user's every-editor guarantee, prevents content delivery after access removal and keeps queued-event eligibility deterministic. |
+A proposed default is not approved merely because it appears here. The named gate must either approve it or record an explicit deferral with an owner and later gate.
+
+| ID | Proposed decision | Recommendation | Decision gate | Why |
+|---|---|---|---|---|
+| RV-P01 | shadcn primitive base | Start with Base UI; retain Radix as an alternative after a focused overlay proof. | TB0 | Base UI is the current shadcn default for new projects; Quincy has no large Radix investment. |
+| RV-P02 | Tailwind Preflight | Disable initially; preserve the existing Quincy base layer. | TB0 | Avoid unrelated global heading/list/border/image regressions during the first slice. |
+| RV-P03 | shadcn location | `portal/apps/web/src/components/ui/` | TB0 | One production web app exists; a shared workspace is premature. |
+| RV-P04 | Theme model | CSS variables mapped to existing Quincy semantic tokens. | TB0 | Keeps brand values centralized and avoids raw palette classes. |
+| RV-P05 | Server-state layer | Add `@tanstack/react-query` first on Project Workspace freshness. | TB0 direction; TB2 exact plan | The app now has real invalidation, polling, route isolation, retry and focus-refresh pressure. |
+| RV-P06 | Router | Keep the typed custom router initially. | TB0 | The router already supports path parsing/history/deep links; data freshness is the current defect. |
+| RV-P07 | Discussion migration | Add a common discussion service/model through an adapter before removing current tables. | TB3 | Preserves production while proving project and notice-board requirements. |
+| RV-P08 | Notification reliability | D1 transactional outbox + Cloudflare Queue + DLQ + recovery scan. | TB0 direction; TB4 exact plan | Removes direct request-path delivery fragility while staying Cloudflare-native. |
+| RV-P09 | Kanban interaction | Modernize the existing project board with dnd-kit first; compare Pragmatic DnD only if a measured limitation appears. | TB5B, after TB5A | dnd-kit is already installed and tested elsewhere in Quincy. |
+| RV-P10 | Kanban comments | Reuse project discussion because a current Kanban card is a project. | TB0 direction; TB6 exact surface | Avoids duplicate card/project comments. |
+| RV-P11 | Date/time UI | Try shadcn-first; permit a narrow MUI X fallback only if accessible minute-precise behavior is otherwise disproportionate. | TB1 component policy; TB4B proof | Tailwind/shadcn is now the UI platform; MUI is no longer pre-approved globally. |
+| RV-P12 | Dark mode | Exclude from the revamp. | TB0 | Prevents unrequested design and maintenance scope. |
+| RV-P13 | Icon policy | Use one approved icon library for new shadcn components; migrate existing icons only with their surfaces. | TB0 | Avoids collateral icon rewrite. |
+| RV-P14 | Kanban ordering default | Make `boardPosition` the sole persisted manual order; treat priority as metadata unless the user selects an explicit Priority sort; keep shoot-date modes view-only. | TB5A | Removes the mismatch between display-only grouping and flat persisted order. |
+| RV-P15 | Editor roster mutations | Use dedicated idempotent add/remove editor operations with an expected membership version or equivalent guard. | TB4A | Avoids concurrent lost updates from the existing stale full-list shape and removes only the editor role when a user holds multiple roles. |
+| RV-P16 | Reminder representation | Store shared project reminder rules as unique positive lead-time offsets normalized to integer minutes; provide 1 day, 4 hour and 1 hour presets plus a bounded custom control. | TB4B | Supports multiple selected reminders without treating them as recurrence. |
+| RV-P17 | Project deadline scheduling | Persist a canonical deadline instant plus explicit display timezone and versioned reminder occurrences; scan due occurrences every minute and emit through the TB4 outbox. | TB4B | Editable D1 schedules centralize cancellation, rescheduling and recovery. |
+| RV-P18 | Editor-wide event scope | Maintain a finite, versioned registry of user-visible project events; emit one summary for a bulk import/job rather than one event per internal row or asset. | TB4C | Keeps volume, deduplication and copy testable while satisfying the broad outcome. |
+| RV-P19 | Recipient timing | Include the actor when the actor is an assigned editor; select only editor memberships begun no later than the event; recheck active membership at delivery; do not backfill delivered history. | TB4C | Prevents delivery after access removal and keeps queued-event eligibility deterministic without silently adding unassigned admins. |
 
 ## C. Product choices still open
 
-These are product questions, not implementation details:
+| Gate | Product choices |
+|---|---|
+| TB0 | Approved design-convergence viewports/surfaces and deviation owner; UI primitive/Preflight/icon policy; TanStack Query direction; outbox direction; router retention. |
+| TB3 | One stream or named threads; reply depth; reactions; subscription levels; photographer collaboration access outside full workspace stage visibility. |
+| TB4 | Email-provider idempotency/ambiguous-acceptance policy and the minimum administration/replay surface. |
+| TB4A | Who may change the editor roster: current `editProject`/admin capability only (recommended) or a broader collaborator role. |
+| TB4B | Studio-fixed or per-project timezone; reminder delivery tolerance; custom reminder bounds/rule cap; past-offset behavior; optional reminder email default. |
+| TB4C | Exact initial event registry; copy and bulk coalescing; optional email policy; queued-event eligibility for a newly assigned editor. |
+| TB5A | Whether priority is metadata-only, an explicit optional sort or an ordering command; target-column insertion rule after a stage move. |
+| TB6 | Card-detail route/sheet/dialog behavior and whether system activity and human discussion are interleaved. |
+| TB7 | Notice-board replies, pinning, priority, expiry and required acknowledgement. |
+| Later/explicitly scoped | Comment/card attachment timing and policy; same-browser `BroadcastChannel`; exact visible-refresh delay if TB2 evidence does not settle it. |
 
-- Are project discussions one chronological stream or multiple named threads?
-- Are replies one level or arbitrarily nested?
-- Are reactions required in the first release?
-- Can a project member subscribe to all activity, replies/mentions only, mentions only, or mute?
-- Does the notice board allow replies, or only top-level posts?
-- Do notices support pinning, priority, expiry or required acknowledgement?
-- Are comment/card attachments in the first program or later?
-- Should project activity and human discussion appear in one visual timeline?
-- What delay is acceptable for visible updates: 15, 30 or 60 seconds?
-- Should same-browser tabs invalidate each other immediately through `BroadcastChannel`?
-- Should photographers retain collaboration access outside their full workspace stage visibility exactly as today?
-- Is project priority metadata-only, an explicit optional sort, or an ordering command? TB5A must choose one meaning rather than combining them implicitly.
-- When a project changes stage, should its manual position append to the target column, retain a relative rank, or use another explicit insertion rule?
-- Who may change the editor roster, project deadline and reminder rules: current `editProject`/admin capability only (recommended) or a broader collaborator role?
-- Which timezone defines project deadline entry/display, and must it always be the studio timezone or selectable per project?
-- What reminder delivery tolerance is acceptable for time-critical work? A one-minute scan and delivery within two minutes is the proposed starting contract.
-- What optional email policy accompanies mandatory in-app TB4A delivery, and what provider reliability/idempotency contract is available?
-- Which exact user-visible mutations belong in the initial event registry, and what bulk-operation coalescing window is acceptable?
-- Should a newly assigned editor receive events that were created but not delivered before assignment? The proposed rule excludes them by event time; delivered history is never backfilled.
-
-TB0 must either decide these or explicitly defer them to the relevant tracer bullet.
+TB0 must decide the TB0 rows, approve D-16/D-17/D-18 at the umbrella level, and record every later choice as an explicit deferral to its owning bullet. A later implementation plan must not inherit a proposed default as though TB0 had approved it.
 
 ## D. Superseded guidance
 

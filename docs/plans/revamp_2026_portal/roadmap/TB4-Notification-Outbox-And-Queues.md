@@ -6,7 +6,7 @@
 
 Project-comment mention.
 
-TB4 proves the durable delivery envelope only. [TB4A](./TB4A-Project-Coordination-Deadline-And-Editor-Notifications.md) reuses the accepted pattern for editor-wide project events and scheduled deadline reminders; it must not broaden TB4 before this checkpoint is accepted.
+TB4 proves the durable delivery envelope only. [TB4A](./TB4A-Collaboration-Pane-Editor-Assignment.md) reuses it for targeted assignment events, [TB4B](./TB4B-Project-Deadline-And-Reminders.md) for scheduled reminders, and [TB4C](./TB4C-Editor-Wide-Project-Change-Notifications.md) for the broad event registry. None may broaden TB4 before this checkpoint is accepted.
 
 ## Scope
 
@@ -26,7 +26,7 @@ TB4 proves the durable delivery envelope only. [TB4A](./TB4A-Project-Coordinatio
 - redesign notification bell;
 - implement all preferences/digests;
 - external notification platform.
-- project deadline/reminder scheduler or editor-wide event migration (owned by TB4A).
+- editor-roster UI/mutations (TB4A), project deadline/reminder scheduling (TB4B), or editor-wide event migration (TB4C).
 
 ## Acceptance
 

@@ -44,7 +44,11 @@ For discussion/notification schema changes:
 
 Do not perform destructive table changes in the same release that first proves the new path.
 
-For TB4A, existing projects backfill to no project deadline and no reminder rules. Add nullable/versioned project fields and a reminder table; do not reinterpret `shootDate`, `timeWindow` or `project_subtasks.dueDate`. Existing `project_members` editor rows remain the assignment source of truth.
+For TB4A, existing `project_members` editor rows remain the assignment source of truth; prefer role-specific deltas without a schema change unless deterministic concurrency or membership-interval evidence requires an additive version.
+
+For TB4B, existing projects backfill to no project deadline and no reminder rules. Add nullable/versioned project fields and a reminder table; do not reinterpret `shootDate`, `timeWindow` or `project_subtasks.dueDate`.
+
+For TB4C, add only the event/delivery fields needed beyond TB4 and keep the owner-approved registry version explicit.
 
 ## 4. D1 migration care
 
@@ -78,13 +82,26 @@ Follow repository-specific D1 lessons:
 - old notification path remains for unmigrated events;
 - provide a switch to stop new producer publication if consumer defect appears.
 
-### Project deadline/editor coordination release
+### Editor-roster release (TB4A)
+
+- the previous Edit Project editor UI remains a fallback until collaboration-pane controls are verified;
+- disabling the pane control leaves existing memberships unchanged;
+- both UI surfaces use the same role-specific mutation contract;
+- rollback never removes or rewrites membership rows.
+
+### Project deadline/reminder release (TB4B)
 
 - prior Workers tolerate nullable deadline fields and the additive reminder table;
-- disabling the new scheduler stops new reminder intent without deleting deadline/editor data;
+- disabling the new scheduler stops new reminder intent without deleting deadline data;
 - stale reminder occurrences are version-suppressed after rollback/reschedule;
-- the previous Edit Project editor UI remains a fallback until the collaboration-pane controls are verified;
-- restoring the prior web bundle may restore the card RAW count, but does not corrupt deadline or membership data.
+- restoring the prior web bundle may restore the card RAW count but does not corrupt deadline data.
+
+### Editor-wide registry release (TB4C)
+
+- a producer-ownership table identifies the one authoritative path per semantic event;
+- disabling a registry producer does not remove already-created notifications;
+- queued events keep their registry version and deterministic recipient rule;
+- rollback restores one old producer at a time without dual-write ambiguity.
 
 ### Discussion cutover
 
@@ -165,7 +182,7 @@ Compare each migrated slice against the baseline for brand, spacing, focus, over
 - email failure;
 - replay;
 - observability.
-- complete editor-recipient fan-out and the approved actor behavior;
+- complete assigned-editor fan-out, the approved actor behavior and proof that unassigned admins are not implicitly included;
 - editor removal/deactivation between event and delivery;
 - versioned project deadline reminders at multiple offsets;
 - reschedule/clear/past-offset suppression;
@@ -197,7 +214,7 @@ For each bullet record:
 - approved plan path;
 - commit SHA;
 - migrations/resources;
-- approved project-deadline timezone, scheduler cadence/SLO, event-registry version and recipient/channel defaults when TB4A is active;
+- approved editor-roster capability for TB4A; project-deadline timezone and scheduler cadence/SLO for TB4B; event-registry version and recipient/channel defaults for TB4C;
 - deploy IDs/order;
 - automated verification result;
 - manual verification performed;

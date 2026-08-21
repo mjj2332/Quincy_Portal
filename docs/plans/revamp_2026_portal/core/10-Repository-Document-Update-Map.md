@@ -27,7 +27,7 @@ Update metadata and the final approved-decision range only after owner sign-off.
 | D-18 | How should Quincy coordinate time-critical editor work from the project collaboration pane? | A. Reuse multi-editor project membership; allow capability-gated in-pane assignment; add one project deadline with multiple lead-time reminders; durably notify active assigned editors for an approved event registry; show deadline instead of RAW count on Kanban cards. B. Keep assignment/deadline in Edit Project and rely on manual communication. C. Add a separate task/collaboration vendor. | **A — Quincy-owned project coordination on the existing membership, activity and notification domains.** | Removes navigation friction and gives editors reliable deadline/change awareness without duplicating assignment or project-card data. | product / collaboration / data / notifications / Kanban | Revamp package 2026-08-21 | Approve ☐ / Change: ___ |
 ```
 
-TB0/TB4A must separately record the chosen write capability, timezone, delivery tolerance, event registry/coalescing and channel/actor defaults.
+TB0 records later choices as explicit deferrals. TB4A records editor-roster write capability; TB4B records timezone, delivery tolerance, past-offset/custom-reminder and reminder-email policy; TB4C records the event registry/coalescing, queued-eligibility and channel/actor defaults.
 
 ## 2. `docs/Implementation-Plan.md`
 
@@ -44,7 +44,7 @@ A9 should cover deep links, query identity, focus/poll refresh, mutation invalid
 
 A10 should cover D1 discussion/read state, notification outbox/Queues, R2 attachments, TB5A ordering correction before TB5B interaction modernization, and no external managed vendor.
 
-A11 should cover reuse of `project_members`, collaboration-pane roster/deadline controls, a deadline distinct from shoot/subtask values, deterministic IANA/DST handling, versioned lead-time reminders, the finite project-event registry, mandatory in-app recipient delivery, optional email reliability semantics, recipient rechecks/coalescing, producer cutover ownership, and the card deadline/RAW metadata replacement.
+A11 should record the split delivery sequence: TB4A reuses `project_members` for collaboration-pane editor deltas; TB4B adds a deadline distinct from shoot/subtask values, deterministic IANA/DST handling, versioned reminders and card deadline/RAW metadata replacement; TB4C adds the finite project-event registry, exact assigned-editor fan-out, optional email semantics, recipient rechecks/coalescing and producer cutover ownership.
 
 Do not change old implementation history to pretend these were original assumptions.
 
@@ -165,7 +165,9 @@ Suggested plan names:
 Revamp-TB0-Architecture-And-Baseline-Plan.md
 Revamp-TB1-Tailwind-Shadcn-Foundation-Plan.md
 Revamp-TB2-Route-Safe-Freshness-Plan.md
-Revamp-TB4A-Project-Coordination-Deadline-And-Editor-Notifications-Plan.md
+Revamp-TB4A-Collaboration-Pane-Editor-Assignment-Plan.md
+Revamp-TB4B-Project-Deadline-And-Reminders-Plan.md
+Revamp-TB4C-Editor-Wide-Project-Change-Notifications-Plan.md
 Revamp-TB5A-Kanban-Ordering-Model-Correction-Plan.md
 Revamp-TB5B-Kanban-Interaction-Modernization-Plan.md
 ...

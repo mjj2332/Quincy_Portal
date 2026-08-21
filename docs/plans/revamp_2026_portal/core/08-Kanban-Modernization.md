@@ -1,7 +1,7 @@
 # Kanban Ordering Correction and Interaction Modernization
 
 **Status:** Proposed two-slice repair and modernization of the existing project board  
-**Related:** [Kanban research](../research/Kanban-And-Trello-Research.md), [TB4A](../roadmap/TB4A-Project-Coordination-Deadline-And-Editor-Notifications.md), [TB5A](../roadmap/TB5A-Kanban-Ordering-Model-Correction.md), [TB5B](../roadmap/TB5B-Kanban-Interaction-Modernization.md)
+**Related:** [Kanban research](../research/Kanban-And-Trello-Research.md), [TB4B](../roadmap/TB4B-Project-Deadline-And-Reminders.md), [TB5A](../roadmap/TB5A-Kanban-Ordering-Model-Correction.md), [TB5B](../roadmap/TB5B-Kanban-Interaction-Modernization.md)
 
 ## 1. Important baseline
 
@@ -36,7 +36,7 @@ The work is split deliberately:
 1. **TB5A — ordering-model correction:** establish the canonical order, repair semantic mismatches and define migration/compatibility.
 2. **TB5B — interaction modernization:** add dnd-kit, accessibility, automatic freshness and guarded conflicts against the approved TB5A contract.
 
-TB4A precedes these slices and makes one bounded card metadata change: show the project due date/time when set and remove the card-level RAW count. It does not introduce deadline sorting or modify manual order. TB5A and TB5B must preserve this metadata contract while changing ordering and interaction behavior.
+TB4B precedes these slices and makes one bounded card metadata change: show the project due date/time when set and remove the card-level RAW count. It does not introduce deadline sorting or modify manual order. TB5A and TB5B must preserve this metadata contract while changing ordering and interaction behavior.
 
 ## 3. Comments are project comments
 
@@ -201,7 +201,7 @@ TB5B:
 - activity/outbox written exactly once.
 - due date/time renders at desktop and narrow board widths with an accessible overdue state;
 - card-level RAW count is absent while other RAW-count surfaces are unchanged;
-- TB5A/TB5B movement and refresh preserve the TB4A deadline metadata.
+- TB5A/TB5B movement and refresh preserve the TB4B deadline metadata.
 
 ## 13. Non-goals
 

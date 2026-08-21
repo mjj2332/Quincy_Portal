@@ -7,7 +7,7 @@
 - TB5A ordering contract approved.
 - TB5A correction live or otherwise established as the implementation baseline.
 - Board query/freshness conventions from TB2 available.
-- TB4A project deadline is included in board query/refresh data and its card-level RAW count removal is the baseline.
+- TB4B project deadline is included in board query/refresh data and its card-level RAW count removal is the baseline.
 
 ## Scope
 

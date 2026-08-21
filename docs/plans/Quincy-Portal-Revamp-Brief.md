@@ -87,7 +87,9 @@ TB1  Thin Tailwind v4 + shadcn foundation on one existing form section
 TB2  Route-safe Project Workspace freshness
 TB3  Project Discussion v2 and server-side read state
 TB4  D1 notification outbox + Cloudflare Queues
-TB4A Project coordination, deadline/reminders and editor-wide change notifications
+TB4A Collaboration-pane editor assignment
+TB4B Project deadline/reminders + Kanban due metadata
+TB4C Editor-wide project-change notifications
 TB5A Kanban ordering-model correction
 TB5B Kanban interaction/freshness modernization
 TB6  Project-card detail + shared discussion/activity
@@ -99,7 +101,7 @@ Do not finish the entire UI refactor before product work. Do not combine all bul
 
 ## Major open implementation decisions
 
-The following are recommended but still require plan/owner approval:
+The following are recommended but still require plan/owner approval. Each choice is decided at the owning tracer-bullet gate recorded in the decision register; TB0 may explicitly defer later-slice choices rather than deciding them prematurely:
 
 - Base UI or Radix beneath shadcn; Base UI is the current default recommendation.
 - Tailwind Preflight disabled initially or enabled from the first slice; disabled initially is recommended.
@@ -145,4 +147,4 @@ The program succeeds when:
 
 ## Immediate next action
 
-Approve or amend the [decision register](./revamp_2026_portal/core/01-Decision-Register.md), then take [TB0](./revamp_2026_portal/roadmap/TB0-Integrated-Architecture-And-Baseline.md) through the repository's plan-review process.
+Approve or amend the TB0-gated rows in the [decision register](./revamp_2026_portal/core/01-Decision-Register.md), record an owner and future gate for every explicit deferral, then take [TB0](./revamp_2026_portal/roadmap/TB0-Integrated-Architecture-And-Baseline.md) through the repository's plan-review process.

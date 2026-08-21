@@ -2,7 +2,7 @@
 
 **Primary user outcome:** card order is understandable, authoritative and free of invisible side effects before the drag interaction is modernized.
 
-**Precondition:** TB4A's card contract is live or established as the implementation baseline: show project due date/time when set and omit the Kanban-card RAW count.
+**Precondition:** TB4B's card contract is live or established as the implementation baseline: show project due date/time when set and omit the Kanban-card RAW count.
 
 ## Scope
 
@@ -28,7 +28,7 @@
 - Decide whether existing values can be reinterpreted, need normalization, or require an additive schema/API change.
 - Preserve audit/capability behavior.
 - Update affected drift-register entries and matched Kanban evidence.
-- Preserve TB4A due metadata and RAW-count removal without treating the deadline as a sort or ordering command.
+- Preserve TB4B due metadata and RAW-count removal without treating the deadline as a sort or ordering command.
 
 ## Required owner decisions
 
