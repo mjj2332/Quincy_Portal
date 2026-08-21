@@ -1,38 +1,12 @@
-# TB5 — Existing Kanban Modernization
+# TB5 — Kanban Ordering Correction and Interaction Modernization
 
-**Primary user outcome:** the current project board is accessible, automatically refreshed and conflict-safe.
+**Status:** Split into two independently reviewed tracer bullets. This file is an index, not an implementation slice.
 
-## Scope
+Read and execute in order:
 
-- Keep project-as-card and stage-as-column.
-- Migrate native HTML5 drag to dnd-kit through one bounded board implementation.
-- Pointer, touch, keyboard and “Move to…” alternative.
-- DragOverlay/scroll handling.
-- Route-keyed board query and focus/poll refresh.
-- Optimistic move with authoritative response.
-- Guarded conflict behavior.
-- Preserve priority, `boardPosition` and shoot-date modes.
-- Emit structured activity/outbox intent when appropriate.
+1. [TB5A — Kanban Ordering-Model Correction](./TB5A-Kanban-Ordering-Model-Correction.md)
+2. [TB5B — Kanban Interaction Modernization](./TB5B-Kanban-Interaction-Modernization.md)
 
-## Non-goals
+The split is mandatory because the current board's visible grouping, persisted `boardPosition`, priority mutation and shoot-date overrides do not form one coherent contract. Replacing native drag with dnd-kit before correcting that model would preserve the wrong behavior behind a better interaction engine.
 
-- generic task-card database;
-- separate card comments;
-- card-detail feature;
-- Pragmatic DnD production dependency unless dnd-kit proof fails;
-- realtime board presence.
-
-## Acceptance
-
-- moves within/between columns;
-- empty columns;
-- keyboard/non-drag movement;
-- touch and nested scroll;
-- rollback/conflict;
-- external board change appears without reload;
-- active drag is not reset by refresh;
-- direct project links/open-new-tab remain native.
-
-## Checkpoint
-
-Retain dnd-kit or document a concrete blocker requiring a Pragmatic DnD comparison.
+Historical implemented Kanban plans remain unchanged as records of what shipped.

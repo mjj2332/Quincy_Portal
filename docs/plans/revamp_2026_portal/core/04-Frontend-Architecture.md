@@ -5,7 +5,7 @@
 
 ## 1. Architecture objective
 
-Adopt Tailwind CSS v4 and source-owned shadcn components without replacing Quincy's brand or forcing an application-wide rewrite.
+Use Tailwind CSS v4 and source-owned shadcn components to converge the production UI toward Quincy's approved design system and prototype intent without forcing an application-wide rewrite.
 
 ```text
 Feature/domain components
@@ -17,6 +17,21 @@ Feature/domain components
           ▼
 Tailwind v4 semantic theme + existing Quincy source tokens
 ```
+
+## 1a. Design authority and convergence
+
+Tailwind and shadcn are implementation tools, not the visual source of truth.
+
+Use this order:
+
+1. repository authority documents define product behavior;
+2. the Quincy design system defines visual language and tokens;
+3. the prototype provides the visual/flow reference for comparable surfaces;
+4. current production behavior is retained only when it is required, approved evolution or safer accessibility/platform behavior.
+
+Every migrated surface must classify material differences as conforming, intentional evolution, required platform/accessibility change, unwanted drift, or unassessed. Stock shadcn appearance and raw Tailwind palette choices are not acceptable evidence of migration success.
+
+The detailed audit and definition-of-done contract lives in [Design Convergence](./11-Design-Convergence.md).
 
 ## 2. Proposed directory model
 
@@ -249,7 +264,8 @@ Generated primitives are not sufficient evidence. Test actual Quincy composition
 
 TB1 should install the foundation and migrate only one bounded ProjectFields section. It must prove:
 
-- token fidelity;
+- token fidelity and component-level design-system fidelity;
+- matched current/prototype evidence for the selected surface, with intentional deviations recorded;
 - build/source detection;
 - Preflight policy;
 - generated-code maintainability;

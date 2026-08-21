@@ -1,7 +1,7 @@
-# Kanban Modernization Architecture
+# Kanban Ordering Correction and Interaction Modernization
 
-**Status:** Proposed modernization of the existing project board  
-**Related:** [Kanban research](../research/Kanban-And-Trello-Research.md), [TB5](../roadmap/TB5-Kanban-Modernization.md)
+**Status:** Proposed two-slice repair and modernization of the existing project board  
+**Related:** [Kanban research](../research/Kanban-And-Trello-Research.md), [TB5A](../roadmap/TB5A-Kanban-Ordering-Model-Correction.md), [TB5B](../roadmap/TB5B-Kanban-Interaction-Modernization.md)
 
 ## 1. Important baseline
 
@@ -12,17 +12,28 @@ Current model:
 - card = project;
 - column = pipeline stage;
 - project holds `stageKey`, `priority`, `boardPosition`;
-- date sort can override board order;
+- board mode displays non-null-priority cards before null-priority cards, then `boardPosition`;
+- shoot-date modes override priority grouping and manual order;
+- priority mutation also repositions `boardPosition`;
+- up/down mutation uses the flat persisted order, not the priority-grouped visible order;
+- an accepted historical boundary case can persist a successful up/down change with no visible movement;
+- stage movement appends to the target column's persisted order while retaining priority;
 - card links to `/projects/:projectId`;
-- stage movement is optimistically applied and persisted;
 - native HTML5 drag events power the board today;
 - dnd-kit is already used elsewhere in Quincy.
 
+The original prototype sorted its dashboard list by recent shoot date or suburb before filtering cards into columns. It had no priority/manual-position model. Production ordering is later product evolution, not an original-prototype invariant.
+
 ## 2. Product direction
 
-Modernize the current board rather than introducing a second generic task-board data model.
+Modernize the current project board rather than introducing a second generic task-board data model.
 
-The board should continue to represent production projects unless a separate product requirement explicitly adds non-project cards.
+Do not treat the current ordering implementation as automatically correct merely because it is live. Correct its semantics first, then replace the interaction engine. A DnD refactor must not preserve or deepen visible/persisted-order contradictions.
+
+The work is split deliberately:
+
+1. **TB5A — ordering-model correction:** establish the canonical order, repair semantic mismatches and define migration/compatibility.
+2. **TB5B — interaction modernization:** add dnd-kit, accessibility, automatic freshness and guarded conflicts against the approved TB5A contract.
 
 ## 3. Comments are project comments
 
@@ -32,66 +43,44 @@ Because a Kanban card is a project:
 Kanban card discussion = project discussion
 ```
 
-A card detail sheet/route may display:
+A card detail sheet/route may display project summary, stage/priority/assignment controls, activity, project discussion and links to the full workspace. Do not create a second comment table keyed to the same project card.
 
-- project summary;
-- stage/priority/due/assignment controls;
-- project activity;
-- project discussion;
-- links to full workspace.
+## 4. Ordering contract
 
-Do not create a second comment table keyed to the same project card.
+TB5A must settle these product meanings before code changes:
 
-## 4. Interaction engine
+- Is priority metadata-only, an explicit optional sort, or an ordering command?
+- What is the sole authoritative manual-order field?
+- What insertion rule applies when a project enters another stage?
+- Which sort modes are view-only?
+- When are manual reorder controls available?
+- How are existing persisted values interpreted or migrated?
 
-Recommended first implementation: dnd-kit.
+Recommended default:
 
-Reasons:
+- `boardPosition` is the sole persisted manual order within a stage.
+- Priority is metadata. If priority ordering is useful, it is an explicit temporary **Priority** sort mode.
+- Shoot-date ascending/descending modes are temporary view-only sorts.
+- Changing priority or a temporary sort does not rewrite manual order.
+- Manual reorder controls appear only in Board order.
+- A stage move uses one documented insertion rule, initially append-to-target unless the move request explicitly carries a destination neighbor.
+- One authoritative response determines the post-mutation state.
 
-- already installed and proven in Quincy;
-- supports multiple sortable containers;
-- supports pointer, touch and keyboard sensors;
-- supports DragOverlay for scrollable/multi-container boards;
-- allows Quincy-owned rendering and Tailwind/shadcn styling.
+Required invariants regardless of the selected option:
 
-Compare Atlassian Pragmatic Drag and Drop only if the proof exposes a measured limitation in:
+- visible Board order equals persisted manual order;
+- no display-only grouping can disagree with mutation neighbors;
+- a successful reorder produces an immediate visible change;
+- a metadata edit cannot secretly alter manual order unless the approved contract defines it as an ordering command;
+- sort labels explain what is temporary and what is persisted;
+- tie-breaking is deterministic;
+- direct links/open-new-tab behavior is unaffected.
 
-- nested scroll/auto-scroll;
-- large-board performance;
-- drop indicators;
-- touch behavior;
-- virtualization;
-- collision behavior.
+## 5. TB5A data and API work
 
-Do not add two production board DnD engines simultaneously.
+TB5A should prefer reusing the existing project fields and data where possible. It may change endpoint semantics or add a guarded move contract, but it must not delete historical data before the corrected behavior is verified.
 
-## 5. Accessibility
-
-Every drag operation must have a non-drag equivalent.
-
-Required controls:
-
-- “Move to…” menu with stage choices;
-- keyboard sortable behavior or explicit up/down/column actions;
-- screen-reader announcement of source/destination;
-- visible drag handle;
-- avoid making the whole link/card an ambiguous draggable trigger;
-- focus remains predictable after move/conflict.
-
-Pointer-only drag is not acceptable.
-
-## 6. Data and conflicts
-
-Continue using project fields unless the plan deliberately changes them:
-
-```text
-stage_key
-priority
-board_position
-updated_at and/or version
-```
-
-Recommended move request includes an expected version or equivalent guarded snapshot:
+A guarded ordering request should identify the expected board snapshot/version and the intended destination, for example:
 
 ```json
 {
@@ -102,103 +91,113 @@ Recommended move request includes an expected version or equivalent guarded snap
 }
 ```
 
-Server behavior:
+Server responsibilities:
 
-- recheck move capability;
-- validate active target stage;
-- calculate/persist board position;
-- update only if expected snapshot/version still matches;
-- return authoritative project/position;
-- emit activity event and notification intent where applicable;
-- return conflict when another writer won.
+- recheck capability and target stage;
+- validate the selected sort/mutation is legal;
+- compute and persist the canonical position;
+- update only when the expected snapshot/version matches;
+- return authoritative project/order state;
+- audit once;
+- return a conflict when another writer won.
 
-Client behavior:
+The TB5A plan must determine whether current `priority`/`board_position` rows can be reinterpreted without migration, require a one-time normalization, or need an additive version/rank field. It must explicitly test production-shaped fixtures before choosing.
 
-- optimistic move;
-- rollback or refetch on failure;
-- on conflict, show a clear notice and load current board state;
-- avoid silent overwrite.
+## 6. TB5B interaction engine
 
-## 7. Sorting modes
+Recommended first implementation: dnd-kit, after TB5A is live or otherwise established as the approved contract.
 
-Preserve distinction:
+Reasons:
 
-- board mode: priority + `boardPosition`/manual ordering;
-- shoot-date modes: date sorting overrides manual ordering.
+- already installed and proven in Quincy;
+- multiple sortable containers;
+- pointer, touch and keyboard sensors;
+- DragOverlay for scrollable/multi-container boards;
+- Quincy-owned rendering and Tailwind/shadcn styling.
 
-When date sorting is active:
+Compare Atlassian Pragmatic Drag and Drop only if the proof exposes a measured limitation in nested scroll/auto-scroll, large-board performance, drop indicators, touch, virtualization or collision behavior. Do not run two production board DnD engines simultaneously.
 
-- drag/manual board-position actions should be disabled or clearly explained;
-- changing priority may persist but not visually reorder until board mode.
+## 7. Accessibility
 
-## 8. Automatic freshness
+Every drag operation needs a non-drag equivalent:
 
-Board query key includes scope/sort where server-derived. Visible board should refetch on the approved interval and on focus/reconnect.
+- “Move to…” with stage choices;
+- explicit within-column up/down or destination-position actions where supported;
+- screen-reader source/destination announcements;
+- visible drag handle;
+- predictable focus after move/conflict;
+- no whole-card draggable target that conflicts with the project link.
+
+Pointer-only drag is not acceptable.
+
+## 8. Sorting modes
+
+Every mode must declare whether it is authoritative or view-only.
+
+Recommended modes:
+
+- **Board order:** authoritative persisted manual order; reorder controls enabled.
+- **Shoot date ↑ / ↓:** view-only; reorder controls disabled.
+- **Priority:** optional view-only mode only if the owner confirms it is useful.
+
+Changing a view-only sort must not mutate any project. Editing metadata while a view-only sort is selected must not secretly change Board order.
+
+## 9. Automatic freshness
+
+Board queries include scope and sort where server-derived. The visible board refetches on the approved interval and on focus/reconnect.
 
 After a move:
 
 - update cache optimistically;
-- apply authoritative response;
+- apply the authoritative response;
 - invalidate project list/detail queries narrowly;
-- optional BroadcastChannel invalidation updates another same-browser tab quickly.
+- optionally broadcast same-browser invalidation;
+- delay or reconcile background results during an active drag so refresh does not destroy the interaction.
 
-Background refresh must not interrupt an active drag. Delay or reconcile incoming board data until drag end.
+## 10. Card detail and activity
 
-## 9. Card detail
+TB6 decides whether quick detail is a sheet, dialog, route or responsive combination. The canonical project route remains `/projects/:projectId`.
 
-TB6 should decide presentation:
+Board operations may emit immutable structured activity events such as:
 
-- deep-linkable route `/projects/:projectId` remains canonical;
-- optional responsive sheet/dialog can provide quick detail;
-- sheet state should be reflected in the URL only if deep linking/Back behavior is required;
-- full project workspace remains available.
+- `project.stage_changed`;
+- `project.priority_changed`;
+- `project.board_position_changed`.
 
-The detail experience reuses project discussion and activity; it does not create a separate card domain.
-
-## 10. Activity
-
-Board operations can emit immutable structured events:
-
-```text
-project.stage_changed
-project.priority_changed
-project.board_position_changed
-```
-
-These may appear in the project/card timeline and drive notifications according to preferences.
+Events and notifications follow the approved ordering semantics and are emitted exactly once.
 
 ## 11. Performance
 
-Prototype and measure:
-
-- typical project count;
-- stress fixture with 100+ cards;
-- multiple columns;
-- nested/horizontal scroll;
-- cover images;
-- keyboard and touch;
-- background refetch during idle, not drag.
-
-Do not introduce virtualization unless board volume demonstrates need.
+Prototype and measure typical project count plus a 100+ card fixture, multiple columns, horizontal/nested scroll, cover images, keyboard/touch, and background refresh while idle—not during active drag. Do not add virtualization without measured need.
 
 ## 12. Tests
 
-- movement within/between columns;
-- empty column drop;
+TB5A:
+
+- current three-layer behavior captured as a regression fixture before change;
+- selected canonical ordering semantics;
+- no successful invisible reorder;
+- priority edit has no hidden manual-order effect under the recommended model;
+- temporary sort changes write nothing;
+- stage-entry insertion policy;
+- deterministic ties;
+- legacy data normalization/reinterpretation;
+- access and audit behavior.
+
+TB5B:
+
+- movement within/between columns and into empty columns;
 - pointer/touch/keyboard/non-drag move;
-- optimistic rollback;
-- conflict response;
-- date-sorted mode behavior;
-- priority/position persistence;
+- optimistic rollback and conflict response;
 - route link/open new tab;
-- board refetch after external simulated change;
-- active drag not destroyed by refresh;
-- access failure;
+- external simulated change appears without reload;
+- active drag survives/defer-reconciles refresh;
 - activity/outbox written exactly once.
 
 ## 13. Non-goals
 
 - Embedding Trello/Wekan/PLANKA.
-- Creating a generic task-board schema before a non-project-card requirement exists.
-- Replacing project discussion with card-specific duplicate comments.
-- Realtime multiplayer board presence.
+- Creating a generic task-card schema before a non-project-card requirement exists.
+- Duplicate card comments.
+- Realtime multiplayer presence.
+- Rewriting the historical implemented Kanban plans; they remain accurate records of what shipped.

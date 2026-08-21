@@ -1,7 +1,7 @@
 # `revamp_2026_portal` — Documentation Package
 
 **Status:** Coordinated research and planning package  
-**Baseline:** `main` at `5b4cf91abde3d71f4b00ab936820f75529ea47c1`  
+**Baseline:** `main` at `4893165202a320e914a77f55d3e8c642bd7e0afd`  
 **Scope:** UI platform, automatic freshness, asynchronous discussions, notifications, and the existing project Kanban board
 
 ## Purpose
@@ -26,6 +26,7 @@ Stable decisions, current-state evidence, product requirements and technical arc
 | [`08-Kanban-Modernization.md`](./core/08-Kanban-Modernization.md) | Existing board modernization and shared project discussion |
 | [`09-Migration-Rollback-And-Verification.md`](./core/09-Migration-Rollback-And-Verification.md) | Additive rollout, testing, release and rollback rules |
 | [`10-Repository-Document-Update-Map.md`](./core/10-Repository-Document-Update-Map.md) | How to update Decision Sheet, Plan, PRD, AGENTS, README and todo |
+| [`11-Design-Convergence.md`](./core/11-Design-Convergence.md) | Visual authority, drift classification, evidence and per-surface definition of done |
 
 ### `research/`
 
@@ -47,11 +48,12 @@ Superseded material preserved only for provenance. Do not use it as active direc
 
 - **Owner approval:** decision register + PRD delta.
 - **Master-plan author:** current-state audit + all core architecture files + roadmap index.
-- **TB1 UI agent:** frontend architecture + UI research + TB1.
+- **Design-convergence/TB1/TB8 UI agent:** design-convergence contract + frontend architecture + UI research + active bullet.
 - **TB2 freshness agent:** current-state audit + route/freshness architecture + TB2.
 - **TB3 discussion agent:** discussion architecture + messaging research + TB3.
 - **TB4 notification agent:** notification architecture + Cloudflare research + TB4.
-- **TB5 board agent:** Kanban architecture + Kanban research + TB5.
+- **TB5A ordering agent:** current-state audit + Kanban architecture + the two historical implemented ordering plans + TB5A.
+- **TB5B board agent:** Kanban architecture + Kanban research + approved TB5A outcome + TB5B.
 - **Reviewer:** active bullet + migration/verification + files changed by the bullet.
 
 ## Status vocabulary
@@ -90,7 +92,8 @@ docs/Decision-Sheet.md
 
 ## Important baseline caveats
 
-- Current production already has a Kanban board; it is not greenfield.
+- Current production already has a Kanban board; it is not greenfield, but its ordering semantics are not automatically preserved by the revamp.
+- The design tokens are largely intact; design drift must be assessed at the component, layout, interaction and responsive-behavior layers.
 - Current production already has project comments, a notice board, rich-text mentions and an in-app/email notification pipeline.
 - The path router is not inherently broken; the missing cross-screen freshness policy is the core issue.
 - There is no staging environment.

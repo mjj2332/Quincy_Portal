@@ -1,6 +1,6 @@
 # Current-State Audit
 
-**Baseline:** `mjj2332/Quincy_Portal` `main` at `5b4cf91abde3d71f4b00ab936820f75529ea47c1`  
+**Baseline:** `mjj2332/Quincy_Portal` `main` at `4893165202a320e914a77f55d3e8c642bd7e0afd`  
 **Audit date:** 2026-08-21  
 **Scope:** facts that constrain the revamp; re-check before implementation
 
@@ -35,6 +35,8 @@ Current declarations and architecture:
 - Custom token files plus monolithic `app.css`.
 - Dependencies pinned at `portal/package.json`.
 - No Tailwind or shadcn configuration yet.
+- Production `colors.css`, `fonts.css`, `spacing.css` and `typography.css` are byte-identical to the prototype design-system sources; production `base.css` differs only in the pattern asset URL.
+- Production `app.css` is about 112 KB versus about 51 KB in the prototype. Growth alone is not proof of visual failure, but it locates the main drift risk in application selectors, component composition and responsive behavior rather than in the foundational tokens.
 
 Specialized libraries already present:
 
@@ -42,6 +44,20 @@ Specialized libraries already present:
 - dnd-kit for checklist and link reordering.
 - Floating UI for anchored popovers.
 - better-auth for staff authentication.
+
+## 2a. Design convergence today
+
+The design foundation is substantially preserved, but there is no repository-level conformance process for the surfaces built after the prototype.
+
+Current facts:
+
+- the design-system tokens and core dashboard/Kanban geometry remain recognizable;
+- production has added real auth, server data, accessibility behavior, notice-board/collaboration UI, ordering controls and other functionality the prototype never modeled;
+- some differences are intentional product evolution, while others may be ad hoc drift;
+- no active document currently classifies those differences or records owner-approved deviations;
+- TB0 previously required representative current screenshots but not matched prototype/current evidence.
+
+Conclusion: do not replace or reconstruct the token system. Audit the application layer surface by surface using the design system as visual authority and the prototype as the visual/flow reference.
 
 ## 3. Routing and deep links
 
@@ -135,9 +151,14 @@ The Dashboard already has a project-stage Kanban board:
 - sort modes include board order and shoot-date ordering;
 - stage moves use optimistic local updates and a server mutation;
 - the board currently uses native HTML5 `DragEvent`, not dnd-kit;
-- up/down controls exist for manual ordering in selected modes.
+- up/down controls exist for manual ordering in selected modes;
+- board mode displays all non-null-priority cards ahead of null-priority cards, then sorts by `boardPosition`;
+- shoot-date modes override both priority grouping and manual order;
+- changing priority also rewrites `boardPosition`, including while a shoot-date view hides the resulting manual-order change;
+- the up/down API uses the flat persisted order while the UI displays a priority-grouped order, so an accepted historical edge case can persist a successful move with no visible movement;
+- stage moves append a project to the target stage's persisted order while retaining its priority value.
 
-Therefore the future work is **Kanban modernization**, not a new board product.
+Therefore the future work is not a new board product, but it is also not only a DnD-library swap. The ordering model must be corrected and approved before interaction modernization so the revamp does not encode the current inconsistencies more deeply.
 
 Key consequence: a Kanban-card discussion is currently the same project discussion. Do not create duplicate comment storage for the same project card.
 
@@ -161,15 +182,19 @@ Key consequence: a Kanban-card discussion is currently the same project discussi
 - Read state is not consistently server-owned.
 - Notification delivery is not uniformly durable.
 - Existing Kanban DnD lacks the richer keyboard/touch/scroll model expected from the installed dnd-kit stack.
+- There is no design-conformance/drift register distinguishing approved product evolution from accidental divergence.
+- Kanban visible order and persisted/manual-order behavior can disagree, and some successful mutations have no immediate visible effect.
 
 ## 11. Audit conclusion
 
 The revamp should not discard the existing application. It should establish shared foundations through real consumers:
 
-1. Tailwind/shadcn proof.
-2. Route-aware server-state proof.
-3. Project discussion migration.
-4. Durable notification delivery.
-5. Existing board modernization.
-6. Reuse project discussion in the project-card experience.
-7. Migrate the notice board after the shared model is proven.
+1. Establish a matched prototype/current design baseline and drift register.
+2. Prove Tailwind/shadcn as an implementation tool for Quincy—not as a replacement aesthetic.
+3. Prove route-aware server state.
+4. Migrate project discussion.
+5. Prove durable notification delivery.
+6. Correct the existing Kanban ordering contract, then modernize its interactions.
+7. Reuse project discussion in the project-card experience.
+8. Migrate the notice board after the shared model is proven.
+9. Converge remaining UI one feature surface at a time.

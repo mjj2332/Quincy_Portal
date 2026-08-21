@@ -18,6 +18,8 @@ This register prevents research conclusions, owner choices and agent recommendat
 | RV-D07 | Keep path-based, deep-linkable URLs. | Approved direction | Multiple projects can be open in multiple tabs; links can target a project/sub-page. |
 | RV-D08 | Restore automatic data freshness without browser reload. | Approved requirement | Route-scoped data must refetch/invalidate safely while preserving drafts and interaction state. |
 | RV-D09 | Quincy owns collaboration/Kanban domain data and rules. | Approved direction | D1 is the leading authoritative store; vendor-specific domain models are avoided. |
+| RV-D10 | Make design convergence—not framework adoption—the UI outcome. | Approved direction | The Quincy design system is the visual authority, the prototype is the visual/flow reference, and material deviations require classification and evidence. |
+| RV-D11 | Correct Kanban ordering semantics before modernizing its interaction engine. | Approved direction | Existing priority/`boardPosition`/shoot-date behavior is not grandfathered; TB5A must establish one understandable contract before TB5B adds dnd-kit/freshness. |
 
 ## B. Proposed defaults requiring approval in TB0
 
@@ -36,6 +38,7 @@ This register prevents research conclusions, owner choices and agent recommendat
 | RV-P11 | Date/time UI | Try shadcn-first; permit narrow MUI X fallback only if accessible minute-precise behavior is otherwise disproportionate. | Tailwind/shadcn is now the UI platform; MUI is no longer pre-approved globally. |
 | RV-P12 | Dark mode | Exclude from the revamp. | Prevent unrequested design and maintenance scope. |
 | RV-P13 | Icon policy | Use one approved icon library for new shadcn components, migrate existing icons only with their surfaces. | Avoid collateral icon rewrite. |
+| RV-P14 | Kanban ordering default | Make `boardPosition` the sole persisted manual order; treat priority as metadata unless the user selects an explicit Priority sort; keep shoot-date modes view-only. | Removes the current mismatch between display-only grouping and the flat persisted order, and prevents metadata edits from secretly rearranging manual order. |
 
 ## C. Product choices still open
 
@@ -52,6 +55,8 @@ These are product questions, not implementation details:
 - What delay is acceptable for visible updates: 15, 30 or 60 seconds?
 - Should same-browser tabs invalidate each other immediately through `BroadcastChannel`?
 - Should photographers retain collaboration access outside their full workspace stage visibility exactly as today?
+- Is project priority metadata-only, an explicit optional sort, or an ordering command? TB5A must choose one meaning rather than combining them implicitly.
+- When a project changes stage, should its manual position append to the target column, retain a relative rank, or use another explicit insertion rule?
 
 TB0 must either decide these or explicitly defer them to the relevant tracer bullet.
 
@@ -72,7 +77,7 @@ Those files are retained under `archive/` only for historical reasoning.
 
 After owner review, add at least two approved decisions to `docs/Decision-Sheet.md`:
 
-- **D-16 — Frontend UI platform:** Tailwind v4 + shadcn, incremental, Quincy-branded.
-- **D-17 — Collaboration/freshness/Kanban ownership:** Quincy-owned domain data on Cloudflare; asynchronous refresh; no external managed platform.
+- **D-16 — Frontend UI platform and design convergence:** Tailwind v4 + shadcn, incremental; Quincy design system authoritative; prototype used as the visual/flow reference with documented deviations.
+- **D-17 — Collaboration/freshness/Kanban ownership:** Quincy-owned domain data on Cloudflare; asynchronous refresh; no external managed platform; Kanban ordering corrected before interaction modernization.
 
 Do not silently modify D-15. D-15 still correctly selects React 18 + TypeScript + Vite SPA.

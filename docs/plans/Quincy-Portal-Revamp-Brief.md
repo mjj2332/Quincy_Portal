@@ -6,11 +6,11 @@
 
 ## Purpose
 
-Modernize Quincy Portal's UI and collaboration architecture without losing its working product, brand, deep links, security boundaries, or Cloudflare-native deployment model.
+Converge Quincy Portal back toward its approved design system and original prototype intent while modernizing its UI and collaboration architecture without losing the working product, deep links, security boundaries, or Cloudflare-native deployment model.
 
 The program combines five related concerns under one north-star design:
 
-1. Tailwind CSS v4 and shadcn migration.
+1. Design-system/prototype convergence through an incremental Tailwind CSS v4 and shadcn migration.
 2. Route-safe automatic data freshness.
 3. Asynchronous project discussions and the staff notice board.
 4. Reliable in-app/email notifications on Cloudflare.
@@ -24,7 +24,9 @@ The implementation remains a sequence of small, independently deployable tracer 
 - Keep `prototype/` reference-only.
 - Keep React 18, Vite, Hono, D1, R2, Workers, Tiptap, and existing security rules unless a separate decision changes them.
 - Use Tailwind v4 and source-owned shadcn components for migrated ordinary UI.
+- Treat the Quincy design system as the visual authority and the prototype as the visual/flow reference; do not copy prototype application structure.
 - Preserve Quincy's ink-on-warm-paper brand, fonts, semantic signals, hairlines, restrained radius, and low elevation.
+- Classify every material production/prototype difference as conforming, intentional evolution, required platform/accessibility change, unwanted drift, or unassessed.
 - Do not add an external managed comments/chat/feed/Kanban platform.
 - Cloudflare-managed infrastructure is acceptable.
 - Do not build Slack-like chat, typing indicators, presence, or WebSockets by default.
@@ -75,15 +77,16 @@ The fix is route-keyed server-state behavior:
 ## Recommended tracer-bullet order
 
 ```text
-TB0  Integrated decisions, documentation, baseline and approved plan
+TB0  Integrated decisions, prototype/current visual baseline and approved plan
 TB1  Thin Tailwind v4 + shadcn foundation on one existing form section
 TB2  Route-safe Project Workspace freshness
 TB3  Project Discussion v2 and server-side read state
 TB4  D1 notification outbox + Cloudflare Queues
-TB5  Existing Kanban modernization
+TB5A Kanban ordering-model correction
+TB5B Kanban interaction/freshness modernization
 TB6  Project-card detail + shared discussion/activity
 TB7  Notice-board migration
-TB8  Wider UI migration and legacy cleanup
+TB8  Surface-by-surface design convergence and legacy cleanup
 ```
 
 Do not finish the entire UI refactor before product work. Do not combine all bullets into one implementation. Build only the UI/data foundations required by the next real feature.
@@ -98,7 +101,8 @@ The following are recommended but still require plan/owner approval:
 - Whether to generalize current comment tables immediately or migrate through an adapter first.
 - Exact discussion features in v2: replies, reactions, subscriptions, pinning, attachments and acknowledgement.
 - Exact polling intervals and whether same-browser `BroadcastChannel` invalidation is included.
-- Whether the existing project board should keep native drag temporarily or move directly to dnd-kit.
+- The canonical relationship between project priority, persisted manual order and temporary shoot-date views; the proposed default makes manual order the sole persisted order and priority metadata unless an explicit Priority sort is selected.
+- After the ordering contract is corrected, whether the existing project board should keep native drag temporarily or move directly to dnd-kit.
 - Whether MUI X remains necessary for a specialized date/time control after the shadcn-first proof.
 
 ## Non-goals
@@ -119,9 +123,9 @@ The program succeeds when:
 
 - multiple project tabs remain isolated and deep-linkable;
 - visible pages receive relevant server changes without a manual reload;
-- ordinary UI is built from Quincy-customized Tailwind/shadcn components;
+- ordinary UI is built from Quincy-customized Tailwind/shadcn components and passes the approved design-convergence checks against the design system and prototype reference;
 - comments, notice posts and notifications have reliable unread/delivery behavior;
-- the Kanban board has accessible and conflict-safe movement;
+- the Kanban board has one understandable ordering contract, no invisible ordering side effects, and accessible conflict-safe movement;
 - Cloudflare remains infrastructure, while Quincy owns the domain model and data;
 - legacy CSS and duplicated fetch/mutation logic shrink only as proven surfaces migrate;
 - every release remains independently testable, reviewable and reversible.
