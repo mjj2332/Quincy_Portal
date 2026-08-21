@@ -14,7 +14,7 @@ Potential sections:
 
 - project summary;
 - stage/priority;
-- assignments/due information;
+- shared editor roster, project due date/time and configured reminder summary;
 - activity timeline;
 - project discussion.
 
@@ -32,6 +32,8 @@ Potential sections:
 - route/open-new-tab behavior is predictable;
 - focus/scroll/mobile sheet behavior passes QA;
 - access restrictions remain exact.
+- project deadline/editor updates invalidate the board card, collaboration pane and quick detail consistently;
+- TB6 does not create a second reminder or editor-assignment store.
 
 ## Checkpoint
 

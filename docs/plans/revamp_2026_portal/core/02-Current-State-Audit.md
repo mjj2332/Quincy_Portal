@@ -1,6 +1,6 @@
 # Current-State Audit
 
-**Baseline:** `mjj2332/Quincy_Portal` `main` at `4893165202a320e914a77f55d3e8c642bd7e0afd`  
+**Baseline:** `mjj2332/Quincy_Portal` `main` at `ff01974f91f4b459a31352fbdf20981e6d38977a`  
 **Audit date:** 2026-08-21  
 **Scope:** facts that constrain the revamp; re-check before implementation
 
@@ -101,6 +101,8 @@ Backend already provides:
 
 Frontend currently keeps comment data in component state, prepends its own newly posted comments and loads older pages manually.
 
+The same collaboration pane already hosts the checklist, whose anchored assignee and due-date popovers provide the interaction precedent for the proposed editor/deadline controls. Multiple editor memberships already exist and the Edit Project form can select several editors, but routine add/remove is not exposed in the collaboration pane. There is no distinct project-level due date/time or configurable project reminder schedule.
+
 ## 6. Existing notice board
 
 Backend already provides:
@@ -139,6 +141,8 @@ Primary gaps:
 - no digest policy;
 - no general retry/DLQ flow for request-path email failures;
 - no unified observability/admin recovery interface.
+- no editor-wide project-change event registry or guaranteed fan-out to all assigned editors;
+- no project-level deadline with multiple user-configurable advance reminders.
 
 ## 8. Existing Kanban
 
@@ -157,6 +161,7 @@ The Dashboard already has a project-stage Kanban board:
 - changing priority also rewrites `boardPosition`, including while a shoot-date view hides the resulting manual-order change;
 - the up/down API uses the flat persisted order while the UI displays a priority-grouped order, so an accepted historical edge case can persist a successful move with no visible movement;
 - stage moves append a project to the target stage's persisted order while retaining its priority value.
+- cards currently show a RAW count and do not have a project due date/time field to display.
 
 Therefore the future work is not a new board product, but it is also not only a DnD-library swap. The ordering model must be corrected and approved before interaction modernization so the revamp does not encode the current inconsistencies more deeply.
 
@@ -172,6 +177,8 @@ Key consequence: a Kanban-card discussion is currently the same project discussi
 - dnd-kit has already been integrated successfully.
 - Existing guarded/optimistic update patterns can inform Kanban conflicts.
 - Existing deep links from notifications/emails already target project routes.
+- Existing `project_members` rows and multi-editor Edit Project UI prove that editor membership is already many-to-many.
+- Existing checklist assignee/date popovers provide a tested interaction pattern for compact collaboration-pane controls.
 
 ## 10. Main architectural debts
 
@@ -181,6 +188,7 @@ Key consequence: a Kanban-card discussion is currently the same project discussi
 - Project discussion and notice-board domains overlap but are separate implementations.
 - Read state is not consistently server-owned.
 - Notification delivery is not uniformly durable.
+- Time-critical project coordination is split between Edit Project, checklist controls and direct notification helpers; there is no project deadline/reminder contract.
 - Existing Kanban DnD lacks the richer keyboard/touch/scroll model expected from the installed dnd-kit stack.
 - There is no design-conformance/drift register distinguishing approved product evolution from accidental divergence.
 - Kanban visible order and persisted/manual-order behavior can disagree, and some successful mutations have no immediate visible effect.
@@ -194,7 +202,8 @@ The revamp should not discard the existing application. It should establish shar
 3. Prove route-aware server state.
 4. Migrate project discussion.
 5. Prove durable notification delivery.
-6. Correct the existing Kanban ordering contract, then modernize its interactions.
-7. Reuse project discussion in the project-card experience.
-8. Migrate the notice board after the shared model is proven.
-9. Converge remaining UI one feature surface at a time.
+6. Add collaboration-pane editor assignment, a versioned project deadline/reminder schedule, editor-wide project-change events and Kanban due metadata.
+7. Correct the existing Kanban ordering contract, then modernize its interactions.
+8. Reuse project discussion in the project-card experience.
+9. Migrate the notice board after the shared model is proven.
+10. Converge remaining UI one feature surface at a time.

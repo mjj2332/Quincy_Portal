@@ -1,7 +1,7 @@
 # Kanban Ordering Correction and Interaction Modernization
 
 **Status:** Proposed two-slice repair and modernization of the existing project board  
-**Related:** [Kanban research](../research/Kanban-And-Trello-Research.md), [TB5A](../roadmap/TB5A-Kanban-Ordering-Model-Correction.md), [TB5B](../roadmap/TB5B-Kanban-Interaction-Modernization.md)
+**Related:** [Kanban research](../research/Kanban-And-Trello-Research.md), [TB4A](../roadmap/TB4A-Project-Coordination-Deadline-And-Editor-Notifications.md), [TB5A](../roadmap/TB5A-Kanban-Ordering-Model-Correction.md), [TB5B](../roadmap/TB5B-Kanban-Interaction-Modernization.md)
 
 ## 1. Important baseline
 
@@ -21,6 +21,7 @@ Current model:
 - card links to `/projects/:projectId`;
 - native HTML5 drag events power the board today;
 - dnd-kit is already used elsewhere in Quincy.
+- cards currently display a RAW count and have no project deadline metadata.
 
 The original prototype sorted its dashboard list by recent shoot date or suburb before filtering cards into columns. It had no priority/manual-position model. Production ordering is later product evolution, not an original-prototype invariant.
 
@@ -35,6 +36,8 @@ The work is split deliberately:
 1. **TB5A — ordering-model correction:** establish the canonical order, repair semantic mismatches and define migration/compatibility.
 2. **TB5B — interaction modernization:** add dnd-kit, accessibility, automatic freshness and guarded conflicts against the approved TB5A contract.
 
+TB4A precedes these slices and makes one bounded card metadata change: show the project due date/time when set and remove the card-level RAW count. It does not introduce deadline sorting or modify manual order. TB5A and TB5B must preserve this metadata contract while changing ordering and interaction behavior.
+
 ## 3. Comments are project comments
 
 Because a Kanban card is a project:
@@ -44,6 +47,8 @@ Kanban card discussion = project discussion
 ```
 
 A card detail sheet/route may display project summary, stage/priority/assignment controls, activity, project discussion and links to the full workspace. Do not create a second comment table keyed to the same project card.
+
+The compact card metadata shows a timezone-aware due label and overdue state with accessible text. Removing RAW count applies only to Kanban cards; project list/detail/collection counts remain available unless separately approved.
 
 ## 4. Ordering contract
 
@@ -75,6 +80,7 @@ Required invariants regardless of the selected option:
 - sort labels explain what is temporary and what is persisted;
 - tie-breaking is deterministic;
 - direct links/open-new-tab behavior is unaffected.
+- deadline display is metadata-only and never changes `boardPosition`, priority or selected sort mode.
 
 ## 5. TB5A data and API work
 
@@ -193,6 +199,9 @@ TB5B:
 - external simulated change appears without reload;
 - active drag survives/defer-reconciles refresh;
 - activity/outbox written exactly once.
+- due date/time renders at desktop and narrow board widths with an accessible overdue state;
+- card-level RAW count is absent while other RAW-count surfaces are unchanged;
+- TB5A/TB5B movement and refresh preserve the TB4A deadline metadata.
 
 ## 13. Non-goals
 

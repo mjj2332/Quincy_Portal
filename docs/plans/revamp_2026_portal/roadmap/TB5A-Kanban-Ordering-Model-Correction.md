@@ -2,6 +2,8 @@
 
 **Primary user outcome:** card order is understandable, authoritative and free of invisible side effects before the drag interaction is modernized.
 
+**Precondition:** TB4A's card contract is live or established as the implementation baseline: show project due date/time when set and omit the Kanban-card RAW count.
+
 ## Scope
 
 - Capture current production behavior with representative fixtures:
@@ -26,6 +28,7 @@
 - Decide whether existing values can be reinterpreted, need normalization, or require an additive schema/API change.
 - Preserve audit/capability behavior.
 - Update affected drift-register entries and matched Kanban evidence.
+- Preserve TB4A due metadata and RAW-count removal without treating the deadline as a sort or ordering command.
 
 ## Required owner decisions
 
@@ -63,6 +66,7 @@
 - admin/non-admin access;
 - audit exactly once;
 - matched visual/control evidence for Board and temporary sort modes.
+- due metadata/overdue state remains readable at approved widths and card RAW count stays absent.
 
 ## Acceptance
 

@@ -6,6 +6,8 @@
 
 Project-comment mention.
 
+TB4 proves the durable delivery envelope only. [TB4A](./TB4A-Project-Coordination-Deadline-And-Editor-Notifications.md) reuses the accepted pattern for editor-wide project events and scheduled deadline reminders; it must not broaden TB4 before this checkpoint is accepted.
+
 ## Scope
 
 - Add D1 outbox schema.
@@ -24,11 +26,12 @@ Project-comment mention.
 - redesign notification bell;
 - implement all preferences/digests;
 - external notification platform.
+- project deadline/reminder scheduler or editor-wide event migration (owned by TB4A).
 
 ## Acceptance
 
 - Queue outage does not lose the notification intent;
-- duplicate delivery creates one notification/email;
+- duplicate delivery creates one in-app recipient row; email follows a provider-supported idempotency contract or an explicitly documented ambiguity policy;
 - access removal prevents delivery;
 - transient failure retries;
 - permanent failure is visible/recoverable;
