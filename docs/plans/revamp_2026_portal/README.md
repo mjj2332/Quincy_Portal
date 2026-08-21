@@ -1,8 +1,8 @@
 # `revamp_2026_portal` — Documentation Package
 
 **Status:** Coordinated research and planning package  
-**Baseline:** `main` at `4893165202a320e914a77f55d3e8c642bd7e0afd`  
-**Scope:** UI platform, automatic freshness, asynchronous discussions, notifications, and the existing project Kanban board
+**Baseline:** `main` at `ff01974f91f4b459a31352fbdf20981e6d38977a`  
+**Scope:** UI platform, automatic freshness, asynchronous discussions, notifications, time-critical project coordination, and the existing project Kanban board
 
 ## Purpose
 
@@ -52,6 +52,7 @@ Superseded material preserved only for provenance. Do not use it as active direc
 - **TB2 freshness agent:** current-state audit + route/freshness architecture + TB2.
 - **TB3 discussion agent:** discussion architecture + messaging research + TB3.
 - **TB4 notification agent:** notification architecture + Cloudflare research + TB4.
+- **TB4A project-coordination agent:** current-state audit + PRD delta + discussion architecture + notification architecture + Cloudflare research + TB4A; read Kanban architecture only for the card metadata change.
 - **TB5A ordering agent:** current-state audit + Kanban architecture + the two historical implemented ordering plans + TB5A.
 - **TB5B board agent:** Kanban architecture + Kanban research + approved TB5A outcome + TB5B.
 - **Reviewer:** active bullet + migration/verification + files changed by the bullet.
@@ -95,6 +96,9 @@ docs/Decision-Sheet.md
 - Current production already has a Kanban board; it is not greenfield, but its ordering semantics are not automatically preserved by the revamp.
 - The design tokens are largely intact; design drift must be assessed at the component, layout, interaction and responsive-behavior layers.
 - Current production already has project comments, a notice board, rich-text mentions and an in-app/email notification pipeline.
+- Current production already supports multiple editor memberships, but editor assignment is exposed in Edit Project rather than the collaboration pane.
+- Current production has checklist due values and a one-shot due reminder, but no distinct project-level deadline or configurable multi-reminder schedule.
+- Current Kanban cards show a RAW count and do not show a project deadline.
 - The path router is not inherently broken; the missing cross-screen freshness policy is the core issue.
 - There is no staging environment.
 - Production mutation remains human-authorized only.

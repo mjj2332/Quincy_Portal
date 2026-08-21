@@ -49,6 +49,8 @@ Useful for:
 - due reminder scan;
 - cleanup/retention.
 
+Cron expressions execute in UTC and support an every-minute schedule (`* * * * *`). For an editable project deadline, a short scan over indexed D1 reminder occurrences can claim due rows, validate the current deadline version and feed the same outbox/Queue path. The reviewed TB4A plan must set an explicit scheduler cadence and user-facing delivery tolerance.
+
 ## Workflows
 
 Useful for durable multi-step processes that wait/retry for minutes, hours or weeks:
@@ -57,6 +59,8 @@ Useful for durable multi-step processes that wait/retry for minutes, hours or we
 - acknowledgement escalation;
 - scheduled reminders;
 - multi-step delivery/approval.
+
+Workflows can sleep until a fixed `Date`/Unix timestamp. They remain an alternative for long-lived orchestration, but one Workflow per editable reminder adds cancellation/reschedule/version coordination that the initial D1 schedule + Cron scan avoids.
 
 Not required for ordinary immediate comment mentions.
 
@@ -118,6 +122,7 @@ Use versioned Queue payloads and ordinary SQL migrations so the domain remains u
 - https://developers.cloudflare.com/queues/configuration/batching-retries/
 - https://developers.cloudflare.com/queues/configuration/dead-letter-queues/
 - https://developers.cloudflare.com/workflows/
+- https://developers.cloudflare.com/workflows/build/sleeping-and-retrying/
 - https://developers.cloudflare.com/r2/api/
 - https://developers.cloudflare.com/r2/api/s3/presigned-urls/
 - https://developers.cloudflare.com/workers/configuration/cron-triggers/

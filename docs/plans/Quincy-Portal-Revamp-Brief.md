@@ -8,13 +8,14 @@
 
 Converge Quincy Portal back toward its approved design system and original prototype intent while modernizing its UI and collaboration architecture without losing the working product, deep links, security boundaries, or Cloudflare-native deployment model.
 
-The program combines five related concerns under one north-star design:
+The program combines six related concerns under one north-star design:
 
 1. Design-system/prototype convergence through an incremental Tailwind CSS v4 and shadcn migration.
 2. Route-safe automatic data freshness.
 3. Asynchronous project discussions and the staff notice board.
 4. Reliable in-app/email notifications on Cloudflare.
-5. Modernization of the existing project Kanban board.
+5. Time-critical project coordination: direct multi-editor assignment, project due date/time, configurable advance reminders and editor-wide change alerts.
+6. Modernization of the existing project Kanban board.
 
 The implementation remains a sequence of small, independently deployable tracer bullets. It is not a single rewrite.
 
@@ -32,6 +33,10 @@ The implementation remains a sequence of small, independently deployable tracer 
 - Do not build Slack-like chat, typing indicators, presence, or WebSockets by default.
 - Keep deep, shareable routes such as `/projects/:projectId`.
 - Restore automatic refresh while a user stays on a route.
+- Let authorized users assign or remove multiple editors directly in the collaboration pane.
+- Notify every active assigned editor, including the actor, through a mandatory durable in-app event for the approved registry of project changes; email remains an additional channel.
+- Add one project-level due date/time with zero, one or multiple advance reminder offsets.
+- Show due date/time on Kanban cards and remove only the card-level RAW count.
 
 ## Target architecture
 
@@ -82,6 +87,7 @@ TB1  Thin Tailwind v4 + shadcn foundation on one existing form section
 TB2  Route-safe Project Workspace freshness
 TB3  Project Discussion v2 and server-side read state
 TB4  D1 notification outbox + Cloudflare Queues
+TB4A Project coordination, deadline/reminders and editor-wide change notifications
 TB5A Kanban ordering-model correction
 TB5B Kanban interaction/freshness modernization
 TB6  Project-card detail + shared discussion/activity
@@ -104,6 +110,10 @@ The following are recommended but still require plan/owner approval:
 - The canonical relationship between project priority, persisted manual order and temporary shoot-date views; the proposed default makes manual order the sole persisted order and priority metadata unless an explicit Priority sort is selected.
 - After the ordering contract is corrected, whether the existing project board should keep native drag temporarily or move directly to dnd-kit.
 - Whether MUI X remains necessary for a specialized date/time control after the shadcn-first proof.
+- Which existing capability may assign editors and change the project deadline/reminder rules; retaining the current `editProject`/admin boundary is recommended.
+- The project-deadline timezone contract and reminder delivery tolerance; a clearly labelled studio timezone with UTC scheduling and a one-minute scan is recommended.
+- The finite event registry and batching rules that operationalize “all project changes” without emitting one alert per internal row or imported asset.
+- The optional email-channel policy and whether a newly assigned editor receives already-queued events created before assignment; mandatory in-app delivery includes the actor.
 
 ## Non-goals
 
@@ -116,6 +126,7 @@ The following are recommended but still require plan/owner approval:
 - No dark mode unless separately approved.
 - No backend authorization weakening.
 - No change to the literal subtask due contract: `YYYY-MM-DD` or `YYYY-MM-DDTHH:MM`, Sydney wall-clock, optional time.
+- No new deadline-based Kanban sort or change to project shoot date/time-window semantics unless separately approved.
 
 ## Success criteria
 
@@ -125,6 +136,8 @@ The program succeeds when:
 - visible pages receive relevant server changes without a manual reload;
 - ordinary UI is built from Quincy-customized Tailwind/shadcn components and passes the approved design-convergence checks against the design system and prototype reference;
 - comments, notice posts and notifications have reliable unread/delivery behavior;
+- editors can be assigned in context and receive deduplicated project-change and deadline reminders;
+- project deadlines are distinct from shoot dates and checklist due values, survive rescheduling safely and appear on Kanban cards;
 - the Kanban board has one understandable ordering contract, no invisible ordering side effects, and accessible conflict-safe movement;
 - Cloudflare remains infrastructure, while Quincy owns the domain model and data;
 - legacy CSS and duplicated fetch/mutation logic shrink only as proven surfaces migrate;

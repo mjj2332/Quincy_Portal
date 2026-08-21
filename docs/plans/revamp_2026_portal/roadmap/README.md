@@ -11,6 +11,7 @@ These are scope briefs. Each bullet requires a separate current-main-aware imple
 | [TB2](./TB2-Route-Safe-Data-Freshness.md) | Project pages update without reload | Route-keyed server state |
 | [TB3](./TB3-Project-Discussion-V2.md) | Automatically refreshed project discussion/read state | Shared discussion direction |
 | [TB4](./TB4-Notification-Outbox-And-Queues.md) | Durable mention delivery | D1 outbox + Cloudflare Queue |
+| [TB4A](./TB4A-Project-Coordination-Deadline-And-Editor-Notifications.md) | Editors are assigned in context and reliably alerted to project changes/deadlines | Existing membership + versioned deadline schedule + TB4 outbox |
 | [TB5A](./TB5A-Kanban-Ordering-Model-Correction.md) | Understandable, authoritative Kanban order | One visible/persisted ordering contract |
 | [TB5B](./TB5B-Kanban-Interaction-Modernization.md) | Accessible, refreshed project board | dnd-kit + guarded board moves |
 | [TB6](./TB6-Project-Card-Detail-And-Discussion.md) | Project-card quick detail with shared discussion/activity | UI/domain reuse |
@@ -23,13 +24,17 @@ These are scope briefs. Each bullet requires a separate current-main-aware imple
 TB0
  └─ TB1
      └─ TB2
-         ├─ TB3 ── TB4
-         └─ TB5A ── TB5B ── TB6
-                              └─ TB7
-                                  └─ TB8
+         └─ TB3
+             └─ TB4
+                 └─ TB4A
+                     └─ TB5A
+                         └─ TB5B
+                             └─ TB6
+                                 └─ TB7
+                                     └─ TB8
 ```
 
-TB3 and TB5A planning may overlap after TB2 stabilizes. TB5B cannot begin until TB5A's ordering contract is approved and its required correction is live or otherwise established as the implementation baseline. Every implementation remains isolated.
+TB3 and TB5A planning may overlap after TB2 stabilizes, but TB4A implementation depends on the accepted TB4 outbox pattern and must land before TB5A/TB5B so later board work preserves the deadline metadata contract. TB5B cannot begin until TB5A's ordering contract is approved and its required correction is live or otherwise established as the implementation baseline. Every implementation remains isolated.
 
 TB8 is an umbrella for multiple feature-surface releases, not permission for a final wholesale rewrite.
 

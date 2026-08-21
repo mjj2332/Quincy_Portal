@@ -2,7 +2,7 @@
 
 **Status:** Planning and research package; not yet merged into the repository authority documents.  
 **Prepared:** 2026-08-21  
-**Repository baseline inspected:** `mjj2332/Quincy_Portal` `main` at `4893165202a320e914a77f55d3e8c642bd7e0afd`  
+**Repository baseline inspected:** `mjj2332/Quincy_Portal` `main` at `ff01974f91f4b459a31352fbdf20981e6d38977a`  
 **Detailed folder:** [`revamp_2026_portal/`](./revamp_2026_portal/README.md)
 
 This is the shortest entry point for the coordinated Quincy Portal revamp. The package intentionally separates high-level decisions from detailed architecture and per-slice plans, so an agent does not need to load one very large Markdown file.
@@ -24,6 +24,7 @@ This is the shortest entry point for the coordinated Quincy Portal revamp. The p
 | Automatic refresh, routing, multi-tab behavior | [Route and data freshness](./revamp_2026_portal/core/05-Route-And-Data-Freshness.md) → [TB2](./revamp_2026_portal/roadmap/TB2-Route-Safe-Data-Freshness.md) |
 | Project comments or notice board | [Discussion architecture](./revamp_2026_portal/core/06-Discussions-And-Notice-Board.md) → [Messaging research](./revamp_2026_portal/research/Messaging-And-Commenting-Research.md) → [TB3](./revamp_2026_portal/roadmap/TB3-Project-Discussion-V2.md) or [TB7](./revamp_2026_portal/roadmap/TB7-Notice-Board-Migration.md) |
 | Notifications/email reliability | [Cloudflare notifications](./revamp_2026_portal/core/07-Notifications-On-Cloudflare.md) → [Cloudflare research](./revamp_2026_portal/research/Cloudflare-Native-Architecture-Research.md) → [TB4](./revamp_2026_portal/roadmap/TB4-Notification-Outbox-And-Queues.md) |
+| Direct editor assignment, project deadline/reminders or editor-wide change alerts | [PRD delta](./revamp_2026_portal/core/03-PRD-Delta.md) → [Cloudflare notifications](./revamp_2026_portal/core/07-Notifications-On-Cloudflare.md) → [TB4A](./revamp_2026_portal/roadmap/TB4A-Project-Coordination-Deadline-And-Editor-Notifications.md) |
 | Kanban ordering or interaction modernization | [Kanban architecture](./revamp_2026_portal/core/08-Kanban-Modernization.md) → [Kanban/Trello research](./revamp_2026_portal/research/Kanban-And-Trello-Research.md) → [TB5A ordering correction](./revamp_2026_portal/roadmap/TB5A-Kanban-Ordering-Model-Correction.md) → [TB5B interaction modernization](./revamp_2026_portal/roadmap/TB5B-Kanban-Interaction-Modernization.md) |
 | Reviewer or release owner | [Migration, rollback and verification](./revamp_2026_portal/core/09-Migration-Rollback-And-Verification.md) → the active tracer-bullet file |
 | Agent updating repository docs | [Repository document update map](./revamp_2026_portal/core/10-Repository-Document-Update-Map.md) |
@@ -71,5 +72,9 @@ Approved by the user in this planning conversation:
 - Quincy remains asynchronous; Slack or Google Chat handles real-time chat.
 - Path-based, deep-linkable URLs must remain.
 - Pages must regain automatic freshness without requiring a browser reload.
+- Multiple editors can be assigned or removed directly in the project collaboration pane without opening Edit Project.
+- Every active assigned editor, including the actor, receives a mandatory durable in-app notification for the approved registry of project changes, including checklist, comment and collection changes; email is an additional channel under the approved delivery policy.
+- A project can have one due date/time plus one or more configurable advance reminder offsets, managed in the collaboration pane.
+- Kanban cards show the project due date/time and no longer show the RAW count; other RAW-count surfaces are unchanged unless separately approved.
 
 Open implementation choices are tracked in the [decision register](./revamp_2026_portal/core/01-Decision-Register.md).

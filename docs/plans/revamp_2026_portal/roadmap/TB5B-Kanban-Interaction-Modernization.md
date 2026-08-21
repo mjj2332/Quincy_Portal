@@ -7,6 +7,7 @@
 - TB5A ordering contract approved.
 - TB5A correction live or otherwise established as the implementation baseline.
 - Board query/freshness conventions from TB2 available.
+- TB4A project deadline is included in board query/refresh data and its card-level RAW count removal is the baseline.
 
 ## Scope
 
@@ -22,6 +23,7 @@
 - Preserve temporary view-only sort behavior and native direct/open-new-tab project links.
 - Emit structured activity/outbox intent where appropriate.
 - Apply the design-convergence contract to board controls/cards touched by the slice.
+- Preserve the deadline label/overdue state through optimistic moves and refresh; do not reintroduce RAW count.
 
 ## Non-goals
 
@@ -47,6 +49,7 @@
 - activity/outbox exactly once;
 - matched design-convergence evidence at desktop and narrow widths;
 - typical board and 100+ card stress fixture.
+- deadline display and absence of RAW count at desktop/narrow widths before, during and after movement.
 
 ## Acceptance
 

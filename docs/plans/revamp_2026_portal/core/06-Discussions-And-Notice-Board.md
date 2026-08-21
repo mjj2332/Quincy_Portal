@@ -16,6 +16,8 @@ Discussion targets may eventually include:
 
 The current project Kanban card is the project itself, so it should reuse project discussion rather than create a duplicate `kanban_card` discussion.
 
+Project comments also produce structured project-change activity for the editor-wide notification registry. That broader event does not replace targeted mention delivery or change comment ownership rules.
+
 ## 2. Current assets to reuse
 
 - Shared Tiptap `RichTextDoc` schema and parser.
@@ -142,6 +144,7 @@ Initial recommended scope:
 - server-side read marker;
 - no mandatory reactions, attachments or nested replies in the first slice;
 - preserve collaboration-only access behavior for stage-hidden project members.
+- emit one versioned `project.comment_created`, `project.comment_edited` or `project.comment_deleted` activity/outbox intent for the approved editor audience; mention events remain separate.
 
 ## 7. Replies
 
@@ -186,6 +189,7 @@ Project discussion:
 - mention only currently eligible project participants/admins;
 - edit/delete remains author-only unless explicitly changed;
 - every mutation remains audited.
+- editor-wide fan-out does not grant discussion access; mandatory in-app delivery includes an editor actor but still rechecks the same active collaboration/editor eligibility before including project content.
 
 Notice board:
 
@@ -225,15 +229,22 @@ Use a separate `activity_events` domain:
 
 ```text
 project.stage_changed
-project.assignment_changed
-project.due_changed
-project.asset_uploaded
+project.editor_membership_changed
+project.deadline_changed
+project.deadline_reminders_changed
+project.checklist_changed
+project.comment_created
+project.comment_edited
+project.comment_deleted
+project.collection_changed
 project.delivered
 project.priority_changed
 project.board_position_changed
 ```
 
 Event payloads should be structured/versioned. Users cannot edit them. The project/card UI may display them alongside comments with filters.
+
+The event registry is finite and versioned. “All changes” means every approved user-visible event type, not every storage write. High-volume collection imports and background jobs must coalesce into one human-readable operation summary with stable source keys.
 
 ## 13. Attachments
 
@@ -260,6 +271,8 @@ When added:
 - access removal;
 - draft preservation;
 - notification outbox intent written exactly once;
+- comment create/edit/delete emits the correct editor-wide event exactly once while targeted mentions remain deduplicated;
+- editor removal between event creation and delivery suppresses project content;
 - notice-board role/capability behavior;
 - migration/backfill parity when storage changes.
 

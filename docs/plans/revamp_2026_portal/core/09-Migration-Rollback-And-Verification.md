@@ -44,6 +44,8 @@ For discussion/notification schema changes:
 
 Do not perform destructive table changes in the same release that first proves the new path.
 
+For TB4A, existing projects backfill to no project deadline and no reminder rules. Add nullable/versioned project fields and a reminder table; do not reinterpret `shootDate`, `timeWindow` or `project_subtasks.dueDate`. Existing `project_members` editor rows remain the assignment source of truth.
+
 ## 4. D1 migration care
 
 Follow repository-specific D1 lessons:
@@ -75,6 +77,14 @@ Follow repository-specific D1 lessons:
 - pending outbox rows can be replayed;
 - old notification path remains for unmigrated events;
 - provide a switch to stop new producer publication if consumer defect appears.
+
+### Project deadline/editor coordination release
+
+- prior Workers tolerate nullable deadline fields and the additive reminder table;
+- disabling the new scheduler stops new reminder intent without deleting deadline/editor data;
+- stale reminder occurrences are version-suppressed after rollback/reschedule;
+- the previous Edit Project editor UI remains a fallback until the collaboration-pane controls are verified;
+- restoring the prior web bundle may restore the card RAW count, but does not corrupt deadline or membership data.
 
 ### Discussion cutover
 
@@ -155,6 +165,16 @@ Compare each migrated slice against the baseline for brand, spacing, focus, over
 - email failure;
 - replay;
 - observability.
+- complete editor-recipient fan-out and the approved actor behavior;
+- editor removal/deactivation between event and delivery;
+- versioned project deadline reminders at multiple offsets;
+- reschedule/clear/past-offset suppression;
+- timezone/DST and approved minute-level tolerance;
+- bulk collection coalescing;
+- mandatory in-app delivery includes every active assigned editor/actor;
+- recipient/channel uniqueness and claim lease/token concurrency;
+- provider-supported email idempotency or explicit ambiguous-delivery handling;
+- per-event old/new producer ownership during cutover.
 
 ## 10. Kanban matrix
 
@@ -166,6 +186,9 @@ Compare each migrated slice against the baseline for brand, spacing, focus, over
 - refresh during/after drag;
 - open link/new tab;
 - large-board fixture.
+- deadline metadata at desktop/narrow widths;
+- card RAW count removed without altering non-Kanban count surfaces;
+- deadline metadata preserved through TB5A/TB5B reorder, refresh and conflict paths.
 
 ## 11. Release documentation
 
@@ -174,6 +197,7 @@ For each bullet record:
 - approved plan path;
 - commit SHA;
 - migrations/resources;
+- approved project-deadline timezone, scheduler cadence/SLO, event-registry version and recipient/channel defaults when TB4A is active;
 - deploy IDs/order;
 - automated verification result;
 - manual verification performed;

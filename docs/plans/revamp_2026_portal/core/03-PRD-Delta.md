@@ -5,7 +5,7 @@
 
 ## 1. Product objective
 
-Quincy Portal must converge toward its approved design system and prototype intent while providing a consistent, deep-linkable and automatically refreshed workspace for project production, asynchronous feedback, operational notifications and project-stage Kanban management.
+Quincy Portal must converge toward its approved design system and prototype intent while providing a consistent, deep-linkable and automatically refreshed workspace for project production, asynchronous feedback, operational notifications, deadline-driven production coordination and project-stage Kanban management.
 
 The revamp must preserve existing workflows while reducing the need to build and maintain one-off UI, comment, unread and notification mechanics.
 
@@ -28,6 +28,14 @@ The revamp must preserve existing workflows while reducing the need to build and
 - Edit/delete permissions and audits remain exact.
 - Deep links can open the project and its collaboration surface.
 
+### Project coordination and deadlines
+
+- An authorized user can assign or remove multiple editors in the collaboration pane without opening Edit Project.
+- All collaborators can see the current editor roster and project due date/time; mutation controls remain capability-gated.
+- A project has at most one project-level due date/time, distinct from shoot date/time window and checklist-item due values.
+- An authorized user can choose zero, one or multiple advance reminder lead times, including 1 day, 4 hours and 1 hour.
+- Deadline and reminder changes appear automatically without a browser reload and do not destroy an open picker or draft.
+
 ### Staff notice board
 
 - Staff can publish organization-wide notices.
@@ -42,6 +50,8 @@ The revamp must preserve existing workflows while reducing the need to build and
 - Email delivery is performed asynchronously and retried safely.
 - Users can eventually choose categories/channels and mute appropriate project/discussion activity.
 - Failed delivery is observable rather than silently lost.
+- Every active assigned editor, including the actor, receives one mandatory durable in-app alert for each event in the approved user-visible project-change registry; email is additional under its approved channel contract.
+- Deadline reminders fire once per selected lead time against the current deadline version; stale reminders from a reschedule or clear never fire.
 
 ### Kanban
 
@@ -52,6 +62,7 @@ The revamp must preserve existing workflows while reducing the need to build and
 - A control must not report success while producing no visible effect or secretly changing manual order behind another sort mode.
 - Board changes made elsewhere appear without a browser reload.
 - A project card can expose project details, activity and the existing project discussion without creating duplicate comment storage.
+- Each card shows the project due date/time when set and no longer shows the RAW count; RAW counts outside Kanban are unchanged.
 
 ### UI consistency
 
@@ -104,10 +115,27 @@ No user should need a full browser reload to observe ordinary project, board, co
 - Domain mutations and notification intent must be recorded durably.
 - Delivery must be idempotent.
 - Queue failure and email failure must not roll back a successful comment or board move.
-- Retries must not create duplicate notifications or duplicate email sends.
+- Retries must not create duplicate mandatory in-app recipient rows; email follows its approved provider idempotency or ambiguity contract.
 - Persistent failures must be visible to an administrator or support workflow.
+- Reminder reschedule/clear must not leak a stale deadline event.
+- Recipient eligibility is rechecked after access/editor removal.
 
-### 3.6 Kanban movement
+### 3.6 Project coordination, deadline and editor event delivery
+
+- Reuse the existing multi-editor membership model; do not create a second editor-assignment store.
+- Provide compact multi-select editor controls in the collaboration pane using the checklist assignee-picker interaction as the precedent.
+- Editor add/remove operations must be idempotent, concurrency-safe, audited and preserve any other role held by the same user.
+- Reject inactive/ineligible users and preserve the current `editProject`/admin capability boundary unless the owner approves a change.
+- Store a nullable project deadline independently from `shootDate`, `timeWindow` and checklist due literals.
+- A set deadline requires both date and time, displays its timezone explicitly and supports accessible minute-precise entry.
+- Reminder rules are unique positive lead times. The UI supports presets for 1 day, 4 hours and 1 hour, any subset of presets, and a bounded custom number/unit rule if approved.
+- Rescheduling or clearing a deadline increments a schedule version and supersedes un-emitted occurrences atomically.
+- Every event producer uses a finite versioned registry. Initial categories cover editor/deadline changes, project metadata/stage/priority, checklist lifecycle and assignment/due changes, project-comment create/edit/delete, and additions/updates/removals in project collections such as photos, videos, floorplans, copy and delivery artifacts.
+- Bulk imports/background jobs emit one useful operation summary rather than one alert per internal row or asset.
+- Every user whose active editor membership began on or before the event time receives the mandatory in-app event, including the actor, provided membership/access still exists at delivery. Preferences may affect only optional channels such as email; mentions and assignment notifications remain additional targeted events.
+- A newly assigned editor receives the assignment event and events created after assignment; delivered history is never backfilled.
+
+### 3.7 Kanban movement
 
 - Project stage remains the column identity.
 - TB5A must define and approve the canonical relationship between priority, manual `boardPosition`, stage movement and temporary sort modes; current behavior is not presumed correct.
@@ -117,7 +145,7 @@ No user should need a full browser reload to observe ordinary project, board, co
 - The API must reject stale/conflicting moves safely.
 - Temporary date/priority views must remain clearly distinct from manual board ordering, and manual reorder controls appear only when they can have an immediate visible effect.
 
-### 3.7 Attachments
+### 3.8 Attachments
 
 When approved:
 
@@ -173,6 +201,8 @@ When approved:
 - Replacing Tiptap or dnd-kit without a measured problem.
 - Changing existing auth/capability or immutable-media rules incidentally.
 - Changing the subtask due-date persistence contract.
+- Replacing project shoot date/time-window semantics with the new deadline.
+- Adding deadline-based Kanban ordering or removing RAW counts from non-Kanban surfaces.
 
 ## 6. Product decisions required before relevant slices
 
@@ -185,6 +215,9 @@ When approved:
 - Polling delay expectations.
 - Whether card detail is a route, sheet, dialog or responsive combination.
 - Whether project system activity and human comments are visually interleaved.
+- Who may mutate editor roster/deadline/reminder rules.
+- Project deadline timezone and delivery tolerance.
+- Exact editor-wide event registry, bulk coalescing, optional email policy and queued-event eligibility for newly assigned editors.
 - Whether priority is metadata-only, an explicit optional sort, or an ordering command; and the target-column insertion rule for a stage move.
 
 ## 7. Product-level acceptance
@@ -197,7 +230,11 @@ The revamp is successful when a staff member can:
 4. Follow a notification link directly to the correct project context.
 5. Move a Kanban project accessibly and see the move persist/conflict safely.
 6. Read notices and have their read state follow them across devices.
-7. Receive deduplicated in-app/email events even when delivery retries occur.
+7. Receive one mandatory in-app row per event even when delivery retries occur, with optional email following its disclosed provider contract.
 8. Continue using the existing production workflows throughout incremental migration.
 9. Recognize migrated surfaces as Quincy through approved typography, spacing, geometry, hierarchy and interaction behavior—not merely matching colors.
 10. Switch Kanban sort modes and edit priority without invisible manual-order side effects or successful no-op reorder controls.
+11. Assign or remove multiple editors from the collaboration pane without overwriting another user's concurrent membership change.
+12. Set a project due date/time with one or multiple lead-time reminders and receive one mandatory in-app row per eligible editor for each reminder after reschedules.
+13. See every approved project-change category reach every currently assigned editor without leaking content after removal.
+14. Read the project deadline on a Kanban card while the card-level RAW count is absent.
