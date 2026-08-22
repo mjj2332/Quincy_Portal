@@ -58,9 +58,9 @@ stay documented in full in case Terra is reinstated for some future task.
    Then a fresh **Opus** subagent reviews the plan document: approve, or revert to a fresh Sol
    spawn with its findings, **max 2 reverts**. Past that cap Opus edits the plan itself and a fresh
    Opus self-review approves it. Build starts only after this resolves.
-2. **Build tasks go to Luna, always at xhigh effort — or Sonnet 5 builds directly** when the task
-   is small and mechanical enough that delegating isn't worth the overhead. Don't delegate
-   reflexively; don't inline something substantial to dodge overhead.
+2. **Build tasks go to Luna, always at xhigh effort.** Sonnet 5 may also build directly, including
+   tasks too small to be worth delegating — either is valid there. Don't delegate reflexively;
+   don't inline something substantial to dodge overhead.
 3. **Sol reviews the diff**, in a fresh invocation separate from whichever run built it.
 4. **Reviewers are read-only**, so they cannot quietly fix what they review: Codex review runs use
    `--sandbox read-only`, always fresh context. The one exception is §2.1's terminal case — Opus
@@ -107,7 +107,7 @@ cold, and never hand back a vague "address the review comments."
 
 | Work type | Builder | Reviewer |
 |---|---|---|
-| Too small to be worth delegating | Sonnet 5 (this session) | Sol |
+| Too small to be worth delegating | Sonnet 5 (this session) or Luna | Sol |
 | Small, mechanical, strongly tested | Luna | Sol |
 | Cheap high-volume implementation | Luna, escalate failures | Sol |
 | Normal feature or refactor | Luna | Sol |
