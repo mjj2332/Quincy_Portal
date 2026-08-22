@@ -1,64 +1,56 @@
 # TB8 — Surface-by-Surface Design Convergence and Cleanup
 
-**Primary user outcome:** proven patterns spread across Quincy while each migrated feature surface visibly converges toward the approved design system/prototype intent and duplicated legacy paths retire safely.
+**Primary user outcome:** proven patterns spread across Quincy while each remaining surface converges through evidence and duplicated legacy owners retire safely.
 
 ## Preconditions
 
-- TB0 drift register and visual baseline accepted.
-- UI foundation accepted.
-- query conventions accepted.
-- project discussion live.
-- notification outbox proven.
-- TB5A ordering correction and TB5B board modernization live.
-- notice-board direction proven.
+TB0 drift register, React 19.2, UI/query/discussion/delivery foundations, TB5A/B, and TB7 direction accepted/live as applicable.
 
-## Scope candidates
+## Selection order
 
-Each candidate becomes its own reviewed feature-surface release rather than one final bulk conversion:
+Do not precommit to directory order. Rank remaining surfaces by:
 
-- Dashboard shell, filters, project cards and responsive navigation.
-- Project Workspace rail, collection controls and empty/error/loading states.
-- Review Lightbox controls while preserving specialized media/annotation CSS.
-- Remaining project/admin forms.
-- Standard menus/dialogs/popovers.
-- Notification UI.
-- Board filters/card controls.
-- Collaboration panel.
-- Notice board.
-- Dead CSS selectors and final Preflight/base-layer decision.
-- Legacy component fetch-state and old notification-emission paths where their replacements are already proven.
+- operational pain;
+- unwanted-drift severity;
+- reuse value;
+- accessibility risk;
+- ability to retire a legacy owner.
+
+Common shell/repeated ordinary controls generally precede specialized Lightbox/media/annotation surfaces. Specialized CSS remains where evidence shows it is clearer.
+
+## Candidate releases
+
+- Dashboard shell/filters/cards/navigation;
+- Project Workspace rail/collection controls/states;
+- remaining project/admin forms;
+- ordinary menus/dialogs/popovers/sheets;
+- notification bell/preferences/Admin delivery UI;
+- board filters/card controls;
+- Collaboration/checklist/comments;
+- notice board;
+- Lightbox controls where valuable;
+- dead selectors and final base/Preflight decision;
+- legacy fetch/emission paths only after replacements prove ownership.
+
+Each candidate becomes its own reviewed plan/release.
 
 ## Rules
 
-- group by real feature surfaces, not file-extension cleanup;
-- begin from the TB0 drift register and update it with the release;
-- compare matched prototype/current/migrated evidence at relevant viewports;
-- preserve useful production evolution and required accessibility behavior;
-- require an explicit owner-approved reason for material reference deviations;
-- remove an old path only when its last consumer has migrated;
-- preserve historical plans;
-- keep specialized CSS/libraries where clearer;
-- never turn TB8 into a whole-app rewrite;
-- continue one reviewed release at a time.
-
-## Acceptance for each surface
-
-- product behavior and access rules remain correct;
-- typography, spacing, geometry, hierarchy, borders, radius, elevation, focus, motion and responsive behavior pass the convergence contract;
-- no stock shadcn appearance or raw palette contract;
-- matched visual evidence is attached to the plan/review record;
-- drift-register items for the surface are closed, intentionally retained with rationale, or explicitly deferred with an owner;
-- no long-lived dual style/data owner;
-- obsolete selectors/paths are removed only when unreferenced;
-- targeted and full gates pass.
+- start from drift-register entries;
+- matched evidence at relevant fixed viewports/states;
+- preserve approved evolution/accessibility/security behavior;
+- owner approval for intentional evolution/deferral;
+- one styling/data owner;
+- remove old path only after last consumer;
+- no whole-app rewrite or stock shadcn appearance;
+- no raw framework palette contract;
+- full product/accessibility/tests/QA.
 
 ## Program completion
 
-TB8 completes only when:
-
-- docs describe the live architecture;
-- remaining legacy CSS is intentional and owned;
-- query/polling logic is centralized by feature;
-- old notification paths are removed only after all event types migrate;
-- every in-scope surface has a resolved drift-register disposition;
-- final visual, accessibility and full repository gates pass.
+- docs describe live architecture;
+- React/UI/query/delivery/Stage contracts are accurate;
+- remaining legacy CSS/fetch paths are intentional and owned;
+- old notification producers removed only after migration;
+- every in-scope drift entry resolved or explicitly deferred;
+- final full visual/accessibility/repository gates pass.

@@ -1,136 +1,130 @@
 # Design Convergence Contract
 
-**Status:** Approved direction; operational details and first drift register are finalized in TB0  
-**Applies to:** every revamp slice that changes rendered UI
+**Status:** Approved planning direction; TB0 creates the first durable drift register  
+**Applies to:** every rendered UI change
 
 ## 1. Outcome
 
-The UI revamp is a design-convergence program implemented with Tailwind CSS v4 and source-owned shadcn components. Installing or using those tools is not success by itself.
+The revamp uses React 19.2, Tailwind CSS v4, and source-owned shadcn components to implement Quincy—not to replace Quincy's visual identity with a framework aesthetic.
 
-A migrated surface succeeds when it behaves correctly, remains accessible and reads unmistakably as Quincy through its typography, spacing, geometry, hierarchy, borders, radius, elevation, motion and responsive behavior.
+A migrated surface succeeds when behavior/security/accessibility are correct and its typography, spacing, geometry, hierarchy, borders, radius, elevation, motion, imagery, and responsive behavior read unmistakably as Quincy.
 
 ## 2. Sources of truth
 
-Use these sources for different questions:
-
 | Question | Authority |
 |---|---|
-| Product behavior, permissions and workflow | Repository authority documents and approved active plan |
-| Visual language and tokens | Quincy design system under `prototype/_ds/.../tokens/` and its design-system guidance |
-| Comparable layout and flow intent | Original `prototype/` screens |
-| Production constraints and verified fixes | Current `portal/`, `docs/todo.md` and `docs/lessons.md` |
-| Implementation technique | Approved frontend architecture and active tracer-bullet plan |
+| Product behavior/security/workflow | approved repository authority and active implementation plan |
+| Visual values/language | Quincy design-system tokens/guidance |
+| Comparable layout/flow | original `prototype/` screens |
+| Production constraints/fixes | current `portal/`, `docs/todo.md`, `docs/lessons.md` |
+| Technique | approved frontend architecture/active bullet |
 
-The prototype is never an application-architecture template. Do not copy its global/CDN/mock-state structure into `portal/`.
+Prototype is never an application template. Current production is evidence, not automatic visual authority. Sera/shadcn is scaffolding, not a target look.
 
-Current production is evidence, not automatic design authority. A live difference may be valuable evolution, a platform/accessibility requirement or accidental drift.
+## 3. Fixed evidence matrix
 
-## 3. Drift classification
+TB0 captures equivalent-content/role evidence at:
 
-Every material difference in an audited or migrated surface receives one disposition:
+- desktop: **1440 × 900**;
+- compact landscape: **1024 × 768**;
+- phone: **390 × 844**;
+- Collaboration overlay open where relevant.
 
-| Disposition | Meaning | Required action |
+Capture representative material states where they change design:
+
+- empty/populated;
+- loading/error;
+- focus/keyboard;
+- popover/dialog/sheet open;
+- permission/read-only/collaboration-only;
+- overdue/conflict/pending where applicable.
+
+Zoom/reflow testing is separate from screenshot dimensions.
+
+TB0A captures focused React 18/19 before-after evidence for high-risk representative surfaces. React 19 parity becomes the TB1 baseline; do not silently replace evidence when a runtime difference appears.
+
+## 4. Classification
+
+| Disposition | Meaning | Action |
 |---|---|---|
-| Conforming | Matches the design system/reference intent | Preserve and test |
-| Intentional evolution | Product-approved improvement or added production feature | Record rationale and preserve |
-| Required platform/accessibility change | Necessary for semantics, focus, responsive use, security or live data | Record evidence and preserve |
-| Unwanted drift | Ad hoc divergence with no approved product reason | Correct through an isolated slice |
-| Unassessed | Evidence or owner decision is missing | Assign owner/follow-up; cannot silently become permanent |
+| Conforming | matches reference intent | preserve/test |
+| Intentional evolution | owner-approved product improvement | record rationale/preserve |
+| Required platform/accessibility change | objective semantic, focus, responsive, security, or live-data need | record evidence/preserve |
+| Unwanted drift | no approved reason | correct in isolated slice |
+| Unassessed | evidence/decision missing | assign owner; cannot silently pass |
 
-“Different because production has more features” is not a complete disposition. Classify the design treatment of the new feature even when the feature itself is intentional.
+“Production has more features” does not classify their design treatment.
 
-## 4. Drift register
+## 5. Drift register fields
 
-TB0 creates a durable register with at least:
+- surface/component/state;
+- exact viewport;
+- role/content fixture;
+- reference evidence;
+- current evidence;
+- specific difference;
+- disposition;
+- rationale/decision owner;
+- target bullet/plan;
+- status;
+- post-change verification.
 
-| Field | Description |
-|---|---|
-| Surface/state | Screen, component and state being compared |
-| Viewport | Exact width/height or named agreed viewport |
-| Reference evidence | Prototype/design-system screenshot or source |
-| Current evidence | Production/current-main screenshot or source |
-| Difference | Specific typography/layout/component/interaction delta |
-| Disposition | One classification from §3 |
-| Decision/rationale | Why it stays, changes or needs review |
-| Target slice | TB/plan that owns correction |
-| Status | Open, approved-retained, corrected, deferred |
-| Verification | Test/screenshot/review evidence after change |
+Keep evidence modular by surface.
 
-Keep the register modular by surface. Do not create one enormous screenshot document that every agent must load.
+## 6. Decision ownership
 
-## 5. Initial surface inventory
+- Planner/implementer gathers evidence and recommends classification.
+- Reviewer verifies evidence and implementation.
+- Product owner approves intentional evolution and explicit deferral.
+- Objective accessibility/security/platform requirements may be classified from evidence but remain recorded.
+- Unassessed material differences block acceptance or receive an explicit owner/follow-up.
 
-TB0 samples and registers at least:
+## 7. Initial inventory
 
-- sign-in and application shell;
-- Dashboard/Kanban/List and project cards;
-- Project Workspace rail, collection tabs and content;
-- Review Lightbox and markup controls;
+- sign-in/application shell;
+- Dashboard List/Kanban/cards;
+- Project Workspace rail, collection controls, responsive overview;
+- Review Lightbox/markup;
 - create/edit/admin forms;
-- collaboration panel;
+- Collaboration/checklist/comments;
 - notice board;
-- notifications;
-- phone-width navigation and critical workflows.
+- notification bell/preferences/Admin delivery operations;
+- quick-detail sheet when introduced;
+- phone-width critical workflows.
 
-A surface may be marked unassessed if representative state cannot be produced safely, but it needs an owner and follow-up.
+## 8. Per-surface definition of done
 
-## 6. Evidence method
+- product/security/data contract passes;
+- labels/errors/focus/Escape/focus return/keyboard/phone reachability pass;
+- semantic Quincy tokens used;
+- stock shadcn/Sera appearance replaced where needed;
+- no raw framework palette as feature contract;
+- current/reference/migrated evidence reviewed;
+- every material difference classified;
+- one styling owner per element;
+- obsolete selectors removed only after final consumer;
+- targeted and full gates pass.
 
-For comparable states:
+Visual similarity never excuses accessibility regression; accessibility work never excuses unrelated drift.
 
-1. use equivalent content and role;
-2. capture prototype and current/migrated surface at the same viewport;
-3. compare structure before polish;
-4. inspect typography, spacing, grid, control geometry, border/radius/elevation, color/token use, imagery treatment, focus/motion and responsive behavior;
-5. classify every material difference;
-6. attach the post-change evidence to the active plan/review record.
+## 9. Tailwind/shadcn guardrails
 
-When the prototype lacks a production feature, derive its treatment from design-system rules and adjacent prototype patterns. Do not invent stock shadcn styling.
+- Preflight disabled initially.
+- Base UI/Sera/Lucide are implementation choices, not visual authority.
+- Square cards, restrained control radius, hairlines, low elevation, calm motion, and editorial hierarchy remain defaults.
+- Keep Quincy fonts and semantic signals.
+- Keep focused CSS for specialized media, annotation, Tiptap, stacking, and complex motion when clearer.
+- Add only active-bullet components.
+- Generated source is reviewed first-party code.
 
-## 7. Per-surface definition of done
+## 10. TB8
 
-A UI slice is not done until:
+TB8 order is evidence-driven, not precommitted file order. Rank remaining surfaces by:
 
-- product behavior, security and data contracts pass;
-- labels, errors, focus, keyboard, Escape/focus-return and responsive reachability pass;
-- semantic Quincy tokens are used;
-- stock shadcn appearance has been customized;
-- raw framework palette values are absent from the feature-level contract;
-- the reference/current/migrated comparison is reviewed;
-- every material difference has a drift-register disposition;
-- obsolete selectors are removed only when their final consumer is gone;
-- targeted tests and the full repository gate pass.
+- operational pain;
+- unwanted-drift severity;
+- reuse value;
+- accessibility risk;
+- ability to retire a legacy owner.
 
-Visual similarity does not excuse accessibility regression. Accessibility improvement does not excuse unrelated visual drift.
-
-## 8. Tailwind/shadcn guardrails
-
-- Tailwind utilities express Quincy semantics; they do not define a new palette or aesthetic.
-- shadcn source becomes Quincy-owned code and is reviewed accordingly.
-- Square cards, restrained control radius, hairline structure and low elevation remain defaults.
-- Quincy fonts and editorial type hierarchy remain intentional.
-- Preflight stays controlled by the approved migration policy.
-- Focus remains visibly on-brand.
-- Keep focused CSS for media geometry, annotations, complex stacking, Tiptap internals and other cases where it is clearer.
-- One element has one styling owner during migration.
-
-## 9. Prototype boundaries
-
-Preserve from the prototype where still applicable:
-
-- visual hierarchy;
-- density and whitespace;
-- card/list/board composition;
-- typography and metadata treatment;
-- restrained motion and interaction tone;
-- responsive intent.
-
-Do not restore prototype-only mock behavior that conflicts with approved production requirements, real authentication, live data, capability enforcement or verified accessibility improvements.
-
-## 10. Lifecycle
-
-- TB0 establishes the register and owner approvals.
-- TB1 proves the first component/tooling path.
-- Every intervening UI-bearing tracer bullet updates its affected surface entries.
-- TB8 is a sequence of feature-surface convergence releases, not a final big-bang rewrite.
-- Completion requires every in-scope entry to be corrected, intentionally retained or explicitly deferred.
+Common shell/repeated ordinary controls generally precede specialized media surfaces. Each surface has its own plan/release. Program completion requires every in-scope entry corrected, intentionally retained, or explicitly deferred.

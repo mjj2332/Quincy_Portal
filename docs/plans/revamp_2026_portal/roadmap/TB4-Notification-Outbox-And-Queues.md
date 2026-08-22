@@ -1,42 +1,38 @@
 # TB4 — Notification Outbox and Cloudflare Queues
 
-**Primary user outcome:** one notification event is delivered reliably without blocking or risking the originating action.
+**Primary user outcome:** one existing project-comment mention is delivered reliably without blocking or risking the comment.
 
 ## First event
 
-Project-comment mention.
-
-TB4 proves the durable delivery envelope only. [TB4A](./TB4A-Collaboration-Pane-Editor-Assignment.md) reuses it for targeted assignment events, [TB4B](./TB4B-Project-Deadline-And-Reminders.md) for scheduled reminders, and [TB4C](./TB4C-Editor-Wide-Project-Change-Notifications.md) for the broad event registry. None may broaden TB4 before this checkpoint is accepted.
+Project-comment mention only.
 
 ## Scope
 
-- Add D1 outbox schema.
-- Write outbox intent in the same batch as the comment/mention mapping.
-- Publish outbox ID to a Queue.
-- Add idempotent Queue consumer.
-- Recheck access/active status.
-- Insert in-app notification and send email.
-- Configure retries and DLQ.
-- Add pending-outbox recovery scan.
-- Record delivery status/error.
+- Add D1 outbox and recipient/channel delivery ledger.
+- Write mention mapping and outbox intent in the same domain-write boundary.
+- Publish outbox ID to Cloudflare Queue.
+- Idempotent consumer with lease/token claims and access recheck.
+- Insert in-app row and send optional email.
+- Retry definitive transient failures; record ambiguous email acceptance as `unknown` without automatic retry.
+- Configure DLQ and Cron pending/stuck recovery.
+- Maintain one authoritative old/new semantic producer.
+- Add compact Admin delivery operations: pending/stuck, DLQ, failed, unknown; safe replay/discard with duplicate warning for unknown email.
 
 ## Non-goals
 
-- migrate every event type;
-- redesign notification bell;
-- implement all preferences/digests;
-- external notification platform.
-- editor-roster UI/mutations (TB4A), project deadline/reminder scheduling (TB4B), or editor-wide event migration (TB4C).
+- every notification producer;
+- full preferences/digest centre;
+- notification bell redesign;
+- roster/Deadline/broad registry work;
+- external notification vendor.
 
 ## Acceptance
 
-- Queue outage does not lose the notification intent;
-- duplicate delivery creates one in-app recipient row; email follows a provider-supported idempotency contract or an explicitly documented ambiguity policy;
-- access removal prevents delivery;
-- transient failure retries;
-- permanent failure is visible/recoverable;
-- comment creation remains successful and fast.
-
-## Checkpoint
-
-Accept the event envelope/idempotency/observability pattern before migrating other events.
+- Queue outage cannot lose intent;
+- duplicate Queue/replay creates one in-app row;
+- access removal suppresses;
+- transient retry, persistent DLQ, unknown email behavior;
+- Admin operations work without sensitive content;
+- comment remains successful/fast;
+- one producer and audit/activity not duplicated;
+- full gate/manual QA.
