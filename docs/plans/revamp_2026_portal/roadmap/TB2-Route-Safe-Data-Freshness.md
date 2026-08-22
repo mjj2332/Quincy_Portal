@@ -1,37 +1,40 @@
 # TB2 — Route-Safe Project Data Freshness
 
-**Primary user outcome:** a project page receives relevant changes without browser reload while deep links and multiple tabs remain correct.
+**Primary user outcome:** Project Workspace detail and active collection assets receive relevant changes without reload while routes/tabs/drafts remain correct.
 
 ## Scope
 
-- Add TanStack Query provider and typed query-key factory.
-- Migrate a bounded Project Workspace data set first: project detail plus one current collection/status path.
-- Include project/collection variables in keys.
-- Focus/reconnect refetch.
-- bounded polling while visible.
-- targeted invalidation after existing mutations.
-- abort/late-response protection.
-- preserve local state and existing special polling.
+- Add TanStack Query provider and typed key factory.
+- Migrate project detail and active collection assets only.
+- Keys include project ID and collection kind.
+- Use query AbortSignal/late-response protection.
+- Focus/reconnect refetch and bounded visible polling.
+- Narrow mutation invalidation plus same-browser BroadcastChannel messages.
+- Preserve existing job/AutoHDR/ingest/comment/checklist lifecycles temporarily.
+- Preserve active tab, Lightbox, selection, scroll, and drafts.
+- Clear inaccessible data on permanent access loss.
+
+## Targets
+
+- same-browser tab: approximately two seconds after successful mutation;
+- another browser/session: within bounded polling target, generally 30 seconds.
 
 ## Non-goals
 
-- convert every API call;
+- every API conversion;
 - router replacement;
 - WebSockets;
-- comment/notice storage changes;
+- duplicate five-second special polling;
 - UI redesign.
 
 ## Acceptance
 
-- direct URL works;
-- Project A/B tabs are isolated;
-- external simulated update appears without reload;
-- focus refresh works;
-- old request cannot overwrite new route;
-- drafts/lightbox/selection are preserved;
-- no duplicate job polling;
-- access removal clears private data.
-
-## Checkpoint
-
-Approve the query conventions before TB3/TB5 reuse them.
+- direct URL and A/B project isolation;
+- RAW/Edited separation;
+- late response cannot overwrite new route/collection;
+- focus/poll/broadcast external update;
+- narrow invalidation;
+- no draft/Lightbox/selection loss;
+- access removal clears private data;
+- Back/Forward/new-tab intact;
+- full gate/manual QA.

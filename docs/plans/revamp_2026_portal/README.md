@@ -1,108 +1,119 @@
 # `revamp_2026_portal` — Documentation Package
 
-**Status:** Coordinated research and planning package  
-**Baseline:** `main` at `dfddccbaaaaeff4b0ce3146c58af338d070d345e`  
-**Scope:** UI platform, automatic freshness, asynchronous discussions, notifications, time-critical project coordination, and the existing project Kanban board
+**Status:** Revised coordinated planning package; owner decisions settled, authority promotion pending  
+**Baseline:** `main` at `8bcb48245a727b048053bd3653cf07f3ad99b780`  
+**Revised:** 2026-08-22
 
 ## Purpose
 
-This folder is intentionally modular. Agents should load the smallest set of documents required for the active task instead of reading one monolithic handoff.
+This package coordinates the Quincy Portal runtime, UI, freshness, discussion, notification, project-coordination, and Kanban revamp. It is modular so agents load only the files required for the active task.
 
-The 2026-08-21 plan review split the former combined TB4A into three independently reviewable releases: editor assignment (TB4A), project deadline/reminders and card metadata (TB4B), and editor-wide project-change alerts (TB4C).
+The package is a proposal. It does not yet modify or outrank the repository authority chain.
 
 ## Package sections
 
 ### `core/`
 
-Stable decisions, current-state evidence, product requirements and technical architecture.
-
 | File | Purpose |
 |---|---|
-| [`01-Decision-Register.md`](./core/01-Decision-Register.md) | Approved decisions, pending choices and superseded guidance |
-| [`02-Current-State-Audit.md`](./core/02-Current-State-Audit.md) | What current `main` actually does |
-| [`03-PRD-Delta.md`](./core/03-PRD-Delta.md) | Product requirements to merge into the PRD |
-| [`04-Frontend-Architecture.md`](./core/04-Frontend-Architecture.md) | Tailwind/shadcn and component boundaries |
-| [`05-Route-And-Data-Freshness.md`](./core/05-Route-And-Data-Freshness.md) | Deep links, query keys, polling, focus refresh and multi-tab behavior |
-| [`06-Discussions-And-Notice-Board.md`](./core/06-Discussions-And-Notice-Board.md) | Quincy-owned asynchronous discussion model |
-| [`07-Notifications-On-Cloudflare.md`](./core/07-Notifications-On-Cloudflare.md) | D1 outbox, Queues, email and preferences |
-| [`08-Kanban-Modernization.md`](./core/08-Kanban-Modernization.md) | Existing board modernization and shared project discussion |
-| [`09-Migration-Rollback-And-Verification.md`](./core/09-Migration-Rollback-And-Verification.md) | Additive rollout, testing, release and rollback rules |
-| [`10-Repository-Document-Update-Map.md`](./core/10-Repository-Document-Update-Map.md) | How to update Decision Sheet, Plan, PRD, AGENTS, README and todo |
-| [`11-Design-Convergence.md`](./core/11-Design-Convergence.md) | Visual authority, drift classification, evidence and per-surface definition of done |
-
-### `research/`
-
-Option analysis and official source links. These explain why the target was chosen; they are not implementation plans.
+| [`01-Decision-Register.md`](./core/01-Decision-Register.md) | Settled owner decisions, superseded guidance, and authority mapping |
+| [`02-Current-State-Audit.md`](./core/02-Current-State-Audit.md) | Current-`main` facts that constrain implementation |
+| [`03-PRD-Delta.md`](./core/03-PRD-Delta.md) | Product requirements proposed for later PRD promotion |
+| [`04-Frontend-Architecture.md`](./core/04-Frontend-Architecture.md) | React 19.2, Tailwind/shadcn, token, and component contracts |
+| [`05-Route-And-Data-Freshness.md`](./core/05-Route-And-Data-Freshness.md) | Query identity, polling, focus refresh, invalidation, and cross-tab behavior |
+| [`06-Discussions-And-Notice-Board.md`](./core/06-Discussions-And-Notice-Board.md) | Discussion/read-state and structured activity boundaries |
+| [`07-Notifications-On-Cloudflare.md`](./core/07-Notifications-On-Cloudflare.md) | Outbox, Queue, delivery ledger, preferences, registry, and reminders |
+| [`08-Kanban-Modernization.md`](./core/08-Kanban-Modernization.md) | Stage semantics, pipeline boundary, ordering correction, and dnd-kit modernization |
+| [`09-Migration-Rollback-And-Verification.md`](./core/09-Migration-Rollback-And-Verification.md) | Release, rollback, testing, and operational gates |
+| [`10-Repository-Document-Update-Map.md`](./core/10-Repository-Document-Update-Map.md) | Proposed D-16–D-19 and A8–A12 promotion map |
+| [`11-Design-Convergence.md`](./core/11-Design-Convergence.md) | Evidence matrix, drift classification, and per-surface definition of done |
 
 ### `roadmap/`
 
-One concise file per tracer bullet. A bullet file is a scope brief, not a substitute for the repository's required reviewed implementation plan.
+One concise scope brief per tracer bullet. A scope brief is not a repository-native implementation plan. New bullets are:
+
+- `TB0A-React-19-2-Runtime-Upgrade.md`
+- `TB0B-Pipeline-Configuration-Boundary.md`
+
+Renamed/reframed bullets are:
+
+- `TB4A-Project-Workspace-Assignment-Rail.md`
+- `TB5A-Project-Stage-And-Kanban-Ordering-Contract.md`
+
+### `research/`
+
+Option analysis and official-source links. Research explains the selected direction but does not authorize implementation.
 
 ### `handoff/`
 
-Entry prompt for the next planning/implementation agent.
+The smallest safe entry prompt for the next agent.
 
 ### `archive/`
 
-Superseded material preserved only for provenance. Do not use it as active direction.
+Superseded material retained only for provenance.
 
 ## Read only what the task requires
 
 - **Owner approval:** decision register + PRD delta.
-- **Master-plan author:** current-state audit + all core architecture files + roadmap index.
-- **Design-convergence/TB1/TB8 UI agent:** design-convergence contract + frontend architecture + UI research + active bullet.
-- **TB2 freshness agent:** current-state audit + route/freshness architecture + TB2.
-- **TB3 discussion agent:** discussion architecture + messaging research + TB3.
-- **TB4 notification agent:** notification architecture + Cloudflare research + TB4.
-- **TB4A editor-assignment agent:** current-state audit + PRD delta + collaboration-pane source + TB4A.
-- **TB4B deadline/reminder agent:** current-state audit + PRD delta + notification architecture + Cloudflare research + TB4B; read Kanban architecture for the card metadata change.
-- **TB4C editor-alert agent:** current-state audit + PRD delta + notification architecture + Cloudflare research + TB4C.
-- **TB5A ordering agent:** current-state audit + Kanban architecture + the two historical implemented ordering plans + TB5A.
-- **TB5B board agent:** Kanban architecture + Kanban research + approved TB5A outcome + TB5B.
-- **Reviewer:** active bullet + migration/verification + files changed by the bullet.
+- **TB0/authority planning:** current-state audit + roadmap index + document update map.
+- **TB0A:** frontend architecture + migration/verification + TB0A.
+- **TB0B:** Kanban/stage architecture + TB0B.
+- **TB1/TB8:** design convergence + frontend architecture + UI research + active bullet.
+- **TB2:** current-state audit + route/data freshness + TB2.
+- **TB3:** discussion architecture + TB3.
+- **TB4:** notification architecture + TB4.
+- **TB4A:** current-state audit + PRD delta + TB4A.
+- **TB4B:** current-state audit + PRD delta + notification architecture + TB4B; read Kanban architecture for card metadata.
+- **TB4C:** PRD delta + discussion/activity architecture + notification architecture + TB4C.
+- **TB5A:** current-state audit + Kanban architecture + relevant historical implemented ordering plans + TB5A.
+- **TB5B:** Kanban architecture + approved TB5A outcome + TB5B.
+- **Reviewer:** active bullet + migration/verification + changed files.
 
 ## Status vocabulary
 
-Use these labels consistently:
-
-- **Approved direction:** user has explicitly selected it.
-- **Proposed:** recommended by research; not yet approved as a repository decision.
-- **Planned:** approved in a reviewed plan but not built.
-- **Implemented:** code is committed but may not be deployed.
-- **Live:** deployed and verified in production.
-- **Superseded:** historical; must not guide current implementation.
+- **Approved direction:** owner explicitly selected it in planning.
+- **Proposed authority:** wording prepared for Decision Sheet/Implementation Plan/PRD but not promoted.
+- **Planned:** approved repository-native implementation plan, not built.
+- **Implemented:** committed, not necessarily deployed.
+- **Live:** deployed and production-verified.
+- **Superseded:** retained only for history.
 
 ## Repository authority
-
-This package does not replace the existing authority chain. Once approved, its decisions must be merged into:
 
 ```text
 docs/Decision-Sheet.md
   → docs/Implementation-Plan.md
-  → docs/PRD.md
-  → supporting documents and per-slice plans
+  → docs/PRD.md / Personas.md / Sitemap.md
+  → supporting architecture and per-slice plans
 ```
 
-`docs/todo.md` remains the current-state tracker. `AGENTS.md` and `CLAUDE.md` must remain exact mirrors.
+This package proposes D-16–D-19 and A8–A12. Those authority files remain unchanged until a separate owner approval.
+
+## Revised roadmap
+
+```text
+TB0 → TB0A → TB0B → TB1 → TB2 → TB3 → TB4
+                                     │
+                                     └→ TB4A → TB4B → TB4C → TB5A → TB5B → TB6 → TB7 → TB8
+```
+
+Planning may overlap only when it does not assume an unresolved upstream implementation contract. Implementation follows the sequence.
+
+## Important current-main caveats
+
+- Production is React 18.3.1 today; React 19.2 is approved only as a target until TB0A is implemented.
+- The Project Workspace rail currently renders Stage read-only and Photographers only, although Editors already exist in the same project response and membership model.
+- Edit Project currently sends full Photographer/Editor lists; left-rail changes must use role-specific deltas.
+- Collaboration currently owns checklist and project comments; it must not gain project-level roster, Stage, or Deadline controls.
+- Admin Pipeline currently permits label, active state, and Up/Down order changes. TB0B deliberately removes ordinary self-service global ordering while retaining label and active-state controls.
+- Project Stage moves currently use `selectForEditing`; the revamp replaces that boundary with `moveProjectStage` for Admins and Editors.
+- Project comments, notice-board posts, notifications, and a Kanban board already exist. The revamp modernizes them rather than building greenfield replacements.
+- There is no staging environment. Production mutation remains human-authorized only.
 
 ## Plan lifecycle
 
-1. Approve decisions.
-2. Update authority documents.
-3. Create/review one implementation plan for the next tracer bullet.
-4. Build and independently verify.
-5. Deploy using the repository's Cloudflare order.
-6. Update the plan status and `docs/todo.md` with actual results.
-7. Move a completed plan to `docs/plans/implemented/` only when it matches live production.
-
-## Important baseline caveats
-
-- Current production already has a Kanban board; it is not greenfield, but its ordering semantics are not automatically preserved by the revamp.
-- The design tokens are largely intact; design drift must be assessed at the component, layout, interaction and responsive-behavior layers.
-- Current production already has project comments, a notice board, rich-text mentions and an in-app/email notification pipeline.
-- Current production already supports multiple editor memberships, but editor assignment is exposed in Edit Project rather than the collaboration pane.
-- Current production has checklist due values and a one-shot due reminder, but no distinct project-level deadline or configurable multi-reminder schedule.
-- Current Kanban cards show a RAW count and do not show a project deadline.
-- The path router is not inherently broken; the missing cross-screen freshness policy is the core issue.
-- There is no staging environment.
-- Production mutation remains human-authorized only.
+1. Approve authority promotion separately.
+2. Run TB0: promote decisions, establish baseline/drift register, and review the TB0A implementation plan.
+3. Build one bullet, independently verify, deploy, and record actual results.
+4. Update `docs/todo.md` only with real status.
+5. Move an implementation plan to `docs/plans/implemented/` only after it matches live production.

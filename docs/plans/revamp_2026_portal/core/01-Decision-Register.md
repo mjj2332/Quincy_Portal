@@ -1,92 +1,143 @@
 # Revamp Decision Register
 
-**Status:** Mixed — user-approved directions plus proposed implementation defaults  
-**Last updated:** 2026-08-21
+**Status:** Owner decisions settled in the proposal package; repository authority promotion pending  
+**Last updated:** 2026-08-22  
+**Baseline:** `main` at `8bcb48245a727b048053bd3653cf07f3ad99b780`
 
-This register prevents research conclusions, owner choices and agent recommendations from being mistaken for one another.
+This register separates owner-approved planning direction from future implementation evidence. A settled direction is not live until its tracer bullet is planned, built, verified, committed, and deployed.
 
-## A. User-approved directions
+## A. Program and platform decisions
 
 | ID | Decision | Status | Consequence |
 |---|---|---|---|
-| RV-D01 | Adopt Tailwind CSS v4 and shadcn as the target UI direction. | Approved direction | Older “no Tailwind / custom CSS only” handoffs are superseded. Existing Quincy tokens and brand remain authoritative. |
-| RV-D02 | Plan the UI, freshness, comments, notifications and Kanban as one coordinated revamp. | Approved direction | Cross-cutting contracts are designed together. |
-| RV-D03 | Implement the revamp through tracer bullets, not one large rewrite. | Approved direction | Each release has one primary outcome, a rollback boundary and its own reviewed plan. |
-| RV-D04 | Do not depend on a separate managed messaging, social-feed, notification-orchestration, Trello or Kanban vendor. | Approved direction | Liveblocks, Stream, Knock, TalkJS, Trello-as-backend and similar vendor-owned stores are out. |
-| RV-D05 | Cloudflare infrastructure and services are acceptable dependencies. | Approved direction | Workers, D1, R2, Queues, Cron, Workflows and related Cloudflare primitives may be used. |
-| RV-D06 | Quincy handles asynchronous project feedback, not real-time chat. | Approved direction | No requirement for typing, presence or WebSocket chat. Slack/Google Chat remain the realtime tools. |
-| RV-D07 | Keep path-based, deep-linkable URLs. | Approved direction | Multiple projects can be open in multiple tabs; links can target a project/sub-page. |
-| RV-D08 | Restore automatic data freshness without browser reload. | Approved requirement | Route-scoped data must refetch/invalidate safely while preserving drafts and interaction state. |
-| RV-D09 | Quincy owns collaboration/Kanban domain data and rules. | Approved direction | D1 is the leading authoritative store; vendor-specific domain models are avoided. |
-| RV-D10 | Make design convergence—not framework adoption—the UI outcome. | Approved direction | The Quincy design system is the visual authority, the prototype is the visual/flow reference, and material deviations require classification and evidence. |
-| RV-D11 | Correct Kanban ordering semantics before modernizing its interaction engine. | Approved direction | Existing priority/`boardPosition`/shoot-date behavior is not grandfathered; TB5A must establish one understandable contract before TB5B adds dnd-kit/freshness. |
-| RV-D12 | Assign or remove multiple project editors directly in the collaboration pane using an assignee-picker interaction comparable to checklist items. | Approved requirement | The Edit Project form is no longer required for routine editor roster changes; the existing multi-editor membership model remains authoritative. |
-| RV-D13 | Every active assigned editor, including the actor, receives a mandatory durable in-app notification for the approved registry of project changes, including checklist, project-comment and collection changes. | Approved requirement | TB4C defines a finite, versioned event registry and durable recipient fan-out rather than interpreting “all changes” as every database write. Email is an additional channel under its approved reliability/preference contract. |
-| RV-D14 | Add one project due date/time and allow zero, one or multiple configurable advance reminder offsets from the collaboration pane. | Approved requirement | TB4B provides presets for one day, four hours and one hour; users may choose any subset, and the implementation must safely supersede reminders when the deadline changes. |
-| RV-D15 | Show the project due date/time on Kanban cards and remove the card-level RAW count. | Approved requirement | TB4B changes card metadata only; RAW counts elsewhere and Kanban ordering/sort semantics stay unchanged unless separately approved. |
+| RV-D01 | Use one coordinated revamp delivered through independently coherent tracer bullets. | Approved direction | No wholesale rewrite; every release has one primary outcome and rollback boundary. |
+| RV-D02 | Keep `portal/` as the only production implementation and `prototype/` as reference-only. | Approved direction | Never extend or copy prototype application structure. |
+| RV-D03 | Upgrade production to the latest stable pinned React `19.2.x` patch in TB0A. | Approved direction | React/React DOM versions match exactly; D-19 will supersede only the React-major portion of D-15. |
+| RV-D04 | Keep the Vite SPA, TypeScript, `createRoot`, StrictMode, typed custom router, and Cloudflare Worker asset-serving architecture. | Approved direction | No SSR, Server Components, framework migration, or router replacement as collateral work. |
+| RV-D05 | React TB0A is compatibility-only. | Approved direction | No React Compiler, `Activity`, Actions/form refactor, `useEffectEvent` sweep, ref-as-prop rewrite, or product redesign in the runtime release. |
+| RV-D06 | Adopt Tailwind CSS v4 and source-owned shadcn components after TB0A/TB0B. | Approved direction | Tailwind/shadcn are implementation tools, not visual authority. |
+| RV-D07 | Use Base UI, Sera scaffold, Lucide, CSS variables, app-local component ownership, and disabled Preflight for TB1. | Approved direction | Quincy tokens and design language replace stock generated appearance. |
+| RV-D08 | Accept Tailwind v4's official browser floor. | Approved direction | Chrome/Chromium 111+, Safari 16.4+, Firefox 128+; no unsupported legacy-browser promise. |
+| RV-D09 | Exclude dark mode. | Approved direction | Reopen only through a separate product decision. |
+| RV-D10 | Use fixed visual baselines at 1440×900, 1024×768, and 390×844, plus relevant overlay/state evidence. | Approved direction | Material deviations require classification and owner disposition. |
 
-## B. Proposed defaults and decision gates
+## B. Freshness, discussion, and delivery decisions
 
-A proposed default is not approved merely because it appears here. The named gate must either approve it or record an explicit deferral with an owner and later gate.
+| ID | Decision | Status | Consequence |
+|---|---|---|---|
+| RV-D11 | Keep path-based deep links and adopt TanStack Query incrementally in TB2. | Approved direction | First migration is Project detail plus active collection assets; route and collection variables belong in query keys. |
+| RV-D12 | Use narrow same-browser `BroadcastChannel` invalidation plus focus/reconnect refresh and bounded polling. | Approved direction | Target approximately two seconds for same-browser tabs and 30 seconds for another session, without WebSockets. |
+| RV-D13 | Keep one flat project discussion stream in TB3. | Approved direction | Existing rich text, mentions, author-only edit/delete, newest-first order, and cursor pagination remain; replies/reactions/attachments/subscriptions are deferred. |
+| RV-D14 | Use an adapter over current project-comment storage and add server-owned read state. | Approved direction | Common storage is reconsidered only when a second real consumer justifies it. |
+| RV-D15 | Use a D1 outbox, Cloudflare Queue, recipient/channel delivery ledger, recovery scan, and DLQ. | Approved direction | Domain writes do not depend on successful Queue/email delivery. |
+| RV-D16 | Project-comment mention is the first TB4 durable event. | Approved direction | Exactly one old/new semantic producer is authoritative during cutover. |
+| RV-D17 | Record ambiguous email acceptance as `unknown` and do not retry automatically. | Approved direction | Admin/support replay warns that duplicate email is possible; mandatory in-app delivery is unaffected. |
+| RV-D18 | Add minimal Admin delivery operations in TB4. | Approved direction | Expose pending/stuck/DLQ/failed/unknown state plus safe replay/discard without sensitive content. |
 
-| ID | Proposed decision | Recommendation | Decision gate | Why |
-|---|---|---|---|---|
-| RV-P01 | shadcn primitive base | Start with Base UI; retain Radix as an alternative after a focused overlay proof. | TB0 | Base UI is the current shadcn default for new projects; Quincy has no large Radix investment. |
-| RV-P02 | Tailwind Preflight | Disable initially; preserve the existing Quincy base layer. | TB0 | Avoid unrelated global heading/list/border/image regressions during the first slice. |
-| RV-P03 | shadcn location | `portal/apps/web/src/components/ui/` | TB0 | One production web app exists; a shared workspace is premature. |
-| RV-P04 | Theme model | CSS variables mapped to existing Quincy semantic tokens. | TB0 | Keeps brand values centralized and avoids raw palette classes. |
-| RV-P05 | Server-state layer | Add `@tanstack/react-query` first on Project Workspace freshness. | TB0 direction; TB2 exact plan | The app now has real invalidation, polling, route isolation, retry and focus-refresh pressure. |
-| RV-P06 | Router | Keep the typed custom router initially. | TB0 | The router already supports path parsing/history/deep links; data freshness is the current defect. |
-| RV-P07 | Discussion migration | Add a common discussion service/model through an adapter before removing current tables. | TB3 | Preserves production while proving project and notice-board requirements. |
-| RV-P08 | Notification reliability | D1 transactional outbox + Cloudflare Queue + DLQ + recovery scan. | TB0 direction; TB4 exact plan | Removes direct request-path delivery fragility while staying Cloudflare-native. |
-| RV-P09 | Kanban interaction | Modernize the existing project board with dnd-kit first; compare Pragmatic DnD only if a measured limitation appears. | TB5B, after TB5A | dnd-kit is already installed and tested elsewhere in Quincy. |
-| RV-P10 | Kanban comments | Reuse project discussion because a current Kanban card is a project. | TB0 direction; TB6 exact surface | Avoids duplicate card/project comments. |
-| RV-P11 | Date/time UI | Try shadcn-first; permit a narrow MUI X fallback only if accessible minute-precise behavior is otherwise disproportionate. | TB1 component policy; TB4B proof | Tailwind/shadcn is now the UI platform; MUI is no longer pre-approved globally. |
-| RV-P12 | Dark mode | Exclude from the revamp. | TB0 | Prevents unrequested design and maintenance scope. |
-| RV-P13 | Icon policy | Use one approved icon library for new shadcn components; migrate existing icons only with their surfaces. | TB0 | Avoids collateral icon rewrite. |
-| RV-P14 | Kanban ordering default | Make `boardPosition` the sole persisted manual order; treat priority as metadata unless the user selects an explicit Priority sort; keep shoot-date modes view-only. | TB5A | Removes the mismatch between display-only grouping and flat persisted order. |
-| RV-P15 | Editor roster mutations | Use dedicated idempotent add/remove editor operations with an expected membership version or equivalent guard. | TB4A | Avoids concurrent lost updates from the existing stale full-list shape and removes only the editor role when a user holds multiple roles. |
-| RV-P16 | Reminder representation | Store shared project reminder rules as unique positive lead-time offsets normalized to integer minutes; provide 1 day, 4 hour and 1 hour presets plus a bounded custom control. | TB4B | Supports multiple selected reminders without treating them as recurrence. |
-| RV-P17 | Project deadline scheduling | Persist a canonical deadline instant plus explicit display timezone and versioned reminder occurrences; scan due occurrences every minute and emit through the TB4 outbox. | TB4B | Editable D1 schedules centralize cancellation, rescheduling and recovery. |
-| RV-P18 | Editor-wide event scope | Maintain a finite, versioned registry of user-visible project events; emit one summary for a bulk import/job rather than one event per internal row or asset. | TB4C | Keeps volume, deduplication and copy testable while satisfying the broad outcome. |
-| RV-P19 | Recipient timing | Include the actor when the actor is an assigned editor; select only editor memberships begun no later than the event; recheck active membership at delivery; do not backfill delivered history. | TB4C | Prevents delivery after access removal and keeps queued-event eligibility deterministic without silently adding unassigned admins. |
+## C. Project Workspace coordination decisions
 
-## C. Product choices still open
+| ID | Decision | Status | Consequence |
+|---|---|---|---|
+| RV-D19 | The Project Workspace left rail is the canonical project-level coordination surface. | Approved requirement | Stage, Deadline/Reminders, Photographers, and Editors live there; Collaboration remains checklist/subtasks plus discussion. |
+| RV-D20 | The rail uses operational-first grouping. | Approved requirement | Header → Production (Stage, Shoot, Deadline) → Team (Photographers, Editors) → Client (Agency, Agent) → Collections/Dropbox. |
+| RV-D21 | Photographer and Editor controls are independent rows with adaptive roster display and searchable anchored multi-select pickers. | Approved requirement | One/two names render directly; larger rosters show the first two plus `+N`; full names remain accessible. |
+| RV-D22 | Assignment changes apply immediately per person. | Approved requirement | Each delta has its own optimistic/pending/error state; the picker remains open. |
+| RV-D23 | Preserve current cross-role assignment eligibility. | Approved requirement | Photographer slot: active Photographer/Editor/Admin. Editor slot: active Editor/Admin. A user may hold both roles. |
+| RV-D24 | Use explicit idempotent role routes and membership-cycle guards. | Approved direction | Stale removal cannot delete a newly re-added membership; different people/roles remain independent. |
+| RV-D25 | Retain `editProject` for Photographer, Editor, Deadline, and Reminder mutations. | Approved direction | Collaboration/workspace visibility does not confer write access. |
+| RV-D26 | Create Project keeps initial assignments; routine team selectors retire from Edit Project after rail parity. | Approved direction | Temporary rollback capability may re-enable them during rollout. |
+| RV-D27 | Inactive assigned users remain visible and removable but cannot be newly selected. | Approved requirement | Stored roster is never hidden or silently rewritten. |
+| RV-D28 | Removing a person's final non-admin project role may atomically clear checklist assignments after a warning with the affected count. | Approved requirement | Retaining another role or active Admin status preserves checklist assignments. |
+| RV-D29 | Newly assigned users receive the targeted role-specific assignment notification; removal is audit-only. | Approved requirement | TB4C later notifies remaining Editors of the roster change without duplicating the new assignee's targeted row. |
+| RV-D30 | Stage-hidden collaboration-only users receive a limited read-only coordination summary outside Collaboration. | Approved requirement | Show presentation-safe Stage, Deadline/next reminder, and both rosters; expose no media/client/Dropbox/AutoHDR diagnostics. |
 
-| Gate | Product choices |
-|---|---|
-| TB0 | Approved design-convergence viewports/surfaces and deviation owner; UI primitive/Preflight/icon policy; TanStack Query direction; outbox direction; router retention. |
-| TB3 | One stream or named threads; reply depth; reactions; subscription levels; photographer collaboration access outside full workspace stage visibility. |
-| TB4 | Email-provider idempotency/ambiguous-acceptance policy and the minimum administration/replay surface. |
-| TB4A | Who may change the editor roster: current `editProject`/admin capability only (recommended) or a broader collaborator role. |
-| TB4B | Studio-fixed or per-project timezone; reminder delivery tolerance; custom reminder bounds/rule cap; past-offset behavior; optional reminder email default. |
-| TB4C | Exact initial event registry; copy and bulk coalescing; optional email policy; queued-event eligibility for a newly assigned editor. |
-| TB5A | Whether priority is metadata-only, an explicit optional sort or an ordering command; target-column insertion rule after a stage move. |
-| TB6 | Card-detail route/sheet/dialog behavior and whether system activity and human discussion are interleaved. |
-| TB7 | Notice-board replies, pinning, priority, expiry and required acknowledgement. |
-| Later/explicitly scoped | Comment/card attachment timing and policy; same-browser `BroadcastChannel`; exact visible-refresh delay if TB2 evidence does not settle it. |
+## D. Stage and pipeline decisions
 
-TB0 must decide the TB0 rows, approve D-16/D-17/D-18 at the umbrella level, and record every later choice as an explicit deferral to its owning bullet. A later implementation plan must not inherit a proposed default as though TB0 had approved it.
+| ID | Decision | Status | Consequence |
+|---|---|---|---|
+| RV-D31 | Introduce `moveProjectStage`, initially granted to Admins and Editors. | Approved direction | The rail, Kanban drag, and non-drag movement share one guarded Stage command. |
+| RV-D32 | Preserve fixed semantic system-stage progression. | Approved direction | `awaiting_raw → raw_review → editing_autohdr → edited_review → delivered`; display order cannot redefine workflow semantics. |
+| RV-D33 | Admins and Editors may manually enter or exit `editing_autohdr`. | Approved requirement | The change is Stage-only; it never starts, cancels, retires, or deletes AutoHDR work. Editors see neutral **Editing** copy. |
+| RV-D34 | Apply semantic confirmation rules. | Approved requirement | Confirm backward moves, skipped forward steps, delivered entry/exit, and dedicated AutoHDR entry/exit; normal one-step public-stage forward moves are immediate. |
+| RV-D35 | Use expected Stage/revision conflicts with no automatic retry. | Approved direction | A `409` shows authoritative state and keeps the picker open. |
+| RV-D36 | Rail and non-drag Stage moves append to target bottom; positional Kanban drag may supply exact neighbours. | Approved direction | Priority is preserved as metadata and does not determine insertion. |
+| RV-D37 | Archived projects are read-only. | Approved requirement | Restore before changing Stage, team, Deadline, or Reminder rules. |
+| RV-D38 | A project on an inactive Stage remains visible and may move to an active destination. | Approved requirement | Inactive Stages cannot be newly selected after leaving them. |
+| RV-D39 | Entering/leaving `delivered` is Stage-only. | Approved requirement | It never publishes, revokes, creates, or deletes delivery artifacts. |
+| RV-D40 | Global label and active/inactive management stays in Admin; global ordering becomes developer-managed. | Approved direction | TB0B removes Admin Up/Down controls and the ordinary self-service move endpoint. Stage creation/deletion and generic workflow building remain deferred. |
 
-## D. Superseded guidance
+## E. Deadline and reminder decisions
 
-The archived 2026-08-20 handoff contains decisions that are no longer active:
+| ID | Decision | Status | Consequence |
+|---|---|---|---|
+| RV-D41 | Use one combined left-rail Deadline/Reminders block and editor. | Approved requirement | Deadline and offsets are one transactional versioned schedule. |
+| RV-D42 | Use `Australia/Sydney` as the explicit studio timezone. | Approved requirement | Reject DST gaps; require earlier/later selection for repeated local times; persist local value, zone, offset/fold, and UTC instant. |
+| RV-D43 | Provide 1-day, 4-hour, and 1-hour presets with none preselected. | Approved requirement | A project may use zero reminders. |
+| RV-D44 | Permit custom whole-number minutes/hours/days from 1 minute to 30 days, maximum eight unique normalized offsets. | Approved requirement | Equivalent offsets deduplicate. |
+| RV-D45 | Scan every minute and target mandatory in-app delivery within two minutes. | Approved requirement | Exact-to-the-second delivery is not promised. |
+| RV-D46 | Every Deadline produces a Due-now event. | Approved requirement | A past Deadline produces one current-version Due-now/overdue event and skips elapsed advance offsets. |
+| RV-D47 | Schedule changes create one broad semantic event. | Approved requirement | Deadline/rule edits do not emit one event per offset. |
+| RV-D48 | Future reminder recipients are resolved from active Editor membership cycles at fire/delivery time. | Approved requirement | Unassigned Admins are excluded; remove/re-add cannot receive older-cycle events. |
+| RV-D49 | Rescheduling creates a new version whose future offsets may fire again. | Approved requirement | Historical notifications remain; stale occurrences never fire. |
+| RV-D50 | Deadline reminder email is default-on with a per-user global opt-out. | Approved requirement | The Notification Preferences page ships before default-on email is enabled; mandatory in-app rows cannot be disabled. |
+| RV-D51 | Delivery or archival supersedes all pending occurrences without clearing metadata. | Approved requirement | Leaving delivered/restoring archived does not silently resume reminders; the coordinator must confirm/save a new schedule version. |
+| RV-D52 | Kanban cards show absolute Deadline/overdue metadata and omit the card-level RAW count. | Approved requirement | No empty placeholder, Deadline sort, priority rewrite, or automatic Stage movement. |
 
-- do not migrate to Tailwind;
-- custom CSS remains the only styling system;
-- MUI X is the selected first proof;
-- Radix should be evaluated as a separate pre-shadcn primitive strategy;
-- TanStack Query remains deferred;
-- UI refactoring is scoped separately from collaboration/Kanban freshness.
+## F. Activity, registry, and privacy decisions
 
-Those files are retained under `archive/` only for historical reasoning.
+| ID | Decision | Status | Consequence |
+|---|---|---|---|
+| RV-D53 | Persist one immutable structured activity event per semantic project operation. | Approved direction | Security audit remains separate; notifications derive/reference activity rather than recipient inbox rows. |
+| RV-D54 | Mandatory Editor-wide in-app delivery uses a finite versioned registry. | Approved requirement | Event/source/actor/copy/deep-link/recipient/coalescing/producer ownership are explicit. |
+| RV-D55 | Exclude pure Kanban/checklist reorder from broad notifications. | Approved requirement | Stage and Priority changes notify; position-only changes remain audited/activity-capable. |
+| RV-D56 | Comment create/delete notify; repeated same-actor edits coalesce within five minutes. | Approved requirement | Broad comment copy contains no body excerpt; targeted mention policy remains separate. |
+| RV-D57 | One user action or background job produces one collection/delivery summary. | Approved requirement | No event per asset, rendition, cache write, or retry bookkeeping. |
+| RV-D58 | Newly assigned Editor receives one targeted assignment row, not a duplicate broad roster row. | Approved requirement | Existing eligible Editors receive the broad roster-change event; removed users receive no content-bearing removal row. |
+| RV-D59 | Broad registry email is off by default. | Approved requirement | Default-on email is limited to targeted mentions, targeted assignments, and Deadline reminders. |
+| RV-D60 | Use minimal operational notification copy. | Approved requirement | Include actor, project, category/outcome, link; checklist title allowed; no broad comment body, filenames, notes, client contacts, Dropbox paths, or provider diagnostics. |
+| RV-D61 | Membership cycle must begin by event occurrence and still exist at delivery. | Approved requirement | Removal suppresses queued delivery; no history backfill; unassigned Admins are excluded. |
 
-## E. Repository decision mapping
+## G. Kanban and later-surface decisions
 
-After owner review, add at least three approved decisions to `docs/Decision-Sheet.md`:
+| ID | Decision | Status | Consequence |
+|---|---|---|---|
+| RV-D62 | `boardPosition` is the sole persisted manual order. | Approved direction | Priority and shoot-date sorts are view-only and never rewrite manual order. |
+| RV-D63 | Normalize existing positions once to preserve current visible Board order. | Approved direction | Cutover does not cause an unrelated card reshuffle. |
+| RV-D64 | Priority view sorts `1` highest through `10`, null last; ties use `boardPosition` then ID. | Approved requirement | Drag/reorder controls are disabled outside Board order. |
+| RV-D65 | Use dnd-kit first in TB5B. | Approved direction | Compare another engine only after a measured blocker; never run two production engines. |
+| RV-D66 | TB6 uses a URL-addressable responsive sheet with separate Overview, Activity, and Discussion views. | Approved requirement | Preserve Back/Forward, deep links, new-tab behavior, and a canonical workspace link. |
+| RV-D67 | TB7 migrates read state/freshness/reliable mention delivery only. | Approved direction | Replies, pinning, priority, expiry, and acknowledgement require separate later decisions. |
+| RV-D68 | TB8 ordering is evidence-driven. | Approved direction | One reviewed surface release at a time; no final wholesale CSS rewrite. |
 
-- **D-16 — Frontend UI platform and design convergence:** Tailwind v4 + shadcn, incremental; Quincy design system authoritative; prototype used as the visual/flow reference with documented deviations.
-- **D-17 — Collaboration/freshness/Kanban ownership:** Quincy-owned domain data on Cloudflare; asynchronous refresh; no external managed platform; Kanban ordering corrected before interaction modernization.
-- **D-18 — Project coordination, deadlines and editor notifications:** collaboration-pane multi-editor assignment; one project deadline with multiple lead-time reminders; durable editor-wide notifications for an approved event registry; Kanban due metadata replacing the card RAW count.
+## H. Proposed repository authority mapping
 
-Do not silently modify D-15. D-15 still correctly selects React 18 + TypeScript + Vite SPA.
+After a separate owner approval, TB0 should propose:
+
+- **D-16 — Frontend UI platform and design convergence.**
+- **D-17 — Quincy-owned collaboration, freshness, pipeline, and Kanban architecture.**
+- **D-18 — Project Workspace coordination, Deadline, and Editor notifications.**
+- **D-19 — React 19.2 runtime baseline**, explicitly superseding only the React-major portion of D-15.
+
+Implementation Plan amendments:
+
+- **A8:** UI platform and design convergence.
+- **A9:** route-aware server-state freshness.
+- **A10:** discussions, durable notifications, pipeline semantics, and Kanban.
+- **A11:** canonical rail coordination, roster deltas, Stage capability, Deadline/reminders, and Editor registry.
+- **A12:** React 19.2 compatibility-only runtime upgrade.
+
+These authority documents are intentionally unchanged by this package revision.
+
+## I. Superseded active-package guidance
+
+The following statements are superseded wherever they appear in historical material:
+
+- Editor assignment belongs in the Collaboration panel.
+- Project Deadline/Reminder editing belongs in the Collaboration panel.
+- Stage mutation remains under `editProject`.
+- `editing_autohdr` is not a manual destination.
+- React 19 is a revamp non-goal.
+- Admin Up/Down pipeline ordering remains ordinary self-service.
+- Priority grouping is part of authoritative Board order.
+- TB4A covers Editors only.
+- TB5A is only a numeric ordering repair.

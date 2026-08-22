@@ -1,177 +1,142 @@
 # Route and Data Freshness Architecture
 
-**Status:** Proposed architecture; automatic refresh is a user-approved requirement  
+**Status:** Settled proposal; automatic refresh is an approved requirement  
 **Related:** [Current-state audit](./02-Current-State-Audit.md), [TB2](../roadmap/TB2-Route-Safe-Data-Freshness.md)
 
 ## 1. Required behavior
 
-Keep path-based URLs and restore automatic updates.
-
-A user must be able to:
+Keep path-based URLs and the typed custom router. A user must be able to:
 
 - open `/projects/A` and `/projects/B` in separate tabs;
-- follow a direct project/sub-page link;
-- remain on a page and receive relevant server changes without reloading;
-- return to a background tab and see stale data refreshed;
-- preserve unsaved local work while server data refreshes.
+- follow direct project/sub-surface links;
+- remain on a route and receive relevant changes without a browser reload;
+- return to a background tab and refresh stale data;
+- preserve drafts and active interactions during refetch;
+- stop displaying private data after access removal.
 
 ## 2. Diagnosis
 
-The custom router already subscribes to history and scopes `ProjectWorkspace` by `projectId`. The stale behavior is caused by inconsistent fetch lifecycles, not by the existence of routes.
+The router already tracks history/search and scopes Project Workspace by project ID. Staleness comes from component-specific fetch lifecycles without shared route keys, invalidation, cancellation, focus/reconnect, or bounded polling.
 
-Several components fetch on mount or after their own mutations but have no shared policy for:
+## 3. Server-state layer
 
-- route-keyed caching;
-- stale time;
-- polling;
-- focus/reconnect refresh;
-- query invalidation;
-- cancellation/late-response protection.
+Adopt TanStack Query incrementally in TB2. Do not convert every request at once.
 
-## 3. Proposed server-state layer
+First proof:
 
-Use TanStack Query beginning with Project Workspace.
+- `GET /api/projects/:projectId`;
+- `GET /api/projects/:projectId/assets?collection=<kind>`.
 
-Why it is justified now:
-
-- independently changing comments/board/project state;
-- background refresh;
-- precise mutation invalidation;
-- optimistic updates;
-- stale request coordination;
-- retry/reconnect behavior;
-- multiple routes/tabs.
-
-This is not “modernization for its own sake”; it directly solves a user-visible regression.
+This proves both project-route isolation and parameterized child-resource isolation while leaving jobs, AutoHDR, ingest, comments, and checklist on their existing lifecycles temporarily.
 
 ## 4. Query identity
 
-Every variable used by the request must be represented in the query key.
-
-Suggested key factory:
+Every request variable belongs in its key.
 
 ```ts
 const projectKeys = {
-  all: ["projects"] as const,
-  list: (scope: "active" | "archived") => ["projects", { scope }] as const,
   detail: (projectId: string) => ["project", projectId] as const,
-  assets: (projectId: string, collection: string) => ["project-assets", projectId, collection] as const,
-  ingest: (projectId: string) => ["project-ingest", projectId] as const,
-  jobs: (projectId: string) => ["project-jobs", projectId] as const,
-  autohdr: (projectId: string) => ["project-autohdr", projectId] as const,
+  assets: (projectId: string, collection: string) =>
+    ["project-assets", projectId, collection] as const,
   discussion: (projectId: string) => ["project-discussion", projectId] as const,
   subtasks: (projectId: string) => ["project-subtasks", projectId] as const,
+  board: (scope: string, sort: string) => ["projects", { scope, sort }] as const,
 };
 ```
 
-Never use a generic key that omits the project or collection identifier.
+Project A can never write into Project B's cache. RAW and Edited never share identity.
 
-## 5. Recommended freshness policy
+## 5. Freshness contract
 
-Exact intervals remain a product/plan choice. Starting proposal:
+- Visible ordinary project/board resources: bounded 20–30 second polling where operationally useful.
+- Hidden browser tab: pause ordinary polling.
+- Focus/reconnect: refetch stale visible resources.
+- Jobs/AutoHDR: retain/adapt current five-second terminal-aware behavior; never duplicate it.
+- Discussion/checklist: later slices use open-state polling and immediate refetch on open/focus.
+- Notifications: list on open plus bounded unread polling.
 
-| Resource | Visible/active | Hidden/collapsed | Focus/reconnect |
-|---|---|---|---|
-| Dashboard/Kanban | 20–30 s | pause in background | refetch if stale |
-| Project detail | 20–30 s | pause in background | refetch if stale |
-| Active asset collection | 20–30 s when operationally useful | pause | refetch if stale |
-| Jobs/AutoHDR | retain/adapt current 5 s while active | stop at terminal | immediate if stale |
-| Project discussion | 15–30 s while open | 60–120 s or stop | refetch on open/focus |
-| Subtasks | 20–30 s while panel open | slow/stop | refetch on open/focus |
-| Notice board | 25–60 s depending open state | current model can be retained initially | refetch on focus |
-| Notifications | unread count 30–60 s; list on open | pause/slow | refetch on open/focus |
+Exact per-resource intervals belong to each implementation plan, but no one global interval is allowed.
 
-Do not set one global polling interval for all data.
+## 6. Same-browser invalidation
 
-## 6. Mutation behavior
-
-After a successful mutation:
-
-1. update the relevant cache immediately when the response contains authoritative data;
-2. invalidate the smallest affected query set;
-3. await required invalidation before reporting final completion where consistency matters;
-4. do not reload the whole app.
-
-Examples:
-
-- project edit → detail + active project list/Kanban;
-- stage move → board list + project detail;
-- comment post → project discussion + unread/notification queries as appropriate;
-- asset delete → current collection + project counts/cover only;
-- notification read → notification list + unread count.
-
-## 7. Stale request handling
-
-- Query functions must use the supplied `AbortSignal` where the API helper supports it.
-- Route changes must cancel or render old responses irrelevant through query identity.
-- Project A's response can never write into Project B's query/cache.
-- RAW and Edited collection requests cannot share identity.
-
-## 8. Local draft preservation
-
-Background refetch must not reset:
-
-- Tiptap content being composed or edited;
-- form fields with unsaved changes;
-- an open picker/dialog;
-- current scroll;
-- active drag;
-- lightbox frame and selection state.
-
-Server response merging must distinguish persisted entities from local drafts. Never replace an entire feature component with a loading state during a background refresh.
-
-## 9. Cross-tab behavior
-
-Polling and focus refresh are sufficient for the product requirement.
-
-Optional enhancement: use same-origin `BroadcastChannel` to publish narrow invalidation messages after mutations:
+Use a narrow same-origin `BroadcastChannel` after successful mutations:
 
 ```ts
 { type: "invalidate", resource: "project", projectId: "..." }
 ```
 
-Other Quincy tabs invalidate matching queries. This improves same-browser immediacy but does not replace server polling/focus refresh.
+Other Quincy tabs invalidate only matching queries. This targets roughly two seconds for same-browser visibility. It supplements—not replaces—server polling and focus refresh, so different browsers/sessions remain correct within the 30-second target.
 
-## 10. API optimizations
+## 7. Mutation behavior
 
-Add only when measurements justify them:
+After success:
 
-- `after` cursors for discussion/activity increments;
-- `ETag`/`If-None-Match` for unchanged lists;
-- compact `latest` endpoints for collapsed surfaces;
-- summary endpoints for unread counts;
-- separate list/detail payloads rather than repeatedly returning heavy data.
+1. apply authoritative response data when available;
+2. invalidate the smallest affected query set;
+3. broadcast narrow same-browser invalidation;
+4. never reload the whole app.
 
-## 11. Access changes
+Examples:
 
-If a refetch returns `403` or `404` because access was removed:
+- team delta → project detail/coordination summary and related board quick detail;
+- Deadline change → project detail, board, coordination summary;
+- Stage move → project detail and board;
+- asset mutation → active collection and affected project summary only;
+- notification read → inbox list and unread count.
 
-- remove/clear inaccessible cached data;
-- show the correct collaboration-only or unavailable state;
-- do not keep displaying stale private data;
-- avoid retry loops for permanent authorization failures.
+## 8. Request cancellation and late responses
 
-## 12. Tests
+- Query functions use the provided `AbortSignal` where supported.
+- Key identity makes old route responses irrelevant.
+- Route changes cancel or ignore late work.
+- Permanent `403`/`404` stops ordinary retries, clears inaccessible content, and renders the correct collaboration-only/unavailable state.
 
-TB2 must prove:
+## 9. Draft and interaction preservation
 
-1. Direct `/projects/:id` load.
-2. Project A/B route isolation.
-3. Late A response cannot overwrite B.
-4. RAW/Edited query separation.
-5. Visible polling obtains a simulated server change.
-6. Window focus refetch obtains a simulated server change.
-7. Mutation invalidates only affected resources.
-8. Background refresh does not clear drafts or selection.
-9. Existing active-job polling is not duplicated.
-10. Access removal clears private cached data.
-11. Back/Forward and open-in-new-tab still work.
-12. Hidden-page timer behavior is acceptable.
+Background refresh must not reset:
 
-## 13. Non-goals
+- Tiptap draft/edit state;
+- form/picker drafts;
+- open popover/dialog/sheet;
+- scroll;
+- active drag;
+- Lightbox frame and selection;
+- dashboard filter/view selection.
 
-- WebSockets.
-- Durable Objects for every screen.
-- Realtime chat semantics.
-- Router replacement in TB2.
-- Converting all server state in one release.
+Do not replace an entire populated feature with a loading screen during background refetch. Merge persisted entities while keeping local drafts separate.
+
+## 10. Coordination conflicts
+
+Automatic freshness does not replace guarded mutation:
+
+- membership removal carries membership-cycle identity;
+- Deadline save carries schedule version;
+- Stage move carries expected current Stage/revision;
+- board movement carries the accepted snapshot/version/neighbour contract.
+
+A conflict shows authoritative state, preserves the user's local context where appropriate, and never silently retries across a changed premise.
+
+## 11. Tests
+
+TB2 and later consumers must cover:
+
+1. direct project URL;
+2. A/B tab isolation;
+3. late A response cannot overwrite B;
+4. RAW/Edited key separation;
+5. visible simulated external change;
+6. focus/reconnect refresh;
+7. narrow mutation invalidation;
+8. same-browser broadcast invalidation;
+9. hidden-page timer behavior;
+10. drafts/selection/Lightbox preserved;
+11. no duplicate special polling;
+12. access removal clears private data;
+13. Back/Forward and native new-tab behavior.
+
+## 12. Non-goals
+
+- WebSockets/presence.
+- Router replacement.
+- One-release conversion of all server state.
+- Polling every resource every five seconds.

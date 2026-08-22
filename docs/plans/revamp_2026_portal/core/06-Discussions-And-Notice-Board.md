@@ -1,286 +1,182 @@
-# Discussions and Notice Board Architecture
+# Discussions, Read State, Activity and Notice Board Architecture
 
-**Status:** Proposed Quincy-owned asynchronous collaboration model  
-**Related:** [Messaging research](../research/Messaging-And-Commenting-Research.md), [TB3](../roadmap/TB3-Project-Discussion-V2.md), [TB7](../roadmap/TB7-Notice-Board-Migration.md)
+**Status:** Settled proposal  
+**Related:** [TB3](../roadmap/TB3-Project-Discussion-V2.md), [TB4C](../roadmap/TB4C-Editor-Wide-Project-Change-Notifications.md), [TB6](../roadmap/TB6-Project-Card-Detail-And-Discussion.md), [TB7](../roadmap/TB7-Notice-Board-Migration.md)
 
-## 1. Product model
+## 1. Domain boundaries
 
-Quincy is an asynchronous project-collaboration application, not a chat system.
-
-Discussion targets may eventually include:
-
-- project;
-- notice-board post;
-- asset/review item;
-- a non-project task/card if such a product is later added.
-
-The current project Kanban card is the project itself, so it should reuse project discussion rather than create a duplicate `kanban_card` discussion.
-
-Project comments also produce structured project-change activity for the editor-wide notification registry. That broader event does not replace targeted mention delivery or change comment ownership rules.
-
-## 2. Current assets to reuse
-
-- Shared Tiptap `RichTextDoc` schema and parser.
-- Mention extraction, label normalization and eligibility checks.
-- Rich-text editor and read-only renderer.
-- Byte guards.
-- Project collaboration access middleware.
-- Author-only edit/delete policy.
-- Audit infrastructure.
-- Existing project comment and notice-board data.
-
-## 3. Target domain boundaries
-
-Separate these concepts:
+Keep three distinct domains:
 
 ```text
 Discussion
-  human-authored posts, comments, replies, mentions, reactions
+  human-authored project comments and notice posts
 
 Activity
-  immutable system events such as stage move, assignment or due-date change
+  immutable user-visible project operations
 
 Notification
-  recipient-specific delivery/read item derived from discussion/activity events
+  recipient-specific delivery/read rows derived from discussion/activity
 ```
 
-The UI may combine discussion and activity into a chronological timeline, but storage and mutation rules remain distinct.
+Security audit remains separate from all three and is never exposed wholesale as project activity.
 
-## 4. Proposed common schema
+A current Kanban card is a project, so card detail reuses project discussion/activity rather than creating a second `kanban_card` store.
 
-Exact table names are a plan decision. Conceptual model:
+## 2. Existing assets to preserve
 
-```text
-discussion_threads
-  id
-  scope_type              project | notice_post | asset | future
-  scope_id
-  title nullable
-  status                  open | resolved | archived
-  created_by
-  created_at
-  updated_at
+- shared validated Tiptap document format;
+- rich-text editor/renderer and byte guards;
+- mention extraction/eligibility;
+- project collaboration access;
+- author-only comment/post edit/delete;
+- cursor pagination and newest-first project comments;
+- audit infrastructure;
+- existing project-comment and notice-board data.
 
-discussion_entries
-  id
-  thread_id
-  parent_entry_id nullable
-  author_id
-  body
-  content_json
-  created_at
-  edited_at nullable
-  deleted_at nullable
+## 3. TB3 project discussion contract
 
-discussion_mentions
-  id
-  entry_id
-  mentioned_user_id
-  created_at
+TB3 remains focused:
 
-discussion_reactions
-  entry_id
-  user_id
-  reaction
-  created_at
-
-discussion_subscriptions
-  thread_id
-  user_id
-  level                    all | replies_mentions | mentions | muted
-  updated_at
-
-discussion_reads
-  thread_id
-  user_id
-  last_read_entry_id nullable
-  last_read_at
-
-discussion_attachments
-  id
-  entry_id
-  object_key
-  original_name
-  content_type
-  byte_size
-  uploaded_by
-  created_at
-```
-
-This is a target model, not approval to create every table in TB3.
-
-## 5. Migration strategy options
-
-### Option A — adapter first (recommended)
-
-- Keep existing `project_comments` and notice-board tables initially.
-- Build a common service/query interface over project comments.
-- Add server-side read state and route-aware refresh.
-- Prove the API/UI contract.
-- Migrate storage only when a second consumer makes the common schema valuable.
-
-Advantages: smallest data migration and easiest rollback.
-
-### Option B — common schema in TB3
-
-- Create new thread/entry tables.
-- Backfill project comments.
-- Dual-read or cut over behind a feature flag.
-- Keep old tables read-only until verification.
-
-Advantages: earlier unification; higher risk and larger release.
-
-TB0/TB3 plan review should choose based on required first-release features.
-
-## 6. Project discussion v2
-
-Initial recommended scope:
-
-- one project discussion stream;
+- one flat project stream;
 - current rich text and mentions;
-- current author edit/delete;
+- author-only edit/delete;
+- current newest-first order;
 - cursor pagination;
-- delayed refetch/focus refresh;
-- server-side read marker;
-- no mandatory reactions, attachments or nested replies in the first slice;
-- preserve collaboration-only access behavior for stage-hidden project members.
-- emit one versioned `project.comment_created`, `project.comment_edited` or `project.comment_deleted` activity/outbox intent for the approved editor audience; mention events remain separate.
+- automatic refresh and draft preservation;
+- server-owned read state;
+- adapter over current `project_comments`/mention storage.
 
-## 7. Replies
+Do not add in TB3:
 
-Product decision required:
+- replies;
+- reactions;
+- attachments;
+- named threads;
+- subscription levels;
+- universal thread/entry data migration.
 
-- flat top-level stream only;
-- one-level replies (recommended if replies are needed);
-- arbitrary nesting.
+A common service/query interface may be introduced, but common storage waits until TB7 proves a second real consumer.
 
-One-level replies generally matches Trello/Facebook-style context without creating a deeply nested mobile experience or complex unread semantics.
+## 4. Read-state semantics
 
-## 8. Notice board
-
-A notice-board post is conceptually a thread root with staff-wide visibility.
-
-Potential notice-specific metadata:
+Store per-user read state in D1:
 
 ```text
-priority
-pinned_at
-expires_at
-requires_acknowledgement
-created_for_role/audience
+scope/thread id
+user id
+last-read entry id nullable
+last-read timestamp
 ```
 
-Potential behavior:
+Mark read only after:
 
-- top-level post authoring;
-- comments/replies if approved;
-- mentions;
-- server-side unread/read;
-- pinning and expiry;
-- acknowledgement records for critical notices.
+1. a successful fresh fetch; and
+2. the discussion is visibly presented.
 
-Do not force notice behavior to match project comments exactly.
+A hidden background poll does not mark read. Open/focus triggers a fresh fetch when stale. Marking is idempotent. Posting one's own comment may advance the author's read marker using the authoritative returned entry.
 
-## 9. Permissions
+## 5. Structured activity
+
+Persist one immutable event per semantic project operation:
+
+```text
+id
+project_id
+actor_id nullable
+occurred_at
+registry_version
+activity_type
+source_key
+safe_payload_json
+deep_link_context
+```
+
+Candidate types include:
+
+- `project.stage_changed`;
+- `project.priority_changed`;
+- `project.team_changed`;
+- `project.deadline_changed`;
+- `project.checklist_changed`;
+- `project.comment_created|edited|deleted`;
+- `project.collection_changed`;
+- `project.archived|restored`;
+- `project.delivered`.
+
+Pure position reorder may remain audit/activity-only and does not create broad inbox noise. Internal retries, cache writes, and delivery bookkeeping never create activity.
+
+## 6. Comment activity/noise
+
+- Comment create: one structured activity and broad Editor event.
+- Comment delete: one content-free structured activity/event.
+- Comment edit: coalesce repeated edits by the same actor to the same comment within five minutes into at most one broad “Comment updated” event.
+- Targeted `@mention` delivery remains separate and may retain its approved excerpt policy.
+- Broad comment notifications never contain the body excerpt.
+
+## 7. Permissions and privacy
 
 Project discussion:
 
-- reuse `hasProjectCollaborationAccess` semantics;
-- mention only currently eligible project participants/admins;
-- edit/delete remains author-only unless explicitly changed;
-- every mutation remains audited.
-- editor-wide fan-out does not grant discussion access; mandatory in-app delivery includes an editor actor but still rechecks the same active collaboration/editor eligibility before including project content.
+- reuse collaboration-access semantics;
+- mention only eligible active project participants/Admins;
+- author-only edit/delete remains exact;
+- Editor-wide delivery never grants discussion access;
+- access is rechecked on request and delivery.
 
-Notice board:
+Activity payloads and broad notifications use minimal operational detail. Do not include comment body, filenames, project notes, client contacts, Dropbox paths, or provider diagnostics.
 
-- use capability gating for viewing/posting;
-- mention only active staff;
-- decide whether admins may moderate others' posts; current behavior is author-only.
+## 8. TB6 card detail
 
-Access must be rechecked on every API request and before queued notification delivery.
+Use a URL-addressable responsive sheet:
 
-## 10. Read state
+- desktop side sheet;
+- phone full-screen presentation;
+- Back/Forward and refresh-safe URL state;
+- native open-new-tab and canonical full workspace link.
 
-Move notice/project read state to D1.
+Keep separate views:
 
-Recommended semantics:
+- **Overview:** Stage, Priority, team, Deadline/reminder summary.
+- **Activity:** immutable structured events.
+- **Discussion:** human-authored comments and unread state.
 
-- mark a thread read after a successful fresh fetch and visible presentation;
-- store last-read entry/time;
-- compute unread counts relative to entries after that marker;
-- do not mark read merely because a background poll succeeded while the surface was hidden;
-- make marking idempotent;
-- provide first-unread deep-link/scroll behavior later if useful.
+Do not interleave Activity and Discussion into one undifferentiated feed.
 
-## 11. Polling and sync
+## 9. TB7 notice-board contract
 
-No realtime requirement.
+TB7 preserves:
 
-- project discussion open: 15–30 second interval;
-- closed: stop or slow interval;
-- notice board open: retain a similar 25–30 second pattern;
-- focus/open: immediate refetch if stale;
-- own mutation: cache update + targeted invalidation;
-- incremental `after` cursor may reduce payload later.
+- top-level notice-post model;
+- rich text and mentions;
+- current author-only rules;
+- capability gating.
 
-## 12. Activity timeline
+TB7 adds:
 
-Use a separate `activity_events` domain:
+- server-owned read state;
+- route/query freshness;
+- durable mention delivery through the TB4 envelope.
 
-```text
-project.stage_changed
-project.editor_membership_changed
-project.deadline_changed
-project.deadline_reminders_changed
-project.checklist_changed
-project.comment_created
-project.comment_edited
-project.comment_deleted
-project.collection_changed
-project.delivered
-project.priority_changed
-project.board_position_changed
-```
+Defer to separately reviewed work:
 
-Event payloads should be structured/versioned. Users cannot edit them. The project/card UI may display them alongside comments with filters.
+- replies/comments under notices;
+- pinning;
+- priority;
+- expiry;
+- required acknowledgement.
 
-The event registry is finite and versioned. “All changes” means every approved user-visible event type, not every storage write. High-volume collection imports and background jobs must coalesce into one human-readable operation summary with stable source keys.
+## 10. Tests
 
-## 13. Attachments
-
-Defer unless approved for the active slice.
-
-When added:
-
-- R2 stores bytes;
-- D1 stores metadata and ownership;
-- upload requires current project access;
-- download rechecks current access;
-- short-lived presigned PUT may be used for large direct uploads;
-- read can be Worker-proxied for stricter authorization;
-- file policy and retention are explicit.
-
-## 14. Tests
-
-- project access and collaboration-only access;
-- mention target validation;
+- project and collaboration-only access;
+- mention eligibility;
 - author-only mutation;
 - pagination/order;
-- cross-tab/poll refresh;
-- read marker across simulated devices;
-- access removal;
+- open/focus/background read semantics;
+- two-device read state;
 - draft preservation;
-- notification outbox intent written exactly once;
-- comment create/edit/delete emits the correct editor-wide event exactly once while targeted mentions remain deduplicated;
-- editor removal between event creation and delivery suppresses project content;
-- notice-board role/capability behavior;
-- migration/backfill parity when storage changes.
-
-## 15. Non-goals
-
-- Slack-like channels.
-- typing/presence.
-- managed comments vendor.
-- unbounded nested social network.
-- replacing Tiptap.
-- deleting current data before verified migration.
+- comment activity exactly once;
+- edit coalescing and delete content privacy;
+- targeted mention plus broad event remain distinct;
+- removal before delivery suppresses content;
+- TB6 URL/Back/focus/mobile behavior;
+- notice-board role/read/freshness behavior.

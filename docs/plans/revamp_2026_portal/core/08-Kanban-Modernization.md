@@ -1,212 +1,212 @@
-# Kanban Ordering Correction and Interaction Modernization
+# Project Stage, Pipeline and Kanban Architecture
 
-**Status:** Proposed two-slice repair and modernization of the existing project board  
-**Related:** [Kanban research](../research/Kanban-And-Trello-Research.md), [TB4B](../roadmap/TB4B-Project-Deadline-And-Reminders.md), [TB5A](../roadmap/TB5A-Kanban-Ordering-Model-Correction.md), [TB5B](../roadmap/TB5B-Kanban-Interaction-Modernization.md)
+**Status:** Settled two-slice Stage/ordering and interaction proposal  
+**Related:** [TB0B](../roadmap/TB0B-Pipeline-Configuration-Boundary.md), [TB4B](../roadmap/TB4B-Project-Deadline-And-Reminders.md), [TB5A](../roadmap/TB5A-Project-Stage-And-Kanban-Ordering-Contract.md), [TB5B](../roadmap/TB5B-Kanban-Interaction-Modernization.md)
 
-## 1. Important baseline
+## 1. Existing board
 
-Quincy already has a Kanban board. It is not a future greenfield product.
-
-Current model:
+Quincy already has a project Kanban board:
 
 - card = project;
-- column = pipeline stage;
-- project holds `stageKey`, `priority`, `boardPosition`;
-- board mode displays non-null-priority cards before null-priority cards, then `boardPosition`;
-- shoot-date modes override priority grouping and manual order;
-- priority mutation also repositions `boardPosition`;
-- up/down mutation uses the flat persisted order, not the priority-grouped visible order;
-- an accepted historical boundary case can persist a successful up/down change with no visible movement;
-- stage movement appends to the target column's persisted order while retaining priority;
-- card links to `/projects/:projectId`;
-- native HTML5 drag events power the board today;
-- dnd-kit is already used elsewhere in Quincy.
-- cards currently display a RAW count and have no project deadline metadata.
+- column = project Stage;
+- fields = `stageKey`, `priority`, `boardPosition`;
+- Board view currently groups all non-null Priority cards ahead of null and then uses `boardPosition`;
+- shoot-date views override both;
+- Priority mutation rewrites `boardPosition`;
+- Up/Down uses flat persisted neighbours, which can disagree with visible grouping;
+- Stage movement appends to target bottom;
+- native HTML5 drag powers movement;
+- dnd-kit is already installed elsewhere;
+- cards show RAW count and no project Deadline.
 
-The original prototype sorted its dashboard list by recent shoot date or suburb before filtering cards into columns. It had no priority/manual-position model. Production ordering is later product evolution, not an original-prototype invariant.
+This is not greenfield. The revamp must repair semantics before replacing interaction.
 
-## 2. Product direction
+## 2. Fixed system-stage semantics
 
-Modernize the current project board rather than introducing a second generic task-board data model.
-
-Do not treat the current ordering implementation as automatically correct merely because it is live. Correct its semantics first, then replace the interaction engine. A DnD refactor must not preserve or deepen visible/persisted-order contradictions.
-
-The work is split deliberately:
-
-1. **TB5A — ordering-model correction:** establish the canonical order, repair semantic mismatches and define migration/compatibility.
-2. **TB5B — interaction modernization:** add dnd-kit, accessibility, automatic freshness and guarded conflicts against the approved TB5A contract.
-
-TB4B precedes these slices and makes one bounded card metadata change: show the project due date/time when set and remove the card-level RAW count. It does not introduce deadline sorting or modify manual order. TB5A and TB5B must preserve this metadata contract while changing ordering and interaction behavior.
-
-## 3. Comments are project comments
-
-Because a Kanban card is a project:
+Canonical progression:
 
 ```text
-Kanban card discussion = project discussion
+awaiting_raw
+→ raw_review
+→ editing_autohdr
+→ edited_review
+→ delivered
 ```
 
-A card detail sheet/route may display project summary, stage/priority/assignment controls, activity, project discussion and links to the full workspace. Do not create a second comment table keyed to the same project card.
+These stable keys own machine behavior such as creation defaults, AutoHDR, photographer visibility, automatic transitions, notifications, and non-admin presentation. Configurable display order and labels never redefine those semantics.
 
-The compact card metadata shows a timezone-aware due label and overdue state with accessible text. Removing RAW count applies only to Kanban cards; project list/detail/collection counts remain available unless separately approved.
+Future custom/manual Stages require explicit transition semantics before participating. Stage creation/deletion is not in the current program.
 
-## 4. Ordering contract
+## 3. Global pipeline boundary (TB0B)
 
-TB5A must settle these product meanings before code changes:
+`Admin → Pipeline` retains:
 
-- Is priority metadata-only, an explicit optional sort, or an ordering command?
-- What is the sole authoritative manual-order field?
-- What insertion rule applies when a project enters another stage?
-- Which sort modes are view-only?
-- When are manual reorder controls available?
-- How are existing persisted values interpreted or migrated?
+- label editing;
+- active/inactive management.
 
-Recommended default:
+Ordinary Admin self-service loses:
 
-- `boardPosition` is the sole persisted manual order within a stage.
-- Priority is metadata. If priority ordering is useful, it is an explicit temporary **Priority** sort mode.
-- Shoot-date ascending/descending modes are temporary view-only sorts.
-- Changing priority or a temporary sort does not rewrite manual order.
-- Manual reorder controls appear only in Board order.
-- A stage move uses one documented insertion rule, initially append-to-target unless the move request explicitly carries a destination neighbor.
-- One authoritative response determines the post-mutation state.
+- Up/Down global Stage ordering UI;
+- the corresponding authenticated self-service move endpoint.
 
-Required invariants regardless of the selected option:
+Existing `displayOrder` values are preserved. Future global order changes are developer-managed through a reviewed migration/script. Hiding the UI alone is insufficient.
 
-- visible Board order equals persisted manual order;
-- no display-only grouping can disagree with mutation neighbors;
-- a successful reorder produces an immediate visible change;
-- a metadata edit cannot secretly alter manual order unless the approved contract defines it as an ordering command;
-- sort labels explain what is temporary and what is persisted;
-- tie-breaking is deterministic;
-- direct links/open-new-tab behavior is unaffected.
-- deadline display is metadata-only and never changes `boardPosition`, priority or selected sort mode.
+## 4. Project Stage command
 
-## 5. TB5A data and API work
+Introduce one `moveProjectStage` capability and one guarded command for the rail and board. Grant it initially to Admins and Editors.
 
-TB5A should prefer reusing the existing project fields and data where possible. It may change endpoint semantics or add a guarded move contract, but it must not delete historical data before the corrected behavior is verified.
-
-A guarded ordering request should identify the expected board snapshot/version and the intended destination, for example:
+Request concept:
 
 ```json
 {
   "targetStageKey": "edited_review",
-  "beforeProjectId": "...",
-  "afterProjectId": "...",
-  "expectedVersion": 7
+  "expectedStageKey": "editing_autohdr",
+  "expectedBoardVersion": 7,
+  "beforeProjectId": null,
+  "afterProjectId": "..."
 }
 ```
 
+The neighbour fields are optional:
+
+- rail picker and non-drag “Move to…” omit them and append to target bottom;
+- positional Kanban drag supplies exact neighbours;
+- same-Stage rail selection is a no-op.
+
 Server responsibilities:
 
-- recheck capability and target stage;
-- validate the selected sort/mutation is legal;
-- compute and persist the canonical position;
-- update only when the expected snapshot/version matches;
+- recheck access and `moveProjectStage`;
+- reject archived projects;
+- validate active destination, while allowing escape from a current inactive Stage;
+- apply semantic confirmation preconditions supplied by the client contract;
+- compare expected Stage/revision;
+- compute canonical target position;
+- preserve Priority as metadata;
+- update Stage/position atomically where possible;
+- audit and create one structured activity/outbox intent;
 - return authoritative project/order state;
-- audit once;
-- return a conflict when another writer won.
+- return `409` on stale premise; never silently retry or last-write-wins.
 
-The TB5A plan must determine whether current `priority`/`board_position` rows can be reinterpreted without migration, require a one-time normalization, or need an additive version/rank field. It must explicitly test production-shaped fixtures before choosing.
+## 5. Manual transition policy
 
-## 6. TB5B interaction engine
+- Normal one-step forward move between public workflow Stages: immediate.
+- Backward move: confirm.
+- Forward skip over one or more semantic stages: confirm.
+- Enter/leave `delivered`: confirm.
+- Enter/leave `editing_autohdr`: dedicated strong confirmation.
+- Inactive current Stage remains visible; active destinations only.
+- Archived project remains read-only until restored.
 
-Recommended first implementation: dnd-kit, after TB5A is live or otherwise established as the approved contract.
+### `editing_autohdr`
 
-Reasons:
+Admins and Editors may enter/exit it.
 
-- already installed and proven in Quincy;
-- multiple sortable containers;
-- pointer, touch and keyboard sensors;
-- DragOverlay for scrollable/multi-container boards;
-- Quincy-owned rendering and Tailwind/shadcn styling.
+- Editors see neutral **Editing** copy; Admins may see configured internal label.
+- Stage mutation never starts an AutoHDR handoff.
+- Exiting never cancels, retires, or deletes active work.
+- Existing send/retry/fetch/resolution actions retain their explicit permissions.
+- Automatic completion may update media/job state but may not silently move the project back after expected Stage no longer matches.
+- Confirmation states those consequences and active-handoff status; no typed street-name confirmation is required.
 
-Compare Atlassian Pragmatic Drag and Drop only if the proof exposes a measured limitation in nested scroll/auto-scroll, large-board performance, drop indicators, touch, virtualization or collision behavior. Do not run two production board DnD engines simultaneously.
+### `delivered`
 
-## 7. Accessibility
+Entering/leaving delivered changes Stage/position only. It never publishes, unpublishes, creates, revokes, or deletes client-delivery artifacts. Entering emits the approved delivery/stage event once. Entering delivered supersedes pending project Deadline occurrences; leaving does not resurrect them.
 
-Every drag operation needs a non-drag equivalent:
+## 6. Corrected ordering contract (TB5A)
 
-- “Move to…” with stage choices;
-- explicit within-column up/down or destination-position actions where supported;
-- screen-reader source/destination announcements;
-- visible drag handle;
-- predictable focus after move/conflict;
-- no whole-card draggable target that conflicts with the project link.
+- `boardPosition` is the sole persisted manual order within a Stage.
+- Priority is metadata.
+- Optional Priority view is temporary and view-only: `1` highest through `10`, null last; ties use `boardPosition`, then ID.
+- Shoot-date ascending/descending views are temporary and view-only.
+- Priority and sort changes never rewrite manual order.
+- Manual reorder controls exist only in Board order.
+- Board visible order equals persisted manual order.
+- A successful reorder always changes visible order or returns a no-op without claiming movement.
+- Deadline is display metadata only.
 
-Pointer-only drag is not acceptable.
+### Cutover normalization
 
-## 8. Sorting modes
+Before removing Priority grouping from authoritative Board order:
 
-Every mode must declare whether it is authoritative or view-only.
+1. derive each Stage's current visible order using current priority grouping, existing `boardPosition`, and deterministic tie-breaker;
+2. rewrite `boardPosition` once to encode that order;
+3. capture pre-normalization state or a verified rollback record;
+4. thereafter use the new contract only.
 
-Recommended modes:
+This avoids a rollout-day card reshuffle unrelated to user intent.
 
-- **Board order:** authoritative persisted manual order; reorder controls enabled.
-- **Shoot date ↑ / ↓:** view-only; reorder controls disabled.
-- **Priority:** optional view-only mode only if the owner confirms it is useful.
+## 7. Notifications and activity
 
-Changing a view-only sort must not mutate any project. Editing metadata while a view-only sort is selected must not secretly change Board order.
+- Stage changes notify eligible assigned Editors.
+- Priority changes notify eligible assigned Editors.
+- Pure within-column position reorder does not create broad inbox rows.
+- Position changes remain audited and may create structured activity for TB6.
+- One semantic movement has one producer/activity/source key.
 
-## 9. Automatic freshness
+## 8. TB5B interaction modernization
 
-Board queries include scope and sort where server-derived. The visible board refetches on the approved interval and on focus/reconnect.
+After TB5A is live or established as the accepted implementation baseline:
 
-After a move:
+- replace native HTML5 drag with dnd-kit;
+- use dedicated drag handle separate from project link;
+- support pointer, touch, keyboard, and non-drag “Move to…”;
+- use DragOverlay and test horizontal/nested scroll;
+- use optimistic cache update with authoritative response/rollback;
+- reconcile or defer refresh during active drag;
+- preserve direct/open-new-tab link behavior;
+- test normal volume and 100+ cards.
 
-- update cache optimistically;
-- apply the authoritative response;
-- invalidate project list/detail queries narrowly;
-- optionally broadcast same-browser invalidation;
-- delay or reconcile background results during an active drag so refresh does not destroy the interaction.
+Compare Pragmatic Drag and Drop only after a concrete measured blocker. Never run two production board engines.
 
-## 10. Card detail and activity
+## 9. Project card metadata/detail
 
-TB6 decides whether quick detail is a sheet, dialog, route or responsive combination. The canonical project route remains `/projects/:projectId`.
+TB4B:
 
-Board operations may emit immutable structured activity events such as:
+- show compact Deadline/overdue metadata;
+- remove card-level RAW count only;
+- do not add Deadline sorting.
 
-- `project.stage_changed`;
-- `project.priority_changed`;
-- `project.board_position_changed`.
+TB6:
 
-Events and notifications follow the approved ordering semantics and are emitted exactly once.
+- URL-addressable responsive sheet;
+- separate Overview, Activity, Discussion;
+- reuse project data/discussion/activity;
+- canonical link to full workspace;
+- no duplicate card/comment schema.
 
-## 11. Performance
+## 10. Tests
 
-Prototype and measure typical project count plus a 100+ card fixture, multiple columns, horizontal/nested scroll, cover images, keyboard/touch, and background refresh while idle—not during active drag. Do not add virtualization without measured need.
+TB0B:
 
-## 12. Tests
+- Admin labels/active state still work;
+- Up/Down UI absent;
+- ordinary move endpoint absent/forbidden;
+- existing display order unchanged.
 
 TB5A:
 
-- current three-layer behavior captured as a regression fixture before change;
-- selected canonical ordering semantics;
-- no successful invisible reorder;
-- priority edit has no hidden manual-order effect under the recommended model;
-- temporary sort changes write nothing;
-- stage-entry insertion policy;
-- deterministic ties;
-- legacy data normalization/reinterpretation;
-- access and audit behavior.
+- normalization preserves current visible order;
+- Board visible/persisted order identity;
+- Priority/sort write nothing to manual order;
+- Priority numeric sort/null/ties;
+- rail append and drag-neighbour insertion;
+- inactive-stage escape;
+- archived rejection;
+- normal/backward/skip/delivered/AutoHDR confirmation contract;
+- Editor neutral presentation;
+- expected-state conflict;
+- AutoHDR/delivery side effects remain separate;
+- audit/activity/outbox exactly once;
+- Deadline metadata and no card RAW count.
 
 TB5B:
 
-- movement within/between columns and into empty columns;
-- pointer/touch/keyboard/non-drag move;
-- optimistic rollback and conflict response;
-- route link/open new tab;
-- external simulated change appears without reload;
-- active drag survives/defer-reconciles refresh;
-- activity/outbox written exactly once.
-- due date/time renders at desktop and narrow board widths with an accessible overdue state;
-- card-level RAW count is absent while other RAW-count surfaces are unchanged;
-- TB5A/TB5B movement and refresh preserve the TB4B deadline metadata.
-
-## 13. Non-goals
-
-- Embedding Trello/Wekan/PLANKA.
-- Creating a generic task-card schema before a non-project-card requirement exists.
-- Duplicate card comments.
-- Realtime multiplayer presence.
-- Rewriting the historical implemented Kanban plans; they remain accurate records of what shipped.
+- within/between/empty-column moves;
+- pointer/touch/keyboard/non-drag;
+- drag/link separation;
+- nested/horizontal scroll;
+- conflict rollback and focus/announcement;
+- active drag survives refresh;
+- direct links/new tab;
+- large-board performance;
+- Deadline metadata retained.

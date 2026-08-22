@@ -3,115 +3,115 @@
 **Status:** Program-wide guardrails  
 **Applies to:** every tracer bullet
 
-## 1. Migration principles
+## 1. Principles
 
 - Add before removing.
-- One primary user outcome per release.
-- One clear old/new ownership boundary.
-- No dual-write indefinitely.
-- Backfill is deterministic, resumable and audited.
-- Old data remains available until parity is proven.
-- Schema changes are backward-compatible with the currently deployed Worker during rollout whenever practical.
-- A Worker rollback does not roll back D1/R2/Queue schema/resources; plan compatibility explicitly.
+- One primary outcome and one clear ownership boundary per release.
+- No indefinite dual write/style/query owner.
+- Backfills are deterministic, resumable, and verified.
+- Preserve old data until parity is proven.
+- Prefer backward-compatible additive schema.
+- A Worker rollback does not roll back D1/R2/Queue resources; plan forward compatibility.
+- Production mutation is human-authorized. There is no staging environment.
 
-## 2. Feature flags and cohorting
-
-Use a feature flag or narrowly selected internal test project when a slice changes high-risk behavior such as:
-
-- discussion storage;
-- notification delivery;
-- board movement;
-- global CSS reset;
-- query/cache ownership.
-
-Flags must have a removal plan; they are not permanent parallel architectures.
-
-## 3. Data migration pattern
-
-For discussion/notification schema changes:
+## 2. Revised sequence and release boundaries
 
 ```text
-1. Create additive schema.
-2. Deploy code that can tolerate both old and new state.
-3. Backfill in bounded batches with progress/checkpointing.
-4. Verify counts, IDs, authors, timestamps, content and mention mappings.
-5. Switch reads for a controlled cohort.
-6. Switch writes.
-7. Observe and compare.
-8. Make old path read-only.
-9. Remove only in a later release after backup/export and approval.
+TB0 → TB0A → TB0B → TB1 → TB2 → TB3 → TB4
+                                     │
+                                     └→ TB4A → TB4B → TB4C → TB5A → TB5B → TB6 → TB7 → TB8
 ```
 
-Do not perform destructive table changes in the same release that first proves the new path.
+Do not combine React, pipeline policy, and UI foundation into one deployment.
 
-For TB4A, existing `project_members` editor rows remain the assignment source of truth; prefer role-specific deltas without a schema change unless deterministic concurrency or membership-interval evidence requires an additive version.
+## 3. TB0A React 19.2
 
-For TB4B, existing projects backfill to no project deadline and no reminder rules. Add nullable/versioned project fields and a reminder table; do not reinterpret `shootDate`, `timeWindow` or `project_subtasks.dueDate`.
+- No schema/resource changes.
+- Pin latest stable `19.2.x` React/React DOM and compatible type packages exactly.
+- Use reviewed official codemods; manually review every change.
+- Keep StrictMode and modern JSX transform.
+- Minimum supporting dependency updates only after a proven blocker.
+- No new React feature/Compiler/SSR architecture.
+- Record JS/CSS bundle deltas and React warnings.
+- Deploy app Worker only.
+- Roll back to previous app Worker version if acceptance fails.
+- Focused before/after screenshots prove no intended visual change; accepted React build becomes TB1 baseline.
 
-For TB4C, add only the event/delivery fields needed beyond TB4 and keep the owner-approved registry version explicit.
+## 4. TB0B pipeline boundary
 
-## 4. D1 migration care
+- Remove Admin Up/Down UI and ordinary self-service global Stage-order endpoint.
+- Preserve Stage rows, display-order values, labels, and active flags.
+- No D1 migration expected unless endpoint ownership requires an additive guard.
+- Rollback restores prior app bundle/API but must be explicitly authorized because it reopens Admin self-service ordering.
 
-Follow repository-specific D1 lessons:
+## 5. UI/Tailwind/query releases
 
-- prefer additive `ALTER TABLE ADD COLUMN` for suitable single-column checks;
-- do not trust local table-rebuild success as proof against production foreign-key data;
-- update Drizzle schema, migration journal and snapshot consistently;
-- confirm next migration number against current `main`;
-- test raw invalid values against D1/Miniflare where constraints matter;
-- include production query/backup/runbook steps.
+- Revert app bundle for rollback.
+- Preserve legacy CSS/API until migrated component/query is verified.
+- Do not delete selectors or old fetch paths until their last consumer is gone.
+- Preflight remains disabled; enabling it is a separate whole-app decision.
+- Feature flags/cohorts require a removal plan.
 
-## 5. Rollback design
+## 6. Membership/rail release (TB4A)
 
-### UI/Tailwind/query-only release
+- Existing `project_members` remains source of truth.
+- Prefer explicit role delta without schema change; add membership-cycle/version only if deterministic stale-remove protection cannot use row identity.
+- Create Project remains intact.
+- Edit Project team controls remain available behind a temporary rollback path until rail parity.
+- Rollback hides/disables rail mutations without rewriting memberships.
+- Last-role checklist cleanup is atomic and reported.
 
-- revert Worker/web bundle;
-- legacy CSS/API remains compatible;
-- do not delete old selectors until migrated component is verified.
+## 7. Deadline/reminder release (TB4B)
 
-### Additive D1 release
+- Add nullable Deadline fields/version and occurrence table.
+- Existing projects backfill to no Deadline/rules.
+- Never reinterpret shoot or checklist due fields.
+- Prior Worker tolerates additive schema where practical.
+- Rollback disables scheduler/producer and leaves data.
+- Schedule-version checks suppress stale occurrences after rollback/reschedule/clear/delivery/archive.
+- Restoring a project/leaving delivered never silently resumes old rows.
 
-- prior Worker must tolerate new nullable tables/columns;
-- rollback code only; leave additive schema;
-- forward-fix data if writes used the new schema.
+## 8. Notification/outbox releases (TB4/TB4C)
 
-### Queue/outbox release
+- Domain state survives Queue/consumer failure.
+- Pending outbox remains replayable.
+- Old producer remains only for unrelated/unmigrated semantics.
+- One producer-ownership record per semantic event.
+- Unique recipient/channel delivery prevents duplicate in-app rows.
+- `unknown` email is never auto-retried.
+- Rollback disables new producer without deleting activity/outbox/inbox data.
 
-- domain write remains successful even if consumers are disabled;
-- pending outbox rows can be replayed;
-- old notification path remains for unmigrated events;
-- provide a switch to stop new producer publication if consumer defect appears.
+## 9. Discussion/read-state migration (TB3/TB7)
 
-### Editor-roster release (TB4A)
+TB3 uses adapter-first storage:
 
-- the previous Edit Project editor UI remains a fallback until collaboration-pane controls are verified;
-- disabling the pane control leaves existing memberships unchanged;
-- both UI surfaces use the same role-specific mutation contract;
-- rollback never removes or rewrites membership rows.
+1. add server-owned read state;
+2. deploy compatible API/query behavior;
+3. verify current comments/mentions/pagination/access;
+4. keep current comment tables authoritative.
 
-### Project deadline/reminder release (TB4B)
+TB7 proves a second consumer. A common storage migration, if later justified, follows additive/backfill/cohort/read-switch/write-switch/observe/read-only/remove-later discipline.
 
-- prior Workers tolerate nullable deadline fields and the additive reminder table;
-- disabling the new scheduler stops new reminder intent without deleting deadline data;
-- stale reminder occurrences are version-suppressed after rollback/reschedule;
-- restoring the prior web bundle may restore the card RAW count but does not corrupt deadline data.
+## 10. Stage/Kanban release (TB5A)
 
-### Editor-wide registry release (TB4C)
+- Capture production-shaped current ordering before mutation.
+- Store a verified pre-normalization export/rollback record.
+- Normalize `boardPosition` once to current visible order.
+- Deploy one command for rail/native board/non-drag movement.
+- Preserve Deadline card metadata and absence of card RAW count.
+- Rollback must not strand mixed old/new ordering semantics; either restore captured positions with old code or forward-fix under the new contract.
+- TB5B does not start until this is accepted.
 
-- a producer-ownership table identifies the one authoritative path per semantic event;
-- disabling a registry producer does not remove already-created notifications;
-- queued events keep their registry version and deterministic recipient rule;
-- rollback restores one old producer at a time without dual-write ambiguity.
+## 11. D1 migration care
 
-### Discussion cutover
+- Recheck migration number against current `main`.
+- Prefer additive `ALTER TABLE ADD COLUMN` for suitable single-column nullable checks.
+- Do not trust local table-rebuild success against production foreign-key data.
+- Update Drizzle schema, journal, and snapshot consistently.
+- Test invalid raw values and production-shaped fixtures.
+- Include backup/query/runbook steps.
 
-- maintain an export/backfill verification report;
-- keep old data read-only;
-- be able to switch feature flag/read adapter back without losing new writes, or explicitly define a forward-only migration.
-
-## 6. Verification layers
-
-### Automated gate
+## 12. Automated gate
 
 From `portal/`:
 
@@ -122,116 +122,103 @@ npm run test --workspaces
 npx vitest run --config packages/shared/vitest.config.ts
 ```
 
-### Targeted tests
+Every slice runs targeted tests during iteration and the full gate before release.
 
-Each slice runs the narrowest changed suites during iteration, then the full gate.
+## 13. Manual local QA
 
-### Manual local browser QA
+Use real local OAuth at `http://localhost:8787` after building web. Verify as applicable:
 
-Use the real local OAuth flow at `http://localhost:8787` after building the web app.
+- sign-in, routing, Back/Forward, direct/new-tab links;
+- Dashboard/Kanban/List;
+- Project Workspace and left rail;
+- Lightbox, media, rich text/mentions;
+- Collaboration/checklist drag/popovers;
+- notice board, notifications/preferences, Admin;
+- keyboard, pointer, touch-equivalent, focus/Escape/return;
+- desktop 1440×900, compact 1024×768, phone 390×844;
+- failed/conflict requests;
+- console/network warnings/errors;
+- simulated external changes and draft preservation.
 
-Verify:
+## 14. Production
 
-- keyboard and pointer;
-- phone width;
-- collaboration panel width;
-- direct URLs and Back/Forward;
-- multiple project tabs;
-- simulated external data change;
-- failed requests;
-- console/network errors;
-- focus and draft retention.
+Production checks are passive/read-only unless a human explicitly performs/authorizes mutation. Record Worker deploy IDs and verify changed surfaces load, render, route, and produce clean console/network results.
 
-### Production
+## 15. Required matrices
 
-No staging exists. Production checks are passive/read-only unless the human explicitly performs or authorizes mutation.
+### React TB0A
 
-## 7. Visual regression approach
+- dependency/typecheck/build/full tests;
+- mount/unmount/effect/ref/portal/generated ID behavior;
+- StrictMode warnings;
+- Tiptap/Floating UI/dnd-kit/Lightbox/LazyImage;
+- render-error test assumptions;
+- bundle delta and representative visual parity.
 
-Before TB1 capture representative screenshots:
+### Freshness
 
-- dashboard list and Kanban;
-- project workspace;
-- project form;
-- collaboration panel;
-- notice board;
-- notification bell;
-- mobile/narrow states.
-
-Compare each migrated slice against the baseline for brand, spacing, focus, overflow and typography.
-
-## 8. Data freshness test matrix
-
-- route A/B isolation;
-- late response guard;
-- focus/reconnect refresh;
-- polling update;
-- mutation invalidation;
-- background hidden behavior;
+- route A/B and collection isolation;
+- late response;
+- focus/reconnect/poll/broadcast;
+- narrow invalidation;
 - access removal;
-- draft/drag/lightbox preservation;
-- no duplicate current 5-second job polling.
+- draft/drag/Lightbox preservation;
+- no duplicate special polling.
 
-## 9. Notification reliability matrix
+### Coordination
 
-- outbox and domain write atomicity;
-- queue publish recovery;
-- duplicate delivery;
-- retry/DLQ;
-- preference/access recheck;
-- email failure;
-- replay;
-- observability.
-- complete assigned-editor fan-out, the approved actor behavior and proof that unassigned admins are not implicitly included;
-- editor removal/deactivation between event and delivery;
-- versioned project deadline reminders at multiple offsets;
-- reschedule/clear/past-offset suppression;
-- timezone/DST and approved minute-level tolerance;
-- bulk collection coalescing;
-- mandatory in-app delivery includes every active assigned editor/actor;
-- recipient/channel uniqueness and claim lease/token concurrency;
-- provider-supported email idempotency or explicit ambiguous-delivery handling;
-- per-event old/new producer ownership during cutover.
+- eligibility, inactive users, dual roles;
+- per-person optimistic/error/conflict;
+- membership-cycle stale removal;
+- last-role checklist cleanup;
+- stage-hidden summary privacy;
+- archived read-only.
 
-## 10. Kanban matrix
+### Deadline
 
-- pointer/touch/keyboard;
-- empty columns;
-- optimistic rollback;
-- conflict;
-- sort modes;
-- refresh during/after drag;
-- open link/new tab;
-- large-board fixture.
-- deadline metadata at desktop/narrow widths;
-- card RAW count removed without altering non-Kanban count surfaces;
-- deadline metadata preserved through TB5A/TB5B reorder, refresh and conflict paths.
+- set/edit/clear/past/overdue;
+- presets/custom limits/normalization;
+- DST gap/fold;
+- Due-now and versions;
+- one-minute scan/two-minute target;
+- recipient membership cycles;
+- delivered/archive suppression;
+- preference opt-out;
+- Kanban due/no RAW.
 
-## 11. Release documentation
+### Stage/Kanban
 
-For each bullet record:
+- fixed semantic progression;
+- confirmations and inactive escape;
+- AutoHDR/delivered stage-only behavior;
+- rail append/drag neighbour;
+- normalization/priority/temp sorts;
+- conflict/audit/activity/outbox;
+- pointer/touch/keyboard/non-drag in TB5B;
+- active-drag refresh and large fixture.
 
-- approved plan path;
+### Notifications
+
+- domain/outbox atomic intent;
+- Queue recovery, duplicate, retry, DLQ;
+- `unknown` email;
+- Admin replay/discard;
+- targeted/broad suppression;
+- actor/unassigned Admin/membership cycles;
+- coalescing/privacy/producer ownership.
+
+## 16. Release documentation
+
+Record per bullet:
+
+- approved implementation-plan path;
 - commit SHA;
-- migrations/resources;
-- approved editor-roster capability for TB4A; project-deadline timezone and scheduler cadence/SLO for TB4B; event-registry version and recipient/channel defaults for TB4C;
+- schema/resources;
+- exact approved contract/version;
 - deploy IDs/order;
-- automated verification result;
-- manual verification performed;
+- automated and manual results;
+- bundle/evidence where applicable;
 - known limitations;
-- next checkpoint.
+- rollback/next checkpoint.
 
-Update `docs/todo.md` only with what is actually planned/live. Move a plan to `implemented/` only after deployment and verification.
-
-## 12. Stop conditions
-
-Stop and revise the plan when:
-
-- baseline tests are not understood;
-- Tailwind/shadcn requires a React/toolchain upgrade not approved;
-- global Preflight changes unrelated screens;
-- query migration loses drafts or leaks cross-project data;
-- common discussion model weakens access/audit rules;
-- Queue delivery cannot be made idempotent;
-- board conflict handling silently loses newer writes;
-- migration cannot be rolled back or safely forward-fixed.
+Move a plan to `implemented/` only after it matches verified production.

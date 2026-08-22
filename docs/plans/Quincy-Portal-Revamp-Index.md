@@ -1,17 +1,17 @@
 # Quincy Portal Revamp — Index
 
-**Status:** Planning and research package; not yet promoted into the repository authority documents.  
-**Prepared:** 2026-08-21  
-**Repository baseline inspected:** `mjj2332/Quincy_Portal` `main` at `dfddccbaaaaeff4b0ce3146c58af338d070d345e`  
+**Status:** Revised planning and research package; owner decisions are settled in this package but have not yet been promoted into repository authority documents.  
+**Revised:** 2026-08-22  
+**Repository baseline inspected:** `mjj2332/Quincy_Portal` `main` at `8bcb48245a727b048053bd3653cf07f3ad99b780`  
 **Detailed folder:** [`revamp_2026_portal/`](./revamp_2026_portal/README.md)
 
-This is the shortest entry point for the coordinated Quincy Portal revamp. The package intentionally separates high-level decisions from detailed architecture and per-slice plans, so an agent does not need to load one very large Markdown file.
+This is the shortest entry point for the coordinated Quincy Portal revamp. Read only the path relevant to the active task.
 
 ## Start here
 
 1. Read the [high-level brief](./Quincy-Portal-Revamp-Brief.md).
 2. Read the [decision register](./revamp_2026_portal/core/01-Decision-Register.md).
-3. Choose the reading path below that matches the task.
+3. Choose the narrow reading path below.
 4. Before implementation, re-read current `main`, `AGENTS.md`, `docs/todo.md`, `docs/lessons.md`, and `docs/Subagent-Orchestration.md`.
 
 ## Reading paths
@@ -19,73 +19,59 @@ This is the shortest entry point for the coordinated Quincy Portal revamp. The p
 | Reader/task | Read these files |
 |---|---|
 | Owner reviewing scope and direction | [Brief](./Quincy-Portal-Revamp-Brief.md) → [Decision register](./revamp_2026_portal/core/01-Decision-Register.md) → [PRD delta](./revamp_2026_portal/core/03-PRD-Delta.md) |
-| Agent drafting the master plan | [Folder README](./revamp_2026_portal/README.md) → [Current-state audit](./revamp_2026_portal/core/02-Current-State-Audit.md) → [Roadmap index](./revamp_2026_portal/roadmap/README.md) → relevant architecture files |
-| Design-system/prototype convergence or UI/Tailwind/shadcn work | [Design convergence](./revamp_2026_portal/core/11-Design-Convergence.md) → [Frontend architecture](./revamp_2026_portal/core/04-Frontend-Architecture.md) → [UI research](./revamp_2026_portal/research/UI-Stack-Tailwind-Shadcn.md) → [TB0](./revamp_2026_portal/roadmap/TB0-Integrated-Architecture-And-Baseline.md), [TB1](./revamp_2026_portal/roadmap/TB1-Tailwind-Shadcn-Foundation.md) or [TB8](./revamp_2026_portal/roadmap/TB8-Wider-UI-Migration-And-Cleanup.md) |
-| Automatic refresh, routing, multi-tab behavior | [Route and data freshness](./revamp_2026_portal/core/05-Route-And-Data-Freshness.md) → [TB2](./revamp_2026_portal/roadmap/TB2-Route-Safe-Data-Freshness.md) |
-| Project comments or notice board | [Discussion architecture](./revamp_2026_portal/core/06-Discussions-And-Notice-Board.md) → [Messaging research](./revamp_2026_portal/research/Messaging-And-Commenting-Research.md) → [TB3](./revamp_2026_portal/roadmap/TB3-Project-Discussion-V2.md) or [TB7](./revamp_2026_portal/roadmap/TB7-Notice-Board-Migration.md) |
-| Notifications/email reliability | [Cloudflare notifications](./revamp_2026_portal/core/07-Notifications-On-Cloudflare.md) → [Cloudflare research](./revamp_2026_portal/research/Cloudflare-Native-Architecture-Research.md) → [TB4](./revamp_2026_portal/roadmap/TB4-Notification-Outbox-And-Queues.md) |
-| Direct editor assignment in the collaboration pane | [PRD delta](./revamp_2026_portal/core/03-PRD-Delta.md) → [TB4A](./revamp_2026_portal/roadmap/TB4A-Collaboration-Pane-Editor-Assignment.md) |
-| Project deadline, advance reminders or Kanban due metadata | [PRD delta](./revamp_2026_portal/core/03-PRD-Delta.md) → [Cloudflare notifications](./revamp_2026_portal/core/07-Notifications-On-Cloudflare.md) → [TB4B](./revamp_2026_portal/roadmap/TB4B-Project-Deadline-And-Reminders.md) |
-| Editor-wide project-change alerts | [PRD delta](./revamp_2026_portal/core/03-PRD-Delta.md) → [Cloudflare notifications](./revamp_2026_portal/core/07-Notifications-On-Cloudflare.md) → [TB4C](./revamp_2026_portal/roadmap/TB4C-Editor-Wide-Project-Change-Notifications.md) |
-| Kanban ordering or interaction modernization | [Kanban architecture](./revamp_2026_portal/core/08-Kanban-Modernization.md) → [Kanban/Trello research](./revamp_2026_portal/research/Kanban-And-Trello-Research.md) → [TB5A ordering correction](./revamp_2026_portal/roadmap/TB5A-Kanban-Ordering-Model-Correction.md) → [TB5B interaction modernization](./revamp_2026_portal/roadmap/TB5B-Kanban-Interaction-Modernization.md) |
-| Reviewer or release owner | [Migration, rollback and verification](./revamp_2026_portal/core/09-Migration-Rollback-And-Verification.md) → the active tracer-bullet file |
-| Agent updating repository docs | [Repository document update map](./revamp_2026_portal/core/10-Repository-Document-Update-Map.md) |
-| New implementation agent | [Next-agent handoff](./revamp_2026_portal/handoff/Next-Agent-Prompt.md) |
+| Agent drafting the umbrella/authority update | [Package README](./revamp_2026_portal/README.md) → [Current-state audit](./revamp_2026_portal/core/02-Current-State-Audit.md) → [Roadmap](./revamp_2026_portal/roadmap/README.md) → [Document update map](./revamp_2026_portal/core/10-Repository-Document-Update-Map.md) |
+| React 19.2 runtime upgrade | [Frontend architecture](./revamp_2026_portal/core/04-Frontend-Architecture.md) → [Migration/verification](./revamp_2026_portal/core/09-Migration-Rollback-And-Verification.md) → [TB0A](./revamp_2026_portal/roadmap/TB0A-React-19-2-Runtime-Upgrade.md) |
+| Admin pipeline boundary | [Decision register](./revamp_2026_portal/core/01-Decision-Register.md) → [Kanban/stage architecture](./revamp_2026_portal/core/08-Kanban-Modernization.md) → [TB0B](./revamp_2026_portal/roadmap/TB0B-Pipeline-Configuration-Boundary.md) |
+| Tailwind/shadcn or UI convergence | [Design convergence](./revamp_2026_portal/core/11-Design-Convergence.md) → [Frontend architecture](./revamp_2026_portal/core/04-Frontend-Architecture.md) → [UI research](./revamp_2026_portal/research/UI-Stack-Tailwind-Shadcn.md) → [TB1](./revamp_2026_portal/roadmap/TB1-Tailwind-Shadcn-Foundation.md) or [TB8](./revamp_2026_portal/roadmap/TB8-Wider-UI-Migration-And-Cleanup.md) |
+| Automatic refresh, routing, multi-tab behavior | [Route/data freshness](./revamp_2026_portal/core/05-Route-And-Data-Freshness.md) → [TB2](./revamp_2026_portal/roadmap/TB2-Route-Safe-Data-Freshness.md) |
+| Project discussion/read state | [Discussion architecture](./revamp_2026_portal/core/06-Discussions-And-Notice-Board.md) → [TB3](./revamp_2026_portal/roadmap/TB3-Project-Discussion-V2.md) |
+| Notification reliability | [Notification architecture](./revamp_2026_portal/core/07-Notifications-On-Cloudflare.md) → [TB4](./revamp_2026_portal/roadmap/TB4-Notification-Outbox-And-Queues.md) |
+| Project Workspace team assignment | [PRD delta](./revamp_2026_portal/core/03-PRD-Delta.md) → [Current-state audit](./revamp_2026_portal/core/02-Current-State-Audit.md) → [TB4A](./revamp_2026_portal/roadmap/TB4A-Project-Workspace-Assignment-Rail.md) |
+| Project deadline/reminders or Kanban due metadata | [PRD delta](./revamp_2026_portal/core/03-PRD-Delta.md) → [Notification architecture](./revamp_2026_portal/core/07-Notifications-On-Cloudflare.md) → [TB4B](./revamp_2026_portal/roadmap/TB4B-Project-Deadline-And-Reminders.md) |
+| Editor-wide project-change alerts | [PRD delta](./revamp_2026_portal/core/03-PRD-Delta.md) → [Notification architecture](./revamp_2026_portal/core/07-Notifications-On-Cloudflare.md) → [TB4C](./revamp_2026_portal/roadmap/TB4C-Editor-Wide-Project-Change-Notifications.md) |
+| Project Stage and Kanban ordering | [Kanban/stage architecture](./revamp_2026_portal/core/08-Kanban-Modernization.md) → [TB5A](./revamp_2026_portal/roadmap/TB5A-Project-Stage-And-Kanban-Ordering-Contract.md) |
+| Kanban interaction modernization | Approved TB5A outcome → [TB5B](./revamp_2026_portal/roadmap/TB5B-Kanban-Interaction-Modernization.md) |
+| Reviewer or release owner | [Migration/verification](./revamp_2026_portal/core/09-Migration-Rollback-And-Verification.md) → active tracer-bullet file |
+| New planning/implementation agent | [Next-agent handoff](./revamp_2026_portal/handoff/Next-Agent-Prompt.md) |
 | Historical audit only | [`archive/`](./revamp_2026_portal/archive/README.md) |
 
-## Folder map
+## Program sequence
 
 ```text
-docs/plans/
-  Quincy-Portal-Revamp-Index.md       # this file
-  Quincy-Portal-Revamp-Brief.md       # owner/high-level brief
-  revamp_2026_portal/
-    README.md                          # package rules and reading guide
-    core/                              # decisions, requirements, architecture
-    research/                          # evaluated options and source links
-    roadmap/                           # one document per tracer bullet
-    handoff/                           # next-agent entry prompt
-    archive/                           # explicitly superseded handoff material
+TB0 → TB0A → TB0B → TB1 → TB2 → TB3 → TB4
+                                     │
+                                     └→ TB4A → TB4B → TB4C → TB5A → TB5B → TB6 → TB7 → TB8
 ```
+
+The new foundation bullets do not renumber the existing roadmap:
+
+- **TB0A:** React 19.2 runtime upgrade.
+- **TB0B:** enforce the developer-managed global pipeline-order boundary.
+
+## Current headline decisions
+
+- Upgrade production `portal/` to the latest stable pinned React `19.2.x` patch in a standalone release; retain the Vite SPA and do not adopt React Compiler, SSR, Server Components, or new React feature refactors as collateral work.
+- Tailwind CSS v4 plus source-owned shadcn components is the target UI direction. Base UI, Sera, Lucide, CSS variables, Quincy semantic tokens, and disabled Preflight form the first proof.
+- The Project Workspace **left rail** is the canonical project-level coordination surface for Stage, Deadline/Reminders, Photographers, and Editors. The Collaboration panel remains checklist/subtasks plus project discussion.
+- `editProject` governs roster and deadline mutations. A new `moveProjectStage` capability governs Stage changes and is initially granted to Admins and Editors.
+- Global pipeline label and active/inactive management remains in Admin. Global stage ordering becomes developer-managed; ordinary Admin Up/Down controls and their self-service endpoint are removed in TB0B.
+- Quincy keeps fixed semantic system-stage identities. Manual entry to and exit from `editing_autohdr` is allowed but is stage-only and never starts or cancels AutoHDR work.
+- One project deadline uses `Australia/Sydney`, supports zero to eight unique lead-time rules from 1 minute to 30 days, emits a Due-now event, and targets delivery within two minutes of scheduled time.
+- Kanban cards show the project deadline and omit only the card-level RAW count.
+- `boardPosition` becomes the sole persisted manual order. Priority is metadata plus an optional view-only sort. Existing positions are normalized once to preserve the current visible board order.
+- Project discussion remains a flat stream in TB3, using an adapter over the current tables plus server-owned read state.
+- Notifications use a D1 outbox, Cloudflare Queue, delivery ledger, recovery scan, DLQ, and explicit `unknown` email outcomes.
+- Quincy remains asynchronous, deep-linkable, Cloudflare-native, and vendor-independent for collaboration/Kanban domain data.
 
 ## Authority and lifecycle
 
-These files are a coordinated proposal package. They do not outrank the repository's approved authority order:
+This package is still a coordinated proposal. It does not outrank:
 
 ```text
 docs/Decision-Sheet.md
   → docs/Implementation-Plan.md
   → docs/PRD.md / Personas.md / Sitemap.md
-  → supporting architecture and plan documents
+  → supporting plans and architecture
 ```
 
-After owner approval, the relevant decisions and requirements must be incorporated into those authority documents. Each implementation tracer bullet should receive its own reviewed implementation plan before code changes begin.
-
-## Current program gate
-
-| Control | Current state |
-|---|---|
-| Repository authority | D-16, D-17 and D-18 are proposed; owner approval and authority-document promotion remain TB0 work. |
-| First implementation slice | TB1 may begin only after TB0 accepts the platform decisions, baseline evidence and drift register. |
-| Project-coordination sequence | TB4A editor assignment → TB4B deadline/reminders + Kanban due metadata → TB4C editor-wide event registry. Each receives its own reviewed implementation plan and release checkpoint. |
-| Deferred product choices | TB0 records the owning tracer bullet and deferral explicitly; it does not need to decide later-slice product details prematurely. |
-
-## Current headline decisions
-
-Approved by the user in this planning conversation:
-
-- Tailwind CSS v4 and shadcn are the target UI direction.
-- The outcome is design convergence: the Quincy design system is the visual authority, the prototype is the visual/flow reference, and intentional production deviations must be recorded.
-- Existing Kanban ordering behavior is not grandfathered into the revamp; ordering semantics must be corrected and approved before interaction modernization.
-- The revamp is one coordinated program implemented through tracer bullets.
-- Quincy will not depend on a separate managed messaging, notification-orchestration, social-feed, Trello, or Kanban vendor.
-- Cloudflare Workers, D1, R2, Queues, Workflows, Cron Triggers, and related Cloudflare services are acceptable infrastructure dependencies.
-- Quincy remains asynchronous; Slack or Google Chat handles real-time chat.
-- Path-based, deep-linkable URLs must remain.
-- Pages must regain automatic freshness without requiring a browser reload.
-- Multiple editors can be assigned or removed directly in the project collaboration pane without opening Edit Project.
-- Every active assigned editor, including the actor, receives a mandatory durable in-app notification for the approved registry of project changes, including checklist, comment and collection changes; email is an additional channel under the approved delivery policy.
-- A project can have one due date/time plus one or more configurable advance reminder offsets, managed in the collaboration pane.
-- Kanban cards show the project due date/time and no longer show the RAW count; other RAW-count surfaces are unchanged unless separately approved.
-
-Open implementation choices are tracked in the [decision register](./revamp_2026_portal/core/01-Decision-Register.md).
+The proposed authority package is D-16 through D-19 and Implementation Plan amendments A8 through A12. Those files are intentionally unchanged in this revision. After a separate owner approval, TB0 promotes the proposal, captures the baseline/drift register, and creates the first repository-native implementation plan.

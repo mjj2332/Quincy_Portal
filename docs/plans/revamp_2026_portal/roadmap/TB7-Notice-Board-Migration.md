@@ -1,36 +1,28 @@
 # TB7 — Notice-Board Migration
 
-**Primary user outcome:** notice read state is server-synchronized and the notice board reuses the proven discussion/notification foundations.
+**Primary user outcome:** notice-board unread state follows the user across devices and notice mentions use the proven refresh/delivery foundations.
 
 ## Scope
 
-- Move read/seen state from localStorage to D1.
-- Apply route/query refresh conventions.
-- Reuse shared rich-text, mentions and delivery pipeline.
-- Decide and implement only approved notice-specific behavior:
-  - replies/comments;
-  - pinning;
-  - priority;
-  - expiry;
-  - acknowledgement.
-- Preserve capability and author-only rules unless changed explicitly.
+- Preserve top-level notice-post model, rich text, mentions, capability gating, and author-only rules.
+- Move seen/read state from localStorage to D1 per user.
+- Apply route/query refresh and focus/open semantics.
+- Mark read only after fresh visible presentation.
+- Reuse TB4 durable mention delivery and Admin operations.
+- Preserve local collapse preference if useful.
+- Preserve drafts during polling.
 
 ## Non-goals
 
-- social network feed ranking;
-- realtime chat;
-- external feed platform;
-- migrating every historical product event into notices.
+- replies/comments under notices;
+- pinning;
+- priority;
+- expiry;
+- acknowledgement;
+- realtime/social feed ranking;
+- external platform;
+- universal discussion storage migration unless separately planned after evidence.
 
 ## Acceptance
 
-- read state follows two simulated devices;
-- new notice appears without reload;
-- collapse state may remain local, but unread state is server-authoritative;
-- mention delivery uses the new reliable path;
-- notice-specific metadata behaves correctly;
-- drafts survive polling.
-
-## Checkpoint
-
-Validate that the shared discussion foundation supports a second distinct domain without becoming generic prop/schema sprawl.
+Two-device read state, hidden/background semantics, new notice without reload, durable mention delivery, author/access rules, drafts, desktop/phone behavior, full gate/manual QA.

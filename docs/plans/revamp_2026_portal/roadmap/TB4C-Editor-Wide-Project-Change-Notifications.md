@@ -1,170 +1,128 @@
 # TB4C — Editor-Wide Project-Change Notifications
 
-**Primary user outcome:** every active assigned editor receives one durable in-app alert for each approved user-visible project change without notification storms, duplicate deliveries or content leakage after removal.
+**Primary user outcome:** every active event-time-eligible assigned Editor receives one privacy-safe durable in-app alert for each approved semantic project change without storms, duplicates, or access leakage.
 
-**Sequence:** after [TB4B](./TB4B-Project-Deadline-And-Reminders.md), before [TB5A](./TB5A-Kanban-Ordering-Model-Correction.md)  
-**Dependencies:** TB4 delivery envelope, TB4A editor-membership contract and TB4B coordination/deadline event shapes  
-**Baseline reviewed:** `main` at `dfddccbaaaaeff4b0ce3146c58af338d070d345e`
+**Sequence:** after TB4B, before TB5A  
+**Dependencies:** TB4 envelope, TB4A membership cycles, TB4B schedule events, TB3 activity direction
 
-## Current-main facts to preserve
+## Structured activity foundation
 
-- Notifications are stored per user in D1 and selected events use `sourceKey` deduplication.
-- Request-path email is currently direct/best-effort; TB4 replaces this with a durable outbox/Queue path.
-- Existing mention, project-assignment, subtask-assignment and due notifications are targeted events and remain additive.
-- `projectNotificationRecipients()` always appends active admins, even with `editorOnly`; it cannot implement this assigned-editor-only guarantee unchanged.
-- `project_members.created_at` can distinguish assignment cycles if event ordering uses a compatible clock/version.
-- A broad registry spans routes and background jobs; it cannot be implemented safely as one generic database hook.
+Persist one immutable safe activity event per semantic operation:
 
-## User-approved product contract
+- project/actor/occurrence time;
+- event type and registry version;
+- stable source key;
+- safe versioned payload;
+- deep-link context.
 
-1. Every active assigned editor receives one mandatory durable in-app notification for each event in the approved project-change registry.
-2. This includes the actor when the actor is an assigned editor.
-3. Email is an additional channel under its approved reliability/preference contract.
-4. “All changes” means a finite versioned registry of user-visible domain events, not every database write.
-5. Existing targeted mention/assignee notifications remain additional events.
-6. Removal or deactivation prevents future content delivery.
-
-## Versioned event registry
-
-Each entry must define:
-
-- stable event type and registry version;
-- owning producer route/job;
-- semantic source key;
-- actor and project;
-- safe summary/copy payload;
-- deep link;
-- editor-recipient rule;
-- bulk coalescing rule;
-- old/new producer cutover owner;
-- tests and observability fields.
-
-Proposed initial categories for owner approval:
-
-| Category | Candidate user-visible events |
-|---|---|
-| Coordination | editor added/removed; deadline set/moved/cleared; reminder rules changed |
-| Project | project details updated; stage changed; priority changed; board position changed |
-| Checklist | item created, edited, completed/reopened, reordered/deleted; assignee or due value changed |
-| Comments | project comment created, edited or deleted; mention remains an additional targeted event |
-| Collections | user-visible item/batch added, updated or removed across photos/RAW/edited assets, videos, floorplans, copy, links and delivery artifacts |
-
-Rules:
-
-- one human mutation emits one useful event;
-- reorder/multi-row writes emit one semantic summary, not one event per row;
-- one high-volume import/background job emits one operation summary, not one event per file;
-- delivery bookkeeping, cache writes and internal retries never emit user alerts;
-- event copy states the user-visible outcome, not an implementation detail;
-- registry version changes are reviewed and backward compatible for queued events.
+Security audit remains separate. Notification delivery references/derives from activity. Internal retry/bookkeeping never creates new activity.
 
 ## Exact recipient contract
 
-Resolve mandatory recipients from active `project_members` rows with `role_on_project = 'editor'` only.
+- Resolve only active `editor` project membership cycles.
+- Cycle begins no later than event occurrence and still exists at delivery.
+- Include actor only when actor is an eligible assigned Editor.
+- Removal/deactivation suppresses pending delivery.
+- Remove/re-add cannot receive older-cycle events.
+- No history backfill.
+- Do not append unassigned Admins.
+- Mandatory in-app rows ignore project/email mute while eligibility remains.
 
-- Do not automatically append administrators who are not assigned editors.
-- Include the actor only when that actor has an eligible editor membership.
-- The membership must have begun no later than the event occurrence.
-- Recheck active user, current editor membership and project access immediately before delivery.
-- A remove/re-add cycle is a new membership interval; it must not receive events from the earlier interval.
-- A newly assigned editor receives the assignment event and later events, never delivered history.
-- Proposed default: exclude queued events whose occurrence predates the new membership.
-- Preferences/mute may affect optional email/digest, but not the mandatory in-app row while eligibility remains.
-- Each recipient/channel delivery is idempotent by registry event/source/recipient/channel key.
+## Registry entry requirements
 
-If existing `created_at` precision cannot order a same-batch assignment and event unambiguously, add an explicit membership version/interval identifier or persist the recipient snapshot in the outbox. The implementation plan must choose one deterministic contract.
+Every type defines:
 
-## Producer integration and rollout
+- type/version and owning producer;
+- source-key rule;
+- actor/recipient rule;
+- safe copy/payload;
+- deep link;
+- coalescing;
+- email default;
+- old/new producer ownership and tests.
 
-The repository-native plan must inventory every current producer before coding. Maintain a cutover table with:
+## Initial registry
 
-| Event | Current producer | New producer | Source-key rule | Coalescing | Cutover state |
-|---|---|---|---|---|---|
+### Coordination/project
 
-Roll out categories in bounded increments behind an internal cohort/feature gate where useful. Exactly one legacy or registry producer is authoritative for a semantic event at a time; both paths share the recipient-delivery key during cutover.
+- team changed;
+- Deadline set/moved/cleared/rules updated (one event per Save);
+- Stage changed;
+- Priority changed;
+- address/location, Agency/Agent/contact, shoot date/window, service set, production notes changed (content-free for notes);
+- archived/restored.
 
-TB4C is accepted only when every owner-approved initial category is live. If that registry proves too large for one safe release, reduce and approve the initial registry or split TB4C again before implementation; do not hide multiple unreviewed releases inside one “complete” checkbox.
+Exclude order IDs/numbers, invoice/payment, Dropbox paths/links, cover image, and internal provider fields.
 
-## Notification behavior
+### Checklist
 
-- Mandatory in-app insertion is durable and does not roll back a successful domain mutation.
-- Queue retry/recovery creates one row per eligible recipient.
-- Existing mention or subtask-assignment events may coexist because their semantic type/source keys are distinct.
-- Optional email follows the TB4 provider idempotency or explicit ambiguous-acceptance policy.
-- Access/editor removal suppresses content at delivery and records a non-error suppression outcome.
-- Deep links use the shared project notification route and open the appropriate collaboration/project context.
+- create/edit/complete/reopen/delete;
+- assignee or due changed.
 
-## Observability
+Pure checklist reorder does not create broad inbox row.
 
-Support must be able to answer:
+### Comments
 
-- was the domain event recorded;
-- which registry version and producer owned it;
-- which editor memberships were eligible and why;
-- which recipients were suppressed and why;
-- whether outbox, Queue, in-app and optional email stages completed;
-- whether a message is retrying/in the DLQ;
-- whether replay is safe.
+- create;
+- delete with content-free copy;
+- edit coalesced per same comment/actor within five minutes.
 
-## Migration and rollback
+Targeted mention remains separate.
 
-- Add versioned event/delivery fields or tables compatibly with the TB4 schema.
-- Preserve old producers only for unrelated or explicitly unmigrated semantic events.
-- Disabling a registry producer must not delete domain data or already-created notifications.
-- Keep additive event/outbox data for safe replay or forward fix.
-- A rollback uses the producer-ownership table to restore exactly one authoritative path.
-- No production mutation is authorized by this planning file.
+### Collections/review/delivery
 
-## Tests and manual QA
+- service collection added/removed;
+- user-visible asset batch ingested/published/replaced/deleted;
+- Edited fetch/publication completion;
+- video/floorplan/copy/link/delivery artifact material add/update/remove;
+- explicit RAW selection submitted/sent for editing;
+- explicit Edited approve/reject/publish workflow operation;
+- annotation create/edit/delete with no annotation body.
 
-- one event for every owner-approved checklist/comment/project/collection/coordination registry case;
-- acting assigned editor receives the mandatory row;
-- acting unassigned admin does not receive an editor-only row solely because of admin role;
-- all event-time-eligible current editors receive exactly one row;
-- newly assigned editor does not receive an older queued event under the proposed rule;
-- remove/re-add interval does not leak earlier events;
-- removal/deactivation between mutation and delivery suppresses delivery;
-- mention plus editor-wide comment event deduplicate independently;
-- bulk import and reorder use approved summaries/coalescing;
-- duplicate Queue, recovery and replay converge on one recipient/channel delivery;
-- persistent failure is observable/recoverable;
-- deep links and copy match each registry entry;
-- automatic freshness shows new alerts without a full reload.
+Do not notify on per-frame rating/color/recommendation/cover/unsubmitted toggle or internal rendition/cache/manifest/retry bookkeeping.
 
-Run the repository full gate after targeted suites.
+## Noise/coalescing
 
-## Owner decisions required
+- one human mutation = one useful event;
+- one background job = one project summary;
+- no timed cross-operation digest initially;
+- pure Kanban position reorder does not notify;
+- newly assigned Editor receives targeted assignment only; existing Editors receive broad roster change;
+- removed user receives no content-bearing removal row.
 
-1. **Initial registry:** approve the exact producer/event list; decide whether board reorder and comment edit/delete are useful enough to alert.
-2. **Noise/coalescing:** approve per-operation versus timed-window summaries for high-volume collection/background activity.
-3. **Queued eligibility:** exclude events created before a new membership (recommended) or snapshot recipients at event time under another explicit rule?
-4. **Optional email:** which registry categories email by default, can users mute them, and what digest behavior applies?
-5. **Copy/privacy:** how much project/comment/collection detail may appear in notification bodies and email?
+## Email defaults
 
-These are TB4C-gated; TB0 need only record the deferral.
+- mandatory in-app for every approved registry event;
+- broad event email off by default;
+- targeted mentions, targeted assignments, and Deadline reminders remain default-on under preferences;
+- later category/digest controls are separate work.
 
-## Non-goals
+## Copy/privacy
 
-- notifying on every D1 row or storage write;
-- realtime presence/WebSockets;
-- external notification-orchestration vendors;
-- replacing targeted mentions or assignee notifications;
-- silently notifying every admin;
-- changing domain authorization or moderation rights;
-- claiming exactly-once email without provider support.
+May include actor, project, category/outcome, safe link, checklist title, collection type/counts. Do not include broad comment excerpt, filename, production-note content, client contacts, Dropbox paths, or provider diagnostics.
+
+## Producer cutover
+
+Inventory every existing producer. Exactly one legacy or registry producer owns a semantic event at a time. Share stable delivery keys during cutover. Keep a producer-ownership table/document and roll back one owner at a time.
+
+## Tests/QA
+
+- each approved event exactly once;
+- assigned actor/unassigned Admin behavior;
+- all eligible cycles and remove/re-add isolation;
+- removal/deactivation suppression;
+- targeted assignment/mention overlap remains distinct without duplicate;
+- reorder exclusions;
+- Deadline Save one event;
+- comment edit coalescing/delete privacy;
+- collection/background one-operation summary;
+- email defaults/preferences;
+- copy/deep link/privacy;
+- Queue/recovery/replay deduplication;
+- observability/producer ownership;
+- automatic inbox freshness;
+- full gate/manual QA.
 
 ## Acceptance
 
-- the approved versioned registry has a complete producer/copy/source-key/coalescing table;
-- each approved event reaches every eligible active assigned editor, including an assigned actor, through exactly one mandatory in-app row;
-- unassigned admins are not silently included;
-- newly assigned or removed editors follow the approved deterministic timing rule with no content leakage;
-- high-volume operations use approved summaries and do not create alert storms;
-- optional email follows the disclosed provider contract;
-- observability and safe replay identify every delivery outcome;
-- targeted tests and the full gate pass;
-- production remains coherent if the roadmap stops after TB4C.
-
-## Checkpoint
-
-Approve the registry, noise, queued-eligibility, email and copy/privacy contracts before the repository-native implementation plan. Accept TB4C before TB5A/TB5B.
+The versioned registry, activity records, producer table, exact recipient rules, coalescing, copy, and delivery outcomes are complete for the approved initial scope. If implementation proves too large, split it before coding rather than hiding multiple releases.

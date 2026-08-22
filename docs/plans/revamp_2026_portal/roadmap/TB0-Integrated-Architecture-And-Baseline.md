@@ -1,72 +1,49 @@
-# TB0 — Integrated Architecture, Decisions and Baseline
+# TB0 — Integrated Architecture, Authority Proposal and Baseline
 
 **User-visible change:** none  
-**Decision gate:** approve the umbrella direction and TB0-owned defaults; explicitly defer later product choices to their owning tracer bullets.
+**Decision gate:** approve authority promotion and establish the evidence/implementation baseline before dependencies or product code change.
 
 ## Goal
 
-Turn the revamp package into approved repository decisions, a matched prototype/current design baseline, a classified drift register and a current-main-aware implementation roadmap before dependencies or product code change.
+Turn the revised package into approved repository authority, a matched prototype/current baseline, a classified drift register, and reviewed implementation plans for the first foundational releases.
 
 ## Required work
 
-- Re-read current `main`, authority docs, todo and lessons.
-- Run the full pre-change gate.
-- Capture matched prototype and current-production screenshots using equivalent content at approved desktop, collaboration-panel and phone widths where each surface exists.
-- Create the design-convergence drift register from [the convergence contract](../core/11-Design-Convergence.md).
-- Classify material differences as conforming, intentional evolution, required platform/accessibility change, unwanted drift or unassessed.
-- Record current bundle/CSS output.
-- Approve or amend the TB0-gated rows in the [decision register](../core/01-Decision-Register.md).
-- For every later-slice choice, record the owning bullet and explicit deferral; do not decide feature details prematurely.
-- Record that TB4A editor assignment, TB4B deadline/reminders and TB4C editor-wide alerts are separate release gates after TB4.
-- Record that Kanban ordering correction (TB5A) precedes interaction modernization (TB5B); decide only the umbrella direction here and defer exact ordering semantics to TB5A if needed.
-- Add/approve D-16, D-17 and D-18.
-- Amend Implementation Plan and PRD.
-- Update AGENTS/CLAUDE identically.
-- Add an accurate todo umbrella entry.
-- Create and review the TB1 implementation plan.
+- Re-read current `main`, `AGENTS.md`, authority docs, todo, lessons, and orchestration policy.
+- Run/document the full pre-change gate.
+- Capture matched evidence at 1440×900, 1024×768, and 390×844, plus relevant overlay/material states.
+- Create the modular drift register and assign owner/follow-up to every unassessed material difference.
+- Record bundle/CSS output.
+- Promote the approved package as D-16–D-19 and A8–A12 only after explicit owner approval.
+- Merge appropriate product outcomes into PRD and update AGENTS/CLAUDE identically.
+- Add an accurate todo umbrella/current-bullet entry.
+- Create and review separate repository-native plans for TB0A and TB0B; create TB1 plan only after their boundaries are explicit.
+- Do not modify product dependencies/source in TB0.
 
-## Decisions TB0 must settle
+## Authority proposal
 
-- Base UI or Radix for the first shadcn proof.
-- Preflight policy.
-- shadcn style/base color/icons/prefix and component location.
-- supported browser floor for Tailwind v4.
-- design-convergence viewport/surface baseline and deviation-approval owner.
-- TanStack Query as the TB2 direction.
-- typed custom-router retention.
-- D1 outbox + Cloudflare Queue as the TB4 direction.
-- Quincy-owned project discussion reuse for Kanban cards.
-- dark-mode exclusion and icon policy.
-- D-16/D-17/D-18 wording.
+- D-16: UI platform/design convergence.
+- D-17: Quincy-owned collaboration/freshness/pipeline/Kanban architecture.
+- D-18: Project Workspace coordination/Deadline/Editor notifications.
+- D-19: React 19.2 runtime baseline, superseding only D-15's React-major choice.
+- A8–A12 as described in `core/10-Repository-Document-Update-Map.md`.
 
-## Decisions TB0 records but may defer
+## Baseline layering
 
-| Owning bullet | Decision family |
-|---|---|
-| TB3 | Discussion threads/replies/reactions/subscriptions and photographer collaboration visibility. |
-| TB4 | Email-provider ambiguity/idempotency and minimum replay/administration surface. |
-| TB4A | Editor-roster mutation capability. |
-| TB4B | Deadline timezone, delivery tolerance, custom reminder bounds, past-offset policy and reminder-email default. |
-| TB4C | Initial event registry, noise/coalescing, optional email and queued-event eligibility. |
-| TB5A | Priority/manual/date ordering semantics and target-stage insertion. |
-| TB5B | Final DnD choice if the dnd-kit proof exposes a measured limitation. |
-| TB6/TB7 | Card-detail/activity composition and notice-board feature choices. |
-
-A deferral is complete only when the decision register names the owning bullet. “Resolve later” without an owner is not accepted.
+- TB0 captures full current React 18.3.1 production/reference evidence.
+- TB0A captures focused React 18/19 parity evidence on high-risk representative surfaces.
+- Accepted React 19.2 output becomes the baseline for TB1 onward.
+- A React rendering difference is classified/resolved, not silently absorbed.
 
 ## Acceptance
 
-- Authority documents agree.
-- Baseline is green or failures are documented.
-- Matched prototype/current evidence and a reviewable drift register exist.
-- Every known material difference in the sampled surfaces is classified; unassessed items have an owner/follow-up.
-- All TB0-owned decisions are approved or amended.
-- Every later product choice has an explicit owner/gate and remains visibly unapproved.
-- The roadmap preserves separate TB4A/TB4B/TB4C release boundaries.
-- TB5A and TB5B retain separate scope and dependency.
+- Authority documents agree and preserve history.
+- Baseline verification is green or failures are understood/documented.
+- Matched evidence/drift register are reviewable.
+- D-16–D-19 and A8–A12 are approved or explicitly amended.
+- TB0A/TB0B plans pass required review.
 - No production source/dependency changes.
-- TB1 plan passes the required review pipeline.
 
 ## Stop condition
 
-Do not initialize Tailwind/shadcn, add packages or begin later tracer-bullet implementation before TB0 authority updates and the applicable per-bullet plan are approved.
+Do not begin TB0A until authority promotion and its reviewed plan are accepted. Do not initialize Tailwind/shadcn before TB0A and TB0B are live.

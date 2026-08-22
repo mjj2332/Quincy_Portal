@@ -1,68 +1,110 @@
-# Research — Tailwind CSS v4 and shadcn
+# Research — React 19.2, Tailwind CSS v4 and shadcn
 
-**Conclusion:** Strong fit as Quincy's incremental implementation platform, provided design convergence—not framework adoption—remains the measured outcome.  
-**Official-source recheck:** 2026-08-21 — shadcn still defaults new projects to Base UI and continues to support Radix.
+**Conclusion:** Strong fit as Quincy's incremental runtime/UI platform when React compatibility and design convergence are proved in separate releases.  
+**Official-source recheck:** 2026-08-22
 
-## Findings
+## React 19.2
 
-### Tailwind v4
+- Quincy is currently on React 18.3.1, the warning bridge recommended by React before upgrading to 19.
+- Current root already uses `createRoot`, StrictMode, and the modern JSX transform.
+- React 19 still includes breaking runtime/type changes: removed deprecated APIs, changed render-error reporting, stricter ref callback/type behavior, and required initial values for `useRef` in the React 19 type definitions.
+- Official migration/runtime and TypeScript codemods exist but require review.
+- The current stable React package is `19.2.8` as of this recheck.
 
-- Provides a first-party Vite plugin (`@tailwindcss/vite`).
-- Uses CSS-first configuration and automatic source detection.
-- Can explicitly add sources through `@source` when necessary.
-- `@import "tailwindcss"` includes Preflight by default.
-- Preflight can be disabled by importing theme/utilities without `preflight.css`.
-- Tailwind v4 requires a modern browser baseline that must be accepted by the product owner.
+Recommendation:
 
-### shadcn
+- TB0A upgrades to the latest stable exact `19.2.x` patch at implementation time;
+- keep React DOM on the identical patch and compatible exact type packages;
+- retain StrictMode and the Vite SPA;
+- minimum supporting dependency changes only;
+- no React Compiler, SSR, Server Components, or new-feature refactor in the compatibility release.
 
-- Distributes editable source code rather than hiding all implementation behind a package.
-- `components.json` configures generation paths, CSS variables, prefix, base color, style and aliases.
-- For Tailwind v4, the Tailwind config path is blank and the CSS path points to the real global stylesheet.
-- CSS-variable theming is recommended.
-- Some initialization choices are expensive to change after component generation.
-- As of July 2026, Base UI is the default for new shadcn projects; Radix remains supported.
-- Current components cover ordinary controls needed by Quincy, including fields, menus, dialogs, popovers, sheets and calendar/date-picker building blocks.
+Official sources:
 
-## Quincy fit
+- https://react.dev/blog/2024/04/25/react-19-upgrade-guide
+- https://react.dev/blog/2025/10/01/react-19-2
+- https://registry.npmjs.org/react/latest
 
-Advantages:
+## Tailwind CSS v4
 
-- source ownership aligns with no vendor UI lock-in;
-- Tailwind can express Quincy tokens rather than a stock theme;
-- generated components reduce repeated accessibility-heavy primitives;
-- consistent component APIs are useful for human and agent development;
-- incremental migration is possible.
+- first-party Vite plugin;
+- CSS-first configuration and automatic source detection;
+- normal all-in-one import includes Preflight;
+- theme/utilities can be imported without Preflight;
+- official browser floor: Chrome 111, Safari 16.4, Firefox 128.
 
-Risks:
+Recommendation:
 
-- stock shadcn aesthetic can erase Quincy identity;
-- class strings can become another form of sprawl;
-- generated code requires ongoing merge/review discipline;
-- Preflight can globally change unrelated production surfaces;
-- newest template assumptions must be tested against React 18 and the current toolchain;
-- Base UI/Radix mixing can create duplicate primitives.
+- use `@tailwindcss/vite`;
+- keep one CSS entry;
+- disable Preflight initially and retain Quincy base styles;
+- map existing tokens into semantic Tailwind variables;
+- accept official browser floor for this closed internal product.
 
-## Recommendation
-
-- Tailwind v4 + shadcn approved as direction, but neither is a visual authority.
-- Use the Quincy design system as the visual authority and the prototype as the visual/flow reference for comparable surfaces.
-- Require a drift classification and matched visual evidence for every migrated feature surface.
-- Use Vite plugin.
-- Disable Preflight initially.
-- Map existing tokens to semantic variables.
-- Start app-local.
-- Add only components required by TB1.
-- Test Base UI first; keep Radix alternative open until overlay behavior is proven.
-- Keep React 18 during the UI foundation unless compatibility testing proves a separate upgrade is required.
-
-## Official sources
+Official sources:
 
 - https://tailwindcss.com/blog/tailwindcss-v4
 - https://tailwindcss.com/docs/preflight
-- https://tailwindcss.com/docs/upgrade-guide
+- https://tailwindcss.com/docs/compatibility
+
+## shadcn
+
+Current facts:
+
+- source-owned generated components;
+- `components.json` controls style, paths, base color, CSS variables, prefix, aliases, RSC/TSX, icon library, and registries;
+- Tailwind v4 config path is blank and CSS path points to the real entry;
+- CSS variables are recommended;
+- Base UI is the default for new projects; Radix remains supported;
+- React Aria is also a first-class option;
+- Sera is an editorial, typography-led, square-cornered scaffold;
+- initialization choices are expensive to change after generation.
+
+Selected Quincy contract:
+
+- Base UI first; React Aria/Radix only after a measured blocker;
+- Sera scaffold;
+- Lucide icons;
+- neutral generated base replaced/mapped through Quincy semantic values;
+- CSS variables, no prefix, app-local aliases/locations;
+- no third-party registries initially;
+- no bulk component install;
+- generated source is first-party reviewed code;
+- stock Sera/shadcn appearance is not acceptance.
+
+Official sources:
+
 - https://ui.shadcn.com/docs
 - https://ui.shadcn.com/docs/components-json
-- https://ui.shadcn.com/docs/tailwind-v4
 - https://ui.shadcn.com/docs/changelog/2026-07-base-ui-default
-- https://ui.shadcn.com/docs/changelog/2026-03-cli-v4
+- https://ui.shadcn.com/docs/changelog/2026-07-react-aria
+- https://ui.shadcn.com/docs/changelog/2026-04-sera
+
+## Quincy fit and risk controls
+
+Advantages:
+
+- editable source and no UI vendor lock-in;
+- semantic token bridge;
+- reusable accessibility-heavy primitives;
+- incremental migration;
+- consistent agent/human component APIs.
+
+Risks:
+
+- stock framework aesthetic;
+- class-string sprawl;
+- global Preflight regressions;
+- generated-source maintenance;
+- primitive-base mixing;
+- runtime-upgrade and UI-tooling regressions becoming hard to distinguish.
+
+Controls:
+
+- React TB0A before Tailwind TB1;
+- separate pipeline TB0B before UI work;
+- fixed matched evidence and drift register;
+- one styling owner;
+- only active-bullet components;
+- focused CSS retained where clearer;
+- no dark mode or whole-app conversion.

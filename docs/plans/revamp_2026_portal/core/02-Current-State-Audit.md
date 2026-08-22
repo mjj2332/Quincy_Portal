@@ -1,9 +1,8 @@
 # Current-State Audit
 
-**Baseline:** `mjj2332/Quincy_Portal` `main` at `dfddccbaaaaeff4b0ce3146c58af338d070d345e`  
-**Code-baseline note:** the commits after `ff01974f91f4b459a31352fbdf20981e6d38977a` through this baseline changed revamp documentation, not production source.  
-**Audit date:** 2026-08-21  
-**Scope:** facts that constrain the revamp; re-check before implementation
+**Baseline:** `mjj2332/Quincy_Portal` `main` at `8bcb48245a727b048053bd3653cf07f3ad99b780`  
+**Audit date:** 2026-08-22  
+**Scope:** current facts that constrain the revised revamp; re-check before each implementation plan
 
 ## 1. Repository and process
 
@@ -13,7 +12,7 @@
 - Repository authority is Decision Sheet → Implementation Plan → PRD/supporting docs.
 - `AGENTS.md` and `CLAUDE.md` must remain exact mirrors.
 - There is no staging environment.
-- The required full gate from `portal/` is:
+- Required verification from `portal/` is:
 
 ```bash
 npm run typecheck
@@ -22,191 +21,189 @@ npm run test --workspaces
 npx vitest run --config packages/shared/vitest.config.ts
 ```
 
-- Production deploy order is background → webhook-ingress → app.
-- Applied migrations are documented through `0029`; the next available number is `0030` at this baseline.
+- Production deploy order is background → webhook-ingress → app when all three change. A web-only bundle change deploys through the app Worker.
+- Applied migrations are documented through `0029`; re-check the next number before any schema plan.
 
-## 2. Production frontend
+## 2. Runtime and frontend baseline
 
-Current declarations and architecture:
+Current declarations:
 
 - React `18.3.1` and React DOM `18.3.1`.
-- Vite `8.1.5`.
-- TypeScript `7.0.2`.
-- Custom state/history route parser; no React Router/TanStack Router.
-- Custom token files plus monolithic `app.css`.
-- Dependencies pinned at `portal/package.json`.
-- No Tailwind or shadcn configuration yet.
-- Production `colors.css`, `fonts.css`, `spacing.css` and `typography.css` are byte-identical to the prototype design-system sources; production `base.css` differs only in the pattern asset URL.
-- Production `app.css` is about 112 KB versus about 51 KB in the prototype. Growth alone is not proof of visual failure, but it locates the main drift risk in application selectors, component composition and responsive behavior rather than in the foundational tokens.
+- `createRoot` under `<StrictMode>`.
+- modern `react-jsx` transform.
+- Vite `8.1.5`, `@vitejs/plugin-react` `6.0.3`, TypeScript `7.0.2`.
+- custom typed pathname/history router; no React Router/TanStack Router.
+- Tiptap v3, dnd-kit, Floating UI, Better Auth.
+- no Tailwind or shadcn configuration.
+- app CSS/token files remain the dominant styling layer.
 
-Specialized libraries already present:
+Consequences:
 
-- Tiptap v3 for rich text, links, mentions, lists, headings and task lists.
-- dnd-kit for checklist and link reordering.
-- Floating UI for anchored popovers.
-- better-auth for staff authentication.
+- Quincy is already on React 18.3, the recommended warning bridge for React 19.
+- The root and JSX transform already meet React 19's core setup expectations.
+- React 19 type changes still require a real source audit: no-argument `useRef`, implicit ref-callback returns, removed APIs, test error assumptions, and StrictMode behavior are not proven compatible merely because the app builds on React 18.
+- TB0A must be an independent compatibility release before generated shadcn code is adopted.
 
-## 2a. Design convergence today
+## 3. Design convergence baseline
 
-The design foundation is substantially preserved, but there is no repository-level conformance process for the surfaces built after the prototype.
+- Foundational Quincy tokens and fonts are substantially preserved.
+- `app.css` and later component composition remain the main drift risk.
+- Production contains valuable evolution—real data, auth, accessibility, collaboration, ordering, and operational UI—that the prototype never modeled.
+- No repository-level drift register currently classifies material differences.
+
+Conclusion: preserve the token system, audit application surfaces at fixed 1440×900, 1024×768, and 390×844 baselines, and classify differences rather than treating either current production or stock shadcn as automatic authority.
+
+## 4. Routing and freshness
+
+The custom router already:
+
+- tracks pathname/search and `popstate`;
+- validates internal destinations;
+- supports direct project routes and multiple tabs;
+- scopes `ProjectWorkspace` by project ID.
+
+The freshness defect is data lifecycle, not path routing.
+
+| Surface | Current behavior | Gap |
+|---|---|---|
+| Dashboard/Kanban | mount/scope/manual reload | no shared focus/poll/invalidation policy |
+| Project detail | load on project change plus own-action refreshes | external changes can stay stale |
+| Active assets | project/tab changes plus explicit actions | no uniform route/resource cache |
+| Jobs/AutoHDR | bespoke five-second polling while active | must not be duplicated by query migration |
+| Project comments | load when panel opens, local updates after own mutation | no shared polling/read-state policy |
+| Checklist | component-owned load/mutations | no cross-tab freshness contract |
+| Notice board | bespoke open/closed polling; seen marker local | unread state is not server-owned |
+| Notifications | bespoke bell polling | delivery is not uniformly durable |
+
+TB2 first migrates Project detail and active collection assets with keys containing project ID and collection kind. Same-browser mutations publish narrow invalidation; bounded polling and focus/reconnect remain the cross-session fallback.
+
+## 5. Project Workspace and Collaboration
+
+Current `ProjectWorkspace.tsx`:
+
+- receives collections and all project memberships;
+- renders a left rail with Agency, Agent, Shoot, read-only Stage, and Photographers;
+- does not render Editors in the rail;
+- renders the Collaboration panel as a separate right-edge surface.
+
+Current Collaboration:
+
+- owns project comments and checklist/subtasks;
+- supports rich text, mentions, author-only comment edit/delete, anchored checklist assignee/due popovers, and stage-hidden collaboration-only access;
+- should remain task/discussion-focused.
+
+Revised consequence: the left rail—not Collaboration—must own Stage, Deadline/Reminders, Photographers, and Editors.
+
+## 6. Membership model and mutation
 
 Current facts:
 
-- the design-system tokens and core dashboard/Kanban geometry remain recognizable;
-- production has added real auth, server data, accessibility behavior, notice-board/collaboration UI, ordering controls and other functionality the prototype never modeled;
-- some differences are intentional product evolution, while others may be ad hoc drift;
-- no active document currently classifies those differences or records owner-approved deviations;
-- TB0 previously required representative current screenshots but not matched prototype/current evidence.
+- `project_members` has independent `(project_id, user_id, role_on_project)` rows.
+- One user may hold both `photographer` and `editor` rows.
+- Create/Edit Project can select multiple users for each role.
+- Photographer eligibility currently includes active Photographer, Editor, and Admin users.
+- Editor eligibility currently includes active Editor and Admin users.
+- Edit Project submits caller-owned full lists.
+- `syncProjectMembersAndClearSubtaskAssignments()` computes role diffs and atomically clears checklist assignments only after the user loses the final project role and is not an active Admin.
 
-Conclusion: do not replace or reconstruct the token system. Audit the application layer surface by surface using the design system as visual authority and the prototype as the visual/flow reference.
+Consequences:
 
-## 3. Routing and deep links
+- Inline rail controls must not reuse stale full-list mutation.
+- Use explicit role-specific idempotent routes and membership-cycle removal guards.
+- Keep inactive assigned users visible/removable.
+- Surface the existing last-role checklist-unassignment consequence before mutation.
+- Create Project retains initial team selection; routine Edit Project selectors retire after rail parity.
 
-The custom router:
+## 7. Stage, capabilities, and pipeline
 
-- reads pathname + search;
-- subscribes to `popstate`;
-- notifies after its own `pushState`/`replaceState` calls;
-- validates internal destinations;
-- supports typed project routes;
-- renders `ProjectWorkspace` with `key={projectId}`.
+Current facts:
 
-Conclusion: path-based routing is not the root defect. It correctly enables direct project links and multiple projects in separate tabs.
+- `editProject` is currently Admin-only.
+- Stage movement currently uses `selectForEditing`, held by Admins and Editors.
+- Current Stage endpoint accepts active system stages, appends to the target Stage, audits, and emits the delivered notification.
+- Non-admins see `editing_autohdr` projected as neutral `editing`/“Editing”.
+- Admin Pipeline can edit labels, activate/deactivate Stages, and move them Up/Down.
+- System-stage keys are hard-coded across creation defaults, AutoHDR, visibility, notifications, and presentation.
 
-## 4. Data freshness today
+Revised consequences:
 
-| Surface | Initial load | Ongoing refresh today | Gap |
-|---|---|---|---|
-| Dashboard/project list/Kanban | Fetch on mount, scope change or manual reload counter | No general interval/focus policy | Other-tab/server changes remain stale |
-| Project details | Fetch when `projectId` changes | Some explicit refreshes after own mutations | External changes may remain stale |
-| Assets/current collection | Fetch on project/tab changes and explicit actions | No uniform general policy | External uploads/reviews may remain stale outside special flows |
-| Jobs | Fetch and poll while active | Five-second polling | Already dynamic but bespoke |
-| AutoHDR status | Conditional five-second recursive polling | Yes in selected stages | Bespoke and separate from other data |
-| Project comments | Fetch when panel opens; local-state updates after own actions | No general polling | Other users/tabs do not appear automatically |
-| Subtasks | Component-managed load/mutations | No unified route/query policy | Other-user changes may remain stale |
-| Notice board | Poll full list every 25 seconds open; latest every 60 seconds closed | Yes | Seen marker is browser-local, not server/user synchronized |
-| Notifications | Bell polling exists | Yes, bespoke | No complete preferences/digest/retry system |
+- Introduce `moveProjectStage` for Admins and Editors and use it across rail/Kanban movement.
+- Keep fixed semantic progression independent of display order.
+- Manual AutoHDR entry/exit is stage-only and uses dedicated confirmation.
+- TB0B removes ordinary Admin global-order controls and their self-service endpoint while preserving label and active-state management.
+- Dynamic stage creation/deletion remains deferred.
 
-## 5. Existing project discussions
+## 8. Deadline/reminder state
 
-Backend already provides:
+Current projects have shoot date/time-window fields; checklist items have literal Sydney due values and a one-shot reminder. There is no distinct project Deadline, configurable reminder set, or project deadline timezone/version.
 
-- project collaboration access enforcement;
-- cursor pagination;
-- Tiptap-compatible rich-text JSON;
-- active/project-eligible mentions;
-- create/edit/delete;
-- author-only edit/delete;
-- auditing;
-- mention notification/email emission.
+Revised consequence:
 
-Frontend currently keeps comment data in component state, prepends its own newly posted comments and loads older pages manually.
+- Add an independent versioned Sydney-time project schedule.
+- Do not derive or backfill it from shoot/checklist fields.
+- Materialize reminder occurrences, include Due-now, suppress stale versions, and suspend pending schedules on delivered/archive.
+- Add a per-user reminder-email preference before enabling default-on email.
 
-The same collaboration pane already hosts the checklist, whose anchored assignee and due-date popovers provide the interaction precedent for the proposed editor/deadline controls. Multiple editor memberships already exist and the Edit Project form can select several editors, but routine add/remove is not exposed in the collaboration pane. The current `syncMembers()` path synchronizes a caller-supplied full-list snapshot; the pane must use guarded role-specific deltas rather than reuse that stale-list contract. `project_members` has a unique `(project_id, user_id, role_on_project)` key and a `created_at` value, so editor removal can preserve another project role and later recipient timing can distinguish a new assignment cycle. There is no distinct project-level due date/time or configurable project reminder schedule.
-
-## 6. Existing notice board
-
-Backend already provides:
-
-- staff capability gating;
-- rich text and mentions;
-- author-only edit/delete;
-- auditing;
-- mention notifications.
-
-Frontend currently:
-
-- polls with different open/closed intervals;
-- stores collapse state and latest-seen ID in localStorage;
-- treats a top-level notice as the content unit;
-- does not yet provide comments/replies under a notice.
-
-## 7. Existing notifications
+## 9. Notifications and activity
 
 Current implementation includes:
 
-- D1 notification rows;
-- per-user unread count;
-- mark read, read all and delete;
-- event types for project pipeline, assignment, mention and due events;
-- `sourceKey` deduplication for selected events;
-- email sent/error metadata;
-- direct best-effort email sending during emission;
-- background scans for due/stalled events.
+- D1 notification rows and unread state;
+- selected `sourceKey` deduplication;
+- direct/best-effort email during emission;
+- mention/assignment/due/pipeline event types;
+- background scans;
+- shared project-notification helper behavior that appends active Admins even under editor filtering.
 
 Primary gaps:
 
-- no durable general outbox between domain writes and delivery;
-- no full preference center;
-- no per-project/thread subscription level;
-- no digest policy;
-- no general retry/DLQ flow for request-path email failures;
-- no unified observability/admin recovery interface.
-- no editor-wide project-change event registry or guaranteed fan-out to all assigned editors;
-- no project-level deadline with multiple user-configurable advance reminders;
-- the current `projectNotificationRecipients()` helper always appends active admins, including when `editorOnly` is requested, so the editor-wide contract needs a dedicated assigned-editor resolver rather than reusing that helper unchanged;
-- current notification uniqueness is `(type, source_key, user_id)` and does not model recipient/channel delivery state.
+- no general outbox/Queue boundary;
+- no recipient/channel delivery ledger or explicit `unknown` email outcome;
+- no unified retry/DLQ/recovery administration;
+- no immutable safe project-activity domain;
+- no finite mandatory assigned-Editor registry;
+- existing general recipient helper cannot implement assigned-Editor-only fan-out unchanged.
 
-## 8. Existing Kanban
+## 10. Existing Kanban
 
-The Dashboard already has a project-stage Kanban board:
+- Card = project; column = Stage.
+- Fields include Stage, Priority, and `boardPosition`.
+- Board mode currently groups all non-null Priority ahead of null and then uses `boardPosition`.
+- Shoot-date modes override that order.
+- Priority mutation rewrites `boardPosition`.
+- Up/Down uses flat persisted neighbours, which can disagree with the visible grouped order.
+- Native HTML5 drag powers Stage movement.
+- dnd-kit is already installed and used elsewhere.
+- Cards currently show RAW count and no project Deadline.
 
-- each card is a project;
-- columns are pipeline stages;
-- cards link to `/projects/:projectId`;
-- project priority and persisted `boardPosition` already exist;
-- sort modes include board order and shoot-date ordering;
-- stage moves use optimistic local updates and a server mutation;
-- the board currently uses native HTML5 `DragEvent`, not dnd-kit;
-- up/down controls exist for manual ordering in selected modes;
-- board mode displays all non-null-priority cards ahead of null-priority cards, then sorts by `boardPosition`;
-- shoot-date modes override both priority grouping and manual order;
-- changing priority also rewrites `boardPosition`, including while a shoot-date view hides the resulting manual-order change;
-- the up/down API uses the flat persisted order while the UI displays a priority-grouped order, so an accepted historical edge case can persist a successful move with no visible movement;
-- stage moves append a project to the target stage's persisted order while retaining its priority value.
-- cards currently show a RAW count and do not have a project due date/time field to display.
+Consequences:
 
-Therefore the future work is not a new board product, but it is also not only a DnD-library swap. The ordering model must be corrected and approved before interaction modernization so the revamp does not encode the current inconsistencies more deeply.
+- TB5A must normalize once to preserve current visible order, then make `boardPosition` the sole persisted manual order.
+- Priority becomes metadata plus a view-only numeric sort (`1` highest; null last).
+- Stage and target-position semantics are unified before TB5B replaces native drag with dnd-kit.
+- Kanban cards inherit TB4B Deadline/RAW metadata without Deadline sorting.
 
-Key consequence: a Kanban-card discussion is currently the same project discussion. Do not create duplicate comment storage for the same project card.
+## 11. Discussion and notice board
 
-## 9. Strengths to preserve
+Project comments and notice-board posts already have rich text, mentions, author-only edit/delete, audit, and notification behavior. Project comments also have cursor pagination. Notice-board read/seen state remains browser-local.
 
-- Strong brand tokens and visual identity.
-- Explicit backend capability checks.
-- Mature auditing discipline.
-- Good focus/Escape DOM tests in complex surfaces.
-- Tiptap content validation is shared server/client.
-- dnd-kit has already been integrated successfully.
-- Existing guarded/optimistic update patterns can inform Kanban conflicts.
-- Existing deep links from notifications/emails already target project routes.
-- Existing `project_members` rows and multi-editor Edit Project UI prove that editor membership is already many-to-many.
-- Existing checklist assignee/date popovers provide a tested interaction pattern for compact collaboration-pane controls.
+Consequences:
 
-## 10. Main architectural debts
+- TB3 uses an adapter over current project-comment tables plus server-owned reads.
+- TB3 remains a flat stream.
+- TB7 proves the same read/freshness/delivery foundation for notices without adding replies/pinning/priority/expiry/acknowledgement.
 
-- Server-backed data lifecycles are component-specific and inconsistent.
-- Global CSS owns too many unrelated surfaces.
-- Repeated generic UI behavior remains expensive.
-- Project discussion and notice-board domains overlap but are separate implementations.
-- Read state is not consistently server-owned.
-- Notification delivery is not uniformly durable.
-- Time-critical project coordination is split between Edit Project, checklist controls and direct notification helpers; there is no project deadline/reminder contract.
-- Existing Kanban DnD lacks the richer keyboard/touch/scroll model expected from the installed dnd-kit stack.
-- There is no design-conformance/drift register distinguishing approved product evolution from accidental divergence.
-- Kanban visible order and persisted/manual-order behavior can disagree, and some successful mutations have no immediate visible effect.
+## 12. Audit conclusion
 
-## 11. Audit conclusion
+The revised program should preserve the working application and proceed in this order:
 
-The revamp should not discard the existing application. It should establish shared foundations through real consumers:
-
-1. Establish a matched prototype/current design baseline and drift register.
-2. Prove Tailwind/shadcn as an implementation tool for Quincy—not as a replacement aesthetic.
-3. Prove route-aware server state.
-4. Migrate project discussion.
-5. Prove durable notification delivery.
-6. Add collaboration-pane editor assignment, a versioned project deadline/reminder schedule, editor-wide project-change events and Kanban due metadata.
-7. Correct the existing Kanban ordering contract, then modernize its interactions.
-8. Reuse project discussion in the project-card experience.
-9. Migrate the notice board after the shared model is proven.
-10. Converge remaining UI one feature surface at a time.
+1. Promote the settled decisions and capture the matched baseline/drift register (TB0).
+2. Upgrade React independently (TB0A).
+3. Enforce the pipeline configuration boundary (TB0B).
+4. Prove the Quincy UI layer (TB1).
+5. Prove route/resource freshness (TB2).
+6. Add discussion read-state/freshness (TB3).
+7. Prove durable delivery (TB4).
+8. Build the assignment rail, Deadline schedule, and Editor registry (TB4A–C).
+9. Establish Stage/Kanban semantics, then modernize interactions (TB5A–B).
+10. Add card detail, notice synchronization, and evidence-driven remaining convergence (TB6–8).

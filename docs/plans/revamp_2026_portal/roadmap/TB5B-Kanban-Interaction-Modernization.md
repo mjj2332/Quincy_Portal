@@ -1,65 +1,48 @@
 # TB5B — Kanban Interaction Modernization
 
-**Primary user outcome:** the corrected project board is accessible, automatically refreshed and conflict-safe across pointer, touch and keyboard use.
+**Primary user outcome:** the accepted project board is accessible, automatically refreshed, and conflict-safe across pointer, touch, keyboard, and non-drag use.
 
-## Preconditions
-
-- TB5A ordering contract approved.
-- TB5A correction live or otherwise established as the implementation baseline.
-- Board query/freshness conventions from TB2 available.
-- TB4B project deadline is included in board query/refresh data and its card-level RAW count removal is the baseline.
+**Preconditions:** TB5A Stage/order contract accepted and live/baseline; TB2 query conventions available; TB4B Deadline metadata baseline.
 
 ## Scope
 
-- Keep project-as-card and stage-as-column.
-- Migrate native HTML5 drag to dnd-kit through one bounded board implementation.
-- Pointer, touch, keyboard and “Move to…” alternative.
-- Visible drag handle separate from the canonical project link.
-- DragOverlay, collision and nested/horizontal scroll handling.
-- Route/scope/sort-keyed board query and focus/reconnect/poll refresh.
-- Optimistic move with authoritative response from the TB5A contract.
-- Guarded conflict behavior.
-- Delay/reconcile incoming refresh while actively dragging.
-- Preserve temporary view-only sort behavior and native direct/open-new-tab project links.
-- Emit structured activity/outbox intent where appropriate.
-- Apply the design-convergence contract to board controls/cards touched by the slice.
-- Preserve the deadline label/overdue state through optimistic moves and refresh; do not reintroduce RAW count.
+- Replace native HTML5 drag with dnd-kit.
+- Dedicated drag handle separate from project link.
+- Pointer, touch, keyboard sensors and explicit **Move to…** alternative.
+- DragOverlay and horizontal/nested scroll behavior.
+- Board query keyed by scope/sort and focus/reconnect/poll freshness.
+- Same-browser invalidation.
+- Optimistic move with authoritative TB5A response/rollback.
+- Reconcile/defer incoming refresh during active drag.
+- Preserve Board-only reorder controls and view-only Priority/shoot-date sorts.
+- Preserve direct/open-new-tab links, Deadline/overdue metadata, and no card RAW count.
+- Emit only accepted activity/outbox semantics; pure position reorder remains no broad notification.
 
 ## Non-goals
 
-- changing the TB5A ordering semantics;
-- generic task-card database;
-- separate card comments;
-- card-detail feature;
-- Pragmatic DnD production dependency unless dnd-kit proof fails;
-- realtime board presence.
+- changing Stage/order semantics;
+- generic task-card schema;
+- duplicate comments;
+- card detail;
+- second production drag engine;
+- realtime presence.
 
 ## Tests/QA
 
-- within-column and between-column moves;
-- empty columns;
-- pointer, touch, keyboard and non-drag movement;
+- within/between/empty-column moves;
+- pointer/touch/keyboard/non-drag;
+- handle/link separation;
 - DragOverlay and nested/horizontal scroll;
-- optimistic rollback and stale conflict;
-- external board change appears without reload;
-- active drag is not reset by refresh;
-- Board/temporary-sort control availability remains correct;
-- direct project links and open-new-tab remain native;
-- focus and announcements after success/conflict;
-- activity/outbox exactly once;
-- matched design-convergence evidence at desktop and narrow widths;
-- typical board and 100+ card stress fixture.
-- deadline display and absence of RAW count at desktop/narrow widths before, during and after movement.
+- optimistic rollback/stale conflict/focus/announcement;
+- external change without reload;
+- active drag survives refresh;
+- view-only sort controls/write behavior;
+- direct link/new tab;
+- normal and 100+ card fixture;
+- Deadline/no RAW before/during/after movement;
+- matched desktop/compact/phone evidence;
+- full gate/manual QA.
 
 ## Acceptance
 
-- all movement paths implement the same TB5A ordering contract;
-- no pointer-only operation;
-- no drag/link ambiguity;
-- conflicts never silently overwrite newer state;
-- refresh does not destroy an active interaction;
-- the board remains coherent if the roadmap stops before TB6.
-
-## Checkpoint
-
-Retain dnd-kit or document a concrete measured blocker requiring a Pragmatic DnD comparison.
+All movement paths implement TB5A, no pointer-only operation or drag/link ambiguity exists, conflicts never overwrite newer state, and dnd-kit is retained unless a concrete measured blocker justifies a separately reviewed alternative.

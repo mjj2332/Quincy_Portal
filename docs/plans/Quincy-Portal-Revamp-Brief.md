@@ -1,150 +1,166 @@
 # Quincy Portal Revamp — High-Level Brief
 
-**Status:** Owner and planning-agent brief  
-**Prepared:** 2026-08-21  
+**Status:** Revised owner/planning brief; decisions settled in the proposal package, authority promotion still pending  
+**Revised:** 2026-08-22  
+**Baseline:** `main` at `8bcb48245a727b048053bd3653cf07f3ad99b780`  
 **Detailed documentation:** [`revamp_2026_portal/`](./revamp_2026_portal/README.md)
 
 ## Purpose
 
-Converge Quincy Portal back toward its approved design system and original prototype intent while modernizing its UI and collaboration architecture without losing the working product, deep links, security boundaries, or Cloudflare-native deployment model.
+Converge Quincy Portal toward its approved design system and prototype intent while modernizing its runtime, UI platform, data freshness, collaboration, operational notifications, project coordination, and existing Kanban board without losing the working product, deep links, security boundaries, or Cloudflare-native deployment model.
 
-The program combines six related concerns under one north-star design:
+The work is an incremental program, not a rewrite.
 
-1. Design-system/prototype convergence through an incremental Tailwind CSS v4 and shadcn migration.
-2. Route-safe automatic data freshness.
-3. Asynchronous project discussions and the staff notice board.
-4. Reliable in-app/email notifications on Cloudflare.
-5. Time-critical project coordination: direct multi-editor assignment, project due date/time, configurable advance reminders and editor-wide change alerts.
-6. Modernization of the existing project Kanban board.
+## Program outcomes
 
-The implementation remains a sequence of small, independently deployable tracer bullets. It is not a single rewrite.
+1. Upgrade the production Vite SPA from React 18.3.1 to the latest stable pinned React 19.2 patch in an isolated release.
+2. Establish Tailwind CSS v4 and source-owned shadcn components as implementation tools for Quincy design convergence.
+3. Restore route-safe automatic data freshness while preserving drafts and active interactions.
+4. Keep project discussion and the notice board asynchronous and Quincy-owned.
+5. Make notification delivery durable through a D1 outbox and Cloudflare Queue.
+6. Make the Project Workspace left rail the canonical project-level coordination surface.
+7. Correct Stage and Kanban ordering semantics before modernizing drag interactions.
+8. Migrate remaining UI surfaces only after the foundations are proven.
 
-## User-approved boundaries
+## Canonical coordination model
 
-- Keep `portal/` as the only production implementation area.
-- Keep `prototype/` reference-only.
-- Keep React 18, Vite, Hono, D1, R2, Workers, Tiptap, and existing security rules unless a separate decision changes them.
-- Use Tailwind v4 and source-owned shadcn components for migrated ordinary UI.
-- Treat the Quincy design system as the visual authority and the prototype as the visual/flow reference; do not copy prototype application structure.
-- Preserve Quincy's ink-on-warm-paper brand, fonts, semantic signals, hairlines, restrained radius, and low elevation.
-- Classify every material production/prototype difference as conforming, intentional evolution, required platform/accessibility change, unwanted drift, or unassessed.
-- Do not add an external managed comments/chat/feed/Kanban platform.
-- Cloudflare-managed infrastructure is acceptable.
-- Do not build Slack-like chat, typing indicators, presence, or WebSockets by default.
-- Keep deep, shareable routes such as `/projects/:projectId`.
-- Restore automatic refresh while a user stays on a route.
-- Let authorized users assign or remove multiple editors directly in the collaboration pane.
-- Notify every active assigned editor, including the actor, through a mandatory durable in-app event for the approved registry of project changes; email remains an additional channel.
-- Add one project-level due date/time with zero, one or multiple advance reminder offsets.
-- Show due date/time on Kanban cards and remove only the card-level RAW count.
+Project-level operational metadata belongs in the **Project Workspace left rail**:
 
-## Target architecture
+- Stage;
+- Deadline and reminder rules;
+- Photographers;
+- Editors.
 
-```text
-React 18 + Vite SPA
-  ├── Custom typed route parser/history adapter
-  ├── TanStack Query proposal for route-keyed server state
-  ├── Tailwind CSS v4
-  ├── shadcn source-owned components
-  ├── Tiptap v3 for rich text and mentions
-  ├── dnd-kit for sortable interactions
-  └── Quincy feature modules
-         │
-         ▼
-Hono on Cloudflare Workers
-  ├── D1: authoritative relational state
-  ├── R2: media and future discussion/card attachments
-  ├── Queues: notification delivery, retry, DLQ
-  ├── Cron: outbox recovery and periodic scans
-  ├── Workflows: only long-lived multi-step jobs
-  └── Email Service: transactional email behind an adapter
-```
+The **Collaboration panel** remains focused on:
 
-## Key product insight
+- project checklist/subtasks;
+- project comments/discussion;
+- related task-level collaboration.
 
-The current Kanban card already represents a project. Therefore, “Kanban card comments” and “project comments” should not become duplicate systems. A project-card detail view can display the same project discussion and activity history.
+The same project-level mutation control must not be duplicated permanently across both surfaces.
 
-A separate `kanban_card` discussion scope is needed only if Quincy later adds cards that are not projects.
+### Team controls
 
-## Why automatic refresh broke
+Photographers and Editors are independent rows. Each shows a compact adaptive roster and opens an anchored searchable multi-select picker. Changes apply immediately through role-specific idempotent operations. Existing cross-role eligibility remains:
 
-Path-based routing is not inherently incompatible with automatic updates. The current router correctly tracks pathname/history and scopes `ProjectWorkspace` by project ID. The stale behavior comes from data lifecycle: several screens load once and then depend on local state or manual reload, while only some job/status surfaces poll.
+- Photographer slot: active Photographers, Editors, and Admins.
+- Editor slot: active Editors and Admins.
 
-The fix is route-keyed server-state behavior:
+A person may hold both project roles. Removing one role never removes the other. Removing the final role may atomically clear checklist assignments, with a warning and count before confirmation.
 
-- include every route variable in query keys;
-- refetch stale data on focus/reconnect;
-- use bounded polling where useful;
-- invalidate affected queries after mutations;
-- cancel or ignore stale requests after route changes;
-- preserve unsaved drafts, scroll, open editors, and drag state during background refresh.
+`editProject` remains the mutation capability for team assignments and deadline configuration. Create Project retains initial assignment. Routine team selectors retire from Edit Project after rail parity is accepted, while a rollback path remains during rollout.
 
-## Recommended tracer-bullet order
+### Stage controls
+
+A new `moveProjectStage` capability is introduced and initially granted to Admins and Editors. The left-rail picker and every Kanban movement path share one guarded Stage command.
+
+System-stage progression is fixed semantically:
 
 ```text
-TB0  Integrated decisions, prototype/current visual baseline and approved plan
-TB1  Thin Tailwind v4 + shadcn foundation on one existing form section
-TB2  Route-safe Project Workspace freshness
-TB3  Project Discussion v2 and server-side read state
-TB4  D1 notification outbox + Cloudflare Queues
-TB4A Collaboration-pane editor assignment
-TB4B Project deadline/reminders + Kanban due metadata
-TB4C Editor-wide project-change notifications
-TB5A Kanban ordering-model correction
-TB5B Kanban interaction/freshness modernization
-TB6  Project-card detail + shared discussion/activity
-TB7  Notice-board migration
-TB8  Surface-by-surface design convergence and legacy cleanup
+awaiting_raw → raw_review → editing_autohdr → edited_review → delivered
 ```
 
-Do not finish the entire UI refactor before product work. Do not combine all bullets into one implementation. Build only the UI/data foundations required by the next real feature.
+Configurable display order does not redefine automation. Editors see the neutral **Editing** presentation for `editing_autohdr`; Admins may see its configured internal label. Admins and Editors may enter or exit that Stage, but doing so changes Stage only—it does not start, cancel, retire, or delete AutoHDR work.
 
-## Major open implementation decisions
+Normal one-step forward moves are immediate, except AutoHDR entry/exit. Backward moves, skipped steps, delivered transitions, and AutoHDR entry/exit require the approved confirmation treatment. Archived projects are read-only. A project already on an inactive Stage remains intelligible and may move to an active destination.
 
-The following are recommended but still require plan/owner approval. Each choice is decided at the owning tracer-bullet gate recorded in the decision register; TB0 may explicitly defer later-slice choices rather than deciding them prematurely:
+Global pipeline label and active/inactive management remains in `Admin → Pipeline`. Global ordering becomes developer-managed in TB0B: ordinary Admin Up/Down controls and the matching self-service endpoint are removed. Stage creation, deletion, and generic workflow-builder behavior remain deferred.
 
-- Base UI or Radix beneath shadcn; Base UI is the current default recommendation.
-- Tailwind Preflight disabled initially or enabled from the first slice; disabled initially is recommended.
-- TanStack Query as the server-state layer; recommended because current requirements now include background refresh, route isolation, invalidation, retry and stale-state coordination.
-- Whether to generalize current comment tables immediately or migrate through an adapter first.
-- Exact discussion features in v2: replies, reactions, subscriptions, pinning, attachments and acknowledgement.
-- Exact polling intervals and whether same-browser `BroadcastChannel` invalidation is included.
-- The canonical relationship between project priority, persisted manual order and temporary shoot-date views; the proposed default makes manual order the sole persisted order and priority metadata unless an explicit Priority sort is selected.
-- After the ordering contract is corrected, whether the existing project board should keep native drag temporarily or move directly to dnd-kit.
-- Whether MUI X remains necessary for a specialized date/time control after the shadcn-first proof.
-- Which existing capability may assign editors and change the project deadline/reminder rules; retaining the current `editProject`/admin boundary is recommended.
-- The project-deadline timezone contract and reminder delivery tolerance; a clearly labelled studio timezone with UTC scheduling and a one-minute scan is recommended.
-- The finite event registry and batching rules that operationalize “all project changes” without emitting one alert per internal row or imported asset.
-- The optional email-channel policy and whether a newly assigned editor receives already-queued events created before assignment; mandatory in-app delivery includes the actor.
+### Deadline controls
 
-## Non-goals
+A project has one nullable project Deadline, separate from shoot date/time and checklist due values. The left rail presents one combined Deadline/Reminders block and one transactional editor.
 
-- No React 19 migration as collateral work.
-- No router replacement solely because path-based routes exist.
-- No realtime chat.
-- No external collaboration/Kanban SaaS.
-- No wholesale CSS conversion.
-- No database table deletion before a verified additive migration.
-- No dark mode unless separately approved.
-- No backend authorization weakening.
-- No change to the literal subtask due contract: `YYYY-MM-DD` or `YYYY-MM-DDTHH:MM`, Sydney wall-clock, optional time.
-- No new deadline-based Kanban sort or change to project shoot date/time-window semantics unless separately approved.
+Approved contract:
 
-## Success criteria
+- `Australia/Sydney` studio timezone;
+- explicit handling of daylight-saving gaps and repeated local times;
+- presets for 1 day, 4 hours, and 1 hour, with none preselected;
+- custom whole-number minutes/hours/days from 1 minute to 30 days;
+- at most eight unique normalized offsets;
+- one Due-now event at the Deadline;
+- every-minute scan targeting mandatory in-app delivery within two minutes;
+- default-on reminder email with a per-user global opt-out;
+- versioned schedules, stale-occurrence suppression, and explicit conflict handling;
+- pending reminders are superseded when a project is delivered or archived and do not silently resume later.
 
-The program succeeds when:
+Kanban cards show the Deadline/overdue state and no longer show the card-level RAW count. No Deadline-based sort or automatic Stage movement is introduced.
 
-- multiple project tabs remain isolated and deep-linkable;
-- visible pages receive relevant server changes without a manual reload;
-- ordinary UI is built from Quincy-customized Tailwind/shadcn components and passes the approved design-convergence checks against the design system and prototype reference;
-- comments, notice posts and notifications have reliable unread/delivery behavior;
-- editors can be assigned in context and receive deduplicated project-change and deadline reminders;
-- project deadlines are distinct from shoot dates and checklist due values, survive rescheduling safely and appear on Kanban cards;
-- the Kanban board has one understandable ordering contract, no invisible ordering side effects, and accessible conflict-safe movement;
-- Cloudflare remains infrastructure, while Quincy owns the domain model and data;
-- legacy CSS and duplicated fetch/mutation logic shrink only as proven surfaces migrate;
-- every release remains independently testable, reviewable and reversible.
+## Runtime and UI platform
 
-## Immediate next action
+### React 19.2
 
-Approve or amend the TB0-gated rows in the [decision register](./revamp_2026_portal/core/01-Decision-Register.md), record an owner and future gate for every explicit deferral, then take [TB0](./revamp_2026_portal/roadmap/TB0-Integrated-Architecture-And-Baseline.md) through the repository's plan-review process.
+TB0A upgrades only production `portal/` to the latest stable React `19.2.x` patch at implementation time, pinned exactly with matching React DOM and compatible type packages. As of this revision the latest stable React package is `19.2.8`.
+
+The release is compatibility-only:
+
+- keep `createRoot`, StrictMode, the modern JSX transform, TypeScript, Vite, and the SPA architecture;
+- use reviewed official codemods and direct fixes for remaining type/runtime issues;
+- do not adopt React Compiler, SSR, Server Components, Actions, `Activity`, or broad refactors as collateral work;
+- update supporting packages only when a demonstrated compatibility blocker requires the minimum change.
+
+### Tailwind/shadcn
+
+TB1 begins after TB0A and TB0B are live. The first setup uses:
+
+- Tailwind CSS v4 with Preflight disabled initially;
+- shadcn with Base UI and the Sera style scaffold;
+- Lucide icons;
+- CSS-variable theming mapped from existing Quincy semantic tokens;
+- app-local `components/ui` and `components/quincy` ownership;
+- one existing ProjectFields Client section as the bounded proof;
+- no dark mode.
+
+The Quincy design system is visual authority. The prototype is a visual/flow reference, never an application-architecture template. Every material difference is classified and supported by matched evidence.
+
+## Data, discussion, and notifications
+
+- Keep the typed custom router. Adopt TanStack Query incrementally, beginning with Project detail plus active collection assets.
+- Same-browser changes use narrow `BroadcastChannel` invalidation; focus/reconnect and bounded polling remain the cross-session safety net.
+- TB3 keeps one flat project discussion stream, existing rich text/mentions and author-only mutation, adds server-owned read state, and uses an adapter over the existing tables.
+- TB4 proves a D1 outbox and Cloudflare Queue with project-comment mention as the first event. It includes a delivery ledger, retry, DLQ, recovery scan, and minimal Admin replay/status operations.
+- TB4C adds immutable structured activity plus a finite Editor-wide registry. In-app delivery is mandatory for eligible assigned Editors; broad event email is off by default.
+- Email delivery records an explicit `unknown` state when provider acceptance is ambiguous; automatic retries do not risk hidden duplicates in that state.
+
+## Kanban contract
+
+TB5A is renamed **Project Stage and Kanban Ordering Contract**.
+
+- `boardPosition` is the sole persisted manual order within a Stage.
+- Existing data is normalized once to preserve the current visible board order.
+- Priority is metadata and an optional view-only sort where `1` is highest; null is last.
+- Shoot-date sorts remain view-only.
+- Rail and non-drag Stage moves append to the target Stage; a Kanban drag may specify exact neighbours.
+- Pure position reorders do not notify Editors, though they remain audited/activity-capable.
+
+TB5B then replaces native HTML5 dragging with dnd-kit and supplies pointer, touch, keyboard, and non-drag movement against the accepted TB5A command.
+
+## Revised sequence
+
+```text
+TB0   Integrated decisions, authority proposal, baseline and drift register
+TB0A  React 19.2 runtime upgrade
+TB0B  Pipeline configuration boundary
+TB1   Tailwind v4 + shadcn foundation
+TB2   Route-safe Project Workspace freshness
+TB3   Project discussion v2 and server-owned read state
+TB4   Notification outbox + Cloudflare Queue
+TB4A  Project Workspace assignment rail
+TB4B  Project Deadline/reminders + Kanban due metadata
+TB4C  Editor-wide project-change registry
+TB5A  Project Stage and Kanban ordering contract
+TB5B  Kanban interaction modernization
+TB6   URL-addressable project-card detail
+TB7   Notice-board synchronization migration
+TB8   Evidence-driven surface-by-surface convergence
+```
+
+## Authority proposal
+
+After a separate owner approval, TB0 should promote:
+
+- **D-16:** UI platform and design convergence.
+- **D-17:** Quincy-owned collaboration, freshness, pipeline, and Kanban architecture.
+- **D-18:** Project Workspace coordination, Deadline, and Editor notifications.
+- **D-19:** React 19.2 runtime baseline, superseding only the React-major portion of D-15.
+
+Implementation Plan amendments should be A8 through A12. This package revision does not modify those authority files.

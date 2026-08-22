@@ -1,34 +1,32 @@
 # TB3 — Project Discussion v2
 
-**Primary user outcome:** project feedback refreshes asynchronously and unread state follows the user across devices.
+**Primary user outcome:** project comments refresh automatically and unread state follows the user across devices without changing the established discussion model.
 
 ## Scope
 
-- Apply route/query conventions to project discussion.
-- Preserve Tiptap content, mentions, access, author-only edits/deletes and audits.
-- Add server-side read marker.
-- Add delayed refresh while panel is open and focus refetch.
-- Keep cursor pagination.
-- Choose adapter-first or common-schema migration.
-- Write durable notification intent compatible with TB4, but do not require full Queue migration unless planned together.
+- Adapter/service over current project-comment and mention storage.
+- Apply TB2 query/freshness conventions.
+- Preserve flat newest-first stream, rich text, mentions, cursor pagination, collaboration access, author-only edit/delete, and audit.
+- Add D1 per-user read marker.
+- Mark read only after a fresh fetch while visibly presented.
+- Hidden background polls never mark read.
+- Preserve drafts during refresh.
+- Emit structured comment activity/outbox intent compatible with TB4/TB4C while keeping targeted mention semantic separate.
 
 ## Non-goals
 
-- realtime chat;
+- common thread/entry storage migration;
+- replies, reactions, attachments, named threads, subscriptions;
 - notice-board migration;
-- reactions/attachments/replies unless explicitly approved;
-- broad collaboration panel redesign;
-- deleting current tables.
+- broad Collaboration redesign.
 
 ## Acceptance
 
-- another tab/user's comment appears without reload;
-- read state follows simulated devices;
-- drafts survive refetch;
-- access/mention/audit policies remain exact;
-- pagination/order remain correct;
-- direct collaboration link still opens the panel.
-
-## Checkpoint
-
-Confirm that the discussion API/model can serve the project-card experience and later notice board without speculative over-generalization.
+- another tab/user comment appears without reload;
+- two-device read state;
+- hidden poll does not mark read;
+- own post may advance own marker safely;
+- drafts, pagination/order, mentions, access, audit remain exact;
+- create/edit/delete activity semantics correct;
+- direct Collaboration deep link remains;
+- full gate/manual QA.

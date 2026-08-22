@@ -1,84 +1,92 @@
 # Next-Agent Handoff — Quincy Portal Revamp
 
-You are taking over planning for the private repository `mjj2332/Quincy_Portal`.
+You are continuing planning or implementation for the private repository `mjj2332/Quincy_Portal`.
 
-## Read first
+## Start and process
 
-From current `main`:
+1. Inspect current `main` and record its exact SHA.
+2. Read `AGENTS.md`, `docs/todo.md`, `docs/lessons.md`, and `docs/Subagent-Orchestration.md`.
+3. Start at `docs/plans/Quincy-Portal-Revamp-Index.md`.
+4. Read only the path relevant to the active tracer bullet.
+5. Do not load the archive unless auditing historical decisions.
+6. Do not treat this proposal package as repository authority until D-16–D-19/A8–A12 are explicitly promoted.
 
-1. `AGENTS.md`
-2. `CLAUDE.md`
-3. `docs/Decision-Sheet.md`
-4. `docs/Implementation-Plan.md`
-5. `docs/PRD.md`
-6. `docs/todo.md`
-7. `docs/lessons.md`
-8. `docs/Subagent-Orchestration.md`
+The package baseline when revised was `8bcb48245a727b048053bd3653cf07f3ad99b780`; recheck it.
 
-Then read only these package files initially:
+## Approved proposal direction
 
-1. `docs/plans/Quincy-Portal-Revamp-Brief.md`
-2. `docs/plans/revamp_2026_portal/core/01-Decision-Register.md`
-3. `docs/plans/revamp_2026_portal/core/02-Current-State-Audit.md`
-4. `docs/plans/revamp_2026_portal/roadmap/TB0-Integrated-Architecture-And-Baseline.md`
-5. `docs/plans/revamp_2026_portal/core/10-Repository-Document-Update-Map.md`
+- TB0 proposes/promotes D-16–D-19 and A8–A12, captures the matched baseline and drift register, and creates reviewed foundational implementation plans.
+- TB0A upgrades production `portal/` to the latest stable exact React `19.2.x` patch. It is compatibility-only; no React Compiler, SSR, Server Components, or feature refactor.
+- TB0B removes ordinary Admin global Stage ordering from both UI and self-service API while retaining label and active/inactive management.
+- TB1 uses Tailwind v4, Base UI/Sera shadcn source, Lucide, semantic Quincy tokens, app-local ownership, and disabled Preflight. First consumer is ProjectFields Client section.
+- Keep the typed custom router; TB2 introduces TanStack Query incrementally for Project detail plus active collection assets, with focus/poll/broadcast freshness and draft preservation.
+- TB3 keeps a flat project discussion stream, current storage via adapter, and adds server-owned read state.
+- TB4 proves D1 outbox + Cloudflare Queue + delivery ledger/DLQ/recovery/Admin operations using project-comment mention.
+- The Project Workspace left rail is canonical for Stage, Deadline/Reminders, Photographers, and Editors. Collaboration remains checklist/subtasks and project comments.
+- TB4A establishes the operational-first rail and role-specific assignment deltas/cycles.
+- TB4B adds one versioned `Australia/Sydney` Deadline schedule, bounded offsets, Due-now, reminder-email preference, and Kanban due metadata/no card RAW count.
+- TB4C adds immutable safe activity plus a finite mandatory assigned-Editor registry with membership-cycle eligibility, privacy-safe copy, and operation-level coalescing.
+- TB5A introduces `moveProjectStage`, activates the rail Stage picker, preserves semantic system-stage progression, allows stage-only manual AutoHDR entry/exit, normalizes current visible board order, and makes `boardPosition` the sole manual order.
+- TB5B uses dnd-kit for pointer/touch/keyboard/non-drag movement against TB5A.
+- TB6 is a URL-addressable responsive sheet with separate Overview/Activity/Discussion.
+- TB7 migrates notice read state/freshness/reliable mentions only.
+- TB8 is evidence-driven, one surface release at a time.
 
-If the active task is project coordination, first choose the narrow path:
+## Canonical capability/surface contracts
 
-- **Editor assignment:** `core/03-PRD-Delta.md` → `roadmap/TB4A-Collaboration-Pane-Editor-Assignment.md`.
-- **Deadline/reminders or Kanban due metadata:** `core/03-PRD-Delta.md` → `core/07-Notifications-On-Cloudflare.md` → `research/Cloudflare-Native-Architecture-Research.md` → `roadmap/TB4B-Project-Deadline-And-Reminders.md`.
-- **Editor-wide change delivery:** `core/03-PRD-Delta.md` → `core/07-Notifications-On-Cloudflare.md` → `research/Cloudflare-Native-Architecture-Research.md` → `roadmap/TB4C-Editor-Wide-Project-Change-Notifications.md`.
+- `editProject`: Photographer, Editor, Deadline, Reminder mutations.
+- `moveProjectStage`: Stage mutation, initially Admins and Editors.
+- Collaboration/workspace visibility never grants mutation rights.
+- Create Project retains initial assignments. Routine Edit Project team selectors retire only after rail parity.
+- Archived projects are read-only until restored.
+- Global pipeline order is developer-managed; display order never redefines system workflow semantics.
 
-Read Kanban architecture/TB5A/TB5B only when the active work touches the card metadata or subsequent board slices.
+## System-stage contract
 
-Do not load the archive unless auditing historical decisions.
+```text
+awaiting_raw → raw_review → editing_autohdr → edited_review → delivered
+```
 
-## Approved direction
+- Normal one-step public forward move: immediate.
+- Backward/skip/delivered: confirm.
+- AutoHDR entry/exit: dedicated confirmation; allowed Admin/Editor; Stage-only; Editor sees neutral **Editing**.
+- Rail/non-drag target placement: bottom. Positional drag: exact neighbours.
+- Entering delivered supersedes pending project Deadline occurrences but does not publish artifacts.
 
-- Tailwind CSS v4 + shadcn target UI platform.
-- Design convergence is the UI outcome: Quincy design system authoritative, prototype visual/flow reference, material deviations classified.
-- One coordinated revamp, implemented through tracer bullets.
-- Keep path-based deep links.
-- Restore automatic freshness without browser reload.
-- Asynchronous comments/feedback only; no chat/presence requirement.
-- No external managed messaging/feed/notification/Kanban vendor.
-- Cloudflare infrastructure is acceptable.
-- Quincy owns discussion, notification and Kanban domain data/rules.
-- Current project Kanban card is a project and reuses project discussion.
-- Kanban ordering semantics are corrected in TB5A before dnd-kit/freshness work in TB5B; current priority/position/sort behavior is not grandfathered.
-- Authorized users assign/remove multiple editors directly in the collaboration pane using the existing membership model.
-- Every active assigned editor, including the actor, receives a mandatory durable in-app notification for the approved finite registry of project changes; email is additional under its reliability/preference contract.
-- One project due date/time supports zero or multiple advance reminders; Kanban cards show it and omit the card-level RAW count.
-- TB4A editor assignment → TB4B deadline/reminders + card metadata → TB4C editor-wide registry; all follow the TB4 outbox proof and precede TB5A/TB5B.
+## Deadline contract
 
-## Your first task
-
-Run TB0 planning only:
-
-- re-check current head and repository facts;
-- run/document baseline verification;
-- capture matched prototype/current screenshots and create the design-convergence drift register;
-- resolve TB0-gated owner decisions and explicitly assign later choices to their owning bullet;
-- draft D-16/D-17/D-18 and implementation/PRD amendments with design convergence, the split TB4A/TB4B/TB4C coordination sequence and the TB5A-before-TB5B dependency;
-- create a repository-native TB1 implementation plan;
-- take it through `docs/Subagent-Orchestration.md`;
-- do not install dependencies or modify product source before plan approval.
+- Separate from shoot and checklist due fields.
+- `Australia/Sydney`; gap rejection and explicit fold choice.
+- Presets 1 day/4 hours/1 hour, none preselected.
+- Custom 1 minute–30 days, max eight unique normalized offsets.
+- Due-now always; past Deadline emits one overdue event and skips elapsed advances.
+- Every-minute scan, target in-app within two minutes.
+- Recipients use active Editor membership cycles at fire/delivery; no unassigned Admins.
+- Delivered/archive supersedes pending rows; no silent resume.
+- Reminder email default-on only after global per-user opt-out exists.
 
 ## Critical invariants
 
-- Implementation only under `portal/`.
-- `prototype/` is a visual/flow reference only; never copy its application structure.
-- Current production behavior is not visual authority merely because it is live.
-- Do not weaken auth/capability/audit rules.
-- Keep direct/open-new-tab project links.
-- No cross-project cache leakage.
-- Background refresh cannot destroy unsaved drafts or active interactions.
-- Subtask due values remain exactly `YYYY-MM-DD` or `YYYY-MM-DDTHH:MM`, optional time, literal Sydney wall-clock.
-- Project deadline remains a separate instant/timezone contract; never reuse or reinterpret `shootDate`, `timeWindow` or the subtask due literal.
-- Editor roster mutations preserve other project roles, current capability checks and audit behavior.
-- “All project changes” means the approved versioned event registry with explicit coalescing, not every storage write.
-- There is no staging environment.
-- Production mutation requires human authorization.
+- Implementation only under `portal/`; prototype reference-only.
+- Do not weaken auth, audit, immutable-media, or collaboration access.
+- Deep links/native new-tab remain.
+- No cross-project/collection cache leakage.
+- Refresh never destroys drafts, Lightbox, selection, open controls, or active drag.
+- Subtask due literal remains `YYYY-MM-DD` or `YYYY-MM-DDTHH:MM` Sydney wall-clock.
+- Role removal preserves the other role and warns/atomically clears checklist assignments only after final non-admin role loss.
+- Broad project-change means approved finite activity registry, not every D1/storage write.
+- One semantic notification producer at a time.
+- Email `unknown` is not automatically retried.
+- There is no staging environment; production verification is passive unless human-authorized.
+
+## Narrow reading paths
+
+- TB0A: `core/04-Frontend-Architecture.md` → `core/09-Migration-Rollback-And-Verification.md` → TB0A.
+- TB0B: `core/08-Kanban-Modernization.md` → TB0B.
+- TB4A: current-state audit + PRD delta + TB4A.
+- TB4B: PRD delta + notification architecture + TB4B.
+- TB4C: discussion/activity + notification architecture + TB4C.
+- TB5A: current-state audit + Kanban architecture + historical implemented ordering plans + TB5A.
 
 ## Full verification
 
@@ -91,4 +99,4 @@ npm run test --workspaces
 npx vitest run --config packages/shared/vitest.config.ts
 ```
 
-An implementing agent's self-report is not verification. Follow the independent review/gate.
+An agent report is never verification. Follow the independent review/gate, update the active plan and todo with actual results, and move a plan to `implemented/` only after live deployment and production verification.

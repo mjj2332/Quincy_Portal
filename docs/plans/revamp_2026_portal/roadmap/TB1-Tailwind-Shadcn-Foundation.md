@@ -1,53 +1,49 @@
 # TB1 — Tailwind v4 + shadcn Foundation
 
-**Primary user outcome:** one bounded existing form section uses the new Quincy UI layer with equivalent or improved accessibility and demonstrable design-system/prototype alignment.
+**Primary user outcome:** one bounded existing form section uses the Quincy UI layer with equal/improved accessibility and demonstrable design convergence.
 
-## Recommended consumer
+**Preconditions:** TB0A and TB0B live/accepted.
 
-ProjectFields Client section:
+## First consumer
 
-- agency;
-- agent;
-- agent email;
-- agent phone.
+ProjectFields Client section across Create/Edit modes:
+
+- Agency;
+- Agent;
+- Agent email;
+- Agent phone.
+
+No product behavior change.
 
 ## Scope
 
-- Tailwind v4 Vite integration.
-- Intentional Preflight policy.
-- Quincy token/semantic-variable bridge.
-- `components.json` and aliases.
-- one `cn()` helper.
-- only required shadcn field/button primitives.
-- matched current/prototype/design-system reference evidence for the bounded section or its closest comparable controls.
-- migrate the bounded section.
-- classify every material visual/interaction deviation.
-- delete only obsolete selectors with no remaining consumer.
+- Tailwind v4 Vite plugin and CSS-first setup.
+- Import theme/utilities without Preflight.
+- Semantic Quincy token bridge.
+- `components.json`: Base UI, `base-sera`, neutral scaffold, CSS variables, Lucide, `rsc:false`, `tsx:true`, no prefix/third-party registries.
+- `@/* → src/*` aliases in TypeScript/Vite; do not rewrite unrelated imports.
+- App-local `components/ui`, `components/quincy`, `lib/utils`.
+- Only required field/button primitives.
+- Matched current/prototype/design-system evidence and drift classifications.
+- Delete only selectors with no remaining consumer.
 
 ## Non-goals
 
-- whole form migration;
-- global CSS rewrite;
-- React upgrade;
-- server-state library;
-- discussion/Kanban changes;
+- whole-form/app migration;
+- Preflight enablement;
+- React/runtime work;
+- query/discussion/coordination/Kanban changes;
 - dark mode;
-- changing the product workflow to imitate mock prototype behavior.
+- shared UI workspace;
+- bulk component install.
 
-## Tests/QA
+## Acceptance
 
-- label/control association;
-- error description and `aria-invalid`;
-- native type/props/ref behavior;
-- create/edit validation parity;
-- desktop, collaboration-panel and narrow-width visual comparison where applicable;
-- Quincy typography, spacing, border, radius, elevation, focus and motion checks;
-- no raw Tailwind palette as feature-level brand contract;
-- no stock shadcn appearance;
-- intentional deviations recorded in the drift register;
-- no unrelated Preflight regression;
-- bundle/CSS delta.
-
-## Checkpoint
-
-Accept, simplify or reject the generated primitive API and its design fidelity before adding more components. A technically working but visually generic shadcn result fails this checkpoint.
+- React 19.2 baseline remains green;
+- label/error/ref/native prop behavior;
+- desktop/compact/phone comparison;
+- Quincy typography/spacing/geometry/focus/motion;
+- no stock Sera/shadcn appearance or raw palette contract;
+- one styling owner and legacy coexistence;
+- bundle/CSS delta;
+- targeted/full gates and manual QA.
