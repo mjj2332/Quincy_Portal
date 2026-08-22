@@ -13,11 +13,11 @@ stable anchors — other docs link to them. Policy history belongs in `git log -
 | Agent | Spawned via | Model | Job | Builds? |
 |---|---|---|---|---|
 | **Sonnet 5** | this session, directly — no subprocess | Claude Sonnet 5 | Orchestrates the pipeline; builds tasks too small to hand off | Yes, at this session's discretion |
-| **Terra** | `codex exec` — [§3](subagents/codex-cli.md) | `gpt-5.6-terra`, high effort | Default planner, builder, and diff reviewer; harder diagnostics/testing | Yes |
-| **Luna** | `codex exec` | `gpt-5.6-luna` | Cheap/high-volume builder; simple diagnostics/testing; only agent permitted danger-mode (§2.9) | Yes |
+| **Sol** | `codex exec` | `gpt-5.6-sol` | Default planner and diff reviewer — drafts plans, reviews plans, reviews diffs | No — plans and reviews only |
+| **Luna** | `codex exec` | `gpt-5.6-luna` | Default builder (xhigh effort for anything beyond small/mechanical); all diagnostics/testing; only agent permitted danger-mode (§2.9) | Yes |
+| **Terra** | `codex exec` — [§3](subagents/codex-cli.md) | `gpt-5.6-terra` | No role assigned — not spawned in this pipeline | No |
 | **Opus reviewer** | `Agent` tool, `model: opus` | Claude Opus 5 | Reviews the plan (§2.1) and the final diff | No code — plan-document exception in §2.4 |
 | **Agy** | `agy` CLI subprocess — [§3a](subagents/agy-cli.md) | `gemini-3.6-flash-high` | Ad hoc groundwork only (quick investigation, one-off scaffolding) | Groundwork only, never a pipeline step |
-| **Sol** | `codex exec` | `gpt-5.6-sol` | No default role — spawn only on explicit user request | N/A |
 
 Codex agents run at `-c model_reasoning_effort=high`, Agy at `--effort high`, unless a task calls
 for otherwise. The `Agent` tool has no effort dial — ask for maximum rigor in the prompt.
@@ -26,14 +26,15 @@ for otherwise. The `Agent` tool has no effort dial — ask for maximum rigor in 
 from the `Agent` tool's `model: sonnet`, which launches a *separate* Claude builder — used only on
 explicit user request.
 
-**Codex agents have their own local Chrome and OpenCLI skills** on this machine, separate from this
-session's Claude Browser tools. A `codex exec` run can drive real Chrome and call the `opencli`
-skill family for live-site checks, bug reproduction, and UI testing. Say so explicitly in the task
-prompt when it would help — Codex won't reach for it unprompted.
+**Codex agents have their own local Chrome-use and computer-use skills/plugins** on this machine,
+separate from this session's Claude Browser tools. A `codex exec` run can drive real Chrome and
+control the desktop directly for live-site checks, bug reproduction, and UI testing. Say so
+explicitly in the task prompt when it would help — Codex won't reach for it unprompted.
 
-**Terra reviews work Terra may have built.** Always spawn the review as a fresh invocation with no
-shared context. Thinner than a genuinely different model's eyes; the accepted tradeoff. Spawn Sol
-when a task is high-stakes enough to want independence.
+**Luna builds, Sol plans and reviews — never the same agent reviewing its own work.** Both run
+via `codex exec` on the same `gpt-5.6` base model under different personas, so this is thinner
+separation than a genuinely different model's eyes; Opus's plan and final-draft passes are the
+deeper cross-model check already built into the pipeline.
 
 **Skip Opus's final-draft review when this session is itself Opus 5** — the §5 gate already carries
 that judgment, and a second Opus reviewing its own session's work buys latency, not insight. Check
@@ -43,52 +44,59 @@ the driver before spawning.
 account rejects it. Its pipeline role was removed 2026-07-26; the CLI mechanics are kept in full in
 case it moves to a more capable model later.
 
+**Terra's builder role was retired 2026-08-22 in favor of Luna at xhigh effort.** Terra is not spawned
+for planning, review, building, or diagnostics — the CLI mechanics in [§3](subagents/codex-cli.md)
+stay documented in full in case Terra is reinstated for some future task.
+
 ---
 
 ## 2. Policy
 
-1. **Plan review is two-tier, each capped.** Terra drafts; a fresh Terra reviews, **max 2 rounds**.
-   Then a fresh **Opus** subagent reviews the plan document: approve, or revert to a fresh Terra
+1. **Plan review is two-tier, each capped.** Sol drafts; a fresh Sol reviews, **max 2 rounds**.
+   Then a fresh **Opus** subagent reviews the plan document: approve, or revert to a fresh Sol
    spawn with its findings, **max 2 reverts**. Past that cap Opus edits the plan itself and a fresh
    Opus self-review approves it. Build starts only after this resolves.
-2. **Build tasks go to Terra or Luna — or Sonnet 5 builds directly** when the task is small and
-   mechanical enough that delegating isn't worth the overhead. Don't delegate reflexively; don't
-   inline something substantial to dodge overhead.
-3. **Terra also reviews the diff**, in a fresh invocation separate from whichever run built it.
+2. **Build tasks go to Luna — xhigh effort for anything beyond small/mechanical — or Sonnet 5 builds
+   directly** when the task is small and mechanical enough that delegating isn't worth the
+   overhead. Don't delegate reflexively; don't inline something substantial to dodge overhead.
+3. **Sol reviews the diff**, in a fresh invocation separate from whichever run built it.
 4. **Reviewers are read-only**, so they cannot quietly fix what they review: Codex review runs use
    `--sandbox read-only`, always fresh context. The one exception is §2.1's terminal case — Opus
    editing the plan document, never implementation code.
-5. **Sol has no default role.** Explicit user request only.
+5. **Terra has no role.** Not spawned for planning, review, building, or diagnostics — see §1 for
+   why the CLI mechanics stay documented anyway.
 6. **Agy plans nothing and builds nothing in the pipeline** — ad hoc, low-stakes groundwork only.
 7. **Nothing deploys or commits on an agent's self-report** — only after the §5 gate passes.
-8. **Diagnostic and testing tasks bypass the pipeline.** Straight to Luna (simple checks) or Terra
-   (harder investigation, thorough test-writing) via `codex exec`; verify their findings directly
-   in this session (§5) instead of a separate reviewer pass.
+8. **Diagnostic and testing tasks bypass the pipeline.** Straight to Luna via `codex exec` —
+   default effort for simple checks, xhigh effort for harder investigation or thorough test-writing;
+   verify their findings directly in this session (§5) instead of a separate reviewer pass.
 9. **Danger-mode is Luna-only, testing-only, passive-only.** `--sandbox danger-full-access` plus
-   Chrome-control (never computer-use) at max effort, on testing tasks exclusively — never a build,
-   never another agent. It exists because Luna's default `workspace-write` sandbox blocks what a
-   real test needs (e.g. binding `127.0.0.1`), paid for with full machine access and Luna's real
-   logged-in sessions: a click is a real staff action. There is no staging environment, so
-   production access is **passive verification only** — pages load, feature renders, console and
-   network clean, the deployed change is live — never create/edit/delete, not even to clean up its
+   Luna's own Chrome-use and computer-use skills/plugins at xhigh effort, on testing tasks
+   exclusively — never a build, never another agent. It exists because Luna's default
+   `workspace-write` sandbox blocks what a real test needs (e.g. binding `127.0.0.1`), paid for
+   with full machine access and Luna's real logged-in sessions: a click is a real staff action.
+   There is no staging environment, so production access is **passive verification only** — pages
+   load, feature renders, console and network clean, the deployed change is live — never
+   create/edit/delete, not even to clean up its
    own test data. A task needing a mutating UI walkthrough goes to local dev (mind the
    `redirect_uri_mismatch` limit in §6) or a human. Every danger-mode prompt states, verbatim or
    equivalent, restated every time:
 
-   > *"You have full machine access via the `danger-full-access` sandbox and Chrome with real
-   > logged-in sessions. Production access is read-only verification only — confirm pages load and
-   > the feature renders; never create, edit, or delete anything in production. If you hit an
-   > auth or config blocker, stop and report it in your final message — never route around it via
+   > *"You have full machine access via the `danger-full-access` sandbox, plus your own Chrome-use
+   > and computer-use skills with real logged-in sessions. Production access is read-only
+   > verification only — confirm pages load and the feature renders; never create, edit, or
+   > delete anything in production. If you hit an auth or config blocker, stop and report it in
+   > your final message — never route around it via
    > secrets, direct DB writes, or forged tokens. Disclose any deviation from the instructed
    > method."*
 
 ### Pipeline
 
-Terra draft → Terra review (≤2) → Opus plan review → Terra revise (≤2 reverts, then Opus
-self-edits and self-approves) → Terra/Luna build, or Sonnet 5 direct → builder self-checks the diff
-against every plan item → **fresh Terra diff review** → builder applies fixes → Terra final focused
-pass → Opus final-draft review (skip per §1 when the session is Opus 5) → **§5 gate** → deploy and
-commit.
+Sol draft → Sol review (≤2) → Opus plan review → Sol revise (≤2 reverts, then Opus
+self-edits and self-approves) → Luna build (xhigh effort), or Sonnet 5 direct → builder self-checks
+the diff against every plan item → **fresh Sol diff review** → builder applies fixes → Sol final
+focused pass → Opus final-draft review (skip per §1 when the session is Opus 5) → **§5 gate** →
+deploy and commit.
 
 Fix loops go back to the *same* agent with per-finding instructions — resume it rather than start
 cold, and never hand back a vague "address the review comments."
@@ -97,17 +105,17 @@ cold, and never hand back a vague "address the review comments."
 
 | Work type | Builder | Reviewer |
 |---|---|---|
-| Too small to be worth delegating | Sonnet 5 (this session) | Terra |
-| Small, mechanical, strongly tested | Luna | Terra |
-| Cheap high-volume implementation | Luna, escalate failures | Terra |
-| Normal feature or refactor | Terra | Terra, fresh context |
-| Large cross-system change | Terra | Terra, max effort |
-| Security, auth, payments, migrations | Terra, max effort | Terra, separate run, max effort |
-| Diagnostic / testing only, no build | Luna (simple) or Terra (harder) | This session, §5 — no reviewer pass |
-| Live/production testing (danger-mode) | Luna, max effort, danger-mode (§2.9) | This session, §5 — passive-only |
+| Too small to be worth delegating | Sonnet 5 (this session) | Sol |
+| Small, mechanical, strongly tested | Luna | Sol |
+| Cheap high-volume implementation | Luna, escalate failures | Sol |
+| Normal feature or refactor | Luna, xhigh effort | Sol, fresh context |
+| Large cross-system change | Luna, xhigh effort | Sol, max effort |
+| Security, auth, payments, migrations | Luna, xhigh effort | Sol, separate run, max effort |
+| Diagnostic / testing only, no build | Luna (simple) or Luna, xhigh effort (harder) | This session, §5 — no reviewer pass |
+| Live/production testing (danger-mode) | Luna, xhigh effort, danger-mode (§2.9) | This session, §5 — passive-only |
 
-Sol and Agy have no rows: Sol is the explicit-request exception, Agy is ad hoc groundwork outside
-this table.
+Agy has no row: ad hoc groundwork outside this table. Terra has no row: no role in this pipeline
+(§1, §2.5).
 
 ---
 

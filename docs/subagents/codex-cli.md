@@ -47,10 +47,11 @@ them into the pipe rather than interpolating any of them into a quoted argument:
   consecutive `codex exec` calls with no `-m` flag both banner-printed `model: gpt-5.6-luna`
   (visible in the run log's `--------` header block, always worth checking after any invocation
   that matters). The account default is **not reliable** and can change outside this session's
-  control. **Always pass `-m gpt-5.6-terra` explicitly** for any Terra invocation (draft, review,
-  or build) rather than trusting the account default — the same applies if a task genuinely wants
-  Sol or Luna, pass `-m` for that too. Don't skip re-checking the run log's `model:` line after a
-  spawn just because this was fixed once; a config default can drift again.
+  control. **Always pass `-m gpt-5.6-luna` explicitly** for any Luna invocation (build, diagnostics,
+  testing) rather than trusting the account default — the same applies for Sol (draft, review),
+  pass `-m` for that too. Terra has no role in the pipeline as of 2026-08-22 (see
+  `Subagent-Orchestration.md` §1, §2.5) and is not spawned. Don't skip re-checking the run log's
+  `model:` line after a spawn just because this was fixed once; a config default can drift again.
 - There is **no `--reasoning-effort` flag** — effort goes through `-c model_reasoning_effort`.
 - There is **no `--no-terminal` flag** on `codex exec`; that belongs to `acpx`'s Claude-session
   wrapper.
