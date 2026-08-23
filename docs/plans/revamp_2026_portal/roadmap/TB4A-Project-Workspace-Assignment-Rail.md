@@ -7,138 +7,48 @@
 
 ## Rail shell
 
-TB4A establishes the operational-first Project Workspace rail:
-
-1. header/status/address/location;
-2. Production: Stage, Shoot, Deadline location;
-3. Team: Photographers, Editors;
-4. Client: Agency, Agent;
-5. Collections/Dropbox.
-
-Stage renders read-only in its final location until TB5A. Deadline may render only as a clearly unavailable/not-yet-enabled layout state where useful; it must not imply functionality before TB4B.
-
-At phone width the rail becomes a full-width Project Overview above workspace content. Team/Client may use compact disclosures. It never moves into Collaboration.
+TB4A establishes the operational-first rail: header/status/address/location → Production (Stage, Shoot, Deadline) → Team (Photographers, Editors) → Client (Agency, Agent) → Collections/Dropbox. Stage is read-only until TB5A; Deadline activates in TB4B. Phone uses full-width Project Overview; controls never move into Collaboration.
 
 ## Team presentation
 
-Separate **Photographers** and **Editors** rows:
-
-- none: `Not assigned`;
-- one/two: initials plus visible names;
-- three or more: first two plus `+N`;
-- full roster remains available to assistive technology and picker;
-- Add/Manage trigger opens anchored searchable multi-select;
-- search name, email, and role from the start;
-- viewport-contained popover/bottom-sheet behavior at narrow widths.
+Separate Photographers and Editors rows, adaptive roster, anchored searchable multi-select, name/email/role search, viewport-contained popover/bottom-sheet, inactive truthful display.
 
 ## Eligibility
 
-Photographer slot:
+At TB4A baseline:
 
-- active Photographer;
-- active Editor;
-- active Admin.
+- Photographer: active Photographer/internal Editor/Admin.
+- Editor: active internal Editor/Admin.
 
-Editor slot:
-
-- active Editor;
-- active Admin.
-
-Inactive currently assigned users remain visible with **Inactive**, may be removed, and cannot be newly selected. A user may hold both roles.
+**TB4E later extends only the Editor candidate set to active External Editors. External Editors never become Photographer candidates.** Existing TB4A API/row contract is reused rather than forked.
 
 ## Mutation API
 
-Use explicit role routes sharing one internal implementation:
+Use explicit role routes:
 
 ```text
-PUT    /projects/:projectId/photographers/:userId
-DELETE /projects/:projectId/photographers/:userId
-PUT    /projects/:projectId/editors/:userId
-DELETE /projects/:projectId/editors/:userId
+PUT/DELETE /projects/:projectId/photographers/:userId
+PUT/DELETE /projects/:projectId/editors/:userId
 ```
 
-Contract:
+`editProject`; server eligibility; idempotent add; exact membership-cycle remove; stale remove/re-add `409`; preserve other roles; independent people/roles commute; authoritative response; audit once; targeted notification only for newly inserted membership. Never submit a full roster through project PATCH.
 
-- `editProject` capability;
-- server-side active/eligible validation;
-- add idempotent and returns authoritative membership row/cycle;
-- remove identifies the exact current membership cycle;
-- stale remove after remove/re-add returns `409` and cannot delete the new cycle;
-- removing one role preserves every other role;
-- changes to different people/roles commute independently;
-- response includes authoritative role roster and cleanup count;
-- audit exactly once;
-- targeted assignment notification only for a newly inserted membership;
-- no self-assignment privilege escalation.
+## Immediate picker and final-role cleanup
 
-Do not submit a full roster through project PATCH.
+Optimistically change only one person, keep picker open, per-person pending/error/conflict state. Final non-admin role removal warns with checklist assignment count and atomically unassigns when confirmed. TB4E adds an explicit “will immediately lose project access” warning when that final membership belongs to an External Editor.
 
-## Immediate picker behavior
+## Create/Edit rollout
 
-- Optimistically change only the selected person's state.
-- Show a per-person pending indicator and disable only repeated toggle for that person.
-- Keep picker open.
-- Ordinary failure reverts that person and shows inline error.
-- Membership-cycle conflict replaces with authoritative state and explains another tab changed it.
-- **Done** closes only; it does not batch-save.
-
-## Final-role checklist cleanup
-
-When removal would eliminate the person's final project role and they are not an active Admin:
-
-- preflight/report the number of checklist assignments that will clear;
-- require confirmation;
-- remove membership and unassign checklist items atomically;
-- preserve assignments when another role or active Admin access remains.
-
-## Notifications
-
-- New assignee receives one role-specific targeted row, including self-assignment.
-- Removal is audit-only for the removed user.
-- TB4C later informs already-assigned Editors of team changes; the new Editor is suppressed from a duplicate broad row.
+Create Project retains initial team selection. After TB4E, External Editors are valid initial Editor candidates. Routine Edit Project team selectors retire after rail parity; temporary rollback surface must still use the role-specific contract.
 
 ## Collaboration-only summary
 
-For a stage-hidden collaborator, add a limited read-only Project Overview outside the Collaboration panel:
-
-- presentation-safe Stage;
-- Deadline/overdue/next reminder when later available;
-- both rosters;
-- no mutation controls, client/media/Dropbox/AutoHDR diagnostics.
-
-## Edit/Create behavior and rollout
-
-- Create Project retains initial team selection.
-- Routine Edit Project team selectors retire after rail parity is accepted.
-- During rollout, a feature flag/rollback path may re-enable the old controls, but both surfaces must use the role-specific contract.
-- Rollback hides rail mutation without rewriting memberships.
+Stage-hidden collaborator receives presentation-safe Stage, Deadline/next reminder, and rosters only. This is distinct from TB4E External Editor normal assigned-project access.
 
 ## Non-goals
 
-- Deadline schema/scheduler;
-- Stage mutation;
-- broad Editor registry;
-- changing role eligibility;
-- pipeline configuration;
-- Collaboration ownership changes beyond keeping project-level controls out.
-
-## Tests/QA
-
-- all eligibility combinations, inactive display/removal;
-- dual-role preservation;
-- idempotent add/remove;
-- stale remove/re-add conflict;
-- simultaneous different-person/role changes;
-- per-person optimistic/error state;
-- final-role checklist warning/atomic cleanup;
-- unauthorized/ineligible targets;
-- targeted notification/audit once;
-- cross-tab freshness without closing picker/draft;
-- desktop/compact/phone and keyboard/focus/Escape;
-- collaboration-only summary privacy;
-- Create/Edit rollout behavior;
-- full gate/manual QA.
+Deadline schema/scheduler, Stage mutation, broad registry, External Editor authorization itself, pipeline configuration.
 
 ## Acceptance
 
-The rail is canonical and responsive; team deltas are exact, concurrent, audited, and notification-safe; other roles/checklist state are preserved correctly; production remains coherent if later bullets stop.
+The rail is canonical/responsive; team deltas are exact/concurrent/audited/notification-safe; later TB4E can extend Editor eligibility without duplicating mutation architecture.

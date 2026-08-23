@@ -1,12 +1,12 @@
 # `revamp_2026_portal` — Documentation Package
 
 **Status:** Revised coordinated planning package; owner decisions settled, authority promotion pending  
-**Baseline:** `main` at `8bcb48245a727b048053bd3653cf07f3ad99b780`  
-**Revised:** 2026-08-22
+**Baseline:** `main` at `2ac2ca27a1e0ded328b9265613ab4ebeeb7db1b0`  
+**Revised:** 2026-08-23
 
 ## Purpose
 
-This package coordinates the Quincy Portal runtime, UI, freshness, discussion, notification, project-coordination, and Kanban revamp. It is modular so agents load only the files required for the active task.
+This package coordinates the Quincy Portal runtime, UI, freshness, discussion, notification, project-coordination, checklist scheduling, External Editor authorization, Kanban, and Production Calendar revamp. It is modular so agents load only the files required for the active task.
 
 The package is a proposal. It does not yet modify or outrank the repository authority chain.
 
@@ -19,30 +19,32 @@ The package is a proposal. It does not yet modify or outrank the repository auth
 | [`01-Decision-Register.md`](./core/01-Decision-Register.md) | Settled owner decisions, superseded guidance, and authority mapping |
 | [`02-Current-State-Audit.md`](./core/02-Current-State-Audit.md) | Current-`main` facts that constrain implementation |
 | [`03-PRD-Delta.md`](./core/03-PRD-Delta.md) | Product requirements proposed for later PRD promotion |
-| [`04-Frontend-Architecture.md`](./core/04-Frontend-Architecture.md) | React 19.2, Tailwind/shadcn, token, and component contracts |
-| [`05-Route-And-Data-Freshness.md`](./core/05-Route-And-Data-Freshness.md) | Query identity, polling, focus refresh, invalidation, and cross-tab behavior |
-| [`06-Discussions-And-Notice-Board.md`](./core/06-Discussions-And-Notice-Board.md) | Discussion/read-state and structured activity boundaries |
-| [`07-Notifications-On-Cloudflare.md`](./core/07-Notifications-On-Cloudflare.md) | Outbox, Queue, delivery ledger, preferences, registry, and reminders |
+| [`04-Frontend-Architecture.md`](./core/04-Frontend-Architecture.md) | React 19.2, Tailwind/shadcn, token, component, and Calendar UI contracts |
+| [`05-Route-And-Data-Freshness.md`](./core/05-Route-And-Data-Freshness.md) | Query identity, polling, invalidation, Calendar URL/range state, and access-loss behavior |
+| [`06-Discussions-And-Notice-Board.md`](./core/06-Discussions-And-Notice-Board.md) | Discussion/read-state, structured activity, and role-safe visibility |
+| [`07-Notifications-On-Cloudflare.md`](./core/07-Notifications-On-Cloudflare.md) | Outbox, Queue, preferences, registry, reminders, and External Editor delivery |
 | [`08-Kanban-Modernization.md`](./core/08-Kanban-Modernization.md) | Stage semantics, pipeline boundary, ordering correction, and dnd-kit modernization |
-| [`09-Migration-Rollback-And-Verification.md`](./core/09-Migration-Rollback-And-Verification.md) | Release, rollback, testing, and operational gates |
-| [`10-Repository-Document-Update-Map.md`](./core/10-Repository-Document-Update-Map.md) | Proposed D-16–D-19 and A8–A12 promotion map |
+| [`09-Migration-Rollback-And-Verification.md`](./core/09-Migration-Rollback-And-Verification.md) | Release, rollback, testing, scheduling, role, and Calendar gates |
+| [`10-Repository-Document-Update-Map.md`](./core/10-Repository-Document-Update-Map.md) | Proposed D-16–D-21 and A8–A14 promotion map |
 | [`11-Design-Convergence.md`](./core/11-Design-Convergence.md) | Evidence matrix, drift classification, and per-surface definition of done |
+| [`12-Production-Calendar-And-Checklist-Scheduling.md`](./core/12-Production-Calendar-And-Checklist-Scheduling.md) | Checklist schedule model, Calendar product/API/interaction contract |
+| [`13-External-Editor-Authorization.md`](./core/13-External-Editor-Authorization.md) | External Editor role, capabilities, project scoping, privacy, lifecycle, and Calendar scope |
 
 ### `roadmap/`
 
-One concise scope brief per tracer bullet. A scope brief is not a repository-native implementation plan. New bullets are:
+One concise scope brief per tracer bullet. A scope brief is not a repository-native implementation plan.
 
-- `TB0A-React-19-2-Runtime-Upgrade.md`
-- `TB0B-Pipeline-Configuration-Boundary.md`
+Inserted bullets:
 
-Renamed/reframed bullets are:
+- `TB4D-Checklist-Scheduling-Ranges.md`
+- `TB4E-External-Editor-Assigned-Scope-Access.md`
+- `TB5C-Production-Calendar.md`
 
-- `TB4A-Project-Workspace-Assignment-Rail.md`
-- `TB5A-Project-Stage-And-Kanban-Ordering-Contract.md`
+Existing TB numbers remain stable.
 
 ### `research/`
 
-Option analysis and official-source links. Research explains the selected direction but does not authorize implementation.
+Option analysis and official-source links. The Calendar selection is documented in `Production-Calendar-FullCalendar-Shadcn.md`. Research explains the selected direction but does not authorize implementation.
 
 ### `handoff/`
 
@@ -63,10 +65,13 @@ Superseded material retained only for provenance.
 - **TB3:** discussion architecture + TB3.
 - **TB4:** notification architecture + TB4.
 - **TB4A:** current-state audit + PRD delta + TB4A.
-- **TB4B:** current-state audit + PRD delta + notification architecture + TB4B; read Kanban architecture for card metadata.
-- **TB4C:** PRD delta + discussion/activity architecture + notification architecture + TB4C.
-- **TB5A:** current-state audit + Kanban architecture + relevant historical implemented ordering plans + TB5A.
-- **TB5B:** Kanban architecture + approved TB5A outcome + TB5B.
+- **TB4B:** PRD delta + notification architecture + TB4B.
+- **TB4C:** discussion/activity + notification architecture + TB4C.
+- **TB4D:** scheduling architecture + notification architecture + migration/verification + TB4D.
+- **TB4E:** External Editor architecture + current-state audit + notification/discussion privacy + TB4E.
+- **TB5A:** current-state audit + Kanban architecture + historical ordering plans + TB5A.
+- **TB5B:** Kanban architecture + accepted TB5A outcome + TB5B.
+- **TB5C:** scheduling architecture + External Editor architecture + frontend/freshness contracts + Calendar research + TB5C.
 - **Reviewer:** active bullet + migration/verification + changed files.
 
 ## Status vocabulary
@@ -87,33 +92,36 @@ docs/Decision-Sheet.md
   → supporting architecture and per-slice plans
 ```
 
-This package proposes D-16–D-19 and A8–A12. Those authority files remain unchanged until a separate owner approval.
+This package proposes **D-16–D-21** and **A8–A14**. Those authority files remain unchanged until a separate owner approval.
 
 ## Revised roadmap
 
 ```text
 TB0 → TB0A → TB0B → TB1 → TB2 → TB3 → TB4
                                      │
-                                     └→ TB4A → TB4B → TB4C → TB5A → TB5B → TB6 → TB7 → TB8
+                                     └→ TB4A → TB4B → TB4C → TB4D → TB4E → TB5A → TB5B → TB5C → TB6 → TB7 → TB8
 ```
 
 Planning may overlap only when it does not assume an unresolved upstream implementation contract. Implementation follows the sequence.
 
 ## Important current-main caveats
 
-- Production is React 18.3.1 today; React 19.2 is approved only as a target until TB0A is implemented.
-- The Project Workspace rail currently renders Stage read-only and Photographers only, although Editors already exist in the same project response and membership model.
-- Edit Project currently sends full Photographer/Editor lists; left-rail changes must use role-specific deltas.
-- Collaboration currently owns checklist and project comments; it must not gain project-level roster, Stage, or Deadline controls.
-- Admin Pipeline currently permits label, active state, and Up/Down order changes. TB0B deliberately removes ordinary self-service global ordering while retaining label and active-state controls.
-- Project Stage moves currently use `selectForEditing`; the revamp replaces that boundary with `moveProjectStage` for Admins and Editors.
-- Project comments, notice-board posts, notifications, and a Kanban board already exist. The revamp modernizes them rather than building greenfield replacements.
+- Production is still React 18.3.1; React 19.2 is a target until TB0A is implemented.
+- Dashboard currently supports List and Kanban only; there is no Calendar surface or FullCalendar dependency.
+- Current `project_subtasks` has one optional literal `due_date` and no start boundary or schedule version.
+- Current global roles are only Admin, Photographer, and Editor. `external_editor` is not live.
+- Current project access already falls back to membership for roles without `viewAllProjects`, but the project-list route special-cases Photographer and otherwise returns the broader role set; TB4E must generalize that query safely before adding the role.
+- Current user-role updates revoke sessions on deactivation only, not on role change.
+- Current project detail includes member names/emails; TB4E must make participant-email exposure project-scoped rather than a global directory surface.
+- The Project Workspace rail currently renders Stage read-only and Photographers only; Editors/Deadline/Stage mutation remain planned work.
+- Collaboration currently owns checklist and project comments; it remains task/discussion-focused.
+- Project comments, Notice Board, notifications, and Kanban already exist; the revamp modernizes them rather than building greenfield replacements.
 - There is no staging environment. Production mutation remains human-authorized only.
 
 ## Plan lifecycle
 
 1. Approve authority promotion separately.
-2. Run TB0: promote decisions, establish baseline/drift register, and review the TB0A implementation plan.
+2. Run TB0: promote decisions, establish baseline/drift register, and review foundational implementation plans.
 3. Build one bullet, independently verify, deploy, and record actual results.
 4. Update `docs/todo.md` only with real status.
 5. Move an implementation plan to `docs/plans/implemented/` only after it matches live production.

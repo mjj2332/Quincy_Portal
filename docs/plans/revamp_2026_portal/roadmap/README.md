@@ -6,7 +6,7 @@ These are scope briefs. Every bullet requires a current-main-aware repository-na
 
 | Bullet | Primary outcome | Main architectural proof |
 |---|---|---|
-| [TB0](./TB0-Integrated-Architecture-And-Baseline.md) | Approved authority package, matched baseline and drift register | One coherent program/decision set |
+| [TB0](./TB0-Integrated-Architecture-And-Baseline.md) | Approved authority package, matched baseline and drift register | One coherent D-16–D-21/A8–A14 program |
 | [TB0A](./TB0A-React-19-2-Runtime-Upgrade.md) | Production runs React 19.2 with no intended product/visual change | Runtime/type compatibility and rollback |
 | [TB0B](./TB0B-Pipeline-Configuration-Boundary.md) | Global Stage order is developer-managed | UI/API policy boundary without data rewrite |
 | [TB1](./TB1-Tailwind-Shadcn-Foundation.md) | First design-conformant Quincy shadcn form slice | UI platform and legacy coexistence |
@@ -16,10 +16,13 @@ These are scope briefs. Every bullet requires a current-main-aware repository-na
 | [TB4A](./TB4A-Project-Workspace-Assignment-Rail.md) | Photographers/Editors managed safely from canonical rail | Role-specific membership deltas/cycles |
 | [TB4B](./TB4B-Project-Deadline-And-Reminders.md) | One Deadline/reminder schedule and Kanban due metadata | Versioned Sydney schedule + delivery |
 | [TB4C](./TB4C-Editor-Wide-Project-Change-Notifications.md) | Approved changes reach every eligible assigned Editor | Activity registry + exact fan-out/coalescing |
-| [TB5A](./TB5A-Project-Stage-And-Kanban-Ordering-Contract.md) | One Stage command and understandable authoritative Board order | Semantic transitions + normalized manual order |
+| [TB4D](./TB4D-Checklist-Scheduling-Ranges.md) | Checklist work can be scheduled as due milestones or ranges | Additive Sydney schedule/version contract |
+| [TB4E](./TB4E-External-Editor-Assigned-Scope-Access.md) | External Editors work only on assigned projects with safe data | Capability + membership-scoped authorization/projection |
+| [TB5A](./TB5A-Project-Stage-And-Kanban-Ordering-Contract.md) | One Stage command and authoritative Board order | Semantic transitions + normalized manual order |
 | [TB5B](./TB5B-Kanban-Interaction-Modernization.md) | Accessible refreshed project board | dnd-kit against accepted Stage/order command |
+| [TB5C](./TB5C-Production-Calendar.md) | Staff can visualize/filter/reschedule production work by date | Authorized range projection + FullCalendar/shadcn interaction |
 | [TB6](./TB6-Project-Card-Detail-And-Discussion.md) | URL-addressable project quick detail | Reused Overview/Activity/Discussion |
-| [TB7](./TB7-Notice-Board-Migration.md) | Server-synchronized notice-board read state | Second read/delivery consumer |
+| [TB7](./TB7-Notice-Board-Migration.md) | Server-synchronized Notice Board read state | Second read/delivery consumer |
 | [TB8](./TB8-Wider-UI-Migration-And-Cleanup.md) | Evidence-driven surface convergence and cleanup | Consolidation after proofs |
 
 ## Dependency view
@@ -27,36 +30,36 @@ These are scope briefs. Every bullet requires a current-main-aware repository-na
 ```text
 TB0 → TB0A → TB0B → TB1 → TB2 → TB3 → TB4
                                      │
-                                     └→ TB4A → TB4B → TB4C → TB5A → TB5B → TB6 → TB7 → TB8
+                                     └→ TB4A → TB4B → TB4C → TB4D → TB4E → TB5A → TB5B → TB5C → TB6 → TB7 → TB8
 ```
 
-Planning may overlap only when it does not assume an unresolved upstream implementation contract. Implementation follows the sequence.
+Planning may overlap only when it does not assume unresolved upstream implementation contracts. Implementation follows the sequence.
 
-## Why TB0A and TB0B are separate
+## Why the inserted bullets are separate
 
-- React runtime/type compatibility must be diagnosed independently from generated UI code.
-- Pipeline administration policy has a distinct authorization/rollback boundary from UI-platform adoption.
-- Existing TB1–TB8 numbers remain stable.
+- TB4D changes the checklist domain/schema/reminder contract and is independently useful without Calendar.
+- TB4E is a reusable authorization/privacy proof that must exist before Calendar exposes a third audience.
+- TB5C is the cross-project visualization/direct-interaction consumer and does not own source project/checklist authorization semantics.
+- Existing TB numbers remain stable.
 
-## Shared Project Workspace rail ownership
+## Shared ownership
 
-- TB4A establishes the operational-first rail shell and activates Photographer/Editor controls.
-- TB4B activates the combined Deadline/Reminders block.
-- TB5A activates the Stage picker.
-- Stage may be visible/read-only in its target position before TB5A.
-- Collaboration never regains ownership of project-level coordination controls.
+- TB4A establishes the operational-first Project Workspace rail and team controls.
+- TB4B activates project Deadline/reminders.
+- TB4D extends task-level checklist scheduling in Collaboration.
+- TB4E extends the Editor slot/account role without moving task/project controls between surfaces.
+- TB5A activates Stage and authoritative board ordering.
+- TB5B modernizes Kanban interaction.
+- TB5C adds Calendar as a third Dashboard projection over TB4B/TB4D with TB4E authorization.
 
 ## Rules for every bullet
 
-- One primary user outcome.
-- One main architectural proof.
-- Exact scope/non-goals and current-main facts.
+- One primary user outcome and architectural proof.
+- Exact scope/non-goals/current-main facts.
 - Additive/reversible migration or explicit no-schema statement.
-- Targeted tests plus full gate.
-- Matched visual evidence when rendered UI changes.
-- Manual browser QA.
-- Independent diff review.
+- Targeted tests + full gate + manual browser QA + independent diff review.
+- Matched visual evidence for rendered UI.
 - Clear accept/rollback checkpoint.
 - Production remains coherent if later work stops.
-- No proposed item is described as live before deployment.
+- No proposed item described as live before deployment.
 - Split a bullet before implementation if it hides unrelated acceptance checkpoints.

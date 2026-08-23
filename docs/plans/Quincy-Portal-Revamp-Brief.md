@@ -1,26 +1,29 @@
 # Quincy Portal Revamp — High-Level Brief
 
 **Status:** Revised owner/planning brief; decisions settled in the proposal package, authority promotion still pending  
-**Revised:** 2026-08-22  
-**Baseline:** `main` at `8bcb48245a727b048053bd3653cf07f3ad99b780`  
+**Revised:** 2026-08-23  
+**Baseline:** `main` at `2ac2ca27a1e0ded328b9265613ab4ebeeb7db1b0`  
 **Detailed documentation:** [`revamp_2026_portal/`](./revamp_2026_portal/README.md)
 
 ## Purpose
 
-Converge Quincy Portal toward its approved design system and prototype intent while modernizing its runtime, UI platform, data freshness, collaboration, operational notifications, project coordination, and existing Kanban board without losing the working product, deep links, security boundaries, or Cloudflare-native deployment model.
+Converge Quincy Portal toward its approved design system and prototype intent while modernizing runtime, UI, freshness, collaboration, scheduling, operational notifications, project coordination, access control, Kanban, and a new Production Calendar without losing the working product, deep links, security boundaries, or Cloudflare-native deployment model.
 
 The work is an incremental program, not a rewrite.
 
 ## Program outcomes
 
-1. Upgrade the production Vite SPA from React 18.3.1 to the latest stable pinned React 19.2 patch in an isolated release.
+1. Upgrade the production Vite SPA to the latest stable pinned React 19.2 patch in an isolated release.
 2. Establish Tailwind CSS v4 and source-owned shadcn components as implementation tools for Quincy design convergence.
 3. Restore route-safe automatic data freshness while preserving drafts and active interactions.
-4. Keep project discussion and the notice board asynchronous and Quincy-owned.
+4. Keep project discussion and the staff Notice Board asynchronous and Quincy-owned.
 5. Make notification delivery durable through a D1 outbox and Cloudflare Queue.
 6. Make the Project Workspace left rail the canonical project-level coordination surface.
-7. Correct Stage and Kanban ordering semantics before modernizing drag interactions.
-8. Migrate remaining UI surfaces only after the foundations are proven.
+7. Add optional checklist start/end scheduling without destroying existing due-only values.
+8. Add a distinct External Editor role whose project access is assignment-scoped and field-limited.
+9. Correct Stage/Kanban semantics and modernize board interactions.
+10. Add a filterable, shareable Production Calendar with guarded drag/resize scheduling.
+11. Migrate remaining UI surfaces only after the foundations are proven.
 
 ## Canonical coordination model
 
@@ -35,104 +38,171 @@ The **Collaboration panel** remains focused on:
 
 - project checklist/subtasks;
 - project comments/discussion;
-- related task-level collaboration.
-
-The same project-level mutation control must not be duplicated permanently across both surfaces.
+- task-level collaboration.
 
 ### Team controls
 
-Photographers and Editors are independent rows. Each shows a compact adaptive roster and opens an anchored searchable multi-select picker. Changes apply immediately through role-specific idempotent operations. Existing cross-role eligibility remains:
+Photographers and Editors are independent rows with immediate role-specific idempotent changes.
 
-- Photographer slot: active Photographers, Editors, and Admins.
-- Editor slot: active Editors and Admins.
+Baseline eligibility:
 
-A person may hold both project roles. Removing one role never removes the other. Removing the final role may atomically clear checklist assignments, with a warning and count before confirmation.
+- Photographer slot: active Photographers, internal Editors, and Admins.
+- Editor slot before TB4E: active internal Editors and Admins.
+- Editor slot after TB4E: active internal Editors, External Editors, and Admins.
+- External Editors are never eligible for the Photographer slot.
 
-`editProject` remains the mutation capability for team assignments and deadline configuration. Create Project retains initial assignment. Routine team selectors retire from Edit Project after rail parity is accepted, while a rollback path remains during rollout.
+A person may hold both project roles only when their global account role is eligible for both. Removing one membership preserves another compatible membership. Removing a final role may atomically clear checklist assignments after warning.
+
+`editProject` remains the mutation capability for team assignments and project Deadline configuration. Create Project retains initial assignment; after TB4E it may assign External Editors in the Editor slot.
 
 ### Stage controls
 
-A new `moveProjectStage` capability is introduced and initially granted to Admins and Editors. The left-rail picker and every Kanban movement path share one guarded Stage command.
+A new `moveProjectStage` capability is introduced and initially granted to Admins, internal Editors, and External Editors. The left-rail picker and every Kanban movement path share one guarded Stage command.
 
-System-stage progression is fixed semantically:
+Semantic progression remains:
 
 ```text
 awaiting_raw → raw_review → editing_autohdr → edited_review → delivered
 ```
 
-Configurable display order does not redefine automation. Editors see the neutral **Editing** presentation for `editing_autohdr`; Admins may see its configured internal label. Admins and Editors may enter or exit that Stage, but doing so changes Stage only—it does not start, cancel, retire, or delete AutoHDR work.
+Display order never redefines automation. Manual `editing_autohdr` entry/exit is Stage-only; it does not start, cancel, retire, or delete AutoHDR work. Backward, skipped, delivered, and AutoHDR-sensitive transitions use the approved confirmation behavior.
 
-Normal one-step forward moves are immediate, except AutoHDR entry/exit. Backward moves, skipped steps, delivered transitions, and AutoHDR entry/exit require the approved confirmation treatment. Archived projects are read-only. A project already on an inactive Stage remains intelligible and may move to an active destination.
+### Project Deadline
 
-Global pipeline label and active/inactive management remains in `Admin → Pipeline`. Global ordering becomes developer-managed in TB0B: ordinary Admin Up/Down controls and the matching self-service endpoint are removed. Stage creation, deletion, and generic workflow-builder behavior remain deferred.
+One nullable project Deadline remains separate from shoot date/time and checklist schedule values. It is versioned in `Australia/Sydney`, supports bounded reminder offsets, always materializes Due-now, handles DST gaps/folds explicitly, and suspends pending reminders while delivered/archived.
 
-### Deadline controls
+Kanban cards show Deadline/overdue metadata and omit only card-level RAW count.
 
-A project has one nullable project Deadline, separate from shoot date/time and checklist due values. The left rail presents one combined Deadline/Reminders block and one transactional editor.
+## Checklist scheduling
 
-Approved contract:
+TB4D extends checklist items additively:
 
-- `Australia/Sydney` studio timezone;
-- explicit handling of daylight-saving gaps and repeated local times;
-- presets for 1 day, 4 hours, and 1 hour, with none preselected;
-- custom whole-number minutes/hours/days from 1 minute to 30 days;
-- at most eight unique normalized offsets;
-- one Due-now event at the Deadline;
-- every-minute scan targeting mandatory in-app delivery within two minutes;
-- default-on reminder email with a per-user global opt-out;
-- versioned schedules, stale-occurrence suppression, and explicit conflict handling;
-- pending reminders are superseded when a project is delivered or archived and do not silently resume later.
+```text
+Unscheduled        no start, no end
+Due-only milestone end/due only
+Scheduled range    start + end
+```
 
-Kanban cards show the Deadline/overdue state and no longer show the card-level RAW count. No Deadline-based sort or automatic Stage movement is introduced.
+- Existing `dueDate` values remain truthful end-only milestones; no start is invented.
+- Existing date-only due values remain date-only Sydney calendar dates.
+- Existing timed due values remain timed Sydney values.
+- New ranges require start and end; start-only is invalid and start must precede end.
+- Same-day and multi-day ranges are allowed.
+- `Australia/Sydney` is canonical; timed values persist deterministic civil/UTC/fold data suitable for range queries.
+- The end boundary remains the checklist due/reminder boundary.
+- No recurrence is introduced.
+- Schedule writes are version/conflict guarded.
+- Repeated broad checklist-schedule notifications for the same item/actor coalesce within five minutes while audit/activity still records actual committed operations.
 
-## Runtime and UI platform
+## External Editor
 
-### React 19.2
+TB4E adds global account role `external_editor`, displayed **External editor**. Project membership remains the existing `editor` role, so project-level notification, assignment, and collaboration domains do not gain a third membership kind.
 
-TB0A upgrades only production `portal/` to the latest stable React `19.2.x` patch at implementation time, pinned exactly with matching React DOM and compatible type packages. As of this revision the latest stable React package is `19.2.8`.
+### Access
 
-The release is compatibility-only:
+External Editors:
 
-- keep `createRoot`, StrictMode, the modern JSX transform, TypeScript, Vite, and the SPA architecture;
-- use reviewed official codemods and direct fixes for remaining type/runtime issues;
-- do not adopt React Compiler, SSR, Server Components, Actions, `Activity`, or broad refactors as collateral work;
-- update supporting packages only when a demonstrated compatibility blocker requires the minimum change.
+- may be assigned to multiple projects in the Editors row or during Create Project;
+- never receive `viewAllProjects`;
+- require an explicit current project membership for project access;
+- have no Photographer Stage-visibility restriction;
+- retain normal assigned-project production capabilities, including future `moveProjectStage`;
+- cannot create/edit/archive projects or use Admin/user/directory/integration/pipeline/prioritization capabilities;
+- cannot see archived projects through their ordinary assigned-project surfaces;
+- do not receive the staff Notice Board;
+- receive an assigned-scope Production Calendar.
 
-### Tailwind/shadcn
+### External-safe projection
 
-TB1 begins after TB0A and TB0B are live. The first setup uses:
+For an assigned project they may receive address/location, Agency/Agent display names, shoot date/time, Stage, Deadline, services/deliverables, project production notes, media needed for production, checklist, discussion, roster identities, and project-participant email addresses.
 
-- Tailwind CSS v4 with Preflight disabled initially;
-- shadcn with Base UI and the Sera style scaffold;
-- Lucide icons;
-- CSS-variable theming mapped from existing Quincy semantic tokens;
-- app-local `components/ui` and `components/quincy` ownership;
-- one existing ProjectFields Client section as the bounded proof;
-- no dark mode.
+Do not expose agent/client email or phone, invoice/payment fields, internal order bookkeeping not required for editing, agency-directory notes, Dropbox paths/links, provider credentials/diagnostics, or Admin backend data.
 
-The Quincy design system is visual authority. The prototype is a visual/flow reference, never an application-architecture template. Every material difference is classified and supported by matched evidence.
+This filtering is enforced server-side through role-safe DTO/projection contracts, not hidden only in React.
+
+### Lifecycle
+
+- Existing users are never auto-converted.
+- Role transitions revoke sessions immediately.
+- Conversion to External Editor is blocked until incompatible Photographer project memberships are removed.
+- Deactivation preserves assignment history but blocks authentication/new assignment/pending content delivery.
+- Removing the final project membership explicitly warns that project access will be lost and applies the approved checklist-assignment cleanup atomically.
+- Access loss purges inaccessible cached data and closes project-specific UI on the next authorization/freshness signal.
+
+## Production Calendar
+
+Dashboard becomes:
+
+```text
+List | Kanban | Calendar
+```
+
+### Audience and scope
+
+- Admin and internal Editor: normal authorized studio scope.
+- External Editor: assigned projects only.
+- Calendar filtering never broadens the underlying authorization set.
+
+### Event model
+
+Project event:
+
+- one milestone at the project Deadline;
+- Stage, checklist completion, overdue/delivered state as metadata;
+- no project duration inferred from shoot date.
+
+Checklist event:
+
+- date-only/timed due milestone, or start/end range;
+- title, assignee, completion/overdue state.
+
+No shoot-date layer initially. No comments/uploads/activity rows become calendar events.
+
+### Views and filters
+
+Initial subviews:
+
+- **Month**;
+- **Week**;
+- **Agenda**.
+
+Calendar state is typed URL state: active date, subview, event layers, Editor filter, Stage filter, completion/delivery/overdue toggles. Back/Forward and copied links restore the same authorized slice.
+
+Initial filters include Projects/Checklist items, multi-Editor OR filtering plus **Unassigned**, Stage, completed checklist visibility, delivered project visibility, overdue-only, and Dashboard search.
+
+### Direct scheduling
+
+- Project Deadline: draggable only with `editProject`; not resizable; confirmation shows old/new Deadline and reminder consequences.
+- Due-only checklist item: draggable, not resizable.
+- Checklist range: drag preserves duration; end-edge resize changes end; independent start editing uses the schedule editor.
+- Month moves whole calendar days while preserving timed wall-clock values; Week uses 15-minute snapping; Agenda uses accessible Reschedule actions instead of drag.
+- Direct manipulation uses guarded optimistic state; a stale `409` reverts to authoritative values and never auto-replays.
+- DST gaps are rejected; ambiguous repeated times require explicit first/second occurrence.
+- Every editable event has a keyboard-operable Move/Reschedule equivalent.
+
+### Unscheduled panel
+
+- Unscheduled project → Month drop creates 17:00 Sydney Deadline on that date; Week drop uses selected 15-minute slot; project confirmation still applies and no advance reminder offset is invented.
+- Unscheduled checklist → Month drop creates a date-only due milestone; Week drop creates a one-hour range.
+- External Editors may drag unscheduled checklist work on assigned projects but cannot create/move project Deadlines because they lack `editProject`.
+- Empty calendar space does not create new projects/tasks.
+
+### Workload collision
+
+Overlapping timed checklist ranges for one assignee are allowed. Calendar shows a non-blocking conflict indicator; it never auto-moves work or treats a project Deadline as exclusive capacity.
+
+### UI engine
+
+TB5C uses the latest reviewed stable **FullCalendar Standard** React integration through FullCalendar's official shadcn registry. Use Standard Month/TimeGrid/List/Interaction capabilities only; no premium Scheduler/resource timeline. Quincy owns toolbar, filters, Unscheduled panel, event renderers, confirmation/editing UX, responsive layout, accessibility treatment, and token mapping. The FullCalendar flavor is selected by matched visual evidence at TB5C implementation time; it is not design authority.
 
 ## Data, discussion, and notifications
 
-- Keep the typed custom router. Adopt TanStack Query incrementally, beginning with Project detail plus active collection assets.
-- Same-browser changes use narrow `BroadcastChannel` invalidation; focus/reconnect and bounded polling remain the cross-session safety net.
-- TB3 keeps one flat project discussion stream, existing rich text/mentions and author-only mutation, adds server-owned read state, and uses an adapter over the existing tables.
-- TB4 proves a D1 outbox and Cloudflare Queue with project-comment mention as the first event. It includes a delivery ledger, retry, DLQ, recovery scan, and minimal Admin replay/status operations.
-- TB4C adds immutable structured activity plus a finite Editor-wide registry. In-app delivery is mandatory for eligible assigned Editors; broad event email is off by default.
-- Email delivery records an explicit `unknown` state when provider acceptance is ambiguous; automatic retries do not risk hidden duplicates in that state.
-
-## Kanban contract
-
-TB5A is renamed **Project Stage and Kanban Ordering Contract**.
-
-- `boardPosition` is the sole persisted manual order within a Stage.
-- Existing data is normalized once to preserve the current visible board order.
-- Priority is metadata and an optional view-only sort where `1` is highest; null is last.
-- Shoot-date sorts remain view-only.
-- Rail and non-drag Stage moves append to the target Stage; a Kanban drag may specify exact neighbours.
-- Pure position reorders do not notify Editors, though they remain audited/activity-capable.
-
-TB5B then replaces native HTML5 dragging with dnd-kit and supplies pointer, touch, keyboard, and non-drag movement against the accepted TB5A command.
+- Keep the typed custom router and incremental TanStack Query migration.
+- Production Calendar uses a dedicated server-authorized range endpoint; do not N+1 fetch every project's checklist in the browser.
+- Same-browser invalidation, focus/reconnect, bounded polling, access-loss cache purge, and active-drag reconciliation apply to Calendar.
+- Project discussion remains flat and project-scoped.
+- External Editors have normal assigned-project collaboration rights and may see project participants' email addresses in project context, but no global directory.
+- TB4C/TB4E use role-safe notification/activity visibility. External Editors receive the external-safe subset of broad project events, Deadline reminders, targeted assignments, and mentions while assigned/active.
 
 ## Revised sequence
 
@@ -147,8 +217,11 @@ TB4   Notification outbox + Cloudflare Queue
 TB4A  Project Workspace assignment rail
 TB4B  Project Deadline/reminders + Kanban due metadata
 TB4C  Editor-wide project-change registry
+TB4D  Checklist scheduling ranges
+TB4E  External Editor assigned-scope access
 TB5A  Project Stage and Kanban ordering contract
 TB5B  Kanban interaction modernization
+TB5C  Production Calendar
 TB6   URL-addressable project-card detail
 TB7   Notice-board synchronization migration
 TB8   Evidence-driven surface-by-surface convergence
@@ -161,6 +234,8 @@ After a separate owner approval, TB0 should promote:
 - **D-16:** UI platform and design convergence.
 - **D-17:** Quincy-owned collaboration, freshness, pipeline, and Kanban architecture.
 - **D-18:** Project Workspace coordination, Deadline, and Editor notifications.
-- **D-19:** React 19.2 runtime baseline, superseding only the React-major portion of D-15.
+- **D-19:** React 19.2 runtime baseline.
+- **D-20:** Production Calendar and checklist scheduling.
+- **D-21:** External Editor assigned-scope access.
 
-Implementation Plan amendments should be A8 through A12. This package revision does not modify those authority files.
+Implementation Plan amendments should be **A8 through A14**, with A13 covering checklist scheduling/Calendar and A14 covering External Editor authorization. This package revision does not modify those authority files.

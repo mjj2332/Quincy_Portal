@@ -6,112 +6,79 @@
 ## 1. Principles
 
 - Add before removing.
-- One primary outcome and one clear ownership boundary per release.
+- One primary outcome and one ownership boundary per release.
 - No indefinite dual write/style/query owner.
-- Backfills are deterministic, resumable, and verified.
+- Backfills are deterministic/resumable/verified.
 - Preserve old data until parity is proven.
 - Prefer backward-compatible additive schema.
-- A Worker rollback does not roll back D1/R2/Queue resources; plan forward compatibility.
-- Production mutation is human-authorized. There is no staging environment.
+- Worker rollback does not roll back D1/R2/Queue resources; plan forward compatibility.
+- Production mutation is human-authorized; there is no staging environment.
 
-## 2. Revised sequence and release boundaries
+## 2. Sequence
 
 ```text
 TB0 → TB0A → TB0B → TB1 → TB2 → TB3 → TB4
                                      │
-                                     └→ TB4A → TB4B → TB4C → TB5A → TB5B → TB6 → TB7 → TB8
+                                     └→ TB4A → TB4B → TB4C → TB4D → TB4E → TB5A → TB5B → TB5C → TB6 → TB7 → TB8
 ```
 
-Do not combine React, pipeline policy, and UI foundation into one deployment.
+Do not combine React, pipeline policy, or UI foundation into one deployment. TB4D schedule storage and TB4E authorization remain independently reversible before TB5C consumes both.
 
-## 3. TB0A React 19.2
+## 3. Existing foundational releases
 
-- No schema/resource changes.
-- Pin latest stable `19.2.x` React/React DOM and compatible type packages exactly.
-- Use reviewed official codemods; manually review every change.
-- Keep StrictMode and modern JSX transform.
-- Minimum supporting dependency updates only after a proven blocker.
-- No new React feature/Compiler/SSR architecture.
-- Record JS/CSS bundle deltas and React warnings.
-- Deploy app Worker only.
-- Roll back to previous app Worker version if acceptance fails.
-- Focused before/after screenshots prove no intended visual change; accepted React build becomes TB1 baseline.
+- **TB0A:** exact React 19.2 compatibility release; no schema; rollback app Worker.
+- **TB0B:** remove ordinary Admin global Stage ordering while preserving rows/order values.
+- **TB1/TB2:** preserve legacy styling/fetch paths until migrated consumer accepted; Preflight disabled.
+- **TB3/TB7:** adapter-first discussion/read-state migration.
+- **TB4/TB4C:** durable outbox/activity/recipient ledger; one producer per semantic event.
+- **TB4A:** project_members source of truth; role delta/cycle protection; rail rollback does not rewrite memberships.
+- **TB4B:** additive project Deadline fields/version/occurrences; scheduler can be disabled without deleting data.
 
-## 4. TB0B pipeline boundary
+## 4. TB4D checklist scheduling ranges
 
-- Remove Admin Up/Down UI and ordinary self-service global Stage-order endpoint.
-- Preserve Stage rows, display-order values, labels, and active flags.
-- No D1 migration expected unless endpoint ownership requires an additive guard.
-- Rollback restores prior app bundle/API but must be explicitly authorized because it reopens Admin self-service ordering.
+- Preserve existing `project_subtasks.due_date` as effective end/due value.
+- Add nullable start civil data and timed start/end UTC/offset-fold/version fields additively.
+- Do not invent start values for existing rows.
+- Date-only due remains a literal calendar date with no fabricated UTC midnight.
+- Add only indexes needed for approved range/assignee queries after production-shaped query verification.
+- Old Worker should tolerate additive columns where practical.
+- Rollback disables range editor/API fields/Calendar producer while leaving existing due behavior/data intact.
+- Reminder compatibility is end-based; reschedule clears/reversions existing one-shot reminder marker under guarded mutation.
 
-## 5. UI/Tailwind/query releases
+## 5. TB4E External Editor
 
-- Revert app bundle for rollback.
-- Preserve legacy CSS/API until migrated component/query is verified.
-- Do not delete selectors or old fetch paths until their last consumer is gone.
-- Preflight remains disabled; enabling it is a separate whole-app decision.
-- Feature flags/cohorts require a removal plan.
+- Extend the user role constraint/type additively with a reviewed migration compatible with real production foreign keys.
+- No current user is automatically changed to `external_editor`.
+- Generalize list/search/detail authorization before or atomically with making the role assignable; never ship a window where External Editor exists but broad project list still falls through.
+- Role-safe DTOs must be server-enforced before first External Editor account is provisioned.
+- Role transitions revoke sessions; incompatible membership conversions fail safely and preserve memberships.
+- Rollback must not reinterpret an existing External Editor as internal Editor. If code rollback cannot understand the new role safely, disable login/role assignment or forward-fix rather than deploying an authorization-unsafe old Worker.
+- Preserve membership history on deactivation.
 
-## 6. Membership/rail release (TB4A)
+## 6. TB5A/TB5B
 
-- Existing `project_members` remains source of truth.
-- Prefer explicit role delta without schema change; add membership-cycle/version only if deterministic stale-remove protection cannot use row identity.
-- Create Project remains intact.
-- Edit Project team controls remain available behind a temporary rollback path until rail parity.
-- Rollback hides/disables rail mutations without rewriting memberships.
-- Last-role checklist cleanup is atomic and reported.
+Capture/rewrite Kanban ordering only under TB5A's reversible normalization contract. TB5B replaces interaction engine only after TB5A accepted; dnd-kit rollback does not change persisted ordering semantics.
 
-## 7. Deadline/reminder release (TB4B)
+## 7. TB5C Production Calendar
 
-- Add nullable Deadline fields/version and occurrence table.
-- Existing projects backfill to no Deadline/rules.
-- Never reinterpret shoot or checklist due fields.
-- Prior Worker tolerates additive schema where practical.
-- Rollback disables scheduler/producer and leaves data.
-- Schedule-version checks suppress stale occurrences after rollback/reschedule/clear/delivery/archive.
-- Restoring a project/leaving delivered never silently resumes old rows.
+- No new independent source of truth: consume TB4B project Deadline and TB4D checklist schedule fields.
+- Add dedicated server-authorized range endpoint; do not expose broad project/checklist payloads for convenience.
+- Recheck/pin latest stable FullCalendar Standard React/shadcn integration and inspect registry-generated source/dependencies before commit.
+- Record bundle/CSS delta and selected official FullCalendar shadcn flavor/rationale.
+- Calendar can be rolled back by removing/hiding the Dashboard Calendar view and range endpoint while preserving all schedule data/source editors.
+- Do not require destructive data migration for Calendar rendering.
+- External Editor Calendar cannot launch before TB4E scope/privacy is accepted.
 
-## 8. Notification/outbox releases (TB4/TB4C)
-
-- Domain state survives Queue/consumer failure.
-- Pending outbox remains replayable.
-- Old producer remains only for unrelated/unmigrated semantics.
-- One producer-ownership record per semantic event.
-- Unique recipient/channel delivery prevents duplicate in-app rows.
-- `unknown` email is never auto-retried.
-- Rollback disables new producer without deleting activity/outbox/inbox data.
-
-## 9. Discussion/read-state migration (TB3/TB7)
-
-TB3 uses adapter-first storage:
-
-1. add server-owned read state;
-2. deploy compatible API/query behavior;
-3. verify current comments/mentions/pagination/access;
-4. keep current comment tables authoritative.
-
-TB7 proves a second consumer. A common storage migration, if later justified, follows additive/backfill/cohort/read-switch/write-switch/observe/read-only/remove-later discipline.
-
-## 10. Stage/Kanban release (TB5A)
-
-- Capture production-shaped current ordering before mutation.
-- Store a verified pre-normalization export/rollback record.
-- Normalize `boardPosition` once to current visible order.
-- Deploy one command for rail/native board/non-drag movement.
-- Preserve Deadline card metadata and absence of card RAW count.
-- Rollback must not strand mixed old/new ordering semantics; either restore captured positions with old code or forward-fix under the new contract.
-- TB5B does not start until this is accepted.
-
-## 11. D1 migration care
+## 8. D1 migration care
 
 - Recheck migration number against current `main`.
-- Prefer additive `ALTER TABLE ADD COLUMN` for suitable single-column nullable checks.
-- Do not trust local table-rebuild success against production foreign-key data.
-- Update Drizzle schema, journal, and snapshot consistently.
+- Prefer additive `ALTER TABLE ADD COLUMN` for suitable nullable changes/checks.
+- Do not trust local table-rebuild success against production FK data.
+- Update Drizzle schema/journal/snapshot consistently.
 - Test invalid raw values and production-shaped fixtures.
 - Include backup/query/runbook steps.
 
-## 12. Automated gate
+## 9. Automated gate
 
 From `portal/`:
 
@@ -122,103 +89,75 @@ npm run test --workspaces
 npx vitest run --config packages/shared/vitest.config.ts
 ```
 
-Every slice runs targeted tests during iteration and the full gate before release.
+Every slice also runs targeted tests during iteration.
 
-## 13. Manual local QA
+## 10. Manual QA
 
-Use real local OAuth at `http://localhost:8787` after building web. Verify as applicable:
+Use authenticated local Worker flow. Verify as applicable:
 
-- sign-in, routing, Back/Forward, direct/new-tab links;
-- Dashboard/Kanban/List;
-- Project Workspace and left rail;
-- Lightbox, media, rich text/mentions;
-- Collaboration/checklist drag/popovers;
-- notice board, notifications/preferences, Admin;
-- keyboard, pointer, touch-equivalent, focus/Escape/return;
+- sign-in, role changes/session revocation, routing/Back/Forward/new-tab;
+- Dashboard List/Kanban/Calendar;
+- Project Workspace/rail;
+- External Editor assigned/unassigned/archived/delivered access and field privacy;
+- media/lightbox/rich text/mentions;
+- checklist schedule editor, due-only/range/multi-day/DST;
+- Calendar Month/Week/Agenda, filters, URL sharing, Unscheduled drag, project confirmation, checklist drag/end-resize, overlap indicator, keyboard Move/Reschedule;
+- notifications/preferences/Admin;
 - desktop 1440×900, compact 1024×768, phone 390×844;
-- failed/conflict requests;
-- console/network warnings/errors;
-- simulated external changes and draft preservation.
+- failure/conflict/access-loss behavior;
+- console/network warnings/errors.
 
-## 14. Production
+## 11. Required matrices
 
-Production checks are passive/read-only unless a human explicitly performs/authorizes mutation. Record Worker deploy IDs and verify changed surfaces load, render, route, and produce clean console/network results.
+### Freshness/access
 
-## 15. Required matrices
-
-### React TB0A
-
-- dependency/typecheck/build/full tests;
-- mount/unmount/effect/ref/portal/generated ID behavior;
-- StrictMode warnings;
-- Tiptap/Floating UI/dnd-kit/Lightbox/LazyImage;
-- render-error test assumptions;
-- bundle delta and representative visual parity.
-
-### Freshness
-
-- route A/B and collection isolation;
-- late response;
+- project A/B/range/filter isolation;
 - focus/reconnect/poll/broadcast;
-- narrow invalidation;
-- access removal;
-- draft/drag/Lightbox preservation;
-- no duplicate special polling.
+- access removal clears private data;
+- active drag/resize/drafts preserved;
+- External versus internal DTO/query isolation.
 
-### Coordination
+### Checklist scheduling
 
-- eligibility, inactive users, dual roles;
-- per-person optimistic/error/conflict;
-- membership-cycle stale removal;
-- last-role checklist cleanup;
-- stage-hidden summary privacy;
-- archived read-only.
+- legacy date-only/timed due migration;
+- unscheduled/due-only/range transitions;
+- start<end and multi-day;
+- Sydney DST gap/fold;
+- exact-minute form + 15-minute Calendar snapping;
+- schedule conflict/version;
+- end-based reminder reset;
+- broad coalescing.
 
-### Deadline
+### External Editor
 
-- set/edit/clear/past/overdue;
-- presets/custom limits/normalization;
-- DST gap/fold;
-- Due-now and versions;
-- one-minute scan/two-minute target;
-- recipient membership cycles;
-- delivered/archive suppression;
-- preference opt-out;
-- Kanban due/no RAW.
+- capability matrix;
+- assigned-only list/search/direct/media/collaboration/Calendar;
+- no Photographer Stage restriction;
+- archived denial/delivered access;
+- field allow/deny contract;
+- participant email project scope/no global directory;
+- assignment eligibility and Photographer exclusion;
+- role transition guards/session revocation;
+- deactivation/final membership/access-loss cleanup;
+- Notice Board exclusion;
+- external-safe Activity/notification categories.
 
-### Stage/Kanban
+### Production Calendar
 
-- fixed semantic progression;
-- confirmations and inactive escape;
-- AutoHDR/delivered stage-only behavior;
-- rail append/drag neighbour;
-- normalization/priority/temp sorts;
-- conflict/audit/activity/outbox;
-- pointer/touch/keyboard/non-drag in TB5B;
-- active-drag refresh and large fixture.
+- range endpoint authorization and N+1 avoidance;
+- Month/Week/Agenda and phone behavior;
+- URL state/back-forward/copied slice;
+- Editor OR/Unassigned/Stage/status/search filters;
+- project progress metadata;
+- project drag confirmation/reminder version;
+- checklist milestone/range drag/end-resize;
+- Unscheduled defaults;
+- DST invalid/fold handling;
+- stale `409` rollback/no retry;
+- overlap warning non-blocking;
+- keyboard/action path/focus/announcements;
+- dense/multi-day render and no stock-framework drift.
 
-### Notifications
+## 12. Release documentation
 
-- domain/outbox atomic intent;
-- Queue recovery, duplicate, retry, DLQ;
-- `unknown` email;
-- Admin replay/discard;
-- targeted/broad suppression;
-- actor/unassigned Admin/membership cycles;
-- coalescing/privacy/producer ownership.
-
-## 16. Release documentation
-
-Record per bullet:
-
-- approved implementation-plan path;
-- commit SHA;
-- schema/resources;
-- exact approved contract/version;
-- deploy IDs/order;
-- automated and manual results;
-- bundle/evidence where applicable;
-- known limitations;
-- rollback/next checkpoint.
-
-Move a plan to `implemented/` only after it matches verified production.
+Record plan path, commit SHA, schema/resources, contract/version, deploy IDs/order, automated/manual results, bundle/evidence, known limitations, rollback/next checkpoint. Move plan to `implemented/` only after verified production.
