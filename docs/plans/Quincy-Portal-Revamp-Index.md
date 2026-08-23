@@ -1,8 +1,8 @@
 # Quincy Portal Revamp — Index
 
 **Status:** Revised planning and research package; owner decisions are settled in this package but have not yet been promoted into repository authority documents.  
-**Revised:** 2026-08-22  
-**Repository baseline inspected:** `mjj2332/Quincy_Portal` `main` at `8bcb48245a727b048053bd3653cf07f3ad99b780`  
+**Revised:** 2026-08-23  
+**Repository baseline inspected:** `mjj2332/Quincy_Portal` `main` at `2ac2ca27a1e0ded328b9265613ab4ebeeb7db1b0`  
 **Detailed folder:** [`revamp_2026_portal/`](./revamp_2026_portal/README.md)
 
 This is the shortest entry point for the coordinated Quincy Portal revamp. Read only the path relevant to the active task.
@@ -27,10 +27,13 @@ This is the shortest entry point for the coordinated Quincy Portal revamp. Read 
 | Project discussion/read state | [Discussion architecture](./revamp_2026_portal/core/06-Discussions-And-Notice-Board.md) → [TB3](./revamp_2026_portal/roadmap/TB3-Project-Discussion-V2.md) |
 | Notification reliability | [Notification architecture](./revamp_2026_portal/core/07-Notifications-On-Cloudflare.md) → [TB4](./revamp_2026_portal/roadmap/TB4-Notification-Outbox-And-Queues.md) |
 | Project Workspace team assignment | [PRD delta](./revamp_2026_portal/core/03-PRD-Delta.md) → [Current-state audit](./revamp_2026_portal/core/02-Current-State-Audit.md) → [TB4A](./revamp_2026_portal/roadmap/TB4A-Project-Workspace-Assignment-Rail.md) |
-| Project deadline/reminders or Kanban due metadata | [PRD delta](./revamp_2026_portal/core/03-PRD-Delta.md) → [Notification architecture](./revamp_2026_portal/core/07-Notifications-On-Cloudflare.md) → [TB4B](./revamp_2026_portal/roadmap/TB4B-Project-Deadline-And-Reminders.md) |
+| Project Deadline/reminders or Kanban due metadata | [PRD delta](./revamp_2026_portal/core/03-PRD-Delta.md) → [Notification architecture](./revamp_2026_portal/core/07-Notifications-On-Cloudflare.md) → [TB4B](./revamp_2026_portal/roadmap/TB4B-Project-Deadline-And-Reminders.md) |
 | Editor-wide project-change alerts | [PRD delta](./revamp_2026_portal/core/03-PRD-Delta.md) → [Notification architecture](./revamp_2026_portal/core/07-Notifications-On-Cloudflare.md) → [TB4C](./revamp_2026_portal/roadmap/TB4C-Editor-Wide-Project-Change-Notifications.md) |
+| Checklist start/end scheduling | [Scheduling architecture](./revamp_2026_portal/core/12-Production-Calendar-And-Checklist-Scheduling.md) → [Notification architecture](./revamp_2026_portal/core/07-Notifications-On-Cloudflare.md) → [TB4D](./revamp_2026_portal/roadmap/TB4D-Checklist-Scheduling-Ranges.md) |
+| External Editor role/access | [External Editor architecture](./revamp_2026_portal/core/13-External-Editor-Authorization.md) → [Current-state audit](./revamp_2026_portal/core/02-Current-State-Audit.md) → [TB4E](./revamp_2026_portal/roadmap/TB4E-External-Editor-Assigned-Scope-Access.md) |
 | Project Stage and Kanban ordering | [Kanban/stage architecture](./revamp_2026_portal/core/08-Kanban-Modernization.md) → [TB5A](./revamp_2026_portal/roadmap/TB5A-Project-Stage-And-Kanban-Ordering-Contract.md) |
 | Kanban interaction modernization | Approved TB5A outcome → [TB5B](./revamp_2026_portal/roadmap/TB5B-Kanban-Interaction-Modernization.md) |
+| Production Calendar | [Scheduling/Calendar architecture](./revamp_2026_portal/core/12-Production-Calendar-And-Checklist-Scheduling.md) → [External Editor architecture](./revamp_2026_portal/core/13-External-Editor-Authorization.md) → [Calendar research](./revamp_2026_portal/research/Production-Calendar-FullCalendar-Shadcn.md) → [TB5C](./revamp_2026_portal/roadmap/TB5C-Production-Calendar.md) |
 | Reviewer or release owner | [Migration/verification](./revamp_2026_portal/core/09-Migration-Rollback-And-Verification.md) → active tracer-bullet file |
 | New planning/implementation agent | [Next-agent handoff](./revamp_2026_portal/handoff/Next-Agent-Prompt.md) |
 | Historical audit only | [`archive/`](./revamp_2026_portal/archive/README.md) |
@@ -40,28 +43,32 @@ This is the shortest entry point for the coordinated Quincy Portal revamp. Read 
 ```text
 TB0 → TB0A → TB0B → TB1 → TB2 → TB3 → TB4
                                      │
-                                     └→ TB4A → TB4B → TB4C → TB5A → TB5B → TB6 → TB7 → TB8
+                                     └→ TB4A → TB4B → TB4C → TB4D → TB4E → TB5A → TB5B → TB5C → TB6 → TB7 → TB8
 ```
 
-The new foundation bullets do not renumber the existing roadmap:
+The inserted bullets do not renumber existing work:
 
 - **TB0A:** React 19.2 runtime upgrade.
-- **TB0B:** enforce the developer-managed global pipeline-order boundary.
+- **TB0B:** developer-managed global pipeline-order boundary.
+- **TB4D:** checklist scheduling ranges.
+- **TB4E:** External Editor assigned-scope access.
+- **TB5C:** Production Calendar.
 
 ## Current headline decisions
 
 - Upgrade production `portal/` to the latest stable pinned React `19.2.x` patch in a standalone release; retain the Vite SPA and do not adopt React Compiler, SSR, Server Components, or new React feature refactors as collateral work.
 - Tailwind CSS v4 plus source-owned shadcn components is the target UI direction. Base UI, Sera, Lucide, CSS variables, Quincy semantic tokens, and disabled Preflight form the first proof.
-- The Project Workspace **left rail** is the canonical project-level coordination surface for Stage, Deadline/Reminders, Photographers, and Editors. The Collaboration panel remains checklist/subtasks plus project discussion.
-- `editProject` governs roster and deadline mutations. A new `moveProjectStage` capability governs Stage changes and is initially granted to Admins and Editors.
-- Global pipeline label and active/inactive management remains in Admin. Global stage ordering becomes developer-managed; ordinary Admin Up/Down controls and their self-service endpoint are removed in TB0B.
-- Quincy keeps fixed semantic system-stage identities. Manual entry to and exit from `editing_autohdr` is allowed but is stage-only and never starts or cancels AutoHDR work.
-- One project deadline uses `Australia/Sydney`, supports zero to eight unique lead-time rules from 1 minute to 30 days, emits a Due-now event, and targets delivery within two minutes of scheduled time.
-- Kanban cards show the project deadline and omit only the card-level RAW count.
-- `boardPosition` becomes the sole persisted manual order. Priority is metadata plus an optional view-only sort. Existing positions are normalized once to preserve the current visible board order.
-- Project discussion remains a flat stream in TB3, using an adapter over the current tables plus server-owned read state.
-- Notifications use a D1 outbox, Cloudflare Queue, delivery ledger, recovery scan, DLQ, and explicit `unknown` email outcomes.
-- Quincy remains asynchronous, deep-linkable, Cloudflare-native, and vendor-independent for collaboration/Kanban domain data.
+- The Project Workspace **left rail** is canonical for Stage, Deadline/Reminders, Photographers, and Editors. Collaboration remains checklist/subtasks plus project discussion.
+- One project Deadline uses `Australia/Sydney`; Kanban shows it and omits only card-level RAW count.
+- Checklist items evolve additively from optional due-only values to optional start/end ranges while preserving existing due values as end-only milestones.
+- Dashboard gains a third **Calendar** view for Admins and internal Editors plus assigned-scope External Editors. Initial views are Month, Week, and Agenda; project entries are Deadline milestones and checklist entries are due milestones or ranges.
+- Calendar supports guarded direct manipulation: project Deadline drag, checklist drag/end-resize, external drag from an Unscheduled panel, accessible non-drag editing, URL-addressable filters, and conflict rollback.
+- The Calendar engine is FullCalendar Standard through its official shadcn registry integration; Quincy owns surrounding composition, event rendering, tokens, and visual convergence. No premium Scheduler/resource timeline is planned.
+- Add global role `external_editor`, displayed **External editor**, while project membership remains `roleOnProject="editor"`.
+- External Editors keep normal assigned-project production capabilities but never receive `viewAllProjects`; they see only explicitly assigned non-archived projects, no Notice Board/global directory/Admin surfaces, and use role-safe server projections.
+- External Editors may read assigned project production notes and project-participant email addresses, but not agent/client contact details, billing/order bookkeeping, agency-directory notes, Dropbox topology, or provider/Admin diagnostics.
+- `boardPosition` remains the sole persisted manual Kanban order; Priority/shoot-date views are non-writing sorts; TB5B uses dnd-kit.
+- Notifications use a D1 outbox, Cloudflare Queue, delivery ledger, recovery scan, DLQ, explicit `unknown` email outcomes, and role-safe assigned-Editor delivery.
 
 ## Authority and lifecycle
 
@@ -74,4 +81,4 @@ docs/Decision-Sheet.md
   → supporting plans and architecture
 ```
 
-The proposed authority package is D-16 through D-19 and Implementation Plan amendments A8 through A12. Those files are intentionally unchanged in this revision. After a separate owner approval, TB0 promotes the proposal, captures the baseline/drift register, and creates the first repository-native implementation plan.
+The proposed authority package is now **D-16 through D-21** and Implementation Plan amendments **A8 through A14**. D-20/A13 cover checklist scheduling and Production Calendar; D-21/A14 cover External Editor assigned-scope authorization. Those authority files are intentionally unchanged in this revision. After a separate owner approval, TB0 promotes the proposal, captures the baseline/drift register, and creates the first repository-native implementation plan.

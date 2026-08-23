@@ -3,130 +3,90 @@
 **Status:** Proposed synchronization checklist after separate authority-promotion approval  
 **Purpose:** prevent the revised package from drifting from Quincy's authority chain
 
-This package revision intentionally does **not** modify the files below.
+This package revision intentionally does **not** modify the authority files below.
 
 ## 1. `docs/Decision-Sheet.md`
 
-Preserve D-15 as the historical React 18 + TypeScript + Vite SPA decision. Add four decisions after owner approval.
+Preserve existing history. After separate owner approval add:
 
 ### Proposed D-16 — Frontend UI platform and design convergence
-
-Tailwind CSS v4 plus source-owned shadcn components, migrated incrementally. Base UI/Sera/Lucide, semantic Quincy token mapping, disabled Preflight initially, no dark mode. Quincy design system is visual authority; prototype is visual/flow reference; material deviations require matched evidence and classification.
+Tailwind v4 + source-owned shadcn, Base UI/Sera/Lucide, semantic Quincy tokens, controlled Preflight, no dark mode, evidence-led convergence.
 
 ### Proposed D-17 — Quincy-owned collaboration, freshness, pipeline, and Kanban architecture
-
-Keep deep routes and typed custom router; adopt TanStack Query incrementally; keep collaboration/activity/notification/Kanban data Quincy-owned on Cloudflare; no managed collaboration/Kanban vendor. Fixed semantic Stage identities remain independent of display order. Global Stage order is developer-managed. Correct ordering before dnd-kit interaction modernization.
+Keep deep routes/custom router; incremental TanStack Query; Cloudflare-owned collaboration/activity/notification data; fixed semantic Stage identities; developer-managed global order; correct ordering before dnd-kit modernization.
 
 ### Proposed D-18 — Project Workspace coordination, Deadline, and Editor notifications
-
-The Project Workspace left rail is canonical for Stage, Deadline/Reminders, Photographers, and Editors. `editProject` governs rosters/deadlines. New `moveProjectStage` governs Stage for Admins and Editors. Add Sydney Deadline/reminder scheduling, durable assigned-Editor registry, and Kanban Deadline metadata replacing card RAW count.
+Left rail canonical for Stage/Deadline/team; `editProject` rosters/deadlines; `moveProjectStage` Stage; Sydney project Deadline/reminders; assigned-Editor registry; Kanban Deadline metadata.
 
 ### Proposed D-19 — React 19.2 runtime baseline
+Standalone exact stable React 19.2 upgrade; retain TypeScript/Vite SPA/Cloudflare; no Compiler/RSC/SSR/product refactor collateral.
 
-Upgrade production `portal/` to the latest stable exact React `19.2.x` patch in standalone TB0A. Retain TypeScript/Vite SPA/Cloudflare architecture. No React Compiler, Server Components, SSR, or product refactor as upgrade collateral. D-19 supersedes only the React-major portion of D-15.
+### Proposed D-20 — Production Calendar and checklist scheduling
+Dashboard Calendar beside List/Kanban; Sydney project Deadline milestones plus optional checklist due/range schedules; Month/Week/Agenda; typed filters/URL state; dedicated authorized range API; FullCalendar Standard official shadcn integration; guarded direct manipulation and accessible alternatives; no recurrence/external calendar sync.
 
-Update approval metadata/range only after explicit owner sign-off.
+### Proposed D-21 — External Editor assigned-scope access
+Distinct global `external_editor` role using existing project Editor membership; assigned-project-only authorization; normal project-production capabilities but no broad/Admin/Notice Board scope; server-side external-safe DTO/event policy; project-scoped collaboration/contact; assigned-scope Calendar; role/session/membership lifecycle rules.
 
 ## 2. `docs/Implementation-Plan.md`
 
-Add amendments, preserving history:
+Add amendments while preserving history:
 
-- **A8 — UI platform and design convergence.** Tailwind/shadcn setup, token bridge, Preflight, component ownership, evidence/drift process.
-- **A9 — Route-aware server-state freshness.** Query keys, focus/poll/broadcast, invalidation, cancellation, draft preservation, router retention.
-- **A10 — Discussions, activity, durable notifications, fixed pipeline semantics, and Kanban.** Adapter-first discussion, server reads, activity domain, outbox/Queue, system-stage identity, developer-managed order, TB5A-before-TB5B.
-- **A11 — Project Workspace coordination.** Canonical rail, role deltas/cycles, `moveProjectStage`, Deadline versions/reminders/preferences, Editor registry/privacy/coalescing.
-- **A12 — React 19.2 runtime upgrade.** Exact pins, reviewed codemods, minimum dependency churn, StrictMode, error behavior, QA/deploy/rollback.
+- **A8 — UI platform and design convergence.**
+- **A9 — Route-aware server-state freshness.**
+- **A10 — Discussions, activity, durable notifications, fixed pipeline semantics, and Kanban.**
+- **A11 — Project Workspace coordination.**
+- **A12 — React 19.2 runtime upgrade.**
+- **A13 — Checklist Scheduling and Production Calendar.** Additive schedule model/versioning/DST, dedicated range API, FullCalendar/shadcn integration, direct manipulation/accessibility/filter/freshness contracts.
+- **A14 — External Editor Assigned-Scope Authorization.** Role/capability matrix, generic membership scoping, safe DTOs, session transition rules, assignment UX, project-scoped contact/privacy, external-safe notification/activity/Calendar behavior.
 
 ## 3. `docs/PRD.md`
 
-Merge product outcomes from [`03-PRD-Delta.md`](./03-PRD-Delta.md), excluding implementation-specific library/schema detail where architecture docs are more appropriate.
+Merge product outcomes from [`03-PRD-Delta.md`](./03-PRD-Delta.md), excluding library/schema details better kept in architecture docs.
 
-Required product additions:
+Required additions now include:
 
-- React 19.2 target and compatibility-only boundary;
-- design convergence/evidence and browser floor;
-- route-safe freshness and draft preservation;
-- canonical left-rail coordination/responsive summary;
-- team eligibility, dual roles, inactive/stale-cycle behavior;
-- Stage semantics/permissions/confirmations;
-- developer-managed global order;
-- Sydney Deadline/reminders/preference/delivery target;
-- activity and durable assigned-Editor registry;
-- corrected Kanban order and accessible movement;
-- URL-addressable card detail and notice read-state migration.
+- React/UI/freshness/canonical rail/Stage/pipeline/Deadline/notification/Kanban outcomes already proposed;
+- checklist unscheduled/due-only/start-end schedule semantics and Sydney time;
+- Calendar as third Dashboard view, Month/Week/Agenda, filters/shareable state, direct manipulation/accessibility and Unscheduled behavior;
+- External Editor identity, assigned-project visibility, normal production capability, privacy/contact bounds, collaboration/Calendar/notification behavior, and lifecycle/access-loss rules.
 
 ## 4. `AGENTS.md` and `CLAUDE.md`
 
-Update identically after D-16–D-19 approval. Add concise rules only when they are approved targets/live states accurately labelled:
+Update identically only after D-16–D-21 approval and label targets versus live state accurately. Add concise rules for:
 
-- React 19.2 upgrade is TB0A target until deployed; no incidental new React architecture.
-- Tailwind/shadcn is incremental; Quincy design system authoritative; Preflight disabled initially.
-- generated source is first-party; one styling owner.
-- all query keys include route/resource variables; preserve deep links/drafts.
-- Project Workspace rail owns project-level coordination; Collaboration owns tasks/discussion.
-- role-specific membership mutations preserve other roles and cycles.
-- `moveProjectStage` owns Stage; system-stage semantics do not follow display order.
-- global order is developer-managed.
-- Deadline is separate from shoot/subtask due fields.
-- broad notifications are a finite activity registry, not every write.
+- React 19.2 target/compatibility boundary;
+- incremental Tailwind/shadcn and Quincy visual authority;
+- route/resource/range query keys and draft/drag preservation;
+- canonical rail vs Collaboration ownership;
+- role-specific membership deltas/cycles;
+- `moveProjectStage` and fixed Stage semantics;
+- Deadline distinct from shoot/checklist schedule;
+- broad registry finite/noise-bounded;
+- checklist due/start-end schedule contract;
+- Calendar authorized range projection/direct manipulation;
+- `external_editor` is assignment-scoped and requires external-safe server projection;
+- External Editor has no staff Notice Board/global directory/Admin scope.
 
-Do not claim stack/feature items are live before deployment.
+Do not claim planned stack/features are live before deployment.
 
-## 5. `README.md`
+## 5. README/todo/lessons
 
-Two stages:
+- README: after authority approval describe approved migration targets; after live slices describe actual adoption.
+- `docs/todo.md`: after authority approval add one umbrella entry plus only active bullet; never mark planned Calendar/role live early.
+- `docs/lessons.md`: add only verified implementation lessons (React/Tailwind/query/membership/Deadline/schedule/DST/role projection/FullCalendar interaction), not planning speculation.
 
-- after authority approval: describe React 19.2/Tailwind/shadcn/freshness/coordination as approved migration targets and link the revamp index;
-- after first live slices: describe actual runtime/component/query adoption accurately and incrementally.
+## 6. Historical plans
 
-## 6. `docs/todo.md`
+Do not rewrite `docs/plans/implemented/`. Historical Collaboration placement, React-18 non-goal, List/Kanban-only Dashboard, and three-role assumptions remain historical records, not current proposal authority.
 
-After authority approval, add one umbrella entry plus only the currently active tracer bullet. Track exact deployed slices. Do not mark the umbrella complete while legacy surfaces or open drift entries remain.
+## 7. Repository-native implementation plans
 
-Suggested umbrella wording:
-
-```markdown
-- [ ] **Quincy Portal revamp — approved umbrella program.** React 19.2 runtime baseline; evidence-led Tailwind v4/shadcn convergence; route-safe freshness; Quincy-owned discussion/activity/notifications; Project Workspace coordination rail; corrected Stage/Kanban semantics; independently reviewed tracer bullets. See `docs/plans/Quincy-Portal-Revamp-Index.md`.
-```
-
-## 7. `docs/lessons.md`
-
-Add only verified implementation lessons, not planning speculation. Candidate categories if observed:
-
-- React 19 types/StrictMode/error behavior;
-- Tailwind Preflight/source detection;
-- shadcn generated-source update behavior;
-- query-key or draft-reset defects;
-- membership-cycle/Deadline conflict defects;
-- D1/Queue/outbox/replay races;
-- dnd-kit refresh/drag behavior.
-
-## 8. Supporting architecture
-
-Keep core files under the revamp package during implementation or promote selected stable architecture later. Avoid permanent duplicated contracts in both locations.
-
-## 9. Historical plans
-
-Do not rewrite `docs/plans/implemented/`. They remain accurate records of what shipped. Do not use historical Collaboration-pane placement or React-18 non-goal as current direction.
-
-## 10. Repository-native implementation plans
-
-Each scope brief becomes a reviewed plan before code. Suggested names:
+Each scope brief becomes a reviewed current-main-aware implementation plan before code. Suggested additions:
 
 ```text
-Revamp-TB0-Architecture-And-Baseline-Plan.md
-Revamp-TB0A-React-19-2-Runtime-Upgrade-Plan.md
-Revamp-TB0B-Pipeline-Configuration-Boundary-Plan.md
-Revamp-TB1-Tailwind-Shadcn-Foundation-Plan.md
-Revamp-TB2-Route-Safe-Freshness-Plan.md
-Revamp-TB3-Project-Discussion-V2-Plan.md
-Revamp-TB4-Notification-Outbox-And-Queues-Plan.md
-Revamp-TB4A-Project-Workspace-Assignment-Rail-Plan.md
-Revamp-TB4B-Project-Deadline-And-Reminders-Plan.md
-Revamp-TB4C-Editor-Wide-Project-Change-Notifications-Plan.md
-Revamp-TB5A-Project-Stage-And-Kanban-Ordering-Plan.md
-Revamp-TB5B-Kanban-Interaction-Modernization-Plan.md
-...
+Revamp-TB4D-Checklist-Scheduling-Ranges-Plan.md
+Revamp-TB4E-External-Editor-Assigned-Scope-Access-Plan.md
+Revamp-TB5C-Production-Calendar-Plan.md
 ```
 
-Follow `docs/Subagent-Orchestration.md`, full verification, production deployment, status update, and `git mv` to `implemented/` only after live verification.
+Follow repository review/orchestration, full verification, production deployment, status update, and `git mv` to `implemented/` only after live verification.

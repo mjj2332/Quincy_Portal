@@ -1,189 +1,97 @@
 # Notifications on Cloudflare
 
 **Status:** Settled reliable-delivery and project-event proposal  
-**Related:** [TB4](../roadmap/TB4-Notification-Outbox-And-Queues.md), [TB4A](../roadmap/TB4A-Project-Workspace-Assignment-Rail.md), [TB4B](../roadmap/TB4B-Project-Deadline-And-Reminders.md), [TB4C](../roadmap/TB4C-Editor-Wide-Project-Change-Notifications.md)
+**Related:** [TB4](../roadmap/TB4-Notification-Outbox-And-Queues.md), [TB4A](../roadmap/TB4A-Project-Workspace-Assignment-Rail.md), [TB4B](../roadmap/TB4B-Project-Deadline-And-Reminders.md), [TB4C](../roadmap/TB4C-Editor-Wide-Project-Change-Notifications.md), [TB4D](../roadmap/TB4D-Checklist-Scheduling-Ranges.md), [TB4E](../roadmap/TB4E-External-Editor-Assigned-Scope-Access.md)
 
-## 1. Goal
+## 1. Goal and flow
 
-Keep notification rules and data Quincy-owned while using Cloudflare infrastructure for durable asynchronous delivery. A successful project/comment operation must not depend on immediate Queue or email success.
-
-## 2. Target flow
+Keep notification rules/data Quincy-owned while using Cloudflare infrastructure for durable async delivery. A successful domain operation never depends on immediate Queue/email success.
 
 ```text
 Domain mutation
   ├── domain state
   ├── security audit
-  ├── immutable safe activity event where applicable
+  ├── safe activity where applicable
   └── notification_outbox intent
-         │
-         ├── best-effort publish outbox id to Cloudflare Queue
-         └── Cron recovery republishes pending/stuck rows
+         ├── Queue publish
+         └── Cron recovery
 
 Queue consumer
-  ├── claim with compare-and-set lease/token
-  ├── resolve/recheck eligible recipient membership/access
-  ├── upsert recipient/channel delivery ledger
-  ├── insert mandatory in-app row idempotently
-  ├── send optional email
-  └── record sent/failed/unknown/suppressed; retry or DLQ
+  ├── claim/lease
+  ├── recheck recipient membership/access/role-safe category
+  ├── recipient/channel delivery ledger
+  ├── mandatory in-app insert
+  ├── optional email
+  └── sent/failed/unknown/suppressed → retry or DLQ
 ```
 
-## 3. Conceptual schema
+Unique semantic delivery key remains `(event_type, source_key, recipient_id, channel)`, never Queue message ID.
 
-```text
-project_activity_events
-  id, project_id, actor_id, occurred_at
-  activity_type, registry_version, source_key
-  safe_payload_json, deep_link_context
+## 2. Retry/email ambiguity
 
-notification_outbox
-  id, event_type, registry_version, source_key
-  activity_event_id nullable, actor_id nullable, project_id nullable
-  payload_json, state, attempts, next_attempt_at
-  claim_token nullable, claim_expires_at nullable
-  last_error nullable, created_at, processed_at nullable
+Definitive transient pre-acceptance email failure may retry. Ambiguous post-submission outcome is `unknown` and not automatically retried. Manual replay warns duplicate email is possible. Mandatory in-app delivery is independent of email outcome.
 
-notification_deliveries
-  id, event_type, source_key, recipient_id, channel
-  membership_cycle_id nullable
-  state: pending | claimed | sent | failed | unknown | suppressed
-  claim_token nullable, claim_expires_at nullable
-  attempts, provider_id nullable, last_error nullable
-  created_at, sent_at nullable
-
-notification_preferences
-  user_id
-  deadline_reminder_email_enabled
-  future category/digest fields
-```
-
-Existing recipient-facing `notifications` remains the in-app inbox table initially.
-
-Unique semantic delivery key:
-
-```text
-(event_type, source_key, recipient_id, channel)
-```
-
-Never deduplicate by random Queue message ID.
-
-## 4. Claims, retries, and email ambiguity
-
-- Claims use compare-and-set state plus random token and expiring lease.
-- Duplicate Queue/recovery processing converges on the unique delivery row.
-- Definitive transient pre-acceptance email failure may retry.
-- An ambiguous timeout/connection loss after submission becomes `unknown`.
-- Do not automatically retry `unknown`; provider acceptance may already have occurred.
-- Manual replay warns that duplicate email is possible.
-- Mandatory in-app delivery is unaffected by email outcome.
-- Do not claim exactly-once email without provider idempotency support.
-
-## 5. TB4 first event and operations
-
-First durable event: project-comment mention.
-
-TB4 must:
-
-- write mention mapping and outbox intent in the same domain-write boundary;
-- cut over one authoritative semantic producer;
-- recheck active access at delivery;
-- insert one in-app row;
-- send optional mention email;
-- prove retry, recovery, DLQ, and deduplication;
-- add a compact Admin operational section showing pending/stuck outbox, DLQ, failed deliveries, and `unknown` email outcomes;
-- allow safe replay/discard without exposing sensitive content.
-
-## 6. Recipient contracts
+## 3. Recipient contracts
 
 ### Targeted assignment
 
-- Newly assigned Photographer/Editor receives one role-specific targeted event, including self-assignment.
-- Removal is audit-only for the removed person.
-- In TB4C, existing eligible Editors receive the broad roster-change event; the new assignee is suppressed from the duplicate broad row.
+New Photographer/Editor assignee receives one role-specific targeted event. After TB4E, an External Editor assigned in the Editor slot uses the same targeted assignment contract. Removal remains audit-only for the removed person; broad roster event goes to other eligible Editors without duplicating the new assignee.
 
-### Deadline reminders
+### Project Deadline reminders
 
-Resolve active Editor membership cycles at occurrence/delivery time:
-
-- assignment before fire qualifies;
-- removal/deactivation suppresses;
-- remove/re-add cannot receive prior-cycle event;
-- unassigned Admins are not appended;
-- a newly assigned Editor may receive future un-emitted occurrences.
+Resolve active Editor membership cycles at occurrence/delivery time. After TB4E this includes active External Editors with `roleOnProject="editor"`. Assignment before fire qualifies; removal/deactivation suppresses; remove/re-add cannot receive prior-cycle occurrence; unassigned Admins are not appended.
 
 ### Broad registry
 
-The membership cycle must begin no later than event occurrence and still exist at delivery. No delivered-history backfill. Mandatory in-app delivery includes the actor only when the actor is an eligible assigned Editor.
+Membership cycle must begin no later than event occurrence and still exist at delivery. Actor receives broad row only when eligible. External Editors use the same membership-cycle mechanics but only for external-safe categories/payloads.
 
-## 7. Deadline schedule
+## 4. Project Deadline schedule
 
-Conceptual data:
+TB4B remains authoritative: Sydney civil/UTC/fold versioned Deadline, bounded offsets, Due-now, one-minute scan/two-minute target, delivered/archive suppression, personal Deadline-email opt-out.
 
-```text
-projects
-  deadline_local nullable
-  deadline_at_utc nullable
-  deadline_timezone nullable
-  deadline_utc_offset nullable
-  deadline_fold nullable
-  deadline_version
+External Editors receive the same personal Notification Preferences access for their own Deadline-email setting.
 
-project_deadline_reminders
-  id, project_id, deadline_version
-  occurrence_kind: advance | due_now
-  offset_minutes nullable
-  fire_at_utc
-  state: pending | claimed | emitted | superseded
-  claim_token nullable, claim_expires_at nullable
-  claimed_at nullable, emitted_at nullable
-```
+## 5. Editor-wide registry
 
-Rules:
+Each type defines stable version, producer, source key, actor/recipient rule, safe payload, deep link, coalescing, email default and cutover tests.
 
-- `Australia/Sydney` is explicit.
-- Reject DST gaps; ambiguous time requires earlier/later choice.
-- Presets: 1 day, 4 hours, 1 hour; none preselected.
-- Custom whole-number minutes/hours/days, 1 minute–30 days, max eight unique normalized offsets.
-- Due-now always exists.
-- Save increments version and supersedes old pending rows atomically.
-- Past Deadline emits one Due-now/overdue event and skips elapsed advances.
-- Scan every minute; target in-app creation within two minutes.
-- Delivered/archive supersedes pending rows and does not auto-resume.
-- Reminder email is default-on only after the per-user Notification Preferences toggle exists.
-
-## 8. Editor-wide registry
-
-Each registry entry defines:
-
-- stable type and registry version;
-- owning producer;
-- source key;
-- safe activity/notification payload;
-- actor rule;
-- recipient membership-cycle rule;
-- deep link;
-- coalescing;
-- email default;
-- producer cutover owner/tests.
-
-Initial categories:
-
-- team, Deadline/rules, Stage, Priority, selected operational project metadata, archive/restore;
-- checklist create/edit/complete/reopen/delete/assignee/due changes;
-- comment create/edit/delete;
-- workflow-significant review/selection/annotation operations;
-- user-visible collection/delivery operations.
+Internal categories remain the approved TB4C registry: team, Deadline, Stage, Priority, selected project metadata, checklist, comments, significant review/workflow, collection/delivery operations.
 
 Noise rules:
 
-- no broad notification for pure Kanban/checklist reorder;
-- one Deadline schedule event per Save;
-- comment edits coalesce per comment/actor within five minutes;
-- one user action/background job = one collection summary;
-- no event for rendition/cache/manifest/retry bookkeeping;
-- no duplicate targeted assignment + broad roster row to the new assignee.
+- no broad event for pure Kanban/checklist reorder;
+- one Deadline schedule event per save/version;
+- comment edits coalesce same-comment/same-actor within five minutes;
+- **checklist schedule edits coalesce same-item/same-actor within five minutes** for broad delivery;
+- one user action/background job = one useful collection summary;
+- no per-rendition/cache/retry events;
+- new assignment targeted row suppresses duplicate broad roster row for new assignee.
 
-## 9. Email defaults and preferences
+## 6. External Editor event policy
+
+External-safe broad categories may include:
+
+- Stage;
+- project Deadline/rules;
+- safe team changes;
+- checklist create/edit/complete/reopen/delete/assignee/schedule;
+- project comment create/edit/delete under broad privacy rules;
+- user-visible media/collection/workflow summaries;
+- shoot date/time;
+- service/deliverable changes.
+
+Do **not** deliver to External Editors categories or payloads that reveal:
+
+- agent/client contact-detail changes;
+- billing/invoice/payment or internal order bookkeeping;
+- agency-directory notes;
+- Dropbox paths/links;
+- provider/integration diagnostics;
+- Admin/pipeline configuration.
+
+Hidden categories are omitted entirely rather than represented as redacted placeholders. Project production-note content is visible on the assigned project by explicit product decision, but broad notification copy remains content-free for note changes.
+
+## 7. Email defaults
 
 ```text
 Category                         In-app        Email default
@@ -193,49 +101,18 @@ Project Deadline reminder        required      on, global per-user opt-out
 Broad registry event             required      off
 ```
 
-The first Notification Preferences page exposes **Project deadline reminder emails**. Per-project muting and digest controls are deferred until a broader subscription model exists. Preferences never suppress mandatory broad/Deadline in-app rows while membership remains eligible.
+Same defaults apply to eligible External Editors. Per-project mute/digest remains deferred.
 
-## 10. Copy/privacy
+## 8. Copy/privacy
 
-Broad rows/email may include:
+Broad rows/email may include actor name, project street/name, event category/outcome, safe link, checklist title, collection type/counts. Do not include broad comment excerpts, filenames, production-note contents, agent/client contacts, Dropbox paths, or provider diagnostics.
 
-- actor name;
-- project street/name;
-- event category and compact outcome;
-- safe link;
-- checklist title;
-- collection type and aggregate counts.
+Project participant email visibility is a project-detail collaboration decision; it does not imply that notification payloads should expose email addresses.
 
-Do not include:
+## 9. Producer ownership/rollback
 
-- broad comment body excerpts;
-- filenames;
-- production notes content;
-- client contact details;
-- Dropbox paths;
-- provider diagnostics.
+Exactly one authoritative producer owns a semantic event at a time. Old/new paths share stable delivery keys during cutover. Disabling a producer never deletes domain/activity/inbox data; pending outbox remains recoverable.
 
-Targeted mention emails retain their separately approved excerpt policy.
+## 10. Tests
 
-## 11. Producer ownership and rollback
-
-Maintain one authoritative producer per semantic event. During cutover, old/new paths share stable delivery keys but do not both independently fan out. Disabling a producer never deletes domain/activity/inbox data. Pending outbox rows remain recoverable. Rollback restores one owner at a time without dual-write ambiguity.
-
-## 12. Tests
-
-- domain write survives Queue publication failure;
-- pending/stuck recovery;
-- duplicate Queue/replay yields one in-app row;
-- active access/membership recheck;
-- remove/re-add interval isolation;
-- actor/unassigned-Admin behavior;
-- targeted/broad assignment suppression;
-- transient email retry and `unknown` no-auto-retry;
-- Admin status/replay/discard;
-- Deadline versions, Due-now, past Deadline, reschedule, delivered/archive suppression;
-- one-minute scan/two-minute target;
-- DST gap/fold behavior;
-- comment edit coalescing;
-- collection operation summary;
-- privacy-safe copy;
-- producer cutover exactly once.
+In addition to TB4/TB4B/TB4C tests, cover External Editor active/assigned eligibility, external-safe category suppression, role/membership removal before delivery, no hidden-field payload leaks, targeted/deadline defaults/preferences, checklist schedule coalescing, and no duplicate Calendar-specific notification semantics.

@@ -1,7 +1,7 @@
 # Frontend Architecture
 
 **Status:** Settled proposal; authority promotion and implementation pending  
-**Related:** [Design convergence](./11-Design-Convergence.md), [TB0A](../roadmap/TB0A-React-19-2-Runtime-Upgrade.md), [TB1](../roadmap/TB1-Tailwind-Shadcn-Foundation.md)
+**Related:** [Design convergence](./11-Design-Convergence.md), [Calendar/scheduling](./12-Production-Calendar-And-Checklist-Scheduling.md), [TB0A](../roadmap/TB0A-React-19-2-Runtime-Upgrade.md), [TB1](../roadmap/TB1-Tailwind-Shadcn-Foundation.md), [TB5C](../roadmap/TB5C-Production-Calendar.md)
 
 ## 1. Architecture objective
 
@@ -13,95 +13,31 @@ React 19.2 + Vite SPA
   ├── components/quincy/        recurring branded composites
   ├── components/ui/            generic source-owned shadcn primitives
   ├── feature-local controls    workflow and access behavior
-  └── focused CSS               media, Tiptap, stacking and specialized geometry
+  ├── specialized engines       e.g. FullCalendar in TB5C
+  └── focused CSS               media, Tiptap, stacking, calendar geometry overrides
 ```
 
 ## 2. React 19.2 baseline
 
-TB0A is an isolated compatibility release before Tailwind/shadcn work.
+TB0A is an isolated compatibility release before Tailwind/shadcn work. Recheck npm at implementation time; pin React/React DOM to the same latest stable `19.2.x` patch and compatible exact `@types` versions. Keep `createRoot`, StrictMode, modern JSX, TypeScript, Vite, typed custom router, client SPA, and app Worker asset serving.
 
-### Version policy
-
-- Recheck npm at implementation time and select the latest stable React `19.2.x` patch.
-- Pin React and React DOM to the same exact patch.
-- Pin the latest compatible exact `@types/react@19.2.x` and `@types/react-dom@19.2.x`.
-- As of 2026-08-22, the current stable React package is `19.2.8`.
-- Commit and review the lockfile.
-- No canary, RC, caret, or unbounded `latest` range remains in `package.json`.
-
-### Scope
-
-Preserve:
-
-- `createRoot`;
-- `<StrictMode>`;
-- `react-jsx` transform;
-- TypeScript and Vite;
-- the custom typed router;
-- client-rendered SPA and app Worker asset serving.
-
-Do not add in TB0A:
-
-- React Compiler;
-- Server Components, SSR, hydration, or Partial Pre-rendering;
-- `Activity`, Actions/new form architecture, `useEffectEvent` refactors, ref-as-prop sweeps, or unrelated component rewrites;
-- a monitoring vendor or duplicate console wrapper.
-
-### Migration method
-
-- Run the official React 19 migration recipe and TypeScript codemods on a clean branch.
-- Treat output as a proposed diff and review every change.
-- Search explicitly for removed APIs, legacy test utilities, React internals, no-argument `useRef`, implicit ref callback returns, and render-error assumptions.
-- Retain React 19 default error reporting unless Quincy has a real reporting sink and a separate observability plan.
-- Keep supporting dependency updates to the minimum proven compatible set.
-
-### Compatibility focus
-
-Prioritize local QA and focused tests around:
-
-- Floating UI/portals and focus return;
-- Tiptap and mention autocomplete;
-- Lightbox and image loading;
-- collaboration/checklist refs, timers, and subscriptions;
-- dnd-kit sensors and sortable refs;
-- mount/unmount cleanup in DOM tests.
+Do not add React Compiler, Server Components, SSR/hydration, `Activity`, Actions/form refactors, or broad product redesign in TB0A. Use official codemods as reviewed proposals, then inspect removed APIs, refs, test assumptions, and StrictMode cleanup directly.
 
 ## 3. Design authority
 
 Use this order:
 
-1. approved repository authority documents for product/security/workflow;
-2. Quincy design-system tokens and guidance for visual language;
-3. prototype screens for comparable layout/flow intent;
-4. current production for verified behavior, accessibility, and platform constraints;
-5. Tailwind/shadcn only as implementation technique.
+1. approved repository authority for product/security/workflow;
+2. Quincy design-system tokens/guidance;
+3. prototype for comparable layout/flow intent;
+4. current production for verified behavior/accessibility/platform constraints;
+5. Tailwind/shadcn/specialized libraries only as implementation technique.
 
-Current production is evidence, not automatic visual authority. Stock generated appearance is not acceptable final output.
+Stock generated appearance or a dependency demo is never final visual authority.
 
 ## 4. Tailwind v4 integration
 
-TB1 uses:
-
-- pinned `tailwindcss` and `@tailwindcss/vite` at `portal/` root;
-- Vite plugin integration;
-- CSS-first v4 configuration;
-- one existing global CSS entry: `src/styles/index.css`;
-- automatic source detection, with explicit `@source` only if verified necessary;
-- no v3 `tailwind.config.js` unless a measured blocker requires it.
-
-### Preflight
-
-Disable Preflight initially. Import theme and utilities without `preflight.css`, retain the existing Quincy base/reset layer, and avoid unrelated whole-app heading/list/border/media regressions. A later enablement requires a dedicated application-wide diff and visual/accessibility gate.
-
-### Browser floor
-
-Accept the official Tailwind v4 minimums:
-
-- Chrome/Chromium 111+;
-- Safari 16.4+;
-- Firefox 128+.
-
-Regular QA focuses on deployed Chrome/Safari plus Firefox regression coverage. No older-browser support is promised.
+TB1 uses pinned Tailwind v4 with `@tailwindcss/vite`, CSS-first configuration, one CSS entry, automatic source detection, and Preflight disabled initially. Retain the existing Quincy reset/base and semantic-token mapping. Accept the official Tailwind v4 browser floor already recorded in the package.
 
 ## 5. shadcn initialization contract
 
@@ -132,79 +68,63 @@ Use one app-local Base UI/Sera setup:
 ```
 
 - Add `@/* → src/*` consistently in TypeScript and Vite.
-- Do not rewrite existing relative imports merely to use the alias.
-- No third-party registries initially.
-- Base UI is the selected primitive base. React Aria and Radix remain alternatives only after a measured blocker.
-- Sera is a code scaffold, not visual authority; replace stock treatments that conflict with Quincy.
+- Do not rewrite working relative imports merely to use the alias.
+- Base UI is the ordinary primitive base; React Aria/Radix require a measured blocker.
+- Generated source is first-party reviewed Quincy code.
+- Add only components needed by the active bullet.
+- Dark mode remains excluded.
 
-## 6. Token bridge
+### Registry policy
 
-Existing Quincy values remain the source. Map them to semantic variables such as:
+The TB1 baseline has no third-party registries. **TB5C is one explicitly reviewed exception:** FullCalendar's official shadcn registry may be added for the specialized Production Calendar after the Quincy shadcn foundation exists.
 
-```text
---background           --foreground
---card                 --card-foreground
---popover              --popover-foreground
---primary              --primary-foreground
---secondary            --secondary-foreground
---muted                --muted-foreground
---accent               --accent-foreground
---destructive          --border
---input                --ring
---positive             --caution
---information          --radius
-```
+That exception does not authorize arbitrary registries or a second ordinary primitive system. Inspect the generated registry source/dependencies before adoption; if it pulls incompatible ordinary primitives, replace/wrap those portions rather than changing Quincy's Base UI contract.
 
-Tailwind feature code uses semantic utilities (`bg-background`, `border-border`, `ring-ring`) rather than raw palette names or repeated brand hex values. Dark mode is excluded.
+## 6. Token bridge and component ownership
 
-## 7. Component ownership
+Existing Quincy values remain the source for semantic variables (`--background`, `--foreground`, `--card`, `--popover`, `--primary`, `--muted`, `--border`, `--ring`, signals, radius). Feature code uses semantic utilities rather than raw palettes/brand hexes.
 
 ```text
 portal/apps/web/src/components/ui/       generic generated primitives
 portal/apps/web/src/components/quincy/   reusable branded composites
-feature-local components                 domain data, capability and workflow behavior
+feature-local components                 domain/capability/workflow behavior
 ```
 
-Rules:
+Generic primitives contain no API calls/capabilities. One rendered element has one styling owner. Keep focused CSS where clearer for media geometry, Tiptap, complex stacking, keyframes, and specialized calendar internals.
 
-- Generated source is first-party Quincy code and receives ordinary review.
-- Add only components required by the active tracer bullet.
-- Never bulk-add all components.
-- Generic primitives contain no API calls, capabilities, or authorization.
-- A Quincy composite needs one strong reusable contract or multiple real consumers.
-- No shared UI workspace without a second real app consumer.
-- One rendered element has one styling owner during migration.
-- Keep focused CSS where clearer for media geometry, annotation layers, Tiptap internals, complex stacking, keyframes, and specialized grids.
+## 7. Specialized Production Calendar engine
 
-## 8. Icon policy
+TB5C may use the latest stable reviewed **FullCalendar Standard** React integration through FullCalendar's official shadcn registry.
 
-Use Lucide for newly migrated ordinary controls. Define Quincy-consistent size, stroke, alignment, accessible names, and icon-button treatment. Existing glyphs/custom SVGs migrate only with their owning surface; no collateral whole-app replacement.
+Boundary:
 
-## 9. Server state and routing
+- FullCalendar owns Month/TimeGrid/List geometry and event interaction mechanics;
+- Quincy owns Dashboard view integration, toolbar, filters, Unscheduled panel, event content, role/permission treatment, confirmations, schedule editor, responsive behavior, a11y adjuncts, and semantic styling;
+- use Standard DayGrid/TimeGrid/List/Interaction capabilities only;
+- no premium Scheduler/resource timeline;
+- no unrelated community shadcn calendar implementation;
+- named `Australia/Sydney` timezone is explicit;
+- current stable package/flavor is rechecked at TB5C plan/implementation time;
+- compare official FullCalendar shadcn flavors at approved evidence viewports and pin the least-drift choice; users do not choose a FullCalendar theme.
 
-TanStack Query enters incrementally in TB2. Ordinary ephemeral UI state stays in React state:
+The Calendar engine is not Quincy's ordinary component library and does not replace Base UI/shadcn ownership elsewhere.
 
-- drafts;
-- open popover/dialog;
-- filter input;
-- Lightbox position;
-- active drag.
+## 8. Server state and routing
 
-Server data uses route/resource keys. Keep the custom typed router; query lifecycle, not pathname routing, is the demonstrated freshness defect.
+TanStack Query enters incrementally in TB2. Ordinary ephemeral state remains local React state: drafts, open controls, filters, Lightbox position, selection, active drag/resize.
 
-## 10. First UI proof
+Server resources use route/range/filter keys. Calendar query state additionally belongs in typed URL parameters. Keep the custom router.
 
-TB1 migrates only the ProjectFields Client section—Agency, Agent, Agent email, Agent phone—across Create/Edit modes without changing product behavior.
+## 9. UI proofs
 
-It must prove:
+TB1 still migrates only the ProjectFields Client section and proves the general UI platform.
 
-- React 19.2 compatibility baseline remains green;
-- Tailwind build/source detection;
-- controlled Preflight;
-- token and typography fidelity;
-- generated-source maintainability;
-- label/error/focus behavior;
-- desktop/compact/phone evidence;
-- legacy coexistence and one styling owner;
-- no stock shadcn appearance or raw palette contract;
-- bundle/CSS delta.
+TB5C separately proves the specialized engine can conform to Quincy:
+
+- Month/Week/Agenda at desktop/compact/phone;
+- empty/populated/dense/overdue/completed/read-only/editable/conflict states;
+- External Editor assigned-scope state;
+- Unscheduled panel and drag/resize plus keyboard Move/Reschedule;
+- focus/announcement/error rollback;
+- no stock FullCalendar/shadcn visual drift;
+- bundle/CSS/dependency delta and registry-source review.

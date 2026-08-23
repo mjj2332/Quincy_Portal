@@ -1,206 +1,261 @@
-# PRD Delta — Runtime, UI, Freshness, Coordination, Collaboration and Kanban
+# PRD Delta — Runtime, UI, Freshness, Coordination, Collaboration, Scheduling, Access and Production Views
 
 **Status:** Proposed product requirements for later promotion into `docs/PRD.md`  
-**Baseline:** `main` at `8bcb48245a727b048053bd3653cf07f3ad99b780`  
+**Baseline:** `main` at `2ac2ca27a1e0ded328b9265613ab4ebeeb7db1b0`  
 **Implementation details remain in architecture and tracer-bullet documents.**
 
 ## 1. Product objective
 
-Quincy Portal must remain a secure, deep-linkable, Cloudflare-native production application while upgrading to React 19.2, converging toward the Quincy design system, refreshing server data automatically, coordinating projects from the Project Workspace left rail, delivering operational notifications durably, and making the existing Kanban board understandable and accessible.
+Quincy Portal must remain a secure, deep-linkable, Cloudflare-native production application while upgrading to React 19.2, converging toward the Quincy design system, refreshing server data automatically, coordinating projects from the Project Workspace left rail, scheduling project/checklist work, supporting assigned-scope External Editors, delivering operational notifications durably, and presenting the same production work coherently in List, Kanban, and Calendar views.
 
 ## 2. Runtime and UI outcomes
 
 - Production runs the latest stable pinned React `19.2.x` patch through an isolated compatibility release.
-- The Vite SPA, TypeScript, StrictMode, typed custom router, and Cloudflare deployment remain.
-- React Compiler, SSR, Server Components, and product-level React feature refactors are not part of the runtime upgrade.
-- Migrated ordinary controls use Quincy-owned Tailwind v4/shadcn source.
-- Base UI/Sera/Lucide and semantic CSS variables provide the initial scaffold; Quincy tokens and design language remain authoritative.
-- Tailwind Preflight is disabled initially.
-- Material visual differences are classified and evidenced at approved desktop, compact, and phone viewports.
-- Dark mode is excluded.
+- Vite SPA, TypeScript, StrictMode, typed custom router, and Cloudflare deployment remain.
+- React Compiler, SSR, Server Components, and product-level React feature refactors are outside the runtime upgrade.
+- Migrated ordinary controls use Quincy-owned Tailwind v4/shadcn source with Base UI/Sera/Lucide and semantic CSS variables.
+- Preflight is disabled initially; dark mode is excluded.
+- Material visual differences are classified/evidenced at approved desktop, compact, and phone viewports.
+- TB5C may add FullCalendar's official shadcn registry as one reviewed specialized exception after the base shadcn platform exists; FullCalendar does not become visual authority.
 
 ## 3. Workspace and freshness outcomes
 
-- Stable URLs support direct navigation, Back/Forward, and multiple projects in separate tabs.
-- Every server-backed screen defines route/resource query identity, stale/fresh behavior, focus/reconnect policy, polling policy, invalidation, cancellation, and draft-preservation behavior.
-- Same-browser tabs receive narrow mutation invalidation; another session observes ordinary changes within the bounded polling target.
-- Background refresh never destroys an unsaved editor, open picker/dialog, Lightbox position, selection, scroll, filter, or drag.
-- Access removal clears inaccessible cached content and does not retry permanently forbidden resources indefinitely.
+- Stable URLs support direct navigation, Back/Forward, and multiple project/Calendar slices in separate tabs.
+- Every server-backed screen defines query identity, stale/fresh behavior, focus/reconnect, polling, invalidation, cancellation, and draft/interaction preservation.
+- Same-browser tabs receive narrow mutation invalidation; another session observes ordinary changes within bounded polling.
+- Background refresh never destroys drafts, open controls, Lightbox position, selection, scroll, filters, or active drag/resize.
+- Access removal clears inaccessible cached content and stops retrying permanently forbidden resources.
 
 ## 4. Canonical Project Workspace coordination
 
 ### 4.1 Surface ownership
 
-The Project Workspace left rail is canonical for:
+The Project Workspace left rail is canonical for Stage, project Deadline/reminders, Photographers, and Editors. Collaboration is canonical for checklist/subtasks, project comments/discussion, and task-level collaboration. Project-level mutation controls are not duplicated permanently across both surfaces.
 
-- Stage;
-- project Deadline and reminder rules;
-- Photographers;
-- Editors.
+### 4.2 Team assignment
 
-The Collaboration panel remains canonical for:
+- Photographers and Editors are separate rows with accessible compact rosters and searchable anchored multi-select pickers.
+- Per-person changes apply immediately through role-specific idempotent operations with membership-cycle conflict protection.
+- Photographer eligibility: active Photographer/internal Editor/Admin.
+- Editor eligibility after TB4E: active internal Editor/External Editor/Admin.
+- External Editors never qualify for Photographer assignment.
+- Inactive assigned users remain visible/removable but cannot be newly selected.
+- Removing a final non-admin role warns about and atomically clears affected checklist assignments.
+- Create Project retains initial assignment and gains External Editor candidates in the Editor selector when TB4E ships.
 
-- project checklist/subtasks;
-- project comments/discussion;
-- task-level collaboration.
+### 4.3 Stage mutation
 
-Project-level mutation controls are not duplicated permanently across both surfaces.
+- `moveProjectStage` is the shared guarded Stage command for rail, Kanban, keyboard, and non-drag movement.
+- Initially eligible global roles: Admin, internal Editor, and External Editor within assigned project scope.
+- Semantic progression remains `awaiting_raw → raw_review → editing_autohdr → edited_review → delivered` independent of display order.
+- Confirm backward/skip/delivered/AutoHDR-sensitive transitions.
+- Manual AutoHDR Stage change never starts/cancels integration work.
+- Archived projects are read-only; External Editors cannot use ordinary archived-project views.
 
-### 4.2 Rail hierarchy and responsive behavior
+## 5. Project Deadline and reminder requirements
 
-The rail uses:
+- One nullable project Deadline, independent from shoot date/time and checklist scheduling.
+- One transactional left-rail Deadline/reminder editor.
+- Canonical timezone `Australia/Sydney`; persist civil value, IANA zone, UTC offset/fold, UTC instant, schedule version.
+- Reject nonexistent DST times and explicitly resolve repeated times.
+- Reminder presets 1 day/4 hours/1 hour, none selected by default; custom 1 minute–30 days; max eight unique normalized offsets.
+- Due-now always exists; past Deadline produces one overdue event and skips elapsed advances.
+- One-minute scan targets mandatory in-app creation within two minutes.
+- New schedule version supersedes old pending occurrences.
+- Current active Editor membership cycles qualify at fire/delivery; after TB4E this includes active External Editors with Editor membership.
+- Reminder email default-on after per-user Notification Preferences opt-out exists.
+- Delivered/archive suppresses pending rows without clearing metadata; no silent resume.
+- Kanban shows Deadline/overdue and omits only card-level RAW count.
 
-1. project header/status/address/location;
-2. Production: Stage, Shoot, Deadline;
-3. Team: Photographers, Editors;
-4. Client: Agency, Agent;
-5. Collections/Dropbox.
+## 6. Checklist scheduling requirements
 
-At phone width it becomes a full-width Project Overview above workspace content. Stage and Deadline remain immediately visible; Team/Client may use compact disclosures. Pickers become viewport-contained popovers or bottom sheets without moving ownership into Collaboration.
+### 6.1 States
 
-A stage-hidden collaborator receives a limited read-only coordination summary—presentation-safe Stage, Deadline/overdue/next reminder, and both rosters—without full workspace, client, media, Dropbox, or AutoHDR diagnostic data.
-
-### 4.3 Team assignment
-
-- Photographers and Editors are separate rows with adaptive visible names/initials and full accessible names.
-- Pickers are anchored, searchable by name/email/role, keyboard accessible, and support multiple selections.
-- Each person's selection applies immediately through a role-specific idempotent operation.
-- Independent changes do not block one another; a stale membership-cycle removal returns conflict rather than deleting a new assignment cycle.
-- Photographer eligibility remains active Photographer/Editor/Admin.
-- Editor eligibility remains active Editor/Admin.
-- One person may hold both roles; removing one role preserves the other.
-- Inactive assigned users remain visible and removable but cannot be newly assigned.
-- Removing the final non-admin project role warns about and atomically clears affected checklist assignments.
-- A new assignment produces one targeted role-specific notification; removal is audit-only for the removed user.
-- `editProject` governs team mutation.
-- Create Project retains initial assignment; routine Edit Project team controls retire after rail parity.
-
-### 4.4 Stage mutation
-
-- Introduce `moveProjectStage`, initially granted to Admins and Editors.
-- Rail, drag, keyboard, and non-drag movement share one guarded command.
-- Stable semantic progression is:
+A checklist item may be:
 
 ```text
-awaiting_raw → raw_review → editing_autohdr → edited_review → delivered
+Unscheduled        no start, no end
+Due-only milestone end/due only
+Scheduled range    start and end
 ```
 
-- Configurable display order never redefines workflow semantics.
-- A normal one-step public-stage forward move is immediate.
-- Confirm backward transitions, skipped forward transitions, entering/leaving delivered, and entering/leaving `editing_autohdr`.
-- Editors see neutral **Editing** presentation; Admins may see the internal configured label.
-- Manual AutoHDR Stage change never starts, cancels, retires, or deletes integration work.
-- Expected-state conflict returns authoritative state and does not automatically retry.
-- Archived projects are read-only.
-- The current inactive Stage remains intelligible; authorized users may leave it for an active destination but cannot select another inactive destination.
-- Rail/non-drag Stage movement appends to target bottom; positional Kanban drag may specify neighbours.
-- Entering/leaving delivered never publishes or revokes artifacts.
+- Existing due values remain end-only milestones.
+- Existing date-only values remain literal Sydney calendar dates.
+- Existing date-time values remain timed due milestones.
+- Do not invent start values during migration.
+- Start-only is invalid; for ranges start must be strictly before end.
+- Same-day and multi-day ranges are allowed.
+- Recurrence is not included.
 
-### 4.5 Global pipeline boundary
+### 6.2 Time and persistence
 
-- Admin retains Stage label and active/inactive management.
-- Ordinary Admin global ordering is removed from UI and API in TB0B.
-- Global order changes are developer-managed through reviewed migrations/scripts.
-- Stage creation/deletion and generic workflow-builder behavior remain deferred.
+- `Australia/Sydney` is canonical for checklist scheduling.
+- Timed start/end persist deterministic local civil values plus canonical UTC/offset-fold metadata for range query and conflict-safe Calendar operations.
+- Date-only due remains a calendar date and does not receive a fabricated midnight instant.
+- Checklist schedule/item version guards mutation.
+- DST gaps reject; repeated times require explicit first/second occurrence.
 
-## 5. Deadline and reminder requirements
+### 6.3 Permission and reminders
 
-- A project has one nullable project Deadline, independent from shoot date/time window and checklist due values.
-- Deadline and reminder offsets are edited together in one transactional left-rail control.
-- The canonical timezone is `Australia/Sydney`, visibly labelled.
-- Persist local civil value, IANA zone, selected UTC offset/fold, canonical UTC instant, and schedule version.
-- Reject nonexistent daylight-saving times; ambiguous times require an explicit earlier/later choice.
-- Offer 1-day, 4-hour, and 1-hour presets with none selected by default.
-- Permit at most eight unique positive offsets normalized to integer minutes; custom values use whole-number minutes/hours/days from 1 minute to 30 days.
-- Saving a Deadline always materializes a Due-now occurrence.
-- A past Deadline is allowed, renders overdue, skips elapsed advance offsets, and produces one current-version Due-now/overdue event.
-- Scan due occurrences every minute and target mandatory in-app creation within two minutes.
-- A new schedule version supersedes old pending occurrences. The same offset may fire again after a real reschedule.
-- Save conflicts preserve the local draft and show authoritative values; no silent merge or last-write-wins.
-- Current active Editor membership cycles are resolved at fire/delivery time; unassigned Admins are excluded.
-- Deadline/rule changes emit one semantic broad in-app event per save.
-- Reminder email is default-on only after a per-user global Notification Preferences opt-out is available.
-- Delivered or archived projects retain Deadline metadata but supersede pending occurrences. Leaving delivered/restoring archived does not silently resume them.
-- Kanban cards show absolute Deadline/overdue text and omit only the card-level RAW count.
-- Deadline never changes Stage, Priority, `boardPosition`, or sort mode.
+- Preserve existing checklist collaboration mutation permission.
+- End/due remains the reminder boundary; start does not create a new reminder category.
+- End reschedule resets/reversions the due reminder state under a guarded mutation.
+- Repeated broad schedule-update notification for the same item/actor within five minutes coalesces; committed audit/activity remains truthful.
 
-## 6. Discussion and read state
+## 7. External Editor requirements
 
-- Project discussion remains one flat newest-first stream in TB3.
-- Preserve rich text, mentions, author-only edit/delete, cursor pagination, and collaboration-only access.
-- Add server-owned per-user read state.
-- Mark read only after a successful fresh fetch while the discussion is visibly presented; hidden background fetches do not clear unread state.
-- Drafts survive refresh.
-- Use an adapter over current storage; do not backfill into a speculative universal discussion schema in TB3.
+### 7.1 Identity and assignment
 
-## 7. Structured activity and notifications
+- Add global role key `external_editor`, displayed **External editor**.
+- Project role remains `editor`; no third project-membership type.
+- External status is visibly distinguished in Admin management, Editor picker/team roster, relevant Calendar filters/Activity/Collaboration identity.
+- External Editors may be assigned to multiple projects during Create Project or from the Editors rail.
+- They are never newly eligible in the Photographer slot.
 
-### 7.1 Activity
+### 7.2 Access and capabilities
 
-- Each semantic project operation creates one immutable structured activity event with actor, project, occurrence time, versioned safe payload, and deep-link context.
-- Activity is distinct from the security/audit log and recipient-specific notification rows.
-- Internal retries and delivery bookkeeping create no activity.
+- External Editors do not receive `viewAllProjects`; explicit current project membership is required.
+- They have no Photographer Stage restriction.
+- Assigned active/delivered projects may be accessed; archived projects are unavailable through ordinary External Editor surfaces.
+- Within assigned projects they receive normal Editor production capabilities: media view/upload/review/annotation/recommend/compare, approved extras/publish/client-preview/final-download, Collaboration, and `moveProjectStage`.
+- They do not receive create/edit/archive-project administration, user/directory/integration/pipeline/Admin/prioritization capabilities or staff Notice Board access.
+- Global list/search/Calendar/direct/quick-detail access all enforce the same assigned-scope predicate server-side.
 
-### 7.2 Durable delivery
+### 7.3 External-safe project projection
 
-- Record notification intent durably with the domain mutation.
-- Use Cloudflare Queue, idempotent recipient/channel delivery rows, recovery scan, and DLQ.
-- Queue/email failure never rolls back a successful domain mutation.
-- Mandatory in-app insertion is unique/idempotent.
-- Definitive transient email failures may retry.
-- Ambiguous provider acceptance becomes `unknown` and is not automatically retried.
-- Minimal Admin operations expose pending/stuck/DLQ/failed/unknown outcomes and safe replay/discard.
+May expose on assigned projects:
 
-### 7.3 Assigned-Editor registry
+- address/location;
+- Agency and Agent/client display names;
+- shoot date/time;
+- Stage, Deadline, services/deliverables;
+- project production notes;
+- approved production media/workflow state;
+- checklist/comments/team;
+- project-participant names, role labels, and email addresses.
 
-- Every approved event reaches each active eligible assigned Editor, including an eligible actor, through one mandatory in-app row.
-- The membership cycle must begin no later than event occurrence and remain active at delivery.
-- Removal/deactivation suppresses pending content; remove/re-add cannot receive older-cycle events; no history backfill.
-- Unassigned Admins are not appended.
-- Existing targeted mention and assignment events remain distinct.
-- A newly assigned Editor receives the targeted assignment row but not a duplicate broad roster row.
-- Pure Kanban/checklist reorders do not notify; Stage and Priority changes do.
-- Comment create/delete notify. Repeated edits to the same comment by one actor coalesce within five minutes.
-- One collection/background operation produces one summary, not one row per asset/internal write.
-- Broad event email is off by default. Targeted mentions, targeted assignments, and Deadline reminders are default-on subject to user preferences.
-- Broad copy is minimal: actor, project, category/outcome, safe link; no broad comment excerpt, filename, project note, client contact, Dropbox path, or provider diagnostic.
+Must not expose:
 
-## 8. Kanban requirements
+- Agent/client email or phone;
+- invoice/payment information;
+- internal order bookkeeping not needed for editing;
+- agency-directory notes;
+- Dropbox paths/links;
+- provider/integration credentials or diagnostics;
+- Admin backend data or unrelated staff/projects.
+
+Filtering is server-side and shared across DTOs/queries; UI-only hiding is insufficient.
+
+### 7.4 Collaboration, notifications, and lifecycle
+
+- External Editors have normal assigned-project comments/mentions/checklist rights.
+- Mention/assignee discovery and participant email visibility remain project-scoped; no global staff directory.
+- They receive targeted assignment and mention events, Deadline reminders, and an external-safe subset of the broad Editor registry while active/assigned.
+- Default-on targeted/deadline email policy matches internal Editors; broad event email remains off.
+- Notification Preferences is available for their own Deadline-email setting.
+- Role changes revoke all sessions. Conversion to External Editor is blocked until Photographer project memberships are removed; incompatible memberships are never silently deleted.
+- No existing user is automatically converted.
+- Deactivation preserves membership history but revokes auth and suppresses pending content delivery.
+- Final membership removal warns that access is immediately lost and applies final-role checklist cleanup atomically.
+- Access loss purges inaccessible client caches/project-specific UI at the next authorization/freshness signal.
+
+## 8. Discussion, activity, and notifications
+
+- Project discussion remains one flat newest-first stream with rich text/mentions/author-only edit/delete and server-owned read state.
+- Each semantic project operation creates one immutable structured activity event separate from security audit and recipient inbox rows.
+- Durable notification delivery uses D1 outbox + Cloudflare Queue + recipient/channel ledger + recovery/DLQ.
+- Assigned-Editor membership-cycle rules remain authoritative for broad delivery.
+- External Editors receive only event categories and safe payloads allowed by the external projection; hidden categories do not appear as redacted placeholders.
+- Pure Kanban/checklist reorder does not broadly notify.
+- Comment edits and checklist schedule edits use the approved five-minute same-item/same-actor coalescing rules.
+
+## 9. Kanban requirements
 
 - Card = project; column = Stage.
-- `boardPosition` is the sole persisted manual order in a Stage.
-- At cutover, normalize positions once to preserve the current visible Board order.
-- Priority is metadata. Optional Priority view sorts `1` highest through `10`, null last; ties use `boardPosition`, then ID.
-- Shoot-date views remain temporary and write nothing.
-- Priority edits never rewrite manual order.
-- Manual reorder controls appear only in Board order.
-- All Stage movement uses the `moveProjectStage` command.
-- Board movement is conflict-safe and returns authoritative state.
-- TB5B uses dnd-kit with pointer, touch, keyboard, and non-drag movement, a dedicated handle, DragOverlay, and active-drag refresh reconciliation.
-- Direct project link and native open-new-tab behavior remain.
-- Pure position reorders are audited but do not create broad notifications.
+- `boardPosition` is sole persisted manual order within a Stage.
+- Normalize current data once to preserve visible Board order.
+- Priority and shoot-date views remain non-writing sorts.
+- All Stage movement uses `moveProjectStage`; TB5B uses dnd-kit with pointer/touch/keyboard/non-drag support.
+- Direct project links/open-new-tab remain.
 
-## 9. Project-card detail and notice board
+## 10. Production Calendar requirements
 
-- TB6 opens a URL-addressable desktop side sheet and phone full-screen presentation.
-- Back/Forward, refresh, deep links, and open-new-tab remain predictable.
-- Separate Overview, Activity, and Discussion views; do not mix operational events and human comments into one undifferentiated feed.
-- Provide a canonical link to `/projects/:projectId`.
-- TB7 preserves top-level notice posts, rich text, mentions, and author-only rules while moving read state to D1 and using query refresh plus durable mention delivery.
-- Replies, pinning, priority, expiry, and acknowledgement remain separate later product work.
+### 10.1 Location, audience, and event layers
 
-## 10. Product-level acceptance
+- Calendar is the third Dashboard view: `List | Kanban | Calendar`.
+- Admin/internal Editor use their normal project scope; External Editor sees assigned projects only.
+- Project event = one Deadline milestone with Stage/checklist completion/overdue/delivered metadata.
+- Checklist event = due milestone or start/end range with title/assignee/completion/overdue state.
+- Do not infer project start from shoot date; no shoot-date layer initially.
+- No comments/uploads/activity rows become Calendar events.
 
-The program succeeds when staff can:
+### 10.2 Views, navigation, and responsive behavior
 
-1. Open multiple projects in separate tabs without data leakage.
-2. Observe relevant external changes without a browser reload and without losing local work.
-3. Coordinate Stage, Deadline, Photographers, and Editors from the canonical left rail.
-4. Receive deterministic conflict feedback rather than silently overwriting newer membership, schedule, Stage, or board state.
-5. Rely on current Editor membership cycles for Deadline and project-change delivery.
-6. Use a board whose visible manual order matches persisted order and whose temporary sorts write nothing.
-7. Move projects accessibly by pointer, touch, keyboard, and non-drag controls.
-8. Receive durable, deduplicated operational notifications with bounded noise and privacy-safe copy.
-9. Use project discussion/read state across devices.
-10. Recognize every migrated surface as Quincy through evidence-backed design convergence rather than stock framework appearance.
-11. Continue using production coherently after any accepted tracer bullet if later roadmap work stops.
+- Initial subviews: Month, Week, Agenda.
+- First use opens Month/today; remember deliberate Calendar position/view when URL is absent.
+- Week starts Monday, includes weekends, uses 24-hour Sydney time, and keeps full day reachable.
+- Phone defaults to Agenda; Month remains available with compact day counts/list. Direct editing remains available even where drag is impractical.
+
+### 10.3 Filters and URL state
+
+- Event layer: Projects / Checklist items.
+- Multi-Editor OR filter plus Unassigned.
+- Project event matches selected Editor membership; checklist event matches selected assignee.
+- Stage multi-select, completed checklist toggle, delivered project toggle, overdue-only, and Dashboard search.
+- Active date/view/layers/filters/toggles are typed query parameters. Back/Forward and copied URLs restore the same slice subject to recipient authorization.
+
+### 10.4 Calendar data API
+
+- Use one dedicated range-bounded server-authorized Calendar projection, not project-list + checklist N+1.
+- Query identity includes range, event layers, filters, scope and authorization-relevant principal state.
+- Return only fields needed by Calendar and a bounded Unscheduled companion projection.
+- Access/filtering is enforced server-side; inaccessible IDs never leak through counts/autocomplete/search.
+
+### 10.5 Direct manipulation
+
+- Project Deadline milestone drag requires `editProject`, is not resizable, and confirms old/new Deadline/reminder consequences.
+- Due-only checklist milestone drag moves its due boundary and is not resizable.
+- Checklist range drag shifts start/end preserving duration; end-edge resize changes end; start-edge resize deferred.
+- Month movement is whole-day and preserves stored time/duration; Week snaps 15 minutes; Agenda uses accessible Reschedule actions.
+- Do not silently convert timed ↔ date-only by drag.
+- Optimistic display rolls back on guarded `409`; no stale auto-retry.
+- Every editable event has keyboard-operable Move/Reschedule; focus and announcements are deterministic.
+
+### 10.6 Unscheduled and overlaps
+
+- Unscheduled project Month drop creates 17:00 Sydney Deadline; Week drop uses selected slot; no reminder offset invented and project confirmation required.
+- Unscheduled checklist Month drop creates date-only due milestone; Week drop creates one-hour range.
+- External Editor can directly schedule checklist work on assigned projects but project Deadline remains read-only.
+- Empty Calendar selection does not create work.
+- Same-assignee timed checklist overlaps are allowed and shown with non-blocking conflict indication; no automatic rescheduling.
+
+### 10.7 Calendar UI engine
+
+- Recheck and pin the latest stable FullCalendar Standard React/shadcn integration at TB5C implementation time.
+- Use FullCalendar's official shadcn registry; no unrelated community calendar implementation.
+- Use Standard Month/TimeGrid/List/Interaction capabilities; no premium Scheduler/resource timeline.
+- FullCalendar owns scheduling geometry/interactions; Quincy owns surrounding composition, event renderers, permission treatment, dialogs, confirmations, responsive UX and semantic styling.
+- Compare official FullCalendar shadcn flavors against Quincy evidence and pin the least-drift choice; no user theme switcher.
+
+## 11. Project-card detail and Notice Board
+
+- TB6 uses URL-addressable desktop side sheet/phone full-screen with separate Overview, Activity, Discussion and canonical workspace link.
+- External Editor Activity/Overview obey role-safe projection/event visibility.
+- TB7 preserves Notice Board model/read migration for roles with `viewNoticeBoard`; External Editors are excluded by capability.
+
+## 12. Product-level acceptance
+
+The program succeeds when authorized staff can:
+
+1. Use stable routes/tabs without cross-project leakage.
+2. Observe external changes without reload or lost local work.
+3. Coordinate Stage/Deadline/team from the canonical rail.
+4. Schedule checklist ranges without corrupting existing due-only meaning.
+5. Use List, Kanban, and a shareable Month/Week/Agenda Calendar against one authorized production model.
+6. Drag/reschedule authorized Calendar events with accessible alternatives, deterministic Sydney time, conflict rollback, reminder/activity consistency, and no invented recurrence/sync semantics.
+7. Filter Calendar by Editor/Stage/status without revealing inaccessible projects.
+8. Give External Editors normal assigned-project production capability while denying unrelated projects, global staff/Admin surfaces, and restricted fields.
+9. Revoke role/project access without stale-session or stale-cache leakage.
+10. Receive durable, deduplicated, role-safe notifications with bounded noise.
+11. Recognize every migrated surface as Quincy rather than stock framework appearance.
+12. Stop safely after any accepted tracer bullet without leaving mixed ownership or authorization semantics.
