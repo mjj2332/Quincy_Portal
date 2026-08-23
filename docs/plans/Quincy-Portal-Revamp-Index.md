@@ -30,10 +30,20 @@ Every affected tracer bullet must preserve these boundaries:
 | Claim and idempotency | A send begins only from `raw_review`, freezes the server-side selected RAW asset IDs, reuses an identical active job, and blocks a different selection while that job is queued/running. |
 | Credential and media boundary | `AUTOHDR_API_KEY` stays only on the background Worker. The Worker reads private R2 originals and uploads them through provider-issued presigned URLs; neither browser nor app responses receive the key. |
 | Send-only scope | The direct path creates presigned uploads and finalizes the photoshoot. It supplies no completion callback, does not poll provider status, and does not retrieve edited photos. Legacy/manual edited-media intake remains a separate compatibility path. |
-| Stage ownership | Provider finalization happens before the guarded automatic `raw_review → editing_autohdr` write. If another authorized action already changed Stage, that newer Stage wins; the Workflow must not silently reassert Editing. |
+| Provider retry contract | Before first live use, verify with AutoHDR `mock_call` or written provider confirmation that callback omission is accepted and that repeated same-UID finalization after an ambiguous response is idempotent. An unresolved provider-acceptance outcome must be reconciled, not converted automatically into a fresh paid photoshoot. |
+| Stage ownership | Provider finalization happens before the guarded automatic `raw_review → editing_autohdr` write. If the current Stage is no longer `raw_review`, that newer state wins. TB5A must strengthen this to its expected Stage/revision contract so an away-and-back Stage cycle cannot look unchanged. |
 | Jobs and freshness | `autohdr_api_send` is the direct-send job kind. Preserve terminal-aware job refresh and do not accidentally revive the legacy AutoHDR round-trip polling/fetch path for a direct-send project. |
 | Notifications and activity | Finalization plus its guarded Stage advance is one semantic operation. Cut over to durable activity/outbox exactly once, after provider acceptance; notification failure must not relabel an accepted send as failed. |
 | Authorization and privacy | Future External Editors may receive neutral Stage/workflow presentation where approved, but never the AutoHDR send capability, provider credential, UID, diagnostic payload, or Admin job surfaces. |
+
+### Production safety gate
+
+The code shape is compatible with this revamp, but the direct provider path is not considered fully production-proven until all of the following are recorded:
+
+1. `AUTOHDR_API_KEY` is provisioned on the production background Worker without entering repository files, app bindings, browser code, or logs.
+2. A provider `mock_call` or support-assisted contract test confirms the create response, presigned PUT requirements, callback omission, and finalization response without consuming ordinary production credits.
+3. Failure injection covers ambiguous external outcomes: provider create/finalize acceptance followed by a lost response, Workflow step retry, and a local completion-write failure. Recovery must reuse/reconcile the existing job and UID where known rather than silently creating a second paid photoshoot.
+4. The first real send is verified from selection freeze through provider finalization, job/audit state, and guarded Stage behavior. This gate does not require or authorize edited-photo retrieval.
 
 ## Reading paths
 
@@ -99,10 +109,10 @@ The inserted bullets do not renumber existing work:
 
 - **TB0:** merge current AutoHDR authority amendments forward. Do not replace current `Implementation-Plan.md`/`PRD.md` with older package wording. Record PR #44 and every later commit in the baseline/drift register.
 - **TB0A/TB1/TB8:** preserve the button’s Admin capability gate, disabled/active state, error handling, job visibility, and source-owned behavior while changing runtime or presentation.
-- **TB2:** preserve the `autohdr_api_send` job lifecycle and terminal-aware refresh. Query migration must not duplicate sends, reset RAW selection, or re-enable legacy AutoHDR status/fetch behavior for the direct path.
+- **TB2:** preserve the `autohdr_api_send` job lifecycle and terminal-aware refresh. Query migration must not duplicate sends, reset RAW selection, re-enable legacy AutoHDR status/fetch behavior for the direct path, or turn an ambiguous provider outcome into a new job without reconciliation.
 - **TB4/TB4C:** register the direct-send Workflow as an existing automatic Stage writer and notification producer. Create durable activity/outbox only after finalization and ensure the generic Stage event and workflow summary do not double-deliver the same semantic operation.
 - **TB4E:** keep the send route and AutoHDR job/status/history surfaces outside External Editor capabilities and DTOs. External Editors may see only neutral, external-safe production state.
-- **TB5A/TB5B:** inventory `workers/background/src/workflows/autohdr-api-send.ts` alongside every other Stage writer. Manual entry/exit of `editing_autohdr` remains Stage-only; confirmation must say it does not send or cancel AutoHDR. An in-flight provider send may continue, but its completion cannot overwrite a newer manual Stage.
+- **TB5A/TB5B:** inventory `workers/background/src/workflows/autohdr-api-send.ts` alongside every other Stage writer. Manual entry/exit of `editing_autohdr` remains Stage-only; confirmation must say it does not send or cancel AutoHDR. Carry the expected Stage/revision from claim to completion so any intervening Stage cycle wins over the automatic advance.
 - **TB5C:** Calendar may display authorized Stage/progress metadata only. It does not expose provider identifiers/diagnostics and does not add a Calendar-based AutoHDR send action.
 
 ## Authority and lifecycle
