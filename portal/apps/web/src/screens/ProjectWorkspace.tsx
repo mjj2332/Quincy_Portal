@@ -18,7 +18,7 @@ type AssetsResponse = { assets: WorkspaceAsset[] };
 type DownloadSelectionResponse = { downloadUrl: string };
 type AssetDeleteResponse = { ok: boolean; deletedAssetIds: string[]; deletedObjects: number; dropboxDeleted: boolean; dropboxOutcome?: "removed" | "alreadyGone" | "claimLost" | "failed"; dropboxReason?: string };
 type IngestStatus = { expectedCount: number | null; receivedCount: number; mismatch: boolean };
-type Job = { id: string; kind: "autohdr" | "fetch_edited" | "autohdr_scaffold" | "manual_edited_publish"; status: "queued" | "running" | "done" | "failed" | "stuck"; error: string | null; correlationId: string | null; createdAt: string; updatedAt: string };
+type Job = { id: string; kind: "autohdr_api_send" | "autohdr" | "fetch_edited" | "autohdr_scaffold" | "manual_edited_publish" | "manual_raw_publish"; status: "queued" | "running" | "done" | "failed" | "stuck"; error: string | null; correlationId: string | null; createdAt: string; updatedAt: string };
 type JobsResponse = { jobs: Job[] };
 type DropboxSyncResponse = {
   raw: { jobId: string } | { skipped: "no_raw_folder" | "not_permitted" | "error"; message?: string };
@@ -234,7 +234,7 @@ export function ProjectWorkspace({ projectId, notice, onNoticeShown, collaborati
   }, [projectId]);
 
   useEffect(() => {
-    if (viewState !== "full-workspace" || !canAdminBackend || !projectId || data?.id !== projectId || (data.stageKey !== "raw_review" && data.stageKey !== "editing_autohdr")) return;
+    if (viewState !== "full-workspace" || !canAdminBackend || !projectId || data?.id !== projectId || jobs.some((job) => job.kind === "autohdr_api_send") || (data.stageKey !== "raw_review" && data.stageKey !== "editing_autohdr")) return;
     let isMounted = true;
     let timer: number | undefined;
     const poll = async () => {
@@ -273,7 +273,7 @@ export function ProjectWorkspace({ projectId, notice, onNoticeShown, collaborati
       isMounted = false;
       if (timer) window.clearTimeout(timer);
     };
-  }, [canAdminBackend, data?.id, data?.stageKey, projectId, refreshAssets, refreshAutohdrStatus, refreshJobs, refreshProject, viewState]);
+  }, [canAdminBackend, data?.id, data?.stageKey, jobs, projectId, refreshAssets, refreshAutohdrStatus, refreshJobs, refreshProject, viewState]);
 
   const consumedTerminalSignalRef = useRef<number>();
   useEffect(() => {
@@ -354,40 +354,18 @@ export function ProjectWorkspace({ projectId, notice, onNoticeShown, collaborati
   }
   async function sendToAutoHdr() {
     if (!projectId || !canAdminBackend) return;
+    const requestedCount = selectionCount;
     setIsSending(true);
     try {
-      const response = await apiPost<{ jobId: string }, { startNewRound?: boolean; removalSetHash?: string }>(`/api/projects/${projectId}/send-to-autohdr`, {});
+      const response = await apiPost<{ jobId: string }, Record<string, never>>(`/api/projects/${projectId}/send-to-autohdr`, {});
       await Promise.all([refreshJobs(), refreshProject()]);
-      toast(`Sent to autoHDR (${response.jobId.slice(0, 8)}).`);
+      toast(`Sending ${requestedCount} selected frame${requestedCount === 1 ? "" : "s"} to AutoHDR (${response.jobId.slice(0, 8)}).`);
     } catch (reason) {
-      const payload = reason instanceof ApiError && reason.details && typeof reason.details === "object" ? reason.details as Record<string, unknown> : null;
-      if (payload?.code === "ERR_HANDOFF_ALREADY_ACTIVE") {
-        const count = typeof payload.removalCount === "number" ? payload.removalCount : 0;
-        const hash = typeof payload.removalSetHash === "string" ? payload.removalSetHash : undefined;
-        const removalCopy = count === 0
-          ? "No previously-sent images are currently eligible for removal."
-          : `This will also remove ${count} previously-sent image${count === 1 ? "" : "s"} from the AutoHDR folder because ${count === 1 ? "it is" : "they are"} no longer selected.`;
-        const confirmed = window.confirm(`Any AutoHDR output for the previous round that's still being delivered may be lost. Wait until it's finished before starting a new round.\n\n${removalCopy}\n\nContinue?`);
-        if (confirmed) {
-          try {
-            const response = await apiPost<{ jobId: string }, { startNewRound: true; removalSetHash?: string }>(`/api/projects/${projectId}/send-to-autohdr`, { startNewRound: true, removalSetHash: hash });
-            await Promise.all([refreshJobs(), refreshProject()]);
-            toast(`Sent new round to autoHDR (${response.jobId.slice(0, 8)}).`);
-          } catch (retryReason) {
-            const retryPayload = retryReason instanceof ApiError && retryReason.details && typeof retryReason.details === "object" ? retryReason.details as Record<string, unknown> : null;
-            if (retryPayload?.code === "ERR_REMOVAL_SET_CHANGED") {
-              await sendToAutoHdr();
-            } else {
-              toast(retryReason instanceof Error ? retryReason.message : "The new AutoHDR round could not be started.", "error");
-            }
-          }
-        }
-      } else {
-        toast(reason instanceof Error ? reason.message : "autoHDR could not be started.", "error");
-      }
+      toast(reason instanceof Error ? reason.message : "The selected photos could not be sent to AutoHDR.", "error");
     }
     finally { setIsSending(false); }
   }
+
   function downloadSelectedRaw() {
     if (!projectId || selectionCount === 0) return;
     toast("Preparing your download…");
@@ -425,19 +403,29 @@ export function ProjectWorkspace({ projectId, notice, onNoticeShown, collaborati
   const photographers = members.filter((member) => member.roleOnProject === "photographer");
   const rawCollection = collections.find((collection) => collection.kind === "raw");
   const selectionCount = rawAssets.filter((asset) => asset.selected).length;
+  const autoHdrApiJobs = jobs.filter((job) => job.kind === "autohdr_api_send");
+  const latestAutoHdrApiJob = autoHdrApiJobs[0];
+  const autoHdrApiSendActive = autoHdrApiJobs.some(activeJob);
+  const usesSendOnlyAutoHdrApi = autoHdrApiJobs.length > 0;
   // Every Dropbox destination is derived from the RAW folder, and an edited upload stays invisible
   // until it is published there. Without one the API refuses the upload, so never offer the picker.
   const hasRawFolder = Boolean(project.rawFolderPath || project.rawFolderLink);
   const autohdrTerminal = autohdrStatus?.state === "retired" || autohdrStatus?.state === "failed";
   const autohdrBlocked = !autohdrTerminal && (autohdrStatus?.state === "blocked" || autohdrStatus?.mappingState === "blocked_collision");
-  const autohdrStatusLabel = autohdrBlocked ? "Blocked — staff resolution needed"
-    : isSyncing ? "Checking Dropbox…"
-      : autohdrStatus?.mappingState === "active" ? "Fetched"
-        : autohdrStatus?.state === "started" ? "Waiting for AutoHDR output"
-          : "Not yet sent to autoHDR";
-  const autohdrMessage = autohdrBlocked
-    ? (autohdrStatus?.diagnostic ?? "AutoHDR output needs staff resolution before it can be fetched.")
-    : "Pull finished edits from autoHDR's 04-FINAL-Photos into this collection.";
+  const autohdrStatusLabel = usesSendOnlyAutoHdrApi
+    ? latestAutoHdrApiJob?.status === "done" ? "Sent to AutoHDR"
+      : latestAutoHdrApiJob?.status === "failed" || latestAutoHdrApiJob?.status === "stuck" ? "AutoHDR send needs attention"
+        : "Sending selected photos to AutoHDR"
+    : autohdrBlocked ? "Blocked — staff resolution needed"
+      : isSyncing ? "Checking Dropbox…"
+        : autohdrStatus?.mappingState === "active" ? "Fetched"
+          : autohdrStatus?.state === "started" ? "Waiting for AutoHDR output"
+            : "Not yet sent to autoHDR";
+  const autohdrMessage = usesSendOnlyAutoHdrApi
+    ? "This integration is send-only. Quincy Portal does not fetch or retrieve the edited photos."
+    : autohdrBlocked
+      ? (autohdrStatus?.diagnostic ?? "AutoHDR output needs staff resolution before it can be fetched.")
+      : "Pull finished edits from autoHDR's 04-FINAL-Photos into this collection.";
 
   return <main className="work">
     <aside className="rail"><div style={{ marginBottom: 10 }}><StatusBadge stageKey={project.stageKey} /></div><h2 className="serif">{project.street}</h2><div className="ey" style={{ marginTop: 8 }}>{[project.suburb, project.postcode].filter(Boolean).join(" · ")}</div>
@@ -449,15 +437,15 @@ export function ProjectWorkspace({ projectId, notice, onNoticeShown, collaborati
     <section className="workmain"><div className="wsbar"><InternalLink className="chip" to="/">← Dashboard</InternalLink><span className="ey">{activeTab === "raw" ? `RAW capture · ${rawCollection?.receivedCount ?? 0} received` : `${collectionLabel(activeTab)} collection`}</span><div className="grow" /></div>
       {ingest?.mismatch && <div className="ingest-warning" role="alert"><strong>Capture count needs attention.</strong> Expected {ingest.expectedCount}, received {ingest.receivedCount}.</div>}
       {activeTab === "raw" || activeTab === "edited" ? <><div className="workspace-intro"><div><div className="ey">{activeTab === "raw" ? "Capture QA" : "Edited QA"}</div><h1 className="serif">{activeTab === "raw" ? "RAW frames" : "Edited frames"}</h1></div><div className="muted">{activeTab === "raw" ? "Ratings from XMP are shown at ingest. Select the strongest frames for editing." : "Review delivered edits before they move to client delivery."}</div></div>
-        {canAdminBackend && activeTab === "raw" && canSelect && <div className="hdr"><div className="grow"><strong>autoHDR hand-off</strong><div className="muted">{selectionCount} selected RAW frame{selectionCount === 1 ? "" : "s"} will be sent for editing.</div></div><div className="row gap2"><button className="button button--secondary" type="button" disabled={selectionCount === 0} onClick={downloadSelectedRaw}>{`Download ${selectionCount} selected (zip)`}</button><button className="button" type="button" disabled={selectionCount === 0 || isSending} onClick={() => void sendToAutoHdr()}>{isSending ? "Sending…" : `Send ${selectionCount} selected to autoHDR`}</button></div></div>}
-        {canAdminBackend && activeTab === "edited" && <div className="hdr" role="status"><div className="grow"><strong>autoHDR status</strong><div className={`muted${autohdrBlocked ? " notice" : ""}`}>{autohdrStatusLabel}</div><div className="muted">{autohdrMessage}</div></div></div>}
+        {canAdminBackend && activeTab === "raw" && canSelect && <div className="hdr"><div className="grow"><strong>AutoHDR hand-off</strong><div className="muted">{selectionCount} selected RAW frame{selectionCount === 1 ? "" : "s"} will be sent for editing.</div></div><div className="row gap2"><button className="button button--secondary" type="button" disabled={selectionCount === 0} onClick={downloadSelectedRaw}>{`Download ${selectionCount} selected (zip)`}</button><button className="button" type="button" disabled={selectionCount === 0 || isSending || autoHdrApiSendActive} onClick={() => void sendToAutoHdr()}>{isSending || autoHdrApiSendActive ? "Sending to AutoHDR…" : `Send ${selectionCount} selected to AutoHDR`}</button></div></div>}
+        {canAdminBackend && activeTab === "edited" && <div className="hdr" role="status"><div className="grow"><strong>AutoHDR status</strong><div className={`muted${autohdrBlocked ? " notice" : ""}`}>{autohdrStatusLabel}</div><div className="muted">{autohdrMessage}</div></div></div>}
         {activeTab === "raw" && canUpload && <div className="workgrid"><UploadDropzone projectId={projectId} onComplete={refresh} onToast={toast} /></div>}
         {activeTab === "edited" && can("uploadEdited") && <div className="workgrid">{hasRawFolder
           ? <UploadDropzone projectId={projectId} collection="edited" onComplete={async () => { await Promise.all([refreshAssets("edited"), refreshProject()]); }} onToast={toast} />
           : <div className="empty" role="status"><span className="serif">No Dropbox RAW folder for this shoot.</span>Edited uploads are published to Dropbox before they appear here, and every destination is derived from the RAW folder. Create the shoot folder in Tonomo, then set the RAW folder on this project{canEdit ? " under Edit details" : ""}.</div>}</div>}
         <PhotoGrid key={activeTab} assets={assets} showSections={activeTab === "raw" || activeTab === "edited"} canReview={canReview} canRecommend={canRecommend} canSelect={activeTab === "raw" && canSelect} canSetCover={canEdit && (activeTab === "raw" || activeTab === "edited")} canDelete={canDeleteAssets} canDownloadSelection={activeTab === "raw" ? can("selectForEditing") : can("downloadFinal")} coverAssetId={project.effectiveCoverAssetId} storedCoverAssetId={project.coverAssetId} onSetCover={updateCover} onOpen={(asset, orderedAssets) => { setLightboxOrderIds(orderedAssets.map((item) => item.id)); setOpenAssetId(asset.id); }} onReview={updateReview} onSelection={updateSelection} onDelete={deleteAsset} onBulkDelete={deleteAssets} onDownloadSelection={downloadSelection} />
       </> : <CollectionPanel projectId={projectId} collection={activeTab} assets={assets} canManage={canManageCollections} canDelete={canDeleteAssets} canApprove={can("reviewEdited")} onReview={updateReview} onDelete={deleteAsset} onChanged={async () => { await Promise.all([refreshAssets(activeTab), refreshProject()]); }} onToast={toast} />}
-      {canAdminBackend && jobs.length > 0 && <div className="workgrid"><section className="hdr" style={{ alignItems: "flex-start", flexDirection: "column" }}><div><strong>autoHDR status</strong><div className="muted">Recent hand-offs, fetches, and manual-upload publishes for this project.</div></div>{jobs.map((job) => <div className="kv" style={{ width: "100%" }} key={job.id}><span className="k">{new Date(job.createdAt).toLocaleString("en-AU")}</span><span className="vv"><span className="k">{job.kind === "fetch_edited" ? "Fetch" : job.kind === "autohdr_scaffold" ? "Scaffold" : job.kind === "manual_edited_publish" ? "Manual upload" : "Send"}</span>{" "}<span className={`statetag st-${job.status}`}>{job.status}</span>{job.error ? ` ${job.error}` : ""}{(job.status === "stuck" || job.status === "failed") && <button className="chip" style={{ marginLeft: 8 }} type="button" onClick={() => void retryAutoHdr(job.id)}>Retry</button>}</span></div>)}</section></div>}
+      {canAdminBackend && jobs.length > 0 && <div className="workgrid"><section className="hdr" style={{ alignItems: "flex-start", flexDirection: "column" }}><div><strong>AutoHDR status</strong><div className="muted">Recent API sends, legacy hand-offs, fetches, and manual-upload publishes for this project.</div></div>{jobs.map((job) => <div className="kv" style={{ width: "100%" }} key={job.id}><span className="k">{new Date(job.createdAt).toLocaleString("en-AU")}</span><span className="vv"><span className="k">{job.kind === "autohdr_api_send" ? "API send" : job.kind === "fetch_edited" ? "Fetch" : job.kind === "autohdr_scaffold" ? "Scaffold" : job.kind === "manual_edited_publish" || job.kind === "manual_raw_publish" ? "Manual upload" : "Send"}</span>{" "}<span className={`statetag st-${job.status}`}>{job.status}</span>{job.error ? ` ${job.error}` : ""}{job.kind !== "autohdr_api_send" && (job.status === "stuck" || job.status === "failed") && <button className="chip" style={{ marginLeft: 8 }} type="button" onClick={() => void retryAutoHdr(job.id)}>Retry</button>}</span></div>)}</section></div>}
     </section>
     <ProjectCollaborationPanel projectId={projectId} openSignal={collaborationOpenSignal} onOpenSignalConsumed={onCollaborationOpenSignalConsumed} />
     {openAssetId && <Lightbox assets={lightboxOrderIds ? lightboxOrderIds.map((id) => assets.find((asset) => asset.id === id)).filter((asset): asset is WorkspaceAsset => Boolean(asset)) : assets} rawAssets={rawAssets} initialAssetId={openAssetId} collectionKind={activeTab === "edited" ? "edited" : "raw"} canReview={canReview} canRecommend={canRecommend} canAnnotate={canAnnotate} onClose={() => { setOpenAssetId(null); setLightboxOrderIds(null); }} onReview={updateReview} onToast={toast} />}

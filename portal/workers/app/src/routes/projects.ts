@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import { appendToStageBottomExpr, computeInsertPosition, createDb, dashboardProjectOrder, orderDashboardStreetTies, schema } from "@quincy/db";
 import { and, asc, desc, eq, exists, gt, inArray, isNotNull, isNull, lte, notExists, sql } from "drizzle-orm";
-import { COLLECTION_KINDS, computeRemovalAssetIds, DOWNLOAD_SELECTION_MAX_ASSETS, DOWNLOAD_SELECTION_MAX_BYTES, isStageKey, PHOTOGRAPHER_VISIBLE_STAGES, ROLE_CAPABILITIES, roleHasCapability, type CollectionKind } from "@quincy/shared";
+import { COLLECTION_KINDS, DOWNLOAD_SELECTION_MAX_ASSETS, DOWNLOAD_SELECTION_MAX_BYTES, isStageKey, PHOTOGRAPHER_VISIBLE_STAGES, ROLE_CAPABILITIES, roleHasCapability, type CollectionKind } from "@quincy/shared";
 import { z } from "zod";
 import type { AppEnv } from "../env";
 import { hasProjectAccess, hasProjectAccessForUser, requireCapability } from "../middleware/capability";
@@ -456,40 +456,19 @@ projectsRoutes.post("/projects/:id/send-to-autohdr", requireCapability("adminBac
   const id = c.req.param("id");
   if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
   if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
-  const db = createDb(c.env.DB);
-  const target = await db.select({ archivedAt: schema.projects.archivedAt }).from(schema.projects).where(eq(schema.projects.id, id)).get();
-  if (target?.archivedAt) return c.json({ error: "Project is archived" }, 409);
-  const body = await c.req.json().catch(() => ({}));
-  const parsedBody = z.object({ startNewRound: z.boolean().optional(), removalSetHash: z.string().min(1).optional() }).safeParse(body);
-  if (!parsedBody.success) return c.json({ error: "Invalid input", details: parsedBody.error.flatten() }, 400);
-  const selectedAssets = await db.select({ assetId: schema.assets.id, filename: schema.assets.originalFilename })
-    .from(schema.selections)
-    .innerJoin(schema.assets, eq(schema.selections.assetId, schema.assets.id))
-    .innerJoin(schema.collections, and(eq(schema.assets.collectionId, schema.collections.id), eq(schema.collections.projectId, id), eq(schema.collections.kind, "raw")))
-    .where(and(eq(schema.selections.state, "selected_for_editing"), sql`${schema.assets.supersededAt} IS NULL`));
-  if (!selectedAssets.length) return c.json({ error: "Select at least one RAW asset before sending to autoHDR" }, 400);
-  let removalInfo: { count: number; hash: string } | undefined;
-  const activeHandoff = await db.select({ id: schema.autoHdrHandoffs.id }).from(schema.autoHdrHandoffs)
-    .where(and(eq(schema.autoHdrHandoffs.projectId, id), inArray(schema.autoHdrHandoffs.state, ["starting", "started", "blocked"]))).get();
-  if (activeHandoff) {
-    const sentFiles = await db.select({ assetId: schema.autoHdrSentFiles.assetId, dropboxPathKey: schema.autoHdrSentFiles.dropboxPathKey })
-      .from(schema.autoHdrSentFiles).where(eq(schema.autoHdrSentFiles.handoffId, activeHandoff.id));
-    const removalIds = computeRemovalAssetIds(sentFiles, selectedAssets);
-    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(removalIds)));
-    removalInfo = { count: removalIds.length, hash: [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("") };
-  }
-  const result = await c.env.BACKGROUND.startAutoHdr(id, c.get("user").id, parsedBody.data);
+  const result = await c.env.BACKGROUND.sendSelectedToAutoHdr(id, c.get("user").id);
   if (!result.ok) {
-    const details = result.code === "ERR_HANDOFF_ALREADY_ACTIVE" ? {
-      removalCount: result.removalCount ?? removalInfo?.count ?? 0,
-      removalSetHash: result.removalSetHash ?? removalInfo?.hash,
-    } : {};
-    return c.json(
-      { error: result.message, code: result.code, ...details },
-      result.code === "ERR_NO_RAW_SELECTION" ? 400 : 409,
-    );
+    const status = result.code === "ERR_NO_RAW_SELECTION" ? 400
+      : result.code === "ERR_PROJECT_NOT_FOUND" ? 404
+        : result.code === "ERR_PROVIDER_NOT_CONFIGURED" || result.code === "ERR_SEND_SETUP_FAILED" ? 503
+          : 409;
+    return c.json({ error: result.message, code: result.code }, status);
   }
-  await audit(c.env, c.get("user").id, "project.send_to_autohdr", "project", id, { jobId: result.jobId });
+  await audit(c.env, c.get("user").id, "project.send_to_autohdr", "project", id, {
+    jobId: result.jobId,
+    provider: "autohdr_api_v4",
+    retrievalEnabled: false,
+  });
   return c.json({ jobId: result.jobId });
 });
 
@@ -707,7 +686,7 @@ projectsRoutes.get("/projects/:id/jobs", requireCapability("adminBackend"), asyn
     id: schema.jobs.id, kind: schema.jobs.kind, status: schema.jobs.status, error: schema.jobs.error,
     correlationId: schema.jobs.correlationId,
     createdAt: schema.jobs.createdAt, updatedAt: schema.jobs.updatedAt,
-  }).from(schema.jobs).where(and(eq(schema.jobs.projectId, id), inArray(schema.jobs.kind, ["autohdr", "fetch_edited", "autohdr_scaffold", "manual_edited_publish", "manual_raw_publish"]))).orderBy(desc(schema.jobs.createdAt)).limit(20).all();
+  }).from(schema.jobs).where(and(eq(schema.jobs.projectId, id), inArray(schema.jobs.kind, ["autohdr_api_send", "autohdr", "fetch_edited", "autohdr_scaffold", "manual_edited_publish", "manual_raw_publish"]))).orderBy(desc(schema.jobs.createdAt)).limit(20).all();
   return c.json({ jobs: rows });
 });
 

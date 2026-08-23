@@ -3,6 +3,7 @@ import type { TonomoProcessorDO } from "./do/tonomo-processor";
 import type { IngestMessage } from "./messages";
 import type { RenditionMessage } from "@quincy/shared";
 import type { AutoHdrInput, AutoHdrSend } from "./workflows/autohdr";
+import type { AutoHdrApiSendInput } from "./autohdr/api-send";
 import type { AutoHdrFetchInput } from "./workflows/autohdr-fetch";
 import type { ManualEditedPublishInput } from "./workflows/manual-edited-publish";
 
@@ -22,11 +23,13 @@ export interface Env {
   ALLOW_PRODUCTION_RENDITION_BACKFILL?: string;
   APP_ORIGIN: string;
   AUTOHDR_WORKFLOW: Workflow<AutoHdrInput>;
+  AUTOHDR_API_SEND_WORKFLOW: Workflow<AutoHdrApiSendInput>;
   AUTOHDR_FETCH_WORKFLOW: Workflow<AutoHdrFetchInput>;
   MANUAL_EDITED_PUBLISH_WORKFLOW: Workflow<ManualEditedPublishInput>;
   DROPBOX_SYNC: DurableObjectNamespace<DropboxSyncDO>;
   TONOMO_PROCESSOR: DurableObjectNamespace<TonomoProcessorDO>;
   INTEGRATION_KEK: string;
+  AUTOHDR_API_KEY?: string;
   DROPBOX_APP_KEY: string;
   DROPBOX_APP_SECRET: string;
   EMAIL?: SendEmail;

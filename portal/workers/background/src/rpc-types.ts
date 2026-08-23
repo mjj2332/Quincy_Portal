@@ -1,6 +1,7 @@
 import type { WorkerEntrypoint } from "cloudflare:workers";
 import type { BackfillParams, BackfillResult } from "./autohdr/backfill";
 import type { AutoHdrFetchResult, AutoHdrResult } from "./autohdr/errors";
+import type { AutoHdrApiSendResult } from "./autohdr/api-send";
 
 /** Public, serializable surface exposed over the BACKGROUND service binding. */
 export declare abstract class QuincyBackground extends WorkerEntrypoint {
@@ -13,6 +14,7 @@ export declare abstract class QuincyBackground extends WorkerEntrypoint {
     | { outcome: "failed"; reason: string }
   >;
   abstract ensureAutoHdrScaffold(projectId: string): Promise<{ jobId: string }>;
+  abstract sendSelectedToAutoHdr(projectId: string, initiatedBy?: string): Promise<AutoHdrApiSendResult>;
   abstract startAutoHdr(projectId: string, initiatedBy?: string, options?: {
     startNewRound?: boolean;
     resumeExisting?: boolean;

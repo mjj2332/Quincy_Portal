@@ -30,9 +30,12 @@ npm run build -w @quincy/web        # build the SPA
 npx vitest run --config workers/app/vitest.config.ts   # API/integration tests
 ```
 
-Local secrets go in `portal/workers/app/.dev.vars` (gitignored). See
-[docs/Google-OAuth-Setup.md](docs/Google-OAuth-Setup.md) to configure sign-in, and
-[CLAUDE.md](CLAUDE.md) for the full build/verify/deploy workflow and conventions.
+Local app/auth secrets go in `portal/workers/app/.dev.vars`; background-provider secrets such as
+`AUTOHDR_API_KEY` go in `portal/workers/background/.dev.vars` (both are gitignored). See the
+adjacent `.dev.vars.example` files, [docs/Google-OAuth-Setup.md](docs/Google-OAuth-Setup.md) for
+sign-in, and [CLAUDE.md](CLAUDE.md) for the full build/verify/deploy workflow and conventions.
+Provision the production AutoHDR key from `portal/workers/background/` with
+`npx wrangler secret put AUTOHDR_API_KEY`; never place it in `wrangler.jsonc`.
 
 Deploys go out in dependency order (**background → webhook-ingress → app**) via
 `wrangler deploy`. Current work is on the `build/phase-0-2` branch.

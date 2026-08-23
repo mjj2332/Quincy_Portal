@@ -397,6 +397,9 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
 
 ## Waiting on user / external
 
+- [ ] Add `AUTOHDR_API_KEY` to the production **background Worker** before the direct-send branch
+  is deployed (`cd portal/workers/background && npx wrangler secret put AUTOHDR_API_KEY`). Local
+  development uses the gitignored `portal/workers/background/.dev.vars`.
 - [ ] Configure Tonomo with the webhook URL:
   `https://quincy-portal-webhook-ingress.mjj2332.workers.dev/webhooks/tonomo?token=<see .prod-secrets.local>`.
 - [ ] Real interactive Google browser login check at `https://quincy.flamingfire.my`.
@@ -407,6 +410,12 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
 
 ## Open, not yet fixed
 
+- [ ] **Direct send-only AutoHDR API handoff — implemented on PR #44, awaiting review/deploy.**
+  The RAW-review button freezes the server-side selection, creates one background Workflow job,
+  obtains provider presigned URLs, streams the private R2 JPEGs, and finalizes the AutoHDR
+  photoshoot. It intentionally supplies no callbacks and contains no status/processed-photo
+  retrieval call. Duplicate clicks reuse the active identical job; a changed selection is blocked
+  until that send terminates. No migration.
 - [ ] **P1** Comment/annotation *creation* fails silently — `postComment()`/`saveAnnotation()`
   in `Lightbox.tsx` have no `catch` (unlike their edit-handler siblings). Annotation create
   schema is `z.unknown()` for strokes while edit validates properly

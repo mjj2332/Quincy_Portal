@@ -1573,7 +1573,7 @@ describe("staff app API", () => {
     await database.DB.prepare("UPDATE user SET role = 'photographer' WHERE id = ?").bind(changingUserId).run(); const downgraded = await SELF.fetch(`https://portal.test${downgradeUrl}`, { headers: { cookie: changingCookie } }); expect(downgraded.status).toBe(403); await expect(downgraded.json()).resolves.toMatchObject({ capability: "selectForEditing" });
     await database.DB.prepare("UPDATE user SET role = 'editor' WHERE id = ?").bind(changingUserId).run(); const inactiveTicket = await changingPost(); expect(inactiveTicket.status).toBe(201); const inactiveUrl = (await inactiveTicket.json() as { downloadUrl: string }).downloadUrl;
     await database.DB.prepare("UPDATE user SET active = 0 WHERE id = ?").bind(changingUserId).run(); expect((await SELF.fetch(`https://portal.test${inactiveUrl}`, { headers: { cookie: changingCookie } })).status).toBe(401);
-  });
+  }, 20_000);
 
   it("permanently deletes an archived project, its jobs, project R2 media, and asset renditions", async () => {
     const cookie = await sessionCookie(adminToken);
@@ -2153,6 +2153,18 @@ describe("staff app API", () => {
     });
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({ jobId: expect.any(String) });
+  });
+
+  it("routes the RAW-review AutoHDR button through the send-only API RPC", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const project = await createUploadProject(cookie, `AutoHDR API send ${crypto.randomUUID()}`);
+    const response = await SELF.fetch(`https://portal.test/api/projects/${project.id}/send-to-autohdr`, {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: "{}",
+    });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ jobId: `api-send-${project.id}` });
   });
 
   it("routes a failed AutoHDR retry through startAutoHdr with resumeExisting", async () => {

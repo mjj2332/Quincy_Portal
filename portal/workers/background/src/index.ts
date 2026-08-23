@@ -18,6 +18,7 @@ import { canMutateRenditionBackfill } from "./backfill-gate";
 import { safeRenditionFailure } from "./rendition-diagnostics";
 import { parseQueueBody, RENDITION_DLQ_QUEUE_NAME } from "./queue-dispatch";
 import { AutoHdrSend } from "./workflows/autohdr";
+import { AutoHdrApiSend } from "./workflows/autohdr-api-send";
 import { AutoHdrFetch } from "./workflows/autohdr-fetch";
 import { ManualEditedPublish } from "./workflows/manual-edited-publish";
 import { canonicalDropboxConnectionId } from "./dropbox/connection";
@@ -30,10 +31,12 @@ import { reconcileAwaitingRawProjects } from "./reconcile-awaiting-raw";
 import { backfillAutoHdrV2 as backfillAutoHdrV2Impl, type BackfillParams, type BackfillResult } from "./autohdr/backfill";
 import { enqueueAutoHdrScaffold, ensureScaffold } from "./autohdr/scaffold";
 import { AutoHdrClaimError } from "./autohdr/errors";
+import { claimAutoHdrApiSend } from "./autohdr/api-send";
+import type { AutoHdrApiSendResult } from "./autohdr/api-send";
 import type { AutoHdrErrorCode, AutoHdrFetchResult, AutoHdrResult } from "./autohdr/errors";
 import { notifyProject, pruneNotifications, scanDueSubtasks, scanStalledAutoHdr } from "./notifications";
 
-export { AutoHdrFetch, AutoHdrSend, ManualEditedPublish, DropboxSyncDO, TonomoProcessorDO };
+export { AutoHdrApiSend, AutoHdrFetch, AutoHdrSend, ManualEditedPublish, DropboxSyncDO, TonomoProcessorDO };
 
 type DropboxSyncMessage = Extract<IngestMessage, { type: "dropbox_sync" }>;
 const INGEST_QUEUE_MAX_ATTEMPTS = 4;
@@ -121,6 +124,10 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
 
   async backfillAutoHdrV2(params: BackfillParams): Promise<BackfillResult> {
     return backfillAutoHdrV2Impl(this.env, params);
+  }
+
+  async sendSelectedToAutoHdr(projectId: string, initiatedBy?: string): Promise<AutoHdrApiSendResult> {
+    return claimAutoHdrApiSend(this.env, projectId, initiatedBy);
   }
 
   async startAutoHdr(projectId: string, initiatedBy?: string, options: { startNewRound?: boolean; resumeExisting?: boolean; removalSetHash?: string } = {}): Promise<AutoHdrResult> {
