@@ -170,10 +170,9 @@ between stages are where QA happens.
 - Editor/QA **selects** (a state separate from approve) the RAWs that should be edited, then sends them to autoHDR.
 
 **3. Editing — internal handoff** ✅ Built
-- The Admin-only AutoHDR workflow copies selected RAWs to a Dropbox folder that AutoHDR monitors; AutoHDR retouches them automatically.
+- The Admin-only explicit handoff uploads the selected RAW-review JPEGs directly to AutoHDR using provider-issued presigned URLs, then finalizes the photoshoot so processing can begin.
 - Non-admin staff see this stage and its progress using the neutral **Editing** label. AutoHDR-specific provider and handoff details are admin-only and must be omitted from non-admin API responses, not merely hidden in the UI.
-- Edited images come back into the project as the **Edited** set, shown with a "Processing → Returned" status.
-- _Planned:_ sending images directly to AutoHDR via API (not implemented yet).
+- This API integration is intentionally send-only: Quincy Portal supplies no completion callback, does not poll AutoHDR processing status, and never fetches or retrieves the edited photos. Existing manual and legacy edited-media paths remain separate from this handoff.
 
 **4. Edited QA** ✅ Built
 - Editor/QA reviews the edited images, approves / flags, rates, labels, annotates.
@@ -385,7 +384,7 @@ Six npm workspaces — three deployable Workers, one SPA, two shared libraries:
   (`Dropbox-API-Path-Root`); needs `sharing.read` for `scl/fo/…` shared-link folders.
 - **Tonomo** — booking webhooks auto-create pre-filled projects at *Awaiting RAW*
   (§4a); DO-serialized processing.
-- **autoHDR** — internal, **Admin-only** editing workflow that watches a Dropbox folder; integration is via Dropbox today (direct API is planned). Non-admin API projections use the neutral **Editing** label and omit provider, folder, and handoff details; authorization and projection are enforced at the API boundary, independently of UI visibility.
+- **AutoHDR** — internal, **Admin-only** editing workflow. The explicit RAW-review handoff sends the selected images through AutoHDR's API; the API integration is intentionally send-only and does not fetch edited photos. Non-admin API projections use the neutral **Editing** label and omit provider and handoff details; authorization and projection are enforced at the API boundary, independently of UI visibility.
 - **Vimeo** — films delivered as links/tiles (direct upload planned).
 
 ### 8.7 Environments & delivery

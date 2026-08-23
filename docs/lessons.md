@@ -673,3 +673,20 @@ was expensive: three wrong root causes were shipped before the plan page was eve
   intentionally throw away `response.status` for ergonomics; where a caller needs it, use the
   new `apiPostWithStatus` (built on the same `requestWithStatus` internals, zero behavior change
   for every other caller) rather than re-deriving status from the response body's shape.
+
+## Presigned provider uploads have two separate trust boundaries (2026-08-24)
+
+- **Keep the provider credential on the Worker that owns the outbound operation.** The AutoHDR
+  button is initiated through the app Worker, but the background Worker reads R2 and performs the
+  provider calls, so `AUTOHDR_API_KEY` belongs only in that Worker's `.dev.vars`/Wrangler secret.
+  Passing it through the app service response or browser would expand the credential boundary for
+  no functional benefit.
+- **A presigned object URL is already its own authorization token.** The AutoHDR Bearer key is used
+  for photoshoot creation and finalization only. The S3 `PUT` must contain the raw JPEG bytes and
+  signed-request headers, but never the AutoHDR `Authorization` header; leaking it to the storage
+  host is both unnecessary and a credential disclosure. Test these headers as distinct requests.
+- **Do not let a secondary notification rewrite the truth of an irreversible provider action.**
+  Once finalization, the job update, and guarded Stage transition are durable, a later notification
+  failure is logged for operations but cannot turn the send job back to `failed`. Otherwise a
+  Workflow retry can replay only its cached post-commit tail and leave the UI claiming failure even
+  though AutoHDR already accepted the paid work.

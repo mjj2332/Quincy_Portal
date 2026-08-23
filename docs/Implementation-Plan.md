@@ -188,6 +188,13 @@ Direct-to-R2 multipart upload (JPEG-only validation per D-01) + manually-trigger
 
 ### Phase 2 — autoHDR handoff + Edited QA
 Public **webhook-ingress Worker** (Dropbox webhook → DO-alarm cursor/delta sync); Workflow round-trip (copy selected → *Editing·autoHDR* → correlate returns via `source_raw_asset_id` → Edited collection → *Edited review*), timeout + manual retry + stuck-recovery screen; Edited QA + **RAW↔Edited compare** (D-07).
+
+**2026-08-24 handoff amendment:** the explicit RAW-review button now sends the frozen selection
+through AutoHDR's presigned-upload API from the background Worker and advances only after the
+provider accepts finalization. That API path is deliberately send-only: it supplies no completion
+callback and does not call AutoHDR status or processed-photo retrieval endpoints. The original
+Dropbox round-trip remains only as compatibility infrastructure for legacy/in-flight work and
+separate edited-media intake paths.
 **Exit:** full internal capture→edit→QA loop runs end-to-end on a real shoot.
 
 ### Phase 3 — Tonomo intake + full dashboard + admin backend completion
@@ -217,6 +224,7 @@ Public **client-delivery Worker**: signed links (hashed tokens, 30-day default e
 | 7 | Vimeo credentials (for the Phase-3 integrations screen) | |
 | 8 | **Initial admin bootstrap**: seed migration creates the first Admin user (Google email), so someone can sign in on day one | decide whose email |
 | 9 | GitHub repo CI secrets (Cloudflare API token per env) + ordered-deploy workflow | |
+| 10 | **AutoHDR API key** as `AUTOHDR_API_KEY` on the background Worker (`wrangler secret put`); local value only in `portal/workers/background/.dev.vars` | never in `wrangler.jsonc`, app bindings, browser code, or logs |
 
 *(No transactional-email provider row: Google-only login needs none for now. Add Resend/Postmark + SPF/DKIM/DMARC whenever magic link is triggered by need, or if Phase 5 emails client links from the portal rather than out-of-band.)*
 

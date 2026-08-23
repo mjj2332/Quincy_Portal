@@ -42,6 +42,11 @@
       "class_name": "AutoHdrSend"
     },
     {
+      "binding": "AUTOHDR_API_SEND_WORKFLOW",
+      "name": "quincy-autohdr-api-send",
+      "class_name": "AutoHdrApiSend"
+    },
+    {
       "binding": "AUTOHDR_FETCH_WORKFLOW",
       "name": "quincy-autohdr-fetch",
       "class_name": "AutoHdrFetch"

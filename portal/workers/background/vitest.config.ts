@@ -32,6 +32,6 @@ export default defineConfig({
     __PORTAL_MIGRATION_0029_SQL__: JSON.stringify(migration0029Sql),
     __BACKGROUND_WRANGLER_CONFIG__: JSON.stringify(wranglerConfig),
   },
-  plugins: [cloudflareTest({ wrangler: { configPath: "./wrangler.jsonc" } })],
+  plugins: [cloudflareTest({ wrangler: { configPath: "./wrangler.jsonc" }, miniflare: { bindings: { AUTOHDR_API_KEY: "test-autohdr-api-key" } } })],
   test: { include: ["test/**/*.test.ts"] },
 });
