@@ -39,7 +39,7 @@ export function useAnchoredPopover({ open, onClose, placement = "bottom-end" }: 
     if (event.key !== "Escape" || !open) return;
     event.preventDefault();
     onClose();
-    window.setTimeout(() => (floating.refs.reference.current as HTMLElement | null)?.focus(), 0);
+    (floating.refs.reference.current as HTMLElement | null)?.focus();
   };
   return { ...floating, onKeyDown };
 }
