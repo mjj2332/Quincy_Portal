@@ -1,8 +1,8 @@
 # Quincy Portal Revamp — Index
 
-**Status:** Coordinated planning and research proposal; owner decisions are settled inside this package, but repository-authority promotion is still pending.  
+**Status:** Coordinated planning and research package; corrected authority promotion completed 2026-08-24.
 **Index reconciled:** 2026-08-24  
-**Current `main` inspected:** `mjj2332/Quincy_Portal` at `b09baf48f9aeb8d3d24e43e28394e03b74b018b4` (merged PR [#44](https://github.com/mjj2332/Quincy_Portal/pull/44))  
+**Current `main` inspected:** `mjj2332/Quincy_Portal` at `08f4653482c82e4a117c6347a7d0a456d48002ed` (merged PR [#44](https://github.com/mjj2332/Quincy_Portal/pull/44))
 **Detailed-package baseline:** `2ac2ca27a1e0ded328b9265613ab4ebeeb7db1b0`; every detailed file that describes “current” behavior must be revalidated against current `main` before implementation.  
 **Detailed folder:** [`revamp_2026_portal/`](./revamp_2026_portal/README.md)
 
@@ -100,8 +100,8 @@ The inserted bullets do not renumber existing work:
 - Calendar supports guarded direct manipulation: project Deadline drag, checklist drag/end-resize, external drag from an Unscheduled panel, accessible non-drag editing, URL-addressable filters, and conflict rollback.
 - The Calendar engine is FullCalendar Standard through its official shadcn registry integration; Quincy owns surrounding composition, event rendering, tokens, and visual convergence. No premium Scheduler/resource timeline is planned.
 - Add global role `external_editor`, displayed **External editor**, while project membership remains `roleOnProject="editor"`.
-- External Editors keep normal assigned-project production capabilities but never receive `viewAllProjects`; they see only explicitly assigned non-archived projects, no Notice Board/global directory/Admin surfaces, and use role-safe server projections.
-- External Editors may read assigned project production notes and project-participant email addresses, but not agent/client contact details, billing/order bookkeeping, agency-directory notes, Dropbox topology, provider credentials, provider diagnostics, or Admin job surfaces.
+- External Editors receive only the explicit assigned-project production/collaboration allow-list and never receive `viewAllProjects`; they see only explicitly assigned non-archived projects, no Notice Board/global directory/Admin surfaces, and use one shared role-safe server projection.
+- External Editors may read assigned `productionNotes` and project-participant email addresses, but not internal `projects.notes`, agent/client contact details, billing/order bookkeeping, agency-directory notes, Dropbox topology, provider credentials, provider diagnostics, or Admin job surfaces; existing `notes` is never copied into `productionNotes`.
 - `boardPosition` remains the sole persisted manual Kanban order; Priority/shoot-date views are non-writing sorts; TB5B uses dnd-kit.
 - Notifications use a D1 outbox, Cloudflare Queue, delivery ledger, recovery scan, DLQ, explicit `unknown` email outcomes, role-safe assigned-Editor delivery, and one producer per semantic event.
 
@@ -128,6 +128,6 @@ docs/Decision-Sheet.md
 
 Current `Implementation-Plan.md` and `PRD.md` already contain the direct send-only AutoHDR amendment from PR #44. Those changes are current authority baseline and must be preserved. They do **not** mean the proposed revamp authority package has been approved.
 
-The proposed revamp authority package remains **D-16 through D-21** and Implementation Plan amendments **A8 through A14**. D-20/A13 cover checklist scheduling and Production Calendar; D-21/A14 cover External Editor assigned-scope authorization.
+The promoted revamp authority package is **revised D-13/D-15, D-16 through D-19**, and Implementation Plan amendments **A8 through A14**. Revised D-13/A13 cover checklist scheduling and Production Calendar; D-19/A14 cover External Editor assigned-scope authorization.
 
-After separate owner approval, TB0 must promote the proposal **additively**, capture drift from the detailed-package baseline through current `main`, update stale current-state statements, and create the first repository-native implementation plan. A feature is not “implemented” for repository lifecycle purposes until it is verified and deployed to production under the normal release rules.
+Following the separate owner approval, TB0 promoted the corrected authority package **additively**, captured drift from the detailed-package baseline through current `main`, and updated stale current-state statements. A feature is not “implemented” for repository lifecycle purposes until it is verified and deployed to production under the normal release rules. TB0A/TB0B repository-native implementation plans remain separate follow-up work.

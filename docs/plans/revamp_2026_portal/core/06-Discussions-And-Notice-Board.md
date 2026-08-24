@@ -47,7 +47,9 @@ Project-scoped people behavior:
 - mention candidates remain project participants plus approved Admin collaborator candidates;
 - External Editors may see participant names, role labels, and email addresses only in authorized project context;
 - no global staff directory/search is exposed;
-- project production notes are visible to External Editors by explicit decision, but broad notification/activity copy still does not repeat note contents;
+- `productionNotes` is visible to External Editors by explicit decision, while internal
+  `projects.notes` remains excluded and is never copied into it; broad notification/activity copy
+  still does not repeat note contents;
 - agent/client contacts, billing/order bookkeeping, agency-directory notes, Dropbox/provider/Admin data remain external-hidden.
 
 External Editors do **not** receive `viewNoticeBoard`; TB7 continues to apply only to roles with that capability.

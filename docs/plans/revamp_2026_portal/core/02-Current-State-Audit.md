@@ -1,7 +1,8 @@
 # Current-State Audit
 
-**Baseline:** `mjj2332/Quincy_Portal` `main` at `2ac2ca27a1e0ded328b9265613ab4ebeeb7db1b0`  
-**Audit date:** 2026-08-23  
+**Detailed-package baseline:** `mjj2332/Quincy_Portal` `main` at `2ac2ca27a1e0ded328b9265613ab4ebeeb7db1b0`
+**Current execution baseline:** `main` at `08f4653482c82e4a117c6347a7d0a456d48002ed`
+**Audit date:** 2026-08-24
 **Scope:** current facts that constrain the revised revamp; re-check before each implementation plan
 
 ## 1. Repository and process
@@ -33,7 +34,18 @@ Consequences:
 
 ## 3. Design convergence baseline
 
-Quincy tokens/fonts are substantially preserved; current production contains valuable real-data/accessibility evolution but is not automatic visual authority. No durable repository drift register exists yet. Calendar Month/Week/Agenda, Unscheduled panel, drag/resize, External Editor read-only/mutable states, and role badges become explicit evidence surfaces once introduced.
+Quincy tokens/fonts are substantially preserved; current production contains valuable real-data/accessibility evolution but is not automatic visual authority. The TB0 baseline area now owns the durable repository drift register. Calendar Month/Week/Agenda, Unscheduled panel, drag/resize, External Editor read-only/mutable states, and role badges become explicit evidence surfaces once introduced.
+
+## 3a. PR #44 AutoHDR current baseline
+
+Current `main` includes the Admin-only direct AutoHDR handoff from RAW Review. The explicit action
+freezes the server-side RAW selection, uses one background Workflow job, uploads private R2 JPEGs
+through provider-issued presigned URLs, and advances Stage only after provider finalization is
+accepted. The direct path is send-only: it has no completion callback and does not retrieve AutoHDR
+status or processed photos. Credentials remain on the background Worker, and provider UID,
+diagnostics, and handoff details stay outside non-admin projections. Manual Stage movement remains
+separate and never sends or cancels AutoHDR work. This is a current source/authority boundary to
+preserve through later tracer bullets, not a new revamp feature.
 
 ## 4. Routing and freshness
 

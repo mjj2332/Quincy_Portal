@@ -1,14 +1,17 @@
 # `revamp_2026_portal` — Documentation Package
 
-**Status:** Revised coordinated planning package; owner decisions settled, authority promotion pending  
+**Status:** Revised coordinated planning package; authority promotion completed 2026-08-24
 **Baseline:** `main` at `2ac2ca27a1e0ded328b9265613ab4ebeeb7db1b0`  
+**Current execution baseline:** `main` at `08f4653482c82e4a117c6347a7d0a456d48002ed`
 **Revised:** 2026-08-23
 
 ## Purpose
 
 This package coordinates the Quincy Portal runtime, UI, freshness, discussion, notification, project-coordination, checklist scheduling, External Editor authorization, Kanban, and Production Calendar revamp. It is modular so agents load only the files required for the active task.
 
-The package is a proposal. It does not yet modify or outrank the repository authority chain.
+The package contains proposed implementation details below the repository authority chain. Its
+corrected D/A authority wording was promoted on 2026-08-24; planned outcomes remain non-live until
+their owning tracer bullets are shipped.
 
 ## Package sections
 
@@ -25,7 +28,7 @@ The package is a proposal. It does not yet modify or outrank the repository auth
 | [`07-Notifications-On-Cloudflare.md`](./core/07-Notifications-On-Cloudflare.md) | Outbox, Queue, preferences, registry, reminders, and External Editor delivery |
 | [`08-Kanban-Modernization.md`](./core/08-Kanban-Modernization.md) | Stage semantics, pipeline boundary, ordering correction, and dnd-kit modernization |
 | [`09-Migration-Rollback-And-Verification.md`](./core/09-Migration-Rollback-And-Verification.md) | Release, rollback, testing, scheduling, role, and Calendar gates |
-| [`10-Repository-Document-Update-Map.md`](./core/10-Repository-Document-Update-Map.md) | Proposed D-16–D-21 and A8–A14 promotion map |
+| [`10-Repository-Document-Update-Map.md`](./core/10-Repository-Document-Update-Map.md) | Promoted revised D-13/D-15, D-16–D-19, and A8–A14 synchronization map |
 | [`11-Design-Convergence.md`](./core/11-Design-Convergence.md) | Evidence matrix, drift classification, and per-surface definition of done |
 | [`12-Production-Calendar-And-Checklist-Scheduling.md`](./core/12-Production-Calendar-And-Checklist-Scheduling.md) | Checklist schedule model, Calendar product/API/interaction contract |
 | [`13-External-Editor-Authorization.md`](./core/13-External-Editor-Authorization.md) | External Editor role, capabilities, project scoping, privacy, lifecycle, and Calendar scope |
@@ -92,7 +95,9 @@ docs/Decision-Sheet.md
   → supporting architecture and per-slice plans
 ```
 
-This package proposes **D-16–D-21** and **A8–A14**. Those authority files remain unchanged until a separate owner approval.
+This package records the promoted authority package: revised **D-13/D-15**, four new decisions
+**D-16–D-19**, and **A8–A14**. Planned outcomes remain targets until their owning tracer bullets
+are implemented, verified, committed, deployed, and recorded live.
 
 ## Revised roadmap
 

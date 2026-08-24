@@ -117,8 +117,8 @@ Scheduled range    start and end
 - External Editors do not receive `viewAllProjects`; explicit current project membership is required.
 - They have no Photographer Stage restriction.
 - Assigned active/delivered projects may be accessed; archived projects are unavailable through ordinary External Editor surfaces.
-- Within assigned projects they receive normal Editor production capabilities: media view/upload/review/annotation/recommend/compare, approved extras/publish/client-preview/final-download, Collaboration, and `moveProjectStage`.
-- They do not receive create/edit/archive-project administration, user/directory/integration/pipeline/Admin/prioritization capabilities or staff Notice Board access.
+- Within assigned projects they receive only `uploadEdited`, `viewRaw`, `annotateRaw`, `recommendRaw`, `compareFrames`, `viewEdited`, `reviewEdited`, `annotateEdited`, and `collaborateOnProject`, plus `moveProjectStage` once TB5A ships and `viewProductionCalendar` once TB5C ships.
+- They are explicitly withheld `publish`, `viewClientPreview`, `downloadFinal`, `manageExtras`, `selectForEditing`, `uploadRaw`, `viewNoticeBoard`, project create/edit/archive, user/directory/integration/pipeline/Admin/prioritization, AutoHDR send, and provider/job diagnostic capabilities.
 - Global list/search/Calendar/direct/quick-detail access all enforce the same assigned-scope predicate server-side.
 
 ### 7.3 External-safe project projection
@@ -129,7 +129,8 @@ May expose on assigned projects:
 - Agency and Agent/client display names;
 - shoot date/time;
 - Stage, Deadline, services/deliverables;
-- project production notes;
+- `productionNotes` (a distinct external-safe field; existing `projects.notes` remains internal and
+  is not copied into it);
 - approved production media/workflow state;
 - checklist/comments/team;
 - project-participant names, role labels, and email addresses.
@@ -215,8 +216,10 @@ Filtering is server-side and shared across DTOs/queries; UI-only hiding is insuf
 
 - Project Deadline milestone drag requires `editProject`, is not resizable, and confirms old/new Deadline/reminder consequences.
 - Due-only checklist milestone drag moves its due boundary and is not resizable.
-- Checklist range drag shifts start/end preserving duration; end-edge resize changes end; start-edge resize deferred.
-- Month movement is whole-day and preserves stored time/duration; Week snaps 15 minutes; Agenda uses accessible Reschedule actions.
+- Checklist range drag preserves each endpoint's Sydney civil/wall-clock time-of-day on the moved
+  dates, not elapsed duration, across DST; end-edge resize changes end; start-edge resize deferred.
+- Month movement is whole-day and preserves each endpoint's Sydney civil/wall-clock time-of-day, not
+  elapsed duration, across DST; Week snaps 15 minutes; Agenda uses accessible Reschedule actions.
 - Do not silently convert timed ↔ date-only by drag.
 - Optimistic display rolls back on guarded `409`; no stale auto-retry.
 - Every editable event has keyboard-operable Move/Reschedule; focus and announcements are deterministic.
@@ -254,7 +257,7 @@ The program succeeds when authorized staff can:
 5. Use List, Kanban, and a shareable Month/Week/Agenda Calendar against one authorized production model.
 6. Drag/reschedule authorized Calendar events with accessible alternatives, deterministic Sydney time, conflict rollback, reminder/activity consistency, and no invented recurrence/sync semantics.
 7. Filter Calendar by Editor/Stage/status without revealing inaccessible projects.
-8. Give External Editors normal assigned-project production capability while denying unrelated projects, global staff/Admin surfaces, and restricted fields.
+8. Give External Editors only the explicit assigned-project production/collaboration allow-list while denying unrelated projects, global staff/Admin surfaces, delivery/publish/RAW-selection/extras scope, and restricted fields.
 9. Revoke role/project access without stale-session or stale-cache leakage.
 10. Receive durable, deduplicated, role-safe notifications with bounded noise.
 11. Recognize every migrated surface as Quincy rather than stock framework appearance.

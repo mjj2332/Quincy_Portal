@@ -1,9 +1,9 @@
 # Quincy Portal — Implementation Plan
 
-> **Status:** v1.0 · 19 July 2026 · Ready for approval
+> **Status:** v1.1 · 2026-08-24 · Approved through A14 (v1.0 · 19 July 2026)
 > **Supersedes where they conflict:** `Implementation-Proposal.md` v1.2 (22 June 2026)
-> **Authority order:** `Decision-Sheet.md` (approved 2026-07-19) → this plan → `PRD.md` → `Implementation-Proposal.md` → `Personas.md` / `Sitemap.md`
-> **Inputs:** repo inventory, Cloudflare platform compatibility audit (2026-07-19, retrieval-based), independent cross-doc consistency review (Codex, 21 findings), approved Decision Sheet D-01…D-15.
+> **Authority order:** `Decision-Sheet.md` (D-01–D-15 approved 2026-07-19; D-13/D-15 revised and D-16–D-19 approved 2026-08-24) → this plan → `PRD.md` → `Implementation-Proposal.md` → `Personas.md` / `Sitemap.md`
+> **Inputs:** repo inventory, Cloudflare platform compatibility audit (2026-07-19, retrieval-based), independent cross-doc consistency review (Codex, 21 findings), approved Decision Sheet D-01…D-19 (D-13/D-15 revised 2026-08-24).
 
 ---
 
@@ -92,6 +92,201 @@ See §5: auth tables (via better-auth, Google in MVP — `magic_link_tokens` add
 
 Zips: **pre-built per `publish_version` into R2** by a Workflow job; client downloads stream the pre-built object (or short-lived signed GET). On-the-fly compression is a fallback for small ad-hoc sets only.
 
+A8–A14 (added 2026-08-24) amend this plan's program scope under revised D-13/D-15 and D-16–D-19;
+they do not amend `Implementation-Proposal.md`.
+
+### A8 — UI platform and design convergence (D-16)
+
+The production SPA converges incrementally on Tailwind CSS v4 and source-owned shadcn components
+only after TB0A and TB0B are live. TB1 proves the boundary with Base UI, Sera scaffold, Lucide,
+CSS-variable-backed Quincy semantic tokens, and Preflight disabled initially. Dark mode is not in
+scope. Generated components are reviewed and owned as application source; neither shadcn, Sera,
+Tailwind, nor FullCalendar becomes visual authority. FullCalendar's official shadcn registry is a
+single specialist exception for TB5C after the base platform exists.
+
+Current production, the reference prototype, and each migrated surface are compared at 1440×900,
+1024×768, and 390×844 plus material open/loading/error/focus/read-only/permission/conflict states.
+Every material difference is classified as conforming, intentional evolution, required
+platform/accessibility/security change, unwanted drift, or unassessed. Intentional evolution and
+deferral require owner disposition; unassessed differences block acceptance. Preserve Quincy
+fonts, signal colors, geometry, hairlines, low elevation, calm motion, keyboard behavior, and
+working product/security constraints throughout coexistence.
+
+### A9 — Route-aware server-state freshness (D-17)
+
+Keep the typed custom router and deep URLs. Adopt TanStack Query incrementally, beginning with
+Project detail and active collection assets in TB2 rather than rewriting every data path at once.
+Every server-backed surface defines query identity using every route, project, collection, visible
+range, filter, and authorization-scope variable that changes the result. It also defines
+stale/fresh timing, cancellation, focus/reconnect behavior, same-browser invalidation, bounded
+polling, and access-loss cleanup.
+
+Background refresh must not destroy form/comment drafts, open controls, Lightbox position,
+selection, scroll, Calendar filters, or active drag/resize. Same-browser mutations use narrow
+`BroadcastChannel` invalidation; other sessions converge through bounded polling. Permanently
+forbidden resources stop retrying, and role/membership loss purges inaccessible cached data and
+closes project-specific UI. Preserve the existing terminal-aware `autohdr_api_send` refresh and do
+not duplicate sends, reset RAW selection, revive legacy round-trip polling/fetch for the direct
+path, or retry an ambiguous provider outcome as a new paid job.
+
+### A10 — Discussions, activity, durable notifications, fixed pipeline semantics, and Kanban (D-17)
+
+Project discussion remains one flat, project-scoped, newest-first stream with rich text, mentions,
+author-only edit/delete, cursor pagination, and server-owned read state. The staff Notice Board
+remains asynchronous and Quincy-owned; TB7 synchronizes only each user's read/unread state across
+their devices. Structured product activity is separate from security audit and recipient inbox
+rows.
+
+Durable delivery uses a D1 outbox, Cloudflare Queue, recipient/channel ledger, recovery scan, and
+DLQ. Every dispatch re-checks current active status, role, capability, membership cycle, and event
+visibility immediately before send. Failed reauthorization is silently dropped without retry or
+user-visible error and is audit-logged. Ambiguous email acceptance is `unknown`, not automatically
+retried. One producer owns each semantic event; coalescing limits noise without falsifying
+committed activity.
+
+Stage machine identities remain
+`awaiting_raw → raw_review → editing_autohdr → edited_review → delivered`; display order never
+redefines automation. TB0B moves global Stage ordering out of ordinary Admin self-service while
+preserving label/active management. `boardPosition` is the sole persisted manual Kanban order;
+Priority and shoot-date views are non-writing sorts; TB5B later replaces native drag with dnd-kit.
+PR #44's Admin-only direct AutoHDR send remains a separate send-only operation: manual Stage
+movement never sends/cancels work, provider credentials/UID/diagnostics remain private, ambiguous
+provider outcomes reconcile the existing job/UID, and finalization plus its guarded Stage advance
+produces durable activity/notification exactly once only after provider acceptance.
+
+### A11 — Project Workspace coordination, including the `moveProjectStage` Stage capability and the Stage/order contract TB5A delivers (D-18)
+
+The Project Workspace left rail is canonical for Stage, project Deadline/reminders,
+Photographers, and Editors. Collaboration remains canonical for checklist/subtasks, project
+discussion, and task-level collaboration. Photographer and Editor rows mutate independently with
+immediate idempotent per-person deltas and membership-cycle guards. Inactive assignees remain
+visible/removable but cannot be newly selected. Removing a final compatible project role warns
+about and atomically clears affected checklist assignments; retaining another compatible role or
+active Admin status preserves them.
+
+Team-assignment eligibility is exact: the Photographer slot permits active Photographers, internal
+Editors, and Admins; the Editor slot permits active internal Editors and Admins before TB4E, then
+active internal Editors, External Editors, and Admins after TB4E. External Editors are never
+eligible for the Photographer slot. A person may hold both project roles only while their global
+account role remains eligible for both.
+
+`editProject` remains the capability for team-assignment and project Deadline/reminder writes.
+TB5A introduces `moveProjectStage`, initially granted to Admins, internal Editors, and assigned
+External Editors, and makes it the single guarded command for rail, Kanban, keyboard, and non-drag
+Stage movement. Semantic backward, skipped, delivered, and `editing_autohdr` transitions use the
+approved confirmations; manual AutoHDR Stage entry/exit is Stage-only.
+
+One nullable project Deadline remains separate from shoot time and checklist schedule. It uses
+`Australia/Sydney` civil time with explicit DST gap/fold treatment and one shared schedule
+revision/conflict token across rail and Calendar mutation. Reminder offsets are bounded, Due-now
+always materializes, and delivered/archive suppress pending occurrences. Kanban shows
+Deadline/overdue metadata and omits only card-level RAW count. The assigned-Editor event registry
+is finite, role-safe, membership-cycle-aware, and noise-bounded.
+
+### A12 — React 19.2 compatibility-only runtime upgrade (D-15, revised 2026-08-24)
+
+TB0A is a standalone app-Worker release that pins React and React DOM to the same latest stable
+exact `19.2.x` patch and pins compatible exact React type packages after checking the registry and
+official migration guidance at implementation time. Retain TypeScript, Vite SPA, `createRoot`,
+StrictMode, modern JSX transform, typed custom router, Hono RPC, Cloudflare Worker asset serving,
+and current product behavior/visual output.
+
+No React Compiler, SSR, Server Components, hydration architecture, framework/router migration,
+`Activity`, Actions/form rewrite, `useEffectEvent` sweep, ref-as-prop sweep, Tailwind/shadcn setup,
+or product redesign belongs in TB0A. Update a supporting dependency only when a demonstrated React
+19 blocker requires the minimum compatible change. Record lockfile, warnings, tests, bundle delta,
+and focused before/after evidence. Rollback is the previous app Worker/web bundle; no schema is
+introduced.
+
+### A13 — Checklist scheduling and Production Calendar (D-13, revised 2026-08-24)
+
+Extend checklist scheduling additively: an item is unscheduled (no start/end), a due-only
+milestone (end/due only), or a scheduled range (start and end). Existing due values remain truthful
+end-only milestones and existing date-only values remain literal Sydney calendar dates; never
+invent starts or fabricated UTC midnight instants. Range endpoints are both date-only or both
+timed, start precedes end, same-day and multi-day ranges are both allowed, date-only persisted end
+is inclusive, and timed ranges are half-open.
+`Australia/Sydney` is canonical; persist deterministic civil/UTC/offset-fold data for timed values,
+reject DST gaps, require an explicit fold choice, version/conflict-guard writes, and keep reminders
+on the persisted end/due boundary. FullCalendar's exclusive end exists only in the Calendar's
+wire/event representation: the range endpoint derives it when serializing and converts it back on
+write. The stored value remains the inclusive final Sydney calendar date, and no other stored
+column, query, or surface receives the exclusive form. Repeated broad checklist-schedule
+notifications for the same item/actor coalesce within five minutes, while audit/activity still
+records each actual committed operation. No recurrence is introduced.
+
+Calendar becomes the third Dashboard view beside List and Kanban, with Month, Week, and Agenda;
+typed URL state; Projects/Checklist layers; multi-Editor OR plus Unassigned, Stage,
+completion/delivery/overdue, and Dashboard-search filters; and one range-bounded server-authorized
+projection rather than browser N+1 fetches. Project events are Deadline milestones; checklist
+events are due milestones or ranges. No shoot-date, comment, upload, or activity event layer is
+inferred.
+
+TB5C rechecks and pins FullCalendar Standard React through its official shadcn registry after TB1,
+using only Standard Month/TimeGrid/List/Interaction capabilities. Quincy owns composition,
+renderers, permissions, confirmations, accessibility, responsive behavior, and tokens. Project
+Deadline drag requires `editProject`, is never resizable, and its confirmation shows the old and
+new Deadline values plus the resulting reminder consequences. Due-only checklist items are
+draggable but never resizable. Checklist ranges are draggable; only the end edge resizes the end,
+while independent start changes use the schedule editor. These operations use guarded optimistic
+state with stale `409` rollback; every editable event has a keyboard-operable Move/Reschedule
+equivalent, and Agenda uses accessible Reschedule actions instead of drag. Range drag and Month
+moves preserve each endpoint's Sydney civil/wall-clock time-of-day on the moved dates, not elapsed
+duration, across DST; Week snaps to 15-minute increments.
+
+The Unscheduled panel is operational, not decorative: dropping an unscheduled project into Month
+creates a 17:00 Sydney Deadline on that date, while Week uses the selected 15-minute slot; project
+confirmation still applies and no advance reminder offset is invented. Dropping an unscheduled
+checklist item into Month creates a date-only due milestone, while Week creates a one-hour range.
+External Editors may drag unscheduled checklist work for assigned projects, but cannot create or
+move project Deadlines because they lack `editProject`. Empty calendar space creates nothing.
+Overlapping timed checklist ranges for one assignee are allowed and show a non-blocking conflict
+indicator; work is never auto-moved, and a project Deadline is never treated as exclusive capacity.
+Calendar filters never broaden authorization; External Editors receive only A14's assigned-safe
+projection. No premium Scheduler/resource timeline or external calendar sync is included.
+
+### A14 — External Editor assigned-scope authorization (D-19)
+
+Add a fourth global account role `external_editor`, displayed **External editor**, with its own
+explicit capability entry. Project membership remains the existing `editor` role. External
+Editors never receive `viewAllProjects`; every list, search, direct route, media, Collaboration,
+quick-detail, notification, and Calendar surface requires current explicit project membership and
+server-side scope. They have no Photographer Stage restriction and no ordinary archived-project
+access.
+
+The complete initial allow-list is `uploadEdited`, `viewRaw`, `annotateRaw`, `recommendRaw`,
+`compareFrames`, `viewEdited`, `reviewEdited`, `annotateEdited`, and `collaborateOnProject`, plus
+`moveProjectStage` when TB5A ships and `viewProductionCalendar` when TB5C ships. Explicitly
+withhold `publish`, `viewClientPreview`, `downloadFinal`, `manageExtras`, `selectForEditing`,
+`uploadRaw`, `viewNoticeBoard`, project create/edit/archive, Admin/user/directory/integration/
+pipeline/prioritization, the staff Notice Board, AutoHDR send, and provider/job diagnostic
+capabilities.
+
+One shared server-side External Editor projection owns every reachable DTO. For an assigned
+project it may expose address/location, Agency/Agent display names, shoot date/time, Stage,
+Deadline, services/deliverables, `productionNotes`, approved production media, checklist,
+discussion, roster identity, and project-participant email. It must exclude the existing
+internal-staff-only `projects.notes`, agent/client email or phone, invoice/payment, unnecessary
+order bookkeeping, agency-directory notes, Dropbox topology, provider credentials/diagnostics,
+Admin data, and unrelated people/projects. Add `productionNotes` as a distinct column; existing
+`notes` remains internal and is not copied into it. Project discussion remains one shared thread.
+An automated regression gate proves every External-Editor-reachable DTO uses the shared
+projection. Every phase from TB5A through TB8 that adds or touches a DTO reachable by an External
+Editor must rerun that same shared-projection regression test as a release gate.
+
+Create Project and the rail may assign External Editors only in the Editor slot. Existing users
+are never auto-converted. Role transitions revoke sessions; conversion is blocked until
+incompatible Photographer memberships are removed. Deactivation preserves membership history but
+blocks authentication, new assignment, and pending delivery. Final membership removal warns of
+immediate access loss and atomically applies approved checklist cleanup. Access-loss signals purge
+inaccessible cached data and close project UI. Assigned External Editors receive only the
+external-safe subset of targeted assignments, mentions, Deadline reminders, broad project events,
+activity, and Calendar data, with send-time reauthorization.
+
+> **A8–A14 approved:** 2026-08-24 by mjj2332@gmail.com. D-13 and D-15 were revised inline;
+> D-16–D-19 were added. Planned outcomes remain targets until their owning tracer bullets are
+> implemented, verified, committed, deployed, and recorded live.
+
 ---
 
 ## 3. Contract decisions locked for implementation
@@ -103,7 +298,7 @@ Small ambiguities the consistency review flagged, resolved here so week 1 doesn'
 3. **Client links:** 30-day default expiry (D-04) becomes a `client_links.expires_at` default computed at creation; passcode optional per link.
 4. **Photographer surfaces (D-02/D-11):** Phase 1's "minimal project list" ships **role-filtered from day one** (assigned shoots only); photographers can compare their own RAWs and see selected-for-editing state. Personas' open questions are resolved accordingly.
 5. **"View as" switcher (D-09):** implemented as a build-time env flag (`VITE_ALLOW_VIEW_AS`), stripped from production bundles; a CI check asserts the production build does not contain the affordance. Production capability checks never consult it.
-6. **Clients / Schedule nav (D-13):** **hidden in production MVP** (not rendered), not stubbed.
+6. **Clients / Schedule nav (D-13, revised 2026-08-24):** **Clients remain hidden and not stubbed.** The Schedule half is superseded by A13: Calendar ships as a third Dashboard view after its prerequisite tracer bullets; planned, not live.
 7. **No auth email provider in MVP** (revised D-14 — Google ships first, magic link stays planned but deferred). A `sendEmail()` interface is stubbed but unimplemented; it activates whenever magic link is triggered by need, or for Phase 5 client-link delivery if that's built before then. Prerequisite while Google-only: all current staff have Google accounts.
 
 ---

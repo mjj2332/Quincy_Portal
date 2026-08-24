@@ -15,7 +15,7 @@ templates and render scripts live in the parent Dropbox workspace, not here.
 ## Two codebases, not one
 
 - **`portal/`** — the production app, and the only place implementation happens. TS monorepo:
-  React 18 + Vite SPA, Hono API on Cloudflare Workers, D1 / R2 / KV / Queues / Workflows,
+  React 18.3.1 current baseline + Vite SPA, Hono API on Cloudflare Workers, D1 / R2 / KV / Queues / Workflows,
   Google OAuth via better-auth.
 - **`prototype/`** — the original Claude-Design export (CDN React, in-browser Babel, mock
   data, no backend). **Reference only: never extend it, never copy its structure into
@@ -29,7 +29,7 @@ this file. Check it before starting new work. `docs/lessons.md` collects real bu
 build; read it before touching auth, Hono routing, or the review lightbox. Keep both current
 as you work.
 
-When docs conflict, earlier wins: `docs/Decision-Sheet.md` (approved decisions D-01…D-15) →
+When docs conflict, earlier wins: `docs/Decision-Sheet.md` (approved decisions D-01–D-19; D-13/D-15 revised 2026-08-24) →
 `docs/Implementation-Plan.md` → `docs/PRD.md` / `Personas.md` / `Sitemap.md`. The Plan
 supersedes `docs/Implementation-Proposal.md` — notably auth is **Google OAuth**, not
 Cloudflare Access, and renditions use the **remote Image Transformation** path, not a
@@ -37,6 +37,20 @@ Container.
 
 To-do and lessons live in **`docs/`**, not a top-level `tasks/`. Before delegating work to
 Codex or Agy subagents, read `docs/Subagent-Orchestration.md`.
+
+## Approved revamp targets — not live until their tracer bullet deploys
+
+React 19.2 is a compatibility-only target. Tailwind/shadcn are incremental implementation tools
+under Quincy visual authority. Future route/resource/range query keys must preserve drafts and
+active drag/resize. The Project Workspace rail is the planned owner of Stage, Deadline, and team
+coordination; Collaboration remains checklist/subtasks and discussion-focused. Membership changes
+use role-specific deltas and cycles; `moveProjectStage` preserves fixed semantic Stage identities.
+Project Deadline remains separate from shoot/checklist schedules. Notification delivery is a finite,
+noise-bounded registry with send-time authorization. Checklist due/range scheduling and an
+authorized Calendar range/direct-manipulation boundary are planned. The assignment-scoped
+`external_editor` role uses one external-safe server projection and has no staff Notice Board,
+global directory, or Admin scope. Calendar, External Editor, React 19, Tailwind, and shadcn remain
+non-live until their owning tracer bullets deploy.
 
 Plan docs live in `docs/plans/`. Once a plan's change is built, verified, committed, **and**
 deployed to production, update its own status line to say so (with the commit hash) and move the
@@ -75,6 +89,10 @@ up by `npm run test --workspaces` — no separate invocation needed for it.
   Browse `http://localhost:8787` directly (build `apps/web` first) — not the Vite 5173 proxy — and
   sign in as the seeded admin (`mjj2332@gmail.com`; this is a closed system, `disableSignUp: true`,
   no other account works locally). See `docs/lessons.md` for why.
+
+- **PR #44 AutoHDR preservation:** direct send is Admin-only and send-only, distinct from Stage
+  movement; credentials remain on the background Worker. Later phases must not revive direct-path
+  retrieval/polling or duplicate semantic delivery.
 
 ## Deploy
 

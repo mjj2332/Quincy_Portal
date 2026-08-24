@@ -1,8 +1,9 @@
 # Quincy Portal — Product Requirements Document (PRD)
 
-> **Status:** Draft v0.3 · 21 July 2026
+> **Status:** Current product requirements + approved revamp targets · 24 August 2026
 > **Owner:** _✏️ your name_
-> **Prototype:** `index.html` (live React prototype)
+> **Production:** `portal/` at <https://quincy.flamingfire.my> · React 18.3.1 current baseline
+> **Prototype:** `prototype/` at <https://prototype.quincy.flamingfire.my> (reference-only)
 
 ---
 
@@ -18,6 +19,12 @@ This is a **working brief**, not a contract. Edit it freely — that's the point
   - ⬜ **New** — described but not yet built
 - When you hand the file back, I'll update the prototype to match.
 
+The approved revamp is an incremental program, not a rewrite. Its planned outcomes cover the
+React 19.2 compatibility release, Quincy-owned freshness/discussion/notification boundaries,
+canonical Project Workspace coordination, additive checklist scheduling, assigned-scope External
+Editor access, corrected Stage/Kanban semantics, and a third-view Production Calendar. These are
+targets for their owning tracer bullets; they are not live merely because they are described here.
+
 ---
 
 ## 1. Summary
@@ -29,6 +36,9 @@ through internal QA and editing, to the final client delivery gallery.
 It serves two audiences from one system:
 1. **Internal team** (admin, photographers, editors/QA) — produce and review work.
 2. **Clients** (real-estate agents & agencies) — receive and download final media.
+
+The planned External Editor role is an additional internal-production persona for assigned
+contractors. It does not create a client account or broaden the client-delivery surface.
 
 ### Problem we're solving
 - Pixieset only does **delivery** — there is no internal review or production pipeline.
@@ -46,6 +56,17 @@ It serves two audiences from one system:
 - ✅ Editorial, on-brand client galleries (Quincy Productions design system).
 - ✅ Frictionless client delivery — **no login**, private link, download + favourites.
 
+### Approved incremental revamp outcomes (planned, not live)
+
+- Preserve deep routes, Quincy-owned Cloudflare data, current working behavior, and the Admin-only
+  direct send-only AutoHDR boundary while modernizing each domain incrementally.
+- Make the Project Workspace left rail the canonical home for Stage, project Deadline/reminders,
+  Photographers, and Editors; keep Collaboration task/checklist/discussion-focused.
+- Add an additive checklist due/range contract and a server-authorized Production Calendar
+  projection with guarded, accessible direct manipulation.
+- Add assignment-scoped `external_editor` access through one external-safe server projection, with
+  no Notice Board, global directory, Admin, delivery/publish, RAW-selection, or extras scope.
+
 ### Non-goals (for now)
 - Billing, invoicing (the premium-content paywall is a simulated checkout only).
 - Full RAW developing / editing inside the portal (autoHDR is the external editor).
@@ -56,13 +77,14 @@ It serves two audiences from one system:
 
 ## 3. Personas (summary)
 
-Full detail in **`Personas.md`**. Three internal roles + the external client.
+Full detail in **`Personas.md`**. Four internal-production roles + the external client.
 
 | Persona | One-line | Access |
 |---|---|---|
-| **Project Manager / Admin** | Runs projects end-to-end, manages people & delivery | Everything |
-| **Photographer** | Uploads RAW, annotates RAW | **RAW only** — nothing else |
+| **Project Manager / Admin** | Runs projects end-to-end, manages people & delivery | Everything within Admin capability policy |
+| **Photographer** | Uploads RAW, annotates RAW | **RAW only** on assigned projects |
 | **Photo Editor / QA Officer** | Selects RAW for editing, QA's edits, publishes to client | RAW + Edited + Publish |
+| **External Editor** *(planned)* | Performs assigned production/editing work as a contractor | Explicit assigned-project allow-list only; no broad/Admin/Notice Board/delivery scope |
 | **Client (Agent)** | Receives & downloads final media | Client delivery page only |
 
 ---
@@ -97,6 +119,35 @@ Full detail in **`Personas.md`**. Three internal roles + the external client.
 - **Project creation is Admin-only.** Editor/QA work within projects Admin sets up.
 - **Video, floorplan and copywriting** can be managed by **both Admin and Editor/QA** (`canManageExtras`).
 - **AutoHDR is an internal, Admin-only workflow.** Editor/QA can select RAWs for editing, but only Admin can execute the AutoHDR handoff. Non-admin staff see the neutral **Editing** stage and status; AutoHDR's name, provider details, watch-folder details, and handoff metadata are not part of their API projections. This privacy boundary must be enforced by API authorization and response projection, not by hiding controls in the UI.
+
+### Planned External Editor role (not live)
+
+External Editor is a distinct global account role, displayed **External editor**, while project
+membership remains the existing `editor` role. Every project surface requires current explicit
+assignment and server-side scope; External Editors never receive `viewAllProjects`, have no
+Photographer Stage restriction, and cannot use ordinary archived-project surfaces.
+
+The complete allow-list is `uploadEdited`, `viewRaw`, `annotateRaw`, `recommendRaw`,
+`compareFrames`, `viewEdited`, `reviewEdited`, `annotateEdited`, and `collaborateOnProject`, plus
+`moveProjectStage` when TB5A ships and `viewProductionCalendar` when TB5C ships. Withhold
+`publish`, `viewClientPreview`, `downloadFinal`, `manageExtras`, `selectForEditing`, `uploadRaw`,
+`viewNoticeBoard`, project create/edit/archive, Admin/user/directory/integration/pipeline/
+prioritization, AutoHDR send, and provider/job diagnostic capabilities.
+
+On assigned projects, the shared server-side external-safe projection may expose production-safe
+address/location, Agency/Agent display names, shoot date/time, Stage, Deadline,
+services/deliverables, `productionNotes`, approved production media, checklist, discussion, roster
+identity, and project-participant email. It excludes internal `projects.notes`, agent/client
+contact, invoice/payment and unnecessary order data, agency-directory notes, Dropbox topology,
+provider credentials/diagnostics, Admin data, and unrelated people/projects. `productionNotes` is a
+distinct planned field; existing `notes` remains internal and is never copied into it.
+
+Existing users are never auto-converted. Role changes revoke sessions; conversion is blocked while
+incompatible Photographer memberships exist. Deactivation preserves membership history but blocks
+authentication, new assignment, and pending delivery. Final membership removal warns about
+immediate access loss and atomically applies approved checklist cleanup. Access loss purges
+inaccessible cached project data and closes project-specific UI. Project discussion remains one
+shared thread, and External Editors do not receive the staff Notice Board or a global directory.
 
 ---
 
@@ -162,7 +213,7 @@ between stages are where QA happens.
   - **Manual upload** — Photographer / Admin / Editor drops RAW or image files (any format, no size limit) onto the project.
   - **Sync from Dropbox** — a one-click pull of the RAW frames from the shoot's Dropbox folder. The folder link/path can be **pasted manually** or **carried over automatically from the Tonomo booking** (`rawFolderLink` / `rawFolderPath` in the webhook). Syncing populates the RAW collection and moves the project into **RAW review**.
 - Photographers annotate / comment on RAWs and **recommend** their picks to guide QA.
-- **Accepted files:** any RAW or image file — **no format or size limit**. Bracketed sets are **not** grouped automatically; the editor brackets them manually during selection.
+- **Accepted files:** JPEG-only ingest (`.jpg` / `.jpeg`) per D-01; camera RAW remains with the photographer and is never uploaded. Bracketed sets are **not** grouped automatically; the editor brackets them manually during selection.
 - ⬜ **Embedded star rating ingest.** Photographers cull on-site in Lightroom before export, applying a 1–5 star rating per frame. On upload/sync, the Portal **reads that rating from the JPEG's embedded XMP metadata** (`xmp:Rating`) and pre-populates the frame's star rating in RAW QA automatically — no re-rating by hand. An un-rated export (no `xmp:Rating` attribute present) shows as unrated, not zero-starred-by-default. QA can still override any rating manually; the metadata read only sets the *starting* value. Validated against 44 real studio export JPEGs (2.9–28 MB) — see `Implementation-Plan.md` §2 A2.
 
 **2. RAW QA & selection** ✅ Built
@@ -173,6 +224,7 @@ between stages are where QA happens.
 - The Admin-only explicit handoff uploads the selected RAW-review JPEGs directly to AutoHDR using provider-issued presigned URLs, then finalizes the photoshoot so processing can begin.
 - Non-admin staff see this stage and its progress using the neutral **Editing** label. AutoHDR-specific provider and handoff details are admin-only and must be omitted from non-admin API responses, not merely hidden in the UI.
 - This API integration is intentionally send-only: Quincy Portal supplies no completion callback, does not poll AutoHDR processing status, and never fetches or retrieves the edited photos. Existing manual and legacy edited-media paths remain separate from this handoff.
+- Manual Stage movement is a separate operation and never starts, cancels, or retrieves AutoHDR work. The fixed semantic progression is `awaiting_raw → raw_review → editing_autohdr → edited_review → delivered`; display order never changes those identities.
 
 **4. Edited QA** ✅ Built
 - Editor/QA reviews the edited images, approves / flags, rates, labels, annotates.
@@ -186,16 +238,52 @@ between stages are where QA happens.
 
 ## 6. Feature requirements by area
 
-### 6.1 Dashboard (internal home) ✅ Built
+### 6.1 Dashboard (internal home) ✅ Built in current production; Calendar planned
 - ✅ All projects as cards / list, with pipeline status, progress, agency/agent, search, filters.
 - ✅ Dashboard filters **by the viewer's role** — photographers see the **same dashboard but only their assigned shoots** ("My shoots").
 - ✅ Status reflects the new pipeline stages (see §7).
-- ✅ **Active dashboard views:** **Kanban** (default) · List. The Kanban has one column per pipeline stage (Awaiting RAW → Delivered); Admin / Editor can **drag a project card between columns to change its stage**. Photographers get a read-only, reduced-column Kanban. The archived dashboard is List-only.
+- ✅ **Current production views:** **Kanban** (default) · List. The Kanban has one column per pipeline stage (Awaiting RAW → Delivered); Admin / Editor can **drag a project card between columns to change its stage**. Photographers get a read-only, reduced-column Kanban. The archived dashboard is List-only.
+- ⬜ **Planned third view:** Calendar, after its checklist/Deadline, authorization, freshness, and interaction prerequisites ship. It will support Month, Week, and Agenda, typed shareable URL/filter state, authorized Project/Checklist event layers, and guarded direct manipulation; it is not live in the current production dashboard.
 
-### 6.2 Project workspace ✅ Built
+### 6.2 Project workspace ✅ Built; coordination rail target planned
 - ✅ Per-project rail (client, agent, shoot date, photographer, collections, filters, labels).
 - ✅ Collection tabs: **RAW · Edited · Floorplan · Copy · Video.**
+- ⬜ **Planned canonical coordination:** the left rail owns Stage, project Deadline/reminders, Photographers, and Editors. Collaboration remains focused on checklist/subtasks, project discussion, and task-level collaboration.
 - **Web & Print** sizes are **not** separate tabs — they're derived from the selected images published to the client page, with **Cloudflare Images** generating the smaller renditions on the fly.
+
+### 6.2a Production Calendar and scheduling (planned, not live)
+
+The approved Schedule half of D-13 becomes a third Dashboard view only after its prerequisite
+tracer bullets ship. Calendar is a projection over authorized project and checklist data, not a
+new source of truth.
+
+- A project has one nullable Deadline, separate from shoot date/time and checklist schedules.
+- A checklist item is unscheduled, a due-only milestone (end/due only), or a scheduled range (start
+  and end). Existing due values remain truthful end-only milestones; date-only values remain
+  literal Sydney calendar dates. No start is invented, and no fabricated UTC-midnight instant is
+  introduced.
+- `Australia/Sydney` is canonical. DST gaps are rejected, repeated wall times require an explicit
+  fold choice, and timed values preserve their civil/UTC/offset meaning. Range endpoints are both
+  date-only or both timed; start precedes end; timed ranges are half-open; date-only range end is
+  inclusive and remains the reminder boundary. No recurrence is included.
+- Initial views are Month, Week, and Agenda. URL state carries the active date/view, event layers,
+  Editor/Unassigned filters, Stage/status toggles, overdue state, and Dashboard search so links and
+  Back/Forward restore the same authorized slice.
+- Project events are Deadline milestones; checklist events are due milestones or ranges. A single
+  range-bounded, server-authorized projection supplies the data, and filtering never broadens
+  access or causes browser N+1 fetches.
+- Deadline drag requires the project-edit permission, is never resizable, and confirms the old/new
+  Deadline plus reminder consequences. Due-only checklist items drag but do not resize. Checklist
+  range drag and Month moves preserve each endpoint's Sydney civil/wall-clock time-of-day on the
+  moved dates, not elapsed duration, across DST; only the end edge resizes the end. Agenda provides
+  keyboard-operable Move/Reschedule actions instead of relying on drag.
+- The Unscheduled panel is operational: an unscheduled project dropped in Month defaults to 17:00
+  Sydney and Week uses the selected 15-minute slot; an unscheduled checklist item dropped in Month
+  becomes a date-only due milestone and in Week becomes a one-hour range. Empty calendar space
+  creates nothing. External Editors may schedule assigned checklist work but cannot create or move
+  project Deadlines.
+- Timed checklist overlaps for one assignee are allowed and shown with a non-blocking conflict
+  indicator. There is no premium resource timeline or external calendar synchronization.
 
 ### 6.3 Review tools ✅ Built
 - ✅ Grid with approve / flag, **star ratings**, **colour labels**, comment counts.
@@ -212,21 +300,37 @@ between stages are where QA happens.
 
 ### 6.5 Floorplans 🔶 Partial
 - ✅ Floorplan collection exists (schematic placeholder).
-- ⬜ Upload real floorplan (PDF + JPG), versioning. ✏️ confirm needs.
+- ⬜ Upload real floorplan (PDF + JPG) with immutable versioning, per D-08.
 
 ### 6.6 Copywriting ✅ Built (PDF)
-- ✅ A per-project **downloadable PDF**, uploaded by the **project admin**, surfaced on the internal Copy tab and the client "Description" tab.
+- ✅ A per-project **downloadable PDF**, uploaded by **Admin or Editor/QA**, surfaced on the internal Copy tab and the client "Description" tab.
 - _Planned:_ entering &amp; displaying copywriting directly in the Portal, plus delivering **social-media content** to the client alongside the copy.
 
 ### 6.7 Client delivery page ✅ Built
 - ✅ Editorial cover hero, collection tabs (Gallery / Film / Floorplan / Description), favourites, slideshow, share, download (web/full-res, single + zip).
 - ✅ **Video** and **Copywriting** sections on the delivered page.
 - ✅ **Premium / paywalled content** — extra images & video shown **watermarked** behind a paywall; client unlocks to remove the watermark and download. _(replaces the former print store)_
-- ✅ No login — private link. ✏️ confirm: link expiry, optional passcode?
+- ✅ No login — private link. Planned link contract: 30-day default expiry, optional passcode, revocation, and hashed tokens per D-04.
 
 ### 6.8 Annotations & comments ✅ Built
 - ✅ Threaded notes per image, freehand drawing, author + role + timestamp.
 - ⬜ Notes should be **role-aware** (photographer's RAW notes vs QA's edit notes) and scoped to RAW or Edited.
+
+#### Project discussion, activity, and notifications (current + planned outcomes)
+
+Project discussion remains one flat, project-scoped, newest-first stream with rich text, mentions,
+author-only edit/delete, and server-owned read state. Structured product activity remains separate
+from security audit records and recipient inbox rows. The staff Notice Board remains Quincy-owned;
+External Editors do not receive it or a global directory.
+
+The approved notification direction is durable, role-safe delivery: an outbox/queue dispatch
+re-checks current active status, role, capability, membership cycle, and event visibility immediately
+before send. Failed reauthorization is silently dropped and audit-logged; ambiguous email
+acceptance is not automatically retried. One producer owns each semantic event, and coalescing
+limits recipient noise without falsifying committed activity. Access or membership loss purges
+inaccessible cached project data and closes project-specific UI. These are planned revamp outcomes
+until their owning tracer bullets are live; the current product's existing notification features
+remain governed by the current implementation and `docs/todo.md`.
 
 ### 6.9 Admin backend dashboard ⬜ New
 A dedicated **Admin Settings** area, separate from the project workspace, for backend
@@ -243,7 +347,8 @@ and operational management. **Admin-only** (per §4 capabilities model).
   time (agencies/agents currently arrive as free-text fields off the Tonomo webhook — see
   §4a).
 - ⬜ **Pipeline configuration:** edit the pipeline stage labels/settings from §7 (e.g.
-  rename a stage, change ordering) without a code change.
+  rename a stage) without a code change. After planned TB0B, ordinary Admins retain label/active
+  management but do not control global Stage ordering; developers own that ordering contract.
 - ⬜ **Integrations:** a connections screen showing status (Connected / Expired / Error)
   for each external service, with a **Reconnect** action for OAuth refresh:
   - **Dropbox** — one **shared studio-level** OAuth connection, used for all RAW sync and
@@ -253,22 +358,24 @@ and operational management. **Admin-only** (per §4 capabilities model).
   - Vimeo account connection.
 ---
 
-## 7. Pipeline statuses  ✅ Built
+## 7. Pipeline statuses  ✅ Current production semantic model
 
 Implemented stages, shown on the dashboard and project rail:
 
-| Stage | Status label | Meaning |
+| Stage key | Status label | Meaning |
 |---|---|---|
-| 1 | **Awaiting RAW** | Project created, no RAW uploaded yet |
-| 2 | **RAW review** | RAW uploaded, QA selecting |
-| 3 | **Editing** | Selected RAWs are in the internal admin-only AutoHDR workflow; non-admin API projections expose only the neutral stage/status |
-| 4 | **Edited review** | Edits returned, QA reviewing |
-| 5 | **Client review** | Published to client _(optional gate)_ |
-| 6 | **Delivered** | Final media delivered |
+| `awaiting_raw` | **Awaiting RAW** | Project created, no RAW uploaded yet |
+| `raw_review` | **RAW review** | RAW uploaded, QA selecting |
+| `editing_autohdr` | **Editing** | Selected RAWs are in the internal Admin-only AutoHDR workflow; non-admin API projections expose only the neutral stage/status |
+| `edited_review` | **Edited review** | Edits returned, QA reviewing |
+| `delivered` | **Delivered** | Final media delivered |
+
+The public stage progression is fixed. A future client-review link is not part of the current
+MVP, and display ordering/configuration never redefines automation semantics.
 
 ---
 
-## 8. Tech stack & architecture  ✅ Built (production `portal/`)
+## 8. Tech stack & architecture — current production `portal/` baseline
 
 > This section describes the **production application** in `portal/` — a TypeScript
 > monorepo running entirely on Cloudflare. It is a **summary**; the authoritative
@@ -301,12 +408,12 @@ Six npm workspaces — three deployable Workers, one SPA, two shared libraries:
 
 | Workspace | Package | Role |
 |---|---|---|
-| `apps/web` | `@quincy/web` | Vite + React 18 SPA — the staff UI (dashboard, workspace, review lightbox, admin). |
+| `apps/web` | `@quincy/web` | Vite + React 18.3.1 SPA — the current staff UI (dashboard, workspace, review lightbox, admin). |
 | `workers/app` | — | **Staff API** (Hono) + better-auth; also **serves the built SPA**; issues signed image-transform URLs. |
-| `workers/background` | — | Queue consumers, **Workflows** (autoHDR round-trip), and the **Dropbox-sync + Tonomo-processor Durable Objects**. |
+| `workers/background` | — | Queue consumers, direct send-only AutoHDR Workflow plus legacy compatibility paths, and the **Dropbox-sync + Tonomo-processor Durable Objects**. |
 | `workers/webhook-ingress` | — | Thin **public** webhook receiver (Dropbox + Tonomo): verifies signatures, dedupes, fast-acks, hands off via service binding. |
 | `packages/shared` | `@quincy/shared` | Single source for capabilities, pipeline stage keys, JPEG/media ingest rules, XMP star-rating parser, AES-GCM credential crypto. |
-| `packages/db` | `@quincy/db` | Drizzle D1 schema, migrations (0000–0003 applied to prod), seed. |
+| `packages/db` | `@quincy/db` | Drizzle D1 schema, migrations 0000–0029 applied to prod, seed. |
 
 ### 8.3 Runtime architecture
 
@@ -368,7 +475,9 @@ Six npm workspaces — three deployable Workers, one SPA, two shared libraries:
 - **Capability model:** roles → capabilities (`uploadRaw`, `selectForEditing`,
   `viewEdited`, `manageExtras`, `publish`, `adminBackend`, …) in a **`role_capabilities`
   table**, enforced by capability middleware on API routes. `@quincy/shared` is the
-  single source for these keys.
+  single source for these keys. Current production roles are Admin, Photographer, and Editor;
+  the approved `external_editor` role and its assigned-safe capability profile are planned, not
+  live.
 - **Credential encryption:** external-integration tokens (Dropbox) are stored
   **AES-GCM encrypted** under an `INTEGRATION_KEK` Worker secret — never in plaintext.
 - **Webhook integrity:** constant-time HMAC verification (Dropbox `X-Dropbox-Signature`;
@@ -392,7 +501,6 @@ Six npm workspaces — three deployable Workers, one SPA, two shared libraries:
 | Environment | Host | Notes |
 |---|---|---|
 | Production | `quincy.flamingfire.my` | Live. `main` is the source of truth. |
-| Staging | `staging.quincy.flamingfire.my` | Pre-prod (shares a single `APP_ORIGIN` for OAuth). |
 | Prototype | `prototype.quincy.flamingfire.my` | The old design prototype, reference-only. |
 
 CI (`.github/portal.yml`) typechecks every workspace, runs the Vitest suites
@@ -404,20 +512,26 @@ the SPA. Secrets are **Worker secrets** in prod; local dev reads gitignored
 
 ## 9. Open questions (remaining)
 
-The decisions resolved in v0.2 have been folded into the sections above. Still open:
+The decisions resolved in v0.2 and the approved D-04/D-07/D-08/D-13 outcomes have been folded into
+the sections above. Remaining product follow-ups are:
 
-1. **Edited QA:** show **RAW-vs-Edited** pairs side-by-side in compare? (§5 stage 4)
-2. **Floorplans:** confirm upload needs — PDF + JPG, versioning? (§6.5)
-3. **Client link:** expiry window and optional passcode? (§6.7)
-4. **Client approval:** does the agent ever **review/approve** media, or only receive it? Your original brief mentioned "review before publish to end client" — confirm whether to (re)introduce a client/guest-reviewer step.
+1. **Edited QA:** continue validating the RAW-vs-Edited compare workflow in the current product.
+2. **Client delivery:** decide when optional client-link email delivery is worth implementing.
+The client/guest-reviewer step remains excluded from the current MVP. The Schedule half of D-13 is
+resolved as the approved planned Production Calendar/checklist-scheduling program; the Clients half
+remains deferred and hidden.
 
 ---
 
 ## 10. Out of current prototype scope / parked
 
 - Real payment processing for premium unlocks (currently a simulated checkout).
-- Notifications (email/SMS) on stage changes.
 - Analytics (client opens, downloads).
 - Audit log / version history.
+
+Durable, role-safe notification delivery and the Production Calendar are approved revamp outcomes,
+but remain planned until their owning tracer bullets are implemented, verified, committed, and
+deployed. They are not live features of the current prototype or production dashboard merely
+because they are specified above.
 
 _✏️ Move anything here into scope by noting it._

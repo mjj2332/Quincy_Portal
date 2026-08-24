@@ -7,7 +7,21 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
 > counts, full diagnostic transcripts) has been cut in favor of what/when/deploy-state. See
 > `docs/lessons.md` for incident mechanics, and `docs/reviews/` for full QA-sweep detail.
 
-## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29, seed-admin UUID migration 2026-07-29, notification dismiss + stalled-guard 2026-07-30, download selection 2026-08-04, notice-board rich text + mentions 2026-08-17, project comments + collaboration panel 2026-08-17, project subtasks/checklist 2026-08-17, collaboration panel relocated to Project page 2026-08-17, collaboration panel UI fixes + due-time reminder 2026-08-17, notification click navigation 2026-08-17, comment ordering + Shift+Enter soft breaks 2026-08-17, mention-email content 2026-08-20)
+## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29, seed-admin UUID migration 2026-07-29, notification dismiss + stalled-guard 2026-07-30, download selection 2026-08-04, notice-board rich text + mentions 2026-08-17, project comments + collaboration panel 2026-08-17, project subtasks/checklist 2026-08-17, collaboration panel relocated to Project page 2026-08-17, collaboration panel UI fixes + due-time reminder 2026-08-17, notification click navigation 2026-08-17, comment ordering + Shift+Enter soft breaks 2026-08-17, mention-email content 2026-08-20, TB0 authority promotion 2026-08-24)
+
+- **Quincy Portal revamp TB0 is the active authority/baseline phase; TB0 itself changes no product
+  source, dependency, schema, Worker, or production resource.** The owner approved the corrected
+  authority package on 2026-08-24: D-13 and D-15 revised inline, four new decisions D-16–D-19,
+  and Implementation Plan amendments A8–A14 (`docs/plans/TB0-Integrated-Architecture-And-Baseline-Plan.md`).
+  The current-main baseline at `08f4653482c82e4a117c6347a7d0a456d48002ed` is recorded under
+  `docs/plans/revamp_2026_portal/baseline/TB0/` with the full verify result, 1440×900 / 1024×768 /
+  390×844 matched evidence, bundle/CSS output, and a fully dispositioned, reviewed drift register.
+  PR #44's Admin-only, direct send-only AutoHDR handoff is carried forward as existing
+  authority/source baseline, not a revamp tracer bullet. Separate repository-native TB0A (React
+  19.2 compatibility-only) and TB0B (developer-managed pipeline-order boundary) plans are not yet
+  drafted; review not started. Neither phase is built or live. TB0A must not start until this
+  authority promotion and its own reviewed plan are accepted, and Tailwind/shadcn must not start
+  until TB0A and TB0B are live.
 
 - **Mention-triggered emails for project comments and notice-board posts now carry the author's
   name and a 400-char, surrogate-safe excerpt of the actual comment/post body, deployed 2026-08-20
@@ -739,6 +753,13 @@ allowlist are silent no-ops otherwise). Full mechanics in `docs/subagents/agy-cl
   not implemented.
 
 ## Open plans (see `docs/plans/`)
+
+- **`Revamp-TB0A-React-19-2-Runtime-Upgrade-Plan.md`** — not yet drafted; review not started.
+  The scope brief exists at `docs/plans/revamp_2026_portal/roadmap/TB0A-React-19-2-Runtime-Upgrade.md`;
+  no React 19 work is built or live.
+- **`Revamp-TB0B-Pipeline-Configuration-Boundary-Plan.md`** — not yet drafted; review not started.
+  The scope brief exists at `docs/plans/revamp_2026_portal/roadmap/TB0B-Pipeline-Configuration-Boundary.md`;
+  no pipeline-order implementation is built or live.
 
 - **`ProjectWorkspace-Asset-Tab-Sync-Plan.md`** — stub only, not yet drafted as a full plan.
   `ProjectWorkspace.tsx`'s `assets` state is shared across every collection tab and only updates

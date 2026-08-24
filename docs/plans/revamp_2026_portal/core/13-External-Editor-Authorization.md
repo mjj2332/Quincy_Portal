@@ -23,13 +23,9 @@ Do not add an `external_editor` project-membership kind or a separate external-a
 
 ## 2. Capability profile
 
-External Editor keeps the normal production capabilities needed to perform editing work on an authorized project, including:
-
-- RAW/Edited media view/upload as the internal Editor contract allows;
-- annotation/recommend/compare/select/review operations;
-- approved extras/publish/client-preview/final-download operations;
-- `collaborateOnProject`;
-- future `moveProjectStage`.
+The complete initial allow-list is `uploadEdited`, `viewRaw`, `annotateRaw`, `recommendRaw`,
+`compareFrames`, `viewEdited`, `reviewEdited`, `annotateEdited`, and `collaborateOnProject`, plus
+future `moveProjectStage` and `viewProductionCalendar` when their owning tracer bullets ship.
 
 Do not grant:
 
@@ -37,7 +33,8 @@ Do not grant:
 - create/edit/archive project administration;
 - manage users/directory/integrations/pipeline/Admin backend;
 - project prioritization;
-- staff Notice Board capability.
+- `publish`, `viewClientPreview`, `downloadFinal`, `manageExtras`, `selectForEditing`, `uploadRaw`;
+- `viewNoticeBoard`, AutoHDR send, or provider/job diagnostic capabilities.
 
 Capability possession does not bypass assigned-project scope.
 
@@ -81,7 +78,7 @@ External Editors are assignable during Create Project and from the Workspace Edi
 - shoot date/time;
 - Stage and project Deadline;
 - service/deliverable set;
-- project production notes (`projects.notes`);
+- `productionNotes` (a distinct external-safe field);
 - production media/workflow state allowed by capabilities;
 - checklist and project discussion;
 - project team identities/role labels;
@@ -97,6 +94,9 @@ External Editors are assignable during Create Project and from the Workspace Edi
 - provider/integration credentials/status/diagnostics;
 - Admin backend data;
 - unrelated projects/staff.
+
+The existing internal-staff-only `projects.notes` field is excluded. It remains internal and is not
+copied into `productionNotes`.
 
 Enforce at server serializer/query boundaries across detail/list/Calendar/quick detail/activity/notification deep-link context/export/download metadata. UI hiding does not satisfy the contract.
 

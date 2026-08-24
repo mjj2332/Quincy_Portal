@@ -13,9 +13,15 @@ External status is shown subtly in Admin user management, Editor assignment/team
 
 ## Capabilities
 
-Grant normal assigned-project production capabilities comparable to internal Editor: media view/upload, annotation/recommend/compare/select/review, approved extras/publish/client-preview/final download, Collaboration, and future `moveProjectStage`.
+Grant only the explicit assigned-project allow-list: `uploadEdited`, `viewRaw`, `annotateRaw`,
+`recommendRaw`, `compareFrames`, `viewEdited`, `reviewEdited`, `annotateEdited`, and
+`collaborateOnProject`, plus `moveProjectStage` when TB5A ships and `viewProductionCalendar` when
+TB5C ships.
 
-Do not grant `viewAllProjects`, create/edit/archive-project administration, user/directory/integration/pipeline/Admin backend, project prioritization, or staff Notice Board.
+Withhold `publish`, `viewClientPreview`, `downloadFinal`, `manageExtras`, `selectForEditing`,
+`uploadRaw`, `viewNoticeBoard`, project create/edit/archive, Admin/user/directory/integration/
+pipeline/prioritization, the staff Notice Board, AutoHDR send, and provider/job diagnostic
+capabilities. They also do not receive `viewAllProjects`.
 
 ## Assigned-project authorization
 
@@ -44,7 +50,8 @@ Allowed on assigned project:
 - Agency/Agent display names;
 - shoot date/time;
 - Stage/Deadline/services/deliverables;
-- `projects.notes` production notes;
+- `productionNotes` (a distinct external-safe field; existing `projects.notes` remains internal and
+  is not copied into it);
 - authorized production media/workflow;
 - checklist/comments/team;
 - project-participant names/role labels/email addresses.

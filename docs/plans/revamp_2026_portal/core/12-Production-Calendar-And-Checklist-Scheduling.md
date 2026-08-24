@@ -55,7 +55,8 @@ Date-only end values do not get an invented midnight UTC instant. A physical ren
 - Explicit UI label: Sydney time.
 - Reject nonexistent spring-forward wall times.
 - Repeated fallback wall time requires first/second occurrence selection and persistence of the chosen fold/offset.
-- Month movement changes calendar date while preserving a timed item's wall-clock time/duration.
+- Month movement changes calendar date while preserving each endpoint's Sydney civil/wall-clock
+  time-of-day, not elapsed duration, across DST.
 - Never use the viewer's browser timezone as the domain timezone.
 
 ## 5. Checklist reminder and event behavior
@@ -171,12 +172,14 @@ Response contains normalized authorized event projections plus bounded Unschedul
 
 - draggable;
 - not resizable;
-- Month shifts date; Week shifts timed due if timed;
+- Month shifts date while preserving a timed item's Sydney civil/wall-clock time-of-day; Week shifts
+  timed due if timed;
 - explicit editor handles date-only ↔ timed or due-only ↔ range conversion.
 
 ### Checklist range
 
-- drag shifts start/end together preserving duration;
+- drag preserves each endpoint's Sydney civil/wall-clock time-of-day on the moved dates, not elapsed
+  duration, across DST;
 - end-edge resize changes end;
 - start-edge resize deferred;
 - Week snap = 15 minutes;

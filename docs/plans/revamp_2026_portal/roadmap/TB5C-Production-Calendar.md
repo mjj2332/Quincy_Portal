@@ -68,9 +68,11 @@ Use one range-bounded, server-authorized Calendar endpoint plus bounded Unschedu
 ### Checklist
 
 - due milestone draggable, not resizable;
-- range drag shifts start/end preserving duration;
+- range drag preserves each endpoint's Sydney civil/wall-clock time-of-day on the moved dates, not
+  elapsed duration, across DST;
 - end-edge resize changes end; start-edge resize deferred;
-- Month moves whole days preserving timed wall-clock/duration;
+- Month moves whole days preserving each endpoint's Sydney civil/wall-clock time-of-day, not elapsed
+  duration, across DST;
 - Week snap 15 minutes;
 - Agenda uses Move/Reschedule action;
 - explicit editor performs timed/date-only and due-only/range conversion.

@@ -14,7 +14,7 @@ Turn the revised package into approved repository authority, matched prototype/c
 - Capture matched evidence at 1440×900, 1024×768, 390×844 plus material states.
 - Create modular drift register and classify/assign every material difference.
 - Record bundle/CSS output.
-- Promote the approved package as **D-16–D-21 and A8–A14** only after explicit owner approval.
+- Promote the approved package as revised **D-13/D-15, D-16–D-19, and A8–A14** after the explicit owner approval recorded in the TB0 baseline report.
 - Merge appropriate product outcomes into PRD and update AGENTS/CLAUDE identically.
 - Add accurate todo umbrella/current-bullet entry.
 - Create/review separate TB0A and TB0B repository-native plans; later bullet plans are created only when their upstream contracts are available/current.
@@ -22,12 +22,12 @@ Turn the revised package into approved repository authority, matched prototype/c
 
 ## Authority proposal
 
+- Revised D-13: Production Calendar and checklist scheduling; Clients remain deferred.
+- Revised D-15: React 19.2 compatibility-only runtime baseline.
 - D-16: UI platform/design convergence.
 - D-17: Quincy-owned collaboration/freshness/pipeline/Kanban architecture.
 - D-18: Project Workspace coordination/Deadline/Editor notifications.
-- D-19: React 19.2 runtime baseline, superseding only D-15's React-major choice.
-- D-20: Production Calendar and checklist scheduling.
-- D-21: External Editor assigned-scope access.
+- D-19: External Editor assigned-scope access.
 - A8–A14 as described in `core/10-Repository-Document-Update-Map.md`.
 
 ## Baseline layering
@@ -42,7 +42,7 @@ Turn the revised package into approved repository authority, matched prototype/c
 - Authority documents agree and preserve history.
 - Baseline verification is green or failures documented.
 - Matched evidence/drift register reviewable.
-- D-16–D-21 and A8–A14 approved or explicitly amended.
+- Revised D-13/D-15, D-16–D-19, and A8–A14 approved or explicitly amended.
 - TB0A/TB0B plans pass required review.
 - No production source/dependency changes.
 

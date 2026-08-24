@@ -1,6 +1,6 @@
 # Frontend Architecture
 
-**Status:** Settled proposal; authority promotion and implementation pending  
+**Status:** Settled proposal; authority promotion recorded 2026-08-24; implementation pending
 **Related:** [Design convergence](./11-Design-Convergence.md), [Calendar/scheduling](./12-Production-Calendar-And-Checklist-Scheduling.md), [TB0A](../roadmap/TB0A-React-19-2-Runtime-Upgrade.md), [TB1](../roadmap/TB1-Tailwind-Shadcn-Foundation.md), [TB5C](../roadmap/TB5C-Production-Calendar.md)
 
 ## 1. Architecture objective

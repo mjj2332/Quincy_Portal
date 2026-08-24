@@ -1,31 +1,32 @@
 # Repository Document Update Map
 
-**Status:** Proposed synchronization checklist after separate authority-promotion approval  
+**Status:** Applied synchronization record after authority-promotion approval on 2026-08-24
 **Purpose:** prevent the revised package from drifting from Quincy's authority chain
 
-This package revision intentionally does **not** modify the authority files below.
+The exact authority wording was applied to the authority files on 2026-08-24; this map records the
+active package propagation and remaining target-vs-live boundaries.
 
 ## 1. `docs/Decision-Sheet.md`
 
-Preserve existing history. After separate owner approval add:
+Preserve existing history. The approved additions are:
 
-### Proposed D-16 — Frontend UI platform and design convergence
+### D-16 — Frontend UI platform and design convergence
 Tailwind v4 + source-owned shadcn, Base UI/Sera/Lucide, semantic Quincy tokens, controlled Preflight, no dark mode, evidence-led convergence.
 
-### Proposed D-17 — Quincy-owned collaboration, freshness, pipeline, and Kanban architecture
+### D-17 — Quincy-owned collaboration, freshness, pipeline, and Kanban architecture
 Keep deep routes/custom router; incremental TanStack Query; Cloudflare-owned collaboration/activity/notification data; fixed semantic Stage identities; developer-managed global order; correct ordering before dnd-kit modernization.
 
-### Proposed D-18 — Project Workspace coordination, Deadline, and Editor notifications
+### D-18 — Project Workspace coordination, Deadline, and Editor notifications
 Left rail canonical for Stage/Deadline/team; `editProject` rosters/deadlines; `moveProjectStage` Stage; Sydney project Deadline/reminders; assigned-Editor registry; Kanban Deadline metadata.
 
-### Proposed D-19 — React 19.2 runtime baseline
+### Revised D-15 — React 19.2 compatibility-only runtime baseline
 Standalone exact stable React 19.2 upgrade; retain TypeScript/Vite SPA/Cloudflare; no Compiler/RSC/SSR/product refactor collateral.
 
-### Proposed D-20 — Production Calendar and checklist scheduling
+### Revised D-13 — Production Calendar and checklist scheduling
 Dashboard Calendar beside List/Kanban; Sydney project Deadline milestones plus optional checklist due/range schedules; Month/Week/Agenda; typed filters/URL state; dedicated authorized range API; FullCalendar Standard official shadcn integration; guarded direct manipulation and accessible alternatives; no recurrence/external calendar sync.
 
-### Proposed D-21 — External Editor assigned-scope access
-Distinct global `external_editor` role using existing project Editor membership; assigned-project-only authorization; normal project-production capabilities but no broad/Admin/Notice Board scope; server-side external-safe DTO/event policy; project-scoped collaboration/contact; assigned-scope Calendar; role/session/membership lifecycle rules.
+### D-19 — External Editor assigned-scope access
+Distinct global `external_editor` role using existing project Editor membership; assigned-project-only authorization; explicit production/collaboration allow-list with no delivery/publish/RAW-selection/extras or broad/Admin/Notice Board scope; server-side external-safe DTO/event policy; project-scoped collaboration/contact; assigned-scope Calendar; role/session/membership lifecycle rules.
 
 ## 2. `docs/Implementation-Plan.md`
 
@@ -48,11 +49,11 @@ Required additions now include:
 - React/UI/freshness/canonical rail/Stage/pipeline/Deadline/notification/Kanban outcomes already proposed;
 - checklist unscheduled/due-only/start-end schedule semantics and Sydney time;
 - Calendar as third Dashboard view, Month/Week/Agenda, filters/shareable state, direct manipulation/accessibility and Unscheduled behavior;
-- External Editor identity, assigned-project visibility, normal production capability, privacy/contact bounds, collaboration/Calendar/notification behavior, and lifecycle/access-loss rules.
+- External Editor identity, assigned-project visibility, explicit production/collaboration allow-list, privacy/contact bounds, collaboration/Calendar/notification behavior, and lifecycle/access-loss rules.
 
 ## 4. `AGENTS.md` and `CLAUDE.md`
 
-Update identically only after D-16–D-21 approval and label targets versus live state accurately. Add concise rules for:
+Update identically after revised D-13/D-15 and D-16–D-19 approval, and label targets versus live state accurately. Add concise rules for:
 
 - React 19.2 target/compatibility boundary;
 - incremental Tailwind/shadcn and Quincy visual authority;

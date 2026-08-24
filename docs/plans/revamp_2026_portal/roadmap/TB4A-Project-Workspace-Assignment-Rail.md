@@ -43,7 +43,7 @@ Create Project retains initial team selection. After TB4E, External Editors are 
 
 ## Collaboration-only summary
 
-Stage-hidden collaborator receives presentation-safe Stage, Deadline/next reminder, and rosters only. This is distinct from TB4E External Editor normal assigned-project access.
+Stage-hidden collaborator receives presentation-safe Stage, Deadline/next reminder, and rosters only. This is distinct from TB4E External Editor's explicit assigned-project allow-list.
 
 ## Non-goals
 

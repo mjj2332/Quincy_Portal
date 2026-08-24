@@ -1,8 +1,8 @@
 # Revamp Decision Register
 
-**Status:** Owner decisions settled in the proposal package; repository authority promotion pending  
-**Last updated:** 2026-08-23  
-**Baseline:** `main` at `2ac2ca27a1e0ded328b9265613ab4ebeeb7db1b0`
+**Status:** Owner decisions settled and corrected authority promotion recorded 2026-08-24
+**Last updated:** 2026-08-24
+**Baseline:** detailed package `main` at `2ac2ca27a1e0ded328b9265613ab4ebeeb7db1b0`; current execution `main` at `08f4653482c82e4a117c6347a7d0a456d48002ed`
 
 This register separates owner-approved planning direction from future implementation evidence. A settled direction is not live until its tracer bullet is planned, built, verified, committed, and deployed.
 
@@ -12,7 +12,7 @@ This register separates owner-approved planning direction from future implementa
 |---|---|---|---|
 | RV-D01 | Use one coordinated revamp delivered through independently coherent tracer bullets. | Approved direction | No wholesale rewrite; every release has one primary outcome and rollback boundary. |
 | RV-D02 | Keep `portal/` as the only production implementation and `prototype/` as reference-only. | Approved direction | Never extend or copy prototype application structure. |
-| RV-D03 | Upgrade production to the latest stable pinned React `19.2.x` patch in TB0A. | Approved direction | React/React DOM versions match exactly; D-19 will supersede only the React-major portion of D-15. |
+| RV-D03 | Upgrade production to the latest stable pinned React `19.2.x` patch in TB0A. | Approved direction | React/React DOM versions match exactly; revised D-15 governs the React-major compatibility release. |
 | RV-D04 | Keep the Vite SPA, TypeScript, `createRoot`, StrictMode, typed custom router, and Cloudflare Worker asset-serving architecture. | Approved direction | No SSR, Server Components, framework migration, or router replacement as collateral work. |
 | RV-D05 | React TB0A is compatibility-only. | Approved direction | No React Compiler, `Activity`, Actions/form refactor, `useEffectEvent` sweep, ref-as-prop rewrite, or product redesign in the runtime release. |
 | RV-D06 | Adopt Tailwind CSS v4 and source-owned shadcn components after TB0A/TB0B. | Approved direction | Tailwind/shadcn are implementation tools, not visual authority. |
@@ -135,12 +135,12 @@ This register separates owner-approved planning direction from future implementa
 | ID | Decision | Status | Consequence |
 |---|---|---|---|
 | RV-D85 | Add distinct global role `external_editor`, displayed **External editor**, while project membership remains `editor`. | Approved requirement | One account role determines global scope; no third project-membership kind. |
-| RV-D86 | External Editors keep normal assigned-project production capabilities but no global/admin/project-administration capabilities. | Approved requirement | They receive `moveProjectStage` in assigned projects but not `viewAllProjects`, `editProject`, create/archive/manage/prioritize capabilities. |
+| RV-D86 | External Editors receive only the explicit assigned-project production/collaboration allow-list. | Approved requirement | Allow `uploadEdited`, `viewRaw`, `annotateRaw`, `recommendRaw`, `compareFrames`, `viewEdited`, `reviewEdited`, `annotateEdited`, `collaborateOnProject`, then `moveProjectStage`/`viewProductionCalendar` when shipped; withhold publish/client-preview/final-download/extras/RAW-selection/RAW-upload, `viewAllProjects`, project/Admin/Notice Board scope, AutoHDR send, and provider diagnostics. |
 | RV-D87 | External Editor project access requires explicit current membership and has no Photographer Stage restriction. | Approved requirement | Assigned active/delivered projects are visible; archived projects are unavailable through ordinary external surfaces. |
 | RV-D88 | Generalize project list/search/access around `viewAllProjects` versus explicit membership. | Approved direction | Photographer Stage restrictions remain an additional Photographer-only rule; do not add one-off External Editor UI filtering. |
 | RV-D89 | External Editors are eligible only in the Editor project slot and during Create Project. | Approved requirement | Never newly selectable as Photographer; inactive assigned external users remain visible/removable. |
 | RV-D90 | Use server-side role-safe project DTO/projections for External Editors. | Approved requirement | UI hiding is insufficient; apply to detail/list/Calendar/quick detail/activity/notifications/exports/cache boundaries. |
-| RV-D91 | External-safe project fields include project production notes and project-participant email addresses. | Approved requirement | Also allow address/location, Agency/Agent display names, shoot, Stage, Deadline, services, media/checklist/discussion/team; no global directory. |
+| RV-D91 | External-safe project fields include distinct `productionNotes` and project-participant email addresses. | Approved requirement | Also allow address/location, Agency/Agent display names, shoot, Stage, Deadline, services, media/checklist/discussion/team; internal `projects.notes` remains excluded and is never copied; no global directory. |
 | RV-D92 | Hide agent/client contact fields, billing/order bookkeeping, agency-directory notes, Dropbox paths/links, provider/integration diagnostics, and Admin data from External Editors. | Approved requirement | Assigned-project access does not imply full internal Editor payload. |
 | RV-D93 | External Editors have normal assigned-project Collaboration/checklist rights but no staff Notice Board. | Approved requirement | Mentions and assignee pickers are project-scoped; participant emails are visible within project context only. |
 | RV-D94 | External Editors receive assigned-scope Production Calendar. | Approved requirement | Show all scheduled work on assigned projects plus My Tasks quick filter; project Deadline is read-only, checklist scheduling follows source permission. |
@@ -153,14 +153,14 @@ This register separates owner-approved planning direction from future implementa
 
 ## J. Proposed repository authority mapping
 
-After a separate owner approval, TB0 should propose:
+Following the separate owner approval recorded in the TB0 baseline report, the promoted mapping is:
 
+- **Revised D-13 — Production Calendar and checklist scheduling.** Clients remain deferred; Calendar is a third Dashboard view after its prerequisite tracer bullets.
+- **Revised D-15 — React 19.2 compatibility-only runtime baseline.** This changes only the React/React DOM runtime major through TB0A.
 - **D-16 — Frontend UI platform and design convergence.**
 - **D-17 — Quincy-owned collaboration, freshness, pipeline, and Kanban architecture.**
 - **D-18 — Project Workspace coordination, Deadline, and Editor notifications.**
-- **D-19 — React 19.2 runtime baseline**, explicitly superseding only the React-major portion of D-15.
-- **D-20 — Production Calendar and checklist scheduling.** Dashboard Calendar, Sydney project/checklist scheduling, FullCalendar official shadcn Standard integration, guarded direct manipulation, no recurrence/external sync.
-- **D-21 — External Editor assigned-scope access.** Distinct global role, existing Editor membership, assigned-project authorization, external-safe DTO/event projections, project-scoped collaboration/Calendar, no Notice Board/global Admin surfaces.
+- **D-19 — External Editor assigned-scope access.** Distinct global role, existing Editor membership, assigned-project authorization, external-safe DTO/event projections, project-scoped collaboration/Calendar, no Notice Board/global Admin surfaces.
 
 Implementation Plan amendments:
 
@@ -172,7 +172,7 @@ Implementation Plan amendments:
 - **A13:** checklist scheduling and Production Calendar.
 - **A14:** External Editor assigned-scope authorization.
 
-These authority documents are intentionally unchanged by this package revision.
+These authority documents were promoted additively on 2026-08-24; implementation remains planned until the owning tracer bullets ship.
 
 ## K. Superseded active-package guidance
 

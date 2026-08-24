@@ -6,7 +6,7 @@ These are scope briefs. Every bullet requires a current-main-aware repository-na
 
 | Bullet | Primary outcome | Main architectural proof |
 |---|---|---|
-| [TB0](./TB0-Integrated-Architecture-And-Baseline.md) | Approved authority package, matched baseline and drift register | One coherent D-16–D-21/A8–A14 program |
+| [TB0](./TB0-Integrated-Architecture-And-Baseline.md) | Approved authority package, matched baseline and drift register | One coherent revised D-13/D-15, D-16–D-19, and A8–A14 program |
 | [TB0A](./TB0A-React-19-2-Runtime-Upgrade.md) | Production runs React 19.2 with no intended product/visual change | Runtime/type compatibility and rollback |
 | [TB0B](./TB0B-Pipeline-Configuration-Boundary.md) | Global Stage order is developer-managed | UI/API policy boundary without data rewrite |
 | [TB1](./TB1-Tailwind-Shadcn-Foundation.md) | First design-conformant Quincy shadcn form slice | UI platform and legacy coexistence |
