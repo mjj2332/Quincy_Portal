@@ -873,54 +873,112 @@ There is no schema/data/resource rollback. Do not delete user/project data, touc
 redeploy unchanged background/webhook Workers. Because the previous legacy CSS selectors remain
 for other consumers, rollback does not require reconstructing deleted shared CSS.
 
+## Execution record
+
+Built by Luna (xhigh effort), reviewed by 2 fresh Sol diff-review rounds (2 real issues fixed each
+round: a legacy `.grid` CSS name collision breaking the responsive layout, thin Edit-mode test
+coverage, then a still-partially-vacuous test assertion and stale bundle evidence), then 3 Opus
+final-draft/evidence review rounds:
+
+1. First Opus pass: verdict APPROVE on the code (independently re-derived the grid fix, cascade
+   contract, Preflight absence, and token collisions from primary sources), but found the required
+   evidence package (18 screenshots + 5 documents) was missing, plus a `FieldGroup` double-
+   `display`-utility fragility and a stale test count.
+2. Both code items were fixed directly (`FieldGroup` now `cn("w-full", className)`, single display
+   owner; the stale 192→193 count corrected) and the evidence package was captured: 18 matched
+   `1440×900`/`1024×768`/`390×844` before/after screenshots (9 "before" from a clean `git
+   stash`-restored checkout of the TB1 base commit, 9 "after" from the final build), plus
+   `reference-assessment.md`, `drift-register.md`, `dependency-and-style-audit.md`,
+   `automated-gates.txt`, and `manual-qa.md`.
+3. The manual-QA/drift-comparison pass (danger-mode Luna) reported one blocking finding — typed
+   values in the `type="email"`/`type="tel"` controls allegedly not retaining in the DOM. The
+   orchestrating session independently reproduced the exact scenario directly (a separate
+   authenticated browser session, real keystrokes, a real submit-triggered validation render, no
+   `POST` sent) and found the value genuinely retained throughout, matching the already-passing
+   automated suite. A second Opus review then traced the actual Base UI source (`Input` resolves
+   through `useFieldRootContext()`; no `Field.Root` exists anywhere in the app, so validation
+   hooks are all no-ops) and confirmed no code path could cause the reported loss — the most likely
+   cause is a Chrome-automation input-dispatch artifact specific to typed attribute inputs, with a
+   documented precedent for this exact class of false positive (TB0A's own recorded
+   "browser-automation key-dispatch limitation"). This Base UI shared-ref finding is recorded as a
+   non-blocking latent risk in `docs/lessons.md` for future Field.Root consumers.
+4. A final Opus confirmation pass verified all fixes and found 5 places where corrected sections
+   still had stale prose asserting the retracted regression as fact (headers said PASS, prose
+   underneath still said FAIL) — all 5 corrected, plus two optional notes added (a byte-identical
+   before/after screenshot pair explained in `drift-register.md`; the `lessons.md` entry above).
+
+The independent verification gate (§5) was run directly by the orchestrating session, outside any
+codex sandbox, at multiple points and confirmed green every time: `npm run typecheck`,
+`npm run build -w @quincy/web` (byte counts matched the evidence record exactly), `npm run test
+--workspaces` (all real suites — db 22/22, web node 68/68, web DOM 193/193, app 180+1 skipped,
+background 191/191, webhook-ingress 13/13 — only the documented `@quincy/shared` quirk causes the
+nonzero exit), and `npx vitest run --config packages/shared/vitest.config.ts` (60/60). Two of the
+builder's own sandboxed test runs had separately reported an `EPERM` loopback-binding failure on
+the Worker suites and once an unrelated `RichTextEditor` failure; neither reproduced in the
+orchestrating session's real runs, confirming both were sandbox artifacts, not real regressions.
+
 ## Acceptance checklist
 
-- [ ] TB0A and TB0B are both recorded live and accepted before implementation begins; the current
-      TB0A acceptance-status discrepancy is resolved explicitly.
-- [ ] React/React DOM remain exactly on the accepted React `19.2.x` baseline and all React 19.2
+- [x] TB0A and TB0B are both recorded live and accepted before implementation begins; the current
+      TB0A acceptance-status discrepancy is resolved explicitly. (TB0A formally accepted 2026-08-25
+      — see `docs/plans/implemented/Revamp-TB0A-React-19-2-Runtime-Upgrade-Plan.md`.)
+- [x] React/React DOM remain exactly on the accepted React `19.2.x` baseline and all React 19.2
       baseline gates remain green; no runtime work entered TB1.
-- [ ] Registry versions and peer contracts were rechecked at execution time; all direct additions
-      are exact stable pins and the lockfile has no unexplained churn.
-- [ ] Tailwind v4 runs through `@tailwindcss/vite`; CSS-first theme/utilities are present and
-      Preflight is absent from source and built CSS.
-- [ ] `components.json` exactly matches the Base UI `base-sera`, neutral, CSS-variable, Lucide,
+- [x] Registry versions and peer contracts were rechecked at execution time; all direct additions
+      are exact stable pins and the lockfile has no unexplained churn. (`lucide-react` drifted
+      1.33.0 → 1.34.0 at execution time, permitted by the plan; recorded in
+      `bundle-css-delta.md`.)
+- [x] Tailwind v4 runs through `@tailwindcss/vite`; CSS-first theme/utilities are present and
+      Preflight is absent from source and built CSS. (Confirmed directly against built CSS by two
+      independent Opus passes.)
+- [x] `components.json` exactly matches the Base UI `base-sera`, neutral, CSS-variable, Lucide,
       `rsc:false`, `tsx:true`, empty-config/no-prefix contract and contains no registry/dark-mode
       addition.
-- [ ] TypeScript, Vite, and both standalone Vitest configs resolve `@/* → src/*`; unrelated imports
-      were not rewritten.
-- [ ] `components/ui`, `components/quincy`, and `lib/utils` are app-local; no shared UI package or
+- [x] TypeScript, Vite, and both standalone Vitest configs resolve `@/* → src/*`; unrelated imports
+      were not rewritten. (`tsconfig.json`'s `baseUrl` was correctly omitted — TypeScript 7 rejects
+      it (`TS5102`) and `moduleResolution: "bundler"` resolves `paths` without it — a builder
+      deviation from the plan's literal text that a fresh Sol review confirmed correct.)
+- [x] `components/ui`, `components/quincy`, and `lib/utils` are app-local; no shared UI package or
       second primitive system was introduced.
-- [ ] Only Input and the minimal Field/Label/Error surface needed by the Client block were added;
+- [x] Only Input and the minimal Field/Label/Error surface needed by the Client block were added;
       no Button, Separator, bulk component, `tw-animate-css`, unused cva dependency, or unused
-      generated Field family is committed.
-- [ ] Only Agency, Agent, Agent email, and Agent phone in the `ProjectFields` Client section
+      generated Field family is committed. (`class-variance-authority` was dropped entirely —
+      confirmed absent from the lockfile, `node_modules`, and every source import.)
+- [x] Only Agency, Agent, Agent email, and Agent phone in the `ProjectFields` Client section
       converted; every other form/screen/component remains on its prior markup and owner.
-- [ ] All four controls retain their controlled values, exact callback field names, DOM order,
+- [x] All four controls retain their controlled values, exact callback field names, DOM order,
       native type/attributes, editability, and parent payload behavior in Create and Edit.
-- [ ] Label association, exact email error text/display, error clearing, explicit error
+      (Independently reproduced live by the orchestrating session after an initial false-positive
+      finding — see the Execution record above.)
+- [x] Label association, exact email error text/display, error clearing, explicit error
       association/announcement, `aria-invalid`, native prop pass-through, and ref-to-native-input
       behavior pass focused tests and manual QA.
-- [ ] `validateProjectFields` preserves empty/valid/invalid Agent email behavior in both modes;
+- [x] `validateProjectFields` preserves empty/valid/invalid Agent email behavior in both modes;
       all existing Create/Edit differences outside Client remain unchanged.
-- [ ] Quincy typography, spacing, responsive four/two/one-column geometry, hairlines, radii,
+- [x] Quincy typography, spacing, responsive four/two/one-column geometry, hairlines, radii,
       signals, focus, and motion behavior are preserved at desktop/compact/phone.
-- [ ] No stock Sera/shadcn appearance, raw Tailwind palette, stock shadow/radius/ring, dark branch,
-      or extra styling owner leaks into the rendered block.
-- [ ] The semantic Quincy token bridge uses the real existing variables and one CSS entry; legacy
+- [x] No stock Sera/shadcn appearance, raw Tailwind palette, stock shadow/radius/ring, dark branch,
+      or extra styling owner leaks into the rendered block. (The `FieldGroup` double-display-owner
+      fragility found by Opus was fixed — `cn("w-full", className)`, one display owner.)
+- [x] The semantic Quincy token bridge uses the real existing variables and one CSS entry; legacy
       CSS coexists cleanly with one styling owner per migrated element, and the sampled overlapping
       Quincy custom properties retain their pre-import computed values.
-- [ ] Repo-wide grep proves every deleted selector/generated source has zero remaining consumer;
-      the known shared legacy selectors remain available to untouched consumers.
-- [ ] Matched Create/Edit before/after evidence exists at `1440×900`, `1024×768`, and `390×844`;
+- [x] Repo-wide grep proves every deleted selector/generated source has zero remaining consumer;
+      the known shared legacy selectors remain available to untouched consumers. (No selector was
+      deleted in TB1 — all legacy selectors retain real consumers, confirmed by grep.)
+- [x] Matched Create/Edit before/after evidence exists at `1440×900`, `1024×768`, and `390×844`;
       focus/error evidence and the prototype non-comparability/design-system assessment are
       recorded.
-- [ ] Every material difference is classified; no Unwanted drift or Unassessed material item
-      remains, and owner disposition exists for any Intentional evolution/deferral.
-- [ ] Raw/gzip JS and CSS, total dist, direct dependency, and absolute/percentage deltas are
+- [x] Every material difference is classified; no Unwanted drift or Unassessed material item
+      remains, and owner disposition exists for any Intentional evolution/deferral. (The one
+      initially-reported Unwanted drift item was independently re-verified and corrected to
+      Conforming — see the Execution record above.)
+- [x] Raw/gzip JS and CSS, total dist, direct dependency, and absolute/percentage deltas are
       recorded and explained; generator-only/unused packages are absent from the browser bundle.
-- [ ] Focused tests, typecheck, web build, every runnable workspace suite, and the dedicated shared
-      suite are green with no unexplained warning.
-- [ ] Manual Create/Edit QA is complete at all three viewports, including valid/invalid/focus,
+- [x] Focused tests, typecheck, web build, every runnable workspace suite, and the dedicated shared
+      suite are green with no unexplained warning. (Independently re-run by the orchestrating
+      session multiple times outside any sandbox — see the Execution record above.)
+- [x] Manual Create/Edit QA is complete at all three viewports, including valid/invalid/focus,
       label keyboard/pointer behavior, persistence on a disposable local fixture, adjacent legacy
       sections, console, and network.
 - [ ] App-only deploy, rollback target, commit SHA, production Worker version, and passive

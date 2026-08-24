@@ -28,6 +28,15 @@ async function render(value: ReactNode) {
   await act(async () => { root!.render(value); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
 }
 
+async function changeInput(element: HTMLInputElement, value: string) {
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
+  await act(async () => {
+    setter.call(element, value);
+    element.dispatchEvent(new Event("input", { bubbles: true }));
+    await Promise.resolve();
+  });
+}
+
 async function unmount() {
   if (!root) return;
   await act(async () => { root!.unmount(); await Promise.resolve(); });
@@ -48,6 +57,12 @@ function checklistLabel(host: HTMLElement, heading: string, userId: string): HTM
 }
 
 const form: ProjectForm = { ...emptyProjectForm, photographerUserIds: [], editorUserIds: [] };
+const clientControls = [
+  ["project-agency-name", "agencyName", "Quincy Agency"],
+  ["project-agent-name", "agentName", "Alex Example"],
+  ["project-agent-email", "agentEmail", "alex@example.test"],
+  ["project-agent-phone", "agentPhone", "+61 412 345 678"],
+] as const;
 
 describe("ProjectFields photographer/editor team pickers", () => {
   let host: HTMLElement;
@@ -94,5 +109,66 @@ describe("ProjectFields photographer/editor team pickers", () => {
 
     await click(checkbox);
     expect(onToggle).toHaveBeenCalledWith("photographerUserIds", "editor-1");
+  });
+});
+
+describe("ProjectFields Client controls", () => {
+  let host: HTMLElement;
+
+  beforeEach(() => { host = mount(); apiGetMock.mockReset().mockResolvedValue({ users: [] }); });
+  afterEach(async () => { await unmount(); host.remove(); });
+
+  it.each(["create", "edit"] as const)("dispatches one exact callback tuple per controlled Client input and keeps the four controls writable in %s mode", async (mode) => {
+    const onChange = vi.fn();
+    await render(<ProjectFields form={form} errors={{}} mode={mode} onChange={onChange} onToggle={() => undefined} />);
+
+    for (const [id, field, value] of clientControls) {
+      const input = host.querySelector<HTMLInputElement>(`#${id}`)!;
+      expect(input.disabled).toBe(false);
+      expect(input.readOnly).toBe(false);
+      onChange.mockClear();
+      await changeInput(input, value);
+      expect(onChange).toHaveBeenCalledTimes(1);
+      expect(onChange).toHaveBeenCalledWith(field, value);
+    }
+  });
+
+  it("keeps controlled values, label associations, and email error behavior correct in Create and Edit", async () => {
+    for (const mode of ["create", "edit"] as const) {
+      const onChange = vi.fn();
+      let controlledForm = form;
+      await render(<ProjectFields form={controlledForm} errors={{}} mode={mode} onChange={onChange} onToggle={() => undefined} />);
+
+      for (const [id, field, updatedValue] of clientControls) {
+        const label = host.querySelector<HTMLLabelElement>(`label[for="${id}"]`)!;
+        const input = host.querySelector<HTMLInputElement>(`#${id}`)!;
+        expect(label.control).toBe(input);
+        expect(input.value).toBe(controlledForm[field]);
+
+        controlledForm = { ...controlledForm, [field]: updatedValue };
+        await render(<ProjectFields form={controlledForm} errors={{}} mode={mode} onChange={onChange} onToggle={() => undefined} />);
+
+        const updatedInput = host.querySelector<HTMLInputElement>(`#${id}`)!;
+        const updatedLabel = host.querySelector<HTMLLabelElement>(`label[for="${id}"]`)!;
+        expect(updatedInput.value).toBe(updatedValue);
+        expect(updatedLabel.control).toBe(updatedInput);
+      }
+
+      await render(<ProjectFields form={{ ...form, agencyName: "Quincy Test Agency", agentEmail: "not-an-email" }} errors={{ agentEmail: "Enter a valid email address." }} mode={mode} onChange={onChange} onToggle={() => undefined} />);
+      const invalidEmail = host.querySelector<HTMLInputElement>("#project-agent-email")!;
+      expect(invalidEmail.value).toBe("not-an-email");
+      expect(invalidEmail.getAttribute("aria-invalid")).toBe("true");
+      expect(invalidEmail.getAttribute("aria-describedby")).toBe("project-agent-email-error");
+      expect(invalidEmail.getAttribute("aria-errormessage")).toBe("project-agent-email-error");
+      expect(host.querySelector("#project-agent-email-error")?.getAttribute("role")).toBe("alert");
+      expect(host.querySelectorAll("#project-agent-email-error")).toHaveLength(1);
+      expect(host.textContent).toContain("Enter a valid email address.");
+
+      await render(<ProjectFields form={{ ...form, agencyName: "Quincy Test Agency", agentEmail: "alex@example.test" }} errors={{}} mode={mode} onChange={onChange} onToggle={() => undefined} />);
+      const validEmail = host.querySelector<HTMLInputElement>("#project-agent-email")!;
+      expect(validEmail.value).toBe("alex@example.test");
+      expect(validEmail.getAttribute("aria-invalid")).toBe("false");
+      expect(host.querySelector("#project-agent-email-error")).toBeNull();
+    }
   });
 });

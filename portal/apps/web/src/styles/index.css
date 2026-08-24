@@ -1,6 +1,10 @@
+@layer theme, base, components, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
 @import "./tokens/colors.css";
 @import "./tokens/spacing.css";
 @import "./tokens/typography.css";
+@import "./tokens/tailwind.css";
 @import "./tokens/base.css";
 @import "./fonts.css";
 @import "./app.css";

@@ -699,3 +699,25 @@ was expensive: three wrong root causes were shipped before the plan page was eve
   failure is logged for operations but cannot turn the send job back to `failed`. Otherwise a
   Workflow retry can replay only its cached post-commit tail and leave the UI claiming failure even
   though AutoHDR already accepted the paid work.
+
+## Base UI `Input` without a `Field.Root` shares one module-level ref across every instance (2026-08-25)
+
+- **Discovered while investigating a false-positive TB1 QA finding**, not a real bug in the
+  shipped code — recorded here so it doesn't become one. `@base-ui-react`'s `Input` resolves its
+  field context via `useFieldRootContext()`; TB1's `components/ui/input.tsx` renders it with no
+  ancestor `Field.Root` anywhere in the app (confirmed by grep), so every instance falls back to
+  the library's single shared `DEFAULT_FIELD_ROOT_CONTEXT`. In that fallback, `validation.commit`,
+  `validation.change`, `registerFieldControl`, `setDirty`, `setFilled`, `setTouched`, and
+  `setFocused` are all no-ops — which is exactly why `Input` behaves as a plain controlled
+  `<input>` today and is safe to use this way.
+- **The hazard:** `DEFAULT_FIELD_ROOT_CONTEXT.validation.inputRef` is one module-level
+  `{ current: null }` object, and `FieldControl` attaches it as a ref to *every* `Input` instance
+  in the app — last-mounted instance wins. Inert today because nothing reads that ref and no
+  Base UI validation/`autoFocus` surface is in use. It becomes a real cross-field aliasing hazard
+  the moment any future consumer wraps some `Input`s in a genuine `Field.Root` (enabling Base UI's
+  own validation/`autoFocus` machinery) while others remain bare — the wrapped and unwrapped
+  instances would silently contend for the same ref.
+- **Rule:** if a future TB-phase introduces `Field.Root` anywhere in the app, audit every existing
+  bare `Input` usage at the same time — either wrap them consistently or confirm the mixed
+  bare/wrapped state is intentional and the shared-ref hazard is actually inert for that specific
+  combination, rather than assuming today's "it's just a no-op" analysis still holds.

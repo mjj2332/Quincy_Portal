@@ -923,6 +923,12 @@ button { font-family: var(--font-sans); }
 .admin-field input:focus, .admin-field select:focus, .admin-role-select:focus { outline: none; border-color: var(--ink-900); }
 .admin-field input[aria-invalid="true"] { border-color: var(--signal-critical); }
 .admin-field small { color: var(--signal-critical); font: var(--type-body); font-size: 12px; letter-spacing: normal; text-transform: none; }
+.quincy-input:focus,
+.quincy-input:focus-visible {
+  outline: none;
+  border-color: var(--focus-ring);
+}
+.quincy-input[aria-invalid="true"] { border-color: var(--signal-critical); }
 .admin-table-wrap { overflow-x: auto; border: 1px solid var(--border-hairline); background: var(--paper-000); }
 .admin-table { width: 100%; min-width: 820px; border-collapse: collapse; font-size: 14px; }
 .admin-table th { padding: 12px var(--space-4); border-bottom: 1px solid var(--border-hairline); color: var(--text-muted); font: var(--type-eyebrow); font-size: 11px; letter-spacing: var(--tracking-wide); text-align: left; text-transform: uppercase; }

@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import type { CollectionKind, Role } from "@quincy/shared";
 import { apiGet } from "../lib/api";
+import { FieldGroup } from "@/components/ui/field";
+import { QuincyField } from "@/components/quincy/QuincyField";
 
 export type User = { id: string; name: string; email: string; role: Role; active: boolean };
 export type ProjectForm = {
@@ -79,7 +81,12 @@ export function ProjectFields({ form, errors, existingCollections = [], mode = "
   return <>
     <section className="create-project__section" aria-labelledby="client-heading">
       <div className="create-project__section-head"><div className="ey">Client</div><h2 className="serif" id="client-heading">Who is it for?</h2></div>
-      <div className="create-project__fields"><label className="admin-field"><span>Agency</span><input value={form.agencyName} onChange={(event) => onChange("agencyName", event.target.value)} /></label><label className="admin-field"><span>Agent</span><input value={form.agentName} onChange={(event) => onChange("agentName", event.target.value)} /></label><label className="admin-field"><span>Agent email</span><input type="email" value={form.agentEmail} onChange={(event) => onChange("agentEmail", event.target.value)} aria-invalid={Boolean(errors.agentEmail)} />{errors.agentEmail && <small>{errors.agentEmail}</small>}</label><label className="admin-field"><span>Agent phone</span><input type="tel" value={form.agentPhone} onChange={(event) => onChange("agentPhone", event.target.value)} /></label></div>
+      <FieldGroup className="[&]:grid grid-cols-1 min-[721px]:grid-cols-2 min-[1081px]:grid-cols-4 gap-[var(--space-4)]">
+        <QuincyField id="project-agency-name" label="Agency" value={form.agencyName} onChange={(event) => onChange("agencyName", event.target.value)} />
+        <QuincyField id="project-agent-name" label="Agent" value={form.agentName} onChange={(event) => onChange("agentName", event.target.value)} />
+        <QuincyField id="project-agent-email" label="Agent email" type="email" value={form.agentEmail} onChange={(event) => onChange("agentEmail", event.target.value)} aria-invalid={Boolean(errors.agentEmail)} error={errors.agentEmail} />
+        <QuincyField id="project-agent-phone" label="Agent phone" type="tel" value={form.agentPhone} onChange={(event) => onChange("agentPhone", event.target.value)} />
+      </FieldGroup>
     </section>
     <section className="create-project__section" aria-labelledby="shoot-heading">
       <div className="create-project__section-head"><div className="ey">Shoot</div><h2 className="serif" id="shoot-heading">When is it happening?</h2></div>
