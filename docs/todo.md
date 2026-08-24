@@ -23,23 +23,26 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
   deliberately skipped as a documented risk decision since that code path is byte-for-byte
   unchanged and already covered locally). TB0B is now live, unblocking TB1.
 
-- **TB0A (React 19.2 compatibility-only runtime upgrade) is deployed to production, 2026-08-24**
-  (`docs/plans/Revamp-TB0A-React-19-2-Runtime-Upgrade-Plan.md`, commits `fef61f5` prerequisite R2
-  fix + `eb76732` the upgrade itself, production Worker version `202d4cd5-c6ec-4f98-8cd2-e7fb2b0d0d60`,
-  rollback target `84ca29ba-c2fb-4e65-8a2a-880bb2e8e5ea`).** Went through 2 Sol review rounds, an
-  Opus final-draft review (which caught a real component-attribution error in the manual
-  verification record and required recording an explicit release exception rather than silently
-  deferring Lightbox/rendition checks), and a passive production smoke with zero regressions found.
-  Found and fixed a genuine, unrelated local-dev bug along the way: `.dev.vars` missing
-  `APP_ENV=dev` let local uploads presign against production R2 while completion checked local R2,
-  producing TB0's own recorded "Uploaded object was not found in R2" failure — see `docs/lessons.md`.
-  One reproduction during that diagnosis reached real production R2 before the fix landed, leaving
-  a harmless orphaned test object (key/timestamp recorded in the TB0A plan); the exposed R2 S3
-  credentials were blanked from local `.dev.vars` but **still need rotation on the Cloudflare side**
-  (see "Waiting on user/external" below). **Not yet formally accepted:** Lightbox/PhotoGrid
-  interaction and full sign-out/in remain unverified against a real rendered asset (low-risk per a
-  static React-19 removed-API usage sweep, zero hits), and the 22 matched `tb0a-*` visual-parity
-  screenshots against TB0's baseline haven't been captured.
+- **TB0A (React 19.2 compatibility-only runtime upgrade) is deployed to production and accepted,
+  2026-08-25** (`docs/plans/implemented/Revamp-TB0A-React-19-2-Runtime-Upgrade-Plan.md`, commits
+  `fef61f5` prerequisite R2 fix + `eb76732` the upgrade itself, production Worker version
+  `202d4cd5-c6ec-4f98-8cd2-e7fb2b0d0d60`, rollback target `84ca29ba-c2fb-4e65-8a2a-880bb2e8e5ea`).
+  Went through 2 Sol review rounds, an Opus final-draft review (which caught a real
+  component-attribution error in the manual verification record and required recording an explicit
+  release exception rather than silently deferring Lightbox/rendition checks), and a passive
+  production smoke with zero regressions found. Found and fixed a genuine, unrelated local-dev bug
+  along the way: `.dev.vars` missing `APP_ENV=dev` let local uploads presign against production R2
+  while completion checked local R2, producing TB0's own recorded "Uploaded object was not found in
+  R2" failure — see `docs/lessons.md`. One reproduction during that diagnosis reached real
+  production R2 before the fix landed, leaving a harmless orphaned test object (key/timestamp
+  recorded in the TB0A plan); the exposed R2 S3 credentials were blanked from local `.dev.vars` but
+  **still need rotation on the Cloudflare side** (see "Waiting on user/external" below). All 22
+  matched `tb0a-*` visual-parity screenshots were captured 2026-08-25 (danger-mode Luna,
+  `docs/plans/revamp_2026_portal/baseline/TB0A/evidence/Visual-Parity-Report.md`) and show zero
+  React 19 regression. **Owner formally accepted TB0A 2026-08-25** on this evidence; Lightbox/
+  PhotoGrid interaction and the sign-out/in cycle remain unverified against a real rendered asset
+  (low-risk per the static React-19 removed-API sweep, zero hits) and are tracked as follow-up debt
+  below rather than blocking further work.
 - **Quincy Portal revamp TB0 is the active authority/baseline phase; TB0 itself changes no product
   source, dependency, schema, Worker, or production resource.** The owner approved the corrected
   authority package on 2026-08-24: D-13 and D-15 revised inline, four new decisions D-16–D-19,
@@ -461,6 +464,17 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
   in `portal/workers/app/src/lib/r2s3.ts`).
 - [x] Dropbox app registered, secrets uploaded, `sharing.read` scope added + connection
   re-authorized, first live sync confirmed working (all 2026-07-20/21).
+- [ ] **TB0A follow-up debt (low-priority, accepted 2026-08-25 without this):** verify Lightbox
+  open/close/filmstrip navigation, RAW-vs-Edited comparison, PhotoGrid load-failure/retry, and a
+  full sign-out/in cycle against real rendered media on React 19.2. Twice attempted and twice
+  blocked this session: no local project has processed RAW/Edited renditions (the background Worker
+  that consumes the rendition queue has no local dev entry point — standing it up means resolving
+  the app Worker's `BACKGROUND` service binding, queue consumers, Workflows, and Durable Objects
+  together), and this environment's Browser pane denied navigation to production for a passive
+  check. Low-risk (a static sweep for every React 18→19 removed/changed API found zero hits
+  touching these surfaces), but genuinely unverified — do not silently mark passed. Close via either
+  a future normal session sampling a real populated project in production, or standing up the local
+  background Worker.
 
 ## Open, not yet fixed
 

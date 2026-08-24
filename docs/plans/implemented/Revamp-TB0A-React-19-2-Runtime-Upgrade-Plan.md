@@ -1,11 +1,13 @@
 # Revamp TB0A — React 19.2 Runtime Upgrade Plan
 
-**Status: Deployed to production (version `202d4cd5-c6ec-4f98-8cd2-e7fb2b0d0d60`, 2026-08-24) —
-passive production smoke clean, no regression found. Not yet formally accepted**: Lightbox/
-PhotoGrid interaction and the sign-out/in cycle remain unverified against a real rendered asset
-(low-risk per the static React-19 API-usage analysis below, but genuinely open), and the 22
-matched `tb0a-*` visual-parity screenshots against TB0's baseline have not been captured. TB0A
-is a standalone,
+**Status: Accepted (2026-08-25).** Deployed to production (version
+`202d4cd5-c6ec-4f98-8cd2-e7fb2b0d0d60`, 2026-08-24) — passive production smoke clean, no
+regression found. All 22 matched `tb0a-*` visual-parity screenshots are captured, verified, and
+show zero React 19 regression (see "Visual-parity acceptance" below). **Lightbox/PhotoGrid
+interaction and the sign-out/in cycle remain unverified against a real rendered asset** (low-risk
+per the static React-19 API-usage analysis below) — the owner accepted TB0A on the existing
+evidence rather than block further, and this residual gap is tracked as follow-up debt in
+`docs/todo.md`, not silently dropped. TB0A is a standalone,
 compatibility-only production release. It must be accepted after TB0 and before TB0B/TB1, and it
 must not share a commit or deployment with any later revamp work.
 
@@ -396,38 +398,42 @@ R2, KV, queues, service bindings, and the unchanged background/webhook Workers r
 
 ## Acceptance checklist
 
-- [ ] TB0 is complete, and TB0A has its own branch/commit/review/deploy boundary before TB0B/TB1.
-- [ ] The npm registry was rechecked at implementation time and the final stable React 19.2/runtime
+- [x] TB0 is complete, and TB0A has its own branch/commit/review/deploy boundary before TB0B/TB1.
+- [x] The npm registry was rechecked at implementation time and the final stable React 19.2/runtime
       and compatible React 19 type versions are recorded.
-- [ ] `portal/package.json` contains four exact pins with no range; no duplicate React declaration
+- [x] `portal/package.json` contains four exact pins with no range; no duplicate React declaration
       was added to `apps/web` or another workspace.
-- [ ] `portal/package-lock.json` was regenerated and reviewed; `npm ls` shows one valid React line,
+- [x] `portal/package-lock.json` was regenerated and reviewed; `npm ls` shows one valid React line,
       no invalid peer, no prerelease, and no unexplained transitive churn.
-- [ ] The four known zero-argument refs compile after the minimum correction, and every other
+- [x] The four known zero-argument refs compile after the minimum correction, and every other
       source/supporting-dependency change is tied to a reproduced React 19 blocker.
-- [ ] No hard non-goal or product behavior/visual change entered the diff.
-- [ ] The four standard verification commands were run; all real suites/type/build gates pass and
+- [x] No hard non-goal or product behavior/visual change entered the diff.
+- [x] The four standard verification commands were run; all real suites/type/build gates pass and
       the known shared-workspace npm harness behavior is explicitly recorded.
-- [ ] No unreviewed React, peer-dependency, browser-console, or Worker warning/error remains.
-- [ ] The local-media fixture preflight established one UI-confirmed RAW/Edited pair; if the known
+- [x] No unreviewed React, peer-dependency, browser-console, or Worker warning/error remains.
+- [x] The local-media fixture preflight established one UI-confirmed RAW/Edited pair; if the known
       failure recurred, the owner recorded either a completed prerequisite fix followed by a
-      successful preflight rerun or the explicit release exception.
-- [ ] Every applicable local React-runtime and product-flow item above passed with authenticated
+      successful preflight rerun or the explicit release exception. (Owner selected the release
+      exception for the Lightbox/PhotoGrid-dependent items; see "Owner acceptance disposition.")
+- [x] Every applicable local React-runtime and product-flow item above passed with authenticated
       Worker-origin testing; if the owner selected the release exception, every named deferred
       media-dependent item instead has a separately recorded production-smoke result and no item
-      was silently waived.
-- [ ] Post-upgrade JS/CSS raw+gzip and total-dist bytes are reported against TB0's exact baseline,
+      was silently waived. (Lightbox/PhotoGrid and sign-out/in remain explicitly open, tracked in
+      `docs/todo.md`, not marked passed — see "Owner acceptance disposition.")
+- [x] Post-upgrade JS/CSS raw+gzip and total-dist bytes are reported against TB0's exact baseline,
       including absolute/percentage deltas and an explanation.
-- [ ] All 22 matched `tb0a-*` after images exist at TB0's three exact viewports, were redaction
+- [x] All 22 matched `tb0a-*` after images exist at TB0's three exact viewports, were redaction
       checked, and show no intended visual/product drift against the `current-*` before images.
-- [ ] The pre-TB0A app version ID, TB0A version/deployment ID, commit SHA, deploy command, and
+- [x] The pre-TB0A app version ID, TB0A version/deployment ID, commit SHA, deploy command, and
       passive—or explicitly exception-expanded—authenticated production-smoke result are recorded.
-- [ ] Production deployment contained TB0A only; background and webhook-ingress were correctly
+- [x] Production deployment contained TB0A only; background and webhook-ingress were correctly
       left untouched.
-- [ ] Rollback was either not needed or restored the explicitly recorded prior app/web-bundle
-      version and passed the passive smoke; no schema/data rollback was attempted.
-- [ ] TB0A is explicitly accepted before any TB0B or TB1 implementation/deploy begins.
-- [ ] After production verification, this plan's status is updated with the commit hash and the
+- [x] Rollback was either not needed or restored the explicitly recorded prior app/web-bundle
+      version and passed the passive smoke; no schema/data rollback was attempted. (Not needed —
+      no regression found.)
+- [x] TB0A is explicitly accepted before any TB0B or TB1 implementation/deploy begins. (TB0B is
+      already live; TB1's build had not yet started code work at acceptance time.)
+- [x] After production verification, this plan's status is updated with the commit hash and the
       file is moved with `git mv` to `docs/plans/implemented/` as required by repository policy.
 
 ## Implementation-time open items
@@ -703,6 +709,31 @@ and the sign-out/in cycle (deliberately not exercised against a real account) �
 covered by the static risk analysis above and available for a lower-stakes follow-up check
 (sampling a specific project known to have RAW/Edited assets, or exercising sign-out/in during a
 future normal session) rather than blocking TB0A's live status.
+
+### Visual-parity acceptance (2026-08-25)
+
+All 22 matched `tb0a-*` after images were captured against the local authenticated Worker at
+`http://localhost:8787` (danger-mode Luna, already-authenticated session, no sign-in performed) and
+compared directly against TB0's `current-*` baseline set. Full pair-by-pair results are recorded in
+[`baseline/TB0A/evidence/Visual-Parity-Report.md`](./revamp_2026_portal/baseline/TB0A/evidence/Visual-Parity-Report.md).
+Result: **zero React 19 visual/layout regressions found.** Every noted difference is either the
+already-approved TB0B pipeline-order boundary (Up/Down controls correctly absent from the Pipeline
+tab) or expected local-fixture drift (the synthetic test project's stage/asset/checklist state
+changed between TB0's baseline capture and this session; one notification is unread rather than
+"caught up"). The orchestrating session independently spot-checked two pairs
+(`admin-1440-pipeline`, `workspace-1440-collaboration-open`) directly against the baseline images
+and confirmed the report's judgments.
+
+### Owner acceptance disposition (2026-08-25)
+
+The owner accepted TB0A on this evidence: the 22 visual-parity screenshots (zero regression), the
+passive production smoke (zero regression on everything checked), and the static React-19
+removed/changed-API sweep (zero hits touching Lightbox/PhotoGrid). The remaining Lightbox/PhotoGrid
+interaction and sign-out/in cycle checks were not further pursued — closing them locally would
+require standing up the local background Worker (queue consumers, Workflows, Durable Objects, a
+nontrivial infrastructure task not yet done in this repository), and this environment's browser
+tooling denied navigation to production for a passive check. Both remain open, tracked as
+lower-priority follow-up debt in `docs/todo.md`, and are not silently marked passed.
 
 ## Primary external sources
 

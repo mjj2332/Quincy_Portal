@@ -955,7 +955,15 @@ for other consumers, rollback does not require reconstructing deleted shared CSS
    **Orchestrator disposition (2026-08-24):** the owner chose to proceed with TB1 planning now and
    close out TB0A's remaining acceptance items (Lightbox/PhotoGrid interaction check, 22
    visual-parity screenshots vs. the TB0 baseline) before TB1's own **build** phase begins, not
-   before its planning phase. Do not start TB1 code work until that TB0A acceptance is recorded.
+   before its planning phase.
+
+   **Resolved (2026-08-25):** the 22 matched `tb0a-*` visual-parity screenshots are captured and
+   show zero React 19 regression. The owner formally accepted TB0A on this evidence, with
+   Lightbox/PhotoGrid interaction and the sign-out/in cycle remaining open as tracked low-priority
+   follow-up debt in `docs/todo.md` (twice attempted, blocked both times by local/production
+   infrastructure limits, not by any found regression). TB0A is now both live and accepted —
+   `docs/plans/implemented/Revamp-TB0A-React-19-2-Runtime-Upgrade-Plan.md`. This precondition is
+   satisfied; TB1 build work may proceed.
 
 ## Opus final-approval notes for the builder (non-blocking)
 
