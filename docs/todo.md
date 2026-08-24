@@ -7,8 +7,23 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
 > counts, full diagnostic transcripts) has been cut in favor of what/when/deploy-state. See
 > `docs/lessons.md` for incident mechanics, and `docs/reviews/` for full QA-sweep detail.
 
-## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29, seed-admin UUID migration 2026-07-29, notification dismiss + stalled-guard 2026-07-30, download selection 2026-08-04, notice-board rich text + mentions 2026-08-17, project comments + collaboration panel 2026-08-17, project subtasks/checklist 2026-08-17, collaboration panel relocated to Project page 2026-08-17, collaboration panel UI fixes + due-time reminder 2026-08-17, notification click navigation 2026-08-17, comment ordering + Shift+Enter soft breaks 2026-08-17, mention-email content 2026-08-20, TB0 authority promotion 2026-08-24, TB0A React 19.2 deployed 2026-08-24, TB0B pipeline configuration boundary deployed 2026-08-24)
+## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29, seed-admin UUID migration 2026-07-29, notification dismiss + stalled-guard 2026-07-30, download selection 2026-08-04, notice-board rich text + mentions 2026-08-17, project comments + collaboration panel 2026-08-17, project subtasks/checklist 2026-08-17, collaboration panel relocated to Project page 2026-08-17, collaboration panel UI fixes + due-time reminder 2026-08-17, notification click navigation 2026-08-17, comment ordering + Shift+Enter soft breaks 2026-08-17, mention-email content 2026-08-20, TB0 authority promotion 2026-08-24, TB0A React 19.2 deployed + accepted 2026-08-25, TB0B pipeline configuration boundary deployed 2026-08-24, TB1 Tailwind v4/shadcn foundation deployed 2026-08-25)
 
+- **TB1 (Tailwind v4 + shadcn/Base UI foundation, first consumer: `ProjectFields`'s Client section)
+  is deployed to production, 2026-08-25** (`docs/plans/implemented/
+  Revamp-TB1-Tailwind-Shadcn-Foundation-Plan.md`, commit `00e2bd3`, production Worker version
+  `a55375f5-2b92-4eb2-860f-541f3ec212b5`, rollback target `02fe617d-d83d-4e96-889c-0ce23e71f941`).
+  Converts Agency/Agent/Agent email/Agent phone (Create and Edit) to source-owned shadcn/Base UI
+  primitives on a pinned Tailwind v4 CSS-first setup, no Preflight, matched to the existing Quincy
+  visual system — no other form/screen changed. Went through 2 Sol plan rounds, 2 Opus tier-2 plan
+  rounds, 2 Sol diff-review rounds (4 real issues fixed, including a legacy `.grid` CSS name
+  collision that silently broke the responsive layout), and 3 Opus final-draft/evidence rounds
+  (a `FieldGroup` double-display-utility fragility fixed; the full 18-screenshot + 5-document
+  evidence package captured; a false-positive "email/tel values don't retain" finding independently
+  reproduced-and-refuted by the orchestrating session via direct DOM/network verification, traced
+  to its root cause in Base UI's `Field.Root`-less code path — see `docs/lessons.md`'s new entry
+  for the non-blocking latent risk this surfaced for future `Field.Root` consumers). Passive
+  production smoke against real client data found zero regressions.
 - **TB0B (developer-managed pipeline-order boundary) is deployed to production, 2026-08-24**
   (`docs/plans/implemented/Revamp-TB0B-Pipeline-Configuration-Boundary-Plan.md`, commits `05f52d8`
   code/tests + `7b1a2ce` the A4 authority-file edit, production Worker version
@@ -53,10 +68,10 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
   for Dashboard only — see `Baseline-Report.md`), bundle/CSS output, and a fully dispositioned,
   reviewed drift register.
   PR #44's Admin-only, direct send-only AutoHDR handoff is carried forward as existing
-  authority/source baseline, not a revamp tracer bullet. TB0A (React 19.2 compatibility-only) and
-  TB0B (developer-managed pipeline-order boundary) are both drafted, reviewed, and deployed to
-  production (see the bullets above). Both prerequisite phases are now live, so TB1
-  (Tailwind v4 + shadcn foundation) is unblocked.
+  authority/source baseline, not a revamp tracer bullet. TB0A (React 19.2 compatibility-only),
+  TB0B (developer-managed pipeline-order boundary), and TB1 (Tailwind v4 + shadcn foundation) are
+  all drafted, reviewed, and deployed to production (see the bullets above). All three are now
+  live, so TB2 (route-safe data freshness) is next in the Revised sequence.
 
 - **Mention-triggered emails for project comments and notice-board posts now carry the author's
   name and a 400-char, surrogate-safe excerpt of the actual comment/post body, deployed 2026-08-20

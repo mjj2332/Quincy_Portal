@@ -1,7 +1,9 @@
 # Revamp TB1 — Tailwind v4 + shadcn Foundation Plan
 
-> **Status: APPROVED — plan review complete (2 Sol rounds, 2 Opus tier-2 rounds, final verdict
-> APPROVE 2026-08-24); not yet implemented, verified, or deployed.**
+> **Status: Deployed to production (version `a55375f5-2b92-4eb2-860f-541f3ec212b5`, 2026-08-25) —
+> passive production smoke clean, no regression found.** The `ProjectFields` Client section
+> (Agency, Agent, Agent email, Agent phone) now runs on the Tailwind v4/shadcn/Base UI foundation
+> in both Create and Edit modes, verified against real production data.
 
 ## Authority and outcome
 
@@ -841,6 +843,42 @@ No background or webhook-ingress deployment and no D1 migration are required. Af
 verification, update this plan's status with the commit hash/version, update `docs/todo.md`, and
 move this file with `git mv` to `docs/plans/implemented/` as required by repository policy.
 
+### Deployment record
+
+- **Pre-deploy production version:** `02fe617d-d83d-4e96-889c-0ce23e71f941` (TB0B, 100% traffic) —
+  the rollback target if needed.
+- **Commit deployed:** `00e2bd3` on `main`.
+- **Deploy command:** `npx wrangler deploy --message "TB1 Tailwind v4 shadcn foundation"` from
+  `portal/workers/app`, after a fresh `npm run build -w @quincy/web` (asset hashes matched the
+  locally-verified/committed build exactly: `index-BRcM4W58.js`, `index-NmV-0yUO.css`).
+- **New production version:** `a55375f5-2b92-4eb2-860f-541f3ec212b5`. Confirmed
+  `env.APP_ENV ("production")` in the deploy output. 3 new/modified assets uploaded
+  (`index.html`, the new JS/CSS bundles), 12 already-uploaded assets (fonts/images) unchanged.
+- **Scope:** app Worker only, as the plan requires. No background or webhook-ingress redeploy.
+
+### Production smoke — passive, authenticated, real account (`Tez`, real production data)
+
+Performed directly against `https://quincy.flamingfire.my` post-deploy. Zero console errors and
+zero non-GET network requests observed across every check — no create/edit/delete/upload/publish
+action was taken.
+
+- **Create mode** (`/projects/new`): the Client section rendered with all four controls present at
+  their exact expected ids/types/label associations (`project-agency-name`/text,
+  `project-agent-name`/text, `project-agent-email`/email, `project-agent-phone`/tel). Computed
+  styles confirmed the Quincy design system, not a stock shadcn aesthetic: `--font-sans` (Apfel
+  Grotezk) family, `38px` minimum height, hairline border color, warm-paper background, `4px`
+  radius. New hashed assets (`index-BRcM4W58.js`, `index-NmV-0yUO.css`) served with 200s.
+- **Edit mode**, a real populated client project (99/108 Brook Street, Ray White Eastern Beaches):
+  all four Client controls rendered correctly, populated with real data, `disabled=false` and
+  `readOnly=false` on every control — matching Create mode's editability contract. No console
+  error on either the Workspace or Edit page loads.
+- **Network:** every request across the full smoke session (Dashboard, Create, Workspace, Edit)
+  was a `GET` returning `200` or `304`; zero `POST`/`PUT`/`PATCH`/`DELETE` requests, confirming no
+  real data was created, edited, or mutated.
+
+**Result: no regression found; the migrated Client section renders and behaves correctly on both
+Create and Edit against real production data, with the intended Quincy visual authority intact.**
+
 ### Concrete rollback
 
 If a local/automated gate fails, do not deploy. If production smoke finds a regression, restore
@@ -981,9 +1019,9 @@ orchestrating session's real runs, confirming both were sandbox artifacts, not r
 - [x] Manual Create/Edit QA is complete at all three viewports, including valid/invalid/focus,
       label keyboard/pointer behavior, persistence on a disposable local fixture, adjacent legacy
       sections, console, and network.
-- [ ] App-only deploy, rollback target, commit SHA, production Worker version, and passive
+- [x] App-only deploy, rollback target, commit SHA, production Worker version, and passive
       production smoke are recorded; no migration or background/webhook deployment occurred.
-- [ ] After production verification, the status/todo are updated and this plan is moved with
+- [x] After production verification, the status/todo are updated and this plan is moved with
       `git mv` to `docs/plans/implemented/`.
 
 ## Primary external implementation references
