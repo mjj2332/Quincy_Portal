@@ -14,8 +14,10 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
   authority package on 2026-08-24: D-13 and D-15 revised inline, four new decisions D-16–D-19,
   and Implementation Plan amendments A8–A14 (`docs/plans/TB0-Integrated-Architecture-And-Baseline-Plan.md`).
   The current-main baseline at `08f4653482c82e4a117c6347a7d0a456d48002ed` is recorded under
-  `docs/plans/revamp_2026_portal/baseline/TB0/` with the full verify result, 1440×900 / 1024×768 /
-  390×844 matched evidence, bundle/CSS output, and a fully dispositioned, reviewed drift register.
+  `docs/plans/revamp_2026_portal/baseline/TB0/` with the full verify result, current-state evidence
+  at 1440×900 / 1024×768 / 390×844 for every applicable surface (prototype-side comparison captured
+  for Dashboard only — see `Baseline-Report.md`), bundle/CSS output, and a fully dispositioned,
+  reviewed drift register.
   PR #44's Admin-only, direct send-only AutoHDR handoff is carried forward as existing
   authority/source baseline, not a revamp tracer bullet. Separate repository-native TB0A (React
   19.2 compatibility-only) and TB0B (developer-managed pipeline-order boundary) plans are not yet

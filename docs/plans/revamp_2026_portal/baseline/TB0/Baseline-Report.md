@@ -1,11 +1,17 @@
 # TB0 Baseline Report — Pre-change gate, evidence, and drift register
 
-> Status: pre-change gate reclassified GREEN after independent re-verification (see "Gate
-> reclassification" below); evidence capture and drift-register creation in progress. No product
-> source, dependency, schema, Worker configuration, or production resource was changed by TB0
-> itself. One unrelated pre-existing flaky-test bug found while running the gate was root-cause
-> fixed and committed separately (`08f4653`, `portal/apps/web/src/components/AnchoredPopover.tsx`)
-> — that fix is not part of TB0's own deliverable, it's what made the gate observable as green.
+> Status: complete. Pre-change gate reclassified GREEN after independent re-verification (see
+> "Gate reclassification" below); evidence capture, the drift register, the owner-approved
+> authority promotion (steps 4-5), and PRD/AGENTS/CLAUDE/todo synchronization (steps 6-8) are all
+> done. Evidence is current-state-complete for every applicable surface at 1440x900/1024x768/390x844;
+> prototype-side matched comparison exists only for the Dashboard view (List/Kanban/grid) — Project
+> Workspace, Admin, Create Project, Edited, and Notifications have current-state captures only, with
+> no equivalent prototype route/state to match against in this baseline (see the evidence manifest
+> below for the per-surface breakdown). No product source, dependency, schema, Worker configuration,
+> or production resource was changed by TB0 itself. One unrelated pre-existing flaky-test bug found
+> while running the gate was root-cause fixed and committed separately (`08f4653`,
+> `portal/apps/web/src/components/AnchoredPopover.tsx`) — that fix is not part of TB0's own
+> deliverable, it's what made the gate observable as green.
 
 ## Execution snapshot
 
