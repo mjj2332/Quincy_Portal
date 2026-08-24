@@ -1,7 +1,10 @@
 # Revamp TB0A — React 19.2 Runtime Upgrade Plan
 
-**Status: Built and locally verified (typecheck/build/tests green; manual runtime checks partially
-exercised, see the implementation record below) — not committed, not deployed, not accepted.** TB0A
+**Status: Deployed to production (version `202d4cd5-c6ec-4f98-8cd2-e7fb2b0d0d60`, 2026-08-24) —
+passive production smoke clean, no regression found. Not yet formally accepted**: Lightbox/
+PhotoGrid interaction and the sign-out/in cycle remain unverified against a real rendered asset
+(low-risk per the static React-19 API-usage analysis below, but genuinely open), and the 22
+matched `tb0a-*` visual-parity screenshots against TB0's baseline have not been captured. TB0A
 is a standalone,
 compatibility-only production release. It must be accepted after TB0 and before TB0B/TB1, and it
 must not share a commit or deployment with any later revamp work.
@@ -644,6 +647,62 @@ real interaction (not inference from TB0's screenshots), but does not by itself 
 acceptance-checklist bullet under "Local React-runtime checks." The remaining Lightbox-rendering
 gap should be resolved by one of: running the background Worker locally and re-testing, or folding
 those specific checks into the post-deploy passive production smoke.
+
+### Deployment record
+
+- **Pre-deploy production version:** `84ca29ba-c2fb-4e65-8a2a-880bb2e8e5ea` (100% traffic, created
+  2026-08-20T05:38:25.856Z) — the rollback target if needed.
+- **Commit deployed:** `eb76732` (TB0A) on top of `fef61f5` (the prerequisite R2 fix), both on
+  `main`.
+- **Deploy command:** `npx wrangler deploy --message "TB0A React 19.2 compatibility release"` from
+  `portal/workers/app`, after a fresh `npm run build -w @quincy/web` (asset hashes matched the
+  locally-verified build exactly: `index-OXRY17oJ.js`, `index-C0MFG1Ba.css`).
+- **New production version:** `202d4cd5-c6ec-4f98-8cd2-e7fb2b0d0d60`. Confirmed
+  `env.APP_ENV ("production")` in the deploy output. Only 2 assets uploaded (`index.html`, the new
+  JS bundle); the CSS asset was already present (byte-identical to TB0's baseline), matching the
+  expected zero-CSS-delta.
+- **Scope:** app Worker only, as the plan requires. `background` and `webhook-ingress` were not
+  redeployed.
+
+### Production smoke — passive, authenticated, real account (`Tez`, real production data)
+
+Performed directly against `https://quincy.flamingfire.my` post-deploy. Zero console errors and
+zero failed network requests observed across every check. No create/edit/delete/upload/publish/
+notify/integration-trigger action was taken.
+
+- **Dashboard:** loaded correctly (Kanban default view), real project counts, Staff Notice Board,
+  search box, thumbnails for populated project cards all rendered; `/api/projects`, `/api/stages`,
+  `/api/notifications`, `/api/notice-board/posts`, and multiple `/media/asset/.../thumb` requests
+  all returned 200.
+- **Project Workspace (multiple real projects):** navigated into 4 different real projects across
+  different stages (Awaiting RAW, RAW Review, Editing, Edited Review) via direct project links.
+  Real checklist items, real threaded comments with `@mentions`, real agency/agent/photographer
+  data all rendered correctly; Collaboration panel opened and closed cleanly on each. None of the
+  sampled projects happened to have populated RAW/Edited photo grids to open a Lightbox against —
+  **Lightbox open/filmstrip/RAW-vs-Edited-compare/annotation-draft-cancellation remain unverified**
+  post-deploy, beyond the static risk analysis already recorded above (zero removed/changed React
+  API touches this surface). Video collection (13 items on one project) was visible in the rail but
+  not opened, since it isn't a Lightbox/PhotoGrid surface.
+- **Admin — all four tabs:** Users (real staff roster with roles/access state), Directory (Agencies
+  & agents, empty but rendered correctly), Pipeline (real stage list, matches local), Integrations
+  (Dropbox "Connected", Tonomo "Receiving" with real processed/received counts, Vimeo "Not
+  configured") — all rendered correctly, closing the Admin Directory/Integrations gap from the
+  local pass.
+- **Notifications popover:** opened via the Topbar bell (its own separate `setTimeout` focus logic,
+  not `AnchoredPopover` — see the corrected component attribution above), showed "You're all caught
+  up," closed cleanly via Escape.
+- **Sign-out/in:** not exercised — signing out of a real production staff account was correctly
+  treated as out of scope for a passive, non-mutating smoke (would require the human to actually
+  re-authenticate); the local session lifecycle around Google OAuth is unchanged by this release
+  (no auth-library version bump, only React/React DOM), so this residual gap is low-risk but still
+  genuinely unverified against React 19.2 specifically.
+
+**Result: no regression found in anything checked.** Two items remain formally open after this
+smoke pass — Lightbox/PhotoGrid interaction (no suitable populated project found in this sample)
+and the sign-out/in cycle (deliberately not exercised against a real account) — both already
+covered by the static risk analysis above and available for a lower-stakes follow-up check
+(sampling a specific project known to have RAW/Edited assets, or exercising sign-out/in during a
+future normal session) rather than blocking TB0A's live status.
 
 ## Primary external sources
 

@@ -7,8 +7,25 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
 > counts, full diagnostic transcripts) has been cut in favor of what/when/deploy-state. See
 > `docs/lessons.md` for incident mechanics, and `docs/reviews/` for full QA-sweep detail.
 
-## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29, seed-admin UUID migration 2026-07-29, notification dismiss + stalled-guard 2026-07-30, download selection 2026-08-04, notice-board rich text + mentions 2026-08-17, project comments + collaboration panel 2026-08-17, project subtasks/checklist 2026-08-17, collaboration panel relocated to Project page 2026-08-17, collaboration panel UI fixes + due-time reminder 2026-08-17, notification click navigation 2026-08-17, comment ordering + Shift+Enter soft breaks 2026-08-17, mention-email content 2026-08-20, TB0 authority promotion 2026-08-24)
+## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29, seed-admin UUID migration 2026-07-29, notification dismiss + stalled-guard 2026-07-30, download selection 2026-08-04, notice-board rich text + mentions 2026-08-17, project comments + collaboration panel 2026-08-17, project subtasks/checklist 2026-08-17, collaboration panel relocated to Project page 2026-08-17, collaboration panel UI fixes + due-time reminder 2026-08-17, notification click navigation 2026-08-17, comment ordering + Shift+Enter soft breaks 2026-08-17, mention-email content 2026-08-20, TB0 authority promotion 2026-08-24, TB0A React 19.2 deployed 2026-08-24)
 
+- **TB0A (React 19.2 compatibility-only runtime upgrade) is deployed to production, 2026-08-24**
+  (`docs/plans/Revamp-TB0A-React-19-2-Runtime-Upgrade-Plan.md`, commits `fef61f5` prerequisite R2
+  fix + `eb76732` the upgrade itself, production Worker version `202d4cd5-c6ec-4f98-8cd2-e7fb2b0d0d60`,
+  rollback target `84ca29ba-c2fb-4e65-8a2a-880bb2e8e5ea`).** Went through 2 Sol review rounds, an
+  Opus final-draft review (which caught a real component-attribution error in the manual
+  verification record and required recording an explicit release exception rather than silently
+  deferring Lightbox/rendition checks), and a passive production smoke with zero regressions found.
+  Found and fixed a genuine, unrelated local-dev bug along the way: `.dev.vars` missing
+  `APP_ENV=dev` let local uploads presign against production R2 while completion checked local R2,
+  producing TB0's own recorded "Uploaded object was not found in R2" failure — see `docs/lessons.md`.
+  One reproduction during that diagnosis reached real production R2 before the fix landed, leaving
+  a harmless orphaned test object (key/timestamp recorded in the TB0A plan); the exposed R2 S3
+  credentials were blanked from local `.dev.vars` but **still need rotation on the Cloudflare side**
+  (see "Waiting on user/external" below). **Not yet formally accepted:** Lightbox/PhotoGrid
+  interaction and full sign-out/in remain unverified against a real rendered asset (low-risk per a
+  static React-19 removed-API usage sweep, zero hits), and the 22 matched `tb0a-*` visual-parity
+  screenshots against TB0's baseline haven't been captured.
 - **Quincy Portal revamp TB0 is the active authority/baseline phase; TB0 itself changes no product
   source, dependency, schema, Worker, or production resource.** The owner approved the corrected
   authority package on 2026-08-24: D-13 and D-15 revised inline, four new decisions D-16–D-19,
@@ -19,11 +36,10 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
   for Dashboard only — see `Baseline-Report.md`), bundle/CSS output, and a fully dispositioned,
   reviewed drift register.
   PR #44's Admin-only, direct send-only AutoHDR handoff is carried forward as existing
-  authority/source baseline, not a revamp tracer bullet. Separate repository-native TB0A (React
-  19.2 compatibility-only) and TB0B (developer-managed pipeline-order boundary) plans are not yet
-  drafted; review not started. Neither phase is built or live. TB0A must not start until this
-  authority promotion and its own reviewed plan are accepted, and Tailwind/shadcn must not start
-  until TB0A and TB0B are live.
+  authority/source baseline, not a revamp tracer bullet. TB0A (React 19.2 compatibility-only) is
+  now drafted, reviewed, and deployed (see the bullet above). TB0B (developer-managed pipeline-order
+  boundary) is drafted and reviewed but not yet built. Tailwind/shadcn must not start until TB0A
+  and TB0B are both live.
 
 - **Mention-triggered emails for project comments and notice-board posts now carry the author's
   name and a 400-char, surrogate-safe excerpt of the actual comment/post body, deployed 2026-08-20
@@ -421,6 +437,14 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
 - [ ] Real interactive Google browser login check at `https://quincy.flamingfire.my`.
 - [ ] Rotate/retire production `BETTER_AUTH_SECRET`: still sits in gitignored
   `portal/workers/app/.prod-secrets.local` — move to password manager, delete the file.
+- [ ] **Rotate the production R2 S3 API token** (account ID / access key ID / secret access key
+  pair). It sat in local `portal/workers/app/.dev.vars` without `APP_ENV=dev` set, which let a
+  local upload reach real production R2 during TB0A diagnosis 2026-08-24 (see the TB0A plan's
+  implementation record for the exact orphaned object key). The local `.dev.vars` copy has been
+  blanked, but the underlying Cloudflare credential itself has not been rotated — do this via the
+  Cloudflare dashboard (R2 → Manage API tokens), then update wherever the production value is
+  actually used (this repo's own local dev never needs real S3 credentials again per the TB0A fix
+  in `portal/workers/app/src/lib/r2s3.ts`).
 - [x] Dropbox app registered, secrets uploaded, `sharing.read` scope added + connection
   re-authorized, first live sync confirmed working (all 2026-07-20/21).
 
