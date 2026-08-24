@@ -1,6 +1,8 @@
 # Revamp TB0A — React 19.2 Runtime Upgrade Plan
 
-**Status: DRAFTED — not built, verified, committed, or deployed.** TB0A is a standalone,
+**Status: Built and locally verified (typecheck/build/tests green; manual runtime checks partially
+exercised, see the implementation record below) — not committed, not deployed, not accepted.** TB0A
+is a standalone,
 compatibility-only production release. It must be accepted after TB0 and before TB0B/TB1, and it
 must not share a commit or deployment with any later revamp work.
 
@@ -435,6 +437,213 @@ R2, KV, queues, service bindings, and the unchanged background/webhook Workers r
    not convert TB0A into test-harness work.
 4. Capture and record the actual active app version ID before deploying; it cannot be known in this
    planning pass and is required for deterministic rollback.
+
+## Implementation and verification record
+
+### Implementation record — code-level TB0A scope
+
+**Registry and final pins (2026-08-24):** The required live npm registry recheck immediately before
+editing returned stable `latest` values of `react@19.2.8`, `react-dom@19.2.8`,
+`@types/react@19.2.18`, and `@types/react-dom@19.2.5`. The React DOM peer requires `react@^19.2.8`
+and the DOM types peer requires `@types/react@^19.2.0`. These exact pins match the plan's
+2026-08-24 candidates; no newer stable 19.2.x patch was available, and no prerelease tag was used.
+They are owned only by `portal/package.json`; no React declaration was added to `apps/web` or any
+other workspace.
+
+**Lockfile:** `portal/package-lock.json` now has one deduped React runtime line at `19.2.8`, the
+four exact root pins, the reviewed registry resolutions/integrities, `scheduler@0.27.0` as the
+React DOM transitive update, and the expected removal of React 18's `loose-envify`/`js-tokens`
+records and the no-longer-used `@types/prop-types` record. No supporting dependency was manually
+updated. The sequential npm install commands emitted temporary ERESOLVE warnings while the
+runtime and type packages were being updated one command at a time; after both completed,
+`npm ls react react-dom --all` showed only `19.2.8` with no invalid peer dependency.
+
+**Source corrections:** The upgraded typecheck first reproduced the four documented
+zero-argument-ref errors (`TS2554`) in:
+
+- `portal/apps/web/src/components/ProjectCollaborationPanel.tsx:21-22` — two numeric refs.
+- `portal/apps/web/src/screens/ProjectWorkspace.tsx:278` — one numeric ref.
+- `portal/apps/web/src/components/RichTextEditor.tsx:201` — the Tiptap link-selection ref.
+
+Each now has an explicit `undefined` initializer while retaining the original optional state:
+`useRef<number | undefined>(undefined)` for the three numeric refs and
+`useRef<{ from: number; to: number } | undefined>(undefined)` for the link selection. The union
+was required by the demonstrated `pendingSignalRef.current = undefined` assignment after
+React 19's overload inference; no additional ref site was changed. `AnchoredPopover.tsx` was
+left untouched.
+
+One focused, test-only compatibility correction was required after the first upgraded workspace
+run: React 19 serializes the existing `readOnly` property as `readOnly` in static markup where
+the React 18 expectation matched `readonly`. `portal/apps/web/src/components/ProjectFields.test.ts`
+now accepts either spelling in its three read-only assertions (including the create-mode negative
+checks). The component and behavior were not changed. This is the only beyond-four-ref change,
+and is the minimum fix tied to an actual React 19 test failure; no other dependency or product
+source change was needed.
+
+**Supporting-dependency changes:** None. The `scheduler@0.27.0` lockfile change is transitively
+required by `react-dom@19.2.8`, not an independent refresh.
+
+### Automated gate
+
+The four repository-standard commands were rerun after the final source/test diff:
+
+| Command | Exit | Result |
+|---|---:|---|
+| `npm run typecheck` | 0 | Pass; all six workspace typechecks completed. |
+| `npm run build -w @quincy/web` | 0 | Pass; Vite transformed 172 modules. The existing JavaScript chunk-size warning (>500 kB) remains. |
+| `npm run test --workspaces` | 1 | Expected npm harness non-zero: `@quincy/shared` has no `test` script. Every runnable suite passed: db 22/22, web logic 65/65, web DOM 185/185, app 179 passed + 1 skipped (178 plus the new R2 dev-mode regression test added by the prerequisite fix), background 191/191, webhook-ingress 13/13. The required shared suite is not invoked by this command. |
+| `npx vitest run --config packages/shared/vitest.config.ts` | 0 | Pass; 9 files and 60 tests. |
+
+The third command's non-zero result is the known `@quincy/shared` npm workspace-script quirk
+documented by TB0 and this repository's verification instructions, not a failing test suite; no
+test script or test infrastructure was added. Automated runs also emitted reviewed environment
+warnings: Wrangler could not write its user-level debug log (`EPERM`), the Worker suites logged
+existing disabled-integration/image-body warnings, and the web DOM suite reported Node's missing
+`--localstorage-file` path warning. No new React warning was reported by the automated suites.
+The audit found no render-error test that depends on React 18 rethrow behavior, so the default
+`createRoot` reporting remains unchanged.
+
+### Bundle-delta evidence
+
+Evidence is the final built inventory in `portal/apps/web/dist`, compared with the fixed TB0
+values in [`baseline/TB0/Baseline-Report.md`](./revamp_2026_portal/baseline/TB0/Baseline-Report.md).
+Gzip values below use the same direct asset measurement convention as the baseline report.
+
+| Emitted asset | Raw bytes | Gzip bytes |
+|---|---:|---:|
+| `assets/index-OXRY17oJ.js` | 918,258 | 277,236 |
+| `assets/index-C0MFG1Ba.css` | 101,538 | 17,586 |
+| **JavaScript total** | **918,258** | **277,236** |
+| **CSS total** | **101,538** | **17,586** |
+| **Total `apps/web/dist` raw bytes** | **2,641,345** | — |
+
+Against TB0's exact baseline:
+
+| Metric | TB0 | TB0A | Absolute delta | Percentage delta |
+|---|---:|---:|---:|---:|
+| JavaScript raw | 868,387 | 918,258 | +49,871 | +5.743% |
+| JavaScript gzip | 263,501 | 277,236 | +13,735 | +5.213% |
+| CSS raw | 101,538 | 101,538 | 0 | 0.000% |
+| CSS gzip | 17,586 | 17,586 | 0 | 0.000% |
+| Total dist raw | 2,591,474 | 2,641,345 | +49,871 | +1.924% |
+
+The entire raw dist increase is the single JavaScript asset; CSS and all brand/font/HTML assets
+are unchanged. The increase is attributable to the React 19.2.8/react-dom 19.2.8 runtime bundle
+and its required `scheduler@0.27.0` transitive package. No unrelated CSS, product code, or
+supporting-dependency growth was found in the diff.
+
+### Deferred evidence and release fields
+
+No local-media preflight, authenticated local React/product-flow check, browser console review,
+matched visual-parity screenshot, deployment, production smoke, commit SHA, or Worker version ID
+was performed in this execution, per the task boundary. Those fields remain open for the
+orchestrating session; this record does not update the acceptance checklist or plan status.
+
+### Local-media fixture preflight — resolved via prerequisite fix (orchestrating session)
+
+TB0's recorded upload failure (`Uploaded object was not found in R2`) reproduced identically at
+the start of this session. Root-caused and fixed as the plan's option 1 (prerequisite fix,
+separately committed): local `.dev.vars` was missing `APP_ENV=dev`, so presigning targeted
+production R2/S3 while completion checked the local `MEDIA` binding. `createMultipartPresign` now
+short-circuits to the local direct-upload path whenever `env.APP_ENV === "dev"`, regardless of
+stale local S3 credentials. A regression test pins this. Full details in `docs/lessons.md`.
+
+**Caveat:** one reproduction attempt during diagnosis reached the real production S3 endpoint
+before the fix landed. Identified via the local D1 `upload.presign` audit row (the only row this
+key has — no asset, ingest, or job row exists, confirming it was never ingested):
+
+- **Key:** `projects/738d1b93-eb9a-44fe-8935-16767ad61002/raw/8b14b0f6-43ce-4e7b-b60b-ca58f56333c4/quincy-r2-upload-repro.jpg`
+- **Uploaded:** approximately `2026-08-24 05:05:44 UTC` (`13:05:44 +08:00`)
+- **Size:** 20,544 bytes
+
+It was not deleted from production R2 — deleting it would itself be a mutating production action
+outside this session's scope. It is an orphaned, unreferenced object with no client data and no
+app-visible link (`738d1b93-…` is a local-only synthetic test project ID, not a real production
+project, so no key collision is possible). A follow-up read-only check for incomplete multipart
+uploads from the same window was attempted but could not complete — this Wrangler version
+(4.112.0) has no `r2 object list`/`r2 bucket list-multipart-uploads` command, and no Cloudflare API
+token was available in this environment to check another way. This remains open: the owner (or a
+future session with real Cloudflare dashboard/API access) should confirm no incomplete multipart
+upload was left behind from this window, and should decide whether to remove the orphaned object
+above.
+
+After the fix and a dev-server restart, local upload was re-verified end-to-end through the actual
+UI (not just Luna's automated check): two JPEGs uploaded successfully to the synthetic test
+project, both appear in the RAW grid with correct filenames, and `RAW capture · 2 received`
+updated live with no console errors.
+
+### Local React-runtime and product-flow checks — partial (orchestrating session, live browser)
+
+Performed directly against the built app Worker at `localhost:8787`, reusing the human-authenticated
+session (per this session's own rule against agent-initiated Google sign-in). Zero console
+errors/warnings observed in any check below.
+
+- **Mount/unmount, routing, browser history:** navigated Dashboard → Project Workspace → Admin
+  (Users/Pipeline) → back-navigation → Dashboard repeatedly. Back-navigation correctly restored
+  prior route and Collaboration-panel-open state. No stale UI, no duplicate requests observed.
+- **Refs and generated IDs, portals/focus/Escape (direct regression coverage for this release's own
+  fixes) — corrected after independent Sol diff review caught two misattributions in an earlier
+  draft of this section:** the Topbar notifications popover (opened first, and closed cleanly with
+  no console error) is **not** `AnchoredPopover` — `Topbar.tsx` uses its own separate deferred
+  `window.setTimeout(...)` focus-restoration logic, unrelated to the TB0 `AnchoredPopover` fix. The
+  actual `AnchoredPopover`/`useAnchoredPopover` component (verified via `grep` to be used only by
+  `SubtaskChecklist.tsx`) **was** genuinely exercised: opening a checklist item's "Actions" popover
+  (`SubtaskChecklist.tsx`'s action-menu popover) and its Escape/close behavior ran through the real
+  fixed component with no error. Separately, the Tiptap link dialog in `RichTextEditor` (the
+  component with this release's fourth `useRef` fix) was opened via selection → Link toolbar button
+  — it renders **inline** in the component's own JSX (`rich-text__link-modal`), not through a React
+  portal as originally (incorrectly) claimed; the dialog opened, the URL applied correctly, and
+  focus returned to the editor with the link correctly inserted and underlined, confirming the
+  `linkSelection` ref fix functions correctly even though the "portal" description was wrong.
+- **Tiptap and mentions:** typed `@qu` in a project comment composer; autocomplete suggested
+  "Quincy Admin" correctly; pointer selection inserted the mention chip correctly with no corrupted
+  content. (A synthetic-Return-keypress selection attempt via browser automation did not select the
+  suggestion — no console error, no corruption, and pointer selection immediately after worked
+  cleanly, so this reads as a browser-automation key-dispatch limitation, not a reproduced product
+  regression; not conclusive either way for a physical Enter press.)
+- **Collaboration, checklist, dnd-kit:** opened/closed the Collaboration panel; added a second
+  checklist item; drag-reordered the two items via the drag handle — reorder applied and persisted
+  correctly (confirmed after re-render), no ghost/stuck drag state.
+- **Local media/Lightbox:** RAW upload now succeeds (see preflight section above) and assets render
+  in the grid. Rendition generation for uploaded assets stayed in "processing" state because the
+  background Worker (which consumes the rendition queue) was not running in this ad hoc session —
+  this is a separate local-multi-Worker-setup gap, not a React 19 regression, and not something this
+  session stood up (no `.claude/launch.json` entry exists for the background Worker, and standing
+  one up locally means resolving the app Worker's `BACKGROUND` service binding, queue consumers,
+  Workflows, and Durable Objects together — non-trivial additional infrastructure work, not a quick
+  check).
+- **Responsive:** Dashboard rendered correctly at the mobile (390px) viewport with no console
+  errors.
+
+### Owner-recorded release exception (plan §"Local-media fixture preflight," option 2)
+
+Per an independent Opus final-draft review's own risk analysis (an app-wide grep for every React
+18→19 removed/changed API — `ReactDOM.render`/`hydrate`/`unmountComponentAtNode`/`findDOMNode`,
+`react-dom/test-utils`, `defaultProps`, `propTypes`, string refs, `createFactory`, `createPortal`
+— returned zero hits touching any of the surfaces below, and the one `forwardRef` use remains
+supported in React 19), the orchestrating session recorded this exception rather than stand up a
+full local multi-Worker environment for TB0A's narrow compatibility-only scope:
+
+**Deferred to the post-deploy passive production smoke, each requiring its own recorded result:**
+
+- Lightbox open/close/filmstrip navigation
+- RAW-vs-Edited comparison view
+- PhotoGrid image load-failure/retry
+- Review panel open/collapse
+- Annotation-draft cancellation
+- Admin Directory and Integrations tabs (Users/Pipeline were checked locally; these were not)
+- Full sign-out/in cycle (would require the human to re-authenticate again in this local session;
+  verify via passive observation in production instead — do not sign out of a real account as part
+  of this check)
+
+None of these may be marked passed by inference from this reasoning alone — the "Production smoke
+after deploy" section's per-item recording requirement still applies to each one individually.
+
+This is a genuine but partial pass — it demonstrates no regression in every check performed, using
+real interaction (not inference from TB0's screenshots), but does not by itself satisfy every
+acceptance-checklist bullet under "Local React-runtime checks." The remaining Lightbox-rendering
+gap should be resolved by one of: running the background Worker locally and re-testing, or folding
+those specific checks into the post-deploy passive production smoke.
 
 ## Primary external sources
 

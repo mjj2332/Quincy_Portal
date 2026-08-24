@@ -275,7 +275,7 @@ export function ProjectWorkspace({ projectId, notice, onNoticeShown, collaborati
     };
   }, [canAdminBackend, data?.id, data?.stageKey, jobs, projectId, refreshAssets, refreshAutohdrStatus, refreshJobs, refreshProject, viewState]);
 
-  const consumedTerminalSignalRef = useRef<number>();
+  const consumedTerminalSignalRef = useRef<number | undefined>(undefined);
   useEffect(() => {
     if ((viewState !== "collaboration-only" && viewState !== "unavailable") || collaborationOpenSignal === undefined || collaborationOpenSignal === consumedTerminalSignalRef.current) return;
     consumedTerminalSignalRef.current = collaborationOpenSignal;

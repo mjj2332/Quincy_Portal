@@ -44,9 +44,9 @@ describe("project field policies", () => {
       onToggle: () => undefined,
     }));
 
-    expect(markup).toMatch(/<span>Order number<\/span><input[^>]*readonly=""/);
-    expect(markup).toMatch(/<span>Order ID<\/span><input[^>]*readonly=""/);
-    expect(markup).toMatch(/<textarea[^>]*readonly=""/);
+    expect(markup).toMatch(/<span>Order number<\/span><input[^>]*(?:readOnly|readonly)=""/);
+    expect(markup).toMatch(/<span>Order ID<\/span><input[^>]*(?:readOnly|readonly)=""/);
+    expect(markup).toMatch(/<textarea[^>]*(?:readOnly|readonly)=""/);
     const serviceInputs = [...markup.matchAll(/<input type="checkbox"[^>]*><span>(?:<strong>RAW<\/strong><small>Always included<\/small>|Edited photography|Video|Floorplan|Copywriting)<\/span>/g)];
     expect(serviceInputs).toHaveLength(5);
     expect(serviceInputs.every(([input]) => input.includes("disabled=\"\""))).toBe(true);
@@ -68,9 +68,9 @@ describe("project field policies", () => {
 
     expect(markup).toContain("Invoice amount");
     expect(markup).toContain("Payment status");
-    expect(markup).not.toMatch(/<span>Order number<\/span><input[^>]*readonly=""/);
-    expect(markup).not.toMatch(/<span>Order ID<\/span><input[^>]*readonly=""/);
-    expect(markup).not.toMatch(/<textarea[^>]*readonly=""/);
+    expect(markup).not.toMatch(/<span>Order number<\/span><input[^>]*(?:readOnly|readonly)=""/);
+    expect(markup).not.toMatch(/<span>Order ID<\/span><input[^>]*(?:readOnly|readonly)=""/);
+    expect(markup).not.toMatch(/<textarea[^>]*(?:readOnly|readonly)=""/);
     const editedService = markup.match(/<input type="checkbox"([^>]*)><span>Edited photography<\/span>/)?.[1];
     expect(editedService).toBeDefined();
     expect(editedService).not.toContain("disabled");

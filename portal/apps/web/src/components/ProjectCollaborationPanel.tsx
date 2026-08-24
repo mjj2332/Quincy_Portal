@@ -18,8 +18,8 @@ export function ProjectCollaborationPanel({ projectId, openSignal, onOpenSignalC
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRootRef = useRef<HTMLElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
-  const lastConsumedSignalRef = useRef<number>();
-  const pendingSignalRef = useRef<number>();
+  const lastConsumedSignalRef = useRef<number | undefined>(undefined);
+  const pendingSignalRef = useRef<number | undefined>(undefined);
   const [overlayOpen, setOverlayOpen] = useState(true);
   const open = overlay ? overlayOpen : true;
   const [project, setProject] = useState<CommentResponse["project"] | undefined>(initialComments?.project);
