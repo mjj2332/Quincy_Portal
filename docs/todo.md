@@ -7,7 +7,21 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
 > counts, full diagnostic transcripts) has been cut in favor of what/when/deploy-state. See
 > `docs/lessons.md` for incident mechanics, and `docs/reviews/` for full QA-sweep detail.
 
-## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29, seed-admin UUID migration 2026-07-29, notification dismiss + stalled-guard 2026-07-30, download selection 2026-08-04, notice-board rich text + mentions 2026-08-17, project comments + collaboration panel 2026-08-17, project subtasks/checklist 2026-08-17, collaboration panel relocated to Project page 2026-08-17, collaboration panel UI fixes + due-time reminder 2026-08-17, notification click navigation 2026-08-17, comment ordering + Shift+Enter soft breaks 2026-08-17, mention-email content 2026-08-20, TB0 authority promotion 2026-08-24, TB0A React 19.2 deployed 2026-08-24)
+## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29, seed-admin UUID migration 2026-07-29, notification dismiss + stalled-guard 2026-07-30, download selection 2026-08-04, notice-board rich text + mentions 2026-08-17, project comments + collaboration panel 2026-08-17, project subtasks/checklist 2026-08-17, collaboration panel relocated to Project page 2026-08-17, collaboration panel UI fixes + due-time reminder 2026-08-17, notification click navigation 2026-08-17, comment ordering + Shift+Enter soft breaks 2026-08-17, mention-email content 2026-08-20, TB0 authority promotion 2026-08-24, TB0A React 19.2 deployed 2026-08-24, TB0B pipeline configuration boundary deployed 2026-08-24)
+
+- **TB0B (developer-managed pipeline-order boundary) is deployed to production, 2026-08-24**
+  (`docs/plans/implemented/Revamp-TB0B-Pipeline-Configuration-Boundary-Plan.md`, commits `05f52d8`
+  code/tests + `7b1a2ce` the A4 authority-file edit, production Worker version
+  `02fe617d-d83d-4e96-889c-0ce23e71f941`, rollback target `202d4cd5-c6ec-4f98-8cd2-e7fb2b0d0d60`).
+  Removed the Admin UI's Up/Down stage-reorder controls and deleted the
+  `POST /admin/stages/:key/move` route entirely (falls through to the existing terminal 404, no
+  stub). `GET /admin/stages` and `PATCH /admin/stages/:key` (label/active only) are untouched.
+  Went through 2 Sol review rounds, an Opus plan review, a fresh Sol diff review (CLEAN) and an
+  Opus final-draft review (APPROVE), independent local QA (label edit, both activation directions,
+  direct move-URL 404, D1 order-query unchanged), and a passive production smoke (404 confirmed,
+  order query identical before/after, zero console errors — live label/activation mutation testing
+  deliberately skipped as a documented risk decision since that code path is byte-for-byte
+  unchanged and already covered locally). TB0B is now live, unblocking TB1.
 
 - **TB0A (React 19.2 compatibility-only runtime upgrade) is deployed to production, 2026-08-24**
   (`docs/plans/Revamp-TB0A-React-19-2-Runtime-Upgrade-Plan.md`, commits `fef61f5` prerequisite R2
@@ -36,10 +50,10 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
   for Dashboard only — see `Baseline-Report.md`), bundle/CSS output, and a fully dispositioned,
   reviewed drift register.
   PR #44's Admin-only, direct send-only AutoHDR handoff is carried forward as existing
-  authority/source baseline, not a revamp tracer bullet. TB0A (React 19.2 compatibility-only) is
-  now drafted, reviewed, and deployed (see the bullet above). TB0B (developer-managed pipeline-order
-  boundary) is drafted and reviewed but not yet built. Tailwind/shadcn must not start until TB0A
-  and TB0B are both live.
+  authority/source baseline, not a revamp tracer bullet. TB0A (React 19.2 compatibility-only) and
+  TB0B (developer-managed pipeline-order boundary) are both drafted, reviewed, and deployed to
+  production (see the bullets above). Both prerequisite phases are now live, so TB1
+  (Tailwind v4 + shadcn foundation) is unblocked.
 
 - **Mention-triggered emails for project comments and notice-board posts now carry the author's
   name and a 400-char, surrogate-safe excerpt of the actual comment/post body, deployed 2026-08-20

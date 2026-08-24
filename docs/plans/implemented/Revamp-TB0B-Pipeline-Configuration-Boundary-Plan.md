@@ -1,7 +1,8 @@
 # Revamp TB0B — Pipeline Configuration Boundary Plan
 
-> **Status: DRAFT — not implemented, verified, committed, or deployed. No schema migration is
-> expected.** TB0B follows TB0A and must be live before TB1 begins.
+> **Status: Deployed to production (version `02fe617d-d83d-4e96-889c-0ce23e71f941`, 2026-08-24) —
+> production smoke confirms the changed behavior (404 on the move URL, order preservation); no
+> regression found.** No schema migration was needed. TB0B is now live, unblocking TB1.
 
 ## Authority and outcome
 
@@ -414,26 +415,32 @@ move is not concealed.
 
 ## Acceptance checklist
 
-- [ ] `Admin → Pipeline` loads and Refresh works with all five existing rows and read-only order
-      numbers.
-- [ ] Up/Down controls, `reorderStage`, action CSS, and every browser caller of the move URL are
-      absent.
-- [ ] Authenticated `POST /api/admin/stages/:key/move` returns the centralized 404, writes no Stage
-      values, and adds no `pipeline_stage.move` audit row.
-- [ ] `GET /api/admin/stages`, `PATCH /api/admin/stages/:key`, and `GET /api/stages` retain current
-      authorization, validation, guard, audit, role-projection, and refresh behavior.
-- [ ] Label editing and active/inactive toggling pass component, Worker integration, and manual QA;
-      active/inactive Stage consumers refresh.
-- [ ] `DEFAULT_STAGES`, seed values, persisted key/order tuples, Stage transitions, and existing
-      project Stage values are unchanged; pre/post order evidence is identical.
-- [ ] Existing `POST /api/projects/:id/stage` tests and manual smoke remain green; no Project
+- [x] `Admin → Pipeline` loads and Refresh works with all five existing rows and read-only order
+      numbers. (Verified locally and in production.)
+- [x] Up/Down controls, `reorderStage`, action CSS, and every browser caller of the move URL are
+      absent. (Confirmed via diff review and a repo-wide grep sweep for surviving references.)
+- [x] Authenticated `POST /api/admin/stages/:key/move` returns the centralized 404, writes no Stage
+      values, and adds no `pipeline_stage.move` audit row. (Verified locally, in the test suite,
+      and via a direct API call against production.)
+- [x] `GET /api/admin/stages`, `PATCH /api/admin/stages/:key`, and `GET /api/stages` retain current
+      authorization, validation, guard, audit, role-projection, and refresh behavior. (Confirmed
+      byte-for-byte unchanged by the Opus final-draft review.)
+- [x] Label editing and active/inactive toggling pass component, Worker integration, and manual QA;
+      active/inactive Stage consumers refresh. (Component + Worker integration tests pass; manual
+      QA done locally in both directions with correct revert — deliberately not repeated live in
+      production since this code path is unchanged by TB0B, see the production smoke record above.)
+- [x] `DEFAULT_STAGES`, seed values, persisted key/order tuples, Stage transitions, and existing
+      project Stage values are unchanged; pre/post order evidence is identical. (Confirmed locally
+      and in production.)
+- [x] Existing `POST /api/projects/:id/stage` tests and manual smoke remain green; no Project
       Workspace, Kanban ordering, creation/deletion, or dynamic-transition scope has entered TB0B.
-- [ ] The developer-managed order runbook is reviewable and no replacement ordinary API exists.
-- [ ] Matched 1440×900 before/after Admin evidence is captured, redaction-checked, and visually
+- [x] The developer-managed order runbook is reviewable and no replacement ordinary API exists.
+- [x] Matched 1440×900 before/after Admin evidence is captured, redaction-checked, and visually
       reviewed.
-- [ ] Typecheck, web build, every workspace test suite, the dedicated shared suite, API/manual QA,
+- [x] Typecheck, web build, every workspace test suite, the dedicated shared suite, API/manual QA,
       production smoke, and order-query comparison are green.
-- [ ] Any rollback has explicit owner approval because it reopens Admin ordering.
+- [x] Any rollback has explicit owner approval because it reopens Admin ordering. (No rollback was
+      needed; this constraint remains in force for any future rollback of this change.)
 
 ## Execution record
 
@@ -458,3 +465,42 @@ against plan revision `f25995a` (this file, confirmed clean/unchanged at approva
 
 This satisfies the §3 checkpoint. The exact replacement quoted in §3 may now be applied to
 `docs/Implementation-Plan.md`.
+
+Applied and committed as `7b1a2ce` — one line changed, byte-for-byte matching the approved
+replacement text, verified via diff before committing.
+
+### Deployment record
+
+- **Pre-deploy production version:** `202d4cd5-c6ec-4f98-8cd2-e7fb2b0d0d60` (TB0A, 100% traffic) —
+  the rollback target if needed.
+- **Commits deployed:** `05f52d8` (TB0B code/tests) and `7b1a2ce` (the A4 authority correction,
+  docs-only, no source change) on top of TB0A, all on `main`.
+- **Deploy command:** `npx wrangler deploy --message "TB0B pipeline configuration boundary"` from
+  `portal/workers/app`, after a fresh `npm run build -w @quincy/web` (asset hashes matched the
+  locally-verified build exactly: `index-BDaqREkt.js`, `index-BQpYqR4q.css`).
+- **New production version:** `02fe617d-d83d-4e96-889c-0ce23e71f941`. Confirmed
+  `env.APP_ENV ("production")` in the deploy output.
+- **Scope:** app Worker only, as the plan requires. No migration, no background/webhook-ingress
+  redeploy.
+
+### Production smoke — passive/minimal-mutation, authenticated, real account (`Tez`, real data)
+
+Performed against `https://quincy.flamingfire.my` post-deploy.
+
+- **Admin → Pipeline:** loaded all 5 real Stage rows with correct order numbers, no Up/Down
+  controls, no console errors.
+- **Order query (before/after the move-URL test):** identical both times —
+  `awaiting_raw:1, raw_review:2, editing_autohdr:3, edited_review:4, delivered:5`.
+- **Direct move-URL call:** authenticated `POST /api/admin/stages/raw_review/move` returned exactly
+  `404 {"error":"Not found"}` in production, matching local QA and the test suite's assertion.
+- **Label/activation mutation test — deliberately not performed live in production.** `PATCH
+  /admin/stages/:key` is confirmed byte-for-byte unchanged by this release (verified by the Opus
+  final-draft review against the real diff) and was already thoroughly exercised locally (both
+  activation directions, label edit, correct refresh of both `/api/admin/stages` and `/api/stages`,
+  correct revert). Given this is an actively-used production system with real staff sessions, the
+  incremental value of repeating an already-validated, unchanged code path live did not justify the
+  small risk of a real (if brief and reversible) Stage-availability window during business hours —
+  the smoke instead targeted only what this release actually changed (the move-URL 404 and order
+  preservation), which is now directly confirmed in production.
+
+**Result: no regression found; the changed behavior (404 + order preservation) is confirmed live.**
