@@ -1,11 +1,15 @@
 # Required in production: random Better Auth secret (32+ bytes).
 BETTER_AUTH_SECRET=replace-with-a-long-random-secret
+# Local Wrangler mode. This overrides wrangler.jsonc's production-shaped base vars.
+APP_ENV=dev
+APP_ORIGIN=http://localhost:8787
 # Google OAuth web client credentials (leave blank to boot local API without Google auth).
 GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
 # Base64-encoded 32-byte AES-GCM KEK for integration credentials.
 INTEGRATION_KEK=
-# R2 S3 credentials for browser multipart-upload presigning.
+# R2 S3 credentials for production browser multipart-upload presigning. Leave blank locally:
+# local uploads use the Miniflare MEDIA binding through the dev-only direct PUT route.
 R2_ACCOUNT_ID=
 R2_S3_ACCESS_KEY_ID=
 R2_S3_SECRET_ACCESS_KEY=

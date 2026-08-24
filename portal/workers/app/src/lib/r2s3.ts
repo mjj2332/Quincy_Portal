@@ -32,6 +32,10 @@ function xmlEscape(value: string) {
   return value.replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" })[character]!);
 }
 export async function createMultipartPresign(env: Env, key: string, bytes: number, contentType?: string, partBytes = PART_BYTES) {
+  // Local Wrangler binds MEDIA to Miniflare's R2 simulator. Never presign against the
+  // remote S3 endpoint in that mode, even if stale R2 credentials remain in .dev.vars:
+  // completion verifies the object through the local MEDIA binding.
+  if (env.APP_ENV === "dev") return null;
   const aws = client(env);
   if (!aws || bytes <= 0) return null;
   const create = await aws.fetch(endpoint(env, key) + "?uploads", { method: "POST", headers: contentType ? { "content-type": contentType } : undefined });

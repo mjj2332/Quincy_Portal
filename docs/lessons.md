@@ -104,6 +104,15 @@
   media-pipeline tests with real photographs (or honest sips upscales of real photographs),
   never structurally degenerate synthetics; keep the fixture path overridable via env var.
 
+- **Local Wrangler R2 must use one storage plane.** The app's local `MEDIA` binding is Miniflare's
+  R2 simulator, but the production-shaped `wrangler.jsonc` also exposes remote R2 S3 credentials
+  when they are present in `.dev.vars`. Before this fix, local presign used those credentials while
+  completion verified the key through local `env.MEDIA`, producing `Uploaded object was not found
+  in R2` after a successful remote PUT. **Rule:** local `.dev.vars` must set `APP_ENV=dev`, and
+  the upload route must always choose its dev direct-PUT path in that mode; leave R2 S3 credentials
+  blank for local uploads. A dev `MEDIA.put()` followed by `head()` succeeds, so this is a
+  configuration/storage-plane split, not a Miniflare R2 persistence limitation.
+
 - **Hono router-wide middleware leaks across sibling mounts.** `subRouter.use("*", mw)` +
   `parent.route("/", subRouter)` applies `mw` to every router mounted at `/` *after* it, not
   just the subrouter's own routes — two route files did this with capability gates, silently
