@@ -434,3 +434,27 @@ move is not concealed.
 - [ ] Typecheck, web build, every workspace test suite, the dedicated shared suite, API/manual QA,
       production smoke, and order-query comparison are green.
 - [ ] Any rollback has explicit owner approval because it reopens Admin ordering.
+
+## Execution record
+
+### Code build (commit `05f52d8`)
+
+Sections 1, 2, and the wording-only corrections in 3 (excluding the `Implementation-Plan.md` A4
+edit), and 4 were built, independently re-verified (all four `CLAUDE.md` verify commands green;
+live manual QA against the local app Worker confirmed the 404 on a direct move call, order
+unchanged, label edit persisted and refreshed both `/api/admin/stages` and `/api/stages`, both
+activation directions succeeded), diff-reviewed by a fresh Sol (CLEAN), and Opus final-draft
+reviewed (APPROVE, all claims independently re-verified against the real source). Matched
+1440×900 evidence captured at
+`docs/plans/revamp_2026_portal/evidence/TB0B/admin-pipeline-after-1440.png`. Committed as `05f52d8`
+on `main`.
+
+### Step 4 — owner checkpoint (A4 authority wording, approval recorded)
+
+The owner (mjj2332@gmail.com) sent the following message in the orchestrating session, verbatim,
+against plan revision `f25995a` (this file, confirmed clean/unchanged at approval time):
+
+> Approve the TB0B A4 authority wording; replace A4 exactly as quoted in §3.
+
+This satisfies the §3 checkpoint. The exact replacement quoted in §3 may now be applied to
+`docs/Implementation-Plan.md`.

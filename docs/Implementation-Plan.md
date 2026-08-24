@@ -77,7 +77,7 @@ Added to scope, phased (§6): staff user CRUD, project edit/**archive-only** (re
 
 ### A4 — Pipeline stage model (resolves PRD §7 vs §6.9 vs D-03)
 
-- Stages have **stable machine keys**; Admin-editable **labels and display order** live in a `pipeline_stages` config table. Code and transitions reference keys only.
+- Stages have **stable machine keys**; Admin-editable **labels and active/inactive status**, together with developer-managed **display order**, live in a `pipeline_stages` config table. Global display order is not ordinary Admin self-service. Code and transitions reference keys only.
 - MVP keys: `awaiting_raw`, `raw_review`, `editing_autohdr`, `edited_review`, `delivered`. **`client_review` is not shipped** (D-03); the key is reserved for a future review-link feature. Stage *reordering* is display-order only — transition logic does not change when labels/order change.
 
 ### A5 — Dropbox integration lifecycle (resolves "app token" gap)
