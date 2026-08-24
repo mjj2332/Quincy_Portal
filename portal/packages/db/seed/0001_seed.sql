@@ -1,5 +1,6 @@
 -- Quincy Portal seed (apply after migrations, all envs)
--- Pipeline stages: stable keys, admin-editable labels/order (Implementation-Plan §2 A4).
+-- Pipeline stages: stable keys, Admin-managed labels and active/inactive status, together with
+-- developer-managed global display order (Implementation-Plan §2 A4).
 INSERT OR IGNORE INTO pipeline_stages (key, label, display_order, active) VALUES
   ('awaiting_raw',    'Awaiting RAW',      1, 1),
   ('raw_review',      'RAW review',        2, 1),

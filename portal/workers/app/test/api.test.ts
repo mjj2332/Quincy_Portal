@@ -2394,28 +2394,93 @@ describe("staff app API", () => {
     await expect(adminMutation.json()).resolves.toEqual({ error: "Unknown stage" });
   });
 
-  it("seeds stages on first read, serves them to photographers, and protects the system stage", async () => {
+  it("keeps global Stage order developer-managed while preserving label and activation management", async () => {
+    type StageRow = { key: string; label: string; displayOrder: number; active: boolean };
     const cookie = await sessionCookie(adminToken);
+    const photographerCookie = await sessionCookie(photographerToken);
+    const readStages = async (path: string, requestCookie: string): Promise<StageRow[]> => {
+      const response = await SELF.fetch(`https://portal.test${path}`, { headers: { cookie: requestCookie } });
+      expect(response.status).toBe(200);
+      return (await response.json() as { stages: StageRow[] }).stages;
+    };
+    const orderTuples = (stages: StageRow[]) => stages.map(({ key, displayOrder }) => ({ key, displayOrder }));
+    const moveAuditCount = async () => (await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE action = ?").bind("pipeline_stage.move").first<{ count: number }>())?.count ?? 0;
+
     await database.DB.exec("DELETE FROM pipeline_stages;");
-    const seeded = await SELF.fetch("https://portal.test/api/admin/stages", { headers: { cookie } });
-    expect(seeded.status).toBe(200); await expect(seeded.json()).resolves.toMatchObject({ stages: expect.arrayContaining([expect.objectContaining({ key: "awaiting_raw", displayOrder: 1 })]) });
-    const photographerStages = await SELF.fetch("https://portal.test/api/stages", { headers: { cookie: await sessionCookie(photographerToken) } });
-    expect(photographerStages.status).toBe(200); await expect(photographerStages.json()).resolves.toMatchObject({ stages: expect.arrayContaining([expect.objectContaining({ key: "awaiting_raw" })]) });
+    const seededStages = await readStages("/api/admin/stages", cookie);
+    expect(orderTuples(seededStages)).toEqual([
+      { key: "awaiting_raw", displayOrder: 1 },
+      { key: "raw_review", displayOrder: 2 },
+      { key: "editing_autohdr", displayOrder: 3 },
+      { key: "edited_review", displayOrder: 4 },
+      { key: "delivered", displayOrder: 5 },
+    ]);
+
+    const beforeOrder = orderTuples(seededStages);
+    const moveAuditsBefore = await moveAuditCount();
+    const move = await SELF.fetch("https://portal.test/api/admin/stages/raw_review/move", { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ direction: "up" }) });
+    expect(move.status).toBe(404);
+    await expect(move.json()).resolves.toEqual({ error: "Not found" });
+    const afterMoveStages = await readStages("/api/admin/stages", cookie);
+    expect(JSON.stringify(orderTuples(afterMoveStages))).toBe(JSON.stringify(beforeOrder));
+    expect(await moveAuditCount()).toBe(moveAuditsBefore);
+
     const label = await SELF.fetch("https://portal.test/api/admin/stages/raw_review", { method: "PATCH", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ label: "Raw triage" }) });
-    await expect(label.json()).resolves.toMatchObject({ label: "Raw triage" });
-    const moved = await SELF.fetch("https://portal.test/api/admin/stages/raw_review/move", { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ direction: "up" }) });
-    expect(moved.status).toBe(200);
-    const movedStages = (await moved.json() as { stages: { key: string; displayOrder: number }[] }).stages;
-    expect(movedStages[0]).toMatchObject({ key: "raw_review", displayOrder: 1 });
-    expect(movedStages[1]).toMatchObject({ key: "awaiting_raw", displayOrder: 2 });
+    expect(label.status).toBe(200);
+    await expect(label.json()).resolves.toMatchObject({ key: "raw_review", label: "Raw triage", displayOrder: 2 });
+    const adminAfterLabel = await readStages("/api/admin/stages", cookie);
+    const publicAfterLabel = await readStages("/api/stages", photographerCookie);
+    expect(adminAfterLabel.find((stage) => stage.key === "raw_review")).toMatchObject({ label: "Raw triage", displayOrder: 2 });
+    expect(publicAfterLabel.find((stage) => stage.key === "raw_review")).toMatchObject({ label: "Raw triage", displayOrder: 2 });
+    expect(JSON.stringify(orderTuples(adminAfterLabel))).toBe(JSON.stringify(beforeOrder));
+
+    const activationKey = "delivered";
+    const unusedStage = await database.DB.prepare("SELECT count(*) AS count FROM projects WHERE stage_key = ? AND archived_at IS NULL").bind(activationKey).first<{ count: number }>();
+    expect(unusedStage).toEqual({ count: 0 });
+    const deactivated = await SELF.fetch(`https://portal.test/api/admin/stages/${activationKey}`, { method: "PATCH", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ active: false }) });
+    expect(deactivated.status).toBe(200);
+    await expect(deactivated.json()).resolves.toMatchObject({ key: activationKey, active: false });
+    const adminDeactivated = await readStages("/api/admin/stages", cookie);
+    const publicDeactivated = await readStages("/api/stages", photographerCookie);
+    expect(adminDeactivated.find((stage) => stage.key === activationKey)).toMatchObject({ active: false });
+    expect(publicDeactivated.find((stage) => stage.key === activationKey)).toMatchObject({ active: false });
+    const reactivated = await SELF.fetch(`https://portal.test/api/admin/stages/${activationKey}`, { method: "PATCH", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ active: true }) });
+    expect(reactivated.status).toBe(200);
+    await expect(reactivated.json()).resolves.toMatchObject({ key: activationKey, active: true });
+    const adminReactivated = await readStages("/api/admin/stages", cookie);
+    const publicReactivated = await readStages("/api/stages", photographerCookie);
+    expect(adminReactivated.find((stage) => stage.key === activationKey)).toMatchObject({ active: true });
+    expect(publicReactivated.find((stage) => stage.key === activationKey)).toMatchObject({ active: true });
+
     const systemBlocked = await SELF.fetch("https://portal.test/api/admin/stages/awaiting_raw", { method: "PATCH", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ active: false }) });
-    expect(systemBlocked.status).toBe(409); await expect(systemBlocked.json()).resolves.toEqual({ error: "The awaiting_raw stage is required for new projects." });
-    const created = await SELF.fetch("https://portal.test/api/projects", { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ street: "Stage guard", orderedServices: [] }) });
-    expect(created.status).toBe(201);
+    expect(systemBlocked.status).toBe(409);
+    await expect(systemBlocked.json()).resolves.toEqual({ error: "The awaiting_raw stage is required for new projects." });
+
+    const guardProject = await createUploadProject(cookie, "Stage guard");
+    await database.DB.prepare("UPDATE projects SET stage_key = ?, updated_at = ? WHERE id = ?").bind("raw_review", Date.now(), guardProject.id).run();
+    const projectCountRow = await database.DB.prepare("SELECT count(*) AS count FROM projects WHERE stage_key = ? AND archived_at IS NULL").bind("raw_review").first<{ count: number }>();
+    const expectedProjectCount = projectCountRow?.count ?? 0;
+    expect(expectedProjectCount).toBeGreaterThan(0);
+    const activeProjectBlocked = await SELF.fetch("https://portal.test/api/admin/stages/raw_review", { method: "PATCH", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ active: false }) });
+    expect(activeProjectBlocked.status).toBe(409);
+    await expect(activeProjectBlocked.json()).resolves.toEqual({ error: "This stage is used by active projects and cannot be deactivated.", projectCount: expectedProjectCount });
+    const adminAfterGuard = await readStages("/api/admin/stages", cookie);
+    const publicAfterGuard = await readStages("/api/stages", photographerCookie);
+    expect(adminAfterGuard.find((stage) => stage.key === "raw_review")).toMatchObject({ active: true });
+    expect(publicAfterGuard.find((stage) => stage.key === "raw_review")).toMatchObject({ active: true });
+  });
+
+  it("rejects project movement into an inactive Stage", async () => {
+    const cookie = await sessionCookie(adminToken);
     await database.DB.prepare("UPDATE pipeline_stages SET active = 0 WHERE key = ?").bind("raw_review").run();
-    const inactiveTarget = await SELF.fetch(`https://portal.test/api/projects/${(await created.json() as { id: string }).id}/stage`, { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ stageKey: "raw_review" }) });
-    expect(inactiveTarget.status).toBe(409); await expect(inactiveTarget.json()).resolves.toEqual({ error: "Stage is deactivated" });
-    await database.DB.prepare("UPDATE pipeline_stages SET active = 1 WHERE key = ?").bind("raw_review").run();
+    try {
+      const created = await createUploadProject(cookie, "Inactive target stage");
+      const inactiveTarget = await SELF.fetch(`https://portal.test/api/projects/${created.id}/stage`, { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ stageKey: "raw_review" }) });
+      expect(inactiveTarget.status).toBe(409);
+      await expect(inactiveTarget.json()).resolves.toEqual({ error: "Stage is deactivated" });
+    } finally {
+      await database.DB.prepare("UPDATE pipeline_stages SET active = 1 WHERE key = ?").bind("raw_review").run();
+    }
   });
 
   it("filters Tonomo events and lets operators retry or discard only poison rows", async () => {

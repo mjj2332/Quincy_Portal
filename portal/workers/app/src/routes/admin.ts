@@ -14,7 +14,6 @@ const agencyPatch = agencyCreate.partial();
 const agentFields = z.object({ agencyId: z.string().uuid().nullable().optional(), name: z.string().trim().min(1), email: z.string().trim().email().nullable().optional(), phone: z.string().trim().nullable().optional() });
 const agentPatch = agentFields.partial();
 const stagePatch = z.object({ label: z.string().trim().min(1).optional(), active: z.boolean().optional() });
-const stageMove = z.object({ direction: z.enum(["up", "down"]) });
 const renditionBackfill = z.object({ dryRun: z.boolean().optional(), cursor: z.string().uuid().optional(), limit: z.number().int().min(1).max(100).optional(), confirmProduction: z.literal(true).optional() });
 const autohdrBackfillInput = z.object({ dryRun: z.boolean().optional(), limit: z.number().int().min(1).max(100).optional(), cursor: z.string().uuid().optional() });
 const autohdrScaffoldBackfillInput = z.object({ dryRun: z.boolean().optional(), limit: z.number().int().min(1).max(200).optional() });
@@ -288,22 +287,6 @@ adminRoutes.patch("/admin/stages/:key", async (c) => {
   await db.update(schema.pipelineStages).set(data).where(eq(schema.pipelineStages.key, key));
   await audit(c.env, c.get("user").id, "pipeline_stage.update", "pipeline_stage", key, data);
   return c.json(await db.select().from(schema.pipelineStages).where(eq(schema.pipelineStages.key, key)).get());
-});
-
-adminRoutes.post("/admin/stages/:key/move", async (c) => {
-  if (!adminAllowed(c)) return c.json({ error: "Forbidden", capability: "adminBackend" }, 403);
-  const key = c.req.param("key"); const data = await jsonInput(c, stageMove); if (data instanceof Response) return data;
-  const db = createDb(c.env.DB); const stages = await listPipelineStages(db); const index = stages.findIndex((stage) => stage.key === key);
-  if (index < 0) return c.json({ error: "Stage not found" }, 404);
-  const adjacent = stages[index + (data.direction === "up" ? -1 : 1)];
-  if (!adjacent) return c.json({ error: "Stage is already at the edge" }, 409);
-  const stage = stages[index]!;
-  await db.batch([
-    db.update(schema.pipelineStages).set({ displayOrder: adjacent.displayOrder }).where(eq(schema.pipelineStages.key, stage.key)),
-    db.update(schema.pipelineStages).set({ displayOrder: stage.displayOrder }).where(eq(schema.pipelineStages.key, adjacent.key)),
-  ]);
-  await audit(c.env, c.get("user").id, "pipeline_stage.move", "pipeline_stage", key, { direction: data.direction, swappedWith: adjacent.key });
-  return c.json({ stages: await listPipelineStages(db) });
 });
 
 adminRoutes.get("/admin/webhook-events", async (c) => {

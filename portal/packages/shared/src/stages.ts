@@ -1,7 +1,8 @@
 /**
  * Pipeline stages (Implementation-Plan §2 A4).
  * Stable machine KEYS — code and transitions reference keys only.
- * Admin-editable labels/display order live in the pipeline_stages D1 table,
+ * Admin-managed labels and active/inactive status, together with developer-managed global
+ * display order, live in the pipeline_stages D1 table,
  * seeded from DEFAULT_STAGES. `client_review` is reserved (D-03) but not shipped.
  */
 

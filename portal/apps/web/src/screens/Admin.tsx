@@ -261,15 +261,10 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
     try { await apiPatch(`/api/admin/agents/${agent.id}`, { agencyId: agent.agencyId, name: agent.name, email: agent.email, phone: agent.phone }); setEditingAgent(undefined); await loadDirectory(); toast("Agent updated."); }
     catch (reason) { toast(reason instanceof Error ? reason.message : "Agent could not be updated.", "error"); }
   }
-  async function updateStage(key: string, patch: Partial<Pick<Stage, "label" | "displayOrder" | "active">>) {
+  async function updateStage(key: string, patch: Partial<Pick<Stage, "label" | "active">>) {
     setStageError(undefined);
     try { await apiPatch(`/api/admin/stages/${key}`, patch); await Promise.all([loadPipeline(), refreshStages()]); }
     catch (reason) { const message = reason instanceof Error ? reason.message : "Stage could not be updated."; setStageError(message); }
-  }
-  async function reorderStage(index: number, direction: -1 | 1) {
-    const stage = stages[index]; if (!stage) return;
-    try { await apiPost(`/api/admin/stages/${stage.key}/move`, { direction: direction === -1 ? "up" : "down" }); await Promise.all([loadPipeline(), refreshStages()]); }
-    catch (reason) { setStageError(reason instanceof Error ? reason.message : "Stages could not be reordered."); }
   }
   async function viewPayload(id: string) {
     try { const detail = await apiGet<EventDetail>(`/api/admin/webhook-events/${id}`); setPayload({ id, json: JSON.stringify(JSON.parse(detail.event.payloadJson), null, 2) }); }
@@ -340,7 +335,7 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
       {activeTab === "pipeline" && canAdminBackend && <section className="admin-section" role="tabpanel">
         <div className="admin-section__head"><div><div className="ey">Project flow</div><h2 className="serif">Pipeline stages</h2></div><button className="button button--secondary" type="button" onClick={() => void loadPipeline()}>Refresh</button></div>
         {pipelineError && <div className="notice" role="alert">{pipelineError}</div>}{stageError && <div className="notice" role="alert">{stageError}</div>}
-        <div className="admin-stage-list">{stages.map((stage, index) => <div className="admin-stage" key={stage.key}><div className="admin-stage__order">{stage.displayOrder}</div><div><strong>{stage.key.replace(/_/g, " ")}</strong><small>Stable stage key</small></div><label className="admin-field"><span>Label</span><input value={stage.label} onChange={(event) => setStages((current) => current.map((item) => item.key === stage.key ? { ...item, label: event.target.value } : item))} onBlur={() => void updateStage(stage.key, { label: stage.label })} /></label><label className="admin-toggle"><input type="checkbox" checked={stage.active} onChange={(event) => void updateStage(stage.key, { active: event.target.checked })} /><span>{stage.active ? "Active" : "Inactive"}</span></label><div className="admin-stage__actions"><button className="button button--text" type="button" disabled={index === 0} onClick={() => void reorderStage(index, -1)}>Up</button><button className="button button--text" type="button" disabled={index === stages.length - 1} onClick={() => void reorderStage(index, 1)}>Down</button></div></div>)}</div>
+        <div className="admin-stage-list">{stages.map((stage) => <div className="admin-stage" key={stage.key}><div className="admin-stage__order">{stage.displayOrder}</div><div><strong>{stage.key.replace(/_/g, " ")}</strong><small>Stable stage key</small></div><label className="admin-field"><span>Label</span><input value={stage.label} onChange={(event) => setStages((current) => current.map((item) => item.key === stage.key ? { ...item, label: event.target.value } : item))} onBlur={() => void updateStage(stage.key, { label: stage.label })} /></label><label className="admin-toggle"><input type="checkbox" checked={stage.active} onChange={(event) => void updateStage(stage.key, { active: event.target.checked })} /><span>{stage.active ? "Active" : "Inactive"}</span></label></div>)}</div>
       </section>}
 
       {activeTab === "integrations" && canManageIntegrations && <section className="admin-section" role="tabpanel">
