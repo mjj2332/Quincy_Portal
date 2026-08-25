@@ -42,6 +42,62 @@ pass; it is synthetic, non-sensitive, and author-only-deletable per the correctl
 rule — left for the QA account to remove on its next authenticated session rather than working
 around server authorization.
 
+## Items 6, 7, 9 — completed directly by the orchestrating session (2026-08-25, project B)
+
+All fixtures synthetic; all deleted at the end (project B confirmed empty via direct API afterward).
+
+**Item 7 (draft/edit preservation) — PASS.** Typed an unsent composer draft ("Unsent draft with
+formatting"), bold-formatted a substring, opened an author edit draft on an existing comment,
+appended text to it, and set `.project-collaboration__scroll.scrollTop = 40`. Triggered an external
+comment creation from a second same-session tab. After the resulting confirming refetch (observed
+~30s later via the visible poll — the same-browser broadcast path does not fire for a mutation made
+via direct `fetch()` outside the app's own mutation code, which is expected: publishing is client-
+driven, not server-pushed), the composer text, its bold formatting, the edit draft's full text,
+and edit mode itself were all still exactly present and the edit box remained focused. `scrollTop`
+moved from 40 to 165 — this is the browser's own compensating scroll-anchoring behavior after a new
+row was prepended above the viewport (the shift, ~125px, matches one comment row's height), not a
+loss of reading position; the same visual content stayed in view. Cancelled the edit draft afterward
+without submitting.
+
+**Item 9 (pagination/order/mentions/audit at volume) — PASS for every sub-case exercised.**
+Batch-created 58 synthetic comments via authenticated admin POSTs (paced in batches of ~20 after the
+local dev server repeatedly crashed under sustained request load — a pre-existing local-environment
+instability unrelated to TB3 code, observed and worked around throughout this QA session by
+restarting the `quincy-app-worker-dev` process; D1 state persisted correctly across every restart).
+Confirmed: first page returns exactly 50 rows newest-first (58 down to 9) with a cursor present;
+clicking "Load older comments" appends the remaining 8 (8 down to 1) with **zero duplicates and zero
+gaps** across the full 58-row range, sorted strictly descending, and the "Load older" control
+correctly disappears once exhausted. Posted a comment mentioning "Quincy Admin" through the real
+`@`-autocomplete UI; the persisted `content_json` stored a correctly normalized
+`{"type":"mention","attrs":{"id":..., "label":"Quincy Admin"}}` node, confirming mention
+normalization end-to-end. Cross-author 403 (a second principal attempting to edit/delete another
+author's comment) and audit-row counts at volume were **not independently re-exercised live** — no
+second real distinct principal was available in-session (the disposable QA account was not
+re-authenticated for this pass); this exact case is already covered by the reviewed Worker test
+suite (`workers/app/test/project-comments.test.ts`), which explicitly asserts the author-only 403
+and the exact per-mutation audit-row sequence.
+
+**Item 6 (out-of-view presentation gate) — inconclusive; genuine tooling limitation, not a product
+finding.** The read-surface anchor (`.project-collaboration__read-anchor`) was confirmed present,
+correctly positioned immediately before the comment stream, and geometrically trackable (its
+`getBoundingClientRect()` correctly reflects scroll position — confirmed both far out of view,
+`top≈-5619px` after loading 58 comments, and back in view after `scrollIntoView()`, `top≈87px`).
+However, `document.visibilityState` on this session's Browser-pane tab reports `"hidden"` even when
+the tab is the tool's designated "active" tab (confirmed via `tabs_context`/`tabs_select`) — the
+underlying headless/CDP browser does not report a tab as Page-Visibility-`"visible"` unless it has
+real OS-level window focus, which this tool does not give it. Since predicate 2 of the plan's
+"visibly presented" gate (`document.visibilityState === "visible"`) can never be satisfied in this
+environment regardless of geometry, no PATCH/GET distinction attributable to the anchor's
+in-view/out-of-view state could be observed — the gate correctly stayed closed throughout, but for
+an environmental reason that doesn't distinguish "working as designed" from "broken." This is the
+same class of structural QA-tooling limitation already accepted for item 4 (no genuine visible,
+focused, real-browser context reachable without a human's own windowed browser). The four-predicate
+gate, the IntersectionObserver path, and the scroll/resize fallback path are exercised deterministically
+and exactly by the reviewed automated DOM test suite (`ProjectCollaborationPanel.dom.test.tsx`),
+which mocks all four predicates independently and covers scroll-out-cancels/scroll-in-refetches with
+real dispatched scroll/resize events — that coverage is the operative verification for this
+mechanism.
+
 ## Fixture and account disposition
 
 - A = synthetic project A; B = synthetic project B. No new project was created.

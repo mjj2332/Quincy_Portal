@@ -721,3 +721,50 @@ was expensive: three wrong root causes were shipped before the plan page was eve
   bare `Input` usage at the same time — either wrap them consistently or confirm the mixed
   bare/wrapped state is intentional and the shared-ref hazard is actually inert for that specific
   combination, rather than assuming today's "it's just a no-op" analysis still holds.
+
+## `RichTextEditor` propagated no-op Tiptap transactions, silently reverting external resets (2026-08-25)
+
+- **Real bug, found in TB3 manual QA and fixed** (`2cba9a1`). Tiptap/ProseMirror can dispatch a
+  transaction whose resulting document is byte-identical to the one already committed — one
+  concrete trigger is `editor.setEditable()` being toggled during a mutation's `saving` state (the
+  comment composer disables itself via `disabled={saving}` while a POST is in flight). The old
+  `onUpdate` handler propagated every transaction unconditionally via `onChangeRef.current(doc)`,
+  so this no-op event could land in its own render pass right after an external
+  `setContent(emptyDoc())` reset (the composer clearing after a successful post, or exiting edit
+  mode) and silently re-populate the field with the stale pre-submit text — even though the
+  comment/edit itself was already correctly persisted server-side.
+- **No automated test caught this** — it needs real ProseMirror/browser transaction timing that
+  mocked editors and fake timers don't reproduce. It was only found by manually exercising the real
+  local dev server in a real browser, then root-caused via temporary `console.log`
+  instrumentation directly in the live page (not guessed from source reading alone).
+- **Fix:** guard `onUpdate` to compare the transaction's resulting document against the last
+  *committed* value (`valueRef.current`) and skip propagating when unchanged, rather than checking
+  Tiptap's `transaction.docChanged` flag directly — that flag proved environment-dependent between
+  real Chrome and this repo's DOM test harness (which simulates typing via direct `textContent`
+  assignment + a synthetic `InputEvent`, not real keyboard/composition events, and produced
+  different transaction semantics for the same simulated edit).
+- **Rule:** any future change to `RichTextEditor`'s `onUpdate`/value-sync logic should be verified
+  live in a real browser against the real dev server, not just against the DOM test suite — this
+  exact class of bug is structurally invisible to jsdom-based tests.
+
+## Local `wrangler dev` (`quincy-app-worker-dev`) crashes intermittently under sustained request load (2026-08-25)
+
+- **Observed repeatedly during TB3 manual QA** — the local app Worker dev server (`wrangler dev`
+  via `.claude/launch.json`'s `quincy-app-worker-dev` config) died outright (process gone, `ps aux`
+  confirms no surviving `wrangler dev`/`workerd serve` process) at least five separate times across
+  one QA session, each time after a burst of API requests (batch comment creation, rapid
+  page-load/mention-lookup cycles) — not under any unusually heavy load by production standards.
+  No corruption, no error dialog, just a dead process; `preview_list` reports zero running servers
+  afterward.
+- **Not a TB3 regression** — reproduced identically against `main` before and after TB3's own
+  changes, and the crash pattern (silent process death under moderate sustained local request
+  volume) matches known `workerd`/Miniflare local-dev stability issues, not application code.
+- **Recovery is reliable and lossless:** restarting via `preview_start` (or `npx wrangler dev`
+  directly) brings it back within seconds, and local D1 state persists correctly across every
+  restart (already-created rows, sessions, and memberships all survive) — this matches the
+  session's established pattern of local D1 persistence surviving dev-server restarts.
+- **Rule:** when running any local QA or scripted load against `quincy-app-worker-dev` (batch
+  fixture creation, repeated polling, etc.), expect the server to die at least once and check for
+  `ERR_CONNECTION_REFUSED` in network request results before concluding a fetch actually failed for
+  an application reason — restart and retry rather than treating a connection-refused error as
+  applicative evidence of anything.
