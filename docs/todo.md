@@ -9,6 +9,20 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
 
 ## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29, seed-admin UUID migration 2026-07-29, notification dismiss + stalled-guard 2026-07-30, download selection 2026-08-04, notice-board rich text + mentions 2026-08-17, project comments + collaboration panel 2026-08-17, project subtasks/checklist 2026-08-17, collaboration panel relocated to Project page 2026-08-17, collaboration panel UI fixes + due-time reminder 2026-08-17, notification click navigation 2026-08-17, comment ordering + Shift+Enter soft breaks 2026-08-17, mention-email content 2026-08-20, TB0 authority promotion 2026-08-24, TB0A React 19.2 deployed + accepted 2026-08-25, TB0B pipeline configuration boundary deployed 2026-08-24, TB1 Tailwind v4/shadcn foundation deployed 2026-08-25, TB2 route-safe project data freshness deployed 2026-08-25)
 
+- **TB3 (project discussion v2 — TanStack Query freshness for project comments plus a new
+  per-user server-owned read-marker table) plan is APPROVED, 2026-08-25**
+  (`docs/plans/Revamp-TB3-Project-Discussion-V2-Plan.md`, not yet built/deployed). This pipeline's
+  first live-production schema migration (`0030_project_comment_read_markers`, additive-only
+  `CREATE TABLE`, no rebuild/`PRAGMA` toggle). Went through 2 Sol plan-review rounds (8 findings,
+  all fixed) and 1 Opus tier-2 revert (8 more findings — most seriously an undefined read-
+  advancement proof-delivery channel that would have silently broken TanStack structural sharing,
+  a 409/200 ambiguity on the read-marker upsert that would have caused refetch amplification on
+  the 30-second poll hot path, and confirmation of the append-monotonic allocator's gap for
+  read markers of deleted comments — fixed with a three-way `MAX()` allocator and a composite
+  covering index), then Opus APPROVE on re-review (verified by actually executing the migration
+  SQL, cascades, index plans, and the deletion regression scenario in SQLite). Next: Luna build
+  via the same Sol diff-review + Opus final-draft pipeline used for TB1/TB2, then production
+  migration + deploy.
 - **TB2 (route-safe project data freshness, TanStack Query for Project Workspace detail + active
   collection assets) is deployed to production, 2026-08-25** (`docs/plans/implemented/
   Revamp-TB2-Route-Safe-Data-Freshness-Plan.md`, commits `155b957` code/tests + `cb6f1e1` manual QA
@@ -91,8 +105,8 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
   authority/source baseline, not a revamp tracer bullet. TB0A (React 19.2 compatibility-only),
   TB0B (developer-managed pipeline-order boundary), TB1 (Tailwind v4 + shadcn foundation), and TB2
   (route-safe project data freshness) are all drafted, reviewed, and deployed to production (see
-  the bullets above). All four are now live, so TB3 (project discussion v2) is next in the Revised
-  sequence.
+  the bullets above). All four are now live; TB3 (project discussion v2)'s plan is now APPROVED
+  (see the bullet above) and is next in the Revised sequence — build in progress.
 
 - **Mention-triggered emails for project comments and notice-board posts now carry the author's
   name and a 400-char, surrogate-safe excerpt of the actual comment/post body, deployed 2026-08-20
