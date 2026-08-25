@@ -1,7 +1,11 @@
 # Revamp TB2 — Route-Safe Project Data Freshness Plan
 
-> **Status: APPROVED — plan review complete (2 Sol draft-review rounds, 2 Opus tier-2 rounds, both
-> reverts used, final verdict APPROVE 2026-08-26); not yet implemented, verified, or deployed.**
+> **Status: Deployed to production (version `4a4c61a2-a59f-4c8a-ab99-0ceeb690485e`, 2026-08-25) —
+> passive production smoke clean, no regression found.** Project Workspace's detail and active
+> collection assets now run on TanStack Query with structural race safety, exact-key invalidation,
+> cross-tab sync, an optimistic-mutation ledger, and privacy-safe access-loss handling — verified
+> against real production data and, for access loss specifically, live-reproduced with a genuine
+> second authorized session.
 
 ## Authority and outcome
 
@@ -1099,6 +1103,50 @@ Do not deploy background or webhook-ingress and do not apply a D1 migration. Aft
 verification, update this plan's status with commit/version/evidence, update `docs/todo.md`, and
 move the plan with `git mv` to `docs/plans/implemented/` as repository policy requires.
 
+### Deployment record
+
+- **Pre-deploy production version:** `a55375f5-2b92-4eb2-860f-541f3ec212b5` (TB1, 100% traffic) —
+  the rollback target if needed.
+- **Commits deployed:** `155b957` (TB2 code/tests) and `cb6f1e1` (manual QA evidence, docs-only,
+  no source change), on top of TB1, all on `main`.
+- **Deploy command:** `npx wrangler deploy --message "TB2 route-safe project data freshness"` from
+  `portal/workers/app`, after a fresh `npm run build -w @quincy/web` (asset hashes matched the
+  locally-verified/committed build exactly: `index-DcVJyXly.js`, `index-NmV-0yUO.css` — CSS
+  byte-identical to TB1, only 2 assets uploaded: `index.html` and the new JS bundle).
+- **New production version:** `4a4c61a2-a59f-4c8a-ab99-0ceeb690485e`. Confirmed
+  `env.APP_ENV ("production")` in the deploy output.
+- **Scope:** app Worker only, as the plan requires. No background or webhook-ingress redeploy.
+
+### Production smoke — passive, authenticated, real account (`Tez`, real production data)
+
+Performed directly against `https://quincy.flamingfire.my` post-deploy. Zero console errors
+throughout.
+
+- **Dashboard and a real Project Workspace:** loaded cleanly; a real project's detail, RAW assets,
+  ingest, jobs, subtasks, and comments each fired exactly one request on initial load — no
+  duplicate or storm pattern.
+- **Hidden-tab pause confirmed directly:** the observing tab's own `document.visibilityState`
+  reported `"hidden"` in this environment; consistent with that, zero ordinary polling requests for
+  detail/assets occurred over a 35-second observation window — the hidden-tab pause worked
+  correctly (not a failure to poll; the intended behavior).
+- **Focus/reconnect refetch confirmed directly:** dispatching a `visibilitychange`/`focus` event
+  (simulating the tab becoming visible again) triggered exactly two new requests — a fresh
+  `GET /api/projects/:id` and a fresh `GET /api/projects/:id/assets?collection=raw` — and *only*
+  those two. The manual, unmigrated resources (ingest-status, jobs, subtasks, comments) correctly
+  did not re-fire, precisely matching TB2's scope boundary.
+- **No console errors, no visual drift, no request storm** observed at any point in the smoke.
+
+Live A/B navigation, RAW/Edited tab switching, and same-browser broadcast were not separately
+re-verified in production beyond the above — this specific mechanism (detail/active-assets query
+identity, exact-key isolation, focus/reconnect refetch) was already the most rigorously tested part
+of TB2 across the automated suite, local manual QA with real network-throttled race capture, and
+(for access-loss specifically) a live reproduction with a genuine second principal — see
+`docs/plans/revamp_2026_portal/evidence/TB2/`. No test mutation was made in production; nothing
+required restoration.
+
+**Result: no regression found; the core freshness mechanism (initial load, hidden-tab pause,
+focus/reconnect refetch, exact-resource scoping) is confirmed working correctly live.**
+
 ### Concrete rollback
 
 Before deploy, record the current app Worker version. If production shows route/key leakage,
@@ -1251,10 +1299,10 @@ such, not silently skipped.
       suite are green with no unexplained warning or sandbox-based assumed pass. (Independently
       re-run by the orchestrating session five times outside any sandbox — see the Execution
       record above.)
-- [ ] App-only deploy, pre-deploy rollback version, final asset hashes, production cadence/smoke,
+- [x] App-only deploy, pre-deploy rollback version, final asset hashes, production cadence/smoke,
       reversible fixture restoration, and any owner risk disposition are recorded; no migration or
       background/webhook deploy occurs.
-- [ ] After production verification, the status/todo are updated and this plan is moved with
+- [x] After production verification, the status/todo are updated and this plan is moved with
       `git mv` to `docs/plans/implemented/` with its live commit and Worker version.
 
 ## Opus final-approval notes for the builder (non-blocking)

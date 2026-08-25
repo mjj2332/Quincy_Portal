@@ -7,8 +7,28 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
 > counts, full diagnostic transcripts) has been cut in favor of what/when/deploy-state. See
 > `docs/lessons.md` for incident mechanics, and `docs/reviews/` for full QA-sweep detail.
 
-## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29, seed-admin UUID migration 2026-07-29, notification dismiss + stalled-guard 2026-07-30, download selection 2026-08-04, notice-board rich text + mentions 2026-08-17, project comments + collaboration panel 2026-08-17, project subtasks/checklist 2026-08-17, collaboration panel relocated to Project page 2026-08-17, collaboration panel UI fixes + due-time reminder 2026-08-17, notification click navigation 2026-08-17, comment ordering + Shift+Enter soft breaks 2026-08-17, mention-email content 2026-08-20, TB0 authority promotion 2026-08-24, TB0A React 19.2 deployed + accepted 2026-08-25, TB0B pipeline configuration boundary deployed 2026-08-24, TB1 Tailwind v4/shadcn foundation deployed 2026-08-25)
+## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29, seed-admin UUID migration 2026-07-29, notification dismiss + stalled-guard 2026-07-30, download selection 2026-08-04, notice-board rich text + mentions 2026-08-17, project comments + collaboration panel 2026-08-17, project subtasks/checklist 2026-08-17, collaboration panel relocated to Project page 2026-08-17, collaboration panel UI fixes + due-time reminder 2026-08-17, notification click navigation 2026-08-17, comment ordering + Shift+Enter soft breaks 2026-08-17, mention-email content 2026-08-20, TB0 authority promotion 2026-08-24, TB0A React 19.2 deployed + accepted 2026-08-25, TB0B pipeline configuration boundary deployed 2026-08-24, TB1 Tailwind v4/shadcn foundation deployed 2026-08-25, TB2 route-safe project data freshness deployed 2026-08-25)
 
+- **TB2 (route-safe project data freshness, TanStack Query for Project Workspace detail + active
+  collection assets) is deployed to production, 2026-08-25** (`docs/plans/implemented/
+  Revamp-TB2-Route-Safe-Data-Freshness-Plan.md`, commits `155b957` code/tests + `cb6f1e1` manual QA
+  evidence, production Worker version `4a4c61a2-a59f-4c8a-ab99-0ceeb690485e`, rollback target
+  `a55375f5-2b92-4eb2-860f-541f3ec212b5`). The highest-stakes phase built in this pipeline: 2 Sol
+  plan rounds + 2 Opus tier-2 plan rounds (11 real issues found and fixed, including a
+  role-downgrade cache-leak privacy gap and a reachable Sync-from-Dropbox self-purge bug), then 2
+  Sol diff-review rounds + 2 Opus final-draft rounds on the build (14 more real issues found and
+  fixed, most seriously a special-owner ownership bug that would have permanently frozen detail/
+  Edited freshness for any Admin viewing a project in `raw_review`/`editing_autohdr` with no active
+  AutoHDR handoff — the normal case post-PR#44 — plus a UI regression where RAW/Edited tab switches
+  silently discarded unsent comment drafts). Manual QA covered all 12 matrix items: 1–9 and 12 via
+  danger-mode local testing (real network-throttled race capture, multi-tab timing); 10 (access
+  removal, both membership-removal and full-deactivation) via a genuine second authorized session —
+  the owner signed a disposable QA account into a real, separate Chrome browser, and the
+  orchestrating session live-drove the admin-side revocation while observing that account's own tab
+  react correctly in real time; item 11 recorded as not attempted live, by owner judgment, backed
+  by existing automated + code-review coverage. Passive production smoke (real client data)
+  confirmed the core mechanism — initial load, hidden-tab pause, focus/reconnect refetch, exact-
+  resource scoping — working correctly live, zero regressions.
 - **TB1 (Tailwind v4 + shadcn/Base UI foundation, first consumer: `ProjectFields`'s Client section)
   is deployed to production, 2026-08-25** (`docs/plans/implemented/
   Revamp-TB1-Tailwind-Shadcn-Foundation-Plan.md`, commit `00e2bd3`, production Worker version
@@ -69,9 +89,10 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
   reviewed drift register.
   PR #44's Admin-only, direct send-only AutoHDR handoff is carried forward as existing
   authority/source baseline, not a revamp tracer bullet. TB0A (React 19.2 compatibility-only),
-  TB0B (developer-managed pipeline-order boundary), and TB1 (Tailwind v4 + shadcn foundation) are
-  all drafted, reviewed, and deployed to production (see the bullets above). All three are now
-  live, so TB2 (route-safe data freshness) is next in the Revised sequence.
+  TB0B (developer-managed pipeline-order boundary), TB1 (Tailwind v4 + shadcn foundation), and TB2
+  (route-safe project data freshness) are all drafted, reviewed, and deployed to production (see
+  the bullets above). All four are now live, so TB3 (project discussion v2) is next in the Revised
+  sequence.
 
 - **Mention-triggered emails for project comments and notice-board posts now carry the author's
   name and a 400-char, surrogate-safe excerpt of the actual comment/post body, deployed 2026-08-20
@@ -869,3 +890,8 @@ allowlist are silent no-ops otherwise). Full mechanics in `docs/subagents/agy-cl
 - R2 S3 API token for presigned multipart uploads; credentials in gitignored `.dev.vars`.
 - Repo layout: `prototype/ · portal/ · docs/ · test-data/`; `CLAUDE.md`/`AGENTS.md` are the
   project guide (kept in sync, identical content).
+- Disposable QA account `tsseotsseo@gmail.com` (Photographer role), provisioned 2026-08-25 via
+  Admin → Users "Provision user" — currently registered in **local dev only**, active, no project
+  memberships. Exists specifically for manual QA needing a genuine second authorized session
+  (cross-session polling/broadcast, access-removal reproduction); reuse for future TB-phases rather
+  than provisioning another. Only the human signs into it — never an agent (standing rule).
