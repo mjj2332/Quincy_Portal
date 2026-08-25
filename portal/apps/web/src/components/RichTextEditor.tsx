@@ -236,7 +236,13 @@ export function RichTextEditor({ value, onChange, limit, disabled = false, loadM
     },
     onUpdate: ({ editor: next }) => {
       const doc = tiptapToRichTextDoc(next.getJSON());
-      valueRef.current = JSON.stringify(doc); onChangeRef.current(doc); setNestingBlocked(false); setQuery(mentionQuery(next));
+      const serialised = JSON.stringify(doc);
+      // Tiptap/ProseMirror can dispatch a no-op transaction (e.g. from a blur triggered by a
+      // submit button click) that reports the same content as before. Propagating it anyway can
+      // clobber a concurrent external reset (e.g. the composer clearing after a successful post)
+      // that lands between this event and the next render.
+      if (serialised === valueRef.current) return;
+      valueRef.current = serialised; onChangeRef.current(doc); setNestingBlocked(false); setQuery(mentionQuery(next));
     },
     onSelectionUpdate: ({ editor: next }) => setQuery(mentionQuery(next)),
   });

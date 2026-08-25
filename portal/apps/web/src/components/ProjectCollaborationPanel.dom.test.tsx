@@ -347,16 +347,19 @@ describe("ProjectCollaborationPanel", () => {
   });
 
   it("posts comments, exposes edit/delete only to the author, cancels edits, and scopes mention lookup to the project", async () => {
+    const posted = { ...ownComment, id: "comment-new", body: "Posted comment", content: doc("Posted comment") };
+    let serverHasPosted = false;
+    apiPostMock.mockImplementation(async () => { serverHasPosted = true; return posted; });
     apiGetMock.mockImplementation((path) => path.includes("mentionable-users")
       ? Promise.resolve({ users: [{ id: "user-mention", name: "Nora Mention", role: "editor" }] })
-      : Promise.resolve(comments()));
+      : Promise.resolve(comments(serverHasPosted ? [posted, ownComment, otherComment] : undefined)));
     const host = mount();
     await render(<ProjectCollaborationPanel projectId={projectId} openSignal={1} />);
     expect([...host.querySelectorAll<HTMLButtonElement>("button")].filter((button) => button.textContent === "Edit")).toHaveLength(1);
     expect([...host.querySelectorAll<HTMLButtonElement>("button")].filter((button) => button.textContent === "Delete")).toHaveLength(1);
     const composer = host.querySelector<HTMLElement>('[contenteditable="true"]')!;
     await typeIntoEditor(composer, "Posted comment");
-    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Post comment")!);
+    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Post comment")!); await flush();
     expect(apiPostMock).toHaveBeenCalledWith(`/api/projects/${projectId}/comments`, { content: doc("Posted comment") }); expect(host.textContent).toContain("Posted comment");
     await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Edit")!);
     await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Cancel")!);
