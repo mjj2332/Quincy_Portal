@@ -8,6 +8,8 @@ const apiGetMock = vi.hoisted(() => vi.fn<(path: string) => Promise<unknown>>())
 const apiPatchMock = vi.hoisted(() => vi.fn<(path: string, body: unknown) => Promise<unknown>>());
 const apiPostMock = vi.hoisted(() => vi.fn<(path: string, body: unknown) => Promise<unknown>>());
 const refreshStagesMock = vi.hoisted(() => vi.fn<() => Promise<void>>());
+const projectQueryClientMock = vi.hoisted(() => ({ current: {} }));
+const invalidateActiveProjectDetailsMock = vi.hoisted(() => vi.fn<() => Promise<void>>());
 
 vi.mock("../lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/api")>();
@@ -19,10 +21,14 @@ vi.mock("../lib/api", async (importOriginal) => {
   };
 });
 vi.mock("../lib/capabilities", () => ({
-  useCapabilities: () => ({ role: "admin", capabilities: ["adminBackend"], can: (capability: string) => capability === "adminBackend" }),
+  useCapabilities: () => ({ role: "admin", capabilities: ["adminBackend", "manageUsers"], can: (capability: string) => capability === "adminBackend" || capability === "manageUsers" }),
 }));
 vi.mock("../lib/stages", () => ({
   useStages: () => ({ stages: [], isLoading: false, refreshStages: refreshStagesMock }),
+}));
+vi.mock("../lib/project-data", () => ({
+  useOptionalProjectQueryClient: () => projectQueryClientMock.current,
+  invalidateActiveProjectDetails: invalidateActiveProjectDetailsMock,
 }));
 
 import { Admin } from "./Admin";
@@ -93,6 +99,7 @@ describe("Admin Pipeline configuration boundary", () => {
     root = createRoot(host);
     stageRows = fixtureStages();
     apiGetMock.mockReset().mockImplementation((path) => {
+      if (path === "/api/users") return Promise.resolve({ users: [] });
       if (path === "/api/admin/stages") return Promise.resolve({ stages: stageRows.map((stage) => ({ ...stage })) });
       if (path === "/api/admin/agencies") return Promise.resolve({ agencies: [] });
       if (path.startsWith("/api/admin/agents")) return Promise.resolve({ agents: [] });
@@ -101,6 +108,8 @@ describe("Admin Pipeline configuration boundary", () => {
     apiPatchMock.mockReset().mockResolvedValue({});
     apiPostMock.mockReset().mockResolvedValue({});
     refreshStagesMock.mockReset().mockResolvedValue(undefined);
+    projectQueryClientMock.current = {};
+    invalidateActiveProjectDetailsMock.mockReset().mockResolvedValue(undefined);
   });
 
   afterEach(async () => {
@@ -144,5 +153,27 @@ describe("Admin Pipeline configuration boundary", () => {
     expect(apiPatchMock.mock.calls[1]?.[1]).toEqual({ active: false });
     expect(refreshStagesMock).toHaveBeenCalledTimes(2);
     expect(apiGetMock.mock.calls.filter(([path]) => path === "/api/admin/stages")).toHaveLength(3);
+  });
+
+  it("invalidates active project details after a successful rename even when the user reload fails", async () => {
+    let userLoads = 0;
+    apiGetMock.mockImplementation((path) => {
+      if (path === "/api/users") {
+        userLoads += 1;
+        return userLoads === 1
+          ? Promise.resolve({ users: [{ id: "user-1", name: "Old Name", email: "old@example.com", role: "editor", active: true, createdAt: null }] })
+          : Promise.reject(new Error("Users reload failed"));
+      }
+      return Promise.resolve({});
+    });
+    await act(async () => { root!.render(<Admin />); await Promise.resolve(); });
+    await flush();
+    await click([...host.querySelectorAll<HTMLButtonElement>(".admin-table__action button")].find((button) => button.textContent === "Edit")!);
+    const input = host.querySelector<HTMLInputElement>('input[aria-label="Name for Old Name"]')!;
+    await typeInto(input, "New Name");
+    await click([...host.querySelectorAll<HTMLButtonElement>(".admin-table__action button")].find((button) => button.textContent === "Save")!);
+    await flush();
+    expect(apiPatchMock).toHaveBeenCalledWith("/api/users/user-1", { name: "New Name" });
+    expect(invalidateActiveProjectDetailsMock).toHaveBeenCalledTimes(1);
   });
 });

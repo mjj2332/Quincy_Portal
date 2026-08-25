@@ -8,6 +8,7 @@ import { type ProjectStageKey, useStages } from "../lib/stages";
 import { formatDashboardDate, initializeDashboardView, initializeKanbanSortMode, isCanonicalShootDate, type DashboardView, type KanbanSortMode } from "./dashboard-helpers";
 import { InternalLink } from "../components/InternalLink";
 import { NoticeBoard } from "../components/NoticeBoard";
+import { invalidateProjectResources, useOptionalProjectQueryClient } from "../lib/project-data";
 
 export interface ProjectSummary {
   id: string;
@@ -119,6 +120,7 @@ function ProjectListRow({ project }: { project: ProjectSummary }) {
 }
 
 export function Dashboard({ currentUserId }: { currentUserId: string }) {
+  const queryClient = useOptionalProjectQueryClient();
   const { can } = useCapabilities();
   const { stages } = useStages();
   const canCreateProject = can("createProject");
@@ -212,6 +214,7 @@ export function Dashboard({ currentUserId }: { currentUserId: string }) {
     setPendingMoves((current) => new Set(current).add(project.id));
     try {
       const response = await apiPost<{ ok: true; stageKey: StageKey; boardPosition: number }, { stageKey: StageKey }>(`/api/projects/${project.id}/stage`, { stageKey });
+      if (queryClient) await invalidateProjectResources(queryClient, { projectId: project.id, resources: [{ kind: "detail" }] });
       setProjects((current) => current.map((item) => item.id === project.id && item.stageKey === stageKey ? { ...item, boardPosition: response.boardPosition } : item));
       const label = stages.find((stage) => stage.key === stageKey)?.label ?? stageKey;
       toast(`Moved to ${label}.`);

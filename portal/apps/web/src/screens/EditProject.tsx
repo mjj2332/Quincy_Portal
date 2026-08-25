@@ -4,6 +4,7 @@ import { ProjectFields, emptyProjectForm, type ProjectFieldError, type ProjectFo
 import { apiGet, apiPatch, apiPost } from "../lib/api";
 import { useCapabilities } from "../lib/capabilities";
 import { InternalLink } from "../components/InternalLink";
+import { invalidateProjectResources, projectDataKeys, removeProjectData, useOptionalProjectQueryClient } from "../lib/project-data";
 
 type ProjectResponse = {
   id: string; street: string; suburb: string | null; postcode: string | null; agencyName: string | null; agentName: string | null; agentEmail: string | null; agentPhone: string | null;
@@ -31,6 +32,7 @@ export function editProjectPayload(form: ProjectForm): Record<string, unknown> {
 }
 
 export function EditProject({ projectId, onNavigate }: { projectId: string; onNavigate: (path: string, notice?: string, replace?: boolean) => void }) {
+  const queryClient = useOptionalProjectQueryClient();
   const { can } = useCapabilities();
   const canEditProject = can("editProject");
   const [project, setProject] = useState<ProjectResponse>();
@@ -69,7 +71,11 @@ export function EditProject({ projectId, onNavigate }: { projectId: string; onNa
     if (Object.values(nextErrors).some(Boolean)) return;
     setIsSubmitting(true);
     try {
-      await apiPatch<ProjectResponse, Record<string, unknown>>(`/api/projects/${projectId}`, editProjectPayload(form));
+      const response = await apiPatch<ProjectResponse, Record<string, unknown>>(`/api/projects/${projectId}`, editProjectPayload(form));
+      if (queryClient) {
+        queryClient.setQueryData(projectDataKeys.detail(projectId), response);
+        await invalidateProjectResources(queryClient, { projectId, resources: [{ kind: "detail" }] });
+      }
       onNavigate(`/projects/${encodeURIComponent(projectId)}`, "Shoot details saved.");
     } catch (reason) {
       setSubmitError(reason instanceof Error ? reason.message : "The shoot details could not be saved.");
@@ -80,7 +86,7 @@ export function EditProject({ projectId, onNavigate }: { projectId: string; onNa
   async function archiveProject() {
     if (!window.confirm("Archive this project? It will be hidden from the dashboard and can be restored later.")) return;
     setDangerError(undefined); setIsDangerAction(true);
-    try { await apiPost<{ ok: true }, Record<string, never>>(`/api/projects/${projectId}/archive`, {}); onNavigate(`/projects/${encodeURIComponent(projectId)}`, "Project archived."); }
+    try { await apiPost<{ ok: true }, Record<string, never>>(`/api/projects/${projectId}/archive`, {}); if (queryClient) await invalidateProjectResources(queryClient, { projectId, resources: [{ kind: "detail" }] }); onNavigate(`/projects/${encodeURIComponent(projectId)}`, "Project archived."); }
     catch (reason) { setDangerError(reason instanceof Error ? reason.message : "The project could not be archived."); }
     finally { setIsDangerAction(false); }
   }
@@ -88,7 +94,7 @@ export function EditProject({ projectId, onNavigate }: { projectId: string; onNa
   async function restoreProject() {
     if (!window.confirm("Restore this project to the dashboard?")) return;
     setDangerError(undefined); setIsDangerAction(true);
-    try { await apiPost<{ ok: true }, Record<string, never>>(`/api/projects/${projectId}/restore`, {}); onNavigate(`/projects/${encodeURIComponent(projectId)}`, "Project restored."); }
+    try { await apiPost<{ ok: true }, Record<string, never>>(`/api/projects/${projectId}/restore`, {}); if (queryClient) await invalidateProjectResources(queryClient, { projectId, resources: [{ kind: "detail" }] }); onNavigate(`/projects/${encodeURIComponent(projectId)}`, "Project restored."); }
     catch (reason) { setDangerError(reason instanceof Error ? reason.message : "The project could not be restored."); }
     finally { setIsDangerAction(false); }
   }
@@ -100,6 +106,7 @@ export function EditProject({ projectId, onNavigate }: { projectId: string; onNa
       const response = await fetch(`/api/projects/${projectId}`, { method: "DELETE", credentials: "include", headers: { Accept: "application/json" } });
       const payload = await response.json().catch(() => undefined) as { error?: unknown } | undefined;
       if (!response.ok) throw new Error(typeof payload?.error === "string" ? payload.error : "The project could not be deleted.");
+      if (queryClient) await removeProjectData(queryClient, projectId);
       onNavigate("/", "Project permanently deleted.", true);
     } catch (reason) { setDangerError(reason instanceof Error ? reason.message : "The project could not be deleted."); setIsDangerAction(false); }
   }

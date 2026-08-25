@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type DragEvent, type ChangeEvent } from "react";
 import { isAcceptedPhotoFilename } from "@quincy/shared";
-import { apiPost } from "../lib/api";
+import { ApiError, apiPost } from "../lib/api";
 import { uploadMultipartFile, type MultipartPresign } from "../lib/multipart-upload";
+import { useProjectAccessTermination } from "../lib/project-data";
 
 type PresignResponse = MultipartPresign & {
   assetId?: string;
@@ -31,6 +32,7 @@ export function UploadDropzone({ projectId, collection = "raw", onComplete, onTo
   const [rejected, setRejected] = useState<string[]>([]);
   const [progress, setProgress] = useState<UploadProgress[]>([]);
   const [isUploading, setIsUploading] = useState(false);
+  const terminateOnUnauthorized = useProjectAccessTermination();
   const onCompleteRef = useRef(onComplete);
   onCompleteRef.current = onComplete;
 
@@ -48,6 +50,10 @@ export function UploadDropzone({ projectId, collection = "raw", onComplete, onTo
     const refreshPublishing = async () => {
       try {
         const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/manual-upload-jobs`, { credentials: "same-origin" });
+        if (response.status === 401) {
+          terminateOnUnauthorized(new ApiError("Your session is no longer available.", 401));
+          return;
+        }
         if (!response.ok) return;
         const body = await response.json() as { jobs?: Job[] };
         if (cancelled) return;
@@ -68,7 +74,7 @@ export function UploadDropzone({ projectId, collection = "raw", onComplete, onTo
     void refreshPublishing();
     const interval = window.setInterval(() => void refreshPublishing(), 5_000);
     return () => { cancelled = true; window.clearInterval(interval); };
-  }, [projectId, publishingJobIds.join(",")]);
+  }, [projectId, publishingJobIds.join(","), terminateOnUnauthorized]);
 
   async function upload(files: File[]) {
     const accepted = files.filter((file) => isAcceptedPhotoFilename(file.name));

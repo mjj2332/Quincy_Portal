@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState, type ChangeEvent, type FormEv
 import type { WorkspaceAsset } from "./PhotoGrid";
 import { ApiError, apiDelete, apiGet, apiPatch, apiPost, apiPostWithStatus } from "../lib/api";
 import { uploadMultipartFile, type MultipartPresign } from "../lib/multipart-upload";
+import { useProjectAccessTermination } from "../lib/project-data";
 import { LazyImage } from "./LazyImage";
 import { reorderNeighbors } from "../lib/reorder-neighbors";
 
@@ -51,10 +52,13 @@ function LinkTiles({ links, video = false, canReorder = false, reorderingLinkId,
   return <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}><SortableContext items={links.map((link) => link.id)} strategy={rectSortingStrategy}>{grid}</SortableContext></DndContext>;
 }
 
-export function CollectionPanel({ projectId, collection, assets, canManage, canDelete = false, canApprove, onReview, onDelete, onChanged, onToast }: {
+export function CollectionPanel({ projectId, collection, assets, canManage, canDelete = false, canApprove, onReview, onDelete, onChanged, onLinksChanged, onDocumentsChanged, onToast }: {
   projectId: string; collection: CollectionKind; assets: WorkspaceAsset[]; canManage: boolean; canDelete?: boolean; canApprove: boolean;
-  onReview: (assetId: string, patch: { decision: "approved" | null }) => Promise<void>; onDelete?: (assetId: string) => Promise<void>; onChanged: () => Promise<void>; onToast: (message: string, tone?: "success" | "error") => void;
+  onReview: (assetId: string, patch: { decision: "approved" | null }) => Promise<void>; onDelete?: (assetId: string) => Promise<void>; onChanged?: () => Promise<void>; onLinksChanged?: () => Promise<void>; onDocumentsChanged?: (kind: "floorplan" | "copy") => Promise<void>; onToast: (message: string, tone?: "success" | "error") => void;
 }) {
+  const terminateOnUnauthorized = useProjectAccessTermination();
+  const reportLinksChanged = onLinksChanged ?? onChanged ?? (async () => undefined);
+  const reportDocumentsChanged = onDocumentsChanged ?? (async () => onChanged?.());
   const [links, setLinks] = useState<Link[]>([]); const [url, setUrl] = useState(""); const [label, setLabel] = useState(""); const [savingLink, setSavingLink] = useState(false);
   const [editingLinkId, setEditingLinkId] = useState<string | null>(null); const [editDraft, setEditDraft] = useState({ url: "", label: "" }); const [editError, setEditError] = useState(""); const [savingEdit, setSavingEdit] = useState(false); const [reorderingLinkId, setReorderingLinkId] = useState<string | null>(null);
   const [uploadGroupId, setUploadGroupId] = useState<string | undefined>(); const [uploading, setUploading] = useState(false); const copyInput = useRef<HTMLInputElement>(null); const floorplanInput = useRef<HTMLInputElement>(null);
@@ -66,24 +70,24 @@ export function CollectionPanel({ projectId, collection, assets, canManage, canD
     // must not clobber a newer load's result.
     if (loadToken.current === token) setLinks(response.links);
   }, [collection, projectId]);
-  useEffect(() => { let active = true; void loadLinks().catch((error: unknown) => { if (active) onToast(error instanceof Error ? error.message : "Delivered links could not be loaded.", "error"); }); return () => { active = false; }; }, [loadLinks, onToast]);
+  useEffect(() => { let active = true; void loadLinks().catch((error: unknown) => { terminateOnUnauthorized(error); if (active) onToast(error instanceof Error ? error.message : "Delivered links could not be loaded.", "error"); }); return () => { active = false; }; }, [loadLinks, onToast, terminateOnUnauthorized]);
   async function addLink(event: FormEvent) {
     event.preventDefault(); setSavingLink(true);
     try {
       const { data: link, status } = await apiPostWithStatus<Link, { collection: CollectionKind; url: string; label?: string }>(`/api/projects/${projectId}/links`, { collection, url, label: label.trim() || undefined });
       if (status === 201) {
         setLinks((current) => [...current.filter((item) => item.id !== link.id), link]);
-        setUrl(""); setLabel(""); await onChanged(); onToast("Link added.");
+        setUrl(""); setLabel(""); await reportLinksChanged(); onToast("Link added.");
       } else {
         // Nothing was written server-side, so don't move the existing tile to the end of the
         // list the way a real append would — only fill it in if this client didn't have it yet.
         setLinks((current) => current.some((item) => item.id === link.id) ? current.map((item) => item.id === link.id ? link : item) : [...current, link]);
         onToast("This link is already in the list.", "error");
       }
-    } catch (error) { onToast(error instanceof Error ? error.message : "The link could not be added.", "error"); }
+    } catch (error) { terminateOnUnauthorized(error); onToast(error instanceof Error ? error.message : "The link could not be added.", "error"); }
     finally { setSavingLink(false); }
   }
-  async function removeLink(link: Link) { try { await apiDelete<void>(`/api/projects/${projectId}/links/${link.id}`); setLinks((current) => current.filter((item) => item.id !== link.id)); onToast("Manual link removed."); await onChanged(); } catch (error) { onToast(error instanceof Error ? error.message : "The link could not be removed.", "error"); } }
+  async function removeLink(link: Link) { try { await apiDelete<void>(`/api/projects/${projectId}/links/${link.id}`); setLinks((current) => current.filter((item) => item.id !== link.id)); onToast("Manual link removed."); await reportLinksChanged(); } catch (error) { terminateOnUnauthorized(error); onToast(error instanceof Error ? error.message : "The link could not be removed.", "error"); } }
   function startEdit(link: Link) { setEditingLinkId(link.id); setEditDraft({ url: link.url, label: link.label ?? "" }); setEditError(""); }
   function cancelEdit() { setEditingLinkId(null); setEditDraft({ url: "", label: "" }); setEditError(""); }
   async function saveEdit(event: FormEvent) {
@@ -93,7 +97,7 @@ export function CollectionPanel({ projectId, collection, assets, canManage, canD
     try {
       const link = await apiPatch<Link, { url: string; label?: string }>(`/api/projects/${projectId}/links/${editingLinkId}`, { url: editDraft.url, label: editDraft.label.trim() || undefined });
       setLinks((current) => current.map((item) => item.id === link.id ? link : item)); cancelEdit(); onToast("Link updated.");
-    } catch (error) { setEditError(error instanceof Error ? error.message : "The link could not be updated."); }
+    } catch (error) { terminateOnUnauthorized(error); setEditError(error instanceof Error ? error.message : "The link could not be updated."); }
     finally { setSavingEdit(false); }
   }
   async function reorderLinks(event: DragEndEvent) {
@@ -105,15 +109,15 @@ export function CollectionPanel({ projectId, collection, assets, canManage, canD
       await loadLinks();
     } catch (error) {
       if (error instanceof ApiError && error.status === 409) {
-        try { await loadLinks(); } catch (reloadError) { onToast(reloadError instanceof Error ? reloadError.message : "Delivered links could not be loaded.", "error"); }
+        try { await loadLinks(); } catch (reloadError) { terminateOnUnauthorized(reloadError); onToast(reloadError instanceof Error ? reloadError.message : "Delivered links could not be loaded.", "error"); }
         onToast("Link order changed; reload and try again", "error");
-      } else onToast(error instanceof Error ? error.message : "The link could not be reordered.", "error");
+      } else { terminateOnUnauthorized(error); onToast(error instanceof Error ? error.message : "The link could not be reordered.", "error"); }
     } finally { setReorderingLinkId(null); }
   }
   async function deleteVersion(document: WorkspaceAsset) {
     if (!onDelete || !window.confirm(`Permanently delete version ${document.version}? This cannot be undone.`)) return;
     try { await onDelete(document.id); }
-    catch (error) { onToast(error instanceof Error ? error.message : "The asset could not be deleted.", "error"); }
+    catch (error) { terminateOnUnauthorized(error); onToast(error instanceof Error ? error.message : "The asset could not be deleted.", "error"); }
   }
   function chooseUpload(groupId?: string) { setUploadGroupId(groupId); (collection === "floorplan" ? floorplanInput : copyInput).current?.click(); }
   async function uploadCopy(event: ChangeEvent<HTMLInputElement>) {
@@ -123,8 +127,8 @@ export function CollectionPanel({ projectId, collection, assets, canManage, canD
       const presign = await apiPost<DocumentPresign, { kind: "copy_pdf"; versionGroupId?: string; pdf: { filename: string; bytes: number; contentType: string } }>(`/api/projects/${projectId}/documents/presign`, { kind: "copy_pdf", versionGroupId, pdf: { filename: file.name, bytes: file.size, contentType: file.type } });
       sessionId = presign.sessionId;
       const pdf = await uploadMultipartFile(file, presign.files.pdf, `/api/projects/${projectId}/documents/direct/${presign.sessionId}/pdf`);
-      await apiPost(`/api/projects/${projectId}/documents/complete`, { sessionId: presign.sessionId, pdf }); await onChanged(); onToast("Copywriting PDF uploaded.");
-    } catch (error) { if (sessionId) void apiPost(`/api/projects/${projectId}/documents/${sessionId}/abort`, {}).catch(() => undefined); onToast(error instanceof Error ? error.message : "The document could not be uploaded.", "error"); } finally { setUploading(false); }
+      await apiPost(`/api/projects/${projectId}/documents/complete`, { sessionId: presign.sessionId, pdf }); await reportDocumentsChanged("copy"); onToast("Copywriting PDF uploaded.");
+    } catch (error) { terminateOnUnauthorized(error); if (sessionId) void apiPost(`/api/projects/${projectId}/documents/${sessionId}/abort`, {}).catch((abortError) => terminateOnUnauthorized(abortError)); onToast(error instanceof Error ? error.message : "The document could not be uploaded.", "error"); } finally { setUploading(false); }
   }
   async function uploadFloorplan(event: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files ?? []); event.target.value = ""; const versionGroupId = uploadGroupId; setUploadGroupId(undefined);
@@ -137,8 +141,8 @@ export function CollectionPanel({ projectId, collection, assets, canManage, canD
         uploadMultipartFile(pdf!, presign.files.pdf, `/api/projects/${projectId}/documents/direct/${presign.sessionId}/pdf`),
         uploadMultipartFile(preview!, presign.files.preview!, `/api/projects/${projectId}/documents/direct/${presign.sessionId}/preview`),
       ]);
-      await apiPost(`/api/projects/${projectId}/documents/complete`, { sessionId: presign.sessionId, pdf: completedPdf, preview: completedPreview }); await onChanged(); onToast(`Floorplan v${presign.version} uploaded.`);
-    } catch (error) { if (sessionId) void apiPost(`/api/projects/${projectId}/documents/${sessionId}/abort`, {}).catch(() => undefined); onToast(error instanceof Error ? error.message : "The floorplan could not be uploaded.", "error"); } finally { setUploading(false); }
+      await apiPost(`/api/projects/${projectId}/documents/complete`, { sessionId: presign.sessionId, pdf: completedPdf, preview: completedPreview }); await reportDocumentsChanged("floorplan"); onToast(`Floorplan v${presign.version} uploaded.`);
+    } catch (error) { terminateOnUnauthorized(error); if (sessionId) void apiPost(`/api/projects/${projectId}/documents/${sessionId}/abort`, {}).catch((abortError) => terminateOnUnauthorized(abortError)); onToast(error instanceof Error ? error.message : "The floorplan could not be uploaded.", "error"); } finally { setUploading(false); }
   }
 
   if (collection === "video") return <div className="collection-panel"><div className="workspace-intro"><div><div className="ey">Video delivery</div><h1 className="serif">Video links</h1></div><div className="muted">External delivery links remain connected to the project, ready for the final hand-off.</div></div><div className="collection-content"><LinkTiles video canReorder={canManage} reorderingLinkId={reorderingLinkId} onDragEnd={(event) => void reorderLinks(event)} links={links} onEdit={canManage ? startEdit : undefined} onRemove={canManage ? removeLink : undefined} editingLinkId={editingLinkId} editDraft={editDraft} editError={editError} savingEdit={savingEdit} onEditDraftChange={setEditDraft} onSaveEdit={(event) => void saveEdit(event)} onCancelEdit={cancelEdit} />{!links.length && <div className="empty"><span className="serif">No video link yet.</span>{canManage ? "Add the first delivery link below." : "Delivered video will appear here."}</div>}{canManage && <form className="collection-link-form" onSubmit={(event) => void addLink(event)}><label><span>Link URL</span><input required type="url" placeholder="https://vimeo.com/…" value={url} onChange={(event) => setUrl(event.target.value)} /></label><label><span>Label <em>optional</em></span><input placeholder="Final walkthrough" value={label} onChange={(event) => setLabel(event.target.value)} /></label><button className="button" disabled={savingLink}>{savingLink ? "Adding…" : "Add link"}</button></form>}</div></div>;

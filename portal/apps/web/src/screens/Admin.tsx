@@ -3,6 +3,7 @@ import { ROLES, type Role } from "@quincy/shared";
 import { ApiError, apiGet, apiPatch, apiPost } from "../lib/api";
 import { useCapabilities } from "../lib/capabilities";
 import { useStages } from "../lib/stages";
+import { invalidateActiveProjectDetails, useOptionalProjectQueryClient } from "../lib/project-data";
 
 type AdminTab = "users" | "directory" | "pipeline" | "integrations";
 type Toast = { id: number; message: string; tone: "success" | "error" };
@@ -53,6 +54,7 @@ function roleLabel(role: Role): string {
 }
 
 export function Admin({ currentUserId }: { currentUserId?: string | null }) {
+  const queryClient = useOptionalProjectQueryClient();
   const { can } = useCapabilities();
   const { refreshStages } = useStages();
   const canManageUsers = can("manageUsers");
@@ -201,6 +203,7 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
     setUpdatingUserId(user.id);
     try {
       await apiPatch<{ ok: true }, typeof patch>(`/api/users/${user.id}`, patch);
+      if (patch.name !== undefined && queryClient) await invalidateActiveProjectDetails(queryClient);
       await loadUsers();
       toast(patch.active === false ? `${user.name} has been deactivated and signed out everywhere.` : patch.active === true ? `${user.name} has been reactivated.` : patch.name !== undefined ? "Name updated." : "Role updated.");
       return true;

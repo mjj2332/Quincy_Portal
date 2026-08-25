@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { RICH_TEXT_JSON_MAX_BYTES, richTextDocByteLength, type RichTextDoc } from "@quincy/shared";
 import { apiDelete, apiGet, apiPatch, apiPost } from "../lib/api";
 import { useSession } from "../lib/auth";
+import { useProjectAccessTermination } from "../lib/project-data";
 import { RichTextContent } from "./RichTextContent";
 import { RichTextEditor } from "./RichTextEditor";
 import type { MentionableUser } from "./MentionAutocomplete";
@@ -13,6 +14,7 @@ const emptyDoc = (): RichTextDoc => ({ type: "doc", content: [{ type: "paragraph
 
 export function ProjectCollaborationPanel({ projectId, openSignal, onOpenSignalConsumed, mode = "overlay", initialComments }: { projectId: string; openSignal?: number; onOpenSignalConsumed?: (signal: number) => void; mode?: "overlay" | "standalone"; initialComments?: CommentResponse }) {
   const session = useSession();
+  const terminateOnUnauthorized = useProjectAccessTermination();
   const currentUserId = session.data?.user.id;
   const overlay = mode === "overlay";
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -59,9 +61,9 @@ export function ProjectCollaborationPanel({ projectId, openSignal, onOpenSignalC
       setProject(response.project); setNextCursor(response.nextCursor);
       setComments((current) => before ? [...current, ...(response.comments ?? [])] : (response.comments ?? []));
       setLoadedInitial(true);
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "Comments could not be loaded."); }
+    } catch (reason) { terminateOnUnauthorized(reason); setError(reason instanceof Error ? reason.message : "Comments could not be loaded."); }
     finally { if (before) setLoadingOlder(false); else setLoading(false); }
-  }, [projectId]);
+  }, [projectId, terminateOnUnauthorized]);
   useEffect(() => { if (open && !loadedInitial) void load(); }, [load, loadedInitial, open]);
 
   const close = useCallback(() => {
@@ -78,12 +80,15 @@ export function ProjectCollaborationPanel({ projectId, openSignal, onOpenSignalC
     window.addEventListener("keydown", keydown); return () => window.removeEventListener("keydown", keydown);
   }, [close, open, overlay]);
 
-  const loadMentionables = useCallback(async (query: string): Promise<MentionableUser[]> => (await apiGet<{ users: MentionableUser[] }>(`/api/mentionable-users?projectId=${encodeURIComponent(projectId)}&q=${encodeURIComponent(query)}`)).users, [projectId]);
+  const loadMentionables = useCallback(async (query: string): Promise<MentionableUser[]> => {
+    try { return (await apiGet<{ users: MentionableUser[] }>(`/api/mentionable-users?projectId=${encodeURIComponent(projectId)}&q=${encodeURIComponent(query)}`)).users; }
+    catch (reason) { terminateOnUnauthorized(reason); throw reason; }
+  }, [projectId, terminateOnUnauthorized]);
   const postingOverBytes = richTextDocByteLength(content) > RICH_TEXT_JSON_MAX_BYTES;
   const editingOverBytes = editing ? richTextDocByteLength(editing.content) > RICH_TEXT_JSON_MAX_BYTES : false;
-  async function submit() { if (saving || postingOverBytes) return; setSaving(true); setError(undefined); try { const comment = await apiPost<Comment, { content: RichTextDoc }>(`/api/projects/${encodeURIComponent(projectId)}/comments`, { content }); setComments((current) => [comment, ...current]); setContent(emptyDoc()); } catch (reason) { setError(reason instanceof Error ? reason.message : "Comment could not be posted."); } finally { setSaving(false); } }
-  async function saveEdit() { if (!editing || saving || editingOverBytes) return; setSaving(true); setError(undefined); try { const comment = await apiPatch<Comment, { content: RichTextDoc }>(`/api/projects/${encodeURIComponent(projectId)}/comments/${encodeURIComponent(editing.id)}`, { content: editing.content }); setComments((current) => current.map((item) => item.id === comment.id ? comment : item)); setEditing(undefined); } catch (reason) { setError(reason instanceof Error ? reason.message : "Comment could not be updated."); } finally { setSaving(false); } }
-  async function remove(comment: Comment) { if (!window.confirm("Delete this comment?")) return; setSaving(true); setError(undefined); try { await apiDelete(`/api/projects/${encodeURIComponent(projectId)}/comments/${encodeURIComponent(comment.id)}`); setComments((current) => current.filter((item) => item.id !== comment.id)); if (editing?.id === comment.id) setEditing(undefined); } catch (reason) { setError(reason instanceof Error ? reason.message : "Comment could not be deleted."); } finally { setSaving(false); } }
+  async function submit() { if (saving || postingOverBytes) return; setSaving(true); setError(undefined); try { const comment = await apiPost<Comment, { content: RichTextDoc }>(`/api/projects/${encodeURIComponent(projectId)}/comments`, { content }); setComments((current) => [comment, ...current]); setContent(emptyDoc()); } catch (reason) { terminateOnUnauthorized(reason); setError(reason instanceof Error ? reason.message : "Comment could not be posted."); } finally { setSaving(false); } }
+  async function saveEdit() { if (!editing || saving || editingOverBytes) return; setSaving(true); setError(undefined); try { const comment = await apiPatch<Comment, { content: RichTextDoc }>(`/api/projects/${encodeURIComponent(projectId)}/comments/${encodeURIComponent(editing.id)}`, { content: editing.content }); setComments((current) => current.map((item) => item.id === comment.id ? comment : item)); setEditing(undefined); } catch (reason) { terminateOnUnauthorized(reason); setError(reason instanceof Error ? reason.message : "Comment could not be updated."); } finally { setSaving(false); } }
+  async function remove(comment: Comment) { if (!window.confirm("Delete this comment?")) return; setSaving(true); setError(undefined); try { await apiDelete(`/api/projects/${encodeURIComponent(projectId)}/comments/${encodeURIComponent(comment.id)}`); setComments((current) => current.filter((item) => item.id !== comment.id)); if (editing?.id === comment.id) setEditing(undefined); } catch (reason) { terminateOnUnauthorized(reason); setError(reason instanceof Error ? reason.message : "Comment could not be deleted."); } finally { setSaving(false); } }
 
   const headerMarkup = <div className="project-collaboration__head"><div><div className="ey">Collaboration</div><h2 className="serif">{project?.street ?? "Project comments"}</h2></div>{overlay && <button ref={closeRef} type="button" className="button button--secondary" onClick={close}>Hide ›</button>}</div>;
   const contentMarkup = <>

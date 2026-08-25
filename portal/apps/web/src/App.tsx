@@ -11,8 +11,10 @@ import { Admin } from "./screens/Admin";
 import { CreateProject } from "./screens/CreateProject";
 import { EditProject } from "./screens/EditProject";
 import { StagesProvider } from "./lib/stages";
+import { QuincyQueryProvider } from "./lib/query-client";
+import type { Role } from "@quincy/shared";
 
-type SessionUser = { id: string; name?: string | null; email?: string | null };
+type SessionUser = { id: string; name?: string | null; email?: string | null; role: Role };
 type Notice = { path: string; message: string } | null;
 
 function viewFor(route: StaffRoute): AppView {
@@ -100,5 +102,6 @@ export default function App() {
   const pathname = typeof window === "undefined" ? "/" : `${window.location.pathname}${window.location.search}`;
   if (session.isPending) return <div className="boot">Loading the studio…</div>;
   if (!session.data) return <SignIn pathname={pathname} />;
-  return <StagesProvider><Shell user={session.data.user as SessionUser} /></StagesProvider>;
+  const user = session.data.user as unknown as SessionUser;
+  return <QuincyQueryProvider key={`${user.id}:${user.role}`} principalId={user.id} role={user.role}><StagesProvider><Shell user={user} /></StagesProvider></QuincyQueryProvider>;
 }

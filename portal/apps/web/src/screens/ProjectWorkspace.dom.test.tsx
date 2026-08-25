@@ -2,9 +2,14 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { focusManager, useQueryClient } from "@tanstack/react-query";
 import { ProjectWorkspace } from "./ProjectWorkspace";
 import type { WorkspaceAsset } from "../components/PhotoGrid";
 import { ApiError } from "../lib/api";
+import { QuincyQueryProvider } from "../lib/query-client";
+import { createProjectDataInvalidationMessage, getProjectQueryRuntime } from "../lib/project-query-sync";
+import { projectAssetsQueryOptions, projectDataKeys } from "../lib/project-data";
+import type { Role } from "@quincy/shared";
 
 const authState = vi.hoisted(() => ({ role: "editor" }));
 vi.mock("../lib/auth", () => ({
@@ -13,9 +18,10 @@ vi.mock("../lib/auth", () => ({
 
 const apiGetMock = vi.fn<(path: string, init?: unknown) => Promise<unknown>>();
 const apiPostMock = vi.fn<(path: string, body: unknown) => Promise<unknown>>();
+const apiDeleteMock = vi.fn<(path: string) => Promise<unknown>>();
 vi.mock("../lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/api")>();
-  return { ...actual, apiGet: (path: string, init?: unknown) => apiGetMock(path, init), apiPost: (path: string, body: unknown) => apiPostMock(path, body) };
+  return { ...actual, apiGet: (path: string, init?: unknown) => apiGetMock(path, init), apiPost: (path: string, body: unknown) => apiPostMock(path, body), apiDelete: (path: string) => apiDeleteMock(path) };
 });
 
 function workspaceAsset(id: string, overrides: Partial<WorkspaceAsset> = {}): WorkspaceAsset {
@@ -37,8 +43,14 @@ function projectFixture(id = "p1") {
 
 function deferredPromise<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((res) => { resolve = res; });
-  return { promise, resolve };
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; });
+  return { promise, resolve, reject };
+}
+
+function ClientCapture({ onClient }: { onClient: (client: ReturnType<typeof import("../lib/query-client").createQuincyQueryClient>) => void }) {
+  onClient(useQueryClient());
+  return null;
 }
 
 let root: Root | null = null;
@@ -52,7 +64,7 @@ function mount() {
 }
 
 async function render(value: ReactNode) {
-  await act(async () => { root!.render(value); await Promise.resolve(); });
+  await act(async () => { root!.render(<QuincyQueryProvider key={`${authState.role}:test`} principalId="test-user" role={authState.role as Role}>{value}</QuincyQueryProvider>); await Promise.resolve(); });
 }
 
 async function unmount() {
@@ -63,7 +75,7 @@ async function unmount() {
 
 async function flush(times = 10) {
   for (let i = 0; i < times; i += 1) {
-    await act(async () => { await Promise.resolve(); });
+    await act(async () => { await Promise.resolve(); await new Promise<void>((resolve) => setTimeout(resolve, 0)); });
   }
 }
 
@@ -71,6 +83,14 @@ function click(el: Element) {
   return act(async () => {
     el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     await Promise.resolve();
+  });
+}
+
+async function typeIntoEditor(editor: HTMLElement, text: string) {
+  await act(async () => {
+    editor.focus(); editor.textContent = text;
+    editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: text }));
+    await Promise.resolve(); await Promise.resolve();
   });
 }
 
@@ -92,6 +112,7 @@ describe("ProjectWorkspace cross-tab asset/selection/lightbox safety", () => {
     editedFetch = deferredPromise();
     apiGetMock.mockReset();
     apiPostMock.mockReset();
+    apiDeleteMock.mockReset();
     apiGetMock.mockImplementation((path: string) => {
       if (path === "/api/projects/p1") return Promise.resolve(projectFixture());
       if (path.includes("/ingest-status")) return Promise.resolve({ expectedCount: null, receivedCount: 2, mismatch: false });
@@ -102,7 +123,8 @@ describe("ProjectWorkspace cross-tab asset/selection/lightbox safety", () => {
     });
   });
 
-  afterEach(async () => {
+afterEach(async () => {
+    vi.useRealTimers();
     await unmount();
     host.remove();
   });
@@ -143,6 +165,301 @@ describe("ProjectWorkspace cross-tab asset/selection/lightbox safety", () => {
     expect(host.textContent).toContain("edited-1.jpg");
   });
 
+  it("hides stale private collection data in the same render that receives a capability 403", async () => {
+    let queryClient: ReturnType<typeof import("../lib/query-client").createQuincyQueryClient> | undefined;
+    await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>); await flush();
+    await click(editedTabButton(host));
+    await act(async () => { editedFetch.resolve({ assets: [workspaceAsset("edited-private")] }); await Promise.resolve(); }); await flush();
+    expect(host.textContent).toContain("edited-private.jpg");
+    apiGetMock.mockImplementation((path: string) => {
+      if (path.includes("/assets?collection=edited")) return Promise.reject(new ApiError("Edited collection forbidden", 403, { capability: "viewEdited" }));
+      if (path === "/api/projects/p1") return Promise.resolve(projectFixture());
+      if (path.includes("/ingest-status")) return Promise.resolve({ expectedCount: null, receivedCount: 2, mismatch: false });
+      if (path.includes("/assets?collection=raw")) return Promise.resolve({ assets: rawAssets });
+      return Promise.resolve({});
+    });
+    await queryClient!.invalidateQueries({ queryKey: ["project-data", "p1", "assets", "edited"], exact: true, refetchType: "active" }); await flush();
+    expect(host.textContent).not.toContain("edited-private.jpg");
+  });
+
+  it("remembers every denied collection for the mounted route generation", async () => {
+    apiGetMock.mockImplementation((path: string) => {
+      if (path === "/api/projects/p1") return Promise.resolve(projectFixture());
+      if (path.includes("/assets?collection=raw")) return Promise.resolve({ assets: rawAssets });
+      if (path.includes("/assets?collection=edited") || path.includes("/assets?collection=video")) return Promise.reject(new ApiError("Collection forbidden", 403, { capability: "viewEdited" }));
+      if (path.includes("/ingest-status")) return Promise.resolve({ expectedCount: null, receivedCount: 2, mismatch: false });
+      if (path.includes("/links")) return Promise.resolve({ links: [] });
+      return Promise.resolve({});
+    });
+    await render(<ProjectWorkspace projectId="p1" />); await flush(20);
+    await click(editedTabButton(host)); await flush(20);
+    expect([...host.querySelectorAll<HTMLButtonElement>(".frow")].some((item) => item.textContent?.includes("Edited"))).toBe(false);
+    await click([...host.querySelectorAll<HTMLButtonElement>(".frow")].find((item) => item.textContent?.includes("Video"))!); await flush(20);
+    expect([...host.querySelectorAll<HTMLButtonElement>(".frow")].some((item) => item.textContent?.includes("Edited"))).toBe(false);
+    expect([...host.querySelectorAll<HTMLButtonElement>(".frow")].some((item) => item.textContent?.includes("Video"))).toBe(false);
+  });
+
+  it("hides passive-RAW private data in the same render as a membership 403", async () => {
+    let queryClient: ReturnType<typeof import("../lib/query-client").createQuincyQueryClient> | undefined;
+    await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>); await flush();
+    await click(editedTabButton(host)); await act(async () => { editedFetch.resolve({ assets: [workspaceAsset("edited-1")] }); await Promise.resolve(); }); await flush();
+    apiGetMock.mockImplementation((path: string) => {
+      if (path.includes("/assets?collection=raw")) return Promise.reject(new ApiError("RAW project membership forbidden", 403));
+      if (path.includes("/assets?collection=edited")) return Promise.resolve({ assets: [workspaceAsset("edited-1")] });
+      if (path === "/api/projects/p1") return Promise.resolve(projectFixture());
+      if (path.includes("/ingest-status")) return Promise.resolve({ expectedCount: null, receivedCount: 2, mismatch: false });
+      return Promise.resolve({});
+    });
+    const invalidation = queryClient!.invalidateQueries({ queryKey: ["project-data", "p1", "assets", "raw"], exact: true, refetchType: "active" });
+    await invalidation; await flush();
+    expect(host.textContent).not.toContain("edited-1.jpg");
+    expect(host.textContent).toContain("Project unavailable.");
+  });
+
+  it("terminates the principal when a passive RAW observer receives a 401", async () => {
+    let queryClient: ReturnType<typeof import("../lib/query-client").createQuincyQueryClient> | undefined;
+    await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>); await flush();
+    await click(editedTabButton(host)); await act(async () => { editedFetch.resolve({ assets: [workspaceAsset("edited-1")] }); await Promise.resolve(); }); await flush();
+    apiGetMock.mockImplementation((path: string) => {
+      if (path.includes("/assets?collection=raw")) return Promise.reject(new ApiError("Session expired", 401));
+      if (path.includes("/assets?collection=edited")) return Promise.resolve({ assets: [workspaceAsset("edited-1")] });
+      if (path === "/api/projects/p1") return Promise.resolve(projectFixture());
+      if (path.includes("/ingest-status")) return Promise.resolve({ expectedCount: null, receivedCount: 2, mismatch: false });
+      return Promise.resolve({});
+    });
+    await queryClient!.invalidateQueries({ queryKey: ["project-data", "p1", "assets", "raw"], exact: true, refetchType: "active" }); await flush();
+    expect(host.textContent).toContain("Project unavailable.");
+    expect(queryClient!.getQueryCache().getAll()).toHaveLength(0);
+  });
+
+  it("finishes workspace initialization after a transient companion failure with one bounded notice", async () => {
+    apiGetMock.mockImplementation((path: string) => {
+      if (path === "/api/projects/p1") return Promise.resolve(projectFixture());
+      if (path.includes("/assets?collection=raw")) return Promise.resolve({ assets: rawAssets });
+      if (path.includes("/ingest-status")) return Promise.reject(new ApiError("Ingest temporarily unavailable", 500));
+      return Promise.resolve({});
+    });
+    await render(<ProjectWorkspace projectId="p1" />); await flush(20);
+    expect(host.querySelector(".work")).not.toBeNull();
+    expect(host.textContent).toContain("Ingest temporarily unavailable");
+    expect(host.textContent).not.toContain("Preparing the workspace.");
+  });
+
+  it("terminates on a 401 hidden behind another companion-bootstrap failure", async () => {
+    authState.role = "admin";
+    let queryClient: ReturnType<typeof import("../lib/query-client").createQuincyQueryClient> | undefined;
+    apiGetMock.mockImplementation((path: string) => {
+      if (path === "/api/projects/p1") return Promise.resolve(projectFixture());
+      if (path.includes("/assets?collection=raw")) return Promise.resolve({ assets: rawAssets });
+      if (path.includes("/ingest-status")) return Promise.reject(new ApiError("Ingest temporarily unavailable", 500));
+      if (path.endsWith("/jobs")) return Promise.reject(new ApiError("Session expired", 401));
+      return Promise.resolve({});
+    });
+    await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>); await flush(20);
+    expect(host.textContent).toContain("Project unavailable.");
+    expect(queryClient!.getQueryCache().getAll()).toHaveLength(0);
+  });
+
+  it("retains assets, multi-select, Lightbox, and a markup draft after a transient refetch error", async () => {
+    authState.role = "admin";
+    let queryClient: ReturnType<typeof import("../lib/query-client").createQuincyQueryClient> | undefined;
+    rawAssets = [workspaceAsset("raw-1"), workspaceAsset("raw-2")];
+    await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>); await flush();
+    await click(host.querySelectorAll<HTMLButtonElement>(".selbox")[0]!);
+    await click(host.querySelectorAll<HTMLButtonElement>(".selbox")[1]!);
+    await flush(12);
+    await click(host.querySelector<HTMLElement>(".tile")!); await flush();
+    await click(host.querySelector<HTMLButtonElement>(".viewer__panel-trigger")!); await flush();
+    const note = host.querySelector<HTMLTextAreaElement>(".annotation-note");
+    expect(note).not.toBeNull();
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")!.set!;
+    await act(async () => { setter.call(note, "unsaved markup draft"); note!.dispatchEvent(new Event("input", { bubbles: true })); await Promise.resolve(); });
+    const scroll = host.querySelector<HTMLElement>(".vpanel__scroll");
+    expect(scroll).not.toBeNull();
+    scroll!.scrollTop = 240;
+    apiGetMock.mockImplementation((path: string) => {
+      if (path.includes("/assets?collection=raw")) return Promise.reject(new ApiError("Temporary asset outage", 500));
+      if (path === "/api/projects/p1") return Promise.resolve(projectFixture());
+      if (path.includes("/ingest-status")) return Promise.resolve({ expectedCount: null, receivedCount: 2, mismatch: false });
+      if (path.includes("/annotations")) return Promise.resolve({ annotations: [] });
+      return Promise.resolve({});
+    });
+    await expect(queryClient!.fetchQuery({ ...projectAssetsQueryOptions("p1", "raw"), staleTime: 0, retry: false })).rejects.toMatchObject({ status: 500 });
+    await flush(12);
+    expect(host.textContent).toContain("Temporary asset outage");
+    expect(host.querySelectorAll(".tile.is-selected")).toHaveLength(2);
+    expect(host.querySelector(".actionbar")).not.toBeNull();
+    expect(host.querySelector(".viewer__close")).not.toBeNull();
+    expect(host.querySelector<HTMLTextAreaElement>(".annotation-note")?.value).toBe("unsaved markup draft");
+    expect(host.querySelector<HTMLElement>(".vpanel__scroll")?.scrollTop).toBe(240);
+  });
+
+  it("preserves multi-select, Lightbox draft, and scroll across an ordinary focus refetch", async () => {
+    authState.role = "admin";
+    let queryClient: ReturnType<typeof import("../lib/query-client").createQuincyQueryClient> | undefined;
+    rawAssets = [workspaceAsset("raw-1"), workspaceAsset("raw-2")];
+    await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>); await flush();
+    await click(host.querySelectorAll<HTMLButtonElement>(".selbox")[0]!);
+    await click(host.querySelectorAll<HTMLButtonElement>(".selbox")[1]!); await flush(12);
+    await click(host.querySelector<HTMLElement>(".tile")!); await flush();
+    await click(host.querySelector<HTMLButtonElement>(".viewer__panel-trigger")!); await flush();
+    const note = host.querySelector<HTMLTextAreaElement>(".annotation-note")!;
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")!.set!;
+    await act(async () => { setter.call(note, "focus-refresh draft"); note.dispatchEvent(new Event("input", { bubbles: true })); await Promise.resolve(); });
+    const scroll = host.querySelector<HTMLElement>(".vpanel__scroll")!; scroll.scrollTop = 180;
+    const refresh = deferredPromise<{ assets: WorkspaceAsset[] }>();
+    apiGetMock.mockImplementation((path: string) => {
+      if (path.includes("/assets?collection=raw")) return refresh.promise;
+      if (path === "/api/projects/p1") return Promise.resolve(projectFixture());
+      if (path.includes("/ingest-status")) return Promise.resolve({ expectedCount: null, receivedCount: 2, mismatch: false });
+      if (path.includes("/annotations")) return Promise.resolve({ annotations: [] });
+      return Promise.resolve({});
+    });
+    queryClient!.setQueryData(projectDataKeys.assets("p1", "raw"), rawAssets, { updatedAt: 0 });
+    focusManager.setFocused(false); focusManager.setFocused(true);
+    await flush(4);
+    expect(refresh.promise).toBeDefined();
+    refresh.resolve({ assets: rawAssets.map((asset) => ({ ...asset })) });
+    await flush(12);
+    expect(host.querySelectorAll(".tile.is-selected")).toHaveLength(2);
+    expect(host.querySelector(".actionbar")).not.toBeNull();
+    expect(host.querySelector(".viewer__close")).not.toBeNull();
+    expect(host.querySelector<HTMLTextAreaElement>(".annotation-note")?.value).toBe("focus-refresh draft");
+    expect(host.querySelector<HTMLElement>(".vpanel__scroll")?.scrollTop).toBe(180);
+    focusManager.setFocused(true);
+  });
+
+  it("holds active-job ownership between forced cycles and releases it at terminal state", async () => {
+    authState.role = "admin";
+    let queryClient: ReturnType<typeof import("../lib/query-client").createQuincyQueryClient> | undefined;
+    let jobsCalls = 0;
+    let detailCalls = 0;
+    const activeJob = { id: "job-1", kind: "autohdr_api_send" as const, status: "running" as const, error: null, correlationId: null, createdAt: "2026-08-25T00:00:00.000Z", updatedAt: "2026-08-25T00:00:00.000Z" };
+    const terminalJob = { ...activeJob, status: "done" as const };
+    apiGetMock.mockImplementation((path: string) => {
+      if (path === "/api/projects/p1") { detailCalls += 1; return Promise.resolve(projectFixture()); }
+      if (path.includes("/assets?collection=raw")) return Promise.resolve({ assets: rawAssets });
+      if (path.includes("/assets?collection=edited")) return Promise.resolve({ assets: [] });
+      if (path.includes("/ingest-status")) return Promise.resolve({ expectedCount: null, receivedCount: 2, mismatch: false });
+      if (path.endsWith("/jobs")) { jobsCalls += 1; return Promise.resolve({ jobs: [jobsCalls < 3 ? activeJob : terminalJob] }); }
+      return Promise.resolve({});
+    });
+    vi.useFakeTimers();
+    await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>);
+    for (let index = 0; index < 20; index += 1) await act(async () => { await Promise.resolve(); await vi.advanceTimersByTimeAsync(0); });
+    expect(jobsCalls).toBe(1);
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000); await Promise.resolve(); });
+    for (let index = 0; index < 8; index += 1) await act(async () => { await Promise.resolve(); await vi.advanceTimersByTimeAsync(0); });
+    expect(jobsCalls).toBe(2);
+    const afterForcedCycle = detailCalls;
+    queryClient!.setQueryData(projectDataKeys.detail("p1"), projectFixture(), { updatedAt: 0 });
+    focusManager.setFocused(false); focusManager.setFocused(true);
+    for (let index = 0; index < 4; index += 1) await act(async () => { await Promise.resolve(); await vi.advanceTimersByTimeAsync(0); });
+    expect(detailCalls).toBe(afterForcedCycle);
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000); await Promise.resolve(); });
+    for (let index = 0; index < 8; index += 1) await act(async () => { await Promise.resolve(); await vi.advanceTimersByTimeAsync(0); });
+    expect(jobsCalls).toBe(3);
+    const beforeTerminalFocus = detailCalls;
+    queryClient!.setQueryData(projectDataKeys.detail("p1"), projectFixture(), { updatedAt: 0 });
+    focusManager.setFocused(false); focusManager.setFocused(true);
+    for (let index = 0; index < 4; index += 1) await act(async () => { await Promise.resolve(); await vi.advanceTimersByTimeAsync(0); });
+    expect(detailCalls).toBeGreaterThan(beforeTerminalFocus);
+    focusManager.setFocused(true);
+  });
+
+  it("keeps ordinary detail freshness and received invalidations when an admin has no AutoHDR handoff", async () => {
+    authState.role = "admin";
+    let queryClient: ReturnType<typeof import("../lib/query-client").createQuincyQueryClient> | undefined;
+    let detailCalls = 0;
+    apiGetMock.mockImplementation((path: string) => {
+      if (path === "/api/projects/p1") { detailCalls += 1; return Promise.resolve(projectFixture()); }
+      if (path.includes("/assets?collection=raw")) return Promise.resolve({ assets: rawAssets });
+      if (path.includes("/ingest-status")) return Promise.resolve({ expectedCount: null, receivedCount: 2, mismatch: false });
+      if (path.endsWith("/jobs")) return Promise.resolve({ jobs: [] });
+      if (path.includes("/autohdr-status")) return Promise.resolve({ handoff: null });
+      return Promise.resolve({});
+    });
+    vi.useFakeTimers();
+    await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>);
+    for (let index = 0; index < 20; index += 1) await act(async () => { await Promise.resolve(); await vi.advanceTimersByTimeAsync(0); });
+    expect(detailCalls).toBe(1);
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); await Promise.resolve(); });
+    for (let index = 0; index < 8; index += 1) await act(async () => { await Promise.resolve(); await vi.advanceTimersByTimeAsync(0); });
+    expect(detailCalls).toBeGreaterThan(1);
+
+    const invalidate = vi.spyOn(queryClient!, "invalidateQueries");
+    const runtime = getProjectQueryRuntime(queryClient!);
+    (runtime as unknown as { receive: (value: unknown) => void }).receive({
+      ...createProjectDataInvalidationMessage("p1", [{ kind: "detail" }]),
+      sourceTabId: "other-tab",
+    });
+    await act(async () => { await Promise.resolve(); await vi.advanceTimersByTimeAsync(0); });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: projectDataKeys.detail("p1"), exact: true, refetchType: "active" });
+  });
+
+  it("starts the legacy AutoHDR gate when a live detail refetch moves the project into RAW review", async () => {
+    authState.role = "admin";
+    let queryClient: ReturnType<typeof import("../lib/query-client").createQuincyQueryClient> | undefined;
+    let stageKey: "awaiting_raw" | "raw_review" = "awaiting_raw";
+    apiGetMock.mockImplementation((path: string) => {
+      if (path === "/api/projects/p1") return Promise.resolve({ ...projectFixture(), stageKey });
+      if (path.includes("/assets?collection=raw")) return Promise.resolve({ assets: rawAssets });
+      if (path.includes("/ingest-status")) return Promise.resolve({ expectedCount: null, receivedCount: 2, mismatch: false });
+      if (path.endsWith("/jobs")) return Promise.resolve({ jobs: [] });
+      if (path.includes("/autohdr-status")) return Promise.resolve({ handoff: null });
+      return Promise.resolve({});
+    });
+    await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>); await flush(20);
+    expect(apiGetMock.mock.calls.some(([path]) => path.includes("/autohdr-status"))).toBe(false);
+
+    stageKey = "raw_review";
+    await queryClient!.invalidateQueries({ queryKey: projectDataKeys.detail("p1"), exact: true, refetchType: "active" }); await flush(20);
+    expect(apiGetMock.mock.calls.some(([path]) => path.includes("/autohdr-status"))).toBe(true);
+  });
+
+  it("keeps a PhotoGrid filter through a background refetch", async () => {
+    let queryClient: ReturnType<typeof import("../lib/query-client").createQuincyQueryClient> | undefined;
+    rawAssets = [workspaceAsset("rated", { review: { stars: 5, colorLabel: null, decision: null, recommended: false } }), workspaceAsset("unrated")];
+    await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>); await flush();
+    await click([...host.querySelectorAll<HTMLButtonElement>(".filter-chips .chip")].find((button) => button.textContent?.startsWith("Rated"))!);
+    apiGetMock.mockImplementation((path: string) => path.includes("/assets?collection=raw") ? Promise.resolve({ assets: rawAssets }) : path === "/api/projects/p1" ? Promise.resolve(projectFixture()) : path.includes("/ingest-status") ? Promise.resolve({ expectedCount: null, receivedCount: 2, mismatch: false }) : Promise.resolve({}));
+    await queryClient!.invalidateQueries({ queryKey: ["project-data", "p1", "assets", "raw"], exact: true, refetchType: "active" }); await flush();
+    expect([...host.querySelectorAll<HTMLButtonElement>(".filter-chips .chip")].find((button) => button.textContent?.startsWith("Rated"))?.classList.contains("is-active")).toBe(true);
+  });
+
+  it("fires exact cache invalidation and broadcast actions from real workspace mutation call sites", async () => {
+    authState.role = "admin";
+    let queryClient: ReturnType<typeof import("../lib/query-client").createQuincyQueryClient> | undefined;
+    await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>); await flush();
+    const runtime = getProjectQueryRuntime(queryClient!); const publish = vi.spyOn(runtime!, "publish"); const invalidate = vi.spyOn(queryClient!, "invalidateQueries");
+    await click(host.querySelectorAll<HTMLButtonElement>(".selbox")[0]!);
+    await click([...host.querySelectorAll<HTMLButtonElement>(".actionbar .barbtn")].find((button) => button.textContent === "Select for editing")!); await flush(20);
+    expect(invalidate).toHaveBeenCalledWith(expect.objectContaining({ queryKey: projectDataKeys.assets("p1", "raw"), exact: true, refetchType: "active" }));
+    expect(publish).toHaveBeenCalledWith(expect.objectContaining({ type: "project-data-invalidated", projectId: "p1", resources: [{ kind: "assets", collectionKind: "raw" }] }));
+
+    invalidate.mockClear(); publish.mockClear(); apiPostMock.mockResolvedValueOnce({});
+    const coverButton = host.querySelector<HTMLButtonElement>('button[title="Use as project cover"]');
+    expect(coverButton).not.toBeNull();
+    await click(coverButton!); await flush(20);
+    expect(invalidate).toHaveBeenCalledWith(expect.objectContaining({ queryKey: projectDataKeys.detail("p1"), exact: true, refetchType: "active" }));
+    expect(publish).toHaveBeenCalledWith(expect.objectContaining({ type: "project-data-invalidated", projectId: "p1", resources: [{ kind: "detail" }] }));
+
+    invalidate.mockClear(); publish.mockClear(); apiPostMock.mockResolvedValueOnce({});
+    await click(host.querySelector<HTMLButtonElement>('button[title="Approve"]')!); await flush(20);
+    expect(invalidate).toHaveBeenCalledWith(expect.objectContaining({ queryKey: projectDataKeys.assets("p1", "raw"), exact: true, refetchType: "active" }));
+    expect(publish).toHaveBeenCalledWith(expect.objectContaining({ type: "project-data-invalidated", projectId: "p1", resources: [{ kind: "assets", collectionKind: "raw" }] }));
+
+    invalidate.mockClear(); publish.mockClear(); apiDeleteMock.mockResolvedValueOnce({ ok: true, deletedAssetIds: ["raw-1"], deletedObjects: 1, dropboxDeleted: true, dropboxOutcome: "removed" });
+    const confirm = vi.fn(() => true); vi.stubGlobal("confirm", confirm);
+    await click(host.querySelector<HTMLButtonElement>('button[aria-label="Delete raw-1.jpg"]')!); await flush(20);
+    expect(invalidate).toHaveBeenCalledWith(expect.objectContaining({ queryKey: projectDataKeys.assets("p1", "raw"), exact: true, refetchType: "active" }));
+    expect(invalidate).toHaveBeenCalledWith(expect.objectContaining({ queryKey: projectDataKeys.detail("p1"), exact: true, refetchType: "active" }));
+    expect(invalidate).toHaveBeenCalledWith(expect.objectContaining({ queryKey: projectDataKeys.assets("p1", "edited"), exact: true, refetchType: "active" }));
+    expect(publish).toHaveBeenCalledWith(expect.objectContaining({ type: "project-data-invalidated", projectId: "p1", resources: [{ kind: "assets", collectionKind: "raw" }, { kind: "detail" }, { kind: "assets", collectionKind: "edited" }] }));
+    vi.unstubAllGlobals();
+  });
+
   it("closes an open lightbox on tab switch instead of crashing or showing the wrong asset", async () => {
     await render(<ProjectWorkspace projectId="p1" />);
     await flush();
@@ -157,6 +474,26 @@ describe("ProjectWorkspace cross-tab asset/selection/lightbox safety", () => {
     await flush();
 
     expect(host.querySelector(".viewer__close")).toBeNull();
+  });
+
+  it("keeps photographer Dropbox sync capability-scoped to RAW and ingest", async () => {
+    authState.role = "photographer";
+    apiGetMock.mockImplementation((path: string) => {
+      if (path === "/api/projects/p1") return Promise.resolve({ ...projectFixture(), rawFolderPath: "/dropbox/raw" });
+      if (path.includes("/ingest-status")) return Promise.resolve({ expectedCount: null, receivedCount: 2, mismatch: false });
+      if (path.includes("/assets?collection=raw")) return Promise.resolve({ assets: rawAssets });
+      return Promise.resolve({});
+    });
+    apiPostMock.mockResolvedValue({ raw: { jobId: "raw-job" }, edited: { skipped: "not_ready" } });
+    await render(<ProjectWorkspace projectId="p1" />); await flush();
+    vi.useFakeTimers();
+    await click(host.querySelector<HTMLButtonElement>(".dropcard")!);
+    for (let cycle = 0; cycle < 6; cycle += 1) await act(async () => { vi.advanceTimersByTime(2500); await Promise.resolve(); await Promise.resolve(); });
+    const paths = apiGetMock.mock.calls.map(([path]) => path);
+    expect(paths.filter((path) => path.includes("/assets?collection=raw")).length).toBeGreaterThanOrEqual(7);
+    expect(paths.some((path) => path.includes("/assets?collection=edited"))).toBe(false);
+    expect(paths.some((path) => path.includes("/jobs"))).toBe(false);
+    expect(paths.some((path) => path.includes("/autohdr-status"))).toBe(false);
   });
 });
 
@@ -174,7 +511,7 @@ describe("ProjectWorkspace selection download", () => {
       return Promise.resolve({});
     });
   });
-  afterEach(async () => { await unmount(); host.remove(); vi.restoreAllMocks(); });
+  afterEach(async () => { vi.useRealTimers(); await unmount(); host.remove(); vi.restoreAllMocks(); });
 
   it("POSTs the captured ids, then uses the returned ticket URL in a native anchor download", async () => {
     apiPostMock.mockResolvedValue({ downloadUrl: "/api/projects/p1/download-selection/ticket/archive.zip" });
@@ -213,16 +550,25 @@ describe("ProjectWorkspace selection download", () => {
     apiPostMock.mockRejectedValue(new Error("Selection unavailable"));
     await render(<ProjectWorkspace projectId="p1" />); await flush();
     await click(host.querySelectorAll<HTMLButtonElement>(".selbox")[0]!);
-    await click([...host.querySelectorAll<HTMLButtonElement>(".actionbar .barbtn")].find((item) => item.textContent === "Download selection")!); await flush();
+    await click([...host.querySelectorAll<HTMLButtonElement>(".actionbar .barbtn")].find((item) => item.textContent === "Download selection")!); await flush(20);
     expect(host.textContent).toContain("Selection unavailable");
     expect(host.querySelector(".tile")?.classList.contains("is-selected")).toBe(true);
+  });
+
+  it("treats an asset-specific mutation 404 as an ordinary mutation error", async () => {
+    await render(<ProjectWorkspace projectId="p1" />); await flush();
+    await click(host.querySelectorAll<HTMLButtonElement>(".selbox")[0]!);
+    apiPostMock.mockRejectedValueOnce(new ApiError("Asset disappeared", 404));
+    await click([...host.querySelectorAll<HTMLButtonElement>(".actionbar .barbtn")].find((item) => item.textContent === "Download selection")!); await flush(20);
+    expect(host.textContent).toContain("Asset disappeared");
+    expect(host.textContent).not.toContain("Project unavailable.");
   });
 });
 
 describe("ProjectWorkspace collaboration relocation", () => {
   let host: HTMLElement;
   beforeEach(() => { host = mount(); authState.role = "editor"; apiGetMock.mockReset(); apiPostMock.mockReset(); });
-  afterEach(async () => { await unmount(); host.remove(); });
+  afterEach(async () => { vi.useRealTimers(); await unmount(); host.remove(); });
 
   it("keeps the overlay out of the workspace grid, forwards every arrival, and preserves it over a lightbox", async () => {
     apiGetMock.mockImplementation((path: string) => {
@@ -240,7 +586,7 @@ describe("ProjectWorkspace collaboration relocation", () => {
     const panel = host.querySelector<HTMLElement>(".project-collaboration")!;
     const workspace = panel.closest<HTMLElement>(".work")!;
     const wrap = host.querySelector<HTMLElement>(".project-collaboration__wrap")!;
-    expect(panel).not.toBeNull(); expect(workspace.firstElementChild?.classList.contains("rail")).toBe(true); expect(panel.closest(".rail, .workmain")).toBeNull();
+    expect(panel).not.toBeNull(); expect(workspace).toBeNull(); expect(panel.closest(".rail, .workmain")).toBeNull();
     expect(panel.closest(".project-collaboration__wrap")).toBe(wrap); expect(consumed).toEqual([1]);
     await click(host.querySelector<HTMLElement>(".tile")!); await flush();
     expect(host.querySelector(".viewer")).not.toBeNull(); expect(host.querySelector(".project-collaboration")).not.toBeNull();
@@ -252,6 +598,32 @@ describe("ProjectWorkspace collaboration relocation", () => {
     expect(host.querySelector(".project-collaboration")).not.toBeNull(); expect(consumed).toEqual([1, 2, 3]);
   });
 
+  it("preserves a comment draft, closed overlay state, and one collaboration load across RAW↔Edited tabs", async () => {
+    let commentRequests = 0;
+    apiGetMock.mockImplementation((path: string) => {
+      if (path === "/api/projects/p1") return Promise.resolve(projectFixture());
+      if (path.includes("/assets?collection=raw")) return Promise.resolve({ assets: [workspaceAsset("raw-1")] });
+      if (path.includes("/assets?collection=edited")) return Promise.resolve({ assets: [workspaceAsset("edited-1")] });
+      if (path.includes("/ingest-status")) return Promise.resolve({ expectedCount: null, receivedCount: 1, mismatch: false });
+      if (path.includes("/comments?limit=50")) { commentRequests += 1; return Promise.resolve({ project: { id: "p1", street: "12 Example St" }, comments: [] }); }
+      if (path.includes("/subtasks")) return Promise.resolve({ subtasks: [] });
+      if (path.includes("/mentionable-users")) return Promise.resolve({ users: [] });
+      return Promise.resolve({});
+    });
+    await render(<ProjectWorkspace projectId="p1" />); await flush(20);
+    await typeIntoEditor(host.querySelector<HTMLElement>(".project-collaboration__comment-compose [contenteditable=\"true\"]")!, "unsent draft");
+    await click(host.querySelector<HTMLButtonElement>(".project-collaboration__head button")!);
+    expect(host.querySelector<HTMLButtonElement>(".project-collaboration__toggle")?.getAttribute("aria-expanded")).toBe("false");
+
+    await click(editedTabButton(host)); await flush(20);
+    await click([...host.querySelectorAll<HTMLButtonElement>(".frow")].find((item) => item.textContent?.includes("RAW"))!); await flush(20);
+    const toggle = host.querySelector<HTMLButtonElement>(".project-collaboration__toggle")!;
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    await click(toggle); await flush(4);
+    expect(host.querySelector<HTMLElement>(".project-collaboration__comment-compose [contenteditable=\"true\"]")?.textContent).toContain("unsent draft");
+    expect(commentRequests).toBe(1);
+  });
+
   it("uses the comments probe for a 403 collaborator without starting workspace reads", async () => {
     apiGetMock.mockImplementation((path: string) => {
       if (path === "/api/projects/p1") return Promise.reject(new ApiError("Forbidden", 403));
@@ -261,7 +633,9 @@ describe("ProjectWorkspace collaboration relocation", () => {
       return Promise.resolve({});
     });
     const consumed: number[] = [];
-    await render(<ProjectWorkspace projectId="p1" collaborationOpenSignal={7} onCollaborationOpenSignalConsumed={(signal) => consumed.push(signal)} />); await flush();
+    await render(<ProjectWorkspace projectId="p1" collaborationOpenSignal={7} onCollaborationOpenSignalConsumed={(signal) => consumed.push(signal)} />);
+    expect(host.textContent).toContain("Loading project."); expect(host.textContent).not.toContain("Project unavailable.");
+    await flush();
     expect(host.querySelector(".project-collaboration-only")).not.toBeNull(); expect(host.textContent).toContain("Hidden Street"); expect(host.querySelector(".work, .rail, .workmain")).toBeNull();
     expect(apiGetMock.mock.calls.map(([path]) => path)).not.toEqual(expect.arrayContaining([expect.stringContaining("/assets?collection=raw"), expect.stringContaining("/ingest-status")]));
     expect(consumed).toEqual([7]); expect(host.querySelector(".project-collaboration--standalone")).not.toBeNull();
@@ -306,7 +680,7 @@ describe("ProjectWorkspace collaboration relocation", () => {
     await render(<ProjectWorkspace projectId="p1" collaborationOpenSignal={11} onCollaborationOpenSignalConsumed={(signal) => consumed.push(signal)} />); await flush();
     expect(host.textContent).toContain("Project unavailable."); expect(host.querySelector(".project-collaboration")).toBeNull(); expect(consumed).toEqual([11]);
 
-    apiGetMock.mockReset().mockImplementation((path: string) => path === "/api/projects/p2" ? Promise.reject(new ApiError("Server failed", 500)) : Promise.resolve({}));
+    apiGetMock.mockReset().mockImplementation((path: string) => path === "/api/projects/p2" ? Promise.reject(new ApiError("Session expired", 401)) : Promise.resolve({}));
     await render(<ProjectWorkspace projectId="p2" collaborationOpenSignal={12} onCollaborationOpenSignalConsumed={(signal) => consumed.push(signal)} />); await flush();
     expect(host.textContent).toContain("Project unavailable."); expect(consumed).toEqual([11, 12]);
     expect(apiGetMock.mock.calls.map(([path]) => path)).not.toEqual(expect.arrayContaining([expect.stringContaining("comments?limit=50")]));
@@ -343,6 +717,6 @@ describe("ProjectWorkspace collaboration relocation", () => {
     expect(host.textContent).toContain("Edited frames");
     await click([...host.querySelectorAll<HTMLButtonElement>(".frow")].find((item) => item.textContent?.includes("RAW"))!); await flush();
     expect(host.textContent).toContain("RAW frames");
-    expect(apiGetMock.mock.calls.filter(([path]) => path.includes("/assets?collection=raw"))).toHaveLength(2);
+    expect(apiGetMock.mock.calls.filter(([path]) => path.includes("/assets?collection=raw"))).toHaveLength(1);
   });
 });

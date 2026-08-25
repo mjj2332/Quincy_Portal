@@ -1,0 +1,42 @@
+TB2 dependency version check
+Date: 2026-08-25
+Base commit: dd85fd6 docs: add approved TB2 plan (current main before TB2 implementation)
+Working directory: portal/
+
+The first registry attempt used npm's normal cache and was blocked by a pre-existing
+root-owned ~/.npm cache. The same live registry commands were rerun with an isolated cache
+under /private/tmp/tb2-npm-cache; no repository files were affected by that workaround.
+
+$ npm --cache /private/tmp/tb2-npm-cache view @tanstack/react-query version
+5.102.3
+
+$ npm --cache /private/tmp/tb2-npm-cache view @tanstack/react-query@5.102.3 version dist-tags --json
+{
+  "version": "5.102.3",
+  "dist-tags": {
+    "alpha": "5.0.0-alpha.91",
+    "beta": "5.0.0-beta.35",
+    "rc": "5.0.0-rc.16",
+    "previous": "4.44.0",
+    "latest": "5.102.3"
+  }
+}
+
+$ npm --cache /private/tmp/tb2-npm-cache view @tanstack/react-query@5.102.3 peerDependencies --json
+{
+  "react": "^18 || ^19"
+}
+
+$ npm --cache /private/tmp/tb2-npm-cache view @tanstack/react-query@5.102.3 dependencies --json
+{
+  "@tanstack/query-core": "5.102.3"
+}
+
+Chosen version: 5.102.3 (latest published stable v5 at execution time; the plan's 5.102.2
+candidate was no longer latest).
+Install command:
+$ npm --cache /private/tmp/tb2-npm-cache install --save-exact @tanstack/react-query@5.102.3
+
+Install result: added 2 packages, audited 533 packages in 8s.
+The npm audit summary reported 13 existing dependency vulnerabilities (6 moderate, 7 high);
+TB2 did not run npm audit fix or otherwise alter unrelated dependencies.

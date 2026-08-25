@@ -1,0 +1,39 @@
+# TB2 query contract and race-test record
+
+Date: 2026-08-25.
+
+The focused server-state seam is `apps/web/src/lib/project-data.test.ts` and
+`apps/web/src/lib/project-query-sync.test.ts` (19 tests), with the real consumer coverage in
+`ProjectWorkspace.dom.test.tsx`, `App.dom.test.tsx`, `Lightbox.dom.test.tsx`, and
+`query-client.dom.test.tsx` (the latter adds role isolation and the five-minute production-GC
+passive-RAW test). The focused consumer command is 3 files / 49 tests; the full web workspace is
+22 DOM files / 216 tests plus 13 node files / 88 tests.
+
+Covered guarantees:
+
+- exact project/detail/assets key tuples for all five collection kinds and URL-encoded paths;
+- direct TanStack AbortSignal propagation, retry classification for abort/status 0/4xx/408/429/
+  5xx/401/403/404, and exact stale/GC/default policy;
+- deterministic reversed A/B detail and RAW/Edited responses, including an aborted old detail
+  request resolving last, with no cross-key cache overwrite;
+- per-key/per-asset/per-field optimistic review/selection ledger: different-asset success/failure,
+  same-asset different-field success/failure, exact cancellation, field-only rollback, and one
+  deferred confirming invalidation after the final sibling settles, including coalescing a received
+  deferred invalidation with the local commit confirmation;
+- exact detail/assets invalidation, RAW-delete Edited side effect, exact BroadcastChannel parsing,
+  sender-loop suppression, receiver invalidation, channel cleanup, and project removal tombstone;
+- 401 whole-client purge, detail/asset capability-vs-membership 403/404 classification, and
+  initial detail-403 probe behavior with no workspace-owner reads before details succeeds;
+- provider role remount clearing the prior principal+role cache; passive RAW subscription remains
+  present after more than five minutes of production GC time and reacts to an exact cache update;
+- real Project Workspace consumers preserve tab/selection/lightbox behavior, exercise the existing
+  one-time Edited default, and prove photographer Dropbox sync does not force Edited, jobs, or
+  AutoHDR reads;
+- passive-RAW membership 403 data is hidden in the render derivation, transient asset failures
+  retain last-good data and show a bounded notice, ordinary focus refresh preserves multi-select,
+  Lightbox markup draft, and scroll, and active-job ownership remains held between forced cycles;
+- the companion bootstrap finds a 401 anywhere in a multi-failure batch, the manual publication
+  poll terminates on 401, and Admin rename invalidation fires before an independent user-list reload
+  failure.
+
+Manual QA and screenshot evidence were intentionally not captured under the task exclusions.

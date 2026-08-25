@@ -1,19 +1,17 @@
-import { describe, expect, it, vi } from "vitest";
-import { computeBulkDeleteOutcome, deletedAssetClosesLightbox, refreshAfterAssetDelete } from "./ProjectWorkspace";
+import { describe, expect, it } from "vitest";
+import { computeBulkDeleteOutcome, deletedAssetClosesLightbox, projectAssetsForRender } from "./ProjectWorkspace";
+import { ApiError } from "../lib/api";
+import type { WorkspaceAsset } from "../components/PhotoGrid";
+
+function asset(id: string): WorkspaceAsset {
+  return { id, collectionId: "c", kind: "photo", originalFilename: `${id}.jpg`, bytes: 1, width: null, height: null, ratingFromMetadata: null, section: null, renditionStatus: "ready", createdAt: "2026-08-25T00:00:00.000Z", sourceRawAssetId: null, version: 1, versionGroupId: null, supersedesAssetId: null, review: null, selected: false };
+}
 
 describe("ProjectWorkspace post-delete refresh ordering", () => {
-  it("keeps deletion result handling alive when an unrelated refresh aborts", async () => {
-    const aborted = Object.assign(new Error("superseded"), { name: "AbortError" });
-    const refreshAssets = vi.fn(async () => { throw aborted; });
-    const refreshProject = vi.fn(async () => undefined);
-    await expect(refreshAfterAssetDelete(refreshAssets, refreshProject)).resolves.toBeUndefined();
-    expect(refreshAssets).toHaveBeenCalledOnce(); expect(refreshProject).toHaveBeenCalledOnce();
-  });
-
-  it("surfaces a genuine failure from either independent refresh", async () => {
-    const failure = new Error("refresh failed");
-    await expect(refreshAfterAssetDelete(async () => { throw failure; }, async () => undefined)).rejects.toBe(failure);
-    await expect(refreshAfterAssetDelete(async () => undefined, async () => { throw failure; })).rejects.toBe(failure);
+  it("derives passive-RAW membership loss as empty before the body render, while retaining transient data", () => {
+    const privateAssets = [asset("private-raw")];
+    expect(projectAssetsForRender(privateAssets, new ApiError("membership lost", 403), "raw")).toEqual([]);
+    expect(projectAssetsForRender(privateAssets, new ApiError("temporary outage", 500), "raw")).toEqual(privateAssets);
   });
 
   it("closes the lightbox for either member returned by a floorplan-pair delete", () => {
