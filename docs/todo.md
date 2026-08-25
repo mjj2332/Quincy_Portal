@@ -9,6 +9,22 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
 
 ## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29, seed-admin UUID migration 2026-07-29, notification dismiss + stalled-guard 2026-07-30, download selection 2026-08-04, notice-board rich text + mentions 2026-08-17, project comments + collaboration panel 2026-08-17, project subtasks/checklist 2026-08-17, collaboration panel relocated to Project page 2026-08-17, collaboration panel UI fixes + due-time reminder 2026-08-17, notification click navigation 2026-08-17, comment ordering + Shift+Enter soft breaks 2026-08-17, mention-email content 2026-08-20, TB0 authority promotion 2026-08-24, TB0A React 19.2 deployed + accepted 2026-08-25, TB0B pipeline configuration boundary deployed 2026-08-24, TB1 Tailwind v4/shadcn foundation deployed 2026-08-25, TB2 route-safe project data freshness deployed 2026-08-25, TB3 project discussion v2 deployed 2026-08-25)
 
+- **TB4 (notification outbox and Cloudflare Queues — durable delivery for project-comment
+  mentions only) plan is APPROVED, 2026-08-25** (`docs/plans/Revamp-TB4-Notification-Outbox-And-
+  Queues-Plan.md`, not yet built/deployed). This pipeline's first Cloudflare-Queue-based
+  infrastructure and its second live-production schema migration (`0031_notification_outbox_and_
+  delivery_ledger`, additive-only, two new tables + indexes). Went through 2 Sol plan-review rounds
+  (2 findings round 1 — a duplicate-email risk in the email-error classifier, an unreachable-before-
+  Cron stuck in-app lease — both fixed; 5 more findings round 2 — most seriously two paths, DLQ
+  handling and Admin discard, that could let an email already mid-send become silently replayable
+  without the required duplicate warning). Rather than a third Sol round, Opus tier-2 review edited
+  the plan directly to resolve all 5 (adding a unifying email-status invariant — `failed` is
+  provably unaccepted, `unknown` may have been sent, live leases are never disturbed — an in-app
+  retry-release fix, a quota-retry pacing fence, and a missing FK index confirmed by executing the
+  amended migration in SQLite), then returned APPROVE without spending either of its two available
+  reverts. Next: Luna build via the same Sol diff-review + Opus final-draft pipeline used for
+  TB1–TB3, with particular attention to the DLQ/discard/email-ambiguity invariants given how many
+  of this plan's real findings clustered there.
 - **TB3 (project discussion v2 — TanStack Query freshness for project comments plus a new
   per-user server-owned read-marker table) is deployed to production, 2026-08-25**
   (`docs/plans/implemented/Revamp-TB3-Project-Discussion-V2-Plan.md`, commits `08f56f4` code/tests +
@@ -123,8 +139,8 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
   authority/source baseline, not a revamp tracer bullet. TB0A (React 19.2 compatibility-only),
   TB0B (developer-managed pipeline-order boundary), TB1 (Tailwind v4 + shadcn foundation), TB2
   (route-safe project data freshness), and TB3 (project discussion v2) are all drafted, reviewed,
-  and deployed to production (see the bullets above). All five are now live; TB4 is next in the
-  Revised sequence.
+  and deployed to production (see the bullets above). All five are now live; TB4's plan is now
+  APPROVED (see the bullet above) and is next in the Revised sequence — build in progress.
 
 - **Mention-triggered emails for project comments and notice-board posts now carry the author's
   name and a 400-char, surrogate-safe excerpt of the actual comment/post body, deployed 2026-08-20
