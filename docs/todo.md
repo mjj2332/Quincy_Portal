@@ -7,22 +7,40 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
 > counts, full diagnostic transcripts) has been cut in favor of what/when/deploy-state. See
 > `docs/lessons.md` for incident mechanics, and `docs/reviews/` for full QA-sweep detail.
 
-## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29, seed-admin UUID migration 2026-07-29, notification dismiss + stalled-guard 2026-07-30, download selection 2026-08-04, notice-board rich text + mentions 2026-08-17, project comments + collaboration panel 2026-08-17, project subtasks/checklist 2026-08-17, collaboration panel relocated to Project page 2026-08-17, collaboration panel UI fixes + due-time reminder 2026-08-17, notification click navigation 2026-08-17, comment ordering + Shift+Enter soft breaks 2026-08-17, mention-email content 2026-08-20, TB0 authority promotion 2026-08-24, TB0A React 19.2 deployed + accepted 2026-08-25, TB0B pipeline configuration boundary deployed 2026-08-24, TB1 Tailwind v4/shadcn foundation deployed 2026-08-25, TB2 route-safe project data freshness deployed 2026-08-25)
+## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29, seed-admin UUID migration 2026-07-29, notification dismiss + stalled-guard 2026-07-30, download selection 2026-08-04, notice-board rich text + mentions 2026-08-17, project comments + collaboration panel 2026-08-17, project subtasks/checklist 2026-08-17, collaboration panel relocated to Project page 2026-08-17, collaboration panel UI fixes + due-time reminder 2026-08-17, notification click navigation 2026-08-17, comment ordering + Shift+Enter soft breaks 2026-08-17, mention-email content 2026-08-20, TB0 authority promotion 2026-08-24, TB0A React 19.2 deployed + accepted 2026-08-25, TB0B pipeline configuration boundary deployed 2026-08-24, TB1 Tailwind v4/shadcn foundation deployed 2026-08-25, TB2 route-safe project data freshness deployed 2026-08-25, TB3 project discussion v2 deployed 2026-08-25)
 
 - **TB3 (project discussion v2 — TanStack Query freshness for project comments plus a new
-  per-user server-owned read-marker table) plan is APPROVED, 2026-08-25**
-  (`docs/plans/Revamp-TB3-Project-Discussion-V2-Plan.md`, not yet built/deployed). This pipeline's
-  first live-production schema migration (`0030_project_comment_read_markers`, additive-only
-  `CREATE TABLE`, no rebuild/`PRAGMA` toggle). Went through 2 Sol plan-review rounds (8 findings,
-  all fixed) and 1 Opus tier-2 revert (8 more findings — most seriously an undefined read-
-  advancement proof-delivery channel that would have silently broken TanStack structural sharing,
-  a 409/200 ambiguity on the read-marker upsert that would have caused refetch amplification on
-  the 30-second poll hot path, and confirmation of the append-monotonic allocator's gap for
-  read markers of deleted comments — fixed with a three-way `MAX()` allocator and a composite
-  covering index), then Opus APPROVE on re-review (verified by actually executing the migration
-  SQL, cascades, index plans, and the deletion regression scenario in SQLite). Next: Luna build
-  via the same Sol diff-review + Opus final-draft pipeline used for TB1/TB2, then production
-  migration + deploy.
+  per-user server-owned read-marker table) is deployed to production, 2026-08-25**
+  (`docs/plans/implemented/Revamp-TB3-Project-Discussion-V2-Plan.md`, commits `08f56f4` code/tests +
+  `2cba9a1` composer-clear fix + `9dab8da`/`28d3063` manual QA evidence, production Worker version
+  `e6d0879d-b739-46ea-be2c-9f772bec9a66`, rollback target `4a4c61a2-a59f-4c8a-ab99-0ceeb690485e`).
+  This pipeline's first live-production schema migration (`0030_project_comment_read_markers`,
+  additive-only `CREATE TABLE`, applied cleanly with a verified recovery export beforehand). Plan
+  review: 2 Sol rounds (8 findings) + 1 Opus tier-2 revert (8 more, most seriously an undefined
+  read-advancement proof-delivery channel and a deleted-comment marker/allocator gap — fixed with a
+  three-way `MAX()` allocator and a composite covering index), then Opus APPROVE verified by
+  actually executing the migration SQL/cascades/index plans in SQLite. Build review: 2 Sol diff
+  rounds (10 findings — most seriously a collaboration-only access-loss branch that fell through to
+  mounting unauthorized full-workspace reads, and an unfenced concurrent read-marker drain able to
+  resurrect purged cache) + 1 Opus final-draft round (APPROVE, no material defect). Manual QA (real
+  local dev server, real browser) found one genuine bug automated tests couldn't reach: the comment/
+  edit composer silently kept its stale text after a successful submit, caused by Tiptap dispatching
+  a no-op transaction (traced to `editor.setEditable()` toggling during the mutation's `saving`
+  state) that the old `onUpdate` handler propagated unconditionally — root-caused live via temporary
+  console instrumentation, fixed by comparing against the last committed document instead of
+  Tiptap's `transaction.docChanged` flag (environment-dependent between real Chrome and the DOM test
+  harness), independently Sol-reviewed clean. Two apparent QA failures turned out to be QA-execution
+  artifacts, not product bugs (a tab not kept foregrounded before measuring poll convergence; a
+  marker timestamp predating the hidden window it was accused of violating). Items 4 (two-device)
+  and 6 (out-of-view gate) hit a shared tooling limit: this session's Browser-pane tabs never report
+  `document.visibilityState` as `"visible"`, so the client-driven visible-read gate can't be forced
+  live here — the reviewed automated DOM suite (full control over mocked visibility/focus/
+  intersection state) is the operative coverage for that mechanism. Production smoke (authenticated,
+  real admin session, one disposable clearly-labeled test project, archived afterward) exercised the
+  full create→edit→delete cycle with zero errors, directly confirming the composer-clear fix live in
+  production. `docs/lessons.md` gained two entries: the `RichTextEditor` no-op-transaction bug, and
+  a pre-existing local `wrangler dev` stability issue (crashes intermittently under sustained
+  request load, reproduces on `main`, D1 state persists correctly across restarts).
 - **TB2 (route-safe project data freshness, TanStack Query for Project Workspace detail + active
   collection assets) is deployed to production, 2026-08-25** (`docs/plans/implemented/
   Revamp-TB2-Route-Safe-Data-Freshness-Plan.md`, commits `155b957` code/tests + `cb6f1e1` manual QA
@@ -103,10 +121,10 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
   reviewed drift register.
   PR #44's Admin-only, direct send-only AutoHDR handoff is carried forward as existing
   authority/source baseline, not a revamp tracer bullet. TB0A (React 19.2 compatibility-only),
-  TB0B (developer-managed pipeline-order boundary), TB1 (Tailwind v4 + shadcn foundation), and TB2
-  (route-safe project data freshness) are all drafted, reviewed, and deployed to production (see
-  the bullets above). All four are now live; TB3 (project discussion v2)'s plan is now APPROVED
-  (see the bullet above) and is next in the Revised sequence — build in progress.
+  TB0B (developer-managed pipeline-order boundary), TB1 (Tailwind v4 + shadcn foundation), TB2
+  (route-safe project data freshness), and TB3 (project discussion v2) are all drafted, reviewed,
+  and deployed to production (see the bullets above). All five are now live; TB4 is next in the
+  Revised sequence.
 
 - **Mention-triggered emails for project comments and notice-board posts now carry the author's
   name and a 400-char, surrogate-safe excerpt of the actual comment/post body, deployed 2026-08-20
@@ -909,3 +927,12 @@ allowlist are silent no-ops otherwise). Full mechanics in `docs/subagents/agy-cl
   memberships. Exists specifically for manual QA needing a genuine second authorized session
   (cross-session polling/broadcast, access-removal reproduction); reuse for future TB-phases rather
   than provisioning another. Only the human signs into it — never an agent (standing rule).
+- Production project `73ab6e89-1166-4599-bdfe-3cabc6cd7170` ("ZZZ TB3 QA Fixture — DELETE ME"),
+  created 2026-08-25 for TB3's production smoke test, archived immediately after (no comments
+  remain). There is no hard-delete for projects in this app; it stays archived and recoverable
+  unless someone with direct D1 access chooses to purge it. Do not reuse it for future smoke tests
+  — create a fresh, clearly-labeled disposable project each time and archive it afterward.
+- **Pre-migration D1 recovery exports** now live outside the repo at
+  `/Volumes/TerrySylviaT7/Quincy Productions Dropbox/Ting Rui Lee/WIP/Quincy Productions/
+  db-recovery/` (chosen 2026-08-25 for TB3's migration 0030, no prior convention existed). Reuse
+  this same directory for future migrations' recovery exports.

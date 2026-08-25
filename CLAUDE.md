@@ -113,7 +113,11 @@ added notice-board rich text/mention columns and the `notice_board_post_mentions
 2026-08-17; 0026 added `project_comments`/`project_comment_mentions`, applied 2026-08-17; 0027
 added `project_subtasks`, applied 2026-08-17; 0028 added `project_subtasks.due_reminder_sent_at`,
 applied 2026-08-17; 0029 added persisted `collection_links.position` with a per-collection
-`created_at, id` backfill, applied 2026-08-19) — next available number is **0030**. Branch off
+`created_at, id` backfill, applied 2026-08-19; 0030 added the additive
+`project_comment_read_markers` table plus its project-cascade index, applied 2026-08-25 — this
+pipeline's first live-production schema migration, with a verified pre-migration recovery export
+saved to `/Volumes/TerrySylviaT7/Quincy Productions Dropbox/Ting Rui Lee/WIP/Quincy Productions/
+db-recovery/`, reused for future migrations) — next available number is **0031**. Branch off
 `main`.
 **Prefer a bare `ALTER TABLE ADD COLUMN col TYPE CHECK(...)` over `drizzle-kit generate`'s
 table-rebuild form when the check is single-column and NULL-satisfiable** — the rebuild form's

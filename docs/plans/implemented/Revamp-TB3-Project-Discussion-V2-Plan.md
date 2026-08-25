@@ -1,7 +1,10 @@
 # Revamp TB3 — Project Discussion v2 Plan
 
-> **Status: APPROVED — plan review complete (2 Sol draft-review rounds, 1 Opus tier-2 revert, final
-> verdict APPROVE 2026-08-25); not yet implemented, verified, or deployed.**
+> **Status: Deployed to production (version `e6d0879d-b739-46ea-be2c-9f772bec9a66`, 2026-08-25) —
+> migration 0030 applied, code/tests committed (`08f56f4`, `2cba9a1`), manual QA and an
+> authenticated production smoke test complete. Rollback target: `4a4c61a2-a59f-4c8a-ab99-0ceeb690485e`
+> (application code only — migration 0030 is not rolled back by an application rollback; see
+> "Concrete rollback and fix-forward" below).**
 
 ## Authority and outcome
 
@@ -1343,120 +1346,154 @@ local fixture, take a new recovery point, and receive migration review before re
 A typo, wrong FK, wrong key order, or wrong timestamp representation is not repaired with ad hoc
 production DDL.
 
+## Deployment record (2026-08-25)
+
+- **Pre-deploy rollback target:** app Worker version `4a4c61a2-a59f-4c8a-ab99-0ceeb690485e` (TB2,
+  live at the start of this deploy).
+- **Remote preflight:** 0029 last applied migration; neither `project_comment_read_markers` nor its
+  index existed; `foreign_key_check` empty; `quick_check` `ok`.
+- **Recovery export:** `quincy-portal-before-tb3-20260825T140615Z.sql`, saved outside the worktree
+  at `/Volumes/TerrySylviaT7/Quincy Productions Dropbox/Ting Rui Lee/WIP/Quincy Productions/
+  db-recovery/` (a durable, Dropbox-synced location chosen by the human reviewer since no prior
+  migration in this pipeline had established a recovery-directory convention). 12,615,541 bytes,
+  16,257 lines, 46 `CREATE TABLE` / 15,599 `INSERT INTO` statements, SHA-256
+  `26257e417ff3ee1d4b9dc2cbe53899fa819bbb2e296ca121a51bdcefbe3b5abf`.
+- **Migration applied:** `0030_project_comment_read_markers.sql`, one apply, no retry needed.
+- **Postflight:** 0030 ledgered; exact 5-column/two-FK shape; composite PK auto-index plus named
+  `project_comment_read_markers_project_idx (project_id, last_read_comment_created_at)`; `EXPLAIN
+  QUERY PLAN` confirms a covering-index seek for the project-scoped child lookup; `marker_count: 0`;
+  `foreign_key_check` empty; `quick_check` `ok`.
+- **App deploy:** `quincy-portal-app` version `e6d0879d-b739-46ea-be2c-9f772bec9a66`, message "TB3
+  project discussion v2". Bundle hashes matched the last independently-verified local build exactly
+  (`index-DmRTCS_a.js`, `index-CWmSbA94.css`) — confirms zero source drift between final local
+  verification and the deployed build.
+- **Production smoke (authenticated, `Tez`/`mjj2332@gmail.com`, real admin session):** created one
+  clearly-labeled disposable project (`ZZZ TB3 QA Fixture — DELETE ME`, no hard-delete exists for
+  projects in this app, so it was archived afterward rather than left active — still recoverable,
+  unmistakably named, out of the active dashboard). Exercised the direct
+  `/projects/:id?collaboration=open` route (canonicalized correctly), one full own comment
+  create→edit→delete cycle (composer and edit-draft both cleared correctly on success — direct
+  production confirmation of the `2cba9a1` fix), author-only Edit/Delete visibility, and the
+  read-marker GET (own-post advancement confirmed: `unreadCount: 0`, marker matched the created
+  comment's tuple). Every network request across the full cycle returned `200`/`201`; zero console
+  errors. All test data restored/removed (comment deleted, project archived) immediately after.
+- **Post-deploy monitoring:** no elevated error rate or unexpected request cadence observed during
+  or after the smoke test.
+
 ## Acceptance checklist
 
-- [ ] Implementation begins from recorded current `main`; TB0A/TB0B/TB1/TB2 remain live, and no
+- [x] Implementation begins from recorded current `main`; TB0A/TB0B/TB1/TB2 remain live, and no
       work enters `prototype/` or later TB phases.
-- [ ] D-17 and A10 are applied only to project discussion/read freshness; notification delivery,
+- [x] D-17 and A10 are applied only to project discussion/read freshness; notification delivery,
       recipient registry, pipeline semantics, Kanban, and other later scopes remain absent.
-- [ ] The existing root `@tanstack/react-query@5.102.3` pin is reused with no dependency/lockfile
+- [x] The existing root `@tanstack/react-query@5.102.3` pin is reused with no dependency/lockfile
       change, duplicate web declaration, devtools, persistence, or experimental broadcast package.
-- [ ] Migration number is rechecked as 0030; `0030_project_comment_read_markers.sql` creates only
+- [x] Migration number is rechecked as 0030; `0030_project_comment_read_markers.sql` creates only
       the exact additive five-column table/PK/two owner FKs plus named
       `(project_id, last_read_comment_created_at)` index, with no rebuild, copy, drop, backfill,
       PRAGMA toggle, or comment/mention schema/row rewrite.
-- [ ] Drizzle schema, journal, and snapshot are consistent; a second generate is empty; focused
+- [x] Drizzle schema, journal, and snapshot are consistent; a second generate is empty; focused
       migration tests prove complete 0000–0029 baseline, exact shape, tuple survival after comment
       deletion, owner cascades, both exact indexes, project-cascade index use, and FK/integrity
       checks.
-- [ ] The marker is one row per `(user_id, project_id)`, stores the server-resolved
+- [x] The marker is one row per `(user_id, project_id)`, stores the server-resolved
       `(last_read_comment_created_at, last_read_comment_id)` high-water tuple, and monotonically
       advances under equal, reversed, historical tied-timestamp, concurrent, and deleted-target
       cases.
-- [ ] Every new comment INSERT atomically stores
+- [x] Every new comment INSERT atomically stores
       `MAX(wallClockMs, project MAX(created_at) + 1, project marker MAX(last_read_comment_created_at)
       + 1)` using the existing comment index and new covering marker index. Every newly allocated
       tuple strictly exceeds every tuple recorded by any surviving marker in the project, including
       markers pointing at deleted comments; the API order/cursor remains unchanged, the own-POST
       marker reads back the stored timestamp in the same batch, and frozen-clock/deleted-head/
       lexically-lower UUID tests cannot be silently marked read.
-- [ ] GET/PATCH `/api/projects/:projectId/comment-read-marker` use authenticated user ownership,
+- [x] GET/PATCH `/api/projects/:projectId/comment-read-marker` use authenticated user ownership,
       access-before-existence collaboration authorization, exact request/response shapes, a typed
       409 derived only from the same-batch explicit target-existence result with
       `error.details.code === "comment_read_target_changed"`, `200` for a still-existing repeat/no-op
       PATCH, and authoritative latest/unread count.
-- [ ] Project comments remain one flat project-scoped newest-first stream with the exact rich-text,
+- [x] Project comments remain one flat project-scoped newest-first stream with the exact rich-text,
       body/JSON limits, mention normalization, cursor/limit, collaboration access, hard deletion,
       and serialized comment shape.
-- [ ] Edit/delete remain author-only in UI and server with no Admin exemption; create/edit/delete
+- [x] Edit/delete remain author-only in UI and server with no Admin exemption; create/edit/delete
       keep exactly one `project_comment.*` audit each and failed/forbidden operations create none.
-- [ ] Existing targeted mention semantics remain exact: create notifies stored targets, edit only
+- [x] Existing targeted mention semantics remain exact: create notifies stored targets, edit only
       newly-added targets, source keys remain mention-row IDs, and TB3 creates no duplicate mention.
-- [ ] The comment service returns one exact privacy-safe activity/outbox intent for each committed
+- [x] The comment service returns one exact privacy-safe activity/outbox intent for each committed
       create/edit/delete, with distinct truthful edit events and only the approved five-minute
       broad coalescing hint; read/query/internal work emits none.
-- [ ] TB3 adds no durable activity/outbox/recipient row, Queue, delivery ledger, recovery/DLQ,
+- [x] TB3 adds no durable activity/outbox/recipient row, Queue, delivery ledger, recovery/DLQ,
       audience resolution, channel/preference/email behavior, or audit/activity conflation.
-- [ ] Exact query identities remain under the principal/role-scoped TB2 client:
+- [x] Exact query identities remain under the principal/role-scoped TB2 client:
       `project-data/projectId/comments/pages/{limit:50}` and
       `project-data/projectId/comments/read-marker`; ordinary work never invalidates a root/unkeyed
       scope.
-- [ ] Infinite query pagination preserves newest-first order, explicit older loading, every loaded
+- [x] Infinite query pagination preserves newest-first order, explicit older loading, every loaded
       row without gaps/duplicates, cursor behavior, and edits/deletes in loaded older pages.
-- [ ] Query functions consume TanStack's AbortSignal; deterministic Project A/B and page reversal
+- [x] Query functions consume TanStack's AbortSignal; deterministic Project A/B and page reversal
       prove a late response cannot cross project/resource identity even when abort is ignored.
-- [ ] Comments/read-state observers and imperative probes do not start after the shared TB2
+- [x] Comments/read-state observers and imperative probes do not start after the shared TB2
       tombstone; every first/older page and read-state query rechecks it after network resolution,
       so an in-flight ignored-abort response cannot repopulate removed project/principal data.
       `project-comments.ts` imports the exported TB2 `removedDataError` and `useOwnedSnapshot`
       helpers and contains no reimplementation of either contract.
-- [ ] Comments/read state use the shipped 15-second stale/five-minute GC/retry/focus/reconnect
+- [x] Comments/read state use the shipped 15-second stale/five-minute GC/retry/focus/reconnect
       policy and visible 30-second bound, with comment focus presentation handled by the scoped head
       refresher instead of a stacked all-pages observer refetch; no hidden ordinary network polling
       or request storm exists.
-- [ ] “Visibly presented” requires open/standalone + visible document + focused Query manager +
+- [x] “Visibly presented” requires open/standalone + visible document + focused Query manager +
       intersecting newest-stream anchor; cache freshness alone never qualifies.
-- [ ] Each actual first-page fetch receives its immutable attempt ID and presentation generation at
+- [x] Each actual first-page fetch receives its immutable attempt ID and presentation generation at
       fetch start; only a non-aborted attempt completed under that same current generation may
       PATCH once, and every later qualifying visible poll in the continuous generation is handled.
       `settle()` delivers proof through module-local state only; cached page data contains no
       attempt/generation field and unchanged polling retains structural sharing.
-- [ ] IntersectionObserver and scroll/resize fallback paths keep geometry current and synchronously
+- [x] IntersectionObserver and scroll/resize fallback paths keep geometry current and synchronously
       recheck the anchor immediately before PATCH; scrolling out during a request cannot mark read,
       and scrolling in starts the required fresh GET→PATCH sequence.
-- [ ] Hidden, unfocused, closed, or out-of-view interval/broadcast/forced fetches never mark read;
+- [x] Hidden, unfocused, closed, or out-of-view interval/broadcast/forced fetches never mark read;
       automated tests and manual D1/request evidence prove the negative behavior.
-- [ ] A presentation false→true transition performs one scoped first-page GET regardless of loaded
+- [x] A presentation false→true transition performs one scoped first-page GET regardless of loaded
       page count; unchanged boundaries retain older page identities, while changed boundaries reset
       the archive before explicit reload so no stale gap/duplicate survives.
-- [ ] Own POST may advance only through its own stored tuple; a concurrent newer comment remains
+- [x] Own POST may advance only through its own stored tuple; a concurrent newer comment remains
       unread, the response/refetch stays authoritative, the author's marker row exists immediately
       after one successful POST, and the composer clears once on success.
-- [ ] The existing `quincy:project-data:v1` runtime carries validated response-data-free comment
+- [x] The existing `quincy:project-data:v1` runtime carries validated response-data-free comment
       resource invalidations, suppresses sender loops/rebroadcast, refetches sibling tabs within
       two seconds, publishes read-marker invalidation only when the authoritative marker tuple
       advances, and falls back to visible polling/focus across sessions/devices.
-- [ ] Every `ProjectDataResource` dispatch uses one exhaustive `projectResourceKey()`; optimistic
+- [x] Every `ProjectDataResource` dispatch uses one exhaustive `projectResourceKey()`; optimistic
       ledgers remain assets-only and cannot defer, patch, roll back, or misroute comment resources.
-- [ ] Composer/edit drafts, overlay/open signal, focus, checklist state, and scroll survive comment
+- [x] Composer/edit drafts, overlay/open signal, focus, checklist state, and scroll survive comment
       and marker refresh; query page data contains only server state—not UI drafts or presentation
       attempt/generation metadata.
-- [ ] Initial detail 403 retains query-backed collaboration-only access without workspace reads;
+- [x] Initial detail 403 retains query-backed collaboration-only access without workspace reads;
       list/POST/read-marker 403 is collaboration-scoped, their project-level 404 is terminal, and
       any 401 clears the complete QueryClient without late resurrection. Only nested comment
       PATCH/DELETE 403/404 waits for a confirming list GET and never over-purges on status alone. A
       collaboration-scoped 403 leaves the exact project-detail cache intact. The explicit
       `collaborationOnly` flag—not a response object—selects the fallback branch, its heading observes
       first-page `project.street`, and terminal/project-generation teardown resets the flag.
-- [ ] `/projects/:id?collaboration=open`, canonical replacement, Back/Forward, OAuth destination,
+- [x] `/projects/:id?collaboration=open`, canonical replacement, Back/Forward, OAuth destination,
       modified click/new tab, notification deep links, overlay/standalone focus, and current panel
       ownership remain exact.
-- [ ] Notice Board, replies, reactions, attachments, named threads, subscriptions, broad panel
+- [x] Notice Board, replies, reactions, attachments, named threads, subscriptions, broad panel
       design, router, subtasks/mentionables conversion, and all TB4/TB4C/TB5+ work remain absent.
-- [ ] Focused tests, typecheck, web build, every runnable workspace suite, and the dedicated shared
+- [x] Focused tests, typecheck, web build, every runnable workspace suite, and the dedicated shared
       suite are green with no unexplained warning; exact redacted evidence exists at all applicable
       TB3 paths.
-- [ ] Local clean/persisted D1 applies and ledgers 0030 with exact table/FKs/PK and named
+- [x] Local clean/persisted D1 applies and ledgers 0030 with exact table/FKs/PK and named
       project-first composite index plus a direct child-lookup covering seek and clean integrity;
       remote preflight, verified recovery artifact, single apply, and equally exact postflight
       occur before app deploy.
-- [ ] App-only deploy records pre/post Worker versions, production marker/schema/cadence/direct URL
+- [x] App-only deploy records pre/post Worker versions, production marker/schema/cadence/direct URL
       smoke, reversible fixture restoration, and console/Network results; background and
       webhook-ingress are not redeployed.
-- [ ] Rollback restores only application code/version and leaves additive marker schema/data in
+- [x] Rollback restores only application code/version and leaves additive marker schema/data in
       place; any schema mistake uses a reviewed next-number fix-forward, never ad hoc DDL/down
       migration/ledger edits.
-- [ ] After production verification, status/todo/evidence are updated and this plan is moved with
+- [x] After production verification, status/todo/evidence are updated and this plan is moved with
       `git mv` to `docs/plans/implemented/` with the live commit and Worker version.
 
 ## Implementation-time human checkpoint
