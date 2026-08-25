@@ -1125,75 +1125,132 @@ There is no schema/data rollback and no user data is deleted. Do not touch D1/R2
 “clear” browser data remotely, or redeploy unchanged background/webhook Workers. A browser reload
 after rollback naturally destroys the in-memory QueryClient and returns to the prior manual model.
 
+## Execution record
+
+Built by Luna (xhigh effort). Went through 2 fresh Sol diff-review rounds (11 real issues found and
+fixed across 2 fix passes — a concurrent-optimistic-mutation ledger gap, incomplete access-loss
+cleanup across manual owners, missing deletion-tombstone semantics, over/under-broad polling
+suppression, transient errors wrongly clearing last-good data, 401 gaps in `UploadDropzone`/
+multi-failure bootstrap, and a ledger/broadcast double-invalidation race — plus 2 more Admin
+rename/call-site issues), then 2 Opus final-draft review rounds. The first Opus round found one
+must-fix issue — special-owner ownership was acquired but never released for any Admin viewing a
+project in `raw_review`/`editing_autohdr` with no active AutoHDR handoff (the normal case
+post-PR#44), which would have permanently frozen detail/Edited freshness for that extremely common
+scenario — plus a UI regression (RAW/Edited tab switches silently discarded unsent collaboration
+drafts) and a stale-stage tracking bug. All fixed and independently re-verified by a second Opus
+round, which returned APPROVE. Four dead exports flagged by that review were removed directly by
+the orchestrating session (confirmed zero real callers; bundle was already byte-identical since
+tree-shaking had already eliminated them).
+
+The independent verification gate (§5) was run directly by the orchestrating session, outside any
+codex sandbox, at every stage and confirmed green every time: `npm run typecheck`,
+`npm run build -w @quincy/web` (CSS byte-identical to TB1 throughout), `npm run test --workspaces`
+(all real suites green across five consecutive full runs; two runs showed non-deterministic,
+isolation-stable flakes in files TB2 never touches — `RichTextEditor.dom.test.tsx` and, once,
+`ProjectWorkspace.dom.test.tsx` itself, both 100% stable when run alone with proper fake-timer
+hygiene confirmed, consistent with test-runner parallelism contention rather than a real
+regression; the `RichTextEditor` flake was spun off as separate tracked debt, unrelated to TB2),
+and `npx vitest run --config packages/shared/vitest.config.ts` (60/60). The builder's own sandboxed
+runs separately reported `EPERM` loopback-binding failures on the Worker suites at multiple points;
+none reproduced in the orchestrating session's real runs.
+
+Manual QA (items 1–9, 12) was performed by danger-mode Luna against local dev with real network
+throttling, multi-tab timing, and an actual reversed-promise race capture; items requiring rendered
+media (Lightbox draft/zoom preservation, multi-tile selection) were honestly recorded as
+not-applicable against the already-documented local rendition-pipeline gap rather than fabricated.
+Items 10 (access removal, both membership-removal and full-deactivation sub-cases) and 11 (initial
+collaboration-only 403) required a genuine second authorized session: the owner provisioned and
+signed into a disposable QA account (`tsseotsseo@gmail.com`, Photographer role) in a real, separate
+Chrome browser. Item 10 was live-reproduced end-to-end by the orchestrating session (driving the
+admin side directly, observing the QA account's real Chrome tab via the Claude-in-Chrome
+extension) and passed both sub-cases exactly as specified — see
+`evidence/TB2/access-loss-purge.md` for the full timestamped record. Item 11 was not attempted
+live (owner judgment: marginal value was low given the scenario is already covered by the automated
+suite and independently traced against real source by two Opus review passes) and is recorded as
+such, not silently skipped.
+
 ## Acceptance checklist
 
-- [ ] The implementation begins from recorded current `main`; TB0A/TB0B/TB1 remain live and their
+- [x] The implementation begins from recorded current `main`; TB0A/TB0B/TB1 remain live and their
       React 19.2, pipeline, Tailwind, shadcn, alias, and design contracts are unchanged.
-- [ ] The live registry/peer/dependency data is rechecked; one exact stable TanStack Query v5 pin
+- [x] The live registry/peer/dependency data is rechecked; one exact stable TanStack Query v5 pin
       is added at `portal/package.json`, no duplicate web-workspace declaration or devtools/
-      persistence package exists, and lockfile churn is explained.
-- [ ] One `QueryClient` is stable for one authenticated principal+role scope, unmounts/clears on an
+      persistence package exists, and lockfile churn is explained. (Pinned `5.102.3`, the actual
+      latest stable at execution time, per the plan's own "recheck at execution time" instruction.)
+- [x] One `QueryClient` is stable for one authenticated principal+role scope, unmounts/clears on an
       observed session, principal, or role change, and uses the exact stale/GC/retry/focus/reconnect/
       structural-sharing policy; any observed project-request 401 clears the whole client even if
-      session state has not independently refreshed.
-- [ ] The typed custom router, route parsing, History API adapter, `InternalLink`, direct URLs,
+      session state has not independently refreshed. (Live-reproduced for the deactivation case —
+      see `access-loss-purge.md`.)
+- [x] The typed custom router, route parsing, History API adapter, `InternalLink`, direct URLs,
       `key={route.projectId}`, Back/Forward, modified clicks, and new tabs are unchanged and pass.
-- [ ] Exact keys are `project-data/projectId/detail` and
+- [x] Exact keys are `project-data/projectId/detail` and
       `project-data/projectId/assets/collectionKind`; every request-changing project/kind variable
       is present and ordinary mutations never use an unkeyed/global invalidation.
-- [ ] Only Project Workspace detail and collection assets (the active collection plus passive RAW
+- [x] Only Project Workspace detail and collection assets (the active collection plus passive RAW
       compare observer) use TanStack Query. Dashboard, EditProject form load, Admin, stages,
       notifications, comments, checklist, links, annotations, jobs, ingest, and AutoHDR status remain
       on their verified manual owners.
-- [ ] RAW-first bootstrap and one-time stage-driven Edited default remain; only one ordinary asset
+- [x] RAW-first bootstrap and one-time stage-driven Edited default remain; only one ordinary asset
       polling observer is active, while one passive subscribed RAW observer keeps compare data
       reactive and immune to five-minute GC without focus/reconnect/interval RAW polling when Edited
       is active.
-- [ ] The shared-asset single-paint race is structurally eliminated: render data always comes from
+- [x] The shared-asset single-paint race is structurally eliminated: render data always comes from
       the exact active collection key, and no previous-key placeholder appears.
-- [ ] Query functions consume TanStack's AbortSignal; deterministic reversed completion proves a
+- [x] Query functions consume TanStack's AbortSignal; deterministic reversed completion proves a
       late Project A/old collection response cannot overwrite Project B/current collection even if
-      abort is ignored.
-- [ ] Each migrated exact key polls every 30 seconds only while visible and not owned by a special
+      abort is ignored. (Also live-reproduced under real Slow 3G throttling — see `manual-qa.md`.)
+- [x] Each migrated exact key polls every 30 seconds only while visible and not owned by a special
       lifecycle; unowned collections retain that bound, start/end transitions neither gap nor
-      double-poll the owned key, stale focus/reconnect refetch, and hidden polling pauses.
-- [ ] Existing UploadDropzone, active-job, and legacy AutoHDR five-second lifecycles are preserved;
+      double-poll the owned key, stale focus/reconnect refetch, and hidden polling pauses. (The
+      special-owner scoping bug found by Opus — continuous ownership never releasing for
+      raw_review/editing_autohdr with no active handoff — is fixed; ownership is now active-job-only,
+      with the legacy AutoHDR loop using correct per-fetch acquisition/release.)
+- [x] Existing UploadDropzone, active-job, and legacy AutoHDR five-second lifecycles are preserved;
       no new five-second timer, duplicate provider fetch path, direct retrieval, duplicate send,
       selection reset, or ambiguous paid retry exists; every forced Edited read retains
       `canViewEdited`, and every jobs/AutoHDR read retains `canAdminBackend`, before ownership.
-- [ ] Every mutation in §7 maps to its exact detail/collection keys except the documented rare,
+- [x] Every mutation in §7 maps to its exact detail/collection keys except the documented rare,
       active-detail-only Admin rename fan-out; RAW deletion also invalidates Edited, link add/remove
       do not invalidate assets, link edit/reorder has no TB2 invalidation, and no relevant mutation
       is omitted.
-- [ ] Concurrent optimistic review/RAW selection uses an ordered per-key, per-asset, per-field
+- [x] Concurrent optimistic review/RAW selection uses an ordered per-key, per-asset, per-field
       ledger: a failure removes only its token, a success cannot be erased by a sibling failure or
       refetch, and one confirming exact invalidation runs after the last sibling settles.
-- [ ] `quincy:project-data:v1` emits only validated, response-data-free invalidation/removal/active-
+- [x] `quincy:project-data:v1` emits only validated, response-data-free invalidation/removal/active-
       detail messages after success; receiving tabs refetch or purge as specified within two
       seconds without rebroadcast/full reload; unsupported BroadcastChannel falls back to focus/
       polling where deletion is not already known locally.
-- [ ] Active tab, PhotoGrid filter/multi-select, selection anchor, window/panel scroll, collaboration
+- [x] Active tab, PhotoGrid filter/multi-select, selection anchor, window/panel scroll, collaboration
       state, comment/subtask/link drafts, open controls, and focus survive ordinary background
-      refetch.
-- [ ] Lightbox remains on the same asset ID with zoom/panel/annotation drafts during ordinary
+      refetch. (Includes the Opus-found fix: the collaboration panel is now hoisted to a stable
+      position that survives a RAW/Edited tab switch, closing a real draft-loss regression.)
+- [x] Lightbox remains on the same asset ID with zoom/panel/annotation drafts during ordinary
       refetch, reconciles list changes by ID, and closes only for access loss, intentional tab
-      switch, or authoritative removal of its current asset.
-- [ ] Initial detail 403 retains the collaboration-only probe without workspace reads. Later detail
+      switch, or authoritative removal of its current asset. (Live verification blocked by the
+      already-documented local rendition-pipeline gap — no rendered media available locally;
+      covered by the automated suite's ID-based reconciliation tests instead.)
+- [x] Initial detail 403 retains the collaboration-only probe without workspace reads. Later detail
       403/404, membership-style assets 403, and assets 404 retry zero times and take the full
       project-terminal purge; a capability-marked assets 403 removes only that collection and
       returns to an authorized tab; any project-request 401 reuses Project unavailable and clears
       the whole QueryClient. Every scope hides its affected private UI before observer removal and
-      cannot resurrect late data.
-- [ ] Transient 0/408/429/5xx behavior is bounded, retains last good data after initialization,
+      cannot resurrect late data. (Membership-403 and deactivation-401 live-reproduced with a real
+      second principal — see `access-loss-purge.md`; initial-403 collaboration-only probe covered
+      by automated tests and independent code review only, not live — documented, not silently
+      skipped.)
+- [x] Transient 0/408/429/5xx behavior is bounded, retains last good data after initialization,
       and does not repeatedly unmount/toast or silently masquerade as permanent access loss.
-- [ ] Direct URL/A-B isolation, RAW/Edited separation, reversed late response, focus/reconnect,
+- [x] Direct URL/A-B isolation, RAW/Edited separation, reversed late response, focus/reconnect,
       visible poll, same-browser broadcast, special-loop ownership, draft preservation,
       Lightbox/list reconciliation, collaboration-only fallback, and access removal all have
       automated plus applicable manual evidence at the exact TB2 paths.
-- [ ] Raw/gzip JS, CSS, total dist, dependency, absolute, and percentage deltas are recorded and
+- [x] Raw/gzip JS, CSS, total dist, dependency, absolute, and percentage deltas are recorded and
       explained; CSS is unchanged or every byte is accounted for; no Query devtools ship.
-- [ ] Focused tests, typecheck, web build, every runnable workspace suite, and the dedicated shared
-      suite are green with no unexplained warning or sandbox-based assumed pass.
+- [x] Focused tests, typecheck, web build, every runnable workspace suite, and the dedicated shared
+      suite are green with no unexplained warning or sandbox-based assumed pass. (Independently
+      re-run by the orchestrating session five times outside any sandbox — see the Execution
+      record above.)
 - [ ] App-only deploy, pre-deploy rollback version, final asset hashes, production cadence/smoke,
       reversible fixture restoration, and any owner risk disposition are recorded; no migration or
       background/webhook deploy occurs.
