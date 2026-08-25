@@ -89,6 +89,12 @@ up by `npm run test --workspaces` — no separate invocation needed for it.
   Browse `http://localhost:8787` directly (build `apps/web` first) — not the Vite 5173 proxy — and
   sign in as the seeded admin (`mjj2332@gmail.com`; this is a closed system, `disableSignUp: true`,
   no other account works locally). See `docs/lessons.md` for why.
+- **Chrome-browser QA/testing tasks go to Luna (danger-mode), not the orchestrating session.**
+  Luna never signs in via Google OAuth itself, on `mjj2332@gmail.com`, the disposable QA account
+  (`tsseotsseo@gmail.com`), or anywhere else. If a task needs an authenticated session Luna doesn't
+  already have, it stops and asks the orchestrating session to have the human sign in — it does not
+  attempt to work around the gap, proceed unauthenticated, or silently fall back to the
+  orchestrating session driving the browser instead.
 
 - **PR #44 AutoHDR preservation:** direct send is Admin-only and send-only, distinct from Stage
   movement; credentials remain on the background Worker. Later phases must not revive direct-path
