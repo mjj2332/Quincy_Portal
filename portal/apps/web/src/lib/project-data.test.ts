@@ -27,6 +27,11 @@ describe("project data key and request seam", () => {
     expect(projectDataKeys.detail("a")).toEqual(["project-data", "a", "detail"]);
     expect(projectDataKeys.assets("a", "raw")).toEqual(["project-data", "a", "assets", "raw"]);
     expect(projectDataKeys.assets("b", "copy")).not.toEqual(projectDataKeys.assets("a", "copy"));
+    expect(projectDataKeys.commentsRoot("a")).toEqual(["project-data", "a", "comments"]);
+    expect(projectDataKeys.commentsRoot("b")).not.toEqual(projectDataKeys.commentsRoot("a"));
+    expect(projectDataKeys.comments("a")).toEqual(["project-data", "a", "comments", "pages", { limit: 50 }]);
+    expect(projectDataKeys.commentReadMarker("b")).toEqual(["project-data", "b", "comments", "read-marker"]);
+    expect(projectDataKeys.comments("a").slice(0, 2)).toEqual(projectDataKeys.project("a"));
     expect(["raw", "edited", "video", "floorplan", "copy"].map((kind) => projectDataKeys.assets("a", kind as never))).toHaveLength(5);
   });
 
@@ -72,6 +77,12 @@ describe("project data key and request seam", () => {
     expect(classifyProjectAccessError(new ApiError("forbidden", 403, { capability: "viewRaw" }), "assets", "edited")).toEqual({ scope: "project" });
     expect(classifyProjectAccessError(new ApiError("forbidden", 403), "assets", "raw")).toEqual({ scope: "project" });
     expect(classifyProjectAccessError(new ApiError("missing", 404), "assets", "raw")).toEqual({ scope: "project" });
+    expect(classifyProjectAccessError(new ApiError("forbidden", 403), "comments")).toEqual({ scope: "collaboration" });
+    expect(classifyProjectAccessError(new ApiError("forbidden", 403), "comment-read-marker")).toEqual({ scope: "collaboration" });
+    expect(classifyProjectAccessError(new ApiError("missing", 404), "comments")).toEqual({ scope: "project" });
+    expect(classifyProjectAccessError(new ApiError("unauthenticated", 401), "comments")).toEqual({ scope: "principal" });
+    expect(classifyProjectAccessError(new ApiError("unauthenticated", 401), "comment-read-marker")).toEqual({ scope: "principal" });
+    expect(classifyProjectAccessError(new ApiError("missing", 404), "comment-read-marker")).toEqual({ scope: "project" });
   });
 
   it("keeps reversed project and collection responses in their exact cache entries", async () => {

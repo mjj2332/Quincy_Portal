@@ -3,7 +3,7 @@
  * Metadata only: media bytes live in R2; dense annotation JSON lives in R2 (ref here).
  * All media rows use immutable, versioned R2 keys.
  */
-import { sqliteTable, text, integer, real, index, uniqueIndex, check } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, real, index, uniqueIndex, check, primaryKey } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 
 const id = () => text("id").primaryKey();
@@ -213,6 +213,21 @@ export const projectCommentMentions = sqliteTable(
     createdAt: createdAt(),
   },
   (t) => [uniqueIndex("project_comment_mentions_unique").on(t.commentId, t.mentionedUserId)],
+);
+
+export const projectCommentReadMarkers = sqliteTable(
+  "project_comment_read_markers",
+  {
+    userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+    projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+    lastReadCommentId: text("last_read_comment_id").notNull(),
+    lastReadCommentCreatedAt: integer("last_read_comment_created_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.userId, t.projectId] }),
+    index("project_comment_read_markers_project_idx").on(t.projectId, t.lastReadCommentCreatedAt),
+  ],
 );
 
 /** A shared, ordered checklist item owned by a project. Due dates are literal calendar strings. */

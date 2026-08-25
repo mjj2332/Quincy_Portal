@@ -2,7 +2,7 @@ import type { CollectionKind } from "@quincy/shared";
 import { QueryClientContext, useQuery, useQueryClient, type QueryClient, type QueryFunctionContext, type QueryKey, type UseQueryResult } from "@tanstack/react-query";
 import { useCallback, useContext, useSyncExternalStore } from "react";
 import { ApiError, apiGet } from "./api";
-import { createActiveProjectDetailsInvalidatedMessage, getProjectQueryRuntime, useProjectQueryRuntime, type ProjectDataResource } from "./project-query-sync";
+import { createActiveProjectDetailsInvalidatedMessage, getProjectQueryRuntime, projectResourceKey, useProjectQueryRuntime, type ProjectDataResource } from "./project-query-sync";
 import type { ReviewPatch, WorkspaceAsset, Review } from "../components/PhotoGrid";
 import type { ProjectStageKey } from "./stages";
 
@@ -21,9 +21,12 @@ export const projectDataKeys = {
   detail: (projectId: string) => ["project-data", projectId, "detail"] as const,
   assetsRoot: (projectId: string) => ["project-data", projectId, "assets"] as const,
   assets: (projectId: string, collectionKind: CollectionKind) => ["project-data", projectId, "assets", collectionKind] as const,
+  commentsRoot: (projectId: string) => ["project-data", projectId, "comments"] as const,
+  comments: (projectId: string) => ["project-data", projectId, "comments", "pages", { limit: 50 }] as const,
+  commentReadMarker: (projectId: string) => ["project-data", projectId, "comments", "read-marker"] as const,
 };
 
-export type AccessErrorScope = "principal" | "project" | "collection";
+export type AccessErrorScope = "principal" | "project" | "collection" | "collaboration";
 export type ProjectAccessClassification = { scope: AccessErrorScope; collectionKind?: CollectionKind };
 
 const assetCapabilities: Record<CollectionKind, "viewRaw" | "viewEdited"> = {
@@ -33,9 +36,10 @@ const assetCapabilities: Record<CollectionKind, "viewRaw" | "viewEdited"> = {
 export function isApiError(error: unknown): error is ApiError { return error instanceof ApiError; }
 export function isPermanentProjectAccessError(error: unknown): error is ApiError { return isApiError(error) && (error.status === 401 || error.status === 403 || error.status === 404); }
 
-export function classifyProjectAccessError(error: unknown, resource: "detail" | "assets", collectionKind?: CollectionKind): ProjectAccessClassification | null {
+export function classifyProjectAccessError(error: unknown, resource: "detail" | "assets" | "comments" | "comment-read-marker", collectionKind?: CollectionKind): ProjectAccessClassification | null {
   if (!isPermanentProjectAccessError(error)) return null;
   if (error.status === 401) return { scope: "principal" };
+  if (resource === "comments" || resource === "comment-read-marker") return error.status === 403 ? { scope: "collaboration" } : { scope: "project" };
   if (resource === "detail" || error.status === 404 || collectionKind === undefined) return { scope: "project" };
   const details = error.details;
   const capability = details && typeof details === "object" ? (details as Record<string, unknown>).capability : undefined;
@@ -53,7 +57,7 @@ export function projectQueryRetry(failureCount: number, error: unknown): boolean
   return failureCount < 2;
 }
 
-function removedDataError(): ApiError {
+export function removedDataError(): ApiError {
   return new ApiError("Project data was removed.", 404, { code: "project-data-removed" });
 }
 
@@ -82,7 +86,7 @@ export function projectAssetsQueryOptions(projectId: string, collectionKind: Col
   } as const;
 }
 
-function useOwnedSnapshot() {
+export function useOwnedSnapshot() {
   const runtime = useProjectQueryRuntime();
   useSyncExternalStore(runtime.subscribe, runtime.getSnapshot, runtime.getSnapshot);
   return runtime;
@@ -138,12 +142,13 @@ export function useProjectAccessTermination(): (error: unknown) => void {
 export async function invalidateProjectResources(queryClient: QueryClient, invalidation: ProjectInvalidation, publish = true): Promise<void> {
   const runtime = getProjectQueryRuntime(queryClient);
   const resources = [...new Map(invalidation.resources.map((resource) => [JSON.stringify(resource), resource])).values()];
-  const keys = resources.map((resource) => resource.kind === "detail" ? projectDataKeys.detail(invalidation.projectId) : projectDataKeys.assets(invalidation.projectId, resource.collectionKind));
-  const queuedResources = resources.filter((_, index) => isProjectQueryLedgerPending(queryClient, keys[index]!));
-  const immediateResources = resources.filter((_, index) => !isProjectQueryLedgerPending(queryClient, keys[index]!));
+  const keys = resources.map((resource) => projectResourceKey(invalidation.projectId, resource));
+  const queuedIndexes = new Set(resources.map((resource, index) => resource.kind === "assets" && isProjectQueryLedgerPending(queryClient, keys[index]!) ? index : -1).filter((index) => index >= 0));
+  const queuedResources = resources.filter((_, index) => queuedIndexes.has(index));
+  const immediateResources = resources.filter((_, index) => !queuedIndexes.has(index));
   if (queuedResources.length) queueLedgerInvalidation(queryClient, { ...invalidation, resources: queuedResources }, publish);
   if (!immediateResources.length) return;
-  const immediateKeys = immediateResources.map((resource) => resource.kind === "detail" ? projectDataKeys.detail(invalidation.projectId) : projectDataKeys.assets(invalidation.projectId, resource.collectionKind));
+  const immediateKeys = immediateResources.map((resource) => projectResourceKey(invalidation.projectId, resource));
   await Promise.all(immediateKeys.map((queryKey) => queryClient.invalidateQueries({ queryKey, exact: true, refetchType: "active" })));
   if (publish) runtime?.publish({ version: 1, type: "project-data-invalidated", projectId: invalidation.projectId, committedAt: new Date().toISOString(), resources: immediateResources });
 }
@@ -249,7 +254,8 @@ export async function beginAssetOptimisticMutation(queryClient: QueryClient, pro
 function queueLedgerInvalidation(queryClient: QueryClient, invalidation: ProjectInvalidation, publish: boolean) {
   const map = ledgerMap(queryClient);
   for (const resource of invalidation.resources) {
-    const key = resource.kind === "detail" ? projectDataKeys.detail(invalidation.projectId) : projectDataKeys.assets(invalidation.projectId, resource.collectionKind);
+    if (resource.kind !== "assets") continue;
+    const key = projectResourceKey(invalidation.projectId, resource);
     const state = map.get(ledgerKey(key));
     if (!state) continue;
     if (!state.queued) state.queued = { projectId: invalidation.projectId, resources: [] };

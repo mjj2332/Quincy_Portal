@@ -1,4 +1,5 @@
 import { ROLE_CAPABILITIES, type Capability, type Role } from "@quincy/shared";
+import { useCallback } from "react";
 import { useSession } from "./auth";
 
 type SessionUser = { role?: unknown };
@@ -12,10 +13,7 @@ export function useCapabilities() {
   const user = session.data?.user as SessionUser | undefined;
   const role = isRole(user?.role) ? user.role : undefined;
   const capabilities = role ? ROLE_CAPABILITIES[role] : [];
+  const can = useCallback((capability: Capability): boolean => capabilities.includes(capability), [capabilities]);
 
-  return {
-    role,
-    capabilities,
-    can: (capability: Capability): boolean => capabilities.includes(capability),
-  };
+  return { role, capabilities, can };
 }

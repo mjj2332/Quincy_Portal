@@ -1,0 +1,36 @@
+TB3 migration 0030 local proof (2026-08-25)
+
+Focused migration test:
+  npx vitest run --config packages/db/vitest.config.ts test/migration-0030.test.ts
+
+  RUN  v4.1.10
+  Test Files  1 passed (1)
+  Tests  1 passed (1)
+
+Exact requested Wrangler commands were then run with a clean --persist-to directory:
+  TB3_LOCAL_D1_DIR=/var/folders/b0/l3pczc8122l2whrl5njj48s00000gn/T/tmp.uDV6K7F7pM
+  npx wrangler d1 migrations apply quincy-portal --local --persist-to "$TB3_LOCAL_D1_DIR" --config workers/app/wrangler.jsonc
+  npx wrangler d1 execute quincy-portal --local --persist-to "$TB3_LOCAL_D1_DIR" --config workers/app/wrangler.jsonc --command "SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 3; PRAGMA table_info('project_comment_read_markers'); PRAGMA foreign_key_list('project_comment_read_markers'); PRAGMA index_list('project_comment_read_markers'); PRAGMA index_info('project_comment_read_markers_project_idx'); EXPLAIN QUERY PLAN SELECT last_read_comment_created_at FROM project_comment_read_markers WHERE project_id = 'tb3-index-probe'; PRAGMA foreign_key_check; PRAGMA quick_check;"
+  npm run db:migrate:local
+
+Actual Wrangler result for all three commands:
+  Resource location: local
+  Error: listen EPERM: operation not permitted 127.0.0.1
+  The D1 commands could not start their local workerd listener in this managed sandbox. The
+  ordinary local persistence command failed at the same listener boundary. No remote/production
+  command was attempted.
+
+Independent in-memory SQLite probe using the same complete 0000–0030 migration set (run because
+the exact Wrangler listener is unavailable):
+  ledger ["0028_project_subtasks_due_reminder.sql","0029_collection_link_positions.sql","0030_project_comment_read_markers.sql"]
+  table_info [{"cid":0,"name":"user_id","type":"TEXT","notnull":1,"dflt_value":null,"pk":1},{"cid":1,"name":"project_id","type":"TEXT","notnull":1,"dflt_value":null,"pk":2},{"cid":2,"name":"last_read_comment_id","type":"TEXT","notnull":1,"dflt_value":null,"pk":0},{"cid":3,"name":"last_read_comment_created_at","type":"INTEGER","notnull":1,"dflt_value":null,"pk":0},{"cid":4,"name":"updated_at","type":"INTEGER","notnull":1,"dflt_value":null,"pk":0}]
+  foreign_key_list [{"id":0,"seq":0,"table":"projects","from":"project_id","to":"id","on_update":"NO ACTION","on_delete":"CASCADE","match":"NONE"},{"id":1,"seq":0,"table":"user","from":"user_id","to":"id","on_update":"NO ACTION","on_delete":"CASCADE","match":"NONE"}]
+  index_list [{"seq":0,"name":"project_comment_read_markers_project_idx","unique":0,"origin":"c","partial":0},{"seq":1,"name":"sqlite_autoindex_project_comment_read_markers_1","unique":1,"origin":"pk","partial":0}]
+  index_info [{"seqno":0,"cid":1,"name":"project_id"},{"seqno":1,"cid":3,"name":"last_read_comment_created_at"}]
+  explain [{"id":2,"parent":0,"notused":54,"detail":"SEARCH project_comment_read_markers USING COVERING INDEX project_comment_read_markers_project_idx (project_id=?)"}]
+  foreign_key_check []
+  quick_check [{"quick_check":"ok"}]
+
+The focused test also proves the duplicate composite key rejection, independent users/projects,
+marker survival after comment deletion, both user/project cascades, and rejection of non-additive
+statement forms.

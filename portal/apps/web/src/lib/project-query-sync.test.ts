@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { QueryClient } from "@tanstack/react-query";
 import {
   PROJECT_DATA_CHANNEL, ProjectQueryRuntime, createActiveProjectDetailsInvalidatedMessage,
-  createProjectDataInvalidationMessage, createProjectDataRemovedMessage, parseProjectDataSyncMessage,
+  createProjectDataInvalidationMessage, createProjectDataRemovedMessage, parseProjectDataSyncMessage, projectResourceKey,
 } from "./project-query-sync";
 import { beginAssetOptimisticMutation, projectDataKeys } from "./project-data";
 
@@ -10,15 +10,24 @@ afterEach(() => { /* each test creates and disposes its own client/runtime */ })
 
 describe("project-data BroadcastChannel contract", () => {
   it("accepts valid discriminants, deduplicates resources, and rejects extra/private fields", () => {
-    const message = createProjectDataInvalidationMessage("p", [{ kind: "detail" }, { kind: "detail" }, { kind: "assets", collectionKind: "raw" }]);
+    const message = createProjectDataInvalidationMessage("p", [{ kind: "detail" }, { kind: "detail" }, { kind: "assets", collectionKind: "raw" }, { kind: "comments" }, { kind: "comment-read-marker" }]);
     expect(message.type).toBe("project-data-invalidated");
     const parsed = parseProjectDataSyncMessage({ ...message, sourceTabId: "a" });
     expect(parsed?.type).toBe("project-data-invalidated");
-    expect(parsed && parsed.type === "project-data-invalidated" ? parsed.resources : []).toHaveLength(2);
+    expect(parsed && parsed.type === "project-data-invalidated" ? parsed.resources : []).toHaveLength(4);
     expect(parseProjectDataSyncMessage({ ...message, sourceTabId: "a", data: "private" })).toBeNull();
     expect(parseProjectDataSyncMessage({ ...message, sourceTabId: "a", resources: [{ kind: "assets", collectionKind: "nope" }] })).toBeNull();
     expect(parseProjectDataSyncMessage({ version: 2, type: "project-data-removed", sourceTabId: "a", projectId: "p", committedAt: new Date().toISOString() })).toBeNull();
     expect(parseProjectDataSyncMessage(createProjectDataRemovedMessage("p"))).toBeNull();
+  });
+
+  it("resolves all four resources to exact keys and rejects private fields on the new variants", () => {
+    expect(projectResourceKey("a", { kind: "detail" })).toEqual(projectDataKeys.detail("a"));
+    expect(projectResourceKey("a", { kind: "assets", collectionKind: "raw" })).toEqual(projectDataKeys.assets("a", "raw"));
+    expect(projectResourceKey("a", { kind: "comments" })).toEqual(projectDataKeys.comments("a"));
+    expect(projectResourceKey("a", { kind: "comment-read-marker" })).toEqual(projectDataKeys.commentReadMarker("a"));
+    const message = createProjectDataInvalidationMessage("a", [{ kind: "comments" }, { kind: "comment-read-marker" }]);
+    expect(parseProjectDataSyncMessage({ ...message, sourceTabId: "sender", resources: [{ kind: "comments", extra: true }] })).toBeNull();
   });
 
   it("keeps removal and active-detail messages data-free and validates their shapes", () => {
@@ -57,7 +66,7 @@ describe("project-data BroadcastChannel contract", () => {
     const receiverClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const sender = new ProjectQueryRuntime(senderClient, "sender"); const receiver = new ProjectQueryRuntime(receiverClient, "receiver");
     sender.start(); receiver.start();
-    const detailKey = projectDataKeys.detail("p"); const assetsKey = projectDataKeys.assets("p", "raw");
+    const detailKey = projectDataKeys.detail("p"); const assetsKey = projectDataKeys.assets("p", "raw"); const commentsKey = projectDataKeys.comments("p"); const markerKey = projectDataKeys.commentReadMarker("p");
     senderClient.setQueryData(detailKey, { id: "p" }); receiverClient.setQueryData(detailKey, { id: "p" }); receiverClient.setQueryData(assetsKey, []);
     sender.publish(createProjectDataInvalidationMessage("p", [{ kind: "detail" }]));
     await Promise.resolve();
@@ -84,11 +93,14 @@ describe("project-data BroadcastChannel contract", () => {
     const receiverClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const sender = new ProjectQueryRuntime(senderClient, "sender"); const receiver = new ProjectQueryRuntime(receiverClient, "receiver");
     sender.start(); receiver.start();
-    const assetsKey = projectDataKeys.assets("p", "raw"); const detailKey = projectDataKeys.detail("p");
+    const assetsKey = projectDataKeys.assets("p", "raw"); const detailKey = projectDataKeys.detail("p"); const commentsKey = projectDataKeys.comments("p"); const markerKey = projectDataKeys.commentReadMarker("p");
     receiverClient.setQueryData(assetsKey, [{ id: "a", selected: false }]); receiverClient.setQueryData(detailKey, { id: "p" });
+    receiverClient.setQueryData(commentsKey, { pages: [], pageParams: [] }); receiverClient.setQueryData(markerKey, { unreadCount: 0 });
     const mutation = await beginAssetOptimisticMutation(receiverClient, "p", "raw", "a", { selected: true });
-    sender.publish(createProjectDataInvalidationMessage("p", [{ kind: "assets", collectionKind: "raw" }]));
+    sender.publish(createProjectDataInvalidationMessage("p", [{ kind: "assets", collectionKind: "raw" }, { kind: "comments" }, { kind: "comment-read-marker" }]));
     expect(receiverClient.getQueryCache().find({ queryKey: assetsKey, exact: true })?.state.isInvalidated).toBe(false);
+    expect(receiverClient.getQueryCache().find({ queryKey: commentsKey, exact: true })?.state.isInvalidated).toBe(true);
+    expect(receiverClient.getQueryCache().find({ queryKey: markerKey, exact: true })?.state.isInvalidated).toBe(true);
     await mutation.fail(); await Promise.resolve();
     expect(receiverClient.getQueryCache().find({ queryKey: assetsKey, exact: true })?.state.isInvalidated).toBe(true);
 

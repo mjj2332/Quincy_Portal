@@ -18,10 +18,11 @@ vi.mock("../lib/auth", () => ({
 
 const apiGetMock = vi.fn<(path: string, init?: unknown) => Promise<unknown>>();
 const apiPostMock = vi.fn<(path: string, body: unknown) => Promise<unknown>>();
+const apiPatchMock = vi.fn<(path: string, body: unknown) => Promise<unknown>>();
 const apiDeleteMock = vi.fn<(path: string) => Promise<unknown>>();
 vi.mock("../lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/api")>();
-  return { ...actual, apiGet: (path: string, init?: unknown) => apiGetMock(path, init), apiPost: (path: string, body: unknown) => apiPostMock(path, body), apiDelete: (path: string) => apiDeleteMock(path) };
+  return { ...actual, apiGet: (path: string, init?: unknown) => apiGetMock(path, init), apiPost: (path: string, body: unknown) => apiPostMock(path, body), apiPatch: (path: string, body: unknown) => apiPatchMock(path, body), apiDelete: (path: string) => apiDeleteMock(path) };
 });
 
 function workspaceAsset(id: string, overrides: Partial<WorkspaceAsset> = {}): WorkspaceAsset {
@@ -119,6 +120,10 @@ describe("ProjectWorkspace cross-tab asset/selection/lightbox safety", () => {
       if (path.includes("/assets?collection=raw")) return Promise.resolve({ assets: rawAssets });
       if (path.includes("/assets?collection=edited")) return editedFetch.promise;
       if (path.includes("/annotations")) return Promise.resolve({ annotations: [] });
+      if (path.includes("/comments?")) return Promise.resolve({ project: { id: "p1", street: "12 Example St" }, comments: [] });
+      if (path.includes("comment-read-marker")) return Promise.resolve({ projectId: "p1", marker: null, latest: null, unreadCount: 0 });
+      if (path.includes("/subtasks")) return Promise.resolve({ subtasks: [] });
+      if (path.includes("/mentionable-users")) return Promise.resolve({ users: [] });
       return Promise.resolve({});
     });
   });
@@ -567,7 +572,7 @@ describe("ProjectWorkspace selection download", () => {
 
 describe("ProjectWorkspace collaboration relocation", () => {
   let host: HTMLElement;
-  beforeEach(() => { host = mount(); authState.role = "editor"; apiGetMock.mockReset(); apiPostMock.mockReset(); });
+  beforeEach(() => { host = mount(); authState.role = "editor"; apiGetMock.mockReset(); apiPostMock.mockReset(); apiPatchMock.mockReset(); });
   afterEach(async () => { vi.useRealTimers(); await unmount(); host.remove(); });
 
   it("keeps the overlay out of the workspace grid, forwards every arrival, and preserves it over a lightbox", async () => {
@@ -641,6 +646,35 @@ describe("ProjectWorkspace collaboration relocation", () => {
     expect(consumed).toEqual([7]); expect(host.querySelector(".project-collaboration--standalone")).not.toBeNull();
   });
 
+  it("fails closed after a collaboration-only comments 403 without mounting workspace reads", async () => {
+    let queryClient: ReturnType<typeof import("../lib/query-client").createQuincyQueryClient> | undefined;
+    let commentsAvailable = true;
+    let detailCalls = 0;
+    let assetCalls = 0;
+    apiGetMock.mockImplementation((path: string) => {
+      if (path === "/api/projects/p1") { detailCalls += 1; return Promise.reject(new ApiError("Forbidden", 403)); }
+      if (path.includes("/comments?")) return commentsAvailable
+        ? Promise.resolve({ project: { id: "p1", street: "Hidden Street" }, comments: [] })
+        : Promise.reject(new ApiError("Collaboration unavailable", 403));
+      if (path.includes("comment-read-marker")) return Promise.resolve({ projectId: "p1", marker: null, latest: null, unreadCount: 0 });
+      if (path.includes("/assets?")) { assetCalls += 1; return Promise.resolve({ assets: [] }); }
+      if (path.includes("subtasks")) return Promise.resolve({ subtasks: [] });
+      if (path.includes("mentionable-users")) return Promise.resolve({ users: [] });
+      return Promise.resolve({});
+    });
+    await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>); await flush(20);
+    expect(host.querySelector(".project-collaboration-only")).not.toBeNull();
+
+    commentsAvailable = false;
+    await queryClient!.invalidateQueries({ queryKey: projectDataKeys.comments("p1"), exact: true, refetchType: "active" }); await flush(20);
+
+    expect(host.querySelector(".project-collaboration--unavailable")).not.toBeNull();
+    expect(host.querySelector(".project-collaboration--standalone")).toBeNull();
+    expect(host.querySelector(".work, .rail, .workmain")).toBeNull();
+    expect(detailCalls).toBe(1);
+    expect(assetCalls).toBe(0);
+  });
+
   it("defers all workspace reads until details succeeds, then owns one initial RAW batch and starts collaboration open", async () => {
     authState.role = "admin";
     const details = deferredPromise<ReturnType<typeof projectFixture>>();
@@ -703,6 +737,338 @@ describe("ProjectWorkspace collaboration relocation", () => {
     expect(probeSignal?.aborted).toBe(true); expect(host.textContent).toContain("34 Second Street");
     await act(async () => { probe.resolve({ project: { id: "p1", street: "Hidden Street" }, comments: [] }); await Promise.resolve(); }); await flush();
     expect(host.textContent).toContain("34 Second Street"); expect(host.textContent).not.toContain("Hidden Street"); expect(host.querySelector(".project-collaboration-only")).toBeNull();
+  });
+
+  it("does not carry collaboration-only access into the next project generation", async () => {
+    const p2Detail = deferredPromise<ReturnType<typeof projectFixture>>();
+    let p2CommentsCalls = 0;
+    apiGetMock.mockImplementation((path: string) => {
+      if (path === "/api/projects/p1") return Promise.reject(new ApiError("Forbidden", 403));
+      if (path.includes("p1/comments?")) return Promise.resolve({ project: { id: "p1", street: "Hidden Street" }, comments: [] });
+      if (path === "/api/projects/p2") return p2Detail.promise;
+      if (path.includes("p2/comments?")) { p2CommentsCalls += 1; return Promise.resolve({ project: { id: "p2", street: "Wrong Street" }, comments: [] }); }
+      if (path.includes("p1/comment-read-marker") || path.includes("p2/comment-read-marker")) return Promise.resolve({ projectId: path.includes("p1/") ? "p1" : "p2", marker: null, latest: null, unreadCount: 0 });
+      if (path.includes("subtasks")) return Promise.resolve({ subtasks: [] });
+      if (path.includes("mentionable-users")) return Promise.resolve({ users: [] });
+      return Promise.resolve({});
+    });
+    await render(<ProjectWorkspace projectId="p1" />); await flush(20);
+    expect(host.querySelector(".project-collaboration-only")).not.toBeNull();
+
+    await render(<ProjectWorkspace projectId="p2" />); await flush();
+
+    expect(apiGetMock.mock.calls.map(([path]) => path)).toContain("/api/projects/p2");
+    expect(p2CommentsCalls).toBe(0);
+    expect(host.textContent).toContain("Loading project.");
+    await act(async () => { p2Detail.resolve(projectFixture("p2")); await Promise.resolve(); }); await flush(20);
+    expect(host.textContent).toContain("34 Second Street");
+  });
+
+  it("keeps authorized detail data when the comments resource loses collaboration access", async () => {
+    let queryClient: ReturnType<typeof import("../lib/query-client").createQuincyQueryClient> | undefined;
+    let commentsForbidden = false;
+    apiGetMock.mockImplementation((path: string) => {
+      if (path === "/api/projects/p1") return Promise.resolve(projectFixture());
+      if (path.includes("/assets?collection=raw")) return Promise.resolve({ assets: [workspaceAsset("raw-1")] });
+      if (path.includes("ingest-status")) return Promise.resolve({ expectedCount: null, receivedCount: 1, mismatch: false });
+      if (path.includes("/comments?")) return commentsForbidden ? Promise.reject(new ApiError("Collaboration unavailable", 403)) : Promise.resolve({ project: { id: "p1", street: "12 Example St" }, comments: [] });
+      if (path.includes("comment-read-marker")) return Promise.resolve({ projectId: "p1", marker: null, latest: null, unreadCount: 0 });
+      if (path.includes("subtasks")) return Promise.resolve({ subtasks: [] });
+      return Promise.resolve({});
+    });
+    await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>); await flush(20);
+    expect(queryClient!.getQueryData(projectDataKeys.detail("p1"))).toBeDefined();
+    commentsForbidden = true;
+    await queryClient!.invalidateQueries({ queryKey: projectDataKeys.comments("p1"), exact: true, refetchType: "active" }); await flush(20);
+    expect(host.querySelector(".work")).not.toBeNull();
+    expect(host.querySelector(".project-collaboration--unavailable")).not.toBeNull();
+    expect(queryClient!.getQueryData(projectDataKeys.detail("p1"))).toBeDefined();
+    expect(queryClient!.getQueryData(projectDataKeys.comments("p1"))).toBeUndefined();
+    expect(queryClient!.getQueryData(projectDataKeys.commentReadMarker("p1"))).toBeUndefined();
+  });
+
+  it("keeps authorized detail data when the read-marker resource loses collaboration access", async () => {
+    let queryClient: ReturnType<typeof import("../lib/query-client").createQuincyQueryClient> | undefined;
+    let markerForbidden = false;
+    apiGetMock.mockImplementation((path: string) => {
+      if (path === "/api/projects/p1") return Promise.resolve(projectFixture());
+      if (path.includes("/assets?collection=raw")) return Promise.resolve({ assets: [workspaceAsset("raw-1")] });
+      if (path.includes("ingest-status")) return Promise.resolve({ expectedCount: null, receivedCount: 1, mismatch: false });
+      if (path.includes("/comments?")) return Promise.resolve({ project: { id: "p1", street: "12 Example St" }, comments: [] });
+      if (path.includes("comment-read-marker")) return markerForbidden ? Promise.reject(new ApiError("Collaboration unavailable", 403)) : Promise.resolve({ projectId: "p1", marker: null, latest: null, unreadCount: 0 });
+      if (path.includes("subtasks")) return Promise.resolve({ subtasks: [] });
+      return Promise.resolve({});
+    });
+    await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>); await flush(20);
+    markerForbidden = true;
+    await queryClient!.invalidateQueries({ queryKey: projectDataKeys.commentReadMarker("p1"), exact: true, refetchType: "active" }); await flush(20);
+    expect(host.querySelector(".work")).not.toBeNull();
+    expect(host.querySelector(".project-collaboration--unavailable")).not.toBeNull();
+    expect(queryClient!.getQueryData(projectDataKeys.detail("p1"))).toBeDefined();
+  });
+
+  it.each([
+    { status: 403, expected: "collaboration" },
+    { status: 404, expected: "project" },
+  ])("classifies comment POST $status at the owning scope", async ({ status, expected }) => {
+    let queryClient: ReturnType<typeof import("../lib/query-client").createQuincyQueryClient> | undefined;
+    apiGetMock.mockImplementation((path: string) => {
+      if (path === "/api/projects/p1") return Promise.resolve(projectFixture());
+      if (path.includes("/assets?collection=raw")) return Promise.resolve({ assets: [workspaceAsset("raw-1")] });
+      if (path.includes("ingest-status")) return Promise.resolve({ expectedCount: null, receivedCount: 1, mismatch: false });
+      if (path.includes("/comments?")) return Promise.resolve({ project: { id: "p1", street: "12 Example St" }, comments: [] });
+      if (path.includes("comment-read-marker")) return Promise.resolve({ projectId: "p1", marker: null, latest: null, unreadCount: 0 });
+      if (path.includes("subtasks")) return Promise.resolve({ subtasks: [] });
+      return Promise.resolve({});
+    });
+    apiPostMock.mockRejectedValueOnce(new ApiError(`Comment POST ${status}`, status));
+    await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>); await flush(20);
+    await typeIntoEditor(host.querySelector<HTMLElement>('.project-collaboration__comment-compose [contenteditable="true"]')!, "A comment");
+    await click(host.querySelector<HTMLButtonElement>('.project-collaboration__comment-compose button[type="submit"]')!); await flush(20);
+    if (expected === "collaboration") {
+      expect(host.querySelector(".work")).not.toBeNull();
+      expect(host.querySelector(".project-collaboration--unavailable")).not.toBeNull();
+      expect(queryClient!.getQueryData(projectDataKeys.detail("p1"))).toBeDefined();
+    } else {
+      expect(host.textContent).toContain("Project unavailable.");
+      expect(queryClient!.getQueryData(projectDataKeys.detail("p1"))).toBeUndefined();
+    }
+    expect(queryClient!.getQueryData(projectDataKeys.comments("p1"))).toBeUndefined();
+    expect(queryClient!.getQueryData(projectDataKeys.commentReadMarker("p1"))).toBeUndefined();
+  });
+
+  it.each([
+    { status: 403, expected: "collaboration" },
+    { status: 404, expected: "project" },
+  ])("classifies read-marker PATCH $status at the owning scope", async ({ status, expected }) => {
+    let queryClient: ReturnType<typeof import("../lib/query-client").createQuincyQueryClient> | undefined;
+    const globals = globalThis as unknown as Record<string, unknown>;
+    const previousObserver = globals.IntersectionObserver;
+    const previousFocused = focusManager.isFocused();
+    let callback: IntersectionObserverCallback | undefined;
+    class TestIntersectionObserver {
+      constructor(next: IntersectionObserverCallback) { callback = next; }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+    globals.IntersectionObserver = TestIntersectionObserver as unknown as typeof IntersectionObserver;
+    focusManager.setFocused(true);
+    apiGetMock.mockImplementation((path: string) => {
+      if (path === "/api/projects/p1") return Promise.resolve(projectFixture());
+      if (path.includes("/assets?collection=raw")) return Promise.resolve({ assets: [workspaceAsset("raw-1")] });
+      if (path.includes("ingest-status")) return Promise.resolve({ expectedCount: null, receivedCount: 1, mismatch: false });
+      if (path.includes("/comments?")) return Promise.resolve({ project: { id: "p1", street: "12 Example St" }, comments: [{ id: "head", author: { id: "user-1", name: "Owner" }, body: "Head", content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Head" }] }] }, createdAt: "2026-08-25T00:00:00.000Z", editedAt: null }] });
+      if (path.includes("comment-read-marker")) return Promise.resolve({ projectId: "p1", marker: null, latest: { commentId: "head", createdAt: "2026-08-25T00:00:00.000Z" }, unreadCount: 1 });
+      if (path.includes("subtasks")) return Promise.resolve({ subtasks: [] });
+      return Promise.resolve({});
+    });
+    apiPatchMock.mockRejectedValueOnce(new ApiError(`Read marker PATCH ${status}`, status));
+    await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>); await flush(20);
+    const anchor = host.querySelector<HTMLElement>(".project-collaboration__read-anchor")!;
+    const scroll = host.querySelector<HTMLElement>(".project-collaboration__scroll")!;
+    Object.defineProperty(anchor, "getBoundingClientRect", { configurable: true, value: () => ({ left: 0, top: 0, right: 100, bottom: 20, width: 100, height: 20 }) });
+    Object.defineProperty(scroll, "getBoundingClientRect", { configurable: true, value: () => ({ left: 0, top: 0, right: 100, bottom: 900, width: 100, height: 900 }) });
+    callback?.([{ isIntersecting: true, intersectionRatio: 1, boundingClientRect: anchor.getBoundingClientRect() } as IntersectionObserverEntry] as IntersectionObserverEntry[], {} as IntersectionObserver);
+    await flush(20);
+    if (expected === "collaboration") {
+      expect(host.querySelector(".work")).not.toBeNull();
+      expect(host.querySelector(".project-collaboration--unavailable")).not.toBeNull();
+      expect(queryClient!.getQueryData(projectDataKeys.detail("p1"))).toBeDefined();
+    } else {
+      expect(host.textContent).toContain("Project unavailable.");
+      expect(queryClient!.getQueryData(projectDataKeys.detail("p1"))).toBeUndefined();
+    }
+    focusManager.setFocused(previousFocused);
+    if (previousObserver === undefined) Reflect.deleteProperty(globals, "IntersectionObserver");
+    else globals.IntersectionObserver = previousObserver;
+  });
+
+  it("purges the full project prefix when the comments resource returns 404", async () => {
+    let queryClient: ReturnType<typeof import("../lib/query-client").createQuincyQueryClient> | undefined;
+    let commentsMissing = false;
+    apiGetMock.mockImplementation((path: string) => {
+      if (path === "/api/projects/p1") return Promise.resolve(projectFixture());
+      if (path.includes("/assets?collection=raw")) return Promise.resolve({ assets: [workspaceAsset("raw-1")] });
+      if (path.includes("ingest-status")) return Promise.resolve({ expectedCount: null, receivedCount: 1, mismatch: false });
+      if (path.includes("/comments?")) return commentsMissing ? Promise.reject(new ApiError("Project missing", 404)) : Promise.resolve({ project: { id: "p1", street: "12 Example St" }, comments: [] });
+      if (path.includes("comment-read-marker")) return Promise.resolve({ projectId: "p1", marker: null, latest: null, unreadCount: 0 });
+      if (path.includes("subtasks")) return Promise.resolve({ subtasks: [] });
+      return Promise.resolve({});
+    });
+    await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>); await flush(20);
+    commentsMissing = true;
+    await queryClient!.invalidateQueries({ queryKey: projectDataKeys.comments("p1"), exact: true, refetchType: "active" }); await flush(20);
+    expect(host.textContent).toContain("Project unavailable.");
+    expect(queryClient!.getQueryData(projectDataKeys.detail("p1"))).toBeUndefined();
+    expect(queryClient!.getQueryCache().findAll({ queryKey: projectDataKeys.project("p1") })).toHaveLength(0);
+  });
+
+  it("purges the full project prefix when the read-marker resource returns 404", async () => {
+    let queryClient: ReturnType<typeof import("../lib/query-client").createQuincyQueryClient> | undefined;
+    let markerMissing = false;
+    apiGetMock.mockImplementation((path: string) => {
+      if (path === "/api/projects/p1") return Promise.resolve(projectFixture());
+      if (path.includes("/assets?collection=raw")) return Promise.resolve({ assets: [workspaceAsset("raw-1")] });
+      if (path.includes("ingest-status")) return Promise.resolve({ expectedCount: null, receivedCount: 1, mismatch: false });
+      if (path.includes("/comments?")) return Promise.resolve({ project: { id: "p1", street: "12 Example St" }, comments: [] });
+      if (path.includes("comment-read-marker")) return markerMissing ? Promise.reject(new ApiError("Project missing", 404)) : Promise.resolve({ projectId: "p1", marker: null, latest: null, unreadCount: 0 });
+      if (path.includes("/subtasks")) return Promise.resolve({ subtasks: [] });
+      return Promise.resolve({});
+    });
+    await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>); await flush(20);
+    markerMissing = true;
+    await queryClient!.invalidateQueries({ queryKey: projectDataKeys.commentReadMarker("p1"), exact: true, refetchType: "active" }); await flush(20);
+    expect(host.textContent).toContain("Project unavailable.");
+    expect(queryClient!.getQueryData(projectDataKeys.detail("p1"))).toBeUndefined();
+    expect(queryClient!.getQueryCache().findAll({ queryKey: projectDataKeys.project("p1") })).toHaveLength(0);
+  });
+
+  it("waits for a confirming list GET before treating nested PATCH 403 as terminal", async () => {
+    let queryClient: ReturnType<typeof import("../lib/query-client").createQuincyQueryClient> | undefined;
+    let commentListCalls = 0;
+    const own = { id: "own-comment", author: { id: "user-1", name: "Owner" }, body: "Own comment", content: { type: "doc" as const, content: [{ type: "paragraph" as const, content: [{ type: "text" as const, text: "Own comment" }] }] }, createdAt: "2026-08-25T00:00:00.000Z", editedAt: null };
+    apiGetMock.mockImplementation((path: string) => {
+      if (path === "/api/projects/p1") return Promise.resolve(projectFixture());
+      if (path.includes("/assets?collection=raw")) return Promise.resolve({ assets: [workspaceAsset("raw-1")] });
+      if (path.includes("ingest-status")) return Promise.resolve({ expectedCount: null, receivedCount: 1, mismatch: false });
+      if (path.includes("/comments?")) { commentListCalls += 1; return Promise.resolve({ project: { id: "p1", street: "12 Example St" }, comments: [own] }); }
+      if (path.includes("comment-read-marker")) return Promise.resolve({ projectId: "p1", marker: null, latest: null, unreadCount: 0 });
+      if (path.includes("subtasks")) return Promise.resolve({ subtasks: [] });
+      return Promise.resolve({});
+    });
+    await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>); await flush(20);
+    const initialCalls = commentListCalls;
+    apiPatchMock.mockRejectedValueOnce(new ApiError("Only the author can edit this comment.", 403));
+    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Edit")!);
+    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Save")!); await flush(20);
+    expect(commentListCalls).toBeGreaterThan(initialCalls);
+    expect(host.querySelector(".work")).not.toBeNull();
+    expect(host.textContent).not.toContain("Project unavailable.");
+    expect(queryClient!.getQueryData(projectDataKeys.detail("p1"))).toBeDefined();
+  });
+
+  it("takes a nested PATCH 404 to project terminal only after the confirming list 404", async () => {
+    let queryClient: ReturnType<typeof import("../lib/query-client").createQuincyQueryClient> | undefined;
+    let commentListCalls = 0;
+    const own = { id: "own-comment", author: { id: "user-1", name: "Owner" }, body: "Own comment", content: { type: "doc" as const, content: [{ type: "paragraph" as const, content: [{ type: "text" as const, text: "Own comment" }] }] }, createdAt: "2026-08-25T00:00:00.000Z", editedAt: null };
+    apiGetMock.mockImplementation((path: string) => {
+      if (path === "/api/projects/p1") return Promise.resolve(projectFixture());
+      if (path.includes("/assets?collection=raw")) return Promise.resolve({ assets: [workspaceAsset("raw-1")] });
+      if (path.includes("ingest-status")) return Promise.resolve({ expectedCount: null, receivedCount: 1, mismatch: false });
+      if (path.includes("/comments?")) { commentListCalls += 1; return commentListCalls > 1 ? Promise.reject(new ApiError("Project missing", 404)) : Promise.resolve({ project: { id: "p1", street: "12 Example St" }, comments: [own] }); }
+      if (path.includes("comment-read-marker")) return Promise.resolve({ projectId: "p1", marker: null, latest: null, unreadCount: 0 });
+      if (path.includes("subtasks")) return Promise.resolve({ subtasks: [] });
+      return Promise.resolve({});
+    });
+    await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>); await flush(20);
+    apiPatchMock.mockRejectedValueOnce(new ApiError("Comment missing", 404));
+    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Edit")!);
+    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Save")!); await flush(20);
+    expect(commentListCalls).toBeGreaterThan(1);
+    expect(host.textContent).toContain("Project unavailable.");
+    expect(queryClient!.getQueryData(projectDataKeys.detail("p1"))).toBeUndefined();
+  });
+
+  it("waits for a confirming list GET before treating nested DELETE 403 as terminal", async () => {
+    let queryClient: ReturnType<typeof import("../lib/query-client").createQuincyQueryClient> | undefined;
+    let commentListCalls = 0;
+    const own = { id: "own-comment", author: { id: "user-1", name: "Owner" }, body: "Own comment", content: { type: "doc" as const, content: [{ type: "paragraph" as const, content: [{ type: "text" as const, text: "Own comment" }] }] }, createdAt: "2026-08-25T00:00:00.000Z", editedAt: null };
+    apiGetMock.mockImplementation((path: string) => {
+      if (path === "/api/projects/p1") return Promise.resolve(projectFixture());
+      if (path.includes("/assets?collection=raw")) return Promise.resolve({ assets: [workspaceAsset("raw-1")] });
+      if (path.includes("ingest-status")) return Promise.resolve({ expectedCount: null, receivedCount: 1, mismatch: false });
+      if (path.includes("/comments?")) { commentListCalls += 1; return Promise.resolve({ project: { id: "p1", street: "12 Example St" }, comments: [own] }); }
+      if (path.includes("comment-read-marker")) return Promise.resolve({ projectId: "p1", marker: null, latest: null, unreadCount: 0 });
+      if (path.includes("/subtasks")) return Promise.resolve({ subtasks: [] });
+      return Promise.resolve({});
+    });
+    await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>); await flush(20);
+    const initialCalls = commentListCalls;
+    apiDeleteMock.mockRejectedValueOnce(new ApiError("Only the author can delete this comment.", 403));
+    vi.stubGlobal("confirm", vi.fn(() => true));
+    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Delete")!); await flush(20);
+    expect(commentListCalls).toBeGreaterThan(initialCalls);
+    expect(host.querySelector(".work")).not.toBeNull();
+    expect(host.textContent).not.toContain("Project unavailable.");
+    expect(queryClient!.getQueryData(projectDataKeys.detail("p1"))).toBeDefined();
+    vi.unstubAllGlobals();
+  });
+
+  it("takes a nested DELETE 404 to project terminal only after the confirming list 404", async () => {
+    let queryClient: ReturnType<typeof import("../lib/query-client").createQuincyQueryClient> | undefined;
+    let commentListCalls = 0;
+    const own = { id: "own-comment", author: { id: "user-1", name: "Owner" }, body: "Own comment", content: { type: "doc" as const, content: [{ type: "paragraph" as const, content: [{ type: "text" as const, text: "Own comment" }] }] }, createdAt: "2026-08-25T00:00:00.000Z", editedAt: null };
+    apiGetMock.mockImplementation((path: string) => {
+      if (path === "/api/projects/p1") return Promise.resolve(projectFixture());
+      if (path.includes("/assets?collection=raw")) return Promise.resolve({ assets: [workspaceAsset("raw-1")] });
+      if (path.includes("ingest-status")) return Promise.resolve({ expectedCount: null, receivedCount: 1, mismatch: false });
+      if (path.includes("/comments?")) { commentListCalls += 1; return commentListCalls > 1 ? Promise.reject(new ApiError("Project missing", 404)) : Promise.resolve({ project: { id: "p1", street: "12 Example St" }, comments: [own] }); }
+      if (path.includes("comment-read-marker")) return Promise.resolve({ projectId: "p1", marker: null, latest: null, unreadCount: 0 });
+      if (path.includes("/subtasks")) return Promise.resolve({ subtasks: [] });
+      return Promise.resolve({});
+    });
+    await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>); await flush(20);
+    apiDeleteMock.mockRejectedValueOnce(new ApiError("Comment missing", 404));
+    vi.stubGlobal("confirm", vi.fn(() => true));
+    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Delete")!); await flush(20);
+    expect(commentListCalls).toBeGreaterThan(1);
+    expect(host.textContent).toContain("Project unavailable.");
+    expect(queryClient!.getQueryData(projectDataKeys.detail("p1"))).toBeUndefined();
+    vi.unstubAllGlobals();
+  });
+
+  it.each([
+    { method: "PATCH", confirmationStatus: 401, expected: "principal" },
+    { method: "PATCH", confirmationStatus: 403, expected: "collaboration" },
+    { method: "PATCH", confirmationStatus: 500, expected: "transient" },
+    { method: "DELETE", confirmationStatus: 401, expected: "principal" },
+    { method: "DELETE", confirmationStatus: 403, expected: "collaboration" },
+    { method: "DELETE", confirmationStatus: 500, expected: "transient" },
+  ])("classifies nested $method after confirming GET $confirmationStatus", async ({ method, confirmationStatus, expected }) => {
+    let queryClient: ReturnType<typeof import("../lib/query-client").createQuincyQueryClient> | undefined;
+    let commentListCalls = 0;
+    const own = { id: "own-comment", author: { id: "user-1", name: "Owner" }, body: "Own comment", content: { type: "doc" as const, content: [{ type: "paragraph" as const, content: [{ type: "text" as const, text: "Own comment" }] }] }, createdAt: "2026-08-25T00:00:00.000Z", editedAt: null };
+    apiGetMock.mockImplementation((path: string) => {
+      if (path === "/api/projects/p1") return Promise.resolve(projectFixture());
+      if (path.includes("/assets?collection=raw")) return Promise.resolve({ assets: [workspaceAsset("raw-1")] });
+      if (path.includes("ingest-status")) return Promise.resolve({ expectedCount: null, receivedCount: 1, mismatch: false });
+      if (path.includes("/comments?")) {
+        commentListCalls += 1;
+        return commentListCalls > 1 ? Promise.reject(new ApiError(`Confirming comments GET ${confirmationStatus}`, confirmationStatus)) : Promise.resolve({ project: { id: "p1", street: "12 Example St" }, comments: [own] });
+      }
+      if (path.includes("comment-read-marker")) return Promise.resolve({ projectId: "p1", marker: null, latest: null, unreadCount: 0 });
+      if (path.includes("subtasks")) return Promise.resolve({ subtasks: [] });
+      return Promise.resolve({});
+    });
+    if (method === "PATCH") {
+      apiPatchMock.mockRejectedValueOnce(new ApiError("Only the author can edit this comment.", 403));
+      await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>); await flush(20);
+      await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Edit")!);
+      await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Save")!);
+    } else {
+      apiDeleteMock.mockRejectedValueOnce(new ApiError("Only the author can delete this comment.", 403));
+      vi.stubGlobal("confirm", vi.fn(() => true));
+      await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>); await flush(20);
+      await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Delete")!);
+    }
+    await flush(20);
+    expect(commentListCalls).toBeGreaterThan(1);
+    if (expected === "principal") {
+      expect(host.textContent).toContain("Project unavailable.");
+      expect(queryClient!.getQueryCache().getAll()).toHaveLength(0);
+    } else if (expected === "collaboration") {
+      expect(host.querySelector(".work")).not.toBeNull();
+      expect(host.querySelector(".project-collaboration--unavailable")).not.toBeNull();
+      expect(queryClient!.getQueryData(projectDataKeys.detail("p1"))).toBeDefined();
+      expect(queryClient!.getQueryData(projectDataKeys.comments("p1"))).toBeUndefined();
+    } else {
+      expect(host.querySelector(".work")).not.toBeNull();
+      expect(host.textContent).not.toContain("Project unavailable.");
+      expect(queryClient!.getQueryData(projectDataKeys.detail("p1"))).toBeDefined();
+      expect(queryClient!.getQueryData(projectDataKeys.comments("p1"))).toBeDefined();
+    }
+    if (method === "DELETE") vi.unstubAllGlobals();
   });
 
   it("refreshes RAW after an initial Edited-stage selection", async () => {

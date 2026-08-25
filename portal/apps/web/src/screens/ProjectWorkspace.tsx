@@ -10,7 +10,7 @@ import { CollectionPanel } from "../components/CollectionPanel";
 import { ApiError, apiDelete, apiGet, apiPost } from "../lib/api";
 import { useCapabilities } from "../lib/capabilities";
 import { InternalLink } from "../components/InternalLink";
-import { ProjectCollaborationPanel, type CommentResponse } from "../components/ProjectCollaborationPanel";
+import { ProjectCollaborationPanel } from "../components/ProjectCollaborationPanel";
 import {
   beginAssetOptimisticMutation, classifyProjectAccessError, discardAssetLedgerForResource, invalidateProjectResources,
   projectAssetsQueryOptions, projectDataKeys, projectDetailQueryOptions, purgeProjectData,
@@ -18,6 +18,7 @@ import {
   useProjectAccessTermination,
   type ProjectDetail,
 } from "../lib/project-data";
+import { projectCommentsInfiniteQueryOptions, purgeProjectCommentData, useProjectCommentsCacheQuery } from "../lib/project-comments";
 import { createProjectDataInvalidationMessage, useProjectQueryRuntime } from "../lib/project-query-sync";
 import type { ProjectDataResource } from "../lib/project-query-sync";
 
@@ -51,6 +52,7 @@ export function computeBulkDeleteOutcome(assetIds: string[], results: PromiseSet
 
 type ProjectWorkspaceProps = { projectId: string; notice?: string | null; onNoticeShown?: () => void; collaborationOpenSignal?: number; onCollaborationOpenSignalConsumed?: (signal: number) => void };
 type TerminalState = { projectId: string; scope: "principal" | "project"; message: string };
+type AccessFailureResource = "detail" | "assets" | "comments" | "comment-read-marker" | "nested-comment";
 
 export function ProjectWorkspace(props: ProjectWorkspaceProps) {
   const { projectId, notice, onNoticeShown, collaborationOpenSignal, onCollaborationOpenSignalConsumed } = props;
@@ -75,7 +77,11 @@ export function ProjectWorkspace(props: ProjectWorkspaceProps) {
   const [queryReadyFor, setQueryReadyFor] = useState<number | null>(null);
   const [terminal, setTerminal] = useState<TerminalState | null>(null);
   const [initialDetailProbe, setInitialDetailProbe] = useState(false);
-  const [fallbackComments, setFallbackComments] = useState<CommentResponse>();
+  const [collaborationAccess, setCollaborationAccess] = useState<{ projectId: string; only: boolean; unavailable: boolean }>({ projectId, only: false, unavailable: false });
+  const collaborationOnly = collaborationAccess.projectId === projectId && collaborationAccess.only;
+  const collaborationUnavailable = collaborationAccess.projectId === projectId && collaborationAccess.unavailable;
+  const setCollaborationOnly = useCallback((only: boolean) => setCollaborationAccess((current) => ({ projectId, only, unavailable: current.projectId === projectId ? current.unavailable : false })), [projectId]);
+  const setCollaborationUnavailable = useCallback((unavailable: boolean) => setCollaborationAccess((current) => ({ projectId, only: current.projectId === projectId ? current.only : false, unavailable })), [projectId]);
   const [collectionDenied, setCollectionDenied] = useState<Set<CollectionKind>>(() => new Set());
   const [stageKeyForManual, setStageKeyForManual] = useState<ProjectStageKey | null>(null);
   const currentProjectIdRef = useRef(projectId);
@@ -108,8 +114,8 @@ export function ProjectWorkspace(props: ProjectWorkspaceProps) {
     if (legacyTimerRef.current) window.clearTimeout(legacyTimerRef.current);
     activeJobTimerRef.current = undefined; legacyTimerRef.current = undefined;
     const controller = new AbortController(); manualOwnerRef.current = { controller, run: nextRun, projectId };
-    setActiveTab("raw"); setOpenAssetId(null); setLightboxOrderIds(null); setIngest(null); setJobs([]); setAutohdrStatus(null); setFallbackComments(undefined); setToasts([]);
-    setManualReadyFor(null); setQueryReadyFor(null); setTerminal(null); setInitialDetailProbe(false); setCollectionDenied(new Set()); setStageKeyForManual(null); setIsSyncing(false); setIsSending(false);
+    setActiveTab("raw"); setOpenAssetId(null); setLightboxOrderIds(null); setIngest(null); setJobs([]); setAutohdrStatus(null); setToasts([]);
+    setManualReadyFor(null); setQueryReadyFor(null); setTerminal(null); setInitialDetailProbe(false); setCollaborationOnly(false); setCollaborationUnavailable(false); setCollectionDenied(new Set()); setStageKeyForManual(null); setIsSyncing(false); setIsSending(false);
     initialTabHandledRef.current = null; autohdrObservedRef.current = null;
     transientNoticeRef.current.clear();
     return () => { controller.abort(); for (const timer of syncDelayTimersRef.current) window.clearTimeout(timer); syncDelayTimersRef.current.clear(); };
@@ -139,8 +145,24 @@ export function ProjectWorkspace(props: ProjectWorkspaceProps) {
     for (const release of specialOwnerReleasesRef.current.values()) release();
     specialOwnerReleasesRef.current.clear();
   }, [projectId, runtime]);
-  const accessFailure = useCallback((error: unknown, resource: "detail" | "assets", kind?: CollectionKind, initial = false) => {
+  const accessFailure = useCallback((error: unknown, resource: AccessFailureResource, kind?: CollectionKind, initial = false) => {
     terminateOnUnauthorized(error);
+    if (resource === "nested-comment") {
+      if (error instanceof ApiError && error.status === 401) {
+        if (isCurrent()) setTerminal({ projectId, scope: "principal", message: error.message });
+        return;
+      }
+      if (!(error instanceof ApiError) || (error.status !== 403 && error.status !== 404)) return;
+      void apiGet(`/api/projects/${encodeURIComponent(projectId)}/comments?limit=50`).then(() => undefined).catch((confirmingError) => {
+        if (confirmingError instanceof ApiError && confirmingError.status >= 500) return;
+        const confirmed = classifyProjectAccessError(confirmingError, "comments");
+        if (!isCurrent() || !confirmed) return;
+        if (confirmed.scope === "principal") setTerminal({ projectId, scope: "principal", message: confirmingError instanceof Error ? confirmingError.message : "Your session is no longer available." });
+        else if (confirmed.scope === "collaboration") setCollaborationUnavailable(true);
+        else setTerminal({ projectId, scope: "project", message: confirmingError instanceof Error ? confirmingError.message : "Project access is no longer available." });
+      });
+      return;
+    }
     const classification = classifyProjectAccessError(error, resource, kind); if (!isCurrent()) return;
     if (!classification) {
       const key = `${resource}:${kind ?? ""}:${error instanceof Error ? error.message : String(error)}`;
@@ -149,6 +171,7 @@ export function ProjectWorkspace(props: ProjectWorkspaceProps) {
     }
     if (classification.scope === "principal") setTerminal({ projectId, scope: "principal", message: error instanceof Error ? error.message : "Your session is no longer available." });
     else if (classification.scope === "collection") { const deniedKind = classification.collectionKind ?? kind; if (deniedKind) setCollectionDenied((current) => current.has(deniedKind) ? current : new Set(current).add(deniedKind)); if (activeTab === deniedKind) setActiveTab(deniedKind === "raw" && canViewEdited ? "edited" : "raw"); }
+    else if (classification.scope === "collaboration") setCollaborationUnavailable(true);
     else if (initial && resource === "detail" && error instanceof ApiError && error.status === 403) setInitialDetailProbe(true);
     else setTerminal({ projectId, scope: "project", message: error instanceof Error ? error.message : "Project access is no longer available." });
   }, [activeTab, canViewEdited, isCurrent, projectId, terminateOnUnauthorized, toast]);
@@ -203,9 +226,9 @@ export function ProjectWorkspace(props: ProjectWorkspaceProps) {
     const controller = new AbortController();
     void purgeProjectData(queryClient, projectId).then(() => {
       if (controller.signal.aborted || !isCurrent() || runRef.current !== run) return;
-      return apiGet<CommentResponse>(`/api/projects/${encodeURIComponent(projectId)}/comments?limit=50`, { signal: controller.signal }).then((response) => { if (!isCurrent() || runRef.current !== run) return; setFallbackComments(response); setInitialDetailProbe(false); });
-    }).catch((reason: unknown) => { if (controller.signal.aborted || (reason instanceof Error && reason.name === "AbortError")) return; if (reason instanceof ApiError && reason.status === 401) setTerminal({ projectId, scope: "principal", message: reason.message }); else { setInitialDetailProbe(false); setTerminal({ projectId, scope: "project", message: reason instanceof Error ? reason.message : "Project unavailable." }); } });
-    return () => controller.abort();
+      return queryClient.fetchInfiniteQuery(projectCommentsInfiniteQueryOptions(projectId)).then(() => { if (!isCurrent() || runRef.current !== run) return; setCollaborationOnly(true); setInitialDetailProbe(false); });
+    }).catch((reason: unknown) => { if (controller.signal.aborted || (reason instanceof Error && reason.name === "AbortError")) return; setInitialDetailProbe(false); if (reason instanceof ApiError && reason.status === 401) setTerminal({ projectId, scope: "principal", message: reason.message }); else setTerminal({ projectId, scope: "project", message: reason instanceof Error ? reason.message : "Project unavailable." }); });
+    return () => { controller.abort(); void queryClient.cancelQueries({ queryKey: projectDataKeys.comments(projectId), exact: true }); };
   }, [initialDetailProbe, isCurrent, projectId, queryClient, run, terminal]);
   useEffect(() => {
     for (const kind of collectionDenied) {
@@ -216,9 +239,13 @@ export function ProjectWorkspace(props: ProjectWorkspaceProps) {
     }
   }, [collectionDenied, projectId, queryClient]);
   useEffect(() => {
+    if (!collaborationUnavailable || terminal) return;
+    void purgeProjectCommentData(queryClient, projectId);
+  }, [collaborationOnly, collaborationUnavailable, projectId, queryClient, terminal]);
+  useEffect(() => {
     if (!terminal || terminal.projectId !== projectId) return;
     manualOwnerRef.current?.controller.abort(); if (activeJobTimerRef.current) window.clearInterval(activeJobTimerRef.current); if (legacyTimerRef.current) window.clearTimeout(legacyTimerRef.current); for (const timer of syncDelayTimersRef.current) window.clearTimeout(timer); syncDelayTimersRef.current.clear(); activeJobTimerRef.current = undefined; legacyTimerRef.current = undefined;
-    setIngest(null); setJobs([]); setAutohdrStatus(null); setFallbackComments(undefined); setIsSyncing(false); setIsSending(false); setOpenAssetId(null); setLightboxOrderIds(null); setCollectionDenied(new Set());
+    setIngest(null); setJobs([]); setAutohdrStatus(null); setCollaborationOnly(false); setCollaborationUnavailable(false); setIsSyncing(false); setIsSending(false); setOpenAssetId(null); setLightboxOrderIds(null); setCollectionDenied(new Set());
     void (terminal.scope === "principal" ? clearPrincipalProjectData(queryClient) : purgeProjectData(queryClient, projectId));
   }, [projectId, queryClient, terminal]);
   useEffect(() => {
@@ -267,24 +294,36 @@ export function ProjectWorkspace(props: ProjectWorkspaceProps) {
     if (!runtimeTerminal || terminal?.projectId === projectId) return;
     setTerminal(runtimeTerminal);
   }, [projectId, runtimeTerminal, terminal]);
-  const viewState = currentTerminal ? "unavailable" : fallbackComments ? "collaboration-only" : workspaceReady ? "full-workspace" : "loading";
+  const viewState = currentTerminal ? "unavailable" : collaborationUnavailable ? "collaboration-unavailable" : collaborationOnly ? "collaboration-only" : workspaceReady ? "full-workspace" : "loading";
   const consumeTerminalSignalRef = useRef<number | undefined>(undefined);
-  useEffect(() => { if ((viewState !== "collaboration-only" && viewState !== "unavailable") || collaborationOpenSignal === undefined || collaborationOpenSignal === consumeTerminalSignalRef.current) return; consumeTerminalSignalRef.current = collaborationOpenSignal; onCollaborationOpenSignalConsumed?.(collaborationOpenSignal); }, [collaborationOpenSignal, onCollaborationOpenSignalConsumed, viewState]);
+  useEffect(() => { if ((viewState !== "collaboration-only" && viewState !== "collaboration-unavailable" && viewState !== "unavailable") || collaborationOpenSignal === undefined || collaborationOpenSignal === consumeTerminalSignalRef.current) return; consumeTerminalSignalRef.current = collaborationOpenSignal; onCollaborationOpenSignalConsumed?.(collaborationOpenSignal); }, [collaborationOpenSignal, onCollaborationOpenSignalConsumed, viewState]);
   if (!projectId || viewState === "unavailable") return <UnavailableProject message={currentTerminal?.message ?? "Project unavailable."} toasts={toasts} />;
-  if (viewState === "collaboration-only" && fallbackComments) return <main className="page project-collaboration-only"><div className="pagehead"><div><div className="ey">Collaboration</div><h1 className="serif">{fallbackComments.project.street}</h1></div><InternalLink className="button button--secondary" to="/">Back to dashboard</InternalLink></div><ProjectCollaborationPanel projectId={projectId} mode="standalone" initialComments={fallbackComments} /></main>;
+  if (viewState === "collaboration-only") return <CollaborationOnlyView projectId={projectId} onAccessFailure={accessFailure} />;
+  if (viewState === "collaboration-unavailable" && collaborationOnly) return <CollaborationOnlyUnavailable />;
   if (initialDetailProbe) return <main className="page"><div className="empty"><span className="serif">Loading project.</span>Preparing the workspace.</div></main>;
   return <>
     <ProjectWorkspaceQueryOwner projectId={projectId} run={run} activeTab={activeTab} collectionDenied={collectionDenied} workspaceReady={workspaceReady} canViewEdited={canViewEdited} canAdminBackend={canAdminBackend} onDetailReady={(ownerRun, stageKey) => { if (ownerRun !== runRef.current) return; setStageKeyForManual(stageKey); startCompanionBatch(ownerRun); }} onDetailStage={(ownerRun, stageKey) => { if (ownerRun !== runRef.current) return; setStageKeyForManual(stageKey); }} onQueryReady={(ownerRun, defaultEdited) => { if (ownerRun !== runRef.current) return; setQueryReadyFor(ownerRun); if (defaultEdited && initialTabHandledRef.current !== ownerRun) { initialTabHandledRef.current = ownerRun; setActiveTab("edited"); } }} onAccessFailure={accessFailure} onCollectionDenied={(kind) => { setCollectionDenied((current) => current.has(kind) ? current : new Set(current).add(kind)); if (activeTab === kind) setActiveTab(kind === "raw" && canViewEdited ? "edited" : "raw"); }} activeTabChange={setActiveTab} openAssetId={openAssetId} setOpenAssetId={setOpenAssetId} lightboxOrderIds={lightboxOrderIds} setLightboxOrderIds={setLightboxOrderIds} ingest={ingest} jobs={jobs} autohdrStatus={autohdrStatus} isSyncing={isSyncing} isSending={isSending} onSyncDropbox={() => void syncDropbox()} onSendToAutoHdr={() => void sendToAutoHdr()} onRetryAutoHdr={(jobId) => void retryAutoHdr(jobId)} onUploadComplete={onUploadComplete} onDocumentsChanged={onDocumentsChanged} onLinksChanged={onLinksChanged} toast={toast} toasts={toasts} onInvalidate={invalidate} onRefreshDetail={forceDetailRead} canReadCollection={canReadCollection} />
-    {viewState === "full-workspace" && <ProjectCollaborationPanel projectId={projectId} openSignal={collaborationOpenSignal} onOpenSignalConsumed={onCollaborationOpenSignalConsumed} />}
+    {viewState === "full-workspace" && <ProjectCollaborationPanel projectId={projectId} openSignal={collaborationOpenSignal} onOpenSignalConsumed={onCollaborationOpenSignalConsumed} onAccessFailure={accessFailure} />}
+    {viewState === "collaboration-unavailable" && <section className="project-collaboration project-collaboration--unavailable" aria-label="Project collaboration"><div className="empty"><span className="serif">Collaboration unavailable.</span>This project discussion is no longer available.</div></section>}
     {viewState === "full-workspace" && <div className="toasts">{toasts.map((item) => <div className={`toast ${item.tone === "error" ? "toast--error" : ""}`} key={item.id}>{item.tone === "error" ? "!" : "✓"}<span>{item.message}</span></div>)}</div>}
   </>;
+}
+
+function CollaborationOnlyView({ projectId, onAccessFailure }: { projectId: string; onAccessFailure: (error: unknown, resource: AccessFailureResource, kind?: CollectionKind, initial?: boolean) => void }) {
+  const commentsQuery = useProjectCommentsCacheQuery(projectId);
+  const street = commentsQuery.data?.pages[0]?.project.street ?? "Project collaboration";
+  return <main className="page project-collaboration-only"><div className="pagehead"><div><div className="ey">Collaboration</div><h1 className="serif">{street}</h1></div><InternalLink className="button button--secondary" to="/">Back to dashboard</InternalLink></div><ProjectCollaborationPanel projectId={projectId} mode="standalone" onAccessFailure={onAccessFailure} /></main>;
+}
+
+function CollaborationOnlyUnavailable() {
+  return <main className="page project-collaboration-only"><div className="pagehead"><div><div className="ey">Collaboration</div><h1 className="serif">Project collaboration</h1></div><InternalLink className="button button--secondary" to="/">Back to dashboard</InternalLink></div><section className="project-collaboration project-collaboration--unavailable" aria-label="Project collaboration"><div className="empty"><span className="serif">Collaboration unavailable.</span>This project discussion is no longer available.</div></section></main>;
 }
 
 function UnavailableProject({ message, toasts }: { message: string; toasts: Toast[] }) { return <main className="page"><div className="pagehead"><h1 className="serif">Project workspace</h1><InternalLink className="button button--secondary" to="/">Back to dashboard</InternalLink></div><div className="empty" role="alert"><span className="serif">Project unavailable.</span>{message}</div><div className="toasts">{toasts.map((item) => <div className={`toast ${item.tone === "error" ? "toast--error" : ""}`} key={item.id}>{item.tone === "error" ? "!" : "✓"}<span>{item.message}</span></div>)}</div></main>; }
 
 type QueryOwnerProps = {
   projectId: string; run: number; activeTab: CollectionKind; collectionDenied: Set<CollectionKind>; workspaceReady: boolean; canViewEdited: boolean; canAdminBackend: boolean;
-  onDetailReady: (run: number, stageKey: ProjectStageKey) => void; onDetailStage: (run: number, stageKey: ProjectStageKey) => void; onQueryReady: (run: number, defaultEdited: boolean) => void; onAccessFailure: (error: unknown, resource: "detail" | "assets", kind?: CollectionKind, initial?: boolean) => void; onCollectionDenied: (kind: CollectionKind) => void; activeTabChange: (kind: CollectionKind) => void;
+  onDetailReady: (run: number, stageKey: ProjectStageKey) => void; onDetailStage: (run: number, stageKey: ProjectStageKey) => void; onQueryReady: (run: number, defaultEdited: boolean) => void; onAccessFailure: (error: unknown, resource: AccessFailureResource, kind?: CollectionKind, initial?: boolean) => void; onCollectionDenied: (kind: CollectionKind) => void; activeTabChange: (kind: CollectionKind) => void;
   openAssetId: string | null; setOpenAssetId: (id: string | null) => void; lightboxOrderIds: string[] | null; setLightboxOrderIds: (ids: string[] | null) => void; ingest: IngestStatus | null; jobs: Job[]; autohdrStatus: AutoHdrStatusResponse["handoff"]; isSyncing: boolean; isSending: boolean; onSyncDropbox: () => void; onSendToAutoHdr: () => void; onRetryAutoHdr: (jobId: string) => void; onUploadComplete: (kind: "raw" | "edited") => Promise<void>; onDocumentsChanged: (kind: "floorplan" | "copy") => Promise<void>; onLinksChanged: () => Promise<void>; toast: (message: string, tone?: Toast["tone"]) => void; toasts: Toast[]; onInvalidate: (resources: ProjectDataResource[]) => Promise<void>; onRefreshDetail: () => Promise<ProjectDetail | undefined>; canReadCollection: (kind: CollectionKind) => boolean;
 };
 

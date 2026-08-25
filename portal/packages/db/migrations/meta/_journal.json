@@ -211,6 +211,13 @@
       "when": 1787094138976,
       "tag": "0029_collection_link_positions",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "6",
+      "when": 1787639589210,
+      "tag": "0030_project_comment_read_markers",
+      "breakpoints": true
     }
   ]
 }

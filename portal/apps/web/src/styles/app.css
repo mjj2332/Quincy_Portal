@@ -1046,6 +1046,7 @@ button { font-family: var(--font-sans); }
 /* Project collaboration and deletion -------------------------------- */
 .project-collaboration__wrap { display: contents; --project-collaboration-top: calc(64px + env(safe-area-inset-top) + 22px); --project-collaboration-bottom: calc(env(safe-area-inset-bottom) + 12px); --project-collaboration-max-height: calc(100dvh - 64px - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 34px); }
 .project-collaboration__toggle { position: fixed; top: var(--project-collaboration-top); right: calc(env(safe-area-inset-right) + 12px); z-index: 70; max-height: var(--project-collaboration-max-height); writing-mode: vertical-rl; padding: 14px 9px; border: 1px solid var(--border-hairline); background: var(--paper-050); box-shadow: var(--shadow-sm); color: var(--text-primary); font: var(--type-label); font-size: 10px; letter-spacing: var(--tracking-wide); text-transform: uppercase; cursor: pointer; }
+.project-collaboration__unread { display: inline-grid; place-items: center; min-width: 18px; min-height: 18px; margin-top: 7px; border-radius: 999px; background: var(--signal-red, #7a2420); color: var(--paper-000); font-size: 9px; line-height: 1; }
 .project-collaboration { position: fixed; top: var(--project-collaboration-top); right: calc(env(safe-area-inset-right) + 12px); bottom: var(--project-collaboration-bottom); z-index: 70; width: min(460px, calc(100vw - env(safe-area-inset-right) - 24px)); max-height: var(--project-collaboration-max-height); border: 1px solid var(--border-hairline); background: var(--paper-050); box-shadow: var(--shadow-lg); }
 .project-collaboration--overlay { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
 .project-collaboration__head { display: flex; align-items: start; justify-content: space-between; gap: var(--space-3); }
@@ -1053,6 +1054,7 @@ button { font-family: var(--font-sans); }
 .project-collaboration__head h2 { margin: 5px 0 0; font: var(--type-h3); font-size: 25px; }
 .project-collaboration__scroll { display: grid; align-content: start; gap: var(--space-4); min-height: 0; flex: 1; overflow: auto; padding: var(--space-5); }
 .project-collaboration__state { padding: var(--space-4); color: var(--text-secondary); background: var(--paper-100); font-size: 13px; }
+.project-collaboration__read-anchor { width: 1px; height: 1px; margin: 0; overflow: hidden; }
 .project-collaboration__comments { display: grid; gap: var(--space-3); }
 .project-collaboration__comment { display: grid; gap: var(--space-2); padding: var(--space-3); border: 1px solid var(--border-hairline); background: var(--paper-000); }
 .project-collaboration__comment header { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-2); }

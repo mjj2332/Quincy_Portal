@@ -14,6 +14,7 @@ vi.mock("../lib/capabilities", () => ({ useCapabilities: () => ({ role: "photogr
 
 import { NoticeBoard } from "./NoticeBoard";
 import { ProjectCollaborationPanel } from "./ProjectCollaborationPanel";
+import { QuincyQueryProvider } from "../lib/query-client";
 
 const projectId = "11111111-1111-4111-8111-111111111111";
 const ownPost = { id: "post-own", authorId: "user-me", authorName: "Me", body: "Existing", content: accepted, createdAt: "2026-08-20T00:00:00.000Z", editedAt: null };
@@ -22,7 +23,7 @@ let root: Root | null = null;
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 function mount() { const host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host); return host; }
-async function render(node: ReactNode) { await act(async () => { root!.render(node); await Promise.resolve(); await Promise.resolve(); }); }
+async function render(node: ReactNode) { await act(async () => { root!.render(<QuincyQueryProvider principalId="user-me" role="photographer">{node}</QuincyQueryProvider>); await Promise.resolve(); await Promise.resolve(); }); }
 async function click(element: Element) { await act(async () => { element.dispatchEvent(new MouseEvent("click", { bubbles: true })); await Promise.resolve(); await Promise.resolve(); }); }
 const button = (host: HTMLElement, label: string) => [...host.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent === label)!;
 
@@ -51,6 +52,6 @@ describe("rich-text serialized-width submit guards", () => {
     await click(button(host, "Edit")); const article = host.querySelector(".project-collaboration__comment")!;
     await click(button(article as HTMLElement, "Use oversized formatting")); expect(button(article as HTMLElement, "Save").disabled).toBe(true);
     await click(button(article as HTMLElement, "Use accepted formatting")); expect(button(article as HTMLElement, "Save").disabled).toBe(false); await click(button(article as HTMLElement, "Save"));
-    expect(mocks.apiPatch).toHaveBeenCalledWith(`/api/projects/${projectId}/comments/comment-new`, { content: accepted });
+    expect(mocks.apiPatch).toHaveBeenCalledWith(`/api/projects/${projectId}/comments/comment-own`, { content: accepted });
   });
 });

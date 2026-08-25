@@ -3,6 +3,7 @@ import { makeSignature } from "better-auth/crypto";
 import { beforeAll, describe, expect, it } from "vitest";
 import { createAuth } from "../src/auth";
 import type { Env } from "../src/env";
+import { createProjectComment, createProjectCommentActivityIntent, deleteProjectComment } from "../src/lib/project-comments";
 
 const database = env as unknown as { DB: D1Database };
 const baseEnv = env as unknown as Env;
@@ -49,6 +50,8 @@ describe("project comments API", () => {
   it("creates normalized project mentions, pages newest-first, and preserves author-only project-scoped edits and deletes", async () => {
     const firstResponse = await request(`/api/projects/${projectId}/comments`, "comments-editor-token", "POST", { content: mentionDoc(adminId, "Forged admin label") });
     expect(firstResponse.status).toBe(201); const first = await firstResponse.json() as { id: string; body: string; content: { content: Array<{ content: Array<{ attrs?: { label: string } }> }> } };
+    const storedFirst = await database.DB.prepare("SELECT id, created_at FROM project_comments WHERE id = ?").bind(first.id).first<{ id: string; created_at: number }>();
+    expect(await database.DB.prepare("SELECT user_id, project_id, last_read_comment_id, last_read_comment_created_at FROM project_comment_read_markers WHERE user_id = ? AND project_id = ?").bind(editorId, projectId).first()).toMatchObject({ user_id: editorId, project_id: projectId, last_read_comment_id: first.id, last_read_comment_created_at: storedFirst?.created_at });
     const secondResponse = await request(`/api/projects/${projectId}/comments`, "comments-editor-token", "POST", { content: doc("Second comment") });
     const thirdResponse = await request(`/api/projects/${projectId}/comments`, "comments-editor-token", "POST", { content: doc("Third comment") });
     expect(secondResponse.status).toBe(201); expect(thirdResponse.status).toBe(201);
@@ -106,6 +109,85 @@ describe("project comments API", () => {
     expect((await request(`/api/mentionable-users?projectId=${projectId}`, "comments-editor-token")).status).toBe(200);
     expect((await request(`/api/mentionable-users?projectId=${crypto.randomUUID()}`, "comments-editor-token")).status).toBe(403);
     expect((await request(`/api/mentionable-users?projectId=${crypto.randomUUID()}`, "comments-admin-token")).status).toBe(404);
+  });
+
+  it("returns authoritative read state, distinguishes a missing target from an idempotent no-op, and preserves access ordering", async () => {
+    const page = await request(`/api/projects/${projectId}/comments?limit=1`, "comments-editor-token");
+    const target = (await page.json() as { comments: Array<{ id: string }> }).comments[0]!;
+    const initial = await request(`/api/projects/${projectId}/comment-read-marker`, "comments-editor-token");
+    expect(initial.status).toBe(200);
+    expect(await initial.json()).toMatchObject({ projectId, marker: expect.anything(), latest: expect.anything(), unreadCount: expect.any(Number) });
+    const advanced = await request(`/api/projects/${projectId}/comment-read-marker`, "comments-editor-token", "PATCH", { throughCommentId: target.id });
+    expect(advanced.status).toBe(200);
+    const advancedBody = await advanced.json() as { marker: { throughCommentId: string; updatedAt: string } };
+    expect(advancedBody.marker.throughCommentId).toBe(target.id);
+    const repeat = await request(`/api/projects/${projectId}/comment-read-marker`, "comments-editor-token", "PATCH", { throughCommentId: target.id });
+    expect(repeat.status).toBe(200);
+    expect(await repeat.json()).toEqual(advancedBody);
+    const missing = await request(`/api/projects/${projectId}/comment-read-marker`, "comments-editor-token", "PATCH", { throughCommentId: crypto.randomUUID() });
+    expect(missing.status).toBe(409);
+    expect(await missing.json()).toEqual({ error: "Comment read target changed.", code: "comment_read_target_changed" });
+    const invalid = await request(`/api/projects/${projectId}/comment-read-marker`, "comments-editor-token", "PATCH", { throughCommentId: "not-a-uuid" });
+    expect(invalid.status).toBe(400);
+    expect((await request(`/api/projects/${crypto.randomUUID()}/comment-read-marker`, "comments-editor-token")).status).toBe(403);
+  });
+
+  it("keeps a deleted high-water target from absorbing a later comment and returns the exact activity intent contract", async () => {
+    const page = await request(`/api/projects/${projectId}/comments?limit=1`, "comments-editor-token");
+    const target = (await page.json() as { comments: Array<{ id: string }> }).comments[0]!;
+    const highWater = Date.now() + 10_000_000;
+    await database.DB.prepare("UPDATE project_comment_read_markers SET last_read_comment_id = ?, last_read_comment_created_at = ? WHERE user_id = ? AND project_id = ?").bind(target.id, highWater, editorId, projectId).run();
+    await database.DB.prepare("DELETE FROM project_comments WHERE id = ?").bind(target.id).run();
+    const created = await request(`/api/projects/${projectId}/comments`, "comments-photographer-token", "POST", { content: doc("After deleted marker") });
+    expect(created.status).toBe(201);
+    const createdBody = await created.json() as { id: string; createdAt: string };
+    expect(Number(new Date(createdBody.createdAt))).toBeGreaterThan(highWater);
+    const editorState = await request(`/api/projects/${projectId}/comment-read-marker`, "comments-editor-token");
+    expect((await editorState.json() as { unreadCount: number }).unreadCount).toBeGreaterThan(0);
+
+    const createdIntent = createProjectCommentActivityIntent({ type: "created", projectId, actorId: editorId, commentId: createdBody.id, occurredAt: new Date("2026-08-25T00:00:00.000Z") });
+    expect(createdIntent).toMatchObject({ schemaVersion: 1, activity: { type: "project.comment.created", projectId, actorId: editorId, source: { kind: "project_comment", id: createdBody.id, key: `project-comment:${createdBody.id}:created` }, safePayload: { commentId: createdBody.id }, deepLink: { kind: "project_collaboration", path: `/projects/${projectId}?collaboration=open` } }, broadDelivery: { registryKey: "project.comment.created", coalesce: null }, targetedMentionDelivery: false });
+    const editedIntent = createProjectCommentActivityIntent({ type: "edited", projectId, actorId: editorId, commentId: createdBody.id, occurredAt: new Date("2026-08-25T00:00:00.000Z") });
+    expect(editedIntent.broadDelivery.coalesce).toEqual({ key: `project-comment-edit:${projectId}:${createdBody.id}:${editorId}`, windowSeconds: 300 });
+    expect(editedIntent.activity.source.key).toMatch(new RegExp(`^project-comment:${createdBody.id}:edited:[0-9a-f-]+$`));
+    expect(editedIntent.activity).not.toHaveProperty("body"); expect(editedIntent.activity).not.toHaveProperty("mentions");
+  });
+
+  it("allocates a lexically lower same-clock successor above a surviving deleted-comment marker", async () => {
+    const deletedId = "ffffffff-ffff-4fff-8fff-ffffffffffff";
+    const successorId = "00000000-0000-4000-8000-000000000001";
+    const frozenClock = Date.now() + 20_000_000;
+    await database.DB.prepare("INSERT INTO project_comments (id, project_id, author_id, body, content_json, created_at) VALUES (?, ?, ?, ?, ?, ?)").bind(deletedId, projectId, editorId, "Deleted high-water", JSON.stringify(doc("Deleted high-water")), frozenClock).run();
+    await database.DB.prepare("INSERT INTO project_comment_read_markers (user_id, project_id, last_read_comment_id, last_read_comment_created_at, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(user_id, project_id) DO UPDATE SET last_read_comment_id = excluded.last_read_comment_id, last_read_comment_created_at = excluded.last_read_comment_created_at, updated_at = excluded.updated_at").bind(editorId, projectId, deletedId, frozenClock, frozenClock).run();
+    await deleteProjectComment(database.DB, { projectId, commentId: deletedId, actorId: editorId, occurredAt: new Date(frozenClock) });
+    const result = await createProjectComment(database.DB, { id: successorId, projectId, authorId: photographerId, body: "Lower UUID successor", contentJson: JSON.stringify(doc("Lower UUID successor")), mentions: [], wallClockMs: frozenClock, occurredAt: new Date(frozenClock) });
+    const stored = await database.DB.prepare("SELECT created_at FROM project_comments WHERE id = ?").bind(successorId).first<{ created_at: number }>();
+    expect(Number(stored?.created_at)).toBeGreaterThan(frozenClock);
+    expect(result.activity.targetedMentionDelivery).toBe(false);
+    const state = await request(`/api/projects/${projectId}/comment-read-marker`, "comments-editor-token");
+    expect((await state.json() as { unreadCount: number }).unreadCount).toBeGreaterThan(0);
+  });
+
+  it("keeps a same-clock lower-UUID follow-up unread after visible-read and own-POST advancement", async () => {
+    const frozenClock = Date.now() + 30_000_000;
+    const visibleTargetId = "ffffffff-ffff-4fff-8fff-fffffffffff0";
+    const ownPostId = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee0";
+    const lowerFollowUpId = "00000000-0000-4000-8000-0000000000f0";
+    const create = (id: string, authorId: string, text: string) => createProjectComment(database.DB, {
+      id, projectId, authorId, body: text, contentJson: JSON.stringify(doc(text)), mentions: [], wallClockMs: frozenClock, occurredAt: new Date(frozenClock),
+    });
+    await create(visibleTargetId, photographerId, "Visible target");
+    const visibleRead = await request(`/api/projects/${projectId}/comment-read-marker`, "comments-editor-token", "PATCH", { throughCommentId: visibleTargetId });
+    expect(visibleRead.status).toBe(200);
+    await create(ownPostId, editorId, "Own post");
+    const ownState = await request(`/api/projects/${projectId}/comment-read-marker`, "comments-editor-token");
+    expect((await ownState.json() as { marker: { throughCommentId: string } }).marker.throughCommentId).toBe(ownPostId);
+    await create(lowerFollowUpId, photographerId, "Lower UUID follow-up");
+    const storedFollowUp = await database.DB.prepare("SELECT created_at FROM project_comments WHERE id = ?").bind(lowerFollowUpId).first<{ created_at: number }>();
+    const storedMarker = await database.DB.prepare("SELECT last_read_comment_created_at FROM project_comment_read_markers WHERE user_id = ? AND project_id = ?").bind(editorId, projectId).first<{ last_read_comment_created_at: number }>();
+    expect(storedFollowUp?.created_at).toBeGreaterThan(storedMarker?.last_read_comment_created_at ?? 0);
+    const unread = await request(`/api/projects/${projectId}/comment-read-marker`, "comments-editor-token");
+    expect((await unread.json() as { unreadCount: number }).unreadCount).toBeGreaterThan(0);
   });
 
   it("stores underline and strike through both POST and author PATCH, rejecting malformed mark attributes", async () => {

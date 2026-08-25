@@ -1,0 +1,24 @@
+TB3 query/read-marker/race coverage (2026-08-25)
+
+npx vitest run --config apps/web/vitest.config.ts src/lib/project-data.test.ts src/lib/project-comments.test.ts src/lib/project-query-sync.test.ts
+  Test Files  3 passed (3)
+  Tests  26 passed (26)
+
+npx vitest run --config apps/web/vitest.dom.config.ts src/components/ProjectCollaborationPanel.dom.test.tsx src/screens/ProjectWorkspace.dom.test.tsx src/lib/project-access-termination.dom.test.tsx src/App.dom.test.tsx
+  Test Files  4 passed (4)
+  Tests  52 passed (52)
+
+The query tests assert exact two-project keys, fixed limit 50, URL/cursor/signal propagation,
+registrar-only proof metadata, tombstone pre/post checks, page-0 retention/reset, deduping cache
+helpers, exhaustive resource resolution, and asset-only ledger deferral. The DOM tests assert the
+four-page single-head refresh and real fallback scroll geometry: scroll-out cancels advancement,
+an ignored-abort response cannot PATCH, and scroll-in requires a fresh GET before one PATCH.
+They also preserve the composer/edit interaction and workspace collaboration fallback coverage.
+
+The Worker focused command was run:
+  npx vitest run --config workers/app/vitest.config.ts test/project-comments.test.ts
+  Result: blocked before collection by Error: listen EPERM: operation not permitted 127.0.0.1.
+  The added Worker assertions remain in source for the authorized environment: immediate
+  author-marker existence after POST, 200 repeat PATCH versus exact 409 missing-target body,
+  access-before-existence, deleted-marker/lower-UUID allocator behavior, and activity-intent
+  separation.

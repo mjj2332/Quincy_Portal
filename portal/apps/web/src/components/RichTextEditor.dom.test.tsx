@@ -712,6 +712,7 @@ describe("RichTextEditor hard breaks", () => {
     const value = fourContainerTaskList();
     expect(parseRichTextDoc(value)).toEqual(value);
     const host = mount(); const onChange = vi.fn(); const { editor } = await render(host, value, onChange);
+    await nextTask();
     onChange.mockClear();
     await appendText(editor, " edit");
     expect(onChange).toHaveBeenLastCalledWith({

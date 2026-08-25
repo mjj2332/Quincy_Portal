@@ -7,7 +7,9 @@ export const PROJECT_DATA_CHANNEL = "quincy:project-data:v1";
 
 export type ProjectDataResource =
   | { kind: "detail" }
-  | { kind: "assets"; collectionKind: CollectionKind };
+  | { kind: "assets"; collectionKind: CollectionKind }
+  | { kind: "comments" }
+  | { kind: "comment-read-marker" };
 
 export type ProjectDataSyncMessage =
   | {
@@ -49,7 +51,7 @@ function nonEmptyString(value: unknown): value is string {
 function isResource(value: unknown): value is ProjectDataResource {
   if (!value || typeof value !== "object") return false;
   const resource = value as Record<string, unknown>;
-  if (resource.kind === "detail") return Object.keys(resource).length === 1;
+  if (resource.kind === "detail" || resource.kind === "comments" || resource.kind === "comment-read-marker") return Object.keys(resource).length === 1;
   return resource.kind === "assets" && validCollections.has(resource.collectionKind as CollectionKind) && Object.keys(resource).length === 2;
 }
 
@@ -81,7 +83,17 @@ function keyString(queryKey: QueryKey): string {
 }
 
 export function projectResourceKey(projectId: string, resource: ProjectDataResource): QueryKey {
-  return resource.kind === "detail" ? projectDataKeys.detail(projectId) : projectDataKeys.assets(projectId, resource.collectionKind);
+  switch (resource.kind) {
+    case "detail": return projectDataKeys.detail(projectId);
+    case "assets": return projectDataKeys.assets(projectId, resource.collectionKind);
+    case "comments": return projectDataKeys.comments(projectId);
+    case "comment-read-marker": return projectDataKeys.commentReadMarker(projectId);
+    default: return assertNever(resource);
+  }
+}
+
+function assertNever(value: never): never {
+  throw new Error(`Unknown project data resource: ${JSON.stringify(value)}`);
 }
 
 export class ProjectQueryRuntime {
