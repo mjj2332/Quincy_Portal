@@ -70,14 +70,12 @@ describe("ConfirmModalHost", () => {
     expect(confirmButton.classList.contains("button--danger")).toBe(false);
     expect(document.activeElement).toBe(cancel);
 
-    cancel.focus();
-    cancel.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }));
-    await flush();
-    expect(document.activeElement === cancel || document.activeElement === confirmButton).toBe(true);
-    confirmButton.focus();
-    confirmButton.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true, cancelable: true }));
-    await flush();
-    expect(document.activeElement === cancel || document.activeElement === confirmButton).toBe(true);
+    // Real Tab/Shift-Tab wraparound is a browser-native focus-traversal behavior that jsdom does
+    // not simulate; a synthetic keydown here cannot genuinely exercise it (confirmed empirically:
+    // dispatching one does not move focus in this environment, regardless of what the trap does).
+    // Cyclical trapping itself is owned by @floating-ui/react's FloatingFocusManager (`modal`
+    // prop), an upstream-tested library, not hand-rolled here. It's verified with a real browser
+    // in manual QA (plan §11.1) rather than faked with an assertion that can't actually fail.
 
     confirmButton.click();
     expect(await pending).toBe(true);

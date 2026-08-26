@@ -164,6 +164,8 @@ describe("user impersonation gate and official Better Auth flow", () => {
     expect((await setFlag(true, adminCookie)).status).toBe(200);
     const started = await startImpersonation(editorId, adminCookie);
     expect(started.response.status).toBe(200);
+    const target = await database.DB.prepare("SELECT id FROM session WHERE user_id = ? AND impersonated_by = ? ORDER BY created_at DESC LIMIT 1").bind(editorId, adminId).first<{ id: string }>();
+    expect(target).not.toBeNull();
     try {
       const deactivated = await request(`/api/users/${editorId}`, adminCookie, "PATCH", { active: false });
       expect(deactivated.status).toBe(200);
@@ -171,6 +173,7 @@ describe("user impersonation gate and official Better Auth flow", () => {
       const stop = await request("/api/auth/admin/stop-impersonating", started.cookie, "POST", {});
       expect(stop.status).not.toBe(200);
     } finally {
+      await database.DB.prepare("DELETE FROM session WHERE id = ?").bind(target!.id).run();
       await database.DB.prepare("UPDATE user SET active = 1 WHERE id = ?").bind(editorId).run();
       await insertSession("tb5-imp-editor-session", editorToken, editorId);
       await database.DB.prepare("UPDATE feature_flags SET enabled = 0, updated_by = NULL, updated_at = ? WHERE key = ?").bind(Date.now(), "user_impersonation").run();
