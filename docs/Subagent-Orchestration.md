@@ -3,7 +3,7 @@
 How this session spawns and coordinates subagents on the Quincy Portal build.
 
 **Living document.** New mechanic, new failure mode, or a process change from the user: write it
-here (or in the CLI reference this points at). Sections §1–§6 and policy numbers §2.1–§2.9 are
+here (or in the CLI reference this points at). Sections §1–§6 and policy numbers §2.1–§2.10 are
 stable anchors — other docs link to them. Policy history belongs in `git log -p`, not in the file.
 
 ---
@@ -14,7 +14,7 @@ stable anchors — other docs link to them. Policy history belongs in `git log -
 |---|---|---|---|---|
 | **Sonnet 5** | this session, directly — no subprocess | Claude Sonnet 5 | Orchestrates the pipeline; builds tasks too small to hand off | Yes, at this session's discretion |
 | **Sol** | `codex exec` | `gpt-5.6-sol`, always high effort | Default planner and diff reviewer — drafts plans, reviews plans, reviews diffs | No — plans and reviews only |
-| **Luna** | `codex exec` | `gpt-5.6-luna`, always xhigh effort | Default builder; all diagnostics/testing; only agent permitted danger-mode (§2.9) | Yes |
+| **Luna** | `codex exec` | `gpt-5.6-luna`, always xhigh effort | Default builder; all diagnostics/testing; only agent permitted danger-mode (§2.9) or YOLO-mode (§2.10) | Yes |
 | **Terra** | `codex exec` — [§3](subagents/codex-cli.md) | `gpt-5.6-terra` | No role assigned — not spawned in this pipeline | No |
 | **Opus reviewer** | `Agent` tool, `model: opus` | Claude Opus 5 | Reviews the plan (§2.1) and the final diff | No code — plan-document exception in §2.4 |
 | **Agy** | `agy` CLI subprocess — [§3a](subagents/agy-cli.md) | `gemini-3.6-flash-high` | Ad hoc groundwork only (quick investigation, one-off scaffolding) | Groundwork only, never a pipeline step |
@@ -49,6 +49,11 @@ case it moves to a more capable model later.
 **Terra's builder role was retired 2026-08-22 in favor of Luna at xhigh effort.** Terra is not spawned
 for planning, review, building, or diagnostics — the CLI mechanics in [§3](subagents/codex-cli.md)
 stay documented in full in case Terra is reinstated for some future task.
+
+**Any Luna testing task that needs a specific role's behavior should use admin impersonation
+([Admin-Impersonation.md](Admin-Impersonation.md)) instead of a second human sign-in.** One Admin
+sign-in in Luna's Chrome context now covers every role — this applies to ordinary diagnostics and
+danger-mode alike, not just YOLO-mode.
 
 ---
 
@@ -92,6 +97,29 @@ stay documented in full in case Terra is reinstated for some future task.
    > secrets, direct DB writes, or forged tokens. Disclose any deviation from the instructed
    > method."*
 
+10. **YOLO-mode is Luna-only, testing-only, mutation-permitted-through-impersonation.** Same
+    `--sandbox danger-full-access` plus Luna's own Chrome-use and computer-use skills at xhigh
+    effort as danger-mode, for the one case §2.9 defers elsewhere: a smoke test that needs to
+    exercise a real write. The containment is admin impersonation
+    ([Admin-Impersonation.md](Admin-Impersonation.md)): every mutation happens while acting as the
+    disposable QA test account, which has zero real project memberships, so the server itself —
+    not just the prompt — denies any reach into real client data. Luna signs into Google exactly
+    once, as itself; impersonation is the already-authenticated Admin session swapping identity
+    server-side, never a second sign-in.
+
+    Every YOLO-mode prompt states, verbatim or equivalent, restated every task:
+
+    > *"You have full machine access via the `danger-full-access` sandbox, plus your own Chrome-use
+    > and computer-use skills with real logged-in sessions. You may create, edit, and delete data
+    > in production, but only while acting as the disposable QA test account via admin
+    > impersonation (`Admin-Impersonation.md`) — never as your own signed-in identity, and never on
+    > a record that isn't already labeled test/disposable or one you created and labeled that way
+    > yourself. Check `Admin-Impersonation.md`'s notification-events list before any write; never
+    > trigger real staff email. Delete or archive your own test data and disable the impersonation
+    > flag when the task ends. If you hit an auth or config blocker, stop and report it in your
+    > final message — never route around it via secrets, direct DB writes, or forged tokens.
+    > Disclose any deviation from the instructed method."*
+
 ### Pipeline
 
 Sol draft → Sol review (≤2) → Opus plan review → Sol revise (≤2 reverts, then Opus
@@ -115,11 +143,12 @@ cold, and never hand back a vague "address the review comments."
 | Security, auth, payments, migrations | Luna | Sol |
 | Diagnostic / testing only, no build | Luna | This session, §5 — no reviewer pass |
 | Live/production testing (danger-mode) | Luna, danger-mode (§2.9) | This session, §5 — passive-only |
+| Live/production mutating smoke test (YOLO-mode) | Luna, YOLO-mode (§2.10) | This session, §5 — confirm every mutation stayed inside the impersonated test identity, nothing real touched |
 
 Luna and Sol run at a fixed effort level regardless of work type (§1) — the table differentiates
-by task category and process (escalating failures, danger-mode) only, never by dialing effort up
-or down per row. Agy has no row: ad hoc groundwork outside this table. Terra has no row: no role in
-this pipeline (§1, §2.5).
+by task category and process (escalating failures, danger-mode, YOLO-mode) only, never by dialing
+effort up or down per row. Agy has no row: ad hoc groundwork outside this table. Terra has no row:
+no role in this pipeline (§1, §2.5).
 
 ---
 
@@ -152,8 +181,9 @@ planning or building inline (§1).
    arrives on exit.
 3. **Read the report file, not the raw transcript** — Codex's `--output-last-message` exists for
    this; the full JSONL can overflow context.
-4. **Choose sandbox by intent** — write access for implementation only; danger-mode only for a Luna
-   testing task, with §2.9's restriction restated in the prompt.
+4. **Choose sandbox by intent** — write access for implementation only; `danger-full-access` only
+   for a Luna testing task, restating §2.9's passive-only restriction or, if the task genuinely
+   needs a real write, §2.10's YOLO-mode restriction instead — never both, never neither.
 
 ---
 
@@ -169,6 +199,9 @@ here directly:
 - If an Agy task was supposed to touch disk, confirm it did (`git status`, read the file back).
 - If a danger-mode task touched production, confirm it was genuinely passive — nothing created,
   edited, or deleted.
+- If a YOLO-mode task touched production, confirm every mutation happened under the impersonated
+  test identity (`impersonatedBy` on the relevant `audit_log` rows), nothing real was touched, no
+  email-triggering event fired, and the test data plus the impersonation flag were both cleaned up.
 
 Only then: deploy and commit. This gate has caught real bugs reported as fine — a guard comparing
 two values from the same closure that could never fire, and a race-condition test whose own fault
