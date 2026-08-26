@@ -768,3 +768,17 @@ was expensive: three wrong root causes were shipped before the plan page was eve
   `ERR_CONNECTION_REFUSED` in network request results before concluding a fetch actually failed for
   an application reason — restart and retry rather than treating a connection-refused error as
   applicative evidence of anything.
+- **A second manifestation observed during TB4 manual QA (2026-08-26):** rather than the server
+  dying outright, a single request can return a live `500` with `D1_ERROR: Failed to parse body as
+  JSON` surfacing from an otherwise-unrelated route (`workers/app/src/routes/projects.ts:205`,
+  the project-membership `PATCH` handler) while every other request — including the actual feature
+  under test — succeeds normally. Confirmed not a code bug: the same UI sequence (edit a project's
+  membership, then edit a comment to re-add a mention for that member) was repeated three times in
+  a row and the comment-edit request itself returned `200 OK` with the correct body every time; the
+  membership route's `500` didn't reproduce on any of the three attempts, matching an intermittent
+  local D1 binding/request-parsing hiccup rather than a deterministic defect.
+- **Rule (extended):** a `500` observed during local QA that doesn't reproduce on a clean repeat,
+  especially one whose stack trace points at a route unrelated to the change under test, is more
+  likely this same local-dev/D1 instability than a real regression — repeat the exact sequence a
+  few times before concluding a defect exists, and check whether the failing route is even the one
+  you're testing.

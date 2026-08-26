@@ -10,7 +10,7 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
 ## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29, seed-admin UUID migration 2026-07-29, notification dismiss + stalled-guard 2026-07-30, download selection 2026-08-04, notice-board rich text + mentions 2026-08-17, project comments + collaboration panel 2026-08-17, project subtasks/checklist 2026-08-17, collaboration panel relocated to Project page 2026-08-17, collaboration panel UI fixes + due-time reminder 2026-08-17, notification click navigation 2026-08-17, comment ordering + Shift+Enter soft breaks 2026-08-17, mention-email content 2026-08-20, TB0 authority promotion 2026-08-24, TB0A React 19.2 deployed + accepted 2026-08-25, TB0B pipeline configuration boundary deployed 2026-08-24, TB1 Tailwind v4/shadcn foundation deployed 2026-08-25, TB2 route-safe project data freshness deployed 2026-08-25, TB3 project discussion v2 deployed 2026-08-25, TB4 notification outbox built + reviewed 2026-08-26)
 
 - **TB4 (notification outbox and Cloudflare Queues — durable delivery for project-comment
-  mentions only) is built and diff-reviewed, 2026-08-26, not yet deployed**
+  mentions only) is built, diff-reviewed, and manually QA'd, 2026-08-26, not yet deployed**
   (`docs/plans/Revamp-TB4-Notification-Outbox-And-Queues-Plan.md`). This pipeline's first
   Cloudflare-Queue-based infrastructure and its second live-production schema migration
   (`0031_notification_outbox_and_delivery_ledger`, additive-only, two new tables + indexes). Plan
@@ -31,10 +31,17 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
   fixed). Full gate (`typecheck`, `build -w @quincy/web`, `test --workspaces`, shared package's
   dedicated vitest config) green outside any sandbox; see
   `docs/plans/revamp_2026_portal/evidence/TB4/` for the full record, including
-  `review-and-fix-cycle.txt`. Next: manual QA (Chrome-browser work routed to Luna per this
-  session's standing instruction, not the orchestrating session), then production migration/deploy
-  following the TB3 pattern (rollback target, remote preflight, recovery export, background-first-
-  then-app deploy since TB4 changes the background Worker's Queue/Cron config).
+  `review-and-fix-cycle.txt`. Manual QA (Chrome work routed to Luna, not the orchestrating session)
+  passed all 11 matrix items — two Luna-reported items were independently re-verified rather than
+  taken at face value: item 5's "transient 500 on mention re-add" reproduced zero times across 3
+  repeat attempts and was traced to the unrelated `projects.ts` membership route hitting this
+  repo's already-documented local `wrangler dev`/D1 flakiness, not TB4 code (see the new lessons.md
+  addendum); items 7/9's "unresolved unknown-replay confirmation" is a `window.confirm()`
+  browser-automation limitation (same class as TB3's accepted two-device/visibilitychange gaps),
+  fully covered instead by `admin.test.ts`'s route-level acknowledgement-gate tests. Next:
+  production migration/deploy following the TB3 pattern (rollback target, remote preflight,
+  recovery export, background-first-then-app deploy since TB4 changes the background Worker's
+  Queue/Cron config).
 - **TB3 (project discussion v2 — TanStack Query freshness for project comments plus a new
   per-user server-owned read-marker table) is deployed to production, 2026-08-25**
   (`docs/plans/implemented/Revamp-TB3-Project-Discussion-V2-Plan.md`, commits `08f56f4` code/tests +
