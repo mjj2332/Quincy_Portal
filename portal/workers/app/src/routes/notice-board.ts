@@ -101,6 +101,8 @@ noticeBoardRoutes.patch("/notice-board/posts/:id", async (c) => {
   const db = createDb(c.env.DB); const existing = await db.select().from(schema.noticeBoardPosts).where(eq(schema.noticeBoardPosts.id, id)).get();
   if (!existing) return c.json({ error: "Post not found" }, 404);
   const user = c.get("user");
+  // An impersonated Admin intentionally acts as the effective author here — see the
+  // impersonation caveat on this rule in CLAUDE.md.
   if (existing.authorId !== user.id) return c.json({ error: "Forbidden: only the author can edit this post." }, 403);
   const prepared = await normalizedContent(db, data.content);
   if (!prepared) return c.json({ error: "Invalid notice content or mention target" }, 400);
@@ -129,6 +131,8 @@ noticeBoardRoutes.delete("/notice-board/posts/:id", async (c) => {
   const db = createDb(c.env.DB); const post = await db.select().from(schema.noticeBoardPosts).where(eq(schema.noticeBoardPosts.id, id)).get();
   if (!post) return c.json({ error: "Post not found" }, 404);
   const user = c.get("user");
+  // An impersonated Admin intentionally acts as the effective author here — see the
+  // impersonation caveat on this rule in CLAUDE.md.
   if (post.authorId !== user.id) return c.json({ error: "Forbidden: only the author can delete this post." }, 403);
   await db.delete(schema.noticeBoardPosts).where(eq(schema.noticeBoardPosts.id, id));
   await audit(c.env, user, "notice_board.delete", "notice_board_post", id);

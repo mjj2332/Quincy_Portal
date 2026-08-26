@@ -88,6 +88,8 @@ projectCommentsRoutes.patch("/projects/:projectId/comments/:commentId", async (c
   const access = await ensureProjectAccessAndExists(c, projectId); if (access === "forbidden") return c.json({ error: "Forbidden: you are not assigned to this project" }, 403); if (!access) return c.json({ error: "Project not found" }, 404);
   const data = await jsonInput(c, commentInput); if (data instanceof Response) return data;
   const db = createDb(c.env.DB); const existing = await findProjectComment(db, projectId, commentId); if (!existing) return c.json({ error: "Comment not found" }, 404);
+  // An impersonated Admin intentionally acts as the effective author here — see the
+  // impersonation caveat on this rule in CLAUDE.md.
   const currentUser = c.get("user"); if (existing.comment.authorId !== currentUser.id) return c.json({ error: "Forbidden: only the author can edit this comment." }, 403);
   const prepared = await normalizedContent(c.env, projectId, data.content); if (!prepared) return c.json({ error: "Invalid comment content or mention target" }, 400);
   const maps = await db.select().from(schema.projectCommentMentions).where(eq(schema.projectCommentMentions.commentId, commentId)).all(); const wanted = new Set(prepared.mentionIds); const existingIds = new Set(maps.map((map) => map.mentionedUserId)); const createdAt = new Date();
@@ -102,6 +104,8 @@ projectCommentsRoutes.delete("/projects/:projectId/comments/:commentId", async (
   const projectId = c.req.param("projectId"); const commentId = c.req.param("commentId"); if (!projectIdSchema.safeParse(projectId).success || !projectIdSchema.safeParse(commentId).success) return c.json({ error: "Invalid project or comment id" }, 400);
   const access = await ensureProjectAccessAndExists(c, projectId); if (access === "forbidden") return c.json({ error: "Forbidden: you are not assigned to this project" }, 403); if (!access) return c.json({ error: "Project not found" }, 404);
   const db = createDb(c.env.DB); const existing = await findProjectComment(db, projectId, commentId); if (!existing) return c.json({ error: "Comment not found" }, 404);
+  // An impersonated Admin intentionally acts as the effective author here — see the
+  // impersonation caveat on this rule in CLAUDE.md.
   const currentUser = c.get("user"); if (existing.comment.authorId !== currentUser.id) return c.json({ error: "Forbidden: only the author can delete this comment." }, 403);
   await deleteProjectComment(c.env.DB, { projectId, commentId, actorId: currentUser.id, auditPrincipal: currentUser, occurredAt: new Date() });
   return c.json({ ok: true });

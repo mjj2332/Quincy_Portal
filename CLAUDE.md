@@ -76,10 +76,18 @@ up by `npm run test --workspaces` — no separate invocation needed for it.
   rules and XMP parsing. Extend it; never duplicate its logic.
 - **Hono:** never `router.use("*", mw)` on a router mounted at `/` — it leaks the middleware
   onto sibling routers (this shipped a 403 bug once). Path-scope instead:
-  `use("/x", mw); use("/x/*", mw)`.
+  `use("/x", mw); use("/x/*", mw)`. Also: an exact-path route registration
+  (`app.post("/x/y", ...)`) does **not** match a trailing-slash request (`/x/y/`), even though a
+  wildcard fallback (`app.all("/x/*", ...)`) or the underlying library being proxied to does — if a
+  gated exact route sits in front of a permissive wildcard, register both the bare and
+  trailing-slash forms of the gated path, or the trailing-slash variant silently skips the gate.
 - Annotation edit and delete are **author-only** — admins are *not* exempt — for audit
   integrity. Every mutation is audit-logged. (The separate "Comments" thread feature existed
-  briefly and was removed 2026-07-29 — annotations' own note field covers that need.)
+  briefly and was removed 2026-07-29 — annotations' own note field covers that need.) **One
+  deliberate exception**: while an Admin is impersonating a user via the runtime-gated user-
+  impersonation feature (`docs/plans/implemented/Confirmation-Modal-And-Admin-Impersonation-Plan.md`),
+  they act as that user for every author-only check, including this one — that bypass is
+  intentional, toggle-gated, and audit-logged (`metaJson.impersonatedBy`), not a bug to fix.
 - Media in R2 is **never deleted** on edit or delete: write a new immutable key and retain the
   old object.
 - `portal/workers/app/.dev.vars` holds local dev secrets and is gitignored — never commit it.
@@ -117,8 +125,10 @@ applied 2026-08-17; 0029 added persisted `collection_links.position` with a per-
 pipeline's first live-production schema migration, with a verified pre-migration recovery export
 saved to `/Volumes/TerrySylviaT7/Quincy Productions Dropbox/Ting Rui Lee/WIP/Quincy Productions/
 db-recovery/`, reused for future migrations; 0031 added the additive `notification_outbox` and
-`notification_delivery_ledger` tables plus seven named indexes, applied 2026-08-26 (TB4) — next
-available number is **0032**. Branch off `main`.
+`notification_delivery_ledger` tables plus seven named indexes, applied 2026-08-26 (TB4); 0032
+added better-auth admin-plugin compatibility columns (`user.banned`/`ban_reason`/`ban_expires`,
+`session.impersonated_by`) plus the additive `feature_flags` table (seeded OFF), applied
+2026-08-26 — next available number is **0033**. Branch off `main`.
 **Prefer a bare `ALTER TABLE ADD COLUMN col TYPE CHECK(...)` over `drizzle-kit generate`'s
 table-rebuild form when the check is single-column and NULL-satisfiable** — the rebuild form's
 `PRAGMA foreign_keys=OFF` doesn't reliably persist across D1's remote migration execution even

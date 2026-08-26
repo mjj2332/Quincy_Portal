@@ -782,3 +782,18 @@ was expensive: three wrong root causes were shipped before the plan page was eve
   likely this same local-dev/D1 instability than a real regression — repeat the exact sequence a
   few times before concluding a defect exists, and check whether the failing route is even the one
   you're testing.
+
+- **A Hono exact-path route registered as a gate in front of a permissive wildcard fallback can be
+  silently bypassed by a trailing slash** (found during final-draft review of the admin-
+  impersonation feature, 2026-08-26). `app.post("/api/auth/admin/impersonate-user", requireSession,
+  requireCapability("manageUsers"), requireImpersonationEnabled, handler)` was meant to gate that
+  one better-auth admin-plugin endpoint before the generic `app.all("/api/auth/*", handler)`
+  fallback serves everything else ungated. Hono's exact-path matching does not treat
+  `/impersonate-user` and `/impersonate-user/` as equivalent, but better-auth's own internal router
+  (`rou3`) does — so a request with a trailing slash skipped Quincy's three gates entirely and fell
+  through to the wildcard, reaching the plugin directly. Not exploitable here (the plugin's own
+  permission check and a separate `session.create.before` hook both independently re-validate), but
+  the intended layered gate was silently skippable. **Rule:** when an exact-path Hono route exists
+  specifically to gate one endpoint in front of a wildcard that serves everything else, register
+  both the bare and trailing-slash forms of that exact path — don't assume the two are equivalent
+  just because the thing being proxied to treats them the same way.

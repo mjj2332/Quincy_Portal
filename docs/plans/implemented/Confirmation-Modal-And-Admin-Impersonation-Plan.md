@@ -1,9 +1,16 @@
 # Confirmation Modal and Admin Impersonation Plan
 
-> **Status: Revised after independent Sol review round 2 (final Sol round, 2026-08-26) — not implemented or
-> deployed.** This is one combined plan/build/deploy unit. It is ad hoc tooling and
-> developer-experience work, not a numbered revamp tracer bullet. Keep this file in `docs/plans/`
-> until the complete unit is built, verified, committed, and deployed.
+> **Status: Deployed to production, 2026-08-26.** Commits `f2d3700` (build), `3b9632a`/`de17a59`
+> (two Sol diff-review fix passes), `320959b` (Opus final-draft fix pass). App Worker version
+> `58fe2088-605a-46ca-a5e8-67e196715058`, rollback target `2fb292aa-f042-4982-96f9-1b64991922cf`.
+> Migration `0032` applied cleanly (preflight, recovery export, and postflight all recorded).
+> Authenticated production smoke test performed live by the human operator in the Claude Browser
+> pane: flag toggle, "Act as", banner, identity switch, Exit-restore, and the full audit trail
+> (`user.impersonation_toggle` / `user.impersonate_start` / `user.impersonate_stop`, all with the
+> correct real-admin actor and target metadata) all verified directly against production D1. Flag
+> disabled after the smoke window; zero live `session.impersonated_by IS NOT NULL` rows confirmed
+> remaining. This is one combined plan/build/deploy unit that shipped as intended — ad hoc tooling
+> and developer-experience work, not a numbered revamp tracer bullet.
 
 ## Authority and outcome
 
@@ -1129,81 +1136,81 @@ recovery export only for confirmed data corruption under a separate human-approv
 
 ### Confirmation modal
 
-- [ ] One global, provider-free, FIFO promise host is mounted once and no promise can be orphaned.
-- [ ] Generic Modal uses existing Quincy classes, portal rendering, dialog semantics, focus trap,
+- [x] One global, provider-free, FIFO promise host is mounted once and no promise can be orphaned.
+- [x] Generic Modal uses existing Quincy classes, portal rendering, dialog semantics, focus trap,
       safe initial focus, focus return, Escape/backdrop close, and event isolation.
-- [ ] Confirm panel and both buttons expose the three exact stable test IDs.
-- [ ] `.button--danger` uses the critical token and only approved destructive/discard actions use it.
-- [ ] All sixteen listed calls use the exact titles/messages/labels/danger choices in §2.
-- [ ] Permanent project deletion retains both street-name and modal guards.
-- [ ] Both pointer-down and focus-in inside the confirm portal preserve the Subtask popover until
+- [x] Confirm panel and both buttons expose the three exact stable test IDs.
+- [x] `.button--danger` uses the critical token and only approved destructive/discard actions use it.
+- [x] All sixteen listed calls use the exact titles/messages/labels/danger choices in §2.
+- [x] Permanent project deletion retains both street-name and modal guards.
+- [x] Both pointer-down and focus-in inside the confirm portal preserve the Subtask popover until
       choice; Cancel preserves it and Confirm follows the existing close/delete path.
-- [ ] `.scrim` remains z-index 90, and a confirm panel is visible and operable above `.viewer`
+- [x] `.scrim` remains z-index 90, and a confirm panel is visible and operable above `.viewer`
       (including `.viewer--compare` mode) and the impersonation banner.
-- [ ] No production `window.confirm`, bare global confirm, or `window.alert` remains in web source.
-- [ ] Existing affected tests mock the module; focused real-DOM tests cover modal behavior.
+- [x] No production `window.confirm`, bare global confirm, or `window.alert` remains in web source.
+- [x] Existing affected tests mock the module; focused real-DOM tests cover modal behavior.
 
 ### Impersonation schema and server
 
-- [ ] The actual build-start journal was rechecked; migration number/tag were adjusted only if
+- [x] The actual build-start journal was rechecked; migration number/tag were adjusted only if
       necessary and remain unique/sequential.
-- [ ] Migration is additive, seeds OFF, passes integrity tests, and has matching schema/snapshot.
-- [ ] Migration generation follows schema update → named initial generation → reviewed SQL-body
+- [x] Migration is additive, seeds OFF, passes integrity tests, and has matching schema/snapshot.
+- [x] Migration generation follows schema update → named initial generation → reviewed SQL-body
       replacement → second empty-diff generation, with one snapshot/journal/SQL artifact set.
-- [ ] Plugin compatibility columns exist, while `active` remains Quincy's account-status authority.
-- [ ] The official server/client Admin plugin is used with a one-hour duration.
-- [ ] Admin grants exactly `impersonate`, never `impersonate-admins` or unrelated plugin actions.
-- [ ] Runtime OFF blocks start and all ongoing target `/api`/`/media` work but never blocks Exit.
-- [ ] With the runtime flag OFF, ordinary sign-in still creates a session for an active user and
+- [x] Plugin compatibility columns exist, while `active` remains Quincy's account-status authority.
+- [x] The official server/client Admin plugin is used with a one-hour duration.
+- [x] Admin grants exactly `impersonate`, never `impersonate-admins` or unrelated plugin actions.
+- [x] Runtime OFF blocks start and all ongoing target `/api`/`/media` work but never blocks Exit.
+- [x] With the runtime flag OFF, ordinary sign-in still creates a session for an active user and
       still rejects an inactive user; the impersonation create-hook branch does not gate normal auth.
-- [ ] Every target request revalidates the target's active/current Photographer-or-Editor role and
+- [x] Every target request revalidates the target's active/current Photographer-or-Editor role and
       the original Admin's active/capability state (principal-level, not session-level).
-- [ ] Target promotion to Admin fails closed before any Admin capability can be exercised.
-- [ ] Official stop-impersonating uses the stock Better Auth mechanism only; when it cannot resolve
+- [x] Target promotion to Admin fails closed before any Admin capability can be exercised.
+- [x] Official stop-impersonating uses the stock Better Auth mechanism only; when it cannot resolve
       a required session, Exit fails visibly with the documented manual-recovery message rather than
       silently succeeding or crashing.
-- [ ] Exit failure shows the documented manual-recovery message; there is no automatic recovery
+- [x] Exit failure shows the documented manual-recovery message; there is no automatic recovery
       path, cookie parser, recovery marker, or custom restoration endpoint.
-- [ ] Settings GET/PATCH are `manageUsers`-gated, strict, fail closed, and audit every change.
-- [ ] Both static settings routes are registered before `PATCH /users/:id` and are not captured as
+- [x] Settings GET/PATCH are `manageUsers`-gated, strict, fail closed, and audit every change.
+- [x] Both static settings routes are registered before `PATCH /users/:id` and are not captured as
       a dynamic user ID.
-- [ ] User-directory responses explicitly exclude plugin moderation fields.
+- [x] User-directory responses explicitly exclude plugin moderation fields.
 
 ### Audit and accepted policy exception
 
-- [ ] Start has its exact lifecycle record, and official stop has its exact record when endpoint
+- [x] Start has its exact lifecycle record, and official stop has its exact record when endpoint
       context resolves, with real Admin actor and target metadata; the documented stop null-context
       omission and pre-hook phantom/duplicate window are treated as best-effort, not atomic.
-- [ ] Every request-owned audit path, including direct D1 batches, gets immutable
+- [x] Every request-owned audit path, including direct D1 batches, gets immutable
       `metaJson.impersonatedBy` while impersonating.
-- [ ] Normal/system audit semantics are unchanged and callers cannot spoof provenance.
-- [ ] No author-only guard is made impersonation-aware; acting as X can perform X's author actions,
+- [x] Normal/system audit semantics are unchanged and callers cannot spoof provenance.
+- [x] No author-only guard is made impersonation-aware; acting as X can perform X's author actions,
       cannot perform unrelated Y's, and tests document both outcomes.
-- [ ] The author-only impersonation exception and manual-Exit limitation are recorded in the
+- [x] The author-only impersonation exception and manual-Exit limitation are recorded in the
       durable documents required by §14, and all three named enforcement modules carry the required
       one-line deliberate-bypass comment.
 
 ### UI, verification, and operations
 
-- [ ] Settings switch and Act-as filtering/copy work exactly as specified.
-- [ ] Fixed banner appears on every staff screen; Exit restores the live Admin session when
+- [x] Settings switch and Act-as filtering/copy work exactly as specified.
+- [x] Fixed banner appears on every staff screen; Exit restores the live Admin session when
       possible, or shows the documented manual sign-out/sign-in fallback message when the stock
       mechanism cannot resolve it.
-- [ ] An impersonated session whose live role is no longer Photographer/Editor renders banner/Exit
+- [x] An impersonated session whose live role is no longer Photographer/Editor renders banner/Exit
       plus only the invalidated-session message—no ordinary or Admin navigation/content.
-- [ ] The standalone invalidated-session surface has its own 42px banner offset and never renders
+- [x] The standalone invalidated-session surface has its own 42px banner offset and never renders
       underneath the fixed banner.
-- [ ] During impersonation, `.viewer`—including its `.viewer--compare` mode—begins below the 42px
+- [x] During impersonation, `.viewer`—including its `.viewer--compare` mode—begins below the 42px
       banner; identity/Exit and the viewer's own top controls are simultaneously visible and usable.
-- [ ] Layout remains usable at desktop/mobile widths and modal/toast stacking remains correct.
-- [ ] Typecheck, web build, all workspace/shared/focused tests, migration replay, and searches pass.
-- [ ] Recovery export, migration evidence, Worker version, smoke evidence, and final OFF/no-live-
+- [x] Layout remains usable at desktop/mobile widths and modal/toast stacking remains correct.
+- [x] Typecheck, web build, all workspace/shared/focused tests, migration replay, and searches pass.
+- [x] Recovery export, migration evidence, Worker version, smoke evidence, and final OFF/no-live-
       impersonation checks are recorded.
-- [ ] The features share one branch, one acceptance gate, and one deploy; the branch has one commit
+- [x] The features share one branch, one acceptance gate, and one deploy; the branch has one commit
       or the permitted modal-then-impersonation pair with two scoped Sol diff-review passes.
-- [ ] The production smoke's approved action list accounted for real outbound notification email;
+- [x] The production smoke's approved action list accounted for real outbound notification email;
       no unannounced staff notification was sent from an impersonated identity.
-- [ ] Production smoke respects the unchanged agent-automation policy.
+- [x] Production smoke respects the unchanged agent-automation policy.
 
 ## 14. Completion and documentation handoff
 
@@ -1233,5 +1240,9 @@ accepted smoke testing:
 7. keep the feature flag OFF after the authorized testing window unless the human explicitly opens
    another one.
 
-Until every item above is true, this document remains in `docs/plans/` and its status remains not
-implemented/not deployed.
+All seven items above are now true: `docs/todo.md`, `CLAUDE.md`/`AGENTS.md` (migration ledger and
+author-only caveat), `docs/PRD.md`'s restatement, and the three enforcement-point code comments are
+all updated; a new `docs/lessons.md` entry captures the Hono trailing-slash gate-bypass finding
+from final-draft review; this file has been moved to `docs/plans/implemented/`; and the feature
+flag was disabled after the smoke window, confirmed by zero live `session.impersonated_by IS NOT
+NULL` rows in production.
