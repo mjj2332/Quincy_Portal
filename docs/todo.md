@@ -7,41 +7,40 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
 > counts, full diagnostic transcripts) has been cut in favor of what/when/deploy-state. See
 > `docs/lessons.md` for incident mechanics, and `docs/reviews/` for full QA-sweep detail.
 
-## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29, seed-admin UUID migration 2026-07-29, notification dismiss + stalled-guard 2026-07-30, download selection 2026-08-04, notice-board rich text + mentions 2026-08-17, project comments + collaboration panel 2026-08-17, project subtasks/checklist 2026-08-17, collaboration panel relocated to Project page 2026-08-17, collaboration panel UI fixes + due-time reminder 2026-08-17, notification click navigation 2026-08-17, comment ordering + Shift+Enter soft breaks 2026-08-17, mention-email content 2026-08-20, TB0 authority promotion 2026-08-24, TB0A React 19.2 deployed + accepted 2026-08-25, TB0B pipeline configuration boundary deployed 2026-08-24, TB1 Tailwind v4/shadcn foundation deployed 2026-08-25, TB2 route-safe project data freshness deployed 2026-08-25, TB3 project discussion v2 deployed 2026-08-25, TB4 notification outbox built + reviewed 2026-08-26)
+## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29, seed-admin UUID migration 2026-07-29, notification dismiss + stalled-guard 2026-07-30, download selection 2026-08-04, notice-board rich text + mentions 2026-08-17, project comments + collaboration panel 2026-08-17, project subtasks/checklist 2026-08-17, collaboration panel relocated to Project page 2026-08-17, collaboration panel UI fixes + due-time reminder 2026-08-17, notification click navigation 2026-08-17, comment ordering + Shift+Enter soft breaks 2026-08-17, mention-email content 2026-08-20, TB0 authority promotion 2026-08-24, TB0A React 19.2 deployed + accepted 2026-08-25, TB0B pipeline configuration boundary deployed 2026-08-24, TB1 Tailwind v4/shadcn foundation deployed 2026-08-25, TB2 route-safe project data freshness deployed 2026-08-25, TB3 project discussion v2 deployed 2026-08-25, TB4 notification outbox deployed 2026-08-26)
 
 - **TB4 (notification outbox and Cloudflare Queues — durable delivery for project-comment
-  mentions only) is built, diff-reviewed, and manually QA'd, 2026-08-26, not yet deployed**
-  (`docs/plans/Revamp-TB4-Notification-Outbox-And-Queues-Plan.md`). This pipeline's first
-  Cloudflare-Queue-based infrastructure and its second live-production schema migration
-  (`0031_notification_outbox_and_delivery_ledger`, additive-only, two new tables + indexes). Plan
-  review: 2 Sol rounds (2 findings round 1, 5 more round 2) + Opus tier-2 edit to resolve all 5
-  (unifying email-status invariant, in-app retry-release fix, quota-retry pacing fence, missing FK
-  index) → APPROVE. Build review: Luna's initial build overstated its own test coverage (claimed
-  full §10 integration coverage with only unit/migration-shape tests present) — a corrective pass
-  added the real Miniflare integration tests. Independent verification (outside any sandbox) then
-  found and fixed a real bug neither review round had caught: `deleteProjectComment` threw a false
-  "could not be deleted" error and silently skipped its audit entry for any comment with mentions,
-  because `project_comment_mentions`' `ON DELETE CASCADE` inflates D1's JS-level `.meta.changes`
-  field (though not the separate SQL-level `changes()` function — confirmed by an isolated
-  empirical test against this repo's real D1 runtime) past the `=== 1` guard the build used. Diff
-  review: 2 Sol rounds (9 findings round 1 — most seriously stale-consumer ownership-fencing gaps
-  in the delivery consumer and an Admin replay/discard race that could return 200 on both sides of
-  the same row — plus 5 more round 2, most seriously a selective-replay path that left the outbox
-  stuck in `processing` forever) + Opus final-draft review (APPROVE, 4 cosmetic Low findings, one
-  fixed). Full gate (`typecheck`, `build -w @quincy/web`, `test --workspaces`, shared package's
-  dedicated vitest config) green outside any sandbox; see
-  `docs/plans/revamp_2026_portal/evidence/TB4/` for the full record, including
-  `review-and-fix-cycle.txt`. Manual QA (Chrome work routed to Luna, not the orchestrating session)
-  passed all 11 matrix items — two Luna-reported items were independently re-verified rather than
-  taken at face value: item 5's "transient 500 on mention re-add" reproduced zero times across 3
-  repeat attempts and was traced to the unrelated `projects.ts` membership route hitting this
-  repo's already-documented local `wrangler dev`/D1 flakiness, not TB4 code (see the new lessons.md
-  addendum); items 7/9's "unresolved unknown-replay confirmation" is a `window.confirm()`
-  browser-automation limitation (same class as TB3's accepted two-device/visibilitychange gaps),
-  fully covered instead by `admin.test.ts`'s route-level acknowledgement-gate tests. Next:
-  production migration/deploy following the TB3 pattern (rollback target, remote preflight,
-  recovery export, background-first-then-app deploy since TB4 changes the background Worker's
-  Queue/Cron config).
+  mentions only) is deployed to production, 2026-08-26**
+  (`docs/plans/implemented/Revamp-TB4-Notification-Outbox-And-Queues-Plan.md`, commits `0b90439`
+  build+review, `f04e6e9` merged flaky-test fix, `ea68916` manual QA, `cd393bd` production smoke;
+  background Worker version `ac7c4753-0b48-4951-87c0-382b18714195`, app Worker version
+  `2fb292aa-f042-4982-96f9-1b64991922cf`, rollback targets `8f6dfce5-9efa-4681-91cf-274a2d14fcc5`
+  (background) / `e6d0879d-b739-46ea-be2c-9f772bec9a66` (app)). This pipeline's first Cloudflare-
+  Queue-based infrastructure (`quincy-notifications` + `quincy-notifications-dlq`) and second
+  live-production schema migration (`0031_notification_outbox_and_delivery_ledger`, additive-only,
+  two new tables + indexes). Plan review: 2 Sol rounds (2 findings round 1, 5 more round 2) + Opus
+  tier-2 edit to resolve all 5 (unifying email-status invariant, in-app retry-release fix,
+  quota-retry pacing fence, missing FK index) → APPROVE. Build review: a corrective pass fixed
+  Luna's overstated test-coverage claim by adding real Miniflare integration tests; independent
+  verification then found and fixed a real bug neither review round had caught —
+  `deleteProjectComment` threw a false "could not be deleted" error and skipped its audit entry for
+  any comment with mentions, because `ON DELETE CASCADE` inflates D1's JS-level `.meta.changes`
+  (not the separate SQL-level `changes()` function — confirmed empirically). Diff review: 2 Sol
+  rounds (9 findings round 1 — stale-consumer ownership-fencing gaps in the delivery consumer, an
+  Admin replay/discard race that could return 200 on both sides — plus 5 more round 2, most
+  seriously a selective-replay path that left the outbox stuck in `processing` forever) + Opus
+  final-draft review (APPROVE, 4 cosmetic Low findings, one fixed). Manual QA (Chrome work routed
+  to Luna) passed all 11 matrix items — two of Luna's own findings were independently re-verified
+  rather than taken at face value: a "transient 500" traced to unrelated, already-documented local
+  `wrangler dev`/D1 flakiness, not TB4 code; an "unresolved" native replay-confirmation gap is a
+  `window.confirm()` browser-automation limitation (same class as TB3's accepted device/visibility
+  gaps), fully covered by route-level tests. A real admin-email leak in two QA screenshots was
+  caught and cropped before commit. Production: rollback targets/preflight/recovery export
+  recorded, 0031 applied cleanly, both Queues created, background-then-app deploy, authenticated
+  smoke test (comment creation done by the human operator after an agent-driven mutation hit a
+  confirmation-gate block; verification/cleanup agent-driven) confirmed outbox/ledger/bell/Admin/
+  audit all correct with a clean console. Full review-and-fix history:
+  `docs/plans/revamp_2026_portal/evidence/TB4/review-and-fix-cycle.txt`.
 - **TB3 (project discussion v2 — TanStack Query freshness for project comments plus a new
   per-user server-owned read-marker table) is deployed to production, 2026-08-25**
   (`docs/plans/implemented/Revamp-TB3-Project-Discussion-V2-Plan.md`, commits `08f56f4` code/tests +

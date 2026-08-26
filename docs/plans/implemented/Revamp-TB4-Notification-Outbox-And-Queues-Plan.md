@@ -1,8 +1,11 @@
 # Revamp TB4 — Notification Outbox and Cloudflare Queues Plan
 
-> **Status: APPROVED — plan review complete (2 Sol draft-review rounds, Opus tier-2 edited the plan
-> directly to resolve round-2's 5 remaining findings rather than spending a revert, final verdict
-> APPROVE 2026-08-25); not yet implemented, verified, or deployed.**
+> **Status: Deployed to production (background Worker version
+> `ac7c4753-0b48-4951-87c0-382b18714195`, app Worker version `2fb292aa-f042-4982-96f9-1b64991922cf`,
+> 2026-08-26) — migration 0031 applied, both Cloudflare Queues created, manual QA and an
+> authenticated production smoke test complete. Rollback targets: background
+> `8f6dfce5-9efa-4681-91cf-274a2d14fcc5`, app `e6d0879d-b739-46ea-be2c-9f772bec9a66` (both live at
+> the start of this deploy). See "Deployment record" below.**
 
 ## Authority and outcome
 
@@ -1347,99 +1350,165 @@ Unknown email remains unknown through rollback. Manual replay after rollback sti
 duplicate warning and a version that exposes the guarded operation; never convert unknown rows to
 pending with ad hoc SQL.
 
+## Deployment record (2026-08-26)
+
+- **Build and review:** Luna's initial build overstated its own test coverage (claimed full §10
+  integration coverage with only unit/migration-shape tests present) — a corrective pass added the
+  real Miniflare integration tests. Independent verification (outside any sandbox) then found and
+  fixed a real bug neither review round had caught: `deleteProjectComment` threw a false "could not
+  be deleted" error and silently skipped its audit entry for any comment with mentions, because
+  `project_comment_mentions`' `ON DELETE CASCADE` inflates D1's JS-level `.meta.changes` field
+  (confirmed by an isolated empirical test against this repo's real D1 runtime; the separate SQL-
+  level `changes()` function is unaffected). Diff review: 2 Sol rounds (9 findings round 1, 5 more
+  round 2 — see `docs/plans/revamp_2026_portal/evidence/TB4/review-and-fix-cycle.txt` for the full
+  list) + Opus final-draft review (APPROVE, 4 cosmetic Low findings, one fixed). Full gate
+  (`typecheck`, `build -w @quincy/web`, `test --workspaces`, shared package's dedicated vitest
+  config) green outside any sandbox. Committed as `0b90439` (build+review) and `f04e6e9` (merged an
+  unrelated flaky-test fix from a parallel session).
+- **Manual QA:** all 11 matrix items passed (`docs/plans/revamp_2026_portal/evidence/TB4/
+  manual-qa.md`). Two of Luna's own reported findings were independently re-verified rather than
+  taken at face value: a "transient 500" on mention re-add reproduced zero times across 3 repeat
+  attempts and traced to the unrelated `projects.ts` membership route hitting this repo's already-
+  documented local `wrangler dev`/D1 flakiness, not TB4 code (new `docs/lessons.md` addendum); the
+  unresolved unknown-email replay confirmation is a `window.confirm()` browser-automation
+  limitation (same class as TB3's accepted two-device/visibilitychange gaps), fully covered instead
+  by `admin.test.ts`'s route-level tests. Committed as `ea68916`.
+- **Pre-deploy rollback targets:** background Worker version
+  `8f6dfce5-9efa-4681-91cf-274a2d14fcc5` (2026-08-19), app Worker version
+  `e6d0879d-b739-46ea-be2c-9f772bec9a66` (TB3, 2026-08-25), both live at the start of this deploy.
+- **Remote preflight:** 0030 last applied migration; neither `notification_outbox` nor
+  `notification_delivery_ledger` nor any of their indexes existed; `foreign_key_check` empty;
+  `quick_check` `ok`; both Queue names (`quincy-notifications`, `quincy-notifications-dlq`) free.
+- **Recovery export:** `quincy-portal-before-tb4-20260826T014919Z.sql`, saved outside the worktree
+  at `/Volumes/TerrySylviaT7/Quincy Productions Dropbox/Ting Rui Lee/WIP/Quincy Productions/
+  db-recovery/`. 12,715,215 bytes, 16,563 lines, 47 `CREATE TABLE` / 15,895 `INSERT INTO`
+  statements, SHA-256 `7f696d5ca13e91562aff836f71e34083b714ad6fa033e6e66b5dd2aa9a421bdc`.
+- **Migration applied:** `0031_notification_outbox_and_delivery_ledger.sql`, one apply, no retry
+  needed.
+- **Postflight:** 0031 ledgered; both tables plus all seven named indexes present exactly as
+  specified; both tables empty (0 rows) on clean apply; `foreign_key_check` empty; `quick_check`
+  `ok`.
+- **Queues created:** `quincy-notifications` (`70abc74f519744e9813e6a598c7d46ad`) and
+  `quincy-notifications-dlq` (`e2cd76864b284072a3aec3fdb7a9bf5f`), confirmed free before creation.
+- **Background deploy:** `quincy-portal-background` version
+  `ac7c4753-0b48-4951-87c0-382b18714195`, message "TB4 notification outbox consumer and recovery".
+  Confirmed producer/consumer bindings for both new Queues, unchanged hourly Cron
+  (`0 * * * *`), and all pre-existing Queue/Workflow/DO bindings intact.
+- **App deploy:** `quincy-portal-app` version `2fb292aa-f042-4982-96f9-1b64991922cf`, message "TB4
+  project mention outbox producer and operations". Bundle hashes matched the last independently-
+  verified local build exactly (`index-g-iMhVgW.js`, `index-Ci_idDHK.css`) — confirms zero source
+  drift between final local verification and the deployed build. Confirmed the new
+  `NOTIFICATION_QUEUE` producer binding and all pre-existing bindings (EMAIL, DB, MEDIA, background
+  service binding, KV, existing Queues) intact.
+- **Production smoke (authenticated, `mjj2332@gmail.com`, real admin session):** one disposable
+  project-comment mention created on a clearly-labeled disposable project (`ZZZ TB4 Prod Smoke —
+  DELETE ME`; comment creation performed by the human operator after an agent-driven mutation hit a
+  confirmation-gate block — verification and cleanup were agent-driven and read-only). Outbox and
+  both channel ledgers reached `completed`/`sent`; the bell showed exactly one `mentioned` row with
+  the correct `/projects/:id?collaboration=open` deep link; Admin's delivery-operations panel
+  returned clean counts (all `0`, nothing left to acknowledge) with no disallowed field in the
+  scoped response or DOM; exactly one `project_comment.create` audit row and one outbox row existed
+  for the source, confirming the TB4 producer path with no legacy fallback. Browser console clean
+  throughout; a live `wrangler tail` attach was not available (separate CLI OAuth required) but no
+  smoke-associated Worker error was otherwise observed. Full record:
+  `docs/plans/revamp_2026_portal/evidence/TB4/production-smoke-and-monitoring.md`. All test data
+  restored/removed (comment deleted, project archived) immediately after.
+- **Post-deploy monitoring:** no elevated error rate or unexpected request cadence observed during
+  or after the smoke test.
+
 ## Acceptance checklist
 
-- [ ] Implementation begins from recorded current `main`; TB0A–TB3 remain live, 0030 is remote
+- [x] Implementation begins from recorded current `main`; TB0A–TB3 remain live, 0030 is remote
       last, 0031 and both Queue names are free, and no work enters `prototype/` or unrelated phases.
-- [ ] D-17 and A10 are applied only to durable notification delivery; freshness, discussion,
+- [x] D-17 and A10 are applied only to durable notification delivery; freshness, discussion,
       pipeline, Kanban, Stage, rail, Deadline, Calendar, registry, and External Editor work remain
       absent.
-- [ ] Migration `0031_notification_outbox_and_delivery_ledger.sql` is additive only and creates the
+- [x] Migration `0031_notification_outbox_and_delivery_ledger.sql` is additive only and creates the
       exact two tables, checks, FKs, constraints, and indexes in §2 — including
       `notification_delivery_ledger_notification_idx`, without which every notification dismissal
       and every hourly Cron prune scans the whole ledger — with no existing-table rebuild,
       rewrite, backfill, drop, or PRAGMA toggle.
-- [ ] The exact semantic channel key is `(event_type, source_key, recipient_id, channel)`, with
+- [x] The exact semantic channel key is `(event_type, source_key, recipient_id, channel)`, with
       `event_type = project.comment.mentioned` and source key equal to the mention-mapping UUID;
       Queue message ID is never an idempotency key.
-- [ ] `notifications` remains the user-visible inbox/read/dismiss projection; the ledger is TB4's
+- [x] `notifications` remains the user-visible inbox/read/dismiss projection; the ledger is TB4's
       authoritative channel record; dismissal sets `notification_id` null without deleting history
       or enabling in-app recreation; legacy `email_*` fields remain compatibility mirrors only.
-- [ ] Every new non-self project-comment mention mapping, exact comment mutation, existing
+- [x] Every new non-self project-comment mention mapping, exact comment mutation, existing
       `project_comment.*` audit, one outbox, and two channel ledger rows commit or roll back in the
       same D1 batch.
-- [ ] TB3's exact immutable `ProjectCommentActivityOutboxIntent` is constructed before and persisted
+- [x] TB3's exact immutable `ProjectCommentActivityOutboxIntent` is constructed before and persisted
       inside the mention envelope unchanged, including source-key formats, edit coalesce hint, and
       `targetedMentionDelivery: false`; all envelopes from one mutation reuse its single
       `activity.id`; no broad delivery/activity table or event is activated.
-- [ ] Comment create publishes every new mapping; edit publishes only newly-added mappings;
+- [x] Comment create publishes every new mapping; edit publishes only newly-added mappings;
       retained mentions do not repeat, removed pending mentions suppress, re-added mentions use a
       new mapping/source key, and delete creates no new mention event.
-- [ ] Project-comment direct `notifyMentions()` calls are removed at cutover and the helper is
+- [x] Project-comment direct `notifyMentions()` calls are removed at cutover and the helper is
       narrowed to Notice Board; all other producers remain direct. One comment mention has exactly
       one semantic producer, one audit/activity intent, and one inbox row.
-- [ ] Queue publication uses `waitUntil`, carries only typed outbox ID, never blocks the comment,
+- [x] Queue publication uses `waitUntil`, carries only typed outbox ID, never blocks the comment,
       and leaves a recoverable pending row on rejection; Queue/email outcome cannot change a
       successful comment response.
-- [ ] `quincy-notifications` and `quincy-notifications-dlq` use the exact established main/DLQ
+- [x] `quincy-notifications` and `quincy-notifications-dlq` use the exact established main/DLQ
       batch, concurrency, retry settings; background owns both consumers and the recovery producer.
-- [ ] Consumer claims use a token, 10-minute lease, guarded ownership updates, and D1 unique keys;
+- [x] Consumer claims use a token, 10-minute lease, guarded ownership updates, and D1 unique keys;
       concurrent/duplicate Queue/Cron/replay deliveries produce one channel outcome and one inbox
       row without relying on `max_concurrency: 1`; the same atomic claim batch resets a stale
       `in_app = processing` row for the newly owned outbox to `pending` for immediate idempotent
       completion, but never resets or takes over `email = processing`.
-- [ ] Every channel rechecks current active status, global role, `collaborateOnProject` capability,
+- [x] Every channel rechecks current active status, global role, `collaborateOnProject` capability,
       occurrence membership cycle through the existing `project_members.id` snapshot, current
       Admin/membership eligibility, exact mapping/recipient/comment/project visibility, and actor
       exclusion immediately before its send; remove/re-add cannot inherit old work.
-- [ ] Failed reauthorization is silently suppressed without retry or user-visible error and writes
+- [x] Failed reauthorization is silently suppressed without retry or user-visible error and writes
       one content-free system audit; removal before first dispatch creates neither inbox nor email.
-- [ ] Mandatory in-app delivery is committed before optional email and is independent of every
+- [x] Mandatory in-app delivery is committed before optional email and is independent of every
       email result. Replay never recreates a sent/dismissed in-app row.
-- [ ] Email uses only the existing Cloudflare `EMAIL` binding and existing targeted mention copy;
+- [x] Email uses only the existing Cloudflare `EMAIL` binding and existing targeted mention copy;
       success stores message ID, only `E_RATE_LIMIT_EXCEEDED` and `E_DAILY_LIMIT_EXCEEDED` retry,
       documented permanent errors fail terminally, and missing configuration is visible without
       affecting in-app/comment.
-- [ ] `E_INTERNAL_SERVER_ERROR`, uncoded/unrecognized/post-submission ambiguity, and an expired
+- [x] `E_INTERNAL_SERVER_ERROR`, uncoded/unrecognized/post-submission ambiguity, and an expired
       processing-email lease become `unknown`, never automatic retry; manual replay requires the
       exact duplicate warning and acknowledgement and replays email only.
-- [ ] The email-status invariant holds on every path: a `failed` email is provably unaccepted, and
+- [x] The email-status invariant holds on every path: a `failed` email is provably unaccepted, and
       no consumer, DLQ, Cron, or Admin transition moves an email channel out of `processing` into
       `failed` or `discarded`. The DLQ handler and Admin discard both refuse to disturb an
       unexpired lease — DLQ retries, discard returns `409` — and on an expired one they record an
       in-flight email attempt as `unknown`, keeping the duplicate warning on any later replay,
       including where the outbox itself is `dlq` or `discarded`.
-- [ ] A transient in-app failure releases its own ledger row and lease before `message.retry()`, so
+- [x] A transient in-app failure releases its own ledger row and lease before `message.retry()`, so
       Queue retry and DLQ progression actually work instead of being absorbed by the plan's own
       claim guard; and no claim or Cron republication takes work whose `available_at` is still in
       the future.
-- [ ] Main-queue persistent failure reaches the dedicated DLQ after one initial plus three retries;
+- [x] Main-queue persistent failure reaches the dedicated DLQ after one initial plus three retries;
       DLQ receipt is recorded/content-free/audited/acked, and no exhausted message disappears from
       operations silently.
-- [ ] The existing hourly Cron independently resolves ambiguous email leases, safely reclaims other
+- [x] The existing hourly Cron independently resolves ambiguous email leases, safely reclaims other
       expired leases that no Queue consumer has already reclaimed, republishes due pending/30-minute
       queued-stuck IDs, processes at most 100, and cannot block existing scheduled jobs.
-- [ ] `adminBackend` operations show bounded pending/stuck, DLQ, failed, and unknown lists/counts;
+- [x] `adminBackend` operations show bounded pending/stuck, DLQ, failed, and unknown lists/counts;
       responses/UI expose no payload, content, excerpt, email, raw error, contact, path, provider,
       or Queue-message data.
-- [ ] Admin replay/discard are atomic guarded operations with one race winner, content-free audits,
+- [x] Admin replay/discard are atomic guarded operations with one race winner, content-free audits,
       no row/domain deletion, Queue-failure recovery, and precise unknown-email semantics/copy.
-- [ ] Existing bell polling, unread/read-all/dismiss/deep-link/focus behavior and every old
+- [x] Existing bell polling, unread/read-all/dismiss/deep-link/focus behavior and every old
       notification producer remain unchanged and regression-tested.
-- [ ] Automated fault tests prove Queue outage cannot lose intent, duplicate delivery/replay creates
+- [x] Automated fault tests prove Queue outage cannot lose intent, duplicate delivery/replay creates
       one in-app row, access removal suppresses, transient retry/persistent DLQ/unknown work,
       comment latency/success is independent, and audit/activity/producer are not duplicated.
-- [ ] Full typecheck, web build, every workspace test, dedicated shared suite, source audits, local
+- [x] Full typecheck, web build, every workspace test, dedicated shared suite, source audits, local
       migration/query-plan/integrity proof, and manual QA are green with no unexplained warning.
-- [ ] Exact redacted evidence exists under `docs/plans/revamp_2026_portal/evidence/TB4/`; every
+- [x] Exact redacted evidence exists under `docs/plans/revamp_2026_portal/evidence/TB4/`; every
       fixture is restored/disposed and no sensitive payload, token, email, or comment content is
       committed.
-- [ ] Production rollout records both rollback targets, exact remote preflight, verified recovery
+- [x] Production rollout records both rollback targets, exact remote preflight, verified recovery
       export in the established `db-recovery/` directory, one 0031 apply, exact postflight, Queue
       creation/config, background-first then app deploy, reversible smoke, and monitoring.
-- [ ] Rollback preserves additive schema/history and single-producer ownership; pending outbox stays
+- [x] Rollback preserves additive schema/history and single-producer ownership; pending outbox stays
       recoverable, unknown email is never reset ad hoc, and schema mistakes use reviewed fix-forward.
-- [ ] After production verification, this plan/status and `docs/todo.md` are updated and this file
+- [x] After production verification, this plan/status and `docs/todo.md` are updated and this file
       moves with `git mv` to `docs/plans/implemented/` with the live commit hash.
 
 ## Implementation-time human checkpoint

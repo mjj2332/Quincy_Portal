@@ -45,9 +45,8 @@ under Quincy visual authority. Future route/resource/range query keys must prese
 active drag/resize. The Project Workspace rail is the planned owner of Stage, Deadline, and team
 coordination; Collaboration remains checklist/subtasks and discussion-focused. Membership changes
 use role-specific deltas and cycles; `moveProjectStage` preserves fixed semantic Stage identities.
-Project Deadline remains separate from shoot/checklist schedules. Notification delivery is a finite,
-noise-bounded registry with send-time authorization. Checklist due/range scheduling and an
-authorized Calendar range/direct-manipulation boundary are planned. The assignment-scoped
+Project Deadline remains separate from shoot/checklist schedules. Checklist due/range scheduling and
+an authorized Calendar range/direct-manipulation boundary are planned. The assignment-scoped
 `external_editor` role uses one external-safe server projection and has no staff Notice Board,
 global directory, or Admin scope. Calendar, External Editor, React 19, Tailwind, and shadcn remain
 non-live until their owning tracer bullets deploy.
@@ -117,8 +116,9 @@ applied 2026-08-17; 0029 added persisted `collection_links.position` with a per-
 `project_comment_read_markers` table plus its project-cascade index, applied 2026-08-25 — this
 pipeline's first live-production schema migration, with a verified pre-migration recovery export
 saved to `/Volumes/TerrySylviaT7/Quincy Productions Dropbox/Ting Rui Lee/WIP/Quincy Productions/
-db-recovery/`, reused for future migrations) — next available number is **0031**. Branch off
-`main`.
+db-recovery/`, reused for future migrations; 0031 added the additive `notification_outbox` and
+`notification_delivery_ledger` tables plus seven named indexes, applied 2026-08-26 (TB4) — next
+available number is **0032**. Branch off `main`.
 **Prefer a bare `ALTER TABLE ADD COLUMN col TYPE CHECK(...)` over `drizzle-kit generate`'s
 table-rebuild form when the check is single-column and NULL-satisfiable** — the rebuild form's
 `PRAGMA foreign_keys=OFF` doesn't reliably persist across D1's remote migration execution even
