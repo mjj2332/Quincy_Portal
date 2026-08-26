@@ -5,6 +5,7 @@ import { apiGet, apiPatch, apiPost } from "../lib/api";
 import { useCapabilities } from "../lib/capabilities";
 import { InternalLink } from "../components/InternalLink";
 import { invalidateProjectResources, projectDataKeys, removeProjectData, useOptionalProjectQueryClient } from "../lib/project-data";
+import { confirm } from "../lib/confirm";
 
 type ProjectResponse = {
   id: string; street: string; suburb: string | null; postcode: string | null; agencyName: string | null; agentName: string | null; agentEmail: string | null; agentPhone: string | null;
@@ -84,7 +85,7 @@ export function EditProject({ projectId, onNavigate }: { projectId: string; onNa
   }
 
   async function archiveProject() {
-    if (!window.confirm("Archive this project? It will be hidden from the dashboard and can be restored later.")) return;
+    if (!await confirm({ title: "Archive project?", message: "Archive this project? It will be hidden from the dashboard and can be restored later.", confirmLabel: "Archive" })) return;
     setDangerError(undefined); setIsDangerAction(true);
     try { await apiPost<{ ok: true }, Record<string, never>>(`/api/projects/${projectId}/archive`, {}); if (queryClient) await invalidateProjectResources(queryClient, { projectId, resources: [{ kind: "detail" }] }); onNavigate(`/projects/${encodeURIComponent(projectId)}`, "Project archived."); }
     catch (reason) { setDangerError(reason instanceof Error ? reason.message : "The project could not be archived."); }
@@ -92,7 +93,7 @@ export function EditProject({ projectId, onNavigate }: { projectId: string; onNa
   }
 
   async function restoreProject() {
-    if (!window.confirm("Restore this project to the dashboard?")) return;
+    if (!await confirm({ title: "Restore project?", message: "Restore this project to the dashboard?", confirmLabel: "Restore" })) return;
     setDangerError(undefined); setIsDangerAction(true);
     try { await apiPost<{ ok: true }, Record<string, never>>(`/api/projects/${projectId}/restore`, {}); if (queryClient) await invalidateProjectResources(queryClient, { projectId, resources: [{ kind: "detail" }] }); onNavigate(`/projects/${encodeURIComponent(projectId)}`, "Project restored."); }
     catch (reason) { setDangerError(reason instanceof Error ? reason.message : "The project could not be restored."); }
@@ -100,7 +101,7 @@ export function EditProject({ projectId, onNavigate }: { projectId: string; onNa
   }
 
   async function deleteProject() {
-    if (!window.confirm("Permanently delete this archived project and all of its cloud media? This cannot be undone.")) return;
+    if (!await confirm({ title: "Delete project permanently?", message: "Permanently delete this archived project and all of its cloud media? This cannot be undone.", confirmLabel: "Delete permanently", danger: true })) return;
     setDangerError(undefined); setIsDangerAction(true);
     try {
       const response = await fetch(`/api/projects/${projectId}`, { method: "DELETE", credentials: "include", headers: { Accept: "application/json" } });

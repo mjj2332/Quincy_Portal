@@ -4,6 +4,8 @@ import { ROLE_CAPABILITIES } from "@quincy/shared";
 import type { AppEnv } from "./env";
 import { createAuth } from "./auth";
 import { requireSession } from "./middleware/session";
+import { requireCapability } from "./middleware/capability";
+import { requireImpersonationEnabled } from "./lib/impersonation";
 import { usersRoutes } from "./routes/users";
 import { projectsRoutes } from "./routes/projects";
 import { uploadsRoutes } from "./routes/uploads";
@@ -46,6 +48,8 @@ app.all("/api/auth/sign-in/social", async (c) => {
   }
   return createAuth(c.env).handler(c.req.raw);
 });
+app.post("/api/auth/admin/impersonate-user", requireSession, requireCapability("manageUsers"), requireImpersonationEnabled, (c) => createAuth(c.env).handler(c.req.raw));
+app.post("/api/auth/admin/impersonate-user/", requireSession, requireCapability("manageUsers"), requireImpersonationEnabled, (c) => createAuth(c.env).handler(c.req.raw));
 app.all("/api/auth/*", (c) => createAuth(c.env).handler(c.req.raw));
 const api = new Hono<AppEnv>();
 api.use("/*", requireSession);

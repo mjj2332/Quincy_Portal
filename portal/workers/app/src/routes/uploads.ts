@@ -42,7 +42,7 @@ uploadsRoutes.post("/projects/:id/upload-manifest", requireCapability("uploadRaw
     const id = newId();
     await db.insert(schema.uploadManifests).values({ id, collectionId: raw.id, expectedCount: data.filenames.length, filenamesJson: JSON.stringify(data.filenames), status: "active", createdBy: c.get("user").id, createdAt: new Date() });
     await db.update(schema.collections).set({ status: "awaiting_upload", updatedAt: new Date() }).where(eq(schema.collections.id, raw.id));
-    await audit(c.env, c.get("user").id, "upload.manifest", "upload_manifest", id, { projectId, expectedCount: data.filenames.length });
+    await audit(c.env, c.get("user"), "upload.manifest", "upload_manifest", id, { projectId, expectedCount: data.filenames.length });
     return c.json({ manifestId: id });
   }
 });
@@ -59,7 +59,7 @@ uploadsRoutes.post("/uploads/presign", async (c) => {
       if (c.env.APP_ENV === "dev") return c.json({ assetId, key, devDirect: true });
       return c.json({ error: "R2 S3 upload credentials are not configured" }, 503);
     }
-    await audit(c.env, c.get("user").id, "upload.presign", "asset", assetId, { projectId: data.projectId, key, bytes: data.bytes }); return c.json({ assetId, ...multipart });
+    await audit(c.env, c.get("user"), "upload.presign", "asset", assetId, { projectId: data.projectId, key, bytes: data.bytes }); return c.json({ assetId, ...multipart });
   }
 });
 uploadsRoutes.put("/uploads/direct", async (c) => {
@@ -72,7 +72,7 @@ uploadsRoutes.put("/uploads/direct", async (c) => {
   if (!await hasProjectAccess(c, projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   const refused = await uploadPrecondition(c, projectId, collection as "raw" | "edited"); if (refused) return refused;
   await c.env.MEDIA.put(key, c.req.raw.body, { httpMetadata: { contentType: "image/jpeg" } });
-  await audit(c.env, c.get("user").id, "upload.direct", "asset", assetId, { projectId, key });
+  await audit(c.env, c.get("user"), "upload.direct", "asset", assetId, { projectId, key });
   return c.body(null, 204);
 });
 uploadsRoutes.post("/uploads/complete", async (c) => {
@@ -85,7 +85,7 @@ uploadsRoutes.post("/uploads/complete", async (c) => {
     const assetId = data.key.match(new RegExp(`^projects/${data.projectId}/${data.collection}/([^/]+)/`))?.[1]; if (!assetId || !z.string().uuid().safeParse(assetId).success) return c.json({ error: "R2 key does not follow the required asset key convention" }, 400);
     if (data.uploadId) { if (!data.parts?.length) return c.json({ error: "Multipart uploads require completed parts" }, 400); await completeMultipart(c.env, data.key, data.uploadId, data.parts); }
     try {
-      const completed = await finalizeIngest(c.env, { actorId: c.get("user").id, projectId: data.projectId, assetId, key: data.key, originalFilename: data.originalFilename, contentHash: data.contentHash, collection: data.collection, manifestId: data.manifestId });
+      const completed = await finalizeIngest(c.env, { actorId: c.get("user").id, auditPrincipal: c.get("user"), projectId: data.projectId, assetId, key: data.key, originalFilename: data.originalFilename, contentHash: data.contentHash, collection: data.collection, manifestId: data.manifestId });
       const needsDropboxPublish = data.collection === "edited"
         ? completed.publishStatus !== "ready"
         : !("mirrorStatus" in completed) || completed.mirrorStatus !== "ready";
@@ -139,7 +139,7 @@ uploadsRoutes.post("/uploads/complete", async (c) => {
                 eq(schema.assets.publishStatus, "pending"),
               ));
             }
-            await audit(c.env, c.get("user").id, data.collection === "edited" ? "asset.manual_publish.start_failed" : "asset.manual_raw_mirror.start_failed", "asset", assetId, { projectId: data.projectId, jobId: existingJob.id, error: message });
+            await audit(c.env, c.get("user"), data.collection === "edited" ? "asset.manual_publish.start_failed" : "asset.manual_raw_mirror.start_failed", "asset", assetId, { projectId: data.projectId, jobId: existingJob.id, error: message });
           }
           if (data.collection === "raw") {
             return c.json({ ...completed, jobId: existingJob?.id, publishStatus: "ready", mirrorStatus: existingJob?.status === "failed" ? "failed" : "pending", error: message }, 201);

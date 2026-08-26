@@ -28,5 +28,5 @@ export interface Env {
   NOTIFICATIONS_FROM_ADDRESS?: string;
 }
 
-export type SessionUser = { id: string; email: string; name: string; role: Role; active: boolean };
+export type SessionUser = { id: string; email: string; name: string; role: Role; active: boolean; impersonatedBy: string | null };
 export type AppEnv = { Bindings: Env; Variables: { user: SessionUser } };

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { DOWNLOAD_SELECTION_MAX_ASSETS, DOWNLOAD_SELECTION_MAX_BYTES } from "@quincy/shared";
 import { LabelDot, Stars } from "./atoms";
 import { LazyImage } from "./LazyImage";
+import { confirm } from "../lib/confirm";
 
 export type Review = { stars: number | null; colorLabel: "select" | "maybe" | "cut" | "hero" | null; decision: "approved" | "flagged" | null; recommended: boolean };
 export type WorkspaceAsset = { id: string; collectionId: string; kind: "photo" | "video" | "floorplan_pdf" | "floorplan_preview" | "copy_pdf"; originalFilename: string; bytes: number; width: number | null; height: number | null; ratingFromMetadata: number | null; section: string | null; renditionStatus: "processing" | "ready"; createdAt: string; sourceRawAssetId: string | null; version: number; versionGroupId: string | null; supersedesAssetId: string | null; review: Review | null; selected: boolean };
@@ -132,7 +133,7 @@ export function PhotoGrid({ assets, showSections, canReview, canRecommend, canSe
     lastSelected.current = null;
   }
   async function deleteOne(asset: WorkspaceAsset) {
-    if (!onDelete || !window.confirm(`Permanently delete ${asset.originalFilename}? This cannot be undone.`)) return;
+    if (!onDelete || !await confirm({ title: `Delete ${asset.originalFilename}?`, message: `Permanently delete ${asset.originalFilename}? This cannot be undone.`, confirmLabel: "Delete", danger: true })) return;
     await onDelete(asset.id);
     setMulti((current) => { if (!current.has(asset.id)) return current; const next = new Set(current); next.delete(asset.id); return next; });
     lastSelected.current = null;
@@ -140,7 +141,7 @@ export function PhotoGrid({ assets, showSections, canReview, canRecommend, canSe
   async function deleteMany() {
     if (!onBulkDelete) return;
     const ids = [...multi];
-    if (!window.confirm(`Permanently delete ${ids.length} selected asset${ids.length === 1 ? "" : "s"}? This cannot be undone.`)) return;
+    if (!await confirm({ title: `Delete ${ids.length} selected asset${ids.length === 1 ? "" : "s"}?`, message: `Permanently delete ${ids.length} selected asset${ids.length === 1 ? "" : "s"}? This cannot be undone.`, confirmLabel: "Delete selected", danger: true })) return;
     const result = await onBulkDelete(ids);
     const succeeded = new Set(result.succeededIds);
     setMulti((current) => { const next = new Set([...current].filter((id) => !succeeded.has(id))); return next.size === current.size ? current : next; });

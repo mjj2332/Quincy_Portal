@@ -483,8 +483,10 @@ Six npm workspaces — three deployable Workers, one SPA, two shared libraries:
 - **Webhook integrity:** constant-time HMAC verification (Dropbox `X-Dropbox-Signature`;
   Tonomo bearer token), dedupe by event id, fast-ack.
 - **Audit integrity:** every mutation is audit-logged; comment/annotation **edit &
-  delete are author-only** (admins are *not* exempt); media is never destructively
-  deleted.
+  delete are author-only** (admins are *not* exempt — the one deliberate exception is an Admin
+  actively impersonating that author via the runtime-gated user-impersonation feature, see
+  `docs/plans/implemented/Confirmation-Modal-And-Admin-Impersonation-Plan.md`); media is never
+  destructively deleted.
 
 ### 8.6 External integrations
 

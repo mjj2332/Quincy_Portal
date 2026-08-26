@@ -1,9 +1,12 @@
-import { act } from "react";
+import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const seenSignals = vi.hoisted(() => [] as Array<number | undefined>);
-vi.mock("./lib/auth", () => ({ useSession: () => ({ data: { user: { id: "u1", name: "Ada", role: "admin" } }, isPending: false }), consumeSignInDestination: () => null }));
+type MockSessionState = { value: { data: { user: { id: string; name: string; role: string }; session?: { impersonatedBy?: string | null } } | null; isPending: boolean; refetch: () => Promise<void> } };
+const sessionState = vi.hoisted(() => ({ value: { data: { user: { id: "u1", name: "Ada", role: "admin" } }, isPending: false, refetch: vi.fn<() => Promise<void>>() } } as MockSessionState));
+const stopImpersonatingMock = vi.hoisted(() => vi.fn<() => Promise<void>>());
+vi.mock("./lib/auth", () => ({ useSession: () => sessionState.value, stopImpersonating: stopImpersonatingMock, consumeSignInDestination: () => null }));
 vi.mock("./lib/stages", () => ({ StagesProvider: ({ children }: { children: unknown }) => children }));
 vi.mock("./components/Topbar", () => ({ Topbar: () => <header /> }));
 vi.mock("./screens/Dashboard", () => ({ Dashboard: () => <main>Dashboard</main> }));
@@ -12,6 +15,7 @@ vi.mock("./screens/SignIn", () => ({ SignIn: () => <main>Sign in</main> }));
 vi.mock("./screens/Admin", () => ({ Admin: () => <main>Admin</main> }));
 vi.mock("./screens/CreateProject", () => ({ CreateProject: () => <main>Create</main> }));
 vi.mock("./screens/EditProject", () => ({ EditProject: () => <main>Edit</main> }));
+vi.mock("./lib/query-client", () => ({ QuincyQueryProvider: ({ children, principalId, role }: { children: ReactNode; principalId: string; role: string }) => <div data-query-boundary={`${principalId}:${role}`}>{children}</div> }));
 
 import App from "./App";
 
@@ -59,5 +63,29 @@ describe("App collaboration arrival transport", () => {
     });
     expect(host.querySelector("[data-signal]")?.getAttribute("data-signal")).toBe("undefined");
     expect(seenSignals.at(-1)).toBeUndefined();
+  });
+});
+
+describe("App impersonation boundary", () => {
+  it("renders the target identity banner above staff routes and does not expose Admin navigation", async () => {
+    sessionState.value = { data: { user: { id: "target", name: "Editor Target", role: "editor" }, session: { impersonatedBy: "u1" } }, isPending: false, refetch: vi.fn<() => Promise<void>>().mockResolvedValue(undefined) };
+    const host = await renderAt("/");
+    expect(host.textContent).toContain("Acting as Editor Target (Editor) · Exit");
+    expect(host.textContent).toContain("Dashboard");
+    expect(host.querySelector("[data-query-boundary]")?.getAttribute("data-query-boundary")).toBe("target:editor");
+    expect(host.textContent).not.toContain("Admin");
+
+    await act(async () => { window.history.pushState(null, "", "/projects/123e4567-e89b-42d3-a456-426614174000"); window.dispatchEvent(new PopStateEvent("popstate")); await Promise.resolve(); await Promise.resolve(); });
+    expect(host.textContent).toContain("Acting as Editor Target (Editor) · Exit");
+    expect(host.textContent).toContain("consume 123e4567-e89b-42d3-a456-426614174000");
+  });
+
+  it("isolates a promoted target before the provider and preserves the Exit banner", async () => {
+    sessionState.value = { data: { user: { id: "target", name: "Promoted Target", role: "admin" }, session: { impersonatedBy: "u1" } }, isPending: false, refetch: vi.fn<() => Promise<void>>().mockResolvedValue(undefined) };
+    const host = await renderAt("/admin");
+    expect(host.textContent).toContain("Acting as Promoted Target (Admin) · Exit");
+    expect(host.textContent).toContain("This impersonated session is no longer valid — exit to restore your Admin session.");
+    expect(host.querySelector("header")).toBeNull();
+    expect(host.textContent).not.toContain("Dashboard");
   });
 });

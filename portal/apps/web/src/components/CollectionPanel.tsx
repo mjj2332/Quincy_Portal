@@ -8,6 +8,7 @@ import { uploadMultipartFile, type MultipartPresign } from "../lib/multipart-upl
 import { useProjectAccessTermination } from "../lib/project-data";
 import { LazyImage } from "./LazyImage";
 import { reorderNeighbors } from "../lib/reorder-neighbors";
+import { confirm } from "../lib/confirm";
 
 type CollectionKind = "video" | "floorplan" | "copy";
 type Link = { id: string; url: string; label: string | null; source: "tonomo" | "manual"; position: number; createdAt: string };
@@ -115,7 +116,7 @@ export function CollectionPanel({ projectId, collection, assets, canManage, canD
     } finally { setReorderingLinkId(null); }
   }
   async function deleteVersion(document: WorkspaceAsset) {
-    if (!onDelete || !window.confirm(`Permanently delete version ${document.version}? This cannot be undone.`)) return;
+    if (!onDelete || !await confirm({ title: `Delete version ${document.version}?`, message: `Permanently delete version ${document.version}? This cannot be undone.`, confirmLabel: "Delete", danger: true })) return;
     try { await onDelete(document.id); }
     catch (error) { terminateOnUnauthorized(error); onToast(error instanceof Error ? error.message : "The asset could not be deleted.", "error"); }
   }

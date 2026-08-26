@@ -28,6 +28,9 @@ export const user = sqliteTable("user", {
     .notNull()
     .default("photographer"),
   active: integer("active", { mode: "boolean" }).notNull().default(true),
+  banned: integer("banned", { mode: "boolean" }).notNull().default(false),
+  banReason: text("ban_reason"),
+  banExpires: integer("ban_expires", { mode: "timestamp_ms" }),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
@@ -43,10 +46,25 @@ export const session = sqliteTable(
     userId: text("user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
+    impersonatedBy: text("impersonated_by"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
   (t) => [index("session_user_idx").on(t.userId)],
+);
+
+export const featureFlags = sqliteTable(
+  "feature_flags",
+  {
+    key: text("key").primaryKey().notNull(),
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(false),
+    updatedBy: text("updated_by").references(() => user.id, { onDelete: "set null" }),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (t) => [
+    check("feature_flags_enabled_check", sql`${t.enabled} in (0,1)`),
+    index("feature_flags_updated_by_idx").on(t.updatedBy),
+  ],
 );
 
 export const account = sqliteTable(

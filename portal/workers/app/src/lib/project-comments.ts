@@ -2,6 +2,7 @@ import { and, desc, eq, lt, or } from "drizzle-orm";
 import { createDb, schema } from "@quincy/db";
 import { NOTIFICATION_OUTBOX_EVENT_TYPE, staffPathFor, type RichTextDoc } from "@quincy/shared";
 import { newId } from "./ids";
+import { auditMeta, type AuditPrincipal } from "./audit";
 
 const readMarkerUpsertSql = `
 INSERT INTO project_comment_read_markers (
@@ -62,6 +63,7 @@ export type CreateProjectCommentInput = {
   mentions: Array<{ id: string; commentId: string; mentionedUserId: string; createdAt: Date }>;
   wallClockMs: number;
   occurredAt: Date;
+  auditPrincipal?: AuditPrincipal;
 };
 
 export type EditProjectCommentInput = {
@@ -74,6 +76,7 @@ export type EditProjectCommentInput = {
   addMentions: Array<{ id: string; commentId: string; mentionedUserId: string; createdAt: Date }>;
   editedAt: Date;
   occurredAt: Date;
+  auditPrincipal?: AuditPrincipal;
 };
 
 export type DeleteProjectCommentInput = {
@@ -81,6 +84,7 @@ export type DeleteProjectCommentInput = {
   commentId: string;
   actorId: string;
   occurredAt: Date;
+  auditPrincipal?: AuditPrincipal;
 };
 
 export type ProjectCommentMentionAuthorizationSnapshot =
@@ -333,8 +337,8 @@ export async function createProjectComment(db: D1Database, input: CreateProjectC
   const marker = db.prepare(readMarkerUpsertSql).bind(input.authorId, input.occurredAt.getTime(), input.projectId, input.id);
   const audit = db.prepare(`
     INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
-    VALUES (?, ?, 'project_comment.create', 'project_comment', ?, NULL, ?)
-  `).bind(newId(), input.authorId, input.id, input.occurredAt.getTime());
+    VALUES (?, ?, 'project_comment.create', 'project_comment', ?, ?, ?)
+  `).bind(newId(), input.auditPrincipal?.id ?? input.authorId, input.id, auditMeta(input.auditPrincipal ?? { id: input.authorId, impersonatedBy: null }), input.occurredAt.getTime());
   const outbox = mentionOutboxStatements(db, input.projectId, input.authorId, activity, input.mentions, snapshots, input.occurredAt.getTime());
   await db.batch([insert, ...mentions, marker, audit, ...outbox.statements]);
   const comment = await findProjectComment(createDb(db), input.projectId, input.id);
@@ -352,9 +356,9 @@ export async function editProjectComment(db: D1Database, input: EditProjectComme
   `).bind(input.body, input.contentJson, input.editedAt.getTime(), input.commentId, input.projectId)];
   statements.push(db.prepare(`
     INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
-    SELECT ?, ?, 'project_comment.edit', 'project_comment', ?, NULL, ?
+    SELECT ?, ?, 'project_comment.edit', 'project_comment', ?, ?, ?
     WHERE changes() = 1
-  `).bind(newId(), input.actorId, input.commentId, input.occurredAt.getTime()));
+  `).bind(newId(), input.auditPrincipal?.id ?? input.actorId, input.commentId, auditMeta(input.auditPrincipal ?? { id: input.actorId, impersonatedBy: null }), input.occurredAt.getTime()));
   statements.push(...input.removeMentionIds.map((id) => db.prepare("DELETE FROM project_comment_mentions WHERE id = ? AND comment_id = ?").bind(id, input.commentId)));
   statements.push(...input.addMentions.map((mention) => db.prepare(`
     INSERT INTO project_comment_mentions (id, comment_id, mentioned_user_id, created_at)
@@ -373,9 +377,9 @@ export async function deleteProjectComment(db: D1Database, input: DeleteProjectC
   const deletion = db.prepare("DELETE FROM project_comments WHERE id = ? AND project_id = ?").bind(input.commentId, input.projectId);
   const audit = db.prepare(`
     INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
-    SELECT ?, ?, 'project_comment.delete', 'project_comment', ?, NULL, ?
+    SELECT ?, ?, 'project_comment.delete', 'project_comment', ?, ?, ?
     WHERE changes() = 1
-  `).bind(newId(), input.actorId, input.commentId, input.occurredAt.getTime());
+  `).bind(newId(), input.auditPrincipal?.id ?? input.actorId, input.commentId, auditMeta(input.auditPrincipal ?? { id: input.actorId, impersonatedBy: null }), input.occurredAt.getTime());
   const results = await db.batch([deletion, audit]);
   // The JS-level .meta.changes on the DELETE includes cascade-deleted
   // project_comment_mentions rows (ON DELETE CASCADE), so the outer check must accept any

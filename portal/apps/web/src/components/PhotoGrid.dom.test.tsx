@@ -4,6 +4,9 @@ import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PhotoGrid, type WorkspaceAsset } from "./PhotoGrid";
 
+const confirmMock = vi.hoisted(() => vi.fn(() => Promise.resolve(true)));
+vi.mock("../lib/confirm", () => ({ confirm: confirmMock }));
+
 function asset(id: string, overrides: Partial<WorkspaceAsset> = {}): WorkspaceAsset {
   return { id, section: null, collectionId: "collection", kind: "photo", originalFilename: `${id}.jpg`, bytes: 1, width: null, height: null, ratingFromMetadata: null, renditionStatus: "ready", createdAt: "2026-07-21T00:00:00.000Z", sourceRawAssetId: null, version: 1, versionGroupId: null, supersedesAssetId: null, review: null, selected: false, ...overrides };
 }
@@ -210,7 +213,7 @@ describe("PhotoGrid select-all / deselect-all", () => {
 
 describe("PhotoGrid deletion controls", () => {
   let host: HTMLElement;
-  beforeEach(() => { host = mount(); window.confirm = vi.fn(() => true); });
+  beforeEach(() => { host = mount(); confirmMock.mockReset().mockResolvedValue(true); });
   afterEach(async () => { await unmount(); host.remove(); });
 
   it("confirms a single delete and prunes that id from multi", async () => {
@@ -218,7 +221,7 @@ describe("PhotoGrid deletion controls", () => {
     await render(<PhotoGrid {...baseProps} canDelete onDelete={onDelete} assets={[asset("one"), asset("two")]} />);
     await click(selBox(host, "one"));
     await click(host.querySelector('[aria-label="Delete one.jpg"]')!);
-    expect(window.confirm).toHaveBeenCalledWith("Permanently delete one.jpg? This cannot be undone.");
+    expect(confirmMock).toHaveBeenCalledWith({ title: "Delete one.jpg?", message: "Permanently delete one.jpg? This cannot be undone.", confirmLabel: "Delete", danger: true });
     expect(onDelete).toHaveBeenCalledWith("one");
     expect(host.querySelector(".actionbar")).toBeNull();
   });
@@ -228,14 +231,14 @@ describe("PhotoGrid deletion controls", () => {
     await render(<PhotoGrid {...baseProps} canDelete onBulkDelete={onBulkDelete} assets={[asset("one"), asset("two")]} />);
     await click(selBox(host, "one")); await click(selBox(host, "two"));
     await click([...host.querySelectorAll<HTMLButtonElement>(".actionbar .barbtn")].find((button) => button.textContent === "Delete 2")!);
-    expect(window.confirm).toHaveBeenCalledWith("Permanently delete 2 selected assets? This cannot be undone.");
+    expect(confirmMock).toHaveBeenCalledWith({ title: "Delete 2 selected assets?", message: "Permanently delete 2 selected assets? This cannot be undone.", confirmLabel: "Delete selected", danger: true });
     expect(onBulkDelete).toHaveBeenCalledWith(["one", "two"]);
     expect(host.querySelector(".actionbar")?.textContent).toContain("1");
     expect(isSelected(host, "two")).toBe(true);
   });
 
   it("leaves selection and calls untouched when a confirmation is declined", async () => {
-    window.confirm = vi.fn(() => false);
+    confirmMock.mockResolvedValue(false);
     const onDelete = vi.fn(async () => undefined);
     await render(<PhotoGrid {...baseProps} canDelete onDelete={onDelete} assets={[asset("one")]} />);
     await click(selBox(host, "one")); await click(host.querySelector('[aria-label="Delete one.jpg"]')!);
@@ -244,7 +247,7 @@ describe("PhotoGrid deletion controls", () => {
   });
 
   it("leaves the whole selection untouched when a bulk confirmation is declined", async () => {
-    window.confirm = vi.fn(() => false);
+    confirmMock.mockResolvedValue(false);
     const onBulkDelete = vi.fn(async () => ({ succeededIds: [], failedIds: [] }));
     await render(<PhotoGrid {...baseProps} canDelete onBulkDelete={onBulkDelete} assets={[asset("one"), asset("two")]} />);
     await click(selBox(host, "one")); await click(selBox(host, "two"));

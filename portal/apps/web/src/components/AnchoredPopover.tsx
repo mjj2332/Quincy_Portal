@@ -24,6 +24,7 @@ export function useAnchoredPopover({ open, onClose, placement = "bottom-end" }: 
       const reference = floating.refs.reference.current as HTMLElement | null;
       const floatingNode = floating.refs.floating.current;
       if (!node || reference?.contains(node) || floatingNode?.contains(node)) return false;
+      if (node instanceof Element && node.closest("[data-confirm-modal-root]")) return false;
       if (!includeFocusBoundary || !(node instanceof Element)) return true;
       if (node.matches("[data-floating-ui-focus-guard]") || node.closest("[data-floating-ui-focus-guard]")) return false;
       return !floatingNode?.closest("[data-floating-ui-portal]")?.contains(node);

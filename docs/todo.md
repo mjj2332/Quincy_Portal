@@ -7,7 +7,7 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
 > counts, full diagnostic transcripts) has been cut in favor of what/when/deploy-state. See
 > `docs/lessons.md` for incident mechanics, and `docs/reviews/` for full QA-sweep detail.
 
-## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29, seed-admin UUID migration 2026-07-29, notification dismiss + stalled-guard 2026-07-30, download selection 2026-08-04, notice-board rich text + mentions 2026-08-17, project comments + collaboration panel 2026-08-17, project subtasks/checklist 2026-08-17, collaboration panel relocated to Project page 2026-08-17, collaboration panel UI fixes + due-time reminder 2026-08-17, notification click navigation 2026-08-17, comment ordering + Shift+Enter soft breaks 2026-08-17, mention-email content 2026-08-20, TB0 authority promotion 2026-08-24, TB0A React 19.2 deployed + accepted 2026-08-25, TB0B pipeline configuration boundary deployed 2026-08-24, TB1 Tailwind v4/shadcn foundation deployed 2026-08-25, TB2 route-safe project data freshness deployed 2026-08-25, TB3 project discussion v2 deployed 2026-08-25, TB4 notification outbox deployed 2026-08-26)
+## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29, seed-admin UUID migration 2026-07-29, notification dismiss + stalled-guard 2026-07-30, download selection 2026-08-04, notice-board rich text + mentions 2026-08-17, project comments + collaboration panel 2026-08-17, project subtasks/checklist 2026-08-17, collaboration panel relocated to Project page 2026-08-17, collaboration panel UI fixes + due-time reminder 2026-08-17, notification click navigation 2026-08-17, comment ordering + Shift+Enter soft breaks 2026-08-17, mention-email content 2026-08-20, TB0 authority promotion 2026-08-24, TB0A React 19.2 deployed + accepted 2026-08-25, TB0B pipeline configuration boundary deployed 2026-08-24, TB1 Tailwind v4/shadcn foundation deployed 2026-08-25, TB2 route-safe project data freshness deployed 2026-08-25, TB3 project discussion v2 deployed 2026-08-25, TB4 notification outbox deployed 2026-08-26, confirmation modal + admin user impersonation deployed 2026-08-26)
 
 - **TB4 (notification outbox and Cloudflare Queues — durable delivery for project-comment
   mentions only) is deployed to production, 2026-08-26**
@@ -41,6 +41,44 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
   confirmation-gate block; verification/cleanup agent-driven) confirmed outbox/ledger/bell/Admin/
   audit all correct with a clean console. Full review-and-fix history:
   `docs/plans/revamp_2026_portal/evidence/TB4/review-and-fix-cycle.txt`.
+- **In-app confirmation modal + admin user impersonation is deployed to production, 2026-08-26**
+  (`docs/plans/implemented/Confirmation-Modal-And-Admin-Impersonation-Plan.md`, commits `f2d3700`
+  build, `3b9632a`/`de17a59` two diff-review fix passes, `320959b` Opus final-draft fix pass, app
+  Worker version `58fe2088-605a-46ca-a5e8-67e196715058`, rollback target
+  `2fb292aa-f042-4982-96f9-1b64991922cf`). Ad hoc dev-tooling work (not a numbered TB tracer
+  bullet), motivated by repeated automation friction this pipeline hit testing native
+  `window.confirm()` dialogs. Replaces all 16 `window.confirm()` call sites with a real-DOM,
+  automation-testable confirmation modal (promise-based singleton, focus-trapped portal via
+  `@floating-ui/react`, stable `data-testid` selectors), and wires up better-auth's official
+  admin-impersonation plugin (installed but previously unconfigured) behind a runtime D1 toggle so
+  an Admin can act as a real Photographer/Editor for testing — never another Admin, never a client
+  (clients aren't user accounts). Deliberately, explicitly bypasses the annotation/notice-board/
+  project-comment author-only invariant while impersonating (see the caveat added to `CLAUDE.md`/
+  `AGENTS.md`'s author-only gotcha) and has no automatic session-recovery path if the original or
+  target session is invalidated out-of-band — both are accepted, bounded, toggle-gated tradeoffs
+  the user chose explicitly after seeing the alternative (a more complex auto-recovery subsystem
+  coupled to better-auth's private cookie internals) and rejecting it. Migration `0032` added
+  better-auth's plugin-compatibility columns plus the additive `feature_flags` table (seeded OFF).
+  Plan review: 2 Sol rounds (6 findings round 1, 5 more round 2) + 3 Opus rounds (2 High/4
+  Medium/4 Low round 1 — most seriously an unenforced original-session-liveness check and a
+  target-promotion-to-Admin gap — then a user-directed simplification dropping an over-engineered
+  auto-recovery subsystem in favor of the accepted manual fallback, then 2 more Medium/2 Low round
+  2) → APPROVE. Build: Luna built it; independent verification (outside Luna's sandbox, which
+  can't run the worker-app test suite at all) found and fixed 3 pre-existing test-authoring bugs in
+  the impersonation integration suite — all confirmed to be test bugs, not implementation defects,
+  by reading the actual better-auth internals directly. Diff review: 2 Sol rounds (2 Medium/3 Low
+  round 1 — a failed-Exit message that could cover the topbar's Sign-out control, materially
+  incomplete security-test coverage — then a test-isolation leak and an unfalsifiable focus-trap
+  assertion found round 2, the latter replaced with an honest comment instead of a test that
+  couldn't actually fail) + Opus final-draft review (APPROVE, 4 Low findings fixed, including a
+  real Hono trailing-slash gate-bypass gap — not exploitable given the plugin's own permission
+  check and session-hook revalidation, but hardened anyway). Production: rollback target/preflight/
+  recovery export recorded, 0032 applied cleanly, app-only deploy (background/webhook-ingress
+  unchanged), authenticated smoke test performed live by the human operator in the Claude Browser
+  pane (flag toggle, Act-as, banner, identity switch, Exit-restore, and the full audit trail all
+  verified directly against production D1) — no client project data touched, since the disposable
+  QA test account has zero project memberships. Flag disabled after the smoke window, zero live
+  impersonated sessions confirmed remaining.
 - **TB3 (project discussion v2 — TanStack Query freshness for project comments plus a new
   per-user server-owned read-marker table) is deployed to production, 2026-08-25**
   (`docs/plans/implemented/Revamp-TB3-Project-Discussion-V2-Plan.md`, commits `08f56f4` code/tests +

@@ -6,6 +6,7 @@ import { LazyImage } from "./LazyImage";
 import { clampZoom, initialZoom, panBy, zoomBy, type ZoomBounds, type ZoomTransform } from "../lib/lightbox-zoom";
 import { cycleLightboxIndex } from "../lib/lightbox-navigation";
 import { useLightboxNeighborPreload } from "../lib/lightbox-neighbor-preload";
+import { confirm } from "../lib/confirm";
 
 const labels = [
   { value: "hero", name: "Hero", color: "#9a6a1f" }, { value: "select", name: "Select", color: "#3f5b3a" }, { value: "maybe", name: "Maybe", color: "#2f3b4d" }, { value: "cut", name: "Cut", color: "#7a2420" },
@@ -40,10 +41,10 @@ function viewerBand(): ViewerBand {
   return "desktop";
 }
 
-function FilmstripThumbnail({ asset, active, onSelect }: { asset: WorkspaceAsset; active: boolean; onSelect: () => void }) {
+function FilmstripThumbnail({ asset, active, onSelect }: { asset: WorkspaceAsset; active: boolean; onSelect: (event: React.MouseEvent<HTMLButtonElement>) => void }) {
   const [failed, setFailed] = useState(false);
   const [retryToken, setRetryToken] = useState(0);
-  function activate() { if (failed) { setFailed(false); setRetryToken((current) => current + 1); } else onSelect(); }
+  function activate(event: React.MouseEvent<HTMLButtonElement>) { if (failed) { setFailed(false); setRetryToken((current) => current + 1); } else onSelect(event); }
   return <button className={`strip__button ${active ? "is-active" : ""}`} type="button" onClick={activate} title={failed ? `Retry ${asset.originalFilename}` : asset.originalFilename} aria-label={failed ? `Retry thumbnail for ${asset.originalFilename}` : asset.originalFilename}><LazyImage className="strip__t" preload="background" assetId={asset.id} alt={asset.originalFilename} retryToken={retryToken} onFailedChange={setFailed} /></button>;
 }
 
@@ -109,8 +110,10 @@ export function Lightbox({ assets, rawAssets, initialAssetId, collectionKind, ca
   const rawCompareAsset = useMemo(() => asset.sourceRawAssetId ? rawAssets.find((item) => item.id === asset.sourceRawAssetId) ?? null : null, [asset.sourceRawAssetId, rawAssets]);
   const compareActive = band !== "phone" && showRawCompare && Boolean(rawCompareAsset);
   const stars = asset.review?.stars ?? asset.ratingFromMetadata ?? 0;
-  const move = (change: number) => {
-    if (hasDraftMarkup && !window.confirm("Discard the current unsaved markup?")) return;
+  const move = async (change: number, event?: { preventDefault: () => void; stopPropagation: () => void }) => {
+    event?.preventDefault();
+    event?.stopPropagation();
+    if (hasDraftMarkup && !await confirm({ title: "Discard unsaved markup?", message: "Discard the current unsaved markup?", confirmLabel: "Discard", danger: true })) return;
     setIndex((current) => { const next = cycleLightboxIndex(current, change, assets.length); activeAssetIdRef.current = assets[next]?.id ?? activeAssetIdRef.current; return next; });
   };
 
@@ -237,8 +240,8 @@ export function Lightbox({ assets, rawAssets, initialAssetId, collectionKind, ca
         return;
       }
       if (event.key === "Escape") { onClose(); return; }
-      if (event.key === "ArrowLeft") { move(-1); return; }
-      if (event.key === "ArrowRight") { move(1); return; }
+      if (event.key === "ArrowLeft") { event.preventDefault(); event.stopPropagation(); void move(-1, event); return; }
+      if (event.key === "ArrowRight") { event.preventDefault(); event.stopPropagation(); void move(1, event); return; }
       if (!canReview) return;
       if (event.key.toLowerCase() === "a") void onReview(asset.id, { decision: asset.review?.decision === "approved" ? null : "approved" });
       if (event.key.toLowerCase() === "x") void onReview(asset.id, { decision: asset.review?.decision === "flagged" ? null : "flagged" });
@@ -254,7 +257,21 @@ export function Lightbox({ assets, rawAssets, initialAssetId, collectionKind, ca
     if (!rect) return { x: 0, y: 0 };
     return { x: Math.max(0, Math.min(1, Number(((event.clientX - rect.left) / rect.width).toFixed(4)))), y: Math.max(0, Math.min(1, Number(((event.clientY - rect.top) / rect.height).toFixed(4)))) };
   }
-  function drawDown(event: React.PointerEvent<SVGSVGElement>) { if (!canAnnotate) return; if (strokes.length === 0 && editingDrawingId === null && editingAnnotationId !== null) { if (!window.confirm("Discard the note edit in progress?")) return; cancelInlineEdit(); } event.preventDefault(); drawingRef.current = true; setStrokes((current) => [...current, { color: tool.color, width: tool.width, points: [pointerPoint(event)] }]); event.currentTarget.setPointerCapture(event.pointerId); }
+  async function drawDown(event: React.PointerEvent<SVGSVGElement>) {
+    if (!canAnnotate) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (strokes.length === 0 && editingDrawingId === null && editingAnnotationId !== null) {
+      if (!await confirm({ title: "Discard note edit?", message: "Discard the note edit in progress?", confirmLabel: "Discard", danger: true })) return;
+      // The original pointer gesture may have ended while the modal was open. Do not
+      // synthesize a point or resume pointer capture; the next fresh gesture draws.
+      cancelInlineEdit();
+      return;
+    }
+    drawingRef.current = true;
+    setStrokes((current) => [...current, { color: tool.color, width: tool.width, points: [pointerPoint(event)] }]);
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
   function drawMove(event: React.PointerEvent<SVGSVGElement>) { if (!canAnnotate || !drawingRef.current) return; const point = pointerPoint(event); setStrokes((current) => { if (!current.length) return current; const next = current.slice(); const last = next[next.length - 1]!; next[next.length - 1] = { ...last, points: [...last.points, point] }; return next; }); }
   function drawUp() { drawingRef.current = false; }
   async function saveAnnotation() {
@@ -310,7 +327,7 @@ export function Lightbox({ assets, rawAssets, initialAssetId, collectionKind, ca
     setEditingAnnotationId(null); setEditingAnnotationNote("");
   }
   async function deleteAnnotation(annotation: Annotation) {
-    if (!window.confirm(annotation.strokeR2Key ? "Delete this annotation and its markup?" : "Delete this annotation?")) return;
+    if (!await confirm({ title: "Delete annotation?", message: annotation.strokeR2Key ? "Delete this annotation and its markup?" : "Delete this annotation?", confirmLabel: "Delete", danger: true })) return;
     const assetIdAtDelete = asset.id;
     const before = annotations;
     const strokeCacheBefore = strokeCache;
@@ -408,7 +425,7 @@ export function Lightbox({ assets, rawAssets, initialAssetId, collectionKind, ca
     const verticalMargin = 12;
     if (Math.abs(dx) < distance || Math.abs(dx) <= Math.abs(dy) + verticalMargin) return;
     active.committed = true;
-    move(dx < 0 ? 1 : -1);
+    void move(dx < 0 ? 1 : -1, event);
   }
   function wheelZoom(event: React.WheelEvent<HTMLDivElement>) {
     if (canAnnotate) return;
@@ -445,7 +462,22 @@ export function Lightbox({ assets, rawAssets, initialAssetId, collectionKind, ca
     })}
     {strokes.map((stroke, strokeIndex) => strokeVisible(stroke, `draft-${strokeIndex}`, 1))}
   </svg>;
-  const editedStage = <div className="viewer__stage"><button className="icbtn icbtn--ondark viewer__close" type="button" onClick={() => { if (hasDraftMarkup && !window.confirm("Discard the current unsaved markup?")) return; onClose(); }} aria-label="Close">×</button><button ref={reviewTriggerRef} className="viewer__panel-trigger" type="button" onClick={(event) => openPanel(event.currentTarget)} aria-expanded={panelOpen} aria-controls="lightbox-review-panel">Review</button><div className="viewer__meta"><div className="a">{asset.originalFilename}</div><div className="b">{collectionKind === "edited" ? "Edited" : "RAW"} · Frame {displayIndex + 1} of {assets.length}</div></div><button className="icbtn icbtn--ondark viewer__nav prev" type="button" onClick={() => move(-1)} aria-label="Previous frame">←</button><div className="viewer__imgwrap"><div className={`canvasframe canvasframe--zoomable ${zoom.scale > 1 && !canAnnotate ? "is-zoomed" : ""}`} ref={frameRef} style={zoomStyleFor(frameRef)} onPointerDown={(event) => { startPan(event); startSwipe(event); }} onPointerMove={(event) => { movePan(event); moveSwipe(event); }} onPointerUp={(event) => { endSwipe(event); endPan(event); }} onPointerCancel={(event) => { swipeRef.current = null; endPan(event); }} onWheel={wheelZoom} onTouchStart={touchStartZoom} onTouchMove={touchMoveZoom} onTouchEnd={touchEndZoom}><img className="viewer__img" draggable={false} onDragStart={(event) => event.preventDefault()} src={`/media/asset/${encodeURIComponent(asset.id)}/web`} alt={asset.originalFilename} />{drawLayer}</div></div><button className="icbtn icbtn--ondark viewer__nav next" type="button" onClick={() => move(1)} aria-label="Next frame">→</button><div className={`viewer__shortcuts ${hasDraftMarkup ? "is-drawing" : ""}`} aria-hidden="true">{hasDraftMarkup ? <><span><kbd className="kbd">⌘Z</kbd> undo</span><i>·</i><span><kbd className="kbd">Esc</kbd> done</span></> : <><span><kbd className="kbd">←</kbd><kbd className="kbd">→</kbd> frames</span>{canReview && <><i>·</i><span><kbd className="kbd">A</kbd> approve</span><i>·</i><span><kbd className="kbd">X</kbd> flag</span><i>·</i><span><kbd className="kbd">1–5</kbd> rate</span><i>·</i><span><kbd className="kbd">0</kbd> clear</span></>}<i>·</i><span><kbd className="kbd">Esc</kbd> close</span></>}</div>
+  async function closeViewer(event?: React.MouseEvent<HTMLButtonElement>) {
+    event?.preventDefault();
+    event?.stopPropagation();
+    if (hasDraftMarkup && !await confirm({ title: "Discard unsaved markup?", message: "Discard the current unsaved markup?", confirmLabel: "Discard", danger: true })) return;
+    onClose();
+  }
+  async function selectFilmstrip(index: number, event: React.MouseEvent<HTMLButtonElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (hasDraftMarkup && !await confirm({ title: "Discard unsaved markup?", message: "Discard the current unsaved markup?", confirmLabel: "Discard", danger: true })) return;
+    const nextAsset = assets[index];
+    if (!nextAsset) return;
+    activeAssetIdRef.current = nextAsset.id;
+    setIndex(index);
+  }
+  const editedStage = <div className="viewer__stage"><button className="icbtn icbtn--ondark viewer__close" type="button" onClick={(event) => { void closeViewer(event); }} aria-label="Close">×</button><button ref={reviewTriggerRef} className="viewer__panel-trigger" type="button" onClick={(event) => openPanel(event.currentTarget)} aria-expanded={panelOpen} aria-controls="lightbox-review-panel">Review</button><div className="viewer__meta"><div className="a">{asset.originalFilename}</div><div className="b">{collectionKind === "edited" ? "Edited" : "RAW"} · Frame {displayIndex + 1} of {assets.length}</div></div><button className="icbtn icbtn--ondark viewer__nav prev" type="button" onClick={(event) => { void move(-1, event); }} aria-label="Previous frame">←</button><div className="viewer__imgwrap"><div className={`canvasframe canvasframe--zoomable ${zoom.scale > 1 && !canAnnotate ? "is-zoomed" : ""}`} ref={frameRef} style={zoomStyleFor(frameRef)} onPointerDown={(event) => { startPan(event); startSwipe(event); }} onPointerMove={(event) => { movePan(event); moveSwipe(event); }} onPointerUp={(event) => { endSwipe(event); endPan(event); }} onPointerCancel={(event) => { swipeRef.current = null; endPan(event); }} onWheel={wheelZoom} onTouchStart={touchStartZoom} onTouchMove={touchMoveZoom} onTouchEnd={touchEndZoom}><img className="viewer__img" draggable={false} onDragStart={(event) => event.preventDefault()} src={`/media/asset/${encodeURIComponent(asset.id)}/web`} alt={asset.originalFilename} />{drawLayer}</div></div><button className="icbtn icbtn--ondark viewer__nav next" type="button" onClick={(event) => { void move(1, event); }} aria-label="Next frame">→</button><div className={`viewer__shortcuts ${hasDraftMarkup ? "is-drawing" : ""}`} aria-hidden="true">{hasDraftMarkup ? <><span><kbd className="kbd">⌘Z</kbd> undo</span><i>·</i><span><kbd className="kbd">Esc</kbd> done</span></> : <><span><kbd className="kbd">←</kbd><kbd className="kbd">→</kbd> frames</span>{canReview && <><i>·</i><span><kbd className="kbd">A</kbd> approve</span><i>·</i><span><kbd className="kbd">X</kbd> flag</span><i>·</i><span><kbd className="kbd">1–5</kbd> rate</span><i>·</i><span><kbd className="kbd">0</kbd> clear</span></>}<i>·</i><span><kbd className="kbd">Esc</kbd> close</span></>}</div>
     {canAnnotate && <div className="drawbar"><span className="drawbar__lbl">{editingDrawingId ? "Editing drawing" : "Markup"}</span><span className="drawbar__grp">{["#e64b3c", "#f0a020", "#3f8f5a", "#2f6df0", "#ffffff", "#0a0a0a"].map((color) => <button key={color} className={`swatch ${tool.color === color ? "on" : ""}`} type="button" style={{ background: color }} onClick={() => setTool((current) => ({ ...current, color }))} />)}</span><span className="drawbar__grp">{[2, 4, 7].map((width) => <button key={width} className={`wbtn ${tool.width === width ? "on" : ""}`} type="button" onClick={() => setTool((current) => ({ ...current, width }))}><span style={{ width: width + 3, height: width + 3 }} /></button>)}</span><button className="barbtn" type="button" disabled={!strokes.length} onClick={() => setStrokes((current) => current.slice(0, -1))}>Undo</button><button className="barbtn" type="button" disabled={!strokes.length} onClick={() => setStrokes([])}>Clear</button>{editingDrawingId && <><button className="barbtn" type="button" onClick={exitDrawMode}>Cancel</button><button className="barbtn barbtn--solid" type="button" disabled={isSaving} onClick={() => void saveDrawingEdit()}>Save</button></>}</div>}
   </div>;
 
@@ -469,6 +501,6 @@ export function Lightbox({ assets, rawAssets, initialAssetId, collectionKind, ca
       {canReview && <section className="vpanel__sec"><div className="eylab">Label</div><div className="labels">{labels.map((label) => <button className={`labelpick ${asset.review?.colorLabel === label.value ? "is-on" : ""}`} type="button" key={label.value} style={{ background: label.color }} title={label.name} onClick={() => void onReview(asset.id, { colorLabel: asset.review?.colorLabel === label.value ? null : label.value })} />)}</div></section>}
       <section className="vpanel__sec"><div className="eylab" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}><span>Markup & annotations</span><span style={{ display: "flex", gap: 6 }}><button className="chip" type="button" onClick={() => setMarkupVisible((current) => !current)}>{markupVisible ? "Hide markup" : "Show markup"}</button></span></div>{canAnnotate && <><textarea className="annotation-note" placeholder="Optional note for this markup…" value={annotationNote} disabled={editingDrawingId !== null || editingAnnotationId !== null} onChange={(event) => setAnnotationNote(event.target.value)} /><button className="dbtn" style={{ width: "100%", marginTop: 8 }} type="button" disabled={isSaving || editingDrawingId !== null || (!strokes.length && !annotationNote.trim())} onClick={() => void saveAnnotation()}>Save annotation</button></>}<div className="thread" style={{ marginTop: 14 }}>{annotations.length === 0 ? <div className="muted" style={{ fontSize: 14 }}>No annotations yet.</div> : annotations.map((annotation) => <div className={`cmt ${highlightedAnnotationId === annotation.id ? "cmt--highlighted" : ""}`} key={annotation.id} ref={(el) => { if (el) annotationRefs.current.set(annotation.id, el); else annotationRefs.current.delete(annotation.id); }}><div className="cmt__pin">✎</div><div className="cmt__b"><div className="cmt__who">{annotation.author.name}<span>{annotation.author.role}</span></div>{editingAnnotationId === annotation.id ? <><textarea className="annotation-note" aria-label="Edit annotation note" value={editingAnnotationNote} disabled={isSaving} onChange={(event) => setEditingAnnotationNote(event.target.value)} /><div className="spread" style={{ marginTop: 6 }}><button className="comment-reply" type="button" disabled={isSaving} onClick={cancelInlineEdit}>Cancel</button><button className="comment-reply" type="button" disabled={isSaving} onClick={() => void saveAnnotationEdit()}>Save</button></div></> : <>{annotation.noteText && <div className="cmt__txt">{annotation.noteText}</div>}<div className="ey muted" style={{ marginTop: 6 }}>{time(annotation.createdAt)}{annotation.editedAt && " · (edited)"}{annotation.authorId === currentUserId && <> · <button className="comment-reply" type="button" disabled={hasDraftMarkup || isSaving} onClick={() => { setEditingAnnotationId(annotation.id); setEditingAnnotationNote(annotation.noteText ?? ""); }}>Edit note</button> · <button className="comment-reply" type="button" disabled={hasDraftMarkup || isSaving || !strokesReady(annotation)} title={!strokesReady(annotation) ? "Loading markup…" : undefined} onClick={() => startDrawingEdit(annotation)}>{annotation.strokeR2Key ? "Edit drawing" : "Add drawing"}</button> · <button className="comment-reply" type="button" disabled={hasDraftMarkup || isSaving} onClick={() => void deleteAnnotation(annotation)}>Delete</button></>}</div></>}</div></div>)}</div></section>
     </div></> : null}</aside>
-    <div className="strip">{assets.map((item, itemIndex) => <FilmstripThumbnail key={item.id} asset={item} active={itemIndex === displayIndex} onSelect={() => { if (hasDraftMarkup && !window.confirm("Discard the current unsaved markup?")) return; activeAssetIdRef.current = item.id; setIndex(itemIndex); }} />)}</div>
+    <div className="strip">{assets.map((item, itemIndex) => <FilmstripThumbnail key={item.id} asset={item} active={itemIndex === displayIndex} onSelect={(event) => { void selectFilmstrip(itemIndex, event); }} />)}</div>
   </div>;
 }

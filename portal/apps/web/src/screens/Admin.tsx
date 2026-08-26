@@ -1,9 +1,12 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState, type ChangeEvent, type FormEvent } from "react";
 import { ROLES, type Role } from "@quincy/shared";
 import { ApiError, apiGet, apiPatch, apiPost } from "../lib/api";
 import { useCapabilities } from "../lib/capabilities";
 import { useStages } from "../lib/stages";
 import { invalidateActiveProjectDetails, useOptionalProjectQueryClient } from "../lib/project-data";
+import { confirm } from "../lib/confirm";
+import { impersonateUser } from "../lib/auth";
+import { locationStore } from "../lib/router";
 
 type AdminTab = "users" | "directory" | "pipeline" | "integrations";
 type Toast = { id: number; message: string; tone: "success" | "error" };
@@ -11,6 +14,7 @@ type User = { id: string; name: string; email: string; role: Role; active: boole
 type IntegrationStatus = "connected" | "disconnected" | "expired" | "error";
 type Integration = { provider: string; status: IntegrationStatus; expiresAt: string | null; lastEventAt: string | null; lastError: string | null };
 type UsersResponse = { users: User[] };
+type ImpersonationSettingsResponse = { enabled: boolean };
 type IntegrationsResponse = { integrations: Integration[] };
 type Agency = { id: string; name: string; notes: string | null; agentCount: number; createdAt: string | null };
 type Agent = { id: string; agencyId: string | null; agencyName?: string | null; name: string; email: string | null; phone: string | null; createdAt: string | null };
@@ -84,6 +88,8 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
   ];
   const [activeTab, setActiveTab] = useState<AdminTab>(availableTabs[0] ?? "users");
   const [users, setUsers] = useState<User[]>([]);
+  const [impersonationEnabled, setImpersonationEnabled] = useState(false);
+  const [isUpdatingImpersonation, setIsUpdatingImpersonation] = useState(false);
   const [integrations, setIntegrations] = useState<Integration[]>([]);
   const [agencies, setAgencies] = useState<Agency[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
@@ -135,13 +141,31 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
     setIsLoadingUsers(true);
     setUsersError(undefined);
     try {
-      setUsers((await apiGet<UsersResponse>("/api/users")).users);
+      const [usersResponse, settingsResponse] = await Promise.all([
+        apiGet<UsersResponse>("/api/users"),
+        apiGet<ImpersonationSettingsResponse>("/api/users/impersonation-settings"),
+      ]);
+      setUsers(usersResponse.users);
+      setImpersonationEnabled(settingsResponse.enabled);
     } catch (reason) {
       setUsersError(reason instanceof Error ? reason.message : "Users could not be loaded.");
     } finally {
       setIsLoadingUsers(false);
     }
   }, []);
+
+  async function toggleImpersonation(event: ChangeEvent<HTMLInputElement>) {
+    const requested = event.currentTarget.checked;
+    setIsUpdatingImpersonation(true);
+    try {
+      const response = await apiPatch<ImpersonationSettingsResponse, { enabled: boolean }>("/api/users/impersonation-settings", { enabled: requested });
+      setImpersonationEnabled(response.enabled);
+    } catch (reason) {
+      toast(reason instanceof Error ? reason.message : "The impersonation setting could not be updated.", "error");
+    } finally {
+      setIsUpdatingImpersonation(false);
+    }
+  }
 
   const loadIntegrations = useCallback(async () => {
     setIsLoadingIntegrations(true);
@@ -250,10 +274,29 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
     }
   }
 
-  function toggleActive(user: User) {
+  async function toggleActive(user: User) {
     const action = user.active ? "deactivate" : "reactivate";
     const detail = user.active ? " This signs them out everywhere immediately." : "";
-    if (window.confirm(`Are you sure you want to ${action} ${user.name}?${detail}`)) void updateUser(user, { active: !user.active });
+    if (!await confirm({ title: user.active ? "Deactivate user?" : "Reactivate user?", message: `Are you sure you want to ${action} ${user.name}?${detail}`, confirmLabel: user.active ? "Deactivate" : "Reactivate", danger: user.active })) return;
+    await updateUser(user, { active: !user.active });
+  }
+
+  async function actAs(user: User) {
+    if (!await confirm({
+      title: `Act as ${user.name}?`,
+      message: "You'll gain their exact permissions, including bypassing author-only restrictions, until you exit.",
+      confirmLabel: "Act as user",
+      danger: true,
+    })) return;
+    setUpdatingUserId(user.id);
+    try {
+      await impersonateUser(user.id);
+      locationStore().replace("/");
+    } catch (reason) {
+      toast(reason instanceof Error ? reason.message : "The user session could not be started.", "error");
+    } finally {
+      setUpdatingUserId(undefined);
+    }
   }
 
   function startEditingUserName(user: User) {
@@ -321,8 +364,8 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
     finally { setOperatingRenditionDlqIds((current) => { const next = new Set(current); next.delete(id); return next; }); }
   }
   async function operateNotificationDelivery(item: NotificationDeliveryItem, action: "replay" | "discard") {
-    if (action === "discard" && !window.confirm("Discard this durable delivery? It will not delete the comment, inbox, or delivery history.")) return;
-    if (action === "replay" && item.unknownEmailPossible && !window.confirm("Cloudflare may already have accepted this email. Replaying can send a duplicate. In-app delivery will not be recreated. Replay email anyway?")) return;
+    if (action === "discard" && !await confirm({ title: "Discard delivery?", message: "Discard this durable delivery? It will not delete the comment, inbox, or delivery history.", confirmLabel: "Discard", danger: true })) return;
+    if (action === "replay" && item.unknownEmailPossible && !await confirm({ title: "Replay email?", message: "Cloudflare may already have accepted this email. Replaying can send a duplicate. In-app delivery will not be recreated. Replay email anyway?", confirmLabel: "Replay email", danger: true })) return;
     setOperatingNotificationIds((current) => new Set(current).add(item.outboxId));
     try {
       const body = action === "replay" && item.unknownEmailPossible ? { acknowledgeDuplicateEmail: true, channels: ["email"] as const } : {};
@@ -368,12 +411,14 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
 
         {isLoadingUsers && <div className="empty" role="status"><span className="serif">Loading users.</span>Reading the studio access roster.</div>}
         {!isLoadingUsers && usersError && <div className="empty" role="alert"><span className="serif">Users are unavailable.</span>{usersError}<div style={{ marginTop: 16 }}><button className="button button--secondary" type="button" onClick={() => void loadUsers()}>Try again</button></div></div>}
+        {!isLoadingUsers && !usersError && <label className="admin-toggle admin-impersonation-toggle"><input type="checkbox" checked={impersonationEnabled} disabled={isUpdatingImpersonation} onChange={toggleImpersonation} aria-label="Enable user impersonation (testing)" /><span>Enable user impersonation (testing)</span></label>}
         {!isLoadingUsers && !usersError && users.length === 0 && <div className="empty"><span className="serif">No users provisioned.</span>Provision a team member to give them closed-access Google sign-in.</div>}
         {!isLoadingUsers && !usersError && users.length > 0 && <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Access</th><th>Created</th><th><span className="sr-only">Actions</span></th></tr></thead><tbody>{users.map((user) => {
           const isSelf = user.id === currentUserId;
           const isUpdating = updatingUserId === user.id;
           const isEditingName = editingUserId === user.id;
-          return <tr key={user.id}><td data-label="Name">{isEditingName ? <input className="admin-inline-input" value={userNameDraft} onChange={(event) => setUserNameDraft(event.target.value)} aria-label={`Name for ${user.name}`} /> : <strong>{user.name}</strong>}</td><td data-label="Email">{user.email}</td><td data-label="Role"><label className="sr-only" htmlFor={`role-${user.id}`}>Role for {user.name}</label><select id={`role-${user.id}`} className="admin-role-select" value={user.role} disabled={isUpdating} onChange={(event) => void updateUser(user, { role: event.target.value as Role })}>{ROLES.map((role) => <option key={role} value={role}>{roleLabel(role)}</option>)}</select></td><td data-label="Access"><span className={`admin-status admin-status--${user.active ? "active" : "inactive"}`}>{user.active ? "Active" : "Inactive"}</span></td><td data-label="Created">{formatDate(user.createdAt)}</td><td className="admin-table__action">{isEditingName ? <><button className="button button--secondary" type="button" disabled={isUpdating} onClick={() => void saveUserName(user)}>Save</button><button className="button button--text" type="button" onClick={() => setEditingUserId(undefined)}>Cancel</button></> : <><button className="button button--text" type="button" disabled={isUpdating} onClick={() => startEditingUserName(user)}>Edit</button><button className="button button--secondary" type="button" disabled={isUpdating || isSelf} title={isSelf ? "You cannot deactivate your own account." : undefined} onClick={() => toggleActive(user)}>{user.active ? "Deactivate" : "Reactivate"}</button></>}</td></tr>;
+          const canImpersonate = impersonationEnabled && user.active && user.role !== "admin" && !isSelf;
+          return <tr key={user.id}><td data-label="Name">{isEditingName ? <input className="admin-inline-input" value={userNameDraft} onChange={(event) => setUserNameDraft(event.target.value)} aria-label={`Name for ${user.name}`} /> : <strong>{user.name}</strong>}</td><td data-label="Email">{user.email}</td><td data-label="Role"><label className="sr-only" htmlFor={`role-${user.id}`}>Role for {user.name}</label><select id={`role-${user.id}`} className="admin-role-select" value={user.role} disabled={isUpdating} onChange={(event) => void updateUser(user, { role: event.target.value as Role })}>{ROLES.map((role) => <option key={role} value={role}>{roleLabel(role)}</option>)}</select></td><td data-label="Access"><span className={`admin-status admin-status--${user.active ? "active" : "inactive"}`}>{user.active ? "Active" : "Inactive"}</span></td><td data-label="Created">{formatDate(user.createdAt)}</td><td className="admin-table__action">{isEditingName ? <><button className="button button--secondary" type="button" disabled={isUpdating} onClick={() => void saveUserName(user)}>Save</button><button className="button button--text" type="button" onClick={() => setEditingUserId(undefined)}>Cancel</button></> : <><button className="button button--text" type="button" disabled={isUpdating} onClick={() => startEditingUserName(user)}>Edit</button><button className="button button--secondary" type="button" disabled={isUpdating || isSelf} title={isSelf ? "You cannot deactivate your own account." : undefined} onClick={() => void toggleActive(user)}>{user.active ? "Deactivate" : "Reactivate"}</button>{canImpersonate && <button className="button button--text" type="button" disabled={isUpdating} onClick={() => void actAs(user)}>Act as</button>}</>}</td></tr>;
         })}</tbody></table></div>}
       </section>}
 

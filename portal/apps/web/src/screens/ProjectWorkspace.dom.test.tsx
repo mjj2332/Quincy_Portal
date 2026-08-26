@@ -12,6 +12,7 @@ import { projectAssetsQueryOptions, projectDataKeys } from "../lib/project-data"
 import type { Role } from "@quincy/shared";
 
 const authState = vi.hoisted(() => ({ role: "editor" }));
+const confirmMock = vi.hoisted(() => vi.fn(() => Promise.resolve(true)));
 vi.mock("../lib/auth", () => ({
   useSession: () => ({ data: { user: { id: "user-1", role: authState.role } }, isPending: false }),
 }));
@@ -24,6 +25,7 @@ vi.mock("../lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/api")>();
   return { ...actual, apiGet: (path: string, init?: unknown) => apiGetMock(path, init), apiPost: (path: string, body: unknown) => apiPostMock(path, body), apiPatch: (path: string, body: unknown) => apiPatchMock(path, body), apiDelete: (path: string) => apiDeleteMock(path) };
 });
+vi.mock("../lib/confirm", () => ({ confirm: confirmMock }));
 
 function workspaceAsset(id: string, overrides: Partial<WorkspaceAsset> = {}): WorkspaceAsset {
   return { id, section: null, collectionId: "collection", kind: "photo", originalFilename: `${id}.jpg`, bytes: 1, width: null, height: null, ratingFromMetadata: null, renditionStatus: "ready", createdAt: "2026-07-21T00:00:00.000Z", sourceRawAssetId: null, version: 1, versionGroupId: null, supersedesAssetId: null, review: null, selected: false, ...overrides };
@@ -456,7 +458,7 @@ afterEach(async () => {
     expect(publish).toHaveBeenCalledWith(expect.objectContaining({ type: "project-data-invalidated", projectId: "p1", resources: [{ kind: "assets", collectionKind: "raw" }] }));
 
     invalidate.mockClear(); publish.mockClear(); apiDeleteMock.mockResolvedValueOnce({ ok: true, deletedAssetIds: ["raw-1"], deletedObjects: 1, dropboxDeleted: true, dropboxOutcome: "removed" });
-    const confirm = vi.fn(() => true); vi.stubGlobal("confirm", confirm);
+    confirmMock.mockResolvedValue(true);
     await click(host.querySelector<HTMLButtonElement>('button[aria-label="Delete raw-1.jpg"]')!); await flush(20);
     expect(invalidate).toHaveBeenCalledWith(expect.objectContaining({ queryKey: projectDataKeys.assets("p1", "raw"), exact: true, refetchType: "active" }));
     expect(invalidate).toHaveBeenCalledWith(expect.objectContaining({ queryKey: projectDataKeys.detail("p1"), exact: true, refetchType: "active" }));
@@ -986,7 +988,7 @@ describe("ProjectWorkspace collaboration relocation", () => {
     await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>); await flush(20);
     const initialCalls = commentListCalls;
     apiDeleteMock.mockRejectedValueOnce(new ApiError("Only the author can delete this comment.", 403));
-    vi.stubGlobal("confirm", vi.fn(() => true));
+    confirmMock.mockResolvedValue(true);
     await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Delete")!); await flush(20);
     expect(commentListCalls).toBeGreaterThan(initialCalls);
     expect(host.querySelector(".work")).not.toBeNull();
@@ -1010,7 +1012,7 @@ describe("ProjectWorkspace collaboration relocation", () => {
     });
     await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>); await flush(20);
     apiDeleteMock.mockRejectedValueOnce(new ApiError("Comment missing", 404));
-    vi.stubGlobal("confirm", vi.fn(() => true));
+    confirmMock.mockResolvedValue(true);
     await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Delete")!); await flush(20);
     expect(commentListCalls).toBeGreaterThan(1);
     expect(host.textContent).toContain("Project unavailable.");
@@ -1048,7 +1050,7 @@ describe("ProjectWorkspace collaboration relocation", () => {
       await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Save")!);
     } else {
       apiDeleteMock.mockRejectedValueOnce(new ApiError("Only the author can delete this comment.", 403));
-      vi.stubGlobal("confirm", vi.fn(() => true));
+      confirmMock.mockResolvedValue(true);
       await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>); await flush(20);
       await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Delete")!);
     }

@@ -1,9 +1,34 @@
 import { betterAuth, APIError } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
+import { admin, createAccessControl } from "better-auth/plugins";
 import { createDb, schema } from "@quincy/db";
 import { eq } from "drizzle-orm";
 import type { Context } from "hono";
 import type { Env } from "./env";
+import { audit } from "./lib/audit";
+import { assertImpersonationSessionAllowed } from "./lib/impersonation";
+
+const adminStatements = {
+  user: [
+    "create",
+    "list",
+    "set-role",
+    "ban",
+    "impersonate",
+    "impersonate-admins",
+    "delete",
+    "set-password",
+    "set-email",
+    "get",
+    "update",
+  ],
+  session: ["list", "revoke", "delete"],
+} as const;
+
+const ac = createAccessControl(adminStatements);
+const adminRole = ac.newRole({ user: ["impersonate"], session: [] });
+const photographerRole = ac.newRole({ user: [], session: [] });
+const editorRole = ac.newRole({ user: [], session: [] });
 
 export function createAuth(env: Env) {
   const db = createDb(env.DB);
@@ -14,6 +39,13 @@ export function createAuth(env: Env) {
     baseURL: env.APP_ORIGIN,
     basePath: "/api/auth",
     trustedOrigins: [env.APP_ORIGIN],
+    plugins: [admin({
+      ac,
+      roles: { admin: adminRole, photographer: photographerRole, editor: editorRole },
+      defaultRole: "photographer",
+      adminRoles: ["admin"],
+      impersonationSessionDuration: 60 * 60,
+    })],
     user: { additionalFields: { role: { type: "string", input: false }, active: { type: "boolean", input: false } } },
     account: {
       accountLinking: {
@@ -25,10 +57,32 @@ export function createAuth(env: Env) {
     socialProviders: googleConfigured ? { google: { clientId: env.GOOGLE_CLIENT_ID!, clientSecret: env.GOOGLE_CLIENT_SECRET!, disableImplicitSignUp: true, disableSignUp: true } } : {},
     databaseHooks: {
       user: { create: { before: async () => { throw new APIError("FORBIDDEN", { message: "This is a closed staff system. Ask an administrator to provision your account." }); } } },
-      session: { create: { before: async (session) => {
+      session: {
+        create: { before: async (session, context) => {
         const user = await db.select({ active: schema.user.active }).from(schema.user).where(eq(schema.user.id, session.userId)).get();
         if (!user?.active) throw new APIError("FORBIDDEN", { message: "This staff account is inactive." });
-      } } },
+        const impersonatedBy = typeof session.impersonatedBy === "string" ? session.impersonatedBy : null;
+        if (!impersonatedBy) return;
+        try {
+          await assertImpersonationSessionAllowed(env, session.userId, impersonatedBy);
+        } catch {
+          throw new APIError("FORBIDDEN", { message: "User impersonation is disabled." });
+        }
+        const target = await db.select({ email: schema.user.email, role: schema.user.role, active: schema.user.active })
+          .from(schema.user).where(eq(schema.user.id, session.userId)).get();
+        if (!target?.active || (target.role !== "photographer" && target.role !== "editor")) throw new APIError("FORBIDDEN", { message: "User impersonation is disabled." });
+        await audit(env, { id: impersonatedBy, impersonatedBy: null }, "user.impersonate_start", "user", session.userId, { targetEmail: target.email, targetRole: target.role });
+        void context;
+      } },
+        delete: { before: async (session, context) => {
+          const impersonatedBy = typeof session.impersonatedBy === "string" ? session.impersonatedBy : null;
+          if (!impersonatedBy || context?.path !== "/admin/stop-impersonating") return;
+          const target = await db.select({ email: schema.user.email, role: schema.user.role })
+            .from(schema.user).where(eq(schema.user.id, session.userId)).get();
+          if (!target) throw new APIError("FORBIDDEN", { message: "User impersonation is disabled." });
+          await audit(env, { id: impersonatedBy, impersonatedBy: null }, "user.impersonate_stop", "user", session.userId, { targetEmail: target.email, targetRole: target.role });
+        } },
+      },
     },
   });
 }

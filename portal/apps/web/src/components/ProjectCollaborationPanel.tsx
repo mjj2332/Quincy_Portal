@@ -18,6 +18,7 @@ import { RichTextContent } from "./RichTextContent";
 import { RichTextEditor } from "./RichTextEditor";
 import type { MentionableUser } from "./MentionAutocomplete";
 import { SubtaskChecklist } from "./SubtaskChecklist";
+import { confirm } from "../lib/confirm";
 
 const emptyDoc = (): RichTextDoc => ({ type: "doc", content: [{ type: "paragraph" }] });
 type AccessFailureResource = "comments" | "comment-read-marker" | "nested-comment";
@@ -146,7 +147,7 @@ export function ProjectCollaborationPanel({ projectId, openSignal, onOpenSignalC
   }
 
   async function remove(comment: Comment) {
-    if (!window.confirm("Delete this comment?")) return;
+    if (!await confirm({ title: "Delete comment?", message: "Delete this comment?", confirmLabel: "Delete", danger: true })) return;
     const mutationProjectId = projectId;
     setSaving(true); setMutationError(undefined);
     try {

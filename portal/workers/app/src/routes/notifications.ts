@@ -48,7 +48,7 @@ notificationsRoutes.delete("/notifications/:id", async (c) => {
     .where(and(eq(schema.notifications.id, id), eq(schema.notifications.userId, userId)))
     .run();
   if ((result.meta.changes ?? 0) !== 1) return c.json({ error: "Notification not found" }, 404);
-  await audit(c.env, userId, "notification.delete", "notification", id);
+  await audit(c.env, c.get("user"), "notification.delete", "notification", id);
   return c.json({ ok: true });
 });
 
