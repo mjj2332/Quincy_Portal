@@ -4,6 +4,7 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { AppEnv } from "../env";
 import { requireCapability } from "../middleware/capability";
+import { auditMeta } from "../lib/audit";
 import { newId } from "../lib/ids";
 
 type DropboxOutcome = "removed" | "alreadyGone" | "claimLost" | "failed";
@@ -135,7 +136,7 @@ assetsRoutes.delete("/assets/:id", async (c) => {
         .bind(...deleteParams),
       c.env.DB.prepare(`INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
         SELECT ?, ?, 'asset.delete', 'asset', ?, ?, ? WHERE changes() > 0`)
-        .bind(auditId, c.get("user").id, primaryAssetId, JSON.stringify({ projectId: primary.projectId, assetIds: targetIds, kinds: targets.map((target) => target.kind) }), nowMs),
+        .bind(auditId, c.get("user").id, primaryAssetId, auditMeta(c.get("user"), { projectId: primary.projectId, assetIds: targetIds, kinds: targets.map((target) => target.kind) }), nowMs),
       c.env.DB.prepare(`UPDATE assets SET
           supersedes_asset_id = CASE WHEN supersedes_asset_id IN ${targetSql} THEN NULL ELSE supersedes_asset_id END,
           replaced_by_asset_id = CASE WHEN replaced_by_asset_id IN ${targetSql} THEN NULL ELSE replaced_by_asset_id END,

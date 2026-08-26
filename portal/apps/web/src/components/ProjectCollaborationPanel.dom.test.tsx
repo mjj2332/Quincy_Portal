@@ -11,6 +11,9 @@ import { ApiError } from "../lib/api";
 import { projectDataKeys } from "../lib/project-data";
 import { purgeProjectCommentData, useProjectCommentPresentation, useProjectCommentReadStateQuery, useProjectCommentsCacheQuery, useProjectCommentsQuery } from "../lib/project-comments";
 
+const confirmMock = vi.hoisted(() => vi.fn(() => Promise.resolve(true)));
+vi.mock("../lib/confirm", () => ({ confirm: confirmMock }));
+
 const apiGetMock = vi.fn<(path: string) => Promise<unknown>>();
 const apiPostMock = vi.fn<(path: string, body: unknown) => Promise<unknown>>();
 const apiPatchMock = vi.fn<(path: string, body: unknown) => Promise<unknown>>();

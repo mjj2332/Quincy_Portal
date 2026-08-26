@@ -7,6 +7,7 @@ import { ApiError, apiDelete, apiGet, apiPatch, apiPost } from "../lib/api";
 import { useProjectAccessTermination } from "../lib/project-data";
 import { initials } from "../lib/initials";
 import { reorderNeighbors } from "../lib/reorder-neighbors";
+import { confirm } from "../lib/confirm";
 import type { MentionableUser } from "./MentionAutocomplete";
 
 type Subtask = { id: string; title: string; done: boolean; position: number; assignee: { id: string; name: string } | null; assignmentVersion: number; dueDate: string | null; createdBy: string; createdAt: string; updatedAt: string; };
@@ -71,7 +72,7 @@ function ActionsControl({ owner, title, open, setOpen, busy, onDelete }: { owner
   const close = useCallback(() => setOpen(false), [setOpen]); const floating = useAnchoredPopover({ open, onClose: close }); const id = popoverId(owner, "actions");
   return <>
     <button ref={floating.refs.setReference} type="button" className="subtask-checklist__overflow" aria-label={`Actions for ${title}`} aria-expanded={open} aria-controls={open ? id : undefined} onKeyDown={floating.onKeyDown} onClick={() => setOpen(!open)}>⋯</button>
-    {open && <AnchoredPopover context={floating.context} floatingStyles={floating.floatingStyles} initialFocus={0} onKeyDown={floating.onKeyDown}><div id={id} className="subtask-popover__content" role="group" aria-label={`Actions for ${title}`}><button type="button" className="button button--secondary" disabled={busy} onClick={() => { if (!window.confirm("Delete this subtask?")) return; close(); onDelete(); }}>Delete</button></div></AnchoredPopover>}
+    {open && <AnchoredPopover context={floating.context} floatingStyles={floating.floatingStyles} initialFocus={0} onKeyDown={floating.onKeyDown}><div id={id} className="subtask-popover__content" role="group" aria-label={`Actions for ${title}`}><button type="button" className="button button--secondary" disabled={busy} onClick={() => { void (async () => { if (!await confirm({ title: "Delete subtask?", message: "Delete this subtask?", confirmLabel: "Delete", danger: true })) return; close(); onDelete(); })(); }}>Delete</button></div></AnchoredPopover>}
   </>;
 }
 

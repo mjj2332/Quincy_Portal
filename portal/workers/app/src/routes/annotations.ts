@@ -94,7 +94,7 @@ annotationsRoutes.post("/assets/:id/annotations", async (c) => {
     id, assetId, authorId: c.get("user").id, authorRole: c.get("user").role, scope,
     strokeR2Key, noteText: data.noteText || null, createdAt,
   });
-  await audit(c.env, c.get("user").id, "asset.annotate", "asset", assetId, { annotationId: id, scope, hasStrokes: Boolean(strokeR2Key) });
+  await audit(c.env, c.get("user"), "asset.annotate", "asset", assetId, { annotationId: id, scope, hasStrokes: Boolean(strokeR2Key) });
   await notifyProject(c.env, asset.projectId, "comment_added", { editorOnly: true, excludeUserId: c.get("user").id });
   const user = c.get("user");
   return c.json({ id, authorId: user.id, author: { id: user.id, name: user.name, role: user.role }, scope, strokeR2Key, noteText: data.noteText || null, createdAt: createdAt.toISOString(), editedAt: null }, 201);
@@ -113,7 +113,7 @@ annotationsRoutes.delete("/annotations/:id", async (c) => {
   if (annotation.authorId !== c.get("user").id) return c.json({ error: "Forbidden: only the author can delete this annotation." }, 403);
   // Retain stroke objects in R2: deletes only remove the D1 reference, preserving cheap, audit-friendly history.
   await db.delete(schema.annotations).where(eq(schema.annotations.id, id));
-  await audit(c.env, c.get("user").id, "annotation.delete", "annotation", id, { assetId: asset.assetId, scope, hadStrokes: Boolean(annotation.strokeR2Key) });
+  await audit(c.env, c.get("user"), "annotation.delete", "annotation", id, { assetId: asset.assetId, scope, hadStrokes: Boolean(annotation.strokeR2Key) });
   return c.json({ ok: true });
 });
 
@@ -149,6 +149,6 @@ annotationsRoutes.patch("/annotations/:id", async (c) => {
     }
   }
   const updated = await db.update(schema.annotations).set(patch).where(eq(schema.annotations.id, id)).returning().get();
-  await audit(c.env, c.get("user").id, "annotation.edit", "annotation", id, { assetId: asset.assetId, scope, changed });
+  await audit(c.env, c.get("user"), "annotation.edit", "annotation", id, { assetId: asset.assetId, scope, changed });
   return c.json(updated);
 });

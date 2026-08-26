@@ -2,14 +2,14 @@ import { COLLECTION_RECEIVED_COUNT_SQL, collectionReceivedCountBindings, createD
 import { and, eq, sql } from "drizzle-orm";
 import { enqueueRenditionSafely, parseXmpRating, XMP_SCAN_BYTES, xmpRatingToStars } from "@quincy/shared";
 import type { Env } from "../env";
-import { audit } from "./audit";
+import { audit, auditMeta, type AuditPrincipal } from "./audit";
 import { notifyProject } from "./notifications";
 
 export type FinalizeIngestDependencies = { beforeMetadataBatch?: () => void | Promise<void> };
 
 export async function finalizeIngest(
   env: Env,
-  input: { actorId: string; projectId: string; assetId: string; key: string; originalFilename: string; contentHash?: string; collection?: "raw" | "edited"; manifestId?: string },
+  input: { actorId: string; auditPrincipal?: AuditPrincipal; projectId: string; assetId: string; key: string; originalFilename: string; contentHash?: string; collection?: "raw" | "edited"; manifestId?: string },
   dependencies: FinalizeIngestDependencies = {},
 ) {
   const object = await env.MEDIA.head(input.key);
@@ -50,7 +50,7 @@ export async function finalizeIngest(
       env.DB.prepare("INSERT INTO asset_ingest_identities (id, collection_id, identity_key, asset_id, created_at) SELECT ?, ?, ?, ?, ? WHERE changes() = 1")
         .bind(crypto.randomUUID(), targetCollection.id, rawIdentityKey, input.assetId, now.getTime()),
       env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, ?, 'asset.ingested', 'asset', ?, ?, ? WHERE EXISTS (SELECT 1 FROM asset_ingest_identities WHERE collection_id = ? AND identity_key = ? AND asset_id = ?)")
-        .bind(crypto.randomUUID(), input.actorId, input.assetId, JSON.stringify({ projectId: input.projectId, key: input.key, manifestId: input.manifestId ?? null, ratingFromMetadata: stars }), now.getTime(), targetCollection.id, rawIdentityKey, input.assetId),
+        .bind(crypto.randomUUID(), input.auditPrincipal?.id ?? input.actorId, input.assetId, auditMeta(input.auditPrincipal ?? { id: input.actorId, impersonatedBy: null }, { projectId: input.projectId, key: input.key, manifestId: input.manifestId ?? null, ratingFromMetadata: stars }), now.getTime(), targetCollection.id, rawIdentityKey, input.assetId),
     );
   }
   statements.push(env.DB.prepare(COLLECTION_RECEIVED_COUNT_SQL).bind(...collectionReceivedCountBindings(targetCollection.id, now.getTime())));
@@ -86,7 +86,7 @@ export async function finalizeIngest(
     if (!sameAsset && project?.archivedAt) throw new Error("Project was archived before RAW metadata could be committed");
   }
   if (inserted && collectionKind !== "raw") {
-    await audit(env, input.actorId, "asset.ingested", "asset", input.assetId, { projectId: input.projectId, key: input.key, manifestId: input.manifestId ?? null, ratingFromMetadata: stars });
+    await audit(env, input.auditPrincipal ?? { id: input.actorId, impersonatedBy: null }, "asset.ingested", "asset", input.assetId, { projectId: input.projectId, key: input.key, manifestId: input.manifestId ?? null, ratingFromMetadata: stars });
   }
   // Manual edited uploads must cross the Dropbox boundary before they become visible. The
   // background publisher is started by the caller after this durable pending row is committed.

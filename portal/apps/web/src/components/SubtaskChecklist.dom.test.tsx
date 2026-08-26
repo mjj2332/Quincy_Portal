@@ -4,6 +4,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { scheduleReorderFocus, SubtaskChecklist } from "./SubtaskChecklist";
 import { reorderNeighbors } from "../lib/reorder-neighbors";
 
+const confirmMock = vi.hoisted(() => vi.fn(() => Promise.resolve(true)));
+vi.mock("../lib/confirm", () => ({ confirm: confirmMock }));
+
 const apiGetMock = vi.fn<(path: string) => Promise<unknown>>(); const apiPostMock = vi.fn<(path: string, body: unknown) => Promise<unknown>>(); const apiPatchMock = vi.fn<(path: string, body: unknown) => Promise<unknown>>(); const apiDeleteMock = vi.fn<(path: string) => Promise<unknown>>();
 vi.mock("../lib/api", async (importOriginal) => { const actual = await importOriginal<typeof import("../lib/api")>(); return { ...actual, apiGet: (path: string) => apiGetMock(path), apiPost: (path: string, body: unknown) => apiPostMock(path, body), apiPatch: (path: string, body: unknown) => apiPatchMock(path, body), apiDelete: (path: string) => apiDeleteMock(path) }; });
 const projectId = "11111111-1111-4111-8111-111111111111"; const year = new Date().getFullYear();
@@ -15,11 +18,12 @@ function mount() { const host = document.createElement("div"); document.body.app
 async function render() { await act(async () => { root!.render(<SubtaskChecklist projectId={projectId} />); await Promise.resolve(); await Promise.resolve(); }); }
 async function click(element: Element) { await act(async () => { element.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); await new Promise((resolve) => window.setTimeout(resolve, 0)); }); }
 async function keydown(element: Element, key: string) { await act(async () => { element.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true })); await new Promise((resolve) => window.setTimeout(resolve, 0)); }); }
+async function flush() { await act(async () => { await Promise.resolve(); await Promise.resolve(); }); }
 async function typeInto(element: HTMLInputElement, value: string) { const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!; await act(async () => { setter.call(element, value); element.dispatchEvent(new Event("input", { bubbles: true })); await Promise.resolve(); }); }
 function item(host: HTMLElement, title: string) { const result = [...host.querySelectorAll<HTMLElement>(".subtask-checklist__item")].find((element) => element.textContent?.includes(title)); if (!result) throw new Error(`No item ${title}`); return result; }
 function portal(id: string) { return document.getElementById(id)!; }
-beforeEach(() => { apiGetMock.mockReset().mockImplementation((path) => path.includes("mentionable-users") ? Promise.resolve({ users: [{ id: "user-2", name: "Nora Jones", role: "editor" }, { id: "user-3", name: "Ada Smith", role: "photographer" }] }) : Promise.resolve({ subtasks: [task, second] })); apiPostMock.mockReset().mockResolvedValue({ ...task, id: "task-new", title: "Schedule staging", position: 3072 }); apiPatchMock.mockReset().mockImplementation((path, body) => Promise.resolve({ ...(path.includes("task-2") ? second : task), ...(body as object) })); apiDeleteMock.mockReset().mockResolvedValue({ ok: true }); vi.stubGlobal("confirm", vi.fn(() => true)); });
-afterEach(async () => { await act(async () => root?.unmount()); root = null; document.body.replaceChildren(); vi.unstubAllGlobals(); });
+beforeEach(() => { apiGetMock.mockReset().mockImplementation((path) => path.includes("mentionable-users") ? Promise.resolve({ users: [{ id: "user-2", name: "Nora Jones", role: "editor" }, { id: "user-3", name: "Ada Smith", role: "photographer" }] }) : Promise.resolve({ subtasks: [task, second] })); apiPostMock.mockReset().mockResolvedValue({ ...task, id: "task-new", title: "Schedule staging", position: 3072 }); apiPatchMock.mockReset().mockImplementation((path, body) => Promise.resolve({ ...(path.includes("task-2") ? second : task), ...(body as object) })); apiDeleteMock.mockReset().mockResolvedValue({ ok: true }); confirmMock.mockReset().mockResolvedValue(true); });
+afterEach(async () => { await act(async () => root?.unmount()); root = null; document.body.replaceChildren(); });
 
 describe("SubtaskChecklist", () => {
   it("preserves accordion/progress, literal due badges, and compact title edit/Escape behavior without legacy controls", async () => {
@@ -43,9 +47,37 @@ describe("SubtaskChecklist", () => {
 
   it("keeps one Delete-only popover and restores deletion focus to the next row or the closed Add button", async () => {
     const host = mount(); await render(); const first = item(host, "Call client"); const actions = first.querySelector<HTMLButtonElement>('[aria-label="Actions for Call client"]')!; await click(actions); const group = portal("subtask-popover-task-1-actions"); expect([...group.querySelectorAll("button")].map((button) => button.textContent)).toEqual(["Delete"]);
-    (window.confirm as ReturnType<typeof vi.fn>).mockReturnValueOnce(false); await click(group.querySelector("button")!); expect(apiDeleteMock).not.toHaveBeenCalled(); expect(document.getElementById("subtask-popover-task-1-actions")).not.toBeNull();
+    confirmMock.mockResolvedValueOnce(false); await click(group.querySelector("button")!); expect(apiDeleteMock).not.toHaveBeenCalled(); expect(document.getElementById("subtask-popover-task-1-actions")).not.toBeNull();
     await click(group.querySelector("button")!); expect(apiDeleteMock).toHaveBeenCalledWith(`/api/projects/${projectId}/subtasks/task-1`); await act(async () => { await new Promise((resolve) => window.setTimeout(resolve, 0)); }); expect(document.activeElement).toBe(item(host, "Prepare files").querySelector(".subtask-checklist__title-trigger"));
     await click(item(host, "Prepare files").querySelector<HTMLButtonElement>('[aria-label="Actions for Prepare files"]')!); await click(portal("subtask-popover-task-2-actions").querySelector("button")!); await act(async () => { await new Promise((resolve) => window.setTimeout(resolve, 0)); }); expect(document.activeElement).toBe(document.getElementById(`subtask-add-${projectId}`));
+  });
+
+  it("keeps the delete popover open for pointer and focus events inside the portalled confirmation", async () => {
+    const host = mount(); await render();
+    const actions = item(host, "Call client").querySelector<HTMLButtonElement>('[aria-label="Actions for Call client"]')!;
+    await click(actions);
+    const group = portal("subtask-popover-task-1-actions");
+    let settle!: (value: boolean) => void;
+    confirmMock.mockImplementationOnce(() => new Promise<boolean>((resolve) => { settle = resolve; }));
+    await click(group.querySelector("button")!);
+
+    const confirmPortal = document.createElement("div");
+    confirmPortal.dataset.confirmModalRoot = "";
+    const confirmButton = document.createElement("button");
+    confirmPortal.append(confirmButton); document.body.append(confirmPortal);
+    confirmButton.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+    confirmButton.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+    expect(document.getElementById("subtask-popover-task-1-actions")).not.toBeNull();
+
+    settle(false); await flush();
+    expect(apiDeleteMock).not.toHaveBeenCalled();
+    expect(document.getElementById("subtask-popover-task-1-actions")).not.toBeNull();
+
+    confirmMock.mockResolvedValueOnce(true);
+    await click(group.querySelector("button")!);
+    await flush();
+    expect(apiDeleteMock).toHaveBeenCalledWith(`/api/projects/${projectId}/subtasks/task-1`);
+    expect(document.getElementById("subtask-popover-task-1-actions")).toBeNull();
   });
 
   it("uses the closed composer, its popovers, one metadata POST, reset focus, and preserves a failed draft", async () => {

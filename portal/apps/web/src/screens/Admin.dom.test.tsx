@@ -7,9 +7,11 @@ type Stage = { key: string; label: string; displayOrder: number; active: boolean
 const apiGetMock = vi.hoisted(() => vi.fn<(path: string) => Promise<unknown>>());
 const apiPatchMock = vi.hoisted(() => vi.fn<(path: string, body: unknown) => Promise<unknown>>());
 const apiPostMock = vi.hoisted(() => vi.fn<(path: string, body: unknown) => Promise<unknown>>());
+const impersonateUserMock = vi.hoisted(() => vi.fn<(userId: string) => Promise<void>>());
 const refreshStagesMock = vi.hoisted(() => vi.fn<() => Promise<void>>());
 const projectQueryClientMock = vi.hoisted(() => ({ current: {} }));
 const invalidateActiveProjectDetailsMock = vi.hoisted(() => vi.fn<() => Promise<void>>());
+const confirmMock = vi.hoisted(() => vi.fn(() => Promise.resolve(true)));
 
 vi.mock("../lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/api")>();
@@ -30,6 +32,8 @@ vi.mock("../lib/project-data", () => ({
   useOptionalProjectQueryClient: () => projectQueryClientMock.current,
   invalidateActiveProjectDetails: invalidateActiveProjectDetailsMock,
 }));
+vi.mock("../lib/confirm", () => ({ confirm: confirmMock }));
+vi.mock("../lib/auth", () => ({ impersonateUser: impersonateUserMock }));
 
 import { Admin } from "./Admin";
 
@@ -90,6 +94,13 @@ function stageRow(host: HTMLElement, key: string): HTMLElement {
   return row;
 }
 
+function userRow(host: HTMLElement, name: string): HTMLTableRowElement {
+  const row = [...host.querySelectorAll<HTMLTableRowElement>(".admin-table tbody tr")]
+    .find((item) => item.textContent?.includes(name));
+  if (!row) throw new Error(`No user row for ${name}`);
+  return row;
+}
+
 describe("Admin Pipeline configuration boundary", () => {
   let host: HTMLElement;
 
@@ -107,6 +118,7 @@ describe("Admin Pipeline configuration boundary", () => {
     });
     apiPatchMock.mockReset().mockResolvedValue({});
     apiPostMock.mockReset().mockResolvedValue({});
+    impersonateUserMock.mockReset().mockResolvedValue(undefined);
     refreshStagesMock.mockReset().mockResolvedValue(undefined);
     projectQueryClientMock.current = {};
     invalidateActiveProjectDetailsMock.mockReset().mockResolvedValue(undefined);
@@ -176,6 +188,82 @@ describe("Admin Pipeline configuration boundary", () => {
     expect(apiPatchMock).toHaveBeenCalledWith("/api/users/user-1", { name: "New Name" });
     expect(invalidateActiveProjectDetailsMock).toHaveBeenCalledTimes(1);
   });
+
+  it("gates Act as behind the testing switch and filters targets by active non-admin identity", async () => {
+    const users = [
+      { id: "self", name: "The Admin", email: "admin@example.test", role: "admin", active: true, createdAt: null },
+      { id: "editor", name: "Active Editor", email: "editor@example.test", role: "editor", active: true, createdAt: null },
+      { id: "photographer", name: "Active Photographer", email: "photographer@example.test", role: "photographer", active: true, createdAt: null },
+      { id: "other-admin", name: "Other Admin", email: "other-admin@example.test", role: "admin", active: true, createdAt: null },
+      { id: "inactive", name: "Inactive Editor", email: "inactive@example.test", role: "editor", active: false, createdAt: null },
+    ];
+    apiGetMock.mockImplementation((path) => path === "/api/users"
+      ? Promise.resolve({ users })
+      : path === "/api/users/impersonation-settings" ? Promise.resolve({ enabled: false }) : Promise.resolve({}));
+    await act(async () => { root!.render(<Admin currentUserId="self" />); await Promise.resolve(); });
+    await flush();
+
+    const toggle = host.querySelector<HTMLInputElement>('[aria-label="Enable user impersonation (testing)"]')!;
+    expect(toggle.checked).toBe(false);
+    expect(host.textContent).not.toContain("Act as");
+
+    apiPatchMock.mockResolvedValueOnce({ enabled: true });
+    await click(toggle);
+    await flush();
+    expect(apiPatchMock).toHaveBeenCalledWith("/api/users/impersonation-settings", { enabled: true });
+    expect(toggle.checked).toBe(true);
+    expect(userRow(host, "Active Editor").textContent).toContain("Act as");
+    expect(userRow(host, "Active Photographer").textContent).toContain("Act as");
+    expect(userRow(host, "The Admin").textContent).not.toContain("Act as");
+    expect(userRow(host, "Other Admin").textContent).not.toContain("Act as");
+    expect(userRow(host, "Inactive Editor").textContent).not.toContain("Act as");
+
+    confirmMock.mockResolvedValueOnce(false);
+    await click([...userRow(host, "Active Editor").querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Deactivate")!);
+    expect(confirmMock).toHaveBeenCalledWith({ title: "Deactivate user?", message: "Are you sure you want to deactivate Active Editor? This signs them out everywhere immediately.", confirmLabel: "Deactivate", danger: true });
+
+    confirmMock.mockResolvedValueOnce(false);
+    await click([...userRow(host, "Active Editor").querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Act as")!);
+    expect(confirmMock).toHaveBeenCalledWith({
+      title: "Act as Active Editor?",
+      message: "You'll gain their exact permissions, including bypassing author-only restrictions, until you exit.",
+      confirmLabel: "Act as user",
+      danger: true,
+    });
+    expect(impersonateUserMock).not.toHaveBeenCalled();
+
+    await click([...userRow(host, "Active Editor").querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Act as")!);
+    await flush();
+    expect(impersonateUserMock).toHaveBeenCalledWith("editor");
+    expect(window.location.pathname).toBe("/");
+  });
+
+  it("keeps the Admin screen on an Act as API failure and shows the existing error toast", async () => {
+    apiGetMock.mockImplementation((path) => path === "/api/users"
+      ? Promise.resolve({ users: [{ id: "editor", name: "Active Editor", email: "editor@example.test", role: "editor", active: true, createdAt: null }] })
+      : path === "/api/users/impersonation-settings" ? Promise.resolve({ enabled: true }) : Promise.resolve({}));
+    impersonateUserMock.mockRejectedValueOnce(new Error("Impersonation unavailable"));
+    await act(async () => { root!.render(<Admin currentUserId="self" />); await Promise.resolve(); });
+    await flush();
+    await click(host.querySelector<HTMLButtonElement>('[class*="admin-table__action"] button:last-child')!);
+    await flush();
+    expect(host.textContent).toContain("Impersonation unavailable");
+    expect(window.location.pathname).toBe("/");
+  });
+
+  it("reconciles a failed testing-switch PATCH without leaving the optimistic browser state on", async () => {
+    apiGetMock.mockImplementation((path) => path === "/api/users"
+      ? Promise.resolve({ users: [] })
+      : path === "/api/users/impersonation-settings" ? Promise.resolve({ enabled: false }) : Promise.resolve({}));
+    apiPatchMock.mockRejectedValueOnce(new Error("Setting unavailable"));
+    await act(async () => { root!.render(<Admin currentUserId="self" />); await Promise.resolve(); });
+    await flush();
+    const toggle = host.querySelector<HTMLInputElement>('[aria-label="Enable user impersonation (testing)"]')!;
+    await click(toggle);
+    await flush();
+    expect(toggle.checked).toBe(false);
+    expect(host.textContent).toContain("Setting unavailable");
+  });
 });
 
 describe("Admin notification delivery operations", () => {
@@ -220,7 +308,7 @@ describe("Admin notification delivery operations", () => {
     apiPatchMock.mockReset().mockResolvedValue({});
     apiPostMock.mockReset().mockResolvedValue({});
     projectQueryClientMock.current = {};
-    Object.defineProperty(window, "confirm", { configurable: true, writable: true, value: vi.fn().mockReturnValue(true) });
+    confirmMock.mockReset().mockResolvedValue(true);
   });
 
   afterEach(async () => {
@@ -310,6 +398,7 @@ describe("Admin notification delivery operations", () => {
     let resolveReplay!: (value: unknown) => void;
     apiPostMock.mockImplementation(() => new Promise((resolve) => { resolveReplay = resolve; }));
     await click(replay);
+    expect(confirmMock).toHaveBeenCalledWith({ title: "Replay email?", message: "Cloudflare may already have accepted this email. Replaying can send a duplicate. In-app delivery will not be recreated. Replay email anyway?", confirmLabel: "Replay email", danger: true });
     expect(replay.disabled).toBe(true);
     resolveReplay({});
     await flush(12);

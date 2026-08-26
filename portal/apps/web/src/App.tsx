@@ -10,6 +10,7 @@ import { SignIn } from "./screens/SignIn";
 import { Admin } from "./screens/Admin";
 import { CreateProject } from "./screens/CreateProject";
 import { EditProject } from "./screens/EditProject";
+import { ImpersonationBanner } from "./components/ImpersonationBanner";
 import { StagesProvider } from "./lib/stages";
 import { QuincyQueryProvider } from "./lib/query-client";
 import type { Role } from "@quincy/shared";
@@ -28,7 +29,7 @@ function viewFor(route: StaffRoute): AppView {
   }
 }
 
-function Shell({ user }: { user: SessionUser }) {
+function Shell({ user, impersonating }: { user: SessionUser; impersonating: boolean }) {
   const history = locationStore();
   const completeLocation = useSyncExternalStore(history.subscribe, history.getLocation, () => "/");
   const pathname = completeLocation.split("?", 1)[0]!;
@@ -84,7 +85,7 @@ function Shell({ user }: { user: SessionUser }) {
 
   const activeView = viewFor(route);
   return (
-    <div className="app">
+    <div className={impersonating ? "app app--impersonating" : "app"}>
       <Topbar activeView={activeView} canAccessAdmin={canAccessAdmin} user={user} />
       {blocked && <main className="page"><div className="empty" role="status"><span className="serif">Returning to dashboard.</span></div></main>}
       {!blocked && route.kind === "dashboard" && <Dashboard currentUserId={user.id} />}
@@ -103,5 +104,11 @@ export default function App() {
   if (session.isPending) return <div className="boot">Loading the studio…</div>;
   if (!session.data) return <SignIn pathname={pathname} />;
   const user = session.data.user as unknown as SessionUser;
-  return <QuincyQueryProvider key={`${user.id}:${user.role}`} principalId={user.id} role={user.role}><StagesProvider><Shell user={user} /></StagesProvider></QuincyQueryProvider>;
+  const sessionValue = session.data.session as unknown as { impersonatedBy?: string | null } | undefined;
+  const impersonatedBy = sessionValue?.impersonatedBy ?? null;
+  const banner = impersonatedBy ? <ImpersonationBanner user={{ name: user.name || user.email || "Quincy user", role: user.role }} invalidated={user.role !== "photographer" && user.role !== "editor"} /> : null;
+  if (impersonatedBy && user.role !== "photographer" && user.role !== "editor") {
+    return <>{banner}<main className="impersonation-invalidated" role="alert">This impersonated session is no longer valid — exit to restore your Admin session.</main></>;
+  }
+  return <>{banner}<QuincyQueryProvider key={`${user.id}:${user.role}`} principalId={user.id} role={user.role}><StagesProvider><Shell user={user} impersonating={Boolean(impersonatedBy)} /></StagesProvider></QuincyQueryProvider></>;
 }

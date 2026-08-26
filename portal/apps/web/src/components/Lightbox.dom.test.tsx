@@ -5,6 +5,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Lightbox } from "./Lightbox";
 import type { WorkspaceAsset } from "./PhotoGrid";
 
+const confirmMock = vi.hoisted(() => vi.fn(() => Promise.resolve(true)));
+vi.mock("../lib/confirm", () => ({ confirm: confirmMock }));
+
 vi.mock("../lib/auth", () => ({
   useSession: () => ({ data: { user: { id: "user-1" } }, isPending: false }),
 }));
@@ -167,7 +170,7 @@ function configureAnnotations(items: TestAnnotation[]) {
 
 beforeEach(() => {
   window.innerWidth = 1024;
-  window.confirm = vi.fn(() => true);
+  confirmMock.mockReset().mockResolvedValue(true);
   apiGetMock.mockReset();
   apiPostMock.mockReset();
   apiPatchMock.mockReset();
@@ -188,7 +191,7 @@ afterEach(async () => {
 describe("Lightbox — always-on drawing and draft protection", () => {
   it("is draw-ready immediately for annotators, with no Draw button, and no confirm prompt with no inline edit open", async () => {
     const host = mount();
-    const confirm = vi.spyOn(window, "confirm");
+    const confirm = confirmMock;
     await render(<Lightbox {...baseProps()} />);
     expect([...host.querySelectorAll("button")].some((item) => item.textContent?.includes("Draw"))).toBe(false);
     expect(host.querySelector(".drawbar")).not.toBeNull();
@@ -299,13 +302,16 @@ describe("Lightbox — always-on drawing and draft protection", () => {
     await click(button(host, "Edit note"));
     const inline = host.querySelector<HTMLTextAreaElement>('textarea[aria-label="Edit annotation note"]')!;
     await typeInto(inline, "unsaved edit");
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const confirm = confirmMock;
+    confirm.mockResolvedValue(false);
     await drawOneStroke(host);
     expect(draftStrokeCount(host)).toBe(0);
     expect(inline.value).toBe("unsaved edit");
-    confirm.mockReturnValue(true);
+    confirm.mockResolvedValue(true);
     await drawOneStroke(host);
     expect(host.querySelector('textarea[aria-label="Edit annotation note"]')).toBeNull();
+    expect(draftStrokeCount(host)).toBe(0); // the gesture that opened the modal is consumed
+    await drawOneStroke(host); // drawing starts only on a fresh pointer-down
     expect(draftStrokeCount(host)).toBe(1);
   });
 
@@ -315,7 +321,8 @@ describe("Lightbox — always-on drawing and draft protection", () => {
     const host = mount();
     await render(<Lightbox {...baseProps({ assets, onClose })} />);
     await drawOneStroke(host);
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const confirm = confirmMock;
+    confirm.mockResolvedValue(false);
     await click(button(host, "Next frame"));
     expect(host.textContent).toContain("Frame 1 of 2");
     await click(host.querySelector<HTMLButtonElement>('button[aria-label="asset-2.jpg"]')!);
@@ -327,8 +334,6 @@ describe("Lightbox — always-on drawing and draft protection", () => {
 
   it("accepting the confirm lets Next frame, filmstrip selection, and Close each proceed", async () => {
     const assets = [workspaceAsset("asset-1"), workspaceAsset("asset-2")];
-    vi.spyOn(window, "confirm").mockReturnValue(true);
-
     const nextHost = mount();
     await render(<Lightbox {...baseProps({ assets })} />);
     await drawOneStroke(nextHost);
@@ -356,7 +361,7 @@ describe("Lightbox — always-on drawing and draft protection", () => {
   it("does not prompt at all for Next frame, filmstrip selection, or Close with no draft", async () => {
     const assets = [workspaceAsset("asset-1"), workspaceAsset("asset-2")];
     const onClose = vi.fn();
-    const confirm = vi.spyOn(window, "confirm");
+    const confirm = confirmMock;
     const host = mount();
     await render(<Lightbox {...baseProps({ assets, onClose })} />);
     await click(button(host, "Next frame"));
@@ -377,7 +382,8 @@ describe("Lightbox — always-on drawing and draft protection", () => {
     await openReviewPanel(host);
     await flush();
     await click(button(host, "Edit note"));
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const confirm = confirmMock;
+    confirm.mockResolvedValue(false);
     await click(button(host, "Next frame"));
     expect(host.textContent).toContain("Frame 1 of 2");
     await click(host.querySelector<HTMLButtonElement>('button[aria-label="asset-2.jpg"]')!);
@@ -617,7 +623,7 @@ describe("Lightbox — always-on drawing and draft protection", () => {
     await click(button(host, "Edit note"));
     await typeInto(host.querySelector<HTMLTextAreaElement>('textarea[aria-label="Edit annotation note"]')!, "race");
     await click(button(host, "Save"));
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const confirm = confirmMock;
     await drawOneStroke(host);
     expect(confirm).not.toHaveBeenCalled();
     pending.reject(new Error("Save failed"));

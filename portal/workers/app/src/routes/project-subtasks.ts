@@ -84,7 +84,7 @@ projectSubtasksRoutes.post("/projects/:projectId/subtasks", async (c) => {
   const db = createDb(c.env.DB); const last = await db.select({ position: schema.projectSubtasks.position }).from(schema.projectSubtasks).where(eq(schema.projectSubtasks.projectId, projectId)).orderBy(desc(schema.projectSubtasks.position), desc(schema.projectSubtasks.id)).limit(1).get();
   const now = new Date(); const id = newId(); const assignmentVersion = data.assigneeId ? 1 : 0;
   await db.insert(schema.projectSubtasks).values({ id, projectId, title: data.title, done: false, position: (last?.position ?? 0) + POSITION_STEP, assigneeId: data.assigneeId, assignmentVersion, dueDate: data.dueDate, createdBy: c.get("user").id, createdAt: now, updatedAt: now });
-  await audit(c.env, c.get("user").id, "project_subtask.create", "project_subtask", id);
+  await audit(c.env, c.get("user"), "project_subtask.create", "project_subtask", id);
   await notifySubtaskAssignee(c.env, { projectId, actorId: c.get("user").id, assigneeId: data.assigneeId ?? null, subtaskId: id, assignmentVersion });
   const task = await subtaskQuery(db, projectId, id).get(); if (!task) return c.json({ error: "Subtask could not be created" }, 500);
   return c.json(serializeSubtask(task), 201);
@@ -114,7 +114,7 @@ projectSubtasksRoutes.patch("/projects/:projectId/subtasks/:subtaskId", async (c
     const current = await subtaskQuery(db, projectId, subtaskId).get();
     return current ? c.json(serializeSubtask(current)) : c.json({ error: "Subtask not found" }, 404);
   }
-  await audit(c.env, c.get("user").id, "project_subtask.update", "project_subtask", subtaskId, { fields: changed });
+  await audit(c.env, c.get("user"), "project_subtask.update", "project_subtask", subtaskId, { fields: changed });
   if (assignmentChanged) await notifySubtaskAssignee(c.env, { projectId, actorId: c.get("user").id, assigneeId: updated.assigneeId, subtaskId, assignmentVersion: updated.assignmentVersion });
   const task = await subtaskQuery(db, projectId, subtaskId).get(); if (!task) return c.json({ error: "Subtask could not be updated" }, 500);
   return c.json(serializeSubtask(task));
@@ -146,7 +146,7 @@ projectSubtasksRoutes.post("/projects/:projectId/subtasks/:subtaskId/reorder", a
     changes = rebased?.meta.changes ?? 0;
     if (changes !== snapshot.length) return c.json({ error: "Subtask order changed; reload and try again" }, 409);
     const targetPosition = desired.findIndex((item) => item.id === subtaskId) + 1;
-    await audit(c.env, c.get("user").id, "project_subtask.reorder", "project_subtask", subtaskId, { beforeId: data.beforeId, afterId: data.afterId });
+    await audit(c.env, c.get("user"), "project_subtask.reorder", "project_subtask", subtaskId, { beforeId: data.beforeId, afterId: data.afterId });
     return c.json({ position: targetPosition * POSITION_STEP });
   }
   const params: unknown[] = [position, now, target.id, projectId, target.position, projectId, snapshot.length];
@@ -159,7 +159,7 @@ projectSubtasksRoutes.post("/projects/:projectId/subtasks/:subtaskId/reorder", a
   const [updated] = await c.env.DB.batch([c.env.DB.prepare(`UPDATE project_subtasks SET position = ?, updated_at = ? WHERE id = ? AND project_id = ? AND position = ? AND (SELECT COUNT(*) FROM project_subtasks WHERE project_id = ?) = ?${guard}`).bind(...params)]);
   changes = updated?.meta.changes ?? 0;
   if (changes !== 1) return c.json({ error: "Subtask order changed; reload and try again" }, 409);
-  await audit(c.env, c.get("user").id, "project_subtask.reorder", "project_subtask", subtaskId, { beforeId: data.beforeId, afterId: data.afterId });
+    await audit(c.env, c.get("user"), "project_subtask.reorder", "project_subtask", subtaskId, { beforeId: data.beforeId, afterId: data.afterId });
   return c.json({ position });
 });
 
@@ -169,6 +169,6 @@ projectSubtasksRoutes.delete("/projects/:projectId/subtasks/:subtaskId", async (
   const project = await ensureProjectAccessAndExists(c, projectId); if (project === "forbidden") return c.json({ error: "Forbidden: you are not assigned to this project" }, 403); if (!project) return c.json({ error: "Project not found" }, 404);
   const db = createDb(c.env.DB); const deleted = await db.delete(schema.projectSubtasks).where(and(eq(schema.projectSubtasks.id, subtaskId), eq(schema.projectSubtasks.projectId, projectId))).returning({ id: schema.projectSubtasks.id }).get();
   if (!deleted) return c.json({ error: "Subtask not found" }, 404);
-  await audit(c.env, c.get("user").id, "project_subtask.delete", "project_subtask", subtaskId);
+  await audit(c.env, c.get("user"), "project_subtask.delete", "project_subtask", subtaskId);
   return c.json({ ok: true });
 });

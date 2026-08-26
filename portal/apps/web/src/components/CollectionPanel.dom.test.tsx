@@ -7,6 +7,9 @@ import { reorderNeighbors } from "../lib/reorder-neighbors";
 import { CollectionPanel } from "./CollectionPanel";
 import type { WorkspaceAsset } from "./PhotoGrid";
 
+const confirmMock = vi.hoisted(() => vi.fn(() => Promise.resolve(true)));
+vi.mock("../lib/confirm", () => ({ confirm: confirmMock }));
+
 const dnd = vi.hoisted(() => ({ handlers: [] as Array<(event: { active: { id: string }; over: { id: string } | null }) => void> }));
 vi.mock("@dnd-kit/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@dnd-kit/core")>();
@@ -70,7 +73,7 @@ describe("CollectionPanel version history deletion wiring", () => {
 
   beforeEach(() => {
     host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
-    window.confirm = vi.fn(() => true);
+    confirmMock.mockReset().mockResolvedValue(true);
     dnd.handlers.length = 0;
     apiGetMock.mockReset().mockImplementation((path) => Promise.resolve(path.includes("collection=video") ? { links: videoLinks() } : { links: [] }));
     apiPatchMock.mockReset();
@@ -340,6 +343,7 @@ describe("CollectionPanel version history deletion wiring", () => {
     // version's id is never passed, proving each button is wired to its own entry, not a shared
     // or stale closure over whichever version happened to render last.
     await act(async () => { deleteButtons[0]!.dispatchEvent(new MouseEvent("click", { bubbles: true })); await Promise.resolve(); });
+    expect(confirmMock).toHaveBeenCalledWith({ title: "Delete version 2?", message: "Permanently delete version 2? This cannot be undone.", confirmLabel: "Delete", danger: true });
     expect(onDelete).toHaveBeenCalledTimes(1);
     expect(onDelete).toHaveBeenCalledWith("v2");
     expect(onDelete).not.toHaveBeenCalledWith("v1");

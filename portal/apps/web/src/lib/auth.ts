@@ -1,9 +1,11 @@
 import { createAuthClient } from "better-auth/react";
+import { adminClient } from "better-auth/client/plugins";
 import { safeStaffDestination } from "./router";
 
 const authClient = createAuthClient({
   baseURL: typeof window === "undefined" ? "http://localhost" : window.location.origin,
   basePath: "/api/auth",
+  plugins: [adminClient()],
 });
 
 export const useSession = authClient.useSession;
@@ -61,4 +63,14 @@ export async function signOut(): Promise<void> {
   if (result.error) {
     throw new Error(result.error.message ?? "Sign-out could not be completed.");
   }
+}
+
+export async function impersonateUser(userId: string): Promise<void> {
+  const result = await authClient.admin.impersonateUser({ userId });
+  if (result.error) throw new Error(result.error.message ?? "User impersonation could not be started.");
+}
+
+export async function stopImpersonating(): Promise<void> {
+  const result = await authClient.admin.stopImpersonating();
+  if (result.error) throw new Error(result.error.message ?? "Could not automatically exit.");
 }

@@ -96,7 +96,7 @@ type ValidatedDownloadSelection = {
   entries: DownloadSelectionEntry[];
   collection: "raw" | "edited";
   totalBytes: number;
-  principal: { id: string; role: AppEnv["Variables"]["user"]["role"] };
+  principal: { id: string; role: AppEnv["Variables"]["user"]["role"]; impersonatedBy: string | null };
 };
 
 /**
@@ -153,7 +153,7 @@ async function validateDownloadSelection(c: Context<AppEnv>, projectId: string, 
     totalBytes += entry.bytes;
   }
   if (totalBytes > DOWNLOAD_SELECTION_MAX_BYTES) return c.json({ error: "Selected assets exceed the 256 MiB download limit" }, 413);
-  return { entries, collection, totalBytes, principal: { id: principal.id, role: principal.role } };
+  return { entries, collection, totalBytes, principal: { id: principal.id, role: principal.role, impersonatedBy: c.get("user").impersonatedBy } };
 }
 
 async function coverMaps(db: ReturnType<typeof createDb>, projectIds: string[], photographersOnlySeeRaw = false) {
@@ -240,7 +240,7 @@ projectsRoutes.post("/projects", requireCapability("createProject"), async (c) =
     ...photographerAdded.map((userId) => ({ userId, roleOnProject: "photographer" as const })),
     ...editorAdded.map((userId) => ({ userId, roleOnProject: "editor" as const })),
   ]);
-  await audit(c.env, c.get("user").id, "project.create", "project", id, { orderedServices: [...services] });
+  await audit(c.env, c.get("user"), "project.create", "project", id, { orderedServices: [...services] });
   return c.json(await details(db, id, c.get("user").role), 201);
 });
 
@@ -261,7 +261,7 @@ projectsRoutes.post("/projects/:id/priority", async (c) => {
   const position = computeInsertPosition(before, after);
   const result = await guardedBoardUpdate(db, c.env.DB, target, [target, ...others], beforeId, afterId, position, data.priority);
   if (!result) return c.json({ error: "Project stage changed while priority was being updated" }, 409);
-  await audit(c.env, c.get("user").id, "project.priority_set", "project", id, { from: target.priority, to: data.priority });
+  await audit(c.env, c.get("user"), "project.priority_set", "project", id, { from: target.priority, to: data.priority });
   return c.json({ priority: result.priority, boardPosition: result.boardPosition });
 });
 
@@ -283,7 +283,7 @@ projectsRoutes.post("/projects/:id/board-position", async (c) => {
   const position = computeInsertPosition(before, after);
   const result = await guardedBoardUpdate(db, c.env.DB, target, column, beforeId, afterId, position, undefined);
   if (!result) return c.json({ error: "Project stage changed while board position was being updated" }, 409);
-  await audit(c.env, c.get("user").id, "project.board_position_set", "project", id, { direction: data.direction });
+  await audit(c.env, c.get("user"), "project.board_position_set", "project", id, { direction: data.direction });
   return c.json({ boardPosition: result.boardPosition });
 });
 projectsRoutes.patch("/projects/:id", async (c) => {
@@ -294,7 +294,7 @@ projectsRoutes.patch("/projects/:id", async (c) => {
     const data = await jsonInput(c, editFields); if (data instanceof Response) return data;
     const db = createDb(c.env.DB); if (!await db.select({ id: schema.projects.id }).from(schema.projects).where(eq(schema.projects.id, id)).get()) return c.json({ error: "Project not found" }, 404);
     const { orderedServices, photographerUserIds, editorUserIds, ...projectUpdates } = data;
-    const auditMeta: Record<string, unknown> = { ...projectUpdates };
+    const projectAuditMeta: Record<string, unknown> = { ...projectUpdates };
     if (orderedServices !== undefined) {
       // Grouped counts merged in JS — a correlated scalar subquery via sql`${schema.assets}` renders
       // incorrectly under drizzle/D1 and silently returned 0 (caught by the blocked-payload tests).
@@ -327,13 +327,13 @@ projectsRoutes.patch("/projects/:id", async (c) => {
       const guardedBlocked = removedCollections.filter((collection) => !deletedIds.has(collection.id));
       if (guardedBlocked.length) {
         const removedKinds = removedCollections.filter((collection) => deletedIds.has(collection.id)).map((collection) => collection.kind);
-        if (removedKinds.length) await audit(c.env, c.get("user").id, "project.update", "project", id, { servicesRemoved: removedKinds, partial: true });
+        if (removedKinds.length) await audit(c.env, c.get("user"), "project.update", "project", id, { servicesRemoved: removedKinds, partial: true });
         return blockedPayload(guardedBlocked, await countsFor(guardedBlocked.map((collection) => collection.id)), removedKinds);
       }
       const existingKinds = new Set(existing.map((collection) => collection.kind as CollectionKind));
       const services = await addCollections(db, id, orderedServices);
-      auditMeta.servicesAdded = [...services].filter((kind) => !existingKinds.has(kind));
-      auditMeta.servicesRemoved = removedCollections.map((collection) => collection.kind);
+      projectAuditMeta.servicesAdded = [...services].filter((kind) => !existingKinds.has(kind));
+      projectAuditMeta.servicesRemoved = removedCollections.map((collection) => collection.kind);
     }
     const [existingPhotographers, existingEditors] = await Promise.all([
       photographerUserIds === undefined ? Promise.resolve(undefined) : db.select({ id: schema.projectMembers.id, userId: schema.projectMembers.userId }).from(schema.projectMembers).where(and(eq(schema.projectMembers.projectId, id), eq(schema.projectMembers.roleOnProject, "photographer"))).all(),
@@ -351,9 +351,9 @@ projectsRoutes.patch("/projects/:id", async (c) => {
     let resultIndex = 0;
     const photographerResult = photographerUserIds === undefined ? undefined : membershipSync!.results[resultIndex++];
     const editorResult = editorUserIds === undefined ? undefined : membershipSync!.results[resultIndex++];
-    if (photographerResult) auditMeta.photographerMembers = photographerResult;
-    if (editorResult) auditMeta.editorMembers = editorResult;
-    if (membershipSync) auditMeta.subtaskAssignmentsCleared = membershipSync.subtaskAssignmentsCleared;
+    if (photographerResult) projectAuditMeta.photographerMembers = photographerResult;
+    if (editorResult) projectAuditMeta.editorMembers = editorResult;
+    if (membershipSync) projectAuditMeta.subtaskAssignmentsCleared = membershipSync.subtaskAssignmentsCleared;
     await db.update(schema.projects).set({ ...projectUpdates, updatedAt: new Date() }).where(eq(schema.projects.id, id));
     await notifyProjectAssignments(c.env, id, [
       ...(photographerResult?.added ?? []).map((userId) => ({ userId, roleOnProject: "photographer" as const })),
@@ -363,7 +363,7 @@ projectsRoutes.patch("/projects/:id", async (c) => {
       await c.env.BACKGROUND.ensureAutoHdrScaffold(id).catch((error) =>
         console.error("AutoHDR scaffold trigger failed", { projectId: id, error }));
     }
-    await audit(c.env, c.get("user").id, "project.update", "project", id, auditMeta);
+    await audit(c.env, c.get("user"), "project.update", "project", id, projectAuditMeta);
     return c.json(await details(db, id, c.get("user").role));
   }
 });
@@ -383,7 +383,7 @@ projectsRoutes.post("/projects/:id/cover", async (c) => {
     if (!asset || !isUserVisibleAsset(asset.collectionKind, asset.publishStatus)) return c.json({ error: "Asset not in this project" }, 404);
   }
   await db.update(schema.projects).set({ coverAssetId: data.assetId, updatedAt: new Date() }).where(eq(schema.projects.id, id));
-  await audit(c.env, c.get("user").id, "project.cover.set", "project", id, { assetId: data.assetId });
+  await audit(c.env, c.get("user"), "project.cover.set", "project", id, { assetId: data.assetId });
   return c.json({ coverAssetId: data.assetId });
 });
 projectsRoutes.post("/projects/:id/dropbox-sync", async (c) => {
@@ -394,7 +394,7 @@ projectsRoutes.post("/projects/:id/dropbox-sync", async (c) => {
   const project = await createDb(c.env.DB).select({ rawFolderPath: schema.projects.rawFolderPath, rawFolderLink: schema.projects.rawFolderLink }).from(schema.projects).where(eq(schema.projects.id, id)).get();
   if (!project?.rawFolderPath && !project?.rawFolderLink) return c.json({ error: "No Dropbox folder configured for this project" }, 400);
   const { jobId } = await c.env.BACKGROUND.triggerDropboxSync(id);
-  await audit(c.env, user.id, "project.dropbox_sync", "project", id, { jobId });
+  await audit(c.env, user, "project.dropbox_sync", "project", id, { jobId });
   return c.json({ ok: true, jobId });
 });
 
@@ -421,7 +421,7 @@ projectsRoutes.post("/projects/:id/sync-dropbox", async (c) => {
     try {
       const raw = await c.env.BACKGROUND.triggerDropboxSync(id);
       result.raw = { jobId: raw.jobId };
-      await audit(c.env, user.id, "project.dropbox_sync", "project", id, { jobId: raw.jobId })
+      await audit(c.env, user, "project.dropbox_sync", "project", id, { jobId: raw.jobId })
         .catch((error) => console.error("sync-dropbox: RAW audit write failed", { projectId: id, error }));
     } catch (error) {
       result.raw = { skipped: "error", message: error instanceof Error ? error.message : String(error) };
@@ -432,7 +432,7 @@ projectsRoutes.post("/projects/:id/sync-dropbox", async (c) => {
       const fetchResult = await c.env.BACKGROUND.fetchEditedFromAutoHdr(id);
       if (fetchResult.ok) {
         result.edited = { jobId: fetchResult.jobId };
-        await audit(c.env, user.id, "project.fetch_edited", "project", id, { jobId: fetchResult.jobId })
+        await audit(c.env, user, "project.fetch_edited", "project", id, { jobId: fetchResult.jobId })
           .catch((error) => console.error("sync-dropbox: edited audit write failed", { projectId: id, error }));
       } else if (fetchResult.code === "ERR_FOLDER_NOT_READY") {
         result.edited = { skipped: "not_ready" };
@@ -464,7 +464,7 @@ projectsRoutes.post("/projects/:id/send-to-autohdr", requireCapability("adminBac
           : 409;
     return c.json({ error: result.message, code: result.code }, status);
   }
-  await audit(c.env, c.get("user").id, "project.send_to_autohdr", "project", id, {
+  await audit(c.env, c.get("user"), "project.send_to_autohdr", "project", id, {
     jobId: result.jobId,
     provider: "autohdr_api_v4",
     retrievalEnabled: false,
@@ -485,7 +485,7 @@ projectsRoutes.post("/projects/:id/fetch-edited", requireCapability("adminBacken
       result.code === "ERR_NO_RAW_SELECTION" ? 400 : 409,
     );
   }
-  await audit(c.env, c.get("user").id, "project.fetch_edited", "project", id, { jobId: result.jobId });
+  await audit(c.env, c.get("user"), "project.fetch_edited", "project", id, { jobId: result.jobId });
   return c.json({ jobId: result.jobId });
 });
 
@@ -564,7 +564,7 @@ projectsRoutes.post("/projects/:id/autohdr-coverage", requireCapability("adminBa
     id: newId(), handoffId: data.handoffId, assetId: data.assetId,
     readinessUnitKey: data.readinessUnitKey, matchKind: "manual", createdAt: new Date(),
   }).onConflictDoNothing();
-  await audit(c.env, c.get("user").id, "autohdr.coverage.resolve", "asset", data.assetId, { projectId, handoffId: data.handoffId, readinessUnitKey: data.readinessUnitKey });
+  await audit(c.env, c.get("user"), "autohdr.coverage.resolve", "asset", data.assetId, { projectId, handoffId: data.handoffId, readinessUnitKey: data.readinessUnitKey });
   return c.json({ ok: true });
 });
 
@@ -591,7 +591,7 @@ projectsRoutes.get("/projects/:id/selected-raw.zip", async (c) => {
       yield { name: asset.originalFilename, size: asset.bytes, stream: object.body as ReadableStream<Uint8Array> };
     }
   }
-  await audit(c.env, c.get("user").id, "project.download_selected", "project", id, { count: selected.length });
+  await audit(c.env, c.get("user"), "project.download_selected", "project", id, { count: selected.length });
   return new Response(createZipStream(entries()), { headers: { "content-type": "application/zip", "content-disposition": `attachment; filename="${filename}"` } });
 });
 
@@ -656,7 +656,7 @@ projectsRoutes.get("/projects/:id/download-selection/:ticket/archive.zip", async
   }
   // This is an authorization/initiation audit, intentionally written before the streaming
   // response; a stream cannot truthfully establish that every byte reached the client.
-  await audit(c.env, principal.id, "project.download_selection", "project", projectId, {
+  await audit(c.env, principal, "project.download_selection", "project", projectId, {
     collection, count: validatedEntries.length, totalBytes, assetIds,
   });
   return new Response(createZipStream(entries()), {
@@ -715,7 +715,7 @@ projectsRoutes.post("/jobs/:id/retry", requireCapability("adminBackend"), async 
     );
   }
   const jobId = outcome.jobId;
-  await audit(c.env, c.get("user").id, job.kind === "autohdr" ? "project.retry_autohdr" : job.kind === "fetch_edited" ? "project.retry_fetch_edited" : job.kind === "autohdr_scaffold" ? "project.retry_autohdr_scaffold" : job.kind === "manual_raw_publish" ? "project.retry_manual_raw_publish" : "project.retry_manual_edited_publish", "project", job.projectId, { previousJobId: id, jobId });
+  await audit(c.env, c.get("user"), job.kind === "autohdr" ? "project.retry_autohdr" : job.kind === "fetch_edited" ? "project.retry_fetch_edited" : job.kind === "autohdr_scaffold" ? "project.retry_autohdr_scaffold" : job.kind === "manual_raw_publish" ? "project.retry_manual_raw_publish" : "project.retry_manual_edited_publish", "project", job.projectId, { previousJobId: id, jobId });
   return c.json({ jobId });
 });
 
@@ -742,7 +742,7 @@ for (const [path, archived] of [["/projects/:id/archive", true], ["/projects/:id
     const result = await db.update(schema.projects).set({ archivedAt: null, archivedBy: null, updatedAt: now }).where(eq(schema.projects.id, id)).returning({ id: schema.projects.id });
     if (!result.length) return c.json({ error: "Project not found" }, 404);
   }
-  await audit(c.env, c.get("user").id, archived ? "project.archive" : "project.restore", "project", id); return c.json({ ok: true });
+  await audit(c.env, c.get("user"), archived ? "project.archive" : "project.restore", "project", id); return c.json({ ok: true });
 });
 projectsRoutes.delete("/projects/:id", async (c) => {
   const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
@@ -766,7 +766,7 @@ projectsRoutes.delete("/projects/:id", async (c) => {
   const assetIds = (await db.select({ id: schema.assets.id }).from(schema.assets).innerJoin(schema.collections, eq(schema.assets.collectionId, schema.collections.id)).where(eq(schema.collections.projectId, id)).all()).map((asset) => asset.id);
   const assetCount = assetIds.length;
   // Audit BEFORE destruction so the trail survives even if a later step dies mid-way.
-  await audit(c.env, c.get("user").id, "project.delete", "project", id, { street: project.street, assetCount, r2Prefix });
+  await audit(c.env, c.get("user"), "project.delete", "project", id, { street: project.street, assetCount, r2Prefix });
   const keys: string[] = [];
   for (const prefix of [r2Prefix, ...assetIds.map((assetId) => `renditions/${assetId}/`)]) {
     let cursor: string | undefined;
@@ -804,7 +804,7 @@ projectsRoutes.post("/projects/:id/stage", async (c) => {
     const target = await db.select({ active: schema.pipelineStages.active }).from(schema.pipelineStages).where(eq(schema.pipelineStages.key, data.stageKey)).get();
     if (!target?.active) return c.json({ error: "Stage is deactivated" }, 409);
     const updated = await db.update(schema.projects).set({ stageKey: data.stageKey, boardPosition: appendToStageBottomExpr(data.stageKey, id), updatedAt: new Date() }).where(eq(schema.projects.id, id)).returning({ boardPosition: schema.projects.boardPosition }).all();
-    await audit(c.env, c.get("user").id, "stage.set", "project", id, { from: project.stageKey, to: data.stageKey });
+    await audit(c.env, c.get("user"), "stage.set", "project", id, { from: project.stageKey, to: data.stageKey });
     if (project.stageKey !== "delivered" && data.stageKey === "delivered") await notifyProject(c.env, id, "delivered");
     return c.json({ ok: true, stageKey: data.stageKey, boardPosition: updated[0]?.boardPosition ?? 0 });
   }

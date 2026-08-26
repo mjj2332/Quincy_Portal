@@ -6,7 +6,7 @@ import { ROLE_CAPABILITIES, type CollectionKind } from "@quincy/shared";
 import { z } from "zod";
 import type { AppEnv } from "../env";
 import { hasProjectAccess } from "../middleware/capability";
-import { audit } from "../lib/audit";
+import { audit, auditMeta } from "../lib/audit";
 import { newId, safeFilename } from "../lib/ids";
 import { abortMultipart, completeMultipart, createMultipartPresign } from "../lib/r2s3";
 import { jsonInput } from "./helpers";
@@ -173,7 +173,7 @@ collectionsRoutes.post("/projects/:id/links", async (c) => {
   await c.env.DB.batch([
     c.env.DB.prepare("INSERT INTO collection_links (id, collection_id, url, label, source, position, created_at, updated_at) VALUES (?, ?, ?, ?, 'manual', COALESCE((SELECT MAX(position) FROM collection_links WHERE collection_id = ?), 0) + 1024, ?, ?) ON CONFLICT(collection_id, url) DO NOTHING").bind(id, collection.id, data.url, data.label ?? null, collection.id, now.getTime(), now.getTime()),
     c.env.DB.prepare(COLLECTION_RECEIVED_COUNT_SQL).bind(...collectionReceivedCountBindings(collection.id, now.getTime())),
-    c.env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, ?, 'collection_link.create', 'collection_link', ?, ?, ? WHERE EXISTS (SELECT 1 FROM collection_links WHERE id = ?)").bind(auditId, c.get("user").id, id, JSON.stringify({ projectId, ...data }), now.getTime(), id),
+    c.env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, ?, 'collection_link.create', 'collection_link', ?, ?, ? WHERE EXISTS (SELECT 1 FROM collection_links WHERE id = ?)").bind(auditId, c.get("user").id, id, auditMeta(c.get("user"), { projectId, ...data }), now.getTime(), id),
   ]);
   const saved = await db.select().from(schema.collectionLinks).where(and(eq(schema.collectionLinks.collectionId, collection.id), eq(schema.collectionLinks.url, data.url))).get();
   if (!saved) return c.json({ error: "Could not save collection link" }, 409);
@@ -209,7 +209,7 @@ collectionsRoutes.patch("/projects/:id/links/:linkId", async (c) => {
         .bind(data.url, updatedLabel, now.getTime(), linkId, link.collectionId, link.url, link.label, projectId),
       c.env.DB.prepare(`INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
         SELECT ?, ?, 'collection_link.update', 'collection_link', ?, ?, ? WHERE changes() > 0`)
-        .bind(newId(), c.get("user").id, linkId, JSON.stringify({ projectId, previous: { url: link.url, label: link.label }, updated: { url: data.url, label: updatedLabel } }), now.getTime()),
+        .bind(newId(), c.get("user").id, linkId, auditMeta(c.get("user"), { projectId, previous: { url: link.url, label: link.label }, updated: { url: data.url, label: updatedLabel } }), now.getTime()),
     ]);
   } catch (error) {
     if (collectionLinkUrlConflict(error)) return c.json({ error: "A link with this URL already exists in this collection" }, 409);
@@ -258,7 +258,7 @@ collectionsRoutes.post("/projects/:id/links/:linkId/reorder", async (c) => {
     const snapshotJson = JSON.stringify(desired.map((item, index) => ({ id: item.id, oldPosition: item.position, newPosition: (index + 1) * 1024 })));
     const results = await c.env.DB.batch([
       c.env.DB.prepare(`UPDATE collection_links SET position = (SELECT CAST(json_extract(value, '$.newPosition') AS INTEGER) FROM json_each(?1) WHERE json_extract(value, '$.id') = collection_links.id), updated_at = ?2 WHERE collection_id = ?3 AND (id, position) IN (SELECT json_extract(value, '$.id'), json_extract(value, '$.oldPosition') FROM json_each(?1)) AND (SELECT COUNT(*) FROM collection_links WHERE collection_id = ?3 AND (id, position) IN (SELECT json_extract(value, '$.id'), json_extract(value, '$.oldPosition') FROM json_each(?1))) = json_array_length(?1) AND (SELECT COUNT(*) FROM collection_links WHERE collection_id = ?3) = json_array_length(?1)`).bind(snapshotJson, now, target.collectionId),
-      c.env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, ?, 'collection_link.reorder', 'collection_link', ?, ?, ? WHERE changes() = ?").bind(newId(), c.get("user").id, linkId, JSON.stringify({ projectId, beforeId: data.beforeId, afterId: data.afterId }), now, snapshot.length),
+      c.env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, ?, 'collection_link.reorder', 'collection_link', ?, ?, ? WHERE changes() = ?").bind(newId(), c.get("user").id, linkId, auditMeta(c.get("user"), { projectId, beforeId: data.beforeId, afterId: data.afterId }), now, snapshot.length),
     ]);
     if ((results[0]?.meta.changes ?? 0) !== snapshot.length) return c.json({ error: "Link order changed; reload and try again" }, 409);
     return c.json({ position: (desired.findIndex((item) => item.id === linkId) + 1) * 1024 });
@@ -273,7 +273,7 @@ collectionsRoutes.post("/projects/:id/links/:linkId/reorder", async (c) => {
   else if (after) { guard += " AND NOT EXISTS (SELECT 1 FROM collection_links AS candidate WHERE candidate.collection_id = ? AND candidate.id <> ? AND (candidate.position < ? OR (candidate.position = ? AND candidate.id < ?)))"; params.push(target.collectionId, target.id, after.position, after.position, after.id); }
   const results = await c.env.DB.batch([
     c.env.DB.prepare(`UPDATE collection_links SET position = ?, updated_at = ? WHERE id = ? AND collection_id = ? AND position = ? AND EXISTS (SELECT 1 FROM collections WHERE id = collection_links.collection_id AND project_id = ? AND kind = 'video') AND (SELECT COUNT(*) FROM collection_links WHERE collection_id = ?) = ?${guard}`).bind(...params),
-    c.env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, ?, 'collection_link.reorder', 'collection_link', ?, ?, ? WHERE changes() > 0").bind(newId(), c.get("user").id, linkId, JSON.stringify({ projectId, beforeId: data.beforeId, afterId: data.afterId }), now),
+    c.env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, ?, 'collection_link.reorder', 'collection_link', ?, ?, ? WHERE changes() > 0").bind(newId(), c.get("user").id, linkId, auditMeta(c.get("user"), { projectId, beforeId: data.beforeId, afterId: data.afterId }), now),
   ]);
   if ((results[0]?.meta.changes ?? 0) !== 1) return c.json({ error: "Link order changed; reload and try again" }, 409);
   return c.json({ position });
@@ -291,7 +291,7 @@ collectionsRoutes.delete("/projects/:id/links/:linkId", async (c) => {
   await c.env.DB.batch([
     c.env.DB.prepare("DELETE FROM collection_links WHERE id = ? AND source = 'manual'").bind(linkId),
     c.env.DB.prepare(COLLECTION_RECEIVED_COUNT_SQL).bind(...collectionReceivedCountBindings(link.collectionId, now.getTime())),
-    c.env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) VALUES (?, ?, 'collection_link.delete', 'collection_link', ?, ?, ?)").bind(newId(), c.get("user").id, linkId, JSON.stringify({ projectId }), now.getTime()),
+    c.env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) VALUES (?, ?, 'collection_link.delete', 'collection_link', ?, ?, ?)").bind(newId(), c.get("user").id, linkId, auditMeta(c.get("user"), { projectId }), now.getTime()),
   ]);
   return c.body(null, 204);
 });
@@ -340,7 +340,7 @@ collectionsRoutes.post("/projects/:id/documents/presign", async (c) => {
     }
     await db.update(schema.documentUploads).set({ pdfUploadId: pdfMultipart?.uploadId ?? null, previewUploadId: previewMultipart?.uploadId ?? null, updatedAt: new Date() }).where(eq(schema.documentUploads.id, upload.id));
     const file = (assetId: string, key: string, multipart: Awaited<ReturnType<typeof createMultipartPresign>> | null) => ({ assetId, key, ...(multipart ?? { devDirect: true }) });
-    await audit(c.env, c.get("user").id, "document.presign", "document_upload", upload.id, { projectId, kind: upload.kind, versionGroupId: upload.versionGroupId, version: upload.version });
+    await audit(c.env, c.get("user"), "document.presign", "document_upload", upload.id, { projectId, kind: upload.kind, versionGroupId: upload.versionGroupId, version: upload.version });
     return c.json({ sessionId: upload.id, kind: upload.kind, versionGroupId: upload.versionGroupId, version: upload.version, files: { pdf: file(upload.pdfAssetId, upload.pdfKey, pdfMultipart), ...(upload.previewKey ? { preview: file(upload.previewAssetId!, upload.previewKey, previewMultipart) } : {}) } }, 201);
   } catch (error) {
     const aborted = await abortReservation(c, { ...upload, pdfUploadId: pdfMultipart?.uploadId ?? null, previewUploadId: previewMultipart?.uploadId ?? null });
@@ -397,7 +397,7 @@ collectionsRoutes.post("/projects/:id/documents/complete", async (c) => {
   ];
   if (upload.kind === "floorplan") statements.push(c.env.DB.prepare("INSERT INTO assets (id, collection_id, kind, r2_key, original_filename, bytes, source, version, supersedes_asset_id, version_group_id, created_at, updated_at) SELECT CASE WHEN EXISTS (SELECT 1 FROM document_uploads WHERE id = ? AND status = 'completing') AND EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at IS NULL) THEN ? ELSE NULL END, ?, 'floorplan_preview', ?, ?, ?, 'upload', ?, ?, ?, ?, ?").bind(upload.id, projectId, upload.previewAssetId, upload.collectionId, upload.previewKey, upload.previewFilename, upload.previewBytes, upload.version, upload.previewSupersedesAssetId, upload.versionGroupId, now.getTime(), now.getTime()));
   statements.push(
-    c.env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) VALUES (?, ?, 'document.complete', 'document_upload', ?, ?, ?)").bind(upload.completionAuditId, c.get("user").id, upload.id, JSON.stringify({ projectId, kind: upload.kind, versionGroupId: upload.versionGroupId, version: upload.version, assetIds: responseFor(upload).assets.map((asset) => asset.id) }), now.getTime()),
+    c.env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) VALUES (?, ?, 'document.complete', 'document_upload', ?, ?, ?)").bind(upload.completionAuditId, c.get("user").id, upload.id, auditMeta(c.get("user"), { projectId, kind: upload.kind, versionGroupId: upload.versionGroupId, version: upload.version, assetIds: responseFor(upload).assets.map((asset) => asset.id) }), now.getTime()),
     c.env.DB.prepare("UPDATE document_uploads SET status = 'completed', completed_at = ?, updated_at = ? WHERE id = ? AND status = 'completing' AND EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at IS NULL)").bind(now.getTime(), now.getTime(), upload.id, projectId),
     c.env.DB.prepare(COLLECTION_RECEIVED_COUNT_SQL).bind(...collectionReceivedCountBindings(upload.collectionId, now.getTime())),
   );

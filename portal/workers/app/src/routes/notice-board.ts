@@ -88,7 +88,7 @@ noticeBoardRoutes.post("/notice-board/posts", async (c) => {
     db.insert(schema.noticeBoardPosts).values({ id, authorId: user.id, body: prepared.body, contentJson: JSON.stringify(prepared.content), createdAt }),
     ...mentions.map((mention) => db.insert(schema.noticeBoardPostMentions).values(mention)),
   ]);
-  await audit(c.env, user.id, "notice_board.post", "notice_board_post", id);
+  await audit(c.env, user, "notice_board.post", "notice_board_post", id);
   await notifyNoticeBoardMentions(c.env, { actorId: user.id, authorName: user.name, body: prepared.body, mentions });
   const post = await findPost(db, id);
   if (!post) return c.json({ error: "Post could not be created" }, 500);
@@ -117,7 +117,7 @@ noticeBoardRoutes.patch("/notice-board/posts/:id", async (c) => {
     ...added.map((map) => db.insert(schema.noticeBoardPostMentions).values(map)),
   ];
   await db.batch(edits as [never, ...never[]]);
-  await audit(c.env, user.id, "notice_board.edit", "notice_board_post", id);
+  await audit(c.env, user, "notice_board.edit", "notice_board_post", id);
   await notifyNoticeBoardMentions(c.env, { actorId: user.id, authorName: user.name, body: prepared.body, mentions: added });
   const post = await findPost(db, id);
   if (!post) return c.json({ error: "Post could not be updated" }, 500);
@@ -131,6 +131,6 @@ noticeBoardRoutes.delete("/notice-board/posts/:id", async (c) => {
   const user = c.get("user");
   if (post.authorId !== user.id) return c.json({ error: "Forbidden: only the author can delete this post." }, 403);
   await db.delete(schema.noticeBoardPosts).where(eq(schema.noticeBoardPosts.id, id));
-  await audit(c.env, user.id, "notice_board.delete", "notice_board_post", id);
+  await audit(c.env, user, "notice_board.delete", "notice_board_post", id);
   return c.json({ ok: true });
 });
