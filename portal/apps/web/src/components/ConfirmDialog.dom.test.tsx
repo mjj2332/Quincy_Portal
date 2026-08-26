@@ -125,6 +125,7 @@ describe("ConfirmModalHost", () => {
     expect(await first).toBe(true);
     await flush();
     expect(document.querySelector('[data-testid="confirm-modal"]')?.textContent).toContain("Second");
+    expect(document.activeElement).toBe(document.querySelector('[data-testid="confirm-modal-cancel"]'));
     confirmStore.resolve(false);
     expect(await second).toBe(false);
     await flush();

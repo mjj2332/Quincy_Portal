@@ -19,5 +19,5 @@ export function ConfirmDialog({ title, message, confirmLabel = "Confirm", cancel
 export function ConfirmModalHost(): JSX.Element | null {
   const active = useSyncExternalStore(confirmStore.subscribe, confirmStore.getSnapshot, () => null);
   if (!active) return null;
-  return <ConfirmDialog {...active.options} onConfirm={() => confirmStore.resolve(true)} onCancel={() => confirmStore.resolve(false)} />;
+  return <ConfirmDialog key={active.id} {...active.options} onConfirm={() => confirmStore.resolve(true)} onCancel={() => confirmStore.resolve(false)} />;
 }

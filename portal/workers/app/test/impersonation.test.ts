@@ -149,6 +149,7 @@ describe("user impersonation gate and official Better Auth flow", () => {
     expect(target).not.toBeNull();
     try {
       await database.DB.prepare("DELETE FROM session WHERE id = ?").bind(original!.id).run();
+      expect((await request("/api/me", started.cookie)).status).toBe(200);
       const stop = await request("/api/auth/admin/stop-impersonating", started.cookie, "POST", {});
       expect(stop.status).not.toBe(200);
       expect(await database.DB.prepare("SELECT id FROM session WHERE id = ?").bind(target!.id).first()).toEqual({ id: target!.id });

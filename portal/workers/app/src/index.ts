@@ -49,6 +49,7 @@ app.all("/api/auth/sign-in/social", async (c) => {
   return createAuth(c.env).handler(c.req.raw);
 });
 app.post("/api/auth/admin/impersonate-user", requireSession, requireCapability("manageUsers"), requireImpersonationEnabled, (c) => createAuth(c.env).handler(c.req.raw));
+app.post("/api/auth/admin/impersonate-user/", requireSession, requireCapability("manageUsers"), requireImpersonationEnabled, (c) => createAuth(c.env).handler(c.req.raw));
 app.all("/api/auth/*", (c) => createAuth(c.env).handler(c.req.raw));
 const api = new Hono<AppEnv>();
 api.use("/*", requireSession);

@@ -1008,7 +1008,9 @@ the permitted sequential commit boundary is not such a split.
 At `http://localhost:8787` with the human-signed-in seeded Admin:
 
 1. Exercise every reachable migrated guard; verify copy, button label, danger treatment, Cancel,
-   Confirm, Escape, backdrop, focus return, and unchanged side effects.
+   Confirm, Escape, backdrop, focus return, and unchanged side effects. Verify Tab and Shift-Tab
+   cycle only between Cancel and Confirm (this specific property is a real-browser check — jsdom
+   cannot simulate native Tab-key focus traversal, so it isn't covered by an automated DOM test).
 2. Specifically verify the Subtask popover remains open after Cancel.
 3. Verify Lightbox Escape closes only the modal, not the viewer; accepted note-edit discard requires
    a fresh drawing gesture.

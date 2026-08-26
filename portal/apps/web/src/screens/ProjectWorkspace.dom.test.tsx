@@ -1050,7 +1050,7 @@ describe("ProjectWorkspace collaboration relocation", () => {
       await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Save")!);
     } else {
       apiDeleteMock.mockRejectedValueOnce(new ApiError("Only the author can delete this comment.", 403));
-    confirmMock.mockResolvedValue(true);
+      confirmMock.mockResolvedValue(true);
       await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>); await flush(20);
       await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Delete")!);
     }
