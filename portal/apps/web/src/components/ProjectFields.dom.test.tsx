@@ -14,6 +14,11 @@ function user(id: string, role: User["role"]): User {
   return { id, name: `${role} ${id}`, email: `${id}@example.test`, role, active: true };
 }
 
+function candidate(value: User) {
+  const { role, ...rest } = value;
+  return { ...rest, globalRole: role };
+}
+
 let root: Root | null = null;
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -71,7 +76,7 @@ describe("ProjectFields photographer/editor team pickers", () => {
 
   it("offers an editor-role user in the Photographers checklist with an editor badge, selectable like a photographer", async () => {
     const users = [user("photographer-1", "photographer"), user("editor-1", "editor")];
-    apiGetMock.mockResolvedValue({ users });
+    apiGetMock.mockResolvedValue({ photographers: users.filter((item) => item.role !== "admin").map(candidate), editors: users.filter((item) => item.role === "editor").map(candidate) });
     const onToggle = vi.fn();
 
     await render(<ProjectFields form={form} errors={{}} onChange={() => undefined} onToggle={onToggle} />);
@@ -87,7 +92,7 @@ describe("ProjectFields photographer/editor team pickers", () => {
 
   it("leaves the Editors checklist candidate set unchanged (no photographer-role users appear there)", async () => {
     const users = [user("photographer-1", "photographer"), user("editor-1", "editor")];
-    apiGetMock.mockResolvedValue({ users });
+    apiGetMock.mockResolvedValue({ photographers: users.filter((item) => item.role !== "admin").map(candidate), editors: users.filter((item) => item.role === "editor").map(candidate) });
 
     await render(<ProjectFields form={form} errors={{}} onChange={() => undefined} onToggle={() => undefined} />);
 
@@ -98,7 +103,7 @@ describe("ProjectFields photographer/editor team pickers", () => {
 
   it("shows the editor already selected in the photographer slot as checked, and lets it be deselected", async () => {
     const users = [user("editor-1", "editor")];
-    apiGetMock.mockResolvedValue({ users });
+    apiGetMock.mockResolvedValue({ photographers: users.filter((item) => item.role !== "admin").map(candidate), editors: users.filter((item) => item.role === "editor").map(candidate) });
     const onToggle = vi.fn();
     const preselected: ProjectForm = { ...form, photographerUserIds: ["editor-1"] };
 
@@ -115,7 +120,7 @@ describe("ProjectFields photographer/editor team pickers", () => {
 describe("ProjectFields Client controls", () => {
   let host: HTMLElement;
 
-  beforeEach(() => { host = mount(); apiGetMock.mockReset().mockResolvedValue({ users: [] }); });
+  beforeEach(() => { host = mount(); apiGetMock.mockReset().mockResolvedValue({ photographers: [], editors: [] }); });
   afterEach(async () => { await unmount(); host.remove(); });
 
   it.each(["create", "edit"] as const)("dispatches one exact callback tuple per controlled Client input and keeps the four controls writable in %s mode", async (mode) => {

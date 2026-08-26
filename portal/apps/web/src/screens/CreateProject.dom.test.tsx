@@ -58,7 +58,7 @@ function clientInput(id: string): HTMLInputElement {
 beforeEach(() => {
   mount();
   apiGetMock.mockReset().mockImplementation(async (path) => {
-    if (path === "/api/users") return { users: [] };
+    if (path === "/api/project-assignment-candidates") return { photographers: [], editors: [] };
     throw new Error(`Unexpected apiGet path: ${path}`);
   });
   apiPostMock.mockReset().mockResolvedValue({ id: "project-created", collections: [], members: [] });
@@ -80,7 +80,7 @@ describe("CreateProject Client payload", () => {
     await typeInto(clientInput("project-agent-phone"), " +61 412 345 678 ");
     await submit();
 
-    expect(apiGetMock).toHaveBeenCalledWith("/api/users");
+    expect(apiGetMock).toHaveBeenCalledWith("/api/project-assignment-candidates");
     expect(apiPostMock).toHaveBeenCalledTimes(1);
     expect(apiPostMock).toHaveBeenCalledWith("/api/projects", expect.objectContaining({
       street: "12 Test Street",

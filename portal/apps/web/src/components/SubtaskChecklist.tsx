@@ -4,7 +4,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { AnchoredPopover, useAnchoredPopover } from "./AnchoredPopover";
 import { ApiError, apiDelete, apiGet, apiPatch, apiPost } from "../lib/api";
-import { useProjectAccessTermination } from "../lib/project-data";
+import { projectCollaborationDataGeneration, useOptionalProjectQueryClient, useProjectAccessTermination } from "../lib/project-data";
 import { initials } from "../lib/initials";
 import { reorderNeighbors } from "../lib/reorder-neighbors";
 import { confirm } from "../lib/confirm";
@@ -100,8 +100,11 @@ function SortableSubtaskRow({ item, users, busy, editing, draftTitle, popover, s
   </article>;
 }
 
-export function SubtaskChecklist({ projectId }: { projectId: string }) {
+export function SubtaskChecklist({ projectId, onAccessFailure }: { projectId: string; onAccessFailure?: (error: unknown) => void }) {
+  const queryClient = useOptionalProjectQueryClient();
   const terminateOnUnauthorized = useProjectAccessTermination();
+  const onAccessFailureRef = useRef(onAccessFailure);
+  onAccessFailureRef.current = onAccessFailure;
   const [subtasks, setSubtasks] = useState<Subtask[]>([]); const [users, setUsers] = useState<MentionableUser[]>([]); const [loading, setLoading] = useState(true); const [adding, setAdding] = useState(false); const [busy, setBusy] = useState<Set<string>>(new Set());
   const [newTitle, setNewTitle] = useState(""); const [newAssigneeId, setNewAssigneeId] = useState<string | null>(null); const [newDueDate, setNewDueDate] = useState<string | null>(null); const [composerOpen, setComposerOpen] = useState(false); const [activePopover, setActivePopover] = useState<ActivePopover>(null);
   const [draftTitles, setDraftTitles] = useState<Record<string, string>>({}); const [notice, setNotice] = useState(""); const [open, setOpen] = useState(true); const [editingId, setEditingId] = useState<string | null>(null);
@@ -109,9 +112,34 @@ export function SubtaskChecklist({ projectId }: { projectId: string }) {
   const itemRef = (id: string) => (element: HTMLElement | null) => { if (element) itemRefs.current.set(id, element); else itemRefs.current.delete(id); };
   const titleInputRef = (id: string) => (element: HTMLInputElement | null) => { if (element) titleInputRefs.current.set(id, element); else titleInputRefs.current.delete(id); };
   const gripRef = (id: string) => (element: HTMLButtonElement | null) => { if (element) gripRefs.current.set(id, element); else gripRefs.current.delete(id); };
-  const load = useCallback(async (): Promise<boolean> => { setLoading(true); try { const response = await apiGet<ChecklistResponse>(`/api/projects/${encodeURIComponent(projectId)}/subtasks`); setSubtasks((response.subtasks ?? []).slice().sort((a, b) => a.position - b.position || a.id.localeCompare(b.id))); return true; } catch (error) { terminateOnUnauthorized(error); setNotice(message(error, "Checklist could not be loaded.")); return false; } finally { setLoading(false); } }, [projectId, terminateOnUnauthorized]);
+  const load = useCallback(async (): Promise<boolean> => {
+    const generation = queryClient ? projectCollaborationDataGeneration(queryClient, projectId) : null;
+    setLoading(true);
+    try {
+      const response = await apiGet<ChecklistResponse>(`/api/projects/${encodeURIComponent(projectId)}/subtasks`);
+      if (queryClient && projectCollaborationDataGeneration(queryClient, projectId) !== generation) return false;
+      setSubtasks((response.subtasks ?? []).slice().sort((a, b) => a.position - b.position || a.id.localeCompare(b.id)));
+      return true;
+    } catch (error) {
+      if (queryClient && projectCollaborationDataGeneration(queryClient, projectId) !== generation) return false;
+      terminateOnUnauthorized(error); onAccessFailureRef.current?.(error);
+      if (!(error instanceof Error && error.name === "AbortError")) setNotice(message(error, "Checklist could not be loaded."));
+      return false;
+    } finally {
+      if (!queryClient || projectCollaborationDataGeneration(queryClient, projectId) === generation) setLoading(false);
+    }
+  }, [projectId, queryClient, terminateOnUnauthorized]);
   useEffect(() => { void load(); }, [load]);
-  useEffect(() => { void apiGet<{ users: MentionableUser[] }>(`/api/mentionable-users?projectId=${encodeURIComponent(projectId)}&q=`).then((response) => setUsers(response.users ?? [])).catch((error) => { terminateOnUnauthorized(error); setNotice("Assignees could not be loaded."); }); }, [projectId, terminateOnUnauthorized]);
+  useEffect(() => {
+    const generation = queryClient ? projectCollaborationDataGeneration(queryClient, projectId) : null;
+    void apiGet<{ users: MentionableUser[] }>(`/api/mentionable-users?projectId=${encodeURIComponent(projectId)}&q=`).then((response) => {
+      if (queryClient && projectCollaborationDataGeneration(queryClient, projectId) !== generation) return;
+      setUsers(response.users ?? []);
+    }).catch((error) => {
+      if (queryClient && projectCollaborationDataGeneration(queryClient, projectId) !== generation) return;
+      terminateOnUnauthorized(error); onAccessFailureRef.current?.(error); if (!(error instanceof Error && error.name === "AbortError")) setNotice("Assignees could not be loaded.");
+    });
+  }, [projectId, queryClient, terminateOnUnauthorized]);
   useLayoutEffect(() => { const changed = editingId !== priorEditingId.current; priorEditingId.current = editingId; if (!editingId || !changed || [...busy].some((key) => key.startsWith(`${editingId}:`))) return; const input = titleInputRefs.current.get(editingId); if (input && !input.disabled) input.focus(); }, [busy, editingId]);
   useLayoutEffect(() => { if (!composerOpen && restoreAddFocus.current) { restoreAddFocus.current = false; document.getElementById(`subtask-add-${projectId}`)?.focus(); } }, [composerOpen, projectId]);
   function setAction(id: string, value: boolean) { const next = new Set(busyRef.current); if (value) next.add(id); else next.delete(id); busyRef.current = next; setBusy(next); }

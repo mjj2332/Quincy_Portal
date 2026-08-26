@@ -2,13 +2,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { QueryClient } from "@tanstack/react-query";
 import { ApiError } from "./api";
 import {
-  beginAssetOptimisticMutation, classifyProjectAccessError, emptyReview, invalidateProjectResources,
-  projectAssetsQueryOptions, projectDataKeys, projectDetailQueryOptions, projectQueryRetry,
-  clearPrincipalProjectData, removeProjectData, type ProjectDetail,
+  applyProjectMembershipOverlay, beginAssetOptimisticMutation, beginProjectMembershipMutation, classifyProjectAccessError, emptyReview, invalidateProjectResources,
+  projectAssetsQueryOptions, projectCollaborationDataGeneration, projectCollaborationSummaryQueryOptions, projectDataKeys, projectDetailQueryOptions, projectQueryRetry,
+  clearPrincipalProjectData, purgeProjectCollaborationData, removeProjectData, type ProjectDetail, type ProjectMember,
 } from "./project-data";
 import { ProjectQueryRuntime } from "./project-query-sync";
 import { createQuincyQueryClient } from "./query-client";
 import type { WorkspaceAsset } from "../components/PhotoGrid";
+import { projectCommentsInfiniteQueryOptions } from "./project-comments";
 
 const apiGetMock = vi.hoisted(() => vi.fn());
 vi.mock("./api", async (importOriginal) => ({ ...(await importOriginal<typeof import("./api")>()), apiGet: apiGetMock }));
@@ -83,6 +84,34 @@ describe("project data key and request seam", () => {
     expect(classifyProjectAccessError(new ApiError("unauthenticated", 401), "comments")).toEqual({ scope: "principal" });
     expect(classifyProjectAccessError(new ApiError("unauthenticated", 401), "comment-read-marker")).toEqual({ scope: "principal" });
     expect(classifyProjectAccessError(new ApiError("missing", 404), "comment-read-marker")).toEqual({ scope: "project" });
+    expect(classifyProjectAccessError(new ApiError("forbidden", 403), "collaboration-summary")).toEqual({ scope: "collaboration" });
+    expect(classifyProjectAccessError(new ApiError("missing", 404), "collaboration-summary")).toEqual({ scope: "project" });
+  });
+
+  it("reads the safe collaboration summary and rejects a response after its generation tombstone", async () => {
+    const queryClient = client();
+    const options = projectCollaborationSummaryQueryOptions("a/b");
+    const summary = { project: { id: "a/b", street: "Marker Lane", stageKey: "raw_review" as const }, members: [] };
+    apiGetMock.mockResolvedValueOnce(summary);
+    await options.queryFn({ signal: new AbortController().signal, client: queryClient, queryKey: options.queryKey, meta: undefined });
+    expect(apiGetMock).toHaveBeenCalledWith("/api/projects/a%2Fb/collaboration-summary", expect.anything());
+    let resolve!: (value: typeof summary) => void;
+    apiGetMock.mockReturnValueOnce(new Promise((done) => { resolve = done; }));
+    const request = options.queryFn({ signal: new AbortController().signal, client: queryClient, queryKey: options.queryKey, meta: undefined });
+    await purgeProjectCollaborationData(queryClient, "a/b");
+    resolve(summary);
+    await expect(request).rejects.toMatchObject({ name: "AbortError" });
+    expect(projectCollaborationDataGeneration(queryClient, "a/b")).toBe(1);
+    expect(queryClient.getQueryData(projectDataKeys.collaborationSummary("a/b"))).toBeUndefined();
+    queryClient.clear();
+  });
+
+  it("rejects malformed collaboration summaries instead of fabricating a successful fallback", async () => {
+    const queryClient = client();
+    const options = projectCollaborationSummaryQueryOptions("p");
+    apiGetMock.mockResolvedValueOnce({ project: { id: "p", street: "Missing members", stageKey: "raw_review" }, members: "not-an-array" });
+    await expect(options.queryFn({ signal: new AbortController().signal, client: queryClient, queryKey: options.queryKey, meta: undefined })).rejects.toThrow("Invalid collaboration summary response");
+    queryClient.clear();
   });
 
   it("keeps reversed project and collection responses in their exact cache entries", async () => {
@@ -158,6 +187,64 @@ describe("asset mutation ledger", () => {
   });
 });
 
+describe("project membership mutation ledger", () => {
+  const member = (id: string, userId: string, roleOnProject: ProjectMember["roleOnProject"]): ProjectMember => ({ id, userId, roleOnProject, name: userId, email: `${userId}@example.test`, globalRole: roleOnProject, active: true, assignedSubtaskCount: 0 });
+
+  function summaryMemberKeys(queryClient: QueryClient, projectId = "p") {
+    const summary = queryClient.getQueryData<{ members: Array<Record<string, unknown>> }>(projectDataKeys.collaborationSummary(projectId));
+    return summary?.members.map((item) => Object.keys(item).sort());
+  }
+
+  async function seedSummaryAndDetail(queryClient: QueryClient, projectId = "p") {
+    const existing = member("cycle-existing", "existing", "editor");
+    queryClient.setQueryData(projectDataKeys.detail(projectId), { ...detail(projectId), members: [existing] });
+    queryClient.setQueryData(projectDataKeys.collaborationSummary(projectId), { project: { id: projectId, street: projectId, stageKey: "raw_review" as const }, members: [] });
+    return existing;
+  }
+
+  it("keeps collaboration-summary membership caches to their exact five-field contract at every ledger settlement", async () => {
+    const scenarios: Array<{ name: string; start: (queryClient: QueryClient) => Promise<{ mutation: Awaited<ReturnType<typeof beginProjectMembershipMutation>>; membership: ProjectMember }>; settle: (mutation: Awaited<ReturnType<typeof beginProjectMembershipMutation>>, membership: ProjectMember) => Promise<void> }> = [
+      { name: "optimistic add", start: async (queryClient) => { const membership = member("cycle-optimistic", "new-user", "photographer"); return { mutation: await beginProjectMembershipMutation(queryClient, "p", "photographer", "new-user", "add", membership), membership }; }, settle: async () => undefined },
+      { name: "successful commit", start: async (queryClient) => { const membership = member("cycle-commit", "new-user", "photographer"); return { mutation: await beginProjectMembershipMutation(queryClient, "p", "photographer", "new-user", "add", membership), membership }; }, settle: async (mutation, membership) => mutation.commit(membership) },
+      { name: "rollback", start: async (queryClient) => { const existing = await seedSummaryAndDetail(queryClient); return { mutation: await beginProjectMembershipMutation(queryClient, "p", "editor", "existing", "remove", null), membership: existing }; }, settle: async (mutation) => mutation.fail() },
+      { name: "conflict replacement", start: async (queryClient) => { const membership = member("cycle-conflict", "new-user", "photographer"); return { mutation: await beginProjectMembershipMutation(queryClient, "p", "photographer", "new-user", "add", membership), membership }; }, settle: async (mutation, membership) => mutation.conflict(membership) },
+    ];
+    for (const scenario of scenarios) {
+      const queryClient = client(); new ProjectQueryRuntime(queryClient);
+      if (scenario.name !== "rollback") await seedSummaryAndDetail(queryClient);
+      const { mutation, membership } = await scenario.start(queryClient);
+      await scenario.settle(mutation, membership);
+      const keys = summaryMemberKeys(queryClient);
+      expect(keys, scenario.name).toEqual([["active", "id", "name", "roleOnProject", "userId"]]);
+      expect(keys?.flat()).not.toContain("email");
+      expect(keys?.flat()).not.toContain("globalRole");
+      queryClient.clear();
+    }
+  });
+
+  it("keeps different optimistic cells independent when one canonical refetch lands first", async () => {
+    const queryClient = client(); new ProjectQueryRuntime(queryClient);
+    const project: ProjectDetail = { ...detail("p"), members: [member("cycle-a", "a", "photographer")] };
+    queryClient.setQueryData(projectDataKeys.detail("p"), project);
+    const optimisticA = member("optimistic-a", "a", "photographer");
+    const optimisticB = member("optimistic-b", "b", "editor");
+    const [first, second] = await Promise.all([
+      beginProjectMembershipMutation(queryClient, "p", "photographer", "a", "add", optimisticA),
+      beginProjectMembershipMutation(queryClient, "p", "editor", "b", "add", optimisticB),
+    ]);
+    expect(queryClient.getQueryData<ProjectDetail>(projectDataKeys.detail("p"))?.members.map((item) => item.userId).sort()).toEqual(["a", "b"]);
+    await first!.commit(member("cycle-a", "a", "photographer"));
+    const landed: ProjectDetail = { ...project, members: [member("cycle-a", "a", "photographer")] };
+    const overlay = applyProjectMembershipOverlay(landed, [
+      { id: 2, cell: "editor:b", roleOnProject: "editor", userId: "b", intent: "add", base: null, optimistic: optimisticB, status: "pending", committed: undefined, cleared: 0 },
+    ]);
+    expect(overlay.members.map((item) => item.userId).sort()).toEqual(["a", "b"]);
+    await second!.fail();
+    expect(queryClient.getQueryData<ProjectDetail>(projectDataKeys.detail("p"))?.members.map((item) => item.userId).sort()).toEqual(["a"]);
+    queryClient.clear();
+  });
+});
+
 describe("tombstone purge", () => {
   it("removes inactive project data and rejects a response that resolves after removal", async () => {
     const queryClient = client(); const runtime = new ProjectQueryRuntime(queryClient); const key = projectDataKeys.detail("p"); queryClient.setQueryData(key, detail("p"));
@@ -174,5 +261,41 @@ describe("tombstone purge", () => {
     await clearPrincipalProjectData(queryClient);
     expect(runtime.principalTerminal).toBe(true); expect(queryClient.getQueryCache().getAll()).toHaveLength(0);
     runtime.dispose();
+  });
+
+  it.each([401, 403, 404] as const)("blocks a late collaboration-summary response after a %s access loss", async (status) => {
+    const queryClient = client(); new ProjectQueryRuntime(queryClient);
+    const key = projectDataKeys.collaborationSummary("p");
+    const summary = { project: { id: "p", street: "Private Lane", stageKey: "raw_review" as const }, members: [] };
+    queryClient.setQueryData(key, summary);
+    let resolve!: (value: typeof summary) => void;
+    apiGetMock.mockReturnValueOnce(new Promise<typeof summary>((done) => { resolve = done; }));
+    const options = projectCollaborationSummaryQueryOptions("p");
+    const request = options.queryFn({ signal: new AbortController().signal, client: queryClient, queryKey: options.queryKey, meta: undefined });
+    await Promise.resolve();
+    if (status === 401) await clearPrincipalProjectData(queryClient);
+    else await purgeProjectCollaborationData(queryClient, "p");
+    resolve(summary);
+    await expect(request).rejects.toMatchObject({ name: "AbortError" });
+    expect(queryClient.getQueryData(key)).toBeUndefined();
+    queryClient.clear();
+  });
+
+  it.each([401, 403, 404] as const)("blocks a late comments response after a %s access loss", async (status) => {
+    const queryClient = client(); new ProjectQueryRuntime(queryClient);
+    const key = projectDataKeys.comments("p");
+    const page = { project: { id: "p", street: "Private Lane" }, comments: [] };
+    queryClient.setQueryData(key, { pages: [page], pageParams: [null] });
+    let resolve!: (value: typeof page) => void;
+    apiGetMock.mockReturnValueOnce(new Promise<typeof page>((done) => { resolve = done; }));
+    const options = projectCommentsInfiniteQueryOptions("p");
+    const request = options.queryFn({ pageParam: null, direction: "forward", signal: new AbortController().signal, client: queryClient, queryKey: options.queryKey, meta: undefined });
+    await Promise.resolve();
+    if (status === 401) await clearPrincipalProjectData(queryClient);
+    else await purgeProjectCollaborationData(queryClient, "p");
+    resolve(page);
+    await expect(request).rejects.toMatchObject({ name: "AbortError" });
+    expect(queryClient.getQueryData(key)).toBeUndefined();
+    queryClient.clear();
   });
 });

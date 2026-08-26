@@ -12,8 +12,6 @@ import { RENDITION_SPEC_VERSION } from "@quincy/shared";
 import { createDb } from "@quincy/db";
 import { collectionLinkUrlConflict, uniqueVersionError } from "../src/routes/collections";
 import { finalizeIngest } from "../src/lib/ingest";
-import { notifyProjectAssignments } from "../src/lib/notifications";
-import { insertProjectMembers, syncMembers } from "../src/lib/project-members";
 
 const database = env as unknown as { DB: D1Database };
 const authEnv = env as unknown as Env;
@@ -290,6 +288,31 @@ async function requestWithDbBatchFault(path: string, cookie: string, body: unkno
           await fault(database.DB);
         }
         return (target.batch as unknown as (items: unknown[]) => Promise<unknown>)(statements);
+      };
+    },
+  }) as unknown as D1Database;
+  return app.fetch(
+    new Request(`https://portal.test${path}`, {
+      method,
+      headers: { cookie, origin: authEnv.APP_ORIGIN, "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+    { ...authEnv, DB: faultDb },
+    testExecutionContext,
+  );
+}
+
+async function requestWithPreparedStatementFault(path: string, cookie: string, body: unknown, matches: (sql: string) => boolean, method: "POST" | "PUT" | "PATCH" = "PATCH") {
+  let injected = false;
+  const faultDb = new Proxy(authEnv.DB, {
+    get(target, property, receiver) {
+      if (property !== "prepare") return Reflect.get(target, property, receiver);
+      return (sql: string) => {
+        if (!injected && matches(sql)) {
+          injected = true;
+          return target.prepare("SELECT * FROM tb4_missing_fault_injection_table");
+        }
+        return target.prepare(sql);
       };
     },
   }) as unknown as D1Database;
@@ -600,7 +623,7 @@ describe("staff app API", () => {
       const response = await SELF.fetch("https://portal.test/api/projects", {
         method: "POST",
         headers: { cookie: adminCookie, "content-type": "application/json" },
-        body: JSON.stringify({ street, shootDate, orderedServices: [], photographerUserIds: [firstPhotographerId] }),
+        body: JSON.stringify({ street, shootDate, orderedServices: [], photographerUserIds: [firstPhotographerId, editorId] }),
       });
       expect(response.status).toBe(201);
       return (await response.json() as { id: string }).id;
@@ -610,13 +633,13 @@ describe("staff app API", () => {
     await database.DB.prepare("UPDATE collections SET received_count = ?, expected_count = ? WHERE project_id = ? AND kind = 'raw'").bind(4, 6, newer).run();
     await database.DB.prepare("UPDATE collections SET received_count = ?, expected_count = ? WHERE project_id = ? AND kind = 'raw'").bind(2, 3, older).run();
 
-    // The unique key includes role_on_project, so this is a distinct, valid membership row.
-    const secondRole = await SELF.fetch(`https://portal.test/api/projects/${newer}`, {
-      method: "PATCH",
+    // editorId is globally an Editor, so their Photographer and Editor rows are both eligible.
+    const secondRole = await SELF.fetch(`https://portal.test/api/projects/${newer}/editors/${editorId}`, {
+      method: "PUT",
       headers: { cookie: adminCookie, "content-type": "application/json" },
-      body: JSON.stringify({ editorUserIds: [firstPhotographerId] }),
+      body: JSON.stringify({}),
     });
-    expect(secondRole.status).toBe(200);
+    expect(secondRole.status).toBe(201);
 
     const response = await SELF.fetch("https://portal.test/api/projects", { headers: { cookie: await sessionCookie(firstPhotographerToken) } });
     expect(response.status).toBe(200);
@@ -1051,7 +1074,7 @@ describe("staff app API", () => {
     expect(sessions.results).toHaveLength(0);
   });
 
-  it("adds service collections and synchronizes only the requested project role", async () => {
+  it("adds service collections while PATCH remains roster-free", async () => {
     const cookie = await sessionCookie(adminToken);
     const created = await SELF.fetch("https://portal.test/api/projects", {
       method: "POST",
@@ -1070,14 +1093,20 @@ describe("staff app API", () => {
     const response = await SELF.fetch(`https://portal.test/api/projects/${project.id}`, {
       method: "PATCH",
       headers: { cookie, "content-type": "application/json" },
-      body: JSON.stringify({ orderedServices: ["edited", "video"], photographerUserIds: [secondPhotographerId] }),
+      body: JSON.stringify({ orderedServices: ["edited", "video"] }),
     });
     expect(response.status).toBe(200);
     const updated = await response.json() as { collections: Array<{ kind: string }>; members: Array<{ userId: string; roleOnProject: string }> };
     expect(updated.collections).toHaveLength(project.collections.length + 1);
     expect(updated.collections.map((collection) => collection.kind).sort()).toEqual(["edited", "raw", "video"]);
-    expect(updated.members.filter((member) => member.roleOnProject === "photographer").map((member) => member.userId)).toEqual([secondPhotographerId]);
+    expect(updated.members.filter((member) => member.roleOnProject === "photographer").map((member) => member.userId)).toEqual([firstPhotographerId]);
     expect(updated.members.filter((member) => member.roleOnProject === "editor").map((member) => member.userId)).toEqual([editorId]);
+    const rosterPatch = await SELF.fetch(`https://portal.test/api/projects/${project.id}`, {
+      method: "PATCH",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ photographerUserIds: [secondPhotographerId] }),
+    });
+    expect(rosterPatch.status).toBe(400);
   });
 
   it("accepts the migrated UUID in photographer and editor membership inputs", async () => {
@@ -1091,20 +1120,24 @@ describe("staff app API", () => {
     const project = await created.json() as { id: string; members: Array<{ userId: string; roleOnProject: string }> };
     expect(project.members).toContainEqual(expect.objectContaining({ userId: seedAdminId, roleOnProject: "photographer" }));
 
-    const updated = await SELF.fetch(`https://portal.test/api/projects/${project.id}`, {
-      method: "PATCH",
+    const updated = await SELF.fetch(`https://portal.test/api/projects/${project.id}/editors/${seedAdminId}`, {
+      method: "PUT",
       headers: { cookie, "content-type": "application/json" },
-      body: JSON.stringify({ editorUserIds: [seedAdminId] }),
+      body: "{}",
     });
-    expect(updated.status).toBe(200);
-    const body = await updated.json() as { members: Array<{ userId: string; roleOnProject: string }> };
-    expect(body.members).toEqual(expect.arrayContaining([
+    expect(updated.status).toBe(201);
+    const body = await updated.json() as { outcome: string; membership: { userId: string; roleOnProject: string } };
+    expect(body).toMatchObject({ outcome: "created", membership: { userId: seedAdminId, roleOnProject: "editor" } });
+    const detail = await SELF.fetch(`https://portal.test/api/projects/${project.id}`, { headers: { cookie } });
+    expect(detail.status).toBe(200);
+    const detailBody = await detail.json() as { members: Array<{ userId: string; roleOnProject: string }> };
+    expect(detailBody.members).toEqual(expect.arrayContaining([
       expect.objectContaining({ userId: seedAdminId, roleOnProject: "photographer" }),
       expect.objectContaining({ userId: seedAdminId, roleOnProject: "editor" }),
     ]));
   });
 
-  it("emits assignment alerts only for confirmed active role assignments", async () => {
+  it("emits assignment outbox occurrences only for eligible Create slots", async () => {
     const cookie = await sessionCookie(adminToken);
     const inactiveId = crypto.randomUUID();
     const now = Date.now();
@@ -1112,50 +1145,204 @@ describe("staff app API", () => {
       .bind(inactiveId, `${inactiveId}@example.test`, now, now).run();
     const created = await SELF.fetch("https://portal.test/api/projects", {
       method: "POST", headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ street: "Assignment outbox", orderedServices: [], photographerUserIds: [firstPhotographerId, editorId], editorUserIds: [editorId] }),
+    });
+    expect(created.status).toBe(201);
+    const project = await created.json() as { id: string };
+    expect((await database.DB.prepare("SELECT id FROM project_members WHERE project_id = ?").bind(project.id).all()).results).toHaveLength(3);
+    expect((await database.DB.prepare("SELECT id FROM audit_log WHERE action = 'project.member.add' AND target_id IN (SELECT id FROM project_members WHERE project_id = ?)").bind(project.id).all()).results).toHaveLength(3);
+    expect((await database.DB.prepare("SELECT id FROM notification_outbox WHERE project_id = ? AND event_type = 'project.assignment.created'").bind(project.id).all()).results).toHaveLength(3);
+    expect((await database.DB.prepare("SELECT id FROM notification_delivery_ledger WHERE event_type = 'project.assignment.created' AND source_key IN (SELECT id FROM project_members WHERE project_id = ?)").bind(project.id).all()).results).toHaveLength(6);
+    expect((await database.DB.prepare("SELECT id FROM notifications WHERE project_id = ? AND type = 'assigned_to_project'").bind(project.id).all()).results).toHaveLength(0);
+
+    const rejected = await SELF.fetch("https://portal.test/api/projects", {
+      method: "POST", headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ street: "Rejected assignment outbox", orderedServices: [], photographerUserIds: [inactiveId] }),
+    });
+    expect(rejected.status).toBe(422);
+    expect(await rejected.json()).toMatchObject({ code: "ineligible_project_assignments", ineligibleSlots: [{ userId: inactiveId, roleOnProject: "photographer" }] });
+    expect(await database.DB.prepare("SELECT id FROM projects WHERE street = 'Rejected assignment outbox'").first()).toBeNull();
+  });
+
+  it("gates assignment candidates and returns only the collaboration-safe summary projection", async () => {
+    const photographerCookie = await sessionCookie(photographerToken);
+    const candidateForbidden = await jsonRequest("/api/project-assignment-candidates", photographerCookie, "GET");
+    expect(candidateForbidden.status).toBe(403);
+    await expect(candidateForbidden.json()).resolves.toEqual({ error: "Forbidden", capability: "editProject" });
+
+    const inactiveId = crypto.randomUUID(); const now = Date.now();
+    await database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, 'Candidate inactive', ?, 1, 'editor', 0, ?, ?)")
+      .bind(inactiveId, `${inactiveId}@example.test`, now, now).run();
+    const stableIds = [crypto.randomUUID(), crypto.randomUUID(), crypto.randomUUID()];
+    const stableEmails = ["z-stable@example.test", "a-stable-1@example.test", "a-stable-2@example.test"];
+    await database.DB.batch(stableIds.map((id, index) => database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, ?, ?, 1, 'editor', 1, ?, ?)")
+      .bind(id, "Stable Candidate", stableEmails[index], now, now)));
+    const candidateResponse = await jsonRequest("/api/project-assignment-candidates", await sessionCookie(adminToken), "GET");
+    expect(candidateResponse.status).toBe(200);
+    const candidates = await candidateResponse.json() as { photographers: Array<Record<string, unknown>>; editors: Array<Record<string, unknown>> };
+    expect(Object.keys(candidates).sort()).toEqual(["editors", "photographers"]);
+    for (const list of [candidates.photographers, candidates.editors]) {
+      for (const candidate of list) {
+        expect(Object.keys(candidate).sort()).toEqual(["active", "email", "globalRole", "id", "name"]);
+        expect(candidate.active).toBe(true);
+      }
+    }
+    expect(candidates.photographers.map((candidate) => candidate.id)).toContain(editorId);
+    expect(candidates.editors.map((candidate) => candidate.id)).toContain(editorId);
+    expect(candidates.editors.map((candidate) => candidate.id)).not.toContain(firstPhotographerId);
+    expect(candidates.photographers.map((candidate) => candidate.id)).not.toContain(inactiveId);
+    const compareCandidates = (left: Record<string, unknown>, right: Record<string, unknown>) => {
+      for (const field of ["name", "email", "id"] as const) {
+        const leftValue = String(left[field]).toLowerCase(); const rightValue = String(right[field]).toLowerCase();
+        if (leftValue < rightValue) return -1;
+        if (leftValue > rightValue) return 1;
+      }
+      return 0;
+    };
+    for (const list of [candidates.photographers, candidates.editors]) {
+      expect(list).toEqual([...list].sort(compareCandidates));
+      expect(list.filter((candidate) => stableIds.includes(String(candidate.id))).map((candidate) => candidate.id))
+        .toEqual([...list].filter((candidate) => stableIds.includes(String(candidate.id))).sort(compareCandidates).map((candidate) => candidate.id));
+    }
+
+    const created = await SELF.fetch("https://portal.test/api/projects", {
+      method: "POST", headers: { cookie: await sessionCookie(adminToken), "content-type": "application/json" },
       body: JSON.stringify({
-        street: "Assignment alerts",
-        orderedServices: [],
-        photographerUserIds: [firstPhotographerId, inactiveId],
-        editorUserIds: [editorId, firstPhotographerId],
+        street: `Collaboration-safe summary ${crypto.randomUUID()}`, suburb: "Withheld suburb", postcode: "99999",
+        agencyName: "Withheld Agency", agentName: "Withheld Agent", agentEmail: "agent@withheld.test", agentPhone: "+60 1111",
+        shootDate: "2026-08-30", timeWindow: "09:00-10:00", orderNo: "ORDER-1", orderId: "ORDER-ID-1", invoiceAmount: 123,
+        paymentStatus: "unpaid", notes: "Withheld notes", rawFolderLink: "https://dropbox.test/private", rawFolderPath: "/private",
+        orderedServices: ["edited"], photographerUserIds: [firstPhotographerId], editorUserIds: [editorId],
       }),
     });
     expect(created.status).toBe(201);
     const project = await created.json() as { id: string };
-    const assignmentRows = async () => database.DB.prepare("SELECT user_id, body FROM notifications WHERE project_id = ? AND type = 'assigned_to_project' ORDER BY user_id, body").bind(project.id).all<{ user_id: string; body: string }>();
-    expect((await assignmentRows()).results).toEqual([
-      { user_id: firstPhotographerId, body: "You have been assigned as the editor for Assignment alerts." },
-      { user_id: firstPhotographerId, body: "You have been assigned as the photographer for Assignment alerts." },
-      { user_id: editorId, body: "You have been assigned as the editor for Assignment alerts." },
-    ]);
-    expect((await assignmentRows()).results.map((row) => row.user_id)).not.toContain(seedAdminId);
-    expect((await assignmentRows()).results.map((row) => row.user_id)).not.toContain(inactiveId);
-    expect((await database.DB.prepare("SELECT user_id FROM project_members WHERE project_id = ? AND user_id = ?").bind(project.id, inactiveId).all()).results).toHaveLength(1);
+    const authorized = await jsonRequest(`/api/projects/${project.id}/collaboration-summary`, await sessionCookie(firstPhotographerToken), "GET");
+    expect(authorized.status).toBe(200);
+    const summary = await authorized.json() as { project: Record<string, unknown>; members: Array<Record<string, unknown>> };
+    expect(Object.keys(summary).sort()).toEqual(["members", "project"]);
+    expect(Object.keys(summary.project).sort()).toEqual(["id", "stageKey", "street"]);
+    expect(summary.project).toMatchObject({ id: project.id, street: expect.stringContaining("Collaboration-safe summary") });
+    expect(summary.members).toHaveLength(2);
+    for (const member of summary.members) expect(Object.keys(member).sort()).toEqual(["active", "id", "name", "roleOnProject", "userId"]);
+    for (const forbidden of ["email", "suburb", "postcode", "shootDate", "timeWindow", "agencyName", "agentName", "agentEmail", "agentPhone", "invoiceAmount", "paymentStatus", "orderNo", "orderId", "notes", "rawFolderLink", "rawFolderPath", "collections", "assets", "assignedSubtaskCount", "mutationCandidates"]) {
+      expect(Object.keys(summary.project)).not.toContain(forbidden);
+      expect(summary.members.flatMap((member) => Object.keys(member))).not.toContain(forbidden);
+    }
 
-    const same = await SELF.fetch(`https://portal.test/api/projects/${project.id}`, {
-      method: "PATCH", headers: { cookie, "content-type": "application/json" },
-      body: JSON.stringify({ photographerUserIds: [firstPhotographerId, inactiveId], editorUserIds: [editorId, firstPhotographerId] }),
-    });
-    expect(same.status).toBe(200);
-    expect((await assignmentRows()).results).toHaveLength(3);
-
-    const added = await SELF.fetch(`https://portal.test/api/projects/${project.id}`, {
-      method: "PATCH", headers: { cookie, "content-type": "application/json" },
-      body: JSON.stringify({ photographerUserIds: [firstPhotographerId, secondPhotographerId], editorUserIds: [editorId, firstPhotographerId] }),
-    });
-    expect(added.status).toBe(200);
-    expect((await assignmentRows()).results.filter((row) => row.user_id === secondPhotographerId)).toEqual([
-      { user_id: secondPhotographerId, body: "You have been assigned as the photographer for Assignment alerts." },
-    ]);
-
-    const removed = await SELF.fetch(`https://portal.test/api/projects/${project.id}`, {
-      method: "PATCH", headers: { cookie, "content-type": "application/json" },
-      body: JSON.stringify({ photographerUserIds: [secondPhotographerId], editorUserIds: [editorId] }),
-    });
-    expect(removed.status).toBe(200);
-    expect((await assignmentRows()).results).toHaveLength(4);
+    const existingDenied = await jsonRequest(`/api/projects/${project.id}/collaboration-summary`, photographerCookie, "GET");
+    const missingDenied = await jsonRequest(`/api/projects/${crypto.randomUUID()}/collaboration-summary`, photographerCookie, "GET");
+    expect(existingDenied.status).toBe(403); expect(missingDenied.status).toBe(403);
+    expect(await existingDenied.json()).toEqual(await missingDenied.json());
+    const adminMissing = await jsonRequest(`/api/projects/${crypto.randomUUID()}/collaboration-summary`, await sessionCookie(adminToken), "GET");
+    expect(adminMissing.status).toBe(404);
+    expect((await jsonRequest(`/api/projects/${project.id}/collaboration-summary`, "", "GET")).status).toBe(401);
   });
 
-  it("returns database-confirmed membership inserts and emits one matching assignment alert", async () => {
+  it("rolls back Create when eligibility drifts before its conditional batch executes", async () => {
+    const cookie = await sessionCookie(adminToken); const userId = crypto.randomUUID(); const now = Date.now();
+    const street = `Create eligibility race ${crypto.randomUUID()}`;
+    await database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, 'Create race target', ?, 1, 'editor', 1, ?, ?)")
+      .bind(userId, `${userId}@example.test`, now, now).run();
+    try {
+      const response = await requestWithDbBatchFault("/api/projects", cookie, { street, orderedServices: ["edited"], photographerUserIds: [userId] }, async () => {
+        await database.DB.prepare("UPDATE user SET active = 0 WHERE id = ?").bind(userId).run();
+      }, "POST");
+      expect(response.status).toBe(422);
+      await expect(response.json()).resolves.toMatchObject({ code: "ineligible_project_assignments", ineligibleSlots: [{ userId, roleOnProject: "photographer" }] });
+      const project = await database.DB.prepare("SELECT id FROM projects WHERE street = ?").bind(street).first();
+      expect(project).toBeNull();
+      expect((await database.DB.prepare("SELECT count(*) AS count FROM collections WHERE project_id IN (SELECT id FROM projects WHERE street = ?)").bind(street).first<{ count: number }>())!.count).toBe(0);
+      expect((await database.DB.prepare("SELECT count(*) AS count FROM project_members WHERE project_id IN (SELECT id FROM projects WHERE street = ?)").bind(street).first<{ count: number }>())!.count).toBe(0);
+      // A bound `street` LIKE pattern can exceed D1/SQLite's default 50-byte LIKE-pattern
+      // length limit ("LIKE or GLOB pattern too complex"); the fixed-length userId UUID stays
+      // well under it and is what a real orphaned project.member.add audit row would reference.
+      expect((await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE target_id IN (SELECT id FROM projects WHERE street = ?) OR meta_json LIKE ?").bind(street, `%${userId}%`).first<{ count: number }>())!.count).toBe(0);
+      expect((await database.DB.prepare("SELECT count(*) AS count FROM notification_outbox WHERE project_id IN (SELECT id FROM projects WHERE street = ?)").bind(street).first<{ count: number }>())!.count).toBe(0);
+      expect((await database.DB.prepare("SELECT count(*) AS count FROM notification_delivery_ledger WHERE outbox_id IN (SELECT id FROM notification_outbox WHERE project_id IN (SELECT id FROM projects WHERE street = ?))").bind(street).first<{ count: number }>())!.count).toBe(0);
+    } finally {
+      await database.DB.prepare("UPDATE user SET active = 1 WHERE id = ?").bind(userId).run();
+    }
+  });
+
+  it("rolls back every statement-level failure point in the Create assignment batch", async () => {
+    const points = [
+      { name: "diagnostic", diagnostic: true },
+      { name: "project", diagnostic: false, table: "projects", when: "" },
+      { name: "collection-raw", diagnostic: false, table: "collections", when: "WHEN NEW.kind = 'raw'" },
+      { name: "collection-edited", diagnostic: false, table: "collections", when: "WHEN NEW.kind = 'edited'" },
+      { name: "collection-video", diagnostic: false, table: "collections", when: "WHEN NEW.kind = 'video'" },
+      { name: "membership", diagnostic: false, table: "project_members", when: "" },
+      { name: "member-audit", diagnostic: false, table: "audit_log", when: "WHEN NEW.action = 'project.member.add'" },
+      { name: "outbox", diagnostic: false, table: "notification_outbox", when: "WHEN NEW.event_type = 'project.assignment.created'" },
+      { name: "in-app-ledger", diagnostic: false, table: "notification_delivery_ledger", when: "WHEN NEW.channel = 'in_app'" },
+      { name: "email-ledger", diagnostic: false, table: "notification_delivery_ledger", when: "WHEN NEW.channel = 'email'" },
+      { name: "project-audit", diagnostic: false, table: "audit_log", when: "WHEN NEW.action = 'project.create'" },
+    ];
+    const cookie = await sessionCookie(adminToken);
+    const countRows = async () => {
+      const [projects, collections, members, audits, outbox, ledger] = await Promise.all([
+        database.DB.prepare("SELECT count(*) AS count FROM projects").first<{ count: number }>(),
+        database.DB.prepare("SELECT count(*) AS count FROM collections").first<{ count: number }>(),
+        database.DB.prepare("SELECT count(*) AS count FROM project_members").first<{ count: number }>(),
+        database.DB.prepare("SELECT count(*) AS count FROM audit_log").first<{ count: number }>(),
+        database.DB.prepare("SELECT count(*) AS count FROM notification_outbox").first<{ count: number }>(),
+        database.DB.prepare("SELECT count(*) AS count FROM notification_delivery_ledger").first<{ count: number }>(),
+      ]);
+      return { projects: projects!.count, collections: collections!.count, members: members!.count, audits: audits!.count, outbox: outbox!.count, ledger: ledger!.count };
+    };
+
+    for (const point of points) {
+      const street = `Create fault ${point.name} ${crypto.randomUUID()}`;
+      const before = await countRows();
+      const trigger = `tb4_create_fault_${point.name.replaceAll("-", "_")}`;
+      if (!point.diagnostic) await database.DB.exec(`CREATE TRIGGER ${trigger} BEFORE INSERT ON ${point.table} ${point.when} BEGIN SELECT RAISE(ABORT, 'forced Create fault'); END`);
+      try {
+        const response = point.diagnostic
+          ? await requestWithPreparedStatementFault("/api/projects", cookie, { street, orderedServices: ["edited", "video"], photographerUserIds: [editorId] }, (sql) => sql.includes("SELECT ? AS userId"), "POST")
+          : await SELF.fetch("https://portal.test/api/projects", { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ street, orderedServices: ["edited", "video"], photographerUserIds: [editorId] }) });
+        expect(response.status, point.name).toBe(500);
+      } finally {
+        if (!point.diagnostic) await database.DB.exec(`DROP TRIGGER ${trigger}`);
+      }
+      expect(await countRows(), point.name).toEqual(before);
+      expect(await database.DB.prepare("SELECT id FROM projects WHERE street = ?").bind(street).first(), point.name).toBeNull();
+    }
+  });
+
+  it("rolls back every statement-level failure point in the PUT assignment batch", async () => {
+    const points = [
+      { name: "diagnostic", diagnostic: true },
+      { name: "membership", diagnostic: false, table: "project_members", when: "" },
+      { name: "audit", diagnostic: false, table: "audit_log", when: "" },
+      { name: "outbox", diagnostic: false, table: "notification_outbox", when: "" },
+      { name: "in-app-ledger", diagnostic: false, table: "notification_delivery_ledger", when: "WHEN NEW.channel = 'in_app'" },
+      { name: "email-ledger", diagnostic: false, table: "notification_delivery_ledger", when: "WHEN NEW.channel = 'email'" },
+    ];
+    const cookie = await sessionCookie(adminToken);
+    for (const point of points) {
+      const projectId = crypto.randomUUID(); const userId = crypto.randomUUID(); const now = Date.now(); const trigger = `tb4_put_fault_${point.name.replaceAll("-", "_")}`;
+      await database.DB.batch([
+        database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, 'PUT fault target', ?, 1, 'editor', 1, ?, ?)").bind(userId, `${userId}@example.test`, now, now),
+        database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, ?, 'awaiting_raw', ?, ?)").bind(projectId, `PUT fault ${point.name} ${projectId}`, now, now),
+      ]);
+      if (!point.diagnostic) await database.DB.exec(`CREATE TRIGGER ${trigger} BEFORE INSERT ON ${point.table} ${point.when} BEGIN SELECT RAISE(ABORT, 'forced PUT fault'); END`);
+      try {
+        const response = point.diagnostic
+          ? await requestWithPreparedStatementFault(`/api/projects/${projectId}/editors/${userId}`, cookie, {}, (sql) => sql.includes("targetUserId"), "PUT")
+          : await SELF.fetch(`https://portal.test/api/projects/${projectId}/editors/${userId}`, { method: "PUT", headers: { cookie, "content-type": "application/json" }, body: "{}" });
+        expect(response.status, point.name).toBe(500);
+      } finally {
+        if (!point.diagnostic) await database.DB.exec(`DROP TRIGGER ${trigger}`);
+      }
+      expect((await database.DB.prepare("SELECT count(*) AS count FROM project_members WHERE project_id = ?").bind(projectId).first<{ count: number }>())!.count, point.name).toBe(0);
+      expect((await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE action = 'project.member.add' AND meta_json LIKE ?").bind(`%${projectId}%`).first<{ count: number }>())!.count, point.name).toBe(0);
+      expect((await database.DB.prepare("SELECT count(*) AS count FROM notification_outbox WHERE project_id = ?").bind(projectId).first<{ count: number }>())!.count, point.name).toBe(0);
+      expect((await database.DB.prepare("SELECT count(*) AS count FROM notification_delivery_ledger WHERE outbox_id IN (SELECT id FROM notification_outbox WHERE project_id = ?)").bind(projectId).first<{ count: number }>())!.count, point.name).toBe(0);
+    }
+  });
+
+  it("returns database-confirmed membership inserts and one matching durable occurrence", async () => {
     const now = Date.now();
     const projectId = crypto.randomUUID();
     const userId = crypto.randomUUID();
@@ -1163,33 +1350,23 @@ describe("staff app API", () => {
       database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, 'Contested target', ?, 1, 'editor', 1, ?, ?)").bind(userId, `${userId}@example.test`, now, now),
       database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'Contested assignment', 'awaiting_raw', ?, ?)").bind(projectId, now, now),
     ]);
-    const db = createDb(database.DB);
-    const first = await insertProjectMembers(db, projectId, [userId], "editor");
-    const second = await insertProjectMembers(db, projectId, [userId], "editor");
-    expect([...first, ...second]).toEqual([userId]);
+    const cookie = await sessionCookie(adminToken);
+    const responses = await Promise.all([1, 2].map(() => SELF.fetch(`https://portal.test/api/projects/${projectId}/editors/${userId}`, { method: "PUT", headers: { cookie, "content-type": "application/json" }, body: "{}" })));
+    expect(responses.map((response) => response.status).sort()).toEqual([200, 201]);
     expect((await database.DB.prepare("SELECT id FROM project_members WHERE project_id = ? AND user_id = ? AND role_on_project = 'editor'").bind(projectId, userId).all()).results).toHaveLength(1);
-    const send = vi.fn().mockResolvedValue({ messageId: "test-message" });
-    const testEnv = { DB: database.DB, EMAIL: { send }, NOTIFICATIONS_FROM_ADDRESS: "studio@example.test", APP_ORIGIN: "https://portal.test" } as unknown as Env;
-    for (const userIds of [first, second]) {
-      await notifyProjectAssignments(testEnv, projectId, userIds.map((assignedUserId) => ({ userId: assignedUserId, roleOnProject: "editor" as const })));
-    }
-    expect((await database.DB.prepare("SELECT id FROM notifications WHERE project_id = ? AND type = 'assigned_to_project'").bind(projectId).all()).results).toHaveLength(1);
-    expect(send).toHaveBeenCalledTimes(1);
-    expect(send).toHaveBeenCalledWith(expect.objectContaining({ text: expect.stringContaining(`https://portal.test/projects/${projectId}`) }));
+    expect((await database.DB.prepare("SELECT id FROM audit_log WHERE action = 'project.member.add' AND target_id IN (SELECT id FROM project_members WHERE project_id = ?)").bind(projectId).all()).results).toHaveLength(1);
+    expect((await database.DB.prepare("SELECT id FROM notification_outbox WHERE project_id = ? AND event_type = 'project.assignment.created'").bind(projectId).all()).results).toHaveLength(1);
+    expect((await database.DB.prepare("SELECT id FROM notification_delivery_ledger WHERE event_type = 'project.assignment.created' AND source_key IN (SELECT id FROM project_members WHERE project_id = ?)").bind(projectId).all()).results).toHaveLength(2);
   });
 
-  it("does not report an addition from a stale empty syncMembers snapshot", async () => {
+  it("does not use a full-roster snapshot for concurrent exact-role PUTs", async () => {
     const now = Date.now();
     const projectId = crypto.randomUUID();
-    const userId = crypto.randomUUID();
-    await database.DB.batch([
-      database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, 'Stale target', ?, 1, 'editor', 1, ?, ?)").bind(userId, `${userId}@example.test`, now, now),
-      database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'Stale membership', 'awaiting_raw', ?, ?)").bind(projectId, now, now),
-    ]);
-    const db = createDb(database.DB);
-    expect(await insertProjectMembers(db, projectId, [userId], "editor")).toEqual([userId]);
-    expect(await syncMembers(db, projectId, [], [userId], "editor")).toEqual({ added: [], removed: [] });
-    expect((await database.DB.prepare("SELECT id FROM project_members WHERE project_id = ? AND user_id = ? AND role_on_project = 'editor'").bind(projectId, userId).all()).results).toHaveLength(1);
+    await database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'Concurrent role membership', 'awaiting_raw', ?, ?)").bind(projectId, now, now).run();
+    const cookie = await sessionCookie(adminToken);
+    const responses = await Promise.all([firstPhotographerId, secondPhotographerId].map((userId) => SELF.fetch(`https://portal.test/api/projects/${projectId}/photographers/${userId}`, { method: "PUT", headers: { cookie, "content-type": "application/json" }, body: "{}" })));
+    expect(responses.every((response) => response.status === 201)).toBe(true);
+    expect((await database.DB.prepare("SELECT user_id FROM project_members WHERE project_id = ? AND role_on_project = 'photographer' ORDER BY user_id").bind(projectId).all<{ user_id: string }>()).results.map((row) => row.user_id)).toEqual([firstPhotographerId, secondPhotographerId].sort());
   });
 
   it("accepts an editor-role user in the photographer slot, and confirms their access is unaffected by that membership row", async () => {

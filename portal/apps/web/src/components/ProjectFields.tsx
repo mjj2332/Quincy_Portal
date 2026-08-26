@@ -15,7 +15,7 @@ export type ProjectSelectionField = "orderedServices" | "photographerUserIds" | 
 export type ProjectFieldError = "agentEmail" | "rawFolderLink" | "invoiceAmount";
 export type ProjectFieldsMode = "create" | "edit";
 
-type UsersResponse = { users: User[] };
+type AssignmentCandidatesResponse = { photographers: Array<Omit<User, "role"> & { globalRole: Role }>; editors: Array<Omit<User, "role"> & { globalRole: Role }> };
 type Service = { kind: Exclude<CollectionKind, "raw">; label: string };
 
 export const SERVICES: Service[] = [
@@ -66,12 +66,19 @@ export function ProjectFields({ form, errors, existingCollections = [], mode = "
   const [usersError, setUsersError] = useState<string>();
   const loadUsers = useCallback(async () => {
     setIsLoadingUsers(true); setUsersError(undefined);
-    try { setUsers((await apiGet<UsersResponse>("/api/users")).users); }
+    try {
+      const response = await apiGet<AssignmentCandidatesResponse>("/api/project-assignment-candidates");
+      const candidates = [...response.photographers, ...response.editors];
+      setUsers([...new Map(candidates.map((user) => [user.id, { ...user, role: user.globalRole }])).values()]);
+    }
     catch (reason) { setUsersError(reason instanceof Error ? reason.message : "Team members could not be loaded."); }
     finally { setIsLoadingUsers(false); }
   }, []);
 
-  useEffect(() => { void loadUsers(); }, [loadUsers]);
+  useEffect(() => {
+    if (mode !== "create") { setIsLoadingUsers(false); return; }
+    void loadUsers();
+  }, [loadUsers, mode]);
 
   const photographers = users.filter((user) => (user.role === "photographer" || user.role === "editor" || user.role === "admin") && (user.active || form.photographerUserIds.includes(user.id)));
   const editors = users.filter((user) => (user.role === "editor" || user.role === "admin") && (user.active || form.editorUserIds.includes(user.id)));
@@ -107,12 +114,12 @@ export function ProjectFields({ form, errors, existingCollections = [], mode = "
       <div className="create-project__section-head"><div className="ey">Dropbox</div><h2 className="serif" id="dropbox-heading">Where will the RAW files land?</h2></div>
       <div className="create-project__fields create-project__fields--two"><label className="admin-field"><span>RAW folder link</span><input type="url" placeholder="https://www.dropbox.com/..." value={form.rawFolderLink} onChange={(event) => onChange("rawFolderLink", event.target.value)} aria-invalid={Boolean(errors.rawFolderLink)} />{errors.rawFolderLink && <small>{errors.rawFolderLink}</small>}</label><label className="admin-field"><span>RAW folder path</span><input placeholder="/Shoots/Property name" value={form.rawFolderPath} onChange={(event) => onChange("rawFolderPath", event.target.value)} /></label></div>
     </section>
-    <section className="create-project__section" aria-labelledby="team-heading">
+    {mode === "create" && <section className="create-project__section" aria-labelledby="team-heading">
       <div className="create-project__section-head"><div className="ey">Team</div><h2 className="serif" id="team-heading">Who is assigned?</h2></div>
       {isLoadingUsers && <div className="create-project__team-state" role="status">Loading available team members…</div>}
       {!isLoadingUsers && usersError && <div className="notice" role="alert">{usersError}<div style={{ marginTop: 12 }}><button className="button button--secondary" type="button" onClick={() => void loadUsers()}>Try again</button></div></div>}
       {!isLoadingUsers && !usersError && <div className="create-project__team"><div><div className="ey">Photographers</div><div className="create-project__checklist">{photographers.length ? photographers.map((user) => <label className="create-project__check" key={user.id}><input type="checkbox" checked={form.photographerUserIds.includes(user.id)} onChange={() => onToggle("photographerUserIds", user.id)} /><span><strong>{userName(user)}</strong><small>{user.email}{user.role === "admin" && " · admin"}{user.role === "editor" && " · editor"}</small></span></label>) : <p>No active photographers are provisioned.</p>}</div></div><div><div className="ey">Editors</div><div className="create-project__checklist">{editors.length ? editors.map((user) => <label className="create-project__check" key={user.id}><input type="checkbox" checked={form.editorUserIds.includes(user.id)} onChange={() => onToggle("editorUserIds", user.id)} /><span><strong>{userName(user)}</strong><small>{user.email}{user.role === "admin" && " · admin"}</small></span></label>) : <p>No active editors are provisioned.</p>}</div></div></div>}
-    </section>
+    </section>}
     <section className={`create-project__section ${policy.notesReadOnly ? "project-fields__section--readonly" : ""}`} aria-labelledby="notes-heading">
       <div className="create-project__section-head"><div className="ey">Notes</div><h2 className="serif" id="notes-heading">Anything the team should know?</h2>{policy.notesReadOnly && <p className="project-fields__readonly-note">Notes are retained from the original order.</p>}</div>
       <label className="admin-field"><span>Production notes</span><textarea rows={5} value={form.notes} readOnly={policy.notesReadOnly} onChange={policy.notesReadOnly ? undefined : (event) => onChange("notes", event.target.value)} /></label>

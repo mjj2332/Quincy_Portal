@@ -100,4 +100,21 @@ describe("SubtaskChecklist", () => {
     vi.useFakeTimers(); try { let busy = true; const focus = vi.spyOn(surviving, "focus"); scheduleReorderFocus(new Map([["task-1", surviving]]), "task-1", 0, false, null, projectId, () => busy); await act(async () => { await vi.advanceTimersByTimeAsync(0); }); expect(focus).not.toHaveBeenCalled(); busy = false; await act(async () => { await vi.advanceTimersByTimeAsync(16); await vi.advanceTimersByTimeAsync(0); }); expect(focus).toHaveBeenCalledTimes(1); } finally { vi.useRealTimers(); }
     scheduleReorderFocus(new Map(), "missing", 0, false, null, projectId); await act(async () => { await new Promise((resolve) => window.setTimeout(resolve, 0)); }); expect(document.activeElement).toBe(document.getElementById(`subtask-add-${projectId}`));
   });
+
+  it("does not reload the checklist when a parent re-render passes a new onAccessFailure identity", async () => {
+    const host = document.createElement("div"); document.body.appendChild(host); const localRoot = createRoot(host);
+    try {
+      await act(async () => { localRoot.render(<SubtaskChecklist projectId={projectId} onAccessFailure={() => {}} />); await Promise.resolve(); await Promise.resolve(); });
+      expect(apiGetMock.mock.calls.filter(([path]) => path.includes("/subtasks")).length).toBe(1);
+      // A parent that re-renders on every keystroke (e.g. a comment composer) allocates a fresh
+      // onAccessFailure closure each time; that identity change must never re-trigger the load effect.
+      for (let index = 0; index < 5; index += 1) {
+        await act(async () => { localRoot.render(<SubtaskChecklist projectId={projectId} onAccessFailure={() => { /* re-render */ }} />); await Promise.resolve(); });
+      }
+      expect(apiGetMock.mock.calls.filter(([path]) => path.includes("/subtasks")).length).toBe(1);
+      expect(apiGetMock.mock.calls.filter(([path]) => path.includes("mentionable-users")).length).toBe(1);
+    } finally {
+      await act(async () => localRoot.unmount());
+    }
+  });
 });

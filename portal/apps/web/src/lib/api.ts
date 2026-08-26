@@ -83,8 +83,16 @@ export function apiPostWithStatus<T, TBody>(path: string, body: TBody): Promise<
   });
 }
 
+export function apiPutWithStatus<T>(path: string): Promise<{ data: T; status: number }> {
+  return requestWithStatus<T>(path, { method: "PUT" });
+}
+
 export function apiDelete<T>(path: string): Promise<T> {
   return request<T>(path, { method: "DELETE" });
+}
+
+export function apiDeleteWithBody<T, TBody>(path: string, body: TBody): Promise<T> {
+  return request<T>(path, { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 }
 
 export function apiPostForm<T>(path: string, body: FormData): Promise<T> {

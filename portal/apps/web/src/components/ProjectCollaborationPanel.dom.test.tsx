@@ -9,7 +9,7 @@ import { Topbar } from "./Topbar";
 import { QuincyQueryProvider } from "../lib/query-client";
 import { ApiError } from "../lib/api";
 import { projectDataKeys } from "../lib/project-data";
-import { purgeProjectCommentData, useProjectCommentPresentation, useProjectCommentReadStateQuery, useProjectCommentsCacheQuery, useProjectCommentsQuery } from "../lib/project-comments";
+import { purgeProjectCollaborationData, useProjectCommentPresentation, useProjectCommentReadStateQuery, useProjectCommentsCacheQuery, useProjectCommentsQuery } from "../lib/project-comments";
 
 const confirmMock = vi.hoisted(() => vi.fn(() => Promise.resolve(true)));
 vi.mock("../lib/confirm", () => ({ confirm: confirmMock }));
@@ -512,6 +512,7 @@ describe("ProjectCollaborationPanel", () => {
       await act(async () => { rerender(); await Promise.resolve(); });
       await flush(2);
     }
+    expect(apiGetMock.mock.calls.filter(([path]) => path.includes("/subtasks")).length).toBe(1);
     apiPatchMock.mockResolvedValueOnce({ ...readState(), marker: { throughCommentId: "proof-head", throughCreatedAt: "2026-08-25T00:00:00.000Z", updatedAt: "2026-08-25T00:00:01.000Z" }, latest: { commentId: "proof-head", createdAt: "2026-08-25T00:00:00.000Z" } });
     pendingComments.at(-1)?.(page(["proof-head"]));
     await flush(20);
@@ -815,7 +816,7 @@ describe("ProjectCollaborationPanel", () => {
     const drain = presentation.drain({ pages: [targetPage], pageParams: [null] }, state);
     await flush();
     expect(apiPatchMock).toHaveBeenCalledTimes(1);
-    await purgeProjectCommentData(queryClient, projectId);
+    await purgeProjectCollaborationData(queryClient, projectId);
     resolvePatch({ ...state, marker: { throughCommentId: "late-head", throughCreatedAt: "2026-08-25T00:00:00.000Z", updatedAt: "2026-08-25T00:00:01.000Z" } });
     await drain; await flush();
     expect(queryClient.getQueryData(projectDataKeys.commentReadMarker(projectId))).toBeUndefined();
@@ -860,6 +861,6 @@ describe("ProjectCollaborationPanel", () => {
     await render(<EditProject projectId={projectId} onNavigate={() => undefined} />);
     expect(apiGetMock).toHaveBeenCalledWith(`/api/projects/${projectId}`); expect(editor.querySelector(".create-project__form")).not.toBeNull();
     expect(editor.querySelector<HTMLInputElement>('input[value="72 Collaboration Lane"]')).not.toBeNull();
-    expect(editor.querySelector(".project-collaboration")).toBeNull(); expect(editor.querySelector(".pagehead + .create-project__form")).not.toBeNull();
+    expect(editor.querySelector(".project-collaboration")).toBeNull(); expect(editor.querySelector(".project-team")).toBeNull(); expect(editor.querySelector(".pagehead + .create-project__form")).not.toBeNull();
   });
 });

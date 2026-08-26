@@ -8,6 +8,8 @@ const comments = read("../../../workers/app/src/lib/project-comments.ts");
 const commentRoutes = read("../../../workers/app/src/routes/project-comments.ts");
 const noticeRoutes = read("../../../workers/app/src/routes/notice-board.ts");
 const notifications = read("../../../workers/app/src/lib/notifications.ts");
+const projects = read("../../../workers/app/src/routes/projects.ts");
+const projectMembers = read("../../../workers/app/src/lib/project-members.ts");
 const sharedOutbox = read("../../../packages/shared/src/notification-outbox.ts");
 const delivery = read("../../../workers/background/src/notification-delivery.ts");
 const backgroundConfig = read("../../../workers/background/wrangler.jsonc");
@@ -51,12 +53,18 @@ describe("TB4 implementation contracts", () => {
     expect(comments).not.toContain("payload: { body");
   });
 
-  it("4. has one project-comment outbox producer and leaves Notice Board direct", () => {
+  it("4. has one project-assignment outbox producer and leaves Notice Board direct", () => {
     expect(commentRoutes).not.toContain("notifyMentions");
     expect(commentRoutes).toContain("waitUntil(publishNotificationOutbox");
     expect(noticeRoutes).toContain("notifyNoticeBoardMentions");
     expect(notifications).toContain("notifyNoticeBoardMentions");
-    expect(notifications).toContain("notifyProjectAssignments");
+    expect(notifications).not.toContain("notifyProjectAssignments");
+    expect(projects).not.toContain("notifyProjectAssignments");
+    expect(projectMembers).toContain("NOTIFICATION_OUTBOX_EVENT_TYPES.projectAssignmentCreated");
+    expect((projectMembers.match(/NOTIFICATION_OUTBOX_EVENT_TYPES\.projectAssignmentCreated/g) ?? []).length).toBeGreaterThan(0);
+    const assignmentProducerOwners = [notifications, projects, projectMembers]
+      .filter((source) => source.includes("NOTIFICATION_OUTBOX_EVENT_TYPES.projectAssignmentCreated"));
+    expect(assignmentProducerOwners).toHaveLength(1);
     expect(notifications).toContain("notifySubtaskAssignee");
   });
 
@@ -143,8 +151,9 @@ describe("TB4 implementation contracts", () => {
 
   it("15. preserves every non-comment direct notification producer", () => {
     expect(notifications).toContain("export async function notifyProject");
-    expect(notifications).toContain("export async function notifyProjectAssignments");
     expect(notifications).toContain("export async function notifySubtaskAssignee");
+    expect(notifications).not.toContain("notifyProjectAssignments");
+    expect(projects).not.toContain("notifyProjectAssignments");
     expect(notifications).toContain("emitNotifications");
     expect(commentRoutes).not.toContain("emitNotifications");
   });

@@ -146,23 +146,103 @@ describe("project subtasks API", () => {
   });
 
   it("clears only final-role non-admin assignees as part of the project membership batch", async () => {
-    // photographerId already holds a "photographer" project_members row from beforeAll.
+    const initialPhotographer = await database.DB.prepare("SELECT id FROM project_members WHERE project_id = ? AND user_id = ? AND role_on_project = 'photographer'").bind(projectId, photographerId).first<{ id: string }>();
+    expect(initialPhotographer).toBeDefined();
     const finalTask = await (await request(`/api/projects/${projectId}/subtasks`, "subtasks-admin-token", "POST", { title: "Final role", assigneeId: photographerId })).json() as { id: string };
-    await request(`/api/projects/${projectId}`, "subtasks-admin-token", "PATCH", { photographerUserIds: [] });
+    const unconfirmed = await request(`/api/projects/${projectId}/photographers/${photographerId}`, "subtasks-admin-token", "DELETE", { membershipCycle: initialPhotographer!.id, clearSubtaskAssignments: false, confirmedAssignmentCount: 0 });
+    expect(unconfirmed.status).toBe(422);
+    expect(await unconfirmed.json()).toMatchObject({ code: "subtask_assignment_confirmation_required", assignmentCount: 1 });
+    const confirmed = await request(`/api/projects/${projectId}/photographers/${photographerId}`, "subtasks-admin-token", "DELETE", { membershipCycle: initialPhotographer!.id, clearSubtaskAssignments: true, confirmedAssignmentCount: 1 });
+    expect(confirmed.status).toBe(200);
+    expect(await confirmed.json()).toMatchObject({ outcome: "removed", removed: { membershipCycle: initialPhotographer!.id, userId: photographerId, roleOnProject: "photographer" }, subtaskAssignmentsCleared: 1 });
     expect(await database.DB.prepare("SELECT assignee_id, assignment_version FROM project_subtasks WHERE id = ?").bind(finalTask.id).first()).toEqual({ assignee_id: null, assignment_version: 2 });
-    const audit = await database.DB.prepare("SELECT meta_json FROM audit_log WHERE action = 'project.update' AND target_id = ? ORDER BY created_at DESC LIMIT 1").bind(projectId).first<{ meta_json: string }>();
-    expect(JSON.parse(audit!.meta_json).subtaskAssignmentsCleared).toBe(1);
-    await addMember(photographerId, "photographer"); await addMember(photographerId, "editor");
-    const retained = await (await request(`/api/projects/${projectId}/subtasks`, "subtasks-admin-token", "POST", { title: "Retained role", assigneeId: photographerId })).json() as { id: string };
-    await request(`/api/projects/${projectId}`, "subtasks-admin-token", "PATCH", { photographerUserIds: [] });
-    expect(await database.DB.prepare("SELECT assignee_id FROM project_subtasks WHERE id = ?").bind(retained.id).first()).toEqual({ assignee_id: photographerId });
-    await addMember(adminId, "photographer");
+    const audit = await database.DB.prepare("SELECT action, meta_json FROM audit_log WHERE action = 'project.member.remove' AND target_id = ? ORDER BY created_at DESC LIMIT 1").bind(initialPhotographer!.id).first<{ action: string; meta_json: string }>();
+    expect(audit?.action).toBe("project.member.remove");
+    expect(JSON.parse(audit!.meta_json)).toMatchObject({ projectId, userId: photographerId, roleOnProject: "photographer", membershipCycle: initialPhotographer!.id });
+
+    const retainedPhotographer = await addMember(editorId, "photographer");
+    const retained = await (await request(`/api/projects/${projectId}/subtasks`, "subtasks-admin-token", "POST", { title: "Retained role", assigneeId: editorId })).json() as { id: string };
+    const retainedRemoval = await request(`/api/projects/${projectId}/photographers/${editorId}`, "subtasks-admin-token", "DELETE", { membershipCycle: retainedPhotographer, clearSubtaskAssignments: false, confirmedAssignmentCount: 0 });
+    expect(retainedRemoval.status).toBe(200);
+    expect(await retainedRemoval.json()).toMatchObject({ outcome: "removed", subtaskAssignmentsCleared: 0 });
+    expect(await database.DB.prepare("SELECT assignee_id FROM project_subtasks WHERE id = ?").bind(retained.id).first()).toEqual({ assignee_id: editorId });
+
+    const adminPhotographer = await addMember(adminId, "photographer");
     const adminTask = await (await request(`/api/projects/${projectId}/subtasks`, "subtasks-admin-token", "POST", { title: "Admin persists", assigneeId: adminId })).json() as { id: string };
-    await request(`/api/projects/${projectId}`, "subtasks-admin-token", "PATCH", { photographerUserIds: [] });
+    const adminRemoval = await request(`/api/projects/${projectId}/photographers/${adminId}`, "subtasks-admin-token", "DELETE", { membershipCycle: adminPhotographer, clearSubtaskAssignments: false, confirmedAssignmentCount: 0 });
+    expect(adminRemoval.status).toBe(200);
+    expect(await adminRemoval.json()).toMatchObject({ outcome: "removed", subtaskAssignmentsCleared: 0 });
     expect(await database.DB.prepare("SELECT assignee_id FROM project_subtasks WHERE id = ?").bind(adminTask.id).first()).toEqual({ assignee_id: adminId });
-    await addMember(outsiderId, "photographer");
+    const transferredPhotographer = await addMember(outsiderId, "photographer");
     const transferred = await (await request(`/api/projects/${projectId}/subtasks`, "subtasks-admin-token", "POST", { title: "Transferred role", assigneeId: outsiderId })).json() as { id: string };
-    await request(`/api/projects/${projectId}`, "subtasks-admin-token", "PATCH", { photographerUserIds: [], editorUserIds: [outsiderId] });
+    const editorRole = await request(`/api/projects/${projectId}/editors/${outsiderId}`, "subtasks-admin-token", "PUT", {});
+    expect(editorRole.status).toBe(201);
+    const editorMembership = await editorRole.json() as { membership: { id: string } };
+    const transferredRemoval = await request(`/api/projects/${projectId}/photographers/${outsiderId}`, "subtasks-admin-token", "DELETE", { membershipCycle: transferredPhotographer, clearSubtaskAssignments: false, confirmedAssignmentCount: 0 });
+    expect(transferredRemoval.status).toBe(200);
+    expect(await transferredRemoval.json()).toMatchObject({ outcome: "removed", subtaskAssignmentsCleared: 0 });
     expect(await database.DB.prepare("SELECT assignee_id FROM project_subtasks WHERE id = ?").bind(transferred.id).first()).toEqual({ assignee_id: outsiderId });
+    expect(await database.DB.prepare("SELECT id FROM project_members WHERE id = ? AND role_on_project = 'editor'").bind(editorMembership.membership.id).first()).toEqual({ id: editorMembership.membership.id });
+  });
+
+  it("returns 409 for a stale C1 delete and never removes the re-added C2 membership", async () => {
+    const isolatedProject = crypto.randomUUID(); const now = Date.now();
+    await database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'Membership cycle race', 'editing_autohdr', ?, ?)").bind(isolatedProject, now, now).run();
+    const c1 = crypto.randomUUID();
+    await database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)").bind(c1, isolatedProject, editorId, now).run();
+    const adminToken = "subtasks-admin-token";
+    const firstDelete = await request(`/api/projects/${isolatedProject}/editors/${editorId}`, adminToken, "DELETE", { membershipCycle: c1, clearSubtaskAssignments: false, confirmedAssignmentCount: 0 });
+    expect(firstDelete.status).toBe(200);
+    const readded = await request(`/api/projects/${isolatedProject}/editors/${editorId}`, adminToken, "PUT", {});
+    expect(readded.status).toBe(201);
+    const c2 = (await readded.json() as { membership: { id: string } }).membership.id;
+    expect(c2).not.toBe(c1);
+    const stale = await request(`/api/projects/${isolatedProject}/editors/${editorId}`, adminToken, "DELETE", { membershipCycle: c1, clearSubtaskAssignments: false, confirmedAssignmentCount: 0 });
+    expect(stale.status).toBe(409);
+    await expect(stale.json()).resolves.toMatchObject({ code: "membership_cycle_changed", requestedMembershipCycle: c1, currentMembership: { id: c2, userId: editorId, roleOnProject: "editor" } });
+    expect(await database.DB.prepare("SELECT id FROM project_members WHERE id = ?").bind(c2).first()).toEqual({ id: c2 });
+  });
+
+  it("rechecks the assignment count after a stale confirmation and returns a fresh 422", async () => {
+    const isolatedProject = crypto.randomUUID(); const taskOne = crypto.randomUUID(); const taskTwo = crypto.randomUUID(); const cycle = crypto.randomUUID(); const now = Date.now();
+    await database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'Assignment count race', 'editing_autohdr', ?, ?)").bind(isolatedProject, now, now).run();
+    await database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'photographer', ?)").bind(cycle, isolatedProject, photographerId, now).run();
+    await database.DB.batch([
+      database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignee_id, assignment_version, created_by, created_at, updated_at) VALUES (?, ?, 'One', 0, 1024, ?, 1, ?, ?, ?)").bind(taskOne, isolatedProject, photographerId, editorId, now, now),
+      database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignee_id, assignment_version, created_by, created_at, updated_at) VALUES (?, ?, 'Two', 0, 2048, ?, 1, ?, ?, ?)").bind(taskTwo, isolatedProject, photographerId, editorId, now, now),
+    ]);
+    const body = { membershipCycle: cycle, clearSubtaskAssignments: false, confirmedAssignmentCount: 0 };
+    const first = await request(`/api/projects/${isolatedProject}/photographers/${photographerId}`, "subtasks-admin-token", "DELETE", body);
+    expect(first.status).toBe(422);
+    const firstPayload = await first.json() as { assignmentCount: number };
+    expect(firstPayload.assignmentCount).toBe(2);
+    await database.DB.prepare("UPDATE project_subtasks SET assignee_id = NULL, assignment_version = assignment_version + 1 WHERE id = ?").bind(taskTwo).run();
+    const retry = await request(`/api/projects/${isolatedProject}/photographers/${photographerId}`, "subtasks-admin-token", "DELETE", { membershipCycle: cycle, clearSubtaskAssignments: true, confirmedAssignmentCount: firstPayload.assignmentCount });
+    expect(retry.status).toBe(422);
+    await expect(retry.json()).resolves.toMatchObject({ code: "subtask_assignment_confirmation_required", assignmentCount: 1 });
+    expect(await database.DB.prepare("SELECT id FROM project_members WHERE id = ?").bind(cycle).first()).toEqual({ id: cycle });
+    expect(await database.DB.prepare("SELECT assignee_id FROM project_subtasks WHERE id = ?").bind(taskOne).first()).toEqual({ assignee_id: photographerId });
+  });
+
+  it("treats a residual role made ineligible by global-role drift as no compatible role", async () => {
+    const isolatedProject = crypto.randomUUID(); const taskId = crypto.randomUUID(); const photographerCycle = crypto.randomUUID(); const editorCycle = crypto.randomUUID(); const now = Date.now();
+    await database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'Compatible role drift', 'editing_autohdr', ?, ?)").bind(isolatedProject, now, now).run();
+    await database.DB.batch([
+      database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'photographer', ?)").bind(photographerCycle, isolatedProject, editorId, now),
+      database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)").bind(editorCycle, isolatedProject, editorId, now),
+      database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignee_id, assignment_version, created_by, created_at, updated_at) VALUES (?, ?, 'Drifted assignment', 0, 1024, ?, 1, ?, ?, ?)").bind(taskId, isolatedProject, editorId, editorId, now, now),
+    ]);
+    try {
+      await database.DB.prepare("UPDATE user SET role = 'photographer' WHERE id = ?").bind(editorId).run();
+      const probe = await request(`/api/projects/${isolatedProject}/photographers/${editorId}`, "subtasks-admin-token", "DELETE", { membershipCycle: photographerCycle, clearSubtaskAssignments: false, confirmedAssignmentCount: 0 });
+      expect(probe.status).toBe(422);
+      await expect(probe.json()).resolves.toMatchObject({ code: "subtask_assignment_confirmation_required", assignmentCount: 1 });
+      const removed = await request(`/api/projects/${isolatedProject}/photographers/${editorId}`, "subtasks-admin-token", "DELETE", { membershipCycle: photographerCycle, clearSubtaskAssignments: true, confirmedAssignmentCount: 1 });
+      expect(removed.status).toBe(200);
+      expect(await database.DB.prepare("SELECT id FROM project_members WHERE id = ?").bind(editorCycle).first()).toEqual({ id: editorCycle });
+      expect(await database.DB.prepare("SELECT assignee_id FROM project_subtasks WHERE id = ?").bind(taskId).first()).toEqual({ assignee_id: null });
+    } finally {
+      await database.DB.prepare("UPDATE user SET role = 'editor' WHERE id = ?").bind(editorId).run();
+    }
   });
 });

@@ -17,6 +17,11 @@ import {
   invalidateProjectResources,
   projectDataKeys,
   projectQueryRetry,
+  projectCollaborationDataGeneration,
+  projectCommentReadStateWriteSequence,
+  nextProjectCommentReadStateRequestSequence,
+  setProjectCommentReadStateWriteSequence,
+  purgeProjectCollaborationData,
   removedDataError,
   useOwnedSnapshot,
 } from "./project-data";
@@ -60,45 +65,6 @@ export type ProjectCommentInfiniteData = InfiniteData<CommentResponse, string | 
 
 type CommentInfiniteData = ProjectCommentInfiniteData;
 
-const commentDataGenerations = new WeakMap<QueryClient, Map<string, number>>();
-const readStateRequestSequences = new WeakMap<QueryClient, Map<string, number>>();
-const readStateWriteSequences = new WeakMap<QueryClient, Map<string, number>>();
-
-function commentGenerationMap(queryClient: QueryClient) {
-  let generations = commentDataGenerations.get(queryClient);
-  if (!generations) {
-    generations = new Map();
-    commentDataGenerations.set(queryClient, generations);
-  }
-  return generations;
-}
-
-export function projectCommentDataGeneration(queryClient: QueryClient, projectId: string) {
-  return commentGenerationMap(queryClient).get(projectId) ?? 0;
-}
-
-function bumpProjectCommentDataGeneration(queryClient: QueryClient, projectId: string) {
-  const generations = commentGenerationMap(queryClient);
-  const next = (generations.get(projectId) ?? 0) + 1;
-  generations.set(projectId, next);
-  return next;
-}
-
-function readStateSequenceMap(store: WeakMap<QueryClient, Map<string, number>>, queryClient: QueryClient) {
-  let sequences = store.get(queryClient);
-  if (!sequences) {
-    sequences = new Map();
-    store.set(queryClient, sequences);
-  }
-  return sequences;
-}
-
-function nextReadStateRequestSequence(queryClient: QueryClient, projectId: string) {
-  const sequences = readStateSequenceMap(readStateRequestSequences, queryClient);
-  const next = (sequences.get(projectId) ?? 0) + 1;
-  sequences.set(projectId, next);
-  return next;
-}
 
 function commentsPath(projectId: string, before: string | null) {
   const query = new URLSearchParams({ limit: "50" });
@@ -122,9 +88,11 @@ async function fetchProjectCommentsPage(
   readAttemptRegistrar?: ProjectCommentReadAttemptRegistrar,
 ) {
   ensureProjectIsLive(queryClient, projectId);
+  const generation = projectCollaborationDataGeneration(queryClient, projectId);
   const attempt = before === null ? readAttemptRegistrar?.start(signal) : undefined;
   const page = await apiGet<CommentResponse>(commentsPath(projectId, before), { signal });
   assertNotAborted(signal);
+  if (projectCollaborationDataGeneration(queryClient, projectId) !== generation) throw new DOMException("The operation was aborted.", "AbortError");
   ensureProjectIsLive(queryClient, projectId);
   if (attempt && readAttemptRegistrar) readAttemptRegistrar.settle(attempt, page.comments[0]?.id ?? null, signal);
   return page;
@@ -145,9 +113,11 @@ export function projectCommentReadStateQueryOptions(projectId: string) {
     queryKey: projectDataKeys.commentReadMarker(projectId),
     queryFn: async ({ signal, client }: QueryFunctionContext) => {
       ensureProjectIsLive(client, projectId);
-      const requestSequence = nextReadStateRequestSequence(client, projectId);
+      const generation = projectCollaborationDataGeneration(client, projectId);
+      const requestSequence = nextProjectCommentReadStateRequestSequence(client, projectId);
       const state = await apiGet<ProjectCommentReadState>(`/api/projects/${encodeURIComponent(projectId)}/comment-read-marker`, { signal });
       assertNotAborted(signal);
+      if (projectCollaborationDataGeneration(client, projectId) !== generation) throw new DOMException("The operation was aborted.", "AbortError");
       ensureProjectIsLive(client, projectId);
       return commitProjectCommentReadState(client, projectId, state, requestSequence);
     },
@@ -204,9 +174,9 @@ export async function refreshProjectCommentsHead(
   readAttemptRegistrar: ProjectCommentReadAttemptRegistrar,
   signal: AbortSignal,
 ) {
-  const dataGeneration = projectCommentDataGeneration(queryClient, projectId);
+  const dataGeneration = projectCollaborationDataGeneration(queryClient, projectId);
   const fresh = await fetchProjectCommentsPage(projectId, null, queryClient, signal, readAttemptRegistrar);
-  if (projectCommentDataGeneration(queryClient, projectId) !== dataGeneration || signal.aborted) return undefined;
+  if (projectCollaborationDataGeneration(queryClient, projectId) !== dataGeneration || signal.aborted) return undefined;
   queryClient.setQueryData<CommentInfiniteData>(projectDataKeys.comments(projectId), (current) => {
     const first = current?.pages[0];
     if (!current || !first || !samePageBoundary(first, fresh)) return { pages: [fresh], pageParams: [null] };
@@ -251,13 +221,7 @@ export async function invalidateProjectCommentResources(
   }, publish);
 }
 
-export async function purgeProjectCommentData(queryClient: QueryClient, projectId: string) {
-  bumpProjectCommentDataGeneration(queryClient, projectId);
-  readStateRequestSequences.get(queryClient)?.delete(projectId);
-  readStateWriteSequences.get(queryClient)?.delete(projectId);
-  await queryClient.cancelQueries({ queryKey: projectDataKeys.commentsRoot(projectId) });
-  queryClient.removeQueries({ queryKey: projectDataKeys.commentsRoot(projectId) });
-}
+export { purgeProjectCollaborationData };
 
 export function advanceProjectCommentReadMarker(projectId: string, throughCommentId: string) {
   return apiPatch<ProjectCommentReadState, { throughCommentId: string }>(
@@ -304,11 +268,10 @@ function commitProjectCommentReadState(
 ) {
   const key = projectDataKeys.commentReadMarker(projectId);
   const current = queryClient.getQueryData<ProjectCommentReadState>(key);
-  const writeSequences = readStateSequenceMap(readStateWriteSequences, queryClient);
-  const currentSequence = writeSequences.get(projectId) ?? Number.NEGATIVE_INFINITY;
+  const currentSequence = projectCommentReadStateWriteSequence(queryClient, projectId);
   const next = freshestReadState(current, incoming, incomingSequence, currentSequence);
   if (next !== current) queryClient.setQueryData<ProjectCommentReadState>(key, next);
-  if (next === incoming) writeSequences.set(projectId, incomingSequence);
+  if (next === incoming) setProjectCommentReadStateWriteSequence(queryClient, projectId, incomingSequence);
   return next;
 }
 
@@ -333,7 +296,7 @@ export function useProjectCommentPresentation({ projectId, open, onAccessError }
   const handledAttemptIdsRef = useRef(new Set<string>());
   const mountedRef = useRef(true);
   const routeGenerationRef = useRef(crypto.randomUUID());
-  const commentDataGenerationRef = useRef(projectCommentDataGeneration(queryClient, projectId));
+  const commentDataGenerationRef = useRef(projectCollaborationDataGeneration(queryClient, projectId));
   const latestDataRef = useRef<CommentInfiniteData | undefined>(undefined);
   const latestReadStateRef = useRef<ProjectCommentReadState | undefined>(undefined);
   const drainPromiseRef = useRef<Promise<void> | null>(null);
@@ -345,7 +308,7 @@ export function useProjectCommentPresentation({ projectId, open, onAccessError }
   const projectChanged = projectIdRef.current !== projectId;
   if (projectChanged) {
     routeGenerationRef.current = crypto.randomUUID();
-    commentDataGenerationRef.current = projectCommentDataGeneration(queryClient, projectId);
+    commentDataGenerationRef.current = projectCollaborationDataGeneration(queryClient, projectId);
     pendingProofsRef.current.clear();
     handledAttemptIdsRef.current.clear();
   }
@@ -386,7 +349,7 @@ export function useProjectCommentPresentation({ projectId, open, onAccessError }
     mountedRef.current
     && projectIdRef.current === expectedProjectId
     && routeGenerationRef.current === renderRouteGeneration
-    && projectCommentDataGeneration(queryClient, expectedProjectId) === commentDataGenerationRef.current
+    && projectCollaborationDataGeneration(queryClient, expectedProjectId) === commentDataGenerationRef.current
     && !runtime.isProjectRemoved(expectedProjectId)
   ), [projectId, queryClient, renderRouteGeneration, runtime]);
 
@@ -487,7 +450,7 @@ export function useProjectCommentPresentation({ projectId, open, onAccessError }
       const beforeState = cachedBefore ?? readState;
       if (beforeState.marker?.throughCommentId === proof.headCommentId) continue;
       try {
-        const requestSequence = nextReadStateRequestSequence(queryClient, projectId);
+        const requestSequence = nextProjectCommentReadStateRequestSequence(queryClient, projectId);
         const next = await advanceProjectCommentReadMarker(projectId, proof.headCommentId);
         // This is the fence immediately before the cache write. A transport may ignore abort,
         // the route may have changed, or collaboration data may have been purged while PATCH ran.

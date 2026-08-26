@@ -13,7 +13,7 @@ import {
   useProjectCommentsQuery,
   type Comment,
 } from "../lib/project-comments";
-import { useProjectAccessTermination } from "../lib/project-data";
+import { projectCollaborationDataGeneration, useProjectAccessTermination } from "../lib/project-data";
 import { RichTextContent } from "./RichTextContent";
 import { RichTextEditor } from "./RichTextEditor";
 import type { MentionableUser } from "./MentionAutocomplete";
@@ -111,9 +111,14 @@ export function ProjectCollaborationPanel({ projectId, openSignal, onOpenSignalC
   }, [onAccessFailure, terminateOnUnauthorized]);
 
   const loadMentionables = useCallback(async (query: string): Promise<MentionableUser[]> => {
-    try { return (await apiGet<{ users: MentionableUser[] }>(`/api/mentionable-users?projectId=${encodeURIComponent(projectId)}&q=${encodeURIComponent(query)}`)).users; }
+    const generation = projectCollaborationDataGeneration(queryClient, projectId);
+    try {
+      const response = await apiGet<{ users: MentionableUser[] }>(`/api/mentionable-users?projectId=${encodeURIComponent(projectId)}&q=${encodeURIComponent(query)}`);
+      if (projectCollaborationDataGeneration(queryClient, projectId) !== generation) throw new DOMException("The operation was aborted.", "AbortError");
+      return response.users;
+    }
     catch (reason) { accessFailure(reason, "comments"); throw reason; }
-  }, [accessFailure, projectId]);
+  }, [accessFailure, projectId, queryClient]);
 
   const postingOverBytes = richTextDocByteLength(content) > RICH_TEXT_JSON_MAX_BYTES;
   const editingOverBytes = editing ? richTextDocByteLength(editing.content) > RICH_TEXT_JSON_MAX_BYTES : false;
@@ -166,7 +171,7 @@ export function ProjectCollaborationPanel({ projectId, openSignal, onOpenSignalC
   const contentMarkup = <>
     {listError && <div className="notice" role="alert">{errorMessage(listError, "Comments could not be loaded.")}</div>}
     {mutationError && <div className="notice" role="alert">{mutationError}</div>}
-    <SubtaskChecklist projectId={projectId} />
+    <SubtaskChecklist projectId={projectId} onAccessFailure={(error) => onAccessFailure?.(error, "comments")} />
     <div ref={presentation.anchorRef} className="project-collaboration__read-anchor" aria-hidden="true" />
     {listLoading ? <div className="project-collaboration__state" role="status">Loading comments…</div> : <>
       <div className="project-collaboration__comments">{comments.length ? comments.map((comment) => <article key={comment.id} className="project-collaboration__comment"><header><strong>{comment.author.name}</strong><time dateTime={comment.createdAt}>{new Date(comment.createdAt).toLocaleString()}</time></header>{editing?.id === comment.id ? <><RichTextEditor value={editing.content} onChange={(value) => setEditing({ id: comment.id, content: value })} limit={10_000} disabled={saving} loadMentionables={loadMentionables} placeholder="Edit comment…" onSubmit={() => void saveEdit()} /><div className="project-collaboration__comment-actions"><button className="button button--secondary" type="button" disabled={saving} onClick={() => setEditing(undefined)}>Cancel</button><button className="button" type="button" disabled={saving || editingOverBytes} onClick={() => void saveEdit()}>Save</button></div></> : <><RichTextContent content={comment.content} />{comment.editedAt && <small>Edited</small>}{comment.author.id === currentUserId && <div className="project-collaboration__comment-actions"><button type="button" className="button button--secondary" onClick={() => setEditing({ id: comment.id, content: comment.content })}>Edit</button><button type="button" className="button button--secondary" disabled={saving} onClick={() => void remove(comment)}>Delete</button></div>}</>}</article>) : <div className="project-collaboration__state">No comments yet.</div>}</div>

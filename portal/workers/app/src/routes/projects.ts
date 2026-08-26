@@ -2,14 +2,14 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import { appendToStageBottomExpr, computeInsertPosition, createDb, dashboardProjectOrder, orderDashboardStreetTies, schema } from "@quincy/db";
 import { and, asc, desc, eq, exists, gt, inArray, isNotNull, isNull, lte, notExists, sql } from "drizzle-orm";
-import { COLLECTION_KINDS, DOWNLOAD_SELECTION_MAX_ASSETS, DOWNLOAD_SELECTION_MAX_BYTES, isStageKey, PHOTOGRAPHER_VISIBLE_STAGES, ROLE_CAPABILITIES, roleHasCapability, type CollectionKind } from "@quincy/shared";
+import { COLLECTION_KINDS, DOWNLOAD_SELECTION_MAX_ASSETS, DOWNLOAD_SELECTION_MAX_BYTES, isStageKey, PHOTOGRAPHER_VISIBLE_STAGES, PROJECT_ASSIGNMENT_ELIGIBLE_ROLES, ROLE_CAPABILITIES, roleHasCapability, publishNotificationOutbox, type CollectionKind, type ProjectMemberRole, type ProjectMembershipDto, type Role } from "@quincy/shared";
 import { z } from "zod";
 import type { AppEnv } from "../env";
 import { hasProjectAccess, hasProjectAccessForUser, requireCapability } from "../middleware/capability";
-import { audit } from "../lib/audit";
+import { audit, auditMeta } from "../lib/audit";
 import { newId } from "../lib/ids";
-import { notifyProject, notifyProjectAssignments } from "../lib/notifications";
-import { insertProjectMembers, syncProjectMembersAndClearSubtaskAssignments } from "../lib/project-members";
+import { notifyProject } from "../lib/notifications";
+import { addProjectMemberWithAssignmentIntent, buildInitialProjectMemberStatementTuples, ProjectMemberIneligibleError, removeProjectMemberCycle, type InitialProjectMemberSlot } from "../lib/project-members";
 import { createZipStream } from "../lib/zip-stream";
 import { jsonInput } from "./helpers";
 import { ensurePipelineStages, projectStageForRole } from "./stages";
@@ -18,8 +18,13 @@ import { isUserVisibleAsset } from "../lib/asset-visibility";
 import { manualInsertNeighbors, needsPositionRenumber, orderedBoardRows, priorityInsertNeighbors, renumberedInsertPosition, type BoardRow } from "../lib/kanban-ordering";
 
 const nullable = <T extends z.ZodTypeAny>(item: T) => item.nullable().optional();
-const projectFields = z.object({ street: z.string().min(1), suburb: nullable(z.string()), postcode: nullable(z.string()), agencyName: nullable(z.string()), agentName: nullable(z.string()), agentEmail: nullable(z.string().email()), agentPhone: nullable(z.string()), agencyId: nullable(z.string().uuid()), agentId: nullable(z.string().uuid()), shootDate: nullable(z.string()), timeWindow: nullable(z.string()), orderNo: nullable(z.string()), orderId: nullable(z.string()), invoiceAmount: nullable(z.number()), paymentStatus: nullable(z.string()), notes: nullable(z.string()), rawFolderLink: nullable(z.string().url()), rawFolderPath: nullable(z.string()), orderedServices: z.array(z.enum(COLLECTION_KINDS)).optional(), photographerUserIds: z.array(z.string().uuid()).optional(), editorUserIds: z.array(z.string().uuid()).optional() });
-const editFields = projectFields.partial();
+const baseProjectFields = z.object({ street: z.string().min(1), suburb: nullable(z.string()), postcode: nullable(z.string()), agencyName: nullable(z.string()), agentName: nullable(z.string()), agentEmail: nullable(z.string().email()), agentPhone: nullable(z.string()), agencyId: nullable(z.string().uuid()), agentId: nullable(z.string().uuid()), shootDate: nullable(z.string()), timeWindow: nullable(z.string()), orderNo: nullable(z.string()), orderId: nullable(z.string()), invoiceAmount: nullable(z.number()), paymentStatus: nullable(z.string()), notes: nullable(z.string()), rawFolderLink: nullable(z.string().url()), rawFolderPath: nullable(z.string()), orderedServices: z.array(z.enum(COLLECTION_KINDS)).optional() });
+const createProjectFields = baseProjectFields.extend({ photographerUserIds: z.array(z.string().uuid()).optional(), editorUserIds: z.array(z.string().uuid()).optional() });
+const editFields = baseProjectFields.partial().strict();
+const deleteProjectMembershipInput = z.discriminatedUnion("clearSubtaskAssignments", [
+  z.object({ membershipCycle: z.string().uuid(), clearSubtaskAssignments: z.literal(false), confirmedAssignmentCount: z.literal(0) }).strict(),
+  z.object({ membershipCycle: z.string().uuid(), clearSubtaskAssignments: z.literal(true), confirmedAssignmentCount: z.number().int().nonnegative() }).strict(),
+]);
 const coverInput = z.object({ assetId: z.string().uuid().nullable() });
 const priorityInput = z.object({ priority: z.number().int().min(1).max(10).nullable() });
 const boardPositionInput = z.object({ direction: z.enum(["up", "down"]) });
@@ -204,13 +209,132 @@ async function abortActiveDocumentSessions(c: Context<AppEnv>, projectId: string
 async function details(db: ReturnType<typeof createDb>, projectId: string, role: AppEnv["Variables"]["user"]["role"], viewerSeesRawOnly = false) {
   const project = await db.select().from(schema.projects).where(eq(schema.projects.id, projectId)).get();
   if (!project) return null;
-  const [{ storedByProject, automaticByProject }, collections, members] = await Promise.all([
+  const [{ storedByProject, automaticByProject }, collections, members, assignedCounts] = await Promise.all([
     coverMaps(db, [projectId], viewerSeesRawOnly),
     db.select().from(schema.collections).where(eq(schema.collections.projectId, projectId)).all(),
-    db.select({ id: schema.projectMembers.id, userId: schema.projectMembers.userId, roleOnProject: schema.projectMembers.roleOnProject, name: schema.user.name, email: schema.user.email }).from(schema.projectMembers).innerJoin(schema.user, eq(schema.projectMembers.userId, schema.user.id)).where(eq(schema.projectMembers.projectId, projectId)).all(),
+    db.select({ id: schema.projectMembers.id, userId: schema.projectMembers.userId, roleOnProject: schema.projectMembers.roleOnProject, name: schema.user.name, email: schema.user.email, globalRole: schema.user.role, active: schema.user.active }).from(schema.projectMembers).innerJoin(schema.user, eq(schema.projectMembers.userId, schema.user.id)).where(eq(schema.projectMembers.projectId, projectId)).all(),
+    db.select({ userId: schema.projectSubtasks.assigneeId, assignedSubtaskCount: sql<number>`count(*)` }).from(schema.projectSubtasks).where(and(eq(schema.projectSubtasks.projectId, projectId), isNotNull(schema.projectSubtasks.assigneeId))).groupBy(schema.projectSubtasks.assigneeId).all(),
   ]);
-  return projectStageForRole({ ...project, effectiveCoverAssetId: storedByProject.get(projectId) ?? automaticByProject.get(projectId) ?? null, collections, members }, role);
+  const counts = new Map(assignedCounts.map((row) => [row.userId, Number(row.assignedSubtaskCount ?? 0)]));
+  const memberDtos: ProjectMembershipDto[] = members.map((member) => ({ ...member, active: Boolean(member.active), assignedSubtaskCount: counts.get(member.userId) ?? 0 }));
+  return projectStageForRole({ ...project, effectiveCoverAssetId: storedByProject.get(projectId) ?? automaticByProject.get(projectId) ?? null, collections, members: memberDtos }, role);
 }
+
+type AssignmentCandidate = { id: string; name: string; email: string; globalRole: Role; active: true };
+type ProjectAssignmentCandidatesResponse = { photographers: AssignmentCandidate[]; editors: AssignmentCandidate[] };
+
+async function assignmentCandidates(db: ReturnType<typeof createDb>): Promise<ProjectAssignmentCandidatesResponse> {
+  const [photographers, editors] = await Promise.all([
+    db.select({ id: schema.user.id, name: schema.user.name, email: schema.user.email, globalRole: schema.user.role, active: schema.user.active })
+      .from(schema.user).where(and(eq(schema.user.active, true), inArray(schema.user.role, PROJECT_ASSIGNMENT_ELIGIBLE_ROLES.photographer)))
+      .orderBy(sql`lower(${schema.user.name})`, sql`lower(${schema.user.email})`, schema.user.id).all(),
+    db.select({ id: schema.user.id, name: schema.user.name, email: schema.user.email, globalRole: schema.user.role, active: schema.user.active })
+      .from(schema.user).where(and(eq(schema.user.active, true), inArray(schema.user.role, PROJECT_ASSIGNMENT_ELIGIBLE_ROLES.editor)))
+      .orderBy(sql`lower(${schema.user.name})`, sql`lower(${schema.user.email})`, schema.user.id).all(),
+  ]);
+  return { photographers: photographers.map((user) => ({ ...user, active: true as const })), editors: editors.map((user) => ({ ...user, active: true as const })) };
+}
+
+function normalizedProjectSlots(photographerUserIds: string[] | undefined, editorUserIds: string[] | undefined) {
+  const slots: Array<{ userId: string; roleOnProject: ProjectMemberRole }> = [];
+  for (const userId of new Set(photographerUserIds ?? [])) slots.push({ userId, roleOnProject: "photographer" });
+  for (const userId of new Set(editorUserIds ?? [])) slots.push({ userId, roleOnProject: "editor" });
+  return slots.sort((left, right) => left.roleOnProject.localeCompare(right.roleOnProject) || left.userId.localeCompare(right.userId));
+}
+
+function createProjectResponse(data: z.infer<typeof createProjectFields>, id: string, memberships: ProjectMembershipDto[]) {
+  return {
+    id, street: data.street, suburb: data.suburb ?? null, postcode: data.postcode ?? null,
+    agencyName: data.agencyName ?? null, agentName: data.agentName ?? null, agentEmail: data.agentEmail ?? null, agentPhone: data.agentPhone ?? null,
+    agencyId: data.agencyId ?? null, agentId: data.agentId ?? null, shootDate: data.shootDate ?? null, timeWindow: data.timeWindow ?? null,
+    stageKey: "awaiting_raw", priority: null, boardPosition: 0, orderNo: data.orderNo ?? null, orderId: data.orderId ?? null,
+    invoiceAmount: data.invoiceAmount ?? null, paymentStatus: data.paymentStatus ?? null, notes: data.notes ?? null,
+    rawFolderLink: data.rawFolderLink ?? null, rawFolderPath: data.rawFolderPath ?? null, coverAssetId: null, effectiveCoverAssetId: null,
+    archivedAt: null, archivedBy: null, members: memberships,
+  };
+}
+
+async function createProjectAtomically(c: Context<AppEnv>, data: z.infer<typeof createProjectFields>, slots: Array<{ userId: string; roleOnProject: ProjectMemberRole }>, candidates: ProjectAssignmentCandidatesResponse) {
+  const now = Date.now();
+  const projectId = newId();
+  const services = [...new Set<CollectionKind>(["raw", ...(data.orderedServices ?? [])])];
+  const raw = c.env.DB;
+  const diagnostics = slots.map((slot) => {
+    const eligibleRoles = [...PROJECT_ASSIGNMENT_ELIGIBLE_ROLES[slot.roleOnProject]];
+    return raw.prepare(`
+      SELECT ? AS userId, ? AS roleOnProject,
+        u.name, u.email, u.role AS globalRole, u.active,
+        CASE WHEN u.active = 1 AND u.role IN (${eligibleRoles.map(() => "?").join(", ")}) THEN 1 ELSE 0 END AS eligible
+      FROM (SELECT 1) AS marker
+      LEFT JOIN user u ON u.id = ?
+    `).bind(slot.userId, slot.roleOnProject, ...eligibleRoles, slot.userId);
+  });
+  const eligibilityPredicates = slots.map((slot) => {
+    const eligibleRoles = [...PROJECT_ASSIGNMENT_ELIGIBLE_ROLES[slot.roleOnProject]];
+    return `EXISTS (SELECT 1 FROM user WHERE id = ? AND active = 1 AND role IN (${eligibleRoles.map(() => "?").join(", ")}))`;
+  });
+  const fieldValues = [
+    projectId, data.street, data.suburb ?? null, data.postcode ?? null, data.agencyName ?? null, data.agentName ?? null,
+    data.agentEmail ?? null, data.agentPhone ?? null, data.agencyId ?? null, data.agentId ?? null, data.shootDate ?? null,
+    data.timeWindow ?? null, data.orderNo ?? null, data.orderId ?? null, data.invoiceAmount ?? null, data.paymentStatus ?? null,
+    data.notes ?? null, data.rawFolderLink ?? null, data.rawFolderPath ?? null, now, now,
+  ];
+  const projectInsert = raw.prepare(`
+    INSERT INTO projects (
+      id, street, suburb, postcode, agency_name, agent_name, agent_email, agent_phone,
+      agency_id, agent_id, shoot_date, time_window, stage_key, board_position,
+      order_no, order_id, invoice_amount, payment_status, notes, raw_folder_link, raw_folder_path,
+      created_at, updated_at
+    )
+    SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'awaiting_raw',
+      (SELECT COALESCE(MAX(board_position) + 1024, 0) FROM projects WHERE stage_key = 'awaiting_raw' AND archived_at IS NULL AND id != ?),
+      ?, ?, ?, ?, ?, ?, ?, ?, ?
+    WHERE ${eligibilityPredicates.length ? eligibilityPredicates.join(" AND ") : "1 = 1"}
+    RETURNING id
+  `).bind(...fieldValues.slice(0, 12), projectId, ...fieldValues.slice(12), ...slots.flatMap((slot) => [slot.userId, ...PROJECT_ASSIGNMENT_ELIGIBLE_ROLES[slot.roleOnProject]]));
+  const collectionRecords = services.map((kind) => ({ id: newId(), kind }));
+  const collectionStatements = collectionRecords.map((collection) => raw.prepare(`
+    INSERT INTO collections (id, project_id, kind, status, received_count, created_at, updated_at)
+    SELECT ?, ?, ?, 'empty', 0, ?, ? WHERE EXISTS (SELECT 1 FROM projects WHERE id = ?)
+  `).bind(collection.id, projectId, collection.kind, now, now, projectId));
+  const initialSlots: InitialProjectMemberSlot[] = slots.map((slot) => {
+    const list = slot.roleOnProject === "photographer" ? candidates.photographers : candidates.editors;
+    const candidate = list.find((item) => item.id === slot.userId);
+    return { userId: slot.userId, roleOnProject: slot.roleOnProject, name: candidate?.name ?? "", email: candidate?.email ?? "", globalRole: candidate?.globalRole ?? "photographer", active: candidate?.active ?? false };
+  });
+  const memberTuples = buildInitialProjectMemberStatementTuples(raw, { projectId, projectMarkerId: projectId, slots: initialSlots, actorId: c.get("user").id, auditPrincipal: c.get("user"), now });
+  const projectAudit = raw.prepare(`
+    INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
+    SELECT ?, ?, 'project.create', 'project', ?, ?, ? WHERE EXISTS (SELECT 1 FROM projects WHERE id = ?)
+  `).bind(newId(), c.get("user").id, projectId, auditMeta(c.get("user"), { orderedServices: services }), now, projectId);
+  const result = await raw.batch([...diagnostics, projectInsert, ...collectionStatements, ...memberTuples.statements, projectAudit]);
+  const projectIndex = diagnostics.length;
+  const created = rowsFromD1<{ id: string }>(result[projectIndex]).length > 0;
+  if (!created) {
+    const ineligibleSlots = diagnostics.map((_, index) => firstD1<{ userId: string; roleOnProject: ProjectMemberRole; eligible: number }>(result[index])).filter((row): row is { userId: string; roleOnProject: ProjectMemberRole; eligible: number } => Boolean(row && row.eligible !== 1)).map(({ userId, roleOnProject }) => ({ userId, roleOnProject }));
+    return { created: false as const, ineligibleSlots: ineligibleSlots.sort((left, right) => left.roleOnProject.localeCompare(right.roleOnProject) || left.userId.localeCompare(right.userId)) };
+  }
+  if (memberTuples.notificationOutboxIds.length) c.executionCtx.waitUntil(Promise.resolve().then(() => publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, memberTuples.notificationOutboxIds)).catch((error) => console.error("Project assignment outbox publication failed", { projectId, error })));
+  if (data.rawFolderPath !== undefined) c.executionCtx.waitUntil(c.env.BACKGROUND.ensureAutoHdrScaffold(projectId).catch((error) => console.error("AutoHDR scaffold trigger failed", { projectId, error })));
+  const collectionsForResponse = collectionRecords.map((collection) => ({ id: collection.id, projectId, kind: collection.kind, status: "empty", expectedCount: null, receivedCount: 0 }));
+  const observedMemberships = memberTuples.memberships.map((membership, index) => {
+    const observed = firstD1<{ name: string | null; email: string | null; globalRole: Role | null; active: number | null }>(result[index]);
+    return {
+      ...membership,
+      name: observed?.name ?? membership.name,
+      email: observed?.email ?? membership.email,
+      globalRole: observed?.globalRole ?? membership.globalRole,
+      active: observed?.active === 1,
+    };
+  });
+  return { created: true as const, response: { ...createProjectResponse(data, projectId, observedMemberships), collections: collectionsForResponse } };
+}
+
+function rowsFromD1<T>(result: unknown): T[] {
+  return ((result as { results?: T[] } | undefined)?.results ?? []);
+}
+
+function firstD1<T>(result: unknown): T | undefined { return rowsFromD1<T>(result)[0]; }
 export const projectsRoutes = new Hono<AppEnv>();
 projectsRoutes.get("/projects", async (c) => {
   const db = createDb(c.env.DB); const user = c.get("user");
@@ -225,23 +349,25 @@ projectsRoutes.get("/projects", async (c) => {
   const { storedByProject, automaticByProject } = await coverMaps(db, projectIds, user.role === "photographer");
   return c.json({ projects: orderedRows.map((r) => projectStageForRole({ ...r.project, coverAssetId: storedByProject.get(r.project.id) ?? automaticByProject.get(r.project.id) ?? null, receivedCount: r.receivedCount ?? 0, expectedCount: r.expectedCount }, user.role)) });
 });
+projectsRoutes.get("/project-assignment-candidates", async (c) => {
+  const user = c.get("user");
+  if (!roleHasCapability(user.role, "createProject") && !roleHasCapability(user.role, "editProject")) return c.json({ error: "Forbidden", capability: "editProject" }, 403);
+  return c.json(await assignmentCandidates(createDb(c.env.DB)));
+});
+
 projectsRoutes.post("/projects", requireCapability("createProject"), async (c) => {
-  const data = await jsonInput(c, projectFields); if (data instanceof Response) return data;
-  const db = createDb(c.env.DB); const id = newId(); const { orderedServices, photographerUserIds, editorUserIds, ...fields } = data;
-  await db.insert(schema.projects).values({ id, ...fields, stageKey: "awaiting_raw", boardPosition: appendToStageBottomExpr("awaiting_raw", id), createdAt: new Date(), updatedAt: new Date() });
-  if (fields.rawFolderPath !== undefined) {
-    await c.env.BACKGROUND.ensureAutoHdrScaffold(id).catch((error) =>
-      console.error("AutoHDR scaffold trigger failed", { projectId: id, error }));
-  }
-  const services = await addCollections(db, id, orderedServices);
-  const photographerAdded = await insertProjectMembers(db, id, photographerUserIds ?? [], "photographer");
-  const editorAdded = await insertProjectMembers(db, id, editorUserIds ?? [], "editor");
-  await notifyProjectAssignments(c.env, id, [
-    ...photographerAdded.map((userId) => ({ userId, roleOnProject: "photographer" as const })),
-    ...editorAdded.map((userId) => ({ userId, roleOnProject: "editor" as const })),
-  ]);
-  await audit(c.env, c.get("user"), "project.create", "project", id, { orderedServices: [...services] });
-  return c.json(await details(db, id, c.get("user").role), 201);
+  const data = await jsonInput(c, createProjectFields); if (data instanceof Response) return data;
+  const slots = normalizedProjectSlots(data.photographerUserIds, data.editorUserIds);
+  const candidates = await assignmentCandidates(createDb(c.env.DB));
+  const photographerIds = new Set(candidates.photographers.map((candidate) => candidate.id));
+  const editorIds = new Set(candidates.editors.map((candidate) => candidate.id));
+  const prevalidationFailures = slots.filter((slot) => !(slot.roleOnProject === "photographer" ? photographerIds : editorIds).has(slot.userId));
+  // This early response is only a useful UX guard. The same eligibility is rechecked inside the
+  // conditional project INSERT in createProjectAtomically, which is the write authority.
+  if (prevalidationFailures.length) return c.json({ error: "One or more project assignments are not eligible", code: "ineligible_project_assignments", ineligibleSlots: prevalidationFailures }, 422);
+  const result = await createProjectAtomically(c, data, slots, candidates);
+  if (!result.created) return c.json({ error: "One or more project assignments are not eligible", code: "ineligible_project_assignments", ineligibleSlots: result.ineligibleSlots }, 422);
+  return c.json(result.response, 201);
 });
 
 projectsRoutes.post("/projects/:id/priority", async (c) => {
@@ -293,7 +419,7 @@ projectsRoutes.patch("/projects/:id", async (c) => {
     if (!ROLE_CAPABILITIES[c.get("user").role].includes("editProject")) return c.json({ error: "Forbidden", capability: "editProject" }, 403);
     const data = await jsonInput(c, editFields); if (data instanceof Response) return data;
     const db = createDb(c.env.DB); if (!await db.select({ id: schema.projects.id }).from(schema.projects).where(eq(schema.projects.id, id)).get()) return c.json({ error: "Project not found" }, 404);
-    const { orderedServices, photographerUserIds, editorUserIds, ...projectUpdates } = data;
+    const { orderedServices, ...projectUpdates } = data;
     const projectAuditMeta: Record<string, unknown> = { ...projectUpdates };
     if (orderedServices !== undefined) {
       // Grouped counts merged in JS — a correlated scalar subquery via sql`${schema.assets}` renders
@@ -335,30 +461,7 @@ projectsRoutes.patch("/projects/:id", async (c) => {
       projectAuditMeta.servicesAdded = [...services].filter((kind) => !existingKinds.has(kind));
       projectAuditMeta.servicesRemoved = removedCollections.map((collection) => collection.kind);
     }
-    const [existingPhotographers, existingEditors] = await Promise.all([
-      photographerUserIds === undefined ? Promise.resolve(undefined) : db.select({ id: schema.projectMembers.id, userId: schema.projectMembers.userId }).from(schema.projectMembers).where(and(eq(schema.projectMembers.projectId, id), eq(schema.projectMembers.roleOnProject, "photographer"))).all(),
-      editorUserIds === undefined ? Promise.resolve(undefined) : db.select({ id: schema.projectMembers.id, userId: schema.projectMembers.userId }).from(schema.projectMembers).where(and(eq(schema.projectMembers.projectId, id), eq(schema.projectMembers.roleOnProject, "editor"))).all(),
-    ]);
-    // Derive both role diffs before making a write. The one D1 batch then performs every
-    // membership INSERT...RETURNING / DELETE plus the post-diff subtask scrub atomically.
-    const membershipPlans = [
-      ...(photographerUserIds === undefined ? [] : [{ existing: existingPhotographers!, desired: photographerUserIds, roleOnProject: "photographer" as const }]),
-      ...(editorUserIds === undefined ? [] : [{ existing: existingEditors!, desired: editorUserIds, roleOnProject: "editor" as const }]),
-    ];
-    const membershipSync = membershipPlans.length
-      ? await syncProjectMembersAndClearSubtaskAssignments(db, id, membershipPlans)
-      : undefined;
-    let resultIndex = 0;
-    const photographerResult = photographerUserIds === undefined ? undefined : membershipSync!.results[resultIndex++];
-    const editorResult = editorUserIds === undefined ? undefined : membershipSync!.results[resultIndex++];
-    if (photographerResult) projectAuditMeta.photographerMembers = photographerResult;
-    if (editorResult) projectAuditMeta.editorMembers = editorResult;
-    if (membershipSync) projectAuditMeta.subtaskAssignmentsCleared = membershipSync.subtaskAssignmentsCleared;
     await db.update(schema.projects).set({ ...projectUpdates, updatedAt: new Date() }).where(eq(schema.projects.id, id));
-    await notifyProjectAssignments(c.env, id, [
-      ...(photographerResult?.added ?? []).map((userId) => ({ userId, roleOnProject: "photographer" as const })),
-      ...(editorResult?.added ?? []).map((userId) => ({ userId, roleOnProject: "editor" as const })),
-    ]);
     if (projectUpdates.rawFolderPath !== undefined) {
       await c.env.BACKGROUND.ensureAutoHdrScaffold(id).catch((error) =>
         console.error("AutoHDR scaffold trigger failed", { projectId: id, error }));
@@ -367,6 +470,53 @@ projectsRoutes.patch("/projects/:id", async (c) => {
     return c.json(await details(db, id, c.get("user").role));
   }
 });
+
+function projectMembershipRoute(roleOnProject: ProjectMemberRole, method: "put" | "delete") {
+  const path = {
+    photographer: "/projects/:projectId/photographers/:userId",
+    editor: "/projects/:projectId/editors/:userId",
+  }[roleOnProject];
+  return projectsRoutes[method](path, async (c) => {
+    const projectId = c.req.param("projectId") ?? "";
+    const userId = c.req.param("userId") ?? "";
+    if (!idCheck(projectId) || !idCheck(userId)) return c.json({ error: "Invalid project or user id" }, 400);
+    let body: z.infer<typeof deleteProjectMembershipInput> | undefined;
+    if (method === "delete") {
+      const parsed = await jsonInput(c, deleteProjectMembershipInput);
+      if (parsed instanceof Response) return parsed;
+      body = parsed;
+    }
+    if (!await hasProjectAccess(c, projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
+    const principal = c.get("user");
+    if (!roleHasCapability(principal.role, "editProject")) return c.json({ error: "Forbidden", capability: "editProject" }, 403);
+    const db = createDb(c.env.DB);
+    if (!await db.select({ id: schema.projects.id }).from(schema.projects).where(eq(schema.projects.id, projectId)).get()) return c.json({ error: "Project not found" }, 404);
+    const target = await db.select({ id: schema.user.id, active: schema.user.active, globalRole: schema.user.role }).from(schema.user).where(eq(schema.user.id, userId)).get();
+    if (!target) return c.json({ error: "User not found" }, 404);
+
+    if (method === "put") {
+      try {
+        const result = await addProjectMemberWithAssignmentIntent(c.env.DB, { projectId, userId, roleOnProject, actorId: principal.id, auditPrincipal: principal });
+        if (result.created && result.notificationOutboxIds.length) c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, result.notificationOutboxIds));
+        return c.json({ outcome: result.created ? "created" : "unchanged", membership: result.membership }, result.created ? 201 : 200);
+      } catch (error) {
+        if (error instanceof ProjectMemberIneligibleError) return c.json({ error: "User is not eligible for this project role", code: "ineligible_project_member", roleOnProject }, 422);
+        throw error;
+      }
+    }
+
+    const result = await removeProjectMemberCycle(c.env.DB, { projectId, userId, roleOnProject, membershipCycle: body!.membershipCycle, clearSubtaskAssignments: body!.clearSubtaskAssignments, confirmedAssignmentCount: body!.confirmedAssignmentCount, actorId: principal.id, auditPrincipal: principal });
+    if (result.outcome === "stale") return c.json({ error: "Project membership changed; refreshed current assignment", code: "membership_cycle_changed", requestedMembershipCycle: body!.membershipCycle, currentMembership: result.currentMembership }, 409);
+    if (result.outcome === "confirmation_required") return c.json({ error: "Checklist assignment state changed; confirm final-role removal again", code: "subtask_assignment_confirmation_required", assignmentCount: result.assignmentCount, currentMembership: result.currentMembership }, 422);
+    return c.json({ outcome: "removed", removed: { membershipCycle: body!.membershipCycle, userId, roleOnProject }, subtaskAssignmentsCleared: result.subtaskAssignmentsCleared }, 200);
+  });
+}
+
+projectMembershipRoute("photographer", "put");
+projectMembershipRoute("photographer", "delete");
+projectMembershipRoute("editor", "put");
+projectMembershipRoute("editor", "delete");
+
 projectsRoutes.post("/projects/:id/cover", async (c) => {
   const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
   if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);

@@ -4,30 +4,38 @@ import {
   PROJECT_DATA_CHANNEL, ProjectQueryRuntime, createActiveProjectDetailsInvalidatedMessage,
   createProjectDataInvalidationMessage, createProjectDataRemovedMessage, parseProjectDataSyncMessage, projectResourceKey,
 } from "./project-query-sync";
-import { beginAssetOptimisticMutation, projectDataKeys } from "./project-data";
+import { beginAssetOptimisticMutation, beginProjectMembershipMutation, projectDataKeys } from "./project-data";
 
 afterEach(() => { /* each test creates and disposes its own client/runtime */ });
 
 describe("project-data BroadcastChannel contract", () => {
   it("accepts valid discriminants, deduplicates resources, and rejects extra/private fields", () => {
-    const message = createProjectDataInvalidationMessage("p", [{ kind: "detail" }, { kind: "detail" }, { kind: "assets", collectionKind: "raw" }, { kind: "comments" }, { kind: "comment-read-marker" }]);
+    const message = createProjectDataInvalidationMessage("p", [{ kind: "detail" }, { kind: "detail" }, { kind: "assets", collectionKind: "raw" }, { kind: "comments" }, { kind: "comment-read-marker" }, { kind: "collaboration-summary" }]);
     expect(message.type).toBe("project-data-invalidated");
     const parsed = parseProjectDataSyncMessage({ ...message, sourceTabId: "a" });
     expect(parsed?.type).toBe("project-data-invalidated");
-    expect(parsed && parsed.type === "project-data-invalidated" ? parsed.resources : []).toHaveLength(4);
+    expect(parsed && parsed.type === "project-data-invalidated" ? parsed.resources : []).toHaveLength(5);
     expect(parseProjectDataSyncMessage({ ...message, sourceTabId: "a", data: "private" })).toBeNull();
     expect(parseProjectDataSyncMessage({ ...message, sourceTabId: "a", resources: [{ kind: "assets", collectionKind: "nope" }] })).toBeNull();
     expect(parseProjectDataSyncMessage({ version: 2, type: "project-data-removed", sourceTabId: "a", projectId: "p", committedAt: new Date().toISOString() })).toBeNull();
     expect(parseProjectDataSyncMessage(createProjectDataRemovedMessage("p"))).toBeNull();
   });
 
-  it("resolves all four resources to exact keys and rejects private fields on the new variants", () => {
+  it("resolves all five resources to exact keys and rejects private fields on the new variants", () => {
     expect(projectResourceKey("a", { kind: "detail" })).toEqual(projectDataKeys.detail("a"));
     expect(projectResourceKey("a", { kind: "assets", collectionKind: "raw" })).toEqual(projectDataKeys.assets("a", "raw"));
     expect(projectResourceKey("a", { kind: "comments" })).toEqual(projectDataKeys.comments("a"));
     expect(projectResourceKey("a", { kind: "comment-read-marker" })).toEqual(projectDataKeys.commentReadMarker("a"));
+    expect(projectResourceKey("a", { kind: "collaboration-summary" })).toEqual(projectDataKeys.collaborationSummary("a"));
     const message = createProjectDataInvalidationMessage("a", [{ kind: "comments" }, { kind: "comment-read-marker" }]);
     expect(parseProjectDataSyncMessage({ ...message, sourceTabId: "sender", resources: [{ kind: "comments", extra: true }] })).toBeNull();
+  });
+
+  it("round-trips a detail and collaboration-summary invalidation together", () => {
+    const message = createProjectDataInvalidationMessage("a", [{ kind: "detail" }, { kind: "collaboration-summary" }]);
+    const parsed = parseProjectDataSyncMessage({ ...message, sourceTabId: "sender" });
+    expect(parsed).toMatchObject({ resources: [{ kind: "detail" }, { kind: "collaboration-summary" }] });
+    expect(parseProjectDataSyncMessage({ ...message, sourceTabId: "sender", resources: [{ kind: "detail" }, { kind: "collaboration-summary", private: true }] })).toBeNull();
   });
 
   it("keeps removal and active-detail messages data-free and validates their shapes", () => {
@@ -66,11 +74,12 @@ describe("project-data BroadcastChannel contract", () => {
     const receiverClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const sender = new ProjectQueryRuntime(senderClient, "sender"); const receiver = new ProjectQueryRuntime(receiverClient, "receiver");
     sender.start(); receiver.start();
-    const detailKey = projectDataKeys.detail("p"); const assetsKey = projectDataKeys.assets("p", "raw"); const commentsKey = projectDataKeys.comments("p"); const markerKey = projectDataKeys.commentReadMarker("p");
-    senderClient.setQueryData(detailKey, { id: "p" }); receiverClient.setQueryData(detailKey, { id: "p" }); receiverClient.setQueryData(assetsKey, []);
-    sender.publish(createProjectDataInvalidationMessage("p", [{ kind: "detail" }]));
+    const detailKey = projectDataKeys.detail("p"); const summaryKey = projectDataKeys.collaborationSummary("p"); const assetsKey = projectDataKeys.assets("p", "raw"); const commentsKey = projectDataKeys.comments("p"); const markerKey = projectDataKeys.commentReadMarker("p");
+    senderClient.setQueryData(detailKey, { id: "p" }); receiverClient.setQueryData(detailKey, { id: "p" }); receiverClient.setQueryData(summaryKey, { project: { id: "p" }, members: [] }); receiverClient.setQueryData(assetsKey, []);
+    sender.publish(createProjectDataInvalidationMessage("p", [{ kind: "detail" }, { kind: "collaboration-summary" }]));
     await Promise.resolve();
     expect(receiverClient.getQueryCache().find({ queryKey: detailKey, exact: true })?.state.isInvalidated).toBe(true);
+    expect(receiverClient.getQueryCache().find({ queryKey: summaryKey, exact: true })?.state.isInvalidated).toBe(true);
     expect(receiverClient.getQueryCache().find({ queryKey: assetsKey, exact: true })?.state.isInvalidated).toBe(false);
     const before = senderClient.getQueryCache().find({ queryKey: detailKey, exact: true })?.state.isInvalidated;
     sender.publish(createProjectDataInvalidationMessage("p", [{ kind: "detail" }]));
@@ -134,6 +143,35 @@ describe("project-data BroadcastChannel contract", () => {
     await mutation.commit();
     expect(invalidate).toHaveBeenCalledTimes(1);
     expect(invalidate).toHaveBeenCalledWith({ queryKey: key, exact: true, refetchType: "active" });
+    sender.dispose(); receiver.dispose(); senderClient.clear(); receiverClient.clear();
+  });
+
+  it("flushes sibling detail and summary invalidations when a local membership mutation fails", async () => {
+    class FakeChannel {
+      static channels: FakeChannel[] = [];
+      readonly listeners = new Set<(event: MessageEvent<unknown>) => void>();
+      constructor(readonly name: string) { FakeChannel.channels.push(this); }
+      addEventListener(_type: string, listener: (event: MessageEvent<unknown>) => void) { this.listeners.add(listener); }
+      postMessage(data: unknown) { for (const channel of FakeChannel.channels.filter((item) => item.name === this.name)) for (const listener of channel.listeners) listener({ data } as MessageEvent<unknown>); }
+      close() { FakeChannel.channels = FakeChannel.channels.filter((item) => item !== this); this.listeners.clear(); }
+    }
+    vi.stubGlobal("BroadcastChannel", FakeChannel);
+    const senderClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const receiverClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const sender = new ProjectQueryRuntime(senderClient, "sender"); const receiver = new ProjectQueryRuntime(receiverClient, "receiver");
+    sender.start(); receiver.start();
+    const detailKey = projectDataKeys.detail("p"); const summaryKey = projectDataKeys.collaborationSummary("p");
+    receiverClient.setQueryData(detailKey, { id: "p", members: [] });
+    receiverClient.setQueryData(summaryKey, { project: { id: "p", street: "P", stageKey: "raw_review" }, members: [] });
+    const mutation = await beginProjectMembershipMutation(receiverClient, "p", "photographer", "u", "add", {
+      id: "cycle", userId: "u", roleOnProject: "photographer", name: "U", email: "u@example.test", globalRole: "photographer", active: true, assignedSubtaskCount: 0,
+    });
+    sender.publish(createProjectDataInvalidationMessage("p", [{ kind: "detail" }, { kind: "collaboration-summary" }]));
+    expect(receiverClient.getQueryCache().find({ queryKey: detailKey, exact: true })?.state.isInvalidated).toBe(false);
+    expect(receiverClient.getQueryCache().find({ queryKey: summaryKey, exact: true })?.state.isInvalidated).toBe(false);
+    await mutation.fail(); await Promise.resolve();
+    expect(receiverClient.getQueryCache().find({ queryKey: detailKey, exact: true })?.state.isInvalidated).toBe(true);
+    expect(receiverClient.getQueryCache().find({ queryKey: summaryKey, exact: true })?.state.isInvalidated).toBe(true);
     sender.dispose(); receiver.dispose(); senderClient.clear(); receiverClient.clear();
   });
 

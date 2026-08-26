@@ -1,6 +1,6 @@
 import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it, vi } from "vitest";
-import { NOTIFICATION_OUTBOX_EVENT_TYPE, type NotificationOutboxMessage } from "@quincy/shared";
+import { NOTIFICATION_OUTBOX_EVENT_TYPE, NOTIFICATION_OUTBOX_EVENT_TYPES, type NotificationOutboxMessage } from "@quincy/shared";
 import QuincyBackground from "../src";
 import type { Env } from "../src/env";
 import {
@@ -105,6 +105,43 @@ async function seedDelivery(options: DeliveryFixtureOptions = {}) {
   return { now, actorId, recipientId, projectId, commentId, mappingId, outboxId, membershipId, payload };
 }
 
+type AssignmentFixtureOptions = {
+  roleOnProject?: "photographer" | "editor";
+  recipientRole?: "admin" | "photographer" | "editor";
+  recipientActive?: boolean;
+  includeMembership?: boolean;
+  membershipId?: string;
+  projectArchived?: boolean;
+  actorId?: string;
+  recipientId?: string;
+};
+
+async function seedAssignment(options: AssignmentFixtureOptions = {}) {
+  const now = Date.now();
+  const actorId = options.actorId ?? crypto.randomUUID();
+  const recipientId = options.recipientId ?? crypto.randomUUID();
+  const projectId = crypto.randomUUID();
+  const membershipId = options.membershipId ?? crypto.randomUUID();
+  const outboxId = crypto.randomUUID();
+  const roleOnProject = options.roleOnProject ?? "editor";
+  const includeMembership = options.includeMembership !== false;
+  const payload = {
+    schemaVersion: 1,
+    event: { type: NOTIFICATION_OUTBOX_EVENT_TYPES.projectAssignmentCreated, sourceKey: membershipId, recipientId },
+    assignment: { projectId, userId: recipientId, roleOnProject, membershipCycle: membershipId },
+  };
+  const statements: D1PreparedStatement[] = [
+    database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, 'Assignment Actor', ?, 1, 'editor', 1, ?, ?)").bind(actorId, `${actorId}@example.test`, now, now),
+  ];
+  if (recipientId !== actorId) statements.push(database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, 'Assignment Recipient', ?, 1, ?, ?, ?, ?)").bind(recipientId, `${recipientId}@example.test`, options.recipientRole ?? "editor", options.recipientActive === false ? 0 : 1, now, now));
+  statements.push(database.DB.prepare("INSERT INTO projects (id, street, stage_key, archived_at, created_at, updated_at) VALUES (?, 'Assignment Street', 'editing_autohdr', ?, ?, ?)").bind(projectId, options.projectArchived ? now : null, now, now));
+  if (includeMembership) statements.push(database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, ?, ?)").bind(membershipId, projectId, recipientId, roleOnProject, now));
+  statements.push(database.DB.prepare("INSERT INTO notification_outbox (id, schema_version, event_type, source_key, project_id, actor_id, recipient_id, payload_json, status, available_at, queue_published_at, lease_token, lease_expires_at, delivery_attempts, created_at, updated_at) VALUES (?, 1, ?, ?, ?, ?, ?, ?, 'pending', ?, NULL, NULL, NULL, 0, ?, ?)").bind(outboxId, NOTIFICATION_OUTBOX_EVENT_TYPES.projectAssignmentCreated, membershipId, projectId, actorId, recipientId, JSON.stringify(payload), now - 1, now, now));
+  statements.push(database.DB.prepare("INSERT INTO notification_delivery_ledger (id, outbox_id, event_type, source_key, recipient_id, channel, status, attempts, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'in_app', 'pending', 0, ?, ?), (?, ?, ?, ?, ?, 'email', 'pending', 0, ?, ?)").bind(crypto.randomUUID(), outboxId, NOTIFICATION_OUTBOX_EVENT_TYPES.projectAssignmentCreated, membershipId, recipientId, now, now, crypto.randomUUID(), outboxId, NOTIFICATION_OUTBOX_EVENT_TYPES.projectAssignmentCreated, membershipId, recipientId, now, now));
+  await database.DB.batch(statements);
+  return { now, actorId, recipientId, projectId, membershipId, outboxId, payload };
+}
+
 function message(outboxId: string, attempts = 0) {
   return { body: { type: "notification_outbox", outboxId } as NotificationOutboxMessage, attempts, ack: vi.fn(), retry: vi.fn() } as never;
 }
@@ -147,6 +184,40 @@ describe("TB4 notification delivery Worker integration", () => {
     expect((afterDismissal as { ack: ReturnType<typeof vi.fn> }).ack).toHaveBeenCalledOnce();
     expect(send).toHaveBeenCalledOnce();
     expect(await database.DB.prepare("SELECT count(*) AS count FROM notifications WHERE source_key = ?").bind(fixture.mappingId).first()).toEqual({ count: 0 });
+  });
+
+  it("delivers durable assignments by role, permits self/archived occurrences, and reauthorizes the exact cycle", async () => {
+    const photographer = await seedAssignment({ roleOnProject: "photographer", recipientRole: "photographer" });
+    const send = vi.fn().mockResolvedValue({ messageId: "assignment-photographer" });
+    const first = message(photographer.outboxId);
+    await processNotificationMessage(deliveryEnv(send), first);
+    expect((first as { ack: ReturnType<typeof vi.fn> }).ack).toHaveBeenCalledOnce();
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ text: expect.stringContaining("assigned as the photographer") }));
+    expect(await database.DB.prepare("SELECT type, source_key, body FROM notifications WHERE source_key = ?").bind(photographer.membershipId).first()).toMatchObject({ type: "assigned_to_project", source_key: photographer.membershipId, body: "You have been assigned as the photographer for Assignment Street." });
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ text: `You have been assigned as the photographer for Assignment Street.\n\nhttps://portal.test/projects/${photographer.projectId}` }));
+    expect(await database.DB.prepare("SELECT status FROM notification_delivery_ledger WHERE outbox_id = ? ORDER BY channel").bind(photographer.outboxId).all()).toMatchObject({ results: [{ status: "sent" }, { status: "sent" }] });
+
+    const duplicate = message(photographer.outboxId, 1);
+    await processNotificationMessage(deliveryEnv(send), duplicate);
+    expect(send).toHaveBeenCalledOnce();
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM notifications WHERE source_key = ?").bind(photographer.membershipId).first()).toEqual({ count: 1 });
+
+    const editor = await seedAssignment({ roleOnProject: "editor", recipientRole: "editor", projectArchived: true });
+    const editorSend = vi.fn().mockResolvedValue({ messageId: "assignment-editor" });
+    await processNotificationMessage(deliveryEnv(editorSend), message(editor.outboxId));
+    expect(editorSend).toHaveBeenCalledWith(expect.objectContaining({ text: expect.stringContaining("assigned as the editor") }));
+
+    const selfUser = crypto.randomUUID();
+    const selfFixture = await seedAssignment({ roleOnProject: "editor", recipientRole: "editor", actorId: selfUser, recipientId: selfUser });
+    const selfSend = vi.fn().mockResolvedValue({ messageId: "assignment-self" });
+    await processNotificationMessage(deliveryEnv(selfSend), message(selfFixture.outboxId));
+    expect(selfSend).toHaveBeenCalledOnce();
+    const changed = await seedAssignment({ roleOnProject: "editor", recipientRole: "editor" });
+    await database.DB.prepare("UPDATE user SET role = 'photographer' WHERE id = ?").bind(changed.recipientId).run();
+    const changedMessage = message(changed.outboxId);
+    await processNotificationMessage(deliveryEnv(vi.fn()), changedMessage);
+    expect((changedMessage as { ack: ReturnType<typeof vi.fn> }).ack).toHaveBeenCalledOnce();
+    expect(await database.DB.prepare("SELECT status FROM notification_outbox WHERE id = ?").bind(changed.outboxId).first()).toEqual({ status: "suppressed" });
   });
 
   it("reclaims a stale in-app processing ledger in the claim batch and completes without Cron", async () => {
@@ -283,6 +354,43 @@ describe("TB4 notification delivery Worker integration", () => {
       },
     } as unknown as D1Database;
     const send = vi.fn().mockResolvedValue({ messageId: "should-not-send" });
+    const m = message(fixture.outboxId);
+    await processNotificationMessage(deliveryEnv(send, raceDb), m);
+    expect(send).not.toHaveBeenCalled();
+    expect(await database.DB.prepare("SELECT channel, status FROM notification_delivery_ledger WHERE outbox_id = ? ORDER BY channel").bind(fixture.outboxId).all()).toMatchObject({ results: [{ channel: "email", status: "suppressed" }, { channel: "in_app", status: "sent" }] });
+    expect(await database.DB.prepare("SELECT status FROM notification_outbox WHERE id = ?").bind(fixture.outboxId).first()).toEqual({ status: "completed" });
+  });
+
+  it("suppresses an assignment occurrence from C1 after removal and re-addition as C2", async () => {
+    const fixture = await seedAssignment();
+    const newCycle = crypto.randomUUID();
+    await database.DB.prepare("DELETE FROM project_members WHERE id = ?").bind(fixture.membershipId).run();
+    await database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)").bind(newCycle, fixture.projectId, fixture.recipientId, Date.now()).run();
+    const send = vi.fn().mockResolvedValue({ messageId: "stale-assignment" });
+    const m = message(fixture.outboxId);
+    await processNotificationMessage(deliveryEnv(send), m);
+    expect((m as { ack: ReturnType<typeof vi.fn> }).ack).toHaveBeenCalledOnce();
+    expect((m as { retry: ReturnType<typeof vi.fn> }).retry).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+    expect(await database.DB.prepare("SELECT status FROM notification_outbox WHERE id = ?").bind(fixture.outboxId).first()).toEqual({ status: "suppressed" });
+    expect(await database.DB.prepare("SELECT channel, status FROM notification_delivery_ledger WHERE outbox_id = ? ORDER BY channel").bind(fixture.outboxId).all()).toMatchObject({ results: [{ channel: "email", status: "suppressed" }, { channel: "in_app", status: "suppressed" }] });
+    expect(await database.DB.prepare("SELECT id FROM project_members WHERE id = ?").bind(newCycle).first()).toEqual({ id: newCycle });
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM notifications WHERE source_key = ?").bind(fixture.membershipId).first()).toEqual({ count: 0 });
+  });
+
+  it("reauthorizes each assignment channel independently after in-app sends", async () => {
+    const fixture = await seedAssignment();
+    let batches = 0;
+    const raceDb = {
+      prepare: database.DB.prepare.bind(database.DB),
+      batch: async (statements: D1PreparedStatement[]) => {
+        const result = await database.DB.batch(statements);
+        batches += 1;
+        if (batches === 2) await database.DB.prepare("DELETE FROM project_members WHERE id = ?").bind(fixture.membershipId).run();
+        return result;
+      },
+    } as unknown as D1Database;
+    const send = vi.fn().mockResolvedValue({ messageId: "assignment-should-not-send" });
     const m = message(fixture.outboxId);
     await processNotificationMessage(deliveryEnv(send, raceDb), m);
     expect(send).not.toHaveBeenCalled();

@@ -8,6 +8,7 @@ import { hasProjectCollaborationAccess } from "../middleware/capability";
 import { newId } from "../lib/ids";
 import { publishNotificationOutbox } from "@quincy/shared";
 import { projectMentionableUsers } from "../lib/project-collaboration";
+import { projectStageForRole } from "./stages";
 import {
   advanceProjectCommentReadMarker,
   createProjectComment,
@@ -59,6 +60,21 @@ async function normalizedContent(env: AppEnv["Bindings"], projectId: string, inp
 }
 
 export const projectCommentsRoutes = new Hono<AppEnv>();
+
+projectCommentsRoutes.get("/projects/:projectId/collaboration-summary", async (c) => {
+  const projectId = c.req.param("projectId");
+  if (!projectIdSchema.safeParse(projectId).success) return c.json({ error: "Invalid project id" }, 400);
+  if (!await hasProjectCollaborationAccess(c, projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
+  const db = createDb(c.env.DB);
+  const project = await db.select({ id: schema.projects.id, street: schema.projects.street, stageKey: schema.projects.stageKey }).from(schema.projects).where(eq(schema.projects.id, projectId)).get();
+  if (!project) return c.json({ error: "Project not found" }, 404);
+  const members = await db.select({ id: schema.projectMembers.id, userId: schema.projectMembers.userId, roleOnProject: schema.projectMembers.roleOnProject, name: schema.user.name, active: schema.user.active })
+    .from(schema.projectMembers).innerJoin(schema.user, eq(schema.projectMembers.userId, schema.user.id)).where(eq(schema.projectMembers.projectId, projectId)).orderBy(schema.projectMembers.roleOnProject, schema.user.name, schema.user.id).all();
+  return c.json({
+    project: { id: project.id, street: project.street, stageKey: projectStageForRole(project, c.get("user").role).stageKey },
+    members: members.map((member) => ({ id: member.id, userId: member.userId, roleOnProject: member.roleOnProject, name: member.name, active: Boolean(member.active) })),
+  });
+});
 
 projectCommentsRoutes.get("/projects/:projectId/comments", async (c) => {
   const projectId = c.req.param("projectId"); if (!projectIdSchema.safeParse(projectId).success) return c.json({ error: "Invalid project id" }, 400);

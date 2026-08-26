@@ -4,7 +4,7 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 import { notificationCopy } from "@quincy/db";
 import { createAuth } from "../src/auth";
 import type { Env } from "../src/env";
-import { notifyProject, notifyProjectAssignments, notifySubtaskAssignee } from "../src/lib/notifications";
+import { notifyProject, notifySubtaskAssignee } from "../src/lib/notifications";
 
 const database = env as unknown as { DB: D1Database };
 const baseEnv = env as unknown as Env;
@@ -115,7 +115,7 @@ describe("notifications API and recipient selection", () => {
     expect(send).toHaveBeenCalledWith(expect.objectContaining({ text: expect.stringContaining(`https://portal.test/projects/${projectId}`) }));
   });
 
-  it("includes active admins for every project event, but only explicit active targets for assignments", async () => {
+  it("includes active admins for every project event", async () => {
     const now = Date.now();
     const projectId = crypto.randomUUID();
     const activeAdmin = crypto.randomUUID();
@@ -148,15 +148,6 @@ describe("notifications API and recipient selection", () => {
     expect(excluded.results.map((row) => row.user_id)).toContain(editor);
     expect(excluded.results.filter((row) => row.user_id === editor)).toHaveLength(2);
 
-    const sendsBeforeAssignments = send.mock.calls.length;
-    await notifyProjectAssignments(testEnv, projectId, [
-      { userId: assignedActive, roleOnProject: "photographer" },
-      { userId: assignedInactive, roleOnProject: "editor" },
-    ]);
-    const assignmentRows = await database.DB.prepare("SELECT user_id, body FROM notifications WHERE project_id = ? AND type = 'assigned_to_project'").bind(projectId).all<{ user_id: string; body: string }>();
-    expect(assignmentRows.results).toEqual([expect.objectContaining({ user_id: assignedActive, body: "You have been assigned as the photographer for Admin recipients." })]);
-    expect(send.mock.calls.length - sendsBeforeAssignments).toBe(1);
-    expect(assignmentRows.results.map((row) => row.user_id)).not.toContain(activeAdmin);
   });
 
   it("records a mocked email failure without failing the notification write", async () => {

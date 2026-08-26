@@ -45,10 +45,10 @@ describe("project field policies", () => {
     expect(editProjectPayload(whitespaceOnly)).toMatchObject({ agencyName: null, agentName: null, agentEmail: null, agentPhone: null });
   });
 
-  it("omits protected order values while retaining editable project and member fields", () => {
+  it("omits protected order values and roster fields from the Edit payload", () => {
     const payload = editProjectPayload(form);
-    expect(payload).toMatchObject({ street: "12 Test Street", suburb: "Sydney", photographerUserIds: ["photographer-id"], editorUserIds: ["editor-id"] });
-    for (const key of ["orderedServices", "orderNo", "orderId", "invoiceAmount", "paymentStatus", "notes"]) expect(payload).not.toHaveProperty(key);
+    expect(payload).toMatchObject({ street: "12 Test Street", suburb: "Sydney" });
+    for (const key of ["orderedServices", "photographerUserIds", "editorUserIds", "orderNo", "orderId", "invoiceAmount", "paymentStatus", "notes"]) expect(payload).not.toHaveProperty(key);
   });
 
   it("renders protected edit controls as read-only without invoice or payment fields", () => {

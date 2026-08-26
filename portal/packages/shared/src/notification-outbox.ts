@@ -4,7 +4,26 @@ export type NotificationOutboxMessage = {
   outboxId: string;
 };
 
-export const NOTIFICATION_OUTBOX_EVENT_TYPE = "project.comment.mentioned" as const;
+export const NOTIFICATION_OUTBOX_EVENT_TYPES = {
+  projectCommentMentioned: "project.comment.mentioned",
+  projectAssignmentCreated: "project.assignment.created",
+} as const;
+export type ProjectAssignmentCreatedPayload = {
+  schemaVersion: 1;
+  event: {
+    type: typeof NOTIFICATION_OUTBOX_EVENT_TYPES.projectAssignmentCreated;
+    sourceKey: string;
+    recipientId: string;
+  };
+  assignment: {
+    projectId: string;
+    userId: string;
+    roleOnProject: "photographer" | "editor";
+    membershipCycle: string;
+  };
+};
+/** Backward-compatible alias for the original comment event. */
+export const NOTIFICATION_OUTBOX_EVENT_TYPE = NOTIFICATION_OUTBOX_EVENT_TYPES.projectCommentMentioned;
 export const NOTIFICATION_QUEUE_NAME = "quincy-notifications" as const;
 export const NOTIFICATION_DLQ_QUEUE_NAME = "quincy-notifications-dlq" as const;
 

@@ -44,6 +44,10 @@ function projectFixture(id = "p1") {
   };
 }
 
+function collaborationSummaryFixture(id = "p1") {
+  return { project: { id, street: id === "p1" ? "12 Example St" : "34 Second Street", stageKey: "raw_review" as const }, members: [] };
+}
+
 function deferredPromise<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason?: unknown) => void;
@@ -634,6 +638,7 @@ describe("ProjectWorkspace collaboration relocation", () => {
   it("uses the comments probe for a 403 collaborator without starting workspace reads", async () => {
     apiGetMock.mockImplementation((path: string) => {
       if (path === "/api/projects/p1") return Promise.reject(new ApiError("Forbidden", 403));
+      if (path.includes("/collaboration-summary")) return Promise.resolve(collaborationSummaryFixture());
       if (path.includes("/comments?limit=50")) return Promise.resolve({ project: { id: "p1", street: "Hidden Street" }, comments: [] });
       if (path.includes("subtasks")) return Promise.resolve({ subtasks: [] });
       if (path.includes("mentionable-users")) return Promise.resolve({ users: [] });
@@ -655,6 +660,7 @@ describe("ProjectWorkspace collaboration relocation", () => {
     let assetCalls = 0;
     apiGetMock.mockImplementation((path: string) => {
       if (path === "/api/projects/p1") { detailCalls += 1; return Promise.reject(new ApiError("Forbidden", 403)); }
+      if (path.includes("/collaboration-summary")) return Promise.resolve(collaborationSummaryFixture());
       if (path.includes("/comments?")) return commentsAvailable
         ? Promise.resolve({ project: { id: "p1", street: "Hidden Street" }, comments: [] })
         : Promise.reject(new ApiError("Collaboration unavailable", 403));
@@ -712,9 +718,10 @@ describe("ProjectWorkspace collaboration relocation", () => {
     const consumed: number[] = [];
     apiGetMock.mockImplementation((path: string) => path === "/api/projects/p1"
       ? Promise.reject(new ApiError("Forbidden", 403))
+      : path.includes("/collaboration-summary") ? Promise.resolve(collaborationSummaryFixture())
       : path.includes("comments?limit=50") ? Promise.reject(new ApiError("Forbidden", 403)) : Promise.resolve({}));
     await render(<ProjectWorkspace projectId="p1" collaborationOpenSignal={11} onCollaborationOpenSignalConsumed={(signal) => consumed.push(signal)} />); await flush();
-    expect(host.textContent).toContain("Project unavailable."); expect(host.querySelector(".project-collaboration")).toBeNull(); expect(consumed).toEqual([11]);
+    expect(host.textContent).toContain("Collaboration unavailable."); expect(host.querySelector(".project-collaboration--unavailable")).not.toBeNull(); expect(consumed).toEqual([11]);
 
     apiGetMock.mockReset().mockImplementation((path: string) => path === "/api/projects/p2" ? Promise.reject(new ApiError("Session expired", 401)) : Promise.resolve({}));
     await render(<ProjectWorkspace projectId="p2" collaborationOpenSignal={12} onCollaborationOpenSignalConsumed={(signal) => consumed.push(signal)} />); await flush();
@@ -727,6 +734,7 @@ describe("ProjectWorkspace collaboration relocation", () => {
     let probeSignal: AbortSignal | undefined;
     apiGetMock.mockImplementation((path: string, init?: unknown) => {
       if (path === "/api/projects/p1") return Promise.reject(new ApiError("Forbidden", 403));
+      if (path.includes("p1/collaboration-summary")) return Promise.resolve(collaborationSummaryFixture());
       if (path.includes("p1/comments?limit=50")) { probeSignal = (init as { signal?: AbortSignal } | undefined)?.signal; return probe.promise; }
       if (path === "/api/projects/p2") return Promise.resolve(projectFixture("p2"));
       if (path.includes("p2/assets?collection=raw")) return Promise.resolve({ assets: [workspaceAsset("p2-raw")] });
@@ -746,6 +754,7 @@ describe("ProjectWorkspace collaboration relocation", () => {
     let p2CommentsCalls = 0;
     apiGetMock.mockImplementation((path: string) => {
       if (path === "/api/projects/p1") return Promise.reject(new ApiError("Forbidden", 403));
+      if (path.includes("p1/collaboration-summary")) return Promise.resolve(collaborationSummaryFixture());
       if (path.includes("p1/comments?")) return Promise.resolve({ project: { id: "p1", street: "Hidden Street" }, comments: [] });
       if (path === "/api/projects/p2") return p2Detail.promise;
       if (path.includes("p2/comments?")) { p2CommentsCalls += 1; return Promise.resolve({ project: { id: "p2", street: "Wrong Street" }, comments: [] }); }

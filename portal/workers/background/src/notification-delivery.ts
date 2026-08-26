@@ -1,14 +1,17 @@
 import {
   NOTIFICATION_DLQ_QUEUE_NAME,
   NOTIFICATION_OUTBOX_EVENT_TYPE,
+  NOTIFICATION_OUTBOX_EVENT_TYPES,
   NOTIFICATION_QUEUE_NAME,
   NotificationOutboxMessage,
   parseNotificationOutboxMessage,
   publishNotificationOutbox,
   roleHasCapability,
+  isProjectAssignmentEligible,
   staffPathFor,
   truncateForEmail,
   type Role,
+  type ProjectAssignmentCreatedPayload,
 } from "@quincy/shared";
 import type { Env } from "./env";
 
@@ -16,6 +19,7 @@ export const NOTIFICATION_DELIVERY_LEASE_MS = 10 * 60_000;
 export const NOTIFICATION_QUEUE_STUCK_MS = 30 * 60_000;
 export const NOTIFICATION_RECOVERY_LIMIT = 100;
 export const NOTIFICATION_QUEUE_MAX_DELAY_SECONDS = 12 * 60 * 60;
+const htmlEscape = (value: string) => value.replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[character]!));
 
 type OutboxRow = {
   id: string;
@@ -87,6 +91,34 @@ type ProjectCommentMentionPayload = {
   };
 };
 
+type ResolvedDelivery = {
+  notificationType: "mentioned" | "assigned_to_project";
+  title: string;
+  body: string;
+  emailSubject: string;
+  emailText: string;
+  emailHtml: string;
+};
+
+function safeAssignmentPayload(value: string, outbox: OutboxRow): ProjectAssignmentCreatedPayload | null {
+  if (outbox.schema_version !== 1 || outbox.event_type !== NOTIFICATION_OUTBOX_EVENT_TYPES.projectAssignmentCreated) return null;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    const object = (candidate: unknown): candidate is Record<string, unknown> => Boolean(candidate && typeof candidate === "object" && !Array.isArray(candidate));
+    const exactKeys = (candidate: Record<string, unknown>, keys: string[]) => Object.keys(candidate).length === keys.length && keys.every((key) => Object.prototype.hasOwnProperty.call(candidate, key));
+    if (!object(parsed) || !exactKeys(parsed, ["schemaVersion", "event", "assignment"]) || parsed.schemaVersion !== 1) return null;
+    const event = parsed.event;
+    const assignment = parsed.assignment;
+    if (!object(event) || !exactKeys(event, ["type", "sourceKey", "recipientId"]) || event.type !== NOTIFICATION_OUTBOX_EVENT_TYPES.projectAssignmentCreated || typeof event.sourceKey !== "string" || typeof event.recipientId !== "string") return null;
+    if (!object(assignment) || !exactKeys(assignment, ["projectId", "userId", "roleOnProject", "membershipCycle"])) return null;
+    if (typeof assignment.projectId !== "string" || typeof assignment.userId !== "string" || typeof assignment.membershipCycle !== "string" || (assignment.roleOnProject !== "photographer" && assignment.roleOnProject !== "editor")) return null;
+    if (event.sourceKey !== outbox.source_key || event.recipientId !== outbox.recipient_id || assignment.projectId !== outbox.project_id || assignment.userId !== outbox.recipient_id || assignment.membershipCycle !== outbox.source_key) return null;
+    return parsed as ProjectAssignmentCreatedPayload;
+  } catch {
+    return null;
+  }
+}
+
 export type EmailClassification =
   | { kind: "quota_transient"; code: "E_RATE_LIMIT_EXCEEDED" | "E_DAILY_LIMIT_EXCEEDED"; message: string }
   | { kind: "permanent"; code: string; message: string }
@@ -148,7 +180,7 @@ function safePayload(value: string, outbox: OutboxRow): ProjectCommentMentionPay
 }
 
 async function resolveRecipient(env: Env, outbox: OutboxRow): Promise<
-  | { ok: true; row: ResolverRow; payload: ProjectCommentMentionPayload; commentPath: string }
+  | { ok: true; row: ResolverRow; payload: ProjectCommentMentionPayload | ProjectAssignmentCreatedPayload; commentPath: string; delivery: ResolvedDelivery }
   | { ok: false; reason: string }
 > {
   const row = await env.DB.prepare(`
@@ -175,6 +207,40 @@ async function resolveRecipient(env: Env, outbox: OutboxRow): Promise<
   `).bind(outbox.id).all<ResolverRow>();
   const first = row.results[0];
   if (!first) return { ok: false, reason: "outbox_missing" };
+
+  if (outbox.event_type === NOTIFICATION_OUTBOX_EVENT_TYPES.projectAssignmentCreated) {
+    const payload = safeAssignmentPayload(first.payloadJson, outbox);
+    if (!payload) return { ok: false, reason: "payload_invalid" };
+    const roleOnProject = payload.assignment.roleOnProject;
+    const role = first.recipientRole as Role;
+    if (first.schemaVersion !== 1 || first.eventType !== NOTIFICATION_OUTBOX_EVENT_TYPES.projectAssignmentCreated || first.sourceKey !== payload.assignment.membershipCycle || first.recipientId !== payload.assignment.userId || first.projectId !== payload.assignment.projectId) return { ok: false, reason: "payload_invalid" };
+    if (first.projectStreet === null) return { ok: false, reason: "project_missing" };
+    if (first.recipientActive !== 1 || !(role === "admin" || role === "editor" || role === "photographer") || !isProjectAssignmentEligible(roleOnProject, role)) return { ok: false, reason: "recipient_ineligible" };
+    const exact = await env.DB.prepare(`
+      SELECT pm.id AS membershipId
+      FROM project_members pm
+      WHERE pm.id = ? AND pm.project_id = ? AND pm.user_id = ? AND pm.role_on_project = ?
+    `).bind(payload.assignment.membershipCycle, payload.assignment.projectId, payload.assignment.userId, roleOnProject).first<{ membershipId: string }>();
+    if (!exact) return { ok: false, reason: "membership_cycle_changed" };
+    const projectPath = `${env.APP_ORIGIN}/projects/${first.projectId}`;
+    const title = "Assigned to project";
+    const body = `You have been assigned as the ${roleOnProject} for ${first.projectStreet ?? "Project"}.`;
+    return {
+      ok: true,
+      row: first,
+      payload,
+      commentPath: projectPath,
+      delivery: {
+        notificationType: "assigned_to_project",
+        title,
+        body,
+        emailSubject: title,
+        emailText: `${body}\n\n${projectPath}`,
+        emailHtml: `<p>${htmlEscape(body)}</p><p><a href="${htmlEscape(projectPath)}">View project</a></p>`,
+      },
+    };
+  }
+
   const payload = safePayload(first.payloadJson, outbox);
   if (!payload) return { ok: false, reason: "payload_invalid" };
   const role = first.recipientRole as Role;
@@ -191,11 +257,21 @@ async function resolveRecipient(env: Env, outbox: OutboxRow): Promise<
   } else if (!payload.authorizationAtOccurrence.membershipIds.some((id) => memberships.includes(id))) {
     return { ok: false, reason: "membership_cycle_changed" };
   }
+  const commentPath = `${env.APP_ORIGIN}${staffPathFor({ kind: "project", projectId: first.projectId, collaboration: "open" })}`;
+  const excerpt = truncateForEmail(first.commentBody ?? "");
   return {
     ok: true,
     row: first,
     payload,
-    commentPath: `${env.APP_ORIGIN}${staffPathFor({ kind: "project", projectId: first.projectId, collaboration: "open" })}`,
+    commentPath,
+    delivery: {
+      notificationType: "mentioned",
+      title: "You were mentioned",
+      body: "You were mentioned in a project comment.",
+      emailSubject: "You were mentioned",
+      emailText: `${first.authorName} commented on ${first.projectStreet ?? ""}:\n\n“${excerpt}”\n\n${commentPath}`,
+      emailHtml: `<p>${htmlEscape(first.authorName ?? "")} commented on ${htmlEscape(first.projectStreet ?? "")}:</p><p>“${htmlEscape(excerpt)}”</p><p><a href="${htmlEscape(commentPath)}">View project</a></p>`,
+    },
   };
 }
 
@@ -342,7 +418,7 @@ async function beginChannel(env: Env, outbox: OutboxRow, token: string, channel:
   return (result.meta.changes ?? 0) === 1;
 }
 
-async function deliverInApp(env: Env, outbox: OutboxRow, token: string, resolved: Extract<Awaited<ReturnType<typeof resolveRecipient>>, { ok: true }>, now: number): Promise<void> {
+async function deliverInApp(env: Env, outbox: OutboxRow, token: string, _resolved: Extract<Awaited<ReturnType<typeof resolveRecipient>>, { ok: true }>, now: number): Promise<void> {
   const began = await beginChannel(env, outbox, token, "in_app", now);
   if (!began) return;
   const secondResolution = await resolveRecipient(env, outbox);
@@ -350,20 +426,21 @@ async function deliverInApp(env: Env, outbox: OutboxRow, token: string, resolved
     await suppressWholeOccurrence(env, outbox, token, secondResolution.reason, now);
     return;
   }
+  const current = secondResolution;
   const notificationId = crypto.randomUUID();
   const inserted = env.DB.prepare(`
     INSERT INTO notifications (id, user_id, project_id, type, title, body, source_key, created_at)
-    SELECT ?, ?, ?, 'mentioned', 'You were mentioned', 'You were mentioned in a project comment.', ?, ?
+    SELECT ?, ?, ?, ?, ?, ?, ?, ?
     WHERE EXISTS (SELECT 1 FROM notification_outbox o WHERE o.id = ? AND o.status = 'processing' AND o.lease_token = ?)
     ON CONFLICT (type, source_key, user_id)
       WHERE source_key IS NOT NULL DO NOTHING
-  `).bind(notificationId, resolved.row.recipientId, resolved.row.projectId, resolved.row.sourceKey, now, outbox.id, token);
+  `).bind(notificationId, current.row.recipientId, current.row.projectId, current.delivery.notificationType, current.delivery.title, current.delivery.body, current.row.sourceKey, now, outbox.id, token);
   const converged = env.DB.prepare(`
     UPDATE notification_delivery_ledger
     SET status = 'sent',
         notification_id = (
           SELECT id FROM notifications
-          WHERE type = 'mentioned' AND source_key = ? AND user_id = ?
+          WHERE type = ? AND source_key = ? AND user_id = ?
           LIMIT 1
         ),
         delivered_at = ?, updated_at = ?, last_error_code = NULL, last_error = NULL
@@ -376,9 +453,9 @@ async function deliverInApp(env: Env, outbox: OutboxRow, token: string, resolved
       )
       AND EXISTS (
         SELECT 1 FROM notifications
-        WHERE type = 'mentioned' AND source_key = ? AND user_id = ?
+        WHERE type = ? AND source_key = ? AND user_id = ?
       )
-  `).bind(resolved.row.sourceKey, resolved.row.recipientId, now, now, outbox.id, outbox.id, token, resolved.row.sourceKey, resolved.row.recipientId);
+  `).bind(current.delivery.notificationType, current.row.sourceKey, current.row.recipientId, now, now, outbox.id, outbox.id, token, current.delivery.notificationType, current.row.sourceKey, current.row.recipientId);
   const results = await env.DB.batch([inserted, converged]);
   if ((results[1]?.meta.changes ?? 0) !== 1) throw new Error("In-app ledger convergence lost ownership");
 }
@@ -449,17 +526,13 @@ async function finishEmail(env: Env, outbox: OutboxRow, token: string, now: numb
   }
   emailReachedProcessing.value = true;
   const current = reauthorized;
-  const projectStreet = current.row.projectStreet ?? "";
-  const text = `${current.row.authorName} commented on ${projectStreet}:\n\n“${truncateForEmail(current.row.commentBody ?? "")}”\n\n${current.commentPath}`;
-  const htmlEscape = (value: string) => value.replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[character]!));
-  const excerpt = truncateForEmail(current.row.commentBody ?? "");
   try {
     const result = await env.EMAIL.send({
       from: env.NOTIFICATIONS_FROM_ADDRESS,
       to: current.row.recipientEmail,
-      subject: "You were mentioned",
-      text,
-      html: `<p>${htmlEscape(current.row.authorName ?? "")} commented on ${htmlEscape(projectStreet)}:</p><p>“${htmlEscape(excerpt)}”</p><p><a href="${htmlEscape(current.commentPath)}">View project</a></p>`,
+      subject: current.delivery.emailSubject,
+      text: current.delivery.emailText,
+      html: current.delivery.emailHtml,
     });
     const sentResult = await env.DB.prepare(`
       UPDATE notification_delivery_ledger
@@ -564,6 +637,7 @@ export async function processNotificationMessage(env: Env, message: Message<Noti
 }
 
 async function recordNotificationDlq(env: Env, outboxId: string, now: number): Promise<void> {
+  const source = await env.DB.prepare("SELECT event_type AS eventType FROM notification_outbox WHERE id = ?").bind(outboxId).first<{ eventType: string }>();
   const results = await env.DB.batch([
     env.DB.prepare(`
       UPDATE notification_delivery_ledger
@@ -604,7 +678,7 @@ async function recordNotificationDlq(env: Env, outboxId: string, now: number): P
       INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
       SELECT ?, NULL, 'notification.delivery.dlq', 'notification_outbox', ?, ?, ?
       WHERE changes() = 1
-    `).bind(crypto.randomUUID(), outboxId, JSON.stringify({ eventType: NOTIFICATION_OUTBOX_EVENT_TYPE, outboxId, reason: "queue_retries_exhausted" }), now),
+    `).bind(crypto.randomUUID(), outboxId, JSON.stringify({ eventType: source?.eventType ?? "unknown", outboxId, reason: "queue_retries_exhausted" }), now),
   ]);
   if ((results[0]?.meta.changes ?? 0) === 1) await mirrorEmailOutcome(env, outboxId, { emailError: "email_acceptance_unknown" });
   else if ((results[1]?.meta.changes ?? 0) === 1) await mirrorEmailOutcome(env, outboxId, { emailError: "queue_retries_exhausted" });
