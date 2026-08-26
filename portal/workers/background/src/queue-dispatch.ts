@@ -1,4 +1,5 @@
 import type { RenditionMessage } from "@quincy/shared";
+import { NOTIFICATION_DLQ_QUEUE_NAME, NOTIFICATION_QUEUE_NAME, parseNotificationOutboxMessage, type NotificationOutboxMessage } from "@quincy/shared";
 import type { IngestMessage } from "./messages";
 
 export const INGEST_QUEUE_NAME = "quincy-ingest";
@@ -8,13 +9,19 @@ export const RENDITION_DLQ_QUEUE_NAME = "quincy-renditions-dlq";
 export type QueueBody =
   | { queue: typeof INGEST_QUEUE_NAME; body: IngestMessage }
   | { queue: typeof RENDITION_QUEUE_NAME; body: RenditionMessage }
-  | { queue: typeof RENDITION_DLQ_QUEUE_NAME; body: RenditionMessage };
+  | { queue: typeof RENDITION_DLQ_QUEUE_NAME; body: RenditionMessage }
+  | { queue: typeof NOTIFICATION_QUEUE_NAME; body: NotificationOutboxMessage }
+  | { queue: typeof NOTIFICATION_DLQ_QUEUE_NAME; body: NotificationOutboxMessage };
 
-/** Runtime boundary for three queues sharing one Worker. Queue name, not a body discriminator,
+/** Runtime boundary for five queues sharing one Worker. Queue name, not a body discriminator,
  * decides which concurrency policy applies. A rendition body on ingest is invalid and retried. */
 export function parseQueueBody(queue: string, body: unknown): QueueBody | null {
   if (!body || typeof body !== "object") return null;
   const value = body as Record<string, unknown>;
+  if (queue === NOTIFICATION_QUEUE_NAME || queue === NOTIFICATION_DLQ_QUEUE_NAME) {
+    const parsed = parseNotificationOutboxMessage(value);
+    return parsed ? { queue, body: parsed } : null;
+  }
   if (queue === RENDITION_QUEUE_NAME || queue === RENDITION_DLQ_QUEUE_NAME) {
     return value.type === "generate_renditions" && typeof value.assetId === "string" && value.assetId.length > 0
       ? { queue, body: { type: "generate_renditions", assetId: value.assetId } }

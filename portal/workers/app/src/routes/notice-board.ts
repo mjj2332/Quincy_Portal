@@ -7,7 +7,7 @@ import type { AppEnv } from "../env";
 import { requireCapability } from "../middleware/capability";
 import { audit } from "../lib/audit";
 import { newId } from "../lib/ids";
-import { notifyMentions } from "../lib/notifications";
+import { notifyNoticeBoardMentions } from "../lib/notifications";
 import { jsonInput } from "./helpers";
 
 const optionalQuery = <T extends z.ZodTypeAny>(schema: T) => z.preprocess((value) => value === "" ? undefined : value, schema.optional());
@@ -89,7 +89,7 @@ noticeBoardRoutes.post("/notice-board/posts", async (c) => {
     ...mentions.map((mention) => db.insert(schema.noticeBoardPostMentions).values(mention)),
   ]);
   await audit(c.env, user.id, "notice_board.post", "notice_board_post", id);
-  await notifyMentions(c.env, { scope: "notice-board", actorId: user.id, authorName: user.name, body: prepared.body, mentions });
+  await notifyNoticeBoardMentions(c.env, { actorId: user.id, authorName: user.name, body: prepared.body, mentions });
   const post = await findPost(db, id);
   if (!post) return c.json({ error: "Post could not be created" }, 500);
   return c.json(serializePost(post), 201);
@@ -118,7 +118,7 @@ noticeBoardRoutes.patch("/notice-board/posts/:id", async (c) => {
   ];
   await db.batch(edits as [never, ...never[]]);
   await audit(c.env, user.id, "notice_board.edit", "notice_board_post", id);
-  await notifyMentions(c.env, { scope: "notice-board", actorId: user.id, authorName: user.name, body: prepared.body, mentions: added });
+  await notifyNoticeBoardMentions(c.env, { actorId: user.id, authorName: user.name, body: prepared.body, mentions: added });
   const post = await findPost(db, id);
   if (!post) return c.json({ error: "Post could not be updated" }, 500);
   return c.json(serializePost(post));

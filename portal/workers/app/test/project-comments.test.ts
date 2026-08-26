@@ -61,7 +61,8 @@ describe("project comments API", () => {
     expect(first.body).toBe("admin 1111"); expect(first.content.content[0]!.content[0]!.attrs?.label).toBe("admin 1111");
     const mention = (await database.DB.prepare("SELECT id, mentioned_user_id FROM project_comment_mentions WHERE comment_id = ?").bind(first.id).first<{ id: string; mentioned_user_id: string }>())!;
     expect(mention.mentioned_user_id).toBe(adminId);
-    expect(await database.DB.prepare("SELECT type, source_key, project_id FROM notifications WHERE user_id = ? AND source_key = ?").bind(adminId, mention.id).first()).toMatchObject({ type: "mentioned", source_key: mention.id, project_id: projectId });
+    expect(await database.DB.prepare("SELECT event_type, source_key, recipient_id, status FROM notification_outbox WHERE source_key = ?").bind(mention.id).first()).toMatchObject({ event_type: "project.comment.mentioned", source_key: mention.id, recipient_id: adminId, status: expect.stringMatching(/pending|queued/) });
+    expect(await database.DB.prepare("SELECT id FROM notifications WHERE user_id = ? AND source_key = ?").bind(adminId, mention.id).first()).toBeNull();
     const full = await request(`/api/projects/${projectId}/comments?limit=3`, "comments-editor-token"); const fullPage = await full.json() as { project: { street: string }; comments: Array<{ id: string }> };
     expect(fullPage.project.street).toBe("Comment Street"); expect(fullPage.comments.map((comment) => comment.id)).toEqual([third.id, second.id, first.id]);
     const limited = await request(`/api/projects/${projectId}/comments?limit=2`, "comments-editor-token"); const limitedPage = await limited.json() as { comments: Array<{ id: string }>; nextCursor?: string };

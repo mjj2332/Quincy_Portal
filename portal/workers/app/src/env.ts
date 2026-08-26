@@ -1,4 +1,4 @@
-import type { Role } from "@quincy/shared";
+import type { NotificationOutboxMessage, Role } from "@quincy/shared";
 import type { QuincyBackground } from "../../background/src/rpc-types";
 
 export interface Env {
@@ -6,6 +6,7 @@ export interface Env {
   MEDIA: R2Bucket;
   SESSIONS: KVNamespace;
   INGEST_QUEUE: Queue;
+  NOTIFICATION_QUEUE: Queue<NotificationOutboxMessage>;
   /** Bound only after the rendition queue has been provisioned and the red gate is green. */
   RENDITION_QUEUE?: Queue<{ type: "generate_renditions"; assetId: string }>;
   BACKGROUND: Service<QuincyBackground>;

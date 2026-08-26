@@ -967,6 +967,7 @@ button { font-family: var(--font-sans); }
 .admin-stage small { margin-top: 4px; color: var(--text-muted); font-size: 11px; }
 .admin-toggle { display: flex; align-items: center; gap: 8px; min-height: 38px; color: var(--text-secondary); font-size: 13px; }
 .admin-poison { margin-top: var(--space-8); }
+.admin-warning { color: var(--signal-negative); font-size: 12px; }
 .admin-modal { position: fixed; z-index: 30; inset: 0; display: grid; place-items: center; padding: var(--space-5); background: rgba(10, 10, 10, .48); }
 .admin-modal__panel { width: min(820px, 100%); max-height: min(80vh, 800px); overflow: auto; padding: var(--space-5); background: var(--paper-000); border: 1px solid var(--ink-900); }
 .admin-modal pre { max-height: 55vh; overflow: auto; margin: 0; padding: var(--space-4); background: var(--paper-050); color: var(--text-secondary); font-size: 12px; line-height: 1.45; }

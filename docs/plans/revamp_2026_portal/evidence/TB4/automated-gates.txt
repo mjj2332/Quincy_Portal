@@ -1,0 +1,42 @@
+TB4 automated gate — final state (2026-08-26, after the full build/review/fix cycle documented in
+review-and-fix-cycle.txt)
+
+All commands below were run by the orchestrating session directly on the host, outside any codex
+sandbox, against the final diff (Luna build → corrective test pass → Sol round 1 fixes → Sol
+round 2 fixes → Opus final-draft fix). The Worker Miniflare suites that a codex sandbox blocks with
+`listen EPERM: operation not permitted 127.0.0.1` run cleanly outside that sandbox; that error is a
+confirmed sandbox artifact, not a real regression.
+
+1) npm run typecheck — PASS
+   Six workspace TypeScript projects, exit 0.
+
+2) npm run build -w @quincy/web — PASS
+   305 modules transformed; Vite build exit 0.
+   Existing chunk-size warning (>500 kB) emitted; not a failure, pre-existing.
+
+3) npm run test --workspaces — PASS (all six workspaces), run multiple times for stability:
+   - @quincy/db: PASS — 11 files, 40 tests.
+   - @quincy/web Node suite: PASS — 14 files, 94 tests.
+   - @quincy/web DOM suite: PASS — 22 files, 255 tests.
+     One unrelated, pre-existing, separately-tracked flake
+     (RichTextEditor.dom.test.tsx "keeps every shallow edit usable in a server-legal
+     four-container document") intermittently fails only under this combined full-suite run and
+     passes reliably 3/3 in isolation — confirmed unrelated to TB4, not fixed as part of this work.
+   - @quincy/worker-app: PASS — 34 files, 204 tests (includes admin.test.ts and
+     tb4-notification-outbox.integration.test.ts).
+   - @quincy/worker-background: PASS — 13 files, 192 tests, 1 pre-existing unrelated skip
+     (includes notification-delivery.test.ts and notification-delivery.integration.test.ts).
+   - @quincy/worker-webhook-ingress: PASS — 1 file, 13 tests.
+   - @quincy/shared: no `test` script (documented repository quirk); covered by the separate
+     command below.
+
+4) npx vitest run --config packages/shared/vitest.config.ts — PASS
+   10 files, 61 tests.
+
+5) Focused TB4 contract/migration suite — PASS
+   npx vitest run --config packages/db/vitest.config.ts test/migration-0031.test.ts
+     test/tb4-contracts.test.ts
+   2 files, 16 tests, all TB4 contract assertions passing against the final (post-fix) code.
+
+No manual QA, screenshot capture, sign-in, remote migration, Queue provisioning, or deployment was
+run as part of this gate.

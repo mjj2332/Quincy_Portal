@@ -28,7 +28,8 @@
   "queues": {
     "producers": [
       { "binding": "INGEST_QUEUE", "queue": "quincy-ingest" },
-      { "binding": "RENDITION_QUEUE", "queue": "quincy-renditions" }
+      { "binding": "RENDITION_QUEUE", "queue": "quincy-renditions" },
+      { "binding": "NOTIFICATION_QUEUE", "queue": "quincy-notifications" }
     ]
   },
   "services": [

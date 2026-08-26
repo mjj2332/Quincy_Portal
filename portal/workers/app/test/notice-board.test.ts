@@ -3,7 +3,7 @@ import { makeSignature } from "better-auth/crypto";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { createAuth } from "../src/auth";
 import type { Env } from "../src/env";
-import { notifyMentions } from "../src/lib/notifications";
+import { notifyNoticeBoardMentions } from "../src/lib/notifications";
 
 const database = env as unknown as { DB: D1Database };
 const baseEnv = env as unknown as Env;
@@ -65,8 +65,8 @@ describe("notice board API", () => {
     const mention = (await database.DB.prepare("SELECT id, mentioned_user_id FROM notice_board_post_mentions WHERE post_id = ?").bind(post.id).first<{ id: string; mentioned_user_id: string }>())!;
     await database.DB.prepare("DELETE FROM notifications WHERE source_key = ?").bind(mention.id).run();
     const send = vi.fn().mockResolvedValue({ messageId: "mention-email" });
-    await notifyMentions({ DB: database.DB, EMAIL: { send }, NOTIFICATIONS_FROM_ADDRESS: "studio@example.test", APP_ORIGIN: "https://portal.test" } as unknown as Env, {
-      scope: "notice-board", actorId: editorId, authorName: "Notice Editor", body: "Hello Notice Admin", mentions: [{ id: mention.id, mentionedUserId: mention.mentioned_user_id }],
+    await notifyNoticeBoardMentions({ DB: database.DB, EMAIL: { send }, NOTIFICATIONS_FROM_ADDRESS: "studio@example.test", APP_ORIGIN: "https://portal.test" } as unknown as Env, {
+      actorId: editorId, authorName: "Notice Editor", body: "Hello Notice Admin", mentions: [{ id: mention.id, mentionedUserId: mention.mentioned_user_id }],
     });
     expect(send).toHaveBeenCalledWith(expect.objectContaining({ to: "notice-admin@example.test", subject: "You were mentioned", text: "Notice Editor mentioned you in a notice-board post:\n\n“Hello Notice Admin”", html: "<p>Notice Editor mentioned you in a notice-board post:</p><p>“Hello Notice Admin”</p>" }));
     expect(await database.DB.prepare("SELECT email_sent_at, email_message_id FROM notifications WHERE source_key = ?").bind(mention.id).first()).toMatchObject({ email_sent_at: expect.any(Number), email_message_id: "mention-email" });
@@ -82,8 +82,8 @@ describe("notice board API", () => {
     ]);
     await database.DB.prepare("UPDATE user SET active = 0 WHERE id = ?").bind(photographerId).run();
     const send = vi.fn().mockResolvedValue({ messageId: "should-not-send" });
-    await notifyMentions({ DB: database.DB, EMAIL: { send }, NOTIFICATIONS_FROM_ADDRESS: "studio@example.test", APP_ORIGIN: "https://portal.test" } as unknown as Env, {
-      scope: "notice-board", actorId: editorId, authorName: "Notice Editor", body: "Mention Notice Photographer", mentions: [{ id: mappingId, mentionedUserId: photographerId }],
+    await notifyNoticeBoardMentions({ DB: database.DB, EMAIL: { send }, NOTIFICATIONS_FROM_ADDRESS: "studio@example.test", APP_ORIGIN: "https://portal.test" } as unknown as Env, {
+      actorId: editorId, authorName: "Notice Editor", body: "Mention Notice Photographer", mentions: [{ id: mappingId, mentionedUserId: photographerId }],
     });
     expect(await database.DB.prepare("SELECT id FROM notifications WHERE source_key = ?").bind(mappingId).all()).toMatchObject({ results: [] });
     expect(send).not.toHaveBeenCalled();

@@ -21,6 +21,23 @@ type TonomoHealth = { tonomo: { lastEventAt: string | null; counts: { received: 
 type EventDetail = { event: Event & { payloadJson: string } };
 type RenditionDlqEvent = { id: string; assetId: string; status: "open" | "replayed" | "discarded"; receivedAt: string | null; resolvedAt: string | null; projectId: string | null; street: string | null };
 type RenditionDlqResponse = { events: RenditionDlqEvent[]; openCount: number };
+type NotificationDeliveryView = "pending_stuck" | "dlq" | "failed" | "unknown";
+type NotificationDeliveryItem = {
+  outboxId: string;
+  eventType: string;
+  projectId: string | null;
+  projectStreet: string | null;
+  recipientName: string | null;
+  channels: Array<{ channel: string; status: string }>;
+  status: string;
+  attempts: number;
+  safeErrorCode: string | null;
+  createdAt: number;
+  updatedAt: number;
+  lastAttemptAt: number | null;
+  unknownEmailPossible: boolean;
+};
+type NotificationDeliveryResponse = { view: NotificationDeliveryView; items: NotificationDeliveryItem[]; nextCursor: string | null; counts: Record<NotificationDeliveryView, number> };
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PROVIDERS = ["dropbox", "tonomo", "vimeo"] as const;
@@ -77,6 +94,13 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
   const [renditionDlq, setRenditionDlq] = useState<RenditionDlqEvent[]>([]);
   const [renditionDlqOpenCount, setRenditionDlqOpenCount] = useState(0);
   const [operatingRenditionDlqIds, setOperatingRenditionDlqIds] = useState<Set<string>>(new Set());
+  const [notificationDeliveryView, setNotificationDeliveryView] = useState<NotificationDeliveryView>("pending_stuck");
+  const [notificationDeliveries, setNotificationDeliveries] = useState<NotificationDeliveryItem[]>([]);
+  const [notificationDeliveryCounts, setNotificationDeliveryCounts] = useState<Record<NotificationDeliveryView, number>>({ pending_stuck: 0, dlq: 0, failed: 0, unknown: 0 });
+  const [notificationDeliveryCursor, setNotificationDeliveryCursor] = useState<string | null>(null);
+  const [notificationDeliveriesError, setNotificationDeliveriesError] = useState<string>();
+  const [isLoadingNotificationDeliveries, setIsLoadingNotificationDeliveries] = useState(false);
+  const [operatingNotificationIds, setOperatingNotificationIds] = useState<Set<string>>(new Set());
   const [selectedAgencyId, setSelectedAgencyId] = useState<string>();
   const [agencyForm, setAgencyForm] = useState({ name: "", notes: "" });
   const [agentForm, setAgentForm] = useState({ name: "", email: "", phone: "" });
@@ -162,13 +186,24 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
     } catch (reason) { setIntegrationsError(reason instanceof Error ? reason.message : "Rendition backlog could not be loaded."); }
   }, []);
 
+  const loadNotificationDeliveries = useCallback(async (view = notificationDeliveryView, cursor?: string, append = false) => {
+    setIsLoadingNotificationDeliveries(true); setNotificationDeliveriesError(undefined);
+    try {
+      const response = await apiGet<NotificationDeliveryResponse>(`/api/admin/notification-deliveries?view=${view}&limit=50${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`);
+      setNotificationDeliveries((current) => append ? [...current, ...response.items] : response.items);
+      setNotificationDeliveryCursor(response.nextCursor); setNotificationDeliveryCounts(response.counts);
+    } catch (reason) {
+      setNotificationDeliveriesError(reason instanceof Error ? reason.message : "Notification delivery status could not be loaded.");
+    } finally { setIsLoadingNotificationDeliveries(false); }
+  }, [notificationDeliveryView]);
+
   // integrationsError is shared across loadIntegrations/loadTonomo/loadRenditionsDlq, so any
   // retry of that error state must re-run all three or it can silently re-render stale/empty
   // Tonomo or rendition-backlog data as if nothing were wrong.
   const loadIntegrationsTab = useCallback(async () => {
     await loadIntegrations();
-    if (canAdminBackend) { await loadTonomo(); await loadRenditionsDlq(); }
-  }, [canAdminBackend, loadIntegrations, loadRenditionsDlq, loadTonomo]);
+    if (canAdminBackend) { await loadTonomo(); await loadRenditionsDlq(); await loadNotificationDeliveries(); }
+  }, [canAdminBackend, loadIntegrations, loadNotificationDeliveries, loadRenditionsDlq, loadTonomo]);
 
   useEffect(() => {
     if (activeTab === "users" && canManageUsers) void loadUsers();
@@ -285,6 +320,23 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
     catch (reason) { toast(reason instanceof Error ? reason.message : "Rendition event could not be updated.", "error"); }
     finally { setOperatingRenditionDlqIds((current) => { const next = new Set(current); next.delete(id); return next; }); }
   }
+  async function operateNotificationDelivery(item: NotificationDeliveryItem, action: "replay" | "discard") {
+    if (action === "discard" && !window.confirm("Discard this durable delivery? It will not delete the comment, inbox, or delivery history.")) return;
+    if (action === "replay" && item.unknownEmailPossible && !window.confirm("Cloudflare may already have accepted this email. Replaying can send a duplicate. In-app delivery will not be recreated. Replay email anyway?")) return;
+    setOperatingNotificationIds((current) => new Set(current).add(item.outboxId));
+    try {
+      const body = action === "replay" && item.unknownEmailPossible ? { acknowledgeDuplicateEmail: true, channels: ["email"] as const } : {};
+      await apiPost(`/api/admin/notification-deliveries/${item.outboxId}/${action}`, body);
+      await loadNotificationDeliveries(notificationDeliveryView);
+      toast(action === "replay" ? "Notification delivery queued for replay." : "Notification delivery discarded.");
+    } catch (reason) { toast(reason instanceof Error ? reason.message : "Notification delivery could not be updated.", "error"); }
+    finally { setOperatingNotificationIds((current) => { const next = new Set(current); next.delete(item.outboxId); return next; }); }
+  }
+
+  function selectNotificationDeliveryView(view: NotificationDeliveryView) {
+    setNotificationDeliveryView(view);
+    void loadNotificationDeliveries(view);
+  }
   if (availableTabs.length === 0) return null;
 
   return (
@@ -353,6 +405,7 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
         })}</div>}
         {!isLoadingIntegrations && !integrationsError && canAdminBackend && <div className="admin-poison"><div className="admin-section__head"><div><div className="ey">Operator queue</div><h2 className="serif">Failed Tonomo events</h2></div></div>{poisonEvents.length === 0 ? <div className="empty"><span className="serif">No failed events.</span>Tonomo orders are processing normally.</div> : <><div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Received</th><th>Order</th><th>Error reason</th><th><span className="sr-only">Actions</span></th></tr></thead><tbody>{poisonEvents.map((event) => { const isOperating = operatingEventIds.has(event.id); return <tr key={event.id}><td data-label="Received">{formatDate(event.receivedAt)}</td><td data-label="Order">{event.summary ? <>{event.summary.street}<br /><small>{event.summary.orderId}</small></> : "Unparseable"}</td><td data-label="Error reason">{event.error || "—"}</td><td className="admin-table__action"><button className="button button--text" type="button" onClick={() => void viewPayload(event.id)}>View payload</button><button className="button button--secondary" type="button" disabled={isOperating} onClick={() => void operateEvent(event.id, "retry")}>Retry</button><button className="button button--text" type="button" disabled={isOperating} onClick={() => void operateEvent(event.id, "discard")}>Discard</button></td></tr>; })}</tbody></table></div>{poisonTotal > poisonEvents.length && <div style={{ marginTop: 16 }}><button className="button button--secondary" type="button" onClick={() => void loadTonomo(poisonEvents.length, true)}>Load more</button></div>}</>}</div>}
         {!isLoadingIntegrations && !integrationsError && canAdminBackend && <div className="admin-poison"><div className="admin-section__head"><div><div className="ey">Operator queue</div><h2 className="serif">Rendition delivery failures</h2></div><span className={`admin-status admin-status--${renditionDlqOpenCount > 0 ? "error" : "active"}`}>{renditionDlqOpenCount > 0 ? `${renditionDlqOpenCount} stuck` : "No backlog"}</span></div>{renditionDlq.length === 0 ? <div className="empty"><span className="serif">No stuck renditions.</span>Preview generation is processing normally.</div> : <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>First failed</th><th>Project</th><th>Asset</th><th><span className="sr-only">Actions</span></th></tr></thead><tbody>{renditionDlq.map((event) => { const isOperating = operatingRenditionDlqIds.has(event.id); return <tr key={event.id}><td data-label="First failed">{formatDate(event.receivedAt)}</td><td data-label="Project">{event.street || "—"}</td><td data-label="Asset"><code>{event.assetId}</code></td><td className="admin-table__action"><button className="button button--secondary" type="button" disabled={isOperating} onClick={() => void operateRenditionDlqEvent(event.id, "replay")}>Replay</button><button className="button button--text" type="button" disabled={isOperating} onClick={() => void operateRenditionDlqEvent(event.id, "discard")}>Discard</button></td></tr>; })}</tbody></table></div>}</div>}
+        {!isLoadingIntegrations && !integrationsError && canAdminBackend && <div className="admin-poison" aria-label="Notification delivery operations"><div className="admin-section__head"><div><div className="ey">Operator queue</div><h2 className="serif">Notification delivery</h2></div><button className="button button--secondary" type="button" onClick={() => void loadNotificationDeliveries(notificationDeliveryView)} disabled={isLoadingNotificationDeliveries}>Refresh</button></div><div className="admin-tabs" role="tablist" aria-label="Notification delivery filters">{(["pending_stuck", "dlq", "failed", "unknown"] as const).map((view) => <button key={view} className={`ctab ${notificationDeliveryView === view ? "is-active" : ""}`} type="button" role="tab" aria-selected={notificationDeliveryView === view} onClick={() => selectNotificationDeliveryView(view)}>{view === "pending_stuck" ? "Pending / stuck" : view.toUpperCase()} ({notificationDeliveryCounts[view]})</button>)}</div>{notificationDeliveriesError && <div className="notice" role="alert">{notificationDeliveriesError}</div>}{isLoadingNotificationDeliveries && <div className="empty" role="status"><span className="serif">Loading delivery status.</span>Reading the durable notification ledger.</div>}{!isLoadingNotificationDeliveries && !notificationDeliveriesError && notificationDeliveries.length === 0 && <div className="empty"><span className="serif">No matching deliveries.</span>This queue is clear.</div>}{!isLoadingNotificationDeliveries && notificationDeliveries.length > 0 && <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Updated</th><th>Project</th><th>Recipient</th><th>Channels</th><th>State</th><th><span className="sr-only">Actions</span></th></tr></thead><tbody>{notificationDeliveries.map((item) => { const isOperating = operatingNotificationIds.has(item.outboxId); return <tr key={item.outboxId}><td data-label="Updated">{formatDate(new Date(item.updatedAt).toISOString())}</td><td data-label="Project">{item.projectStreet || item.projectId || "—"}</td><td data-label="Recipient">{item.recipientName || "Unavailable"}</td><td data-label="Channels">{item.channels.map((channel) => `${channel.channel}: ${channel.status}`).join(" · ")}{item.unknownEmailPossible && <><br /><strong className="admin-warning">Duplicate email possible</strong></>}</td><td data-label="State">{item.status}{item.safeErrorCode && <><br /><small>{item.safeErrorCode}</small></>}</td><td className="admin-table__action"><button className="button button--secondary" type="button" disabled={isOperating} onClick={() => void operateNotificationDelivery(item, "replay")}>Replay</button><button className="button button--text" type="button" disabled={isOperating} onClick={() => void operateNotificationDelivery(item, "discard")}>Discard</button></td></tr>; })}</tbody></table></div>}{notificationDeliveryCursor && <div style={{ marginTop: 16 }}><button className="button button--secondary" type="button" disabled={isLoadingNotificationDeliveries} onClick={() => void loadNotificationDeliveries(notificationDeliveryView, notificationDeliveryCursor, true)}>Load more</button></div>}</div>}
       </section>}
       {payload && <div className="admin-modal" role="dialog" aria-modal="true" aria-label="Tonomo event payload"><div className="admin-modal__panel"><div className="admin-section__head"><div><div className="ey">Webhook payload</div><h2 className="serif">Event details</h2></div><button className="button button--secondary" type="button" onClick={() => setPayload(undefined)}>Close</button></div><pre>{payload.json}</pre></div></div>}
       <div className="toasts" aria-live="polite">{toasts.map((item) => <div className={`toast ${item.tone === "error" ? "toast--error" : ""}`} key={item.id}>{item.tone === "error" ? "!" : "✓"}<span>{item.message}</span></div>)}</div>

@@ -16,6 +16,7 @@ import { renewRawReconciliationClaim, syncProjectRawFolder } from "./dropbox/syn
 import { fanOutDropboxKicks } from "./dropbox/webhook";
 import { canMutateRenditionBackfill } from "./backfill-gate";
 import { safeRenditionFailure } from "./rendition-diagnostics";
+import { NOTIFICATION_DLQ_QUEUE_NAME, NOTIFICATION_QUEUE_NAME } from "@quincy/shared";
 import { parseQueueBody, RENDITION_DLQ_QUEUE_NAME } from "./queue-dispatch";
 import { AutoHdrSend } from "./workflows/autohdr";
 import { AutoHdrApiSend } from "./workflows/autohdr-api-send";
@@ -35,6 +36,7 @@ import { claimAutoHdrApiSend } from "./autohdr/api-send";
 import type { AutoHdrApiSendResult } from "./autohdr/api-send";
 import type { AutoHdrErrorCode, AutoHdrFetchResult, AutoHdrResult } from "./autohdr/errors";
 import { notifyProject, pruneNotifications, scanDueSubtasks, scanStalledAutoHdr } from "./notifications";
+import { processNotificationDlqMessage, processNotificationMessage, recoverNotificationOutbox } from "./notification-delivery";
 
 export { AutoHdrApiSend, AutoHdrFetch, AutoHdrSend, ManualEditedPublish, DropboxSyncDO, TonomoProcessorDO };
 
@@ -62,6 +64,12 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
       console.log("Due subtask notification scan", { emitted });
     } catch (error) {
       console.error("Due subtask notification scan failed", { error });
+    }
+    try {
+      const recovered = await recoverNotificationOutbox(this.env, controller.scheduledTime);
+      console.log("Notification outbox recovery scan", { recovered });
+    } catch (error) {
+      console.error("Notification outbox recovery scan failed", { error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
     }
     await pruneNotifications(this.env, controller.scheduledTime);
   }
@@ -600,7 +608,28 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
     return { scanned: rows.length, wouldEnqueue: rows.length, enqueued, skipped: 0, nextCursor: rows.length === limit ? rows.at(-1)!.id : null, dryRun: input.dryRun === true };
   }
 
-  async queue(batch: MessageBatch<IngestMessage | RenditionMessage>): Promise<void> {
+  async queue(batch: MessageBatch<IngestMessage | RenditionMessage | import("@quincy/shared").NotificationOutboxMessage>): Promise<void> {
+    if (batch.queue === NOTIFICATION_DLQ_QUEUE_NAME) {
+      for (const message of batch.messages) {
+        const parsed = parseQueueBody(batch.queue, message.body);
+        if (!parsed || parsed.queue !== NOTIFICATION_DLQ_QUEUE_NAME) { message.ack(); continue; }
+        await processNotificationDlqMessage(this.env, message as Message<import("@quincy/shared").NotificationOutboxMessage>);
+      }
+      return;
+    }
+    if (batch.queue === NOTIFICATION_QUEUE_NAME) {
+      for (const message of batch.messages) {
+        try {
+          const parsed = parseQueueBody(batch.queue, message.body);
+          if (!parsed || parsed.queue !== NOTIFICATION_QUEUE_NAME) throw new Error("Invalid notification queue body");
+          await processNotificationMessage(this.env, message as Message<import("@quincy/shared").NotificationOutboxMessage>);
+        } catch (error) {
+          console.error("Notification queue message failed", { outboxId: typeof message.body === "object" && message.body && typeof (message.body as { outboxId?: unknown }).outboxId === "string" ? (message.body as { outboxId: string }).outboxId : undefined, error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
+          message.retry();
+        }
+      }
+      return;
+    }
     if (batch.queue === RENDITION_DLQ_QUEUE_NAME) {
       // Messages here already exhausted max_retries on quincy-renditions. Record the backlog so
       // it's operator-visible, then ack — retrying here just burns attempts before the root

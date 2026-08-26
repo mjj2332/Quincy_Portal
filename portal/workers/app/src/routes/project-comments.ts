@@ -5,9 +5,8 @@ import { normalizeRichTextMentionLabels, parseRichTextDoc, richTextMentionIds, r
 import { z } from "zod";
 import type { AppEnv } from "../env";
 import { hasProjectCollaborationAccess } from "../middleware/capability";
-import { audit } from "../lib/audit";
 import { newId } from "../lib/ids";
-import { notifyMentions } from "../lib/notifications";
+import { publishNotificationOutbox } from "@quincy/shared";
 import { projectMentionableUsers } from "../lib/project-collaboration";
 import {
   advanceProjectCommentReadMarker,
@@ -79,8 +78,8 @@ projectCommentsRoutes.post("/projects/:projectId/comments", async (c) => {
   const db = createDb(c.env.DB); const currentUser = c.get("user"); const id = newId(); const createdAt = new Date();
   const mentions = prepared.mentionIds.map((mentionedUserId) => ({ id: newId(), commentId: id, mentionedUserId, createdAt }));
   const result = await createProjectComment(c.env.DB, { id, projectId, authorId: currentUser.id, body: prepared.body, contentJson: JSON.stringify(prepared.content), mentions, wallClockMs: createdAt.getTime(), occurredAt: createdAt });
-  await audit(c.env, currentUser.id, "project_comment.create", "project_comment", id);
-  await notifyMentions(c.env, { scope: "project-comment", projectId, projectStreet: access.street, actorId: currentUser.id, authorName: currentUser.name, body: prepared.body, mentions });
+  c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, result.notificationOutboxIds));
+  if (!result.comment) return c.json({ error: "Comment could not be created" }, 500);
   return c.json(serializeProjectComment(result.comment), 201);
 });
 
@@ -94,8 +93,8 @@ projectCommentsRoutes.patch("/projects/:projectId/comments/:commentId", async (c
   const maps = await db.select().from(schema.projectCommentMentions).where(eq(schema.projectCommentMentions.commentId, commentId)).all(); const wanted = new Set(prepared.mentionIds); const existingIds = new Set(maps.map((map) => map.mentionedUserId)); const createdAt = new Date();
   const added = prepared.mentionIds.filter((mentionedUserId) => !existingIds.has(mentionedUserId)).map((mentionedUserId) => ({ id: newId(), commentId, mentionedUserId, createdAt }));
   const result = await editProjectComment(c.env.DB, { projectId, commentId, actorId: currentUser.id, body: prepared.body, contentJson: JSON.stringify(prepared.content), removeMentionIds: maps.filter((map) => !wanted.has(map.mentionedUserId)).map((map) => map.id), addMentions: added, editedAt: createdAt, occurredAt: createdAt });
-  await audit(c.env, currentUser.id, "project_comment.edit", "project_comment", commentId);
-  await notifyMentions(c.env, { scope: "project-comment", projectId, projectStreet: access.street, actorId: currentUser.id, authorName: currentUser.name, body: prepared.body, mentions: added });
+  c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, result.notificationOutboxIds));
+  if (!result.comment) return c.json({ error: "Comment could not be updated" }, 500);
   return c.json(serializeProjectComment(result.comment));
 });
 
@@ -105,7 +104,6 @@ projectCommentsRoutes.delete("/projects/:projectId/comments/:commentId", async (
   const db = createDb(c.env.DB); const existing = await findProjectComment(db, projectId, commentId); if (!existing) return c.json({ error: "Comment not found" }, 404);
   const currentUser = c.get("user"); if (existing.comment.authorId !== currentUser.id) return c.json({ error: "Forbidden: only the author can delete this comment." }, 403);
   await deleteProjectComment(c.env.DB, { projectId, commentId, actorId: currentUser.id, occurredAt: new Date() });
-  await audit(c.env, currentUser.id, "project_comment.delete", "project_comment", commentId);
   return c.json({ ok: true });
 });
 

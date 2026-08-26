@@ -3,7 +3,7 @@
  * Metadata only: media bytes live in R2; dense annotation JSON lives in R2 (ref here).
  * All media rows use immutable, versioned R2 keys.
  */
-import { sqliteTable, text, integer, real, index, uniqueIndex, check, primaryKey } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, real, index, unique, uniqueIndex, check, primaryKey } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 
 const id = () => text("id").primaryKey();
@@ -955,5 +955,74 @@ export const notifications = sqliteTable(
     uniqueIndex("notifications_source_key_unique")
       .on(t.type, t.sourceKey, t.userId)
       .where(sql`${t.sourceKey} IS NOT NULL`),
+  ],
+);
+
+export const notificationOutbox = sqliteTable(
+  "notification_outbox",
+  {
+    id: id(),
+    schemaVersion: integer("schema_version").notNull(),
+    eventType: text("event_type").notNull(),
+    sourceKey: text("source_key").notNull(),
+    projectId: text("project_id").notNull(),
+    actorId: text("actor_id").notNull(),
+    recipientId: text("recipient_id").notNull(),
+    payloadJson: text("payload_json").notNull(),
+    status: text("status", { enum: ["pending", "queued", "processing", "completed", "suppressed", "failed", "dlq", "discarded"] as const }).notNull().default("pending"),
+    availableAt: integer("available_at").notNull(),
+    queuePublishedAt: integer("queue_published_at"),
+    leaseToken: text("lease_token"),
+    leaseExpiresAt: integer("lease_expires_at"),
+    publishAttempts: integer("publish_attempts").notNull().default(0),
+    deliveryAttempts: integer("delivery_attempts").notNull().default(0),
+    lastErrorCode: text("last_error_code"),
+    lastError: text("last_error"),
+    completedAt: integer("completed_at"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [
+    index("notification_outbox_status_available_idx").on(t.status, t.availableAt, t.createdAt, t.id),
+    index("notification_outbox_status_lease_idx").on(t.status, t.leaseExpiresAt),
+    index("notification_outbox_status_queue_idx").on(t.status, t.queuePublishedAt),
+    index("notification_outbox_status_updated_idx").on(t.status, t.updatedAt, t.id),
+    unique("notification_outbox_event_source_recipient_unique").on(t.eventType, t.sourceKey, t.recipientId),
+    check("notification_outbox_status_check", sql`${t.status} IN ('pending', 'queued', 'processing', 'completed', 'suppressed', 'failed', 'dlq', 'discarded')`),
+    check("notification_outbox_publish_attempts_check", sql`${t.publishAttempts} >= 0`),
+    check("notification_outbox_delivery_attempts_check", sql`${t.deliveryAttempts} >= 0`),
+    check("notification_outbox_lease_check", sql`(${t.status} = 'processing' AND ${t.leaseToken} IS NOT NULL AND ${t.leaseExpiresAt} IS NOT NULL) OR (${t.status} != 'processing' AND ${t.leaseToken} IS NULL AND ${t.leaseExpiresAt} IS NULL)`),
+  ],
+);
+
+export const notificationDeliveryLedger = sqliteTable(
+  "notification_delivery_ledger",
+  {
+    id: id(),
+    outboxId: text("outbox_id").notNull().references(() => notificationOutbox.id, { onDelete: "restrict" }),
+    eventType: text("event_type").notNull(),
+    sourceKey: text("source_key").notNull(),
+    recipientId: text("recipient_id").notNull(),
+    channel: text("channel", { enum: ["in_app", "email"] as const }).notNull(),
+    status: text("status", { enum: ["pending", "processing", "sent", "suppressed", "failed", "unknown", "discarded"] as const }).notNull().default("pending"),
+    attempts: integer("attempts").notNull().default(0),
+    notificationId: text("notification_id").references(() => notifications.id, { onDelete: "set null" }),
+    emailMessageId: text("email_message_id"),
+    lastErrorCode: text("last_error_code"),
+    lastError: text("last_error"),
+    lastAttemptAt: integer("last_attempt_at"),
+    deliveredAt: integer("delivered_at"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [
+    index("notification_delivery_ledger_outbox_idx").on(t.outboxId, t.channel),
+    index("notification_delivery_ledger_status_updated_idx").on(t.status, t.updatedAt, t.id),
+    index("notification_delivery_ledger_notification_idx").on(t.notificationId),
+    unique("notification_delivery_ledger_outbox_channel_unique").on(t.outboxId, t.channel),
+    unique("notification_delivery_ledger_event_source_recipient_channel_unique").on(t.eventType, t.sourceKey, t.recipientId, t.channel),
+    check("notification_delivery_ledger_channel_check", sql`${t.channel} IN ('in_app', 'email')`),
+    check("notification_delivery_ledger_status_check", sql`${t.status} IN ('pending', 'processing', 'sent', 'suppressed', 'failed', 'unknown', 'discarded')`),
+    check("notification_delivery_ledger_attempts_check", sql`${t.attempts} >= 0`),
   ],
 );

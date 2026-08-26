@@ -4,7 +4,7 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 import { notificationCopy } from "@quincy/db";
 import { createAuth } from "../src/auth";
 import type { Env } from "../src/env";
-import { notifyMentions, notifyProject, notifyProjectAssignments, notifySubtaskAssignee } from "../src/lib/notifications";
+import { notifyProject, notifyProjectAssignments, notifySubtaskAssignee } from "../src/lib/notifications";
 
 const database = env as unknown as { DB: D1Database };
 const baseEnv = env as unknown as Env;
@@ -167,7 +167,7 @@ describe("notifications API and recipient selection", () => {
     expect(row?.email_error).toContain("mock email unavailable");
   });
 
-  it("uses collaboration-open links for project mentions and subtask assignments", async () => {
+  it("uses collaboration-open links for subtask assignments", async () => {
     const now = Date.now();
     const projectId = crypto.randomUUID();
     const actorId = crypto.randomUUID();
@@ -179,13 +179,8 @@ describe("notifications API and recipient selection", () => {
     ]);
     const send = vi.fn().mockResolvedValue({ messageId: "collaboration-link" });
     const testEnv = { DB: database.DB, EMAIL: { send }, NOTIFICATIONS_FROM_ADDRESS: "studio@example.test", APP_ORIGIN: "https://portal.test" } as unknown as Env;
-    await notifyMentions(testEnv, { scope: "project-comment", actorId, authorName: "Mention actor", body: "Please adjust the front elevation.", projectId, projectStreet: "Collaboration links", mentions: [{ id: crypto.randomUUID(), mentionedUserId: assigneeId }] });
     await notifySubtaskAssignee(testEnv, { projectId, actorId, assigneeId, subtaskId: crypto.randomUUID(), assignmentVersion: 1 });
-    expect(send).toHaveBeenCalledTimes(2);
+    expect(send).toHaveBeenCalledTimes(1);
     for (const [message] of send.mock.calls) expect(message).toMatchObject({ text: expect.stringContaining(`https://portal.test/projects/${projectId}?collaboration=open`) });
-    expect(send.mock.calls[0]![0]).toMatchObject({
-      text: `Mention actor commented on Collaboration links:\n\n“Please adjust the front elevation.”\n\nhttps://portal.test/projects/${projectId}?collaboration=open`,
-      html: `<p>Mention actor commented on Collaboration links:</p><p>“Please adjust the front elevation.”</p><p><a href="https://portal.test/projects/${projectId}?collaboration=open">View project</a></p>`,
-    });
   });
 });

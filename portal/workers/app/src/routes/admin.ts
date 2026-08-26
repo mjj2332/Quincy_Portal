@@ -1,7 +1,7 @@
 import { Hono, type Context } from "hono";
 import { createDb, dashboardProjectOrder, orderDashboardStreetTies, schema } from "@quincy/db";
 import { and, asc, desc, eq, isNotNull, isNull, notExists, sql } from "drizzle-orm";
-import { enqueueRenditionSafely, parseTonomoOrder, renditionsEnabled, ROLE_CAPABILITIES } from "@quincy/shared";
+import { enqueueRenditionSafely, parseTonomoOrder, publishNotificationOutbox, renditionsEnabled, ROLE_CAPABILITIES } from "@quincy/shared";
 import { z } from "zod";
 import type { AppEnv } from "../env";
 import { audit } from "../lib/audit";
@@ -33,6 +33,263 @@ function summary(payloadJson: string) {
 }
 
 export const adminRoutes = new Hono<AppEnv>();
+
+const notificationDeliveryView = z.enum(["pending_stuck", "dlq", "failed", "unknown"]);
+const notificationDeliveryQuery = z.object({
+  view: notificationDeliveryView,
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+  cursor: z.string().optional(),
+});
+const notificationReplayInput = z.object({
+  acknowledgeDuplicateEmail: z.literal(true).optional(),
+  channels: z.array(z.enum(["in_app", "email"])).min(1).max(2).optional(),
+}).strict();
+
+type NotificationDeliveryApiRow = {
+  outboxId: string;
+  eventType: string;
+  projectId: string | null;
+  projectStreet: string | null;
+  recipientName: string | null;
+  channels: string | null;
+  status: string;
+  attempts: number;
+  safeErrorCode: string | null;
+  createdAt: number;
+  updatedAt: number;
+  lastAttemptAt: number | null;
+  unknownEmailPossible: number;
+};
+
+type NotificationDeliveryCursor = { updatedAt: number; id: string };
+
+function encodeNotificationCursor(row: { updatedAt: number; outboxId: string }): string {
+  return btoa(JSON.stringify({ updatedAt: row.updatedAt, id: row.outboxId }));
+}
+
+function decodeNotificationCursor(value: string | undefined): NotificationDeliveryCursor | null {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(atob(value)) as Record<string, unknown>;
+    return typeof parsed.updatedAt === "number" && Number.isSafeInteger(parsed.updatedAt) && typeof parsed.id === "string" && idCheck(parsed.id)
+      ? { updatedAt: parsed.updatedAt, id: parsed.id }
+      : null;
+  } catch { return null; }
+}
+
+function notificationViewSql(view: z.infer<typeof notificationDeliveryView>): string {
+  switch (view) {
+    case "pending_stuck": return "(o.status = 'pending' OR (o.status = 'queued' AND o.queue_published_at <= ? AND o.queue_published_at IS NOT NULL) OR (o.status = 'processing' AND o.lease_expires_at <= ?))";
+    case "dlq": return "o.status = 'dlq'";
+    case "failed": return "o.status != 'dlq' AND EXISTS (SELECT 1 FROM notification_delivery_ledger failed WHERE failed.outbox_id = o.id AND failed.status = 'failed')";
+    case "unknown": return "EXISTS (SELECT 1 FROM notification_delivery_ledger unknown_email WHERE unknown_email.outbox_id = o.id AND unknown_email.channel = 'email' AND unknown_email.status = 'unknown')";
+  }
+}
+
+function safeNotificationErrorCode(value: string | null): string | null {
+  if (!value) return null;
+  const safe = new Set([
+    "queue_publish_failed", "delivery_lease_expired", "delivery_retry", "reauthorization_suppressed",
+    "queue_retries_exhausted", "email_configuration_missing", "email_acceptance_unknown",
+    "E_RATE_LIMIT_EXCEEDED", "E_DAILY_LIMIT_EXCEEDED", "E_DELIVERY_FAILED", "E_INVALID_FROM",
+    "E_INVALID_TO", "E_INVALID_EMAIL", "E_DOMAIN_NOT_VERIFIED", "E_SENDER_NOT_ALLOWED",
+    "E_RECIPIENT_SUPPRESSED", "E_MESSAGE_TOO_LARGE", "E_INVALID_HEADERS",
+  ]);
+  return safe.has(value) ? value : "delivery_error";
+}
+
+function serializeNotificationDeliveryRow(row: NotificationDeliveryApiRow) {
+  return {
+    outboxId: row.outboxId,
+    eventType: row.eventType,
+    projectId: row.projectId,
+    projectStreet: row.projectStreet,
+    recipientName: row.recipientName,
+    channels: row.channels ? row.channels.split(",").map((value) => {
+      const [channel, status] = value.split(":");
+      return { channel, status };
+    }) : [],
+    status: row.status,
+    attempts: row.attempts,
+    safeErrorCode: safeNotificationErrorCode(row.safeErrorCode),
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    lastAttemptAt: row.lastAttemptAt,
+    unknownEmailPossible: row.unknownEmailPossible === 1,
+  };
+}
+
+async function loadNotificationDeliveryRow(c: Parameters<typeof adminAllowed>[0], outboxId: string): Promise<ReturnType<typeof serializeNotificationDeliveryRow> | null> {
+  const row = await c.env.DB.prepare(`
+    SELECT o.id AS outboxId, o.event_type AS eventType, o.project_id AS projectId,
+      p.street AS projectStreet, recipient.name AS recipientName,
+      GROUP_CONCAT(l.channel || ':' || l.status) AS channels,
+      o.status AS status, o.delivery_attempts AS attempts,
+      COALESCE(o.last_error_code, MAX(l.last_error_code)) AS safeErrorCode,
+      o.created_at AS createdAt, o.updated_at AS updatedAt,
+      MAX(l.last_attempt_at) AS lastAttemptAt,
+      MAX(CASE WHEN l.channel = 'email' AND l.status = 'unknown' THEN 1 ELSE 0 END) AS unknownEmailPossible
+    FROM notification_outbox o
+    LEFT JOIN notification_delivery_ledger l ON l.outbox_id = o.id
+    LEFT JOIN projects p ON p.id = o.project_id
+    LEFT JOIN user recipient ON recipient.id = o.recipient_id
+    WHERE o.id = ? GROUP BY o.id
+  `).bind(outboxId).first<NotificationDeliveryApiRow>();
+  return row ? serializeNotificationDeliveryRow(row) : null;
+}
+
+async function notificationDeliveryCounts(c: Parameters<typeof adminAllowed>[0], now: number) {
+  const counts = await Promise.all(([
+    "pending_stuck", "dlq", "failed", "unknown",
+  ] as const).map(async (view) => {
+    const clause = notificationViewSql(view);
+    const values = view === "pending_stuck" ? [now - 30 * 60_000, now] : [];
+    const result = await c.env.DB.prepare(`SELECT COUNT(DISTINCT o.id) AS count FROM notification_outbox o WHERE ${clause}`).bind(...values).first<{ count: number }>();
+    return [view, Number(result?.count ?? 0)] as const;
+  }));
+  return Object.fromEntries(counts) as Record<typeof notificationDeliveryView['_type'], number>;
+}
+
+adminRoutes.get("/admin/notification-deliveries", async (c) => {
+  if (!adminAllowed(c)) return c.json({ error: "Forbidden", capability: "adminBackend" }, 403);
+  const parsed = notificationDeliveryQuery.safeParse(c.req.query());
+  if (!parsed.success) return c.json({ error: "Invalid query", details: parsed.error.flatten() }, 400);
+  const cursor = decodeNotificationCursor(parsed.data.cursor);
+  if (parsed.data.cursor && !cursor) return c.json({ error: "Invalid cursor" }, 400);
+  const now = Date.now();
+  const clause = notificationViewSql(parsed.data.view);
+  const values: unknown[] = parsed.data.view === "pending_stuck" ? [now - 30 * 60_000, now] : [];
+  let cursorClause = "";
+  if (cursor) { cursorClause = " AND (o.updated_at < ? OR (o.updated_at = ? AND o.id < ?))"; values.push(cursor.updatedAt, cursor.updatedAt, cursor.id); }
+  const rows = await c.env.DB.prepare(`
+    SELECT o.id AS outboxId, o.event_type AS eventType, o.project_id AS projectId,
+      p.street AS projectStreet, recipient.name AS recipientName,
+      GROUP_CONCAT(l.channel || ':' || l.status) AS channels,
+      o.status AS status, o.delivery_attempts AS attempts,
+      COALESCE(o.last_error_code, MAX(l.last_error_code)) AS safeErrorCode,
+      o.created_at AS createdAt, o.updated_at AS updatedAt,
+      MAX(l.last_attempt_at) AS lastAttemptAt,
+      MAX(CASE WHEN l.channel = 'email' AND l.status = 'unknown' THEN 1 ELSE 0 END) AS unknownEmailPossible
+    FROM notification_outbox o
+    LEFT JOIN notification_delivery_ledger l ON l.outbox_id = o.id
+    LEFT JOIN projects p ON p.id = o.project_id
+    LEFT JOIN user recipient ON recipient.id = o.recipient_id
+    WHERE ${clause}${cursorClause}
+    GROUP BY o.id ORDER BY o.updated_at DESC, o.id DESC LIMIT ?
+  `).bind(...values, parsed.data.limit).all<NotificationDeliveryApiRow>();
+  const items = rows.results.map(serializeNotificationDeliveryRow);
+  const last = rows.results.at(-1);
+  return c.json({
+    view: parsed.data.view,
+    items,
+    nextCursor: last && rows.results.length === parsed.data.limit ? encodeNotificationCursor({ updatedAt: last.updatedAt, outboxId: last.outboxId }) : null,
+    counts: await notificationDeliveryCounts(c, now),
+  });
+});
+
+adminRoutes.post("/admin/notification-deliveries/:outboxId/replay", async (c) => {
+  if (!adminAllowed(c)) return c.json({ error: "Forbidden", capability: "adminBackend" }, 403);
+  const outboxId = c.req.param("outboxId"); if (!idCheck(outboxId)) return c.json({ error: "Invalid outbox id" }, 400);
+  const data = await jsonInput(c, notificationReplayInput); if (data instanceof Response) return data;
+  const existing = await c.env.DB.prepare("SELECT id, status, lease_expires_at AS leaseExpiresAt, updated_at AS updatedAt FROM notification_outbox WHERE id = ?").bind(outboxId).first<{ id: string; status: string; leaseExpiresAt: number | null; updatedAt: number }>();
+  if (!existing) return c.json({ error: "Notification outbox row not found" }, 404);
+  const now = Math.max(Date.now(), existing.updatedAt + 1);
+  if (existing.status === "processing" && existing.leaseExpiresAt !== null && existing.leaseExpiresAt > now) return c.json({ error: "Notification delivery is actively leased", code: "delivery_active" }, 409);
+  const email = await c.env.DB.prepare("SELECT status FROM notification_delivery_ledger WHERE outbox_id = ? AND channel = 'email'").bind(outboxId).first<{ status: string }>();
+  const unknownEmail = email?.status === "unknown";
+  const channels = data.channels ? [...new Set(data.channels)] : ["in_app", "email"] as const;
+  const exactUnknownAcknowledgement = data.acknowledgeDuplicateEmail === true
+    && data.channels?.length === 1
+    && data.channels[0] === "email"
+    && Object.keys(data).length === 2;
+  if (unknownEmail && !exactUnknownAcknowledgement) {
+    return c.json({ error: "Cloudflare may already have accepted this email. Replaying can send a duplicate.", code: "duplicate_email_possible" }, 409);
+  }
+  const channelList = channels.map((channel) => `'${channel}'`).join(",");
+  const acknowledgement = unknownEmail && exactUnknownAcknowledgement;
+  // Both statements are fenced on `existing.updatedAt` (read moments ago) so a concurrent
+  // discard/replay racing this same row -- which would have changed updated_at -- cannot win
+  // alongside this request: exactly one of the two produces changes here.
+  const results = await c.env.DB.batch([
+    c.env.DB.prepare(`
+      UPDATE notification_outbox
+      SET status = 'pending', available_at = ?, queue_published_at = NULL,
+          lease_token = NULL, lease_expires_at = NULL, completed_at = NULL,
+          last_error_code = NULL, last_error = NULL, updated_at = ?
+      WHERE id = ? AND updated_at = ? AND status != 'suppressed'
+        AND (status != 'processing' OR lease_expires_at IS NULL OR lease_expires_at <= ?)
+        AND EXISTS (
+          SELECT 1 FROM notification_delivery_ledger
+          WHERE outbox_id = ? AND channel IN (${channelList})
+            AND (status IN ('failed', 'discarded') OR (channel = 'email' AND status = 'unknown' AND ? = 1))
+        )
+    `).bind(now, now, outboxId, existing.updatedAt, now, outboxId, acknowledgement ? 1 : 0),
+    c.env.DB.prepare(`
+      UPDATE notification_delivery_ledger
+      SET status = 'pending',
+          email_message_id = CASE WHEN channel = 'email' THEN NULL ELSE email_message_id END,
+          last_error_code = NULL, last_error = NULL, updated_at = ?
+      WHERE outbox_id = ? AND channel IN (${channelList})
+        AND (status IN ('failed', 'discarded') OR (channel = 'email' AND status = 'unknown' AND ? = 1))
+        AND EXISTS (SELECT 1 FROM notification_outbox o WHERE o.id = notification_delivery_ledger.outbox_id AND o.status = 'pending' AND o.updated_at = ?)
+    `).bind(now, outboxId, acknowledgement ? 1 : 0, now),
+    c.env.DB.prepare(`
+      INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
+      SELECT ?, ?, 'notification.delivery.replay', 'notification_outbox', ?, ?, ?
+      WHERE changes() >= 1
+    `).bind(newId(), c.get("user").id, outboxId, JSON.stringify({ channels, acknowledgeDuplicateEmail: acknowledgement }), now),
+  ]);
+  if ((results[0]?.meta.changes ?? 0) === 0 || (results[1]?.meta.changes ?? 0) === 0) return c.json({ error: "Notification delivery is no longer replayable", code: "delivery_changed" }, 409);
+  c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, [outboxId]));
+  return c.json({ item: await loadNotificationDeliveryRow(c, outboxId) });
+});
+
+adminRoutes.post("/admin/notification-deliveries/:outboxId/discard", async (c) => {
+  if (!adminAllowed(c)) return c.json({ error: "Forbidden", capability: "adminBackend" }, 403);
+  const outboxId = c.req.param("outboxId"); if (!idCheck(outboxId)) return c.json({ error: "Invalid outbox id" }, 400);
+  const existing = await c.env.DB.prepare("SELECT id, status, lease_expires_at AS leaseExpiresAt, updated_at AS updatedAt FROM notification_outbox WHERE id = ?").bind(outboxId).first<{ id: string; status: string; leaseExpiresAt: number | null; updatedAt: number }>();
+  if (!existing) return c.json({ error: "Notification outbox row not found" }, 404);
+  const now = Math.max(Date.now(), existing.updatedAt + 1);
+  if (existing.status === "processing" && existing.leaseExpiresAt !== null && existing.leaseExpiresAt > now) return c.json({ error: "Notification delivery is actively leased", code: "delivery_active" }, 409);
+  // Both statements are fenced on `existing.updatedAt` (read moments ago) so a concurrent
+  // replay/discard racing this same row -- which would have changed updated_at -- cannot win
+  // alongside this request: exactly one of the two produces changes here.
+  const results = await c.env.DB.batch([
+    c.env.DB.prepare(`
+      UPDATE notification_delivery_ledger
+      SET status = CASE WHEN channel = 'email' AND status IN ('processing', 'unknown') THEN 'unknown' ELSE 'discarded' END,
+          last_error_code = CASE WHEN channel = 'email' AND status IN ('processing', 'unknown') THEN 'email_acceptance_unknown' ELSE 'operator_discarded' END,
+          last_error = CASE WHEN channel = 'email' AND status IN ('processing', 'unknown') THEN 'Email outcome requires duplicate acknowledgement.' ELSE 'Discarded by operator.' END,
+          updated_at = ?
+      WHERE outbox_id = ? AND status NOT IN ('sent', 'suppressed')
+        AND EXISTS (SELECT 1 FROM notification_outbox o WHERE o.id = notification_delivery_ledger.outbox_id AND o.updated_at = ? AND o.status != 'discarded' AND o.status != 'suppressed' AND (o.status != 'processing' OR o.lease_expires_at IS NULL OR o.lease_expires_at <= ?))
+      RETURNING channel, status
+    `).bind(now, outboxId, existing.updatedAt, now),
+    c.env.DB.prepare(`
+      UPDATE notification_outbox
+      SET status = 'discarded', lease_token = NULL, lease_expires_at = NULL,
+          completed_at = ?, last_error_code = 'operator_discarded', last_error = 'Discarded by operator.', updated_at = ?
+      WHERE id = ? AND updated_at = ? AND status != 'discarded' AND status != 'suppressed' AND (status != 'processing' OR lease_expires_at IS NULL OR lease_expires_at <= ?)
+        AND EXISTS (SELECT 1 FROM notification_delivery_ledger WHERE outbox_id = ? AND status NOT IN ('sent', 'suppressed'))
+    `).bind(now, now, outboxId, existing.updatedAt, now, outboxId),
+    c.env.DB.prepare(`
+      INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
+      SELECT ?, ?, 'notification.delivery.discard', 'notification_outbox', ?, ?, ?
+      WHERE changes() = 1
+    `).bind(newId(), c.get("user").id, outboxId, JSON.stringify({ outboxId }), now),
+  ]);
+  const discardedEmailToUnknown = (results[0]?.results as Array<{ channel: string; status: string }> | undefined)?.some((row) => row.channel === "email" && row.status === "unknown");
+  if (discardedEmailToUnknown) {
+    try {
+      await c.env.DB.prepare(`
+        UPDATE notifications SET email_error = 'email_acceptance_unknown'
+        WHERE id = (SELECT notification_id FROM notification_delivery_ledger WHERE outbox_id = ? AND channel = 'in_app')
+      `).bind(outboxId).run();
+    } catch { /* Ledger remains authoritative if the compatibility mirror is gone. */ }
+  }
+  if ((results[0]?.meta.changes ?? 0) === 0 || (results[1]?.meta.changes ?? 0) === 0) return c.json({ error: "Notification delivery is no longer discardable", code: "delivery_changed" }, 409);
+  return c.json({ item: await loadNotificationDeliveryRow(c, outboxId) });
+});
 
 // Temporary, idempotent operator route for the priority/reordering migration. The initial
 // ordering is deliberately computed with the same dashboard query and Unicode tie-break as the

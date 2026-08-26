@@ -1,7 +1,7 @@
 import type { DropboxSyncDO } from "./do/dropbox-sync";
 import type { TonomoProcessorDO } from "./do/tonomo-processor";
 import type { IngestMessage } from "./messages";
-import type { RenditionMessage } from "@quincy/shared";
+import type { NotificationOutboxMessage, RenditionMessage } from "@quincy/shared";
 import type { AutoHdrInput, AutoHdrSend } from "./workflows/autohdr";
 import type { AutoHdrApiSendInput } from "./autohdr/api-send";
 import type { AutoHdrFetchInput } from "./workflows/autohdr-fetch";
@@ -12,6 +12,7 @@ export interface Env {
   DB: D1Database;
   MEDIA: R2Bucket;
   INGEST_QUEUE: Queue<IngestMessage>;
+  NOTIFICATION_QUEUE: Queue<NotificationOutboxMessage>;
   /** Bound only after quincy-renditions is provisioned and the red gate is green. */
   RENDITION_QUEUE?: Queue<RenditionMessage>;
   /** Dedicated shared secret for app source signing and background generation only. */

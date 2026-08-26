@@ -28,11 +28,14 @@
     "consumers": [
       { "queue": "quincy-ingest", "max_batch_size": 1, "max_concurrency": 1, "max_retries": 3 },
       { "queue": "quincy-renditions", "max_batch_size": 1, "max_concurrency": 1, "max_retries": 3, "dead_letter_queue": "quincy-renditions-dlq" },
-      { "queue": "quincy-renditions-dlq", "max_batch_size": 10, "max_retries": 3 }
+      { "queue": "quincy-renditions-dlq", "max_batch_size": 10, "max_retries": 3 },
+      { "queue": "quincy-notifications", "max_batch_size": 1, "max_concurrency": 1, "max_retries": 3, "dead_letter_queue": "quincy-notifications-dlq" },
+      { "queue": "quincy-notifications-dlq", "max_batch_size": 10, "max_retries": 3 }
     ],
     "producers": [
       { "binding": "INGEST_QUEUE", "queue": "quincy-ingest" },
-      { "binding": "RENDITION_QUEUE", "queue": "quincy-renditions" }
+      { "binding": "RENDITION_QUEUE", "queue": "quincy-renditions" },
+      { "binding": "NOTIFICATION_QUEUE", "queue": "quincy-notifications" }
     ]
   },
   "workflows": [

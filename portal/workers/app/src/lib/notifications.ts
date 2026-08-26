@@ -84,47 +84,33 @@ export async function notifyProjectAssignments(
 type MentionMap = { id: string; mentionedUserId: string };
 
 /**
- * Emits direct rich-text mention notifications. The mapping id is intentionally
- * the source key: a removed and later re-added mention is a new event, while a
- * retry of the same persisted map cannot duplicate a notice or an email.
+ * Emits direct Notice Board rich-text mention notifications. Project-comment mentions
+ * use the transactional notification outbox and must not re-enter this helper.
  */
-export async function notifyMentions(
+export async function notifyNoticeBoardMentions(
   env: AppEnv["Bindings"],
-  input: (
-    { scope: "notice-board"; actorId: string; authorName: string; body: string; mentions: MentionMap[] }
-    | { scope: "project-comment"; actorId: string; authorName: string; body: string; projectId: string; projectStreet: string; mentions: MentionMap[] }
-  ),
+  input: { actorId: string; authorName: string; body: string; mentions: MentionMap[] },
 ): Promise<void> {
   try {
     const db = createDb(env.DB);
     const mentionIds = [...new Set(input.mentions.map((mention) => mention.mentionedUserId).filter((id) => id !== input.actorId))];
     if (!mentionIds.length) return;
     let recipients: Map<string, { userId: string; email: string; name: string }>;
-    if (input.scope === "notice-board") {
-      // Re-check active status at emission time; the map may have been written
-      // before a user was deactivated.
-      const activeStaff = await db.select({ userId: user.id, email: user.email, name: user.name })
-        .from(user).where(and(inArray(user.id, mentionIds), eq(user.active, true))).all();
-      recipients = new Map(activeStaff.map((target) => [target.userId, target]));
-    } else {
-      const activeRecipients = await projectNotificationRecipients(db, input.projectId, { excludeUserId: input.actorId });
-      recipients = new Map(activeRecipients.map((target) => [target.userId, target]));
-    }
-    const copy = input.scope === "notice-board"
-      ? { title: "You were mentioned", body: "You were mentioned in a notice-board post." }
-      : { title: "You were mentioned", body: "You were mentioned in a project comment." };
+    // Re-check active status at emission time; the map may have been written
+    // before a user was deactivated.
+    const activeStaff = await db.select({ userId: user.id, email: user.email, name: user.name })
+      .from(user).where(and(inArray(user.id, mentionIds), eq(user.active, true))).all();
+    recipients = new Map(activeStaff.map((target) => [target.userId, target]));
+    const copy = { title: "You were mentioned", body: "You were mentioned in a notice-board post." };
     const excerpt = truncateForEmail(input.body);
-    const mentionEmail = input.scope === "notice-board"
-      ? { scope: "notice-board" as const, authorName: input.authorName, excerpt }
-      : { scope: "project-comment" as const, authorName: input.authorName, projectLabel: input.projectStreet, excerpt };
-    const route = projectNotificationRoute(input.scope === "project-comment" ? input.projectId : null, "mentioned");
+    const mentionEmail = { scope: "notice-board" as const, authorName: input.authorName, excerpt };
+    const route = projectNotificationRoute(null, "mentioned");
     const link = route?.kind === "project" ? `${env.APP_ORIGIN}${staffPathFor(route)}` : undefined;
     for (const mention of input.mentions) {
       if (mention.mentionedUserId === input.actorId) continue;
       const recipient = recipients.get(mention.mentionedUserId);
       if (!recipient) continue;
       await emitNotifications(db, {
-        ...(input.scope === "project-comment" ? { projectId: input.projectId } : {}),
         type: "mentioned",
         recipients: [recipient],
         title: copy.title,
@@ -137,7 +123,7 @@ export async function notifyMentions(
       });
     }
   } catch (error) {
-    console.error("Mention notification emission failed", { scope: input.scope, error });
+    console.error("Notice Board mention notification emission failed", { error });
   }
 }
 
