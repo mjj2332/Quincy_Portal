@@ -138,6 +138,45 @@ describe("user impersonation gate and official Better Auth flow", () => {
     expect((await setFlag(false, adminCookie)).status).toBe(200);
   });
 
+  it("retains the target session when stock Exit cannot resolve the revoked original session", async () => {
+    const adminCookie = await sessionCookie(adminToken);
+    expect((await setFlag(true, adminCookie)).status).toBe(200);
+    const started = await startImpersonation(editorId, adminCookie);
+    expect(started.response.status).toBe(200);
+    const original = await database.DB.prepare("SELECT id FROM session WHERE token = ?").bind(adminToken).first<{ id: string }>();
+    const target = await database.DB.prepare("SELECT id FROM session WHERE user_id = ? AND impersonated_by = ? ORDER BY created_at DESC LIMIT 1").bind(editorId, adminId).first<{ id: string }>();
+    expect(original).not.toBeNull();
+    expect(target).not.toBeNull();
+    try {
+      await database.DB.prepare("DELETE FROM session WHERE id = ?").bind(original!.id).run();
+      const stop = await request("/api/auth/admin/stop-impersonating", started.cookie, "POST", {});
+      expect(stop.status).not.toBe(200);
+      expect(await database.DB.prepare("SELECT id FROM session WHERE id = ?").bind(target!.id).first()).toEqual({ id: target!.id });
+    } finally {
+      await database.DB.prepare("DELETE FROM session WHERE id = ?").bind(target!.id).run();
+      await insertSession("tb5-imp-admin-session", adminToken, adminId);
+      await database.DB.prepare("UPDATE feature_flags SET enabled = 0, updated_by = NULL, updated_at = ? WHERE key = ?").bind(Date.now(), "user_impersonation").run();
+    }
+  });
+
+  it("surfaces stock Exit failure after target deactivation deletes the target session", async () => {
+    const adminCookie = await sessionCookie(adminToken);
+    expect((await setFlag(true, adminCookie)).status).toBe(200);
+    const started = await startImpersonation(editorId, adminCookie);
+    expect(started.response.status).toBe(200);
+    try {
+      const deactivated = await request(`/api/users/${editorId}`, adminCookie, "PATCH", { active: false });
+      expect(deactivated.status).toBe(200);
+      expect(await database.DB.prepare("SELECT id FROM session WHERE user_id = ? AND impersonated_by = ?").bind(editorId, adminId).first()).toBeNull();
+      const stop = await request("/api/auth/admin/stop-impersonating", started.cookie, "POST", {});
+      expect(stop.status).not.toBe(200);
+    } finally {
+      await database.DB.prepare("UPDATE user SET active = 1 WHERE id = ?").bind(editorId).run();
+      await insertSession("tb5-imp-editor-session", editorToken, editorId);
+      await database.DB.prepare("UPDATE feature_flags SET enabled = 0, updated_by = NULL, updated_at = ? WHERE key = ?").bind(Date.now(), "user_impersonation").run();
+    }
+  });
+
   it("does not apply the impersonation branch to ordinary session creation while OFF", async () => {
     const authContext = await createAuth(authEnv).$context;
     const normal = await authContext.internalAdapter.createSession(editorId, true);
@@ -174,6 +213,9 @@ describe("user impersonation gate and official Better Auth flow", () => {
     expect(stored?.impersonated_by).toBe(adminId);
     expect(stored!.expires_at).toBeLessThanOrEqual(Date.now() + 3_600_000 + 10_000);
     await expect((await request("/api/me", started.cookie)).json()).resolves.toMatchObject({ user: { id: editorId, role: "editor", impersonatedBy: adminId } });
+    const directSession = await request("/api/auth/get-session", started.cookie);
+    expect(directSession.status).toBe(200);
+    await expect(directSession.json()).resolves.toMatchObject({ user: { id: editorId, role: "editor" }, session: { impersonatedBy: adminId } });
 
     const directory = await request("/api/users", adminCookie);
     const directoryBody = await directory.json() as { users: Array<Record<string, unknown>> };
@@ -200,9 +242,29 @@ describe("user impersonation gate and official Better Auth flow", () => {
     expect((await startImpersonation(inactiveId, adminCookie)).response.status).toBe(403);
     expect((await startImpersonation("99999999-9999-4999-8999-999999999999", adminCookie)).response.status).toBe(404);
     expect((await request("/api/auth/admin/list-users", adminCookie, "GET")).status).toBe(403);
+    expect((await request("/api/auth/admin/set-role", adminCookie, "POST", { userId: editorId, role: "editor" })).status).toBe(403);
+    expect((await request("/api/auth/admin/ban-user", adminCookie, "POST", { userId: editorId, banReason: "not allowed" })).status).toBe(403);
+    expect((await request("/api/auth/admin/remove-user", adminCookie, "POST", { userId: otherPhotographerId })).status).toBe(403);
     const started = await startImpersonation(editorId, adminCookie);
     expect(started.response.status).toBe(200);
     expect((await startImpersonation(photographerId, started.cookie)).response.status).toBe(403);
+    expect((await request("/api/auth/admin/stop-impersonating", started.cookie, "POST", {})).status).toBe(200);
+  });
+
+  it("adds immutable provenance to a direct-batch project-comment audit", async () => {
+    const adminCookie = await sessionCookie(adminToken);
+    expect((await setFlag(true, adminCookie)).status).toBe(200);
+    const started = await startImpersonation(photographerId, adminCookie);
+    expect(started.response.status).toBe(200);
+    const fixture = await createAnnotationFixture(adminCookie);
+    const created = await request(`/api/projects/${fixture.projectId}/comments`, started.cookie, "POST", {
+      content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Direct batch provenance" }] }] },
+    });
+    expect(created.status).toBe(201);
+    const comment = await created.json() as { id: string };
+    const auditRow = await database.DB.prepare("SELECT actor_id, meta_json FROM audit_log WHERE action = 'project_comment.create' AND target_id = ?").bind(comment.id).first<{ actor_id: string; meta_json: string }>();
+    expect(auditRow?.actor_id).toBe(photographerId);
+    expect(JSON.parse(auditRow!.meta_json)).toMatchObject({ impersonatedBy: adminId });
     expect((await request("/api/auth/admin/stop-impersonating", started.cookie, "POST", {})).status).toBe(200);
   });
 

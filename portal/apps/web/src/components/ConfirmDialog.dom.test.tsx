@@ -75,7 +75,7 @@ describe("ConfirmModalHost", () => {
     await flush();
     expect(document.activeElement === cancel || document.activeElement === confirmButton).toBe(true);
     confirmButton.focus();
-    confirmButton.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", shiftKey: false, bubbles: true, cancelable: true }));
+    confirmButton.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true, cancelable: true }));
     await flush();
     expect(document.activeElement === cancel || document.activeElement === confirmButton).toBe(true);
 

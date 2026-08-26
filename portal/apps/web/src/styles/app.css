@@ -32,13 +32,14 @@ button { font-family: var(--font-sans); }
    App shell + top bar
    --------------------------------------------------------------------- */
 .app { min-height: 100vh; display: flex; flex-direction: column; }
-.impersonation-banner { position: fixed; inset: 0 0 auto; z-index: 76; display: flex; align-items: center; gap: 12px; height: 42px; padding: 0 var(--space-6); background: var(--ink-900); color: var(--paper-050); font: var(--type-label); font-size: 11px; letter-spacing: var(--tracking-wide); text-transform: uppercase; }
+.impersonation-banner { position: fixed; inset: 0 0 auto; z-index: 76; display: flex; align-items: center; gap: 12px; height: 42px; overflow: hidden; padding: 0 var(--space-6); background: var(--ink-900); color: var(--paper-050); font: var(--type-label); font-size: 11px; letter-spacing: var(--tracking-wide); text-transform: uppercase; }
+.impersonation-banner__identity { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .impersonation-banner .button--text { color: var(--paper-050); }
-.impersonation-banner__error { position: absolute; top: 42px; right: var(--space-6); max-width: min(520px, calc(100vw - 32px)); padding: 10px 12px; border: 1px solid var(--signal-critical); background: var(--paper-050); color: var(--signal-critical); font: var(--type-body); font-size: 12px; line-height: 1.35; text-transform: none; letter-spacing: normal; box-shadow: var(--shadow-md); }
+.impersonation-banner__error { position: static; flex: 1 1 160px; min-width: 0; overflow: hidden; padding: 0; border: 0; background: transparent; color: var(--signal-critical); font: var(--type-body); font-size: 12px; line-height: 1.35; text-overflow: ellipsis; text-transform: none; letter-spacing: normal; white-space: nowrap; box-shadow: none; }
 .app--impersonating { padding-top: 42px; }
 .app--impersonating .topbar { top: 42px; }
 .app--impersonating .rail { top: 106px; max-height: calc(100vh - 106px); }
-.app--impersonating .worktools, .app--impersonating .cbar { top: 106px; }
+.app--impersonating .worktools { top: 106px; }
 .app--impersonating .viewer { inset: 42px 0 0; }
 
 .topbar {
@@ -780,7 +781,7 @@ button { font-family: var(--font-sans); }
   .compare__pair { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; }
   .cbar { top: 58px; }
   .worktools { top: 58px; }
-  .app--impersonating .cbar, .app--impersonating .worktools { top: 100px; }
+  .app--impersonating .worktools { top: 100px; }
   .viewer__shortcuts { display: none; }
   .viewer__panel-trigger { display: none; }
   .viewer__close { top: calc(16px + env(safe-area-inset-top)); left: max(16px, env(safe-area-inset-left)); min-width: 48px; width: 48px; height: 48px; }

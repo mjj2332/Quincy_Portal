@@ -33,8 +33,8 @@ export function ImpersonationBanner({ user, invalidated }: ImpersonationBannerPr
   }
 
   return <aside className="impersonation-banner" aria-label="Impersonation status" data-invalidated={invalidated ? "true" : undefined}>
-    <span>Acting as {user.name} ({roleTitle(user.role)}) · </span>
+    <span className="impersonation-banner__identity">Acting as {user.name} ({roleTitle(user.role)}) · </span>
     <button className="button button--text" type="button" disabled={isExiting} onClick={() => void exit()}>Exit</button>
-    {error && <span className="impersonation-banner__error" role="alert">{error}</span>}
+    {error && <span className="impersonation-banner__error" role="alert" title={error}>{error}</span>}
   </aside>;
 }

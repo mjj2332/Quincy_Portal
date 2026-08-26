@@ -74,6 +74,10 @@ describe("App impersonation boundary", () => {
     expect(host.textContent).toContain("Dashboard");
     expect(host.querySelector("[data-query-boundary]")?.getAttribute("data-query-boundary")).toBe("target:editor");
     expect(host.textContent).not.toContain("Admin");
+
+    await act(async () => { window.history.pushState(null, "", "/projects/123e4567-e89b-42d3-a456-426614174000"); window.dispatchEvent(new PopStateEvent("popstate")); await Promise.resolve(); await Promise.resolve(); });
+    expect(host.textContent).toContain("Acting as Editor Target (Editor) · Exit");
+    expect(host.textContent).toContain("consume 123e4567-e89b-42d3-a456-426614174000");
   });
 
   it("isolates a promoted target before the provider and preserves the Exit banner", async () => {

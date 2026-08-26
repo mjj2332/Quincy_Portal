@@ -7,6 +7,7 @@ import type { AppEnv } from "../env";
 import { requireCapability } from "../middleware/capability";
 import { audit, auditMeta } from "../lib/audit";
 import { newId } from "../lib/ids";
+import { USER_IMPERSONATION_FLAG } from "../lib/impersonation";
 import { jsonInput } from "./helpers";
 
 const input = z.object({ email: z.string().email(), name: z.string().min(1).max(200), role: z.enum(ROLES) });
@@ -26,21 +27,21 @@ usersRoutes.get("/users", async (c) => c.json({ users: await createDb(c.env.DB).
 }).from(schema.user).orderBy(desc(schema.user.createdAt)).all() }));
 usersRoutes.get("/users/impersonation-settings", async (c) => {
   const row = await createDb(c.env.DB).select({ enabled: schema.featureFlags.enabled })
-    .from(schema.featureFlags).where(eq(schema.featureFlags.key, "user_impersonation")).get();
+    .from(schema.featureFlags).where(eq(schema.featureFlags.key, USER_IMPERSONATION_FLAG)).get();
   return c.json({ enabled: row?.enabled === true });
 });
 usersRoutes.patch("/users/impersonation-settings", async (c) => {
   const data = await jsonInput(c, impersonationSettingsInput); if (data instanceof Response) return data;
   const db = createDb(c.env.DB);
   const existing = await db.select({ key: schema.featureFlags.key }).from(schema.featureFlags)
-    .where(eq(schema.featureFlags.key, "user_impersonation")).get();
+    .where(eq(schema.featureFlags.key, USER_IMPERSONATION_FLAG)).get();
   if (!existing) return c.json({ error: "Impersonation setting is unavailable" }, 500);
   const user = c.get("user"); const now = Date.now();
   await c.env.DB.batch([
     c.env.DB.prepare("UPDATE feature_flags SET enabled = ?, updated_by = ?, updated_at = ? WHERE key = ?")
-      .bind(data.enabled ? 1 : 0, user.id, now, "user_impersonation"),
+      .bind(data.enabled ? 1 : 0, user.id, now, USER_IMPERSONATION_FLAG),
     c.env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-      .bind(newId(), user.id, "user.impersonation_toggle", "feature_flag", "user_impersonation", auditMeta(user, { enabled: data.enabled }), now),
+      .bind(newId(), user.id, "user.impersonation_toggle", "feature_flag", USER_IMPERSONATION_FLAG, auditMeta(user, { enabled: data.enabled }), now),
   ]);
   return c.json({ enabled: data.enabled });
 });

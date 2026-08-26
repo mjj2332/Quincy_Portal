@@ -50,7 +50,10 @@ describe("ImpersonationBanner", () => {
     expect(host.querySelector("[data-invalidated='true']")).not.toBeNull();
     const button = host.querySelector<HTMLButtonElement>("button")!;
     await act(async () => { button.click(); await Promise.resolve(); });
-    expect(host.querySelector('[role="alert"]')?.textContent).toBe("Could not automatically exit. Sign out completely and sign back in as Admin to restore your session.");
+    const alert = host.querySelector<HTMLElement>('[role="alert"]')!;
+    expect(alert.textContent).toBe("Could not automatically exit. Sign out completely and sign back in as Admin to restore your session.");
+    expect(alert.title).toBe(alert.textContent);
+    expect(alert.parentElement).toBe(host.querySelector(".impersonation-banner"));
     expect(button.disabled).toBe(false);
     expect(refetchMock).not.toHaveBeenCalled();
   });
