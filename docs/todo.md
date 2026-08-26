@@ -7,7 +7,78 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
 > counts, full diagnostic transcripts) has been cut in favor of what/when/deploy-state. See
 > `docs/lessons.md` for incident mechanics, and `docs/reviews/` for full QA-sweep detail.
 
-## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29, seed-admin UUID migration 2026-07-29, notification dismiss + stalled-guard 2026-07-30, download selection 2026-08-04, notice-board rich text + mentions 2026-08-17, project comments + collaboration panel 2026-08-17, project subtasks/checklist 2026-08-17, collaboration panel relocated to Project page 2026-08-17, collaboration panel UI fixes + due-time reminder 2026-08-17, notification click navigation 2026-08-17, comment ordering + Shift+Enter soft breaks 2026-08-17, mention-email content 2026-08-20, TB0 authority promotion 2026-08-24, TB0A React 19.2 deployed + accepted 2026-08-25, TB0B pipeline configuration boundary deployed 2026-08-24, TB1 Tailwind v4/shadcn foundation deployed 2026-08-25, TB2 route-safe project data freshness deployed 2026-08-25, TB3 project discussion v2 deployed 2026-08-25, TB4 notification outbox deployed 2026-08-26, confirmation modal + admin user impersonation deployed 2026-08-26)
+## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29, seed-admin UUID migration 2026-07-29, notification dismiss + stalled-guard 2026-07-30, download selection 2026-08-04, notice-board rich text + mentions 2026-08-17, project comments + collaboration panel 2026-08-17, project subtasks/checklist 2026-08-17, collaboration panel relocated to Project page 2026-08-17, collaboration panel UI fixes + due-time reminder 2026-08-17, notification click navigation 2026-08-17, comment ordering + Shift+Enter soft breaks 2026-08-17, mention-email content 2026-08-20, TB0 authority promotion 2026-08-24, TB0A React 19.2 deployed + accepted 2026-08-25, TB0B pipeline configuration boundary deployed 2026-08-24, TB1 Tailwind v4/shadcn foundation deployed 2026-08-25, TB2 route-safe project data freshness deployed 2026-08-25, TB3 project discussion v2 deployed 2026-08-25, TB4 notification outbox deployed 2026-08-26, confirmation modal + admin user impersonation deployed 2026-08-26, TB4A project workspace assignment rail deployed 2026-08-27)
+
+- **TB4A (Project Workspace Assignment Rail — role-scoped photographer/editor membership
+  routes replacing full-roster project PATCH) is deployed to production, 2026-08-27**
+  (`docs/plans/implemented/Revamp-TB4A-Project-Workspace-Assignment-Rail-Plan.md`, commit
+  `15f28ef`, background Worker version `c236a205-ab55-4ac6-8a04-97e2a867bd12`, app Worker version
+  `8af4bcf9-903e-4d3b-9979-eab34e4f70dc`, rollback targets `ac7c4753-0b48-4951-87c0-382b18714195`
+  (background) / `58fe2088-605a-46ca-a5e8-67e196715058` (app)). Replaces the old full-roster
+  `PATCH /projects/:id` membership write with explicit `PUT/DELETE
+  /projects/:id/photographers|editors/:userId` routes: idempotent add via guarded
+  `INSERT...RETURNING` (never a post-batch reload), exact membership-cycle DELETE with 409 on
+  staleness and a server-verified `confirmedAssignmentCount` precondition for final-role
+  checklist cleanup, and an atomic all-or-nothing Create batch. Targeted assignment notifications
+  cut over from the retired direct `notifyProjectAssignments()` helper onto TB4's durable D1
+  outbox/Queue/delivery-ledger as a new `project.assignment.created` event, reusing
+  `resolveRecipient`/`releaseBeforeRetry`/`completeIfTerminal` unchanged so all TB4 mention-path
+  tests stayed green. Reorganizes the Project Overview rail into
+  header → Production (Stage read-only, Shoot, honest Deadline/reminder placeholders for TB4B) →
+  Team (Photographers and Editors, both now rendered — Editors were previously absent from the
+  rail) → Client → Collections/Dropbox, with an optimistic per-person picker and a
+  mutation-token ledger so concurrent add/remove operations for different people commute without
+  clobbering each other's pending state. Adds a new presentation-safe `GET
+  /projects/:id/collaboration-summary` endpoint for Stage-hidden collaborators, reusing the real
+  `purgeProjectCommentData()`-style generation-bump fence on access loss. No schema migration —
+  reuses `project_members.id` as the membership cycle and TB4's existing outbox/ledger schema
+  for the new event type; migration tail remains `0032`.
+  Plan review: 2 Sol rounds + fix passes, 1 Opus plan-tier revert + fix pass → APPROVE. Build:
+  Luna built it; independent verification outside Luna's sandbox (which cannot run the
+  Wrangler/Miniflare-backed Worker integration suites) caught and fixed 5 test-authoring bugs in
+  Luna's own new/updated tests (an eligibility-mismatched dual-role fixture, a wrong expected
+  HTTP status, a stale test still driving the now-roster-free `PATCH` route, a query against a
+  `notifications.link` column that has never existed in the schema, and a `LIKE` pattern
+  exceeding D1/SQLite's default 50-byte pattern-length limit) — all confirmed to be test bugs, not
+  implementation defects, by direct inspection of the real schema/source. Diff review: a fresh Sol
+  pass found and a fix round closed a real privacy leak (the optimistic membership-mutation
+  ledger was pushing full member email/global-role data into the collaboration-summary cache via
+  two separate code paths — one write-side, one read-side, the second caught independently after
+  Luna's first fix only closed the write side) plus incomplete high-risk test coverage. A second
+  Sol focused pass then caught a real UI regression — the final-role-removal confirmation dialog
+  was skipping the mandatory unconfirmed server probe and using a client-cached assignment count,
+  reintroducing exactly the bug class two earlier *plan*-review rounds had hardened against — and
+  more coverage gaps; both were fixed, independently re-verified line-by-line. Opus final-draft
+  review then found two further real issues nothing had caught: a dependency-array bug making the
+  project checklist reload and collapse to a loading state on every keystroke in the comment
+  composer (`onAccessFailure` was a fresh closure every render; fixed with the existing
+  ref-callback pattern from `ProjectWorkspace.tsx`), and a "compatibility Edit-page" rollout
+  control gated by a feature flag that existed nowhere but the one line reading it and that
+  couldn't reflect its own mutations even if enabled — resolved by removing the inert
+  compatibility stage entirely in favor of a single canonical deployment (Edit Project no longer
+  renders any team control; the rail is the sole owner from the start). One Codex-workspace
+  credits interruption mid-fix-round left a partially-applied diff with a missing regression test;
+  every landed code change was independently verified correct directly against source before the
+  missing test (checklist-reload regression coverage) was added directly. Full verify sequence
+  green throughout every round: typecheck (6 workspaces), `apps/web` build, `apps/web` 288 tests,
+  `workers/app` 210 tests/1 skipped, `workers/background` 207 tests, `packages/db` 42 tests,
+  `packages/shared` 62 tests, `webhook-ingress` 13 tests (unaffected, not redeployed). Two
+  accepted, Opus-agreed test-coverage limitations remain undocumented in automated tests but are
+  low-risk and structural: a jsdom DOM test cannot prove a CSS `@media` bottom-sheet rule actually
+  engages (no `matchMedia`/layout engine; covered instead by live production passive verification
+  below), and a candidate-ordering ID tie-break is unreachable in any real integration test
+  because `(name, email)` is already a total order under the real `user.email` UNIQUE constraint.
+  Production: rollback targets recorded above, deploy order `background → app` (webhook-ingress
+  skipped, unchanged), passive smoke performed directly in this session's Browser pane against
+  real production data — dashboard/project list loaded clean, a real project's rail rendered the
+  new Production/Team sections correctly (Deadline/reminder placeholders, a real Photographer
+  membership with working display, Editors correctly "Not assigned"), both new endpoints
+  (`GET /project-assignment-candidates`, `GET /projects/:id/collaboration-summary`) returned 200
+  against real data, `notification_outbox` confirmed healthy post-deploy (existing mention rows
+  still `completed`, no stuck/errored rows), zero console/network errors throughout. No mutating
+  membership walkthrough was performed against production, per
+  `docs/Subagent-Orchestration.md` §2.9 — local mutating QA against `http://localhost:8787` per
+  the plan's manual QA matrix remains outstanding follow-up, tracked below.
 
 - **TB4 (notification outbox and Cloudflare Queues — durable delivery for project-comment
   mentions only) is deployed to production, 2026-08-26**
@@ -584,6 +655,14 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
 
 ## Waiting on user / external
 
+- [ ] **TB4A local mutating QA matrix** (`docs/plans/implemented/
+  Revamp-TB4A-Project-Workspace-Assignment-Rail-Plan.md`'s "Manual local browser QA matrix", 11
+  items): idempotent/concurrent add, independent dual-role removal, final-role checklist cleanup
+  with the real confirmation dialog, stale-cycle 409, failure recovery, the Create/Edit rollout
+  boundary, the collaboration-only Stage-hidden boundary, and cross-tab freshness — all deliberately
+  left to local `http://localhost:8787` testing per `docs/Subagent-Orchestration.md` §2.9 (no
+  mutating walkthrough against production). Production itself was only passively smoke-tested
+  (see the TB4A entry above).
 - [ ] Add `AUTOHDR_API_KEY` to the production **background Worker** before the direct-send branch
   is deployed (`cd portal/workers/background && npx wrangler secret put AUTOHDR_API_KEY`). Local
   development uses the gitignored `portal/workers/background/.dev.vars`.
