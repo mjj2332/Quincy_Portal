@@ -66,13 +66,23 @@ async function typeAfterCurrentContent(editor: HTMLElement, value: string) {
   });
 }
 
-async function appendText(editor: HTMLElement, value: string) {
+async function waitForCondition(condition: () => boolean, description: string) {
+  const deadline = Date.now() + 1_000;
+  while (!condition()) {
+    if (Date.now() >= deadline) throw new Error(`Timed out waiting for ${description}`);
+    await act(async () => { await new Promise<void>((resolve) => window.setTimeout(resolve, 0)); });
+  }
+}
+
+async function appendText(editor: HTMLElement, value: string, onChange: { mock: { calls: unknown[][] } }) {
+  const callsBefore = onChange.mock.calls.length;
   await act(async () => {
+    editor.focus();
     const paragraphs = editor.querySelectorAll("p");
     paragraphs[paragraphs.length - 1]!.append(document.createTextNode(value));
     editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: value }));
-    await Promise.resolve(); await Promise.resolve();
   });
+  await waitForCondition(() => onChange.mock.calls.length > callsBefore, "RichTextEditor onChange after appended text");
 }
 
 async function moveCaret(editor: HTMLElement, node: Node, offset = 1) {
@@ -307,7 +317,7 @@ describe("RichTextEditor hard breaks", () => {
     const host = mount(); const onChange = vi.fn();
     const { editor } = await render(host, value, onChange);
     onChange.mockClear();
-    await appendText(editor, " edit");
+    await appendText(editor, " edit", onChange);
     expect(onChange).toHaveBeenLastCalledWith({
       ...value,
       content: [...value.content!.slice(0, -1), { type: "paragraph", content: [{ type: "text", text: "Unrelated edit" }] }],
@@ -326,7 +336,7 @@ describe("RichTextEditor hard breaks", () => {
     });
     expect(rendered.editor.textContent).toContain("Shallow");
     expect(onChange).not.toHaveBeenCalled();
-    await appendText(rendered.editor, " edit");
+    await appendText(rendered.editor, " edit", onChange);
     expect(onChange).toHaveBeenLastCalledWith({
       ...replacement,
       content: [...replacement.content.slice(0, -1), { type: "paragraph", content: [{ type: "text", text: "Shallow edit" }] }],
@@ -365,7 +375,7 @@ describe("RichTextEditor hard breaks", () => {
     const host = mount(); const onChange = vi.fn();
     const { editor } = await render(host, value, onChange);
     onChange.mockClear();
-    await appendText(editor, " edited");
+    await appendText(editor, " edited", onChange);
     expect(onChange).toHaveBeenLastCalledWith(list([{ type: "text", text: "Final item edited" }]));
   });
 
@@ -380,7 +390,7 @@ describe("RichTextEditor hard breaks", () => {
     expect(buttons("Underline").getAttribute("aria-pressed")).toBe("true");
     await moveCaret(editor, editor.querySelector("s")!.firstChild!, 2);
     expect(buttons("Strikethrough").getAttribute("aria-pressed")).toBe("true");
-    onChange.mockClear(); await appendText(editor, "!");
+    onChange.mockClear(); await appendText(editor, "!", onChange);
     expect(onChange).toHaveBeenLastCalledWith({ type: "doc", content: [{ type: "paragraph", content: [
       { type: "text", text: "Under", marks: [{ type: "underline" }] },
       { type: "text", text: " strike!", marks: [{ type: "strike" }] },
@@ -615,7 +625,7 @@ describe("RichTextEditor hard breaks", () => {
     const undo = host.querySelector<HTMLButtonElement>('[aria-label="Undo"]')!;
     const redo = host.querySelector<HTMLButtonElement>('[aria-label="Redo"]')!;
     expect(undo.disabled).toBe(true); expect(redo.disabled).toBe(true);
-    await appendText(editor, " change");
+    await appendText(editor, " change", onChange);
     expect(undo.disabled).toBe(false); await click(undo);
     expect(onChange).toHaveBeenLastCalledWith(text("History"));
     expect(redo.disabled).toBe(false); await click(redo);
@@ -714,7 +724,7 @@ describe("RichTextEditor hard breaks", () => {
     const host = mount(); const onChange = vi.fn(); const { editor } = await render(host, value, onChange);
     await nextTask();
     onChange.mockClear();
-    await appendText(editor, " edit");
+    await appendText(editor, " edit", onChange);
     expect(onChange).toHaveBeenLastCalledWith({
       ...value,
       content: [...value.content.slice(0, -1), { type: "paragraph", content: [{ type: "text", text: "Shallow edit" }] }],
