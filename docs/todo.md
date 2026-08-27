@@ -9,6 +9,23 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
 
 ## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29, seed-admin UUID migration 2026-07-29, notification dismiss + stalled-guard 2026-07-30, download selection 2026-08-04, notice-board rich text + mentions 2026-08-17, project comments + collaboration panel 2026-08-17, project subtasks/checklist 2026-08-17, collaboration panel relocated to Project page 2026-08-17, collaboration panel UI fixes + due-time reminder 2026-08-17, notification click navigation 2026-08-17, comment ordering + Shift+Enter soft breaks 2026-08-17, mention-email content 2026-08-20, TB0 authority promotion 2026-08-24, TB0A React 19.2 deployed + accepted 2026-08-25, TB0B pipeline configuration boundary deployed 2026-08-24, TB1 Tailwind v4/shadcn foundation deployed 2026-08-25, TB2 route-safe project data freshness deployed 2026-08-25, TB3 project discussion v2 deployed 2026-08-25, TB4 notification outbox deployed 2026-08-26, confirmation modal + admin user impersonation deployed 2026-08-26, TB4A project workspace assignment rail deployed 2026-08-27, TB4B project deadline and reminders deployed 2026-08-27, TB4C editor-wide project-change notifications deployed 2026-08-27)
 
+- **TB4D (Checklist Scheduling & Ranges — every project checklist item carries one truthful
+  optional schedule: unscheduled / due-only / start+end range, without changing the shipped
+  `due_date` or its due-today reminder) — PLAN APPROVED 2026-08-27, build in progress.**
+  Plan: `docs/plans/Revamp-TB4D-Checklist-Scheduling-Ranges-Plan.md` (this commit). Pipeline:
+  Sol draft → fresh-Sol review ×2 (2B+6S then 1B+2S+1N, all folded) → Opus plan-tier revert 1/2
+  (5 Blocking + 6 Should-fix + 4 Nits) → fresh-Sol revision → **Opus plan-tier re-review APPROVED**
+  (all 5 Blocking verified fixed vs. real source; 5 Should-fix + 6 Nits carried into the build
+  spec as builder/diff-review clarifications). Adds additive migration **`0035`** (11 bare
+  `ALTER TABLE ADD COLUMN` on `project_subtasks` + `schedule_version`), a route-independent
+  create-or-update task command owning POST+PATCH persistence with a non-throwing `invalid_request`
+  arm and one shared finalizer, an O(1) Sydney civil-time resolver extracted from TB4B (differential
+  proof required), admission of the reserved `project.checklist.schedule_changed` activity type
+  (5-min leading-edge actor/item coalescing via TB4C's outbox columns, broad email off), a
+  five-state schedule DTO (`unscheduled | due_only | range | legacy_unresolved | invalid`), and a
+  three-app rollout (background consumer → tested inert `tb4d-inert-rollback` app → write-enabled
+  app) because a pre-TB4D app is never a valid rollback after `0035`. Not built, committed, or
+  deployed yet. ~3 Codex credit exhaustions + 1 Claude session-limit hit across the plan pipeline.
 - **TB4C (Editor-Wide Project-Change Notifications — one immutable safe activity event per
   approved semantic project change, delivered as one durable in-app broad alert per eligible
   active assigned Editor via TB4's outbox/Queue/ledger) is deployed to production, 2026-08-27**
