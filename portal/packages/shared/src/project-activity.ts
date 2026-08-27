@@ -31,10 +31,10 @@ const LIVE_TYPES = [
   "project.collection.document_completed",
   "project.workflow.manual_edited_ready",
   "project.collection.raw_sync_completed",
+  "project.checklist.schedule_changed",
 ] as const;
 const RESERVED_TYPES = [
   "project.stage.changed",
-  "project.checklist.schedule_changed",
   "project.workflow.raw_ready",
   "project.workflow.sent_to_editing",
   "project.workflow.edited_ready",

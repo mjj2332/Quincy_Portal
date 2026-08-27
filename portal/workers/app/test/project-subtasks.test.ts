@@ -71,6 +71,10 @@ describe("project subtasks API", () => {
   });
 
   it("uses collaboration access, validates scoped input, orders/reorders tasks, and emits assignment notices only for real assignment changes", async () => {
+    // Earlier schedule coverage intentionally leaves durable history on the shared fixture
+    // project. Start this ordering contract from an empty checklist so the first two positions
+    // prove the command's inline tail allocation rather than test execution order.
+    await database.DB.prepare("DELETE FROM project_subtasks WHERE project_id = ?").bind(projectId).run();
     expect((await request(`/api/projects/${projectId}/subtasks`, "subtasks-admin-token")).status).toBe(200);
     expect((await request(`/api/projects/${projectId}/subtasks`, "subtasks-photographer-token")).status).toBe(200);
     expect((await request(`/api/projects/${projectId}/subtasks`, "subtasks-outsider-token")).status).toBe(403);
@@ -174,12 +178,14 @@ describe("project subtasks API", () => {
   it("accepts literal due times and clears a sent reminder when the due date is rescheduled", async () => {
     const firstMorning = Date.UTC(2026, 7, 17, 22);
     const nextMorning = Date.UTC(2026, 7, 18, 22);
-    const due = await (await request(`/api/projects/${projectId}/subtasks`, "subtasks-editor-token", "POST", { title: "Reschedule reminder", assigneeId: photographerId, dueDate: "2026-08-18T14:30" })).json() as { id: string; dueDate: string };
+    const dueResponse = await request(`/api/projects/${projectId}/subtasks`, "subtasks-editor-token", "POST", { title: "Reschedule reminder", assigneeId: photographerId, dueDate: "2026-08-18T14:30" });
+    expect(dueResponse.status).toBe(201);
+    const due = await dueResponse.json() as { id: string; dueDate: string; schedule: { version: number } };
     expect(due.dueDate).toBe("2026-08-18T14:30");
     const reminderEnv = { ...baseEnv, DB: database.DB, EMAIL: { send: vi.fn().mockResolvedValue({ messageId: "reschedule" }) }, NOTIFICATIONS_FROM_ADDRESS: "studio@example.test" } as unknown as Env;
     expect(await scanDueSubtasks(reminderEnv, firstMorning)).toBe(1);
     expect(await database.DB.prepare("SELECT due_reminder_sent_at FROM project_subtasks WHERE id = ?").bind(due.id).first()).toEqual({ due_reminder_sent_at: firstMorning });
-    expect((await request(`/api/projects/${projectId}/subtasks/${due.id}`, "subtasks-editor-token", "PATCH", { dueDate: "2026-08-19" })).status).toBe(200);
+    expect((await request(`/api/projects/${projectId}/subtasks/${due.id}`, "subtasks-editor-token", "PATCH", { schedule: { expectedVersion: due.schedule.version, schedule: { state: "due_only", end: { kind: "date", localCivil: "2026-08-19" } } } })).status).toBe(200);
     expect(await database.DB.prepare("SELECT due_reminder_sent_at FROM project_subtasks WHERE id = ?").bind(due.id).first()).toEqual({ due_reminder_sent_at: null });
     expect(await scanDueSubtasks(reminderEnv, nextMorning)).toBe(1);
     expect((await database.DB.prepare("SELECT count(*) AS count FROM notifications WHERE type = 'subtask_due_today' AND project_id = ? AND user_id = ?").bind(projectId, photographerId).first<{ count: number }>())!.count).toBe(2);
@@ -208,13 +214,16 @@ describe("project subtasks API", () => {
   });
 
   it("clears only final-role non-admin assignees as part of the project membership batch", async () => {
-    const initialPhotographer = await database.DB.prepare("SELECT id FROM project_members WHERE project_id = ? AND user_id = ? AND role_on_project = 'photographer'").bind(projectId, photographerId).first<{ id: string }>();
+    const isolatedProject = crypto.randomUUID(); const now = Date.now(); const initialPhotographerId = crypto.randomUUID();
+    await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES (?, 'Final role isolation', 'editing_autohdr', 0, ?, ?)").bind(isolatedProject, now, now).run();
+    await database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'photographer', ?)").bind(initialPhotographerId, isolatedProject, photographerId, now).run();
+    const initialPhotographer = await database.DB.prepare("SELECT id FROM project_members WHERE project_id = ? AND user_id = ? AND role_on_project = 'photographer'").bind(isolatedProject, photographerId).first<{ id: string }>();
     expect(initialPhotographer).toBeDefined();
-    const finalTask = await (await request(`/api/projects/${projectId}/subtasks`, "subtasks-admin-token", "POST", { title: "Final role", assigneeId: photographerId })).json() as { id: string };
-    const unconfirmed = await request(`/api/projects/${projectId}/photographers/${photographerId}`, "subtasks-admin-token", "DELETE", { membershipCycle: initialPhotographer!.id, clearSubtaskAssignments: false, confirmedAssignmentCount: 0 });
+    const finalTask = await (await request(`/api/projects/${isolatedProject}/subtasks`, "subtasks-admin-token", "POST", { title: "Final role", assigneeId: photographerId })).json() as { id: string };
+    const unconfirmed = await request(`/api/projects/${isolatedProject}/photographers/${photographerId}`, "subtasks-admin-token", "DELETE", { membershipCycle: initialPhotographer!.id, clearSubtaskAssignments: false, confirmedAssignmentCount: 0 });
     expect(unconfirmed.status).toBe(422);
     expect(await unconfirmed.json()).toMatchObject({ code: "subtask_assignment_confirmation_required", assignmentCount: 1 });
-    const confirmed = await request(`/api/projects/${projectId}/photographers/${photographerId}`, "subtasks-admin-token", "DELETE", { membershipCycle: initialPhotographer!.id, clearSubtaskAssignments: true, confirmedAssignmentCount: 1 });
+    const confirmed = await request(`/api/projects/${isolatedProject}/photographers/${photographerId}`, "subtasks-admin-token", "DELETE", { membershipCycle: initialPhotographer!.id, clearSubtaskAssignments: true, confirmedAssignmentCount: 1 });
     expect(confirmed.status).toBe(200);
     expect(await confirmed.json()).toMatchObject({ outcome: "removed", removed: { membershipCycle: initialPhotographer!.id, userId: photographerId, roleOnProject: "photographer" }, subtaskAssignmentsCleared: 1 });
     expect(await database.DB.prepare("SELECT assignee_id, assignment_version FROM project_subtasks WHERE id = ?").bind(finalTask.id).first()).toEqual({ assignee_id: null, assignment_version: 2 });

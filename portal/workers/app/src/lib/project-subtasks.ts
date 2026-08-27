@@ -1,5 +1,5 @@
 import { buildProjectActivityStatements, createDb, schema } from "@quincy/db";
-import { and, desc, eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import {
   CHECKLIST_SCHEDULE_ZONE,
   CHECKLIST_SCHEDULE_RANGES_ENABLED,
@@ -11,6 +11,7 @@ import {
   type InitialChecklistScheduleInput,
   type SaveChecklistScheduleRequest,
   type NormalizedChecklistSchedule,
+  projectActivityCoalesce,
   projectActivityDeepLink,
   publishNotificationOutbox,
   type ProjectActivityIntent,
@@ -196,6 +197,7 @@ function activityFor(itemId: string, projectId: string, actorId: string, now: nu
 
 function scheduleActivityFor(itemId: string, projectId: string, actorId: string, now: number, title: string, state: "unscheduled" | "due_only" | "range", version: number): ProjectActivityIntent {
   const activityId = newId();
+  const safePayload = { itemId, checklistTitle: title, scheduleState: state, version } as const;
   return {
     schemaVersion: 1,
     activity: {
@@ -205,10 +207,10 @@ function scheduleActivityFor(itemId: string, projectId: string, actorId: string,
       actorId,
       occurredAt: now,
       source: { kind: "project_checklist", id: itemId, key: `project-checklist-schedule:${projectId}:${itemId}:version:${version}` },
-      safePayload: { itemId, checklistTitle: title, scheduleState: state, version },
+      safePayload,
       deepLink: projectActivityDeepLink("project.checklist.schedule_changed", projectId),
     },
-    broadDelivery: { registryKey: "project.checklist.schedule_changed", sourceActivityId: activityId, coalesce: null },
+    broadDelivery: { registryKey: "project.checklist.schedule_changed", sourceActivityId: activityId, coalesce: projectActivityCoalesce("project.checklist.schedule_changed", projectId, actorId, safePayload) },
   };
 }
 
@@ -235,7 +237,7 @@ export async function saveProjectSubtask(input: SaveProjectSubtaskInput): Promis
     if (assigneeId && !(await projectMentionableUsers(env, projectId)).some((user) => user.id === assigneeId)) return invalidRequest("subtask_assignee_ineligible", "Assignee is not an active project participant.");
     const normalized = normalizeChecklistSchedule(requested, requested.state === "unscheduled" ? 0 : 1);
     if (!normalized.ok) return invalidRequest(normalized.error.code, normalized.error.message, normalized.error.endpoint ? { endpoint: normalized.error.endpoint, ...(normalized.error.choices ? { choices: normalized.error.choices } : {}) } : undefined);
-    const last = await db.select({ position: schema.projectSubtasks.position }).from(schema.projectSubtasks).where(eq(schema.projectSubtasks.projectId, projectId)).orderBy(desc(schema.projectSubtasks.position), desc(schema.projectSubtasks.id)).limit(1).get();
+    const last = await env.DB.prepare("SELECT position FROM project_subtasks WHERE project_id = ? ORDER BY position DESC, id DESC LIMIT 1").bind(projectId).first<{ position: number }>();
     const id = newId();
     const auditId = newId();
     const activity = activityFor(id, projectId, principal.id, now, operation.item.title, "created");
