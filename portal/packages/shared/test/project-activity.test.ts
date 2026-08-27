@@ -12,6 +12,7 @@ import {
   type ProjectActivityType,
 } from "../src/project-activity";
 import { PROJECT_ASSIGNMENT_ELIGIBLE_ROLES } from "../src/project-members";
+import { TB4D_SCHEDULE_ACTIVITY_CUTOVER_DATE } from "../src/checklist-schedule-config";
 
 const projectId = "project-activity-test";
 const userId = "11111111-1111-4111-8111-111111111111";
@@ -155,7 +156,7 @@ describe("TB4C project activity registry", () => {
       producerCallSites: ["workers/app/src/lib/project-subtasks.ts#saveProjectSubtask"],
       cutover: "live",
       cutoverOwner: "TB4D saveProjectSubtask",
-      cutoverDate: "2026-08-27",
+      cutoverDate: TB4D_SCHEDULE_ACTIVITY_CUTOVER_DATE,
       backfill: "none",
       noBackfillNote: expect.stringContaining("no checklist schedule history backfill"),
     });

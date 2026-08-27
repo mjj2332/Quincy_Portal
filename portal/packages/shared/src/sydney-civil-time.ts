@@ -60,6 +60,12 @@ function partsFor(date: Date): Record<string, string> {
   return Object.fromEntries(SYDNEY_FORMATTER.formatToParts(date).map(({ type, value }) => [type, value]));
 }
 
+function offsetAt(epochMs: number): number {
+  const projected = partsFor(new Date(epochMs));
+  const projectedEpoch = epochFromCivil(Number(projected.year), Number(projected.month), Number(projected.day), Number(projected.hour), Number(projected.minute));
+  return Math.round((projectedEpoch - epochMs) / 60_000);
+}
+
 /**
  * Keep this intentionally compatible with the Deadline implementation. In
  * particular, Intl emits years below 1000 without left-padding them, and the
@@ -115,18 +121,23 @@ export function resolveSydneyCivilMinuteExhaustive(localCivil: string, disambigu
 /**
  * Resolve a Sydney wall-clock minute in O(1) candidate checks.
  *
- * A single projection of the naive civil-as-UTC instant gives the current
- * provisional offset. Sydney's only relevant neighboring civil offsets are
- * one hour on either side of that value, so the round-trip set is bounded to
- * three deduplicated candidates.
+ * A projection of the naive civil-as-UTC instant gives a provisional offset.
+ * Probe the actual zone offsets around its corresponding instant rather than
+ * assuming that historical neighboring offsets are an hour apart. The
+ * bounded three-probe set covers Sydney transitions such as the 1895 change
+ * from rounded LMT (+604) to +600, while the round-trip set remains O(1).
  */
 export function resolveSydneyCivilMinute(localCivil: string, disambiguation?: SydneyCivilDisambiguation): SydneyCivilResolutionResult {
   const parsed = parseCivil(localCivil);
   if (!parsed) return { ok: false, code: "invalid_local_time", message: "Enter a valid Sydney date and time to the minute." };
-  const projected = partsFor(new Date(parsed.localEpoch));
-  const projectedEpoch = epochFromCivil(Number(projected.year), Number(projected.month), Number(projected.day), Number(projected.hour), Number(projected.minute));
-  const provisionalOffset = Math.round((projectedEpoch - parsed.localEpoch) / 60_000);
-  const offsets = [...new Set([provisionalOffset - 60, provisionalOffset, provisionalOffset + 60])];
+  const provisionalOffset = offsetAt(parsed.localEpoch);
+  const provisionalInstant = parsed.localEpoch - provisionalOffset * 60_000;
+  const probeRadius = 6 * 60 * 60_000;
+  const offsets = [...new Set([
+    provisionalOffset,
+    offsetAt(provisionalInstant - probeRadius),
+    offsetAt(provisionalInstant + probeRadius),
+  ])];
   const candidates = offsets.map((offset) => candidate(localCivil, parsed.localEpoch, offset)).filter((value): value is SydneyCivilResolution => value !== null);
   return finishCandidates(localCivil, parsed, candidates, disambiguation);
 }

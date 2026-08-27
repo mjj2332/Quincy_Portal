@@ -203,6 +203,27 @@ describe("project subtasks API", () => {
     expect((await request(`/api/projects/${projectId}/subtasks/${due.id}`, "subtasks-editor-token", "DELETE")).status).toBe(200);
   });
 
+  it("treats adding a start to a version-0 timed due as a pure start edit", async () => {
+    const created = await request(`/api/projects/${projectId}/subtasks`, "subtasks-editor-token", "POST", {
+      title: "Pure start comparison",
+      dueDate: "2026-08-18T14:30",
+    });
+    expect(created.status).toBe(201);
+    const item = await created.json() as { id: string; schedule: { version: number } };
+    const claimedAt = Date.UTC(2026, 7, 17, 22);
+    await database.DB.prepare("UPDATE project_subtasks SET due_reminder_sent_at = ? WHERE id = ?").bind(claimedAt, item.id).run();
+    const activityBefore = (await database.DB.prepare("SELECT count(*) AS count FROM project_activity_events WHERE event_type = 'project.checklist.schedule_changed' AND project_id = ?").bind(projectId).first<{ count: number }>())!.count;
+    const outboxBefore = (await database.DB.prepare("SELECT count(*) AS count FROM notification_outbox o JOIN project_activity_events a ON a.id = o.source_key WHERE o.event_type = 'project.activity.broad' AND a.event_type = 'project.checklist.schedule_changed' AND o.project_id = ?").bind(projectId).first<{ count: number }>())!.count;
+    const changed = await request(`/api/projects/${projectId}/subtasks/${item.id}`, "subtasks-editor-token", "PATCH", {
+      schedule: { expectedVersion: item.schedule.version, schedule: { state: "range", start: { kind: "timed", localCivil: "2026-08-18T13:30" }, end: { kind: "timed", localCivil: "2026-08-18T14:30" } } },
+    });
+    expect(changed.status).toBe(200);
+    expect(await changed.json()).toMatchObject({ schedule: { state: "range", version: 1, start: { localCivil: "2026-08-18T13:30" }, end: { localCivil: "2026-08-18T14:30" } } });
+    expect(await database.DB.prepare("SELECT due_reminder_sent_at FROM project_subtasks WHERE id = ?").bind(item.id).first()).toEqual({ due_reminder_sent_at: claimedAt });
+    expect((await database.DB.prepare("SELECT count(*) AS count FROM project_activity_events WHERE event_type = 'project.checklist.schedule_changed' AND project_id = ?").bind(projectId).first<{ count: number }>())!.count).toBe(activityBefore + 1);
+    expect((await database.DB.prepare("SELECT count(*) AS count FROM notification_outbox o JOIN project_activity_events a ON a.id = o.source_key WHERE o.event_type = 'project.activity.broad' AND a.event_type = 'project.checklist.schedule_changed' AND o.project_id = ?").bind(projectId).first<{ count: number }>())!.count).toBe(outboxBefore);
+  });
+
   it("resets a fold-only end claim without changing due_date or emitting a duplicate reminder", async () => {
     const firstMorning = Date.UTC(2026, 3, 4, 22);
     const created = await request(`/api/projects/${projectId}/subtasks`, "subtasks-editor-token", "POST", {

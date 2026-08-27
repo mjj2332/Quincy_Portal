@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { staffPathFor } from "./staff-routes";
+import { TB4D_SCHEDULE_ACTIVITY_CUTOVER_DATE } from "./checklist-schedule-config";
 
 export const PROJECT_ACTIVITY_SCHEMA_VERSION = 1 as const;
 export const PROJECT_ACTIVITY_SYSTEM_OUTBOX_ACTOR_ID = "00000000-0000-4000-8000-000000000000" as const;
@@ -183,7 +184,7 @@ export const PROJECT_ACTIVITY_REGISTRY = {
   "project.checklist.schedule_changed": live("checklist", "TB4D saveProjectSubtask", ["workers/app/src/lib/project-subtasks.ts#saveProjectSubtask"], "project_checklist", "project-checklist-schedule:<projectId>:<itemId>:version:<version>", "project_collaboration", payloadSchemas["project.checklist.schedule_changed"], { strategy: "leading_edge", keyShape: "project-checklist-schedule:<projectId>:<itemId>:<actorId>", windowSeconds: 300 }, "user", {
     cutoverOwner: "TB4D saveProjectSubtask",
     // Explicit TB4D cutover metadata; do not inherit the TB4C helper default.
-    cutoverDate: "2026-08-27",
+    cutoverDate: TB4D_SCHEDULE_ACTIVITY_CUTOVER_DATE,
     noBackfillNote: "TB4D has no checklist schedule history backfill; only post-cutover committed schedule winners emit this type.",
   }),
   "project.workflow.raw_ready": reserved("workflow", "future canonical workflow owner", "project_workflow", "project-workflow:<projectId>:raw-ready:<transitionId>", "project"),

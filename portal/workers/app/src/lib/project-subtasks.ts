@@ -139,23 +139,28 @@ function rawScheduleEqual(a: ChecklistScheduleStorage, b: ChecklistScheduleStora
   return SCHEDULE_KEYS.every((key) => a[key] === b[key]);
 }
 
+function scheduleEndpointEqual(left: ChecklistScheduleDto["start"], right: ChecklistScheduleDto["start"]): boolean {
+  if (!left || !right) return left === right;
+  return left.kind === right.kind && left.localCivil === right.localCivil && left.instant === right.instant && left.utcOffsetMinutes === right.utcOffsetMinutes && left.fold === right.fold;
+}
+
 function semanticScheduleEqual(a: ChecklistScheduleDto, b: ChecklistScheduleDto): boolean {
   if ((a.state === "legacy_unresolved") || (b.state === "legacy_unresolved") || a.state === "invalid" || b.state === "invalid") return false;
-  const endpointEqual = (left: typeof a.start, right: typeof b.start) => {
-    if (!left || !right) return left === right;
-    return left.kind === right.kind && left.localCivil === right.localCivil && left.instant === right.instant && left.utcOffsetMinutes === right.utcOffsetMinutes && left.fold === right.fold;
-  };
-  return a.state === b.state && a.due === b.due && endpointEqual(a.start, b.start) && endpointEqual(a.end, b.end);
+  return a.state === b.state && a.due === b.due && scheduleEndpointEqual(a.start, b.start) && scheduleEndpointEqual(a.end, b.end);
 }
 
 function scheduleDiff(current: ChecklistScheduleDto, next: ChecklistScheduleDto): { startChanged: boolean; endChanged: boolean } {
   const startChanged = current.state === "legacy_unresolved" || next.state === "legacy_unresolved"
     ? true
-    : JSON.stringify(current.start) !== JSON.stringify(next.start);
+    : !scheduleEndpointEqual(current.start, next.start);
   const endChanged = current.state === "legacy_unresolved" || next.state === "legacy_unresolved"
     ? true
-    : JSON.stringify(current.end) !== JSON.stringify(next.end) || current.due !== next.due;
+    : !scheduleEndpointEqual(current.end, next.end) || current.due !== next.due;
   return { startChanged, endChanged };
+}
+
+export function scheduleActivityBroadMode(endChanged: boolean): "emit" | "activity_only" {
+  return CHECKLIST_SCHEDULE_RANGES_ENABLED && endChanged ? "emit" : "activity_only";
 }
 
 function withVersion(value: NormalizedChecklistSchedule, scheduleVersion: number, startChanged: boolean, endChanged: boolean): NormalizedChecklistSchedule {
@@ -344,7 +349,7 @@ export async function saveProjectSubtask(input: SaveProjectSubtaskInput): Promis
     bundles.push({ bundle, offset: statements.length }); statements.push(...bundle.statements);
   }
   if (scheduleChanged && normalized) {
-    const bundle = buildProjectActivityStatements({ db: env.DB, intent: scheduleActivityFor(operation.subtaskId, projectId, principal.id, now, nextTitle, normalized.state, normalized.scheduleVersion), winnerAuditId: auditId, createdAt: now, broadMode: endChanged ? "emit" : "activity_only" });
+    const bundle = buildProjectActivityStatements({ db: env.DB, intent: scheduleActivityFor(operation.subtaskId, projectId, principal.id, now, nextTitle, normalized.state, normalized.scheduleVersion), winnerAuditId: auditId, createdAt: now, broadMode: scheduleActivityBroadMode(endChanged) });
     bundles.push({ bundle, offset: statements.length }); statements.push(...bundle.statements);
   }
   const results = await env.DB.batch(statements);

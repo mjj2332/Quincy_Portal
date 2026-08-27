@@ -947,9 +947,10 @@ noBackfillNote    TB4D has no checklist schedule history backfill; only post-cut
                   schedule winners emit this type.
 ```
 
-The release-preparation commit must replace `cutoverDate` with that reviewed deployment date before
-the write-enabled artifact is built; it must not inherit `"2026-08-27"` from the TB4C helper. The
-background and inert-app compatibility deploys are not the producer cutover.
+The shared `TB4D_SCHEDULE_ACTIVITY_CUTOVER_DATE` constant is initially a review marker (`2026-08-28`)
+and the release-preparation/deployment step must confirm or update it to the reviewed write-enabled
+production deployment date before that artifact is built; it must not inherit `"2026-08-27"` from the
+TB4C helper. The background and inert-app compatibility deploys are not the producer cutover.
 
 Payload schema is strict and bounded:
 

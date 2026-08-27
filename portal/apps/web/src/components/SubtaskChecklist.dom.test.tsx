@@ -1,8 +1,12 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { ApiError } from "../lib/api";
 import { scheduleReorderFocus, SubtaskChecklist } from "./SubtaskChecklist";
 import { reorderNeighbors } from "../lib/reorder-neighbors";
+import { ProjectQueryRuntime, ProjectQueryRuntimeProvider } from "../lib/project-query-sync";
+import { projectDataKeys } from "../lib/project-data";
 
 const confirmMock = vi.hoisted(() => vi.fn(() => Promise.resolve(true)));
 vi.mock("../lib/confirm", () => ({ confirm: confirmMock }));
@@ -53,6 +57,51 @@ describe("SubtaskChecklist", () => {
   it("keeps one Delete-only popover and restores deletion focus", async () => {
     const host = mount(); await render(); const first = item(host, "Call client"); const actions = first.querySelector<HTMLButtonElement>('[aria-label="Actions for Call client"]')!; await click(actions); const group = portal("subtask-popover-task-1-actions"); expect([...group.querySelectorAll("button")].map((button) => button.textContent)).toEqual(["Delete"]);
     confirmMock.mockResolvedValueOnce(false); await click(group.querySelector("button")!); expect(apiDeleteMock).not.toHaveBeenCalled(); expect(portal("subtask-popover-task-1-actions")).not.toBeNull(); await click(group.querySelector("button")!); await flush(); expect(apiDeleteMock).toHaveBeenCalledWith(`/api/projects/${projectId}/subtasks/task-1`); expect(document.activeElement).toBe(item(host, "Prepare files").querySelector(".subtask-checklist__title-trigger"));
+  });
+
+  it("removes a deleted item from the exact cache and broadcasts the committed resource", async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const runtime = new ProjectQueryRuntime(queryClient, "subtask-delete-test");
+    const publish = vi.spyOn(runtime, "publish");
+    queryClient.setQueryData(projectDataKeys.subtasks(projectId), [task, second]);
+    const host = mount();
+    await act(async () => { root!.render(<ProjectQueryRuntimeProvider runtime={runtime}><QueryClientProvider client={queryClient}><SubtaskChecklist projectId={projectId} /></QueryClientProvider></ProjectQueryRuntimeProvider>); await Promise.resolve(); await Promise.resolve(); });
+    await click(host.querySelector<HTMLButtonElement>('[aria-label="Actions for Call client"]')!);
+    await click(portal("subtask-popover-task-1-actions").querySelector("button")!);
+    await flush();
+    expect(queryClient.getQueryData<typeof task[]>(projectDataKeys.subtasks(projectId))?.map((entry) => entry.id)).toEqual(["task-2"]);
+    expect(publish).toHaveBeenCalledWith(expect.objectContaining({ type: "project-data-invalidated", projectId, resources: [{ kind: "subtasks" }] }));
+    runtime.dispose(); queryClient.clear();
+  });
+
+  it("shows the full authoritative item on an item conflict with explicit discard and reapply choices", async () => {
+    const host = mount(); await render();
+    const latest = { ...task, title: "Authoritative title", done: true, assignee: { id: "user-3", name: "Ada Smith" }, schedule: { state: "due_only", version: 2, zone: "Australia/Sydney", start: null, end: { kind: "date", localCivil: `${year}-06-10`, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" }, due: `${year}-06-10` } };
+    apiPatchMock.mockRejectedValueOnce(new ApiError("Checklist item changed", 409, { code: "subtask_item_conflict", current: latest.schedule, currentSubtask: latest }));
+    await click(item(host, "Call client").querySelector<HTMLButtonElement>('[aria-label="Schedule for Call client"]')!);
+    const draft = portal("subtask-popover-task-1-schedule"); await typeInto(draft.querySelector<HTMLInputElement>('input[type="date"]')!, `${year}-06-20`); await click(draft.querySelector<HTMLButtonElement>(".button")!);
+    await flush();
+    await click(item(host, "Call client").querySelector<HTMLButtonElement>('[aria-label="Schedule for Call client"]')!);
+    const conflict = portal("subtask-popover-task-1-schedule");
+    expect(conflict.querySelector<HTMLInputElement>('input[type="date"]')?.value).toBe(`${year}-06-20`); expect(conflict.textContent).toContain("Authoritative title"); expect(conflict.textContent).toContain("Complete"); expect(conflict.textContent).toContain("Ada Smith"); expect(conflict.textContent).toContain("Use latest item (discard draft)"); expect(conflict.textContent).toContain("Save reapplies your retained schedule draft; Cancel discards it.");
+    await click([...conflict.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Use latest item (discard draft)")!); expect(item(host, "Authoritative title")).not.toBeNull();
+  });
+
+  it("preserves an open schedule draft when a late authoritative refresh arrives", async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const runtime = new ProjectQueryRuntime(queryClient, "subtask-refresh-test");
+    queryClient.setQueryData(projectDataKeys.subtasks(projectId), [task, second]);
+    const host = mount();
+    await act(async () => { root!.render(<ProjectQueryRuntimeProvider runtime={runtime}><QueryClientProvider client={queryClient}><SubtaskChecklist projectId={projectId} /></QueryClientProvider></ProjectQueryRuntimeProvider>); await Promise.resolve(); await Promise.resolve(); });
+    const schedule = item(host, "Call client").querySelector<HTMLButtonElement>('[aria-label="Schedule for Call client"]')!;
+    await click(schedule);
+    const editor = portal("subtask-popover-task-1-schedule"); const state = editor.querySelector<HTMLSelectElement>("select")!;
+    state.value = "due_only"; state.dispatchEvent(new Event("change", { bubbles: true }));
+    await typeInto(editor.querySelector<HTMLInputElement>('input[type="date"]')!, `${year}-06-15`);
+    queryClient.setQueryData(projectDataKeys.subtasks(projectId), [{ ...task, title: "Late authoritative title", dueDate: `${year}-07-01` }, second]);
+    await flush();
+    expect(portal("subtask-popover-task-1-schedule").querySelector<HTMLInputElement>('input[type="date"]')?.value).toBe(`${year}-06-15`);
+    runtime.dispose(); queryClient.clear();
   });
 
   it("uses one canonical schedule POST from the compact composer and preserves a failed draft", async () => {

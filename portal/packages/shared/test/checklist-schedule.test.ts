@@ -30,6 +30,9 @@ describe("TB4D checklist schedule resolver and discriminator", () => {
     const corpus = [
       "2026-08-27T09:15",
       "1894-01-01T12:00", // Sydney LMT (+10:04:52) boundary
+      // Sydney's 1895 transition rounds LMT to +604 minutes before moving
+      // back to +600; these minutes exercise both sides of that short fold.
+      ...["23:55", "23:56", "23:57", "23:58", "23:59"].map((time) => `1895-01-31T${time}`),
       "0999-01-01T12:00", // Intl's unpadded-year compatibility boundary
       "9999-12-31T23:59", // far-future transition-free date
       ...["2026-10-04", "2026-04-05"].flatMap((date) => Array.from({ length: 5 * 60 }, (_, index) => {

@@ -26,6 +26,9 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
   three-app rollout (background consumer → tested inert `tb4d-inert-rollback` app → write-enabled
   app) because a pre-TB4D app is never a valid rollback after `0035`. Not built, committed, or
   deployed yet. ~3 Codex credit exhaustions + 1 Claude session-limit hit across the plan pipeline.
+  Before the write-enabled deployment, verify/update the shared `TB4D_SCHEDULE_ACTIVITY_CUTOVER_DATE`
+  marker to the actual production deploy date; record the dueDate-adapter sunset in this file at
+  that closeout.
 - **TB4C (Editor-Wide Project-Change Notifications — one immutable safe activity event per
   approved semantic project change, delivered as one durable in-app broad alert per eligible
   active assigned Editor via TB4's outbox/Queue/ledger) is deployed to production, 2026-08-27**
