@@ -7,7 +7,106 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
 > counts, full diagnostic transcripts) has been cut in favor of what/when/deploy-state. See
 > `docs/lessons.md` for incident mechanics, and `docs/reviews/` for full QA-sweep detail.
 
-## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29, seed-admin UUID migration 2026-07-29, notification dismiss + stalled-guard 2026-07-30, download selection 2026-08-04, notice-board rich text + mentions 2026-08-17, project comments + collaboration panel 2026-08-17, project subtasks/checklist 2026-08-17, collaboration panel relocated to Project page 2026-08-17, collaboration panel UI fixes + due-time reminder 2026-08-17, notification click navigation 2026-08-17, comment ordering + Shift+Enter soft breaks 2026-08-17, mention-email content 2026-08-20, TB0 authority promotion 2026-08-24, TB0A React 19.2 deployed + accepted 2026-08-25, TB0B pipeline configuration boundary deployed 2026-08-24, TB1 Tailwind v4/shadcn foundation deployed 2026-08-25, TB2 route-safe project data freshness deployed 2026-08-25, TB3 project discussion v2 deployed 2026-08-25, TB4 notification outbox deployed 2026-08-26, confirmation modal + admin user impersonation deployed 2026-08-26, TB4A project workspace assignment rail deployed 2026-08-27)
+## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29, seed-admin UUID migration 2026-07-29, notification dismiss + stalled-guard 2026-07-30, download selection 2026-08-04, notice-board rich text + mentions 2026-08-17, project comments + collaboration panel 2026-08-17, project subtasks/checklist 2026-08-17, collaboration panel relocated to Project page 2026-08-17, collaboration panel UI fixes + due-time reminder 2026-08-17, notification click navigation 2026-08-17, comment ordering + Shift+Enter soft breaks 2026-08-17, mention-email content 2026-08-20, TB0 authority promotion 2026-08-24, TB0A React 19.2 deployed + accepted 2026-08-25, TB0B pipeline configuration boundary deployed 2026-08-24, TB1 Tailwind v4/shadcn foundation deployed 2026-08-25, TB2 route-safe project data freshness deployed 2026-08-25, TB3 project discussion v2 deployed 2026-08-25, TB4 notification outbox deployed 2026-08-26, confirmation modal + admin user impersonation deployed 2026-08-26, TB4A project workspace assignment rail deployed 2026-08-27, TB4B project deadline and reminders deployed 2026-08-27)
+
+- **TB4B (Project Deadline, Reminders and Kanban Due Metadata — one nullable versioned
+  Sydney-civil project Deadline with bounded advance reminders, delivered through TB4's durable
+  outbox as a third event type) is deployed to production, 2026-08-27**
+  (`docs/plans/implemented/Revamp-TB4B-Project-Deadline-And-Reminders-Plan.md`, build commit
+  `dba2e40` + this documentation commit, background Worker version
+  `2668a652-dca8-4a24-a2c8-f0b712b8ff0f`, app Worker version
+  `15b45ad1-620d-4c00-94e2-1b27484d29a0`, rollback targets `c236a205-ab55-4ac6-8a04-97e2a867bd12`
+  (background) / `8af4bcf9-903e-4d3b-9979-eab34e4f70dc` (app) — TB4A's versions).
+  Adds one nullable, versioned project Deadline (civil `YYYY-MM-DDTHH:mm` + IANA zone + resolved
+  UTC offset + fold + UTC instant + `deadline_version`) independent of Shoot and checklist dates,
+  a shared DST-aware Sydney civil-time resolver in `@quincy/shared` (gap → `400
+  deadline_nonexistent_local_time`, repeated → `400 deadline_repeated_local_time` with
+  Earlier/Later choices; advance offsets are absolute-duration subtractions, so a "1 day" reminder
+  can land at a different Sydney wall-clock hour across a DST transition), and one combined
+  set/edit/clear/resume domain command (`PUT /api/projects/:id/deadline`) authorized by
+  `editProject` with optimistic version-conflict handling (`409 deadline_version_conflict`, draft
+  retained, explicit review/reapply — no silent overwrite). The versioned save uses a guarded
+  project update → adjacent `changes()=1` audit marker → marker-gated occurrence/delivery writes,
+  so a concurrent different-schedule loser leaves zero downstream footprint. Materialized
+  `project_deadline_occurrences` history (presets 1 day / 4 hours / 1 hour, custom 1 min–30 days,
+  ≤8 advance offsets, implicit mandatory Due-now; elapsed advances at save → terminal
+  `skipped/elapsed_at_save`; a structural `CHECK (fire_at = deadline_at - offset*60000)`),
+  scanned every minute by a new background Cron trigger `* * * * *` (added beside the retained
+  `0 * * * *`; the scheduled handler now branches on `controller.cron` and wraps every individual
+  job — minute and hourly — in its own `try/catch`). The fire batch mirrors the save pattern:
+  guarded occurrence claim → adjacent `changes()=1` fire-audit marker → marker-gated
+  outbox/ledger fan-out that resolves eligible active `editor` membership cycles (exact
+  `project_members.id`, `created_at <= fired_at`, active + `isProjectAssignmentEligible`) inside
+  the SQL, with same-batch lazy terminalization of guard-stale due rows. Delivery reuses TB4's
+  event-dispatched consumer unchanged — a third `project.deadline.reminder` branch in
+  `resolveRecipient()` plus an atomic per-channel authorization/admission batch that re-evaluates
+  membership/account/preference inside the guarded `pending → processing` transition; an admitted
+  email is never retroactively reclassified. Archive suppression is atomic in the archive D1
+  batch (`superseded/project_archived`); Delivered-entry suppression is a best-effort
+  own-result-gated post-success hook (`superseded/project_delivered`) backstopped by scan-time
+  lazy terminalization, with explicit Resume required after leave/restore. Adds personal
+  Notification Preferences (`/settings/notifications`, self-only `GET`/`PATCH
+  /api/notification-preferences`, one default-on "Project deadline reminder emails" toggle;
+  in-app always mandatory), a read-only Admin `preference_suppressed` delivery-ops view, and
+  Kanban Deadline/overdue card metadata replacing the card-level RAW count (List row RAW count
+  untouched). Migration `0033_project_deadline_and_reminders.sql` — strictly additive: 7 bare
+  `ALTER TABLE ADD COLUMN` on `projects` (6 nullable + `deadline_version NOT NULL DEFAULT 0`),
+  new `project_deadline_occurrences` + `notification_preferences` tables, one
+  `notification_outbox` index — no table rebuild (avoids the migration-0020 D1 failure mode).
+  Constructs one typed `ProjectDeadlineScheduleEventIntent` (`project.deadline.schedule_changed`)
+  per state-changing save but does not persist/deliver broad activity — TB4C owns that seam.
+  Plan review: 2 Sol rounds + fix passes, 2 Opus plan-tier reverts + fix passes, Opus final
+  approval. Build: Luna built it; independent verification outside Luna's sandbox after every
+  round (Luna cannot run the Wrangler/Miniflare Worker suites at all). Real defects found and
+  fixed: a version-conflict transaction with no atomic winner marker; a delivery-suppression race
+  that could falsify an already-admitted email's outcome; Delivered-transition suppression
+  originally specified against a D1 batch that doesn't exist in the real Stage-transition code
+  (resolved as an explicit best-effort hook + lazy scan-time backstop, distinct from archive's
+  genuinely atomic suppression); a rollback plan that didn't account for the new Cron trigger
+  being a Worker script-level setting rather than something carried inside a Worker version; three
+  new request-owned audit writes that dropped admin-impersonation provenance; a destructive
+  "Reload latest" conflict-resolution control; an arithmetically wrong DST test fixture caught on
+  the final review pass. Four Codex-credit-exhaustion interruptions mid-review, each resumed
+  cleanly. Full verify sequence green throughout and independently re-run at deploy: typecheck (6
+  workspaces), `apps/web` build, `apps/web` 412 tests, `workers/app` 220 tests/1 skipped,
+  `workers/background` 231 tests, `packages/db` 44 tests, `packages/shared` 68 tests,
+  `webhook-ingress` 13 tests (unaffected, not redeployed) — 989 total. Migration proof: applied to
+  an isolated scratch SQLite instance outside any test framework — clean apply, `PRAGMA
+  foreign_key_check` empty, `PRAGMA quick_check` ok, the structural `fire_at` CHECK correctly
+  rejects a bad value, and all three real query shapes confirmed via `EXPLAIN QUERY PLAN` to use
+  their intended covering indexes. Production: rollback targets/preflight recorded, pre-migration
+  remote D1 recovery export saved to `../db-recovery/quincy-portal-before-tb4b-20260827T033801Z.sql`
+  (13.3 MB, sha256 `3036281e25c0e9399a7f451cdda42f5b3594277ab9b748767012c5fe814e2696`); remote
+  `d1_migrations` tail confirmed `0032` before apply; `0033` applied cleanly; postflight confirmed
+  7 columns + 2 tables + index, FK check empty, quick_check ok, all 73 existing projects
+  unset/version 0 with no backfill, 0 occurrence/preference rows. Deploy order `background → app`
+  (webhook-ingress unchanged, not redeployed). Cron monitored via `wrangler tail` for ~20 min: 19
+  consecutive every-minute ticks + the 04:00 UTC hourly boundary all `ok`, zero exceptions —
+  minute trigger ran only `scanProjectDeadlineOccurrences` + `recoverNotificationOutbox` (both
+  `0`), hourly trigger ran only its 4 jobs; `notification_outbox` stayed 9 rows all `completed`,
+  0 DLQ, so the new every-minute `recoverNotificationOutbox()` cadence isn't disturbing live
+  mention/assignment traffic. Passive production verification (this session's Browser pane +
+  Luna danger-mode, zero mutations confirmed via 0 audit_log rows in the window + impersonation
+  flag still OFF): dashboard clean, Kanban card RAW count removed / List RAW count retained /
+  priority+drag intact, rail renders the new single Deadline control (`Not set` / `Next reminder
+  None` / `Set Deadline` for Admin), `/settings/notifications` renders the exact toggle
+  (desktop + mobile surfaces) with `GET /api/notification-preferences` → 200, Admin `Preference
+  suppressed (0)` filter present and safe, bell opens. Local mutating QA against
+  `http://localhost:8787` (Luna items 1–6 + this session driving the Browser pane for items
+  7–13, after a human sign-in): DST matrix incl. the exact `2026-10-04T09:00` Sydney fixture
+  (advance `fire_at` = `2026-10-02T22:00:00.000Z`, offset +660 → displayed +600) verified to the
+  millisecond; set/presets/edit/clear with correct terminal reasons and retained history;
+  version-conflict 409 with zero occurrence/audit/outbox footprint; Delivered → `409
+  deadline_project_delivered` + rail hides controls; leave Delivered → synchronous
+  `superseded/project_delivered` + "Reminders inactive" + explicit Resume (no auto-resume);
+  Resume → new version + fresh pending occurrences; archive → atomic `superseded/project_archived`
+  in the archive batch + `409 deadline_project_archived`; read-only rail — impersonated
+  photographer `PUT /deadline` → `403 editProject` (refused server-side) while `GET` still
+  returns the schedule; Kanban future/overdue/unset card labels correct. **Residual QA gap**
+  (tracked below): the fire → outbox → in-app/email delivery half is not locally exercisable (no
+  local background Worker; covered by the `workers/background` automated suite), and a full
+  keyboard-only accessibility sweep of the editor/preferences/conflict flow was not completed
+  live.
 
 - **TB4A (Project Workspace Assignment Rail — role-scoped photographer/editor membership
   routes replacing full-roster project PATCH) is deployed to production, 2026-08-27**
@@ -655,6 +754,17 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
 
 ## Waiting on user / external
 
+- [ ] **TB4B residual QA** (`docs/plans/implemented/Revamp-TB4B-Project-Deadline-And-Reminders-Plan.md`'s
+  "Manual QA matrix"): the fire → outbox → in-app/email **delivery** half of items 4/6/7/8/9 is not
+  locally exercisable (no local background Worker — the app Worker's `BACKGROUND` binding is
+  `[not connected]` under `wrangler dev`), and is covered instead by the `workers/background`
+  automated suite (231 tests) and the passive production Cron monitoring in the TB4B entry above.
+  Item 13's full keyboard-only accessibility sweep of the Deadline editor / preferences / conflict
+  flow was not completed live (the inline editor uses an explicit Cancel button and does not
+  dismiss on Escape — noted, not a defect). Everything else in the matrix (save-side occurrence
+  materialization, DST, conflict, Delivered/archive/Resume lifecycle, read-only rail, Kanban) was
+  verified locally — see the TB4B entry. No mutating walkthrough was performed against production
+  per `docs/Subagent-Orchestration.md` §2.9.
 - [ ] **TB4A local mutating QA matrix** (`docs/plans/implemented/
   Revamp-TB4A-Project-Workspace-Assignment-Rail-Plan.md`'s "Manual local browser QA matrix", 11
   items): idempotent/concurrent add, independent dual-role removal, final-role checklist cleanup
