@@ -86,7 +86,7 @@ describe("migration 0034 project activity events", () => {
     const migration = readFileSync(new URL("../migrations/0034_project_activity_events.sql", import.meta.url), "utf8");
     const journal = JSON.parse(readFileSync(new URL("../migrations/meta/_journal.json", import.meta.url), "utf8")) as { entries: Array<{ idx: number; tag: string }> };
     const snapshot = JSON.parse(readFileSync(new URL("../migrations/meta/0034_snapshot.json", import.meta.url), "utf8")) as { version: string; tables: Record<string, unknown> };
-    expect(journal.entries.at(-1)).toMatchObject({ idx: 34, tag: "0034_project_activity_events" });
+    expect(journal.entries.find((entry) => entry.idx === 34)).toMatchObject({ idx: 34, tag: "0034_project_activity_events" });
     expect(snapshot.tables).toHaveProperty("project_activity_events");
     expect(snapshot.tables).toHaveProperty("notification_outbox");
     expect(migration).not.toMatch(/__new_|DROP TABLE|PRAGMA foreign_keys|INSERT INTO\s+projects|UPDATE\s+projects/i);

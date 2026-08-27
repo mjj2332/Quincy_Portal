@@ -25,9 +25,18 @@ export async function hasProjectAccess(c: { env: AppEnv["Bindings"]; get: (key: 
  * explicit project_members row, regardless of role or pipeline stage.
  */
 export async function hasProjectCollaborationAccess(c: { env: AppEnv["Bindings"]; get: (key: "user") => AppEnv["Variables"]["user"] }, projectId: string) {
-  const currentUser = c.get("user");
-  if (currentUser.role === "admin" && currentUser.active) return true;
-  const db = createDb(c.env.DB);
+  return hasProjectCollaborationAccessForUser(c.env, c.get("user"), projectId);
+}
+
+/** Context-free collaboration guard for route-independent commands. */
+export async function hasProjectCollaborationAccessForUser(
+  env: AppEnv["Bindings"],
+  currentUser: Pick<SessionUser, "id" | "role" | "active">,
+  projectId: string,
+) {
+  if (currentUser.active !== true) return false;
+  if (currentUser.role === "admin") return true;
+  const db = createDb(env.DB);
   return Boolean(await db.select({ id: schema.projectMembers.id }).from(schema.projectMembers)
     .where(and(eq(schema.projectMembers.projectId, projectId), eq(schema.projectMembers.userId, currentUser.id))).get());
 }

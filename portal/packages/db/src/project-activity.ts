@@ -23,6 +23,7 @@ type AppendProjectActivityInput = {
   winnerAuditId: string;
   excludeRecipientId?: string;
   createdAt?: number;
+  broadMode?: "emit" | "activity_only";
 };
 
 function uuidSql(): string {
@@ -30,7 +31,8 @@ function uuidSql(): string {
   return "lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' || substr(lower(hex(randomblob(2))), 2) || '-8' || substr(lower(hex(randomblob(2))), 2) || '-' || lower(hex(randomblob(6)))";
 }
 
-function broadOutboxSql(coalesce: ReturnType<typeof projectActivityCoalesce>, roles: readonly string[], excludeRecipientId?: string): string {
+function broadOutboxSql(coalesce: ReturnType<typeof projectActivityCoalesce>, roles: readonly string[], excludeRecipientId?: string, broadMode: "emit" | "activity_only" = "emit"): string {
+  if (broadMode === "activity_only") return "SELECT id FROM notification_outbox WHERE 0";
   const exclude = excludeRecipientId === undefined ? "" : " AND recipient.id <> ?";
   const prior = coalesce
     ? `
@@ -104,7 +106,7 @@ export function buildProjectActivityStatements(input: AppendProjectActivityInput
     activity.deepLink.path, createdAt, input.winnerAuditId,
   );
   const eligibleRoles = PROJECT_ASSIGNMENT_ELIGIBLE_ROLES.editor;
-  const broadOutbox = input.db.prepare(broadOutboxSql(coalesce, eligibleRoles, input.excludeRecipientId)).bind(
+  const broadBindings = input.broadMode === "activity_only" ? [] : [
     NOTIFICATION_OUTBOX_EVENT_TYPES.projectActivityBroad,
     actorId,
     NOTIFICATION_OUTBOX_EVENT_TYPES.projectActivityBroad,
@@ -118,7 +120,8 @@ export function buildProjectActivityStatements(input: AppendProjectActivityInput
     ...eligibleRoles,
     ...(input.excludeRecipientId === undefined ? [] : [input.excludeRecipientId]),
     ...(coalesce ? [NOTIFICATION_OUTBOX_EVENT_TYPES.projectActivityBroad, coalesce.key, 300_000] : []),
-  );
+  ];
+  const broadOutbox = input.db.prepare(broadOutboxSql(coalesce, eligibleRoles, input.excludeRecipientId, input.broadMode)).bind(...broadBindings);
   const ledger = input.db.prepare(`
     INSERT INTO notification_delivery_ledger (
       id, outbox_id, event_type, source_key, recipient_id, channel, status, created_at, updated_at

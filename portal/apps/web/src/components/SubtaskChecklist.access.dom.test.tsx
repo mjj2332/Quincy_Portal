@@ -19,7 +19,7 @@ let queryClient: QueryClient | null = null;
 let runtime: ProjectQueryRuntime | null = null;
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-async function flush() { await act(async () => { await Promise.resolve(); await Promise.resolve(); }); }
+async function flush() { await act(async () => { await Promise.resolve(); await Promise.resolve(); await new Promise((resolve) => setTimeout(resolve, 0)); }); }
 
 afterEach(async () => {
   if (root) await act(async () => { root!.unmount(); await Promise.resolve(); });
@@ -36,7 +36,7 @@ describe("SubtaskChecklist access-generation boundary", () => {
       ? new Promise<{ users: Array<{ id: string; name: string; role: "editor" }> }>((resolve) => { resolveUsers = resolve; })
       : Promise.resolve({ subtasks: [task] }));
     host = document.createElement("div"); document.body.append(host); root = createRoot(host);
-    await act(async () => { root!.render(<ProjectQueryRuntimeProvider runtime={runtime!}><QueryClientProvider client={queryClient!}><SubtaskChecklist projectId={projectId} /></QueryClientProvider></ProjectQueryRuntimeProvider>); await Promise.resolve(); await Promise.resolve(); });
+    await act(async () => { root!.render(<ProjectQueryRuntimeProvider runtime={runtime!}><QueryClientProvider client={queryClient!}><SubtaskChecklist projectId={projectId} /></QueryClientProvider></ProjectQueryRuntimeProvider>); await Promise.resolve(); await Promise.resolve(); }); await flush();
     expect(host.textContent).toContain("Prepare delivery");
     if (status === 401) await clearPrincipalProjectData(queryClient);
     else await purgeProjectCollaborationData(queryClient, projectId);
@@ -56,7 +56,7 @@ describe("SubtaskChecklist access-generation boundary", () => {
       ? Promise.resolve({ users: [] })
       : new Promise<{ subtasks: typeof task[] }>((resolve) => { resolveChecklist = resolve; }));
     host = document.createElement("div"); document.body.append(host); root = createRoot(host);
-    await act(async () => { root!.render(<ProjectQueryRuntimeProvider runtime={runtime!}><QueryClientProvider client={queryClient!}><SubtaskChecklist projectId={projectId} /></QueryClientProvider></ProjectQueryRuntimeProvider>); await Promise.resolve(); await Promise.resolve(); });
+    await act(async () => { root!.render(<ProjectQueryRuntimeProvider runtime={runtime!}><QueryClientProvider client={queryClient!}><SubtaskChecklist projectId={projectId} /></QueryClientProvider></ProjectQueryRuntimeProvider>); await Promise.resolve(); await Promise.resolve(); }); await flush();
     if (status === 401) await clearPrincipalProjectData(queryClient);
     else await purgeProjectCollaborationData(queryClient, projectId);
     resolveChecklist({ subtasks: [task] });

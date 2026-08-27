@@ -258,18 +258,18 @@ describe("ProjectCollaborationPanel", () => {
     const input = host.querySelector<HTMLInputElement>(".subtask-checklist__title")!; input.focus(); await act(async () => { input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await Promise.resolve(); });
     expect(host.querySelector(".project-collaboration")).toBe(panel); expect(host.querySelector(".subtask-checklist__title-trigger")).not.toBeNull();
     const dispatchEscape = async (element: Element) => { const event = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }); await act(async () => { element.dispatchEvent(event); await Promise.resolve(); }); expect(event.defaultPrevented).toBe(true); expect(host.querySelector(".project-collaboration")).toBe(panel); };
-    for (const label of ["Due date for Call client", "Assignee for Call client", "Actions for Call client"] as const) {
+    for (const label of ["Schedule for Call client", "Assignee for Call client", "Actions for Call client"] as const) {
       const trigger = host.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`); expect(trigger, host.innerHTML).not.toBeNull(); await click(trigger!);
       const focused = label.startsWith("Assignee") ? document.querySelector<HTMLInputElement>('input[type="search"]')! : trigger;
       await dispatchEscape(focused!);
-      expect(document.getElementById(`subtask-popover-task-1-${label.startsWith("Due") ? "due" : label.startsWith("Assignee") ? "assignee" : "actions"}`)).toBeNull();
+      expect(document.getElementById(`subtask-popover-task-1-${label.startsWith("Schedule") ? "schedule" : label.startsWith("Assignee") ? "assignee" : "actions"}`)).toBeNull();
     }
     await click(host.querySelector<HTMLButtonElement>(`#subtask-add-${projectId}`)!);
     const composer = host.querySelector<HTMLInputElement>(`#subtask-composer-${projectId}`)!;
-    for (const label of ["Due date for new subtask", "Assignee for new subtask"] as const) {
+    for (const label of ["Schedule for new subtask", "Assignee for new subtask"] as const) {
       const trigger = host.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`)!; await click(trigger);
       await dispatchEscape(label.startsWith("Assignee") ? document.querySelector<HTMLInputElement>('input[type="search"]')! : trigger);
-      expect(document.getElementById(`subtask-popover-composer-${label.startsWith("Due") ? "due" : "assignee"}`)).toBeNull();
+      expect(document.getElementById(`subtask-popover-composer-${label.startsWith("Schedule") ? "schedule" : "assignee"}`)).toBeNull();
       expect(host.querySelector(`#subtask-composer-${projectId}`)).toBe(composer);
     }
     await dispatchEscape(composer); expect(host.querySelector(`#subtask-composer-${projectId}`)).toBeNull();

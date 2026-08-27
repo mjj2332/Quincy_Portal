@@ -80,6 +80,7 @@ const payloadSchemas = {
   "project.checklist.item_created": z.object({ itemId: identifier, checklistTitle }).strict(),
   "project.checklist.item_updated": z.object({ itemId: identifier, checklistTitle, changes: z.array(z.enum(["title", "completion", "assignee"])).min(1).max(3).refine((changes) => new Set(changes).size === changes.length, "Checklist changes must be unique") }).strict(),
   "project.checklist.item_deleted": z.object({ itemId: identifier, checklistTitle }).strict(),
+  "project.checklist.schedule_changed": z.object({ itemId: identifier, checklistTitle, scheduleState: z.enum(["unscheduled", "due_only", "range"]), version: z.number().int().min(1) }).strict(),
   "project.comment.created": z.object({ commentId: identifier }).strict(),
   "project.comment.edited": z.object({ commentId: identifier }).strict(),
   "project.comment.deleted": z.object({ commentId: identifier }).strict(),
@@ -91,7 +92,6 @@ const payloadSchemas = {
   "project.workflow.manual_edited_ready": z.object({ collectionKind: z.literal("edited"), count: z.literal(1) }).strict(),
   "project.collection.raw_sync_completed": z.object({ collectionKind: z.literal("raw"), importedCount: z.number().int().min(1).max(100_000) }).strict(),
   "project.stage.changed": emptyPayload,
-  "project.checklist.schedule_changed": emptyPayload,
   "project.workflow.raw_ready": emptyPayload,
   "project.workflow.sent_to_editing": emptyPayload,
   "project.workflow.edited_ready": emptyPayload,
@@ -135,12 +135,13 @@ const live = (
   payloadSchema: z.ZodTypeAny,
   coalescing: RegistryEntry["coalescing"] = null,
   actorRule: ActorKind = "user",
+  metadata: Partial<Pick<RegistryEntry, "cutoverOwner" | "cutoverDate" | "noBackfillNote">> = {},
 ): RegistryEntry => ({
   schemaVersion: 1, category, producerOwner, producerCallSites, sourceKind, sourceKeyShape, actorRule,
   actorRecipientRule: "eligible_editor_membership_only", payloadSchema, deepLinkKind, coalescing,
   channels: ["in_app"], emailDefault: "off", audience: "internal", externalProjection: "pending",
-  cutover: "live", cutoverOwner: producerOwner, cutoverDate: "2026-08-27", backfill: "none",
-  noBackfillNote: "TB4C has no history backfill; only committed semantic winners emit this type.",
+  cutover: "live", cutoverOwner: metadata.cutoverOwner ?? producerOwner, cutoverDate: metadata.cutoverDate ?? "2026-08-27", backfill: "none",
+  noBackfillNote: metadata.noBackfillNote ?? "TB4C has no history backfill; only committed semantic winners emit this type.",
 });
 
 const reserved = (
@@ -179,7 +180,12 @@ export const PROJECT_ACTIVITY_REGISTRY = {
   "project.workflow.manual_edited_ready": live("review_workflow", "manual edited publication workflow", ["workers/background/src/workflows/manual-edited-publish.ts"], "project_manual_edited", "project-manual-edited:<jobId>:<assetId>:ready", "project", payloadSchemas["project.workflow.manual_edited_ready"], null, "system"),
   "project.collection.raw_sync_completed": live("collection_delivery", "RAW Dropbox reconciliation", ["workers/background/src/dropbox/sync.ts#claim-completion"], "project_raw_sync", "project-raw-sync:<claimId>:completed", "project", payloadSchemas["project.collection.raw_sync_completed"], null, "system"),
   "project.stage.changed": reserved("stage", "future canonical Stage owner", "project_stage", "project-stage:<projectId>:<transitionId>", "project"),
-  "project.checklist.schedule_changed": reserved("checklist", "TB4D checklist scheduler", "project_checklist", "project-checklist-schedule:<projectId>:<itemId>:<actorId>", "project_collaboration", emptyPayload, { strategy: "leading_edge", keyShape: "project-checklist-schedule:<projectId>:<itemId>:<actorId>", windowSeconds: 300 }),
+  "project.checklist.schedule_changed": live("checklist", "TB4D saveProjectSubtask", ["workers/app/src/lib/project-subtasks.ts#saveProjectSubtask"], "project_checklist", "project-checklist-schedule:<projectId>:<itemId>:version:<version>", "project_collaboration", payloadSchemas["project.checklist.schedule_changed"], { strategy: "leading_edge", keyShape: "project-checklist-schedule:<projectId>:<itemId>:<actorId>", windowSeconds: 300 }, "user", {
+    cutoverOwner: "TB4D saveProjectSubtask",
+    // Explicit TB4D cutover metadata; do not inherit the TB4C helper default.
+    cutoverDate: "2026-08-27",
+    noBackfillNote: "TB4D has no checklist schedule history backfill; only post-cutover committed schedule winners emit this type.",
+  }),
   "project.workflow.raw_ready": reserved("workflow", "future canonical workflow owner", "project_workflow", "project-workflow:<projectId>:raw-ready:<transitionId>", "project"),
   "project.workflow.sent_to_editing": reserved("workflow", "future canonical workflow owner", "project_workflow", "project-workflow:<projectId>:sent-to-editing:<transitionId>", "project"),
   "project.workflow.edited_ready": reserved("workflow", "future canonical workflow owner", "project_workflow", "project-workflow:<projectId>:edited-ready:<transitionId>", "project"),
@@ -265,7 +271,10 @@ function sourceKeyMatches(type: ProjectActivityType, sourceId: string, key: stri
     }
     case "project.collection.raw_sync_completed": return exact("project-raw-sync:", ":completed");
     case "project.stage.changed": return key.startsWith("project-stage:");
-    case "project.checklist.schedule_changed": return key.startsWith("project-checklist-schedule:");
+    case "project.checklist.schedule_changed": {
+      const match = /^project-checklist-schedule:([^:]+):([^:]+):version:(\d+)$/.exec(key);
+      return Boolean(match && match[2] === sourceId && Number(match[3]) >= 1);
+    }
     case "project.workflow.raw_ready":
     case "project.workflow.sent_to_editing":
     case "project.workflow.edited_ready":
@@ -278,6 +287,15 @@ function parseOccurredAt(value: unknown): number | null {
   if (typeof value !== "string") return null;
   const date = new Date(value);
   return Number.isFinite(date.valueOf()) && date.toISOString() === value ? date.getTime() : null;
+}
+
+function scheduleSourceIdentityMatches(projectId: string, sourceId: string, key: string, payload: unknown): boolean {
+  const match = /^project-checklist-schedule:([^:]+):([^:]+):version:(\d+)$/.exec(key);
+  if (!match || match[1] !== projectId || match[2] !== sourceId) return false;
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return false;
+  const value = payload as Record<string, unknown>;
+  return value.itemId === sourceId && typeof value.version === "number" && Number.isSafeInteger(value.version)
+    && value.version >= 1 && String(value.version) === match[3];
 }
 
 export function projectActivityCoalesce(type: ProjectActivityType, projectId: string, actorId: string | null, payload?: unknown): ProjectActivityCoalescing {
@@ -316,6 +334,7 @@ export function parseProjectActivityIntent(value: unknown): ParsedProjectActivit
   if (sourceRecord.kind !== entry.sourceKind || typeof sourceRecord.id !== "string" || !sourceRecord.id || typeof sourceRecord.key !== "string" || !sourceRecord.key || !sourceKeyMatches(typed, sourceRecord.id, sourceRecord.key)) return null;
   const safePayload = entry.payloadSchema.safeParse(activity.safePayload);
   if (!safePayload.success || JSON.stringify(safePayload.data).length > 4_096) return null;
+  if (typed === "project.checklist.schedule_changed" && !scheduleSourceIdentityMatches(activity.projectId, sourceRecord.id, sourceRecord.key, safePayload.data)) return null;
   const deepLink = activity.deepLink;
   const expected = expectedDeepLink(typed, activity.projectId);
   if (!deepLink || typeof deepLink !== "object" || Array.isArray(deepLink) || (deepLink as Record<string, unknown>).kind !== expected.kind || (deepLink as Record<string, unknown>).path !== expected.path) return null;
@@ -409,8 +428,8 @@ export function renderProjectActivityNotification(
     case "project.collection.document_completed": return { title: "Document upload completed", body: `${actor}${projectLabel} copy or floorplan upload completed.` };
     case "project.workflow.manual_edited_ready": return { title: "Edited media is ready", body: `${actor}${projectLabel} edited media is ready.` };
     case "project.collection.raw_sync_completed": return { title: "RAW import completed", body: `${actor}${projectLabel} RAW import completed (${String(safe.importedCount ?? 0)} items).` };
+    case "project.checklist.schedule_changed": return { title: "Checklist schedule updated", body: `${actor}Checklist “${String(safe.checklistTitle ?? "item")}” schedule was updated.` };
     case "project.stage.changed":
-    case "project.checklist.schedule_changed":
     case "project.workflow.raw_ready":
     case "project.workflow.sent_to_editing":
     case "project.workflow.edited_ready":

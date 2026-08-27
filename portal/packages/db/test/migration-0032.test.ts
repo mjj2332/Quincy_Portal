@@ -51,6 +51,7 @@ describe("migration 0032 admin impersonation", () => {
     expect(names).toContain("0032_admin_impersonation.sql");
     expect(names).toContain("0033_project_deadline_and_reminders.sql");
     expect(names).toContain("0034_project_activity_events.sql");
-    expect(names.filter((value) => Number(value.slice(0, 4)) > 34)).toEqual([]);
+    expect(names).toContain("0035_project_subtask_scheduling_ranges.sql");
+    expect(names.filter((value) => Number(value.slice(0, 4)) > 35)).toEqual([]);
   });
 });

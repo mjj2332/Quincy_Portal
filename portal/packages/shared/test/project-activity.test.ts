@@ -39,7 +39,7 @@ function sourceFor(type: ProjectActivityType, sourceId: string): { kind: string;
     "project.workflow.manual_edited_ready": `project-manual-edited:job:${sourceId}:ready`,
     "project.collection.raw_sync_completed": `project-raw-sync:${sourceId}:completed`,
     "project.stage.changed": `project-stage:${sourceId}`,
-    "project.checklist.schedule_changed": `project-checklist-schedule:${sourceId}`,
+    "project.checklist.schedule_changed": `project-checklist-schedule:${projectId}:${sourceId}:version:1`,
     "project.workflow.raw_ready": `project-workflow:${sourceId}:raw-ready:transition`,
     "project.workflow.sent_to_editing": `project-workflow:${sourceId}:sent-to-editing:transition`,
     "project.workflow.edited_ready": `project-workflow:${sourceId}:edited-ready:transition`,
@@ -71,7 +71,7 @@ function payloadFor(type: ProjectActivityType, sourceId: string): Record<string,
     "project.workflow.manual_edited_ready": { collectionKind: "edited", count: 1 },
     "project.collection.raw_sync_completed": { collectionKind: "raw", importedCount: 2 },
     "project.stage.changed": {},
-    "project.checklist.schedule_changed": {},
+    "project.checklist.schedule_changed": { itemId: sourceId, checklistTitle: "Review images", scheduleState: "due_only", version: 1 },
     "project.workflow.raw_ready": {},
     "project.workflow.sent_to_editing": {},
     "project.workflow.edited_ready": {},
@@ -149,7 +149,16 @@ describe("TB4C project activity registry", () => {
     expect(parseProjectActivityIntent(intentFor("project.priority.changed", { actorId: PROJECT_ACTIVITY_SYSTEM_OUTBOX_ACTOR_ID }))).toBeNull();
   });
 
-  it("keeps the reserved TB4D coalescing declaration available without admitting its type", () => {
+  it("admits the TB4D coalescing declaration and versioned identity", () => {
+    expect(PROJECT_ACTIVITY_REGISTRY["project.checklist.schedule_changed"]).toMatchObject({
+      producerOwner: "TB4D saveProjectSubtask",
+      producerCallSites: ["workers/app/src/lib/project-subtasks.ts#saveProjectSubtask"],
+      cutover: "live",
+      cutoverOwner: "TB4D saveProjectSubtask",
+      cutoverDate: "2026-08-27",
+      backfill: "none",
+      noBackfillNote: expect.stringContaining("no checklist schedule history backfill"),
+    });
     expect(PROJECT_ACTIVITY_REGISTRY["project.checklist.schedule_changed"].coalescing).toEqual({
       strategy: "leading_edge",
       keyShape: "project-checklist-schedule:<projectId>:<itemId>:<actorId>",
@@ -160,7 +169,31 @@ describe("TB4C project activity registry", () => {
       key: `project-checklist-schedule:${projectId}:item:${userId}`,
       windowSeconds: 300,
     });
-    expect(parseProjectActivityIntent(intentFor("project.checklist.schedule_changed"))).toBeNull();
+    expect(parseProjectActivityIntent(intentFor("project.checklist.schedule_changed"))).not.toBeNull();
+  });
+
+  it("rejects each independent schedule source-identity mismatch", () => {
+    const base = intentFor("project.checklist.schedule_changed");
+    const source = base.activity.source;
+    const payload = base.activity.safePayload as Record<string, unknown>;
+    const cases = [
+      { name: "project token", source: { ...source, key: source.key.replace(`:${projectId}:`, ":other-project:") } },
+      { name: "source id", source: { ...source, id: "other-item" } },
+      { name: "payload item", payload: { ...payload, itemId: "other-item" } },
+      { name: "payload version", payload: { ...payload, version: 2 } },
+      { name: "noncanonical key version", source: { ...source, key: source.key.replace(":version:1", ":version:01") } },
+    ] as const;
+    for (const candidate of cases) {
+      const parsed = parseProjectActivityIntent({
+        ...base,
+        activity: {
+          ...base.activity,
+          source: candidate.source ?? source,
+          safePayload: candidate.payload ?? payload,
+        },
+      });
+      expect(parsed, candidate.name).toBeNull();
+    }
   });
 
   it("rejects an ISO string in the database row projection", () => {
@@ -192,6 +225,7 @@ describe("TB4C project activity registry", () => {
     const systemCopy = renderProjectActivityNotification(systemActivity!.activity.type, systemActivity!.activity.safePayload, "Maple House", systemActivity!.activity.actorKind === "user" ? "should-not-render" : null);
     expect(systemCopy).toEqual({ title: "Edited media is ready", body: "Maple House edited media is ready." });
     expect(JSON.stringify(systemCopy)).not.toContain(PROJECT_ACTIVITY_SYSTEM_OUTBOX_ACTOR_ID);
+    expect(renderProjectActivityNotification("project.checklist.schedule_changed", { itemId: "item", checklistTitle: "Review images", scheduleState: "range", version: 2 }, "Maple House", "Ting")).toEqual({ title: "Checklist schedule updated", body: "Ting — Checklist “Review images” schedule was updated." });
   });
 
   it("keeps the shared editor eligibility source unchanged", () => {

@@ -1185,6 +1185,14 @@ button { font-family: var(--font-sans); }
 .subtask-popover { z-index: 90; width: max-content; max-width: min(320px, calc(100vw - 16px)); border: 1px solid var(--border-hairline); background: var(--paper-000); box-shadow: var(--shadow-lg); }
 .subtask-popover__content { display: grid; gap: var(--space-2); padding: var(--space-3); }
 .subtask-popover__content label { display: grid; gap: 3px; color: var(--text-secondary); font-size: 10px; }
+.subtask-schedule__endpoint { display: grid; gap: var(--space-2); min-width: 0; padding: var(--space-2); border: 1px solid var(--border-hairline); }
+.subtask-schedule__endpoint legend { padding: 0 var(--space-1); color: var(--text-primary); font: var(--type-label); font-size: 10px; }
+.subtask-schedule__fold { display: grid; gap: 4px; margin: 0; padding: var(--space-2); border: 1px dashed var(--border-hairline); }
+.subtask-schedule__fold legend { color: var(--text-secondary); font-size: 10px; }
+.subtask-schedule__fold label { display: flex; grid-template-columns: none; align-items: center; gap: 5px; }
+.subtask-schedule__error, .subtask-schedule__conflict { display: grid; gap: 4px; color: var(--signal-critical); font-size: 11px; }
+.subtask-schedule__conflict { color: var(--signal-warning); }
+.subtask-schedule__conflict .button { justify-self: start; }
 .subtask-popover__actions, .subtask-checklist__composer-controls { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
 .subtask-popover__actions .button, .subtask-popover__member { min-height: 30px; padding: 5px 7px; font-size: 10px; }
 .subtask-popover__members { display: grid; max-height: 190px; overflow: auto; }
@@ -1196,6 +1204,12 @@ button { font-family: var(--font-sans); }
 .subtask-checklist__composer-trigger { opacity: 1; border: 1px solid var(--border-hairline); }
 .subtask-checklist__add-button { justify-self: start; padding: 7px 8px; border: 1px solid transparent; background: transparent; color: var(--text-secondary); font: inherit; font-size: 12px; cursor: pointer; }
 .subtask-checklist__add-button:hover { border-color: var(--border-hairline); background: var(--paper-100); color: var(--text-primary); }
+@media (max-width: 600px) {
+  .subtask-popover { width: min(320px, calc(100vw - 16px)); max-height: calc(100dvh - 24px); overflow: auto; }
+  .subtask-popover__actions, .subtask-checklist__composer-controls { flex-wrap: wrap; }
+  .subtask-checklist__composer-controls > span { display: none; }
+  .subtask-checklist__composer-controls .subtask-checklist__composer-trigger { flex: 1 1 130px; }
+}
 .edit-project__archived { display: inline-flex; margin-top: var(--space-3); padding: 5px 8px; border: 1px solid color-mix(in srgb, var(--signal-caution) 45%, var(--border-hairline)); background: color-mix(in srgb, var(--signal-caution) 8%, var(--paper-000)); color: var(--signal-caution); font: var(--type-eyebrow); font-size: 10px; letter-spacing: var(--tracking-wide); text-transform: uppercase; }
 .danger-zone { display: grid; gap: var(--space-5); margin-top: var(--space-8); padding: var(--space-5); border: 1px solid color-mix(in srgb, var(--signal-critical) 48%, var(--border-hairline)); background: color-mix(in srgb, var(--signal-critical) 4%, var(--paper-000)); }
 .danger-zone h2 { margin: 5px 0 0; font: var(--type-h3); font-size: 29px; letter-spacing: var(--tracking-tight); }

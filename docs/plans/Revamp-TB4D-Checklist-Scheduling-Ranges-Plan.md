@@ -189,7 +189,7 @@ prose.
 - Its payload schema is currently strict `{}` (`portal/packages/shared/src/project-activity.ts:67,94`).
 - Its registry entry is reserved to “TB4D checklist scheduler,” category `checklist`, source kind
   `project_checklist`, Collaboration deep link, and a leading-edge 300-second declaration
-  (`portal/packages/shared/src/project-activity.ts:181-186`).
+  (`portal/packages/shared/src/project-activity.ts:182`).
 - The source-key validator currently accepts any key starting
   `project-checklist-schedule:` (`portal/packages/shared/src/project-activity.ts:241-273`).
 - `projectActivityCoalesce()` already produces
@@ -379,9 +379,10 @@ invalid`**. Only the first three are writable input states. `legacy_unresolved` 
 supplying a complete replacement schedule through the normal command; `invalid` is read-only and
 requires incident repair. Every serialized subtask retains top-level `dueDate` as a read-only
 compatibility alias for the same literal `schedule.due`; it also adds `schedule`. No response carries
-two independently writable end values except the explicitly time-bounded legacy PATCH adapter below,
-which is mutually exclusive with `schedule` and immediately normalizes to the same complete due-only
-command input. Neither exceptional state is silently represented as unscheduled or due-only.
+two independently writable end values. This is a write-path invariant: the PATCH adapter and POST's
+`dueDate` adapter are both explicit, mutually exclusive compatibility carve-outs that immediately
+normalize to the same complete due-only command input; neither creates a second writable end
+authority. Neither exceptional state is silently represented as unscheduled or due-only.
 
 There is one serializer and one DTO shape. The subtask list response, mutation-success reread, both
 conflict `current` values, full-subtask conflict projection, and inert-rollback rendering all call it
@@ -389,13 +390,18 @@ and handle all five states exhaustively. TB4D adds no subtask-detail endpoint.
 
 ### Allowed shapes and ordering
 
-| State | Start columns | `due_date` / end | Timed metadata | Valid ordering |
-|---|---|---|---|---|
-| Unscheduled | all NULL | NULL | all NULL | n/a |
-| Due-only date | all NULL | `YYYY-MM-DD` | end instant/offset/fold NULL | n/a |
-| Due-only timed | all NULL | `YYYY-MM-DDTHH:MM` | resolved end instant/offset/fold required | n/a |
-| Date-only range | date kind + literal `YYYY-MM-DD`; no start instant | literal `YYYY-MM-DD`; no end instant | both endpoint timed fields NULL | stored start date `<=` stored inclusive end date |
-| Timed range | timed kind + literal exact minute | literal timed exact minute | both resolved instants/offsets/folds required | start epoch-ms `<` end epoch-ms |
+| State | Start kind | Start civil presence | `due_date` / end kind + civil | `schedule_zone` | Timed metadata | Valid ordering |
+|---|---|---|---|---|---|---|
+| Unscheduled | NULL | absent (`schedule_start_civil` NULL) | NULL / NULL | NULL | all NULL | n/a |
+| Due-only date | NULL | absent (`schedule_start_civil` NULL) | `YYYY-MM-DD` / `date` | `Australia/Sydney` | end instant/offset/fold NULL | n/a |
+| Due-only timed | NULL | absent (`schedule_start_civil` NULL) | `YYYY-MM-DDTHH:MM` / `timed` | `Australia/Sydney` | resolved end instant/offset/fold required | n/a |
+| Date-only range | `date` | present literal `YYYY-MM-DD` | literal `YYYY-MM-DD` / `date` | non-NULL `Australia/Sydney` | both endpoint timed fields NULL | stored start date `<=` stored inclusive end date |
+| Timed range | `timed` | present exact-minute literal | exact-minute literal / `timed` | non-NULL `Australia/Sydney` | both resolved endpoint instants/offsets/folds required | start epoch-ms `<` end epoch-ms |
+
+The due-only rows above deliberately require `schedule_end_kind` to match the end's literal kind and
+require non-NULL `schedule_zone`; an unscheduled row has no end kind and a NULL zone. A version `>=1`
+row cleared to unscheduled NULLs the zone and every other schedule metadata/end column. The fail-
+closed validator is generated from these complete shapes; any deviation serializes as `invalid`.
 
 Rules:
 
@@ -490,7 +496,8 @@ Migration `0035` backfills **nothing**:
 
 The read discriminator is total and ordered:
 
-1. When `schedule_version=0` and every new metadata column is NULL, interpret only `due_date`:
+1. When `schedule_version=0` and every new schedule metadata column other than the non-NULL-by-
+   definition `schedule_version` is NULL, interpret only `due_date`:
    - NULL → normal `unscheduled`;
    - valid date-only → normal `due_only` with no instant;
    - valid unambiguous timed minute → normal `due_only` with transient `derived_unambiguous`
@@ -499,7 +506,8 @@ The read discriminator is total and ordered:
    - Sydney gap → `legacy_unresolved(reason:'nonexistent_local_time')`;
    - repeated Sydney minute without stored fold →
      `legacy_unresolved(reason:'repeated_local_time')` with Earlier/Later choices.
-2. When `schedule_version=0` and **any** new schedule metadata column is non-NULL, return
+2. When `schedule_version=0` and **any** new schedule metadata column (excluding `schedule_version`,
+   which is `NOT NULL DEFAULT 0`) is non-NULL, return
    `invalid(reason:'shape_mismatch')` without considering whether those columns could otherwise form a
    complete range. Version 0 is reserved for untouched legacy/unscheduled rows and is never writable
    against a metadata shape the command could not produce.
@@ -551,10 +559,13 @@ components directly and never calls `Date.parse()`.
 
 Prove the optimization by retaining the current exhaustive scan as a test-only reference and running
 a differential corpus across every minute around both Sydney DST boundaries, ordinary winter/summer
-dates, malformed inputs, explicit Earlier/Later choices, and the reference resolver's full
-`-840..840` candidate-offset range. New and reference results must be bit-identical, including success
-instants/offsets/folds, choice order, every error code, and copy. The production resolver may perform
-no more than three candidate round trips per valid civil input.
+dates, pre-1895 Sydney LMT (+10:04:52), years below 1000, far-future dates, malformed inputs,
+explicit Earlier/Later choices, and the reference resolver's full `-840..840` candidate-offset range.
+New and reference results must be bit-identical, including success instants/offsets/folds, choice
+order, every error code, and copy. The legacy read discriminator maps the fourth
+`subtask_schedule_resolver_defect` outcome to `state:'invalid', reason:'resolution_mismatch'`;
+`invalid` is not a recoverable legacy state. The production resolver may perform no more than three
+candidate round trips per valid civil input.
 
 The extraction is a shared-helper refactor only. It creates no dependency from checklist rows to
 project Deadline rows, occurrences, reminders, routes, or UI.
@@ -713,12 +724,26 @@ Contract details:
   bounded code such as the named `subtask_schedule_*` codes or `subtask_assignee_ineligible`; its
   `message` supplies the mapped client copy. Strict JSON/unknown-field parsing remains route-owned and
   may return before command invocation, but every parsed semantic request receives this result rather
-  than an expected-validation throw.
+  than an expected-validation throw. The same arm carries the inert build-time gate as `status:503,
+  code:'subtask_schedule_ranges_disabled'` before normalization for new range transitions; legacy
+  version-0 `dueDate`, clear, and due-only edits remain available while disabled.
 - `not_found` maps to the existing 404 without leaking a forbidden project. Both conflict outcomes
   map to the two 409 bodies below. `storage_invalid` fails closed without mutation and maps to a
   non-retryable `422 code:'subtask_schedule_storage_invalid'` with
   `current:<the canonical invalid DTO>` and repair-required copy; it is a resource-integrity condition,
   not a transient server failure. Ordinary UI never submits it because editing is disabled.
+  This `422` trigger applies only when the request carries `schedule` or transitional `dueDate` and
+  the authoritative row serializes as `invalid`; a pure title/done/assignee PATCH against a directly
+  corrupted row preserves today's commit behavior and returns the item with `schedule.state:'invalid'`.
+
+Define the create-time shape used above as:
+
+```ts
+type InitialChecklistScheduleInput =
+  | { state: "unscheduled" }
+  | { state: "due_only"; end: ChecklistScheduleEndpointInput }
+  | { state: "range"; start: ChecklistScheduleEndpointInput; end: ChecklistScheduleEndpointInput };
+```
 
 Add one `finalizeProjectSubtaskCommandResult({env,executionCtx,result})` step and require **every**
 caller—POST, PATCH, and later TB5C—to invoke it exactly once for every non-throwing command result
@@ -984,7 +1009,7 @@ governs later `schedule_changed` operations and does not suppress the independen
 itself was created.
 
 Keep `buildProjectActivityStatements()` generic. Add a generic option such as
-`broadDelivery: "emit"|"activity_only"` (default `emit`) that marker-gates the same activity insert
+`broadMode: "emit"|"activity_only"` (default `emit`) that marker-gates the same activity insert
 while making its broad INSERT return zero rows and its ledger insert see no outbox in activity-only
 mode. Do not add a schedule-type branch to the DB builder. Keep stable indexes/return shape so
 producer publication bookkeeping is deterministic. Add DB tests proving activity-only mode writes
@@ -1056,7 +1081,8 @@ editing, not suppression of the shipped reminder scan.
   (`portal/workers/background/src/notifications.ts:75-139`).
 
 Tests must prove an end change after a sent reminder permits the new end’s reminder, while start-only
-edits do not duplicate it.
+edits do not duplicate it. A fold-only end change resets `due_reminder_sent_at` but leaves `due_date`
+unchanged, so the re-claim emits `emitted === 0` rather than a reminder for a new end.
 
 ## TB2 freshness and checklist UI
 
@@ -1176,8 +1202,9 @@ Keep commits small and independently reviewable. Suggested slices:
 5. **TB2 subtask resource.** Add exact key/query/runtime/invalidation/access-loss support and cache
    tests before converting the component.
 6. **Inert rollback artifact.** Land and fully test the migration-aware, range-disabled app state
-   across all five DTO states; it becomes the recorded production rollback target before the enabling
-   UI/API commit.
+   across all five DTO states using the single build-time `CHECKLIST_SCHEDULE_RANGES_ENABLED` constant
+   checked by the command before normalization; the enabling slice changes exactly that constant from
+   false to true. It becomes the recorded production rollback target before the enabling UI/API commit.
 7. **Schedule UI and write enablement.** Replace the due editor, wire exact-minute/fold/two-conflict
    behavior, compact composer, responsive styles, accessibility, and DOM tests.
 8. **Reminder/activity/consumer regression.** Add end/start/coalescing/exact-cycle/generic-delivery
@@ -1411,9 +1438,11 @@ Use a disposable `mktemp -d` database/local D1, never production data.
    requests independently against title, done, and assignee writers; confirm response classification
    and audit/activity/outbox/ledger/targeted-notice counts.
 8. Measure the actual list serializer after warm-up with **20 legacy timed rows** and record runtime,
-   host, Node/Workers compatibility runtime, repetitions, median, and p95. Require p95 **<10 ms** for
-   the complete 20-row serialization and instrument the resolver to prove at most three candidate
-   round trips per row. Treat a miss as a release blocker, not a query-plan exception.
+   host, Node/Workers compatibility runtime, repetitions, measured median, and p95. Require p95 **<10
+   ms** for the complete 20-row serialization and record the measured median alongside that ceiling so
+   O(1)-resolver regressions are visible before reaching 10 ms. Instrument the resolver to prove at
+   most three candidate round trips per row. Treat a miss as a release blocker, not a query-plan
+   exception.
 9. Run `EXPLAIN QUERY PLAN` for:
    - project checklist list order using `project_subtasks_project_position_idx`;
    - item/version guarded primary-key mutation;
@@ -1471,7 +1500,7 @@ Capture redacted matched evidence at 1440×900, 1024×768, and 390×844.
 | Transitional stale tab | Submit raw PATCH `dueDate` against untouched version-0, then version>=1/range state | Legacy request normalizes successfully; post-TB4D state returns reload-required 400 with actionable copy and zero writes. |
 | Invalid write status | Attempt a write against a direct-DB invalid schedule row | Non-retryable 422 with canonical invalid DTO/repair copy; no 500, retry, or mutation. |
 | Result/finalizer | Create assigned scheduled item; update assignment+schedule; submit no-op/conflict | Authoritative item returned; each committed broad ID published once; targeted notice once; no-op/conflict produces no side effect; create emits item-created only. |
-| Inert rollback artifact | Run inert build across all five DTO states | Range UI hidden/new range rejected; valid range read-only; unresolved legacy permits complete due-only/clear replacement; invalid fail-closed; schedule broad stays off. |
+| Inert rollback artifact | Run inert build across all five DTO states | Single build-time gate rejects new ranges with `503 code:'subtask_schedule_ranges_disabled'` before normalization; dueDate adapter, clear, and due-only edits remain available; valid range read-only; unresolved legacy permits complete due-only/clear replacement; invalid fail-closed; schedule broad stays off. |
 | Reminder end | Mark due reminder sent, change/revert end | Claim resets under winner; new due reminder can fire on calendar date. |
 | Reminder start | Mark due reminder sent, edit only start | Claim remains; start creates no notification. |
 | Activity/noise | Rapid same actor/item end edits before/at 5 minutes | Every audit/activity persists; one broad per fixed window/cycle; exact boundary opens next. |
@@ -1587,6 +1616,8 @@ Only after verified production deployment:
 - update `docs/todo.md`, `CLAUDE.md`, and mirrored `AGENTS.md` with migration/Worker/commit state;
 - update this status line with deployed commit, migration, Worker versions, recovery export, and QA;
 - mark every acceptance item with evidence;
+- write the one-release raw `dueDate` adapter sunset obligation into `docs/todo.md`, including the
+  TB4D write-enabled production deployment date, and check off the adapter-removal acceptance item;
 - `git mv` this file to `docs/plans/implemented/` only when production matches the reviewed plan.
 
 ## Rollback and fix-forward
@@ -1671,8 +1702,11 @@ remains untouched.
 - [ ] Version 0 with any non-NULL schedule metadata is invalid/shape-mismatch; date endpoints always
   use stored resolution and never receive instant/offset/fold data.
 - [ ] New timed values persist civil/instant/offset/fold/zone and round-trip deterministically.
+- [ ] The one-release raw PATCH `dueDate` adapter sunset is recorded in `docs/todo.md` with the TB4D
+  write-enabled deployment date and removed in the first reviewed post-closeout release.
 - [ ] The O(1) Sydney resolver is bit-identical to the old exhaustive scan across the differential
-  corpus and the 20-row legacy list serializer meets the recorded <10 ms p95 CPU budget.
+  corpus; the 20-row list serializer records measured median and p95 and meets the <10 ms p95 CPU
+  budget.
 - [ ] Cross-column integrity is explicitly command-enforced; direct-DB inconsistent fixtures surface
   only the bounded invalid-state DTO/UI and are never coerced or normally editable.
 - [ ] Migration is `0035`, strictly additive bare ALTERs, no table rebuild/PRAGMA/data UPDATE; schema,

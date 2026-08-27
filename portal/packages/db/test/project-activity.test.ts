@@ -79,6 +79,23 @@ describe("TB4C activity marker and exact-cycle fan-out", () => {
     expect(EMAIL_ENABLED_EVENTS).not.toContain("project_collaboration_activity");
   });
 
+  it("can commit the activity row without broad fan-out for activity-only schedule updates", async () => {
+    const db = localSqlite();
+    db.exec("PRAGMA foreign_keys = ON");
+    applyMigrations(db);
+    const now = 1_787_000_000_000;
+    db.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES ('tb4c-editor', 'TB4D Editor', 'tb4d-editor@example.test', 1, 'editor', 1, ?, ?)").run(now, now);
+    db.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES ('tb4c-project', 'TB4C Street', 'edited_review', 0, ?, ?)").run(now, now);
+    db.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES ('tb4d-cycle', 'tb4c-project', 'tb4c-editor', 'editor', ?)").run(now - 1000);
+    addAudit(db, "tb4d-audit", now);
+    const bundle = buildProjectActivityStatements({ db: localD1(db), intent: intent("project.priority.changed", "tb4d-activity", now, "tb4d-audit"), winnerAuditId: "tb4d-audit", createdAt: now, broadMode: "activity_only" });
+    await runBundle(bundle);
+    expect(db.prepare("SELECT count(*) AS count FROM project_activity_events").get()).toEqual({ count: 1 });
+    expect(db.prepare("SELECT count(*) AS count FROM notification_outbox").get()).toEqual({ count: 0 });
+    expect(db.prepare("SELECT count(*) AS count FROM audit_log WHERE id = 'tb4d-audit'").get()).toEqual({ count: 1 });
+    db.close();
+  });
+
   it("writes no activity without the winning audit marker, then fans out once and remains replay-idempotent", async () => {
     const db = localSqlite();
     db.exec("PRAGMA foreign_keys = ON");

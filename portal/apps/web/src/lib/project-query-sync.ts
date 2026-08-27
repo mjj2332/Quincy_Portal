@@ -8,6 +8,7 @@ export const PROJECT_DATA_CHANNEL = "quincy:project-data:v1";
 export type ProjectDataResource =
   | { kind: "detail" }
   | { kind: "assets"; collectionKind: CollectionKind }
+  | { kind: "subtasks" }
   | { kind: "comments" }
   | { kind: "comment-read-marker" }
   | { kind: "collaboration-summary" };
@@ -52,7 +53,7 @@ function nonEmptyString(value: unknown): value is string {
 function isResource(value: unknown): value is ProjectDataResource {
   if (!value || typeof value !== "object") return false;
   const resource = value as Record<string, unknown>;
-  if (resource.kind === "detail" || resource.kind === "comments" || resource.kind === "comment-read-marker" || resource.kind === "collaboration-summary") return Object.keys(resource).length === 1;
+  if (resource.kind === "detail" || resource.kind === "subtasks" || resource.kind === "comments" || resource.kind === "comment-read-marker" || resource.kind === "collaboration-summary") return Object.keys(resource).length === 1;
   return resource.kind === "assets" && validCollections.has(resource.collectionKind as CollectionKind) && Object.keys(resource).length === 2;
 }
 
@@ -87,6 +88,7 @@ export function projectResourceKey(projectId: string, resource: ProjectDataResou
   switch (resource.kind) {
     case "detail": return projectDataKeys.detail(projectId);
     case "assets": return projectDataKeys.assets(projectId, resource.collectionKind);
+    case "subtasks": return projectDataKeys.subtasks(projectId);
     case "comments": return projectDataKeys.comments(projectId);
     case "comment-read-marker": return projectDataKeys.commentReadMarker(projectId);
     case "collaboration-summary": return projectDataKeys.collaborationSummary(projectId);
