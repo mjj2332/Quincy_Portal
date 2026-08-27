@@ -114,10 +114,10 @@ actually works reliably.
   MCP server + its Chrome. Run it as a normal blocking `Bash` call with a generous
   `--print-timeout` (`5m0s`+). This is a real constraint on offloading: a run that needs to
   wait on a human (e.g. for sign-in) blocks the orchestrating session for its whole duration.
-- **Still ad hoc groundwork only** (§2.6) — Agy has no pipeline role and no danger/YOLO-mode
-  sanction (those are Luna-only). Even fully authenticated, use this for "does this page render
-  for a signed-in admin / what does Lighthouse say", not as a Luna substitute for gated QA or
-  any mutating walkthrough.
+- **Agy is the pipeline's tester** (§2.8) and carries danger-mode (§2.9) and YOLO-mode (§2.10)
+  sanction as of 2026-08-27 — it took the testing role over from Luna after a trial pass on the
+  TB4C QA matrix. Planning and building still never go to Agy (§2.6). Every QA finding still
+  clears the full §5 gate in the orchestrating session — the report is not ground truth.
 
 ### Option A — attach to a human-authenticated Chrome (verified 2026-08-27)
 
@@ -155,9 +155,11 @@ Smoke test result: Agy attached, `list_pages` found the tab, `evaluate_script` o
 `impersonatedBy: null`), and `/admin` rendered the full admin UI — no redirect. The better-auth
 session cookie lasts ~7 days; re-sign-in is one click in the same window.
 
-- **Local dev is the target, not prod.** Local-dev Google sign-in works for `localhost:8787`
-  (redirect registered 2026-08-19). Against prod, Agy has no danger/YOLO sanction — passive
-  only.
+- **Local dev is the usual target.** Local-dev Google sign-in works for `localhost:8787`
+  (redirect registered 2026-08-19). For production danger-mode (passive, §2.9) or YOLO-mode
+  (mutating via impersonation, §2.10), the human points this same dedicated Chrome at
+  `https://quincy.flamingfire.my` and signs in there once instead — the invocation is
+  identical, the containment is entirely prompt-level plus (for YOLO) server-side impersonation.
 - **Do NOT point this at your everyday Chrome profile.** Chrome blocks `--remote-debugging-port`
   on the default profile anyway, and attaching automation there would hand Agy your entire
   Google session (Gmail, Drive, …). The dedicated profile is the containment boundary. The
