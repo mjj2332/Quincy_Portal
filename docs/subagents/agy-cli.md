@@ -82,6 +82,57 @@ So: check **stderr**, not just whether the report file has content, and confirm 
 actually touched disk (`git status`, read the file back) before trusting its self-report. Then
 run the full §5 gate as with any other builder.
 
+## Chrome automation via `chrome-devtools-mcp` (verified 2026-08-27)
+
+Agy has no native browser tool — only `read_url_content` (static HTTP, no JS) and `search_web`.
+But it *can* drive a real Chrome through the
+[`chrome-devtools-mcp`](https://github.com/ChromeDevTools/chrome-devtools-mcp) MCP server.
+
+One-time setup (persists in `~/.gemini/antigravity-cli/` MCP config):
+
+```bash
+agy mcp add chrome-devtools npx -y chrome-devtools-mcp@latest
+agy mcp list   # confirm: chrome-devtools  stdio  enabled
+```
+
+Then run Agy **in `--mode accept-edits`** — plan mode only drafts an implementation plan and
+waits for a "Proceed" click, so it never executes an MCP tool call non-interactively:
+
+```bash
+agy --model gemini-3.6-flash-high --mode accept-edits --effort high \
+  --dangerously-skip-permissions --print-timeout 9m0s \
+  -p "Do not write files or draft a plan. Use the chrome-devtools MCP tools now: navigate_page
+      to <url>, take_snapshot, report ..." > report.md 2> run.log
+```
+
+Smoke test (navigate `example.com` → `take_snapshot` → report `h1`/`title`) passed. Tools
+exposed (~29): `navigate_page`, `new_page`, `select_page`, `list_pages`, `close_page`,
+`take_snapshot`, `take_screenshot`, `click`, `hover`, `drag`, `fill`, `fill_form`, `type_text`,
+`press_key`, `upload_file`, `handle_dialog`, `wait_for`, `evaluate_script`, `resize_page`,
+`emulate`, `list_network_requests`, `get_network_request`, `list_console_messages`,
+`get_console_message`, `performance_start_trace`, `performance_stop_trace`,
+`performance_analyze_insight`, `lighthouse_audit`, `take_heapsnapshot`.
+
+Gotchas:
+
+- **`--mode plan` does not execute tools.** Use `--mode accept-edits` (this is the build
+  invocation shape — `--add-dir` only matters if the task also writes repo files).
+- **Model and effort must agree.** `--model gemini-3.6-flash-high` rejects `--effort medium`
+  or `low` with `invalid model selection … conflicts with --effort`; pass `--effort high`.
+  (Roster is `gemini-3.6-flash-*`, not `3.7`.)
+- **First run downloads Chrome for Testing via `npx`** — give `--print-timeout` generous room
+  (`9m0s`+). The browser launches isolated (`~/.cache/chrome-devtools-mcp/chrome-profile`) and
+  exits cleanly; no leftover process.
+- **This Chrome is logged into nothing.** Fine for public sites, `prototype.`/marketing pages,
+  Lighthouse/perf audits, and unauthenticated smoke checks. It does **not** close the Quincy
+  local-auth gap — no Google sign-in, and forging the better-auth cookie stays the
+  [Subagent-Orchestration.md](../Subagent-Orchestration.md) §6-forbidden move. Authenticated
+  Quincy QA still goes to Luna (danger/YOLO-mode) or the orchestrating session's own Browser
+  pane after a human sign-in.
+- **Still ad hoc groundwork only** (§2.6) — no pipeline role. Use it for a quick "is the
+  deployed page rendering / what does Lighthouse say" check, not as a Luna substitute for
+  gated QA.
+
 ## Passing a large prompt safely — `-p` has no stdin equivalent
 
 Agy's `-p` takes a positional argument only; unlike `codex exec`, there is no stdin mode to fall

@@ -161,8 +161,9 @@ its own flags, sandboxing, and file access, output read back from a file. There 
 - **Codex (Terra/Luna/Sol): [subagents/codex-cli.md](subagents/codex-cli.md)** — invocation, flags,
   and the MCP write-approval failure mode (§6).
 - **§3a — Agy: [subagents/agy-cli.md](subagents/agy-cli.md)** — invocation, plan vs. build flags,
-  and two failure modes that report a cheerful "done" with zero effect and zero error output. Read
-  it before any Agy task.
+  the failure modes that report a cheerful "done" with zero effect and zero error output, and the
+  `chrome-devtools-mcp` setup that lets Agy drive a (logged-out) Chrome for unauthenticated ad hoc
+  checks — Lighthouse/perf, "is the deployed page rendering". Read it before any Agy task.
 
 The `Agent` tool spawns *Claude* subagents: `model: opus` for both Opus review touchpoints, and
 `model: sonnet` for an isolated Claude builder on explicit user request.
