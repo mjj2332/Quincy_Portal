@@ -14,3 +14,4 @@ export * from "./rich-text";
 export * from "./email-text";
 export * from "./notification-outbox";
 export * from "./project-members";
+export * from "./project-deadline";

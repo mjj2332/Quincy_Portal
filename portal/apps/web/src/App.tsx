@@ -10,6 +10,7 @@ import { SignIn } from "./screens/SignIn";
 import { Admin } from "./screens/Admin";
 import { CreateProject } from "./screens/CreateProject";
 import { EditProject } from "./screens/EditProject";
+import { NotificationPreferences } from "./screens/NotificationPreferences";
 import { ImpersonationBanner } from "./components/ImpersonationBanner";
 import { StagesProvider } from "./lib/stages";
 import { QuincyQueryProvider } from "./lib/query-client";
@@ -25,6 +26,7 @@ function viewFor(route: StaffRoute): AppView {
     case "project": return "project";
     case "edit-project": return "edit-project";
     case "admin": return "admin";
+    case "notifications": return "notifications";
     default: return "not-found";
   }
 }
@@ -93,6 +95,7 @@ function Shell({ user, impersonating }: { user: SessionUser; impersonating: bool
       {!blocked && route.kind === "create-project" && <CreateProject onNavigate={navigate} />}
       {!blocked && route.kind === "edit-project" && <EditProject key={route.projectId} projectId={route.projectId} onNavigate={navigate} />}
       {!blocked && route.kind === "admin" && <Admin currentUserId={user.id} />}
+      {!blocked && route.kind === "notifications" && <NotificationPreferences />}
       {!blocked && (route.kind === "not-found" || route.kind === "reserved") && <main className="page"><div className="empty" role="status"><span className="serif">That page is not available.</span><InternalLink className="button button--secondary" to="/">Return to dashboard</InternalLink></div></main>}
     </div>
   );

@@ -16,6 +16,7 @@ import { ensurePipelineStages, projectStageForRole } from "./stages";
 import { abortMultipart } from "../lib/r2s3";
 import { isUserVisibleAsset } from "../lib/asset-visibility";
 import { manualInsertNeighbors, needsPositionRenumber, orderedBoardRows, priorityInsertNeighbors, renumberedInsertPosition, type BoardRow } from "../lib/kanban-ordering";
+import { readProjectDeadlineSchedule, suppressProjectDeadlineWork } from "../lib/project-deadline";
 
 const nullable = <T extends z.ZodTypeAny>(item: T) => item.nullable().optional();
 const baseProjectFields = z.object({ street: z.string().min(1), suburb: nullable(z.string()), postcode: nullable(z.string()), agencyName: nullable(z.string()), agentName: nullable(z.string()), agentEmail: nullable(z.string().email()), agentPhone: nullable(z.string()), agencyId: nullable(z.string().uuid()), agentId: nullable(z.string().uuid()), shootDate: nullable(z.string()), timeWindow: nullable(z.string()), orderNo: nullable(z.string()), orderId: nullable(z.string()), invoiceAmount: nullable(z.number()), paymentStatus: nullable(z.string()), notes: nullable(z.string()), rawFolderLink: nullable(z.string().url()), rawFolderPath: nullable(z.string()), orderedServices: z.array(z.enum(COLLECTION_KINDS)).optional() });
@@ -206,7 +207,7 @@ async function abortActiveDocumentSessions(c: Context<AppEnv>, projectId: string
   }
   return sessions.length;
 }
-async function details(db: ReturnType<typeof createDb>, projectId: string, role: AppEnv["Variables"]["user"]["role"], viewerSeesRawOnly = false) {
+async function details(db: ReturnType<typeof createDb>, d1: D1Database, projectId: string, role: AppEnv["Variables"]["user"]["role"], viewerSeesRawOnly = false) {
   const project = await db.select().from(schema.projects).where(eq(schema.projects.id, projectId)).get();
   if (!project) return null;
   const [{ storedByProject, automaticByProject }, collections, members, assignedCounts] = await Promise.all([
@@ -217,7 +218,8 @@ async function details(db: ReturnType<typeof createDb>, projectId: string, role:
   ]);
   const counts = new Map(assignedCounts.map((row) => [row.userId, Number(row.assignedSubtaskCount ?? 0)]));
   const memberDtos: ProjectMembershipDto[] = members.map((member) => ({ ...member, active: Boolean(member.active), assignedSubtaskCount: counts.get(member.userId) ?? 0 }));
-  return projectStageForRole({ ...project, effectiveCoverAssetId: storedByProject.get(projectId) ?? automaticByProject.get(projectId) ?? null, collections, members: memberDtos }, role);
+  const deadlineSchedule = await readProjectDeadlineSchedule(d1, projectId);
+  return projectStageForRole({ ...project, effectiveCoverAssetId: storedByProject.get(projectId) ?? automaticByProject.get(projectId) ?? null, collections, members: memberDtos, deadlineSchedule }, role);
 }
 
 type AssignmentCandidate = { id: string; name: string; email: string; globalRole: Role; active: true };
@@ -347,7 +349,7 @@ projectsRoutes.get("/projects", async (c) => {
   const orderedRows = orderDashboardStreetTies(rows);
   const projectIds = orderedRows.map(({ project }) => project.id);
   const { storedByProject, automaticByProject } = await coverMaps(db, projectIds, user.role === "photographer");
-  return c.json({ projects: orderedRows.map((r) => projectStageForRole({ ...r.project, coverAssetId: storedByProject.get(r.project.id) ?? automaticByProject.get(r.project.id) ?? null, receivedCount: r.receivedCount ?? 0, expectedCount: r.expectedCount }, user.role)) });
+  return c.json({ projects: orderedRows.map((r) => projectStageForRole({ ...r.project, coverAssetId: storedByProject.get(r.project.id) ?? automaticByProject.get(r.project.id) ?? null, receivedCount: r.receivedCount ?? 0, expectedCount: r.expectedCount, deadlineAt: r.project.deadlineAt, deadlineLocalCivil: r.project.deadlineLocalCivil, deadlineZone: r.project.deadlineZone }, user.role)) });
 });
 projectsRoutes.get("/project-assignment-candidates", async (c) => {
   const user = c.get("user");
@@ -467,7 +469,7 @@ projectsRoutes.patch("/projects/:id", async (c) => {
         console.error("AutoHDR scaffold trigger failed", { projectId: id, error }));
     }
     await audit(c.env, c.get("user"), "project.update", "project", id, projectAuditMeta);
-    return c.json(await details(db, id, c.get("user").role));
+    return c.json(await details(db, c.env.DB, id, c.get("user").role));
   }
 });
 
@@ -877,9 +879,43 @@ for (const [path, archived] of [["/projects/:id/archive", true], ["/projects/:id
     // Ownership survives archive: retire the mapping and tombstone both permanent candidate
     // claims, never release them for silent reuse.
     const archivedAt = now.getTime();
+    const archiveAuditId = newId();
     const result = await c.env.DB.batch([
       c.env.DB.prepare("UPDATE projects SET archived_at = ?, archived_by = ?, updated_at = ? WHERE id = ? AND NOT EXISTS (SELECT 1 FROM document_uploads WHERE project_id = ? AND status in ('pending', 'completing', 'aborting'))")
         .bind(archivedAt, c.get("user").id, archivedAt, id, id),
+      c.env.DB.prepare(`
+        INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
+        SELECT ?, ?, 'project.archive', 'project', ?, ?, ?
+        WHERE changes() = 1 RETURNING id
+      `).bind(archiveAuditId, c.get("user").id, id, auditMeta(c.get("user")), archivedAt),
+      c.env.DB.prepare(`
+        UPDATE project_deadline_occurrences
+        SET status = 'superseded', terminal_reason = 'project_archived', fired_at = NULL, updated_at = ?
+        WHERE project_id = ? AND status = 'pending'
+          AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?)
+      `).bind(archivedAt, id, archiveAuditId),
+      c.env.DB.prepare(`
+        UPDATE notification_delivery_ledger
+        SET status = 'suppressed', last_error_code = 'reauthorization_suppressed',
+          last_error = 'Deadline reminder suppressed: project_archived.', updated_at = ?
+        WHERE event_type = 'project.deadline.reminder' AND status = 'pending'
+          AND EXISTS (
+            SELECT 1 FROM notification_outbox o
+            WHERE o.id = notification_delivery_ledger.outbox_id AND o.project_id = ?
+              AND o.source_key IN (SELECT id FROM project_deadline_occurrences WHERE project_id = ?)
+          )
+          AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?)
+      `).bind(archivedAt, id, id, archiveAuditId),
+      c.env.DB.prepare(`
+        UPDATE notification_outbox
+        SET status = 'suppressed', lease_token = NULL, lease_expires_at = NULL,
+          completed_at = ?, last_error_code = 'reauthorization_suppressed',
+          last_error = 'Deadline reminder suppressed: project_archived.', updated_at = ?
+        WHERE project_id = ? AND event_type = 'project.deadline.reminder'
+          AND status IN ('pending', 'queued')
+          AND NOT EXISTS (SELECT 1 FROM notification_delivery_ledger WHERE outbox_id = notification_outbox.id AND status IN ('pending', 'processing'))
+          AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?)
+      `).bind(archivedAt, archivedAt, id, archiveAuditId),
       c.env.DB.prepare("UPDATE autohdr_output_mappings SET state = 'retired', retired_at = ?, updated_at = ? WHERE project_id = ? AND EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at = ?)")
         .bind(archivedAt, archivedAt, id, id, archivedAt),
       c.env.DB.prepare("UPDATE autohdr_path_claims SET state = 'tombstone', updated_at = ? WHERE project_id = ? AND EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at = ?)")
@@ -892,7 +928,8 @@ for (const [path, archived] of [["/projects/:id/archive", true], ["/projects/:id
     const result = await db.update(schema.projects).set({ archivedAt: null, archivedBy: null, updatedAt: now }).where(eq(schema.projects.id, id)).returning({ id: schema.projects.id });
     if (!result.length) return c.json({ error: "Project not found" }, 404);
   }
-  await audit(c.env, c.get("user"), archived ? "project.archive" : "project.restore", "project", id); return c.json({ ok: true });
+  if (!archived) await audit(c.env, c.get("user"), "project.restore", "project", id);
+  return c.json({ ok: true });
 });
 projectsRoutes.delete("/projects/:id", async (c) => {
   const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
@@ -953,9 +990,13 @@ projectsRoutes.post("/projects/:id/stage", async (c) => {
     await ensurePipelineStages(db);
     const target = await db.select({ active: schema.pipelineStages.active }).from(schema.pipelineStages).where(eq(schema.pipelineStages.key, data.stageKey)).get();
     if (!target?.active) return c.json({ error: "Stage is deactivated" }, 409);
-    const updated = await db.update(schema.projects).set({ stageKey: data.stageKey, boardPosition: appendToStageBottomExpr(data.stageKey, id), updatedAt: new Date() }).where(eq(schema.projects.id, id)).returning({ boardPosition: schema.projects.boardPosition }).all();
+    const updated = await db.update(schema.projects).set({ stageKey: data.stageKey, boardPosition: appendToStageBottomExpr(data.stageKey, id), updatedAt: new Date() }).where(eq(schema.projects.id, id)).returning({ boardPosition: schema.projects.boardPosition, stageKey: schema.projects.stageKey }).all();
     await audit(c.env, c.get("user"), "stage.set", "project", id, { from: project.stageKey, to: data.stageKey });
-    if (project.stageKey !== "delivered" && data.stageKey === "delivered") await notifyProject(c.env, id, "delivered");
+    if (project.stageKey !== "delivered" && data.stageKey === "delivered" && updated.length === 1) {
+      try { await suppressProjectDeadlineWork(c.env.DB, id, Date.now(), "project_delivered"); }
+      catch (error) { console.error("Delivered Deadline suppression follow-up failed", { projectId: id, error: error instanceof Error ? error.message.slice(0, 200) : "unknown" }); }
+      await notifyProject(c.env, id, "delivered");
+    }
     return c.json({ ok: true, stageKey: data.stageKey, boardPosition: updated[0]?.boardPosition ?? 0 });
   }
 });
@@ -963,6 +1004,6 @@ projectsRoutes.get("/projects/:id", async (c) => {
   const id = c.req.param("id");
   if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
   if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
-  const value = await details(createDb(c.env.DB), id, c.get("user").role, c.get("user").role === "photographer");
+  const value = await details(createDb(c.env.DB), c.env.DB, id, c.get("user").role, c.get("user").role === "photographer");
   return value ? c.json(value) : c.json({ error: "Project not found" }, 404);
 });

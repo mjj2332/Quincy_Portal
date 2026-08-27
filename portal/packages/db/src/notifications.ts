@@ -12,7 +12,8 @@ export type NotificationType =
   | "assigned_to_project"
   | "mentioned"
   | "subtask_assigned"
-  | "subtask_due_today";
+  | "subtask_due_today"
+  | "project_deadline_reminder";
 
 export const EMAIL_ENABLED_EVENTS: readonly NotificationType[] = [
   "raw_ready", "edited_landed", "sent_to_editing", "autohdr_stalled", "delivered", "comment_added", "assigned_to_project", "mentioned", "subtask_assigned", "subtask_due_today",
@@ -46,6 +47,7 @@ export function notificationCopy(
     case "mentioned": return { title: "You were mentioned", body: "You were mentioned." };
     case "subtask_assigned": return { title: "Subtask assigned", body: `You have been assigned a subtask in ${projectLabel}.` };
     case "subtask_due_today": return { title: "Subtask due today", body: `A subtask assigned to you in ${projectLabel} is due today.` };
+    case "project_deadline_reminder": return { title: "Project deadline reminder", body: `${projectLabel} has a deadline reminder.` };
   }
 }
 
@@ -122,6 +124,10 @@ export async function emitNotifications(
   db: Database,
   input: EmitNotificationInput,
 ): Promise<number> {
+  // Deadline reminders are durable occurrence events owned by the background outbox
+  // consumer. Keeping the legacy emitter fail-closed prevents a future generic caller from
+  // creating a second producer or bypassing membership-cycle authorization.
+  if (input.type === "project_deadline_reminder") return 0;
   const copy = input.title && input.body ? { title: input.title, body: input.body } : notificationCopy(input.type);
   const recipients = [...new Map(input.recipients.map((recipient) => [recipient.userId, recipient])).values()];
   let insertedCount = 0;

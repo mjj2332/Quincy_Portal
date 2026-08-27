@@ -37,6 +37,7 @@ import type { AutoHdrApiSendResult } from "./autohdr/api-send";
 import type { AutoHdrErrorCode, AutoHdrFetchResult, AutoHdrResult } from "./autohdr/errors";
 import { notifyProject, pruneNotifications, scanDueSubtasks, scanStalledAutoHdr } from "./notifications";
 import { processNotificationDlqMessage, processNotificationMessage, recoverNotificationOutbox } from "./notification-delivery";
+import { scanProjectDeadlineOccurrences } from "./project-deadline";
 
 export { AutoHdrApiSend, AutoHdrFetch, AutoHdrSend, ManualEditedPublish, DropboxSyncDO, TonomoProcessorDO };
 
@@ -52,26 +53,48 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
 
   // Temporary safety net: retire only after Dropbox RAW automation has been verified live in a later deploy.
   async scheduled(controller: ScheduledController): Promise<void> {
-    await reconcileAwaitingRawProjects(this.env.DB, controller.scheduledTime, (projectId) => notifyProject(this.env, projectId, "raw_ready"));
+    if (controller.cron === "* * * * *") {
+      try {
+        const result = await scanProjectDeadlineOccurrences(this.env, controller.scheduledTime);
+        console.log("Project Deadline occurrence scan", result);
+      } catch (error) {
+        console.error("Project Deadline occurrence scan failed", { error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
+      }
+      try {
+        const recovered = await recoverNotificationOutbox(this.env, controller.scheduledTime);
+        console.log("Notification outbox recovery scan", { recovered });
+      } catch (error) {
+        console.error("Notification outbox recovery scan failed", { error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
+      }
+      return;
+    }
+    if (controller.cron !== "0 * * * *") {
+      console.warn("Ignored unknown Cron trigger", { cron: controller.cron });
+      return;
+    }
+    try {
+      await reconcileAwaitingRawProjects(this.env.DB, controller.scheduledTime, (projectId) => notifyProject(this.env, projectId, "raw_ready"));
+    } catch (error) {
+      console.error("RAW reconciliation scan failed", { error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
+    }
     try {
       const emitted = await scanStalledAutoHdr(this.env, controller.scheduledTime);
       console.log("AutoHDR stalled notification scan", { emitted });
     } catch (error) {
-      console.error("AutoHDR stalled notification scan failed", { error });
+      console.error("AutoHDR stalled notification scan failed", { error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
     }
     try {
       const emitted = await scanDueSubtasks(this.env, controller.scheduledTime);
       console.log("Due subtask notification scan", { emitted });
     } catch (error) {
-      console.error("Due subtask notification scan failed", { error });
+      console.error("Due subtask notification scan failed", { error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
     }
     try {
-      const recovered = await recoverNotificationOutbox(this.env, controller.scheduledTime);
-      console.log("Notification outbox recovery scan", { recovered });
+      await pruneNotifications(this.env, controller.scheduledTime);
+      console.log("Notification pruning complete");
     } catch (error) {
-      console.error("Notification outbox recovery scan failed", { error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
+      console.error("Notification pruning failed", { error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
     }
-    await pruneNotifications(this.env, controller.scheduledTime);
   }
 
   async triggerDropboxSync(projectId: string): Promise<{ jobId: string }> {

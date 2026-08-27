@@ -14,7 +14,7 @@
   // Free plan ("CPU limits are not supported for the Free plan", code 100328) and fails the
   // entire deploy — and `wrangler deploy --dry-run` does NOT catch it. See docs/lessons.md.
   // Intentionally retained until Dropbox RAW automation is verified live before a later retirement deploy.
-  "triggers": { "crons": ["0 * * * *"] },
+  "triggers": { "crons": ["0 * * * *", "* * * * *"] },
   "d1_databases": [
     { "binding": "DB", "database_name": "quincy-portal", "database_id": "1d36b42e-f1e6-4659-8c9e-70afe822b6fa" }
   ],

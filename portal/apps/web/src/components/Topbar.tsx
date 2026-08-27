@@ -5,7 +5,7 @@ import { InternalLink } from "./InternalLink";
 import { projectNotificationRoute, staffPathFor } from "@quincy/shared";
 import { initials } from "../lib/initials";
 
-export type AppView = "dashboard" | "project" | "create-project" | "edit-project" | "admin" | "not-found";
+export type AppView = "dashboard" | "project" | "create-project" | "edit-project" | "admin" | "notifications" | "not-found";
 
 interface TopbarProps {
   activeView: AppView;
@@ -159,6 +159,7 @@ export function Topbar({ activeView, canAccessAdmin, user, notificationPollMs = 
           <strong>{displayName}</strong>
           {user.email && user.name && <span className="ey">{user.email}</span>}
         </div>
+        <InternalLink className={activeView === "notifications" ? "is-active button button--text" : "button button--text"} to="/settings/notifications">Notification preferences</InternalLink>
         <div className="avatar" aria-hidden="true">{initials(displayName)}</div>
         <button className="button button--text" type="button" onClick={handleSignOut}>
           Sign out
@@ -172,6 +173,7 @@ export function Topbar({ activeView, canAccessAdmin, user, notificationPollMs = 
         <div className="topbar__mobile-identity"><strong>{displayName}</strong>{user.email && <span>{user.email}</span>}</div>
         <InternalLink role="menuitem" className={activeView === "dashboard" ? "is-active" : ""} to="/" onClick={closeNavigationMenu}>Dashboard</InternalLink>
         {canAccessAdmin && <InternalLink role="menuitem" className={activeView === "admin" ? "is-active" : ""} to="/admin" onClick={closeNavigationMenu}>Admin</InternalLink>}
+        <InternalLink role="menuitem" className={activeView === "notifications" ? "is-active" : ""} to="/settings/notifications" onClick={closeNavigationMenu}>Notification preferences</InternalLink>
         <button role="menuitem" type="button" onClick={handleSignOut}>Sign out</button>
       </div>}
     </header>

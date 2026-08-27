@@ -41,6 +41,7 @@ function projectFixture(id = "p1") {
       { id: "c-edited", kind: "edited", status: "active", expectedCount: null, receivedCount: 1 },
     ],
     members: [],
+    deadlineSchedule: { version: 0, deadline: null, reminderOffsetsMinutes: [], state: "unset", nextOccurrence: null, canResume: false },
   };
 }
 

@@ -42,8 +42,8 @@ describe("awaiting RAW reconciliation dates", () => {
 });
 
 describe("awaiting RAW reconciliation mutation", () => {
-  it("keeps the hourly cron trigger as the temporary production safety net", () => {
-    expect(__BACKGROUND_WRANGLER_CONFIG__).toContain('"triggers": { "crons": ["0 * * * *"] }');
+  it("keeps the hourly trigger and adds the minute trigger", () => {
+    expect(__BACKGROUND_WRANGLER_CONFIG__).toContain('"triggers": { "crons": ["0 * * * *", "* * * * *"] }');
   });
 
   it("asks D1 for one stable, canonical due batch rather than scanning every awaiting project", async () => {

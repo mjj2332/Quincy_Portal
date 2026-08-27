@@ -272,6 +272,22 @@ describe("user impersonation gate and official Better Auth flow", () => {
     expect((await request("/api/auth/admin/stop-impersonating", started.cookie, "POST", {})).status).toBe(200);
   });
 
+  it("adds immutable provenance to a preference update made through an impersonated session", async () => {
+    const adminCookie = await sessionCookie(adminToken);
+    expect((await setFlag(true, adminCookie)).status).toBe(200);
+    const started = await startImpersonation(editorId, adminCookie);
+    expect(started.response.status).toBe(200);
+    try {
+      const updated = await request("/api/notification-preferences", started.cookie, "PATCH", { projectDeadlineReminderEmails: false });
+      expect(updated.status).toBe(200);
+      const auditRow = await database.DB.prepare("SELECT actor_id, meta_json FROM audit_log WHERE action = 'notification.preference.update' AND target_id = ? ORDER BY created_at DESC LIMIT 1").bind(editorId).first<{ actor_id: string; meta_json: string }>();
+      expect(auditRow?.actor_id).toBe(editorId);
+      expect(JSON.parse(auditRow!.meta_json)).toMatchObject({ impersonatedBy: adminId, projectDeadlineReminderEmails: false });
+    } finally {
+      expect((await request("/api/auth/admin/stop-impersonating", started.cookie, "POST", {})).status).toBe(200);
+    }
+  });
+
   it("fails closed for target promotion, flag changes, and original-principal changes on API and media", async () => {
     const adminCookie = await sessionCookie(adminToken);
     expect((await setFlag(true, adminCookie)).status).toBe(200);

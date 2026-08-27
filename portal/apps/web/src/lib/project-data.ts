@@ -1,4 +1,4 @@
-import { isStageKey, type CollectionKind, type ProjectMembershipDto, type ProjectMemberRole } from "@quincy/shared";
+import { isStageKey, type CollectionKind, type ProjectDeadlineSchedule, type ProjectMembershipDto, type ProjectMemberRole } from "@quincy/shared";
 import { QueryClientContext, useQuery, useQueryClient, type QueryClient, type QueryFunctionContext, type QueryKey, type UseQueryResult } from "@tanstack/react-query";
 import { useCallback, useContext, useSyncExternalStore } from "react";
 import { ApiError, apiGet } from "./api";
@@ -11,7 +11,7 @@ export type ProjectMember = ProjectMembershipDto;
 export type ProjectDetail = {
   id: string; street: string; suburb: string | null; postcode: string | null; agencyName: string | null; agentName: string | null;
   shootDate: string | null; stageKey: ProjectStageKey; rawFolderPath: string | null; rawFolderLink: string | null;
-  coverAssetId: string | null; effectiveCoverAssetId: string | null; collections: ProjectCollection[]; members: ProjectMember[];
+  coverAssetId: string | null; effectiveCoverAssetId: string | null; collections: ProjectCollection[]; members: ProjectMember[]; deadlineSchedule: ProjectDeadlineSchedule;
 };
 type AssetsResponse = { assets: WorkspaceAsset[] };
 

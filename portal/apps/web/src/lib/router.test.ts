@@ -11,10 +11,12 @@ describe("staff route contract", () => {
     expect(parseStaffPathname(`/projects/${projectId}`)).toEqual({ kind: "project", projectId });
     expect(parseStaffPathname(`/projects/${projectId}/edit`)).toEqual({ kind: "edit-project", projectId });
     expect(parseStaffPathname("/admin")).toEqual({ kind: "admin" });
+    expect(parseStaffPathname("/settings/notifications")).toEqual({ kind: "notifications" });
     expect(staffPathFor({ kind: "project", projectId })).toBe(`/projects/${projectId}`);
     expect(parseStaffLocation(`/projects/${projectId}?collaboration=open`)).toEqual({ kind: "project", projectId, collaboration: "open" });
     expect(staffPathFor({ kind: "project", projectId, collaboration: "open" })).toBe(`/projects/${projectId}?collaboration=open`);
     expect(staffPathFor({ kind: "edit-project", projectId })).toBe(`/projects/${projectId}/edit`);
+    expect(staffPathFor({ kind: "notifications" })).toBe("/settings/notifications");
   });
 
   it("keeps parser-only canonical UUID casing and static route precedence strict", () => {
@@ -47,6 +49,7 @@ describe("staff route contract", () => {
       "/d/token", "/api/projects", "/unknown", `/projects/${projectId.toUpperCase()}`,
       "/projects/%6eew", "/admin\u0000",
     ]) expect(safeStaffDestination(destination)).toBeNull();
+    expect(safeStaffDestination("/settings/notifications")).toBe("/settings/notifications");
   });
 
   it("keeps the one-shot query strict", () => {

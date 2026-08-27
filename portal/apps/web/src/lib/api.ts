@@ -106,3 +106,11 @@ export function apiPatch<T, TBody>(path: string, body: TBody): Promise<T> {
     body: JSON.stringify(body),
   });
 }
+
+export function apiPut<T, TBody>(path: string, body: TBody): Promise<T> {
+  return request<T>(path, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}

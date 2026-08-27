@@ -34,7 +34,7 @@ function summary(payloadJson: string) {
 
 export const adminRoutes = new Hono<AppEnv>();
 
-const notificationDeliveryView = z.enum(["pending_stuck", "dlq", "failed", "unknown"]);
+const notificationDeliveryView = z.enum(["pending_stuck", "dlq", "failed", "unknown", "preference_suppressed"]);
 const notificationDeliveryQuery = z.object({
   view: notificationDeliveryView,
   limit: z.coerce.number().int().min(1).max(100).default(50),
@@ -83,13 +83,22 @@ function notificationViewSql(view: z.infer<typeof notificationDeliveryView>): st
     case "dlq": return "o.status = 'dlq'";
     case "failed": return "o.status != 'dlq' AND EXISTS (SELECT 1 FROM notification_delivery_ledger failed WHERE failed.outbox_id = o.id AND failed.status = 'failed')";
     case "unknown": return "EXISTS (SELECT 1 FROM notification_delivery_ledger unknown_email WHERE unknown_email.outbox_id = o.id AND unknown_email.channel = 'email' AND unknown_email.status = 'unknown')";
+    case "preference_suppressed": return `o.status = 'completed'
+      AND o.event_type = 'project.deadline.reminder'
+      AND EXISTS (
+        SELECT 1 FROM notification_delivery_ledger preference_suppressed_email
+        WHERE preference_suppressed_email.outbox_id = o.id
+          AND preference_suppressed_email.channel = 'email'
+          AND preference_suppressed_email.status = 'suppressed'
+          AND preference_suppressed_email.last_error_code = 'recipient_preference_disabled'
+      )`;
   }
 }
 
 function safeNotificationErrorCode(value: string | null): string | null {
   if (!value) return null;
   const safe = new Set([
-    "queue_publish_failed", "delivery_lease_expired", "delivery_retry", "reauthorization_suppressed",
+    "queue_publish_failed", "delivery_lease_expired", "delivery_retry", "reauthorization_suppressed", "recipient_preference_disabled",
     "queue_retries_exhausted", "email_configuration_missing", "email_acceptance_unknown",
     "E_RATE_LIMIT_EXCEEDED", "E_DAILY_LIMIT_EXCEEDED", "E_DELIVERY_FAILED", "E_INVALID_FROM",
     "E_INVALID_TO", "E_INVALID_EMAIL", "E_DOMAIN_NOT_VERIFIED", "E_SENDER_NOT_ALLOWED",
@@ -140,7 +149,7 @@ async function loadNotificationDeliveryRow(c: Parameters<typeof adminAllowed>[0]
 
 async function notificationDeliveryCounts(c: Parameters<typeof adminAllowed>[0], now: number) {
   const counts = await Promise.all(([
-    "pending_stuck", "dlq", "failed", "unknown",
+    "pending_stuck", "dlq", "failed", "unknown", "preference_suppressed",
   ] as const).map(async (view) => {
     const clause = notificationViewSql(view);
     const values = view === "pending_stuck" ? [now - 30 * 60_000, now] : [];

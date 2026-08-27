@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from "react";
-import { compareByStreetThenId, type StageKey } from "@quincy/shared";
+import { compareByStreetThenId, formatSydneyCivil, isDeadlineOverdue, type StageKey } from "@quincy/shared";
 import { StatusBadge } from "../components/atoms";
 import { LazyImage } from "../components/LazyImage";
 import { apiGet, apiPost } from "../lib/api";
@@ -24,6 +24,9 @@ export interface ProjectSummary {
   expectedCount: number | null;
   priority: number | null;
   boardPosition: number;
+  deadlineAt: number | null;
+  deadlineLocalCivil: string | null;
+  deadlineZone: "Australia/Sydney" | null;
 }
 
 function sortKanbanProjectsByShootDate(projects: ProjectSummary[], mode: "shootDate-asc" | "shootDate-desc"): ProjectSummary[] {
@@ -76,7 +79,8 @@ export function KanbanCard({ project, canMove, isDragging, onDragStart, onDragEn
   /** Used by the Node markup test; normal cards begin with their cover available. */
   initialCoverFailed?: boolean;
 }) {
-  const rawCount = project.expectedCount === null ? `${project.receivedCount} RAW` : `${project.receivedCount}/${project.expectedCount} RAW`;
+  const overdue = isDeadlineOverdue(project.deadlineAt);
+  const deadlineLabel = project.deadlineAt === null ? null : (project.deadlineLocalCivil ?? formatSydneyCivil(project.deadlineAt)).replace("T", " ");
   const [coverFailed, setCoverFailed] = useState(initialCoverFailed); const [coverRetry, setCoverRetry] = useState(0);
   const suppressNavigation = useRef(false);
   return <div className={`kcard-wrap ${isDragging ? "is-dragging" : ""}`}>
@@ -86,7 +90,7 @@ export function KanbanCard({ project, canMove, isDragging, onDragStart, onDragEn
         <div className="kcard__addr serif">{project.street}</div>
         <div className="kcard__meta">{location(project)}</div>
         <div className="kcard__meta">{project.agencyName || "Agency pending"}</div>
-        <div className="kcard__foot"><span className="ey">{rawCount}</span>{project.priority !== null && <span className="ey">Priority {project.priority}</span>}</div>
+        <div className="kcard__foot">{deadlineLabel && <time className={overdue ? "project-deadline__overdue" : ""} dateTime={new Date(project.deadlineAt!).toISOString()}>{overdue ? "Overdue" : "Due"} {deadlineLabel} Sydney</time>}{project.priority !== null && <span className="ey">Priority {project.priority}</span>}</div>
       </div>
     </InternalLink>
     {canPrioritize && <div className="kcard-controls" aria-label={`Order controls for ${project.street}`}>

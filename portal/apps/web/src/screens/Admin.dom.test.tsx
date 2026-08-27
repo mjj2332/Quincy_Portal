@@ -273,7 +273,7 @@ describe("Admin notification delivery operations", () => {
     view: "pending_stuck",
     items: [],
     nextCursor: null,
-    counts: { pending_stuck: 0, dlq: 0, failed: 0, unknown: 0 },
+    counts: { pending_stuck: 0, dlq: 0, failed: 0, unknown: 0, preference_suppressed: 0 },
   };
 
   function notificationResponse(view: string, item: Record<string, unknown> | null = null) {
@@ -281,7 +281,7 @@ describe("Admin notification delivery operations", () => {
       ...emptyNotificationResponse,
       view,
       items: item ? [item] : [],
-      counts: { pending_stuck: 1, dlq: 1, failed: 1, unknown: 1 },
+      counts: { pending_stuck: 1, dlq: 1, failed: 1, unknown: 1, preference_suppressed: 1 },
     };
   }
 
@@ -318,7 +318,7 @@ describe("Admin notification delivery operations", () => {
     host.remove();
   });
 
-  it("renders loading, empty, error, all four filters, and leaves the existing bell surface alone", async () => {
+  it("renders loading, empty, error, all five filters, and leaves the existing bell surface alone", async () => {
     let releaseIntegrations!: (value: unknown) => void;
     let releaseNotifications!: (value: unknown) => void;
     apiGetMock.mockImplementation((path) => {
@@ -339,15 +339,15 @@ describe("Admin notification delivery operations", () => {
     expect(host.querySelector('[aria-label="Notifications"]')).toBeNull();
 
     apiGetMock.mockImplementation((path) => path.startsWith("/api/admin/notification-deliveries") ? Promise.resolve(emptyNotificationResponse) : Promise.resolve({ integrations: [], tonomo: { lastEventAt: null, counts: { processed: 0, received: 0, poison: 0 }, poisonCount: 0 }, events: [], total: 0, openCount: 0 }));
-    const filterLabels = ["Pending / stuck", "DLQ", "FAILED", "UNKNOWN"];
+    const filterLabels = ["Pending / stuck", "DLQ", "FAILED", "UNKNOWN", "Preference suppressed"];
     const filterButtons = filterLabels.map((label) => [...host.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find((button) => button.textContent?.startsWith(label))).filter((button): button is HTMLButtonElement => Boolean(button));
-    expect(filterButtons).toHaveLength(4);
+    expect(filterButtons).toHaveLength(5);
     for (const filter of filterButtons) {
       await click(filter);
       await flush();
       const requestedPaths = apiGetMock.mock.calls.map(([path]) => path).filter((path): path is string => typeof path === "string");
       const label = filter.textContent ?? "";
-      const filterKey = (label.split(" ")[0] ?? "").toLowerCase().replace("pending", "pending_stuck");
+      const filterKey = label.startsWith("Preference") ? "preference_suppressed" : (label.split(" ")[0] ?? "").toLowerCase().replace("pending", "pending_stuck");
       expect(requestedPaths.some((path) => path.includes(`view=${filterKey}`) || (label.startsWith("Pending") && path.includes("view=pending_stuck")))).toBe(true);
     }
   });
@@ -403,5 +403,31 @@ describe("Admin notification delivery operations", () => {
     resolveReplay({});
     await flush(12);
     expect(apiPostMock).toHaveBeenCalledWith("/api/admin/notification-deliveries/tb4-ui-outbox/replay", { acknowledgeDuplicateEmail: true, channels: ["email"] });
+  });
+
+  it("renders deadline reminders with a closed event label and no operator actions in the preference view", async () => {
+    const item = {
+      outboxId: "tb4b-preference-outbox",
+      eventType: "project.deadline.reminder",
+      projectId: "project-1",
+      projectStreet: "Sydney Street",
+      recipientName: "Editor",
+      channels: [{ channel: "in_app", status: "sent" }, { channel: "email", status: "suppressed" }],
+      status: "completed",
+      attempts: 1,
+      safeErrorCode: "recipient_preference_disabled",
+      createdAt: Date.now(), updatedAt: Date.now(), lastAttemptAt: null, unknownEmailPossible: false,
+    };
+    apiGetMock.mockImplementation((path) => path.startsWith("/api/admin/notification-deliveries")
+      ? Promise.resolve(notificationResponse("preference_suppressed", item))
+      : Promise.resolve({ users: [], integrations: [], tonomo: { lastEventAt: null, counts: { processed: 0, received: 0, poison: 0 }, poisonCount: 0 }, events: [], total: 0, openCount: 0 }));
+    await act(async () => { root!.render(<Admin />); await Promise.resolve(); });
+    await openIntegrations(); await flush(10);
+    const preference = [...host.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find((button) => button.textContent?.startsWith("Preference suppressed"));
+    expect(preference).toBeDefined();
+    await click(preference!); await flush(10);
+    expect(host.textContent).toContain("Deadline reminder");
+    expect(host.textContent).toContain("recipient_preference_disabled");
+    expect([...host.querySelectorAll<HTMLButtonElement>('.admin-poison[aria-label="Notification delivery operations"] .admin-table__action button')]).toHaveLength(0);
   });
 });

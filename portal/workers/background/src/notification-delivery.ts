@@ -4,14 +4,18 @@ import {
   NOTIFICATION_OUTBOX_EVENT_TYPES,
   NOTIFICATION_QUEUE_NAME,
   NotificationOutboxMessage,
+  PROJECT_ASSIGNMENT_ELIGIBLE_ROLES,
   parseNotificationOutboxMessage,
   publishNotificationOutbox,
   roleHasCapability,
   isProjectAssignmentEligible,
   staffPathFor,
   truncateForEmail,
+  formatSydneyInstant,
+  formatSydneyCivil,
   type Role,
   type ProjectAssignmentCreatedPayload,
+  type ProjectDeadlineReminderOutboxPayload,
 } from "@quincy/shared";
 import type { Env } from "./env";
 
@@ -19,6 +23,7 @@ export const NOTIFICATION_DELIVERY_LEASE_MS = 10 * 60_000;
 export const NOTIFICATION_QUEUE_STUCK_MS = 30 * 60_000;
 export const NOTIFICATION_RECOVERY_LIMIT = 100;
 export const NOTIFICATION_QUEUE_MAX_DELAY_SECONDS = 12 * 60 * 60;
+export const PROJECT_DEADLINE_OPERATIONAL_TARGET_MS = 120_000;
 const htmlEscape = (value: string) => value.replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[character]!));
 
 type OutboxRow = {
@@ -64,6 +69,39 @@ type ResolverRow = {
   membershipId: string | null;
 };
 
+type ReminderResolverRow = {
+  outboxId: string;
+  schemaVersion: number;
+  eventType: string;
+  sourceKey: string;
+  projectId: string;
+  actorId: string;
+  recipientId: string;
+  payloadJson: string;
+  recipientActive: number;
+  recipientRole: string;
+  recipientName: string;
+  recipientEmail: string;
+  projectStreet: string | null;
+  projectArchivedAt: number | null;
+  projectStageKey: string | null;
+  projectDeadlineVersion: number | null;
+  occurrenceId: string | null;
+  occurrenceStatus: string | null;
+  occurrenceFiredAt: number | null;
+  occurrenceScheduleVersion: number | null;
+  occurrenceKind: string | null;
+  occurrenceOffsetMinutes: number | null;
+  occurrenceDeadlineAt: number | null;
+  occurrenceDeadlineLocalCivil: string | null;
+  occurrenceDeadlineZone: string | null;
+  occurrenceUtcOffsetMinutes: number | null;
+  occurrenceFold: number | null;
+  membershipId: string | null;
+  membershipCreatedAt: number | null;
+  membershipRole: string | null;
+};
+
 type ProjectCommentMentionPayload = {
   schemaVersion: 1;
   event: { type: "project.comment.mentioned"; sourceKey: string; recipientId: string };
@@ -92,13 +130,60 @@ type ProjectCommentMentionPayload = {
 };
 
 type ResolvedDelivery = {
-  notificationType: "mentioned" | "assigned_to_project";
+  notificationType: "mentioned" | "assigned_to_project" | "project_deadline_reminder";
   title: string;
   body: string;
   emailSubject: string;
   emailText: string;
   emailHtml: string;
 };
+
+type ResolvedRecipient = {
+  ok: true;
+  row: ResolverRow | ReminderResolverRow;
+  payload: ProjectCommentMentionPayload | ProjectAssignmentCreatedPayload | ProjectDeadlineReminderOutboxPayload;
+  commentPath: string;
+  delivery: ResolvedDelivery;
+} | { ok: false; reason: string };
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
+  return Object.keys(value).length === keys.length && keys.every((key) => Object.prototype.hasOwnProperty.call(value, key));
+}
+
+export function safeReminderPayload(value: string, outbox: OutboxRow): ProjectDeadlineReminderOutboxPayload | null {
+  if (outbox.schema_version !== 1 || outbox.event_type !== NOTIFICATION_OUTBOX_EVENT_TYPES.projectDeadlineReminder) return null;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!isObject(parsed) || !hasExactKeys(parsed, ["schemaVersion", "event", "authorizationAtOccurrence", "reminder"]) || parsed.schemaVersion !== 1) return null;
+    const event = parsed.event;
+    const authorization = parsed.authorizationAtOccurrence;
+    const reminder = parsed.reminder;
+    if (!isObject(event) || !hasExactKeys(event, ["type", "sourceKey", "recipientId"]) || event.type !== NOTIFICATION_OUTBOX_EVENT_TYPES.projectDeadlineReminder || typeof event.sourceKey !== "string" || typeof event.recipientId !== "string") return null;
+    if (!isObject(authorization) || !hasExactKeys(authorization, ["kind", "membershipCycle", "startedAt"]) || authorization.kind !== "project_editor_membership" || typeof authorization.membershipCycle !== "string" || typeof authorization.startedAt !== "number" || !Number.isSafeInteger(authorization.startedAt)) return null;
+    if (!isObject(reminder) || !hasExactKeys(reminder, ["occurrenceId", "projectId", "scheduleVersion", "kind", "offsetMinutes", "deadlineAt", "deadlineLocalCivil", "zone", "utcOffsetMinutes", "fold"])) return null;
+    const occurrenceId = reminder.occurrenceId;
+    const projectId = reminder.projectId;
+    const scheduleVersion = reminder.scheduleVersion;
+    const kind = reminder.kind;
+    const offsetMinutes = reminder.offsetMinutes;
+    const deadlineAt = reminder.deadlineAt;
+    const deadlineLocalCivil = reminder.deadlineLocalCivil;
+    const zone = reminder.zone;
+    const utcOffsetMinutes = reminder.utcOffsetMinutes;
+    const fold = reminder.fold;
+    if (typeof occurrenceId !== "string" || typeof projectId !== "string" || typeof scheduleVersion !== "number" || !Number.isSafeInteger(scheduleVersion) || scheduleVersion < 1 || (kind !== "advance" && kind !== "due_now") || typeof offsetMinutes !== "number" || !Number.isSafeInteger(offsetMinutes) || (kind === "due_now" ? offsetMinutes !== 0 : offsetMinutes < 1 || offsetMinutes > 43200) || typeof deadlineAt !== "string" || typeof deadlineLocalCivil !== "string" || zone !== "Australia/Sydney" || typeof utcOffsetMinutes !== "number" || !Number.isSafeInteger(utcOffsetMinutes) || utcOffsetMinutes < -840 || utcOffsetMinutes > 840 || (fold !== 0 && fold !== 1)) return null;
+    const deadline = new Date(deadlineAt);
+    if (!Number.isFinite(deadline.valueOf()) || deadline.toISOString() !== deadlineAt) return null;
+    if (event.sourceKey !== outbox.source_key || event.recipientId !== outbox.recipient_id || occurrenceId !== outbox.source_key || projectId !== outbox.project_id) return null;
+    return parsed as ProjectDeadlineReminderOutboxPayload;
+  } catch {
+    return null;
+  }
+}
 
 function safeAssignmentPayload(value: string, outbox: OutboxRow): ProjectAssignmentCreatedPayload | null {
   if (outbox.schema_version !== 1 || outbox.event_type !== NOTIFICATION_OUTBOX_EVENT_TYPES.projectAssignmentCreated) return null;
@@ -117,6 +202,65 @@ function safeAssignmentPayload(value: string, outbox: OutboxRow): ProjectAssignm
   } catch {
     return null;
   }
+}
+
+async function resolveDeadlineReminderRecipient(env: Env, outbox: OutboxRow): Promise<ResolvedRecipient> {
+  const payload = safeReminderPayload(outbox.payload_json, outbox);
+  if (!payload) return { ok: false, reason: "payload_invalid" };
+  const result = await env.DB.prepare(`
+    SELECT o.id AS outboxId, o.schema_version AS schemaVersion, o.event_type AS eventType,
+      o.source_key AS sourceKey, o.project_id AS projectId, o.actor_id AS actorId,
+      o.recipient_id AS recipientId, o.payload_json AS payloadJson,
+      recipient.active AS recipientActive, recipient.role AS recipientRole,
+      recipient.name AS recipientName, recipient.email AS recipientEmail,
+      p.street AS projectStreet, p.archived_at AS projectArchivedAt,
+      p.stage_key AS projectStageKey, p.deadline_version AS projectDeadlineVersion,
+      occurrence.id AS occurrenceId, occurrence.status AS occurrenceStatus,
+      occurrence.fired_at AS occurrenceFiredAt, occurrence.schedule_version AS occurrenceScheduleVersion,
+      occurrence.kind AS occurrenceKind, occurrence.reminder_offset_minutes AS occurrenceOffsetMinutes,
+      occurrence.deadline_at AS occurrenceDeadlineAt, occurrence.deadline_local_civil AS occurrenceDeadlineLocalCivil,
+      occurrence.deadline_zone AS occurrenceDeadlineZone, occurrence.deadline_utc_offset_minutes AS occurrenceUtcOffsetMinutes,
+      occurrence.deadline_fold AS occurrenceFold,
+      member.id AS membershipId, member.created_at AS membershipCreatedAt, member.role_on_project AS membershipRole
+    FROM notification_outbox o
+    LEFT JOIN user recipient ON recipient.id = o.recipient_id
+    LEFT JOIN projects p ON p.id = o.project_id
+    LEFT JOIN project_deadline_occurrences occurrence
+      ON occurrence.id = o.source_key AND occurrence.project_id = o.project_id
+    LEFT JOIN project_members member
+      ON member.id = json_extract(o.payload_json, '$.authorizationAtOccurrence.membershipCycle')
+      AND member.project_id = o.project_id AND member.user_id = o.recipient_id
+    WHERE o.id = ?
+  `).bind(outbox.id).first<ReminderResolverRow>();
+  if (!result) return { ok: false, reason: "outbox_missing" };
+  if (result.schemaVersion !== 1 || result.eventType !== NOTIFICATION_OUTBOX_EVENT_TYPES.projectDeadlineReminder || result.sourceKey !== payload.reminder.occurrenceId || result.projectId !== payload.reminder.projectId || result.recipientId !== payload.event.recipientId) return { ok: false, reason: "payload_invalid" };
+  const deadlineAt = Date.parse(payload.reminder.deadlineAt);
+  const role = result.recipientRole as Role;
+  if (result.projectStreet === null || result.projectArchivedAt !== null || result.projectStageKey === "delivered" || result.projectDeadlineVersion !== payload.reminder.scheduleVersion) return { ok: false, reason: "project_no_longer_visible" };
+  if (result.recipientActive !== 1 || !isProjectAssignmentEligible("editor", role)) return { ok: false, reason: "recipient_ineligible" };
+  if (result.occurrenceId !== payload.reminder.occurrenceId || result.occurrenceStatus !== "fired" || result.occurrenceFiredAt === null || result.occurrenceScheduleVersion !== payload.reminder.scheduleVersion || result.occurrenceKind !== payload.reminder.kind || result.occurrenceOffsetMinutes !== payload.reminder.offsetMinutes || result.occurrenceDeadlineAt !== deadlineAt || result.occurrenceDeadlineLocalCivil !== payload.reminder.deadlineLocalCivil || result.occurrenceDeadlineZone !== payload.reminder.zone || result.occurrenceUtcOffsetMinutes !== payload.reminder.utcOffsetMinutes || result.occurrenceFold !== payload.reminder.fold) return { ok: false, reason: "occurrence_changed" };
+  if (result.membershipId !== payload.authorizationAtOccurrence.membershipCycle || result.membershipRole !== "editor" || result.membershipCreatedAt !== payload.authorizationAtOccurrence.startedAt || result.membershipCreatedAt > result.occurrenceFiredAt) return { ok: false, reason: "membership_cycle_changed" };
+  const projectPath = `${env.APP_ORIGIN}${staffPathFor({ kind: "project", projectId: result.projectId })}`;
+  const label = result.projectStreet || "Project";
+  const dueText = payload.reminder.kind === "due_now"
+    ? Date.now() > deadlineAt ? "is overdue" : "is due now"
+    : `is due at ${formatSydneyCivil(deadlineAt)} Sydney time`;
+  const body = `${label} ${dueText}.`;
+  const title = "Project deadline reminder";
+  return {
+    ok: true,
+    row: result,
+    payload,
+    commentPath: projectPath,
+    delivery: {
+      notificationType: "project_deadline_reminder",
+      title,
+      body,
+      emailSubject: title,
+      emailText: `${body}\n\n${projectPath}`,
+      emailHtml: `<p>${htmlEscape(body)}</p><p><small>${htmlEscape(formatSydneyInstant(deadlineAt))}</small></p><p><a href="${htmlEscape(projectPath)}">View project</a></p>`,
+    },
+  };
 }
 
 export type EmailClassification =
@@ -179,10 +323,8 @@ function safePayload(value: string, outbox: OutboxRow): ProjectCommentMentionPay
   }
 }
 
-async function resolveRecipient(env: Env, outbox: OutboxRow): Promise<
-  | { ok: true; row: ResolverRow; payload: ProjectCommentMentionPayload | ProjectAssignmentCreatedPayload; commentPath: string; delivery: ResolvedDelivery }
-  | { ok: false; reason: string }
-> {
+async function resolveRecipient(env: Env, outbox: OutboxRow): Promise<ResolvedRecipient> {
+  if (outbox.event_type === NOTIFICATION_OUTBOX_EVENT_TYPES.projectDeadlineReminder) return resolveDeadlineReminderRecipient(env, outbox);
   const row = await env.DB.prepare(`
     SELECT
       o.id AS outboxId, o.schema_version AS schemaVersion, o.event_type AS eventType,
@@ -383,15 +525,17 @@ async function suppressWholeOccurrence(env: Env, outbox: OutboxRow, token: strin
   ]);
 }
 
-async function suppressEmailChannel(env: Env, outbox: OutboxRow, token: string, reason: string, now: number): Promise<void> {
+type NotificationSuppressionCode = "reauthorization_suppressed" | "recipient_preference_disabled";
+
+async function suppressEmailChannel(env: Env, outbox: OutboxRow, token: string, reason: string, now: number, code: NotificationSuppressionCode = "reauthorization_suppressed"): Promise<void> {
   const meta = JSON.stringify({ eventType: outbox.event_type, sourceKey: outbox.source_key, recipientId: outbox.recipient_id, reason });
   await env.DB.batch([
     env.DB.prepare(`
       UPDATE notification_delivery_ledger
-      SET status = 'suppressed', last_error_code = 'reauthorization_suppressed', last_error = ?, updated_at = ?
+      SET status = 'suppressed', last_error_code = ?, last_error = ?, updated_at = ?
       WHERE outbox_id = ? AND channel = 'email' AND status = 'pending'
         AND EXISTS (SELECT 1 FROM notification_outbox o WHERE o.id = ? AND o.status = 'processing' AND o.lease_token = ?)
-    `).bind(reason, now, outbox.id, outbox.id, token),
+    `).bind(code, reason, now, outbox.id, outbox.id, token),
     env.DB.prepare(`
       UPDATE notification_outbox
       SET status = 'completed', lease_token = NULL, lease_expires_at = NULL,
@@ -407,7 +551,108 @@ async function suppressEmailChannel(env: Env, outbox: OutboxRow, token: string, 
   ]);
 }
 
+type ReminderAdmission = { sql: string; values: unknown[] };
+
+function reminderAuthorization(outbox: OutboxRow, payload: ProjectDeadlineReminderOutboxPayload, token: string, channel?: "in_app" | "email"): ReminderAdmission {
+  const roles = PROJECT_ASSIGNMENT_ELIGIBLE_ROLES.editor;
+  const rolePlaceholders = roles.map(() => "?").join(",");
+  return {
+    sql: `
+      SELECT 1
+      FROM notification_outbox o
+      JOIN projects p ON p.id = o.project_id
+      JOIN project_deadline_occurrences occurrence
+        ON occurrence.id = o.source_key AND occurrence.project_id = o.project_id
+      JOIN user recipient ON recipient.id = o.recipient_id
+      JOIN project_members member
+        ON member.id = ? AND member.project_id = o.project_id
+        AND member.user_id = o.recipient_id AND member.role_on_project = 'editor'
+      LEFT JOIN notification_preferences preference ON preference.user_id = o.recipient_id
+      WHERE o.id = notification_delivery_ledger.outbox_id
+        AND o.id = ? AND o.status = 'processing' AND o.lease_token = ?
+        AND o.schema_version = 1 AND o.event_type = 'project.deadline.reminder'
+        AND o.source_key = ? AND o.project_id = ? AND o.recipient_id = ?
+        AND p.archived_at IS NULL AND p.stage_key <> 'delivered'
+        AND p.deadline_version = ? AND p.deadline_at = ?
+        AND occurrence.status = 'fired' AND occurrence.fired_at IS NOT NULL
+        AND occurrence.schedule_version = ? AND occurrence.kind = ?
+        AND occurrence.reminder_offset_minutes = ? AND occurrence.deadline_at = ?
+        AND occurrence.deadline_local_civil = ? AND occurrence.deadline_zone = 'Australia/Sydney'
+        AND occurrence.deadline_utc_offset_minutes = ? AND occurrence.deadline_fold = ?
+        AND recipient.active = 1 AND recipient.role IN (${rolePlaceholders})
+        AND member.created_at = ? AND member.created_at <= occurrence.fired_at
+        ${channel ? "AND (? <> 'email' OR COALESCE(preference.project_deadline_reminder_emails, 1) = 1)" : ""}
+    `,
+    values: [
+      payload.authorizationAtOccurrence.membershipCycle, outbox.id, token,
+      payload.reminder.occurrenceId, payload.reminder.projectId, outbox.recipient_id,
+      payload.reminder.scheduleVersion, Date.parse(payload.reminder.deadlineAt),
+      payload.reminder.scheduleVersion, payload.reminder.kind, payload.reminder.offsetMinutes,
+      Date.parse(payload.reminder.deadlineAt), payload.reminder.deadlineLocalCivil,
+      payload.reminder.utcOffsetMinutes, payload.reminder.fold, ...roles,
+      payload.authorizationAtOccurrence.startedAt, ...(channel ? [channel] : []),
+    ],
+  };
+}
+
+async function beginReminderChannel(env: Env, outbox: OutboxRow, token: string, channel: "in_app" | "email", now: number): Promise<boolean> {
+  const payload = safeReminderPayload(outbox.payload_json, outbox);
+  if (!payload) return false;
+  const authorization = reminderAuthorization(outbox, payload, token);
+  const admission = reminderAuthorization(outbox, payload, token, channel);
+  const preferenceForCode = `COALESCE((SELECT project_deadline_reminder_emails FROM notification_preferences WHERE user_id = ?), 1) = 0`;
+  const results = await env.DB.batch([
+    env.DB.prepare(`
+      UPDATE notification_delivery_ledger
+      SET status = 'processing', attempts = attempts + 1, last_attempt_at = ?, updated_at = ?,
+          last_error_code = NULL, last_error = NULL
+      WHERE outbox_id = ? AND channel = ? AND status = 'pending'
+        AND EXISTS (${admission.sql})
+      RETURNING id
+    `).bind(now, now, outbox.id, channel, ...admission.values.slice(0, -1), channel),
+    env.DB.prepare(`
+      UPDATE notification_delivery_ledger
+      SET status = 'suppressed',
+          last_error_code = CASE
+            WHEN channel = 'email' AND EXISTS (${authorization.sql}) AND ${preferenceForCode}
+              THEN 'recipient_preference_disabled'
+            ELSE 'reauthorization_suppressed'
+          END,
+          last_error = CASE
+            WHEN channel = 'email' AND EXISTS (${authorization.sql}) AND ${preferenceForCode}
+              THEN 'Recipient disabled project deadline reminder email.'
+            ELSE 'Current reminder authorization no longer matches.'
+          END,
+          updated_at = ?
+      WHERE outbox_id = ? AND channel = ? AND status = 'pending' AND changes() = 0
+        AND EXISTS (SELECT 1 FROM notification_outbox owned WHERE owned.id = ? AND owned.status = 'processing' AND owned.lease_token = ?)
+        AND NOT EXISTS (${admission.sql})
+      RETURNING id, last_error_code
+    `).bind(
+      ...authorization.values, outbox.recipient_id,
+      ...authorization.values, outbox.recipient_id,
+      now, outbox.id, channel, outbox.id, token,
+      ...admission.values.slice(0, -1), channel,
+    ),
+    env.DB.prepare(`
+      INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
+      SELECT ?, NULL, 'notification.delivery.suppressed', 'notification_outbox', ?,
+        json_object('eventType', ?, 'sourceKey', ?, 'recipientId', ?,
+          'reasonCode', (SELECT last_error_code FROM notification_delivery_ledger WHERE outbox_id = ? AND channel = ? AND status = 'suppressed' ORDER BY updated_at DESC LIMIT 1)), ?
+      WHERE changes() = 1
+    `).bind(crypto.randomUUID(), outbox.id, outbox.event_type, outbox.source_key, outbox.recipient_id, outbox.id, channel, now),
+    env.DB.prepare(`
+      UPDATE notification_outbox
+      SET status = 'completed', lease_token = NULL, lease_expires_at = NULL, completed_at = ?, updated_at = ?
+      WHERE id = ? AND status = 'processing' AND lease_token = ?
+        AND NOT EXISTS (SELECT 1 FROM notification_delivery_ledger WHERE outbox_id = ? AND status IN ('pending', 'processing'))
+    `).bind(now, now, outbox.id, token, outbox.id),
+  ]);
+  return (results[0]?.results?.length ?? 0) === 1;
+}
+
 async function beginChannel(env: Env, outbox: OutboxRow, token: string, channel: "in_app" | "email", now: number): Promise<boolean> {
+  if (outbox.event_type === NOTIFICATION_OUTBOX_EVENT_TYPES.projectDeadlineReminder) return beginReminderChannel(env, outbox, token, channel, now);
   const result = await env.DB.prepare(`
     UPDATE notification_delivery_ledger
     SET status = 'processing', attempts = attempts + 1, last_attempt_at = ?, updated_at = ?,
@@ -458,6 +703,7 @@ async function deliverInApp(env: Env, outbox: OutboxRow, token: string, _resolve
   `).bind(current.delivery.notificationType, current.row.sourceKey, current.row.recipientId, now, now, outbox.id, outbox.id, token, current.delivery.notificationType, current.row.sourceKey, current.row.recipientId);
   const results = await env.DB.batch([inserted, converged]);
   if ((results[1]?.meta.changes ?? 0) !== 1) throw new Error("In-app ledger convergence lost ownership");
+  await recordProjectDeadlineInAppLatency(env, outbox, now);
 }
 
 async function mirrorEmailOutcome(env: Env, outboxId: string, update: { emailSentAt: number; emailMessageId: string } | { emailError: string }): Promise<void> {
@@ -474,6 +720,35 @@ async function mirrorEmailOutcome(env: Env, outboxId: string, update: { emailSen
       `).bind(update.emailError, outboxId).run();
     }
   } catch { /* Ledger remains authoritative if the compatibility mirror is gone. */ }
+}
+
+async function recordProjectDeadlineInAppLatency(env: Env, outbox: OutboxRow, deliveredAt: number): Promise<void> {
+  if (outbox.event_type !== NOTIFICATION_OUTBOX_EVENT_TYPES.projectDeadlineReminder) return;
+  try {
+    const occurrence = await env.DB.prepare(`
+      SELECT fire_at AS fireAt, created_at AS createdAt
+      FROM project_deadline_occurrences
+      WHERE id = ?
+    `).bind(outbox.source_key).first<{ fireAt: number; createdAt: number }>();
+    if (!occurrence) return;
+    const operationalMetricBasis = Math.max(occurrence.fireAt, occurrence.createdAt);
+    const latencyMs = deliveredAt - operationalMetricBasis;
+    const details = {
+      outboxId: outbox.id,
+      occurrenceId: outbox.source_key,
+      fireAt: occurrence.fireAt,
+      operationalMetricBasis,
+      deliveredAt,
+      latencyMs,
+    };
+    if (latencyMs > PROJECT_DEADLINE_OPERATIONAL_TARGET_MS) {
+      console.warn("Project Deadline in-app latency target exceeded", details);
+    } else {
+      console.log("Project Deadline in-app latency", details);
+    }
+  } catch {
+    // Delivery remains authoritative when the bounded operational metric cannot be recorded.
+  }
 }
 
 async function failEmailBeforeAdmission(env: Env, outbox: OutboxRow, token: string, code: string, message: string, now: number): Promise<void> {

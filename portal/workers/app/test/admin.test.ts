@@ -74,12 +74,17 @@ describe("TB4 Admin delivery operations", () => {
     ]);
   });
 
-  it("requires adminBackend, paginates and filters all four views, and serializes no sensitive delivery data", async () => {
+  it("requires adminBackend, paginates and filters all five views, and serializes no sensitive delivery data", async () => {
     const pendingA = await seedFixture({ outboxStatus: "pending", updatedAt: Date.now() - 2_000 });
     const pendingB = await seedFixture({ outboxStatus: "pending", updatedAt: Date.now() - 1_000 });
     const dlq = await seedFixture({ outboxStatus: "dlq" });
     const failed = await seedFixture({ outboxStatus: "completed", emailStatus: "failed", errorCode: "E_INVALID_TO", errorMessage: "RAW PROVIDER ERROR" });
     const unknown = await seedFixture({ outboxStatus: "completed", emailStatus: "unknown" });
+    const preference = await seedFixture({ outboxStatus: "completed", inAppStatus: "sent", emailStatus: "failed" });
+    await database.DB.batch([
+      database.DB.prepare("UPDATE notification_outbox SET event_type = 'project.deadline.reminder', last_error_code = NULL WHERE id = ?").bind(preference.outboxId),
+      database.DB.prepare("UPDATE notification_delivery_ledger SET event_type = 'project.deadline.reminder', status = CASE WHEN channel = 'email' THEN 'suppressed' ELSE status END, last_error_code = CASE WHEN channel = 'email' THEN 'recipient_preference_disabled' ELSE last_error_code END WHERE outbox_id = ?").bind(preference.outboxId),
+    ]);
 
     expect((await request("/api/admin/notification-deliveries?view=pending_stuck&limit=1", editorToken)).status).toBe(403);
     const pending = await request("/api/admin/notification-deliveries?view=pending_stuck&limit=1", adminToken);
@@ -103,6 +108,14 @@ describe("TB4 Admin delivery operations", () => {
       expect(JSON.stringify(body)).not.toContain("secret-queue-id");
       expect(body.items.every((item) => !item.safeErrorCode || item.safeErrorCode !== "raw-provider-code")).toBe(true);
     }
+    const preferenceResponse = await request("/api/admin/notification-deliveries?view=preference_suppressed&limit=10", adminToken);
+    expect(preferenceResponse.status).toBe(200);
+    const preferenceBody = await preferenceResponse.json() as { view: string; items: Array<{ outboxId: string; safeErrorCode: string | null }> };
+    expect(preferenceBody.view).toBe("preference_suppressed");
+    expect(preferenceBody.items.map((item) => item.outboxId)).toContain(preference.outboxId);
+    expect(preferenceBody.items.find((item) => item.outboxId === preference.outboxId)?.safeErrorCode).toBe("recipient_preference_disabled");
+    expect(JSON.stringify(preferenceBody)).not.toContain("secret@example.test");
+    expect(JSON.stringify(preferenceBody)).not.toContain("SECRET COMMENT CONTENT");
   });
 
   it("guards live discard, converts expired email processing to unknown, and preserves the duplicate warning", async () => {

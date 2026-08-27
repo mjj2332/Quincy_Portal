@@ -86,7 +86,7 @@ describe("collaboration-summary polling boundary", () => {
 
   it("automatically purges collaboration data when ProjectWorkspace polling loses access", async () => {
     vi.useFakeTimers(); notifyManager.setScheduler((callback) => callback()); focusManager.setFocused(true); onlineManager.setOnline(true);
-    const project = { id: "p", street: "Private Lane", suburb: null, postcode: null, agencyName: null, agentName: null, shootDate: null, stageKey: "raw_review", rawFolderPath: null, rawFolderLink: null, coverAssetId: null, effectiveCoverAssetId: null, collections: [{ id: "raw", kind: "raw", status: "active", expectedCount: null, receivedCount: 0 }], members: [] };
+    const project = { id: "p", street: "Private Lane", suburb: null, postcode: null, agencyName: null, agentName: null, shootDate: null, stageKey: "raw_review", rawFolderPath: null, rawFolderLink: null, coverAssetId: null, effectiveCoverAssetId: null, collections: [{ id: "raw", kind: "raw", status: "active", expectedCount: null, receivedCount: 0 }], members: [], deadlineSchedule: { version: 0, deadline: null, reminderOffsetsMinutes: [], state: "unset", nextOccurrence: null, canResume: false } };
     let summaryCalls = 0;
     apiGetMock.mockImplementation((path: string) => {
       if (path === "/api/projects/p") return Promise.resolve(project);

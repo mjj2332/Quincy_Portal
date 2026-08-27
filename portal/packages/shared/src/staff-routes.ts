@@ -9,6 +9,7 @@ export type StaffRoute =
   | { kind: "project"; projectId: string; collaboration?: "open" }
   | { kind: "edit-project"; projectId: string }
   | { kind: "admin" }
+  | { kind: "notifications" }
   | { kind: "not-found" }
   | { kind: "reserved" };
 
@@ -42,6 +43,7 @@ export function parseStaffPathname(pathname: string): StaffRoute {
   if (reservedRoots.has(segments[0]!)) return { kind: "reserved" };
 
   if (segments.length === 1 && segments[0] === "admin") return { kind: "admin" };
+  if (segments.length === 2 && segments[0] === "settings" && segments[1] === "notifications") return { kind: "notifications" };
   if (segments[0] !== "projects") return { kind: "not-found" };
   if (segments.length === 2 && segments[1] === "new") return { kind: "create-project" };
   if (!UUID.test(segments[1] ?? "")) return { kind: "not-found" };
@@ -70,6 +72,7 @@ export function staffPathFor(route: Exclude<StaffRoute, { kind: "not-found" } | 
     case "project": return `/projects/${encodeURIComponent(route.projectId)}${route.collaboration === "open" ? "?collaboration=open" : ""}`;
     case "edit-project": return `/projects/${encodeURIComponent(route.projectId)}/edit`;
     case "admin": return "/admin";
+    case "notifications": return "/settings/notifications";
   }
 }
 
@@ -84,7 +87,7 @@ export function projectNotificationRoute(projectId: string | null, type: string)
 export function safeStaffDestination(value: unknown): string | null {
   if (typeof value !== "string" || unsafeText(value) || value.includes("#") || !value.startsWith("/") || value.startsWith("//")) return null;
   const route = parseStaffLocation(value);
-  return route.kind === "dashboard" || route.kind === "create-project" || route.kind === "project" || route.kind === "edit-project" || route.kind === "admin"
+  return route.kind === "dashboard" || route.kind === "create-project" || route.kind === "project" || route.kind === "edit-project" || route.kind === "admin" || route.kind === "notifications"
     ? staffPathFor(route)
     : null;
 }

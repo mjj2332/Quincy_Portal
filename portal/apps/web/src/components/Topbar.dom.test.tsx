@@ -41,6 +41,14 @@ afterEach(async () => {
 });
 
 describe("Topbar notifications", () => {
+  it("exposes personal notification preferences in desktop and mobile account navigation", async () => {
+    const host = document.body.firstElementChild as HTMLElement;
+    await render(host);
+    expect(host.querySelectorAll<HTMLAnchorElement>('a[href="/settings/notifications"]')).toHaveLength(1);
+    await click(host.querySelector<HTMLButtonElement>('[aria-label="Open account and navigation menu"]')!);
+    expect(host.querySelector<HTMLAnchorElement>('.topbar__mobile-menu a[href="/settings/notifications"]')).not.toBeNull();
+  });
+
   it("polls on a configurable interval and supports open, focus, escape, outside click, and read", async () => {
     const host = document.body.firstElementChild as HTMLElement;
     await render(host);

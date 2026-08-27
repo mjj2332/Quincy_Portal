@@ -7,7 +7,9 @@ export type NotificationOutboxMessage = {
 export const NOTIFICATION_OUTBOX_EVENT_TYPES = {
   projectCommentMentioned: "project.comment.mentioned",
   projectAssignmentCreated: "project.assignment.created",
+  projectDeadlineReminder: "project.deadline.reminder",
 } as const;
+export type ProjectDeadlineReminderOutboxPayload = import("./project-deadline").ProjectDeadlineReminderPayload;
 export type ProjectAssignmentCreatedPayload = {
   schemaVersion: 1;
   event: {

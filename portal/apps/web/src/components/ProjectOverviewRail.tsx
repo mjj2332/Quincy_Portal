@@ -2,6 +2,7 @@ import type { CollectionKind } from "@quincy/shared";
 import { StatusBadge } from "./atoms";
 import { InternalLink } from "./InternalLink";
 import { ProjectTeamControl } from "./ProjectTeamControl";
+import { ProjectDeadlineControl } from "./ProjectDeadlineControl";
 import { useStages } from "../lib/stages";
 import type { ProjectDetail } from "../lib/project-data";
 
@@ -55,8 +56,7 @@ export function ProjectOverviewRail({
       <div className="ey rail__section-label" id="project-overview-production">Production</div>
       <div className="kv"><span className="k">Stage</span><span className="vv">{stage?.label ?? project.stageKey}</span></div>
       <div className="kv"><span className="k">Shoot</span><span className="vv">{date(project.shootDate)}</span></div>
-      <div className="kv"><span className="k">Deadline</span><span className="vv">Not scheduled</span></div>
-      <div className="kv"><span className="k">Next reminder</span><span className="vv">None</span></div>
+      <ProjectDeadlineControl projectId={project.id} schedule={project.deadlineSchedule} canEdit={canEdit} />
       {canEdit && <InternalLink className="button button--secondary rail__edit" to={`/projects/${encodeURIComponent(project.id)}/edit`}>Edit details</InternalLink>}
     </section>
 
