@@ -895,16 +895,24 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
 ## Waiting on user / external
 
 - [ ] **TB4D residual QA** (`docs/plans/implemented/Revamp-TB4D-Checklist-Scheduling-Ranges-Plan.md`):
-  no local mutating QA matrix was run (deployed straight from the §5 gate + Opus final-draft APPROVE);
-  the schedule-change → broad-outbox → bell **delivery** half is covered by the `workers/background`
-  239-test suite only (no local background Worker). No authenticated **production** walkthrough of the
-  schedule editor (create range / due-only date+timed / DST gap+fold / version-conflict 409 /
-  desktop+compact+phone) was performed. Post-deploy production checks stayed passive (site 200,
-  outbox 9/9 completed, 0 stuck/DLQ, migration `0035` postflight clean, every-minute cron running).
-  **Recommend a local-dev mutating QA pass** (Agy via Option A, or the orchestrating session's
-  Browser pane after a human sign-in) against `http://localhost:8787` on `main` now that TB4D is
-  live, covering the brief's Tests/QA list. Also: the **PATCH raw-`dueDate` one-release adapter** and
-  the deferred Opus final-draft nits (see the TB4D entry above) are open follow-ups.
+  **local mutating QA matrix — DONE 2026-08-28** (Agy via Option A against `http://localhost:8787` on
+  `main` + migration `0035` applied to local D1). 17-check matrix ALL PASS, every functional claim
+  independently re-verified against local D1 by the orchestrating session (§5): 13 `schedule_changed`
+  activity rows with contiguous versions 1–13 (one per committed change; none for no-op / rejected /
+  legacy-adapter writes); `safe_payload_json` = exactly `{itemId, checklistTitle, scheduleState,
+  version}` (privacy-safe); `source_key` = `project-checklist-schedule:<projectId>:<itemId>:version:<n>`;
+  1 broad `project.activity.broad` outbox row with `coalesce_key`
+  `...:<itemId>:<actorId>` + 300000 ms window, 2nd same-item/same-actor edit coalesced (count stayed
+  1); 0 email ledger rows; version-conflict → 409 + authoritative state + no UI auto-retry; Sydney
+  DST gap (Oct 4) → 400 `nonexistent_local_time`, fold (Apr 5) → 400 `repeated_local_time` with
+  Earlier/Later `choices` (offset 660 vs 600); exact-minute round-trip; pure-start edit → activity
+  yes / broad no / reminder untouched; legacy `dueDate` adapter (version-0 works, version≥1 →
+  `reload_required`); reorder/reassign unchanged (no schedule activity); responsive editor at
+  1280/900/375. Still open: the fire → outbox → **bell delivery** half is NOT locally exercisable
+  (no local background Worker) — covered by the `workers/background` 239-test suite; no authenticated
+  **production** walkthrough (Agy has no prod danger/YOLO sanction; post-deploy prod checks stayed
+  passive — site 200, outbox 9/9 completed, cron clean). The **PATCH raw-`dueDate` one-release
+  adapter** removal and the deferred Opus final-draft nits (see the TB4D entry above) remain open.
 - [ ] **TB4C residual QA** (`docs/plans/implemented/Revamp-TB4C-Editor-Wide-Project-Change-Notifications-Plan.md`):
   the fire → outbox → in-app-notification → bell **delivery** half of the broad-activity path is not
   locally exercisable (no local background Worker — `BACKGROUND` binding `[not connected]` under
