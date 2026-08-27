@@ -88,50 +88,104 @@ Agy has no native browser tool — only `read_url_content` (static HTTP, no JS) 
 But it *can* drive a real Chrome through the
 [`chrome-devtools-mcp`](https://github.com/ChromeDevTools/chrome-devtools-mcp) MCP server.
 
-One-time setup (persists in `~/.gemini/antigravity-cli/` MCP config):
-
-```bash
-agy mcp add chrome-devtools npx -y chrome-devtools-mcp@latest
-agy mcp list   # confirm: chrome-devtools  stdio  enabled
-```
-
-Then run Agy **in `--mode accept-edits`** — plan mode only drafts an implementation plan and
-waits for a "Proceed" click, so it never executes an MCP tool call non-interactively:
-
-```bash
-agy --model gemini-3.6-flash-high --mode accept-edits --effort high \
-  --dangerously-skip-permissions --print-timeout 9m0s \
-  -p "Do not write files or draft a plan. Use the chrome-devtools MCP tools now: navigate_page
-      to <url>, take_snapshot, report ..." > report.md 2> run.log
-```
-
-Smoke test (navigate `example.com` → `take_snapshot` → report `h1`/`title`) passed. Tools
-exposed (~29): `navigate_page`, `new_page`, `select_page`, `list_pages`, `close_page`,
+Tools exposed (~29): `navigate_page`, `new_page`, `select_page`, `list_pages`, `close_page`,
 `take_snapshot`, `take_screenshot`, `click`, `hover`, `drag`, `fill`, `fill_form`, `type_text`,
 `press_key`, `upload_file`, `handle_dialog`, `wait_for`, `evaluate_script`, `resize_page`,
 `emulate`, `list_network_requests`, `get_network_request`, `list_console_messages`,
 `get_console_message`, `performance_start_trace`, `performance_stop_trace`,
 `performance_analyze_insight`, `lighthouse_audit`, `take_heapsnapshot`.
 
-Gotchas:
+Two ways to run it. **Option B** lets the MCP server launch its own throwaway Chrome — simplest,
+but logged into nothing. **Option A** attaches the MCP server to a Chrome a human already
+signed in — this is what gives Agy an authenticated Quincy session, and it's the one that
+actually works reliably.
 
-- **`--mode plan` does not execute tools.** Use `--mode accept-edits` (this is the build
-  invocation shape — `--add-dir` only matters if the task also writes repo files).
-- **Model and effort must agree.** `--model gemini-3.6-flash-high` rejects `--effort medium`
-  or `low` with `invalid model selection … conflicts with --effort`; pass `--effort high`.
-  (Roster is `gemini-3.6-flash-*`, not `3.7`.)
-- **First run downloads Chrome for Testing via `npx`** — give `--print-timeout` generous room
-  (`9m0s`+). The browser launches isolated (`~/.cache/chrome-devtools-mcp/chrome-profile`) and
-  exits cleanly; no leftover process.
-- **This Chrome is logged into nothing.** Fine for public sites, `prototype.`/marketing pages,
-  Lighthouse/perf audits, and unauthenticated smoke checks. It does **not** close the Quincy
-  local-auth gap — no Google sign-in, and forging the better-auth cookie stays the
-  [Subagent-Orchestration.md](../Subagent-Orchestration.md) §6-forbidden move. Authenticated
-  Quincy QA still goes to Luna (danger/YOLO-mode) or the orchestrating session's own Browser
-  pane after a human sign-in.
-- **Still ad hoc groundwork only** (§2.6) — no pipeline role. Use it for a quick "is the
-  deployed page rendering / what does Lighthouse say" check, not as a Luna substitute for
-  gated QA.
+### Rules that apply to both
+
+- **`--mode plan` does not execute tools** — it only drafts a plan and waits for a "Proceed"
+  click. Use **`--mode accept-edits`** (the build invocation shape; `--add-dir` only matters if
+  the task also writes repo files).
+- **Model and effort must agree.** `--model gemini-3.7-flash-high` (current default; `3.6` and
+  `3.5` also on the roster) rejects `--effort medium`/`low` with `invalid model selection …
+  conflicts with --effort` — the tier is baked into the model id, so always pass `--effort high`
+  with a `*-high` model.
+- **Run Agy in the FOREGROUND.** `nohup agy -p … &` exits in ~10 s with empty stdout *and*
+  empty stderr and the task half-done (stdin EOF ends print mode early) — and it can orphan the
+  MCP server + its Chrome. Run it as a normal blocking `Bash` call with a generous
+  `--print-timeout` (`5m0s`+). This is a real constraint on offloading: a run that needs to
+  wait on a human (e.g. for sign-in) blocks the orchestrating session for its whole duration.
+- **Still ad hoc groundwork only** (§2.6) — Agy has no pipeline role and no danger/YOLO-mode
+  sanction (those are Luna-only). Even fully authenticated, use this for "does this page render
+  for a signed-in admin / what does Lighthouse say", not as a Luna substitute for gated QA or
+  any mutating walkthrough.
+
+### Option A — attach to a human-authenticated Chrome (verified 2026-08-27)
+
+A human starts a dedicated Chrome, signs into local dev once, and leaves it running. Agy's MCP
+server attaches over CDP; the session lives in that Chrome regardless of whether any `agy`
+process is alive.
+
+```bash
+# 1. dedicated Chrome — NOT your everyday profile. Pick a free port (9222 is often already
+#    taken by another Chrome; this project used 9333). A non-default --user-data-dir is
+#    mandatory: modern Chrome refuses --remote-debugging-port on the default profile.
+nohup "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+  --remote-debugging-port=9333 \
+  --user-data-dir="$HOME/.cache/agy-quincy-chrome" \
+  --no-first-run --no-default-browser-check --disable-sync \
+  http://localhost:8787 > /tmp/agy-chrome.log 2>&1 &
+curl -sS http://127.0.0.1:9333/json/version   # confirm the endpoint is up
+
+# 2. human signs into http://localhost:8787 in that window (Continue with Google → seed admin).
+#    Verify: curl http://127.0.0.1:9333/json  → the localhost:8787 tab is listed.
+
+# 3. point the MCP server at it
+agy mcp remove chrome-devtools 2>/dev/null
+agy mcp add chrome-devtools npx -y chrome-devtools-mcp@latest --browserUrl=http://127.0.0.1:9333
+agy mcp list
+
+# 4. run tasks (foreground)
+agy --model gemini-3.7-flash-high --mode accept-edits --effort high \
+  --dangerously-skip-permissions --print-timeout 5m0s \
+  -p "$(cat "$SCRATCH/task.md")" > report.md 2> run.log
+```
+
+Smoke test result: Agy attached, `list_pages` found the tab, `evaluate_script` on
+`fetch('/api/auth/get-session')` returned the real session (`mjj2332@gmail.com`, `role: admin`,
+`impersonatedBy: null`), and `/admin` rendered the full admin UI — no redirect. The better-auth
+session cookie lasts ~7 days; re-sign-in is one click in the same window.
+
+- **Local dev is the target, not prod.** Local-dev Google sign-in works for `localhost:8787`
+  (redirect registered 2026-08-19). Against prod, Agy has no danger/YOLO sanction — passive
+  only.
+- **Do NOT point this at your everyday Chrome profile.** Chrome blocks `--remote-debugging-port`
+  on the default profile anyway, and attaching automation there would hand Agy your entire
+  Google session (Gmail, Drive, …). The dedicated profile is the containment boundary. The
+  Quincy session is a `localhost` better-auth cookie, not a Google cookie — the dedicated
+  profile holds it after one sign-in; Google is only touched during the OAuth handshake.
+- **The human does the Google click** (`feedback-no-autonomous-google-signin`) — Agy never runs
+  the OAuth flow itself.
+
+### Option B — MCP server launches its own Chrome
+
+```bash
+agy mcp add chrome-devtools npx -y chrome-devtools-mcp@latest
+agy --model gemini-3.7-flash-high --mode accept-edits --effort high \
+  --dangerously-skip-permissions --print-timeout 9m0s \
+  -p "Do not write files or draft a plan. Use the chrome-devtools MCP tools now: navigate_page
+      to <url>, take_snapshot, report ..." > report.md 2> run.log
+```
+
+Smoke test (navigate `example.com` → `take_snapshot` → report `h1`/`title`) passed.
+
+- **First run downloads Chrome for Testing via `npx`** — give `--print-timeout` room (`9m0s`+).
+- Browser is persistent by default (`~/.cache/chrome-devtools-mcp/chrome-profile`, `--isolated`
+  is false) but **logged into nothing**. Fine for public sites, `prototype.`/marketing pages,
+  Lighthouse/perf audits, unauthenticated smoke checks. Does **not** close the Quincy local-auth
+  gap — and forging the better-auth cookie stays the
+  [Subagent-Orchestration.md](../Subagent-Orchestration.md) §6-forbidden move.
+- Coordinating a human sign-in *inside* one non-interactive `-p` turn is fragile — that's what
+  Option A exists for.
 
 ## Passing a large prompt safely — `-p` has no stdin equivalent
 
