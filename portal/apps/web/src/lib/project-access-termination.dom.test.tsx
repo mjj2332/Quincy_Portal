@@ -47,6 +47,7 @@ describe("manual project-data owners terminate the principal on a real 401", () 
       client = value; value.setQueryData(["private"], "secret");
     });
     expect(getProjectQueryRuntime(client!)?.principalTerminal).toBe(true);
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
     expect(client!.getQueryCache().getAll()).toHaveLength(0);
   });
 
@@ -67,6 +68,7 @@ describe("manual project-data owners terminate the principal on a real 401", () 
       client = value; value.setQueryData(["private"], "secret");
     });
     expect(getProjectQueryRuntime(client!)?.principalTerminal).toBe(true);
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); await new Promise((resolve) => setTimeout(resolve, 0)); });
     expect(client!.getQueryCache().getAll()).toHaveLength(0);
   });
 });

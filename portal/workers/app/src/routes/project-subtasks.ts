@@ -1,15 +1,20 @@
 import { Hono } from "hono";
+import type { Context } from "hono";
 import { buildProjectActivityStatements, computeInsertPosition, createDb, schema } from "@quincy/db";
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { AppEnv } from "../env";
 import { audit, auditMeta } from "../lib/audit";
 import { newId } from "../lib/ids";
-import { notifySubtaskAssignee } from "../lib/notifications";
 import { publishNotificationOutbox, projectActivityDeepLink, type ProjectActivityIntent } from "@quincy/shared";
-import { projectMentionableUsers } from "../lib/project-collaboration";
 import { hasProjectCollaborationAccess } from "../middleware/capability";
 import { jsonInput } from "./helpers";
+import {
+  finalizeProjectSubtaskCommandResult,
+  saveProjectSubtask,
+  serializeProjectSubtask,
+  type ItemPatch,
+} from "../lib/project-subtasks";
 
 const idParam = z.string().uuid();
 const TITLE_MAX_LENGTH = 500;
@@ -31,9 +36,19 @@ function isCalendarDateTime(value: string) {
 
 const titleInput = z.string().trim().min(1).max(TITLE_MAX_LENGTH);
 const dueDateInput = z.string().refine(isCalendarDateTime, "Expected a calendar-valid YYYY-MM-DD date or YYYY-MM-DDTHH:MM date-time");
-const createInput = z.object({ title: titleInput, assigneeId: idParam.optional(), dueDate: dueDateInput.optional() }).strict();
+const endpointInput = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("date"), localCivil: z.string() }).strict(),
+  z.object({ kind: z.literal("timed"), localCivil: z.string(), disambiguation: z.enum(["earlier", "later"]).optional() }).strict(),
+]);
+const scheduleInput = z.discriminatedUnion("state", [
+  z.object({ state: z.literal("unscheduled") }).strict(),
+  z.object({ state: z.literal("due_only"), end: endpointInput }).strict(),
+  z.object({ state: z.literal("range"), start: endpointInput, end: endpointInput }).strict(),
+]);
+const scheduleRequestInput = z.object({ expectedVersion: z.number().int().nonnegative().refine(Number.isSafeInteger), schedule: scheduleInput }).strict();
+const createInput = z.object({ title: titleInput, assigneeId: idParam.optional(), schedule: scheduleInput.optional(), dueDate: dueDateInput.optional() }).strict();
 const updateInput = z.object({
-  title: titleInput.optional(), done: z.boolean().optional(), assigneeId: idParam.nullable().optional(), dueDate: dueDateInput.nullable().optional(),
+  title: titleInput.optional(), done: z.boolean().optional(), assigneeId: idParam.nullable().optional(), schedule: scheduleRequestInput.optional(), dueDate: dueDateInput.nullable().optional(),
 }).strict().refine((value) => Object.keys(value).length > 0, "At least one field is required");
 const reorderInput = z.object({ beforeId: idParam.nullable(), afterId: idParam.nullable() }).strict().refine((value) => value.beforeId !== value.afterId || value.beforeId === null, "Neighbors must be distinct");
 
@@ -43,15 +58,7 @@ function rowsFromD1<T>(result: unknown): T[] {
   return ((result as { results?: T[] } | undefined)?.results ?? []);
 }
 
-function serializeSubtask(row: SubtaskRow) {
-  const item = row.subtask;
-  return {
-    id: item.id, title: item.title, done: item.done, position: item.position,
-    assignee: row.assigneeId && row.assigneeName ? { id: row.assigneeId, name: row.assigneeName } : null,
-    assignmentVersion: item.assignmentVersion, dueDate: item.dueDate,
-    createdBy: item.createdBy, createdAt: item.createdAt.toISOString(), updatedAt: item.updatedAt.toISOString(),
-  };
-}
+const serializeSubtask = serializeProjectSubtask;
 
 async function ensureProjectAccessAndExists(c: Parameters<typeof hasProjectCollaborationAccess>[0], projectId: string) {
   if (!await hasProjectCollaborationAccess(c, projectId)) return "forbidden" as const;
@@ -64,8 +71,20 @@ function subtaskQuery(db: ReturnType<typeof createDb>, projectId: string, subtas
     .where(and(eq(schema.projectSubtasks.projectId, projectId), subtaskId ? eq(schema.projectSubtasks.id, subtaskId) : undefined));
 }
 
-async function eligibleAssignee(env: AppEnv["Bindings"], projectId: string, assigneeId: string) {
-  return (await projectMentionableUsers(env, projectId)).some((candidate) => candidate.id === assigneeId);
+function hasField(value: object, key: string): boolean { return Object.prototype.hasOwnProperty.call(value, key); }
+
+function commandResponse(c: Context<AppEnv>, result: Awaited<ReturnType<typeof saveProjectSubtask>>, status: 200 | 201 = 200) {
+  switch (result.outcome) {
+    case "created": return c.json(result.item, status);
+    case "updated":
+    case "noop": return c.json(result.item, status);
+    case "invalid_request": return c.json({ error: result.message, code: result.code, ...(result.details ? { details: result.details } : {}) }, result.status);
+    case "forbidden": return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
+    case "not_found": return c.json({ error: result.target === "project" ? "Project not found" : "Subtask not found" }, 404);
+    case "schedule_conflict": return c.json({ error: "Checklist schedule changed; review the latest schedule before saving.", code: "subtask_schedule_version_conflict", current: result.current, ...(result.currentSubtask ? { currentSubtask: result.currentSubtask } : {}) }, 409);
+    case "item_conflict": return c.json({ error: "Checklist item changed; review the latest item before saving.", code: "subtask_item_conflict", current: result.current, currentSubtask: result.currentSubtask }, 409);
+    case "storage_invalid": return c.json({ error: "Checklist schedule data needs repair.", code: "subtask_schedule_storage_invalid", current: result.current }, 422);
+  }
 }
 
 export const projectSubtasksRoutes = new Hono<AppEnv>();
@@ -79,82 +98,41 @@ projectSubtasksRoutes.get("/projects/:projectId/subtasks", async (c) => {
 
 projectSubtasksRoutes.post("/projects/:projectId/subtasks", async (c) => {
   const projectId = c.req.param("projectId"); if (!idParam.safeParse(projectId).success) return c.json({ error: "Invalid project id" }, 400);
-  const project = await ensureProjectAccessAndExists(c, projectId); if (project === "forbidden") return c.json({ error: "Forbidden: you are not assigned to this project" }, 403); if (!project) return c.json({ error: "Project not found" }, 404);
   const data = await jsonInput(c, createInput); if (data instanceof Response) return data;
-  if (data.assigneeId && !await eligibleAssignee(c.env, projectId, data.assigneeId)) return c.json({ error: "Assignee is not an active project participant" }, 400);
-  const db = createDb(c.env.DB); const last = await db.select({ position: schema.projectSubtasks.position }).from(schema.projectSubtasks).where(eq(schema.projectSubtasks.projectId, projectId)).orderBy(desc(schema.projectSubtasks.position), desc(schema.projectSubtasks.id)).limit(1).get();
-  const now = new Date(); const id = newId(); const assignmentVersion = data.assigneeId ? 1 : 0;
-  const auditId = newId();
-  const activityId = newId();
-  const activity: ProjectActivityIntent = {
-    schemaVersion: 1,
-    activity: { id: activityId, type: "project.checklist.item_created", projectId, actorId: c.get("user").id, occurredAt: now.getTime(), source: { kind: "project_checklist", id, key: `project-checklist:${id}:created` }, safePayload: { itemId: id, checklistTitle: data.title }, deepLink: projectActivityDeepLink("project.checklist.item_created", projectId) },
-    broadDelivery: { registryKey: "project.checklist.item_created", sourceActivityId: activityId, coalesce: null },
-  };
-  const activityStatements = buildProjectActivityStatements({ db: c.env.DB, intent: activity, winnerAuditId: auditId, createdAt: now.getTime() });
-  const results = await c.env.DB.batch([
-    c.env.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignee_id, assignment_version, due_date, created_by, created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)").bind(id, projectId, data.title, (last?.position ?? 0) + POSITION_STEP, data.assigneeId ?? null, assignmentVersion, data.dueDate ?? null, c.get("user").id, now.getTime(), now.getTime()),
-    c.env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, ?, 'project_subtask.create', 'project_subtask', ?, ?, ? WHERE changes() = 1").bind(auditId, c.get("user").id, id, auditMeta(c.get("user")), now.getTime()),
-    ...activityStatements.statements,
-  ]);
-  const publicationIds = rowsFromD1<{ id: string }>(results[2 + activityStatements.broadOutboxIndex]).map((row) => row.id);
-  if (publicationIds.length) c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, publicationIds));
-  await notifySubtaskAssignee(c.env, { projectId, actorId: c.get("user").id, assigneeId: data.assigneeId ?? null, subtaskId: id, assignmentVersion });
-  const task = await subtaskQuery(db, projectId, id).get(); if (!task) return c.json({ error: "Subtask could not be created" }, 500);
-  return c.json(serializeSubtask(task), 201);
+  const result = await saveProjectSubtask({
+    env: c.env,
+    projectId,
+    principal: c.get("user"),
+    operation: { kind: "create", item: { title: data.title, assigneeId: data.assigneeId ?? null }, schedule: data.schedule, legacyDueDate: data.dueDate },
+  });
+  await finalizeProjectSubtaskCommandResult({ env: c.env, executionCtx: c.executionCtx, result });
+  return commandResponse(c, result, result.outcome === "created" ? 201 : 200);
 });
 
 projectSubtasksRoutes.patch("/projects/:projectId/subtasks/:subtaskId", async (c) => {
   const projectId = c.req.param("projectId"); const subtaskId = c.req.param("subtaskId");
   if (!idParam.safeParse(projectId).success || !idParam.safeParse(subtaskId).success) return c.json({ error: "Invalid project or subtask id" }, 400);
-  const project = await ensureProjectAccessAndExists(c, projectId); if (project === "forbidden") return c.json({ error: "Forbidden: you are not assigned to this project" }, 403); if (!project) return c.json({ error: "Project not found" }, 404);
   const data = await jsonInput(c, updateInput); if (data instanceof Response) return data;
-  const db = createDb(c.env.DB); const existing = await subtaskQuery(db, projectId, subtaskId).get(); if (!existing) return c.json({ error: "Subtask not found" }, 404);
-  const has = (key: keyof typeof data) => Object.prototype.hasOwnProperty.call(data, key);
-  if (has("assigneeId") && data.assigneeId && !await eligibleAssignee(c.env, projectId, data.assigneeId)) return c.json({ error: "Assignee is not an active project participant" }, 400);
-  const changed: string[] = [];
-  const values: Record<string, unknown> = {};
-  if (has("title") && data.title !== existing.subtask.title) { values.title = data.title; changed.push("title"); }
-  if (has("done") && data.done !== existing.subtask.done) { values.done = data.done; changed.push("done"); }
-  if (has("dueDate") && data.dueDate !== existing.subtask.dueDate) { values.dueDate = data.dueDate; values.dueReminderSentAt = null; changed.push("dueDate"); }
-  const assignmentChanged = has("assigneeId") && data.assigneeId !== existing.subtask.assigneeId;
-  if (assignmentChanged) { values.assigneeId = data.assigneeId; values.assignmentVersion = sql`${schema.projectSubtasks.assignmentVersion} + 1`; changed.push("assigneeId"); }
-  if (!changed.length) return c.json(serializeSubtask(existing));
-  values.updatedAt = new Date();
-  // The compare-on-current-assignee guard means a concurrent reassignment cannot be overwritten
-  // or spuriously notified based on this request's stale read.
-  const setParts: string[] = []; const setBindings: unknown[] = [];
-  if (values.title !== undefined) { setParts.push("title = ?"); setBindings.push(values.title); }
-  if (values.done !== undefined) { setParts.push("done = ?"); setBindings.push(values.done ? 1 : 0); }
-  if (values.dueDate !== undefined) { setParts.push("due_date = ?", "due_reminder_sent_at = NULL"); setBindings.push(values.dueDate); }
-  if (assignmentChanged) { setParts.push("assignee_id = ?", "assignment_version = assignment_version + 1"); setBindings.push(data.assigneeId ?? null); }
-  setParts.push("updated_at = ?"); setBindings.push(values.updatedAt instanceof Date ? values.updatedAt.getTime() : Date.now());
-  const auditId = newId();
-  const mappedChanges = changed.flatMap((key) => key === "title" ? ["title" as const] : key === "done" ? ["completion" as const] : key === "assigneeId" ? ["assignee" as const] : []);
-  const nextTitle = data.title ?? existing.subtask.title;
-  const activityId = newId();
-  const activity: ProjectActivityIntent = {
-    schemaVersion: 1,
-    activity: { id: activityId, type: "project.checklist.item_updated", projectId, actorId: c.get("user").id, occurredAt: Date.now(), source: { kind: "project_checklist", id: subtaskId, key: `project-checklist:${subtaskId}:updated:${activityId}` }, safePayload: { itemId: subtaskId, checklistTitle: nextTitle, changes: mappedChanges }, deepLink: projectActivityDeepLink("project.checklist.item_updated", projectId) },
-    broadDelivery: { registryKey: "project.checklist.item_updated", sourceActivityId: activityId, coalesce: null },
-  };
-  const activityBundle = mappedChanges.length ? buildProjectActivityStatements({ db: c.env.DB, intent: activity, winnerAuditId: auditId, createdAt: Date.now() }) : null;
-  const batchStatements: D1PreparedStatement[] = [c.env.DB.prepare(`UPDATE project_subtasks SET ${setParts.join(", ")} WHERE id = ? AND project_id = ? AND title IS ? AND done IS ? AND due_date IS ? AND assignee_id IS ? RETURNING assignee_id AS assigneeId, assignment_version AS assignmentVersion`).bind(...setBindings, subtaskId, projectId, existing.subtask.title, existing.subtask.done ? 1 : 0, existing.subtask.dueDate, existing.subtask.assigneeId)];
-  batchStatements.push(c.env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, ?, 'project_subtask.update', 'project_subtask', ?, ?, ? WHERE changes() = 1").bind(auditId, c.get("user").id, subtaskId, auditMeta(c.get("user"), { fields: changed }), Date.now()));
-  if (activityBundle) batchStatements.push(...activityBundle.statements);
-  const batchResults = await c.env.DB.batch(batchStatements);
-  const updated = rowsFromD1<{ assigneeId: string | null; assignmentVersion: number }>(batchResults[0])[0];
-  if (!updated) {
-    const current = await subtaskQuery(db, projectId, subtaskId).get();
-    return current ? c.json(serializeSubtask(current)) : c.json({ error: "Subtask not found" }, 404);
-  }
-  if (assignmentChanged) await notifySubtaskAssignee(c.env, { projectId, actorId: c.get("user").id, assigneeId: updated.assigneeId, subtaskId, assignmentVersion: updated.assignmentVersion });
-  if (activityBundle) {
-    const publicationIds = rowsFromD1<{ id: string }>(batchResults[2 + activityBundle.broadOutboxIndex]).map((row) => row.id);
-    if (publicationIds.length) c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, publicationIds));
-  }
-  const task = await subtaskQuery(db, projectId, subtaskId).get(); if (!task) return c.json({ error: "Subtask could not be updated" }, 500);
-  return c.json(serializeSubtask(task));
+  const hasSchedule = hasField(data, "schedule");
+  const hasDueDate = hasField(data, "dueDate");
+  const itemPatch: ItemPatch = {};
+  if (hasField(data, "title")) itemPatch.title = data.title;
+  if (hasField(data, "done")) itemPatch.done = data.done;
+  if (hasField(data, "assigneeId")) itemPatch.assigneeId = data.assigneeId;
+  const result = await saveProjectSubtask({
+    env: c.env,
+    projectId,
+    principal: c.get("user"),
+    operation: {
+      kind: "update",
+      subtaskId,
+      itemPatch: Object.keys(itemPatch).length ? itemPatch : undefined,
+      scheduleRequest: hasSchedule ? data.schedule : undefined,
+      legacyDueDatePatch: hasDueDate ? data.dueDate : undefined,
+    },
+  });
+  await finalizeProjectSubtaskCommandResult({ env: c.env, executionCtx: c.executionCtx, result });
+  return commandResponse(c, result);
 });
 
 projectSubtasksRoutes.post("/projects/:projectId/subtasks/:subtaskId/reorder", async (c) => {

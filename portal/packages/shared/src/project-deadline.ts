@@ -1,6 +1,13 @@
 import type { Role } from "./capabilities";
+import {
+  formatSydneyCivilMinute,
+  resolveSydneyCivilMinute,
+  SYDNEY_TIME_ZONE,
+  type SydneyCivilResolution,
+  type SydneyCivilResolutionResult as NeutralSydneyCivilResolutionResult,
+} from "./sydney-civil-time";
 
-export const PROJECT_DEADLINE_ZONE = "Australia/Sydney" as const;
+export const PROJECT_DEADLINE_ZONE = SYDNEY_TIME_ZONE;
 export const PROJECT_DEADLINE_PRESETS = [1440, 240, 60] as const;
 export const PROJECT_DEADLINE_MAX_ADVANCE_OFFSETS = 8;
 export const PROJECT_DEADLINE_MAX_OFFSET_MINUTES = 30 * 24 * 60;
@@ -84,14 +91,6 @@ export type ProjectDeadlineReminderPayload = {
   };
 };
 
-export type SydneyCivilResolution = {
-  localCivil: string;
-  instant: string;
-  epochMs: number;
-  utcOffsetMinutes: number;
-  fold: 0 | 1;
-};
-
 export type SydneyCivilResolutionError =
   | { ok: false; code: "deadline_invalid_local_time"; message: string }
   | { ok: false; code: "deadline_nonexistent_local_time"; message: string }
@@ -100,78 +99,16 @@ export type SydneyCivilResolutionError =
 
 export type SydneyCivilResolutionResult = { ok: true; value: SydneyCivilResolution } | SydneyCivilResolutionError;
 
-const CIVIL_RE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/;
-const SYDNEY_FORMATTER = new Intl.DateTimeFormat("en-AU", {
-  timeZone: PROJECT_DEADLINE_ZONE,
-  year: "numeric",
-  month: "2-digit",
-  day: "2-digit",
-  hour: "2-digit",
-  minute: "2-digit",
-  hourCycle: "h23",
-});
-
-function epochFromCivil(year: number, month: number, day: number, hour: number, minute: number): number {
-  const value = new Date(0);
-  value.setUTCFullYear(year, month - 1, day);
-  value.setUTCHours(hour, minute, 0, 0);
-  return value.getTime();
-}
-
-function isLeapYear(year: number): boolean {
-  return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
-}
-
-function parseCivil(localCivil: string): { year: number; month: number; day: number; hour: number; minute: number; localEpoch: number } | null {
-  const match = CIVIL_RE.exec(localCivil);
-  if (!match) return null;
-  const [, yearText, monthText, dayText, hourText, minuteText] = match;
-  const year = Number(yearText);
-  const month = Number(monthText);
-  const day = Number(dayText);
-  const hour = Number(hourText);
-  const minute = Number(minuteText);
-  const daysInMonth = [31, isLeapYear(year) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
-  if (!daysInMonth || day < 1 || day > daysInMonth || hour > 23 || minute > 59) return null;
-  return { year, month, day, hour, minute, localEpoch: epochFromCivil(year, month, day, hour, minute) };
-}
-
-function roundTripCivil(date: Date): string {
-  const values = Object.fromEntries(SYDNEY_FORMATTER.formatToParts(date).map(({ type, value }) => [type, value]));
-  return `${values.year}-${values.month}-${values.day}T${values.hour}:${values.minute}`;
-}
-
-/** Resolve a Sydney wall-clock minute with explicit gap/fold behavior. */
+/** Backward-compatible Deadline adapter over the neutral shared resolver. */
 export function resolveSydneyCivilTime(localCivil: string, disambiguation?: ProjectDeadlineDisambiguation): SydneyCivilResolutionResult {
-  const parsed = parseCivil(localCivil);
-  if (!parsed) return { ok: false, code: "deadline_invalid_local_time", message: "Enter a valid Sydney date and time to the minute." };
-  const candidates: SydneyCivilResolution[] = [];
-  for (let offset = -840; offset <= 840; offset += 1) {
-    const epochMs = parsed.localEpoch - offset * 60_000;
-    const instant = new Date(epochMs);
-    if (roundTripCivil(instant) !== localCivil) continue;
-    candidates.push({ localCivil, epochMs, instant: instant.toISOString(), utcOffsetMinutes: offset, fold: 0 });
+  const result: NeutralSydneyCivilResolutionResult = resolveSydneyCivilMinute(localCivil, disambiguation);
+  if (result.ok) return result;
+  switch (result.code) {
+    case "invalid_local_time": return { ok: false, code: "deadline_invalid_local_time", message: result.message };
+    case "nonexistent_local_time": return { ok: false, code: "deadline_nonexistent_local_time", message: result.message };
+    case "repeated_local_time": return { ok: false, code: "deadline_repeated_local_time", message: result.message, choices: result.choices };
+    case "resolver_defect": return { ok: false, code: "deadline_resolver_defect", message: result.message };
   }
-  const unique = [...new Map(candidates.map((candidate) => [candidate.epochMs, candidate])).values()].sort((a, b) => a.epochMs - b.epochMs);
-  if (unique.length === 0) return { ok: false, code: "deadline_nonexistent_local_time", message: "That Sydney time does not exist because the clocks move forward." };
-  if (unique.length > 2) return { ok: false, code: "deadline_resolver_defect", message: "Sydney time resolution returned an unexpected number of matches." };
-  if (unique.length === 2 && !disambiguation) {
-    return {
-      ok: false,
-      code: "deadline_repeated_local_time",
-      message: "That Sydney time occurs twice. Choose Earlier or Later.",
-      choices: [
-        { disambiguation: "earlier", utcOffsetMinutes: unique[0]!.utcOffsetMinutes },
-        { disambiguation: "later", utcOffsetMinutes: unique[1]!.utcOffsetMinutes },
-      ],
-    };
-  }
-  const selected = unique.length === 1 ? unique[0]! : unique[disambiguation === "later" ? 1 : 0]!;
-  selected.fold = unique.length === 2 && disambiguation === "later" ? 1 : 0;
-  if (roundTripCivil(new Date(selected.epochMs)) !== localCivil || selected.utcOffsetMinutes !== Math.round((parsed.localEpoch - selected.epochMs) / 60_000)) {
-    return { ok: false, code: "deadline_resolver_defect", message: "Sydney time resolution failed its round-trip assertion." };
-  }
-  return { ok: true, value: selected };
 }
 
 export function normalizeReminderOffsets(value: unknown): number[] {
@@ -197,9 +134,7 @@ export function formatSydneyInstant(instant: string | number): string {
 }
 
 export function formatSydneyCivil(instant: string | number): string {
-  const date = new Date(instant);
-  if (Number.isNaN(date.valueOf())) return "Invalid date";
-  return roundTripCivil(date);
+  return formatSydneyCivilMinute(instant);
 }
 
 export function isDeadlineOverdue(deadlineAt: number | null, now = Date.now()): boolean {

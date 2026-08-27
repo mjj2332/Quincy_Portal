@@ -1,6 +1,6 @@
-import { isStageKey, type CollectionKind, type ProjectDeadlineSchedule, type ProjectMembershipDto, type ProjectMemberRole } from "@quincy/shared";
-import { QueryClientContext, useQuery, useQueryClient, type QueryClient, type QueryFunctionContext, type QueryKey, type UseQueryResult } from "@tanstack/react-query";
-import { useCallback, useContext, useSyncExternalStore } from "react";
+import { isStageKey, type ChecklistScheduleDto, type CollectionKind, type ProjectDeadlineSchedule, type ProjectMembershipDto, type ProjectMemberRole } from "@quincy/shared";
+import { QueryClient, QueryClientContext, useQuery, useQueryClient, type QueryFunctionContext, type QueryKey, type UseQueryResult } from "@tanstack/react-query";
+import { useCallback, useContext, useEffect, useState, useSyncExternalStore } from "react";
 import { ApiError, apiGet } from "./api";
 import { createActiveProjectDetailsInvalidatedMessage, getProjectQueryRuntime, projectResourceKey, useProjectQueryRuntime, type ProjectDataResource } from "./project-query-sync";
 import type { ReviewPatch, WorkspaceAsset, Review } from "../components/PhotoGrid";
@@ -13,6 +13,11 @@ export type ProjectDetail = {
   shootDate: string | null; stageKey: ProjectStageKey; rawFolderPath: string | null; rawFolderLink: string | null;
   coverAssetId: string | null; effectiveCoverAssetId: string | null; collections: ProjectCollection[]; members: ProjectMember[]; deadlineSchedule: ProjectDeadlineSchedule;
 };
+export type ProjectSubtask = {
+  id: string; title: string; done: boolean; position: number;
+  assignee: { id: string; name: string } | null; assignmentVersion: number;
+  dueDate: string | null; schedule: ChecklistScheduleDto; createdBy: string; createdAt: string; updatedAt: string;
+};
 type AssetsResponse = { assets: WorkspaceAsset[] };
 
 export const projectDataKeys = {
@@ -21,6 +26,7 @@ export const projectDataKeys = {
   detail: (projectId: string) => ["project-data", projectId, "detail"] as const,
   assetsRoot: (projectId: string) => ["project-data", projectId, "assets"] as const,
   assets: (projectId: string, collectionKind: CollectionKind) => ["project-data", projectId, "assets", collectionKind] as const,
+  subtasks: (projectId: string) => ["project-data", projectId, "subtasks"] as const,
   commentsRoot: (projectId: string) => ["project-data", projectId, "comments"] as const,
   comments: (projectId: string) => ["project-data", projectId, "comments", "pages", { limit: 50 }] as const,
   commentReadMarker: (projectId: string) => ["project-data", projectId, "comments", "read-marker"] as const,
@@ -37,10 +43,10 @@ const assetCapabilities: Record<CollectionKind, "viewRaw" | "viewEdited"> = {
 export function isApiError(error: unknown): error is ApiError { return error instanceof ApiError; }
 export function isPermanentProjectAccessError(error: unknown): error is ApiError { return isApiError(error) && (error.status === 401 || error.status === 403 || error.status === 404); }
 
-export function classifyProjectAccessError(error: unknown, resource: "detail" | "assets" | "comments" | "comment-read-marker" | "collaboration-summary", collectionKind?: CollectionKind): ProjectAccessClassification | null {
+export function classifyProjectAccessError(error: unknown, resource: "detail" | "assets" | "subtasks" | "comments" | "comment-read-marker" | "collaboration-summary", collectionKind?: CollectionKind): ProjectAccessClassification | null {
   if (!isPermanentProjectAccessError(error)) return null;
   if (error.status === 401) return { scope: "principal" };
-  if (resource === "comments" || resource === "comment-read-marker" || resource === "collaboration-summary") return error.status === 403 ? { scope: "collaboration" } : { scope: "project" };
+  if (resource === "comments" || resource === "comment-read-marker" || resource === "collaboration-summary" || resource === "subtasks") return error.status === 403 ? { scope: "collaboration" } : { scope: "project" };
   if (resource === "detail" || error.status === 404 || collectionKind === undefined) return { scope: "project" };
   const details = error.details;
   const capability = details && typeof details === "object" ? (details as Record<string, unknown>).capability : undefined;
@@ -65,6 +71,7 @@ export function removedDataError(): ApiError {
 function detailPath(projectId: string) { return `/api/projects/${encodeURIComponent(projectId)}`; }
 function assetsPath(projectId: string, collectionKind: CollectionKind) { return `${detailPath(projectId)}/assets?collection=${encodeURIComponent(collectionKind)}`; }
 function collaborationSummaryPath(projectId: string) { return `/api/projects/${encodeURIComponent(projectId)}/collaboration-summary`; }
+function subtasksPath(projectId: string) { return `/api/projects/${encodeURIComponent(projectId)}/subtasks`; }
 
 export function projectDetailQueryOptions(projectId: string) {
   return {
@@ -99,6 +106,22 @@ export function projectCollaborationSummaryQueryOptions(projectId: string) {
       if (getProjectQueryRuntime(client)?.isProjectRemoved(projectId)) throw removedDataError();
       if (!isProjectCollaborationSummary(summary, projectId)) throw new Error("Invalid collaboration summary response");
       return summary;
+    },
+  } as const;
+}
+
+type ProjectSubtasksResponse = { subtasks?: ProjectSubtask[] };
+
+export function projectSubtasksQueryOptions(projectId: string) {
+  return {
+    queryKey: projectDataKeys.subtasks(projectId),
+    queryFn: async ({ signal, client }: QueryFunctionContext) => {
+      const generation = projectCollaborationDataGeneration(client, projectId);
+      const response = await apiGet<ProjectSubtasksResponse>(subtasksPath(projectId), { signal });
+      if (signal.aborted) throw new DOMException("The operation was aborted.", "AbortError");
+      if (projectCollaborationDataGeneration(client, projectId) !== generation) throw new DOMException("The operation was aborted.", "AbortError");
+      if (getProjectQueryRuntime(client)?.isProjectRemoved(projectId)) throw removedDataError();
+      return (response.subtasks ?? []).slice().sort((a, b) => a.position - b.position || a.id.localeCompare(b.id));
     },
   } as const;
 }
@@ -160,6 +183,25 @@ export function useProjectCollaborationSummaryQuery(projectId: string, enabled: 
   });
   void ledgerVersion;
   return { ...query, data: query.data ? applyProjectCollaborationSummaryMembershipOverlay(query.data, getProjectMembershipTokens(queryClient, projectId)) : query.data } as UseQueryResult<ProjectCollaborationSummary, Error>;
+}
+
+export function useProjectSubtasksQuery(projectId: string, enabled: boolean, specialOwnerOwnsKey = false): UseQueryResult<ProjectSubtask[], Error> {
+  const contextClient = useContext(QueryClientContext);
+  const [fallbackClient] = useState(() => new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  const queryClient = contextClient ?? fallbackClient;
+  const runtime = contextClient ? getProjectQueryRuntime(contextClient) : undefined;
+  const subscribe = runtime?.subscribe ?? (() => () => undefined);
+  const getSnapshot = runtime?.getSnapshot ?? (() => 0);
+  useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+  const key = projectDataKeys.subtasks(projectId);
+  const owned = specialOwnerOwnsKey || Boolean(runtime?.isOwned(key)) || isProjectQueryLedgerPending(queryClient, key);
+  useEffect(() => {
+    if (runtime?.principalTerminal) queryClient.removeQueries({ queryKey: key, exact: true });
+  }, [key, queryClient, runtime?.principalTerminal]);
+  return useQuery({
+    ...projectSubtasksQueryOptions(projectId), enabled: enabled && !runtime?.isProjectRemoved(projectId) && !runtime?.principalTerminal, staleTime: 15_000,
+    refetchInterval: owned ? false : 30_000, refetchIntervalInBackground: false, refetchOnWindowFocus: owned ? false : true, refetchOnReconnect: owned ? false : true, retry: projectQueryRetry,
+  }, queryClient) as UseQueryResult<ProjectSubtask[], Error>;
 }
 
 export function usePassiveRawAssetsQuery(projectId: string, enabled: boolean): UseQueryResult<WorkspaceAsset[], Error> {
@@ -282,6 +324,8 @@ export async function purgeProjectCollaborationData(queryClient: QueryClient, pr
   bumpProjectCollaborationDataGeneration(queryClient, projectId);
   commentReadStateSequenceReset(queryClient, projectId);
   discardProjectMembershipLedger(queryClient, projectId);
+  await queryClient.cancelQueries({ queryKey: projectDataKeys.subtasks(projectId), exact: true });
+  queryClient.removeQueries({ queryKey: projectDataKeys.subtasks(projectId), exact: true });
   await queryClient.cancelQueries({ queryKey: projectDataKeys.collaborationSummary(projectId), exact: true });
   queryClient.removeQueries({ queryKey: projectDataKeys.collaborationSummary(projectId), exact: true });
   await queryClient.cancelQueries({ queryKey: projectDataKeys.commentsRoot(projectId) });
