@@ -140,7 +140,9 @@ added better-auth admin-plugin compatibility columns (`user.banned`/`ban_reason`
 `notification_preferences` tables plus a `notification_outbox` index, applied 2026-08-27 (TB4B);
 0034 added the additive `project_activity_events` table plus three nullable `notification_outbox`
 columns (`coalesce_key`, `coalesce_until`, `recipient_membership_cycle_id`) and one index, applied
-2026-08-27 (TB4C) — next available number is **0035**. Branch off `main`.
+2026-08-27 (TB4C); 0035 added 11 nullable `project_subtasks` schedule columns plus
+`schedule_version` (all bare `ALTER TABLE ADD COLUMN`, single-column NULL-safe CHECKs), applied
+2026-08-28 (TB4D) — next available number is **0036**. Branch off `main`.
 **Prefer a bare `ALTER TABLE ADD COLUMN col TYPE CHECK(...)` over `drizzle-kit generate`'s
 table-rebuild form when the check is single-column and NULL-satisfiable** — the rebuild form's
 `PRAGMA foreign_keys=OFF` doesn't reliably persist across D1's remote migration execution even

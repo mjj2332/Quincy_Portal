@@ -7,28 +7,55 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
 > counts, full diagnostic transcripts) has been cut in favor of what/when/deploy-state. See
 > `docs/lessons.md` for incident mechanics, and `docs/reviews/` for full QA-sweep detail.
 
-## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29, seed-admin UUID migration 2026-07-29, notification dismiss + stalled-guard 2026-07-30, download selection 2026-08-04, notice-board rich text + mentions 2026-08-17, project comments + collaboration panel 2026-08-17, project subtasks/checklist 2026-08-17, collaboration panel relocated to Project page 2026-08-17, collaboration panel UI fixes + due-time reminder 2026-08-17, notification click navigation 2026-08-17, comment ordering + Shift+Enter soft breaks 2026-08-17, mention-email content 2026-08-20, TB0 authority promotion 2026-08-24, TB0A React 19.2 deployed + accepted 2026-08-25, TB0B pipeline configuration boundary deployed 2026-08-24, TB1 Tailwind v4/shadcn foundation deployed 2026-08-25, TB2 route-safe project data freshness deployed 2026-08-25, TB3 project discussion v2 deployed 2026-08-25, TB4 notification outbox deployed 2026-08-26, confirmation modal + admin user impersonation deployed 2026-08-26, TB4A project workspace assignment rail deployed 2026-08-27, TB4B project deadline and reminders deployed 2026-08-27, TB4C editor-wide project-change notifications deployed 2026-08-27)
+## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29, seed-admin UUID migration 2026-07-29, notification dismiss + stalled-guard 2026-07-30, download selection 2026-08-04, notice-board rich text + mentions 2026-08-17, project comments + collaboration panel 2026-08-17, project subtasks/checklist 2026-08-17, collaboration panel relocated to Project page 2026-08-17, collaboration panel UI fixes + due-time reminder 2026-08-17, notification click navigation 2026-08-17, comment ordering + Shift+Enter soft breaks 2026-08-17, mention-email content 2026-08-20, TB0 authority promotion 2026-08-24, TB0A React 19.2 deployed + accepted 2026-08-25, TB0B pipeline configuration boundary deployed 2026-08-24, TB1 Tailwind v4/shadcn foundation deployed 2026-08-25, TB2 route-safe project data freshness deployed 2026-08-25, TB3 project discussion v2 deployed 2026-08-25, TB4 notification outbox deployed 2026-08-26, confirmation modal + admin user impersonation deployed 2026-08-26, TB4A project workspace assignment rail deployed 2026-08-27, TB4B project deadline and reminders deployed 2026-08-27, TB4C editor-wide project-change notifications deployed 2026-08-27, TB4D checklist scheduling & ranges deployed 2026-08-28)
 
 - **TB4D (Checklist Scheduling & Ranges — every project checklist item carries one truthful
   optional schedule: unscheduled / due-only / start+end range, without changing the shipped
-  `due_date` or its due-today reminder) — PLAN APPROVED 2026-08-27, build in progress.**
-  Plan: `docs/plans/Revamp-TB4D-Checklist-Scheduling-Ranges-Plan.md` (this commit). Pipeline:
-  Sol draft → fresh-Sol review ×2 (2B+6S then 1B+2S+1N, all folded) → Opus plan-tier revert 1/2
-  (5 Blocking + 6 Should-fix + 4 Nits) → fresh-Sol revision → **Opus plan-tier re-review APPROVED**
-  (all 5 Blocking verified fixed vs. real source; 5 Should-fix + 6 Nits carried into the build
-  spec as builder/diff-review clarifications). Adds additive migration **`0035`** (11 bare
-  `ALTER TABLE ADD COLUMN` on `project_subtasks` + `schedule_version`), a route-independent
-  create-or-update task command owning POST+PATCH persistence with a non-throwing `invalid_request`
-  arm and one shared finalizer, an O(1) Sydney civil-time resolver extracted from TB4B (differential
-  proof required), admission of the reserved `project.checklist.schedule_changed` activity type
-  (5-min leading-edge actor/item coalescing via TB4C's outbox columns, broad email off), a
-  five-state schedule DTO (`unscheduled | due_only | range | legacy_unresolved | invalid`), and a
-  three-app rollout (background consumer → tested inert `tb4d-inert-rollback` app → write-enabled
-  app) because a pre-TB4D app is never a valid rollback after `0035`. Not built, committed, or
-  deployed yet. ~3 Codex credit exhaustions + 1 Claude session-limit hit across the plan pipeline.
-  Before the write-enabled deployment, verify/update the shared `TB4D_SCHEDULE_ACTIVITY_CUTOVER_DATE`
-  marker to the actual production deploy date; record the dueDate-adapter sunset in this file at
-  that closeout.
+  `due_date` or its due-today reminder) is deployed to production, 2026-08-28**
+  (`docs/plans/implemented/Revamp-TB4D-Checklist-Scheduling-Ranges-Plan.md`, merge commit `37c6219`
+  + this documentation commit, background Worker version `e7133940-5c55-4faf-9db6-4c15394dcb39`,
+  app Worker version `65ad323b-4ba5-4c19-8b9e-5e838a3562e6`, rollback targets `ea917b33-…`
+  (background) / `aecde3a7-…` (app) — TB4C's versions). Migration **`0035`** applied to prod D1
+  (11 nullable `project_subtasks` schedule columns + `schedule_version`, all bare
+  `ALTER TABLE ADD COLUMN`, no rebuild/backfill; postflight: 11 cols, 19 rows all
+  `schedule_version=0` + 0 with metadata, FK check clean, quick_check ok). Pre-migration recovery
+  export `../db-recovery/quincy-portal-before-tb4d-20260827T194205Z.sql`
+  (sha256 `a5476331dc000a87d01b3c342a1d8d8db0a0a0c50113106e2133780ee9c41a31`). Deployed
+  `CHECKLIST_SCHEDULE_RANGES_ENABLED = true` directly (user chose direct write-enabled over the
+  plan's 3-app inert rollout; the inert build is tested but not a deployed artifact — rollback is
+  recovery-export + `git revert` + redeploy). `TB4D_SCHEDULE_ACTIVITY_CUTOVER_DATE` confirmed
+  `2026-08-28` (Sydney deploy date) at deploy.
+  Pipeline: Sol draft → fresh-Sol review ×2 (2B+6S then 1B+2S+1N) → Opus plan-tier revert 1/2
+  (5B+6S+4N) → fresh-Sol revision → **Opus plan-tier re-review APPROVED** → Luna build + **5 fix
+  rounds** (schedule-intent coalesce + create position + test isolation; legacy `dueDate` adapters
+  as version-0 passthroughs; Sol diff-review 4B+4S — Sydney 1895-offset resolver bug, `resolution`
+  provenance leaking into endpoint-change classification, inert gate not forcing activity-only,
+  inherited TC4C cutover date, +web; Sol focused pass — S3 optimistic-concurrency regression where
+  Save rebased the retained draft past a newer version + independent differential oracle + deletion
+  race; Opus final-draft 3 pre-deploy should-fixes — schedule conflict draft cleared by unrelated
+  PATCH, dead `resolveSydneyCivilMinuteExhaustive` in the public barrel, inert-gate test coverage)
+  → **Opus final-draft review APPROVE FOR DEPLOY** → §5 gate green (typecheck; web build; workers/app
+  242; workers/background 239 no regression; webhook 13; shared 82; db 54; web 417; `drizzle-kit
+  generate` no-op). Adds a route-independent create-or-update task command owning POST+PATCH
+  persistence with a non-throwing `invalid_request` arm (400/503) and one shared
+  `finalizeProjectSubtaskCommandResult`; an O(1) Sydney civil-time resolver (≤6 `formatToParts`,
+  bit-identical to the TB4B O(1681) scan across 1895/pre-1895 LMT/year 0999/9999) extracted to
+  `packages/shared/src/sydney-civil-time.ts` with TB4B's `resolveSydneyCivilTime` kept as an alias;
+  admission of `project.checklist.schedule_changed` (`reserved`→`live`, versioned source key with
+  full project/item/version identity agreement, 5-min leading-edge `<projectId>:<itemId>:<actorId>`
+  coalescing via TB4C's `coalesce_key`/`coalesce_until` outbox columns, broad email off); a
+  five-state schedule DTO (`unscheduled | due_only | range | legacy_unresolved | invalid`, total
+  fail-closed partition); the `CHECKLIST_SCHEDULE_RANGES_ENABLED` build-time rollback switch; and
+  permanent POST + one-release PATCH raw-`dueDate` compatibility adapters that write only `due_date`
+  (version 0, no metadata, no schedule activity). No new Cron; reminder scan unchanged (reads
+  `due_date` directly, exempt from the serializer).
+  **Follow-up:** the PATCH raw-`dueDate` adapter is a one-release sunset — remove it in the first
+  reviewed app release after this deploy. `capability.ts` `active !== true` now gates every
+  collaboration route (comments, read-markers), not just TB4D — a correct tightening, recorded.
+  Opus final-draft nits deferred: `project-subtasks.ts:247` `canonicalSchedule = schedule!`
+  restructure; vestigial `NormalizedChecklistSchedule.startChanged/endChanged`; post-commit reread
+  failure throws before the finalizer (rows stay `pending`, outbox-recoverable — error shape only);
+  `packages/shared/tsconfig.json` doesn't typecheck the new test suites.
 - **TB4C (Editor-Wide Project-Change Notifications — one immutable safe activity event per
   approved semantic project change, delivered as one durable in-app broad alert per eligible
   active assigned Editor via TB4's outbox/Queue/ledger) is deployed to production, 2026-08-27**
@@ -867,6 +894,17 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
 
 ## Waiting on user / external
 
+- [ ] **TB4D residual QA** (`docs/plans/implemented/Revamp-TB4D-Checklist-Scheduling-Ranges-Plan.md`):
+  no local mutating QA matrix was run (deployed straight from the §5 gate + Opus final-draft APPROVE);
+  the schedule-change → broad-outbox → bell **delivery** half is covered by the `workers/background`
+  239-test suite only (no local background Worker). No authenticated **production** walkthrough of the
+  schedule editor (create range / due-only date+timed / DST gap+fold / version-conflict 409 /
+  desktop+compact+phone) was performed. Post-deploy production checks stayed passive (site 200,
+  outbox 9/9 completed, 0 stuck/DLQ, migration `0035` postflight clean, every-minute cron running).
+  **Recommend a local-dev mutating QA pass** (Agy via Option A, or the orchestrating session's
+  Browser pane after a human sign-in) against `http://localhost:8787` on `main` now that TB4D is
+  live, covering the brief's Tests/QA list. Also: the **PATCH raw-`dueDate` one-release adapter** and
+  the deferred Opus final-draft nits (see the TB4D entry above) are open follow-ups.
 - [ ] **TB4C residual QA** (`docs/plans/implemented/Revamp-TB4C-Editor-Wide-Project-Change-Notifications-Plan.md`):
   the fire → outbox → in-app-notification → bell **delivery** half of the broad-activity path is not
   locally exercisable (no local background Worker — `BACKGROUND` binding `[not connected]` under

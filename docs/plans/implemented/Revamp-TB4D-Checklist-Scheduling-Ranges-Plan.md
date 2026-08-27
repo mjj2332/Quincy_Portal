@@ -1,6 +1,28 @@
 # Revamp TB4D — Checklist Scheduling Ranges
 
-**Status:** APPROVED FOR BUILD — 2026-08-27. Fresh-Sol review rounds 1–2 (both folded in) → Opus plan-tier revert 1 of 2 (5 Blocking + 6 Should-fix + 4 Nits) → fresh-Sol revision → **Opus plan-tier re-review APPROVED**: all five revert-1 Blocking items verified fixed against real source; architecture, A13 conformance, activity admission, coalescing, recipient resolution, migration `0035` form, production-writer enumeration, and three-app rollout ordering all intact. Opus left 5 Should-fix + 6 Nits as builder/Sol-diff-review/§5-gate clarifications (carried in the build spec, not blocking). Build may start; not yet implemented, committed, or deployed.
+**Status:** DEPLOYED TO PRODUCTION 2026-08-28 — merge commit `37c6219` (build `b80e45f` + 5 fix
+rounds `3a7d5f0`/`7a3afa2`/`a87fa2f`/`5a683dd`/`31bdbbe`), migration `0035` applied to prod D1
+(11 additive `ALTER TABLE ADD COLUMN` + `schedule_version`; postflight: 11 cols, 19 rows all
+`schedule_version=0`, FK check clean, quick_check ok), background Worker version
+`e7133940-5c55-4faf-9db6-4c15394dcb39`, app Worker version `65ad323b-4ba5-4c19-8b9e-5e838a3562e6`,
+rollback targets `ea917b33-…` (background) / `aecde3a7-…` (app) — TB4C's versions. Pre-migration
+recovery export `../db-recovery/quincy-portal-before-tb4d-20260827T194205Z.sql`
+(sha256 `a5476331dc000a87d01b3c342a1d8d8db0a0a0c50113106e2133780ee9c41a31`). Deployed
+`CHECKLIST_SCHEDULE_RANGES_ENABLED = true` (direct write-enabled; the inert build is tested but was
+not deployed as a separate artifact — rollback path is recovery export + revert + redeploy).
+Pipeline: Sol draft → fresh-Sol review ×2 → Opus plan-tier revert 1/2 → fresh-Sol revision → Opus
+re-review APPROVED → Luna build + 5 fix rounds → fresh Sol diff review (4 Blocking + 4 Should-fix) →
+Sol focused pass (caught an S3 optimistic-concurrency regression) → **Opus final-draft review APPROVE
+FOR DEPLOY** → §5 gate green (typecheck, web build, workers/app 242, workers/background 239,
+webhook 13, shared 82, db 54, web 417, drizzle no-op).
+
+**Follow-up (Opus final-draft nits + one should-fix, non-blocking):** `TB4D_SCHEDULE_ACTIVITY_CUTOVER_DATE`
+constant confirmed `2026-08-28` at deploy; `capability.ts` `active !== true` now gates every
+collaboration route (comments, read-markers), not just TB4D — a correct tightening, recorded here;
+`project-subtasks.ts:247` `canonicalSchedule = schedule!` restructure; vestigial
+`NormalizedChecklistSchedule.startChanged/endChanged`; post-commit reread failure now throws before
+the finalizer (rows stay `pending`, outbox-recoverable — only the error shape regressed);
+`packages/shared/tsconfig.json` doesn't typecheck the new test suites.
 
 ## Purpose and review state
 
