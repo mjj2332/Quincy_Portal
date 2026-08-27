@@ -103,18 +103,6 @@ function finishCandidates(candidates: SydneyCivilResolution[], disambiguation?: 
   return { ok: true, value: selected };
 }
 
-/** Test-only compatibility reference. Production code must use the O(1) resolver below. */
-export function resolveSydneyCivilMinuteExhaustive(localCivil: string, disambiguation?: SydneyCivilDisambiguation): SydneyCivilResolutionResult {
-  const parsed = parseCivil(localCivil);
-  if (!parsed) return { ok: false, code: "invalid_local_time", message: "Enter a valid Sydney date and time to the minute." };
-  const candidates: SydneyCivilResolution[] = [];
-  for (let offset = -840; offset <= 840; offset += 1) {
-    const value = candidate(localCivil, parsed.localEpoch, offset);
-    if (value) candidates.push(value);
-  }
-  return finishCandidates(candidates, disambiguation);
-}
-
 /**
  * Resolve a Sydney wall-clock minute in O(1) candidate checks.
  *

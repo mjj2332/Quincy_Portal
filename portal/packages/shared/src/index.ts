@@ -18,7 +18,6 @@ export * from "./project-deadline";
 export {
   SYDNEY_TIME_ZONE,
   resolveSydneyCivilMinute,
-  resolveSydneyCivilMinuteExhaustive,
   formatSydneyCivilMinute,
   isSydneyCalendarDate,
 } from "./sydney-civil-time";

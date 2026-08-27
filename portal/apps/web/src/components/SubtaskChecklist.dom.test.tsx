@@ -87,6 +87,19 @@ describe("SubtaskChecklist", () => {
     await click([...conflict.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Use latest item (discard draft)")!); expect(item(host, "Authoritative title")).not.toBeNull();
   });
 
+  it("keeps a retained schedule conflict draft when an unrelated Done update succeeds", async () => {
+    const host = mount(); await render();
+    const latest = { ...task, schedule: { state: "due_only" as const, version: 2, zone: "Australia/Sydney" as const, start: null, end: { kind: "date" as const, localCivil: `${year}-06-10`, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const }, due: `${year}-06-10` } };
+    apiPatchMock.mockRejectedValueOnce(new ApiError("Schedule changed", 409, { code: "subtask_schedule_conflict", current: latest.schedule }));
+    await click(item(host, "Call client").querySelector<HTMLButtonElement>('[aria-label="Schedule for Call client"]')!);
+    const editor = portal("subtask-popover-task-1-schedule"); await typeInto(editor.querySelector<HTMLInputElement>('input[type="date"]')!, `${year}-06-20`); await click(editor.querySelector<HTMLButtonElement>(".button")!); await flush();
+    await click(item(host, "Call client").querySelector<HTMLButtonElement>('[aria-label="Schedule for Call client"]')!);
+    expect(portal("subtask-popover-task-1-schedule").querySelector<HTMLInputElement>('input[type="date"]')?.value).toBe(`${year}-06-20`);
+    await click(item(host, "Call client").querySelector<HTMLInputElement>('input[type="checkbox"]')!); await flush();
+    expect(portal("subtask-popover-task-1-schedule").textContent).toContain("Latest schedule · v2");
+    expect(portal("subtask-popover-task-1-schedule").querySelector<HTMLInputElement>('input[type="date"]')?.value).toBe(`${year}-06-20`);
+  });
+
   it("preserves an open schedule draft when a late authoritative refresh arrives", async () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const runtime = new ProjectQueryRuntime(queryClient, "subtask-refresh-test");
