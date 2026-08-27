@@ -134,9 +134,10 @@ db-recovery/`, reused for future migrations; 0031 added the additive `notificati
 added better-auth admin-plugin compatibility columns (`user.banned`/`ban_reason`/`ban_expires`,
 `session.impersonated_by`) plus the additive `feature_flags` table (seeded OFF), applied
 2026-08-26; 0033 added the additive project Deadline columns/`project_deadline_occurrences`/
-`notification_preferences` tables plus a `notification_outbox` index, applied 2026-08-27 (TB4B) —
-next available number is **0034** (claimed by TB4C's not-yet-applied
-`0034_project_activity_events.sql`). Branch off `main`.
+`notification_preferences` tables plus a `notification_outbox` index, applied 2026-08-27 (TB4B);
+0034 added the additive `project_activity_events` table plus three nullable `notification_outbox`
+columns (`coalesce_key`, `coalesce_until`, `recipient_membership_cycle_id`) and one index, applied
+2026-08-27 (TB4C) — next available number is **0035**. Branch off `main`.
 **Prefer a bare `ALTER TABLE ADD COLUMN col TYPE CHECK(...)` over `drizzle-kit generate`'s
 table-rebuild form when the check is single-column and NULL-satisfiable** — the rebuild form's
 `PRAGMA foreign_keys=OFF` doesn't reliably persist across D1's remote migration execution even

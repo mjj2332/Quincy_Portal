@@ -7,7 +7,100 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
 > counts, full diagnostic transcripts) has been cut in favor of what/when/deploy-state. See
 > `docs/lessons.md` for incident mechanics, and `docs/reviews/` for full QA-sweep detail.
 
-## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29, seed-admin UUID migration 2026-07-29, notification dismiss + stalled-guard 2026-07-30, download selection 2026-08-04, notice-board rich text + mentions 2026-08-17, project comments + collaboration panel 2026-08-17, project subtasks/checklist 2026-08-17, collaboration panel relocated to Project page 2026-08-17, collaboration panel UI fixes + due-time reminder 2026-08-17, notification click navigation 2026-08-17, comment ordering + Shift+Enter soft breaks 2026-08-17, mention-email content 2026-08-20, TB0 authority promotion 2026-08-24, TB0A React 19.2 deployed + accepted 2026-08-25, TB0B pipeline configuration boundary deployed 2026-08-24, TB1 Tailwind v4/shadcn foundation deployed 2026-08-25, TB2 route-safe project data freshness deployed 2026-08-25, TB3 project discussion v2 deployed 2026-08-25, TB4 notification outbox deployed 2026-08-26, confirmation modal + admin user impersonation deployed 2026-08-26, TB4A project workspace assignment rail deployed 2026-08-27, TB4B project deadline and reminders deployed 2026-08-27)
+## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29, seed-admin UUID migration 2026-07-29, notification dismiss + stalled-guard 2026-07-30, download selection 2026-08-04, notice-board rich text + mentions 2026-08-17, project comments + collaboration panel 2026-08-17, project subtasks/checklist 2026-08-17, collaboration panel relocated to Project page 2026-08-17, collaboration panel UI fixes + due-time reminder 2026-08-17, notification click navigation 2026-08-17, comment ordering + Shift+Enter soft breaks 2026-08-17, mention-email content 2026-08-20, TB0 authority promotion 2026-08-24, TB0A React 19.2 deployed + accepted 2026-08-25, TB0B pipeline configuration boundary deployed 2026-08-24, TB1 Tailwind v4/shadcn foundation deployed 2026-08-25, TB2 route-safe project data freshness deployed 2026-08-25, TB3 project discussion v2 deployed 2026-08-25, TB4 notification outbox deployed 2026-08-26, confirmation modal + admin user impersonation deployed 2026-08-26, TB4A project workspace assignment rail deployed 2026-08-27, TB4B project deadline and reminders deployed 2026-08-27, TB4C editor-wide project-change notifications deployed 2026-08-27)
+
+- **TB4C (Editor-Wide Project-Change Notifications — one immutable safe activity event per
+  approved semantic project change, delivered as one durable in-app broad alert per eligible
+  active assigned Editor via TB4's outbox/Queue/ledger) is deployed to production, 2026-08-27**
+  (`docs/plans/implemented/Revamp-TB4C-Editor-Wide-Project-Change-Notifications-Plan.md`, build
+  commit `f857f3f` + this documentation commit, background Worker version
+  `ea917b33-4ba8-4ee3-a713-ae31cc336484`, app Worker version
+  `aecde3a7-c525-4836-8272-e2b4eef0ef29`, rollback targets `2668a652-dca8-4a24-a2c8-f0b712b8ff0f`
+  (background) / `15b45ad1-620d-4c00-94e2-1b27484d29a0` (app) — TB4B's versions).
+  Persists one immutable `project_activity_events` row per approved semantic operation (comment
+  create/edit/delete, checklist create/update/delete, priority/board-position, video
+  collection-link reorder, archive/restore, project details/services, initial-project roster,
+  post-create membership add, collection-link create/delete, document-completion,
+  manual-edited-ready, aggregate RAW reconciliation) — separate from `audit_log` and from
+  `notifications`/`notification_outbox`. Delivers one **in-app-only** broad alert (event type
+  `project.activity.broad`, no email ledger row ever) to every active event-time-eligible assigned
+  Editor, resolving TB4A's exact `project_members.id` membership cycles (cycle began ≤ event
+  occurrence, still exists at delivery, active + eligible) inside the marker-gated fan-out SQL, and
+  re-checking the full exact-cycle predicate inside the guarded `pending → processing` admission —
+  closing the delivery-time TOCTOU. Consumes TB4B's existing `ProjectDeadlineScheduleEventIntent`
+  unchanged (no second Deadline producer). Fixed 5-minute leading-edge coalescing for
+  same-comment/same-actor edits, scoped by `recipient_membership_cycle_id` + `coalesce_key` (so a
+  remove/re-add editor cycle can't lose its first alert). A finite shared type registry in
+  `@quincy/shared` owns per-type producer/source-key/safe-payload/deep-link/coalescing/email/
+  cutover; `project.stage.changed`, checklist-schedule, and workflow-outcome types are registered
+  but **reserved** (reject as producer intents until their owning tracer bullet). System-authored
+  events use a fixed reserved sentinel for the non-null `notification_outbox.actor_id`, never
+  joined to `user` or rendered. Every producer emits only on a semantic-mutation win, marker-gated,
+  one summary per bulk op, with **equality-guarded no-op semantics** — a same-value HTTP retry or a
+  concurrent racer does not double-emit (the `PATCH /projects/:id` service delta was refactored
+  into one guarded all-or-nothing batch; priority/board-position and link-reorder winners guard on
+  `(col IS NOT ?)` + a `changes()=1` marker; archive guards `archived_at IS NULL`). Admin ops view
+  gains a "Project activity" label; broad events never create `preference_suppressed`/`sent`/
+  `failed`/`unknown` email states. Additive migration `0034_project_activity_events.sql` — one new
+  table (`typeof`/actor-kind-partition/`json_valid`/deep-link CHECKs, `UNIQUE(event_type,
+  source_key)`), three bare `ALTER TABLE ADD COLUMN` on `notification_outbox`, one index; no table
+  rebuild, no wrangler/Queue/Cron change.
+  Plan review: Sol draft → 2 Sol review rounds (4 Blocking / 4 Should-fix → resolved → confirmed)
+  → 2 Opus plan-tier rounds (structure + all 8 fixes confirmed sound vs landed code, 7 surgical
+  revert items → all resolved → APPROVE, 7 implementation nits N1–N7 folded in). Build: Luna built
+  it; the orchestrating session independently ran the Wrangler/Miniflare Worker suites Luna can't
+  after every round. **6 §5-gate fix rounds** (a `PATCH /projects` SQL syntax error, a dropped
+  `boardPosition` in the PATCH response, a subtask assignment-notice miscount, comment-producer
+  atomicity + broad fan-out counts, a suppressed-broad outbox not terminalizing to `completed`,
+  stale pre-TB4C test assertions). Fresh **Sol diff review**: 3 Blocking + 4 Should-fix, all one
+  theme — producers guarded only on identity/stage instead of snapshot-fencing the complete
+  canonical state in the winning mutation (fixed; one follow-on round when the first priority-fence
+  fix over-corrected into a whole-board JSON optimistic-lock that 409'd everything). **Sol final
+  focused pass**: 5/7 resolved, 2 partials (video tied-rebase still touched unchanged rows; the
+  rollback test injected its failure before the activity/broad statements ran) → resolved. **Opus
+  final-draft review**: NOT APPROVED but **"no production-code defect found" — test-only** —
+  `failWholeOccurrence()` / the 5 bounded permanent codes had zero coverage, the delivery-time
+  barrier only tested cycle removal (not deactivate/role-demote), the per-slot initial-roster
+  suppression matrix was unproven; + 5 nits (checklist-delete 404→409 on a rename race, a dead
+  `failureCode` arm, two missing plan-mandated assertions, the outbox `last_error_code` disagreeing
+  between the two broad-suppress paths, `AGENTS.md` stale migration number). All resolved across 3
+  further rounds, then Opus re-verified the deltas and **APPROVED FOR DEPLOY** with no production
+  drift. Full verify green throughout and independently re-run at deploy: typecheck (6 workspaces),
+  `apps/web` build, `apps/web` 412, `packages/db` 51, `packages/shared` 77, `workers/app` 230
+  (229/1 skipped), `workers/background` 239, `webhook-ingress` 13; `drizzle-kit generate` no-op;
+  migration 0034 independently applied to a scratch SQLite instance (clean apply, FK check empty,
+  `quick_check` ok, query plans use their intended indexes).
+  Production: rollback targets/preflight recorded, pre-migration remote D1 recovery export saved to
+  `../db-recovery/quincy-portal-before-tb4c-20260827T110021Z.sql` (13.4 MB, sha256
+  `3b88d6a27a172c2136f13f8958fa5e47a907a48ff22bfd840a10e7efa69bb003`); remote `d1_migrations` tail
+  confirmed `0033` before apply; `0034` applied cleanly; postflight confirmed the new table (15
+  cols) + 3 nullable outbox columns + index, FK check empty, `quick_check` ok, all 9 existing
+  outbox rows `coalesce_key IS NULL` (no backfill), 0 activity rows. Deploy order `background → app`
+  (webhook-ingress unchanged, not redeployed). Post-deploy: every-minute cron clean over ~25 min
+  (`Project Deadline occurrence scan {scanned:0,fired:0,published:0}` + `Notification outbox
+  recovery scan {recovered:0}` — the recovery scan now runs through the extended consumer that
+  recognizes `project.activity.broad`, zero exceptions), `notification_outbox` 9 rows all
+  `completed` / 0 DLQ/failed, endpoints gated (401, not 5xx).
+  **Local mutating QA matrix** run against `http://localhost:8787` (TB4C code + migration 0034
+  applied locally) by **Agy** (`gemini-3.7-flash-high`) driving Chrome via the `chrome-devtools-mcp`
+  MCP server (Option A, human-authenticated dedicated profile) — the first QA task delegated to Agy
+  instead of Luna, run as a capability trial. All 9 checks PASS, each independently re-verified by
+  the orchestrating session against local D1: one activity row per semantic op with correct
+  event_type/category (no row for a pure Kanban reorder); broad fan-out writes one
+  `project.activity.broad` outbox row per eligible editor cycle with **zero** email ledger rows;
+  comment-edit coalescing (create → broad, first edit → broad with `coalesce_key`, second rapid
+  edit → activity row but **0** broad); priority no-op (two identical POSTs → `200`/`200`, exactly
+  1 audit + 1 activity); unchanged Edit-Project save → `200` (not 409), no new activity; archive →
+  `project.archived`, repeat-archive → no-op no new row, restore → `project.restored`; Admin ops
+  "Project activity" label + all filters load + no payload/email/cycle-id leak; bell/Kanban/rail
+  render clean, no console errors; broad outbox payload contains only `schemaVersion`/`event`/
+  `authorizationAtOccurrence`/`activity` (id+projectId). Agy's report was accurate under
+  independent D1 verification — no fabrication, cleanup performed, stayed on localhost, no direct
+  D1 writes. **Residual QA gap** (tracked below): the fire → outbox → in-app-notification →
+  bell **delivery** half is not locally exercisable (no local background Worker; covered by the
+  `workers/background` automated suite, 239 tests), and no authenticated *production* render check
+  (rail/bell/Admin) was performed — Agy has no production danger/YOLO sanction and the passive
+  production checks above stayed unauthenticated.
 
 - **TB4B (Project Deadline, Reminders and Kanban Due Metadata — one nullable versioned
   Sydney-civil project Deadline with bounded advance reminders, delivered through TB4's durable
@@ -754,6 +847,15 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
 
 ## Waiting on user / external
 
+- [ ] **TB4C residual QA** (`docs/plans/implemented/Revamp-TB4C-Editor-Wide-Project-Change-Notifications-Plan.md`):
+  the fire → outbox → in-app-notification → bell **delivery** half of the broad-activity path is not
+  locally exercisable (no local background Worker — `BACKGROUND` binding `[not connected]` under
+  `wrangler dev`), covered instead by the `workers/background` automated suite (239 tests, incl. the
+  Opus-mandated permanent-failure / deactivate / role-demote / initial-roster-matrix coverage). No
+  authenticated **production** render check (rail/bell/Admin ops) was performed — Agy (which ran the
+  local QA matrix) has no production danger/YOLO sanction, and the post-deploy production checks
+  stayed unauthenticated (D1 health, cron, endpoint gating). The 9-item local mutating matrix was
+  fully run and independently D1-verified — see the TB4C entry.
 - [ ] **TB4B residual QA** (`docs/plans/implemented/Revamp-TB4B-Project-Deadline-And-Reminders-Plan.md`'s
   "Manual QA matrix"): the fire → outbox → in-app/email **delivery** half of items 4/6/7/8/9 is not
   locally exercisable (no local background Worker — the app Worker's `BACKGROUND` binding is

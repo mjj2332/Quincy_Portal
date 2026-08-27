@@ -1,6 +1,22 @@
 # Revamp TB4C — Editor-Wide Project-Change Notifications
 
-**Status:** APPROVED FOR BUILD (2026-08-27). Pipeline: Sol draft → Sol review r1 (4 Blocking / 4 Should-fix) → Sol first revision (all 8 resolved) → Sol review r2 (all confirmed, +1 Should-fix / 1 Nit) → Opus plan-tier review (all 8 fixes confirmed sound vs landed code, plan structure approved, 7 surgical revert items) → Sol follow-up revision (all 7 resolved) → final Opus plan-tier review: **APPROVE**, all 7 verified against source, item 3 (`deliverBroadInApp()` contract) confirmed airtight, 7 implementation nits N1–N7 incorporated below. Not yet built.
+**Status:** DEPLOYED TO PRODUCTION 2026-08-27 — build commit `f857f3f`, migration `0034` applied
+(remote `d1_migrations` tail `0033` → `0034`), background Worker version
+`ea917b33-4ba8-4ee3-a713-ae31cc336484`, app Worker version
+`aecde3a7-c525-4836-8272-e2b4eef0ef29`, rollback targets `2668a652-…` (background) / `15b45ad1-…`
+(app) — TB4B's versions. No wrangler/Queue/Cron changes. Recovery export
+`../db-recovery/quincy-portal-before-tb4c-20260827T110021Z.sql`. See `docs/todo.md`'s TB4C entry
+for the full pipeline/deploy record.
+Pipeline: plan Sol draft → Sol review ×2 (4 Blocking / 4 Should-fix → all resolved → confirmed) →
+Opus plan-tier review ×2 (structure + all fixes approved, 7 surgical revert items → all resolved →
+**APPROVE**, N1–N7 nits folded in) → Luna build → 6 §5-gate fix rounds → fresh Sol diff review
+(3 Blocking / 4 Should-fix on the one-semantic-winner contract → resolved) → Sol final focused pass
+(5/7 resolved + 2 partials → resolved) → Opus final-draft review (**test-only** — "no
+production-code defect": permanent-failure coverage, deactivate/role-demote barrier cases,
+initial-roster suppression matrix + 5 nits → resolved) → Opus re-verify → **APPROVE FOR DEPLOY**.
+Local mutating QA matrix (9 checks) run via Agy driving `chrome-devtools-mcp` against local dev
+(first Agy QA task; delivery half not locally exercisable — no local background Worker), all PASS,
+independently re-verified against local D1 by the orchestrating session.
 
 ## Purpose
 
