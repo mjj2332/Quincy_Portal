@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { roleHasCapability } from "@quincy/shared";
+import { publishNotificationOutbox, roleHasCapability } from "@quincy/shared";
 import { z } from "zod";
 import type { AppEnv } from "../env";
 import { hasProjectAccess } from "../middleware/capability";
@@ -29,6 +29,7 @@ projectDeadlineRoutes.put("/projects/:id/deadline", async (c) => {
   if (request instanceof Response) return request;
   try {
     const result = await saveProjectDeadlineSchedule(c.env.DB, { projectId, principal, request });
+    if (result.publicationIds.length) c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, result.publicationIds));
     return c.json(result);
   } catch (error) {
     if (!(error instanceof ProjectDeadlineError)) throw error;

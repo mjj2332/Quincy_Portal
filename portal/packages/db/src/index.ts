@@ -5,6 +5,7 @@ export * as schema from "./schema";
 export { COLLECTION_RECEIVED_COUNT_SQL, collectionReceivedCountBindings } from "./collection-count";
 export { RAW_CLAIM_LEASE_MS } from "./raw-reconciliation-claims";
 export { guardedStageTransition, type GuardedStageTransitionInput } from "./stage-transition";
+export { buildProjectActivityStatements, type ProjectActivityStatementBundle } from "./project-activity";
 export { appendToStageBottomExpr, computeInsertPosition } from "./board-position";
 export { dashboardProjectOrder, orderDashboardStreetTies } from "./dashboard-order";
 export {

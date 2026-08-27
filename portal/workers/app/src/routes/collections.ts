@@ -1,8 +1,8 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
-import { COLLECTION_RECEIVED_COUNT_SQL, collectionReceivedCountBindings, computeInsertPosition, createDb, schema } from "@quincy/db";
+import { buildProjectActivityStatements, COLLECTION_RECEIVED_COUNT_SQL, collectionReceivedCountBindings, computeInsertPosition, createDb, schema } from "@quincy/db";
 import { and, asc, desc, eq, ne, sql } from "drizzle-orm";
-import { ROLE_CAPABILITIES, type CollectionKind } from "@quincy/shared";
+import { projectActivityDeepLink, publishNotificationOutbox, ROLE_CAPABILITIES, type CollectionKind, type ProjectActivityIntent } from "@quincy/shared";
 import { z } from "zod";
 import type { AppEnv } from "../env";
 import { hasProjectAccess } from "../middleware/capability";
@@ -170,13 +170,22 @@ collectionsRoutes.post("/projects/:id/links", async (c) => {
   const db = createDb(c.env.DB); const collection = await ensureCollection(db, projectId, data.collection);
   if (!collection) return c.json({ error: "Project not found" }, 404);
   const id = newId(); const now = new Date(); const auditId = newId();
-  await c.env.DB.batch([
-    c.env.DB.prepare("INSERT INTO collection_links (id, collection_id, url, label, source, position, created_at, updated_at) VALUES (?, ?, ?, ?, 'manual', COALESCE((SELECT MAX(position) FROM collection_links WHERE collection_id = ?), 0) + 1024, ?, ?) ON CONFLICT(collection_id, url) DO NOTHING").bind(id, collection.id, data.url, data.label ?? null, collection.id, now.getTime(), now.getTime()),
+  const activityId = newId();
+  const activity: ProjectActivityIntent = { schemaVersion: 1, activity: { id: activityId, type: "project.collection.video_link_added", projectId, actorId: c.get("user").id, occurredAt: now.getTime(), source: { kind: "project_video_link", id, key: `project-video-link:${id}:added` }, safePayload: { linkId: id, collectionKind: "video" }, deepLink: projectActivityDeepLink("project.collection.video_link_added", projectId) }, broadDelivery: { registryKey: "project.collection.video_link_added", sourceActivityId: activityId, coalesce: null } };
+  const activityBundle = data.collection === "video" ? buildProjectActivityStatements({ db: c.env.DB, intent: activity, winnerAuditId: auditId, createdAt: now.getTime() }) : null;
+  const statements: D1PreparedStatement[] = [
+    c.env.DB.prepare("INSERT INTO collection_links (id, collection_id, url, label, source, position, created_at, updated_at) VALUES (?, ?, ?, ?, 'manual', COALESCE((SELECT MAX(position) FROM collection_links WHERE collection_id = ?), 0) + 1024, ?, ?) ON CONFLICT(collection_id, url) DO NOTHING RETURNING id").bind(id, collection.id, data.url, data.label ?? null, collection.id, now.getTime(), now.getTime()),
+    c.env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, ?, 'collection_link.create', 'collection_link', ?, ?, ? WHERE changes() = 1 RETURNING id").bind(auditId, c.get("user").id, id, auditMeta(c.get("user"), { projectId, ...data }), now.getTime()),
     c.env.DB.prepare(COLLECTION_RECEIVED_COUNT_SQL).bind(...collectionReceivedCountBindings(collection.id, now.getTime())),
-    c.env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, ?, 'collection_link.create', 'collection_link', ?, ?, ? WHERE EXISTS (SELECT 1 FROM collection_links WHERE id = ?)").bind(auditId, c.get("user").id, id, auditMeta(c.get("user"), { projectId, ...data }), now.getTime(), id),
-  ]);
+  ];
+  if (activityBundle) statements.push(...activityBundle.statements);
+  const results = await c.env.DB.batch(statements);
   const saved = await db.select().from(schema.collectionLinks).where(and(eq(schema.collectionLinks.collectionId, collection.id), eq(schema.collectionLinks.url, data.url))).get();
   if (!saved) return c.json({ error: "Could not save collection link" }, 409);
+  if (activityBundle && ((results[0]?.results?.length ?? 0) === 1)) {
+    const publicationIds = ((results[3 + activityBundle.broadOutboxIndex]?.results ?? []) as Array<{ id?: string }>).flatMap((row) => row.id ? [row.id] : []);
+    if (publicationIds.length) c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, publicationIds));
+  }
   return c.json({ id: saved.id, url: saved.url, label: saved.label, source: saved.source, position: saved.position, createdAt: saved.createdAt }, saved.id === id ? 201 : 200);
 });
 
@@ -200,6 +209,11 @@ collectionsRoutes.patch("/projects/:id/links/:linkId", async (c) => {
   if (existing) return c.json({ error: "A link with this URL already exists in this collection" }, 409);
 
   const now = new Date();
+  if (link.url === data.url && link.label === updatedLabel) return c.json({ id: link.id, url: link.url, label: link.label, source: link.source, position: link.position, createdAt: link.createdAt });
+  const auditId = newId(); const activityId = newId();
+  const changedFields = [...(link.url !== data.url ? ["url" as const] : []), ...(link.label !== updatedLabel ? ["label" as const] : [])];
+  const activity: ProjectActivityIntent = { schemaVersion: 1, activity: { id: activityId, type: "project.collection.video_link_changed", projectId, actorId: c.get("user").id, occurredAt: now.getTime(), source: { kind: "project_video_link", id: linkId, key: `project-video-link:${linkId}:changed:${activityId}` }, safePayload: { linkId, collectionKind: "video", changedFields }, deepLink: projectActivityDeepLink("project.collection.video_link_changed", projectId) }, broadDelivery: { registryKey: "project.collection.video_link_changed", sourceActivityId: activityId, coalesce: null } };
+  const activityBundle = buildProjectActivityStatements({ db: c.env.DB, intent: activity, winnerAuditId: auditId, createdAt: now.getTime() });
   let results: D1Result[];
   try {
     results = await c.env.DB.batch([
@@ -208,20 +222,26 @@ collectionsRoutes.patch("/projects/:id/links/:linkId", async (c) => {
           AND EXISTS (SELECT 1 FROM collections WHERE id = collection_links.collection_id AND project_id = ? AND kind = 'video')`)
         .bind(data.url, updatedLabel, now.getTime(), linkId, link.collectionId, link.url, link.label, projectId),
       c.env.DB.prepare(`INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
-        SELECT ?, ?, 'collection_link.update', 'collection_link', ?, ?, ? WHERE changes() > 0`)
-        .bind(newId(), c.get("user").id, linkId, auditMeta(c.get("user"), { projectId, previous: { url: link.url, label: link.label }, updated: { url: data.url, label: updatedLabel } }), now.getTime()),
+        SELECT ?, ?, 'collection_link.update', 'collection_link', ?, ?, ? WHERE changes() > 0 RETURNING id`)
+        .bind(auditId, c.get("user").id, linkId, auditMeta(c.get("user"), { projectId, previous: { url: link.url, label: link.label }, updated: { url: data.url, label: updatedLabel } }), now.getTime()),
+      ...activityBundle.statements,
     ]);
   } catch (error) {
     if (collectionLinkUrlConflict(error)) return c.json({ error: "A link with this URL already exists in this collection" }, 409);
     throw error;
   }
-  if ((results[0]?.meta.changes ?? 0) > 0) return c.json({ id: link.id, url: data.url, label: updatedLabel, source: "manual", position: link.position, createdAt: link.createdAt });
+  if ((results[0]?.meta.changes ?? 0) > 0) {
+    const publicationIds = ((results[2 + activityBundle.broadOutboxIndex]?.results ?? []) as Array<{ id?: string }>).flatMap((row) => row.id ? [row.id] : []);
+    if (publicationIds.length) c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, publicationIds));
+    return c.json({ id: link.id, url: data.url, label: updatedLabel, source: "manual", position: link.position, createdAt: link.createdAt });
+  }
 
-  const current = await db.select({ source: schema.collectionLinks.source }).from(schema.collectionLinks)
+  const current = await db.select({ id: schema.collectionLinks.id, source: schema.collectionLinks.source, url: schema.collectionLinks.url, label: schema.collectionLinks.label, position: schema.collectionLinks.position, createdAt: schema.collectionLinks.createdAt }).from(schema.collectionLinks)
     .innerJoin(schema.collections, eq(schema.collectionLinks.collectionId, schema.collections.id))
     .where(and(eq(schema.collectionLinks.id, linkId), eq(schema.collections.projectId, projectId), eq(schema.collections.kind, "video"))).get();
   if (!current) return c.json({ error: "Link not found" }, 404);
   if (current.source !== "manual") return c.json({ error: "Tonomo delivery links are immutable" }, 409);
+  if (current.url === data.url && current.label === updatedLabel) return c.json({ id: current.id, url: current.url, label: current.label, source: current.source, position: current.position, createdAt: current.createdAt });
   return c.json({ error: "This link changed while you were editing; reload and try again" }, 409);
 });
 
@@ -241,6 +261,7 @@ collectionsRoutes.post("/projects/:id/links/:linkId/reorder", async (c) => {
   const snapshot = await db.select({ id: schema.collectionLinks.id, position: schema.collectionLinks.position })
     .from(schema.collectionLinks).where(eq(schema.collectionLinks.collectionId, target.collectionId))
     .orderBy(asc(schema.collectionLinks.position), asc(schema.collectionLinks.id)).all();
+  const snapshotIds = snapshot.map((item) => item.id);
   const remaining = snapshot.filter((item) => item.id !== linkId);
   const beforeIndex = data.beforeId ? remaining.findIndex((item) => item.id === data.beforeId) : -1;
   const afterIndex = data.afterId ? remaining.findIndex((item) => item.id === data.afterId) : -1;
@@ -248,23 +269,38 @@ collectionsRoutes.post("/projects/:id/links/:linkId/reorder", async (c) => {
   const expectedAfterIndex = data.beforeId ? beforeIndex + 1 : 0;
   if (data.beforeId === null && data.afterId === null ? remaining.length !== 0 : data.afterId ? afterIndex !== expectedAfterIndex : beforeIndex !== remaining.length - 1) return c.json({ error: "Link order changed; reload and try again" }, 409);
   const before = data.beforeId ? remaining[beforeIndex]! : null; const after = data.afterId ? remaining[afterIndex]! : null;
+  const insertAt = before ? beforeIndex + 1 : 0;
+  const desired = [...remaining]; desired.splice(insertAt, 0, target);
+  if (JSON.stringify(desired.map((item) => item.id)) === JSON.stringify(snapshotIds)) return c.json({ position: target.position });
   const position = computeInsertPosition(before?.position ?? null, after?.position ?? null); const now = Date.now();
   const tied = position === before?.position || position === after?.position;
+  const reorderAuditId = newId(); const reorderActivityId = newId();
+  const reorderActivity: ProjectActivityIntent = { schemaVersion: 1, activity: { id: reorderActivityId, type: "project.collection.video_links_reordered", projectId, actorId: c.get("user").id, occurredAt: now, source: { kind: "project_video_links", id: target.collectionId, key: `project-video-links:${target.collectionId}:reordered:${reorderActivityId}` }, safePayload: { collectionKind: "video", count: snapshot.length }, deepLink: projectActivityDeepLink("project.collection.video_links_reordered", projectId) }, broadDelivery: { registryKey: "project.collection.video_links_reordered", sourceActivityId: reorderActivityId, coalesce: null } };
+  const reorderActivityBundle = buildProjectActivityStatements({ db: c.env.DB, intent: reorderActivity, winnerAuditId: reorderAuditId, createdAt: now });
 
   // Keep the audit in the D1 batch. A failed audit write rolls back the position mutation rather
   // than returning a 500 after a successful, un-audited reorder.
   if (tied) {
-    const insertAt = before ? beforeIndex + 1 : 0; const desired = [...remaining]; desired.splice(insertAt, 0, target);
-    const snapshotJson = JSON.stringify(desired.map((item, index) => ({ id: item.id, oldPosition: item.position, newPosition: (index + 1) * 1024 })));
+    const plannedPositions = desired.map((item, index) => ({ id: item.id, oldPosition: item.position, newPosition: (index + 1) * 1024 }));
+    const expectedChangedCount = plannedPositions.filter((item) => item.oldPosition !== item.newPosition).length;
+    if (expectedChangedCount === 0) return c.json({ position: target.position });
+    const snapshotJson = JSON.stringify(plannedPositions);
     const results = await c.env.DB.batch([
-      c.env.DB.prepare(`UPDATE collection_links SET position = (SELECT CAST(json_extract(value, '$.newPosition') AS INTEGER) FROM json_each(?1) WHERE json_extract(value, '$.id') = collection_links.id), updated_at = ?2 WHERE collection_id = ?3 AND (id, position) IN (SELECT json_extract(value, '$.id'), json_extract(value, '$.oldPosition') FROM json_each(?1)) AND (SELECT COUNT(*) FROM collection_links WHERE collection_id = ?3 AND (id, position) IN (SELECT json_extract(value, '$.id'), json_extract(value, '$.oldPosition') FROM json_each(?1))) = json_array_length(?1) AND (SELECT COUNT(*) FROM collection_links WHERE collection_id = ?3) = json_array_length(?1)`).bind(snapshotJson, now, target.collectionId),
-      c.env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, ?, 'collection_link.reorder', 'collection_link', ?, ?, ? WHERE changes() = ?").bind(newId(), c.get("user").id, linkId, auditMeta(c.get("user"), { projectId, beforeId: data.beforeId, afterId: data.afterId }), now, snapshot.length),
+      c.env.DB.prepare(`UPDATE collection_links SET position = (SELECT CAST(json_extract(value, '$.newPosition') AS INTEGER) FROM json_each(?1) WHERE json_extract(value, '$.id') = collection_links.id), updated_at = ?2 WHERE collection_id = ?3 AND (id, position) IN (SELECT json_extract(value, '$.id'), json_extract(value, '$.oldPosition') FROM json_each(?1)) AND (SELECT COUNT(*) FROM collection_links WHERE collection_id = ?3 AND (id, position) IN (SELECT json_extract(value, '$.id'), json_extract(value, '$.oldPosition') FROM json_each(?1))) = json_array_length(?1) AND (SELECT COUNT(*) FROM collection_links WHERE collection_id = ?3) = json_array_length(?1) AND position IS NOT (SELECT CAST(json_extract(desired.value, '$.newPosition') AS INTEGER) FROM json_each(?1) desired WHERE json_extract(desired.value, '$.id') = collection_links.id)`).bind(snapshotJson, now, target.collectionId),
+      c.env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, ?, 'collection_link.reorder', 'collection_link', ?, ?, ? WHERE changes() = ? RETURNING id").bind(reorderAuditId, c.get("user").id, linkId, auditMeta(c.get("user"), { projectId, beforeId: data.beforeId, afterId: data.afterId }), now, expectedChangedCount),
+      ...reorderActivityBundle.statements,
     ]);
-    if ((results[0]?.meta.changes ?? 0) !== snapshot.length) return c.json({ error: "Link order changed; reload and try again" }, 409);
+    if ((results[0]?.meta.changes ?? 0) !== expectedChangedCount) {
+      const current = await db.select({ id: schema.collectionLinks.id, position: schema.collectionLinks.position }).from(schema.collectionLinks).where(eq(schema.collectionLinks.collectionId, target.collectionId)).orderBy(asc(schema.collectionLinks.position), asc(schema.collectionLinks.id)).all();
+      if (JSON.stringify(current.map((item) => item.id)) === JSON.stringify(desired.map((item) => item.id))) return c.json({ position: current.find((item) => item.id === linkId)?.position ?? target.position });
+      return c.json({ error: "Link order changed; reload and try again" }, 409);
+    }
+    const publicationIds = ((results[2 + reorderActivityBundle.broadOutboxIndex]?.results ?? []) as Array<{ id?: string }>).flatMap((row) => row.id ? [row.id] : []);
+    if (publicationIds.length) c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, publicationIds));
     return c.json({ position: (desired.findIndex((item) => item.id === linkId) + 1) * 1024 });
   }
 
-  const params: unknown[] = [position, now, target.id, target.collectionId, target.position, projectId, target.collectionId, snapshot.length];
+  const params: unknown[] = [position, now, target.id, target.collectionId, target.position, position, projectId, target.collectionId, snapshot.length];
   let guard = "";
   if (before) { guard += " AND EXISTS (SELECT 1 FROM collection_links WHERE id = ? AND collection_id = ? AND position = ?)"; params.push(before.id, target.collectionId, before.position); }
   if (after) { guard += " AND EXISTS (SELECT 1 FROM collection_links WHERE id = ? AND collection_id = ? AND position = ?)"; params.push(after.id, target.collectionId, after.position); }
@@ -272,10 +308,17 @@ collectionsRoutes.post("/projects/:id/links/:linkId/reorder", async (c) => {
   else if (before) { guard += " AND NOT EXISTS (SELECT 1 FROM collection_links AS candidate WHERE candidate.collection_id = ? AND candidate.id <> ? AND (candidate.position > ? OR (candidate.position = ? AND candidate.id > ?)))"; params.push(target.collectionId, target.id, before.position, before.position, before.id); }
   else if (after) { guard += " AND NOT EXISTS (SELECT 1 FROM collection_links AS candidate WHERE candidate.collection_id = ? AND candidate.id <> ? AND (candidate.position < ? OR (candidate.position = ? AND candidate.id < ?)))"; params.push(target.collectionId, target.id, after.position, after.position, after.id); }
   const results = await c.env.DB.batch([
-    c.env.DB.prepare(`UPDATE collection_links SET position = ?, updated_at = ? WHERE id = ? AND collection_id = ? AND position = ? AND EXISTS (SELECT 1 FROM collections WHERE id = collection_links.collection_id AND project_id = ? AND kind = 'video') AND (SELECT COUNT(*) FROM collection_links WHERE collection_id = ?) = ?${guard}`).bind(...params),
-    c.env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, ?, 'collection_link.reorder', 'collection_link', ?, ?, ? WHERE changes() > 0").bind(newId(), c.get("user").id, linkId, auditMeta(c.get("user"), { projectId, beforeId: data.beforeId, afterId: data.afterId }), now),
+    c.env.DB.prepare(`UPDATE collection_links SET position = ?, updated_at = ? WHERE id = ? AND collection_id = ? AND position = ? AND position IS NOT ? AND EXISTS (SELECT 1 FROM collections WHERE id = collection_links.collection_id AND project_id = ? AND kind = 'video') AND (SELECT COUNT(*) FROM collection_links WHERE collection_id = ?) = ?${guard}`).bind(...params),
+    c.env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, ?, 'collection_link.reorder', 'collection_link', ?, ?, ? WHERE changes() > 0 RETURNING id").bind(reorderAuditId, c.get("user").id, linkId, auditMeta(c.get("user"), { projectId, beforeId: data.beforeId, afterId: data.afterId }), now),
+    ...reorderActivityBundle.statements,
   ]);
-  if ((results[0]?.meta.changes ?? 0) !== 1) return c.json({ error: "Link order changed; reload and try again" }, 409);
+  if ((results[0]?.meta.changes ?? 0) !== 1) {
+    const current = await db.select({ id: schema.collectionLinks.id, position: schema.collectionLinks.position }).from(schema.collectionLinks).where(eq(schema.collectionLinks.collectionId, target.collectionId)).orderBy(asc(schema.collectionLinks.position), asc(schema.collectionLinks.id)).all();
+    if (JSON.stringify(current.map((item) => item.id)) === JSON.stringify(desired.map((item) => item.id))) return c.json({ position: current.find((item) => item.id === linkId)?.position ?? target.position });
+    return c.json({ error: "Link order changed; reload and try again" }, 409);
+  }
+  const publicationIds = ((results[2 + reorderActivityBundle.broadOutboxIndex]?.results ?? []) as Array<{ id?: string }>).flatMap((row) => row.id ? [row.id] : []);
+  if (publicationIds.length) c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, publicationIds));
   return c.json({ position });
 });
 
@@ -284,15 +327,25 @@ collectionsRoutes.delete("/projects/:id/links/:linkId", async (c) => {
   if (!z.string().uuid().safeParse(projectId).success || !z.string().uuid().safeParse(linkId).success) return c.json({ error: "Invalid project or link id" }, 400);
   if (!await hasProjectAccess(c, projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   if (!canManageCollection(c)) return forbidden(c);
-  const db = createDb(c.env.DB); const link = await db.select({ source: schema.collectionLinks.source, collectionId: schema.collectionLinks.collectionId }).from(schema.collectionLinks).innerJoin(schema.collections, eq(schema.collectionLinks.collectionId, schema.collections.id)).where(and(eq(schema.collectionLinks.id, linkId), eq(schema.collections.projectId, projectId))).get();
+  const db = createDb(c.env.DB); const link = await db.select({ source: schema.collectionLinks.source, collectionId: schema.collectionLinks.collectionId, kind: schema.collections.kind }).from(schema.collectionLinks).innerJoin(schema.collections, eq(schema.collectionLinks.collectionId, schema.collections.id)).where(and(eq(schema.collectionLinks.id, linkId), eq(schema.collections.projectId, projectId))).get();
   if (!link) return c.json({ error: "Link not found" }, 404);
   if (link.source !== "manual") return c.json({ error: "Tonomo delivery links are immutable" }, 409);
   const now = new Date();
-  await c.env.DB.batch([
-    c.env.DB.prepare("DELETE FROM collection_links WHERE id = ? AND source = 'manual'").bind(linkId),
+  const auditId = newId(); const activityId = newId();
+  const activity: ProjectActivityIntent = { schemaVersion: 1, activity: { id: activityId, type: "project.collection.video_link_removed", projectId, actorId: c.get("user").id, occurredAt: now.getTime(), source: { kind: "project_video_link", id: linkId, key: `project-video-link:${linkId}:removed` }, safePayload: { linkId, collectionKind: "video" }, deepLink: projectActivityDeepLink("project.collection.video_link_removed", projectId) }, broadDelivery: { registryKey: "project.collection.video_link_removed", sourceActivityId: activityId, coalesce: null } };
+  const activityBundle = link.kind === "video" ? buildProjectActivityStatements({ db: c.env.DB, intent: activity, winnerAuditId: auditId, createdAt: now.getTime() }) : null;
+  const statements: D1PreparedStatement[] = [
+    c.env.DB.prepare("DELETE FROM collection_links WHERE id = ? AND source = 'manual' RETURNING id").bind(linkId),
+    c.env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, ?, 'collection_link.delete', 'collection_link', ?, ?, ? WHERE changes() = 1 RETURNING id").bind(auditId, c.get("user").id, linkId, auditMeta(c.get("user"), { projectId }), now.getTime()),
     c.env.DB.prepare(COLLECTION_RECEIVED_COUNT_SQL).bind(...collectionReceivedCountBindings(link.collectionId, now.getTime())),
-    c.env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) VALUES (?, ?, 'collection_link.delete', 'collection_link', ?, ?, ?)").bind(newId(), c.get("user").id, linkId, auditMeta(c.get("user"), { projectId }), now.getTime()),
-  ]);
+  ];
+  if (activityBundle) statements.push(...activityBundle.statements);
+  const results = await c.env.DB.batch(statements);
+  if (!((results[0]?.results?.length ?? 0) > 0)) return c.json({ error: "Link not found" }, 404);
+  if (activityBundle) {
+    const publicationIds = ((results[3 + activityBundle.broadOutboxIndex]?.results ?? []) as Array<{ id?: string }>).flatMap((row) => row.id ? [row.id] : []);
+    if (publicationIds.length) c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, publicationIds));
+  }
   return c.body(null, 204);
 });
 
@@ -401,13 +454,23 @@ collectionsRoutes.post("/projects/:id/documents/complete", async (c) => {
     c.env.DB.prepare("UPDATE document_uploads SET status = 'completed', completed_at = ?, updated_at = ? WHERE id = ? AND status = 'completing' AND EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at IS NULL)").bind(now.getTime(), now.getTime(), upload.id, projectId),
     c.env.DB.prepare(COLLECTION_RECEIVED_COUNT_SQL).bind(...collectionReceivedCountBindings(upload.collectionId, now.getTime())),
   );
-  try { await c.env.DB.batch(statements); }
+  const activityId = newId();
+  const activity: ProjectActivityIntent = { schemaVersion: 1, activity: { id: activityId, type: "project.collection.document_completed", projectId, actorId: c.get("user").id, occurredAt: now.getTime(), source: { kind: "project_document", id: upload.id, key: `project-document:${upload.id}:completed` }, safePayload: { collectionKind: upload.kind === "floorplan" ? "floorplan" : "copy", version: upload.version, assetCount: responseFor(upload).assets.length }, deepLink: projectActivityDeepLink("project.collection.document_completed", projectId) }, broadDelivery: { registryKey: "project.collection.document_completed", sourceActivityId: activityId, coalesce: null } };
+  const activityBundle = buildProjectActivityStatements({ db: c.env.DB, intent: activity, winnerAuditId: upload.completionAuditId, createdAt: now.getTime() });
+  statements.push(...activityBundle.statements);
+  let completionResults: D1Result[];
+  try { completionResults = await c.env.DB.batch(statements); }
   catch (error) {
     const completed = await ownedUpload(c, projectId, upload.id);
     if (completed?.status === "completed") return c.json(responseFor(completed));
     return c.json({ error: uniqueVersionError(error) ? "Document version was reserved concurrently; request a new upload" : "Could not finalize document metadata" }, 409);
   }
   const completed: DocumentUpload = { ...upload, status: "completed", completedAt: now, updatedAt: now };
+  // The completion batch has already committed the authoritative audit and assets. Queue only
+  // broad IDs returned by the same batch; no per-PDF/preview event is emitted.
+  const activityStart = statements.length - activityBundle.statements.length;
+  const publicationIds = ((completionResults![activityStart + activityBundle.broadOutboxIndex]?.results ?? []) as Array<{ id?: string }>).flatMap((row) => row.id ? [row.id] : []);
+  if (publicationIds.length) c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, publicationIds));
   return c.json(responseFor(completed), 201);
 });
 

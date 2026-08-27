@@ -110,7 +110,7 @@ projectCommentsRoutes.patch("/projects/:projectId/comments/:commentId", async (c
   const prepared = await normalizedContent(c.env, projectId, data.content); if (!prepared) return c.json({ error: "Invalid comment content or mention target" }, 400);
   const maps = await db.select().from(schema.projectCommentMentions).where(eq(schema.projectCommentMentions.commentId, commentId)).all(); const wanted = new Set(prepared.mentionIds); const existingIds = new Set(maps.map((map) => map.mentionedUserId)); const createdAt = new Date();
   const added = prepared.mentionIds.filter((mentionedUserId) => !existingIds.has(mentionedUserId)).map((mentionedUserId) => ({ id: newId(), commentId, mentionedUserId, createdAt }));
-  const result = await editProjectComment(c.env.DB, { projectId, commentId, actorId: currentUser.id, auditPrincipal: currentUser, body: prepared.body, contentJson: JSON.stringify(prepared.content), removeMentionIds: maps.filter((map) => !wanted.has(map.mentionedUserId)).map((map) => map.id), addMentions: added, editedAt: createdAt, occurredAt: createdAt });
+  const result = await editProjectComment(c.env.DB, { projectId, commentId, actorId: currentUser.id, auditPrincipal: currentUser, body: prepared.body, contentJson: JSON.stringify(prepared.content), removeMentionIds: maps.filter((map) => !wanted.has(map.mentionedUserId)).map((map) => map.id), addMentions: added, mentionIds: prepared.mentionIds, editedAt: createdAt, occurredAt: createdAt });
   c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, result.notificationOutboxIds));
   if (!result.comment) return c.json({ error: "Comment could not be updated" }, 500);
   return c.json(serializeProjectComment(result.comment));
@@ -123,7 +123,8 @@ projectCommentsRoutes.delete("/projects/:projectId/comments/:commentId", async (
   // An impersonated Admin intentionally acts as the effective author here — see the
   // impersonation caveat on this rule in CLAUDE.md.
   const currentUser = c.get("user"); if (existing.comment.authorId !== currentUser.id) return c.json({ error: "Forbidden: only the author can delete this comment." }, 403);
-  await deleteProjectComment(c.env.DB, { projectId, commentId, actorId: currentUser.id, auditPrincipal: currentUser, occurredAt: new Date() });
+  const result = await deleteProjectComment(c.env.DB, { projectId, commentId, actorId: currentUser.id, auditPrincipal: currentUser, occurredAt: new Date() });
+  c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, result.notificationOutboxIds));
   return c.json({ ok: true });
 });
 

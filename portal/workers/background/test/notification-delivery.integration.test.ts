@@ -6,6 +6,7 @@ import type { Env } from "../src/env";
 import {
   NOTIFICATION_DELIVERY_LEASE_MS,
   NOTIFICATION_QUEUE_STUCK_MS,
+  deliverBroadInApp,
   processNotificationDlqMessage,
   processNotificationMessage,
   recoverNotificationOutbox,
@@ -142,6 +143,66 @@ async function seedAssignment(options: AssignmentFixtureOptions = {}) {
   return { now, actorId, recipientId, projectId, membershipId, outboxId, payload };
 }
 
+async function seedBroadDelivery() {
+  const now = Date.now();
+  const actorId = crypto.randomUUID();
+  const recipientId = crypto.randomUUID();
+  const projectId = crypto.randomUUID();
+  const membershipId = crypto.randomUUID();
+  const activityId = crypto.randomUUID();
+  const outboxId = crypto.randomUUID();
+  const auditId = crypto.randomUUID();
+  const commentId = crypto.randomUUID();
+  const sourceKey = activityId;
+  const payload = {
+    schemaVersion: 1,
+    event: { type: NOTIFICATION_OUTBOX_EVENT_TYPES.projectActivityBroad, sourceKey, recipientId },
+    authorizationAtOccurrence: { kind: "project_editor_membership", membershipCycle: membershipId, startedAt: now },
+    activity: { id: activityId, projectId },
+  };
+  await database.DB.batch([
+    database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, 'Broad Actor', ?, 1, 'editor', 1, ?, ?)").bind(actorId, `${actorId}@example.test`, now, now),
+    database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, 'Broad Recipient', ?, 1, 'editor', 1, ?, ?)").bind(recipientId, `${recipientId}@example.test`, now, now),
+    database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'Broad Activity Street', 'editing_autohdr', ?, ?)").bind(projectId, now, now),
+    database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)").bind(membershipId, projectId, recipientId, now),
+    database.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) VALUES (?, ?, 'project.test', 'projects', ?, '{}', ?)").bind(auditId, actorId, projectId, now),
+    database.DB.prepare("INSERT INTO project_activity_events (id, schema_version, event_type, category, project_id, actor_kind, actor_id, occurred_at, source_kind, source_id, source_key, safe_payload_json, deep_link_kind, deep_link_path, created_at) VALUES (?, 1, 'project.comment.created', 'comment', ?, 'user', ?, ?, 'project_comment', ?, ?, ?, 'project_collaboration', ?, ?)").bind(activityId, projectId, actorId, now, commentId, `project-comment:${commentId}:created`, JSON.stringify({ commentId }), `/projects/${projectId}?collaboration=open`, now),
+    database.DB.prepare("INSERT INTO notification_outbox (id, schema_version, event_type, source_key, project_id, actor_id, recipient_id, payload_json, status, available_at, coalesce_key, coalesce_until, recipient_membership_cycle_id, created_at, updated_at) VALUES (?, 1, ?, ?, ?, ?, ?, ?, 'pending', ?, NULL, NULL, ?, ?, ?)").bind(outboxId, NOTIFICATION_OUTBOX_EVENT_TYPES.projectActivityBroad, sourceKey, projectId, actorId, recipientId, JSON.stringify(payload), now - 1, membershipId, now, now),
+    database.DB.prepare("INSERT INTO notification_delivery_ledger (id, outbox_id, event_type, source_key, recipient_id, channel, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'in_app', 'pending', ?, ?)").bind(crypto.randomUUID(), outboxId, NOTIFICATION_OUTBOX_EVENT_TYPES.projectActivityBroad, sourceKey, recipientId, now, now),
+  ]);
+  return { now, actorId, recipientId, projectId, membershipId, activityId, commentId, outboxId, sourceKey, payload };
+}
+
+function resolvedBroadFixture(fixture: Awaited<ReturnType<typeof seedBroadDelivery>>) {
+  return {
+    ok: true,
+    kind: "broad",
+    row: { recipientId: fixture.recipientId, projectId: fixture.projectId, sourceKey: fixture.sourceKey },
+    activity: {
+      id: fixture.activityId,
+      type: "project.comment.created",
+      projectId: fixture.projectId,
+      actorId: fixture.actorId,
+      actorKind: "user",
+      occurredAt: fixture.now,
+      source: { kind: "project_comment", id: fixture.commentId, key: `project-comment:${fixture.commentId}:created` },
+      safePayload: { commentId: fixture.commentId },
+      deepLink: { kind: "project_collaboration", path: `/projects/${fixture.projectId}?collaboration=open` },
+      category: "comment",
+      createdAt: fixture.now,
+    },
+    delivery: {
+      notificationType: "project_collaboration_activity",
+      title: "Project comment added",
+      body: "A project comment was added.",
+      emailSubject: "Project comment added",
+      emailText: "A project comment was added.",
+      emailHtml: "<p>A project comment was added.</p>",
+    },
+    commentPath: `https://portal.test/projects/${fixture.projectId}?collaboration=open`,
+  } as unknown as Parameters<typeof deliverBroadInApp>[3];
+}
+
 function message(outboxId: string, attempts = 0) {
   return { body: { type: "notification_outbox", outboxId } as NotificationOutboxMessage, attempts, ack: vi.fn(), retry: vi.fn() } as never;
 }
@@ -164,6 +225,152 @@ function service(envOverride: unknown = { DB: database.DB }) {
 describe("TB4 notification delivery Worker integration", () => {
   beforeAll(async () => {
     await executeSql(__PORTAL_MIGRATION_SQL__);
+  });
+
+  it("returns terminal broad outcomes and never creates an email ledger", async () => {
+    const delivered = await seedBroadDelivery();
+    await database.DB.prepare("UPDATE notification_outbox SET status = 'processing', lease_token = 'broad-direct-1', lease_expires_at = ? WHERE id = ?").bind(delivered.now + NOTIFICATION_DELIVERY_LEASE_MS, delivered.outboxId).run();
+    const deliveredRow = await database.DB.prepare("SELECT * FROM notification_outbox WHERE id = ?").bind(delivered.outboxId).first();
+    const resolved = {
+      ok: true,
+      kind: "broad",
+      row: { recipientId: delivered.recipientId, projectId: delivered.projectId, sourceKey: delivered.sourceKey },
+      activity: {
+        id: delivered.activityId,
+        type: "project.comment.created",
+        projectId: delivered.projectId,
+        actorId: delivered.actorId,
+        actorKind: "user",
+        occurredAt: delivered.now,
+        source: { kind: "project_comment", id: delivered.commentId, key: `project-comment:${delivered.commentId}:created` },
+        safePayload: { commentId: delivered.commentId },
+        deepLink: { kind: "project_collaboration", path: `/projects/${delivered.projectId}?collaboration=open` },
+        category: "comment",
+        createdAt: delivered.now,
+      },
+      delivery: {
+        notificationType: "project_collaboration_activity",
+        title: "Project comment added",
+        body: "A project comment was added.",
+        emailSubject: "Project comment added",
+        emailText: "A project comment was added.",
+        emailHtml: "<p>A project comment was added.</p>",
+      },
+      commentPath: `https://portal.test/projects/${delivered.projectId}?collaboration=open`,
+    } as unknown as Parameters<typeof deliverBroadInApp>[3];
+    expect(await deliverBroadInApp(deliveryEnv(), deliveredRow as Parameters<typeof deliverBroadInApp>[1], "broad-direct-1", resolved, delivered.now)).toBe("delivered");
+    expect(await database.DB.prepare("SELECT status FROM notification_outbox WHERE id = ?").bind(delivered.outboxId).first()).toEqual({ status: "completed" });
+    expect(await database.DB.prepare("SELECT status FROM notification_delivery_ledger WHERE outbox_id = ? AND channel = 'in_app'").bind(delivered.outboxId).first()).toEqual({ status: "sent" });
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM notification_delivery_ledger WHERE outbox_id = ? AND channel = 'email'").bind(delivered.outboxId).first()).toEqual({ count: 0 });
+
+    const suppressed = await seedBroadDelivery();
+    await database.DB.prepare("UPDATE notification_outbox SET status = 'processing', lease_token = 'broad-direct-2', lease_expires_at = ? WHERE id = ?").bind(suppressed.now + NOTIFICATION_DELIVERY_LEASE_MS, suppressed.outboxId).run();
+    await database.DB.prepare("DELETE FROM project_members WHERE id = ?").bind(suppressed.membershipId).run();
+    const suppressedRow = await database.DB.prepare("SELECT * FROM notification_outbox WHERE id = ?").bind(suppressed.outboxId).first();
+    const suppressedResolved = { ...resolved, row: { recipientId: suppressed.recipientId, projectId: suppressed.projectId, sourceKey: suppressed.sourceKey }, activity: { ...(resolved as unknown as { activity: Record<string, unknown> }).activity, id: suppressed.activityId, projectId: suppressed.projectId, actorId: suppressed.actorId, occurredAt: suppressed.now, source: { kind: "project_comment", id: suppressed.commentId, key: `project-comment:${suppressed.commentId}:created` }, safePayload: { commentId: suppressed.commentId }, deepLink: { kind: "project_collaboration", path: `/projects/${suppressed.projectId}?collaboration=open` } } } as unknown as Parameters<typeof deliverBroadInApp>[3];
+    expect(await deliverBroadInApp(deliveryEnv(), suppressedRow as Parameters<typeof deliverBroadInApp>[1], "broad-direct-2", suppressedResolved, suppressed.now)).toBe("suppressed");
+    expect(await database.DB.prepare("SELECT status, last_error_code AS code FROM notification_delivery_ledger WHERE outbox_id = ?").bind(suppressed.outboxId).first()).toEqual({ status: "suppressed", code: "reauthorization_suppressed" });
+  });
+
+  it("acks a suppressed broad message exactly once with no retry or DLQ", async () => {
+    const fixture = await seedBroadDelivery();
+    await database.DB.prepare("DELETE FROM project_members WHERE id = ?").bind(fixture.membershipId).run();
+    const m = message(fixture.outboxId);
+    await processNotificationMessage(deliveryEnv(), m);
+    expect((m as { ack: ReturnType<typeof vi.fn> }).ack).toHaveBeenCalledOnce();
+    expect((m as { retry: ReturnType<typeof vi.fn> }).retry).not.toHaveBeenCalled();
+    expect(await database.DB.prepare("SELECT status FROM notification_outbox WHERE id = ?").bind(fixture.outboxId).first()).toEqual({ status: "completed" });
+    expect(await database.DB.prepare("SELECT status, last_error_code AS code FROM notification_delivery_ledger WHERE outbox_id = ?").bind(fixture.outboxId).first()).toEqual({ status: "suppressed", code: "reauthorization_suppressed" });
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM notification_delivery_ledger WHERE outbox_id = ? AND channel = 'email'").bind(fixture.outboxId).first()).toEqual({ count: 0 });
+  });
+
+  it("permanently fails a broad message when its activity row is missing", async () => {
+    const fixture = await seedBroadDelivery();
+    await database.DB.prepare("DELETE FROM project_activity_events WHERE id = ?").bind(fixture.activityId).run();
+    const m = message(fixture.outboxId);
+    await processNotificationMessage(deliveryEnv(), m);
+    expect((m as { ack: ReturnType<typeof vi.fn> }).ack).toHaveBeenCalledOnce();
+    expect((m as { retry: ReturnType<typeof vi.fn> }).retry).not.toHaveBeenCalled();
+    expect(await database.DB.prepare("SELECT status, last_error_code AS code FROM notification_outbox WHERE id = ?").bind(fixture.outboxId).first()).toEqual({ status: "failed", code: "project_activity_missing" });
+    expect(await database.DB.prepare("SELECT status, last_error_code AS code FROM notification_delivery_ledger WHERE outbox_id = ? AND channel = 'in_app'").bind(fixture.outboxId).first()).toEqual({ status: "failed", code: "project_activity_missing" });
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE action = 'notification.delivery.failed' AND target_id = ?").bind(fixture.outboxId).first()).toEqual({ count: 1 });
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE action = 'notification.delivery.dlq' AND target_id = ?").bind(fixture.outboxId).first()).toEqual({ count: 0 });
+  });
+
+  it("permanently fails a broad message whose activity type is reserved", async () => {
+    const fixture = await seedBroadDelivery();
+    await database.DB.prepare("UPDATE project_activity_events SET event_type = 'project.stage.changed' WHERE id = ?").bind(fixture.activityId).run();
+    const m = message(fixture.outboxId);
+    await processNotificationMessage(deliveryEnv(), m);
+    expect((m as { ack: ReturnType<typeof vi.fn> }).ack).toHaveBeenCalledOnce();
+    expect((m as { retry: ReturnType<typeof vi.fn> }).retry).not.toHaveBeenCalled();
+    expect(await database.DB.prepare("SELECT status, last_error_code AS code FROM notification_outbox WHERE id = ?").bind(fixture.outboxId).first()).toEqual({ status: "failed", code: "project_activity_type_reserved" });
+    expect(await database.DB.prepare("SELECT status, last_error_code AS code FROM notification_delivery_ledger WHERE outbox_id = ? AND channel = 'in_app'").bind(fixture.outboxId).first()).toEqual({ status: "failed", code: "project_activity_type_reserved" });
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE action = 'notification.delivery.failed' AND target_id = ?").bind(fixture.outboxId).first()).toEqual({ count: 1 });
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE action = 'notification.delivery.dlq' AND target_id = ?").bind(fixture.outboxId).first()).toEqual({ count: 0 });
+  });
+
+  it("distinguishes permanent broad failure from removed-cycle authorization suppression", async () => {
+    const fixture = await seedBroadDelivery();
+    await database.DB.prepare("DELETE FROM project_members WHERE id = ?").bind(fixture.membershipId).run();
+    const m = message(fixture.outboxId);
+    await processNotificationMessage(deliveryEnv(), m);
+    expect((m as { ack: ReturnType<typeof vi.fn> }).ack).toHaveBeenCalledOnce();
+    expect((m as { retry: ReturnType<typeof vi.fn> }).retry).not.toHaveBeenCalled();
+    expect(await database.DB.prepare("SELECT status, last_error_code AS code FROM notification_outbox WHERE id = ?").bind(fixture.outboxId).first()).toEqual({ status: "completed", code: null });
+    expect(await database.DB.prepare("SELECT status, last_error_code AS code FROM notification_delivery_ledger WHERE outbox_id = ? AND channel = 'in_app'").bind(fixture.outboxId).first()).toEqual({ status: "suppressed", code: "reauthorization_suppressed" });
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE action = 'notification.delivery.failed' AND target_id = ?").bind(fixture.outboxId).first()).toEqual({ count: 0 });
+  });
+
+  it("suppresses broad delivery after recipient deactivation or global-role demotion", async () => {
+    for (const [label, update] of [
+      ["deactivation", "UPDATE user SET active = 0 WHERE id = ?"],
+      ["role demotion", "UPDATE user SET role = 'photographer' WHERE id = ?"],
+    ] as const) {
+      const fixture = await seedBroadDelivery();
+      await database.DB.prepare(update).bind(fixture.recipientId).run();
+      await database.DB.prepare("UPDATE notification_outbox SET status = 'processing', lease_token = ?, lease_expires_at = ? WHERE id = ?").bind(`broad-${label}`, fixture.now + NOTIFICATION_DELIVERY_LEASE_MS, fixture.outboxId).run();
+      const outbox = await database.DB.prepare("SELECT * FROM notification_outbox WHERE id = ?").bind(fixture.outboxId).first();
+      const outcome = await deliverBroadInApp(deliveryEnv(), outbox as Parameters<typeof deliverBroadInApp>[1], `broad-${label}`, resolvedBroadFixture(fixture), fixture.now);
+      expect(outcome, label).toBe("suppressed");
+      expect(await database.DB.prepare("SELECT status, last_error_code AS code FROM notification_delivery_ledger WHERE outbox_id = ? AND channel = 'in_app'").bind(fixture.outboxId).first(), label).toEqual({ status: "suppressed", code: "reauthorization_suppressed" });
+      expect(await database.DB.prepare("SELECT count(*) AS count FROM notifications WHERE project_id = ?").bind(fixture.projectId).first(), label).toEqual({ count: 0 });
+    }
+  });
+
+  it("records an in-batch broad structural failure with the bounded ledger code", async () => {
+    const fixture = await seedBroadDelivery();
+    const token = "broad-structural-failure";
+    await database.DB.prepare("UPDATE notification_outbox SET status = 'processing', lease_token = ?, lease_expires_at = ? WHERE id = ?").bind(token, fixture.now + NOTIFICATION_DELIVERY_LEASE_MS, fixture.outboxId).run();
+    await database.DB.prepare("DELETE FROM project_activity_events WHERE id = ?").bind(fixture.activityId).run();
+    const outbox = await database.DB.prepare("SELECT * FROM notification_outbox WHERE id = ?").bind(fixture.outboxId).first();
+    expect(await deliverBroadInApp(deliveryEnv(), outbox as Parameters<typeof deliverBroadInApp>[1], token, resolvedBroadFixture(fixture), fixture.now)).toBe("failed");
+    expect(await database.DB.prepare("SELECT status, last_error_code AS code FROM notification_delivery_ledger WHERE outbox_id = ? AND channel = 'in_app'").bind(fixture.outboxId).first()).toEqual({ status: "failed", code: "project_activity_missing" });
+    expect(await database.DB.prepare("SELECT status, last_error_code AS code FROM notification_outbox WHERE id = ?").bind(fixture.outboxId).first()).toEqual({ status: "failed", code: "project_activity_missing" });
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE action = 'notification.delivery.failed' AND target_id = ?").bind(fixture.outboxId).first()).toEqual({ count: 1 });
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE action = 'notification.delivery.dlq' AND target_id = ?").bind(fixture.outboxId).first()).toEqual({ count: 0 });
+  });
+
+  it("does not run a second broad outbox terminalization write in the Queue wrapper", async () => {
+    const fixture = await seedBroadDelivery();
+    let fallbackWrites = 0;
+    const noFallbackDb = new Proxy(database.DB, {
+      get(target, property, receiver) {
+        if (property !== "prepare") {
+          const value = Reflect.get(target, property, receiver);
+          return typeof value === "function" ? value.bind(target) : value;
+        }
+        return (sql: string) => {
+          if (sql.includes("SET status = 'completed'")) fallbackWrites += 1;
+          return target.prepare(sql);
+        };
+      },
+    }) as unknown as D1Database;
+    const m = message(fixture.outboxId);
+    await processNotificationMessage(deliveryEnv(undefined, noFallbackDb), m);
+    expect(fallbackWrites).toBe(0);
+    expect((m as { ack: ReturnType<typeof vi.fn> }).ack).toHaveBeenCalledOnce();
+    expect(await database.DB.prepare("SELECT status FROM notification_outbox WHERE id = ?").bind(fixture.outboxId).first()).toEqual({ status: "completed" });
   });
 
   it("lets exactly one of two concurrent claims win and converges duplicate Queue delivery to one result", async () => {

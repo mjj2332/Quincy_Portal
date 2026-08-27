@@ -8,6 +8,7 @@ import {
   type ProjectDeadlineScheduleEventIntent,
   type SaveProjectDeadlineRequest,
 } from "@quincy/shared";
+import { buildProjectActivityStatements } from "@quincy/db";
 import { auditMeta, type AuditPrincipal } from "./audit";
 
 export class ProjectDeadlineError extends Error {
@@ -243,6 +244,9 @@ export async function saveProjectDeadlineSchedule(db: D1Database, input: SavePro
 
   const newVersion = before.deadlineVersion + 1;
   const auditId = crypto.randomUUID();
+  // TB4B already owns this semantic intent. Construct it once and let TB4C persist the
+  // exact same object after the existing schedule-save winner marker.
+  const eventIntent = scheduleEventIntent(input.projectId, actorId, newVersion, resume ? "resume" : request.operation, now);
   const occurrences: Array<{ id: string; kind: "advance" | "due_now"; offset: number; fireAt: number; status: "pending" | "skipped"; reason: string | null }> = [];
   if (request.operation === "set") {
     for (const offset of request.offsets) {
@@ -316,6 +320,9 @@ export async function saveProjectDeadlineSchedule(db: D1Database, input: SavePro
       RETURNING id
     `).bind(occurrence.id, input.projectId, newVersion, occurrence.kind, occurrence.offset, occurrence.fireAt, request.deadlineAt, request.localCivil, PROJECT_DEADLINE_ZONE, request.offset, request.fold, occurrence.status, occurrence.reason, actorId, now, now, auditId));
   }
+  const activityStatements = buildProjectActivityStatements({ db, intent: eventIntent, winnerAuditId: auditId, createdAt: now });
+  const activityStatementStart = statements.length;
+  statements.push(...activityStatements.statements);
   const results = await db.batch(statements);
   const marker = results[1]?.results?.[0] as { id?: string } | undefined;
   if (!marker || marker.id !== auditId) {
@@ -332,7 +339,7 @@ export async function saveProjectDeadlineSchedule(db: D1Database, input: SavePro
   return {
     changed: true,
     current,
-    eventIntent: scheduleEventIntent(input.projectId, actorId, newVersion, resume ? "resume" : request.operation, now),
-    publicationIds: [],
+    eventIntent,
+    publicationIds: ((results[activityStatementStart + activityStatements.broadOutboxIndex]?.results ?? []) as Array<{ id?: string }>).flatMap((row) => row.id ? [row.id] : []),
   };
 }

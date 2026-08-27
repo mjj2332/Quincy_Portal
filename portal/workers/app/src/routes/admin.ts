@@ -103,6 +103,8 @@ function safeNotificationErrorCode(value: string | null): string | null {
     "E_RATE_LIMIT_EXCEEDED", "E_DAILY_LIMIT_EXCEEDED", "E_DELIVERY_FAILED", "E_INVALID_FROM",
     "E_INVALID_TO", "E_INVALID_EMAIL", "E_DOMAIN_NOT_VERIFIED", "E_SENDER_NOT_ALLOWED",
     "E_RECIPIENT_SUPPRESSED", "E_MESSAGE_TOO_LARGE", "E_INVALID_HEADERS",
+    "project_activity_payload_invalid", "project_activity_missing", "project_activity_invalid",
+    "project_activity_project_mismatch", "project_activity_type_reserved",
   ]);
   return safe.has(value) ? value : "delivery_error";
 }

@@ -66,6 +66,20 @@ describe("Kanban priority and manual-position API", () => {
     expect((await database.DB.prepare("SELECT board_position FROM projects WHERE id = ?").bind(a).first<{ board_position: number }>())!.board_position).toBe(aBefore!.board_position);
   });
 
+  it("treats concurrent ambiguous same-priority retries as one winner and one no-op", async () => {
+    const sibling = crypto.randomUUID(); const target = crypto.randomUUID();
+    await seedProject(sibling, "priority-retry", 1024, 1); await seedProject(target, "priority-retry", 2048);
+    const [first, second] = await Promise.all([
+      request(`/api/projects/${target}/priority`, adminToken, { method: "POST", body: JSON.stringify({ priority: 5 }) }),
+      request(`/api/projects/${target}/priority`, adminToken, { method: "POST", body: JSON.stringify({ priority: 5 }) }),
+    ]);
+    expect([first.status, second.status].sort()).toEqual([200, 200]);
+    expect(await database.DB.prepare("SELECT priority, board_position FROM projects WHERE id = ?").bind(target).first()).toEqual({ priority: 5, board_position: 0 });
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE action = 'project.priority_set' AND target_id = ?").bind(target).first()).toEqual({ count: 1 });
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM project_activity_events WHERE project_id = ? AND event_type = 'project.priority.changed'").bind(target).first()).toEqual({ count: 1 });
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM notification_outbox WHERE project_id = ?").bind(target).first()).toEqual({ count: 0 });
+  });
+
   it("handles no-anchor, tie, clear, validation, and capability cases", async () => {
     const first = crypto.randomUUID(); const second = crypto.randomUUID(); const target = crypto.randomUUID();
     await seedProject(first, "edited_review", 4096, 1); await seedProject(second, "edited_review", 5120, 2); await seedProject(target, "edited_review", 8192);

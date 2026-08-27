@@ -50,6 +50,7 @@ describe("migration 0032 admin impersonation", () => {
     const names = readdirSync(directory).filter((value) => /^\d{4}_.*\.sql$/.test(value)).sort();
     expect(names).toContain("0032_admin_impersonation.sql");
     expect(names).toContain("0033_project_deadline_and_reminders.sql");
-    expect(names.filter((value) => Number(value.slice(0, 4)) > 33)).toEqual([]);
+    expect(names).toContain("0034_project_activity_events.sql");
+    expect(names.filter((value) => Number(value.slice(0, 4)) > 34)).toEqual([]);
   });
 });

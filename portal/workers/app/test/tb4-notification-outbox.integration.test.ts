@@ -5,6 +5,7 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 import { createAuth } from "../src/auth";
 import type { AppEnv, Env } from "../src/env";
 import {
+  assertUniqueMentions,
   createProjectComment,
   deleteProjectComment,
   editProjectComment,
@@ -52,13 +53,17 @@ async function seedDiscussionFixture(options: { actorRole?: "admin" | "editor"; 
   const actorMembershipId = crypto.randomUUID();
   const actorRole = options.actorRole ?? "editor";
   const recipientRole = options.recipientRole ?? "editor";
+  const eligibleEditorIds = [
+    ...(actorRole === "editor" || actorRole === "admin" ? [actorId] : []),
+    ...(recipientRole === "editor" || recipientRole === "admin" ? [recipientId] : []),
+  ];
   await database.DB.batch([
     database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, 'TB4 Actor', ?, 1, ?, 1, ?, ?), (?, 'TB4 Recipient', ?, 1, ?, 1, ?, ?)").bind(actorId, `${actorId}@example.test`, actorRole, now, now, recipientId, `${recipientId}@example.test`, recipientRole, now, now),
     database.DB.prepare("INSERT INTO session (id, expires_at, token, user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)").bind(crypto.randomUUID(), now + 3_600_000, actorToken, actorId, now, now),
     database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'TB4 Comment Street', 'editing_autohdr', ?, ?)").bind(projectId, now, now),
     database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?), (?, ?, ?, 'editor', ?)").bind(actorMembershipId, projectId, actorId, now, recipientMembershipId, projectId, recipientId, now),
   ]);
-  return { now, actorId, recipientId, projectId, actorToken, adminToken, recipientMembershipId, actorMembershipId };
+  return { now, actorId, recipientId, projectId, actorToken, adminToken, recipientMembershipId, actorMembershipId, eligibleEditorIds };
 }
 
 function mutationInput(fixture: Awaited<ReturnType<typeof seedDiscussionFixture>>, commentId: string, mentionIds: Array<{ id: string; userId: string }>, occurredAt = new Date(fixture.now)) {
@@ -91,11 +96,14 @@ describe("TB4 project-comment outbox integration", () => {
       { id: recipientMentionId, userId: fixture.recipientId },
     ]));
 
-    expect(created.notificationOutboxIds).toHaveLength(1);
+    // TB4C adds one activity event and one broad in-app outbox per eligible assigned Editor;
+    // the targeted mention remains one additional outbox (the self mention is intentionally skipped).
+    expect(created.notificationOutboxIds).toHaveLength(1 + fixture.eligibleEditorIds.length);
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM project_activity_events WHERE project_id = ?").bind(fixture.projectId).first()).toEqual({ count: 1 });
     const mentionRows = await database.DB.prepare("SELECT mentioned_user_id FROM project_comment_mentions WHERE comment_id = ?").bind(commentId).all<{ mentioned_user_id: string }>();
     // mention row ids are random UUIDs unrelated to insertion order, so compare as a set rather than relying on ORDER BY id.
     expect(mentionRows.results.map((row) => row.mentioned_user_id).sort()).toEqual([fixture.actorId, fixture.recipientId].sort());
-    const outbox = await database.DB.prepare("SELECT id, event_type, source_key, actor_id, recipient_id, payload_json, status FROM notification_outbox WHERE project_id = ?").bind(fixture.projectId).first<{ id: string; event_type: string; source_key: string; actor_id: string; recipient_id: string; payload_json: string; status: string }>();
+    const outbox = await database.DB.prepare("SELECT id, event_type, source_key, actor_id, recipient_id, payload_json, status FROM notification_outbox WHERE project_id = ? AND event_type = 'project.comment.mentioned'").bind(fixture.projectId).first<{ id: string; event_type: string; source_key: string; actor_id: string; recipient_id: string; payload_json: string; status: string }>();
     expect(outbox).toMatchObject({ event_type: "project.comment.mentioned", source_key: recipientMentionId, actor_id: fixture.actorId, recipient_id: fixture.recipientId, status: "pending" });
     const payload = JSON.parse(outbox!.payload_json) as Record<string, unknown>;
     expect(payload).toEqual({
@@ -110,7 +118,7 @@ describe("TB4 project-comment outbox integration", () => {
     expect(JSON.stringify(payload)).not.toContain("@example.test");
     expect((await database.DB.prepare("SELECT channel, status FROM notification_delivery_ledger WHERE outbox_id = ? ORDER BY channel").bind(outbox!.id).all()).results).toEqual([{ channel: "email", status: "pending" }, { channel: "in_app", status: "pending" }]);
     expect(await database.DB.prepare("SELECT action FROM audit_log WHERE action = 'project_comment.create' AND target_id = ?").bind(commentId).all()).toMatchObject({ results: [{ action: "project_comment.create" }] });
-    expect(await database.DB.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE '%activity%'").all()).toMatchObject({ results: [] });
+    expect((await database.DB.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE '%activity%' ORDER BY name").all()).results.map((row) => (row as { name: string }).name)).toEqual(["project_activity_events"]);
 
     const retained = await editProjectComment(database.DB, {
       projectId: fixture.projectId,
@@ -123,8 +131,12 @@ describe("TB4 project-comment outbox integration", () => {
       editedAt: new Date(fixture.now + 1),
       occurredAt: new Date(fixture.now + 1),
     });
-    expect(retained.notificationOutboxIds).toEqual([]);
-    expect(await database.DB.prepare("SELECT count(*) AS count FROM notification_outbox WHERE project_id = ?").bind(fixture.projectId).first()).toEqual({ count: 1 });
+    // The retained edit is the first edit in this leading-edge coalescing window, so it
+    // persists an activity row and delivers one broad outbox row per eligible Editor.
+    // The re-added edit below is the second edit in the same window and is coalesced.
+    expect(retained.notificationOutboxIds).toHaveLength(fixture.eligibleEditorIds.length);
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM notification_outbox WHERE project_id = ?").bind(fixture.projectId).first()).toEqual({ count: 1 + 2 * fixture.eligibleEditorIds.length });
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM project_activity_events WHERE project_id = ?").bind(fixture.projectId).first()).toEqual({ count: 2 });
 
     const readdedMentionId = crypto.randomUUID();
     const edited = await editProjectComment(database.DB, {
@@ -140,54 +152,76 @@ describe("TB4 project-comment outbox integration", () => {
     });
     expect(edited.notificationOutboxIds).toHaveLength(1);
     expect(edited.activity.activity.id).not.toBe(created.activity.activity.id);
-    expect(await database.DB.prepare("SELECT source_key FROM notification_outbox WHERE project_id = ? ORDER BY created_at, id").bind(fixture.projectId).all()).toMatchObject({ results: [{ source_key: recipientMentionId }, { source_key: readdedMentionId }] });
+    expect(await database.DB.prepare("SELECT source_key FROM notification_outbox WHERE project_id = ? AND event_type = 'project.comment.mentioned' ORDER BY created_at, id").bind(fixture.projectId).all()).toMatchObject({ results: [{ source_key: recipientMentionId }, { source_key: readdedMentionId }] });
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM notification_outbox WHERE project_id = ? AND event_type = 'project.activity.broad'").bind(fixture.projectId).first()).toEqual({ count: 2 * fixture.eligibleEditorIds.length });
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM project_activity_events WHERE project_id = ?").bind(fixture.projectId).first()).toEqual({ count: 3 });
 
     await deleteProjectComment(database.DB, { projectId: fixture.projectId, commentId, actorId: fixture.actorId, occurredAt: new Date(fixture.now + 3) });
     expect(await database.DB.prepare("SELECT id FROM project_comments WHERE id = ?").bind(commentId).first()).toBeNull();
-    expect(await database.DB.prepare("SELECT count(*) AS count FROM notification_outbox WHERE project_id = ?").bind(fixture.projectId).first()).toEqual({ count: 2 });
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM notification_outbox WHERE project_id = ?").bind(fixture.projectId).first()).toEqual({ count: 2 + 3 * fixture.eligibleEditorIds.length });
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM project_activity_events WHERE project_id = ?").bind(fixture.projectId).first()).toEqual({ count: 4 });
     expect(await database.DB.prepare("SELECT action FROM audit_log WHERE target_id = ? ORDER BY created_at").bind(commentId).all()).toMatchObject({ results: [{ action: "project_comment.create" }, { action: "project_comment.edit" }, { action: "project_comment.edit" }, { action: "project_comment.delete" }] });
   });
 
-  it("creates a self mapping without delivery intent and rolls failed domain batches back completely", async () => {
+  it("rejects duplicate project-comment mention mappings before opening a mutation batch", () => {
+    expect(() => assertUniqueMentions([
+      { id: "mention-1", commentId: "comment-1", mentionedUserId: "user-1" },
+      { id: "mention-1", commentId: "comment-1", mentionedUserId: "user-2" },
+    ])).toThrow("Duplicate project comment mention");
+    expect(() => assertUniqueMentions([
+      { id: "mention-1", commentId: "comment-1", mentionedUserId: "user-1" },
+      { id: "mention-2", commentId: "comment-1", mentionedUserId: "user-1" },
+    ])).toThrow("Duplicate project comment mention");
+  });
+
+  it("creates a self mapping without delivery intent", async () => {
     const fixture = await seedDiscussionFixture();
     const commentId = crypto.randomUUID();
     const selfMentionId = crypto.randomUUID();
     const self = await createProjectComment(database.DB, mutationInput(fixture, commentId, [{ id: selfMentionId, userId: fixture.actorId }]));
-    expect(self.notificationOutboxIds).toEqual([]);
+    expect(self.notificationOutboxIds).toHaveLength(fixture.eligibleEditorIds.length);
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM project_activity_events WHERE project_id = ?").bind(fixture.projectId).first()).toEqual({ count: 1 });
     expect(await database.DB.prepare("SELECT id FROM project_comment_mentions WHERE id = ?").bind(selfMentionId).first()).toEqual({ id: selfMentionId });
     expect(await database.DB.prepare("SELECT id FROM notification_outbox WHERE source_key = ?").bind(selfMentionId).first()).toBeNull();
+  });
 
+  it("rolls a later producer failure back across the comment and every TB4C row", async () => {
+    const fixture = await seedDiscussionFixture();
     const failedCommentId = crypto.randomUUID();
-    const duplicateMentionId = crypto.randomUUID();
-    await expect(createProjectComment(database.DB, mutationInput(fixture, failedCommentId, [
-      { id: duplicateMentionId, userId: fixture.recipientId },
-      { id: duplicateMentionId, userId: fixture.recipientId },
+    const mentionId = crypto.randomUUID();
+    const counts = async () => {
+      const [comments, mentions, audits, activities, outbox, ledger] = await Promise.all([
+        database.DB.prepare("SELECT count(*) AS count FROM project_comments WHERE id = ?").bind(failedCommentId).first<{ count: number }>(),
+        database.DB.prepare("SELECT count(*) AS count FROM project_comment_mentions WHERE comment_id = ?").bind(failedCommentId).first<{ count: number }>(),
+        database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE target_id = ?").bind(failedCommentId).first<{ count: number }>(),
+        database.DB.prepare("SELECT count(*) AS count FROM project_activity_events WHERE project_id = ?").bind(fixture.projectId).first<{ count: number }>(),
+        database.DB.prepare("SELECT count(*) AS count FROM notification_outbox WHERE project_id = ?").bind(fixture.projectId).first<{ count: number }>(),
+        database.DB.prepare("SELECT count(*) AS count FROM notification_delivery_ledger").first<{ count: number }>(),
+      ]);
+      return { comments: comments!.count, mentions: mentions!.count, audits: audits!.count, activities: activities!.count, outbox: outbox!.count, ledger: ledger!.count };
+    };
+    const before = await counts();
+    let injected = false;
+    const faultDb = new Proxy(database.DB, {
+      get(target, property, receiver) {
+        if (property === "prepare") {
+          return (sql: string) => {
+            if (!injected && sql.includes("INSERT INTO notification_delivery_ledger") && sql.includes("FROM notification_outbox o")) {
+              injected = true;
+              return target.prepare("SELECT * FROM tb4_missing_fault_injection_table");
+            }
+            return target.prepare(sql);
+          };
+        }
+        const value = Reflect.get(target, property, receiver);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }) as unknown as D1Database;
+    await expect(createProjectComment(faultDb, mutationInput(fixture, failedCommentId, [
+      { id: mentionId, userId: fixture.recipientId },
     ]))).rejects.toThrow();
-    expect(await database.DB.prepare("SELECT id FROM project_comments WHERE id = ?").bind(failedCommentId).first()).toBeNull();
-    expect(await database.DB.prepare("SELECT id FROM project_comment_mentions WHERE comment_id = ?").bind(failedCommentId).all()).toMatchObject({ results: [] });
-    expect(await database.DB.prepare("SELECT id FROM audit_log WHERE target_id = ?").bind(failedCommentId).all()).toMatchObject({ results: [] });
-    expect(await database.DB.prepare("SELECT id FROM notification_outbox WHERE project_id = ? AND source_key = ?").bind(fixture.projectId, duplicateMentionId).all()).toMatchObject({ results: [] });
-
-    const editableId = crypto.randomUUID();
-    const editableMentionId = crypto.randomUUID();
-    await createProjectComment(database.DB, mutationInput(fixture, editableId, [{ id: editableMentionId, userId: fixture.recipientId }]));
-    const editMentionId = crypto.randomUUID();
-    await expect(editProjectComment(database.DB, {
-      projectId: fixture.projectId,
-      commentId: editableId,
-      actorId: fixture.actorId,
-      body: "should roll back",
-      contentJson: JSON.stringify(doc([mention(fixture.recipientId)])),
-      removeMentionIds: [],
-      addMentions: [
-        { id: editMentionId, commentId: editableId, mentionedUserId: fixture.recipientId, createdAt: new Date() },
-        { id: editMentionId, commentId: editableId, mentionedUserId: fixture.recipientId, createdAt: new Date() },
-      ],
-      editedAt: new Date(),
-      occurredAt: new Date(),
-    })).rejects.toThrow();
-    expect(await database.DB.prepare("SELECT body FROM project_comments WHERE id = ?").bind(editableId).first()).toEqual({ body: "TB4 comment" });
-    expect(await database.DB.prepare("SELECT id FROM audit_log WHERE action = 'project_comment.edit' AND target_id = ?").bind(editableId).all()).toMatchObject({ results: [] });
+    expect(injected).toBe(true);
+    expect(await counts()).toEqual(before);
   });
 
   it("keeps project-comment mutations on the outbox producer while Notice Board remains a direct producer", async () => {
@@ -195,7 +229,7 @@ describe("TB4 project-comment outbox integration", () => {
     const commentResponse = await request(`/api/projects/${fixture.projectId}/comments`, fixture.actorToken, "POST", { content: doc([mention(fixture.recipientId, "forged label")]) });
     expect(commentResponse.status).toBe(201);
     const body = await commentResponse.json() as { id: string };
-    expect(await database.DB.prepare("SELECT count(*) AS count FROM notification_outbox WHERE project_id = ?").bind(fixture.projectId).first()).toEqual({ count: 1 });
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM notification_outbox WHERE project_id = ?").bind(fixture.projectId).first()).toEqual({ count: 1 + fixture.eligibleEditorIds.length });
     expect(await database.DB.prepare("SELECT id FROM notifications WHERE project_id = ? AND type = 'mentioned'").bind(fixture.projectId).all()).toMatchObject({ results: [] });
     expect(await database.DB.prepare("SELECT action FROM audit_log WHERE action = 'project_comment.create' AND target_id = ?").bind(body.id).all()).toMatchObject({ results: [{ action: "project_comment.create" }] });
     expect((await database.DB.prepare("SELECT action FROM audit_log WHERE action = 'project_comment.create' AND target_id = ?").bind(body.id).all()).results).toHaveLength(1);
@@ -227,6 +261,8 @@ describe("TB4 project-comment outbox integration", () => {
     expect(waits).toHaveLength(1);
     (globalThis as typeof globalThis & { resolveTb4Queue?: () => void }).resolveTb4Queue?.();
     await Promise.all(waits);
-    expect(queue.send).toHaveBeenCalledTimes(1);
+    // One deferred publishNotificationOutbox call publishes the mention plus the broad IDs;
+    // the Queue therefore receives one message per committed outbox row.
+    expect(queue.send).toHaveBeenCalledTimes(1 + fixture.eligibleEditorIds.length);
   });
 });

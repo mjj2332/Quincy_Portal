@@ -6,6 +6,8 @@ import {
   type ProjectMembershipDto,
   type Role,
 } from "@quincy/shared";
+import { buildProjectActivityStatements } from "@quincy/db";
+import { projectActivityDeepLink, type ProjectActivityIntent } from "@quincy/shared";
 import { auditMeta, type AuditPrincipal } from "./audit";
 import { newId } from "./ids";
 
@@ -34,6 +36,32 @@ function first<T>(result: D1Rows<T>): T | undefined {
 
 function roleBindings(roleOnProject: ProjectMemberRole): string[] {
   return [...PROJECT_ASSIGNMENT_ELIGIBLE_ROLES[roleOnProject]];
+}
+
+function membershipActivityIntent(input: {
+  type: "member_added" | "member_removed";
+  projectId: string;
+  membershipCycle: string;
+  roleOnProject: ProjectMemberRole;
+  actorId: string;
+  occurredAt: number;
+}): ProjectActivityIntent {
+  const eventType = input.type === "member_added" ? "project.team.member_added" : "project.team.member_removed";
+  const activityId = newId();
+  return {
+    schemaVersion: 1,
+    activity: {
+      id: activityId,
+      type: eventType,
+      projectId: input.projectId,
+      actorId: input.actorId,
+      occurredAt: input.occurredAt,
+      source: { kind: "project_member", id: input.membershipCycle, key: `project-member:${input.membershipCycle}:${input.type === "member_added" ? "added" : "removed"}` },
+      safePayload: { membershipCycle: input.membershipCycle, roleOnProject: input.roleOnProject },
+      deepLink: projectActivityDeepLink(eventType, input.projectId),
+    },
+    broadDelivery: { registryKey: eventType, sourceActivityId: activityId, coalesce: null },
+  };
 }
 
 function memberDto(row: MemberDtoRow): ProjectMembershipDto {
@@ -131,11 +159,19 @@ export async function addProjectMemberWithAssignmentIntent(
   `).bind(newId(), outboxId, NOTIFICATION_OUTBOX_EVENT_TYPES.projectAssignmentCreated, membershipCycle, input.userId, channel,
     now, now, outboxId, NOTIFICATION_OUTBOX_EVENT_TYPES.projectAssignmentCreated, membershipCycle, input.userId));
   const timestamp = db.prepare("UPDATE projects SET updated_at = ? WHERE id = ? AND EXISTS (SELECT 1 FROM project_members WHERE id = ? AND project_id = ?)").bind(now, input.projectId, membershipCycle, input.projectId);
-  const result = await db.batch([insert, diagnostic, audit, outbox, ...ledgers, timestamp]);
+  const activityStatements = buildProjectActivityStatements({
+    db,
+    intent: membershipActivityIntent({ type: "member_added", projectId: input.projectId, membershipCycle, roleOnProject: input.roleOnProject, actorId: input.actorId, occurredAt: now }),
+    winnerAuditId: auditId,
+    excludeRecipientId: input.userId,
+    createdAt: now,
+  });
+  const result = await db.batch([insert, diagnostic, audit, outbox, ...ledgers, timestamp, ...activityStatements.statements]);
   const inserted = first<{ id: string }>(result[0] as D1Rows<{ id: string }>);
   const canonical = first<MemberDtoRow>(result[1] as D1Rows<MemberDtoRow>);
   if (!canonical?.id) throw new ProjectMemberIneligibleError(input.roleOnProject);
-  return { created: Boolean(inserted?.id), membership: memberDto(canonical), notificationOutboxIds: inserted?.id ? [outboxId] : [] };
+  const broadIds = rows<{ id: string }>(result[7 + activityStatements.broadOutboxIndex] as D1Rows<{ id: string }>).map((row) => row.id);
+  return { created: Boolean(inserted?.id), membership: memberDto(canonical), notificationOutboxIds: [...(inserted?.id ? [outboxId] : []), ...broadIds] };
 }
 
 type RemainingRoleFragment = { sql: string; bindings: unknown[] };
@@ -163,7 +199,7 @@ export async function removeProjectMemberCycle(
   db: D1Database,
   input: RemoveInput,
 ): Promise<
-  | { outcome: "removed"; subtaskAssignmentsCleared: number }
+  | { outcome: "removed"; subtaskAssignmentsCleared: number; notificationOutboxIds: string[] }
   | { outcome: "stale"; currentMembership: ProjectMembershipDto | null }
   | { outcome: "confirmation_required"; assignmentCount: number; currentMembership: ProjectMembershipDto }
 > {
@@ -209,7 +245,13 @@ export async function removeProjectMemberCycle(
     RETURNING id
   `).bind(now, input.projectId, input.userId, auditId, ...remainingAfterDelete.bindings, input.userId);
   const timestamp = db.prepare("UPDATE projects SET updated_at = ? WHERE id = ? AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?)").bind(now, input.projectId, auditId);
-  const result = await db.batch([exact, current, compatible, activeAdmin, assignmentCount, deletion, audit, clear, timestamp]);
+  const activityStatements = buildProjectActivityStatements({
+    db,
+    intent: membershipActivityIntent({ type: "member_removed", projectId: input.projectId, membershipCycle: input.membershipCycle, roleOnProject: input.roleOnProject, actorId: input.actorId, occurredAt: now }),
+    winnerAuditId: auditId,
+    createdAt: now,
+  });
+  const result = await db.batch([exact, current, compatible, activeAdmin, assignmentCount, deletion, audit, clear, timestamp, ...activityStatements.statements]);
   const exactRow = first<{ id: string }>(result[0] as D1Rows<{ id: string }>);
   const currentRow = first<MemberDtoRow>(result[1] as D1Rows<MemberDtoRow>);
   const currentMembership = currentRow ? memberDto(currentRow) : null;
@@ -220,7 +262,7 @@ export async function removeProjectMemberCycle(
     if (!currentMembership) throw new Error("Project membership diagnostic disappeared during removal");
     return { outcome: "confirmation_required", assignmentCount: count, currentMembership };
   }
-  return { outcome: "removed", subtaskAssignmentsCleared: rows<{ id: string }>(result[7] as D1Rows<{ id: string }>).length };
+  return { outcome: "removed", subtaskAssignmentsCleared: rows<{ id: string }>(result[7] as D1Rows<{ id: string }>).length, notificationOutboxIds: rows<{ id: string }>(result[9 + activityStatements.broadOutboxIndex] as D1Rows<{ id: string }>).map((row) => row.id) };
 }
 
 export type InitialProjectMemberSlot = { userId: string; roleOnProject: ProjectMemberRole; name: string; email: string; globalRole: Role; active: boolean };
@@ -228,11 +270,12 @@ export type InitialProjectMemberSlot = { userId: string; roleOnProject: ProjectM
 export function buildInitialProjectMemberStatementTuples(
   db: D1Database,
   input: { projectId: string; projectMarkerId: string; slots: InitialProjectMemberSlot[]; actorId: string; auditPrincipal: AuditPrincipal; now?: number },
-): { statements: D1PreparedStatement[]; memberships: ProjectMembershipDto[]; notificationOutboxIds: string[] } {
+): { statements: D1PreparedStatement[]; memberships: ProjectMembershipDto[]; notificationOutboxIds: string[]; broadResultOffsets: number[] } {
   const now = input.now ?? Date.now();
   const statements: D1PreparedStatement[] = [];
   const memberships: ProjectMembershipDto[] = [];
   const notificationOutboxIds: string[] = [];
+  const activityBundles: Array<{ statements: D1PreparedStatement[]; broadOutboxIndex: number }> = [];
   for (const slot of input.slots) {
     const membershipCycle = newId(); const auditId = newId(); const outboxId = newId();
     notificationOutboxIds.push(outboxId);
@@ -264,6 +307,18 @@ export function buildInitialProjectMemberStatementTuples(
       SELECT ?, ?, ?, ?, ?, ?, 'pending', ?, ?
       WHERE EXISTS (SELECT 1 FROM notification_outbox WHERE id = ? AND event_type = ? AND source_key = ? AND recipient_id = ?)
     `).bind(newId(), outboxId, NOTIFICATION_OUTBOX_EVENT_TYPES.projectAssignmentCreated, membershipCycle, slot.userId, channel, now, now, outboxId, NOTIFICATION_OUTBOX_EVENT_TYPES.projectAssignmentCreated, membershipCycle, slot.userId));
+    activityBundles.push(buildProjectActivityStatements({
+      db,
+      intent: membershipActivityIntent({ type: "member_added", projectId: input.projectId, membershipCycle, roleOnProject: slot.roleOnProject, actorId: input.actorId, occurredAt: now }),
+      winnerAuditId: auditId,
+      excludeRecipientId: slot.userId,
+      createdAt: now,
+    }));
   }
-  return { statements, memberships, notificationOutboxIds };
+  const broadResultOffsets: number[] = [];
+  for (const bundle of activityBundles) {
+    broadResultOffsets.push(statements.length + bundle.broadOutboxIndex);
+    statements.push(...bundle.statements);
+  }
+  return { statements, memberships, notificationOutboxIds, broadResultOffsets };
 }

@@ -8,6 +8,7 @@ export const NOTIFICATION_OUTBOX_EVENT_TYPES = {
   projectCommentMentioned: "project.comment.mentioned",
   projectAssignmentCreated: "project.assignment.created",
   projectDeadlineReminder: "project.deadline.reminder",
+  projectActivityBroad: "project.activity.broad",
 } as const;
 export type ProjectDeadlineReminderOutboxPayload = import("./project-deadline").ProjectDeadlineReminderPayload;
 export type ProjectAssignmentCreatedPayload = {

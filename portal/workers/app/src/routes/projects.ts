@@ -1,8 +1,8 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
-import { appendToStageBottomExpr, computeInsertPosition, createDb, dashboardProjectOrder, orderDashboardStreetTies, schema } from "@quincy/db";
+import { appendToStageBottomExpr, buildProjectActivityStatements, computeInsertPosition, createDb, dashboardProjectOrder, orderDashboardStreetTies, schema } from "@quincy/db";
 import { and, asc, desc, eq, exists, gt, inArray, isNotNull, isNull, lte, notExists, sql } from "drizzle-orm";
-import { COLLECTION_KINDS, DOWNLOAD_SELECTION_MAX_ASSETS, DOWNLOAD_SELECTION_MAX_BYTES, isStageKey, PHOTOGRAPHER_VISIBLE_STAGES, PROJECT_ASSIGNMENT_ELIGIBLE_ROLES, ROLE_CAPABILITIES, roleHasCapability, publishNotificationOutbox, type CollectionKind, type ProjectMemberRole, type ProjectMembershipDto, type Role } from "@quincy/shared";
+import { COLLECTION_KINDS, DOWNLOAD_SELECTION_MAX_ASSETS, DOWNLOAD_SELECTION_MAX_BYTES, isStageKey, PHOTOGRAPHER_VISIBLE_STAGES, PROJECT_ASSIGNMENT_ELIGIBLE_ROLES, ROLE_CAPABILITIES, projectActivityDeepLink, publishNotificationOutbox, roleHasCapability, type CollectionKind, type ProjectActivityIntent, type ProjectMemberRole, type ProjectMembershipDto, type Role } from "@quincy/shared";
 import { z } from "zod";
 import type { AppEnv } from "../env";
 import { hasProjectAccess, hasProjectAccessForUser, requireCapability } from "../middleware/capability";
@@ -41,7 +41,6 @@ const unavailableSelectionError = "One or more selected assets are not available
 const unsupportedSelectionError = "Download Selection supports one RAW or Edited photo selection";
 
 async function guardedBoardUpdate(
-  db: ReturnType<typeof createDb>,
   d1: D1Database,
   target: BoardRow,
   rows: BoardRow[],
@@ -49,34 +48,69 @@ async function guardedBoardUpdate(
   afterId: string | null,
   position: number,
   newPriority: number | null | undefined,
+  tail: D1PreparedStatement[] = [],
+  winnerMarkerId?: string,
 ) {
+  const plan = plannedBoardState(rows, target.id, beforeId, afterId, position, newPriority);
+  const snapshot = target.stageKey;
+  const finalPosition = plan.position;
+  const finalSql = newPriority === undefined
+    ? `UPDATE projects SET board_position = ?, updated_at = ? WHERE id = ? AND stage_key = ? AND archived_at IS NULL AND board_position IS NOT ? RETURNING priority, board_position AS boardPosition`
+    : `UPDATE projects SET priority = ?, board_position = ?, updated_at = ? WHERE id = ? AND stage_key = ? AND archived_at IS NULL AND (priority IS NOT ? OR board_position IS NOT ?) RETURNING priority, board_position AS boardPosition`;
+  const finalStatement = newPriority === undefined
+    ? d1.prepare(finalSql).bind(finalPosition, Date.now(), target.id, snapshot, finalPosition)
+    : d1.prepare(finalSql).bind(newPriority, finalPosition, Date.now(), target.id, snapshot, newPriority, finalPosition);
+
+  if (!plan.renumbered.length && !tail.length) {
+    const result = await d1.batch([finalStatement]);
+    const row = firstD1<{ priority: number | null; boardPosition: number }>(result[0]);
+    return row ? { ...row, tailResults: [] as D1Result<unknown>[] } : null;
+  }
+
+  const renumberStatements = plan.renumbered
+    .filter((row) => row.id !== target.id)
+    .map((row) => d1.prepare(
+      "UPDATE projects SET board_position = ?, updated_at = ? WHERE id = ? AND stage_key = ? AND archived_at IS NULL AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?)",
+    ).bind(plan.positions.get(row.id), Date.now(), row.id, snapshot, winnerMarkerId));
+  const result = await d1.batch([
+    finalStatement,
+    ...(tail.length ? [tail[0]!] : []),
+    ...renumberStatements,
+    ...tail.slice(1),
+  ]);
+  const row = firstD1<{ priority: number | null; boardPosition: number }>(result[0]);
+  if (!row) return null;
+  const activityStart = 1 + (tail.length ? renumberStatements.length + 1 : renumberStatements.length);
+  const tailResults = tail.length
+    ? [result[1]!, ...result.slice(activityStart)]
+    : [];
+  return { ...row, tailResults };
+}
+
+function plannedBoardState(rows: BoardRow[], targetId: string, beforeId: string | null, afterId: string | null, position: number, newPriority: number | null | undefined) {
   const before = beforeId ? rows.find((row) => row.id === beforeId)?.boardPosition ?? null : null;
   const after = afterId ? rows.find((row) => row.id === afterId)?.boardPosition ?? null : null;
   const renumber = needsPositionRenumber(position, before, after);
-  const snapshot = target.stageKey;
-
   if (!renumber) {
-    const values = newPriority === undefined
-      ? { boardPosition: position, updatedAt: new Date() }
-      : { priority: newPriority, boardPosition: position, updatedAt: new Date() };
-    const result = await db.update(schema.projects).set(values).where(and(eq(schema.projects.id, target.id), eq(schema.projects.stageKey, snapshot), isNull(schema.projects.archivedAt))).returning({ priority: schema.projects.priority, boardPosition: schema.projects.boardPosition }).all();
-    return result[0] ?? null;
+    return {
+      renumbered: [] as BoardRow[],
+      positions: new Map<string, number>(),
+      position,
+      expectedRows: rows.map((row) => row.id === targetId ? { ...row, priority: newPriority === undefined ? row.priority : newPriority, boardPosition: position } : row),
+    };
   }
-
   const { renumbered, position: recomputedPosition } = renumberedInsertPosition(rows, beforeId, afterId);
-  const sorted = orderedBoardRows(rows);
-  const statements = sorted.map((row) => d1.prepare(
-    "UPDATE projects SET board_position = ? WHERE id = ? AND stage_key = ? AND archived_at IS NULL AND EXISTS (SELECT 1 FROM projects WHERE id = ? AND stage_key = ? AND archived_at IS NULL)",
-  ).bind(renumbered.get(row.id), row.id, snapshot, target.id, snapshot));
-  const finalSql = newPriority === undefined
-    ? "UPDATE projects SET board_position = ?, updated_at = ? WHERE id = ? AND stage_key = ? AND archived_at IS NULL"
-    : "UPDATE projects SET priority = ?, board_position = ?, updated_at = ? WHERE id = ? AND stage_key = ? AND archived_at IS NULL";
-  const finalStatement = newPriority === undefined
-    ? d1.prepare(finalSql).bind(recomputedPosition, Date.now(), target.id, snapshot)
-    : d1.prepare(finalSql).bind(newPriority, recomputedPosition, Date.now(), target.id, snapshot);
-  const result = await d1.batch([...statements, finalStatement]);
-  if ((result.at(-1)?.meta.changes ?? 0) !== 1) return null;
-  return { priority: newPriority === undefined ? target.priority : newPriority, boardPosition: recomputedPosition };
+  return {
+    renumbered: orderedBoardRows(rows),
+    positions: renumbered,
+    position: recomputedPosition,
+    expectedRows: rows.map((row) => ({ ...row, priority: row.id === targetId && newPriority !== undefined ? newPriority : row.priority, boardPosition: renumbered.get(row.id)! })),
+  };
+}
+
+async function currentBoardTarget(db: ReturnType<typeof createDb>, projectId: string) {
+  return await db.select({ id: schema.projects.id, stageKey: schema.projects.stageKey, priority: schema.projects.priority, boardPosition: schema.projects.boardPosition })
+    .from(schema.projects).where(and(eq(schema.projects.id, projectId), isNull(schema.projects.archivedAt))).get() as BoardRow | undefined;
 }
 
 type DropboxSyncResult = {
@@ -309,6 +343,7 @@ async function createProjectAtomically(c: Context<AppEnv>, data: z.infer<typeof 
     INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
     SELECT ?, ?, 'project.create', 'project', ?, ?, ? WHERE EXISTS (SELECT 1 FROM projects WHERE id = ?)
   `).bind(newId(), c.get("user").id, projectId, auditMeta(c.get("user"), { orderedServices: services }), now, projectId);
+  const memberStatementStart = diagnostics.length + 1 + collectionStatements.length;
   const result = await raw.batch([...diagnostics, projectInsert, ...collectionStatements, ...memberTuples.statements, projectAudit]);
   const projectIndex = diagnostics.length;
   const created = rowsFromD1<{ id: string }>(result[projectIndex]).length > 0;
@@ -316,7 +351,9 @@ async function createProjectAtomically(c: Context<AppEnv>, data: z.infer<typeof 
     const ineligibleSlots = diagnostics.map((_, index) => firstD1<{ userId: string; roleOnProject: ProjectMemberRole; eligible: number }>(result[index])).filter((row): row is { userId: string; roleOnProject: ProjectMemberRole; eligible: number } => Boolean(row && row.eligible !== 1)).map(({ userId, roleOnProject }) => ({ userId, roleOnProject }));
     return { created: false as const, ineligibleSlots: ineligibleSlots.sort((left, right) => left.roleOnProject.localeCompare(right.roleOnProject) || left.userId.localeCompare(right.userId)) };
   }
-  if (memberTuples.notificationOutboxIds.length) c.executionCtx.waitUntil(Promise.resolve().then(() => publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, memberTuples.notificationOutboxIds)).catch((error) => console.error("Project assignment outbox publication failed", { projectId, error })));
+  const broadIds = memberTuples.broadResultOffsets.flatMap((offset) => rowsFromD1<{ id: string }>(result[memberStatementStart + offset]).map((row) => row.id));
+  const publicationIds = [...memberTuples.notificationOutboxIds, ...broadIds];
+  if (publicationIds.length) c.executionCtx.waitUntil(Promise.resolve().then(() => publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, publicationIds)).catch((error) => console.error("Project assignment outbox publication failed", { projectId, error })));
   if (data.rawFolderPath !== undefined) c.executionCtx.waitUntil(c.env.BACKGROUND.ensureAutoHdrScaffold(projectId).catch((error) => console.error("AutoHDR scaffold trigger failed", { projectId, error })));
   const collectionsForResponse = collectionRecords.map((collection) => ({ id: collection.id, projectId, kind: collection.kind, status: "empty", expectedCount: null, receivedCount: 0 }));
   const observedMemberships = memberTuples.memberships.map((membership, index) => {
@@ -387,9 +424,30 @@ projectsRoutes.post("/projects/:id/priority", async (c) => {
   const neighbors = priorityInsertNeighbors([target, ...others], id, desiredPriority);
   const { beforeId, afterId, before, after } = neighbors;
   const position = computeInsertPosition(before, after);
-  const result = await guardedBoardUpdate(db, c.env.DB, target, [target, ...others], beforeId, afterId, position, data.priority);
-  if (!result) return c.json({ error: "Project stage changed while priority was being updated" }, 409);
-  await audit(c.env, c.get("user"), "project.priority_set", "project", id, { from: target.priority, to: data.priority });
+  const plan = plannedBoardState([target, ...others], target.id, beforeId, afterId, position, desiredPriority);
+  const plannedTarget = plan.expectedRows.find((row) => row.id === target.id)!;
+  if (!plan.renumbered.length && target.priority === plannedTarget.priority && target.boardPosition === plannedTarget.boardPosition) return c.json({ priority: target.priority, boardPosition: target.boardPosition });
+  const now = Date.now();
+  const auditId = newId(); const activityId = newId();
+  const activity: ProjectActivityIntent = {
+    schemaVersion: 1,
+    activity: { id: activityId, type: "project.priority.changed", projectId: id, actorId: c.get("user").id, occurredAt: now, source: { kind: "project_priority", id, key: `project-priority:${id}:change:${activityId}` }, safePayload: { priority: data.priority }, deepLink: projectActivityDeepLink("project.priority.changed", id) },
+    broadDelivery: { registryKey: "project.priority.changed", sourceActivityId: activityId, coalesce: null },
+  };
+  const activityStatements = buildProjectActivityStatements({ db: c.env.DB, intent: activity, winnerAuditId: auditId, createdAt: now });
+  const auditStatement = c.env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, ?, 'project.priority_set', 'project', ?, ?, ? WHERE changes() = 1 RETURNING id").bind(auditId, c.get("user").id, id, auditMeta(c.get("user"), { from: target.priority, to: data.priority }), now);
+  const result = await guardedBoardUpdate(c.env.DB, target, [target, ...others], beforeId, afterId, position, data.priority, [auditStatement, ...activityStatements.statements], auditId);
+  if (!result) {
+    const current = await currentBoardTarget(db, id);
+    if (current && current.priority === plannedTarget.priority && current.boardPosition === plannedTarget.boardPosition) {
+      return c.json({ priority: current.priority, boardPosition: current.boardPosition });
+    }
+    return c.json({ error: "Project stage changed while priority was being updated" }, 409);
+  }
+  const tailResults = result.tailResults ?? [];
+  if (!rowsFromD1(tailResults[0]).length) return c.json({ error: "Project changed while priority was being recorded" }, 409);
+  const publicationIds = rowsFromD1<{ id: string }>(tailResults[1 + activityStatements.broadOutboxIndex]).map((row) => row.id);
+  if (publicationIds.length) c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, publicationIds));
   return c.json({ priority: result.priority, boardPosition: result.boardPosition });
 });
 
@@ -409,68 +467,105 @@ projectsRoutes.post("/projects/:id/board-position", async (c) => {
   if (!neighbors) return c.json({ boardPosition: target.boardPosition });
   const { beforeId, afterId, before, after } = neighbors;
   const position = computeInsertPosition(before, after);
-  const result = await guardedBoardUpdate(db, c.env.DB, target, column, beforeId, afterId, position, undefined);
-  if (!result) return c.json({ error: "Project stage changed while board position was being updated" }, 409);
-  await audit(c.env, c.get("user"), "project.board_position_set", "project", id, { direction: data.direction });
+  const boardPlan = plannedBoardState(column, target.id, beforeId, afterId, position, undefined);
+  const plannedTarget = boardPlan.expectedRows.find((row) => row.id === target.id)!;
+  if (!boardPlan.renumbered.length && target.boardPosition === plannedTarget.boardPosition) return c.json({ boardPosition: target.boardPosition });
+  const auditId = newId();
+  const auditStatement = c.env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, ?, 'project.board_position_set', 'project', ?, ?, ? WHERE changes() = 1 RETURNING id").bind(auditId, c.get("user").id, id, auditMeta(c.get("user"), { direction: data.direction }), Date.now());
+  const result = await guardedBoardUpdate(c.env.DB, target, column, beforeId, afterId, position, undefined, [auditStatement], auditId);
+  if (!result) {
+    const current = await currentBoardTarget(db, id);
+    if (current && current.boardPosition === plannedTarget.boardPosition) return c.json({ boardPosition: current.boardPosition });
+    return c.json({ error: "Project stage changed while board position was being updated" }, 409);
+  }
   return c.json({ boardPosition: result.boardPosition });
 });
 projectsRoutes.patch("/projects/:id", async (c) => {
   const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
   if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
-  {
-    if (!ROLE_CAPABILITIES[c.get("user").role].includes("editProject")) return c.json({ error: "Forbidden", capability: "editProject" }, 403);
-    const data = await jsonInput(c, editFields); if (data instanceof Response) return data;
-    const db = createDb(c.env.DB); if (!await db.select({ id: schema.projects.id }).from(schema.projects).where(eq(schema.projects.id, id)).get()) return c.json({ error: "Project not found" }, 404);
-    const { orderedServices, ...projectUpdates } = data;
-    const projectAuditMeta: Record<string, unknown> = { ...projectUpdates };
-    if (orderedServices !== undefined) {
-      // Grouped counts merged in JS — a correlated scalar subquery via sql`${schema.assets}` renders
-      // incorrectly under drizzle/D1 and silently returned 0 (caught by the blocked-payload tests).
-      const countsFor = async (collectionIds: string[]) => {
-        const [assetRows, manifestRows, documentRows] = await Promise.all([
-          db.select({ collectionId: schema.assets.collectionId, n: sql<number>`count(*)` }).from(schema.assets).where(inArray(schema.assets.collectionId, collectionIds)).groupBy(schema.assets.collectionId).all(),
-          db.select({ collectionId: schema.uploadManifests.collectionId, n: sql<number>`count(*)` }).from(schema.uploadManifests).where(inArray(schema.uploadManifests.collectionId, collectionIds)).groupBy(schema.uploadManifests.collectionId).all(),
-          db.select({ collectionId: schema.documentUploads.collectionId, n: sql<number>`count(*)` }).from(schema.documentUploads).where(and(inArray(schema.documentUploads.collectionId, collectionIds), sql`${schema.documentUploads.status} in ('pending', 'completing', 'aborting')`)).groupBy(schema.documentUploads.collectionId).all(),
-        ]);
-        return { assets: new Map(assetRows.map((row) => [row.collectionId, row.n])), manifests: new Map(manifestRows.map((row) => [row.collectionId, row.n])), documents: new Map(documentRows.map((row) => [row.collectionId, row.n])) };
-      };
-      const existing = await db.select({ id: schema.collections.id, kind: schema.collections.kind, receivedCount: schema.collections.receivedCount }).from(schema.collections).where(eq(schema.collections.projectId, id)).all();
-      const desiredServices = new Set<CollectionKind>(["raw", ...orderedServices]);
-      const removedCollections = existing.filter((collection) => collection.kind !== "raw" && !desiredServices.has(collection.kind as CollectionKind));
-      const blockedPayload = (list: typeof removedCollections, counts: Awaited<ReturnType<typeof countsFor>>, removedKinds: string[] = []) =>
-        c.json({ error: "Services with received media or active document uploads cannot be removed.", blocked: list.map((collection) => ({ kind: collection.kind, assetCount: counts.assets.get(collection.id) ?? 0, manifestCount: counts.manifests.get(collection.id) ?? 0, activeDocumentSessions: counts.documents.get(collection.id) ?? 0 })), ...(removedKinds.length ? { removed: removedKinds } : {}) }, 409);
-      if (removedCollections.length) {
-        // Pre-screen so the COMMON blocked case mutates nothing at all (no partial removals on 409).
-        const pre = await countsFor(removedCollections.map((collection) => collection.id));
-        const links = await db.select({ collectionId: schema.collectionLinks.collectionId, n: sql<number>`count(*)` }).from(schema.collectionLinks).where(inArray(schema.collectionLinks.collectionId, removedCollections.map((collection) => collection.id))).groupBy(schema.collectionLinks.collectionId).all();
-        const linkCounts = new Map(links.map((row) => [row.collectionId, row.n]));
-        const preBlocked = removedCollections.filter((collection) => collection.receivedCount > 0 || (pre.assets.get(collection.id) ?? 0) > 0 || (pre.manifests.get(collection.id) ?? 0) > 0 || (pre.documents.get(collection.id) ?? 0) > 0 || (linkCounts.get(collection.id) ?? 0) > 0);
-        if (preBlocked.length) return blockedPayload(preBlocked, pre);
-      }
-      // Correctness (no cascade-deleting a mid-flight upload) lives in the guarded DELETE itself —
-      // the pre-screen above only shapes UX. A race between the two can still block a delete here;
-      // in that rare case we audit what WAS removed and report both halves honestly.
-      const guardedDeletes = await Promise.all(removedCollections.map((collection) => db.delete(schema.collections).where(and(eq(schema.collections.id, collection.id), eq(schema.collections.receivedCount, 0), notExists(db.select({ id: schema.assets.id }).from(schema.assets).where(eq(schema.assets.collectionId, schema.collections.id))), notExists(db.select({ id: schema.collectionLinks.id }).from(schema.collectionLinks).where(eq(schema.collectionLinks.collectionId, schema.collections.id))), notExists(db.select({ id: schema.uploadManifests.id }).from(schema.uploadManifests).where(eq(schema.uploadManifests.collectionId, schema.collections.id))), notExists(db.select({ id: schema.documentUploads.id }).from(schema.documentUploads).where(and(eq(schema.documentUploads.collectionId, schema.collections.id), sql`${schema.documentUploads.status} in ('pending', 'completing', 'aborting')`))))).returning({ id: schema.collections.id })));
-      const deletedIds = new Set(guardedDeletes.flatMap((rows) => rows.map((row) => row.id)));
-      const guardedBlocked = removedCollections.filter((collection) => !deletedIds.has(collection.id));
-      if (guardedBlocked.length) {
-        const removedKinds = removedCollections.filter((collection) => deletedIds.has(collection.id)).map((collection) => collection.kind);
-        if (removedKinds.length) await audit(c.env, c.get("user"), "project.update", "project", id, { servicesRemoved: removedKinds, partial: true });
-        return blockedPayload(guardedBlocked, await countsFor(guardedBlocked.map((collection) => collection.id)), removedKinds);
-      }
-      const existingKinds = new Set(existing.map((collection) => collection.kind as CollectionKind));
-      const services = await addCollections(db, id, orderedServices);
-      projectAuditMeta.servicesAdded = [...services].filter((kind) => !existingKinds.has(kind));
-      projectAuditMeta.servicesRemoved = removedCollections.map((collection) => collection.kind);
-    }
-    await db.update(schema.projects).set({ ...projectUpdates, updatedAt: new Date() }).where(eq(schema.projects.id, id));
-    if (projectUpdates.rawFolderPath !== undefined) {
-      await c.env.BACKGROUND.ensureAutoHdrScaffold(id).catch((error) =>
-        console.error("AutoHDR scaffold trigger failed", { projectId: id, error }));
-    }
-    await audit(c.env, c.get("user"), "project.update", "project", id, projectAuditMeta);
-    return c.json(await details(db, c.env.DB, id, c.get("user").role));
+  if (!ROLE_CAPABILITIES[c.get("user").role].includes("editProject")) return c.json({ error: "Forbidden", capability: "editProject" }, 403);
+  const data = await jsonInput(c, editFields); if (data instanceof Response) return data;
+  const db = createDb(c.env.DB);
+  const existingProject = await db.select().from(schema.projects).where(eq(schema.projects.id, id)).get();
+  if (!existingProject) return c.json({ error: "Project not found" }, 404);
+  const { orderedServices, ...projectUpdates } = data;
+  const existing = await db.select({ id: schema.collections.id, kind: schema.collections.kind, receivedCount: schema.collections.receivedCount }).from(schema.collections).where(eq(schema.collections.projectId, id)).all();
+  const desiredServices = orderedServices === undefined ? null : new Set<CollectionKind>(["raw", ...orderedServices]);
+  const desiredKinds = desiredServices ? [...desiredServices] : [];
+  const removedCollections = desiredServices ? existing.filter((collection) => collection.kind !== "raw" && !desiredServices.has(collection.kind as CollectionKind)) : [];
+  const addedKinds = desiredServices ? [...desiredServices].filter((kind) => !existing.some((collection) => collection.kind === kind)) : [];
+  const countsFor = async (collectionIds: string[]) => {
+    if (!collectionIds.length) return { assets: new Map<string, number>(), manifests: new Map<string, number>(), documents: new Map<string, number>(), links: new Map<string, number>() };
+    const [assetRows, manifestRows, documentRows, linkRows] = await Promise.all([
+      db.select({ collectionId: schema.assets.collectionId, n: sql<number>`count(*)` }).from(schema.assets).where(inArray(schema.assets.collectionId, collectionIds)).groupBy(schema.assets.collectionId).all(),
+      db.select({ collectionId: schema.uploadManifests.collectionId, n: sql<number>`count(*)` }).from(schema.uploadManifests).where(inArray(schema.uploadManifests.collectionId, collectionIds)).groupBy(schema.uploadManifests.collectionId).all(),
+      db.select({ collectionId: schema.documentUploads.collectionId, n: sql<number>`count(*)` }).from(schema.documentUploads).where(and(inArray(schema.documentUploads.collectionId, collectionIds), sql`${schema.documentUploads.status} in ('pending', 'completing', 'aborting')`)).groupBy(schema.documentUploads.collectionId).all(),
+      db.select({ collectionId: schema.collectionLinks.collectionId, n: sql<number>`count(*)` }).from(schema.collectionLinks).where(inArray(schema.collectionLinks.collectionId, collectionIds)).groupBy(schema.collectionLinks.collectionId).all(),
+    ]);
+    return { assets: new Map(assetRows.map((row) => [row.collectionId, Number(row.n)])), manifests: new Map(manifestRows.map((row) => [row.collectionId, Number(row.n)])), documents: new Map(documentRows.map((row) => [row.collectionId, Number(row.n)])), links: new Map(linkRows.map((row) => [row.collectionId, Number(row.n)])) };
+  };
+  const preCounts = await countsFor(removedCollections.map((collection) => collection.id));
+  const blocked = removedCollections.filter((collection) => collection.receivedCount > 0 || (preCounts.assets.get(collection.id) ?? 0) > 0 || (preCounts.manifests.get(collection.id) ?? 0) > 0 || (preCounts.documents.get(collection.id) ?? 0) > 0 || (preCounts.links.get(collection.id) ?? 0) > 0);
+  if (blocked.length) return c.json({ error: "Services with received media or active document uploads cannot be removed.", blocked: blocked.map((collection) => ({ kind: collection.kind, assetCount: preCounts.assets.get(collection.id) ?? 0, manifestCount: preCounts.manifests.get(collection.id) ?? 0, activeDocumentSessions: preCounts.documents.get(collection.id) ?? 0 })) }, 409);
+
+  const dbFieldMap: Record<string, string> = { street: "street", suburb: "suburb", postcode: "postcode", agencyName: "agency_name", agentName: "agent_name", agentEmail: "agent_email", agentPhone: "agent_phone", agencyId: "agency_id", agentId: "agent_id", shootDate: "shoot_date", timeWindow: "time_window", orderNo: "order_no", orderId: "order_id", invoiceAmount: "invoice_amount", paymentStatus: "payment_status", notes: "notes", rawFolderLink: "raw_folder_link", rawFolderPath: "raw_folder_path" };
+  const updateParts: string[] = []; const updateBindings: unknown[] = []; const snapshotParts: string[] = []; const snapshotBindings: unknown[] = []; const changeParts: string[] = []; const changeBindings: unknown[] = [];
+  for (const [key, column] of Object.entries(dbFieldMap)) {
+    if (!Object.prototype.hasOwnProperty.call(projectUpdates, key)) continue;
+    const value = (projectUpdates as Record<string, unknown>)[key];
+    const previousValue = (existingProject as unknown as Record<string, unknown>)[key === "agencyName" ? "agencyName" : key];
+    updateParts.push(`${column} = ?`); updateBindings.push(value ?? null);
+    snapshotParts.push(`${column} IS ?`); snapshotBindings.push(previousValue ?? null);
+    changeParts.push(`${column} IS NOT ?`); changeBindings.push(value ?? null);
   }
+  if (orderedServices !== undefined) {
+    const requestedKinds = desiredKinds;
+    const snapshotKinds = existing.map((collection) => collection.kind as CollectionKind);
+    const valuesSelect = (kinds: CollectionKind[]) => `SELECT ? AS kind${kinds.slice(1).map(() => " UNION ALL SELECT ? AS kind").join("")}`;
+    const serviceDelta = `EXISTS (SELECT 1 FROM collections current_service WHERE current_service.project_id = projects.id AND current_service.kind NOT IN (${requestedKinds.map(() => "?").join(",")})) OR EXISTS (SELECT 1 FROM (${valuesSelect(requestedKinds)}) desired_service WHERE NOT EXISTS (SELECT 1 FROM collections current_service WHERE current_service.project_id = projects.id AND current_service.kind = desired_service.kind))`;
+    const serviceSnapshot = `NOT EXISTS (SELECT 1 FROM collections current_service WHERE current_service.project_id = projects.id AND current_service.kind NOT IN (${snapshotKinds.map(() => "?").join(",")})) AND NOT EXISTS (SELECT 1 FROM (${valuesSelect(snapshotKinds)}) snapshot_service WHERE NOT EXISTS (SELECT 1 FROM collections current_service WHERE current_service.project_id = projects.id AND current_service.kind = snapshot_service.kind))`;
+    snapshotParts.push(`(${serviceSnapshot})`); snapshotBindings.push(...snapshotKinds, ...snapshotKinds);
+    changeParts.push(`(${serviceDelta})`); changeBindings.push(...requestedKinds, ...requestedKinds);
+  }
+  const auditId = newId(); const activityId = newId();
+  const safeFieldMap = { street: "address", shootDate: "shootDate", timeWindow: "timeWindow", agencyName: "agency", agentName: "agent" } as const;
+  const safeChangedFields: string[] = (Object.keys(safeFieldMap) as Array<keyof typeof safeFieldMap>).flatMap((key) => Object.prototype.hasOwnProperty.call(projectUpdates, key) && projectUpdates[key] !== (existingProject as unknown as Record<string, unknown>)[key] ? [safeFieldMap[key]] : []);
+  const servicesChanged = orderedServices !== undefined && (removedCollections.length > 0 || addedKinds.length > 0);
+  if (servicesChanged) safeChangedFields.push("services");
+  const activity: ProjectActivityIntent = { schemaVersion: 1, activity: { id: activityId, type: "project.details.changed", projectId: id, actorId: c.get("user").id, occurredAt: Date.now(), source: { kind: "project_details", id, key: `project-details:${id}:change:${activityId}` }, safePayload: { changedFields: [...new Set(safeChangedFields)] }, deepLink: projectActivityDeepLink("project.details.changed", id) }, broadDelivery: { registryKey: "project.details.changed", sourceActivityId: activityId, coalesce: null } };
+  const activityBundle = safeChangedFields.length ? buildProjectActivityStatements({ db: c.env.DB, intent: activity, winnerAuditId: auditId }) : null;
+  const removalSafe = orderedServices === undefined
+    ? "1 = 1"
+    : `NOT EXISTS (SELECT 1 FROM collections doomed WHERE doomed.project_id = projects.id AND doomed.kind <> 'raw' AND doomed.kind NOT IN (${desiredKinds.map(() => "?").join(",")}) AND (doomed.received_count > 0 OR EXISTS (SELECT 1 FROM assets WHERE collection_id = doomed.id) OR EXISTS (SELECT 1 FROM collection_links WHERE collection_id = doomed.id) OR EXISTS (SELECT 1 FROM upload_manifests WHERE collection_id = doomed.id) OR EXISTS (SELECT 1 FROM document_uploads WHERE collection_id = doomed.id AND status IN ('pending', 'completing', 'aborting'))))`;
+  const snapshotPredicate = snapshotParts.length ? snapshotParts.join(" AND ") : "1 = 1";
+  const changePredicate = changeParts.length ? changeParts.join(" OR ") : "0 = 1";
+  const updateWhere = ["id = ?", "stage_key = ?", "archived_at IS NULL", `(${snapshotPredicate})`, `(${changePredicate})`, removalSafe].join(" AND ");
+  const projectUpdate = c.env.DB.prepare(`UPDATE projects SET ${[...updateParts, "updated_at = ?"].join(", ")} WHERE ${updateWhere} RETURNING id`).bind(...updateBindings, Date.now(), id, existingProject.stageKey, ...snapshotBindings, ...changeBindings, ...(orderedServices === undefined ? [] : desiredKinds));
+  const projectAuditMeta: Record<string, unknown> = { ...projectUpdates };
+  if (orderedServices !== undefined) { projectAuditMeta.servicesAdded = addedKinds; projectAuditMeta.servicesRemoved = removedCollections.map((collection) => collection.kind); }
+  const serviceStatements: D1PreparedStatement[] = [];
+  if (orderedServices !== undefined) {
+    serviceStatements.push(c.env.DB.prepare(`DELETE FROM collections WHERE project_id = ? AND kind <> 'raw' AND kind NOT IN (${desiredKinds.map(() => "?").join(",")}) AND received_count = 0 AND NOT EXISTS (SELECT 1 FROM assets WHERE collection_id = collections.id) AND NOT EXISTS (SELECT 1 FROM collection_links WHERE collection_id = collections.id) AND NOT EXISTS (SELECT 1 FROM upload_manifests WHERE collection_id = collections.id) AND NOT EXISTS (SELECT 1 FROM document_uploads WHERE collection_id = collections.id AND status IN ('pending', 'completing', 'aborting')) AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?) RETURNING id`).bind(id, ...desiredKinds, auditId));
+    for (const kind of desiredKinds) serviceStatements.push(c.env.DB.prepare("INSERT INTO collections (id, project_id, kind, status, received_count, created_at, updated_at) SELECT ?, ?, ?, 'empty', 0, ?, ? WHERE EXISTS (SELECT 1 FROM audit_log WHERE id = ?) AND NOT EXISTS (SELECT 1 FROM collections WHERE project_id = ? AND kind = ?)").bind(newId(), id, kind, Date.now(), Date.now(), auditId, id, kind));
+  }
+  const statements: D1PreparedStatement[] = [projectUpdate, c.env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, ?, 'project.update', 'project', ?, ?, ? WHERE changes() = 1 RETURNING id").bind(auditId, c.get("user").id, id, auditMeta(c.get("user"), projectAuditMeta), Date.now())];
+  statements.push(...serviceStatements); if (activityBundle) statements.push(...activityBundle.statements);
+  const result = await c.env.DB.batch(statements);
+  if (!rowsFromD1<{ id: string }>(result[0]).length) {
+    const currentProject = await db.select().from(schema.projects).where(eq(schema.projects.id, id)).get();
+    const currentCollections = await db.select({ kind: schema.collections.kind }).from(schema.collections).where(eq(schema.collections.projectId, id)).all();
+    const projectMatches = currentProject?.archivedAt === null && Object.entries(projectUpdates).every(([key, value]) => (currentProject as unknown as Record<string, unknown>)[key] === (value ?? null));
+    const servicesMatch = orderedServices === undefined || (currentCollections.length === desiredServices!.size && currentCollections.every((collection) => desiredServices!.has(collection.kind as CollectionKind)));
+    if (projectMatches && servicesMatch) return c.json(await details(db, c.env.DB, id, c.get("user").role));
+    const currentCounts = await countsFor(removedCollections.map((collection) => collection.id));
+    return c.json({ error: "Services or project details changed while saving; reload and try again", blocked: removedCollections.filter((collection) => collection.receivedCount > 0 || (currentCounts.assets.get(collection.id) ?? 0) > 0 || (currentCounts.manifests.get(collection.id) ?? 0) > 0 || (currentCounts.documents.get(collection.id) ?? 0) > 0 || (currentCounts.links.get(collection.id) ?? 0) > 0).map((collection) => ({ kind: collection.kind, assetCount: currentCounts.assets.get(collection.id) ?? 0, manifestCount: currentCounts.manifests.get(collection.id) ?? 0, activeDocumentSessions: currentCounts.documents.get(collection.id) ?? 0 })) }, 409);
+  }
+  if (activityBundle) {
+    const publicationIds = rowsFromD1<{ id: string }>(result[2 + serviceStatements.length + activityBundle.broadOutboxIndex]).map((row) => row.id);
+    if (publicationIds.length) c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, publicationIds));
+  }
+  if (projectUpdates.rawFolderPath !== undefined && projectUpdates.rawFolderPath !== existingProject.rawFolderPath) c.executionCtx.waitUntil(c.env.BACKGROUND.ensureAutoHdrScaffold(id).catch((error) => console.error("AutoHDR scaffold trigger failed", { projectId: id, error })));
+  return c.json(await details(db, c.env.DB, id, c.get("user").role));
 });
 
 function projectMembershipRoute(roleOnProject: ProjectMemberRole, method: "put" | "delete") {
@@ -510,6 +605,7 @@ function projectMembershipRoute(roleOnProject: ProjectMemberRole, method: "put" 
     const result = await removeProjectMemberCycle(c.env.DB, { projectId, userId, roleOnProject, membershipCycle: body!.membershipCycle, clearSubtaskAssignments: body!.clearSubtaskAssignments, confirmedAssignmentCount: body!.confirmedAssignmentCount, actorId: principal.id, auditPrincipal: principal });
     if (result.outcome === "stale") return c.json({ error: "Project membership changed; refreshed current assignment", code: "membership_cycle_changed", requestedMembershipCycle: body!.membershipCycle, currentMembership: result.currentMembership }, 409);
     if (result.outcome === "confirmation_required") return c.json({ error: "Checklist assignment state changed; confirm final-role removal again", code: "subtask_assignment_confirmation_required", assignmentCount: result.assignmentCount, currentMembership: result.currentMembership }, 422);
+    if (result.notificationOutboxIds.length) c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, result.notificationOutboxIds));
     return c.json({ outcome: "removed", removed: { membershipCycle: body!.membershipCycle, userId, roleOnProject }, subtaskAssignmentsCleared: result.subtaskAssignmentsCleared }, 200);
   });
 }
@@ -880,8 +976,16 @@ for (const [path, archived] of [["/projects/:id/archive", true], ["/projects/:id
     // claims, never release them for silent reuse.
     const archivedAt = now.getTime();
     const archiveAuditId = newId();
+    const archiveActivityId = newId();
+    const archiveActivity: ProjectActivityIntent = {
+      schemaVersion: 1,
+      activity: { id: archiveActivityId, type: "project.archived", projectId: id, actorId: c.get("user").id, occurredAt: archivedAt, source: { kind: "project", id, key: `project:${id}:archived:${archiveAuditId}` }, safePayload: {}, deepLink: projectActivityDeepLink("project.archived", id) },
+      broadDelivery: { registryKey: "project.archived", sourceActivityId: archiveActivityId, coalesce: null },
+    };
+    const archiveActivityStatements = buildProjectActivityStatements({ db: c.env.DB, intent: archiveActivity, winnerAuditId: archiveAuditId, createdAt: archivedAt });
+    const archiveStatementStart = 8;
     const result = await c.env.DB.batch([
-      c.env.DB.prepare("UPDATE projects SET archived_at = ?, archived_by = ?, updated_at = ? WHERE id = ? AND NOT EXISTS (SELECT 1 FROM document_uploads WHERE project_id = ? AND status in ('pending', 'completing', 'aborting'))")
+        c.env.DB.prepare("UPDATE projects SET archived_at = ?, archived_by = ?, updated_at = ? WHERE id = ? AND archived_at IS NULL AND NOT EXISTS (SELECT 1 FROM document_uploads WHERE project_id = ? AND status in ('pending', 'completing', 'aborting'))")
         .bind(archivedAt, c.get("user").id, archivedAt, id, id),
       c.env.DB.prepare(`
         INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
@@ -922,13 +1026,37 @@ for (const [path, archived] of [["/projects/:id/archive", true], ["/projects/:id
         .bind(archivedAt, id, id, archivedAt),
       c.env.DB.prepare("UPDATE autohdr_handoffs SET state = 'retired', updated_at = ? WHERE project_id = ? AND state in ('starting', 'started', 'blocked') AND EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at = ?)")
         .bind(archivedAt, id, id, archivedAt),
+      ...archiveActivityStatements.statements,
     ]);
-    if ((result[0]?.meta.changes ?? 0) !== 1) return c.json({ error: "Active document uploads must be aborted before archiving." }, 409);
+    if ((result[0]?.meta.changes ?? 0) !== 1) {
+      const current = await db.select({ id: schema.projects.id, archivedAt: schema.projects.archivedAt }).from(schema.projects).where(eq(schema.projects.id, id)).get();
+      if (current?.archivedAt !== null && current?.archivedAt !== undefined) return c.json({ ok: true });
+      if (!current) return c.json({ error: "Project not found" }, 404);
+      return c.json({ error: "Active document uploads must be aborted before archiving." }, 409);
+    }
+    const publicationIds = rowsFromD1<{ id: string }>(result[archiveStatementStart + archiveActivityStatements.broadOutboxIndex]).map((row) => row.id);
+    if (publicationIds.length) c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, publicationIds));
   } else {
-    const result = await db.update(schema.projects).set({ archivedAt: null, archivedBy: null, updatedAt: now }).where(eq(schema.projects.id, id)).returning({ id: schema.projects.id });
-    if (!result.length) return c.json({ error: "Project not found" }, 404);
+    const restoreAuditId = newId(); const restoreActivityId = newId();
+    const restoreActivity: ProjectActivityIntent = {
+      schemaVersion: 1,
+      activity: { id: restoreActivityId, type: "project.restored", projectId: id, actorId: c.get("user").id, occurredAt: now.getTime(), source: { kind: "project", id, key: `project:${id}:restored:${restoreAuditId}` }, safePayload: {}, deepLink: projectActivityDeepLink("project.restored", id) },
+      broadDelivery: { registryKey: "project.restored", sourceActivityId: restoreActivityId, coalesce: null },
+    };
+    const restoreActivityStatements = buildProjectActivityStatements({ db: c.env.DB, intent: restoreActivity, winnerAuditId: restoreAuditId, createdAt: now.getTime() });
+    const result = await c.env.DB.batch([
+      c.env.DB.prepare("UPDATE projects SET archived_at = NULL, archived_by = NULL, updated_at = ? WHERE id = ? AND archived_at IS NOT NULL RETURNING id").bind(now.getTime(), id),
+      c.env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, ?, 'project.restore', 'project', ?, ?, ? WHERE changes() = 1 RETURNING id").bind(restoreAuditId, c.get("user").id, id, auditMeta(c.get("user")), now.getTime()),
+      ...restoreActivityStatements.statements,
+    ]);
+    const restored = rowsFromD1<{ id: string }>(result[0]).length > 0;
+    if (!restored) {
+      if (!await db.select({ id: schema.projects.id }).from(schema.projects).where(eq(schema.projects.id, id)).get()) return c.json({ error: "Project not found" }, 404);
+      return c.json({ ok: true });
+    }
+    const publicationIds = rowsFromD1<{ id: string }>(result[2 + restoreActivityStatements.broadOutboxIndex]).map((row) => row.id);
+    if (publicationIds.length) c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, publicationIds));
   }
-  if (!archived) await audit(c.env, c.get("user"), "project.restore", "project", id);
   return c.json({ ok: true });
 });
 projectsRoutes.delete("/projects/:id", async (c) => {

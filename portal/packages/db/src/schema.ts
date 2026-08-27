@@ -265,6 +265,37 @@ export const projectMembers = sqliteTable(
   ],
 );
 
+export const projectActivityEvents = sqliteTable(
+  "project_activity_events",
+  {
+    id: id(),
+    schemaVersion: integer("schema_version").notNull(),
+    eventType: text("event_type").notNull(),
+    category: text("category").notNull(),
+    projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+    actorKind: text("actor_kind", { enum: ["user", "system"] as const }).notNull(),
+    actorId: text("actor_id"),
+    occurredAt: integer("occurred_at").notNull(),
+    sourceKind: text("source_kind").notNull(),
+    sourceId: text("source_id").notNull(),
+    sourceKey: text("source_key").notNull(),
+    safePayloadJson: text("safe_payload_json").notNull(),
+    deepLinkKind: text("deep_link_kind", { enum: ["project", "project_collaboration"] as const }).notNull(),
+    deepLinkPath: text("deep_link_path").notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    unique("project_activity_events_event_source_unique").on(t.eventType, t.sourceKey),
+    check("project_activity_events_schema_version_check", sql`${t.schemaVersion} = 1`),
+    check("project_activity_events_actor_kind_check", sql`${t.actorKind} IN ('user', 'system')`),
+    check("project_activity_events_occurred_at_check", sql`typeof(${t.occurredAt}) = 'integer'`),
+    check("project_activity_events_safe_payload_check", sql`json_valid(${t.safePayloadJson})`),
+    check("project_activity_events_deep_link_kind_check", sql`${t.deepLinkKind} IN ('project', 'project_collaboration')`),
+    check("project_activity_events_created_at_check", sql`typeof(${t.createdAt}) = 'integer'`),
+    check("project_activity_events_actor_contract_check", sql`(${t.actorKind} = 'user' AND ${t.actorId} IS NOT NULL) OR (${t.actorKind} = 'system' AND ${t.actorId} IS NULL)`),
+  ],
+);
+
 /** Shared discussion scoped to explicit project participants and active admins. */
 export const projectComments = sqliteTable(
   "project_comments",
@@ -1055,6 +1086,9 @@ export const notificationOutbox = sqliteTable(
     lastErrorCode: text("last_error_code"),
     lastError: text("last_error"),
     completedAt: integer("completed_at"),
+    coalesceKey: text("coalesce_key"),
+    coalesceUntil: integer("coalesce_until"),
+    recipientMembershipCycleId: text("recipient_membership_cycle_id"),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
@@ -1064,6 +1098,7 @@ export const notificationOutbox = sqliteTable(
     index("notification_outbox_status_queue_idx").on(t.status, t.queuePublishedAt),
     index("notification_outbox_status_updated_idx").on(t.status, t.updatedAt, t.id),
     index("notification_outbox_project_event_status_idx").on(t.projectId, t.eventType, t.status, t.sourceKey),
+    index("notification_outbox_coalesce_idx").on(t.eventType, t.recipientId, t.recipientMembershipCycleId, t.coalesceKey, t.coalesceUntil),
     unique("notification_outbox_event_source_recipient_unique").on(t.eventType, t.sourceKey, t.recipientId),
     check("notification_outbox_status_check", sql`${t.status} IN ('pending', 'queued', 'processing', 'completed', 'suppressed', 'failed', 'dlq', 'discarded')`),
     check("notification_outbox_publish_attempts_check", sql`${t.publishAttempts} >= 0`),

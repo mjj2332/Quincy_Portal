@@ -1,6 +1,7 @@
 import { and, desc, eq, lt, or } from "drizzle-orm";
-import { createDb, schema } from "@quincy/db";
+import { buildProjectActivityStatements, createDb, schema } from "@quincy/db";
 import { NOTIFICATION_OUTBOX_EVENT_TYPE, staffPathFor, type RichTextDoc } from "@quincy/shared";
+import type { ProjectActivityIntent } from "@quincy/shared";
 import { newId } from "./ids";
 import { auditMeta, type AuditPrincipal } from "./audit";
 
@@ -27,25 +28,7 @@ type CommentDb = ReturnType<typeof createDb>;
 
 export type ProjectCommentCursor = { createdAt: Date; id: string };
 
-export type ProjectCommentActivityOutboxIntent = {
-  schemaVersion: 1;
-  activity: {
-    id: string;
-    type: "project.comment.created" | "project.comment.edited" | "project.comment.deleted";
-    projectId: string;
-    actorId: string;
-    occurredAt: string;
-    source: { kind: "project_comment"; id: string; key: string };
-    safePayload: { commentId: string };
-    deepLink: { kind: "project_collaboration"; path: string };
-  };
-  broadDelivery: {
-    registryKey: "project.comment.created" | "project.comment.edited" | "project.comment.deleted";
-    sourceActivityId: string;
-    coalesce: null | { key: string; windowSeconds: 300 };
-  };
-  targetedMentionDelivery: false;
-};
+export type ProjectCommentActivityOutboxIntent = ProjectActivityIntent & { targetedMentionDelivery: false };
 
 export type ProjectCommentReadState = {
   projectId: string;
@@ -74,6 +57,8 @@ export type EditProjectCommentInput = {
   contentJson: string;
   removeMentionIds: string[];
   addMentions: Array<{ id: string; commentId: string; mentionedUserId: string; createdAt: Date }>;
+  /** The complete desired mention set; supplied by the route so same-state retries are no-ops. */
+  mentionIds?: string[];
   editedAt: Date;
   occurredAt: Date;
   auditPrincipal?: AuditPrincipal;
@@ -114,6 +99,22 @@ function rows<T>(result: D1Result<T> | undefined): T[] {
 
 function one<T>(result: D1Result<T> | undefined): T | undefined {
   return rows(result)[0];
+}
+
+export function assertUniqueMentions(mentions: Array<{ id: string; commentId: string; mentionedUserId: string }>): void {
+  // Reject malformed direct callers before opening the domain batch. The route already
+  // canonicalizes rich-text mentions, but this keeps duplicate mappings from reaching D1 where
+  // a constraint error could otherwise leave a non-transactional test/runtime adapter with only
+  // the earlier producer statements applied.
+  const mentionIds = new Set<string>();
+  const recipients = new Set<string>();
+  for (const mention of mentions) {
+    if (mentionIds.has(mention.id) || recipients.has(mention.mentionedUserId)) {
+      throw new Error("Duplicate project comment mention");
+    }
+    mentionIds.add(mention.id);
+    recipients.add(mention.mentionedUserId);
+  }
 }
 
 function readStateFromResults(
@@ -255,6 +256,7 @@ function mentionOutboxStatements(
   mentions: Array<{ id: string; mentionedUserId: string }>,
   snapshots: Map<string, ProjectCommentMentionAuthorizationSnapshot>,
   occurredAt: number,
+  winnerAuditId?: string,
 ): { statements: D1PreparedStatement[]; outboxIds: string[] } {
   const statements: D1PreparedStatement[] = [];
   const outboxIds: string[] = [];
@@ -274,22 +276,26 @@ function mentionOutboxStatements(
       projectCommentActivity: activity,
     };
     outboxIds.push(outboxId);
+    const auditGate = winnerAuditId === undefined ? "" : " AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?)";
     statements.push(db.prepare(`
       INSERT INTO notification_outbox (
         id, schema_version, event_type, source_key, project_id, actor_id,
         recipient_id, payload_json, status, available_at, created_at, updated_at
-      ) VALUES (?, 1, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)
+      ) SELECT ?, 1, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?
+      WHERE 1 = 1${auditGate}
     `).bind(
       outboxId, NOTIFICATION_OUTBOX_EVENT_TYPE, mention.id, projectId, actorId,
       mention.mentionedUserId, JSON.stringify(payload), occurredAt, occurredAt, occurredAt,
+      ...(winnerAuditId === undefined ? [] : [winnerAuditId]),
     ));
     for (const channel of ["in_app", "email"] as const) {
       statements.push(db.prepare(`
         INSERT INTO notification_delivery_ledger (
           id, outbox_id, event_type, source_key, recipient_id, channel,
           status, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)
-      `).bind(newId(), outboxId, NOTIFICATION_OUTBOX_EVENT_TYPE, mention.id, mention.mentionedUserId, channel, occurredAt, occurredAt));
+        ) SELECT ?, ?, ?, ?, ?, ?, 'pending', ?, ?
+        WHERE EXISTS (SELECT 1 FROM notification_outbox WHERE id = ? AND event_type = ? AND source_key = ? AND recipient_id = ?)
+      `).bind(newId(), outboxId, NOTIFICATION_OUTBOX_EVENT_TYPE, mention.id, mention.mentionedUserId, channel, occurredAt, occurredAt, outboxId, NOTIFICATION_OUTBOX_EVENT_TYPE, mention.id, mention.mentionedUserId));
     }
   }
   return { statements, outboxIds };
@@ -319,6 +325,7 @@ export async function findProjectComment(db: CommentDb, projectId: string, comme
 }
 
 export async function createProjectComment(db: D1Database, input: CreateProjectCommentInput): Promise<ProjectCommentMutationResult> {
+  assertUniqueMentions(input.mentions);
   const activity = createProjectCommentActivityIntent({ type: "created", projectId: input.projectId, actorId: input.authorId, commentId: input.id, occurredAt: input.occurredAt });
   const snapshots = await mentionOccurrenceSnapshots(db, input.projectId, input.mentions);
   const insert = db.prepare(`
@@ -335,58 +342,93 @@ export async function createProjectComment(db: D1Database, input: CreateProjectC
     VALUES (?, ?, ?, ?)
   `).bind(mention.id, mention.commentId, mention.mentionedUserId, mention.createdAt.getTime()));
   const marker = db.prepare(readMarkerUpsertSql).bind(input.authorId, input.occurredAt.getTime(), input.projectId, input.id);
+  const auditId = newId();
   const audit = db.prepare(`
     INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
     VALUES (?, ?, 'project_comment.create', 'project_comment', ?, ?, ?)
-  `).bind(newId(), input.auditPrincipal?.id ?? input.authorId, input.id, auditMeta(input.auditPrincipal ?? { id: input.authorId, impersonatedBy: null }), input.occurredAt.getTime());
-  const outbox = mentionOutboxStatements(db, input.projectId, input.authorId, activity, input.mentions, snapshots, input.occurredAt.getTime());
-  await db.batch([insert, ...mentions, marker, audit, ...outbox.statements]);
+  `).bind(auditId, input.auditPrincipal?.id ?? input.authorId, input.id, auditMeta(input.auditPrincipal ?? { id: input.authorId, impersonatedBy: null }), input.occurredAt.getTime());
+  const outbox = mentionOutboxStatements(db, input.projectId, input.authorId, activity, input.mentions, snapshots, input.occurredAt.getTime(), auditId);
+  const activityStatements = buildProjectActivityStatements({ db, intent: activity, winnerAuditId: auditId, createdAt: input.occurredAt.getTime() });
+  const activityStatementStart = 1 + mentions.length + 2 + outbox.statements.length;
+  const results = await db.batch([insert, ...mentions, marker, audit, ...outbox.statements, ...activityStatements.statements]);
   const comment = await findProjectComment(createDb(db), input.projectId, input.id);
   if (!comment) throw new Error("Comment could not be created");
-  return { comment, activity, notificationOutboxIds: outbox.outboxIds };
+  const broad = rows<{ id: string }>(results[activityStatementStart + activityStatements.broadOutboxIndex] as D1Result<{ id: string }>).map((row) => row.id);
+  return { comment, activity, notificationOutboxIds: [...outbox.outboxIds, ...broad] };
 }
 
 export async function editProjectComment(db: D1Database, input: EditProjectCommentInput): Promise<ProjectCommentMutationResult> {
+  assertUniqueMentions(input.addMentions);
   const activity = createProjectCommentActivityIntent({ type: "edited", projectId: input.projectId, actorId: input.actorId, commentId: input.commentId, occurredAt: input.occurredAt });
   const snapshots = await mentionOccurrenceSnapshots(db, input.projectId, input.addMentions);
+  const desiredMentionIds = input.mentionIds ?? [];
+  const mentionChanged = input.mentionIds === undefined
+    ? "0 = 1"
+    : desiredMentionIds.length
+    ? `(
+        EXISTS (SELECT 1 FROM project_comment_mentions current_mentions WHERE current_mentions.comment_id = ? AND current_mentions.mentioned_user_id NOT IN (${desiredMentionIds.map(() => "?").join(", ")}))
+        OR (SELECT COUNT(*) FROM project_comment_mentions current_mentions WHERE current_mentions.comment_id = ?) <> ?
+      )`
+    : "EXISTS (SELECT 1 FROM project_comment_mentions current_mentions WHERE current_mentions.comment_id = ?)";
+  const mentionChangedBindings = input.mentionIds === undefined
+    ? []
+    : desiredMentionIds.length
+    ? [input.commentId, ...desiredMentionIds, input.commentId, desiredMentionIds.length]
+    : [input.commentId];
+  const auditId = newId();
   const statements: D1PreparedStatement[] = [db.prepare(`
     UPDATE project_comments
     SET body = ?, content_json = ?, edited_at = ?
     WHERE id = ? AND project_id = ?
-  `).bind(input.body, input.contentJson, input.editedAt.getTime(), input.commentId, input.projectId)];
+      AND (body IS NOT ? OR content_json IS NOT ? OR ${mentionChanged})
+  `).bind(input.body, input.contentJson, input.editedAt.getTime(), input.commentId, input.projectId, input.body, input.contentJson, ...mentionChangedBindings)];
   statements.push(db.prepare(`
     INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
     SELECT ?, ?, 'project_comment.edit', 'project_comment', ?, ?, ?
     WHERE changes() = 1
-  `).bind(newId(), input.auditPrincipal?.id ?? input.actorId, input.commentId, auditMeta(input.auditPrincipal ?? { id: input.actorId, impersonatedBy: null }), input.occurredAt.getTime()));
-  statements.push(...input.removeMentionIds.map((id) => db.prepare("DELETE FROM project_comment_mentions WHERE id = ? AND comment_id = ?").bind(id, input.commentId)));
+  `).bind(auditId, input.auditPrincipal?.id ?? input.actorId, input.commentId, auditMeta(input.auditPrincipal ?? { id: input.actorId, impersonatedBy: null }), input.occurredAt.getTime()));
+  statements.push(...input.removeMentionIds.map((id) => db.prepare("DELETE FROM project_comment_mentions WHERE id = ? AND comment_id = ? AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?)").bind(id, input.commentId, auditId)));
   statements.push(...input.addMentions.map((mention) => db.prepare(`
     INSERT INTO project_comment_mentions (id, comment_id, mentioned_user_id, created_at)
-    VALUES (?, ?, ?, ?)
-  `).bind(mention.id, mention.commentId, mention.mentionedUserId, mention.createdAt.getTime())));
-  const outbox = mentionOutboxStatements(db, input.projectId, input.actorId, activity, input.addMentions, snapshots, input.occurredAt.getTime());
-  const results = await db.batch([...statements, ...outbox.statements]);
-  if ((results[0]?.meta.changes ?? 0) !== 1) throw new Error("Comment could not be updated");
+    SELECT ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM audit_log WHERE id = ?)
+  `).bind(mention.id, mention.commentId, mention.mentionedUserId, mention.createdAt.getTime(), auditId)));
+  const outbox = mentionOutboxStatements(db, input.projectId, input.actorId, activity, input.addMentions, snapshots, input.occurredAt.getTime(), auditId);
+  const activityStatements = buildProjectActivityStatements({ db, intent: activity, winnerAuditId: auditId, createdAt: input.occurredAt.getTime() });
+  const activityStatementStart = statements.length + outbox.statements.length;
+  const results = await db.batch([...statements, ...outbox.statements, ...activityStatements.statements]);
+  if ((results[0]?.meta.changes ?? 0) !== 1) {
+    // A rebuilt request whose complete canonical body/content/mention state is still current is
+    // the bounded retry identity for this command. It is a successful no-op: no new audit,
+    // activity, mention delivery, or broad outbox was admitted by the marker gate.
+    const current = await findProjectComment(createDb(db), input.projectId, input.commentId);
+    if (current) return { comment: current, activity, notificationOutboxIds: [] };
+    throw new Error("Comment could not be updated");
+  }
   const comment = await findProjectComment(createDb(db), input.projectId, input.commentId);
   if (!comment) throw new Error("Comment could not be updated");
-  return { comment, activity, notificationOutboxIds: outbox.outboxIds };
+  const broad = rows<{ id: string }>(results[activityStatementStart + activityStatements.broadOutboxIndex] as D1Result<{ id: string }>).map((row) => row.id);
+  return { comment, activity, notificationOutboxIds: [...outbox.outboxIds, ...broad] };
 }
 
 export async function deleteProjectComment(db: D1Database, input: DeleteProjectCommentInput): Promise<ProjectCommentMutationResult> {
   const activity = createProjectCommentActivityIntent({ type: "deleted", projectId: input.projectId, actorId: input.actorId, commentId: input.commentId, occurredAt: input.occurredAt });
   const deletion = db.prepare("DELETE FROM project_comments WHERE id = ? AND project_id = ?").bind(input.commentId, input.projectId);
+  const auditId = newId();
   const audit = db.prepare(`
     INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
     SELECT ?, ?, 'project_comment.delete', 'project_comment', ?, ?, ?
     WHERE changes() = 1
-  `).bind(newId(), input.auditPrincipal?.id ?? input.actorId, input.commentId, auditMeta(input.auditPrincipal ?? { id: input.actorId, impersonatedBy: null }), input.occurredAt.getTime());
-  const results = await db.batch([deletion, audit]);
+  `).bind(auditId, input.auditPrincipal?.id ?? input.actorId, input.commentId, auditMeta(input.auditPrincipal ?? { id: input.actorId, impersonatedBy: null }), input.occurredAt.getTime());
+  const activityStatements = buildProjectActivityStatements({ db, intent: activity, winnerAuditId: auditId, createdAt: input.occurredAt.getTime() });
+  const activityStatementStart = 2;
+  const results = await db.batch([deletion, audit, ...activityStatements.statements]);
   // The JS-level .meta.changes on the DELETE includes cascade-deleted
   // project_comment_mentions rows (ON DELETE CASCADE), so the outer check must accept any
   // positive value. The SQL-level changes() function used by the audit guard excludes those
   // cascades, so its exact-one guard is correct here, as it is for create and edit.
   if ((results[0]?.meta.changes ?? 0) < 1) throw new Error("Comment could not be deleted");
-  return { activity, notificationOutboxIds: [] };
+  const broad = rows<{ id: string }>(results[activityStatementStart + activityStatements.broadOutboxIndex] as D1Result<{ id: string }>).map((row) => row.id);
+  return { activity, notificationOutboxIds: broad };
 }
 
 export async function getProjectCommentReadState(db: D1Database, userId: string, projectId: string): Promise<ProjectCommentReadState> {

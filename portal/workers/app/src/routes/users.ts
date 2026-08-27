@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { createDb, schema } from "@quincy/db";
 import { desc, eq } from "drizzle-orm";
-import { ROLES } from "@quincy/shared";
+import { PROJECT_ACTIVITY_SYSTEM_OUTBOX_ACTOR_ID, ROLES } from "@quincy/shared";
 import { z } from "zod";
 import type { AppEnv } from "../env";
 import { requireCapability } from "../middleware/capability";
@@ -48,6 +48,7 @@ usersRoutes.patch("/users/impersonation-settings", async (c) => {
 usersRoutes.post("/users", async (c) => {
   const data = await jsonInput(c, input); if (data instanceof Response) return data;
   const db = createDb(c.env.DB); const id = newId();
+  if (id === PROJECT_ACTIVITY_SYSTEM_OUTBOX_ACTOR_ID) return c.json({ error: "Reserved user identifier" }, 409);
   try { await db.insert(schema.user).values({ id, ...data, emailVerified: false, active: true, createdAt: new Date(), updatedAt: new Date() }); }
   catch { return c.json({ error: "A user with this email already exists" }, 409); }
   await audit(c.env, c.get("user"), "user.provision", "user", id, { email: data.email, role: data.role });

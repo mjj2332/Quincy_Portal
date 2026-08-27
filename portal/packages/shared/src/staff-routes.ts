@@ -15,7 +15,7 @@ export type StaffRoute =
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const reservedRoots = new Set(["api", "media", "__transform-source", "d"]);
-const COLLABORATION_NOTIFICATION_TYPES = new Set(["mentioned", "subtask_assigned", "subtask_due_today"]);
+const COLLABORATION_NOTIFICATION_TYPES = new Set(["mentioned", "subtask_assigned", "subtask_due_today", "project_collaboration_activity"]);
 
 function unsafeText(value: string): boolean {
   return /[\\\u0000-\u001f\u007f]/.test(value);

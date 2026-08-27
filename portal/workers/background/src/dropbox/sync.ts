@@ -1,6 +1,6 @@
-import { COLLECTION_RECEIVED_COUNT_SQL, RAW_CLAIM_LEASE_MS, collectionReceivedCountBindings, guardedStageTransition } from "@quincy/db";
+import { buildProjectActivityStatements, COLLECTION_RECEIVED_COUNT_SQL, RAW_CLAIM_LEASE_MS, collectionReceivedCountBindings, guardedStageTransition } from "@quincy/db";
 import { assetIngestIdentities, assets, collections, jobs, projects, rawReconciliationClaims } from "@quincy/db/schema";
-import { enqueueRenditionSafely, isAcceptedPhotoFilename, parseXmpRating, XMP_SCAN_BYTES, xmpRatingToStars } from "@quincy/shared";
+import { enqueueRenditionSafely, isAcceptedPhotoFilename, parseXmpRating, projectActivityDeepLink, publishNotificationOutbox, XMP_SCAN_BYTES, xmpRatingToStars, type ProjectActivityIntent } from "@quincy/shared";
 import { and, eq, isNull, sql } from "drizzle-orm";
 
 import type { Env } from "../env";
@@ -375,12 +375,20 @@ export async function syncProjectRawFolder(
       });
     }
     const completedAt = Date.now();
-    const completion = await env.DB.prepare(
+    const completionAuditId = crypto.randomUUID();
+    const completion = env.DB.prepare(
       "UPDATE raw_reconciliation_claims SET state = 'done', updated_at = ? " +
-      "WHERE id = ? AND owner_job_id = ? AND state = 'running' AND lease_expires_at >= ?",
-    ).bind(completedAt, claimId, trackingJobId, completedAt).run();
-    if ((completion.meta.changes ?? 0) !== 1) {
-      throw new Error(`RAW reconciliation lease ${claimId} expired or was reclaimed before completion`);
+      "WHERE id = ? AND owner_job_id = ? AND state = 'running' AND lease_expires_at >= ? RETURNING id",
+    ).bind(completedAt, claimId, trackingJobId, completedAt);
+    const completionAudit = env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, NULL, 'raw_reconciliation.complete', 'raw_reconciliation_claim', ?, ?, ? WHERE changes() = 1 RETURNING id").bind(completionAuditId, claimId, JSON.stringify({ projectId, claimId, newlyImported }), completedAt);
+    const activityId = crypto.randomUUID();
+    const activity: ProjectActivityIntent = { schemaVersion: 1, activity: { id: activityId, type: "project.collection.raw_sync_completed", projectId, actorId: null, actorKind: "system", occurredAt: completedAt, source: { kind: "project_raw_sync", id: claimId, key: `project-raw-sync:${claimId}:completed` }, safePayload: { collectionKind: "raw", importedCount: newlyImported }, deepLink: projectActivityDeepLink("project.collection.raw_sync_completed", projectId) }, broadDelivery: { registryKey: "project.collection.raw_sync_completed", sourceActivityId: activityId, coalesce: null } };
+    const activityBundle = newlyImported > 0 ? buildProjectActivityStatements({ db: env.DB, intent: activity, winnerAuditId: completionAuditId, createdAt: completedAt }) : null;
+    const completionResults = await env.DB.batch([completion, completionAudit, ...(activityBundle?.statements ?? [])]);
+    if (!completionResults[0]?.results?.length) throw new Error(`RAW reconciliation lease ${claimId} expired or was reclaimed before completion`);
+    if (activityBundle) {
+      const publicationIds = ((completionResults[2 + activityBundle.broadOutboxIndex]?.results ?? []) as Array<{ id?: string }>).flatMap((row) => row.id ? [row.id] : []);
+      if (publicationIds.length) await publishNotificationOutbox(env.NOTIFICATION_QUEUE, env.DB, publicationIds);
     }
     await setJobStatus(db, trackingJobId, "done");
     // This operation did list the configured project folder, so it can recover a sticky path

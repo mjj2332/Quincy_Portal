@@ -8,7 +8,7 @@ import type { Env } from "../src/env";
 import { createZipStream } from "../src/lib/zip-stream";
 import { signTransformSource } from "../src/lib/transform-source";
 import { liveTransformLocation } from "../src/routes/media";
-import { RENDITION_SPEC_VERSION } from "@quincy/shared";
+import { PROJECT_ACTIVITY_SYSTEM_OUTBOX_ACTOR_ID, RENDITION_SPEC_VERSION } from "@quincy/shared";
 import { createDb } from "@quincy/db";
 import { collectionLinkUrlConflict, uniqueVersionError } from "../src/routes/collections";
 import { finalizeIngest } from "../src/lib/ingest";
@@ -277,7 +277,7 @@ async function jsonRequest(path: string, cookie: string, method: "GET" | "POST" 
 
 const testExecutionContext = { waitUntil: () => undefined, passThroughOnException: () => undefined, props: undefined } as unknown as ExecutionContext;
 
-async function requestWithDbBatchFault(path: string, cookie: string, body: unknown, fault: (db: D1Database) => Promise<void>, method: "POST" | "PATCH" = "PATCH") {
+async function requestWithDbBatchFault(path: string, cookie: string, body: unknown, fault: (db: D1Database) => Promise<void>, method: "POST" | "PATCH" | "DELETE" = "PATCH") {
   let injected = false;
   const faultDb = new Proxy(authEnv.DB, {
     get(target, property, receiver) {
@@ -1074,6 +1074,23 @@ describe("staff app API", () => {
     expect(sessions.results).toHaveLength(0);
   });
 
+  it("keeps the project-activity system sentinel out of users and rejects it in provisioning", async () => {
+    expect(await database.DB.prepare("SELECT id FROM user WHERE id = ?").bind(PROJECT_ACTIVITY_SYSTEM_OUTBOX_ACTOR_ID).first()).toBeNull();
+    const randomUuid = vi.spyOn(crypto, "randomUUID").mockReturnValue(PROJECT_ACTIVITY_SYSTEM_OUTBOX_ACTOR_ID as ReturnType<typeof crypto.randomUUID>);
+    try {
+      const response = await SELF.fetch("https://portal.test/api/users", {
+        method: "POST",
+        headers: { cookie: await sessionCookie(adminToken), "content-type": "application/json" },
+        body: JSON.stringify({ email: `sentinel-${crypto.randomUUID()}@example.test`, name: "Reserved sentinel", role: "editor" }),
+      });
+      expect(response.status).toBe(409);
+      await expect(response.json()).resolves.toEqual({ error: "Reserved user identifier" });
+    } finally {
+      randomUuid.mockRestore();
+    }
+    expect(await database.DB.prepare("SELECT id FROM user WHERE id = ?").bind(PROJECT_ACTIVITY_SYSTEM_OUTBOX_ACTOR_ID).first()).toBeNull();
+  });
+
   it("adds service collections while PATCH remains roster-free", async () => {
     const cookie = await sessionCookie(adminToken);
     const created = await SELF.fetch("https://portal.test/api/projects", {
@@ -1090,6 +1107,21 @@ describe("staff app API", () => {
     const project = await created.json() as { id: string; collections: Array<{ kind: string }> };
     expect(project.collections.map((collection) => collection.kind).sort()).toEqual(["edited", "raw"]);
 
+    const beforeNoOp = await Promise.all([
+      database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE action = 'project.update' AND target_id = ?").bind(project.id).first(),
+      database.DB.prepare("SELECT count(*) AS count FROM project_activity_events WHERE project_id = ?").bind(project.id).first(),
+      database.DB.prepare("SELECT count(*) AS count FROM notification_outbox WHERE project_id = ?").bind(project.id).first(),
+    ]);
+    const unchanged = await SELF.fetch(`https://portal.test/api/projects/${project.id}`, {
+      method: "PATCH",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ street: "12 Kings Road", orderedServices: ["edited"] }),
+    });
+    expect(unchanged.status).toBe(200);
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE action = 'project.update' AND target_id = ?").bind(project.id).first()).toEqual(beforeNoOp[0]);
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM project_activity_events WHERE project_id = ?").bind(project.id).first()).toEqual(beforeNoOp[1]);
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM notification_outbox WHERE project_id = ?").bind(project.id).first()).toEqual(beforeNoOp[2]);
+
     const response = await SELF.fetch(`https://portal.test/api/projects/${project.id}`, {
       method: "PATCH",
       headers: { cookie, "content-type": "application/json" },
@@ -1101,6 +1133,10 @@ describe("staff app API", () => {
     expect(updated.collections.map((collection) => collection.kind).sort()).toEqual(["edited", "raw", "video"]);
     expect(updated.members.filter((member) => member.roleOnProject === "photographer").map((member) => member.userId)).toEqual([firstPhotographerId]);
     expect(updated.members.filter((member) => member.roleOnProject === "editor").map((member) => member.userId)).toEqual([editorId]);
+    const beforeServiceRetry = await database.DB.prepare("SELECT count(*) AS count FROM project_activity_events WHERE project_id = ?").bind(project.id).first();
+    const serviceRetry = await SELF.fetch(`https://portal.test/api/projects/${project.id}`, { method: "PATCH", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ orderedServices: ["edited", "video"] }) });
+    expect(serviceRetry.status).toBe(200);
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM project_activity_events WHERE project_id = ?").bind(project.id).first()).toEqual(beforeServiceRetry);
     const rosterPatch = await SELF.fetch(`https://portal.test/api/projects/${project.id}`, {
       method: "PATCH",
       headers: { cookie, "content-type": "application/json" },
@@ -1162,6 +1198,47 @@ describe("staff app API", () => {
     expect(rejected.status).toBe(422);
     expect(await rejected.json()).toMatchObject({ code: "ineligible_project_assignments", ineligibleSlots: [{ userId: inactiveId, roleOnProject: "photographer" }] });
     expect(await database.DB.prepare("SELECT id FROM projects WHERE street = 'Rejected assignment outbox'").first()).toBeNull();
+  });
+
+  it("proves the initial-roster broad suppression matrix and post-create assignment fan-out", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const create = async (body: Record<string, unknown>) => {
+      const response = await SELF.fetch("https://portal.test/api/projects", {
+        method: "POST",
+        headers: { cookie, "content-type": "application/json" },
+        body: JSON.stringify({ street: `Initial roster ${crypto.randomUUID()}`, orderedServices: [], ...body }),
+      });
+      expect(response.status).toBe(201);
+      return await response.json() as { id: string };
+    };
+
+    // Editor A and Editor C are eligible Editors; Photographer B is a separate,
+    // photographer-only user. The photographer activity reaches both Editors, then
+    // each Editor's own activity is suppressed only for that Editor: 2 + 1 + 1 = 4.
+    const threeSlot = await create({ photographerUserIds: [firstPhotographerId], editorUserIds: [editorId, seedAdminId] });
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM project_activity_events WHERE project_id = ? AND event_type = 'project.team.member_added'").bind(threeSlot.id).first()).toEqual({ count: 3 });
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM notification_outbox WHERE project_id = ? AND event_type = 'project.assignment.created'").bind(threeSlot.id).first()).toEqual({ count: 3 });
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM notification_outbox WHERE project_id = ? AND event_type = 'project.activity.broad'").bind(threeSlot.id).first()).toEqual({ count: 4 });
+    expect(await database.DB.prepare("SELECT recipient_id, count(*) AS count FROM notification_outbox WHERE project_id = ? AND event_type = 'project.activity.broad' GROUP BY recipient_id ORDER BY recipient_id").bind(threeSlot.id).all()).toMatchObject({ results: [{ recipient_id: editorId, count: 2 }, { recipient_id: seedAdminId, count: 2 }] });
+
+    // Editor A is also assigned in the Photographer slot. User-ID suppression
+    // removes both of A's own roster rows, while C still receives both and A receives C's.
+    const dualRole = await create({ photographerUserIds: [editorId], editorUserIds: [editorId, seedAdminId] });
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM notification_outbox WHERE project_id = ? AND event_type = 'project.activity.broad'").bind(dualRole.id).first()).toEqual({ count: 3 });
+    expect(await database.DB.prepare("SELECT recipient_id, count(*) AS count FROM notification_outbox WHERE project_id = ? AND event_type = 'project.activity.broad' GROUP BY recipient_id ORDER BY recipient_id").bind(dualRole.id).all()).toMatchObject({ results: [{ recipient_id: editorId, count: 1 }, { recipient_id: seedAdminId, count: 2 }] });
+
+    const oneEditor = await create({ editorUserIds: [editorId] });
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM project_activity_events WHERE project_id = ? AND event_type = 'project.team.member_added'").bind(oneEditor.id).first()).toEqual({ count: 1 });
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM notification_outbox WHERE project_id = ? AND event_type = 'project.activity.broad'").bind(oneEditor.id).first()).toEqual({ count: 0 });
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM notification_outbox WHERE project_id = ? AND event_type = 'project.assignment.created'").bind(oneEditor.id).first()).toEqual({ count: 1 });
+
+    const postCreate = await create({ editorUserIds: [editorId] });
+    const added = await SELF.fetch(`https://portal.test/api/projects/${postCreate.id}/editors/${seedAdminId}`, { method: "PUT", headers: { cookie, "content-type": "application/json" }, body: "{}" });
+    expect(added.status).toBe(201);
+    const addedMembership = (await added.json() as { membership: { id: string } }).membership.id;
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM notification_outbox WHERE project_id = ? AND event_type = 'project.assignment.created' AND recipient_id = ? AND source_key = ?").bind(postCreate.id, seedAdminId, addedMembership).first()).toEqual({ count: 1 });
+    expect(await database.DB.prepare("SELECT recipient_id FROM notification_outbox WHERE project_id = ? AND event_type = 'project.activity.broad' ORDER BY recipient_id").bind(postCreate.id).all()).toMatchObject({ results: [{ recipient_id: editorId }] });
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM notification_outbox WHERE project_id = ? AND event_type = 'project.activity.broad' AND recipient_id = ?").bind(postCreate.id, seedAdminId).first()).toEqual({ count: 0 });
   });
 
   it("gates assignment candidates and returns only the collaboration-safe summary projection", async () => {
@@ -1595,6 +1672,43 @@ describe("staff app API", () => {
     expect(video).not.toBeNull();
   });
 
+  it("fences a service removal race before the project PATCH winner and leaves no downstream rows", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const created = await SELF.fetch("https://portal.test/api/projects", { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ street: `Service race ${crypto.randomUUID()}`, orderedServices: ["edited", "video"] }) });
+    expect(created.status).toBe(201); const project = await created.json() as { id: string };
+    const video = await database.DB.prepare("SELECT id FROM collections WHERE project_id = ? AND kind = 'video'").bind(project.id).first<{ id: string }>();
+    const assetId = crypto.randomUUID(); const now = Date.now();
+    const beforeProject = await database.DB.prepare("SELECT street FROM projects WHERE id = ?").bind(project.id).first();
+    const response = await requestWithDbBatchFault(`/api/projects/${project.id}`, cookie, { street: "Must not partially save", orderedServices: [] }, async (db) => {
+      await db.prepare("INSERT INTO assets (id, collection_id, r2_key, original_filename, bytes, source, created_at, updated_at) VALUES (?, ?, ?, 'race.jpg', 1, 'upload', ?, ?)").bind(assetId, video!.id, `tests/${assetId}.jpg`, now, now).run();
+    });
+    expect(response.status).toBe(409);
+    expect(await database.DB.prepare("SELECT street FROM projects WHERE id = ?").bind(project.id).first()).toEqual(beforeProject);
+    expect(await database.DB.prepare("SELECT kind FROM collections WHERE project_id = ? ORDER BY kind").bind(project.id).all()).toMatchObject({ results: [{ kind: "edited" }, { kind: "raw" }, { kind: "video" }] });
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE action = 'project.update' AND target_id = ?").bind(project.id).first()).toEqual({ count: 0 });
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM project_activity_events WHERE project_id = ?").bind(project.id).first()).toEqual({ count: 0 });
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM notification_outbox WHERE project_id = ?").bind(project.id).first()).toEqual({ count: 0 });
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM notification_delivery_ledger WHERE outbox_id IN (SELECT id FROM notification_outbox WHERE project_id = ?)").bind(project.id).first()).toEqual({ count: 0 });
+  });
+
+  it("rejects a checklist delete after a concurrent rename without stale title activity", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const project = await createUploadProject(cookie, `Checklist delete race ${crypto.randomUUID()}`);
+    const created = await SELF.fetch(`https://portal.test/api/projects/${project.id}/subtasks`, { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ title: "Original checklist title" }) });
+    expect(created.status).toBe(201); const task = await created.json() as { id: string };
+    const beforeActivity = await database.DB.prepare("SELECT count(*) AS count FROM project_activity_events WHERE project_id = ?").bind(project.id).first();
+    const response = await requestWithDbBatchFault(`/api/projects/${project.id}/subtasks/${task.id}`, cookie, undefined, async (db) => {
+      await db.prepare("UPDATE project_subtasks SET title = ?, updated_at = ? WHERE id = ?").bind("Concurrent renamed title", Date.now(), task.id).run();
+    }, "DELETE");
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({ code: "subtask_changed" });
+    expect(await database.DB.prepare("SELECT title FROM project_subtasks WHERE id = ?").bind(task.id).first()).toEqual({ title: "Concurrent renamed title" });
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE action = 'project_subtask.delete' AND target_id = ?").bind(task.id).first()).toEqual({ count: 0 });
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM project_activity_events WHERE project_id = ?").bind(project.id).first()).toEqual(beforeActivity);
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM notification_outbox WHERE project_id = ?").bind(project.id).first()).toEqual({ count: 0 });
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM notification_delivery_ledger WHERE outbox_id IN (SELECT id FROM notification_outbox WHERE project_id = ?)").bind(project.id).first()).toEqual({ count: 0 });
+  });
+
   it("keeps a de-selected service collection with a pending upload manifest", async () => {
     const cookie = await sessionCookie(adminToken);
     const created = await SELF.fetch("https://portal.test/api/projects", {
@@ -1885,6 +1999,23 @@ describe("staff app API", () => {
     await expect(database.DB.prepare("SELECT state FROM autohdr_path_claims WHERE project_id = ? LIMIT 1").bind(project.id).first()).resolves.toEqual({ state: "pending" });
     await expect(database.DB.prepare("SELECT state FROM autohdr_handoffs WHERE project_id = ?").bind(project.id).first()).resolves.toEqual({ state: "starting" });
     await database.DB.exec(`DROP TRIGGER fail_${project.id.replaceAll("-", "_")};`);
+  });
+
+  it("treats archiving an already archived project as a no-op", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const project = await createUploadProject(cookie, `Archive retry ${crypto.randomUUID()}`);
+    expect((await SELF.fetch(`https://portal.test/api/projects/${project.id}/archive`, { method: "POST", headers: { cookie } })).status).toBe(200);
+    const before = await Promise.all([
+      database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE action = 'project.archive' AND target_id = ?").bind(project.id).first(),
+      database.DB.prepare("SELECT count(*) AS count FROM project_activity_events WHERE project_id = ? AND event_type = 'project.archived'").bind(project.id).first(),
+      database.DB.prepare("SELECT count(*) AS count FROM notification_outbox WHERE project_id = ?").bind(project.id).first(),
+    ]);
+    const retry = await SELF.fetch(`https://portal.test/api/projects/${project.id}/archive`, { method: "POST", headers: { cookie } });
+    expect(retry.status).toBe(200);
+    await expect(retry.json()).resolves.toEqual({ ok: true });
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE action = 'project.archive' AND target_id = ?").bind(project.id).first()).toEqual(before[0]);
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM project_activity_events WHERE project_id = ? AND event_type = 'project.archived'").bind(project.id).first()).toEqual(before[1]);
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM notification_outbox WHERE project_id = ?").bind(project.id).first()).toEqual(before[2]);
   });
 
   it("refuses to delete an archived project while background work is active", async () => {
@@ -2946,6 +3077,28 @@ describe("staff app API", () => {
     expect(collectionLinkUrlConflict(new Error("UNIQUE constraint failed: other_table.value"))).toBe(false);
   });
 
+  it("treats an already-current Video link reorder as a successful no-op", async () => {
+    const adminCookie = await sessionCookie(adminToken);
+    const created = await SELF.fetch("https://portal.test/api/projects", { method: "POST", headers: { cookie: adminCookie, "content-type": "application/json" }, body: JSON.stringify({ street: `Current link order ${crypto.randomUUID()}`, orderedServices: ["video"] }) });
+    expect(created.status).toBe(201); const project = await created.json() as { id: string };
+    const add = async (suffix: string) => {
+      const response = await SELF.fetch(`https://portal.test/api/projects/${project.id}/links`, { method: "POST", headers: { cookie: adminCookie, "content-type": "application/json" }, body: JSON.stringify({ collection: "video", url: `https://example.test/current-order-${suffix}` }) });
+      expect(response.status).toBe(201); return response.json() as Promise<{ id: string }>;
+    };
+    const first = await add("first"); const second = await add("second");
+    const reorder = () => SELF.fetch(`https://portal.test/api/projects/${project.id}/links/${second.id}/reorder`, { method: "POST", headers: { cookie: adminCookie, "content-type": "application/json" }, body: JSON.stringify({ beforeId: null, afterId: first.id }) });
+    expect((await reorder()).status).toBe(200);
+    const beforeAudit = await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE action = 'collection_link.reorder' AND target_id = ?").bind(second.id).first();
+    const beforeActivity = await database.DB.prepare("SELECT count(*) AS count FROM project_activity_events WHERE project_id = ? AND event_type = 'project.collection.video_links_reordered'").bind(project.id).first();
+    const beforeOutbox = await database.DB.prepare("SELECT count(*) AS count FROM notification_outbox WHERE project_id = ?").bind(project.id).first();
+    const retry = await reorder();
+    expect(retry.status).toBe(200);
+    await expect(retry.json()).resolves.toEqual({ position: 0 });
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE action = 'collection_link.reorder' AND target_id = ?").bind(second.id).first()).toEqual(beforeAudit);
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM project_activity_events WHERE project_id = ? AND event_type = 'project.collection.video_links_reordered'").bind(project.id).first()).toEqual(beforeActivity);
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM notification_outbox WHERE project_id = ?").bind(project.id).first()).toEqual(beforeOutbox);
+  });
+
   it("reorders mixed Video links with guarded canonical positions and rejects stale snapshots", async () => {
     const adminCookie = await sessionCookie(adminToken);
     const created = await SELF.fetch("https://portal.test/api/projects", { method: "POST", headers: { cookie: adminCookie, "content-type": "application/json" }, body: JSON.stringify({ street: `Reorder collection ${crypto.randomUUID()}`, orderedServices: ["video"], photographerUserIds: [firstPhotographerId] }) });
@@ -2978,13 +3131,17 @@ describe("staff app API", () => {
     expect(stale.status).toBe(409);
     expect(await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE action = 'collection_link.reorder' AND target_id = ?").bind(first.id).first()).toEqual({ count: 0 });
 
-    // Equal adjacent positions can arrive from concurrent appends. A single JSON-snapshot UPDATE
-    // rebases the mixed-source collection atomically instead of issuing one update per row.
+    // Equal adjacent positions can arrive from concurrent appends. A single UPDATE uses the
+    // JSON mapping only to assign the rebase positions; its guards validate the captured rows
+    // and require at least one row to move, rather than comparing serialized whole-sequence JSON.
     await database.DB.prepare("UPDATE collection_links SET position = 1024 WHERE collection_id = ?").bind(video!.id).run();
     const tiedRows = await database.DB.prepare("SELECT id FROM collection_links WHERE collection_id = ? ORDER BY position, id").bind(video!.id).all<{ id: string }>();
+    const unchangedId = tiedRows.results[1]!.id;
+    const unchangedBefore = await database.DB.prepare("SELECT position, updated_at FROM collection_links WHERE id = ?").bind(unchangedId).first<{ position: number; updated_at: number }>();
     const rebase = await reorder(tiedRows.results[0]!.id, tiedRows.results[1]!.id, tiedRows.results[2]!.id);
     expect(rebase.status).toBe(200);
     expect(await database.DB.prepare("SELECT position FROM collection_links WHERE collection_id = ? ORDER BY position, id").bind(video!.id).all()).toMatchObject({ results: [{ position: 1024 }, { position: 2048 }, { position: 3072 }] });
+    expect(await database.DB.prepare("SELECT position, updated_at FROM collection_links WHERE id = ?").bind(unchangedId).first()).toEqual(unchangedBefore);
   });
 
   it("rebases tied Video links with a constant parameter count independent of row count", async () => {

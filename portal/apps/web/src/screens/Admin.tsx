@@ -79,6 +79,7 @@ function eventTypeLabel(eventType: string): string {
     "project.comment.mentioned": "Comment mention",
     "project.assignment.created": "Project assignment",
     "project.deadline.reminder": "Deadline reminder",
+    "project.activity.broad": "Project activity",
   };
   return labels[eventType] ?? "Unknown event";
 }

@@ -1,11 +1,12 @@
 import { Hono } from "hono";
-import { computeInsertPosition, createDb, schema } from "@quincy/db";
-import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
+import { buildProjectActivityStatements, computeInsertPosition, createDb, schema } from "@quincy/db";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { AppEnv } from "../env";
-import { audit } from "../lib/audit";
+import { audit, auditMeta } from "../lib/audit";
 import { newId } from "../lib/ids";
 import { notifySubtaskAssignee } from "../lib/notifications";
+import { publishNotificationOutbox, projectActivityDeepLink, type ProjectActivityIntent } from "@quincy/shared";
 import { projectMentionableUsers } from "../lib/project-collaboration";
 import { hasProjectCollaborationAccess } from "../middleware/capability";
 import { jsonInput } from "./helpers";
@@ -38,6 +39,10 @@ const reorderInput = z.object({ beforeId: idParam.nullable(), afterId: idParam.n
 
 type SubtaskRow = { subtask: typeof schema.projectSubtasks.$inferSelect; assigneeId: string | null; assigneeName: string | null };
 
+function rowsFromD1<T>(result: unknown): T[] {
+  return ((result as { results?: T[] } | undefined)?.results ?? []);
+}
+
 function serializeSubtask(row: SubtaskRow) {
   const item = row.subtask;
   return {
@@ -63,10 +68,6 @@ async function eligibleAssignee(env: AppEnv["Bindings"], projectId: string, assi
   return (await projectMentionableUsers(env, projectId)).some((candidate) => candidate.id === assigneeId);
 }
 
-function assigneeUnchangedCondition(assigneeId: string | null) {
-  return assigneeId === null ? isNull(schema.projectSubtasks.assigneeId) : eq(schema.projectSubtasks.assigneeId, assigneeId);
-}
-
 export const projectSubtasksRoutes = new Hono<AppEnv>();
 
 projectSubtasksRoutes.get("/projects/:projectId/subtasks", async (c) => {
@@ -83,8 +84,21 @@ projectSubtasksRoutes.post("/projects/:projectId/subtasks", async (c) => {
   if (data.assigneeId && !await eligibleAssignee(c.env, projectId, data.assigneeId)) return c.json({ error: "Assignee is not an active project participant" }, 400);
   const db = createDb(c.env.DB); const last = await db.select({ position: schema.projectSubtasks.position }).from(schema.projectSubtasks).where(eq(schema.projectSubtasks.projectId, projectId)).orderBy(desc(schema.projectSubtasks.position), desc(schema.projectSubtasks.id)).limit(1).get();
   const now = new Date(); const id = newId(); const assignmentVersion = data.assigneeId ? 1 : 0;
-  await db.insert(schema.projectSubtasks).values({ id, projectId, title: data.title, done: false, position: (last?.position ?? 0) + POSITION_STEP, assigneeId: data.assigneeId, assignmentVersion, dueDate: data.dueDate, createdBy: c.get("user").id, createdAt: now, updatedAt: now });
-  await audit(c.env, c.get("user"), "project_subtask.create", "project_subtask", id);
+  const auditId = newId();
+  const activityId = newId();
+  const activity: ProjectActivityIntent = {
+    schemaVersion: 1,
+    activity: { id: activityId, type: "project.checklist.item_created", projectId, actorId: c.get("user").id, occurredAt: now.getTime(), source: { kind: "project_checklist", id, key: `project-checklist:${id}:created` }, safePayload: { itemId: id, checklistTitle: data.title }, deepLink: projectActivityDeepLink("project.checklist.item_created", projectId) },
+    broadDelivery: { registryKey: "project.checklist.item_created", sourceActivityId: activityId, coalesce: null },
+  };
+  const activityStatements = buildProjectActivityStatements({ db: c.env.DB, intent: activity, winnerAuditId: auditId, createdAt: now.getTime() });
+  const results = await c.env.DB.batch([
+    c.env.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignee_id, assignment_version, due_date, created_by, created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)").bind(id, projectId, data.title, (last?.position ?? 0) + POSITION_STEP, data.assigneeId ?? null, assignmentVersion, data.dueDate ?? null, c.get("user").id, now.getTime(), now.getTime()),
+    c.env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, ?, 'project_subtask.create', 'project_subtask', ?, ?, ? WHERE changes() = 1").bind(auditId, c.get("user").id, id, auditMeta(c.get("user")), now.getTime()),
+    ...activityStatements.statements,
+  ]);
+  const publicationIds = rowsFromD1<{ id: string }>(results[2 + activityStatements.broadOutboxIndex]).map((row) => row.id);
+  if (publicationIds.length) c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, publicationIds));
   await notifySubtaskAssignee(c.env, { projectId, actorId: c.get("user").id, assigneeId: data.assigneeId ?? null, subtaskId: id, assignmentVersion });
   const task = await subtaskQuery(db, projectId, id).get(); if (!task) return c.json({ error: "Subtask could not be created" }, 500);
   return c.json(serializeSubtask(task), 201);
@@ -109,13 +123,36 @@ projectSubtasksRoutes.patch("/projects/:projectId/subtasks/:subtaskId", async (c
   values.updatedAt = new Date();
   // The compare-on-current-assignee guard means a concurrent reassignment cannot be overwritten
   // or spuriously notified based on this request's stale read.
-  const updated = await db.update(schema.projectSubtasks).set(values).where(and(eq(schema.projectSubtasks.id, subtaskId), eq(schema.projectSubtasks.projectId, projectId), assigneeUnchangedCondition(existing.subtask.assigneeId))).returning().get();
+  const setParts: string[] = []; const setBindings: unknown[] = [];
+  if (values.title !== undefined) { setParts.push("title = ?"); setBindings.push(values.title); }
+  if (values.done !== undefined) { setParts.push("done = ?"); setBindings.push(values.done ? 1 : 0); }
+  if (values.dueDate !== undefined) { setParts.push("due_date = ?", "due_reminder_sent_at = NULL"); setBindings.push(values.dueDate); }
+  if (assignmentChanged) { setParts.push("assignee_id = ?", "assignment_version = assignment_version + 1"); setBindings.push(data.assigneeId ?? null); }
+  setParts.push("updated_at = ?"); setBindings.push(values.updatedAt instanceof Date ? values.updatedAt.getTime() : Date.now());
+  const auditId = newId();
+  const mappedChanges = changed.flatMap((key) => key === "title" ? ["title" as const] : key === "done" ? ["completion" as const] : key === "assigneeId" ? ["assignee" as const] : []);
+  const nextTitle = data.title ?? existing.subtask.title;
+  const activityId = newId();
+  const activity: ProjectActivityIntent = {
+    schemaVersion: 1,
+    activity: { id: activityId, type: "project.checklist.item_updated", projectId, actorId: c.get("user").id, occurredAt: Date.now(), source: { kind: "project_checklist", id: subtaskId, key: `project-checklist:${subtaskId}:updated:${activityId}` }, safePayload: { itemId: subtaskId, checklistTitle: nextTitle, changes: mappedChanges }, deepLink: projectActivityDeepLink("project.checklist.item_updated", projectId) },
+    broadDelivery: { registryKey: "project.checklist.item_updated", sourceActivityId: activityId, coalesce: null },
+  };
+  const activityBundle = mappedChanges.length ? buildProjectActivityStatements({ db: c.env.DB, intent: activity, winnerAuditId: auditId, createdAt: Date.now() }) : null;
+  const batchStatements: D1PreparedStatement[] = [c.env.DB.prepare(`UPDATE project_subtasks SET ${setParts.join(", ")} WHERE id = ? AND project_id = ? AND title IS ? AND done IS ? AND due_date IS ? AND assignee_id IS ? RETURNING assignee_id AS assigneeId, assignment_version AS assignmentVersion`).bind(...setBindings, subtaskId, projectId, existing.subtask.title, existing.subtask.done ? 1 : 0, existing.subtask.dueDate, existing.subtask.assigneeId)];
+  batchStatements.push(c.env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, ?, 'project_subtask.update', 'project_subtask', ?, ?, ? WHERE changes() = 1").bind(auditId, c.get("user").id, subtaskId, auditMeta(c.get("user"), { fields: changed }), Date.now()));
+  if (activityBundle) batchStatements.push(...activityBundle.statements);
+  const batchResults = await c.env.DB.batch(batchStatements);
+  const updated = rowsFromD1<{ assigneeId: string | null; assignmentVersion: number }>(batchResults[0])[0];
   if (!updated) {
     const current = await subtaskQuery(db, projectId, subtaskId).get();
     return current ? c.json(serializeSubtask(current)) : c.json({ error: "Subtask not found" }, 404);
   }
-  await audit(c.env, c.get("user"), "project_subtask.update", "project_subtask", subtaskId, { fields: changed });
   if (assignmentChanged) await notifySubtaskAssignee(c.env, { projectId, actorId: c.get("user").id, assigneeId: updated.assigneeId, subtaskId, assignmentVersion: updated.assignmentVersion });
+  if (activityBundle) {
+    const publicationIds = rowsFromD1<{ id: string }>(batchResults[2 + activityBundle.broadOutboxIndex]).map((row) => row.id);
+    if (publicationIds.length) c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, publicationIds));
+  }
   const task = await subtaskQuery(db, projectId, subtaskId).get(); if (!task) return c.json({ error: "Subtask could not be updated" }, 500);
   return c.json(serializeSubtask(task));
 });
@@ -167,8 +204,27 @@ projectSubtasksRoutes.delete("/projects/:projectId/subtasks/:subtaskId", async (
   const projectId = c.req.param("projectId"); const subtaskId = c.req.param("subtaskId");
   if (!idParam.safeParse(projectId).success || !idParam.safeParse(subtaskId).success) return c.json({ error: "Invalid project or subtask id" }, 400);
   const project = await ensureProjectAccessAndExists(c, projectId); if (project === "forbidden") return c.json({ error: "Forbidden: you are not assigned to this project" }, 403); if (!project) return c.json({ error: "Project not found" }, 404);
-  const db = createDb(c.env.DB); const deleted = await db.delete(schema.projectSubtasks).where(and(eq(schema.projectSubtasks.id, subtaskId), eq(schema.projectSubtasks.projectId, projectId))).returning({ id: schema.projectSubtasks.id }).get();
-  if (!deleted) return c.json({ error: "Subtask not found" }, 404);
-  await audit(c.env, c.get("user"), "project_subtask.delete", "project_subtask", subtaskId);
+  const db = createDb(c.env.DB); const existing = await subtaskQuery(db, projectId, subtaskId).get(); if (!existing) return c.json({ error: "Subtask not found" }, 404);
+  const auditId = newId(); const activityId = newId();
+  const activity: ProjectActivityIntent = {
+    schemaVersion: 1,
+    activity: { id: activityId, type: "project.checklist.item_deleted", projectId, actorId: c.get("user").id, occurredAt: Date.now(), source: { kind: "project_checklist", id: subtaskId, key: `project-checklist:${subtaskId}:deleted` }, safePayload: { itemId: subtaskId, checklistTitle: existing.subtask.title }, deepLink: projectActivityDeepLink("project.checklist.item_deleted", projectId) },
+    broadDelivery: { registryKey: "project.checklist.item_deleted", sourceActivityId: activityId, coalesce: null },
+  };
+  const activityStatements = buildProjectActivityStatements({ db: c.env.DB, intent: activity, winnerAuditId: auditId, createdAt: Date.now() });
+  const results = await c.env.DB.batch([
+    // The title is part of the delete snapshot because the activity payload is prepared before
+    // the batch. A concurrent rename therefore loses this delete rather than producing stale bell copy.
+    c.env.DB.prepare("DELETE FROM project_subtasks WHERE id = ? AND project_id = ? AND title IS ? RETURNING id").bind(subtaskId, projectId, existing.subtask.title),
+    c.env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, ?, 'project_subtask.delete', 'project_subtask', ?, ?, ? WHERE changes() = 1").bind(auditId, c.get("user").id, subtaskId, auditMeta(c.get("user")), Date.now()),
+    ...activityStatements.statements,
+  ]);
+  if (!rowsFromD1<{ id: string }>(results[0])[0]) {
+    const current = await subtaskQuery(db, projectId, subtaskId).get();
+    if (current) return c.json({ error: "Subtask changed while deleting; reload and try again", code: "subtask_changed" }, 409);
+    return c.json({ error: "Subtask not found" }, 404);
+  }
+  const publicationIds = rowsFromD1<{ id: string }>(results[2 + activityStatements.broadOutboxIndex]).map((row) => row.id);
+  if (publicationIds.length) c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, publicationIds));
   return c.json({ ok: true });
 });

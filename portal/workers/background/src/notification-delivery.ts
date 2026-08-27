@@ -5,8 +5,14 @@ import {
   NOTIFICATION_QUEUE_NAME,
   NotificationOutboxMessage,
   PROJECT_ASSIGNMENT_ELIGIBLE_ROLES,
+  PROJECT_ACTIVITY_REGISTRY,
+  PROJECT_ACTIVITY_SYSTEM_OUTBOX_ACTOR_ID,
+  parseProjectActivityRow,
   parseNotificationOutboxMessage,
   publishNotificationOutbox,
+  projectActivityCoalesce,
+  projectActivityCoalescingDeclaration,
+  renderProjectActivityNotification,
   roleHasCapability,
   isProjectAssignmentEligible,
   staffPathFor,
@@ -41,6 +47,45 @@ type OutboxRow = {
   lease_token: string | null;
   lease_expires_at: number | null;
   delivery_attempts: number;
+  coalesce_key: string | null;
+  coalesce_until: number | null;
+  recipient_membership_cycle_id: string | null;
+};
+
+type BroadResolverRow = {
+  outboxId: string;
+  schemaVersion: number;
+  eventType: string;
+  sourceKey: string;
+  projectId: string;
+  actorId: string;
+  recipientId: string;
+  payloadJson: string;
+  coalesceKey: string | null;
+  coalesceUntil: number | null;
+  recipientMembershipCycleId: string | null;
+  recipientActive: number | null;
+  recipientRole: string | null;
+  recipientName: string | null;
+  projectStreet: string | null;
+  membershipId: string | null;
+  membershipCreatedAt: number | null;
+  activityId: string | null;
+  activitySchemaVersion: number | null;
+  activityEventType: string | null;
+  activityCategory: string | null;
+  activityProjectId: string | null;
+  activityActorKind: string | null;
+  activityActorId: string | null;
+  activityOccurredAt: number | null;
+  activitySourceKind: string | null;
+  activitySourceId: string | null;
+  activitySourceKey: string | null;
+  activitySafePayloadJson: string | null;
+  activityDeepLinkKind: string | null;
+  activityDeepLinkPath: string | null;
+  activityCreatedAt: number | null;
+  activityActorName: string | null;
 };
 
 type ResolverRow = {
@@ -130,7 +175,7 @@ type ProjectCommentMentionPayload = {
 };
 
 type ResolvedDelivery = {
-  notificationType: "mentioned" | "assigned_to_project" | "project_deadline_reminder";
+  notificationType: "mentioned" | "assigned_to_project" | "project_deadline_reminder" | "project_activity" | "project_collaboration_activity";
   title: string;
   body: string;
   emailSubject: string;
@@ -138,13 +183,42 @@ type ResolvedDelivery = {
   emailHtml: string;
 };
 
-type ResolvedRecipient = {
+type LegacyResolvedRecipient = {
   ok: true;
+  kind: "legacy";
   row: ResolverRow | ReminderResolverRow;
   payload: ProjectCommentMentionPayload | ProjectAssignmentCreatedPayload | ProjectDeadlineReminderOutboxPayload;
   commentPath: string;
   delivery: ResolvedDelivery;
-} | { ok: false; reason: string };
+};
+
+type BroadResolvedRecipient = {
+  ok: true;
+  kind: "broad";
+  row: BroadResolverRow;
+  activity: NonNullable<ReturnType<typeof parseProjectActivityRow>>;
+  delivery: ResolvedDelivery;
+  commentPath: string;
+};
+
+export type ProjectActivityPermanentCode =
+  | "project_activity_payload_invalid"
+  | "project_activity_missing"
+  | "project_activity_invalid"
+  | "project_activity_project_mismatch"
+  | "project_activity_type_reserved";
+
+type RecipientResolution =
+  | LegacyResolvedRecipient
+  | BroadResolvedRecipient
+  | { ok: false; kind: "suppress"; code: "reauthorization_suppressed"; reason: string }
+  | { ok: false; kind: "permanent"; code: ProjectActivityPermanentCode; reason: string };
+
+type ResolvedRecipient = RecipientResolution;
+
+function suppressed(reason: string) {
+  return { ok: false as const, kind: "suppress" as const, code: "reauthorization_suppressed" as const, reason };
+}
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
@@ -206,7 +280,7 @@ function safeAssignmentPayload(value: string, outbox: OutboxRow): ProjectAssignm
 
 async function resolveDeadlineReminderRecipient(env: Env, outbox: OutboxRow): Promise<ResolvedRecipient> {
   const payload = safeReminderPayload(outbox.payload_json, outbox);
-  if (!payload) return { ok: false, reason: "payload_invalid" };
+  if (!payload) return suppressed("payload_invalid");
   const result = await env.DB.prepare(`
     SELECT o.id AS outboxId, o.schema_version AS schemaVersion, o.event_type AS eventType,
       o.source_key AS sourceKey, o.project_id AS projectId, o.actor_id AS actorId,
@@ -232,14 +306,14 @@ async function resolveDeadlineReminderRecipient(env: Env, outbox: OutboxRow): Pr
       AND member.project_id = o.project_id AND member.user_id = o.recipient_id
     WHERE o.id = ?
   `).bind(outbox.id).first<ReminderResolverRow>();
-  if (!result) return { ok: false, reason: "outbox_missing" };
-  if (result.schemaVersion !== 1 || result.eventType !== NOTIFICATION_OUTBOX_EVENT_TYPES.projectDeadlineReminder || result.sourceKey !== payload.reminder.occurrenceId || result.projectId !== payload.reminder.projectId || result.recipientId !== payload.event.recipientId) return { ok: false, reason: "payload_invalid" };
+  if (!result) return suppressed("outbox_missing");
+  if (result.schemaVersion !== 1 || result.eventType !== NOTIFICATION_OUTBOX_EVENT_TYPES.projectDeadlineReminder || result.sourceKey !== payload.reminder.occurrenceId || result.projectId !== payload.reminder.projectId || result.recipientId !== payload.event.recipientId) return suppressed("payload_invalid");
   const deadlineAt = Date.parse(payload.reminder.deadlineAt);
   const role = result.recipientRole as Role;
-  if (result.projectStreet === null || result.projectArchivedAt !== null || result.projectStageKey === "delivered" || result.projectDeadlineVersion !== payload.reminder.scheduleVersion) return { ok: false, reason: "project_no_longer_visible" };
-  if (result.recipientActive !== 1 || !isProjectAssignmentEligible("editor", role)) return { ok: false, reason: "recipient_ineligible" };
-  if (result.occurrenceId !== payload.reminder.occurrenceId || result.occurrenceStatus !== "fired" || result.occurrenceFiredAt === null || result.occurrenceScheduleVersion !== payload.reminder.scheduleVersion || result.occurrenceKind !== payload.reminder.kind || result.occurrenceOffsetMinutes !== payload.reminder.offsetMinutes || result.occurrenceDeadlineAt !== deadlineAt || result.occurrenceDeadlineLocalCivil !== payload.reminder.deadlineLocalCivil || result.occurrenceDeadlineZone !== payload.reminder.zone || result.occurrenceUtcOffsetMinutes !== payload.reminder.utcOffsetMinutes || result.occurrenceFold !== payload.reminder.fold) return { ok: false, reason: "occurrence_changed" };
-  if (result.membershipId !== payload.authorizationAtOccurrence.membershipCycle || result.membershipRole !== "editor" || result.membershipCreatedAt !== payload.authorizationAtOccurrence.startedAt || result.membershipCreatedAt > result.occurrenceFiredAt) return { ok: false, reason: "membership_cycle_changed" };
+  if (result.projectStreet === null || result.projectArchivedAt !== null || result.projectStageKey === "delivered" || result.projectDeadlineVersion !== payload.reminder.scheduleVersion) return suppressed("project_no_longer_visible");
+  if (result.recipientActive !== 1 || !isProjectAssignmentEligible("editor", role)) return suppressed("recipient_ineligible");
+  if (result.occurrenceId !== payload.reminder.occurrenceId || result.occurrenceStatus !== "fired" || result.occurrenceFiredAt === null || result.occurrenceScheduleVersion !== payload.reminder.scheduleVersion || result.occurrenceKind !== payload.reminder.kind || result.occurrenceOffsetMinutes !== payload.reminder.offsetMinutes || result.occurrenceDeadlineAt !== deadlineAt || result.occurrenceDeadlineLocalCivil !== payload.reminder.deadlineLocalCivil || result.occurrenceDeadlineZone !== payload.reminder.zone || result.occurrenceUtcOffsetMinutes !== payload.reminder.utcOffsetMinutes || result.occurrenceFold !== payload.reminder.fold) return suppressed("occurrence_changed");
+  if (result.membershipId !== payload.authorizationAtOccurrence.membershipCycle || result.membershipRole !== "editor" || result.membershipCreatedAt !== payload.authorizationAtOccurrence.startedAt || result.membershipCreatedAt > result.occurrenceFiredAt) return suppressed("membership_cycle_changed");
   const projectPath = `${env.APP_ORIGIN}${staffPathFor({ kind: "project", projectId: result.projectId })}`;
   const label = result.projectStreet || "Project";
   const dueText = payload.reminder.kind === "due_now"
@@ -249,6 +323,7 @@ async function resolveDeadlineReminderRecipient(env: Env, outbox: OutboxRow): Pr
   const title = "Project deadline reminder";
   return {
     ok: true,
+    kind: "legacy",
     row: result,
     payload,
     commentPath: projectPath,
@@ -323,7 +398,114 @@ function safePayload(value: string, outbox: OutboxRow): ProjectCommentMentionPay
   }
 }
 
+type BroadPayload = {
+  schemaVersion: 1;
+  event: { type: "project.activity.broad"; sourceKey: string; recipientId: string };
+  authorizationAtOccurrence: { kind: "project_editor_membership"; membershipCycle: string; startedAt: number };
+  activity: { id: string; projectId: string };
+};
+
+function safeBroadPayload(value: string, outbox: OutboxRow): BroadPayload | null {
+  if (outbox.schema_version !== 1 || outbox.event_type !== NOTIFICATION_OUTBOX_EVENT_TYPES.projectActivityBroad) return null;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!isObject(parsed) || !hasExactKeys(parsed, ["schemaVersion", "event", "authorizationAtOccurrence", "activity"]) || parsed.schemaVersion !== 1) return null;
+    const event = parsed.event;
+    const authorization = parsed.authorizationAtOccurrence;
+    const activity = parsed.activity;
+    if (!isObject(event) || !hasExactKeys(event, ["type", "sourceKey", "recipientId"]) || event.type !== NOTIFICATION_OUTBOX_EVENT_TYPES.projectActivityBroad || typeof event.sourceKey !== "string" || typeof event.recipientId !== "string") return null;
+    if (!isObject(authorization) || !hasExactKeys(authorization, ["kind", "membershipCycle", "startedAt"]) || authorization.kind !== "project_editor_membership" || typeof authorization.membershipCycle !== "string" || typeof authorization.startedAt !== "number" || !Number.isSafeInteger(authorization.startedAt)) return null;
+    if (!isObject(activity) || !hasExactKeys(activity, ["id", "projectId"]) || typeof activity.id !== "string" || typeof activity.projectId !== "string") return null;
+    if (event.sourceKey !== outbox.source_key || event.recipientId !== outbox.recipient_id || activity.id.length === 0 || activity.projectId !== outbox.project_id) return null;
+    return parsed as BroadPayload;
+  } catch {
+    return null;
+  }
+}
+
+async function resolveBroadRecipient(env: Env, outbox: OutboxRow): Promise<ResolvedRecipient> {
+  const payload = safeBroadPayload(outbox.payload_json, outbox);
+  if (!payload) return { ok: false, kind: "permanent", code: "project_activity_payload_invalid", reason: "Broad activity payload failed validation." };
+  const row = await env.DB.prepare(`
+    SELECT o.id AS outboxId, o.schema_version AS schemaVersion, o.event_type AS eventType,
+      o.source_key AS sourceKey, o.project_id AS projectId, o.actor_id AS actorId,
+      o.recipient_id AS recipientId, o.payload_json AS payloadJson,
+      o.coalesce_key AS coalesceKey, o.coalesce_until AS coalesceUntil,
+      o.recipient_membership_cycle_id AS recipientMembershipCycleId,
+      recipient.active AS recipientActive, recipient.role AS recipientRole, recipient.name AS recipientName,
+      project.street AS projectStreet,
+      member.id AS membershipId, member.created_at AS membershipCreatedAt,
+      activity.id AS activityId, activity.schema_version AS activitySchemaVersion,
+      activity.event_type AS activityEventType, activity.category AS activityCategory,
+      activity.project_id AS activityProjectId, activity.actor_kind AS activityActorKind,
+      activity.actor_id AS activityActorId, activity.occurred_at AS activityOccurredAt,
+      activity.source_kind AS activitySourceKind, activity.source_id AS activitySourceId,
+      activity.source_key AS activitySourceKey, activity.safe_payload_json AS activitySafePayloadJson,
+      activity.deep_link_kind AS activityDeepLinkKind, activity.deep_link_path AS activityDeepLinkPath,
+      activity.created_at AS activityCreatedAt,
+      activityActor.name AS activityActorName
+    FROM notification_outbox o
+    LEFT JOIN projects project ON project.id = o.project_id
+    LEFT JOIN user recipient ON recipient.id = o.recipient_id
+    LEFT JOIN project_members member ON member.id = o.recipient_membership_cycle_id
+      AND member.project_id = o.project_id AND member.user_id = o.recipient_id
+    LEFT JOIN project_activity_events activity ON activity.id = json_extract(o.payload_json, '$.activity.id')
+    LEFT JOIN user activityActor ON activityActor.id = activity.actor_id AND activity.actor_kind = 'user'
+    WHERE o.id = ?
+  `).bind(outbox.id).first<BroadResolverRow>();
+  if (!row) return { ok: false, kind: "permanent", code: "project_activity_missing", reason: "Broad activity outbox row is missing." };
+  if (!row.activityId) return { ok: false, kind: "permanent", code: "project_activity_missing", reason: "Referenced project activity is missing." };
+  if (row.projectId !== payload.activity.projectId || row.activityProjectId !== row.projectId || row.activityId !== payload.activity.id || row.sourceKey !== row.activityId || row.sourceKey !== payload.event.sourceKey || row.recipientId !== payload.event.recipientId || row.recipientMembershipCycleId !== payload.authorizationAtOccurrence.membershipCycle || (row.membershipId !== null && (row.membershipId !== payload.authorizationAtOccurrence.membershipCycle || row.membershipCreatedAt !== payload.authorizationAtOccurrence.startedAt))) {
+    return { ok: false, kind: "permanent", code: "project_activity_project_mismatch", reason: "Broad activity identity does not match its outbox envelope." };
+  }
+  if (row.activityActorKind === "user" && row.actorId !== row.activityActorId) return { ok: false, kind: "permanent", code: "project_activity_project_mismatch", reason: "Broad activity actor does not match its outbox envelope." };
+  if (row.activityActorKind === "system" && row.actorId !== PROJECT_ACTIVITY_SYSTEM_OUTBOX_ACTOR_ID) return { ok: false, kind: "permanent", code: "project_activity_project_mismatch", reason: "Broad system activity does not match its outbox envelope." };
+  const eventType = row.activityEventType;
+  const registryEntry = typeof eventType === "string" && Object.prototype.hasOwnProperty.call(PROJECT_ACTIVITY_REGISTRY, eventType)
+    ? PROJECT_ACTIVITY_REGISTRY[eventType as keyof typeof PROJECT_ACTIVITY_REGISTRY]
+    : undefined;
+  if (registryEntry?.cutover === "reserved") return { ok: false, kind: "permanent", code: "project_activity_type_reserved", reason: "Project activity type is reserved." };
+  const activity = parseProjectActivityRow({
+    id: row.activityId, schemaVersion: row.activitySchemaVersion, eventType: row.activityEventType,
+    projectId: row.activityProjectId, actorKind: row.activityActorKind, actorId: row.activityActorId,
+    occurredAt: row.activityOccurredAt, sourceKind: row.activitySourceKind, sourceId: row.activitySourceId,
+    sourceKey: row.activitySourceKey, safePayloadJson: row.activitySafePayloadJson,
+    deepLinkKind: row.activityDeepLinkKind, deepLinkPath: row.activityDeepLinkPath, createdAt: row.activityCreatedAt,
+  });
+  if (!activity) return { ok: false, kind: "permanent", code: "project_activity_invalid", reason: "Project activity failed registry validation." };
+  if (row.activityCategory !== PROJECT_ACTIVITY_REGISTRY[activity.type].category) return { ok: false, kind: "permanent", code: "project_activity_invalid", reason: "Project activity category failed registry validation." };
+  if (activity.actorKind === "user" && activity.actorId !== row.actorId) return { ok: false, kind: "permanent", code: "project_activity_project_mismatch", reason: "Project activity actor identity does not match its outbox envelope." };
+  if (activity.actorKind === "system" && row.actorId !== PROJECT_ACTIVITY_SYSTEM_OUTBOX_ACTOR_ID) return { ok: false, kind: "permanent", code: "project_activity_project_mismatch", reason: "Project activity system identity does not match its outbox envelope." };
+  const coalesce = projectActivityCoalesce(activity.type, activity.projectId, activity.actorId, activity.safePayload);
+  if (coalesce ? row.coalesceKey !== coalesce.key || row.coalesceUntil !== activity.occurredAt + coalesce.windowSeconds * 1000 : row.coalesceKey !== null || row.coalesceUntil !== null) {
+    return { ok: false, kind: "permanent", code: "project_activity_invalid", reason: "Project activity coalescing state failed validation." };
+  }
+  if (row.projectStreet === null) return suppressed("project_no_longer_visible");
+  const role = row.recipientRole as Role;
+  if (row.recipientActive !== 1 || !isProjectAssignmentEligible("editor", role)) return suppressed("recipient_ineligible");
+  if (row.membershipId === null || row.membershipCreatedAt === null || row.membershipCreatedAt > activity.occurredAt) return suppressed("membership_cycle_changed");
+  const projection = activity.deepLink.kind === "project_collaboration" ? "project_collaboration_activity" : "project_activity";
+  const copy = renderProjectActivityNotification(activity.type, activity.safePayload, row.projectStreet, activity.actorKind === "user" ? row.activityActorName : null);
+  const projectPath = `${env.APP_ORIGIN}${activity.deepLink.path}`;
+  return {
+    ok: true,
+    kind: "broad",
+    row,
+    activity,
+    commentPath: projectPath,
+    delivery: {
+      notificationType: projection,
+      title: copy.title,
+      body: copy.body,
+      emailSubject: copy.title,
+      emailText: `${copy.body}\n\n${projectPath}`,
+      emailHtml: `<p>${htmlEscape(copy.body)}</p><p><a href="${htmlEscape(projectPath)}">View project</a></p>`,
+    },
+  };
+}
+
 async function resolveRecipient(env: Env, outbox: OutboxRow): Promise<ResolvedRecipient> {
+  if (outbox.event_type === NOTIFICATION_OUTBOX_EVENT_TYPES.projectActivityBroad) return resolveBroadRecipient(env, outbox);
   if (outbox.event_type === NOTIFICATION_OUTBOX_EVENT_TYPES.projectDeadlineReminder) return resolveDeadlineReminderRecipient(env, outbox);
   const row = await env.DB.prepare(`
     SELECT
@@ -348,27 +530,28 @@ async function resolveRecipient(env: Env, outbox: OutboxRow): Promise<ResolvedRe
     ORDER BY member.id
   `).bind(outbox.id).all<ResolverRow>();
   const first = row.results[0];
-  if (!first) return { ok: false, reason: "outbox_missing" };
+  if (!first) return suppressed("outbox_missing");
 
   if (outbox.event_type === NOTIFICATION_OUTBOX_EVENT_TYPES.projectAssignmentCreated) {
     const payload = safeAssignmentPayload(first.payloadJson, outbox);
-    if (!payload) return { ok: false, reason: "payload_invalid" };
+    if (!payload) return suppressed("payload_invalid");
     const roleOnProject = payload.assignment.roleOnProject;
     const role = first.recipientRole as Role;
-    if (first.schemaVersion !== 1 || first.eventType !== NOTIFICATION_OUTBOX_EVENT_TYPES.projectAssignmentCreated || first.sourceKey !== payload.assignment.membershipCycle || first.recipientId !== payload.assignment.userId || first.projectId !== payload.assignment.projectId) return { ok: false, reason: "payload_invalid" };
-    if (first.projectStreet === null) return { ok: false, reason: "project_missing" };
-    if (first.recipientActive !== 1 || !(role === "admin" || role === "editor" || role === "photographer") || !isProjectAssignmentEligible(roleOnProject, role)) return { ok: false, reason: "recipient_ineligible" };
+    if (first.schemaVersion !== 1 || first.eventType !== NOTIFICATION_OUTBOX_EVENT_TYPES.projectAssignmentCreated || first.sourceKey !== payload.assignment.membershipCycle || first.recipientId !== payload.assignment.userId || first.projectId !== payload.assignment.projectId) return suppressed("payload_invalid");
+    if (first.projectStreet === null) return suppressed("project_missing");
+    if (first.recipientActive !== 1 || !(role === "admin" || role === "editor" || role === "photographer") || !isProjectAssignmentEligible(roleOnProject, role)) return suppressed("recipient_ineligible");
     const exact = await env.DB.prepare(`
       SELECT pm.id AS membershipId
       FROM project_members pm
       WHERE pm.id = ? AND pm.project_id = ? AND pm.user_id = ? AND pm.role_on_project = ?
     `).bind(payload.assignment.membershipCycle, payload.assignment.projectId, payload.assignment.userId, roleOnProject).first<{ membershipId: string }>();
-    if (!exact) return { ok: false, reason: "membership_cycle_changed" };
+    if (!exact) return suppressed("membership_cycle_changed");
     const projectPath = `${env.APP_ORIGIN}/projects/${first.projectId}`;
     const title = "Assigned to project";
     const body = `You have been assigned as the ${roleOnProject} for ${first.projectStreet ?? "Project"}.`;
     return {
       ok: true,
+      kind: "legacy",
       row: first,
       payload,
       commentPath: projectPath,
@@ -384,25 +567,26 @@ async function resolveRecipient(env: Env, outbox: OutboxRow): Promise<ResolvedRe
   }
 
   const payload = safePayload(first.payloadJson, outbox);
-  if (!payload) return { ok: false, reason: "payload_invalid" };
+  if (!payload) return suppressed("payload_invalid");
   const role = first.recipientRole as Role;
-  if (first.recipientActive !== 1 || !["admin", "editor", "photographer"].includes(role) || !roleHasCapability(role, "collaborateOnProject")) return { ok: false, reason: "recipient_ineligible" };
-  if (first.recipientId === first.actorId) return { ok: false, reason: "self_mention" };
-  if (first.projectArchivedAt !== null || !first.projectStreet || !first.commentId || first.commentProjectId !== first.projectId || !first.authorId || !first.authorName || first.commentBody === null) return { ok: false, reason: "project_comment_invisible" };
-  if (first.mappingId !== first.sourceKey || first.mappingRecipientId !== first.recipientId || first.mappingCommentId !== first.commentId) return { ok: false, reason: "mention_mapping_removed" };
+  if (first.recipientActive !== 1 || !["admin", "editor", "photographer"].includes(role) || !roleHasCapability(role, "collaborateOnProject")) return suppressed("recipient_ineligible");
+  if (first.recipientId === first.actorId) return suppressed("self_mention");
+  if (first.projectArchivedAt !== null || !first.projectStreet || !first.commentId || first.commentProjectId !== first.projectId || !first.authorId || !first.authorName || first.commentBody === null) return suppressed("project_comment_invisible");
+  if (first.mappingId !== first.sourceKey || first.mappingRecipientId !== first.recipientId || first.mappingCommentId !== first.commentId) return suppressed("mention_mapping_removed");
 
   const memberships = [...new Set(row.results.map((candidate) => candidate.membershipId).filter((id): id is string => Boolean(id)))];
   const currentEligible = role === "admin" || memberships.length > 0;
-  if (!currentEligible) return { ok: false, reason: "membership_removed" };
+  if (!currentEligible) return suppressed("membership_removed");
   if (payload.authorizationAtOccurrence.kind === "admin") {
-    if (role !== "admin") return { ok: false, reason: "admin_authorization_changed" };
+    if (role !== "admin") return suppressed("admin_authorization_changed");
   } else if (!payload.authorizationAtOccurrence.membershipIds.some((id) => memberships.includes(id))) {
-    return { ok: false, reason: "membership_cycle_changed" };
+    return suppressed("membership_cycle_changed");
   }
   const commentPath = `${env.APP_ORIGIN}${staffPathFor({ kind: "project", projectId: first.projectId, collaboration: "open" })}`;
   const excerpt = truncateForEmail(first.commentBody ?? "");
   return {
     ok: true,
+    kind: "legacy",
     row: first,
     payload,
     commentPath,
@@ -513,10 +697,13 @@ async function suppressWholeOccurrence(env: Env, outbox: OutboxRow, token: strin
     `).bind(reason, now, outbox.id, outbox.id, token),
     env.DB.prepare(`
       UPDATE notification_outbox
-      SET status = 'suppressed', lease_token = NULL, lease_expires_at = NULL,
-          completed_at = ?, last_error_code = 'reauthorization_suppressed', last_error = ?, updated_at = ?
+      SET status = CASE WHEN event_type = ? THEN 'completed' ELSE 'suppressed' END,
+          last_error_code = CASE WHEN event_type = ? THEN NULL ELSE 'reauthorization_suppressed' END,
+          last_error = CASE WHEN event_type = ? THEN NULL ELSE ? END,
+          lease_token = NULL, lease_expires_at = NULL,
+          completed_at = ?, updated_at = ?
       WHERE id = ? AND status = 'processing' AND lease_token = ?
-    `).bind(now, reason, now, outbox.id, token),
+    `).bind(NOTIFICATION_OUTBOX_EVENT_TYPES.projectActivityBroad, NOTIFICATION_OUTBOX_EVENT_TYPES.projectActivityBroad, NOTIFICATION_OUTBOX_EVENT_TYPES.projectActivityBroad, reason, now, now, outbox.id, token),
     env.DB.prepare(`
       INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
       SELECT ?, NULL, 'notification.delivery.suppressed', 'notification_outbox', ?, ?, ?
@@ -663,14 +850,16 @@ async function beginChannel(env: Env, outbox: OutboxRow, token: string, channel:
   return (result.meta.changes ?? 0) === 1;
 }
 
-async function deliverInApp(env: Env, outbox: OutboxRow, token: string, _resolved: Extract<Awaited<ReturnType<typeof resolveRecipient>>, { ok: true }>, now: number): Promise<void> {
+async function deliverInApp(env: Env, outbox: OutboxRow, token: string, _resolved: Extract<Awaited<ReturnType<typeof resolveRecipient>>, { ok: true; kind: "legacy" }>, now: number): Promise<void> {
   const began = await beginChannel(env, outbox, token, "in_app", now);
   if (!began) return;
   const secondResolution = await resolveRecipient(env, outbox);
   if (!secondResolution.ok) {
+    if (secondResolution.kind !== "suppress") throw new Error("Legacy recipient resolver returned a permanent failure");
     await suppressWholeOccurrence(env, outbox, token, secondResolution.reason, now);
     return;
   }
+  if (secondResolution.kind !== "legacy") throw new Error("Legacy outbox resolved as a broad activity");
   const current = secondResolution;
   const notificationId = crypto.randomUUID();
   const inserted = env.DB.prepare(`
@@ -704,6 +893,205 @@ async function deliverInApp(env: Env, outbox: OutboxRow, token: string, _resolve
   const results = await env.DB.batch([inserted, converged]);
   if ((results[1]?.meta.changes ?? 0) !== 1) throw new Error("In-app ledger convergence lost ownership");
   await recordProjectDeadlineInAppLatency(env, outbox, now);
+}
+
+type BroadAdmission = {
+  structural: { sql: string; values: unknown[] };
+  authorization: { sql: string; values: unknown[] };
+  failureCode: { sql: string; values: unknown[] };
+};
+
+function broadAdmission(outbox: OutboxRow, resolved: BroadResolvedRecipient, token: string): BroadAdmission {
+  const roles = PROJECT_ASSIGNMENT_ELIGIBLE_ROLES.editor;
+  const activity = resolved.activity;
+  const coalescing = projectActivityCoalescingDeclaration(activity.type);
+  const coalesceSql = coalescing
+    ? "AND o.coalesce_key = ? AND o.coalesce_until = ?"
+    : "AND o.coalesce_key IS NULL AND o.coalesce_until IS NULL";
+  const coalesceValues = coalescing
+    ? [resolved.row.coalesceKey, activity.occurredAt + coalescing.windowSeconds * 1000]
+    : [];
+  const conditions = `
+    o.id = ? AND o.status = 'processing' AND o.lease_token = ?
+    AND o.schema_version = 1 AND o.event_type = ? AND o.source_key = ? AND o.project_id = ? AND o.recipient_id = ?
+    AND o.recipient_membership_cycle_id IS NOT NULL
+    AND json_extract(o.payload_json, '$.schemaVersion') = 1
+    AND json_extract(o.payload_json, '$.event.type') = ?
+    AND json_extract(o.payload_json, '$.event.sourceKey') = o.source_key
+    AND json_extract(o.payload_json, '$.event.recipientId') = o.recipient_id
+    AND json_extract(o.payload_json, '$.authorizationAtOccurrence.kind') = 'project_editor_membership'
+    AND json_extract(o.payload_json, '$.authorizationAtOccurrence.membershipCycle') = o.recipient_membership_cycle_id
+    AND json_extract(o.payload_json, '$.authorizationAtOccurrence.startedAt') IS NOT NULL
+    AND json_extract(o.payload_json, '$.activity.id') = activity.id
+    AND json_extract(o.payload_json, '$.activity.projectId') = activity.project_id
+    AND activity.schema_version = 1 AND activity.event_type = ? AND activity.project_id = ?
+    AND activity.category = ? AND activity.actor_kind = ? AND activity.occurred_at = ?
+    AND activity.source_kind = ? AND activity.source_id = ? AND activity.source_key = ?
+    AND activity.safe_payload_json = ?
+    AND activity.deep_link_kind = ? AND activity.deep_link_path = ?
+    AND ((activity.actor_kind = 'system' AND activity.actor_id IS NULL AND o.actor_id = ?)
+      OR (activity.actor_kind = 'user' AND activity.actor_id = o.actor_id AND o.actor_id <> ?))
+    ${coalesceSql}
+  `;
+  const baseValues = [
+    outbox.id, token, NOTIFICATION_OUTBOX_EVENT_TYPES.projectActivityBroad,
+    activity.id, activity.projectId, outbox.recipient_id, NOTIFICATION_OUTBOX_EVENT_TYPES.projectActivityBroad,
+    activity.type, activity.projectId, PROJECT_ACTIVITY_REGISTRY[activity.type].category, activity.actorKind,
+    activity.occurredAt, activity.source.kind, activity.source.id, activity.source.key,
+    JSON.stringify(activity.safePayload), activity.deepLink.kind, activity.deepLink.path,
+    PROJECT_ACTIVITY_SYSTEM_OUTBOX_ACTOR_ID, PROJECT_ACTIVITY_SYSTEM_OUTBOX_ACTOR_ID,
+    ...coalesceValues,
+  ];
+  const structural = {
+    sql: `EXISTS (
+      SELECT 1
+      FROM notification_outbox o
+      JOIN project_activity_events activity ON activity.id = ?
+      WHERE ${conditions}
+    )`,
+    values: [activity.id, ...baseValues],
+  };
+  const authorization = {
+    sql: `EXISTS (
+      SELECT 1
+      FROM notification_outbox o
+      JOIN project_activity_events activity ON activity.id = ?
+      JOIN project_members member ON member.id = o.recipient_membership_cycle_id
+        AND member.project_id = o.project_id AND member.user_id = o.recipient_id AND member.role_on_project = 'editor'
+      JOIN user recipient ON recipient.id = o.recipient_id
+      WHERE ${conditions}
+        AND json_extract(o.payload_json, '$.authorizationAtOccurrence.membershipCycle') = member.id
+        AND json_extract(o.payload_json, '$.authorizationAtOccurrence.startedAt') = member.created_at
+        AND activity.occurred_at >= member.created_at
+        AND recipient.active = 1 AND recipient.role IN (${roles.map(() => "?").join(",")})
+    )`,
+    values: [activity.id, ...baseValues, ...roles],
+  };
+  const reservedTypes = Object.entries(PROJECT_ACTIVITY_REGISTRY)
+    .filter(([, entry]) => entry.cutover === "reserved")
+    .map(([type]) => type);
+  const failureCode = {
+    // These three predicates partition the structural failures reaching this SQL;
+    // there is deliberately no fallback code for an impossible fourth arm.
+    sql: `CASE
+      WHEN NOT EXISTS (SELECT 1 FROM project_activity_events WHERE id = ?) THEN 'project_activity_missing'
+      WHEN EXISTS (SELECT 1 FROM project_activity_events WHERE id = ? AND event_type IN (${reservedTypes.map(() => "?").join(",") || "NULL"})) THEN 'project_activity_type_reserved'
+      WHEN EXISTS (SELECT 1 FROM project_activity_events WHERE id = ?) THEN 'project_activity_project_mismatch'
+    END`,
+    values: [activity.id, activity.id, ...reservedTypes, activity.id],
+  };
+  return {
+    structural,
+    authorization,
+    failureCode,
+  };
+}
+
+/**
+ * Broad activity admission is deliberately separate from the legacy two-channel delivery path.
+ * The nine statements (including the two adjacent terminal audits) keep in-app admission,
+ * authorization convergence, suppression, and completion in one lease-fenced D1 batch; a returned
+ * outcome is terminal and never a Queue retry.
+ */
+export async function deliverBroadInApp(env: Env, outbox: OutboxRow, token: string, resolved: BroadResolvedRecipient, now: number): Promise<"delivered" | "suppressed" | "failed"> {
+  const admission = broadAdmission(outbox, resolved, token);
+  const notificationId = crypto.randomUUID();
+  const results = await env.DB.batch([
+    env.DB.prepare(`
+      UPDATE notification_delivery_ledger
+      SET status = 'processing', attempts = attempts + 1, last_attempt_at = ?, updated_at = ?, last_error_code = NULL, last_error = NULL
+      WHERE outbox_id = ? AND channel = 'in_app' AND status = 'pending' AND ${admission.authorization.sql}
+      RETURNING id
+    `).bind(now, now, outbox.id, ...admission.authorization.values),
+    env.DB.prepare(`
+      INSERT INTO notifications (id, user_id, project_id, type, title, body, source_key, created_at)
+      SELECT ?, ?, ?, ?, ?, ?, ?, ?
+      WHERE EXISTS (
+        SELECT 1 FROM notification_delivery_ledger
+        WHERE outbox_id = ? AND channel = 'in_app' AND status = 'processing'
+      ) AND ${admission.authorization.sql}
+      ON CONFLICT (type, source_key, user_id) WHERE source_key IS NOT NULL DO NOTHING
+    `).bind(notificationId, resolved.row.recipientId, resolved.row.projectId, resolved.delivery.notificationType, resolved.delivery.title, resolved.delivery.body, resolved.row.sourceKey, now, outbox.id, ...admission.authorization.values),
+    env.DB.prepare(`
+      UPDATE notification_delivery_ledger
+      SET status = 'sent', notification_id = (SELECT id FROM notifications WHERE type = ? AND source_key = ? AND user_id = ? LIMIT 1), delivered_at = ?, updated_at = ?, last_error_code = NULL, last_error = NULL
+      WHERE outbox_id = ? AND channel = 'in_app' AND status = 'processing'
+        AND ${admission.authorization.sql}
+        AND EXISTS (SELECT 1 FROM notifications WHERE type = ? AND source_key = ? AND user_id = ?)
+    `).bind(resolved.delivery.notificationType, resolved.row.sourceKey, resolved.row.recipientId, now, now, outbox.id, ...admission.authorization.values, resolved.delivery.notificationType, resolved.row.sourceKey, resolved.row.recipientId),
+    env.DB.prepare(`
+      INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
+      SELECT ?, NULL, 'notification.delivery.delivered', 'notification_outbox', ?, ?, ?
+      WHERE changes() = 1
+    `).bind(crypto.randomUUID(), outbox.id, JSON.stringify({ eventType: outbox.event_type, outboxId: outbox.id, recipientId: outbox.recipient_id }), now),
+    env.DB.prepare(`
+      UPDATE notification_delivery_ledger
+      SET status = 'suppressed', last_error_code = 'reauthorization_suppressed', last_error = 'Current project activity authorization no longer matches.', updated_at = ?
+      WHERE outbox_id = ? AND channel = 'in_app' AND status IN ('pending', 'processing')
+        AND EXISTS (SELECT 1 FROM notification_outbox o WHERE o.id = ? AND o.status = 'processing' AND o.lease_token = ?)
+        AND ${admission.structural.sql}
+        AND NOT ${admission.authorization.sql}
+      RETURNING id
+    `).bind(now, outbox.id, outbox.id, token, ...admission.structural.values, ...admission.authorization.values),
+    env.DB.prepare(`
+      INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
+      SELECT ?, NULL, 'notification.delivery.suppressed', 'notification_outbox', ?, ?, ?
+      WHERE changes() = 1
+    `).bind(crypto.randomUUID(), outbox.id, JSON.stringify({ eventType: outbox.event_type, outboxId: outbox.id, recipientId: outbox.recipient_id, reasonCode: "reauthorization_suppressed" }), now),
+    env.DB.prepare(`
+      UPDATE notification_delivery_ledger
+      SET status = 'failed', last_error_code = ${admission.failureCode.sql}, last_error = 'Project activity could not be processed.', updated_at = ?
+      WHERE outbox_id = ? AND channel = 'in_app' AND status IN ('pending', 'processing')
+        AND EXISTS (SELECT 1 FROM notification_outbox o WHERE o.id = ? AND o.status = 'processing' AND o.lease_token = ?)
+        AND NOT ${admission.structural.sql}
+      RETURNING id
+    `).bind(...admission.failureCode.values, now, outbox.id, outbox.id, token, ...admission.structural.values),
+    env.DB.prepare(`
+      INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
+      SELECT ?, NULL, 'notification.delivery.failed', 'notification_outbox', ?,
+        json_object('eventType', ?, 'outboxId', ?, 'recipientId', ?, 'code', (SELECT last_error_code FROM notification_delivery_ledger WHERE outbox_id = ? AND channel = 'in_app')),
+        ?
+      WHERE changes() = 1
+    `).bind(crypto.randomUUID(), outbox.id, outbox.event_type, outbox.id, outbox.recipient_id, outbox.id, now),
+    env.DB.prepare(`
+      UPDATE notification_outbox
+      SET status = CASE WHEN EXISTS (SELECT 1 FROM notification_delivery_ledger WHERE outbox_id = ? AND status = 'failed') THEN 'failed' ELSE 'completed' END,
+        last_error_code = CASE WHEN EXISTS (SELECT 1 FROM notification_delivery_ledger WHERE outbox_id = ? AND status = 'failed') THEN (SELECT last_error_code FROM notification_delivery_ledger WHERE outbox_id = ? AND channel = 'in_app') ELSE NULL END,
+        last_error = CASE WHEN EXISTS (SELECT 1 FROM notification_delivery_ledger WHERE outbox_id = ? AND status = 'failed') THEN last_error ELSE NULL END,
+        lease_token = NULL, lease_expires_at = NULL, completed_at = ?, updated_at = ?
+      WHERE id = ? AND status = 'processing' AND lease_token = ?
+      AND NOT EXISTS (SELECT 1 FROM notification_delivery_ledger WHERE outbox_id = ? AND status IN ('pending', 'processing'))
+      RETURNING id, status
+    `).bind(outbox.id, outbox.id, outbox.id, outbox.id, now, now, outbox.id, token, outbox.id),
+  ]);
+  const terminalOutcomes = [
+    [(results[2]?.meta.changes ?? 0) === 1, "delivered"],
+    [(results[4]?.meta.changes ?? 0) === 1, "suppressed"],
+    [(results[6]?.meta.changes ?? 0) === 1, "failed"],
+  ].filter(([matched]) => matched).map(([, outcome]) => outcome);
+  if (terminalOutcomes.length !== 1 || (results[8]?.meta.changes ?? 0) !== 1) throw new Error("Broad in-app delivery did not atomically terminalize exactly one outcome");
+  return terminalOutcomes[0] as "delivered" | "suppressed" | "failed";
+}
+
+async function failWholeOccurrence(env: Env, outbox: OutboxRow, token: string, code: ProjectActivityPermanentCode, now: number): Promise<void> {
+  const results = await env.DB.batch([
+    env.DB.prepare(`
+      UPDATE notification_delivery_ledger
+      SET status = 'failed', last_error_code = ?, last_error = 'Project activity could not be processed.', updated_at = ?
+      WHERE outbox_id = ? AND channel = 'in_app' AND status IN ('pending', 'processing')
+        AND EXISTS (SELECT 1 FROM notification_outbox o WHERE o.id = ? AND o.status = 'processing' AND o.lease_token = ? AND o.event_type = ?)
+    `).bind(code, now, outbox.id, outbox.id, token, NOTIFICATION_OUTBOX_EVENT_TYPES.projectActivityBroad),
+    env.DB.prepare(`
+      UPDATE notification_outbox
+      SET status = 'failed', lease_token = NULL, lease_expires_at = NULL, completed_at = ?, last_error_code = ?, last_error = 'Project activity could not be processed.', updated_at = ?
+      WHERE id = ? AND status = 'processing' AND lease_token = ? AND event_type = ?
+    `).bind(now, code, now, outbox.id, token, NOTIFICATION_OUTBOX_EVENT_TYPES.projectActivityBroad),
+    env.DB.prepare(`
+      INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
+      SELECT ?, NULL, 'notification.delivery.failed', 'notification_outbox', ?, ?, ? WHERE changes() = 1
+    `).bind(crypto.randomUUID(), outbox.id, JSON.stringify({ eventType: outbox.event_type, outboxId: outbox.id, recipientId: outbox.recipient_id, code }), now),
+  ]);
+  if ((results[1]?.meta.changes ?? 0) !== 1) return;
 }
 
 async function mirrorEmailOutcome(env: Env, outboxId: string, update: { emailSentAt: number; emailMessageId: string } | { emailError: string }): Promise<void> {
@@ -786,9 +1174,11 @@ async function quotaReleaseAndRetry(env: Env, outbox: OutboxRow, token: string, 
 async function finishEmail(env: Env, outbox: OutboxRow, token: string, now: number, messageAttempts: number, emailReachedProcessing: { value: boolean }): Promise<"done" | "retry"> {
   const reauthorized = await resolveRecipient(env, outbox);
   if (!reauthorized.ok) {
+    if (reauthorized.kind !== "suppress") throw new Error("Legacy email resolver returned a permanent failure");
     await suppressEmailChannel(env, outbox, token, reauthorized.reason, now);
     return "done";
   }
+  if (reauthorized.kind !== "legacy") throw new Error("Legacy email resolver returned a broad activity");
   if (!env.EMAIL || !env.NOTIFICATIONS_FROM_ADDRESS) {
     await failEmailBeforeAdmission(env, outbox, token, "email_configuration_missing", "Email delivery is not configured.", now);
     await completeIfTerminal(env, outbox, token, now);
@@ -876,7 +1266,18 @@ export async function processNotificationMessage(env: Env, message: Message<Noti
   try {
     const resolved = await resolveRecipient(env, row);
     if (!resolved.ok) {
-      await suppressWholeOccurrence(env, row, token, resolved.reason, now);
+      if (resolved.kind === "suppress") await suppressWholeOccurrence(env, row, token, resolved.reason, now);
+      else await failWholeOccurrence(env, row, token, resolved.code, now);
+      message.ack();
+      return "acked";
+    }
+    if (resolved.kind === "broad") {
+      // Broad delivery has no email phase. This dispatch remains defensive: the atomic broad
+      // batch normally terminalizes the outbox. This read/ack is defensive only; it never writes
+      // a second terminal transition.
+      await deliverBroadInApp(env, row, token, resolved, now);
+      const broadCurrent = await readOutbox(env, row.id);
+      if (!broadCurrent || !["completed", "failed"].includes(broadCurrent.status)) throw new Error("Broad delivery returned without a terminal outbox state");
       message.ack();
       return "acked";
     }

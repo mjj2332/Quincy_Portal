@@ -1,8 +1,9 @@
 import { WorkflowEntrypoint } from "cloudflare:workers";
 import type { WorkflowEvent, WorkflowStep } from "cloudflare:workers";
-import { COLLECTION_RECEIVED_COUNT_SQL, collectionReceivedCountBindings } from "@quincy/db";
+import { buildProjectActivityStatements, COLLECTION_RECEIVED_COUNT_SQL, collectionReceivedCountBindings } from "@quincy/db";
 import { assets, collections, projects } from "@quincy/db/schema";
 import { and, eq, isNull } from "drizzle-orm";
+import { projectActivityDeepLink, publishNotificationOutbox, type ProjectActivityIntent } from "@quincy/shared";
 
 import { autoHdrManualUploadFolderChain, autoHdrManualUploadPath, deriveAutoHdrFolderName, rawManualUploadPath } from "../autohdr/paths";
 import { pathFromRawFolderLink } from "../dropbox/sync";
@@ -102,13 +103,24 @@ export class ManualEditedPublish extends WorkflowEntrypoint<Env, ManualEditedPub
 
           // Recheck the project in the promotion statement: archive/delete can happen after
           // Dropbox accepts the idempotent overwrite but before this final visibility change.
-          await this.env.DB.batch([
+          const publishAuditId = crypto.randomUUID();
+          const publishActivityId = crypto.randomUUID();
+          const publishActivity: ProjectActivityIntent = {
+            schemaVersion: 1,
+            activity: { id: publishActivityId, type: "project.workflow.manual_edited_ready", projectId: input.projectId, actorId: null, actorKind: "system", occurredAt: now.getTime(), source: { kind: "project_manual_edited", id: input.assetId, key: `project-manual-edited:${input.jobId}:${input.assetId}:ready` }, safePayload: { collectionKind: "edited", count: 1 }, deepLink: projectActivityDeepLink("project.workflow.manual_edited_ready", input.projectId) },
+            broadDelivery: { registryKey: "project.workflow.manual_edited_ready", sourceActivityId: publishActivityId, coalesce: null },
+          };
+          const publishActivityBundle = buildProjectActivityStatements({ db: this.env.DB, intent: publishActivity, winnerAuditId: publishAuditId, createdAt: now.getTime() });
+          const publishResults = await this.env.DB.batch([
             this.env.DB.prepare("UPDATE assets SET publish_status = 'ready', source_path = ?, updated_at = ? WHERE id = ? AND publish_status = 'pending' AND EXISTS (SELECT 1 FROM collections INNER JOIN projects ON collections.project_id = projects.id WHERE collections.id = assets.collection_id AND projects.id = ? AND projects.archived_at IS NULL)").bind(destination, now.getTime(), input.assetId, input.projectId),
             // `changes()` is connection-local, and D1 batches execute on one connection. The
             // audit row therefore exists only for the guarded pending -> ready promotion.
-            this.env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, NULL, 'asset.manual_publish.ready', 'asset', ?, ?, ? WHERE changes() = 1").bind(crypto.randomUUID(), input.assetId, JSON.stringify({ actor: "system", projectId: input.projectId, jobId: input.jobId, destination }), now.getTime()),
+            this.env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, NULL, 'asset.manual_publish.ready', 'asset', ?, ?, ? WHERE changes() = 1 RETURNING id").bind(publishAuditId, input.assetId, JSON.stringify({ actor: "system", projectId: input.projectId, jobId: input.jobId, destination }), now.getTime()),
             this.env.DB.prepare(COLLECTION_RECEIVED_COUNT_SQL).bind(...collectionReceivedCountBindings(asset.collectionId, now.getTime())),
+            ...publishActivityBundle.statements,
           ]);
+          const publicationIds = ((publishResults[3 + publishActivityBundle.broadOutboxIndex]?.results ?? []) as Array<{ id?: string }>).flatMap((row) => row.id ? [row.id] : []);
+          if (publicationIds.length) await publishNotificationOutbox(this.env.NOTIFICATION_QUEUE, this.env.DB, publicationIds);
           const promoted = await dbFor(this.env).select({ publishStatus: assets.publishStatus })
             .from(assets)
             .innerJoin(collections, eq(assets.collectionId, collections.id))
