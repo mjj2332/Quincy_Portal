@@ -71,6 +71,7 @@ function popoverId(owner: string, kind: PopoverKind) { return `subtask-popover-$
 function ScheduleControl({ owner, label, value, open, setOpen, onSave, onUseLatest, onUseLatestItem, busy, compact = false, error }: { owner: string; label: string; value: ChecklistScheduleDto; open: boolean; setOpen: (open: boolean) => void; onSave: (value: SaveChecklistScheduleRequest) => void; onUseLatest?: (value: ChecklistScheduleDto) => void; onUseLatestItem?: (value: Subtask) => void; busy: boolean; compact?: boolean; error?: ScheduleError }) {
   const [draft, setDraft] = useState(() => scheduleDraft(value));
   const retainedDraft = useRef<ScheduleDraft | null>(null);
+  const draftBaseVersion = useRef<number | null>(null);
   const close = useCallback(() => setOpen(false), [setOpen]);
   const floating = useAnchoredPopover({ open, onClose: close, placement: "bottom-start" });
   // A refetch can complete after the editor opened. While it is open, the
@@ -79,8 +80,13 @@ function ScheduleControl({ owner, label, value, open, setOpen, onSave, onUseLate
   // conflict is shown after the popover closes and the user must be able to
   // reopen it and reapply the retained draft.
   useEffect(() => {
-    if (open || busy) return;
+    if (open) {
+      if (draftBaseVersion.current === null) draftBaseVersion.current = value.version;
+      return;
+    }
+    if (busy) return;
     if (error) { if (retainedDraft.current) setDraft(retainedDraft.current); return; }
+    draftBaseVersion.current = null;
     retainedDraft.current = null;
     setDraft(scheduleDraft(value));
   }, [open, value, busy, error]);
@@ -97,7 +103,7 @@ function ScheduleControl({ owner, label, value, open, setOpen, onSave, onUseLate
       {draft.state !== "unscheduled" && <><label>Endpoint kind <select value={draft.kind} onChange={(event) => setDraft((current) => ({ ...current, kind: event.target.value as "date" | "timed" }))}><option value="date">Date</option><option value="timed">Timed · Australia/Sydney</option></select></label>{draft.state === "range" ? <>{endpointFields("start", draft.start)}{endpointFields("end", draft.end)}</> : endpointFields("end", draft.end)}</>}
       {error && !error.choices && !error.current && <div className="subtask-schedule__error" role="alert">The schedule could not be saved. Review the highlighted fields.</div>}
       {error?.currentSubtask ? <div className="subtask-schedule__conflict" role="status"><strong>Latest checklist item · schedule v{error.currentSubtask.schedule.version}</strong><dl><div><dt>Title</dt><dd>{error.currentSubtask.title}</dd></div><div><dt>Done</dt><dd>{error.currentSubtask.done ? "Complete" : "Open"}</dd></div><div><dt>Assignee</dt><dd>{error.currentSubtask.assignee?.name ?? "Unassigned"}</dd></div><div><dt>Schedule</dt><dd>{formatSchedule(error.currentSubtask.schedule)}</dd></div></dl><button type="button" className="button button--secondary" disabled={busy} onClick={() => { onUseLatestItem?.(error.currentSubtask!); close(); }}>Use latest item (discard draft)</button><span>Save reapplies your retained schedule draft; Cancel discards it.</span></div> : error?.current && <div className="subtask-schedule__conflict" role="status"><strong>Latest schedule · v{error.current.version}</strong><span>{formatSchedule(error.current)}</span><button type="button" className="button button--secondary" disabled={busy} onClick={() => { onUseLatest?.(error.current!); close(); }}>Use latest schedule (discard draft)</button><span>Save reapplies your retained schedule draft; Cancel discards it.</span></div>}
-      <div className="subtask-popover__actions"><button type="button" className="button" disabled={busy} onClick={() => { retainedDraft.current = draft; onSave({ expectedVersion: error?.current?.version ?? value.version, schedule: scheduleInput(draft) }); close(); }}>Save</button><button type="button" className="button button--secondary" disabled={busy} onClick={() => { retainedDraft.current = null; setDraft(scheduleDraft(value)); close(); }}>Cancel</button></div>
+      <div className="subtask-popover__actions"><button type="button" className="button" disabled={busy} onClick={() => { retainedDraft.current = draft; onSave({ expectedVersion: error?.current?.version ?? draftBaseVersion.current ?? value.version, schedule: scheduleInput(draft) }); close(); }}>Save</button><button type="button" className="button button--secondary" disabled={busy} onClick={() => { draftBaseVersion.current = null; retainedDraft.current = null; setDraft(scheduleDraft(value)); close(); }}>Cancel</button></div>
     </div></AnchoredPopover>}
   </>;
 }

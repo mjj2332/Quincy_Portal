@@ -133,6 +133,19 @@ describe("saveProjectSubtask command boundary", () => {
     const missingSubtask = await saveProjectSubtask(commandInput(commandProjectId, { kind: "update", subtaskId: crypto.randomUUID(), scheduleRequest: { expectedVersion: 0, schedule: { state: "unscheduled" } } }));
     expect(missingSubtask).toEqual({ outcome: "not_found", target: "subtask" });
 
+    const deleted = await createDueItem();
+    const beforeDeletedAudit = (await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE target_id = ?").bind(deleted.item.id).first<{ count: number }>())!.count;
+    const beforeDeletedActivity = (await database.DB.prepare("SELECT count(*) AS count FROM project_activity_events WHERE project_id = ?").bind(commandProjectId).first<{ count: number }>())!.count;
+    const beforeDeletedOutbox = (await database.DB.prepare("SELECT count(*) AS count FROM notification_outbox WHERE project_id = ?").bind(commandProjectId).first<{ count: number }>())!.count;
+    const deletionCalls = { count: 0 };
+    const deletionDb = faultDb(async (db) => { await db.prepare("DELETE FROM project_subtasks WHERE id = ?").bind(deleted.item.id).run(); }, deletionCalls);
+    const deletedRace = await saveProjectSubtask(commandInput(commandProjectId, { kind: "update", subtaskId: deleted.item.id, itemPatch: { title: "Deleted during save" } }, { env: { ...baseEnv, DB: deletionDb } }));
+    expect(deletedRace).toEqual({ outcome: "not_found", target: "subtask" });
+    expect(deletionCalls.count).toBe(1);
+    expect((await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE target_id = ?").bind(deleted.item.id).first<{ count: number }>())!.count).toBe(beforeDeletedAudit);
+    expect((await database.DB.prepare("SELECT count(*) AS count FROM project_activity_events WHERE project_id = ?").bind(commandProjectId).first<{ count: number }>())!.count).toBe(beforeDeletedActivity);
+    expect((await database.DB.prepare("SELECT count(*) AS count FROM notification_outbox WHERE project_id = ?").bind(commandProjectId).first<{ count: number }>())!.count).toBe(beforeDeletedOutbox);
+
     const scheduled = await createDueItem();
     const scheduleCalls = { count: 0 };
     const scheduleDb = faultDb(async (db) => { await db.prepare("UPDATE project_subtasks SET due_date = '2027-01-02' WHERE id = ?").bind(scheduled.item.id).run(); }, scheduleCalls);

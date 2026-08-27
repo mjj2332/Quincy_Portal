@@ -104,6 +104,32 @@ describe("SubtaskChecklist", () => {
     runtime.dispose(); queryClient.clear();
   });
 
+  it("submits the schedule version captured at editor open after a late versioned refresh", async () => {
+    const versionOne = { ...task, schedule: { state: "due_only" as const, version: 1, zone: "Australia/Sydney" as const, start: null, end: { kind: "timed" as const, localCivil: `${year}-06-01T09:00`, instant: "2026-06-01T23:00:00.000Z", utcOffsetMinutes: 600, fold: 0 as const, resolution: "stored" as const }, due: `${year}-06-01T09:00` } };
+    const versionTwo = { ...versionOne, title: "Late version 2", dueDate: `${year}-06-02T09:00`, schedule: { ...versionOne.schedule, version: 2, end: { ...versionOne.schedule.end, localCivil: `${year}-06-02T09:00`, instant: "2026-06-02T23:00:00.000Z" }, due: `${year}-06-02T09:00` } };
+    apiGetMock.mockImplementation((path) => path.includes("mentionable-users") ? Promise.resolve({ users: [{ id: "user-2", name: "Nora Jones", role: "editor" }] }) : Promise.resolve({ subtasks: [versionOne, second] }));
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const runtime = new ProjectQueryRuntime(queryClient, "subtask-version-refresh-test");
+    queryClient.setQueryData(projectDataKeys.subtasks(projectId), [versionOne, second]);
+    const host = mount();
+    await act(async () => { root!.render(<ProjectQueryRuntimeProvider runtime={runtime}><QueryClientProvider client={queryClient}><SubtaskChecklist projectId={projectId} /></QueryClientProvider></ProjectQueryRuntimeProvider>); await Promise.resolve(); await Promise.resolve(); });
+    await click(item(host, "Call client").querySelector<HTMLButtonElement>('[aria-label="Schedule for Call client"]')!);
+    const editor = portal("subtask-popover-task-1-schedule");
+    await typeInto(editor.querySelector<HTMLInputElement>('input[type="time"]')!, "10:00");
+    await act(async () => { queryClient.setQueryData(projectDataKeys.subtasks(projectId), [versionTwo, second]); await new Promise((resolve) => window.setTimeout(resolve, 0)); });
+    await flush();
+    expect(item(host, "Late version 2")).not.toBeNull();
+    apiPatchMock.mockRejectedValueOnce(new ApiError("Schedule changed", 409, { code: "subtask_schedule_conflict", current: versionTwo.schedule }));
+    await click(portal("subtask-popover-task-1-schedule").querySelector<HTMLButtonElement>(".button")!);
+    expect(apiPatchMock).toHaveBeenCalledWith(`/api/projects/${projectId}/subtasks/task-1`, { schedule: { expectedVersion: 1, schedule: { state: "due_only", end: { kind: "timed", localCivil: `${year}-06-01T10:00` } } } });
+    await flush();
+    await click(item(host, "Late version 2").querySelector<HTMLButtonElement>('[aria-label="Schedule for Late version 2"]')!);
+    const conflict = portal("subtask-popover-task-1-schedule");
+    expect(conflict.textContent).toContain("Latest schedule · v2");
+    expect(conflict.querySelector<HTMLInputElement>('input[type="time"]')?.value).toBe("10:00");
+    runtime.dispose(); queryClient.clear();
+  });
+
   it("uses one canonical schedule POST from the compact composer and preserves a failed draft", async () => {
     const host = mount(); await render(); await click(document.getElementById(`subtask-add-${projectId}`)!); const input = host.querySelector<HTMLInputElement>(`#subtask-composer-${projectId}`)!; await click(host.querySelector<HTMLButtonElement>('[aria-label="Schedule for new subtask"]')!); const editor = portal("subtask-popover-composer-schedule"); const state = editor.querySelector<HTMLSelectElement>("select")!; state.value = "due_only"; state.dispatchEvent(new Event("change", { bubbles: true })); const date = editor.querySelector<HTMLInputElement>('input[type="date"]')!; await typeInto(date, `${year}-06-02`); await click(editor.querySelector<HTMLButtonElement>(".button")!); await typeInto(input, "Schedule staging"); await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Add")!); expect(apiPostMock).toHaveBeenCalledWith(`/api/projects/${projectId}/subtasks`, { title: "Schedule staging", schedule: { state: "due_only", end: { kind: "date", localCivil: `${year}-06-02` } } });
     await click(document.getElementById(`subtask-add-${projectId}`)!); const retry = host.querySelector<HTMLInputElement>(`#subtask-composer-${projectId}`)!; await typeInto(retry, "Retry"); apiPostMock.mockRejectedValueOnce(new Error("No network")); await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Add")!); expect(retry.value).toBe("Retry"); const escape = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }); await act(async () => retry.dispatchEvent(escape)); expect(escape.defaultPrevented).toBe(true); expect(document.getElementById(`subtask-add-${projectId}`)).not.toBeNull();

@@ -5,7 +5,59 @@ import {
   serializeChecklistSchedule,
   type ChecklistScheduleStorage,
 } from "../src/checklist-schedule";
-import { resolveSydneyCivilMinute, resolveSydneyCivilMinuteExhaustive } from "../src/sydney-civil-time";
+import { resolveSydneyCivilMinute } from "../src/sydney-civil-time";
+
+const INDEPENDENT_SYDNEY_FORMATTER = new Intl.DateTimeFormat("en-AU", {
+  timeZone: "Australia/Sydney",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23",
+});
+
+type IndependentCandidate = { localCivil: string; instant: string; epochMs: number; utcOffsetMinutes: number; fold: 0 | 1 };
+type IndependentResult =
+  | { ok: true; value: IndependentCandidate }
+  | { ok: false; code: "invalid_local_time" | "nonexistent_local_time" | "resolver_defect"; message: string }
+  | { ok: false; code: "repeated_local_time"; message: string; choices: Array<{ disambiguation: "earlier" | "later"; utcOffsetMinutes: number }> };
+
+function independentLeapYear(year: number) { return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0); }
+function independentEpoch(year: number, month: number, day: number, hour: number, minute: number) {
+  const value = new Date(0);
+  value.setUTCFullYear(year, month - 1, day);
+  value.setUTCHours(hour, minute, 0, 0);
+  return value.getTime();
+}
+function independentParse(localCivil: string) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(localCivil);
+  if (!match) return null;
+  const year = Number(match[1]); const month = Number(match[2]); const day = Number(match[3]); const hour = Number(match[4]); const minute = Number(match[5]);
+  const daysInMonth = [31, independentLeapYear(year) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
+  if (!daysInMonth || day < 1 || day > daysInMonth || hour > 23 || minute > 59) return null;
+  return independentEpoch(year, month, day, hour, minute);
+}
+function independentCivil(date: Date) {
+  const parts = Object.fromEntries(INDEPENDENT_SYDNEY_FORMATTER.formatToParts(date).map(({ type, value }) => [type, value]));
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
+}
+function independentResolve(localCivil: string, disambiguation?: "earlier" | "later"): IndependentResult {
+  const localEpoch = independentParse(localCivil);
+  if (localEpoch === null) return { ok: false, code: "invalid_local_time", message: "Enter a valid Sydney date and time to the minute." };
+  const candidates: IndependentCandidate[] = [];
+  for (let offset = -840; offset <= 840; offset += 1) {
+    const epochMs = localEpoch - offset * 60_000;
+    if (independentCivil(new Date(epochMs)) === localCivil) candidates.push({ localCivil, instant: new Date(epochMs).toISOString(), epochMs, utcOffsetMinutes: offset, fold: 0 });
+  }
+  const unique = [...new Map(candidates.map((value) => [value.epochMs, value])).values()].sort((a, b) => a.epochMs - b.epochMs);
+  if (unique.length === 0) return { ok: false, code: "nonexistent_local_time", message: "That Sydney time does not exist because the clocks move forward." };
+  if (unique.length > 2) return { ok: false, code: "resolver_defect", message: "Sydney time resolution returned an unexpected number of matches." };
+  if (unique.length === 2 && !disambiguation) return { ok: false, code: "repeated_local_time", message: "That Sydney time occurs twice. Choose Earlier or Later.", choices: [{ disambiguation: "earlier", utcOffsetMinutes: unique[0]!.utcOffsetMinutes }, { disambiguation: "later", utcOffsetMinutes: unique[1]!.utcOffsetMinutes }] };
+  const selected = unique.length === 1 ? unique[0]! : unique[disambiguation === "later" ? 1 : 0]!;
+  selected.fold = unique.length === 2 && disambiguation === "later" ? 1 : 0;
+  return { ok: true, value: selected };
+}
 
 function storage(overrides: Partial<ChecklistScheduleStorage> = {}): ChecklistScheduleStorage {
   return {
@@ -26,12 +78,13 @@ function storage(overrides: Partial<ChecklistScheduleStorage> = {}): ChecklistSc
 }
 
 describe("TB4D checklist schedule resolver and discriminator", () => {
-  it("keeps the O(1) resolver equal to the exhaustive reference corpus", () => {
+  it("keeps the O(1) resolver bit-identical to an independent Intl scan", () => {
     const corpus = [
       "2026-08-27T09:15",
       "1894-01-01T12:00", // Sydney LMT (+10:04:52) boundary
       // Sydney's 1895 transition rounds LMT to +604 minutes before moving
       // back to +600; these minutes exercise both sides of that short fold.
+      ...["1894-12-31", "1895-01-01", "1895-01-31", "1895-02-01"].flatMap((date) => ["00:00", "00:01", "12:00", "23:58", "23:59"].map((time) => `${date}T${time}`)),
       ...["23:55", "23:56", "23:57", "23:58", "23:59"].map((time) => `1895-01-31T${time}`),
       "0999-01-01T12:00", // Intl's unpadded-year compatibility boundary
       "9999-12-31T23:59", // far-future transition-free date
@@ -44,7 +97,7 @@ describe("TB4D checklist schedule resolver and discriminator", () => {
     ];
     for (const civil of corpus) {
       for (const disambiguation of [undefined, "earlier", "later"] as const) {
-        expect(resolveSydneyCivilMinute(civil, disambiguation), `${civil}/${disambiguation}`).toEqual(resolveSydneyCivilMinuteExhaustive(civil, disambiguation));
+        expect(resolveSydneyCivilMinute(civil, disambiguation), `${civil}/${disambiguation}`).toEqual(independentResolve(civil, disambiguation));
       }
     }
   }, 20_000);

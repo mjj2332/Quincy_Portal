@@ -83,7 +83,7 @@ function candidate(localCivil: string, localEpoch: number, offsetMinutes: number
   return { localCivil, epochMs, instant: instant.toISOString(), utcOffsetMinutes: offsetMinutes, fold: 0 };
 }
 
-function finishCandidates(localCivil: string, parsed: ParsedCivil, candidates: SydneyCivilResolution[], disambiguation?: SydneyCivilDisambiguation): SydneyCivilResolutionResult {
+function finishCandidates(candidates: SydneyCivilResolution[], disambiguation?: SydneyCivilDisambiguation): SydneyCivilResolutionResult {
   const unique = [...new Map(candidates.map((value) => [value.epochMs, value])).values()].sort((a, b) => a.epochMs - b.epochMs);
   if (unique.length === 0) return { ok: false, code: "nonexistent_local_time", message: "That Sydney time does not exist because the clocks move forward." };
   if (unique.length > 2) return { ok: false, code: "resolver_defect", message: "Sydney time resolution returned an unexpected number of matches." };
@@ -100,9 +100,6 @@ function finishCandidates(localCivil: string, parsed: ParsedCivil, candidates: S
   }
   const selected = unique.length === 1 ? unique[0]! : unique[disambiguation === "later" ? 1 : 0]!;
   selected.fold = unique.length === 2 && disambiguation === "later" ? 1 : 0;
-  if (roundTripCivil(new Date(selected.epochMs)) !== localCivil || selected.utcOffsetMinutes !== Math.round((parsed.localEpoch - selected.epochMs) / 60_000)) {
-    return { ok: false, code: "resolver_defect", message: "Sydney time resolution failed its round-trip assertion." };
-  }
   return { ok: true, value: selected };
 }
 
@@ -115,7 +112,7 @@ export function resolveSydneyCivilMinuteExhaustive(localCivil: string, disambigu
     const value = candidate(localCivil, parsed.localEpoch, offset);
     if (value) candidates.push(value);
   }
-  return finishCandidates(localCivil, parsed, candidates, disambiguation);
+  return finishCandidates(candidates, disambiguation);
 }
 
 /**
@@ -139,7 +136,7 @@ export function resolveSydneyCivilMinute(localCivil: string, disambiguation?: Sy
     offsetAt(provisionalInstant + probeRadius),
   ])];
   const candidates = offsets.map((offset) => candidate(localCivil, parsed.localEpoch, offset)).filter((value): value is SydneyCivilResolution => value !== null);
-  return finishCandidates(localCivil, parsed, candidates, disambiguation);
+  return finishCandidates(candidates, disambiguation);
 }
 
 export function isSydneyCalendarDate(value: string): boolean {

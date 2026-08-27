@@ -560,15 +560,19 @@ Earlier/Later offset choices. Resolution happens before SQL assembly. Stored `*_
 must round-trip back to the supplied Sydney civil minute. Date-only validation uses calendar
 components directly and never calls `Date.parse()`.
 
-Prove the optimization by retaining the current exhaustive scan as a test-only reference and running
-a differential corpus across every minute around both Sydney DST boundaries, ordinary winter/summer
-dates, pre-1895 Sydney LMT (+10:04:52), years below 1000, far-future dates, malformed inputs,
-explicit Earlier/Later choices, and the reference resolver's full `-840..840` candidate-offset range.
-New and reference results must be bit-identical, including success instants/offsets/folds, choice
-order, every error code, and copy. The legacy read discriminator maps the fourth
+Prove the optimization with a genuinely independent test-only oracle: its own `Intl.DateTimeFormat`
+parts-to-epoch math and full `-840..840` candidate-offset scan, sharing no production resolver helper.
+Run that differential corpus across every minute around both Sydney DST boundaries, ordinary
+winter/summer dates, pre-1895 Sydney LMT (+10:04:52), the 1895 short historical-offset transition,
+years below 1000, far-future dates, malformed inputs, and explicit Earlier/Later choices. New and
+oracle results must be bit-identical, including success instants/offsets/folds, choice order, every
+error code, and copy. The legacy read discriminator maps the fourth
 `subtask_schedule_resolver_defect` outcome to `state:'invalid', reason:'resolution_mismatch'`;
 `invalid` is not a recoverable legacy state. The production resolver may perform no more than three
-candidate round trips per valid civil input.
+candidate round trips per valid civil input. With the historical-offset probes deduplicated, the
+implementation performs at most six `formatToParts()` calls per valid input (three bounded offset
+projections plus up to three candidate round trips), remains O(1), and stays within the measured
+CPU budget (the serializer benchmark records its measured median alongside the <10 ms p95 ceiling).
 
 The extraction is a shared-helper refactor only. It creates no dependency from checklist rows to
 project Deadline rows, occurrences, reminders, routes, or UI.
@@ -594,8 +598,11 @@ saveProjectSubtask({
 The existing POST and PATCH handlers validate transport shape, then delegate all persistence to this
 command. Its create branch owns the INSERT now at
 `portal/workers/app/src/routes/project-subtasks.ts:80-104`; its update branch owns the guarded UPDATE.
-Both call exactly the same shared schedule normalizer and column-mapping function before assembling
-SQL, so validation, civil resolution, NULL population, and version initialization cannot diverge.
+The canonical `schedule` field on both branches calls exactly the same shared schedule normalizer and
+column-mapping function before assembling SQL, so validation, civil resolution, NULL population, and
+version initialization cannot diverge. The POST and PATCH legacy `dueDate` adapters are the explicit
+legacy-shaped `due_date`-only passthroughs described below: they keep `schedule_version=0`, write no
+schedule metadata, and emit no schedule activity or schedule broad outbox.
 TB5C later calls the update branch with only `scheduleRequest`; it must not call the Hono handler,
 duplicate SQL, or create a Calendar-specific event.
 
