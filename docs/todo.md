@@ -9,6 +9,31 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
 
 ## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29, seed-admin UUID migration 2026-07-29, notification dismiss + stalled-guard 2026-07-30, download selection 2026-08-04, notice-board rich text + mentions 2026-08-17, project comments + collaboration panel 2026-08-17, project subtasks/checklist 2026-08-17, collaboration panel relocated to Project page 2026-08-17, collaboration panel UI fixes + due-time reminder 2026-08-17, notification click navigation 2026-08-17, comment ordering + Shift+Enter soft breaks 2026-08-17, mention-email content 2026-08-20, TB0 authority promotion 2026-08-24, TB0A React 19.2 deployed + accepted 2026-08-25, TB0B pipeline configuration boundary deployed 2026-08-24, TB1 Tailwind v4/shadcn foundation deployed 2026-08-25, TB2 route-safe project data freshness deployed 2026-08-25, TB3 project discussion v2 deployed 2026-08-25, TB4 notification outbox deployed 2026-08-26, confirmation modal + admin user impersonation deployed 2026-08-26, TB4A project workspace assignment rail deployed 2026-08-27, TB4B project deadline and reminders deployed 2026-08-27, TB4C editor-wide project-change notifications deployed 2026-08-27, TB4D checklist scheduling & ranges deployed 2026-08-28)
 
+- **TB4E (External Editor Assigned-Scope Access — a global `external_editor` role that can do
+  normal editing work only on explicitly assigned projects, seeing external-safe data, discovering
+  no unrelated projects) — PLAN APPROVED 2026-08-28, build not started.**
+  Plan: `docs/plans/Revamp-TB4E-External-Editor-Assigned-Scope-Access-Plan.md` (this commit).
+  Pipeline: Sol draft → fresh-Sol review ×2 (7B+3S then 4B) → **Opus plan-tier revert 1/2**
+  (3 Blocking: transform-bearer quarantine defeated by replay; upload proxy on a transport that
+  doesn't exist in dev; route manifest unsatisfiable) → fresh-Sol revision (transform-bearer state
+  machine **collapsed ~84→19 lines**; migration `0036` shrank 6→3 columns; upload transport →
+  `env.MEDIA` R2 multipart binding) → **Opus plan-tier re-review APPROVED** (all 3 Blocking verified
+  fixed; residual purge window + multipart-orphan both ruled acceptable-with-conditions; 9
+  Should-fix + 5 Nits carried into the build spec). Security/authorization/privacy tracer bullet —
+  acceptance bar is "reusable security boundary, not a UI filter", **no first External Editor
+  account provisioned by this TB**. Adds: `external_editor` in `ROLES` + its capability allow-list
+  (no `viewAllProjects`); one server-side `visibleProjectScope` every list/search/detail/child-
+  resource endpoint routes through (generic 404 for unassigned/archived/nonexistent); an
+  external-safe DTO matrix (explicit column selects, `@quincy/shared` cross-worker policy modules,
+  a new `projects.production_notes` distinct from internal `notes`); per-registry-type
+  allowed|suppressed external notification policy (exclusion inside `emitNotifications()`, no second
+  recipient table); `user.authorization_epoch` + per-outbox stamp fencing role-transition races;
+  opaque R2-binding multipart upload sessions; revocable transform signatures (principal + epoch,
+  120s TTL); a generated route security manifest; winner-gated role-transition (atomic
+  `DELETE FROM session`). Migration **`0036`** = 3 additive columns (`projects.production_notes`,
+  `user.authorization_epoch`, `notification_outbox.recipient_authorization_epoch`) + 2 upload-session
+  tables + 3 indexes; no role-column migration or rebuild. Not built, committed, or deployed.
+  ~5 Codex credit exhaustions across the plan pipeline.
 - **TB4D (Checklist Scheduling & Ranges — every project checklist item carries one truthful
   optional schedule: unscheduled / due-only / start+end range, without changing the shipped
   `due_date` or its due-today reminder) is deployed to production, 2026-08-28**
