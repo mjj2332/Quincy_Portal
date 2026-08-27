@@ -130,11 +130,6 @@ function invalidRequest(code: string, message: string, details?: RequestDetails,
   return { outcome: "invalid_request", status, code, message, ...(details ? { details } : {}) };
 }
 
-function legacyDueDateInput(value: string | null): InitialChecklistScheduleInput {
-  if (value === null) return { state: "unscheduled" };
-  return { state: "due_only", end: value.includes("T") ? { kind: "timed", localCivil: value } : { kind: "date", localCivil: value } };
-}
-
 const SCHEDULE_KEYS: Array<keyof ChecklistScheduleStorage> = [
   "dueDate", "scheduleStartKind", "scheduleStartCivil", "scheduleStartAt", "scheduleStartUtcOffsetMinutes", "scheduleStartFold",
   "scheduleEndKind", "scheduleEndAt", "scheduleEndUtcOffsetMinutes", "scheduleEndFold", "scheduleZone",
@@ -231,21 +226,26 @@ export async function saveProjectSubtask(input: SaveProjectSubtaskInput): Promis
 
   if (operation.kind === "create") {
     if (operation.schedule && operation.legacyDueDate !== undefined) return invalidRequest("subtask_schedule_inputs_conflict", "Choose either schedule or dueDate, not both.");
-    const requested = operation.schedule ?? (operation.legacyDueDate === undefined ? { state: "unscheduled" } : legacyDueDateInput(operation.legacyDueDate));
-    if (requested.state === "range" && !CHECKLIST_SCHEDULE_RANGES_ENABLED) return invalidRequest("subtask_schedule_ranges_disabled", "Range scheduling is not enabled in this app version.", undefined, 503);
+    const legacyDueDateRequested = operation.legacyDueDate !== undefined;
+    const requested = legacyDueDateRequested ? null : operation.schedule ?? { state: "unscheduled" as const };
+    if (requested?.state === "range" && !CHECKLIST_SCHEDULE_RANGES_ENABLED) return invalidRequest("subtask_schedule_ranges_disabled", "Range scheduling is not enabled in this app version.", undefined, 503);
     const assigneeId = operation.item.assigneeId ?? null;
     if (assigneeId && !(await projectMentionableUsers(env, projectId)).some((user) => user.id === assigneeId)) return invalidRequest("subtask_assignee_ineligible", "Assignee is not an active project participant.");
-    const normalized = normalizeChecklistSchedule(requested, requested.state === "unscheduled" ? 0 : 1);
-    if (!normalized.ok) return invalidRequest(normalized.error.code, normalized.error.message, normalized.error.endpoint ? { endpoint: normalized.error.endpoint, ...(normalized.error.choices ? { choices: normalized.error.choices } : {}) } : undefined);
+    const normalized = requested ? normalizeChecklistSchedule(requested, requested.state === "unscheduled" ? 0 : 1) : null;
+    if (normalized && !normalized.ok) return invalidRequest(normalized.error.code, normalized.error.message, normalized.error.endpoint ? { endpoint: normalized.error.endpoint, ...(normalized.error.choices ? { choices: normalized.error.choices } : {}) } : undefined);
     const last = await env.DB.prepare("SELECT position FROM project_subtasks WHERE project_id = ? ORDER BY position DESC, id DESC LIMIT 1").bind(projectId).first<{ position: number }>();
     const id = newId();
     const auditId = newId();
     const activity = activityFor(id, projectId, principal.id, now, operation.item.title, "created");
     const bundle = buildProjectActivityStatements({ db: env.DB, intent: activity, winnerAuditId: auditId, createdAt: now });
-    const schedule = normalized.value;
+    const schedule = normalized?.value;
+    const canonicalSchedule = schedule!;
+    const insert = legacyDueDateRequested
+      ? env.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignee_id, assignment_version, due_date, created_by, created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)").bind(id, projectId, operation.item.title, (last?.position ?? 0) + POSITION_STEP, assigneeId, assigneeId ? 1 : 0, operation.legacyDueDate!, principal.id, now, now)
+      : env.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignee_id, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_start_at, schedule_start_utc_offset_minutes, schedule_start_fold, schedule_end_kind, schedule_end_at, schedule_end_utc_offset_minutes, schedule_end_fold, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(id, projectId, operation.item.title, (last?.position ?? 0) + POSITION_STEP, assigneeId, assigneeId ? 1 : 0, canonicalSchedule.dueDate, canonicalSchedule.scheduleStartKind, canonicalSchedule.scheduleStartCivil, canonicalSchedule.scheduleStartAt, canonicalSchedule.scheduleStartUtcOffsetMinutes, canonicalSchedule.scheduleStartFold, canonicalSchedule.scheduleEndKind, canonicalSchedule.scheduleEndAt, canonicalSchedule.scheduleEndUtcOffsetMinutes, canonicalSchedule.scheduleEndFold, canonicalSchedule.scheduleZone, canonicalSchedule.scheduleVersion, principal.id, now, now);
     const results = await env.DB.batch([
-      env.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignee_id, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_start_at, schedule_start_utc_offset_minutes, schedule_start_fold, schedule_end_kind, schedule_end_at, schedule_end_utc_offset_minutes, schedule_end_fold, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(id, projectId, operation.item.title, (last?.position ?? 0) + POSITION_STEP, assigneeId, assigneeId ? 1 : 0, schedule.dueDate, schedule.scheduleStartKind, schedule.scheduleStartCivil, schedule.scheduleStartAt, schedule.scheduleStartUtcOffsetMinutes, schedule.scheduleStartFold, schedule.scheduleEndKind, schedule.scheduleEndAt, schedule.scheduleEndUtcOffsetMinutes, schedule.scheduleEndFold, schedule.scheduleZone, schedule.scheduleVersion, principal.id, now, now),
-      env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, ?, 'project_subtask.create', 'project_subtask', ?, ?, ? WHERE changes() = 1").bind(auditId, principal.id, id, auditMeta(principal, { scheduleState: schedule.state, scheduleVersion: schedule.scheduleVersion }), now),
+      insert,
+      env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, ?, 'project_subtask.create', 'project_subtask', ?, ?, ? WHERE changes() = 1").bind(auditId, principal.id, id, auditMeta(principal, legacyDueDateRequested ? undefined : { scheduleState: canonicalSchedule.state, scheduleVersion: canonicalSchedule.scheduleVersion }), now),
       ...bundle.statements,
     ]);
     const item = await subtaskQuery(db, projectId, id).get();
@@ -257,17 +257,19 @@ export async function saveProjectSubtask(input: SaveProjectSubtaskInput): Promis
   if (!existing) return { outcome: "not_found", target: "subtask" };
   const existingStorage = scheduleStorage(existing.subtask);
   const currentDto = serializeChecklistSchedule(existingStorage);
-  const scheduleBearing = operation.scheduleRequest !== undefined || operation.legacyDueDatePatch !== undefined;
+  const legacyDueDateRequested = operation.legacyDueDatePatch !== undefined;
+  const scheduleBearing = operation.scheduleRequest !== undefined || legacyDueDateRequested;
   if (scheduleBearing && currentDto.state === "invalid") return { outcome: "storage_invalid", current: currentDto };
-  if (operation.scheduleRequest && operation.legacyDueDatePatch !== undefined) return invalidRequest("subtask_schedule_inputs_conflict", "Choose either schedule or dueDate, not both.");
+  if (operation.scheduleRequest && legacyDueDateRequested) return invalidRequest("subtask_schedule_inputs_conflict", "Choose either schedule or dueDate, not both.");
 
   let requested: InitialChecklistScheduleInput | null = null;
   let expectedVersion: number | null = null;
-  if (operation.legacyDueDatePatch !== undefined) {
+  let legacyDueDateChanged = false;
+  if (legacyDueDateRequested) {
     if (existingStorage.scheduleVersion !== 0 || currentDto.state === "legacy_unresolved" || ![
       "unscheduled", "due_only",
     ].includes(currentDto.state)) return invalidRequest("subtask_schedule_reload_required", "This checklist item has newer schedule data. Reload and reopen the schedule editor.");
-    requested = legacyDueDateInput(operation.legacyDueDatePatch);
+    legacyDueDateChanged = operation.legacyDueDatePatch !== existing.subtask.dueDate;
     expectedVersion = 0;
   } else if (operation.scheduleRequest) {
     if (!Number.isSafeInteger(operation.scheduleRequest.expectedVersion) || operation.scheduleRequest.expectedVersion < 0) return invalidRequest("subtask_schedule_invalid_version", "Schedule version must be a nonnegative integer.");
@@ -276,7 +278,7 @@ export async function saveProjectSubtask(input: SaveProjectSubtaskInput): Promis
     expectedVersion = operation.scheduleRequest.expectedVersion;
   }
 
-  if (requested && expectedVersion !== existingStorage.scheduleVersion) return { outcome: "schedule_conflict", current: currentDto, ...(operation.itemPatch ? { currentSubtask: serializeProjectSubtask(existing) } : {}) };
+  if ((requested || legacyDueDateRequested) && expectedVersion !== existingStorage.scheduleVersion) return { outcome: "schedule_conflict", current: currentDto, ...(operation.itemPatch ? { currentSubtask: serializeProjectSubtask(existing) } : {}) };
   let normalized: NormalizedChecklistSchedule | null = null;
   let scheduleChanged = false;
   let startChanged = false;
@@ -308,14 +310,17 @@ export async function saveProjectSubtask(input: SaveProjectSubtaskInput): Promis
     ...(doneChanged ? ["completion" as const] : []),
     ...(assignmentChanged ? ["assignee" as const] : []),
   ];
-  if (!scheduleChanged && mappedChanges.length === 0) return { outcome: "noop", item: serializeProjectSubtask(existing), broadPublicationIds: [], assignmentNotice: null };
+  if (!scheduleChanged && !legacyDueDateChanged && mappedChanges.length === 0) return { outcome: "noop", item: serializeProjectSubtask(existing), broadPublicationIds: [], assignmentNotice: null };
 
   const setParts: string[] = [];
   const bindings: unknown[] = [];
   if (titleChanged) { setParts.push("title = ?"); bindings.push(patch.title); }
   if (doneChanged) { setParts.push("done = ?"); bindings.push(patch.done ? 1 : 0); }
   if (assignmentChanged) { setParts.push("assignee_id = ?", "assignment_version = assignment_version + 1"); bindings.push(patch.assigneeId ?? null); }
-  if (normalized && scheduleChanged) {
+  if (legacyDueDateChanged) {
+    setParts.push("due_date = ?", "due_reminder_sent_at = NULL");
+    bindings.push(operation.legacyDueDatePatch);
+  } else if (normalized && scheduleChanged) {
     setParts.push("due_date = ?", "schedule_start_kind = ?", "schedule_start_civil = ?", "schedule_start_at = ?", "schedule_start_utc_offset_minutes = ?", "schedule_start_fold = ?", "schedule_end_kind = ?", "schedule_end_at = ?", "schedule_end_utc_offset_minutes = ?", "schedule_end_fold = ?", "schedule_zone = ?", "schedule_version = ?");
     bindings.push(normalized.dueDate, normalized.scheduleStartKind, normalized.scheduleStartCivil, normalized.scheduleStartAt, normalized.scheduleStartUtcOffsetMinutes, normalized.scheduleStartFold, normalized.scheduleEndKind, normalized.scheduleEndAt, normalized.scheduleEndUtcOffsetMinutes, normalized.scheduleEndFold, normalized.scheduleZone, normalized.scheduleVersion);
     if (endChanged) setParts.push("due_reminder_sent_at = NULL");
@@ -323,11 +328,16 @@ export async function saveProjectSubtask(input: SaveProjectSubtaskInput): Promis
   setParts.push("updated_at = ?"); bindings.push(now);
   const auditId = newId();
   const nextTitle = titleChanged ? patch.title! : existing.subtask.title;
-  const auditFields = [...mappedChanges, ...(scheduleChanged ? ["schedule"] : [])];
+  const auditFields = legacyDueDateRequested
+    ? [...(titleChanged ? ["title"] : []), ...(doneChanged ? ["done"] : []), ...(legacyDueDateChanged ? ["dueDate"] : []), ...(assignmentChanged ? ["assigneeId"] : [])]
+    : [...mappedChanges, ...(scheduleChanged ? ["schedule"] : [])];
   const nextScheduleState = normalized?.state ?? currentDto.state;
   const nextScheduleVersion = normalized?.scheduleVersion ?? existingStorage.scheduleVersion;
+  const auditDetails = legacyDueDateRequested
+    ? { fields: auditFields }
+    : { fields: auditFields, scheduleState: nextScheduleState, scheduleVersion: nextScheduleVersion };
   const statements: D1PreparedStatement[] = [env.DB.prepare(`UPDATE project_subtasks SET ${setParts.join(", ")} WHERE id = ? AND project_id = ? AND title IS ? AND done IS ? AND due_date IS ? AND assignee_id IS ? AND schedule_start_kind IS ? AND schedule_start_civil IS ? AND schedule_start_at IS ? AND schedule_start_utc_offset_minutes IS ? AND schedule_start_fold IS ? AND schedule_end_kind IS ? AND schedule_end_at IS ? AND schedule_end_utc_offset_minutes IS ? AND schedule_end_fold IS ? AND schedule_zone IS ? AND schedule_version IS ? RETURNING id, assignee_id AS assigneeId, assignment_version AS assignmentVersion`).bind(...bindings, operation.subtaskId, projectId, existing.subtask.title, existing.subtask.done ? 1 : 0, existing.subtask.dueDate, existing.subtask.assigneeId, existing.subtask.scheduleStartKind, existing.subtask.scheduleStartCivil, existing.subtask.scheduleStartAt, existing.subtask.scheduleStartUtcOffsetMinutes, existing.subtask.scheduleStartFold, existing.subtask.scheduleEndKind, existing.subtask.scheduleEndAt, existing.subtask.scheduleEndUtcOffsetMinutes, existing.subtask.scheduleEndFold, existing.subtask.scheduleZone, existing.subtask.scheduleVersion)];
-  statements.push(env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, ?, 'project_subtask.update', 'project_subtask', ?, ?, ? WHERE changes() = 1").bind(auditId, principal.id, operation.subtaskId, auditMeta(principal, { fields: auditFields, scheduleState: nextScheduleState, scheduleVersion: nextScheduleVersion }), now));
+  statements.push(env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, ?, 'project_subtask.update', 'project_subtask', ?, ?, ? WHERE changes() = 1").bind(auditId, principal.id, operation.subtaskId, auditMeta(principal, auditDetails), now));
   const bundles: Array<{ bundle: ReturnType<typeof buildProjectActivityStatements>; offset: number }> = [];
   if (mappedChanges.length) {
     const bundle = buildProjectActivityStatements({ db: env.DB, intent: activityFor(operation.subtaskId, projectId, principal.id, now, nextTitle, "updated", mappedChanges), winnerAuditId: auditId, createdAt: now });
