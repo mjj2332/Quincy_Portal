@@ -302,7 +302,7 @@ describe("notification fanout and stalled scan", () => {
     await withActiveAdminsSuppressed(async () => {
       const now = sydneyEightAm(2026, 8, 18);
       const fixture = await seedDueSubtask(now, "2026-08-18T14:30");
-      const candidate = { subtaskId: fixture.subtaskId, projectId: fixture.projectId, assigneeId: fixture.userId, dueDate: fixture.dueDate };
+      const candidate = { subtaskId: fixture.subtaskId, projectId: fixture.projectId, assigneeId: fixture.userId, assignmentVersion: 1, dueDate: fixture.dueDate };
       const env = notificationEnv(vi.fn().mockResolvedValue({ messageId: "due-race" }));
       expect(await processDueSubtaskCandidate(env, candidate, now, "2026-08-18")).toEqual({ claimed: true, emitted: 1 });
       expect(await processDueSubtaskCandidate(env, candidate, now, "2026-08-18")).toEqual({ claimed: false, emitted: 0 });

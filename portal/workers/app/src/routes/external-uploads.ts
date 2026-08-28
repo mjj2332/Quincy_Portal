@@ -138,7 +138,10 @@ externalUploadsRoutes.post("/external-uploads", terminalRoute("/external-uploads
   const db = createDb(c.env.DB);
   const openCount = await db.select({ count: sql<number>`count(*)` }).from(schema.externalEditedUploadSessions)
     .where(and(eq(schema.externalEditedUploadSessions.createdBy, c.get("user").id), eq(schema.externalEditedUploadSessions.status, "open"))).get();
-  if (Number(openCount?.count ?? 0) >= EXTERNAL_UPLOAD_MAX_SESSIONS_PER_PRINCIPAL) return errorResponse(c, "edited_upload_unavailable", 409);
+  // This is an existing-session count, taken before any R2 multipart or D1 session is created:
+  // three existing open sessions block the fourth create, while the first three are allowed.
+  const openSessionCount = Number(openCount?.count ?? 0);
+  if (openSessionCount >= EXTERNAL_UPLOAD_MAX_SESSIONS_PER_PRINCIPAL) return errorResponse(c, "edited_upload_unavailable", 409);
   const project = await db.select({ projectId: schema.projects.id, collectionId: schema.collections.id, membershipCycleId: schema.projectMembers.id, editedUploadAvailable: sql<boolean>`(${schema.projects.rawFolderPath} IS NOT NULL OR ${schema.projects.rawFolderLink} IS NOT NULL)` })
     .from(schema.projects).innerJoin(schema.collections, and(eq(schema.collections.projectId, schema.projects.id), eq(schema.collections.kind, "edited")))
     .leftJoin(schema.projectMembers, and(eq(schema.projectMembers.projectId, schema.projects.id), eq(schema.projectMembers.userId, c.get("user").id)))

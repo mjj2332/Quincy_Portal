@@ -809,7 +809,7 @@ describe("staff app API", () => {
       const response = await SELF.fetch("https://portal.test/api/projects", {
         method: "POST",
         headers: { cookie: adminCookie, "content-type": "application/json" },
-        body: JSON.stringify({ street, orderedServices: [], ...(assigned ? { editorUserIds: [externalEditorId] } : {}) }),
+        body: JSON.stringify({ street, orderedServices: ["edited"], ...(assigned ? { editorUserIds: [externalEditorId] } : {}) }),
       });
       expect(response.status).toBe(201);
       return (await response.json() as { id: string }).id;

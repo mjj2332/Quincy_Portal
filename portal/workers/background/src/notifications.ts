@@ -95,9 +95,8 @@ export async function processDueSubtaskCandidate(
     "UPDATE project_subtasks SET due_reminder_sent_at = ?, updated_at = ? " +
     "WHERE id = ? AND project_id = ? AND due_reminder_sent_at IS NULL AND done = 0 " +
     "AND due_date = ? AND substr(due_date, 1, 10) <= ? AND assignee_id = ? " +
-    "AND assignment_version = ? " +
     "AND EXISTS (SELECT 1 FROM projects p WHERE p.id = project_subtasks.project_id AND p.archived_at IS NULL)",
-  ).bind(now, now, row.subtaskId, row.projectId, row.dueDate, todaySydney, row.assigneeId, row.assignmentVersion).run();
+  ).bind(now, now, row.subtaskId, row.projectId, row.dueDate, todaySydney, row.assigneeId).run();
   if ((claim.meta.changes ?? 0) !== 1) {
     await logDueSubtaskClaimSkip(env, row, todaySydney);
     return { claimed: false, emitted: 0 };

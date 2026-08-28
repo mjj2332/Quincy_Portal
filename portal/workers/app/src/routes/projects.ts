@@ -920,7 +920,8 @@ projectsRoutes.get("/projects/:id/download-selection/:ticket/archive.zip", termi
   });
 }));
 
-projectsRoutes.get("/projects/:id/manual-upload-jobs", requireCapability("adminBackend"), terminalRoute("/projects/:id/manual-upload-jobs", async (c) => {
+projectsRoutes.get("/projects/:id/manual-upload-jobs", terminalRoute("/projects/:id/manual-upload-jobs", async (c) => {
+  if (c.get("user").role === "external_editor") return c.json({ error: "Forbidden" }, 403);
   const id = c.req.param("id");
   if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
   if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);

@@ -323,12 +323,14 @@ describe("TB4 notification delivery Worker integration", () => {
   });
 
   it("suppresses broad delivery after recipient deactivation or global-role demotion", async () => {
-    for (const [label, update] of [
-      ["deactivation", "UPDATE user SET active = 0 WHERE id = ?"],
-      ["role demotion", "UPDATE user SET role = 'photographer' WHERE id = ?"],
+    for (const [label, update, bumpedEpoch] of [
+      ["deactivation", "UPDATE user SET active = 0 WHERE id = ?", false],
+      ["role demotion", "UPDATE user SET role = 'photographer', authorization_epoch = 1 WHERE id = ?", true],
+      ["role-ineligible", "UPDATE user SET role = 'client', authorization_epoch = 1 WHERE id = ?", true],
     ] as const) {
       const fixture = await seedBroadDelivery();
       await database.DB.prepare(update).bind(fixture.recipientId).run();
+      if (bumpedEpoch) await database.DB.prepare("UPDATE notification_outbox SET recipient_authorization_epoch = 0 WHERE id = ?").bind(fixture.outboxId).run();
       await database.DB.prepare("UPDATE notification_outbox SET status = 'processing', lease_token = ?, lease_expires_at = ? WHERE id = ?").bind(`broad-${label}`, fixture.now + NOTIFICATION_DELIVERY_LEASE_MS, fixture.outboxId).run();
       const outbox = await database.DB.prepare("SELECT * FROM notification_outbox WHERE id = ?").bind(fixture.outboxId).first();
       const outcome = await deliverBroadInApp(deliveryEnv(), outbox as Parameters<typeof deliverBroadInApp>[1], `broad-${label}`, resolvedBroadFixture(fixture), fixture.now);

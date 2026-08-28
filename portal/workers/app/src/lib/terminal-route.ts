@@ -33,7 +33,7 @@ export type SecurityRouteRegistration = { method: string; path: string; class: S
  * entering both the actual and expected sets.
  */
 export const PROJECT_SECURITY_ROUTE_CLASSIFICATION = [
-  { method: "ALL", path: "*", class: "terminal-fallback" },
+  { method: "ALL", path: "/*", class: "terminal-fallback" },
   { method: "GET", path: "/__transform-source/*", class: "terminal-fallback" },
   { method: "ALL", path: "/__transform-source", class: "terminal-fallback" },
   { method: "ALL", path: "/api/*", class: "terminal-fallback" },
@@ -152,7 +152,7 @@ export const PROJECT_SECURITY_ROUTE_CLASSIFICATION = [
   { method: "GET", path: "/api/projects/:projectId/subtasks", class: "scoped" },
   { method: "POST", path: "/api/projects/:projectId/subtasks", class: "scoped" },
   { method: "GET", path: "/api/projects", class: "scoped" },
-  { method: "POST", path: "/api/projects", class: "scoped" },
+  { method: "POST", path: "/api/projects", class: "withheld" },
   { method: "GET", path: "/api/stages", class: "withheld" },
   { method: "POST", path: "/api/uploads/complete", class: "withheld" },
   { method: "POST", path: "/api/uploads/complete/", class: "withheld" },
@@ -184,7 +184,7 @@ export const CHECKED_IN_MIDDLEWARE_REGISTRATIONS = [
   ["POST", "/api/projects"],
   ["POST", "/api/projects/:id/send-to-autohdr"], ["POST", "/api/projects/:id/fetch-edited"],
   ["GET", "/api/projects/:id/autohdr-status"], ["GET", "/api/projects/:id/autohdr-history"],
-  ["POST", "/api/projects/:id/autohdr-coverage"], ["GET", "/api/projects/:id/manual-upload-jobs"],
+  ["POST", "/api/projects/:id/autohdr-coverage"],
   ["GET", "/api/projects/:id/jobs"], ["POST", "/api/jobs/:id/retry"],
   ["POST", "/api/projects/:id/upload-manifest"],
   ["POST", "/api/assets/:id/select"], ["DELETE", "/api/assets/:id/select"],
@@ -222,5 +222,13 @@ export function assertSecurityRouteManifest(routes: readonly HonoRouteLike[]): v
   }
   const expected = new Set(PROJECT_SECURITY_ROUTE_CLASSIFICATION.map((route) => `${route.method.toUpperCase()} ${route.path}`));
   const actualTerminal = new Set(marked.map((route) => `${route.method} ${route.path}`));
-  if (expected.size !== actualTerminal.size || [...expected].some((route) => !actualTerminal.has(route))) throw new Error("Route manifest classification mismatch");
+  const actualOnly = [...actualTerminal].filter((route) => !expected.has(route)).sort();
+  const expectedOnly = [...expected].filter((route) => !actualTerminal.has(route)).sort();
+  if (actualOnly.length || expectedOnly.length) {
+    throw new Error([
+      "Route manifest classification mismatch",
+      `Registered but unclassified: ${actualOnly.length ? actualOnly.join(", ") : "none"}`,
+      `Classified but not registered: ${expectedOnly.length ? expectedOnly.join(", ") : "none"}`,
+    ].join("\n"));
+  }
 }

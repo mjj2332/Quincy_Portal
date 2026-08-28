@@ -264,6 +264,12 @@ function suppressed(reason: string, code: AuthorizationSuppressionCode = reason 
   return { ok: false as const, kind: "suppress" as const, code, reason };
 }
 
+function authorizationEpochMismatch(row: { recipientAuthorizationEpoch: number | null; currentAuthorizationEpoch: number | null }): boolean {
+  return row.recipientAuthorizationEpoch !== null
+    && row.currentAuthorizationEpoch !== null
+    && row.currentAuthorizationEpoch !== row.recipientAuthorizationEpoch;
+}
+
 function isObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
@@ -352,7 +358,8 @@ async function resolveExternalSafeDirectRecipient(env: Env, outbox: OutboxRow): 
   if (!row || row.schemaVersion !== 1 || row.eventType !== "project.external_safe.direct" || row.sourceKey !== payload.event.sourceKey || row.recipientId !== payload.event.recipientId || row.projectId !== payload.legacy.projectId || row.recipientMembershipCycleId !== payload.authorizationAtOccurrence.membershipCycle || row.membershipId !== payload.authorizationAtOccurrence.membershipCycle || row.membershipCreatedAt !== payload.authorizationAtOccurrence.startedAt) return suppressed("payload_invalid");
   if (row.projectArchivedAt !== null || !row.projectStreet) return suppressed("project_no_longer_visible");
   if (row.recipientActive !== 1 || row.recipientRole !== "external_editor") return suppressed("recipient_ineligible");
-  if (row.recipientAuthorizationEpoch === null || row.currentAuthorizationEpoch !== row.recipientAuthorizationEpoch) return suppressed("authorization_epoch_changed");
+  if (row.recipientAuthorizationEpoch === null) return suppressed("authorization_epoch_missing");
+  if (authorizationEpochMismatch(row)) return suppressed("authorization_epoch_changed");
   const copy = externalNotificationCopy({ type: payload.legacy.type });
   const projectPath = `${env.APP_ORIGIN}/projects/${row.projectId}`;
   return {
@@ -399,9 +406,13 @@ async function resolveExternalSubtaskRecipient(env: Env, outbox: OutboxRow): Pro
       AND subtask.project_id = o.project_id
     WHERE o.id = ?
   `).bind(outbox.id).first<ExternalSubtaskResolverRow>();
-  if (!row || row.schemaVersion !== 1 || row.eventType !== outbox.event_type || row.sourceKey !== payload.event.sourceKey || row.recipientId !== payload.event.recipientId || row.projectId !== payload.assignment.projectId || row.subtaskId !== payload.assignment.subtaskId || row.subtaskProjectId !== row.projectId || row.subtaskAssigneeId !== payload.assignment.assigneeId || row.subtaskAssigneeId !== row.recipientId || row.subtaskAssignmentVersion !== payload.assignment.assignmentVersion || row.membershipId !== payload.authorizationAtOccurrence.membershipCycle || row.membershipCreatedAt !== payload.authorizationAtOccurrence.startedAt || row.recipientAuthorizationEpoch === null || row.currentAuthorizationEpoch !== row.recipientAuthorizationEpoch) return suppressed(row?.recipientAuthorizationEpoch !== row?.currentAuthorizationEpoch ? "authorization_epoch_changed" : "payload_invalid");
+  if (!row) return suppressed("payload_invalid");
   if (row.projectArchivedAt !== null || !row.projectStreet) return suppressed("project_no_longer_visible");
   if (row.recipientActive !== 1 || row.recipientRole !== "external_editor") return suppressed("recipient_ineligible");
+  if (row.membershipId !== payload.authorizationAtOccurrence.membershipCycle || row.membershipCreatedAt !== payload.authorizationAtOccurrence.startedAt) return suppressed("membership_cycle_changed");
+  if (row.recipientAuthorizationEpoch === null) return suppressed("authorization_epoch_missing");
+  if (authorizationEpochMismatch(row)) return suppressed("authorization_epoch_changed");
+  if (row.schemaVersion !== 1 || row.eventType !== outbox.event_type || row.sourceKey !== payload.event.sourceKey || row.recipientId !== payload.event.recipientId || row.projectId !== payload.assignment.projectId || row.subtaskId !== payload.assignment.subtaskId || row.subtaskProjectId !== row.projectId || row.subtaskAssigneeId !== payload.assignment.assigneeId || row.subtaskAssigneeId !== row.recipientId || row.subtaskAssignmentVersion !== payload.assignment.assignmentVersion) return suppressed("payload_invalid");
   if (payload.event.type !== (expectedType === "subtask_assigned" ? "project.subtask.assigned" : "project.subtask.due_today")) return suppressed("payload_invalid");
   if (expectedType === "subtask_due_today" && (!("dueDate" in payload.assignment) || payload.assignment.dueDate !== row.subtaskDueDate || payload.assignment.claimAt !== row.subtaskDueReminderSentAt)) return suppressed("subtask_changed");
   const copy = externalNotificationCopy({ type: expectedType });
@@ -454,7 +465,6 @@ async function resolveDeadlineReminderRecipient(env: Env, outbox: OutboxRow): Pr
     WHERE o.id = ?
   `).bind(outbox.id).first<ReminderResolverRow>();
   if (!result) return suppressed("outbox_missing");
-  if ((result.recipientAuthorizationEpoch === null && result.recipientRole === "external_editor") || (result.recipientAuthorizationEpoch !== null && result.currentAuthorizationEpoch !== result.recipientAuthorizationEpoch)) return suppressed("authorization_epoch_changed");
   if (result.schemaVersion !== 1 || result.eventType !== NOTIFICATION_OUTBOX_EVENT_TYPES.projectDeadlineReminder || result.sourceKey !== payload.reminder.occurrenceId || result.projectId !== payload.reminder.projectId || result.recipientId !== payload.event.recipientId) return suppressed("payload_invalid");
   const deadlineAt = Date.parse(payload.reminder.deadlineAt);
   const role = result.recipientRole as Role;
@@ -462,6 +472,8 @@ async function resolveDeadlineReminderRecipient(env: Env, outbox: OutboxRow): Pr
   if (result.recipientActive !== 1 || !isProjectAssignmentEligible("editor", role)) return suppressed("recipient_ineligible");
   if (result.occurrenceId !== payload.reminder.occurrenceId || result.occurrenceStatus !== "fired" || result.occurrenceFiredAt === null || result.occurrenceScheduleVersion !== payload.reminder.scheduleVersion || result.occurrenceKind !== payload.reminder.kind || result.occurrenceOffsetMinutes !== payload.reminder.offsetMinutes || result.occurrenceDeadlineAt !== deadlineAt || result.occurrenceDeadlineLocalCivil !== payload.reminder.deadlineLocalCivil || result.occurrenceDeadlineZone !== payload.reminder.zone || result.occurrenceUtcOffsetMinutes !== payload.reminder.utcOffsetMinutes || result.occurrenceFold !== payload.reminder.fold) return suppressed("occurrence_changed");
   if (result.membershipId !== payload.authorizationAtOccurrence.membershipCycle || result.membershipRole !== "editor" || result.membershipCreatedAt !== payload.authorizationAtOccurrence.startedAt || result.membershipCreatedAt > result.occurrenceFiredAt) return suppressed("membership_cycle_changed");
+  if (result.recipientRole === "external_editor" && result.recipientAuthorizationEpoch === null) return suppressed("authorization_epoch_missing");
+  if (authorizationEpochMismatch(result)) return suppressed("authorization_epoch_changed");
   const projectPath = `${env.APP_ORIGIN}${staffPathFor({ kind: "project", projectId: result.projectId })}`;
   const label = result.projectStreet || "Project";
   const dueText = payload.reminder.kind === "due_now"
@@ -687,7 +699,6 @@ async function resolveRecipient(env: Env, outbox: OutboxRow): Promise<ResolvedRe
   `).bind(outbox.id).all<ResolverRow>();
   const first = row.results[0];
   if (!first) return suppressed("outbox_missing");
-  if ((first.recipientAuthorizationEpoch === null && first.recipientRole === "external_editor") || (first.recipientAuthorizationEpoch !== null && first.currentAuthorizationEpoch !== first.recipientAuthorizationEpoch)) return suppressed("authorization_epoch_changed");
 
   if (outbox.event_type === NOTIFICATION_OUTBOX_EVENT_TYPES.projectAssignmentCreated) {
     const payload = safeAssignmentPayload(first.payloadJson, outbox);
@@ -703,6 +714,8 @@ async function resolveRecipient(env: Env, outbox: OutboxRow): Promise<ResolvedRe
       WHERE pm.id = ? AND pm.project_id = ? AND pm.user_id = ? AND pm.role_on_project = ?
     `).bind(payload.assignment.membershipCycle, payload.assignment.projectId, payload.assignment.userId, roleOnProject).first<{ membershipId: string }>();
     if (!exact) return suppressed("membership_cycle_changed");
+    if (first.recipientRole === "external_editor" && first.recipientAuthorizationEpoch === null) return suppressed("authorization_epoch_missing");
+    if (authorizationEpochMismatch(first)) return suppressed("authorization_epoch_changed");
     const projectPath = `${env.APP_ORIGIN}/projects/${first.projectId}`;
     const title = "Assigned to project";
     const body = `You have been assigned as the ${roleOnProject} for ${first.projectStreet ?? "Project"}.`;
@@ -739,6 +752,8 @@ async function resolveRecipient(env: Env, outbox: OutboxRow): Promise<ResolvedRe
   } else if (!payload.authorizationAtOccurrence.membershipIds.some((id) => memberships.includes(id))) {
     return suppressed("membership_cycle_changed");
   }
+  if (first.recipientRole === "external_editor" && first.recipientAuthorizationEpoch === null) return suppressed("authorization_epoch_missing");
+  if (authorizationEpochMismatch(first)) return suppressed("authorization_epoch_changed");
   const commentPath = `${env.APP_ORIGIN}${staffPathFor({ kind: "project", projectId: first.projectId, collaboration: "open" })}`;
   const excerpt = truncateForEmail(first.commentBody ?? "");
   return {
