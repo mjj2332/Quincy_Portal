@@ -7,33 +7,63 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
 > counts, full diagnostic transcripts) has been cut in favor of what/when/deploy-state. See
 > `docs/lessons.md` for incident mechanics, and `docs/reviews/` for full QA-sweep detail.
 
-## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29, seed-admin UUID migration 2026-07-29, notification dismiss + stalled-guard 2026-07-30, download selection 2026-08-04, notice-board rich text + mentions 2026-08-17, project comments + collaboration panel 2026-08-17, project subtasks/checklist 2026-08-17, collaboration panel relocated to Project page 2026-08-17, collaboration panel UI fixes + due-time reminder 2026-08-17, notification click navigation 2026-08-17, comment ordering + Shift+Enter soft breaks 2026-08-17, mention-email content 2026-08-20, TB0 authority promotion 2026-08-24, TB0A React 19.2 deployed + accepted 2026-08-25, TB0B pipeline configuration boundary deployed 2026-08-24, TB1 Tailwind v4/shadcn foundation deployed 2026-08-25, TB2 route-safe project data freshness deployed 2026-08-25, TB3 project discussion v2 deployed 2026-08-25, TB4 notification outbox deployed 2026-08-26, confirmation modal + admin user impersonation deployed 2026-08-26, TB4A project workspace assignment rail deployed 2026-08-27, TB4B project deadline and reminders deployed 2026-08-27, TB4C editor-wide project-change notifications deployed 2026-08-27, TB4D checklist scheduling & ranges deployed 2026-08-28)
+## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29, seed-admin UUID migration 2026-07-29, notification dismiss + stalled-guard 2026-07-30, download selection 2026-08-04, notice-board rich text + mentions 2026-08-17, project comments + collaboration panel 2026-08-17, project subtasks/checklist 2026-08-17, collaboration panel relocated to Project page 2026-08-17, collaboration panel UI fixes + due-time reminder 2026-08-17, notification click navigation 2026-08-17, comment ordering + Shift+Enter soft breaks 2026-08-17, mention-email content 2026-08-20, TB0 authority promotion 2026-08-24, TB0A React 19.2 deployed + accepted 2026-08-25, TB0B pipeline configuration boundary deployed 2026-08-24, TB1 Tailwind v4/shadcn foundation deployed 2026-08-25, TB2 route-safe project data freshness deployed 2026-08-25, TB3 project discussion v2 deployed 2026-08-25, TB4 notification outbox deployed 2026-08-26, confirmation modal + admin user impersonation deployed 2026-08-26, TB4A project workspace assignment rail deployed 2026-08-27, TB4B project deadline and reminders deployed 2026-08-27, TB4C editor-wide project-change notifications deployed 2026-08-27, TB4D checklist scheduling & ranges deployed 2026-08-28, TB4E external editor assigned-scope access deployed 2026-08-28)
 
-- **TB4E (External Editor Assigned-Scope Access — a global `external_editor` role that can do
-  normal editing work only on explicitly assigned projects, seeing external-safe data, discovering
-  no unrelated projects) — PLAN APPROVED 2026-08-28, build not started.**
-  Plan: `docs/plans/Revamp-TB4E-External-Editor-Assigned-Scope-Access-Plan.md` (this commit).
-  Pipeline: Sol draft → fresh-Sol review ×2 (7B+3S then 4B) → **Opus plan-tier revert 1/2**
-  (3 Blocking: transform-bearer quarantine defeated by replay; upload proxy on a transport that
-  doesn't exist in dev; route manifest unsatisfiable) → fresh-Sol revision (transform-bearer state
-  machine **collapsed ~84→19 lines**; migration `0036` shrank 6→3 columns; upload transport →
-  `env.MEDIA` R2 multipart binding) → **Opus plan-tier re-review APPROVED** (all 3 Blocking verified
-  fixed; residual purge window + multipart-orphan both ruled acceptable-with-conditions; 9
-  Should-fix + 5 Nits carried into the build spec). Security/authorization/privacy tracer bullet —
-  acceptance bar is "reusable security boundary, not a UI filter", **no first External Editor
-  account provisioned by this TB**. Adds: `external_editor` in `ROLES` + its capability allow-list
-  (no `viewAllProjects`); one server-side `visibleProjectScope` every list/search/detail/child-
-  resource endpoint routes through (generic 404 for unassigned/archived/nonexistent); an
-  external-safe DTO matrix (explicit column selects, `@quincy/shared` cross-worker policy modules,
-  a new `projects.production_notes` distinct from internal `notes`); per-registry-type
-  allowed|suppressed external notification policy (exclusion inside `emitNotifications()`, no second
-  recipient table); `user.authorization_epoch` + per-outbox stamp fencing role-transition races;
-  opaque R2-binding multipart upload sessions; revocable transform signatures (principal + epoch,
-  120s TTL); a generated route security manifest; winner-gated role-transition (atomic
-  `DELETE FROM session`). Migration **`0036`** = 3 additive columns (`projects.production_notes`,
-  `user.authorization_epoch`, `notification_outbox.recipient_authorization_epoch`) + 2 upload-session
-  tables + 3 indexes; no role-column migration or rebuild. Not built, committed, or deployed.
-  ~5 Codex credit exhaustions across the plan pipeline.
+- **TB4E (External Editor Assigned-Scope Access — a global `external_editor` role that does normal
+  editing work only on explicitly assigned projects, sees external-safe data, discovers no
+  unrelated projects) is deployed to production, 2026-08-28**
+  (`docs/plans/implemented/Revamp-TB4E-External-Editor-Assigned-Scope-Access-Plan.md`, merge commit
+  `b2efb17`, background Worker version `00baf29f-b70d-43fc-a12b-3949dc12def4`, webhook-ingress
+  `f6037769-60a1-4bd2-8ddc-86efffe8503d`, app Worker version
+  `18ff1c86-a827-41b7-9798-172c2ca17e0b`; rollback targets `e7133940-…` (background),
+  `b8a1d549-…` (webhook-ingress), `65ad323b-…` (app) — TB4D's versions). Migration **`0036`**
+  applied to prod D1 2026-08-28 06:57:57 UTC (3 additive columns `projects.production_notes` /
+  `user.authorization_epoch` NOT NULL DEFAULT 0 / `notification_outbox.recipient_authorization_epoch`
+  nullable; 2 tables `external_edited_upload_sessions` + `_parts` with multi-column CHECKs inside
+  CREATE; 3 indexes; no role-column migration, no rebuild). Postflight: all 3 columns + 2 tables +
+  3 indexes present, 12 users all `authorization_epoch=0`, 126 outbox rows all
+  `recipient_authorization_epoch` NULL (fail-closed), FK check clean, quick_check ok. Pre-migration
+  recovery export `../db-recovery/quincy-portal-before-tb4e-20260828T065731Z.sql`
+  (sha256 `49086cbbf462770fa002a11da253e9533560675045d0fc2222ab619e30bed747`). **Ships
+  enabled-but-dark — no `external_editor` account provisioned (acceptance bar met: 2 admin /
+  8 editor / 2 photographer), no feature flag.** Passive prod verification: login screen renders,
+  `/api/health` 200, all unauthenticated API returns 401 (session middleware + 0036 did not break
+  auth), upload-session tables empty, no unexpected audit writes.
+  Security/authorization/privacy tracer bullet. Adds: `external_editor` in `ROLES` + a 9-capability
+  allow-list (no `viewAllProjects`); one server-side `visibleProjectWhere` every list/detail/
+  child-resource endpoint routes through (generic 404/403 for unassigned/nonexistent; staff
+  `viewAllProjects` still reach archived projects by id); an external-safe DTO matrix (explicit
+  column selects, `.strict()` `@quincy/shared` schemas, `projects.production_notes` distinct from
+  internal `notes`, `editing_autohdr → editing` stage neutralization); per-registry-type
+  allowed|suppressed external notification policy scoped to `external_editor` recipients only
+  (staff legacy delivery byte-identical to pre-TB4E); `user.authorization_epoch` + per-outbox stamp
+  fencing role-transition races; opaque R2-binding multipart upload sessions (3-session cap as a
+  serialized conditional insert, lease/expiry sweep); revocable transform signatures (principal +
+  epoch, 120s TTL); an enforced route security manifest (integration probes hit every withheld +
+  external-surface route with a real external session); winner-gated role-transition (atomic
+  incompatible-membership `NOT EXISTS` + `DELETE FROM session`).
+  Follow-up before the first External Editor is provisioned: set background secrets
+  `CLOUDFLARE_ZONE_ID` + `CLOUDFLARE_CACHE_PURGE_TOKEN` (`wrangler secret put`), or a later
+  `external_editor` role transition fails the cache purge → 30-min provisioning freeze.
+  Pipeline: Sol draft → fresh-Sol review ×2 (7B+3S then 4B) → Opus plan-tier revert 1/2 (3 Blocking:
+  transform-bearer replay; upload proxy transport; unsatisfiable manifest) → fresh-Sol revision
+  (bearer state machine ~84→19 lines; migration 0036 6→3 columns; transport → `env.MEDIA` R2
+  multipart) → **Opus plan-tier re-review APPROVED** (9 Should-fix + 5 Nits into the build spec) →
+  Luna build + **9 fix rounds** (rounds 1-3: SQL binding, epoch over-application, unwrapped
+  terminal routes, `roleHasCapability` fail-closed; round 4: 5 Sol diff-review blockers —
+  role-transition atomicity, exhaustive external copy, epoch-atomic admission, route-manifest
+  contract, upload linearization; rounds 5-7: those regressed the TB4B deadline suite —
+  `reminderAuthorization` NULL-safety, `channelAdmission` `EXISTS()` wrapper + outbox-id binding
+  mode, post-send lease-only convergence, and the fix-4 SQL fences re-scoped to `external_editor`
+  recipients only with `main`'s staff path restored; round 8: Opus final-draft 2 blockers
+  (staff archived-project regression in `visibleProjectWhere`, expired-`open` upload-session
+  lockout) + 5 bugs; round 9: Opus re-check nits — `/api/stages` reclassified `principal-global`,
+  withheld probe `>= 400`, explicit `sql\`1=1\``, deleted dead `visibleProjectScopeSql`). Sol
+  diff-review at medium effort was unusable (regurgitated the pre-fix blocker list); Opus carried
+  the final review. ~8 Codex credit exhaustions across the plan + build pipeline.
+  **Residual QA:** local mutating role-matrix (Agy) and a human authenticated prod spot-check still
+  to run. Deferred Opus nits: F4 (hoist `isMissingMultipartUploadError` to `@quincy/shared`),
+  F5 (bound the completing-session sweep alert).
 - **TB4D (Checklist Scheduling & Ranges — every project checklist item carries one truthful
   optional schedule: unscheduled / due-only / start+end range, without changing the shipped
   `due_date` or its due-today reminder) is deployed to production, 2026-08-28**

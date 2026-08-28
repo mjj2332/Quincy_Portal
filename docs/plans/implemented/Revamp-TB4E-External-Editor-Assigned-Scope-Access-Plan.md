@@ -1,15 +1,21 @@
 # Revamp TB4E — External Editor Assigned-Scope Access
 
-**Status:** APPROVED FOR BUILD — 2026-08-28. Pipeline: Sol draft → fresh-Sol review ×2 (7B+3S then
-4B, all folded) → Opus plan-tier revert 1 of 2 (3 Blocking + 7 Should-fix + 1 Nit) → fresh-Sol
-revision (the transform-bearer state machine collapsed ~84→19 lines; migration `0036` shrank 6→3
-columns) → **Opus plan-tier re-review APPROVED**: all 3 revert-1 Blocking verified fixed against
-source; residual purge window + multipart-orphan story both ruled acceptable with conditions. Opus
-left **9 Should-fix + 5 Nits** (carried into the build spec, not blocking) — notably SF-1 (route
-manifest gate fails open — needs count reconciliation), SF-5 (registry policy `Record` vs per-entry
-`externalProjection` circular import — use the separate `Record`), SF-2/SF-3 (dangling
-conversion-state refs from the collapse), SF-6 (per-principal concurrent upload-session cap),
-SF-8 (purge-exhaustion runbook), SF-9 (bound the incomplete-multipart lifecycle rule). Build →
+**Status:** DEPLOYED TO PRODUCTION — 2026-08-28. Merge commit `b2efb17`; Worker versions
+background `00baf29f-b70d-43fc-a12b-3949dc12def4`, webhook-ingress
+`f6037769-60a1-4bd2-8ddc-86efffe8503d`, app `18ff1c86-a827-41b7-9798-172c2ca17e0b`; migration
+`0036` applied to prod D1 2026-08-28 06:57:57 UTC (recovery export
+`../db-recovery/quincy-portal-before-tb4e-20260828T065731Z.sql`, sha256
+`49086cbbf462770fa002a11da253e9533560675045d0fc2222ab619e30bed747`). Ships enabled-but-dark — no
+`external_editor` account provisioned (acceptance bar met). Build: Luna + 9 fix rounds; Opus
+carried the final-draft review (Sol diff-review at medium effort was unusable). Deferred nits:
+F4 (hoist `isMissingMultipartUploadError` to `@quincy/shared`), F5 (bound the completing-session
+sweep alert). Follow-up before first External Editor provisioning: set background secrets
+`CLOUDFLARE_ZONE_ID` + `CLOUDFLARE_CACHE_PURGE_TOKEN`. Residual QA: local mutating role-matrix
+(Agy) + human authenticated prod spot-check. See `docs/todo.md` "Current state" for the full
+summary. — Original approval line: APPROVED FOR BUILD 2026-08-28, pipeline Sol draft → fresh-Sol
+review ×2 (7B+3S then 4B) → Opus plan-tier revert 1 of 2 (3 Blocking + 7 Should-fix + 1 Nit) →
+fresh-Sol revision → **Opus plan-tier re-review APPROVED** (9 Should-fix + 5 Nits carried into the
+build spec). Build →
 self-check → fresh Sol diff review → fixes → Sol focused pass → Opus final-draft review → §5 gate →
 deploy + commit. Move this file to `docs/plans/implemented/` after production deploy. No first
 External Editor account is provisioned by this tracer bullet (acceptance bar).
