@@ -235,6 +235,12 @@ injection broke its assertion math while the code under test was correct.
 
 ## 6. Known failure modes
 
+- **Codex credit exhaustion mid-run.** The `codex exec` run dies with `ERROR: Your workspace is out
+  of credits`. The session is not lost: top up or switch the Codex account, then **`codex exec
+  resume <session-id>`** — the id is the `session id:` line in the dead run's log banner, and the
+  switched account continues that session with its full context (verified 2026-08-28). Resume,
+  never restart — a fresh spawn discards everything the dead run did. Resume mechanics:
+  [subagents/codex-cli.md](subagents/codex-cli.md).
 - **Codex + MCP write actions.** `codex exec` runs with `approval: never`, and some MCP write tools
   need a per-call approval it cannot grant non-interactively — while read-only calls to the same
   server succeed in the same run. Don't tune the invocation; fall back to an authenticated CLI
