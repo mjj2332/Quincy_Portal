@@ -1,9 +1,10 @@
 # Revamp TB5A — Project Stage and Kanban Ordering Contract
 
-**Status:** DRAFT — round 2 revision, awaiting fresh-Opus plan-tier review.
+**Status:** APPROVED by Opus plan-tier review — round 3 folds in the APPROVE conditions; build-ready.
 
-**Review-state note:** This is a plan-only artifact. It authorizes no code, migration, deployment,
-or production mutation. The implementation baseline / parent commit is
+**Review-state note:** APPROVED by Opus plan-tier review — round 3 folds in the APPROVE conditions;
+build-ready. This remains a plan-only artifact. It authorizes no code, migration, deployment, or
+production mutation. The implementation baseline / parent commit is
 `8b7b3f96b1195c8dbaef547348962a7bb9bd3079`; the draft commit is
 `7f04955e9456eccf482bb87befccad02eea4fac9`. The checked-in migration journal ends at `0036`,
 and `docs/todo.md` records migration `0036` applied to production on 2026-08-28. The read-only
@@ -126,6 +127,69 @@ The round-2 nits are also applied: compacting SQL is explicitly normative and ex
 migration suite must prove that a postflight CHECK failure rolls back the preceding
 ALTER/capture/update sequence rather than merely reporting failure.
 
+## Round 3 revision log (Opus APPROVE conditions)
+
+- **Migration splitter safety:** Both normalization comparator occurrences now use
+  `(priority IS NULL),` instead of a comma-followed `CASE … END,`. The migration suite runs
+  Wrangler’s own `splitSqlQuery` over the checked-in file, proves one statement per
+  breakpoint-delimited segment, and rejects any remaining compound `END` followed by punctuation
+  that can keep Wrangler’s compound frame open.
+
+- **Pinned all-or-zero fences:** Every single-reference fence CTE carrying a snapshot guarantee is
+  declared `AS MATERIALIZED`. The compacting and non-compacting exact-placement statements receive
+  scratch-D1 query-plan assertions; the compacting plan must contain `MATERIALIZE fence`. The
+  rollback batch continues to use its transactional following-CHECK gate and has no fence CTE to
+  pin.
+
+- **Same-Stage capability boundary:** A placement-changing request whose target semantic Stage
+  equals the project’s current Stage is rejected with
+  `403 project_board_reorder_forbidden` unless the principal also holds `prioritizeProjects`.
+  Authorized same-Stage reorder is delegated exclusively to `project-board-order.ts`, emits
+  `project.board_position_set`, and never becomes a weaker path through `moveProjectStage`.
+  Cross-Stage `moveProjectStage` behavior is unchanged.
+
+- **Complete writer ownership:** Slice 0 now closes only after a complete Stage-and-position writer
+  inventory assigns every current writer to a slice. The three legacy ordering helpers
+  `priorityInsertNeighbors`, `manualInsertNeighbors`, and `renumberedInsertPosition` and their
+  shared test imports are removed or rewritten together in Slice 5. No writer may leave Slice 6
+  still changing `board_position` without the corresponding `board_revision`.
+
+- **Migration-number coupling:** Renumbering `0037` requires one atomic checklist edit to the
+  rollback table name, its unique-index name, every Worker marker literal, migration filename,
+  snapshot, journal, tests, and scratch objects.
+
+- **Activity contract simplified:** `project.stage.changed` keeps `emptyPayload`; there is no
+  from/to Stage payload and therefore no new semantic-Stage leak surface. Its registry entry moves
+  from reserved/cutover to live with the exact producer and source-key shape
+  `project-stage:<projectId>:transition:<activityId>`. Its generic safe copy remains appropriate.
+
+- **External stage DTO tightened:** External summary/detail `stageKey` becomes
+  `z.enum(STAGE_PRESENTATION_KEYS)`. The existing `editing_autohdr → editing` conversion moves into
+  `stageTransportKeyForRole`; no parallel `externalStageKey` helper remains.
+
+- **Executable non-compacting fence:** The plan now specifies the full normative SQL for the
+  non-compacting exact-placement winner, including JSON validation, type checks, bidirectional
+  target-column set equality, and exact source Stage/revision fencing.
+
+- **Compaction cost made explicit:** A compaction is a full-column renumber to
+  `0,1024,2048,…`; every changed row receives a revision bump, invalidating other clients’ tokens
+  and potentially producing visible `409` churn. Slice 8 benchmarks bounded representative column
+  sizes and stops rollout if production exceeds the reviewed measured envelope.
+
+- **Drizzle snapshot discipline:** Migration-only rollback/scratch tables and the migration-only
+  normalization index stay out of `schema.ts` and `0037_snapshot.json`, following the migration
+  `0015` backup-table precedent.
+
+- **Pre-marker reads enumerated:** The six current bare project selects that would expand after the
+  Drizzle schema change are explicitly assigned pre-`0037` projections:
+  `projects.ts:247,492,559,1121` and `tonomo/process.ts:72,80`. Repository audit found no additional
+  bare project selects.
+
+- **Review nits closed:** Slice 0 records the legacy `1024,2048,…` versus migration
+  `0,1024,…` normalization difference; the trailing-slash Stage route is documented as net-new
+  strict-Hono surface; and removal of `/admin/backfill-board-position` includes
+  `admin.board_position_backfill`, its route-manifest entry, and its tests.
+
 ## Purpose
 
 TB5A establishes one Stage-movement contract and removes the hidden coupling between Priority and
@@ -135,8 +199,10 @@ Delivered outcomes:
 
 - Admins, internal Editors, and assigned External Editors can move an unarchived project from the
   Project Workspace rail, native Kanban drag, or a keyboard/non-drag action.
-- Every human Stage change uses one command with identical capability, authorization,
+- Every human cross-Stage change uses one command with identical capability, authorization,
   expected-state, confirmation, audit, activity, Deadline, notification, and conflict semantics.
+- Same-Stage manual reorder remains Admin-only through `prioritizeProjects` and the dedicated
+  Board-order command.
 - Manual entry into or exit from Editing and Delivered changes Stage only. It does not send,
   retrieve, cancel, retire, publish, revoke, or delete workflow state.
 - `board_position` is the sole persisted manual order. Priority and shoot-date modes are non-writing
@@ -229,6 +295,8 @@ Grant `moveProjectStage` to Admin, internal Editor, and External Editor. Do not 
 Photographer. External possession of the capability never substitutes for current assignment,
 unarchived-project, active-account, or TB4E visible-scope checks.
 
+`prioritizeProjects` remains Admin-only. TB5A does not grant it to either Editor role.
+
 ### Exact current Stage-writer inventory
 
 The current DB helper is `packages/db/src/stage-transition.ts#guardedStageTransition`. It guards
@@ -236,27 +304,59 @@ source Stage and archive state, appends to the destination, writes `stage.auto_a
 a best-effort `onSuccess` hook after a winning batch. It does not currently fence Board revision or
 continuous workflow-owned Stage occupancy.
 
-| File / function | Current primitive | Current Stage audit | Current prerequisite | Current notification | TB5A target |
-|---|---|---|---|---|---|
-| `workers/app/src/lib/ingest.ts#finalizeIngest` | `guardedStageTransition` | `stage.auto_advance` | Durable RAW asset | `raw_ready` | Automatic winner bundle; caller finalizer |
-| `workers/background/src/dropbox/sync.ts#syncProjectRawFolder` | `guardedStageTransition` | `stage.auto_advance` | Reconciliation claim and RAW evidence | `raw_ready` | Automatic winner bundle; caller finalizer |
-| `workers/background/src/reconcile-awaiting-raw.ts#advanceAwaitingRawProject` | Direct guarded update/audit batch | `stage.auto_advance` | Shoot date due on Sydney business date | `raw_ready` | Typed reconciliation prerequisite |
-| `workers/background/src/autohdr/claims.ts#confirmAutoHdrHandoff` | Direct Stage/audit/handoff batch | `stage.auto_advance` | Handoff identity/connection/generation/state | `sent_to_editing` | Winner plus handoff token tail |
-| `workers/background/src/autohdr/claims.ts#claimAutoHdrRepeatSend` | Stage update inside claim batch | `stage.auto_advance` | Retirement/new mapping winner | None here | Winner plus new handoff token |
-| `workers/background/src/autohdr/claims.ts#claimImplicitAutoHdrHandoff` | Direct claim batch | `stage.auto_advance` | Mapping/path ownership | `sent_to_editing` | Winner plus handoff token tail |
-| `workers/background/src/autohdr/claims.ts#claimBackfillAutoHdrHandoff` | Direct claim batch | `stage.auto_advance` | Mapping/path claim | `sent_to_editing` | Winner plus handoff token tail |
-| `workers/background/src/workflows/autohdr-api-send.ts#complete-autohdr-api-send` | Direct Stage/job/audit batch | Stage and workflow audits | Provider finalize and exact job | `sent_to_editing` | Winner plus job token tail |
-| `workers/background/src/workflows/autohdr.ts#mark-send-running` with handoff | `confirmAutoHdrHandoff` | As above | Frozen handoff | `sent_to_editing` | Converted handoff command |
-| `workers/background/src/workflows/autohdr.ts#mark-send-running` legacy no-handoff | Direct Drizzle Stage update | None | Legacy workflow input/source Stage | `sent_to_editing` | Propagated entry-job token or fail closed |
-| `workers/background/src/autohdr/finals.ts#writeAutoHdrFinal` same-hash | `guardedStageTransition` | `stage.auto_advance` | Handoff/mapping/fetch/coverage | `edited_landed` | Completion with handoff entry token |
-| `workers/background/src/autohdr/finals.ts#writeAutoHdrFinal` first-version | Direct asset/claim/Stage batch | `stage.auto_advance` | Current asset and coverage | `edited_landed` | Completion with handoff entry token |
-| `workers/background/src/autohdr/finals.ts#writeAutoHdrFinal` replacement | `guardedStageTransition` | `stage.auto_advance` | Replacement claim and coverage | `edited_landed` | Completion with handoff entry token |
-| `workers/background/src/workflows/autohdr-fetch.ts#advance-stage` legacy | Direct Drizzle Stage update | None | Returned edited coverage | `edited_landed` | Propagated entry-job token or fail closed |
-| `workers/app/src/routes/projects.ts` Stage handler | Unguarded Stage/append write | `stage.set` | Route-local access | Legacy `delivered` | Replaced by `moveProjectStage` |
+| File / function | Current primitive | Current Stage audit | Current prerequisite | Current notification | TB5A target | Slice |
+|---|---|---|---|---|---|---|
+| `workers/app/src/lib/ingest.ts#finalizeIngest` | `guardedStageTransition` | `stage.auto_advance` | Durable RAW asset | `raw_ready` | Automatic winner bundle; caller finalizer; no separate position write remains | 6 |
+| `workers/background/src/dropbox/sync.ts#syncProjectRawFolder` | `guardedStageTransition` | `stage.auto_advance` | Reconciliation claim and RAW evidence | `raw_ready` | Automatic winner bundle; caller finalizer; no separate position write remains | 6 |
+| `workers/background/src/reconcile-awaiting-raw.ts#advanceAwaitingRawProject` | Direct guarded Stage/append update and audit batch | `stage.auto_advance` | Shoot date due on Sydney business date | `raw_ready` | Typed reconciliation prerequisite | 6 |
+| `workers/background/src/autohdr/claims.ts#confirmAutoHdrHandoff` | Direct Stage/append/audit/handoff batch | `stage.auto_advance` | Handoff identity/connection/generation/state | `sent_to_editing` | Winner plus handoff token tail | 6 |
+| `workers/background/src/autohdr/claims.ts#claimAutoHdrRepeatSend` | Stage/append update inside claim batch | `stage.auto_advance` | Retirement/new mapping winner | None here | Winner plus new handoff token | 6 |
+| `workers/background/src/autohdr/claims.ts#claimImplicitAutoHdrHandoff` | Direct Stage/append claim batch | `stage.auto_advance` | Mapping/path ownership | `sent_to_editing` | Winner plus handoff token tail | 6 |
+| `workers/background/src/autohdr/claims.ts#claimBackfillAutoHdrHandoff` | Direct Stage/append claim batch | `stage.auto_advance` | Mapping/path claim | `sent_to_editing` | Winner plus handoff token tail | 6 |
+| `workers/background/src/workflows/autohdr-api-send.ts#complete-autohdr-api-send` | Direct Stage/append/job/audit batch | Stage and workflow audits | Provider finalize and exact job | `sent_to_editing` | Winner plus job token tail | 6 |
+| `workers/background/src/workflows/autohdr.ts#mark-send-running` with handoff | `confirmAutoHdrHandoff` | As above | Frozen handoff | `sent_to_editing` | Converted handoff command | 6 |
+| `workers/background/src/workflows/autohdr.ts#mark-send-running` legacy no-handoff | Direct Drizzle Stage/append update | None | Legacy workflow input/source Stage | `sent_to_editing` | Propagated entry-job token or fail closed | 6 |
+| `workers/background/src/autohdr/finals.ts#writeAutoHdrFinal` same-hash | `guardedStageTransition` | `stage.auto_advance` | Handoff/mapping/fetch/coverage | `edited_landed` | Completion with handoff entry token; no separate position write remains | 6 |
+| `workers/background/src/autohdr/finals.ts#writeAutoHdrFinal` first-version | Direct asset/claim/Stage/append batch | `stage.auto_advance` | Current asset and coverage | `edited_landed` | Completion with handoff entry token | 6 |
+| `workers/background/src/autohdr/finals.ts#writeAutoHdrFinal` replacement | `guardedStageTransition` | `stage.auto_advance` | Replacement claim and coverage | `edited_landed` | Completion with handoff entry token; no separate position write remains | 6 |
+| `workers/background/src/workflows/autohdr-fetch.ts#advance-stage` legacy | Direct Drizzle Stage/append update | None | Returned edited coverage | `edited_landed` | Propagated entry-job token or fail closed | 6 |
+| `workers/app/src/routes/projects.ts` Stage handler | Unguarded Stage/append write | `stage.set` | Route-local access | Legacy `delivered` | Replaced by `moveProjectStage` | 5 |
 
-Final source audit also covers creation, archive, restore, manual position, and Priority-coupled
-position writers. No production Stage or position mutation may remain outside an owned TB5A
-command/bundle.
+The three existing `guardedStageTransition` owners—`ingest.ts`, `sync.ts`, and both named
+`finals.ts` callers—do not retain or add a direct position update outside their converted automatic
+winner bundle. The append and revision change are one DB-owned winner.
+
+### Complete current Stage-and-position writer inventory
+
+Slice 0 must verify this table against source before it closes. A newly discovered writer is added
+to the table and assigned before implementation continues.
+
+| Writer / source | Current primitive | Current audit | Prerequisite / guard | Current post-success hook | TB5A target form | Slice |
+|---|---|---|---|---|---|---|
+| `POST /projects/:id/stage`, `projects.ts:1114-1133` | Direct Drizzle Stage plus `appendToStageBottomExpr` | `stage.set` | Route access, active Stage | Deadline follow-up and legacy `delivered` notification | Cross-Stage `moveProjectStage` winner/activity/Deadline bundle; same-Stage placement dispatches only to Board-order command | 5 |
+| `POST /projects/:id/board-position`, `projects.ts:456-484` | `guardedBoardUpdate` using `plannedBoardState` | `project.board_position_set` | Access plus `prioritizeProjects` | None | `project-board-order.ts`; exact snapshot/revision; audit only | 5 |
+| `guardedBoardUpdate` / `plannedBoardState`, `projects.ts:45-112` | Target update followed by per-row renumber writes | Caller-provided marker | Stage/position snapshots, incomplete revision contract | Caller-specific | Delete after DB-owned non-compacting/compacting bundles replace all callers | 5 |
+| Priority route, `projects.ts:417-454`; `priorityInsertNeighbors`, import at `:19`, call at `:427` | Priority-coupled position planning through `guardedBoardUpdate` | `project.priority_set` plus `project.priority.changed` | `prioritizeProjects`, current Stage/position | Queue publication | Metadata-only guarded Priority update; no position/revision mutation | 5 |
+| `manualInsertNeighbors`, `kanban-ordering.ts:33-40` | Directional neighbour derivation | None itself | Used only by manual Board route | None | Replaced by exact visible-neighbour request contract; delete with its tests | 5 |
+| `renumberedInsertPosition`, `kanban-ordering.ts:42-50` | Legacy full-column `1024,2048,…` renumber plan | None itself | Called through `plannedBoardState` | None | Replaced by DB-owned `0,1024,…` compaction; delete with its tests | 5 |
+| Raw app project creation insert, `projects.ts:323-328` | SQL insert with Stage-bottom subquery | Project-creation audit/activity chain | Eligibility and membership predicates | Scaffold trigger | Marker/flag-aware creation bundle appending at bottom with initial revision contract | 5 |
+| Tonomo project creation, `workers/background/src/tonomo/process.ts:95-103` | Drizzle insert with `appendToStageBottomExpr` | Tonomo project audit | Exact order/address reconciliation | AutoHDR scaffold enqueue | Marker/flag-aware creation bundle; position and revision written together | 6 |
+| Admin backfill route full-column writes, `admin.ts:309-343`, including Stage-bottom repair at `:338` | Per-row normalization plus retrying Stage-bottom correction | `admin.board_position_backfill` | Admin operator route | None | Entire route, route-manifest entry, audit expectation, and tests removed | 5 |
+| Archive route, `projects.ts:974-1040` | Archive update removes row from visible Board but does not revise it | `project.archive` | Archive capability and document guards | Activity publication | Board-aware archive winner increments revision exactly once | 5 |
+| Restore route, `projects.ts:1041-1071` | Clears archive fields without appending/revision | `project.restore` | Archive capability | Activity publication | Board-aware restore appends to Stage bottom and increments revision exactly once | 5 |
+| `ingest.ts#finalizeIngest` | `guardedStageTransition` owns Stage-bottom position | `stage.auto_advance` | Durable RAW asset | `raw_ready` | One automatic winner bundle; no direct position write | 6 |
+| `dropbox/sync.ts#syncProjectRawFolder` | `guardedStageTransition` owns Stage-bottom position | `stage.auto_advance` | Claim and RAW evidence | `raw_ready` | One automatic winner bundle; no direct position write | 6 |
+| `autohdr/finals.ts` same-hash and replacement | `guardedStageTransition` owns Stage-bottom position | `stage.auto_advance` | Handoff/mapping/fetch/coverage | `edited_landed` | One automatic winner bundle per path; no direct position write | 6 |
+| All remaining direct automatic rows in the preceding Stage inventory | Direct Stage-bottom writes | `stage.auto_advance` or currently missing audit on legacy paths | Exact workflow-specific prerequisite | Current owning workflow notification | DB-owned automatic winner plus revision/token tail | 6 |
+
+`workers/app/test/kanban-ordering.test.ts` imports
+`priorityInsertNeighbors`, `manualInsertNeighbors`, and `renumberedInsertPosition` together. Slice 5
+must remove or rewrite all three imports, their helper definitions, and all affected expectations in
+the same independently green slice.
+
+No writer in either inventory may reach the end of Slice 6 while changing `board_position` without
+also applying the required `board_revision` transition. The Slice 6 closeout audit is a hard gate,
+not a later cleanup.
 
 ### Current Priority and External ordering behavior
 
@@ -289,7 +389,7 @@ promise to preserve External ID order.
 - Persist workflow-owned Editing-entry revisions.
 - Normalize current internal Board order and retain permanent rollback evidence.
 - Make Priority metadata-only and add a non-writing Priority view.
-- Add one route-independent human Stage command and a same-Stage order command.
+- Add one route-independent human Stage command and a capability-distinct same-Stage order command.
 - Converge all Stage/position writers on shared prepared bundles.
 - Add External-safe Board order, revision, and contract-state projections.
 - Add Project Workspace rail, native drag, keyboard movement, confirmations, and refresh ownership.
@@ -308,7 +408,8 @@ promise to preserve External ID order.
 - React/dependency migration;
 - prototype changes;
 - media deletion;
-- a second activity/outbox system.
+- a second activity/outbox system;
+- any expansion of same-Stage reorder authority beyond `prioritizeProjects`.
 
 ## Exact Stage domain contract
 
@@ -349,6 +450,10 @@ parseStageTransportKey(value: unknown, role: Role): StageKey | null
 projectStageDtoForRole(stage: PipelineStage, role: Role): RoleSafeStageDto
 ```
 
+`stageTransportKeyForRole` owns the existing `editing_autohdr → editing` role projection now
+implemented separately as `external-project-query.ts#externalStageKey`. Delete that parallel helper
+and route every External DTO projection through the shared transport helper.
+
 Rules:
 
 - Admin may receive and submit `editing_autohdr`.
@@ -358,6 +463,16 @@ Rules:
 - Audit/activity storage uses semantic `StageKey`.
 - Provider vocabulary never appears in non-Admin API, DOM, modal, toast, console, or notification
   payloads.
+
+In `packages/shared/src/external-project-dto.ts`:
+
+```ts
+stageKey: z.enum(STAGE_PRESENTATION_KEYS)
+```
+
+replaces `stageKey: z.string()` in `externalProjectSummarySchema`. The detail schema extends summary
+and therefore inherits the same restriction. This change must land before the strict-decoding
+internal-Editing sentinel is considered meaningful.
 
 ### Sequence and cumulative confirmation
 
@@ -412,12 +527,33 @@ One modal may explain multiple reasons.
 - An inactive current Stage remains displayed and can be exited.
 - An inactive non-current Stage cannot be entered.
 - Same-Stage selection with unchanged placement is a no-op.
+- A same-Stage placement change is not a Stage move. If the principal lacks
+  `prioritizeProjects`, return:
+
+```json
+{
+  "error": "Forbidden: manual Board reorder requires prioritizeProjects.",
+  "code": "project_board_reorder_forbidden",
+  "capability": "prioritizeProjects"
+}
+```
+
+  with HTTP `403` and zero audit/activity/outbox footprint.
+- If the principal holds `prioritizeProjects`, dispatch the same-Stage placement change exclusively
+  to `project-board-order.ts`; a winner writes `project.board_position_set`. It does not write
+  `stage.set`, `project.stage.changed`, or a Stage audit.
+- Cross-Stage `moveProjectStage` remains governed only by `moveProjectStage` plus project visibility
+  and is unaffected by this same-Stage rule.
 - Archived Dashboard remains List-only.
 - Admin/internal Editor receives `409 project_archived_read_only`.
 - External missing, unassigned, archived, or nonexistent project receives the same generic `404`.
 - Photographer receives a constant capability `403`.
 - No failed or no-op request writes Stage, position, revision, audit, activity, outbox, Deadline, or
   workflow state.
+
+Tests include an internal Editor and an External Editor each submitting a same-Stage
+`between` placement. Both receive `403 project_board_reorder_forbidden`, no existence or hidden-row
+leak, and zero mutation footprint.
 
 ## Board revision, placement, and transport types
 
@@ -570,8 +706,8 @@ External responses never contain Priority, raw position, hidden IDs, or the inte
 
 Changed Stage/revision/neighbour/snapshot/assignment premises return
 `409 project_stage_conflict` with authoritative role-safe current state and no automatic retry.
-Archived, inactive-destination, confirmation-required, contract-disabled, and pre-schema
-maintenance results use distinct codes.
+Archived, inactive-destination, confirmation-required, contract-disabled, same-Stage-reorder
+forbidden, and pre-schema maintenance results use distinct codes.
 
 ## Human Stage command and route
 
@@ -596,20 +732,21 @@ moveProjectStage({
 The command owns:
 
 1. schema-variant and durable-feature-flag admission;
-2. active principal and capability;
+2. active principal and `moveProjectStage`;
 3. External visible-project authorization before existence disclosure;
 4. archive state;
 5. role-safe transport normalization;
 6. expected Stage and revision;
-7. active destination;
-8. confirmation classification and equality;
-9. neighbour visibility and revision;
-10. complete target-Stage snapshot;
-11. canonical placement;
-12. prepared winner/activity/Deadline bundle composition;
-13. fixed result-index interpretation;
-14. authoritative role-safe reread;
-15. publication IDs and finalizer intent.
+7. same-Stage placement classification and `prioritizeProjects` enforcement;
+8. active destination;
+9. confirmation classification and equality;
+10. neighbour visibility and revision;
+11. complete target-Stage snapshot;
+12. canonical placement;
+13. prepared winner/activity/Deadline bundle composition;
+14. fixed result-index interpretation;
+15. authoritative role-safe reread;
+16. publication IDs and finalizer intent.
 
 Expected results are exhaustive and non-throwing:
 
@@ -622,6 +759,11 @@ type MoveProjectStageResult =
     }
   | { kind: "no_change"; response: MoveProjectStageResponse }
   | { kind: "forbidden"; capability: "moveProjectStage" }
+  | {
+      kind: "reorder_forbidden";
+      code: "project_board_reorder_forbidden";
+      capability: "prioritizeProjects";
+    }
   | { kind: "not_found" }
   | { kind: "archived"; current: StageMoveProjectState }
   | { kind: "inactive_destination"; current: StageMoveProjectState }
@@ -639,7 +781,8 @@ type MoveProjectStageResult =
   | { kind: "schema_maintenance" };
 ```
 
-Unexpected D1/runtime failures throw and remain `500`.
+An authorized same-Stage placement change is handed to the dedicated Board-order command rather
+than executed as a Stage winner. Unexpected D1/runtime failures throw and remain `500`.
 
 ### Route forms and legacy discriminator
 
@@ -651,6 +794,10 @@ POST /projects/:id/stage/
 ```
 
 Both use the same session, CSRF, terminal-route, body, command, and finalizer chain.
+
+`POST /projects/:id/stage/` is net-new surface because the app uses default strict Hono routing
+(`workers/app/src/index.ts:34`); it is not a regression guard. The route-manifest audit must expect
+the new explicit route.
 
 After JSON decoding but before strict TB5A parsing:
 
@@ -838,7 +985,7 @@ Human `moveProjectStage` produces Queue publication IDs but no legacy workflow n
 
 ## Two mutually exclusive Stage winner forms
 
-### Non-compacting winner
+### Non-compacting winner — normative exact-placement SQL
 
 A non-compacting move consists of:
 
@@ -846,10 +993,7 @@ A non-compacting move consists of:
 2. one audit marker requiring `changes() = 1`;
 3. marker-gated activity, outbox/ledger, workflow, and Deadline tails.
 
-The update requires the durable feature flag, exact project ID, source Stage, archive state,
-expected revision, typed prerequisite, and placement snapshot.
-
-Append is computed inside the update:
+Append is computed inside the guarded update:
 
 ```sql
 SELECT COALESCE(MAX(board_position) + 1024, 0)
@@ -859,8 +1003,144 @@ WHERE stage_key = ?1
   AND id <> ?2
 ```
 
-Exact placement also fences the complete target-Stage snapshot encoded as one JSON parameter. If any
-ID, Stage, position, revision, archive state, or row count changed, it updates zero rows.
+For exact placement, the following is normative executable SQL. It must pass scratch D1 alongside
+the compacting form.
+
+Parameters:
+
+```text
+?1  expectedTargetJson
+?2  'tb5a_board_contract_enabled'
+?3  expectedTargetRowCount excluding target
+?4  semantic target Stage
+?5  target project ID
+?6  target old semantic Stage
+?7  target old board revision
+?8  computed non-compacting board position
+?9  updated_at timestamp
+```
+
+Each `expectedTargetJson` row is:
+
+```ts
+type ExpectedTargetPlacementRow = {
+  projectId: string;
+  stageKey: StageKey;
+  boardPosition: number;
+  boardRevision: number;
+};
+```
+
+```sql
+WITH
+expected_target AS (
+  SELECT
+    json_extract(value, '$.projectId') AS project_id,
+    json_type(value, '$.projectId') AS project_id_type,
+    json_extract(value, '$.stageKey') AS stage_key,
+    json_type(value, '$.stageKey') AS stage_key_type,
+    CAST(json_extract(value, '$.boardPosition') AS REAL) AS board_position,
+    json_type(value, '$.boardPosition') AS board_position_type,
+    CAST(json_extract(value, '$.boardRevision') AS INTEGER) AS board_revision,
+    json_type(value, '$.boardRevision') AS board_revision_type
+  FROM json_each(
+    CASE WHEN json_valid(?1) THEN ?1 ELSE '[]' END
+  )
+),
+fence AS MATERIALIZED (
+  SELECT 1 AS ok
+  WHERE EXISTS (
+    SELECT 1
+    FROM feature_flags
+    WHERE key = ?2
+      AND enabled = 1
+  )
+  AND json_valid(?1)
+  AND (SELECT COUNT(*) FROM expected_target) = ?3
+  AND (SELECT COUNT(DISTINCT project_id) FROM expected_target) = ?3
+  AND NOT EXISTS (
+    SELECT 1
+    FROM expected_target
+    WHERE project_id_type <> 'text'
+       OR stage_key_type <> 'text'
+       OR stage_key IS NOT ?4
+       OR board_position_type NOT IN ('integer', 'real')
+       OR board_revision_type <> 'integer'
+       OR board_revision < 0
+       OR board_revision > 9007199254740991
+  )
+  AND (
+    SELECT COUNT(*)
+    FROM projects
+    WHERE stage_key = ?4
+      AND archived_at IS NULL
+      AND id <> ?5
+  ) = ?3
+  AND (
+    SELECT COUNT(*)
+    FROM expected_target e
+    JOIN projects p
+      ON p.id = e.project_id
+     AND p.id <> ?5
+    WHERE p.stage_key = e.stage_key
+      AND p.board_position IS e.board_position
+      AND p.board_revision = e.board_revision
+      AND p.archived_at IS NULL
+  ) = ?3
+  AND NOT EXISTS (
+    SELECT 1
+    FROM expected_target e
+    LEFT JOIN projects p
+      ON p.id = e.project_id
+     AND p.id <> ?5
+    WHERE p.id IS NULL
+       OR p.stage_key IS NOT e.stage_key
+       OR p.board_position IS NOT e.board_position
+       OR p.board_revision IS NOT e.board_revision
+       OR p.archived_at IS NOT NULL
+  )
+  AND NOT EXISTS (
+    SELECT 1
+    FROM projects p
+    LEFT JOIN expected_target e
+      ON e.project_id = p.id
+    WHERE p.stage_key = ?4
+      AND p.archived_at IS NULL
+      AND p.id <> ?5
+      AND e.project_id IS NULL
+  )
+)
+UPDATE projects AS p
+SET
+  stage_key = ?4,
+  board_position = ?8,
+  board_revision = p.board_revision + 1,
+  updated_at = ?9
+FROM fence
+WHERE p.id = ?5
+  AND p.stage_key = ?6
+  AND p.board_revision = ?7
+  AND p.archived_at IS NULL
+RETURNING
+  id,
+  stage_key,
+  board_position,
+  board_revision;
+```
+
+The SQL validates `json_valid`, every JSON field type, distinct expected IDs, both directions of
+set equality against the complete live unarchived target-Stage snapshot, and the target’s exact
+source Stage and revision. Any ID, Stage, position, revision, archive state, or row-count change
+updates zero rows.
+
+The append specialization retains the exact source Stage/revision, durable flag, and complete
+target-snapshot fence, but computes its final position from the fenced destination inside the
+winner. It does not trust a client-supplied numeric position.
+
+Every single-reference fence CTE carrying an all-or-zero premise uses `AS MATERIALIZED`.
+Scratch-D1 query-plan tests inspect both non-compacting and compacting statements. The compacting
+plan must contain `MATERIALIZE fence`; the non-compacting plan must show the pinned fence rather
+than a co-routine/inlined evaluation.
 
 ### Compacting winner — normative executable SQL
 
@@ -969,7 +1249,7 @@ ordered_destination AS (
     ) - 1 AS desired_rank
   FROM planned_destination
 ),
-fence AS (
+fence AS MATERIALIZED (
   SELECT 1 AS ok
   WHERE EXISTS (
     SELECT 1
@@ -1160,6 +1440,11 @@ The fence establishes all of the following before any candidate is admitted:
 
 The same-stage reorder specialization must retain these proofs. It may not replace them with
 per-row guards that permit a partial renumber.
+
+Every compaction is intentionally a full-column normalization to `0,1024,2048,…`. Every row whose
+position changes increments `board_revision`, invalidating every other client’s optimistic token
+for that column. On a large column this can cause visible, expected `409 project_stage_conflict`
+churn; TB5A does not auto-retry or silently rebase those clients.
 
 The following audit marker remains immediate:
 
@@ -1352,22 +1637,39 @@ Manual moves never retire workflow state. The token is the continuous-occupancy 
 
 Activate only `project.stage.changed`.
 
-Payload:
+The payload remains the existing strict `emptyPayload`:
 
 ```ts
-{
-  fromStageKey: StageKey;
-  toStageKey: StageKey;
-}
+{}
 ```
+
+Do not add `fromStageKey` or `toStageKey`. Current internal and External copy is generic and renders
+neither field; keeping the empty payload removes the semantic Editing leak surface entirely.
+
+Exact registry deltas in `packages/shared/src/project-activity.ts`:
+
+- change `project.stage.changed` from reserved / `cutover: "reserved"` to a live registry entry;
+- set `producerOwner` to `moveProjectStage`;
+- set `producerCallSites` to the sole human producer,
+  `workers/app/src/lib/project-stage.ts#moveProjectStage`;
+- retain `sourceKind: "project_stage"`;
+- change `sourceKeyShape` from `project-stage:<projectId>:<transitionId>` to
+  `project-stage:<projectId>:transition:<activityId>`;
+- retain `payloadSchema: emptyPayload`;
+- retain project deep linking, no coalescing, and in-app-only delivery;
+- keep `case "project.stage.changed":` in the generic-copy group at
+  `project-activity.ts:433`, because the empty payload requires no type-specific rendering.
 
 Registry contract:
 
 ```text
 category: stage
+cutover: live
 producer: moveProjectStage
+producer call site: workers/app/src/lib/project-stage.ts#moveProjectStage
 source kind: project_stage
 source key: project-stage:<projectId>:transition:<activityId>
+payload: emptyPayload
 actor: user
 deep link: project
 coalescing: none
@@ -1376,8 +1678,8 @@ email default: off
 backfill: none
 ```
 
-Every winning human Stage change emits one immutable activity. Automatic advances, same Stage,
-conflicts, cancellation, inactive target, archive, and failed authorization do not.
+Every winning human cross-Stage change emits one immutable activity. Automatic advances, same-Stage
+reorder, conflicts, cancellation, inactive target, archive, and failed authorization do not.
 
 Reuse `buildProjectActivityStatements()` and TB4C recipient-cycle semantics:
 
@@ -1385,7 +1687,13 @@ Reuse `buildProjectActivityStatements()` and TB4C recipient-cycle semantics:
 - exact membership-cycle and authorization-epoch admission;
 - no broad email or coalescing;
 - External assigned recipients receive fixed generic safe copy;
+- `projectExternalActivityPayload` returns only `{}` for this live type;
 - External notification projection never exposes semantic Editing keys.
+
+If and only if a later reviewer reopens the accepted `emptyPayload` decision and requires a
+from/to payload, the change requires fresh review plus an explicit test proving an External
+recipient never receives `editing_autohdr`. The TB5A default and approved build contract is
+`emptyPayload`.
 
 Human Stage movement does not call legacy `notifyProject(..., "delivered")` or
 `notifyProject(..., "sent_to_editing")`.
@@ -1402,7 +1710,16 @@ Before creating files:
 1. query production `d1_migrations` and require tail `0036`;
 2. require local journal and migration-directory tail `0036`;
 3. confirm no other branch has claimed `0037`;
-4. stop and renumber if any check differs.
+4. stop and renumber if any check differs;
+5. if renumbering is required, change together:
+   - migration filename and journal tag;
+   - snapshot filename and snapshot identity;
+   - `project_board_order_0037_rollback`;
+   - `project_board_order_0037_stage_rank_idx`;
+   - every app/background Worker `sqlite_master` marker literal;
+   - all `_tb5a_0037_*` scratch/guard table names;
+   - migration, rollback, route, variant, and query-plan test fixtures.
+   No isolate may check a marker number different from the rollback table and unique-index number.
 
 Planned files:
 
@@ -1519,7 +1836,7 @@ WITH ranked AS (
     ROW_NUMBER() OVER (
       PARTITION BY stage_key
       ORDER BY
-        CASE WHEN priority IS NULL THEN 1 ELSE 0 END,
+        (priority IS NULL),
         board_position,
         id
     ) AS visible_rank
@@ -1588,12 +1905,25 @@ the guarded update affected every captured row and every captured row matches no
 The comparator remains exactly:
 
 ```sql
-CASE WHEN priority IS NULL THEN 1 ELSE 0 END,
+(priority IS NULL),
 board_position,
 id
 ```
 
-Never add numeric `priority ASC`.
+This is rank-identical to `CASE WHEN priority IS NULL THEN 1 ELSE 0 END` but is required because
+Wrangler’s compound-statement splitter does not close a `CASE` frame at `END,`. Never restore the
+comma-followed `CASE` expression and never add numeric `priority ASC`.
+
+The migration suite imports Wrangler’s installed
+`wrangler-dist/cli.js` `splitSqlQuery`, runs it over the checked-in migration file, and asserts:
+
+- each nonempty segment separated by `--> statement-breakpoint` maps to exactly one Wrangler SQL
+  statement;
+- no Wrangler statement merges adjacent migration segments;
+- Wrangler’s compound stack is effectively closed at every boundary;
+- no migration statement is swallowed together with Wrangler’s `d1_migrations` journal insert;
+- a source audit finds no other compound `END` followed by punctuation rather than `;` or
+  whitespace.
 
 The migration:
 
@@ -1604,6 +1934,26 @@ The migration:
 - assigns every normalized unarchived project revision `1`;
 - creates no audit, activity, outbox, or workflow notification;
 - uses no rebuild, `PRAGMA foreign_keys=OFF`, permanent-data drop, or rollback-table foreign key.
+
+### Drizzle snapshot discipline
+
+`packages/db/drizzle.config.ts` has no `tablesFilter`. The migration-only objects:
+
+```text
+project_board_order_0037_rollback
+project_board_order_0037_stage_rank_idx
+projects_stage_archive_board_order_idx
+_tb5a_*
+```
+
+must remain out of `packages/db/src/schema.ts` and out of
+`packages/db/migrations/meta/0037_snapshot.json`. This follows migration `0015`’s `_bk_*` table
+precedent.
+
+Only the three durable application columns and their intended Drizzle declarations enter
+`schema.ts` and the snapshot. The rollback table, its unique index, the normalization query index,
+and all scratch/guard tables are maintained only by the hand-authored migration. This is required
+for the second `drizzle-kit generate` to be a no-op.
 
 ### Migration transaction rollback proof
 
@@ -1623,8 +1973,8 @@ After failure, open a fresh connection and prove:
 - every original position, Stage, and Priority remains unchanged;
 - the migration journal did not advance.
 
-This test accompanies normal full-chain, `0036→0037`, preflight-failure, Wrangler, and scratch-D1
-proofs.
+This test accompanies normal full-chain, `0036→0037`, preflight-failure, Wrangler-splitter, and
+scratch-D1 proofs.
 
 ### External order correction
 
@@ -1690,10 +2040,22 @@ entire batch, including the guard-table creation and every otherwise matching po
 Tests create one drifted row and prove that all other rows retain normalized positions after the
 failure.
 
+This rollback form has no single-reference fence CTE; its all-or-zero guarantee is the following
+CHECK failure inside one D1 batch. If implementation introduces a fence CTE here, it must be
+`AS MATERIALIZED` and receive the same query-plan proof.
+
 After any genuine Stage/reorder/archive/restore write, mass restore and revision reset are forbidden.
 Keep the no-FK rollback table permanently and fix forward.
 
-Remove `/admin/backfill-board-position`; it must not survive as a second ordering authority.
+Remove `/admin/backfill-board-position` as one unit:
+
+- remove the handler;
+- remove its `/api/admin/backfill-board-position` route-manifest entry;
+- remove `admin.board_position_backfill`;
+- remove or rewrite its audit-action tests and route tests;
+- prove no production or test reference survives.
+
+It must not survive as a second ordering authority.
 
 ## Priority and Board commands
 
@@ -1727,8 +2089,9 @@ It:
 - does not derive a position from siblings;
 - does not change Stage, position, or Board revision.
 
-The route rewrite, tests, import removal, and deletion of `priorityInsertNeighbors` occur in one
-slice. Before the `0037` marker exists, the route returns bounded
+The route rewrite, tests, import removal, and deletion of all three
+`priorityInsertNeighbors`, `manualInsertNeighbors`, and `renumberedInsertPosition` helpers occur in
+one slice. Before the `0037` marker exists, the route returns bounded
 `503 board_schema_maintenance`; no statement containing `board_revision` is prepared.
 
 Priority view:
@@ -1749,14 +2112,19 @@ Add `workers/app/src/lib/project-board-order.ts`.
 The command:
 
 - requires `prioritizeProjects`;
+- is the sole owner of same-Stage position changes;
 - requires the post-`0037` schema variant and enabled feature flag;
 - validates target Stage/revision and visible neighbours;
 - applies the same canonical global-anchor and full-snapshot rules;
 - writes position/revision only;
 - writes one `project.board_position_set` audit;
-- creates no activity or outbox;
+- creates no Stage audit, activity, or outbox;
 - returns authoritative visible order;
 - returns `409` on stale state without retry.
+
+`moveProjectStage` must reject a placement-changing same-Stage request from a principal lacking
+`prioritizeProjects` with `403 project_board_reorder_forbidden`. An authorized same-Stage request
+must use this command and audit, not a Stage winner. The cross-Stage path is unaffected.
 
 Archive increments revision while removing a row from the Board. Restore appends to the current
 Stage bottom and increments revision.
@@ -1785,6 +2153,7 @@ External response adds only:
 
 ```ts
 type ExternalProjectSummaryDto = ExistingExternalSummary & {
+  stageKey: StagePresentationKey;
   boardRevision: number;
 };
 
@@ -1805,6 +2174,7 @@ Rules:
 - arrays contain only assigned, unarchived IDs;
 - no hidden fetch/filter occurs in React;
 - no Priority, raw position, hidden count, global revision, or internal Editing key leaks;
+- `externalProjectSummarySchema.stageKey` is `z.enum(STAGE_PRESENTATION_KEYS)`;
 - strict schemas reject internal-field expansion;
 - Board rendering consumes the authorized maps, then ID only as a defensive missing-ID fallback.
 
@@ -1829,14 +2199,15 @@ Strict External detail adds:
 
 ```ts
 type ExternalProjectDetailDto = ExistingExternalProjectDetailDto & {
+  stageKey: StagePresentationKey;
   boardRevision: number;
   contractEnabled: boolean;
 };
 ```
 
-`externalProjectDetailSchema` remains `.strict()`, and
-`externalProjectDetailToWorkspace()` explicitly maps both fields. A direct Workspace deep link can
-therefore create:
+`externalProjectDetailSchema` remains `.strict()`, inherits the narrowed summary `stageKey`, and
+`externalProjectDetailToWorkspace()` explicitly maps all three fields. A direct Workspace deep link
+can therefore create:
 
 ```ts
 {
@@ -1849,8 +2220,8 @@ therefore create:
 
 without Dashboard state.
 
-Privacy sentinel tests inject `priority`, `boardPosition`, an internal Editing key, hidden IDs, and
-hidden counts into External detail. Strict decoding must reject each response. Valid External detail
+Privacy sentinel tests inject `priority`, `boardPosition`, `editing_autohdr`, hidden IDs, and hidden
+counts into External detail. Strict decoding must reject each response. Valid External detail
 contains `boardRevision` and `contractEnabled` but never raw global position or Priority.
 
 ### Slice-4 rendering authority
@@ -1894,15 +2265,19 @@ append placement, and uses the Quincy confirmation modal.
 
 TB5A keeps native HTML drag:
 
-- `draggable` uses `moveProjectStage`;
+- cross-column `draggable` uses `moveProjectStage`;
 - column background uses append;
 - card boundaries submit exact visible neighbours;
+- a same-column card drop is admitted only for `prioritizeProjects` and uses
+  `project-board-order.ts`;
+- internal and External Editors cannot reorder within a Stage;
 - confirmation keeps the card in its source column until accepted;
 - conflict restores authoritative state;
 - no dnd-kit dependency is added.
 
 Every movable card also has a keyboard-operable Move Stage action using the same destinations,
-confirmation, append placement, focus return, and live-region announcement.
+confirmation, append placement, focus return, and live-region announcement. Manual reorder controls
+remain available only in Board order to principals with `prioritizeProjects`.
 
 ### Refresh ownership
 
@@ -1939,10 +2314,33 @@ SELECT EXISTS (
 The resulting promise/value is cached for the isolate. No later route independently probes or
 speculatively prepares both variants.
 
+If the migration renumbers, this marker literal, the rollback table, its unique-index name, all
+scratch names, and every test move together.
+
+### Named pre-marker read sites
+
+After `boardRevision` is added to the Drizzle `projects` schema, these current bare selects would
+automatically emit the new column unless replaced with explicit old-schema projections:
+
+```text
+workers/app/src/routes/projects.ts:247
+workers/app/src/routes/projects.ts:492
+workers/app/src/routes/projects.ts:559
+workers/app/src/routes/projects.ts:1121
+workers/background/src/tonomo/process.ts:72
+workers/background/src/tonomo/process.ts:80
+```
+
+The round-3 repository audit searched both `.from(schema.projects)` and `.from(projects)` bare
+select forms and found no additional current Worker sites. Slice 4 must repeat the audit against its
+implementation diff. Every listed site receives a pre-marker explicit projection or is removed by
+its owning rewrite.
+
 ### `pre_0037` variant
 
 - Normal internal list/detail reads use their old-column SQL projections.
 - Normal strict External list/detail reads use old-column authorized SQL projections.
+- The six named bare project selects use explicit old-column projections.
 - Response adapters synthesize `boardRevision: 0` and `contractEnabled: false`; those values are
   inert presentation defaults, not concurrency authority.
 - Legacy Board presentation remains active; no authoritative post-normalization map is claimed.
@@ -1950,9 +2348,9 @@ speculatively prepares both variants.
   capable of invoking them return bounded `503 board_schema_maintenance`.
 - The metadata-only Priority route also returns `503 board_schema_maintenance`.
 - No builder containing `board_revision`, either workflow token column, or normalized-order indexes
-  is invoked or prepared.
-- Background Queue, Workflow, Cron, reconciliation, Dropbox, and AutoHDR handlers classify the
-  bounded maintenance result without retry storms or Stage side effects.
+  is constructed, invoked, or prepared.
+- Background Queue, Workflow, Cron, reconciliation, Dropbox, Tonomo, and AutoHDR handlers classify
+  the bounded maintenance result without retry storms or Stage side effects.
 
 ### `tb5a_0037` variant
 
@@ -1962,8 +2360,10 @@ speculatively prepares both variants.
 - Priority may use its new metadata-only statement even while the Board flag is OFF.
 - Automatic writers remain flag-gated.
 
-Variant-selection tests use a real `0036` schema and fail the test if any trace or preparation
-mentions a `0037` column before the marker check completes.
+Variant-selection tests use a real `0036` schema and fail the test if any trace, construction, or
+preparation mentions a `0037` column before the marker check completes. “No statement referencing a
+`0037` column is prepared before the marker” is satisfied only when all six named sites and the
+writer inventory have explicit pre-schema behavior.
 
 ## Implementation slices
 
@@ -1980,18 +2380,29 @@ and its affected tests. Compatibility adapters remain until the slice moving the
 
 - Freeze legacy internal ordering, External ID fallback, Stage writers, Priority insertion,
   duplicate/fractional positions, archived rows, and inactive Stage fixtures.
+- Complete and verify the Stage-and-position writer inventory above. No writer may remain assigned
+  only by prose.
+- Record that `renumberedInsertPosition` normalizes to `1024,2048,…`, whereas migration `0037`
+  deliberately normalizes to `0,1024,…`. This is harmless only because the old helper is deleted in
+  Slice 5.
 - Record implementation parent, draft, migration tail, dependency pins, and test counts.
 - Make no production signature removal.
 
-Gate: typecheck, web build, existing Kanban/background characterization suites.
+Gate: typecheck, web build, existing Kanban/background characterization suites, and checked
+writer-inventory evidence.
 
 ### Slice 1 — additive shared contract
 
 - Add capability, Stage transport, sequence, confirmation, request/response, revision, placement,
   activity, and External-safe schemas.
+- Flip `project.stage.changed` from reserved to live with its exact producer call site, new
+  activity-ID source-key shape, and `emptyPayload`.
+- Keep its generic-copy switch case.
+- Narrow External summary/detail Stage decoding to `STAGE_PRESENTATION_KEYS`.
+- Fold External Editing neutralization into `stageTransportKeyForRole`.
 - Add internal and strict External detail revision/contract fields.
 - Keep current Stage call sites on compatibility types until their owning slice.
-- Add shared truth-table, strict-schema, and privacy-sentinel tests.
+- Add shared truth-table, strict-schema, activity-registry, and privacy-sentinel tests.
 
 Gate: typecheck, web build, shared Vitest, affected workspace tests.
 
@@ -1999,19 +2410,28 @@ Gate: typecheck, web build, shared Vitest, affected workspace tests.
 
 - Add the exact breakpoint-separated migration `0037`, three additive columns, rollback table,
   indexes, flag seed, journal, snapshot, and migration tests.
+- Use `(priority IS NULL),` at both comparator declarations.
+- Run Wrangler’s own `splitSqlQuery` over the checked-in migration and prove one statement per
+  breakpoint-delimited segment.
+- Re-audit the entire SQL file for compound `END` tokens not followed by `;` or whitespace.
+- Keep migration-only tables/indexes/scratch objects out of `schema.ts` and
+  `0037_snapshot.json`.
 - Prove full-chain, `0036→0037`, preflight failure, and postflight transactional rollback.
 - Keep production helpers intact.
 
-Gate: typecheck, web build, DB migration tests, local Wrangler, scratch D1, foreign-key check, and
-`quick_check`.
+Gate: typecheck, web build, DB migration tests, local Wrangler splitter/apply, scratch D1,
+foreign-key check, and `quick_check`.
 
 ### Slice 3 — additive DB bundles
 
-- Add prepared winner, normative compaction, complete activity indexes, workflow-token,
-  workflow-tail, and Deadline-suppression bundles.
+- Add prepared winner, normative non-compacting exact-placement SQL, normative compacting SQL,
+  complete activity indexes, workflow-token, workflow-tail, and Deadline-suppression bundles.
+- Declare every single-reference fence CTE `AS MATERIALIZED`.
+- Assert scratch-D1 `EXPLAIN QUERY PLAN` contains `MATERIALIZE fence` for the compacting winner and
+  confirms pinned fence materialization for the non-compacting exact-placement winner.
 - Retain `guardedStageTransition` and `onSuccess` compatibility executor.
-- Retain `priorityInsertNeighbors`.
-- Add winner, loser, malformed-plan, compaction, token-tail, and index-layout tests.
+- Retain the three legacy Kanban-ordering helpers through this slice.
+- Add winner, loser, malformed-plan, compaction, token-tail, query-plan, and index-layout tests.
 
 Gate: typecheck, web build, DB and existing app/background tests.
 
@@ -2019,49 +2439,69 @@ Gate: typecheck, web build, DB and existing app/background tests.
 
 - Add internal/External Board projections and summary/detail `boardRevision`.
 - Add internal and strict External detail `contractEnabled`.
-- Add strict decoders and privacy sentinels.
+- Add strict decoders and privacy sentinels, including non-vacuous rejection of
+  `editing_autohdr`.
 - Replace manufactured-zero/ID ordering with authoritative authorized-map rendering.
 - Add durable flag projection and hidden-control behavior.
+- Convert or remove all six named bare pre-marker project reads and repeat the repository audit for
+  additions.
+- Prove no `0037` column statement is constructed or prepared before the marker.
 - Do not change the Stage mutation route signature yet.
 
-Gate: typecheck, web build, query/privacy/detail/web-adapter tests, including independent `Z,A`
-External authorized-order behavior.
+Gate: typecheck, web build, query/privacy/detail/web-adapter/pre-schema tests, including independent
+`Z,A` External authorized-order behavior.
 
 ### Slice 5 — human commands, routes, Priority, and current web caller
 
 In one independently green slice:
 
 - add `moveProjectStage` and manual order command;
+- enforce `403 project_board_reorder_forbidden` for internal or External Editors attempting a
+  same-Stage placement change;
+- dispatch authorized same-Stage changes only to `project-board-order.ts`;
+- retain `project.board_position_set` as the sole successful reorder audit;
+- leave cross-Stage `moveProjectStage` behavior unchanged;
 - replace both Stage route forms;
+- document and register trailing-slash Stage as net-new strict-Hono surface;
 - add the legacy-body discriminator;
 - change the Dashboard Stage caller to the new request/response;
-- move its capability gate to `moveProjectStage`;
+- move its cross-Stage capability gate to `moveProjectStage`;
+- gate same-Stage drag/reorder on `prioritizeProjects`;
 - refactor Priority to metadata-only;
-- update/remove all tests importing `priorityInsertNeighbors`;
-- remove its route import, call, and helper definition;
-- remove the temporary Admin backfill route;
+- rewrite every app creation/archive/restore position writer to the revision contract;
+- update/remove all tests importing `priorityInsertNeighbors`, `manualInsertNeighbors`, and
+  `renumberedInsertPosition`;
+- remove all three route imports, calls, and helper definitions;
+- remove the temporary Admin backfill route, route-manifest entry,
+  `admin.board_position_backfill`, and its tests;
 - integrate DB-owned Deadline suppression and post-commit Queue finalizer.
 
-Gate: typecheck, web build, app integration, Dashboard, capability, Deadline, activity, and route
-tests.
+Gate: typecheck, web build, app integration, Dashboard, capability, Deadline, activity, route,
+archive/restore/create, same-Stage-403, and backfill-removal tests.
 
 ### Slice 6 — automatic writer convergence and compatibility removal
 
-- Convert every inventory row.
+- Convert every automatic and Tonomo inventory row.
 - Add SQL-reread workflow Editing-entry token tails.
 - Propagate source entry-job identity through every job-owned completion path.
 - Permanently fail closed for missing legacy provenance.
 - Add move-out, out-and-back ABA, stale-token, and source-job-substitution tests.
 - Replace every named `onSuccess` and direct notification owner.
+- Confirm `ingest.ts`, `sync.ts`, and both guarded `finals.ts` callers have no separate direct
+  position write.
 - Remove compatibility executor only after all callers compile.
 - Audit that no direct production Stage update remains.
+- Audit that no production `board_position` writer remains without its required
+  `board_revision` mutation.
 
-Gate: typecheck, web build, app/background/DB automatic-writer and notification suites.
+Gate: typecheck, web build, app/background/DB automatic-writer and notification suites plus the
+complete writer-inventory closeout.
 
 ### Slice 7 — complete interaction UI
 
 - Add rail Stage control.
 - Add native exact-neighbour drag and keyboard Move action.
+- Route same-column interaction only through the Admin-only Board-order command.
 - Add Priority view for authorized internal roles.
 - Add interaction ownership, narrow invalidation, neutral-label, focus, and accessibility tests.
 - Do not introduce a second Board-order authority; consume the Slice 4 maps.
@@ -2072,6 +2512,15 @@ Gate: typecheck, web build, complete web logic and DOM suites.
 
 - Run complete verification and repository audits.
 - Run local migration/query-plan/performance proof.
+- Assert every compacting plan fully renumbers its destination column to `0,1024,2048,…` and bumps
+  each changed row’s revision.
+- Benchmark fixed bounded destination sizes—for example 25, 100, 250, and 500 projects—recording
+  SQL/JSON size, D1 execution time, returned-row count, and revisions invalidated.
+- Record the actual production unarchived count per Stage during preflight. Require the largest
+  column to be no larger than the greatest successfully reviewed benchmark size. If it exceeds the
+  measured envelope, stop rollout for fresh performance review rather than extrapolating.
+- Include one representative measurement at or above the actual largest production column size.
+- Record expected visible `409` churn under concurrent stale clients; do not auto-retry.
 - Run Agy browser matrix.
 - Obtain fresh read-only implementation diff review.
 - Prepare one reviewed schema-aware production revision and recovery export.
@@ -2081,10 +2530,11 @@ Gate: typecheck, web build, complete web logic and DOM suites.
 
 ### Shared
 
-Prove capability membership, RAW capability retention, Stage sequence, role-safe Editing,
-non-Admin internal-key rejection, all 25 confirmation pairs, cumulative reason order, strict
-request/response schemas, activity identity, external policy, provider-safe copy, and summary/detail
-revision contracts.
+Prove capability membership, including that `prioritizeProjects` remains Admin-only; RAW capability
+retention; Stage sequence; role-safe Editing; non-Admin internal-key rejection; all 25 confirmation
+pairs; cumulative reason order; strict request/response schemas; activity identity and exact live
+registry metadata; `emptyPayload`; external policy; provider-safe copy; narrowed
+`STAGE_PRESENTATION_KEYS`; and summary/detail revision contracts.
 
 ### Migration
 
@@ -2096,6 +2546,10 @@ Prove:
 - noncanonical unarchived Stage fails before capture;
 - archived noncanonical rows do not enter normalization;
 - exact breakpoint-separated SQL applies through local Wrangler and scratch D1;
+- Wrangler’s own `splitSqlQuery` returns one statement for each breakpoint-delimited segment;
+- no compound frame remains open and no journal/CHECK statement is merged;
+- the complete `0037` SQL contains no unsafe `END` followed by punctuation;
+- comparator is `(priority IS NULL), board_position, id`;
 - internal legacy order is preserved;
 - External ID order intentionally changes to canonical authorized order;
 - normalized positions are `0,1024,…`;
@@ -2105,7 +2559,8 @@ Prove:
 - Stage/Priority values are unchanged;
 - feature flag is seeded OFF;
 - workflow entry columns are nullable and constrained;
-- indexes exist;
+- migration-only rollback/scratch tables and indexes are absent from `schema.ts` and snapshot;
+- runtime indexes exist;
 - no rebuild/PRAGMA/drop/rename occurs;
 - foreign-key check is empty and `quick_check` is `ok`;
 - an injected postflight mismatch rolls back all preceding ALTER/capture/update/flag/index work;
@@ -2119,9 +2574,21 @@ same Stage, active/inactive destinations, archived state, cumulative confirmatio
 stale project/neighbour revisions, append, empty destination, simultaneous append, midpoint,
 compaction, and full-snapshot loss.
 
-For every winner assert exact revision increments, one audit, one human activity, recipient-cycle
-fan-out, no email, correct Deadline suppression, and authoritative role-safe order. Every loser or
-no-op has zero footprint.
+Explicit same-Stage cases:
+
+- internal Editor, same semantic Stage, `between` placement →
+  `403 project_board_reorder_forbidden`;
+- External Editor, same semantic Stage, `between` placement →
+  `403 project_board_reorder_forbidden`;
+- Admin with `prioritizeProjects`, same semantic Stage, `between` placement → Board-order command,
+  `project.board_position_set`, no Stage activity;
+- each rejected request has zero audit/activity/outbox/revision footprint;
+- cross-Stage Editor and assigned External Editor movement remains authorized by
+  `moveProjectStage`.
+
+For every cross-Stage winner assert exact revision increments, one Stage audit, one human activity
+with `{}`, recipient-cycle fan-out, no email, correct Deadline suppression, and authoritative
+role-safe order. Every loser or no-op has zero footprint.
 
 Compaction tests include:
 
@@ -2134,9 +2601,15 @@ Compaction tests include:
 - missing row that actually changes;
 - extra unchanged row;
 - missing/extra target-snapshot row;
-- invalid deterministic position sequence.
+- invalid deterministic position sequence;
+- `EXPLAIN QUERY PLAN` contains `MATERIALIZE fence`;
+- all changed siblings receive revision bumps.
 
 Every failure leaves all Stage/position/revision rows unchanged.
+
+Non-compacting tests run the normative SQL unchanged and cover malformed JSON, wrong JSON field
+types, duplicate IDs, missing/extra live target rows, stale Stage/position/revision/archive tuples,
+wrong target source Stage/revision, and pinned fence materialization.
 
 ### Hidden-neighbour fixtures
 
@@ -2184,8 +2657,9 @@ Race/provenance tests include:
 
 Prove metadata-only Priority, no Board revision change, Priority-view sorting, pure reorder
 audit-only behavior, Delivered atomic suppression, no reminder auto-resume, human-only Stage
-activity, External-safe copy, assigned-only order, no forbidden detail/list fields, authoritative
-map rendering, native drag, keyboard action, refresh ownership, access-loss purge, and
+activity with empty payload, exact live registry source key, External-safe copy, assigned-only
+order, no forbidden detail/list fields, strict rejection of `editing_autohdr`, authoritative map
+rendering, native drag, keyboard action, refresh ownership, access-loss purge, and
 Deadline/overdue preservation.
 
 ### Pre-schema variants
@@ -2194,9 +2668,10 @@ Against an exact `0036` fixture:
 
 - first marker check selects `pre_0037`;
 - old-column internal and External list/detail reads succeed;
+- all six named bare project-read sites use old-column projections or have been removed;
 - returned detail/list values are inert `boardRevision:0`, `contractEnabled:false`;
 - Stage/reorder/archive/restore/create/automatic/Priority paths return bounded maintenance;
-- no SQL preparation or execution references a nonexistent `0037` column;
+- no SQL construction, preparation, or execution references a nonexistent `0037` column;
 - background handlers do not retry indefinitely or emit workflow notifications.
 
 Against `0037` with flag OFF:
@@ -2211,7 +2686,7 @@ Against `0037` with flag OFF:
 Run and classify:
 
 ```bash
-rg -n 'selectForEditing|moveProjectStage' \
+rg -n 'selectForEditing|moveProjectStage|prioritizeProjects' \
   portal/packages/shared portal/apps/web portal/workers
 
 rg -n \
@@ -2223,29 +2698,49 @@ rg -n 'board_position|boardPosition|board_revision|boardRevision' \
   portal/apps portal/workers portal/packages \
   -g '*.ts'
 
-rg -n 'priorityInsertNeighbors|priority.*board_position|priority.*boardPosition' \
+rg -n \
+  'priorityInsertNeighbors|manualInsertNeighbors|renumberedInsertPosition|priority.*board_position|priority.*boardPosition' \
   portal -g '*.ts'
 
 rg -n \
   'project\.stage\.changed|notifyProject\(.*delivered|notifyProject\(.*sent_to_editing|project\.priority\.changed' \
   portal -g '*.ts'
+
+rg -n -U \
+  '\.select\(\)\s*\.from\((schema\.)?projects\)' \
+  portal/workers -g '*.ts'
+
+rg -n \
+  'admin\.board_position_backfill|backfill-board-position' \
+  portal -g '*.ts'
+
+rg -n \
+  'project_board_order_0037|_tb5a_0037|projects_stage_archive_board_order_idx' \
+  portal/packages/db/src/schema.ts \
+  portal/packages/db/migrations/meta/0037_snapshot.json
 ```
 
 Expected:
 
 - Stage UI/API uses only `moveProjectStage`;
 - RAW selection/download retains `selectForEditing`;
+- same-Stage reorder requires `prioritizeProjects` and uses only `project-board-order.ts`;
 - no unowned production Stage or position writer remains;
 - every Board-state writer increments revision;
 - no Priority-to-position production path remains;
-- one human Stage activity producer exists;
+- all three legacy Kanban-order helpers are gone after Slice 5;
+- one human Stage activity producer exists with `emptyPayload`;
 - workflow legacy notifications remain only on workflow winners;
 - no manual Delivered/Editing legacy notification exists;
 - no External adapter manufactures raw ordering authority;
-- every summary/detail projection has the intended role-safe revision contract.
+- no parallel `externalStageKey` helper remains;
+- every summary/detail projection has the intended role-safe revision and Stage contract;
+- no named pre-marker bare read can expand to a `0037` column;
+- no migration-only object appears in Drizzle schema or snapshot;
+- the Admin backfill route, audit action, manifest entry, and tests are gone.
 
-Also verify both Stage route forms, no wildcard middleware leak, removed backfill route, TB4E route
-manifest, External strict projection, and complete bundle-index exports.
+Also verify both Stage route forms, no wildcard middleware leak, TB4E route manifest, External strict
+projection, and complete bundle-index exports.
 
 ## Verification
 
@@ -2271,11 +2766,13 @@ git diff --exit-code -- \
   packages/db/src/schema.ts
 ```
 
-The second generation must be a no-op and must not produce a rebuild.
+The second generation must be a no-op and must not produce a rebuild. The migration-only rollback
+table, its indexes, and `_tb5a_*` objects must not appear in schema or snapshot output.
 
-Scratch proof covers the full migration chain, `0036→0037`, exact normalization SQL, preflight
-failure, transactional postflight rollback, all-or-zero position rollback, normative compacting
-SQL and malformed plans, foreign-key check, quick check, query plans, and representative Board
+Scratch proof covers the full migration chain, `0036→0037`, Wrangler’s own splitter, exact
+normalization SQL, preflight failure, transactional postflight rollback, all-or-zero position
+rollback, normative non-compacting and compacting SQL, malformed plans, `MATERIALIZE fence`,
+foreign-key check, quick check, bounded compaction measurements, and representative Board
 serialization measurements.
 
 ## Manual local QA
@@ -2287,6 +2784,8 @@ disposable External fixtures.
 Cover:
 
 - Admin/internal/External/Photographer capability matrix;
+- internal and External Editor same-Stage reorder rejection;
+- Admin same-Stage Board reorder through `project.board_position_set`;
 - canonical Board order and Priority view;
 - intentional External ID-order correction;
 - direct Workspace deep-link movement without prior Dashboard visit;
@@ -2325,26 +2824,31 @@ There is one reviewed schema-aware app/background revision:
 ### Freeze and proof before migration
 
 1. Record reviewed source commit and Worker artifact hashes.
-2. Create and verify the remote D1 recovery export.
-3. Drain notification/project queues to recorded zero or pause consumers with backlog recorded.
-4. Stop new Stage-capable Workflow instances and wait until every old Stage-capable instance is
+2. Re-run the numbering-discipline checklist, including coupled rollback-table/index/marker names.
+3. Create and verify the remote D1 recovery export.
+4. Drain notification/project queues to recorded zero or pause consumers with backlog recorded.
+5. Stop new Stage-capable Workflow instances and wait until every old Stage-capable instance is
    terminal.
-5. Disable Cron and hourly reconciliation triggers.
-6. Disable app service/RPC paths that can start Dropbox sync, AutoHDR send/fetch, or reconciliation.
-7. Deploy the reviewed background Worker while triggers remain paused; its pre-schema variant must
+6. Disable Cron and hourly reconciliation triggers.
+7. Disable app service/RPC paths that can start Dropbox sync, AutoHDR send/fetch, Tonomo creation,
+   or reconciliation.
+8. Deploy the reviewed background Worker while triggers remain paused; its pre-schema variant must
    perform no Stage or position write.
-8. Deploy webhook-ingress only if its reviewed artifact changed.
-9. Deploy the same reviewed app Worker in pre-schema maintenance mode.
-10. Prove list/detail reads use old projections and all Stage/reorder/archive/restore/create,
+9. Deploy webhook-ingress only if its reviewed artifact changed.
+10. Deploy the same reviewed app Worker in pre-schema maintenance mode.
+11. Prove list/detail reads use old projections and all Stage/reorder/archive/restore/create,
     automatic, and Priority mutation paths return bounded maintenance.
-11. Prove no statement referencing a `0037` column was prepared.
-12. Query audits, jobs, workflows, queues, and Stage/position aggregates twice across a quiet
+12. Prove all six named pre-marker reads are explicit old projections or removed.
+13. Prove no statement referencing a `0037` column was constructed or prepared.
+14. Record unarchived project count per Stage and require the largest column to fit inside the
+    reviewed Slice 8 performance envelope.
+15. Query audits, jobs, workflows, queues, and Stage/position aggregates twice across a quiet
     interval. Any unexplained change stops rollout.
-13. Only then apply migration `0037`.
+16. Only then apply migration `0037`.
 
 The freeze covers app RAW ingest, Dropbox reconciliation, Queue consumers, Workflow instances,
-Cron, AutoHDR claims/finals, creation, Stage, Priority-coupled legacy order, archive, restore, and
-manual reorder. No old Stage writer may execute after normalization.
+Cron, Tonomo creation, AutoHDR claims/finals, creation, Stage, Priority-coupled legacy order,
+archive, restore, and manual reorder. No old Stage writer may execute after normalization.
 
 ### Post-migration flag-OFF verification
 
@@ -2376,7 +2880,8 @@ After enablement:
 4. resume new Workflow creation;
 5. resume Cron/reconciliation;
 6. prove only the reviewed background version handles new work;
-7. monitor Stage conflicts, token losers, outbox failures, and workflow provenance failures.
+7. monitor Stage conflicts, same-Stage forbidden responses, compaction-driven `409` churn, token
+   losers, outbox failures, and workflow provenance failures.
 
 If distinct bundles become unavoidable, rollout requires a new plan review, pinned commits,
 artifact hashes, and proof that the inert artifact cannot enable writes.
@@ -2395,7 +2900,7 @@ artifact hashes, and proof that the inert artifact cannot enable writes.
 
 Keep the flag OFF if continued production increases risk. Deploy a fixed TB5A-aware background
 consumer, then resume only after it recognizes the Stage revision and source-owner contract. Never
-restore a writer that mutates Stage without revision/token fencing.
+restore a writer that mutates Stage or position without revision/token fencing.
 
 ### Migration fault before enablement
 
@@ -2420,27 +2925,41 @@ internal DTO and redact it in React.
 
 - [ ] `moveProjectStage` belongs only to Admin, internal Editor, and External Editor.
 - [ ] External movement additionally requires current assignment.
+- [ ] `prioritizeProjects` remains Admin-only.
+- [ ] Same-Stage placement change without `prioritizeProjects` returns
+      `403 project_board_reorder_forbidden`.
+- [ ] Internal Editor and External Editor same-Stage `between` tests pass.
+- [ ] Authorized same-Stage reorder uses only `project-board-order.ts` and
+      `project.board_position_set`.
+- [ ] Cross-Stage `moveProjectStage` behavior is unaffected.
 - [ ] Exact MOVE/STAY `selectForEditing` disposition is preserved.
 - [ ] Semantic Stage sequence and cumulative confirmations are shared.
 - [ ] Non-Admin transport exposes only neutral Editing.
 - [ ] Inactive current Stage remains escapable; archived projects are read-only.
 - [ ] Legacy `{stageKey}` returns `409 stage_contract_reload_required` on both route forms.
+- [ ] Trailing-slash Stage route is recorded as net-new strict-Hono surface.
 
 ### Ordering and migration
 
 - [ ] Remote tail is confirmed `0036` before applying `0037`.
+- [ ] Renumbering updates rollback table, unique index, marker literals, scratch names, journal,
+      snapshot, filenames, and tests together.
 - [ ] Noncanonical unarchived Stage keys abort migration.
 - [ ] Exact breakpoint-separated migration passes Wrangler and scratch D1.
+- [ ] Wrangler’s own splitter returns one statement per breakpoint-delimited segment.
+- [ ] No unsafe comma-followed `CASE … END,` or other unclosed compound frame remains.
 - [ ] Failed postflight CHECK rolls back ALTER/capture/update/flag/index work.
-- [ ] Comparator is exactly null-group, `board_position`, ID.
+- [ ] Comparator is exactly `(priority IS NULL), board_position, ID`.
 - [ ] Permanent rollback table has no foreign key.
+- [ ] Migration-only rollback/scratch objects and indexes stay out of Drizzle schema/snapshot.
 - [ ] Internal order is preserved.
 - [ ] External ID fallback changes to authorized canonical order.
 - [ ] Positions normalize to `0,1024,…` and unarchived revisions to `1`.
 - [ ] Priority and Stage values remain unchanged.
 - [ ] Flag is seeded OFF.
 - [ ] Pre-enable rollback is all-or-zero through a following CHECK-failure gate.
-- [ ] Temporary Admin backfill route is removed.
+- [ ] Temporary Admin backfill route, route manifest, `admin.board_position_backfill`, and tests are
+      removed.
 
 ### Command and DB seam
 
@@ -2450,8 +2969,12 @@ internal DTO and redact it in React.
 - [ ] No caller supplies arbitrary SQL.
 - [ ] Post-commit finalizer never runs for a loser.
 - [ ] `onSuccess` is removed only with all named production callers.
-- [ ] Non-compaction uses one guarded target update.
+- [ ] Non-compaction uses the normative guarded target update.
+- [ ] Non-compacting exact placement validates JSON types and bidirectional live-snapshot set
+      equality.
 - [ ] Compaction uses the normative executable all-or-zero SQL.
+- [ ] Every single-reference fence CTE carrying the guarantee is `AS MATERIALIZED`.
+- [ ] Scratch-D1 plan contains `MATERIALIZE fence` for the compacting winner.
 - [ ] `RETURNING` uses unqualified columns and parses on scratch D1.
 - [ ] Expected target is distinct and set-equal to the live fenced snapshot.
 - [ ] Changed plan is the exact set of changed rows.
@@ -2459,6 +2982,9 @@ internal DTO and redact it in React.
 - [ ] Every changed old tuple is pre-proved live before candidates are admitted.
 - [ ] Malformed-plan tests leave every row unchanged.
 - [ ] Hidden placement uses immediate-before-`after` or global append.
+- [ ] Full writer inventory is verified before Slice 0 closes.
+- [ ] No writer reaches Slice 6 end changing `board_position` without `board_revision`.
+- [ ] All three legacy Kanban-ordering helpers and shared tests move together in Slice 5.
 
 ### Workflow safety
 
@@ -2471,20 +2997,28 @@ internal DTO and redact it in React.
 - [ ] Missing legacy provenance permanently fails closed.
 - [ ] Move-out and out-and-back ABA tests pass.
 - [ ] Every automatic writer retains its prerequisite and notification owner.
+- [ ] `ingest.ts`, `sync.ts`, and guarded `finals.ts` callers have no separate position writes.
 - [ ] Automatic loser produces no Stage audit/revision/activity/outbox/legacy notification.
 - [ ] Manual Editing and Delivered moves cause no provider or delivery action.
 
 ### Activity, privacy, and UI
 
+- [ ] `project.stage.changed` flips from reserved to live with its exact producer call site.
+- [ ] Its source key is `project-stage:<projectId>:transition:<activityId>`.
+- [ ] Its payload remains strict `emptyPayload`.
+- [ ] Its generic-copy switch case remains appropriate.
 - [ ] `project.stage.changed` is human-only, non-coalesced, and in-app-only.
 - [ ] Recipient fan-out is at most once per eligible membership cycle.
 - [ ] Pure reorder emits no activity/outbox.
 - [ ] Priority is metadata-only and externally suppressed.
+- [ ] External summary/detail Stage key is `z.enum(STAGE_PRESENTATION_KEYS)`.
+- [ ] `stageTransportKeyForRole` owns `editing_autohdr → editing`; no parallel helper remains.
 - [ ] Internal and strict External detail include `boardRevision` and `contractEnabled`.
 - [ ] External detail rejects Priority, raw position, hidden IDs/counts, and internal Editing.
 - [ ] Slice 4 makes authorized maps the Board rendering authority.
 - [ ] External manufactured-zero/ID order is removed.
-- [ ] Rail, native drag, and keyboard use the same command.
+- [ ] Rail, native cross-Stage drag, and keyboard use the same Stage command.
+- [ ] Same-column reorder uses only the authorized Board-order command.
 - [ ] Interaction ownership preserves drag/modal/pending state.
 - [ ] Access-loss purge wins over late responses.
 
@@ -2492,14 +3026,19 @@ internal DTO and redact it in React.
 
 - [ ] One old-schema-safe marker check selects each isolate’s statement variant.
 - [ ] Pre-marker reads use old projections.
+- [ ] All six named bare project-read sites are handled and the source audit finds no additions.
 - [ ] No nonexistent-column statement is constructed or prepared pre-marker.
 - [ ] Pre-marker Priority and every Board-affecting writer return bounded maintenance.
 - [ ] Every slice independently typechecks, builds, and passes focused tests.
-- [ ] Priority helper removal and route rewrite are one slice.
+- [ ] Priority helper removal, all three helper tests, and route rewrite are one slice.
 - [ ] Automatic caller conversion and `onSuccess` removal are one slice.
 - [ ] Full workspace tests and explicit shared Vitest pass.
 - [ ] Second Drizzle generation is a no-op.
-- [ ] Writer, capability, ordering, privacy, route, and activity audits are recorded.
+- [ ] Compaction benchmarks cover bounded representative column sizes.
+- [ ] Actual production column size fits within the reviewed performance envelope.
+- [ ] Representative measurement at or above production size is recorded.
+- [ ] Writer, capability, ordering, privacy, route, activity, splitter, and marker audits are
+      recorded.
 - [ ] Agy local browser matrix passes.
 - [ ] Fresh read-only implementation diff review approves.
 - [ ] Recovery export path, size, and SHA-256 are recorded.
@@ -2513,50 +3052,81 @@ internal DTO and redact it in React.
 
 Expected files include:
 
-- shared capabilities, stages, activity registry, External DTO/policy, and tests;
-- migration `0037`, journal, snapshot, Drizzle schema, and migration tests;
-- DB winner/compaction, Board position, activity, Deadline, workflow-tail, token, and bundle tests;
+- shared capabilities, stages, live activity registry, External DTO/policy, and tests;
+- migration `0037`, journal, snapshot, Drizzle declarations for only the three durable columns, and
+  migration/splitter tests;
+- migration-only rollback table, rollback unique index, normalization index, and `_tb5a_*` scratch
+  objects in SQL only—not `schema.ts` or `0037_snapshot.json`;
+- DB winner/compaction, Board position, activity, Deadline, workflow-tail, token, query-plan, and
+  bundle tests;
 - new app `project-stage.ts` and `project-board-order.ts`;
 - app project, Stage, Admin, Deadline, External-query, and Kanban modules/tests;
-- every background writer named in the inventory;
+- every app/background Stage-and-position writer named in the inventories;
 - internal/External summary and detail adapters and strict decoders;
 - Dashboard, Project Workspace, Project Overview rail, query ownership, styles, and DOM tests;
 - closeout documentation only after production verification.
 
 Changes to `prototype/`, Calendar, provider credentials, delivery publish/revoke behavior, media
-deletion, React/dependency versions, global Stage configuration, or External Priority policy require
-fresh review.
+deletion, React/dependency versions, global Stage configuration, External Priority policy, or the
+accepted capability boundary require fresh review.
 
-## Open decisions for review
+## Notes for the builder
 
-No unresolved product decision is required before implementation. Fresh Opus plan-tier review should
-explicitly affirm or revise:
+No unresolved product or architectural decision remains. The builder must hold these conditions:
 
-1. `projects.board_revision` remains the per-project conflict and continuous-occupancy token; no
-   global Stage revision is exposed.
-2. `autohdr_handoffs.editing_entry_board_revision` and source
-   `jobs.stage_entry_board_revision` remain the workflow-specific entry-token owners.
-3. Job-owned completion uses explicit source-entry-job propagation; missing legacy provenance fails
-   closed.
-4. The two winner forms remain guarded single-row non-compaction and the normative executable,
-   fully fenced multi-row compaction.
-5. `expected_target.newBoardPosition` is the deterministic full-destination plan used to prove the
-   exact changed-row set.
-6. `@quincy/db` owns all prepared SQL bundles; callers own authorization, composition, named-index
-   interpretation, and post-commit finalization.
-7. `onSuccess` remains only as a temporary compatibility hook and is removed with every named caller
-   in one green slice.
-8. External exact placement remains immediate-before-visible-`after`, with global append when
-   `after=null`, while hidden rows retain relative order.
-9. The permanent rollback table remains no-FK, and pre-enable rollback uses the all-or-zero CHECK
-   batch.
-10. External Editor’s old ID fallback is intentionally corrected to authorized canonical order.
-11. Internal and strict External detail DTOs expose only role-safe `boardRevision` and
+1. Never restore `CASE WHEN priority IS NULL THEN 1 ELSE 0 END,` in migration `0037`. Use
+   `(priority IS NULL),`, run Wrangler’s own splitter, and re-audit every compound `END`.
+2. Every single-reference snapshot fence CTE is `AS MATERIALIZED`; the compacting scratch-D1 plan
+   must say `MATERIALIZE fence`.
+3. `moveProjectStage` does not grant same-Stage reorder. Reject internal/External Editors with
+   `403 project_board_reorder_forbidden`; successful same-Stage reorder belongs only to
+   `project-board-order.ts`, requires `prioritizeProjects`, and audits
+   `project.board_position_set`. Cross-Stage movement is unchanged.
+4. The full Stage-and-position writer inventory closes in Slice 0. All three legacy helper
+   definitions/imports/tests move together in Slice 5, and no position writer survives Slice 6
+   without revision fencing.
+5. If migration `0037` renumbers, its rollback table, unique index, marker literal in every Worker
+   isolate, scratch names, journal, snapshot, filenames, and tests renumber together.
+6. `project.stage.changed` remains `emptyPayload`; make its registry entry live with the exact
+   producer call site and source key
+   `project-stage:<projectId>:transition:<activityId>`. Keep its generic safe copy.
+7. External summary/detail `stageKey` is `z.enum(STAGE_PRESENTATION_KEYS)`.
+   `stageTransportKeyForRole` absorbs the existing External Editing mapping.
+8. Both non-compacting exact placement and compacting SQL are normative executable contracts and
+   must pass scratch-D1 proofs unchanged in substance.
+9. A compaction is a full-column renumber and can invalidate many optimistic tokens. Record bounded
+   measurements and stop rollout if production exceeds the measured envelope.
+10. Migration-only rollback/scratch tables and indexes stay out of Drizzle schema and snapshot so
+    the second generation remains a no-op.
+11. The six named bare project reads are the verified pre-marker list. Repeat the audit after edits;
+    no statement referencing a `0037` column may be constructed or prepared before the marker.
+12. Legacy `renumberedInsertPosition` starts at `1024`; migration and the new compactor start at
+    `0`. Do not preserve the old offset accidentally.
+13. The trailing-slash Stage route is intentional net-new strict-Hono surface and must appear in the
+    route manifest.
+14. Removing `/admin/backfill-board-position` includes its manifest entry,
+    `admin.board_position_backfill`, and all associated tests.
+15. `projects.board_revision` remains the per-project conflict and continuous-occupancy token; no
+    global Stage revision is exposed.
+16. `autohdr_handoffs.editing_entry_board_revision` and source
+    `jobs.stage_entry_board_revision` remain the workflow-specific entry-token owners.
+17. Job-owned completion uses explicit source-entry-job propagation; missing legacy provenance
+    fails closed.
+18. `expected_target.newBoardPosition` remains the deterministic full-destination plan used to
+    prove the exact changed-row set.
+19. `@quincy/db` owns all prepared SQL bundles; callers own authorization, composition,
+    named-index interpretation, and post-commit finalization.
+20. `onSuccess` remains only as a temporary compatibility hook and is removed with every named
+    caller in one green slice.
+21. External exact placement remains immediate-before-visible-`after`, with global append when
+    `after=null`, while hidden rows retain relative order.
+22. The permanent rollback table remains no-FK, and pre-enable rollback uses the all-or-zero CHECK
+    batch.
+23. External Editor’s old ID fallback is intentionally corrected to authorized canonical order.
+24. Internal and strict External detail DTOs expose only role-safe `stageKey`, `boardRevision`, and
     `contractEnabled` as required by direct Workspace entry.
-12. Authoritative Board-map rendering ships in Slice 4; Slice 7 adds interactions without changing
+25. Authoritative Board-map rendering ships in Slice 4; Slice 7 adds interactions without changing
     order authority.
-13. Confirmation remains the exact cumulative typed-reason array.
-14. `project.stage.changed` remains human-command-owned, non-coalesced, and absent from automatic
-    advances.
-15. One seeded-OFF durable flag, one old-schema-safe marker check, and one reviewed source revision
+26. Confirmation remains the exact cumulative typed-reason array.
+27. One seeded-OFF durable flag, one old-schema-safe marker check, and one reviewed source revision
     provide the inert/enabled rollout boundary.
