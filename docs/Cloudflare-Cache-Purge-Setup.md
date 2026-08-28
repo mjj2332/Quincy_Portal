@@ -23,10 +23,17 @@ a dashboard flow has shifted.
 
 ## Step 1 — Find the Zone ID
 
-1. Cloudflare dashboard → select the **`flamingfire.my`** zone.
-2. On the zone's **Overview** page, the **Zone ID** is in the right-hand "API" panel. Copy it.
+Dashboard: select the **`flamingfire.my`** zone → **Overview** → **Zone ID** in the right-hand
+"API" panel. Or, once you have the token (step 2), one call gives you the ID and confirms the
+token can see exactly that zone:
 
-Reference: [Find zone and account IDs](https://developers.cloudflare.com/fundamentals/account/find-account-and-zone-ids/).
+```bash
+curl -s "https://api.cloudflare.com/client/v4/zones?name=flamingfire.my" \
+  -H "Authorization: Bearer <TOKEN>" | jq '{zone: .result[0].name, zone_id: .result[0].id}'
+```
+
+The Zone ID is a 32-hex-char string; it is not secret the way the token is (it shows in dashboard
+URLs). Reference: [Find zone and account IDs](https://developers.cloudflare.com/fundamentals/account/find-account-and-zone-ids/).
 
 ## Step 2 — Create a scoped API token
 
@@ -42,25 +49,25 @@ Reference: [Create an API token](https://developers.cloudflare.com/fundamentals/
 
 ## Step 3 — Validate the token without purging
 
-Confirm the token is live and correctly scoped before wiring it in — do **not** run a real purge
-to test:
+Confirm the token is live before wiring it in — do **not** run a real purge to test:
 
 ```bash
-# token is valid + active
 curl -s https://api.cloudflare.com/client/v4/user/tokens/verify \
   -H "Authorization: Bearer <TOKEN>" | jq '.success, .result.status'
-
-# token can see exactly the one zone (read is implied by Cache Purge on that zone)
-curl -s "https://api.cloudflare.com/client/v4/zones/<ZONE_ID>" \
-  -H "Authorization: Bearer <TOKEN>" | jq '.success, .result.name'
 ```
 
-Expect `true` / `"active"` and `true` / `"flamingfire.my"`.
+Expect `true` / `"active"`. The zone-name call in step 1 doubles as the scope check.
+
+**Never paste the token into a shared terminal, chat, or ticket.** If it lands somewhere it
+shouldn't, roll it (dashboard → API Tokens → the token → **Roll**) and re-run step 4 with the new
+value — a Cache-Purge token is low blast radius but it can flush the whole production edge cache.
 
 ## Step 4 — Set the secrets on the background Worker only
 
 ```bash
-cd portal/workers/background
+cd "<repo>/portal/workers/background"   # the dir with wrangler.jsonc — wrangler reads the
+                                        # Worker name (quincy-portal-background) from it, and
+                                        # top-level = production (there is no staging env)
 npx wrangler secret put CLOUDFLARE_ZONE_ID
 npx wrangler secret put CLOUDFLARE_CACHE_PURGE_TOKEN
 ```
