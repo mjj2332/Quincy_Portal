@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { NotificationType } from "./notification-types";
+import type { ProjectActivityType } from "./project-activity";
 
 export const EXTERNAL_NOTIFICATION_OUTBOX_EVENT_TYPES = {
   projectSafeDirect: "project.external_safe.direct",
@@ -50,33 +51,18 @@ export function parseExternalNotificationOutboxPayload(value: unknown): External
 
 export type ExternalAllowedNotificationType =
   | NotificationType
-  | "project.team.member_added"
-  | "project.team.member_removed"
-  | "project.deadline.schedule_changed"
-  | "project.details.changed"
-  | "project.checklist.item_created"
-  | "project.checklist.item_updated"
-  | "project.checklist.item_deleted"
-  | "project.checklist.schedule_changed"
-  | "project.comment.created"
-  | "project.comment.edited"
-  | "project.comment.deleted"
-  | "project.collection.video_link_added"
-  | "project.collection.video_link_changed"
-  | "project.collection.video_links_reordered"
-  | "project.collection.video_link_removed"
-  | "project.collection.document_completed"
-  | "project.workflow.manual_edited_ready"
-  | "project.collection.raw_sync_completed"
-  | "project.stage.changed";
+  | ProjectActivityType;
 
 export type NotificationCopy = { title: string; body: string };
-export type ExternalNotificationCopyInput = { type: ExternalAllowedNotificationType };
+export type ExternalNotificationCopyInput = { type: string };
 
-const COPY: Partial<Record<ExternalAllowedNotificationType, NotificationCopy>> = {
+// Suppressed known values are represented as null so this remains a total compile-time registry
+// without giving a future or provider-only event a permissive fallback renderer.
+const COPY: Record<ExternalAllowedNotificationType, NotificationCopy | null> = {
   raw_ready: { title: "RAW media ready", body: "RAW media is ready for review." },
   edited_landed: { title: "Edited media updated", body: "Edited project media was updated." },
   sent_to_editing: { title: "Editing workflow updated", body: "The project was sent to editing." },
+  autohdr_stalled: null,
   delivered: { title: "Project delivered", body: "The assigned project was delivered." },
   comment_added: { title: "New annotation feedback", body: "Annotation feedback was added to assigned media." },
   assigned_to_project: { title: "Project assigned", body: "You were assigned to a project." },
@@ -84,11 +70,15 @@ const COPY: Partial<Record<ExternalAllowedNotificationType, NotificationCopy>> =
   subtask_assigned: { title: "Checklist item assigned", body: "A checklist item was assigned to you." },
   subtask_due_today: { title: "Checklist item due today", body: "An assigned checklist item is due today." },
   project_deadline_reminder: { title: "Project deadline reminder", body: "An assigned project deadline is approaching." },
+  project_activity: null,
+  project_collaboration_activity: null,
   "project.team.member_added": { title: "Project team updated", body: "The assigned project team was updated." },
   "project.team.member_removed": { title: "Project team updated", body: "The assigned project team was updated." },
+  "project.deadline.schedule_changed": { title: "Project details updated", body: "External-visible project details were updated." },
+  "project.priority.changed": null,
   "project.details.changed": { title: "Project details updated", body: "External-visible project details were updated." },
-  project_activity: { title: "Project update", body: "The assigned project was updated." },
-  project_collaboration_activity: { title: "Project discussion updated", body: "The assigned project discussion was updated." },
+  "project.archived": null,
+  "project.restored": null,
   "project.checklist.item_created": { title: "Project checklist updated", body: "The assigned project checklist was updated." },
   "project.checklist.item_updated": { title: "Project checklist updated", body: "The assigned project checklist was updated." },
   "project.checklist.item_deleted": { title: "Project checklist updated", body: "The assigned project checklist was updated." },
@@ -104,13 +94,36 @@ const COPY: Partial<Record<ExternalAllowedNotificationType, NotificationCopy>> =
   "project.workflow.manual_edited_ready": { title: "Edited media updated", body: "Edited project media was updated." },
   "project.collection.raw_sync_completed": { title: "RAW media ready", body: "RAW media is ready for review." },
   "project.stage.changed": { title: "Project stage updated", body: "The assigned project stage was updated." },
+  "project.workflow.raw_ready": { title: "RAW media ready", body: "RAW media is ready for review." },
+  "project.workflow.sent_to_editing": { title: "Editing workflow updated", body: "The project was sent to editing." },
+  "project.workflow.edited_ready": { title: "Edited media updated", body: "Edited project media was updated." },
+  "project.workflow.delivered": { title: "Project delivered", body: "The assigned project was delivered." },
 };
 
-export function externalNotificationCopy(input: ExternalNotificationCopyInput): NotificationCopy {
-  return COPY[input.type] ?? { title: "Project update", body: "The assigned project was updated." };
+export function externalNotificationCopy(input: ExternalNotificationCopyInput): NotificationCopy | null {
+  return Object.prototype.hasOwnProperty.call(COPY, input.type)
+    ? COPY[input.type as ExternalAllowedNotificationType]
+    : null;
 }
 
-export function externalNotificationChannels(type: ExternalAllowedNotificationType): readonly ("in_app" | "email")[] {
-  if (type === "assigned_to_project" || type === "mentioned" || type === "subtask_assigned" || type === "subtask_due_today" || type === "project_deadline_reminder") return ["in_app", "email"];
-  return ["in_app"];
+const CHANNELS: Record<ExternalAllowedNotificationType, readonly ("in_app" | "email")[]> = {
+  raw_ready: ["in_app"], edited_landed: ["in_app"], sent_to_editing: ["in_app"], autohdr_stalled: [],
+  delivered: ["in_app"], comment_added: ["in_app"], assigned_to_project: ["in_app", "email"], mentioned: ["in_app", "email"],
+  subtask_assigned: ["in_app", "email"], subtask_due_today: ["in_app", "email"], project_deadline_reminder: ["in_app", "email"],
+  project_activity: [], project_collaboration_activity: [],
+  "project.team.member_added": ["in_app"], "project.team.member_removed": ["in_app"], "project.deadline.schedule_changed": ["in_app"],
+  "project.priority.changed": [], "project.details.changed": ["in_app"], "project.archived": [], "project.restored": [],
+  "project.checklist.item_created": ["in_app"], "project.checklist.item_updated": ["in_app"], "project.checklist.item_deleted": ["in_app"],
+  "project.comment.created": ["in_app"], "project.comment.edited": ["in_app"], "project.comment.deleted": ["in_app"],
+  "project.collection.video_link_added": ["in_app"], "project.collection.video_link_changed": ["in_app"],
+  "project.collection.video_links_reordered": ["in_app"], "project.collection.video_link_removed": ["in_app"],
+  "project.collection.document_completed": ["in_app"], "project.workflow.manual_edited_ready": ["in_app"],
+  "project.collection.raw_sync_completed": ["in_app"], "project.checklist.schedule_changed": ["in_app"], "project.stage.changed": ["in_app"],
+  "project.workflow.raw_ready": ["in_app"], "project.workflow.sent_to_editing": ["in_app"], "project.workflow.edited_ready": ["in_app"], "project.workflow.delivered": ["in_app"],
+};
+
+export function externalNotificationChannels(type: string): readonly ("in_app" | "email")[] {
+  return Object.prototype.hasOwnProperty.call(CHANNELS, type)
+    ? CHANNELS[type as ExternalAllowedNotificationType]
+    : [];
 }

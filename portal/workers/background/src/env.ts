@@ -39,6 +39,6 @@ export interface Env {
   EMAIL?: SendEmail;
   NOTIFICATIONS_FROM_ADDRESS?: string;
   /** Zone purge credentials remain on the background Worker; never expose them to the app. */
-  CF_ZONE_ID?: string;
-  CF_API_TOKEN?: string;
+  CLOUDFLARE_ZONE_ID?: string;
+  CLOUDFLARE_CACHE_PURGE_TOKEN?: string;
 }

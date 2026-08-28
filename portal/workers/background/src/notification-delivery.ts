@@ -17,6 +17,7 @@ import {
   EXTERNAL_LEGACY_NOTIFICATION_POLICY,
   NOTIFICATION_TYPES,
   externalNotificationCopy,
+  externalNotificationChannels,
   parseExternalNotificationOutboxPayload,
   projectExternalActivityPayload,
   roleHasCapability,
@@ -338,6 +339,7 @@ async function resolveExternalSafeDirectRecipient(env: Env, outbox: OutboxRow): 
   if (!isLegacyNotificationType(payload.legacy.type)) return suppressed("external_policy_suppressed");
   const policy = EXTERNAL_LEGACY_NOTIFICATION_POLICY[payload.legacy.type];
   if (policy.decision !== "allowed" || policy.durableEvent !== "project.external_safe.direct") return suppressed("external_policy_suppressed");
+  if (!externalNotificationChannels(payload.legacy.type).length) return suppressed("external_policy_suppressed");
   const row = await env.DB.prepare(`
     SELECT o.id AS outboxId, o.schema_version AS schemaVersion, o.event_type AS eventType,
       o.source_key AS sourceKey, o.project_id AS projectId, o.actor_id AS actorId,
@@ -361,6 +363,7 @@ async function resolveExternalSafeDirectRecipient(env: Env, outbox: OutboxRow): 
   if (row.recipientAuthorizationEpoch === null) return suppressed("authorization_epoch_missing");
   if (authorizationEpochMismatch(row)) return suppressed("authorization_epoch_changed");
   const copy = externalNotificationCopy({ type: payload.legacy.type });
+  if (!copy) return suppressed("external_policy_suppressed");
   const projectPath = `${env.APP_ORIGIN}/projects/${row.projectId}`;
   return {
     ok: true,
@@ -384,6 +387,7 @@ async function resolveExternalSubtaskRecipient(env: Env, outbox: OutboxRow): Pro
   if (!payload || !("assignment" in payload) || payload.event.type !== outbox.event_type) return suppressed("payload_invalid");
   const expectedType = outbox.event_type === "project.subtask.assigned" ? "subtask_assigned" : outbox.event_type === "project.subtask.due_today" ? "subtask_due_today" : null;
   if (!expectedType || payload.event.sourceKey !== outbox.source_key || payload.event.recipientId !== outbox.recipient_id) return suppressed("payload_invalid");
+  if (!externalNotificationChannels(expectedType).length) return suppressed("external_policy_suppressed");
   const row = await env.DB.prepare(`
     SELECT o.id AS outboxId, o.schema_version AS schemaVersion, o.event_type AS eventType,
       o.source_key AS sourceKey, o.project_id AS projectId, o.actor_id AS actorId,
@@ -416,6 +420,7 @@ async function resolveExternalSubtaskRecipient(env: Env, outbox: OutboxRow): Pro
   if (payload.event.type !== (expectedType === "subtask_assigned" ? "project.subtask.assigned" : "project.subtask.due_today")) return suppressed("payload_invalid");
   if (expectedType === "subtask_due_today" && (!("dueDate" in payload.assignment) || payload.assignment.dueDate !== row.subtaskDueDate || payload.assignment.claimAt !== row.subtaskDueReminderSentAt)) return suppressed("subtask_changed");
   const copy = externalNotificationCopy({ type: expectedType });
+  if (!copy) return suppressed("external_policy_suppressed");
   const projectPath = `${env.APP_ORIGIN}/projects/${row.projectId}`;
   return {
     ok: true,
@@ -475,6 +480,26 @@ async function resolveDeadlineReminderRecipient(env: Env, outbox: OutboxRow): Pr
   if (result.recipientRole === "external_editor" && result.recipientAuthorizationEpoch === null) return suppressed("authorization_epoch_missing");
   if (authorizationEpochMismatch(result)) return suppressed("authorization_epoch_changed");
   const projectPath = `${env.APP_ORIGIN}${staffPathFor({ kind: "project", projectId: result.projectId })}`;
+  if (result.recipientRole === "external_editor") {
+    if (!externalNotificationChannels("project_deadline_reminder").length) return suppressed("external_policy_suppressed");
+    const copy = externalNotificationCopy({ type: "project_deadline_reminder" });
+    if (!copy) return suppressed("external_policy_suppressed");
+    return {
+      ok: true,
+      kind: "legacy",
+      row: result,
+      payload,
+      commentPath: projectPath,
+      delivery: {
+        notificationType: "project_deadline_reminder",
+        title: copy.title,
+        body: copy.body,
+        emailSubject: copy.title,
+        emailText: `${copy.body}\n\n${projectPath}`,
+        emailHtml: `<p>${htmlEscape(copy.body)}</p><p><a href="${htmlEscape(projectPath)}">View project</a></p>`,
+      },
+    };
+  }
   const label = result.projectStreet || "Project";
   const dueText = payload.reminder.kind === "due_now"
     ? Date.now() > deadlineAt ? "is overdue" : "is due now"
@@ -647,9 +672,13 @@ async function resolveBroadRecipient(env: Env, outbox: OutboxRow): Promise<Resol
   if (role === "external_editor") {
     const policy = EXTERNAL_PROJECT_ACTIVITY_POLICY[activity.type];
     if (policy.decision === "suppressed" || !projectExternalActivityPayload(activity.type, activity.safePayload)) return suppressed("external_policy_suppressed");
+    if (!externalNotificationChannels(activity.type).length) return suppressed("external_policy_suppressed");
   }
   const projection = activity.deepLink.kind === "project_collaboration" ? "project_collaboration_activity" : "project_activity";
-  const copy = renderProjectActivityNotification(activity.type, activity.safePayload, row.projectStreet, activity.actorKind === "user" ? row.activityActorName : null);
+  const copy = role === "external_editor"
+    ? externalNotificationCopy({ type: activity.type })
+    : renderProjectActivityNotification(activity.type, activity.safePayload, row.projectStreet, activity.actorKind === "user" ? row.activityActorName : null);
+  if (!copy) return suppressed("external_policy_suppressed");
   const projectPath = `${env.APP_ORIGIN}${activity.deepLink.path}`;
   return {
     ok: true,
@@ -717,6 +746,26 @@ async function resolveRecipient(env: Env, outbox: OutboxRow): Promise<ResolvedRe
     if (first.recipientRole === "external_editor" && first.recipientAuthorizationEpoch === null) return suppressed("authorization_epoch_missing");
     if (authorizationEpochMismatch(first)) return suppressed("authorization_epoch_changed");
     const projectPath = `${env.APP_ORIGIN}/projects/${first.projectId}`;
+    if (first.recipientRole === "external_editor") {
+      if (!externalNotificationChannels("assigned_to_project").length) return suppressed("external_policy_suppressed");
+      const copy = externalNotificationCopy({ type: "assigned_to_project" });
+      if (!copy) return suppressed("external_policy_suppressed");
+      return {
+        ok: true,
+        kind: "legacy",
+        row: first,
+        payload,
+        commentPath: projectPath,
+        delivery: {
+          notificationType: "assigned_to_project",
+          title: copy.title,
+          body: copy.body,
+          emailSubject: copy.title,
+          emailText: `${copy.body}\n\n${projectPath}`,
+          emailHtml: `<p>${htmlEscape(copy.body)}</p><p><a href="${htmlEscape(projectPath)}">View project</a></p>`,
+        },
+      };
+    }
     const title = "Assigned to project";
     const body = `You have been assigned as the ${roleOnProject} for ${first.projectStreet ?? "Project"}.`;
     return {
@@ -755,6 +804,26 @@ async function resolveRecipient(env: Env, outbox: OutboxRow): Promise<ResolvedRe
   if (first.recipientRole === "external_editor" && first.recipientAuthorizationEpoch === null) return suppressed("authorization_epoch_missing");
   if (authorizationEpochMismatch(first)) return suppressed("authorization_epoch_changed");
   const commentPath = `${env.APP_ORIGIN}${staffPathFor({ kind: "project", projectId: first.projectId, collaboration: "open" })}`;
+  if (first.recipientRole === "external_editor") {
+    if (!externalNotificationChannels("mentioned").length) return suppressed("external_policy_suppressed");
+    const copy = externalNotificationCopy({ type: "mentioned" });
+    if (!copy) return suppressed("external_policy_suppressed");
+    return {
+      ok: true,
+      kind: "legacy",
+      row: first,
+      payload,
+      commentPath,
+      delivery: {
+        notificationType: "mentioned",
+        title: copy.title,
+        body: copy.body,
+        emailSubject: copy.title,
+        emailText: `${copy.body}\n\n${commentPath}`,
+        emailHtml: `<p>${htmlEscape(copy.body)}</p><p><a href="${htmlEscape(commentPath)}">View project</a></p>`,
+      },
+    };
+  }
   const excerpt = truncateForEmail(first.commentBody ?? "");
   return {
     ok: true,
@@ -939,6 +1008,7 @@ function reminderAuthorization(outbox: OutboxRow, payload: ProjectDeadlineRemind
         AND occurrence.deadline_local_civil = ? AND occurrence.deadline_zone = 'Australia/Sydney'
         AND occurrence.deadline_utc_offset_minutes = ? AND occurrence.deadline_fold = ?
         AND recipient.active = 1 AND recipient.role IN (${rolePlaceholders})
+        AND o.recipient_authorization_epoch = recipient.authorization_epoch
         AND member.created_at = ? AND member.created_at <= occurrence.fired_at
         ${channel ? "AND (? <> 'email' OR COALESCE(preference.project_deadline_reminder_emails, 1) = 1)" : ""}
     `,
@@ -1010,37 +1080,149 @@ async function beginReminderChannel(env: Env, outbox: OutboxRow, token: string, 
   return (results[0]?.results?.length ?? 0) === 1;
 }
 
-async function beginChannel(env: Env, outbox: OutboxRow, token: string, channel: "in_app" | "email", now: number): Promise<boolean> {
+type LegacyAdmission = { sql: string; values: unknown[] };
+
+function legacyAdmission(outbox: OutboxRow, resolved: LegacyResolvedRecipient, token: string): LegacyAdmission {
+  const allRoles = [...new Set([
+    ...PROJECT_ASSIGNMENT_ELIGIBLE_ROLES.photographer,
+    ...PROJECT_ASSIGNMENT_ELIGIBLE_ROLES.editor,
+  ])];
+  const rolePlaceholders = allRoles.map(() => "?").join(",");
+  const epoch = `(o.recipient_authorization_epoch = recipient.authorization_epoch OR (o.recipient_authorization_epoch IS NULL AND recipient.role <> 'external_editor'))`;
+  const lease = "o.id = ? AND o.status = 'processing' AND o.lease_token = ? AND o.recipient_id = ?";
+  if (outbox.event_type === "project.external_safe.direct") {
+    return {
+      sql: `EXISTS (
+        SELECT 1 FROM notification_outbox o
+        JOIN user recipient ON recipient.id = o.recipient_id
+        JOIN projects p ON p.id = o.project_id AND p.archived_at IS NULL
+        JOIN project_members member ON member.id = o.recipient_membership_cycle_id
+          AND member.project_id = o.project_id AND member.user_id = o.recipient_id AND member.role_on_project = 'editor'
+        WHERE ${lease} AND recipient.active = 1 AND recipient.role = 'external_editor'
+          AND ${epoch}
+          AND json_extract(o.payload_json, '$.authorizationAtOccurrence.membershipCycle') = member.id
+          AND json_extract(o.payload_json, '$.authorizationAtOccurrence.startedAt') = member.created_at
+      )`,
+      values: [outbox.id, token, outbox.recipient_id],
+    };
+  }
+  if (outbox.event_type === "project.subtask.assigned" || outbox.event_type === "project.subtask.due_today") {
+    const due = outbox.event_type === "project.subtask.due_today"
+      ? "AND subtask.due_date = json_extract(o.payload_json, '$.assignment.dueDate') AND subtask.due_reminder_sent_at = json_extract(o.payload_json, '$.assignment.claimAt')"
+      : "";
+    return {
+      sql: `EXISTS (
+        SELECT 1 FROM notification_outbox o
+        JOIN user recipient ON recipient.id = o.recipient_id
+        JOIN projects p ON p.id = o.project_id AND p.archived_at IS NULL
+        JOIN project_members member ON member.id = o.recipient_membership_cycle_id
+          AND member.project_id = o.project_id AND member.user_id = o.recipient_id AND member.role_on_project = 'editor'
+        JOIN project_subtasks subtask ON subtask.id = json_extract(o.payload_json, '$.assignment.subtaskId')
+          AND subtask.project_id = o.project_id AND subtask.assignee_id = o.recipient_id AND subtask.done = 0
+        WHERE ${lease} AND recipient.active = 1 AND recipient.role = 'external_editor'
+          AND ${epoch}
+          AND subtask.assignment_version = json_extract(o.payload_json, '$.assignment.assignmentVersion')
+          AND json_extract(o.payload_json, '$.authorizationAtOccurrence.membershipCycle') = member.id
+          AND json_extract(o.payload_json, '$.authorizationAtOccurrence.startedAt') = member.created_at
+          ${due}
+      )`,
+      values: [outbox.id, token, outbox.recipient_id],
+    };
+  }
+  if (outbox.event_type === NOTIFICATION_OUTBOX_EVENT_TYPES.projectAssignmentCreated) {
+    return {
+      sql: `EXISTS (
+        SELECT 1 FROM notification_outbox o
+        JOIN user recipient ON recipient.id = o.recipient_id
+        JOIN projects p ON p.id = o.project_id AND p.archived_at IS NULL
+        JOIN project_members member ON member.id = o.source_key
+          AND member.project_id = o.project_id AND member.user_id = o.recipient_id
+          AND member.role_on_project = json_extract(o.payload_json, '$.assignment.roleOnProject')
+        WHERE ${lease} AND recipient.active = 1 AND recipient.role IN (${rolePlaceholders})
+          AND ${epoch}
+          AND json_extract(o.payload_json, '$.assignment.membershipCycle') = member.id
+          AND json_extract(o.payload_json, '$.assignment.projectId') = o.project_id
+          AND json_extract(o.payload_json, '$.assignment.userId') = o.recipient_id
+      )`,
+      values: [outbox.id, token, outbox.recipient_id, ...allRoles],
+    };
+  }
+  // The remaining legacy family is project-comment mention delivery. The admin arm has no
+  // project membership cycle by design; every non-admin arm must still prove one of the
+  // occurrence's exact membership IDs is current.
+  return {
+    sql: `EXISTS (
+      SELECT 1 FROM notification_outbox o
+      JOIN user recipient ON recipient.id = o.recipient_id
+      JOIN projects p ON p.id = o.project_id AND p.archived_at IS NULL
+      WHERE ${lease} AND recipient.active = 1 AND recipient.role IN (${rolePlaceholders})
+        AND ${epoch}
+        AND EXISTS (
+          SELECT 1 FROM project_comment_mentions mention
+          JOIN project_comments comment ON comment.id = mention.comment_id AND comment.project_id = o.project_id
+          WHERE mention.id = o.source_key AND mention.mentioned_user_id = o.recipient_id
+            AND json_extract(o.payload_json, '$.projectCommentActivity.activity.safePayload.commentId') = mention.comment_id
+        )
+        AND (
+          recipient.role = 'admin'
+          OR EXISTS (
+            SELECT 1 FROM project_members member
+            WHERE member.project_id = o.project_id AND member.user_id = o.recipient_id
+              AND EXISTS (SELECT 1 FROM json_each(o.payload_json, '$.authorizationAtOccurrence.membershipIds') cycle WHERE cycle.value = member.id)
+          )
+        )
+    )`,
+    values: [outbox.id, token, outbox.recipient_id, ...allRoles],
+  };
+}
+
+function channelAdmission(outbox: OutboxRow, resolved: LegacyResolvedRecipient, token: string, channel: "in_app" | "email"): LegacyAdmission {
+  if (outbox.event_type === NOTIFICATION_OUTBOX_EVENT_TYPES.projectDeadlineReminder) {
+    const payload = safeReminderPayload(outbox.payload_json, outbox);
+    if (!payload) return { sql: "0", values: [] };
+    const admission = reminderAuthorization(outbox, payload, token, channel);
+    // reminderAuthorization is also used by the ledger UPDATE, where the target table is
+    // available as notification_delivery_ledger. The media/notification INSERT and convergence
+    // statements have no such target alias, so bind the outbox identity explicitly instead.
+    return {
+      sql: admission.sql.replace("o.id = notification_delivery_ledger.outbox_id", "o.id = ?"),
+      values: [outbox.id, ...admission.values],
+    };
+  }
+  return legacyAdmission(outbox, resolved, token);
+}
+
+async function beginChannel(env: Env, outbox: OutboxRow, token: string, channel: "in_app" | "email", now: number, resolved: LegacyResolvedRecipient): Promise<boolean> {
   if (outbox.event_type === NOTIFICATION_OUTBOX_EVENT_TYPES.projectDeadlineReminder) return beginReminderChannel(env, outbox, token, channel, now);
+  const admission = legacyAdmission(outbox, resolved, token);
   const result = await env.DB.prepare(`
     UPDATE notification_delivery_ledger
     SET status = 'processing', attempts = attempts + 1, last_attempt_at = ?, updated_at = ?,
         last_error_code = NULL, last_error = NULL
-    WHERE outbox_id = ? AND channel = ? AND status = 'pending'
-      AND EXISTS (SELECT 1 FROM notification_outbox o WHERE o.id = ? AND o.status = 'processing' AND o.lease_token = ?)
-  `).bind(now, now, outbox.id, channel, outbox.id, token).run();
+      WHERE outbox_id = ? AND channel = ? AND status = 'pending'
+      AND ${admission.sql}
+  `).bind(now, now, outbox.id, channel, ...admission.values).run();
   return (result.meta.changes ?? 0) === 1;
 }
 
-async function deliverInApp(env: Env, outbox: OutboxRow, token: string, _resolved: Extract<Awaited<ReturnType<typeof resolveRecipient>>, { ok: true; kind: "legacy" }>, now: number): Promise<void> {
-  const began = await beginChannel(env, outbox, token, "in_app", now);
-  if (!began) return;
-  const secondResolution = await resolveRecipient(env, outbox);
-  if (!secondResolution.ok) {
-    if (secondResolution.kind !== "suppress") throw new Error("Legacy recipient resolver returned a permanent failure");
-    await suppressWholeOccurrence(env, outbox, token, secondResolution.reason, now, secondResolution.code);
+async function deliverInApp(env: Env, outbox: OutboxRow, resolved: LegacyResolvedRecipient, token: string, now: number): Promise<void> {
+  const began = await beginChannel(env, outbox, token, "in_app", now, resolved);
+  if (!began) {
+    const latest = await resolveRecipient(env, outbox);
+    if (!latest.ok && latest.kind === "suppress") await suppressWholeOccurrence(env, outbox, token, latest.reason, now, latest.code);
     return;
   }
-  if (secondResolution.kind !== "legacy") throw new Error("Legacy outbox resolved as a broad activity");
-  const current = secondResolution;
+  const current = resolved;
+  const admission = channelAdmission(outbox, current, token, "in_app");
   const notificationId = crypto.randomUUID();
   const inserted = env.DB.prepare(`
     INSERT INTO notifications (id, user_id, project_id, type, title, body, source_key, created_at)
     SELECT ?, ?, ?, ?, ?, ?, ?, ?
-    WHERE EXISTS (SELECT 1 FROM notification_outbox o WHERE o.id = ? AND o.status = 'processing' AND o.lease_token = ?)
+    WHERE EXISTS (SELECT 1 FROM notification_delivery_ledger WHERE outbox_id = ? AND channel = 'in_app' AND status = 'processing')
+      AND ${admission.sql}
     ON CONFLICT (type, source_key, user_id)
       WHERE source_key IS NOT NULL DO NOTHING
-  `).bind(notificationId, current.row.recipientId, current.row.projectId, current.delivery.notificationType, current.delivery.title, current.delivery.body, current.row.sourceKey, now, outbox.id, token);
+  `).bind(notificationId, current.row.recipientId, current.row.projectId, current.delivery.notificationType, current.delivery.title, current.delivery.body, current.row.sourceKey, now, outbox.id, ...admission.values);
   const converged = env.DB.prepare(`
     UPDATE notification_delivery_ledger
     SET status = 'sent',
@@ -1050,20 +1232,21 @@ async function deliverInApp(env: Env, outbox: OutboxRow, token: string, _resolve
           LIMIT 1
         ),
         delivered_at = ?, updated_at = ?, last_error_code = NULL, last_error = NULL
-    WHERE id = (SELECT id FROM notification_delivery_ledger WHERE outbox_id = ? AND channel = 'in_app')
+      WHERE id = (SELECT id FROM notification_delivery_ledger WHERE outbox_id = ? AND channel = 'in_app')
       AND outbox_id = ? AND channel = 'in_app' AND status = 'processing'
-      AND EXISTS (
-        SELECT 1 FROM notification_outbox o
-        WHERE o.id = notification_delivery_ledger.outbox_id
-          AND o.status = 'processing' AND o.lease_token = ?
-      )
+      AND ${admission.sql}
       AND EXISTS (
         SELECT 1 FROM notifications
         WHERE type = ? AND source_key = ? AND user_id = ?
       )
-  `).bind(current.delivery.notificationType, current.row.sourceKey, current.row.recipientId, now, now, outbox.id, outbox.id, token, current.delivery.notificationType, current.row.sourceKey, current.row.recipientId);
+  `).bind(current.delivery.notificationType, current.row.sourceKey, current.row.recipientId, now, now, outbox.id, outbox.id, ...admission.values, current.delivery.notificationType, current.row.sourceKey, current.row.recipientId);
   const results = await env.DB.batch([inserted, converged]);
-  if ((results[1]?.meta.changes ?? 0) !== 1) throw new Error("In-app ledger convergence lost ownership");
+  if ((results[1]?.meta.changes ?? 0) !== 1) {
+    const latest = await resolveRecipient(env, outbox);
+    if (!latest.ok && latest.kind === "suppress") await suppressWholeOccurrence(env, outbox, token, latest.reason, now, latest.code);
+    else throw new Error("In-app ledger convergence lost ownership");
+    return;
+  }
   await recordProjectDeadlineInAppLatency(env, outbox, now);
 }
 
@@ -1379,18 +1562,25 @@ async function finishEmail(env: Env, outbox: OutboxRow, token: string, now: numb
     return "done";
   }
   if (reauthorized.kind !== "legacy") throw new Error("Legacy email resolver returned a broad activity");
+  if (reauthorized.row.recipientRole === "external_editor" && !externalNotificationChannels(reauthorized.delivery.notificationType).includes("email")) {
+    await suppressEmailChannel(env, outbox, token, "external_email_not_allowed", now);
+    return "done";
+  }
   if (!env.EMAIL || !env.NOTIFICATIONS_FROM_ADDRESS) {
     await failEmailBeforeAdmission(env, outbox, token, "email_configuration_missing", "Email delivery is not configured.", now);
     await completeIfTerminal(env, outbox, token, now);
     return "done";
   }
-  const began = await beginChannel(env, outbox, token, "email", now);
+  const began = await beginChannel(env, outbox, token, "email", now, reauthorized);
   if (!began) {
+    const latest = await resolveRecipient(env, outbox);
+    if (!latest.ok && latest.kind === "suppress") await suppressEmailChannel(env, outbox, token, latest.reason, now, latest.code);
     await completeIfTerminal(env, outbox, token, now);
     return "done";
   }
   emailReachedProcessing.value = true;
   const current = reauthorized;
+  const admission = channelAdmission(outbox, current, token, "email");
   try {
     const result = await env.EMAIL.send({
       from: env.NOTIFICATIONS_FROM_ADDRESS,
@@ -1403,8 +1593,8 @@ async function finishEmail(env: Env, outbox: OutboxRow, token: string, now: numb
       UPDATE notification_delivery_ledger
       SET status = 'sent', delivered_at = ?, email_message_id = ?, updated_at = ?, last_error_code = NULL, last_error = NULL
       WHERE outbox_id = ? AND channel = 'email' AND status = 'processing'
-        AND EXISTS (SELECT 1 FROM notification_outbox o WHERE o.id = ? AND o.status = 'processing' AND o.lease_token = ?)
-    `).bind(now, result.messageId, now, outbox.id, outbox.id, token).run();
+        AND ${admission.sql}
+    `).bind(now, result.messageId, now, outbox.id, ...admission.values).run();
     if ((sentResult.meta.changes ?? 0) === 1) await mirrorEmailOutcome(env, outbox.id, { emailSentAt: now, emailMessageId: result.messageId });
     await completeIfTerminal(env, outbox, token, now);
     return "done";
@@ -1481,7 +1671,7 @@ export async function processNotificationMessage(env: Env, message: Message<Noti
       message.ack();
       return "acked";
     }
-    await deliverInApp(env, row, token, resolved, now);
+    await deliverInApp(env, row, resolved, token, now);
     const current = await readOutbox(env, row.id);
     if (!current || current.status !== "processing") {
       message.ack();

@@ -9,6 +9,7 @@ import { PROJECT_ACTIVITY_TYPES } from "../src/project-activity";
 import { NOTIFICATION_TYPES } from "../src/notification-types";
 import { externalProjectSummarySchema } from "../src/external-project-dto";
 import { externalEditedUploadCreateRequestSchema } from "../src/external-upload";
+import { externalNotificationChannels, externalNotificationCopy } from "../src/external-notification";
 
 describe("TB4E external policy and DTO boundaries", () => {
   it("is exhaustive independently of the internal activity registry metadata", () => {
@@ -22,6 +23,15 @@ describe("TB4E external policy and DTO boundaries", () => {
     expect(Object.keys(EXTERNAL_LEGACY_NOTIFICATION_POLICY).sort()).toEqual([...NOTIFICATION_TYPES].sort());
     expect(projectExternalActivityPayload("project.comment.created", { commentId: "comment" })).toEqual({ type: "project.comment.created", payload: { commentId: "comment" } });
     expect(projectExternalActivityPayload("project.comment.created", { commentId: "comment", body: "private" } as never)).toBeNull();
+  });
+
+  it("uses only an explicit external copy/channel entry", () => {
+    expect(externalNotificationCopy({ type: "project.comment.created" })).toEqual({ title: "Project discussion updated", body: "The assigned project discussion was updated." });
+    expect(externalNotificationChannels("project.comment.created")).toEqual(["in_app"]);
+    expect(externalNotificationCopy({ type: "project.priority.changed" })).toBeNull();
+    expect(externalNotificationChannels("project.priority.changed")).toEqual([]);
+    expect(externalNotificationCopy({ type: "future.unknown" })).toBeNull();
+    expect(externalNotificationChannels("future.unknown")).toEqual([]);
   });
 
   it("rejects DTO widening and non-edited upload requests at the shared boundary", () => {

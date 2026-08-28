@@ -131,7 +131,10 @@ export function ProjectTeamControl({ projectId, members, canEdit }: { projectId:
       let mutation: Awaited<ReturnType<typeof beginProjectMembershipMutation>> | undefined;
       try {
         mutation = await beginProjectMembershipMutation(queryClient, projectId, member.roleOnProject, member.userId, "remove", null);
-        const body = { membershipCycle: member.id, clearSubtaskAssignments: confirmedCount !== null, confirmedAssignmentCount: confirmedCount ?? 0 } as const;
+        const clearAssignments = confirmedCount !== null && confirmedCount > 0;
+        const body = member.globalRole === "external_editor"
+          ? { membershipCycle: member.id, clearSubtaskAssignments: clearAssignments, confirmedAssignmentCount: confirmedCount ?? 0, confirmAccessLoss: confirmedCount !== null } as const
+          : { membershipCycle: member.id, clearSubtaskAssignments: clearAssignments, confirmedAssignmentCount: confirmedCount ?? 0 } as const;
         const response = await apiDeleteWithBody<RemoveResponse, typeof body>(`/api/projects/${encodeURIComponent(projectId)}/${member.roleOnProject === "photographer" ? "photographers" : "editors"}/${encodeURIComponent(member.userId)}`, body);
         await mutation.commit(undefined, response.subtaskAssignmentsCleared);
         setState(key, null);
@@ -147,7 +150,7 @@ export function ProjectTeamControl({ projectId, members, canEdit }: { projectId:
             return;
           }
           const count = payload.assignmentCount;
-          const accepted = await confirm({ title: "Remove final project role?", message: `Removing ${member.name || member.email}'s final project role will unassign ${count} checklist item${count === 1 ? "" : "s"}. Continue?`, confirmLabel: "Remove and unassign", danger: true });
+          const accepted = await confirm({ title: "Remove final project role?", message: payload.accessWillBeLost ? `Project access will be lost immediately. Removing ${member.name || member.email}'s final project role will unassign ${count} checklist item${count === 1 ? "" : "s"}. Continue?` : `Removing ${member.name || member.email}'s final project role will unassign ${count} checklist item${count === 1 ? "" : "s"}. Continue?`, confirmLabel: "Remove and unassign", danger: true });
           if (!accepted) { setState(key, null); return; }
           confirmedCount = count;
           continue;

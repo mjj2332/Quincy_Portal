@@ -60,9 +60,10 @@ async function insertLedgers(db: D1Database, outboxIds: readonly string[], chann
  */
 export async function emitExternalSafeLegacyNotification(db: D1Database, input: ExternalSafeLegacyInput): Promise<string[]> {
   const policy = EXTERNAL_LEGACY_NOTIFICATION_POLICY[input.type];
-  if (policy.decision !== "allowed" || policy.durableEvent !== EXTERNAL_NOTIFICATION_OUTBOX_EVENT_TYPES.projectSafeDirect || !input.sourceKey || !input.sourceId) return [];
+  if (!policy || policy.decision !== "allowed" || policy.durableEvent !== EXTERNAL_NOTIFICATION_OUTBOX_EVENT_TYPES.projectSafeDirect || !input.sourceKey || !input.sourceId) return [];
   const now = input.now ?? Date.now();
   const copy = externalNotificationCopy({ type: input.type });
+  if (!copy || !externalNotificationChannels(input.type).length) return [];
   const rows = await db.prepare(`
     INSERT INTO notification_outbox (
       id, schema_version, event_type, source_key, project_id, actor_id, recipient_id,
@@ -92,7 +93,6 @@ export async function emitExternalSafeLegacyNotification(db: D1Database, input: 
   ).all<InsertedOutbox>();
   const outboxIds = rows.results.map((row) => row.id);
   await insertLedgers(db, outboxIds, externalNotificationChannels(input.type), now);
-  void copy;
   return outboxIds;
 }
 

@@ -73,6 +73,8 @@
   "vars": {
     "APP_ENV": "production",
     "APP_ORIGIN": "https://quincy.flamingfire.my",
+    // CLOUDFLARE_ZONE_ID and CLOUDFLARE_CACHE_PURGE_TOKEN are background-only secrets;
+    // provision them with `wrangler secret put`, never as committed vars.
     "RENDITIONS_ENABLED": true,
     "DROPBOX_RAW_AUTOMATION_ENABLED": "1",
     "DROPBOX_AUTOHDR_AUTOMATION_ENABLED": "1"

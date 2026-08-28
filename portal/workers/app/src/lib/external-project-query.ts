@@ -35,6 +35,11 @@ function coverUrl(origin: string, assetId: string | null) {
   return assetId ? { assetId, url: new URL(`/media/asset/${assetId}/thumb`, origin).href } : null;
 }
 
+/** External projections never expose provider-specific workflow stage identifiers. */
+export function externalStageKey(stageKey: string) {
+  return stageKey === "editing_autohdr" ? "editing" : stageKey;
+}
+
 async function projectRows(db: Db, userId: string, role: Role, projectId?: string) {
   return db.select({
     id: schema.projects.id,
@@ -105,7 +110,7 @@ function summaryFields(project: ProjectRow, services: ServiceRow[], deadline: Aw
     agentDisplayName: project.directoryAgentName ?? project.agentName,
     shootDate: project.shootDate,
     timeWindow: project.timeWindow,
-    stageKey: project.stageKey,
+    stageKey: externalStageKey(project.stageKey),
     deadline,
     productionNotes: project.productionNotes,
     services: services.map(({ id, kind, status, expectedCount, receivedCount }) => ({ id, kind, status, expectedCount, receivedCount })),

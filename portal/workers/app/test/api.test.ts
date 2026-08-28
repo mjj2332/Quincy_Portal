@@ -719,7 +719,7 @@ describe("staff app API", () => {
       expectStageStatus(await jsonRequest(`/api/projects/${fixture.projectId}/cover`, photographerCookie, "POST", { assetId: null }), 403);
       expectStageStatus(await jsonRequest(`/api/projects/${fixture.projectId}/dropbox-sync`, photographerCookie, "POST"), visible ? 400 : 403);
       expectStageStatus(await jsonRequest(`/api/projects/${fixture.projectId}/sync-dropbox`, photographerCookie, "POST"), visible ? 409 : 403);
-      expectStageStatus(await jsonRequest(`/api/projects/${fixture.projectId}/manual-upload-jobs`, photographerCookie, "GET"), visible ? 200 : 403);
+      expectStageStatus(await jsonRequest(`/api/projects/${fixture.projectId}/manual-upload-jobs`, photographerCookie, "GET"), 403);
       expectStageStatus(await jsonRequest(`/api/projects/${fixture.projectId}/selected-raw.zip`, photographerCookie, "GET"), 403);
 
       // These routes retain their existing adminBackend middleware; the photographer is denied

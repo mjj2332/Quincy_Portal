@@ -22,6 +22,7 @@ import {
 } from "../lib/project-comments";
 import { jsonInput } from "./helpers";
 import { resolveVisibleProject } from "../lib/visible-project-scope";
+import { externalStageKey } from "../lib/external-project-query";
 import { ROLE_LABELS, externalCommentListResponseSchema, externalCommentSchema } from "@quincy/shared";
 
 const MAX_LIMIT = 50;
@@ -75,7 +76,7 @@ projectCommentsRoutes.get("/projects/:projectId/collaboration-summary", terminal
   const members = await db.select({ id: schema.projectMembers.id, userId: schema.projectMembers.userId, roleOnProject: schema.projectMembers.roleOnProject, name: schema.user.name, email: schema.user.email, globalRole: schema.user.role, active: schema.user.active })
     .from(schema.projectMembers).innerJoin(schema.user, eq(schema.projectMembers.userId, schema.user.id)).where(eq(schema.projectMembers.projectId, projectId)).orderBy(schema.projectMembers.roleOnProject, schema.user.name, schema.user.id).all();
   if (c.get("user").role === "external_editor") return c.json({
-    project: { id: project.id, street: project.street, stageKey: project.stageKey },
+    project: { id: project.id, street: project.street, stageKey: externalStageKey(project.stageKey) },
     members: members.map((member) => ({
       id: member.id, userId: member.userId, membershipCycleId: member.id, roleOnProject: member.roleOnProject,
       name: member.name, email: member.email, roleLabel: ROLE_LABELS[member.globalRole],

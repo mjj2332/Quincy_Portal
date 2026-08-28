@@ -20,6 +20,13 @@ export const requireSession: MiddlewareHandler<AppEnv> = async (c, next) => {
   const current = await createDb(c.env.DB).select({ id: schema.user.id, email: schema.user.email, name: schema.user.name, role: schema.user.role, active: schema.user.active, authorizationEpoch: schema.user.authorizationEpoch })
     .from(schema.user).where(eq(schema.user.id, user.id)).get();
   if (!current?.active || !ROLES.includes(current.role as never)) return c.json({ error: "Authentication required" }, 401);
+  // Better-auth's session cookie can remain readable while the guarded role/active mutation
+  // batch is still deleting the backing row. Treat the epoch carried by that cookie as a
+  // snapshot, never as an invitation to adopt the newly-read role. A request that crossed an
+  // authorization transition is stale even when this connection has not observed DELETE session.
+  if (typeof user.authorizationEpoch !== "number" || !Number.isSafeInteger(user.authorizationEpoch) || user.authorizationEpoch < 0 || current.authorizationEpoch !== user.authorizationEpoch) {
+    return c.json({ error: "Authentication required" }, 401);
+  }
   if (impersonatedBy) {
     try { await assertImpersonationSessionAllowed(c.env, user.id, impersonatedBy); }
     catch { return impersonationDisabledResponse(c); }

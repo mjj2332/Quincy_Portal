@@ -102,8 +102,9 @@ usersRoutes.patch("/users/:id", terminalRoute("/users/:id", async (c) => {
       ? c.env.DB.prepare(`
         UPDATE user SET role = ?, name = COALESCE(?, name), authorization_epoch = authorization_epoch + 1, updated_at = ?
         WHERE id = ? AND role = ? AND active = ? AND authorization_epoch = ? AND updated_at = ?
+          ${blockerRole ? "AND NOT EXISTS (SELECT 1 FROM project_members WHERE user_id = ? AND role_on_project = ?)" : ""}
         RETURNING id, authorization_epoch
-      `).bind(nextRole, data.name ?? null, now, id, existing.role, existing.active ? 1 : 0, existing.authorizationEpoch, existing.updatedAt.getTime())
+      `).bind(nextRole, data.name ?? null, now, id, existing.role, existing.active ? 1 : 0, existing.authorizationEpoch, existing.updatedAt.getTime(), ...(blockerRole ? [id, blockerRole] : []))
       : c.env.DB.prepare(`
         UPDATE user SET active = ?, name = COALESCE(?, name), authorization_epoch = authorization_epoch + 1, updated_at = ?
         WHERE id = ? AND role = ? AND active = ? AND authorization_epoch = ? AND updated_at = ?

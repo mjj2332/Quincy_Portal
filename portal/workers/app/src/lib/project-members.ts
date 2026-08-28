@@ -192,7 +192,8 @@ export function eligibleRemainingRoleSql(projectId: string, userId: string, excl
 
 type RemoveInput = {
   projectId: string; userId: string; roleOnProject: ProjectMemberRole; membershipCycle: string;
-  clearSubtaskAssignments: boolean; confirmedAssignmentCount: number; actorId: string; auditPrincipal: AuditPrincipal; now?: number;
+  clearSubtaskAssignments: boolean; confirmedAssignmentCount: number; confirmAccessLoss?: boolean;
+  actorId: string; auditPrincipal: AuditPrincipal; now?: number;
 };
 
 export async function removeProjectMemberCycle(
@@ -201,7 +202,7 @@ export async function removeProjectMemberCycle(
 ): Promise<
   | { outcome: "removed"; subtaskAssignmentsCleared: number; notificationOutboxIds: string[] }
   | { outcome: "stale"; currentMembership: ProjectMembershipDto | null }
-  | { outcome: "confirmation_required"; assignmentCount: number; currentMembership: ProjectMembershipDto }
+  | { outcome: "confirmation_required"; assignmentCount: number; accessWillBeLost: boolean; currentMembership: ProjectMembershipDto }
 > {
   const now = input.now ?? Date.now();
   const auditId = newId();
@@ -228,10 +229,17 @@ export async function removeProjectMemberCycle(
         OR (? = 0 AND NOT EXISTS (SELECT 1 FROM project_subtasks WHERE project_id = ? AND assignee_id = ?))
         OR (? = 1 AND (SELECT COUNT(*) FROM project_subtasks WHERE project_id = ? AND assignee_id = ?) = ?)
       )
+      AND (
+        ? = 1 OR NOT (
+          EXISTS (SELECT 1 FROM user targetUser WHERE targetUser.id = ? AND targetUser.role = 'external_editor')
+          AND NOT EXISTS (SELECT 1 FROM project_members remaining JOIN user target ON target.id = remaining.user_id WHERE ${remaining.sql})
+        )
+      )
     RETURNING id
   `).bind(input.membershipCycle, input.projectId, input.userId, input.roleOnProject, input.userId, ...remaining.bindings,
     input.clearSubtaskAssignments ? 1 : 0, input.projectId, input.userId,
-    input.clearSubtaskAssignments ? 1 : 0, input.projectId, input.userId, input.confirmedAssignmentCount);
+    input.clearSubtaskAssignments ? 1 : 0, input.projectId, input.userId, input.confirmedAssignmentCount,
+    input.confirmAccessLoss ? 1 : 0, input.userId, ...remaining.bindings);
   const audit = db.prepare(`
     INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
     SELECT ?, ?, 'project.member.remove', 'project_member', ?, ?, ? WHERE changes() = 1
@@ -256,11 +264,12 @@ export async function removeProjectMemberCycle(
   const currentRow = first<MemberDtoRow>(result[1] as D1Rows<MemberDtoRow>);
   const currentMembership = currentRow ? memberDto(currentRow) : null;
   const count = Number(first<{ assignmentCount: number }>(result[4] as D1Rows<{ assignmentCount: number }>)?.assignmentCount ?? 0);
+  const accessWillBeLost = currentRow?.globalRole === "external_editor" && !first(result[2] as D1Rows<{ 1: number }>);
   const deleted = first<{ id: string }>(result[5] as D1Rows<{ id: string }>);
   if (!exactRow) return { outcome: "stale", currentMembership };
   if (!deleted) {
     if (!currentMembership) throw new Error("Project membership diagnostic disappeared during removal");
-    return { outcome: "confirmation_required", assignmentCount: count, currentMembership };
+    return { outcome: "confirmation_required", assignmentCount: count, accessWillBeLost, currentMembership };
   }
   return { outcome: "removed", subtaskAssignmentsCleared: rows<{ id: string }>(result[7] as D1Rows<{ id: string }>).length, notificationOutboxIds: rows<{ id: string }>(result[9 + activityStatements.broadOutboxIndex] as D1Rows<{ id: string }>).map((row) => row.id) };
 }

@@ -16,7 +16,7 @@ import {
   type ExternalEditedUploadCreateResponse,
 } from "@quincy/shared";
 import type { AppEnv } from "../env";
-import { finalizeExternalEditedUpload } from "../lib/ingest";
+import { ExternalEditedUploadCompletionRejectedError, finalizeExternalEditedUpload } from "../lib/ingest";
 import { safeFilename } from "../lib/ids";
 import { visibleProjectWhere } from "../lib/visible-project-scope";
 import { jsonInput } from "./helpers";
@@ -136,12 +136,6 @@ externalUploadsRoutes.post("/external-uploads", terminalRoute("/external-uploads
   if (c.get("user").role !== "external_editor") return errorResponse(c, "edited_upload_unavailable", 409);
   const data = await jsonInput(c, externalEditedUploadCreateRequestSchema); if (data instanceof Response) return errorResponse(c, "invalid_edited_upload", 400);
   const db = createDb(c.env.DB);
-  const openCount = await db.select({ count: sql<number>`count(*)` }).from(schema.externalEditedUploadSessions)
-    .where(and(eq(schema.externalEditedUploadSessions.createdBy, c.get("user").id), eq(schema.externalEditedUploadSessions.status, "open"))).get();
-  // This is an existing-session count, taken before any R2 multipart or D1 session is created:
-  // three existing open sessions block the fourth create, while the first three are allowed.
-  const openSessionCount = Number(openCount?.count ?? 0);
-  if (openSessionCount >= EXTERNAL_UPLOAD_MAX_SESSIONS_PER_PRINCIPAL) return errorResponse(c, "edited_upload_unavailable", 409);
   const project = await db.select({ projectId: schema.projects.id, collectionId: schema.collections.id, membershipCycleId: schema.projectMembers.id, editedUploadAvailable: sql<boolean>`(${schema.projects.rawFolderPath} IS NOT NULL OR ${schema.projects.rawFolderLink} IS NOT NULL)` })
     .from(schema.projects).innerJoin(schema.collections, and(eq(schema.collections.projectId, schema.projects.id), eq(schema.collections.kind, "edited")))
     .leftJoin(schema.projectMembers, and(eq(schema.projectMembers.projectId, schema.projects.id), eq(schema.projectMembers.userId, c.get("user").id)))
@@ -172,14 +166,30 @@ externalUploadsRoutes.post("/external-uploads", terminalRoute("/external-uploads
     const statements = [c.env.DB.prepare(`INSERT INTO external_edited_upload_sessions
       (id, token_hash, project_id, collection_id, asset_id, created_by, membership_cycle_id, authorization_epoch,
        original_filename, bytes, r2_key, r2_upload_id, part_bytes, part_count, status, expires_at, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?)`)
-      .bind(session.id, tokenHash, session.projectId, session.collectionId, session.assetId, session.createdBy, session.membershipCycleId, session.authorizationEpoch, session.originalFilename, session.bytes, session.r2Key, session.r2UploadId, session.partBytes, session.partCount, session.expiresAt, now, now)];
+      SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?
+      WHERE EXISTS (
+        SELECT 1 FROM user u
+        INNER JOIN project_members pm ON pm.id = ?
+          AND pm.project_id = ? AND pm.user_id = u.id AND pm.role_on_project = 'editor'
+        WHERE u.id = ? AND u.active = 1 AND u.role = 'external_editor'
+          AND u.authorization_epoch = ?
+      )
+        AND (SELECT COUNT(*) FROM external_edited_upload_sessions
+             WHERE created_by = ? AND status = 'open') < ?`)
+      .bind(session.id, tokenHash, session.projectId, session.collectionId, session.assetId, session.createdBy, session.membershipCycleId, session.authorizationEpoch, session.originalFilename, session.bytes, session.r2Key, session.r2UploadId, session.partBytes, session.partCount, session.expiresAt, now, now, session.membershipCycleId, session.projectId, session.createdBy, session.authorizationEpoch, session.createdBy, EXTERNAL_UPLOAD_MAX_SESSIONS_PER_PRINCIPAL)];
     for (let partNumber = 1; partNumber <= partCount; partNumber += 1) {
       const remaining = data.bytes - (partNumber - 1) * EXTERNAL_UPLOAD_PART_BYTES;
-      statements.push(c.env.DB.prepare(`INSERT INTO external_edited_upload_parts (session_id, part_number, expected_bytes, status, updated_at) VALUES (?, ?, ?, 'pending', ?)`)
-        .bind(session.id, partNumber, Math.min(EXTERNAL_UPLOAD_PART_BYTES, remaining), now));
+      statements.push(c.env.DB.prepare(`INSERT INTO external_edited_upload_parts (session_id, part_number, expected_bytes, status, updated_at)
+        SELECT ?, ?, ?, 'pending', ? WHERE EXISTS (SELECT 1 FROM external_edited_upload_sessions WHERE id = ? AND status = 'open')`)
+        .bind(session.id, partNumber, Math.min(EXTERNAL_UPLOAD_PART_BYTES, remaining), now, session.id));
     }
-    await c.env.DB.batch(statements);
+    const results = await c.env.DB.batch(statements);
+    // The conditional INSERT is the serialized cap check. Do not leave the R2 multipart
+    // alive when another concurrent create already holds all three slots.
+    if ((results[0]?.meta.changes ?? 0) !== 1) {
+      try { await multipart.abort(); } catch { /* lifecycle reclaims the zero-part orphan. */ }
+      return errorResponse(c, "edited_upload_unavailable", 409);
+    }
   } catch {
     try { await multipart.abort(); } catch { /* lifecycle aborts incomplete multipart uploads after 7 days; this zero-part, unreferenceable, uncompletable orphan is storage/billing hygiene, not a privacy item. */ }
     return errorResponse(c, "upload_service_unavailable", 503);
@@ -202,6 +212,8 @@ externalUploadsRoutes.put("/external-uploads/:sessionToken/parts/:partNumber", t
   if (!rawLength || !DECIMAL_RE.test(rawLength)) return errorResponse(c, "invalid_edited_upload", 400);
   const receivedBytes = Number(rawLength);
   if (!Number.isSafeInteger(receivedBytes) || receivedBytes <= 0) return errorResponse(c, "invalid_edited_upload", 400);
+  const body = c.req.raw.body;
+  if (!body) return errorResponse(c, "invalid_edited_upload", 400);
   const db = createDb(c.env.DB);
   const part = await db.select().from(schema.externalEditedUploadParts).where(and(eq(schema.externalEditedUploadParts.sessionId, session.id), eq(schema.externalEditedUploadParts.partNumber, partNumber))).get();
   if (!part) return errorResponse(c, "invalid_edited_upload", 400);
@@ -210,8 +222,6 @@ externalUploadsRoutes.put("/external-uploads/:sessionToken/parts/:partNumber", t
   const leaseToken = randomToken(); const leaseExpiresAt = Date.now() + LEASE_MS;
   const claimed = await c.env.DB.prepare(`UPDATE external_edited_upload_parts SET status = 'uploading', upload_lease_token = ?, upload_lease_expires_at = ?, updated_at = ? WHERE session_id = ? AND part_number = ? AND (status = 'pending' OR (status = 'uploading' AND upload_lease_expires_at <= ?))`).bind(leaseToken, leaseExpiresAt, Date.now(), session.id, partNumber, Date.now()).run();
   if ((claimed.meta.changes ?? 0) !== 1) return errorResponse(c, "edited_upload_unavailable", 409);
-  const body = c.req.raw.body;
-  if (!body) return errorResponse(c, "invalid_edited_upload", 400);
   try {
     let observedBytes = 0;
     const countedBody = body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
@@ -284,7 +294,8 @@ externalUploadsRoutes.post("/external-uploads/:sessionToken/complete", terminalR
     c.executionCtx.waitUntil(c.env.BACKGROUND.publishManualEditedUpload(session.projectId, session.assetId).catch((error) => console.error("External edited upload publish failed", { sessionId: session.id, error })));
     const asset = await readSessionAsset(c, session); if (!asset) return errorResponse(c, "edited_upload_unavailable", 409);
     return c.json(externalEditedCompleteResponseSchema.parse({ asset, workflow: { state: "processing" } }), 200);
-  } catch {
+  } catch (error) {
+    if (error instanceof ExternalEditedUploadCompletionRejectedError) return errorResponse(c, "edited_upload_unavailable", 409);
     return errorResponse(c, "upload_service_unavailable", 503);
   }
 }));

@@ -80,8 +80,9 @@ export type ExternalProjectedActivity<T extends ProjectActivityType> = {
 
 export function projectExternalActivityPayload<T extends ProjectActivityType>(type: T, payload: ProjectActivityPayloadFor<T>): ExternalProjectedActivity<T> | null {
   const policy = EXTERNAL_PROJECT_ACTIVITY_POLICY[type];
-  if (policy.decision === "suppressed" || PROJECT_ACTIVITY_REGISTRY[type].cutover !== "live") return null;
-  const parsed = PROJECT_ACTIVITY_REGISTRY[type].payloadSchema.safeParse(payload);
+  const registry = PROJECT_ACTIVITY_REGISTRY[type];
+  if (!policy || !registry || policy.decision === "suppressed" || registry.cutover !== "live") return null;
+  const parsed = registry.payloadSchema.safeParse(payload);
   if (!parsed.success) return null;
   if (type === "project.details.changed") {
     const fields = (parsed.data as { changedFields: string[] }).changedFields;
@@ -91,7 +92,7 @@ export function projectExternalActivityPayload<T extends ProjectActivityType>(ty
 }
 
 export function projectExternalLegacyPayload(type: NotificationType, payload: unknown): { type: NotificationType } | null {
-  return EXTERNAL_LEGACY_NOTIFICATION_POLICY[type].decision === "allowed" ? { type } : null;
+  return EXTERNAL_LEGACY_NOTIFICATION_POLICY[type]?.decision === "allowed" ? { type } : null;
 }
 
 export function isExternalNotificationEventAllowed(eventType: string): boolean {

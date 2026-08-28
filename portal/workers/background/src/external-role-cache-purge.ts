@@ -19,10 +19,10 @@ async function freezeProvisioning(env: Env, now: number, details: { attempts: nu
 }
 
 async function purgeZone(env: Env): Promise<boolean> {
-  if (!env.CF_ZONE_ID || !env.CF_API_TOKEN) return false;
-  const response = await fetch(`https://api.cloudflare.com/client/v4/zones/${encodeURIComponent(env.CF_ZONE_ID)}/purge_cache`, {
+  if (!env.CLOUDFLARE_ZONE_ID || !env.CLOUDFLARE_CACHE_PURGE_TOKEN) return false;
+  const response = await fetch(`https://api.cloudflare.com/client/v4/zones/${encodeURIComponent(env.CLOUDFLARE_ZONE_ID)}/purge_cache`, {
     method: "POST",
-    headers: { authorization: `Bearer ${env.CF_API_TOKEN}`, "content-type": "application/json" },
+    headers: { authorization: `Bearer ${env.CLOUDFLARE_CACHE_PURGE_TOKEN}`, "content-type": "application/json" },
     body: JSON.stringify({ purge_everything: true }),
   });
   if (!response.ok) return false;

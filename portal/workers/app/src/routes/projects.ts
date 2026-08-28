@@ -25,8 +25,8 @@ const baseProjectFields = z.object({ street: z.string().min(1), suburb: nullable
 const createProjectFields = baseProjectFields.extend({ photographerUserIds: z.array(z.string().uuid()).optional(), editorUserIds: z.array(z.string().uuid()).optional() });
 const editFields = baseProjectFields.partial().strict();
 const deleteProjectMembershipInput = z.discriminatedUnion("clearSubtaskAssignments", [
-  z.object({ membershipCycle: z.string().uuid(), clearSubtaskAssignments: z.literal(false), confirmedAssignmentCount: z.literal(0) }).strict(),
-  z.object({ membershipCycle: z.string().uuid(), clearSubtaskAssignments: z.literal(true), confirmedAssignmentCount: z.number().int().nonnegative() }).strict(),
+  z.object({ membershipCycle: z.string().uuid(), clearSubtaskAssignments: z.literal(false), confirmedAssignmentCount: z.literal(0), confirmAccessLoss: z.boolean().optional() }).strict(),
+  z.object({ membershipCycle: z.string().uuid(), clearSubtaskAssignments: z.literal(true), confirmedAssignmentCount: z.number().int().nonnegative(), confirmAccessLoss: z.boolean().optional() }).strict(),
 ]);
 const coverInput = z.object({ assetId: z.string().uuid().nullable() });
 const priorityInput = z.object({ priority: z.number().int().min(1).max(10).nullable() });
@@ -606,9 +606,9 @@ function projectMembershipRoute(roleOnProject: ProjectMemberRole, method: "put" 
       }
     }
 
-    const result = await removeProjectMemberCycle(c.env.DB, { projectId, userId, roleOnProject, membershipCycle: body!.membershipCycle, clearSubtaskAssignments: body!.clearSubtaskAssignments, confirmedAssignmentCount: body!.confirmedAssignmentCount, actorId: principal.id, auditPrincipal: principal });
+    const result = await removeProjectMemberCycle(c.env.DB, { projectId, userId, roleOnProject, membershipCycle: body!.membershipCycle, clearSubtaskAssignments: body!.clearSubtaskAssignments, confirmedAssignmentCount: body!.confirmedAssignmentCount, confirmAccessLoss: body!.confirmAccessLoss, actorId: principal.id, auditPrincipal: principal });
     if (result.outcome === "stale") return c.json({ error: "Project membership changed; refreshed current assignment", code: "membership_cycle_changed", requestedMembershipCycle: body!.membershipCycle, currentMembership: result.currentMembership }, 409);
-    if (result.outcome === "confirmation_required") return c.json({ error: "Checklist assignment state changed; confirm final-role removal again", code: "subtask_assignment_confirmation_required", assignmentCount: result.assignmentCount, currentMembership: result.currentMembership }, 422);
+    if (result.outcome === "confirmation_required") return c.json({ error: "Project access will be lost immediately; confirm final-role removal again", code: "subtask_assignment_confirmation_required", assignmentCount: result.assignmentCount, accessWillBeLost: result.accessWillBeLost, message: `Project access will be lost immediately. ${result.assignmentCount} checklist assignments will be cleared.`, currentMembership: result.currentMembership }, 422);
     if (result.notificationOutboxIds.length) c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, result.notificationOutboxIds));
     return c.json({ outcome: "removed", removed: { membershipCycle: body!.membershipCycle, userId, roleOnProject }, subtaskAssignmentsCleared: result.subtaskAssignmentsCleared }, 200);
   }));
@@ -920,8 +920,7 @@ projectsRoutes.get("/projects/:id/download-selection/:ticket/archive.zip", termi
   });
 }));
 
-projectsRoutes.get("/projects/:id/manual-upload-jobs", terminalRoute("/projects/:id/manual-upload-jobs", async (c) => {
-  if (c.get("user").role === "external_editor") return c.json({ error: "Forbidden" }, 403);
+projectsRoutes.get("/projects/:id/manual-upload-jobs", requireCapability("adminBackend"), terminalRoute("/projects/:id/manual-upload-jobs", async (c) => {
   const id = c.req.param("id");
   if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
   if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
@@ -1066,11 +1065,11 @@ for (const [path, archived] of [["/projects/:id/archive", true], ["/projects/:id
 }));
 projectsRoutes.delete("/projects/:id", terminalRoute("/projects/:id", async (c) => {
   const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
+  // Keep this constant pre-lookup: a caller without the destructive capability must not learn
+  // whether a project id exists from a 404/403 distinction.
+  if (!roleHasCapability(c.get("user").role, "adminBackend")) return c.json({ error: "Forbidden", capability: "adminBackend" }, 403);
   const db = createDb(c.env.DB); const project = await db.select({ id: schema.projects.id, street: schema.projects.street, archivedAt: schema.projects.archivedAt }).from(schema.projects).where(eq(schema.projects.id, id)).get();
   if (!project) return c.json({ error: "Project not found" }, 404);
-  // Inline capability check like every other route — invoking the middleware factory manually
-  // with a body-closure `next` discards the closure's c.json() return and falls through to 404.
-  if (!roleHasCapability(c.get("user").role, "adminBackend")) return c.json({ error: "Forbidden", capability: "adminBackend" }, 403);
   if (!project.archivedAt) return c.json({ error: "Archive the project before deleting it." }, 409);
   const activeJobs = (await db.select({ count: sql<number>`count(*)` }).from(schema.jobs).where(and(eq(schema.jobs.projectId, id), inArray(schema.jobs.status, ["queued", "running"]))).get())?.count ?? 0;
   if (activeJobs) return c.json({ error: "Background work is still running for this project — wait for it to finish and try again.", activeJobs }, 409);

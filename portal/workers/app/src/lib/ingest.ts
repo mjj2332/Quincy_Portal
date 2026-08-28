@@ -20,6 +20,14 @@ export type FinalizeExternalEditedUploadInput = {
   now?: number;
 };
 
+/** The lease was valid when R2 work began, but no longer passed the final D1 authorization fence. */
+export class ExternalEditedUploadCompletionRejectedError extends Error {
+  constructor() {
+    super("Edited upload completion authorization or lease was lost");
+    this.name = "ExternalEditedUploadCompletionRejectedError";
+  }
+}
+
 /**
  * Commits the final edited asset and upload-session terminal state in one lease-fenced D1 batch.
  * Unlike the legacy ingest path, this deliberately does not inspect the object body: the External
@@ -41,6 +49,11 @@ export async function finalizeExternalEditedUpload(env: Env, input: FinalizeExte
     FROM external_edited_upload_sessions s
     INNER JOIN collections c ON c.id = s.collection_id AND c.project_id = s.project_id AND c.kind = 'edited'
     INNER JOIN projects p ON p.id = s.project_id AND p.archived_at IS NULL
+    INNER JOIN user recipient ON recipient.id = s.created_by
+      AND recipient.active = 1 AND recipient.role = 'external_editor'
+      AND recipient.authorization_epoch = s.authorization_epoch
+    INNER JOIN project_members pm ON pm.id = s.membership_cycle_id
+      AND pm.project_id = s.project_id AND pm.user_id = s.created_by AND pm.role_on_project = 'editor'
     WHERE s.id = ? AND s.status = 'completing' AND s.completion_lease_token = ?
       AND s.project_id = ? AND s.collection_id = ? AND s.asset_id = ?
       AND s.r2_key = ? AND s.bytes = ? AND s.expires_at > ?
@@ -51,22 +64,53 @@ export async function finalizeExternalEditedUpload(env: Env, input: FinalizeExte
     INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
     SELECT ?, ?, 'asset.ingested', 'asset', ?, ?, ?
     WHERE EXISTS (SELECT 1 FROM assets WHERE id = ? AND collection_id = ? AND r2_key = ? AND bytes = ?)
+      AND EXISTS (
+        SELECT 1 FROM external_edited_upload_sessions s
+        INNER JOIN user recipient ON recipient.id = s.created_by
+          AND recipient.active = 1 AND recipient.role = 'external_editor'
+          AND recipient.authorization_epoch = s.authorization_epoch
+        INNER JOIN project_members pm ON pm.id = s.membership_cycle_id
+          AND pm.project_id = s.project_id AND pm.user_id = s.created_by AND pm.role_on_project = 'editor'
+        WHERE s.id = ? AND s.status = 'completing' AND s.completion_lease_token = ?
+          AND s.project_id = ? AND s.collection_id = ? AND s.asset_id = ?
+          AND s.r2_key = ? AND s.bytes = ? AND s.expires_at > ?
+      )
       AND NOT EXISTS (SELECT 1 FROM audit_log WHERE action = 'asset.ingested' AND target_type = 'asset' AND target_id = ?)
   `).bind(
     auditId, auditActorId, input.assetId,
     auditMeta(input.auditPrincipal, { projectId: input.projectId, key: input.key, manifestId: null, ratingFromMetadata: null }), now,
-    input.assetId, input.collectionId, input.key, input.bytes, input.assetId,
+    input.assetId, input.collectionId, input.key, input.bytes,
+    input.sessionId, input.leaseToken, input.projectId, input.collectionId, input.assetId, input.key, input.bytes, now,
+    input.assetId,
   );
-  const collectionCount = env.DB.prepare(COLLECTION_RECEIVED_COUNT_SQL).bind(...collectionReceivedCountBindings(input.collectionId, now));
+  const collectionCount = env.DB.prepare(`${COLLECTION_RECEIVED_COUNT_SQL}
+    AND EXISTS (
+      SELECT 1 FROM external_edited_upload_sessions s
+      INNER JOIN user recipient ON recipient.id = s.created_by
+        AND recipient.active = 1 AND recipient.role = 'external_editor'
+        AND recipient.authorization_epoch = s.authorization_epoch
+      INNER JOIN project_members pm ON pm.id = s.membership_cycle_id
+        AND pm.project_id = s.project_id AND pm.user_id = s.created_by AND pm.role_on_project = 'editor'
+      WHERE s.id = ? AND s.status = 'completing' AND s.completion_lease_token = ? AND s.expires_at > ?
+    )`).bind(...collectionReceivedCountBindings(input.collectionId, now), input.sessionId, input.leaseToken, now);
   const complete = env.DB.prepare(`
     UPDATE external_edited_upload_sessions
     SET status = 'completed', completion_lease_token = NULL, completion_lease_expires_at = NULL,
         completed_at = ?, terminal_at = ?, updated_at = ?
     WHERE id = ? AND status = 'completing' AND completion_lease_token = ? AND expires_at > ?
       AND EXISTS (SELECT 1 FROM assets WHERE id = ? AND collection_id = ? AND r2_key = ? AND bytes = ?)
-  `).bind(now, now, now, input.sessionId, input.leaseToken, now, input.assetId, input.collectionId, input.key, input.bytes);
+      AND EXISTS (
+        SELECT 1 FROM external_edited_upload_sessions s
+        INNER JOIN user recipient ON recipient.id = s.created_by
+          AND recipient.active = 1 AND recipient.role = 'external_editor'
+          AND recipient.authorization_epoch = s.authorization_epoch
+        INNER JOIN project_members pm ON pm.id = s.membership_cycle_id
+          AND pm.project_id = s.project_id AND pm.user_id = s.created_by AND pm.role_on_project = 'editor'
+        WHERE s.id = ? AND s.status = 'completing' AND s.completion_lease_token = ? AND s.expires_at > ?
+      )
+  `).bind(now, now, now, input.sessionId, input.leaseToken, now, input.assetId, input.collectionId, input.key, input.bytes, input.sessionId, input.leaseToken, now);
   const results = await env.DB.batch([assetInsert, audit, collectionCount, complete]);
-  if ((results[3]?.meta.changes ?? 0) !== 1) throw new Error("Edited upload completion lease was lost");
+  if ((results[3]?.meta.changes ?? 0) !== 1) throw new ExternalEditedUploadCompletionRejectedError();
 }
 
 export async function finalizeIngest(
