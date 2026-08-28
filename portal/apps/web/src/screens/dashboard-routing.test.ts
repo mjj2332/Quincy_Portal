@@ -7,6 +7,7 @@ const project: ProjectSummary = {
   id: "123e4567-e89b-42d3-a456-426614174000", street: "12 Kings Road", suburb: null, postcode: null,
   agencyName: null, agentName: null, stageKey: "awaiting_raw", shootDate: null, coverAssetId: null,
   receivedCount: 0, expectedCount: null, priority: null, boardPosition: 0, deadlineAt: null, deadlineLocalCivil: null, deadlineZone: null,
+  boardRevision: 0,
 };
 
 describe("dashboard project card markup", () => {

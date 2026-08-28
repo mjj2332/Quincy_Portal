@@ -13,6 +13,7 @@ const project: ProjectSummary = {
   coverAssetId: null,
   receivedCount: 0,
   expectedCount: null,
+  boardRevision: 0,
   priority: null,
   boardPosition: 0,
   deadlineAt: null,

@@ -13,6 +13,7 @@ import { dbFor, errorMessage } from "../lib/db";
 import { setJobStatus } from "../lib/jobs";
 import { writeAutoHdrFinal, type FinalWriteContext } from "../autohdr/finals";
 import { notifyProject } from "../notifications";
+import { requireBoardSchemaReady } from "../lib/board-schema";
 
 export interface AutoHdrFetchInput {
   projectId: string;
@@ -76,6 +77,7 @@ async function rawAssetsByBasename(env: Env, projectId: string): Promise<Map<str
 export class AutoHdrFetch extends WorkflowEntrypoint<Env, AutoHdrFetchInput> {
   async run(event: Readonly<WorkflowEvent<AutoHdrFetchInput>>, step: WorkflowStep): Promise<void> {
     const input = event.payload;
+    await requireBoardSchemaReady(this.env);
     if (input.claimId) return this.runClaimed(input, step);
     try {
       await step.do("mark-fetch-running", async () => {

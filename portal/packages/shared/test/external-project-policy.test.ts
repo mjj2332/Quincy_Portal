@@ -7,7 +7,7 @@ import {
 } from "../src/external-project-policy";
 import { PROJECT_ACTIVITY_TYPES } from "../src/project-activity";
 import { NOTIFICATION_TYPES } from "../src/notification-types";
-import { externalProjectDetailSchema, externalProjectSummarySchema } from "../src/external-project-dto";
+import { externalProjectDetailSchema, externalProjectListResponseSchema, externalProjectSummarySchema } from "../src/external-project-dto";
 import { externalEditedUploadCreateRequestSchema } from "../src/external-upload";
 import { externalNotificationChannels, externalNotificationCopy } from "../src/external-notification";
 import { stageTransportKeyForRole } from "../src/stage-move";
@@ -44,6 +44,7 @@ describe("TB4E external policy and DTO boundaries", () => {
       shootDate: null,
       timeWindow: null,
       stageKey: "edited_review",
+      boardRevision: 0,
       deadline: null,
       productionNotes: null,
       services: [],
@@ -57,14 +58,30 @@ describe("TB4E external policy and DTO boundaries", () => {
     const externalEditing = stageTransportKeyForRole("editing_autohdr", "external_editor");
     expect(externalEditing).toBe("editing");
     expect(externalProjectSummarySchema.safeParse({ ...summary, stageKey: externalEditing }).success).toBe(true);
-    expect(externalProjectDetailSchema.safeParse({
+    const detail = {
       ...summary,
       boardRevision: 4,
       contractEnabled: false,
       editedUploadAvailable: false,
       collections: [],
       members: [],
-    }).success).toBe(true);
+    };
+    expect(externalProjectDetailSchema.safeParse(detail).success).toBe(true);
+    const list = {
+      projects: [summary],
+      board: { contractEnabled: false, orderedProjectIdsByStage: { edited_review: [summary.id] } },
+    };
+    expect(externalProjectListResponseSchema.safeParse(list).success).toBe(true);
+
+    // These probes represent fields that are useful internally but must never cross the
+    // external boundary, even if a route accidentally spreads a wider project row.
+    for (const field of ["priority", "boardPosition", "hiddenProjectIds", "hiddenCount"] as const) {
+      const value = field === "hiddenProjectIds" ? [summary.id] : field === "hiddenCount" ? 1 : 0;
+      expect(externalProjectListResponseSchema.safeParse({ ...list, projects: [{ ...summary, [field]: value }] }).success).toBe(false);
+      expect(externalProjectDetailSchema.safeParse({ ...detail, [field]: value }).success).toBe(false);
+    }
+    expect(externalProjectListResponseSchema.safeParse({ ...list, projects: [{ ...summary, stageKey: "editing_autohdr" }] }).success).toBe(false);
+    expect(externalProjectDetailSchema.safeParse({ ...detail, stageKey: "editing_autohdr" }).success).toBe(false);
     expect(externalEditedUploadCreateRequestSchema.safeParse({ projectId: summary.id, collection: "raw", filename: "image.jpg", bytes: 10 }).success).toBe(false);
     expect(externalEditedUploadCreateRequestSchema.safeParse({ projectId: summary.id, collection: "edited", filename: "image.jpg", bytes: 10 }).success).toBe(true);
   });

@@ -25,7 +25,13 @@ export interface ProjectSummary {
   receivedCount: number;
   expectedCount: number | null;
   priority: number | null;
-  boardPosition: number;
+  boardPosition?: number;
+  /** Private, non-wire rendering rank derived from the authorized Board ID map. */
+  boardRank?: number;
+  /** Private marker: Board ordering is authoritative even when this card's ID is absent. */
+  boardMapPresent?: boolean;
+  boardContractEnabled?: boolean;
+  boardRevision: number;
   deadlineAt: number | null;
   deadlineLocalCivil: string | null;
   deadlineZone: "Australia/Sydney" | null;
@@ -47,9 +53,16 @@ function sortKanbanProjectsByShootDate(projects: ProjectSummary[], mode: "shootD
 
 export function sortKanbanProjects(projects: ProjectSummary[], sort: KanbanSortMode = "board"): ProjectSummary[] {
   if (sort !== "board") return sortKanbanProjectsByShootDate(projects, sort);
+  const hasAuthorizedMap = projects.some((project) => project.boardMapPresent === true || project.boardRank !== undefined);
+  if (hasAuthorizedMap) {
+    return [...projects].sort((left, right) =>
+      (left.boardRank === undefined ? Number.POSITIVE_INFINITY : left.boardRank)
+      - (right.boardRank === undefined ? Number.POSITIVE_INFINITY : right.boardRank)
+      || left.id.localeCompare(right.id));
+  }
   return [...projects].sort((left, right) =>
     (left.priority === null ? 1 : 0) - (right.priority === null ? 1 : 0)
-    || left.boardPosition - right.boardPosition
+    || (left.boardPosition ?? 0) - (right.boardPosition ?? 0)
     || left.id.localeCompare(right.id));
 }
 
@@ -128,7 +141,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   const { can } = useCapabilities();
   const { stages } = useStages();
   const canCreateProject = can("createProject");
-  const canMoveStages = can("selectForEditing");
+  const canMoveStagesCapability = can("selectForEditing");
   const canPrioritize = can("prioritizeProjects");
   const canViewArchived = can("adminBackend");
   const canViewNoticeBoard = can("viewNoticeBoard");
@@ -151,6 +164,8 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   const identity = { principalId: currentUserId, role, authorizationEpoch } as const;
   const projectsQuery = useDashboardProjects(viewingArchived, identity);
   const projects = projectsQuery.data ?? [];
+  const boardContractEnabled = projects.some((project) => project.boardContractEnabled === true);
+  const canMoveStages = boardContractEnabled && canMoveStagesCapability;
   const isLoading = projectsQuery.isPending && !projectsQuery.data;
   const error = projectsQuery.error instanceof Error ? projectsQuery.error.message : projectsQuery.error ? "Projects could not be loaded." : undefined;
   const dashboardKey = dashboardProjectsKey(currentUserId, role, authorizationEpoch, viewingArchived);
@@ -231,7 +246,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
 
   async function moveProjectPosition(project: ProjectSummary, direction: "up" | "down") {
     if (pendingOrdering.has(project.id)) return;
-    const optimistic = direction === "up" ? project.boardPosition - 1024 : project.boardPosition + 1024;
+    const optimistic = direction === "up" ? (project.boardPosition ?? 0) - 1024 : (project.boardPosition ?? 0) + 1024;
     updateProjects((current) => current.map((item) => item.id === project.id ? { ...item, boardPosition: optimistic } : item));
     setPendingOrdering((current) => new Set(current).add(project.id));
     try {
@@ -335,7 +350,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
               <div className="kcol__head"><span className="row gap2"><StatusBadge stageKey={stage.key} /></span><span className="cnt">{stageProjects.length}</span></div>
               <div className="kcol__body">
                 {stageProjects.length === 0 && <div className="kcol__empty">—</div>}
-                {stageProjects.map((project) => <KanbanCard key={project.id} project={project} canMove={canMoveStages && !pendingMoves.has(project.id)} canPrioritize={canPrioritize && !pendingOrdering.has(project.id)} canReorder={canPrioritize && kanbanSort === "board" && !pendingOrdering.has(project.id)} isDragging={dragging?.id === project.id} onPriorityChange={setProjectPriority} onBoardPosition={moveProjectPosition} onDragStart={beginDrag} onDragEnd={() => { setDragging(undefined); setDropStage(undefined); }} />)}
+                {stageProjects.map((project) => <KanbanCard key={project.id} project={project} canMove={canMoveStages && !pendingMoves.has(project.id)} canPrioritize={boardContractEnabled && canPrioritize && !pendingOrdering.has(project.id)} canReorder={boardContractEnabled && canPrioritize && kanbanSort === "board" && !pendingOrdering.has(project.id)} isDragging={dragging?.id === project.id} onPriorityChange={setProjectPriority} onBoardPosition={moveProjectPosition} onDragStart={beginDrag} onDragEnd={() => { setDragging(undefined); setDropStage(undefined); }} />)}
               </div>
             </section>;
           })}

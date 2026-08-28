@@ -985,7 +985,7 @@ describe("staff app API", () => {
     });
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ projects: [] });
+    await expect(response.json()).resolves.toEqual({ projects: [], board: { contractEnabled: false, orderedProjectIdsByStage: {} } });
   });
 
   it("returns the migrated UUID from the existing signed Quincy Admin session", async () => {

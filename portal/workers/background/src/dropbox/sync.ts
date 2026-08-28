@@ -11,6 +11,7 @@ import { normalisePath } from "./paths";
 import { dropboxPathKey } from "./paths";
 import { enqueueAutoHdrScaffold } from "../autohdr/scaffold";
 import { notifyProject } from "../notifications";
+import { requireBoardSchemaReady } from "../lib/board-schema";
 
 // Each downloaded file costs ~9-10 subrequests (2 Dropbox content calls, an R2 put, a
 // rendition enqueue, and several D1 statements) — 150 once overran the pre-2026 Free-tier
@@ -123,6 +124,8 @@ export async function syncProjectRawFolder(
   connectionId?: string,
   trigger: "dropbox_delta" | "manual_dropbox_sync" | "queue_retry" = jobId ? "queue_retry" : "manual_dropbox_sync",
 ): Promise<{ newlyImported: number; currentRawAvailable: boolean; claimed: boolean }> {
+  // Do not create a job, claim, asset, or legacy Stage statement on a pre-0037 database.
+  await requireBoardSchemaReady(env);
   const db = dbFor(env);
   const trackingJobId = jobId ?? await createJob(db, {
     kind: "dropbox_sync",

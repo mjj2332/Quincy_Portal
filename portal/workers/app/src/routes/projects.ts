@@ -1,9 +1,9 @@
 import { Hono } from "hono";
 import { terminalRoute } from "../lib/terminal-route";
 import type { Context } from "hono";
-import { appendToStageBottomExpr, buildProjectActivityStatements, computeInsertPosition, createDb, dashboardProjectOrder, orderDashboardStreetTies, schema } from "@quincy/db";
+import { appendToStageBottomExpr, boardContractEnabled, boardSchemaVariant, buildProjectActivityStatements, computeInsertPosition, createDb, dashboardProjectOrder, orderDashboardStreetTies, projectColumnsForVariant, schema, type BoardSchemaVariant } from "@quincy/db";
 import { and, asc, desc, eq, exists, gt, inArray, isNotNull, isNull, lte, notExists, sql } from "drizzle-orm";
-import { COLLECTION_KINDS, DOWNLOAD_SELECTION_MAX_ASSETS, DOWNLOAD_SELECTION_MAX_BYTES, isStageKey, PHOTOGRAPHER_VISIBLE_STAGES, PROJECT_ASSIGNMENT_ELIGIBLE_ROLES, projectActivityDeepLink, publishNotificationOutbox, roleHasCapability, type CollectionKind, type ProjectActivityIntent, type ProjectMemberRole, type ProjectMembershipDto, type Role } from "@quincy/shared";
+import { COLLECTION_KINDS, DOWNLOAD_SELECTION_MAX_ASSETS, DOWNLOAD_SELECTION_MAX_BYTES, isStageKey, PHOTOGRAPHER_VISIBLE_STAGES, PROJECT_ASSIGNMENT_ELIGIBLE_ROLES, projectActivityDeepLink, publishNotificationOutbox, roleHasCapability, type CollectionKind, type ProjectActivityIntent, type ProjectMemberRole, type ProjectMembershipDto, type Role, type StageKey, type StageTransportKey } from "@quincy/shared";
 import { z } from "zod";
 import type { AppEnv } from "../env";
 import { hasProjectAccess, hasProjectAccessForUser, requireCapability } from "../middleware/capability";
@@ -19,6 +19,7 @@ import { isUserVisibleAsset } from "../lib/asset-visibility";
 import { manualInsertNeighbors, needsPositionRenumber, orderedBoardRows, priorityInsertNeighbors, renumberedInsertPosition, type BoardRow } from "../lib/kanban-ordering";
 import { readProjectDeadlineSchedule, suppressProjectDeadlineWork } from "../lib/project-deadline";
 import { listExternalProjects, readExternalProjectDetail } from "../lib/external-project-query";
+import { boardSchemaMaintenance } from "../lib/board-schema-maintenance";
 
 const nullable = <T extends z.ZodTypeAny>(item: T) => item.nullable().optional();
 const baseProjectFields = z.object({ street: z.string().min(1), suburb: nullable(z.string()), postcode: nullable(z.string()), agencyName: nullable(z.string()), agentName: nullable(z.string()), agentEmail: nullable(z.string().email()), agentPhone: nullable(z.string()), agencyId: nullable(z.string().uuid()), agentId: nullable(z.string().uuid()), shootDate: nullable(z.string()), timeWindow: nullable(z.string()), orderNo: nullable(z.string()), orderId: nullable(z.string()), invoiceAmount: nullable(z.number()), paymentStatus: nullable(z.string()), notes: nullable(z.string()), productionNotes: nullable(z.string()), rawFolderLink: nullable(z.string().url()), rawFolderPath: nullable(z.string()), orderedServices: z.array(z.enum(COLLECTION_KINDS)).optional() });
@@ -243,8 +244,9 @@ async function abortActiveDocumentSessions(c: Context<AppEnv>, projectId: string
   }
   return sessions.length;
 }
-async function details(db: ReturnType<typeof createDb>, d1: D1Database, projectId: string, role: AppEnv["Variables"]["user"]["role"], viewerSeesRawOnly = false) {
-  const project = await db.select().from(schema.projects).where(eq(schema.projects.id, projectId)).get();
+async function details(db: ReturnType<typeof createDb>, d1: D1Database, projectId: string, role: AppEnv["Variables"]["user"]["role"], variant: BoardSchemaVariant, contractEnabled: boolean, viewerSeesRawOnly = false) {
+  // Do not replace this with select(). The post-0037 Drizzle schema contains board_revision.
+  const project = await db.select(projectColumnsForVariant(variant)).from(schema.projects).where(eq(schema.projects.id, projectId)).get();
   if (!project) return null;
   const [{ storedByProject, automaticByProject }, collections, members, assignedCounts] = await Promise.all([
     coverMaps(db, [projectId], viewerSeesRawOnly),
@@ -255,7 +257,32 @@ async function details(db: ReturnType<typeof createDb>, d1: D1Database, projectI
   const counts = new Map(assignedCounts.map((row) => [row.userId, Number(row.assignedSubtaskCount ?? 0)]));
   const memberDtos: ProjectMembershipDto[] = members.map((member) => ({ ...member, active: Boolean(member.active), assignedSubtaskCount: counts.get(member.userId) ?? 0 }));
   const deadlineSchedule = await readProjectDeadlineSchedule(d1, projectId);
-  return projectStageForRole({ ...project, editedUploadAvailable: Boolean(project.rawFolderPath || project.rawFolderLink), effectiveCoverAssetId: storedByProject.get(projectId) ?? automaticByProject.get(projectId) ?? null, collections, members: memberDtos, deadlineSchedule }, role);
+  return projectStageForRole({
+    ...project,
+    boardRevision: variant === "tb5a_0037" && "boardRevision" in project ? Number(project.boardRevision) : 0,
+    contractEnabled,
+    editedUploadAvailable: Boolean(project.rawFolderPath || project.rawFolderLink),
+    effectiveCoverAssetId: storedByProject.get(projectId) ?? automaticByProject.get(projectId) ?? null,
+    collections,
+    members: memberDtos,
+    deadlineSchedule,
+  }, role);
+}
+
+function authorizedInternalBoardOrder(rows: Array<{ project: { id: string; stageKey: string; priority: number | null; boardPosition: number } }>, role: Role): Partial<Record<StageTransportKey, string[]>> {
+  const groups = new Map<StageTransportKey, Array<{ id: string; priority: number | null; boardPosition: number }>>();
+  for (const { project } of rows) {
+    const stageKey = projectStageForRole(project, role).stageKey as StageTransportKey;
+    const group = groups.get(stageKey) ?? [];
+    group.push(project);
+    groups.set(stageKey, group);
+  }
+  const orderedProjectIdsByStage: Partial<Record<StageTransportKey, string[]>> = {};
+  for (const [stageKey, group] of groups) {
+    group.sort((left, right) => (left.priority === null ? 1 : 0) - (right.priority === null ? 1 : 0) || left.boardPosition - right.boardPosition || left.id.localeCompare(right.id));
+    orderedProjectIdsByStage[stageKey] = group.map((project) => project.id);
+  }
+  return orderedProjectIdsByStage;
 }
 
 type AssignmentCandidate = { id: string; name: string; email: string; globalRole: Role; active: true };
@@ -285,7 +312,7 @@ function createProjectResponse(data: z.infer<typeof createProjectFields>, id: st
     id, street: data.street, suburb: data.suburb ?? null, postcode: data.postcode ?? null,
     agencyName: data.agencyName ?? null, agentName: data.agentName ?? null, agentEmail: data.agentEmail ?? null, agentPhone: data.agentPhone ?? null,
     agencyId: data.agencyId ?? null, agentId: data.agentId ?? null, shootDate: data.shootDate ?? null, timeWindow: data.timeWindow ?? null,
-    stageKey: "awaiting_raw", priority: null, boardPosition: 0, orderNo: data.orderNo ?? null, orderId: data.orderId ?? null,
+    stageKey: "awaiting_raw", priority: null, boardPosition: 0, boardRevision: 0, orderNo: data.orderNo ?? null, orderId: data.orderId ?? null,
     invoiceAmount: data.invoiceAmount ?? null, paymentStatus: data.paymentStatus ?? null, notes: data.notes ?? null, productionNotes: data.productionNotes ?? null,
     rawFolderLink: data.rawFolderLink ?? null, rawFolderPath: data.rawFolderPath ?? null, coverAssetId: null, effectiveCoverAssetId: null,
     archivedAt: null, archivedBy: null, members: memberships,
@@ -378,18 +405,36 @@ function rowsFromD1<T>(result: unknown): T[] {
 function firstD1<T>(result: unknown): T | undefined { return rowsFromD1<T>(result)[0]; }
 export const projectsRoutes = new Hono<AppEnv>();
 projectsRoutes.get("/projects", terminalRoute("/projects", async (c) => {
+  const variant = await boardSchemaVariant(c.env.DB);
   const db = createDb(c.env.DB); const user = c.get("user");
   if (user.role === "external_editor") return c.json(await listExternalProjects(c.env, user.id, user.role));
   const archived = c.req.query("archived") === "1" && roleHasCapability(user.role, "adminBackend");
   const archivedFilter = archived ? isNotNull(schema.projects.archivedAt) : isNull(schema.projects.archivedAt);
-  const base = db.select({ project: schema.projects, receivedCount: schema.collections.receivedCount, expectedCount: schema.collections.expectedCount }).from(schema.projects).leftJoin(schema.collections, and(eq(schema.collections.projectId, schema.projects.id), eq(schema.collections.kind, "raw")));
+  const projectColumns = projectColumnsForVariant(variant);
+  const base = db.select({ project: projectColumns, receivedCount: schema.collections.receivedCount, expectedCount: schema.collections.expectedCount }).from(schema.projects).leftJoin(schema.collections, and(eq(schema.collections.projectId, schema.projects.id), eq(schema.collections.kind, "raw")));
   const rows = user.role === "photographer"
     ? await base.where(and(archivedFilter, exists(db.select({ id: schema.projectMembers.id }).from(schema.projectMembers).where(and(eq(schema.projectMembers.projectId, schema.projects.id), eq(schema.projectMembers.userId, user.id)))), inArray(schema.projects.stageKey, PHOTOGRAPHER_VISIBLE_STAGES))).orderBy(...dashboardProjectOrder).all()
     : await base.where(archivedFilter).orderBy(...dashboardProjectOrder).all();
   const orderedRows = orderDashboardStreetTies(rows);
   const projectIds = orderedRows.map(({ project }) => project.id);
   const { storedByProject, automaticByProject } = await coverMaps(db, projectIds, user.role === "photographer");
-  return c.json({ projects: orderedRows.map((r) => projectStageForRole({ ...r.project, coverAssetId: storedByProject.get(r.project.id) ?? automaticByProject.get(r.project.id) ?? null, receivedCount: r.receivedCount ?? 0, expectedCount: r.expectedCount, deadlineAt: r.project.deadlineAt, deadlineLocalCivil: r.project.deadlineLocalCivil, deadlineZone: r.project.deadlineZone }, user.role)) });
+  const enabled = await boardContractEnabled(c.env.DB, variant);
+  return c.json({
+    projects: orderedRows.map((r) => projectStageForRole({
+      ...r.project,
+      boardRevision: variant === "tb5a_0037" && "boardRevision" in r.project ? Number(r.project.boardRevision) : 0,
+      coverAssetId: storedByProject.get(r.project.id) ?? automaticByProject.get(r.project.id) ?? null,
+      receivedCount: r.receivedCount ?? 0,
+      expectedCount: r.expectedCount,
+      deadlineAt: r.project.deadlineAt,
+      deadlineLocalCivil: r.project.deadlineLocalCivil,
+      deadlineZone: r.project.deadlineZone,
+    }, user.role)),
+    board: {
+      contractEnabled: enabled,
+      orderedProjectIdsByStage: variant === "tb5a_0037" && !archived ? authorizedInternalBoardOrder(orderedRows, user.role) : {},
+    },
+  });
 }));
 projectsRoutes.get("/project-assignment-candidates", terminalRoute("/project-assignment-candidates", async (c) => {
   const user = c.get("user");
@@ -398,6 +443,8 @@ projectsRoutes.get("/project-assignment-candidates", terminalRoute("/project-ass
 }));
 
 projectsRoutes.post("/projects", requireCapability("createProject"), terminalRoute("/projects", async (c) => {
+  const variant = await boardSchemaVariant(c.env.DB);
+  if (variant === "pre_0037") return boardSchemaMaintenance(c);
   const data = await jsonInput(c, createProjectFields); if (data instanceof Response) return data;
   const slots = normalizedProjectSlots(data.photographerUserIds, data.editorUserIds);
   const candidates = await assignmentCandidates(createDb(c.env.DB));
@@ -409,10 +456,11 @@ projectsRoutes.post("/projects", requireCapability("createProject"), terminalRou
   if (prevalidationFailures.length) return c.json({ error: "One or more project assignments are not eligible", code: "ineligible_project_assignments", ineligibleSlots: prevalidationFailures }, 422);
   const result = await createProjectAtomically(c, data, slots, candidates);
   if (!result.created) return c.json({ error: "One or more project assignments are not eligible", code: "ineligible_project_assignments", ineligibleSlots: result.ineligibleSlots }, 422);
-  return c.json(result.response, 201);
+  return c.json({ ...result.response, contractEnabled: await boardContractEnabled(c.env.DB, variant) }, 201);
 }));
 
 projectsRoutes.post("/projects/:id/priority", terminalRoute("/projects/:id/priority", async (c) => {
+  if (await boardSchemaVariant(c.env.DB) === "pre_0037") return boardSchemaMaintenance(c);
   const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
   if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   if (!roleHasCapability(c.get("user").role, "prioritizeProjects")) return c.json({ error: "Forbidden", capability: "prioritizeProjects" }, 403);
@@ -455,6 +503,8 @@ projectsRoutes.post("/projects/:id/priority", terminalRoute("/projects/:id/prior
 }));
 
 projectsRoutes.post("/projects/:id/board-position", terminalRoute("/projects/:id/board-position", async (c) => {
+  const variant = await boardSchemaVariant(c.env.DB);
+  if (variant === "pre_0037") return boardSchemaMaintenance(c);
   const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
   if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   if (!roleHasCapability(c.get("user").role, "prioritizeProjects")) return c.json({ error: "Forbidden", capability: "prioritizeProjects" }, 403);
@@ -488,8 +538,10 @@ projectsRoutes.patch("/projects/:id", terminalRoute("/projects/:id", async (c) =
   if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   if (!roleHasCapability(c.get("user").role, "editProject")) return c.json({ error: "Forbidden", capability: "editProject" }, 403);
   const data = await jsonInput(c, editFields); if (data instanceof Response) return data;
+  const variant = await boardSchemaVariant(c.env.DB);
   const db = createDb(c.env.DB);
-  const existingProject = await db.select().from(schema.projects).where(eq(schema.projects.id, id)).get();
+  // Explicit variant selection prevents a 0036 deployment from preparing board_revision.
+  const existingProject = await db.select(projectColumnsForVariant(variant)).from(schema.projects).where(eq(schema.projects.id, id)).get();
   if (!existingProject) return c.json({ error: "Project not found" }, 404);
   const { orderedServices, ...projectUpdates } = data;
   const existing = await db.select({ id: schema.collections.id, kind: schema.collections.kind, receivedCount: schema.collections.receivedCount }).from(schema.collections).where(eq(schema.collections.projectId, id)).all();
@@ -556,11 +608,11 @@ projectsRoutes.patch("/projects/:id", terminalRoute("/projects/:id", async (c) =
   statements.push(...serviceStatements); if (activityBundle) statements.push(...activityBundle.statements);
   const result = await c.env.DB.batch(statements);
   if (!rowsFromD1<{ id: string }>(result[0]).length) {
-    const currentProject = await db.select().from(schema.projects).where(eq(schema.projects.id, id)).get();
+    const currentProject = await db.select(projectColumnsForVariant(variant)).from(schema.projects).where(eq(schema.projects.id, id)).get();
     const currentCollections = await db.select({ kind: schema.collections.kind }).from(schema.collections).where(eq(schema.collections.projectId, id)).all();
     const projectMatches = currentProject?.archivedAt === null && Object.entries(projectUpdates).every(([key, value]) => (currentProject as unknown as Record<string, unknown>)[key] === (value ?? null));
     const servicesMatch = orderedServices === undefined || (currentCollections.length === desiredServices!.size && currentCollections.every((collection) => desiredServices!.has(collection.kind as CollectionKind)));
-    if (projectMatches && servicesMatch) return c.json(await details(db, c.env.DB, id, c.get("user").role));
+    if (projectMatches && servicesMatch) return c.json(await details(db, c.env.DB, id, c.get("user").role, variant, await boardContractEnabled(c.env.DB, variant)));
     const currentCounts = await countsFor(removedCollections.map((collection) => collection.id));
     return c.json({ error: "Services or project details changed while saving; reload and try again", blocked: removedCollections.filter((collection) => collection.receivedCount > 0 || (currentCounts.assets.get(collection.id) ?? 0) > 0 || (currentCounts.manifests.get(collection.id) ?? 0) > 0 || (currentCounts.documents.get(collection.id) ?? 0) > 0 || (currentCounts.links.get(collection.id) ?? 0) > 0).map((collection) => ({ kind: collection.kind, assetCount: currentCounts.assets.get(collection.id) ?? 0, manifestCount: currentCounts.manifests.get(collection.id) ?? 0, activeDocumentSessions: currentCounts.documents.get(collection.id) ?? 0 })) }, 409);
   }
@@ -569,7 +621,7 @@ projectsRoutes.patch("/projects/:id", terminalRoute("/projects/:id", async (c) =
     if (publicationIds.length) c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, publicationIds));
   }
   if (projectUpdates.rawFolderPath !== undefined && projectUpdates.rawFolderPath !== existingProject.rawFolderPath) c.executionCtx.waitUntil(c.env.BACKGROUND.ensureAutoHdrScaffold(id).catch((error) => console.error("AutoHDR scaffold trigger failed", { projectId: id, error })));
-  return c.json(await details(db, c.env.DB, id, c.get("user").role));
+  return c.json(await details(db, c.env.DB, id, c.get("user").role, variant, await boardContractEnabled(c.env.DB, variant)));
 }));
 
 function projectMembershipRoute(roleOnProject: ProjectMemberRole, method: "put" | "delete") {
@@ -640,6 +692,8 @@ projectsRoutes.post("/projects/:id/cover", terminalRoute("/projects/:id/cover", 
 }));
 projectsRoutes.post("/projects/:id/dropbox-sync", terminalRoute("/projects/:id/dropbox-sync", async (c) => {
   const id = c.req.param("id");
+  const variant = await boardSchemaVariant(c.env.DB);
+  if (variant === "pre_0037") return boardSchemaMaintenance(c);
   const user = c.get("user");
   if (!roleHasCapability(user.role, "uploadRaw")) return c.json({ error: "Forbidden", capability: "uploadRaw" }, 403);
   if (!(await hasProjectAccess(c, id))) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
@@ -652,6 +706,8 @@ projectsRoutes.post("/projects/:id/dropbox-sync", terminalRoute("/projects/:id/d
 
 projectsRoutes.post("/projects/:id/sync-dropbox", terminalRoute("/projects/:id/sync-dropbox", async (c) => {
   const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
+  const variant = await boardSchemaVariant(c.env.DB);
+  if (variant === "pre_0037") return boardSchemaMaintenance(c);
   if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   const user = c.get("user");
   const hasUploadRaw = roleHasCapability(user.role, "uploadRaw");
@@ -706,6 +762,8 @@ projectsRoutes.post("/projects/:id/sync-dropbox", terminalRoute("/projects/:id/s
 
 projectsRoutes.post("/projects/:id/send-to-autohdr", requireCapability("adminBackend"), terminalRoute("/projects/:id/send-to-autohdr", async (c) => {
   const id = c.req.param("id");
+  const variant = await boardSchemaVariant(c.env.DB);
+  if (variant === "pre_0037") return boardSchemaMaintenance(c);
   if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
   if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   const result = await c.env.BACKGROUND.sendSelectedToAutoHdr(id, c.get("user").id);
@@ -726,6 +784,8 @@ projectsRoutes.post("/projects/:id/send-to-autohdr", requireCapability("adminBac
 
 projectsRoutes.post("/projects/:id/fetch-edited", requireCapability("adminBackend"), terminalRoute("/projects/:id/fetch-edited", async (c) => {
   const id = c.req.param("id");
+  const variant = await boardSchemaVariant(c.env.DB);
+  if (variant === "pre_0037") return boardSchemaMaintenance(c);
   if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
   if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   const target = await createDb(c.env.DB).select({ archivedAt: schema.projects.archivedAt }).from(schema.projects).where(eq(schema.projects.id, id)).get();
@@ -948,6 +1008,10 @@ projectsRoutes.post("/jobs/:id/retry", requireCapability("adminBackend"), termin
   const job = await createDb(c.env.DB).select({ id: schema.jobs.id, projectId: schema.jobs.projectId, kind: schema.jobs.kind, status: schema.jobs.status, payloadJson: schema.jobs.payloadJson })
     .from(schema.jobs).where(eq(schema.jobs.id, id)).get();
   if (!job || !job.projectId || !["autohdr", "fetch_edited", "autohdr_scaffold", "manual_edited_publish", "manual_raw_publish"].includes(job.kind)) return c.json({ error: "Background job not found" }, 404);
+  if (["autohdr", "fetch_edited", "autohdr_scaffold"].includes(job.kind)) {
+    const variant = await boardSchemaVariant(c.env.DB);
+    if (variant === "pre_0037") return boardSchemaMaintenance(c);
+  }
   if (!await hasProjectAccess(c, job.projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   if (job.status !== "stuck" && job.status !== "failed") return c.json({ error: "Only stuck or failed background jobs can be retried" }, 409);
   const isManualPublish = job.kind === "manual_edited_publish" || job.kind === "manual_raw_publish";
@@ -972,6 +1036,8 @@ projectsRoutes.post("/jobs/:id/retry", requireCapability("adminBackend"), termin
 }));
 
 for (const [path, archived] of [["/projects/:id/archive", true], ["/projects/:id/restore", false]] as const) projectsRoutes.post(path, terminalRoute(path, async (c) => {
+  const variant = await boardSchemaVariant(c.env.DB);
+  if (variant === "pre_0037") return boardSchemaMaintenance(c);
   const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
   if (!roleHasCapability(c.get("user").role, "archiveProject")) return c.json({ error: "Forbidden", capability: "archiveProject" }, 403);
   const db = createDb(c.env.DB); const now = new Date();
@@ -1111,6 +1177,8 @@ projectsRoutes.delete("/projects/:id", terminalRoute("/projects/:id", async (c) 
   return c.json({ ok: true, deletedObjects: keys.length });
 }));
 projectsRoutes.post("/projects/:id/stage", terminalRoute("/projects/:id/stage", async (c) => {
+  const variant = await boardSchemaVariant(c.env.DB);
+  if (variant === "pre_0037") return boardSchemaMaintenance(c);
   const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
   if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   {
@@ -1118,7 +1186,7 @@ projectsRoutes.post("/projects/:id/stage", terminalRoute("/projects/:id/stage", 
     const data = await jsonInput(c, z.object({ stageKey: z.string() })); if (data instanceof Response) return data;
     if (data.stageKey === "editing_autohdr" && !roleHasCapability(c.get("user").role, "adminBackend")) return c.json({ error: "Forbidden" }, 403);
     if (!isStageKey(data.stageKey)) return c.json({ error: "Unknown stage" }, 400);
-    const db = createDb(c.env.DB); const project = await db.select().from(schema.projects).where(eq(schema.projects.id, id)).get(); if (!project) return c.json({ error: "Project not found" }, 404);
+    const db = createDb(c.env.DB); const project = await db.select(projectColumnsForVariant(variant)).from(schema.projects).where(eq(schema.projects.id, id)).get(); if (!project) return c.json({ error: "Project not found" }, 404);
     await ensurePipelineStages(db);
     const target = await db.select({ active: schema.pipelineStages.active }).from(schema.pipelineStages).where(eq(schema.pipelineStages.key, data.stageKey)).get();
     if (!target?.active) return c.json({ error: "Stage is deactivated" }, 409);
@@ -1140,6 +1208,7 @@ projectsRoutes.get("/projects/:id", terminalRoute("/projects/:id", async (c) => 
     return value ? c.json(value) : c.json({ error: "Project not found" }, 404);
   }
   if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
-  const value = await details(createDb(c.env.DB), c.env.DB, id, c.get("user").role, c.get("user").role === "photographer");
+  const variant = await boardSchemaVariant(c.env.DB);
+  const value = await details(createDb(c.env.DB), c.env.DB, id, c.get("user").role, variant, await boardContractEnabled(c.env.DB, variant), c.get("user").role === "photographer");
   return value ? c.json(value) : c.json({ error: "Project not found" }, 404);
 }));

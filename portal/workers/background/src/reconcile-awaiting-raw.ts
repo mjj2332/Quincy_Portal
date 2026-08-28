@@ -1,3 +1,5 @@
+import { boardSchemaVariant } from "@quincy/db";
+
 export type AwaitingRawProject = {
   id: string;
   shootDate: string | null;
@@ -122,6 +124,11 @@ export async function reconcileAwaitingRaw(store: ReconciliationStore, businessD
 }
 
 export async function reconcileAwaitingRawProjects(database: D1Database, scheduledTime: Date | number, onAdvanced?: (projectId: string) => void | Promise<void>): Promise<ReconciliationSummary> {
+  const variant = await boardSchemaVariant(database);
+  if (variant === "pre_0037") {
+    // The marker check deliberately precedes construction of the legacy stage UPDATE.
+    return { attempted: 0, advanced: 0, skipped: 0, failures: 0 };
+  }
   const businessDate = australiaSydneyBusinessDate(scheduledTime);
   const summary = await reconcileAwaitingRaw({
     scan: (date) => scanAwaitingRawProjects(database, date),

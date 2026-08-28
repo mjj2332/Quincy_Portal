@@ -4,7 +4,7 @@ import { webhookEvents } from "@quincy/db/schema";
 
 import type { Env } from "../env";
 import { errorMessage, dbFor } from "../lib/db";
-import { isDeterministicTonomoError, processTonomoEvent } from "../tonomo/process";
+import { isDeterministicTonomoError, processTonomoEvent, TonomoApplyError } from "../tonomo/process";
 
 const RETRY_DELAY_MS = 60_000;
 const MAX_ATTEMPTS = 5;
@@ -46,6 +46,12 @@ export class TonomoProcessorDO extends DurableObject<Env> {
         await this.ctx.storage.delete(attemptKey(event.id));
       } catch (error) {
         const message = errorMessage(error);
+        if (error instanceof TonomoApplyError && error.code === "board_schema_maintenance") {
+          // Leave the event received for a later explicit drain after migration. In particular,
+          // do not schedule a one-minute retry loop while a deployment is applying 0037.
+          console.warn("Tonomo event held for board schema/contract rollout", { eventId: event.id, code: error.code });
+          return;
+        }
         if (isDeterministicTonomoError(error)) {
           await db.update(webhookEvents).set({ status: "poison", error: message, processedAt: new Date() })
             .where(eq(webhookEvents.id, event.id));

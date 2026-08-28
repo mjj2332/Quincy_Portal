@@ -14,6 +14,7 @@ import { dbFor, errorMessage } from "../lib/db";
 import { setJobStatus } from "../lib/jobs";
 import { confirmAutoHdrHandoff } from "../autohdr/claims";
 import { notifyProject } from "../notifications";
+import { requireBoardSchemaReady } from "../lib/board-schema";
 
 export interface AutoHdrInput {
   projectId: string;
@@ -253,6 +254,7 @@ const COPY_BATCH_MAX_POLLS = 45;
 export class AutoHdrSend extends WorkflowEntrypoint<Env, AutoHdrInput> {
   async run(event: Readonly<WorkflowEvent<AutoHdrInput>>, step: WorkflowStep): Promise<void> {
     const input = event.payload;
+    await requireBoardSchemaReady(this.env);
     try {
       await step.do("mark-send-running", async () => {
         const db = dbFor(this.env);

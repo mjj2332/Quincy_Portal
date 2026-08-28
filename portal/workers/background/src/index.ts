@@ -1,5 +1,6 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { and, eq, gt, inArray, sql } from "drizzle-orm";
+import { boardSchemaVariant } from "@quincy/db";
 import { assets, autoHdrFinalAssociations, autoHdrHandoffs, autoHdrOutputMappings, autoHdrPathClaims, collections, dropboxMonitorHealth, jobs, projects, renditionDlqEvents } from "@quincy/db/schema";
 import { enqueueRenditionSafely, renditionsEnabled, type RenditionMessage } from "@quincy/shared";
 
@@ -40,6 +41,7 @@ import { processNotificationDlqMessage, processNotificationMessage, recoverNotif
 import { scanProjectDeadlineOccurrences } from "./project-deadline";
 import { sweepExternalEditedUploads } from "./external-upload-sweep";
 import { processExternalRoleCachePurges } from "./external-role-cache-purge";
+import { isBoardSchemaMaintenanceError, requireBoardSchemaReady } from "./lib/board-schema";
 
 export { AutoHdrApiSend, AutoHdrFetch, AutoHdrSend, ManualEditedPublish, DropboxSyncDO, TonomoProcessorDO };
 
@@ -55,6 +57,8 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
 
   // Temporary safety net: retire only after Dropbox RAW automation has been verified live in a later deploy.
   async scheduled(controller: ScheduledController): Promise<void> {
+    // Warm the isolate-local variant memo before any scheduled handler can touch D1.
+    if (this.env.DB) await boardSchemaVariant(this.env.DB);
     if (controller.cron === "* * * * *") {
       try {
         const result = await scanProjectDeadlineOccurrences(this.env, controller.scheduledTime);
@@ -112,6 +116,7 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
   }
 
   async triggerDropboxSync(projectId: string): Promise<{ jobId: string }> {
+    await requireBoardSchemaReady(this.env);
     const db = dbFor(this.env);
     const jobId = await createJob(db, {
       kind: "dropbox_sync",
@@ -164,18 +169,22 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
   }
 
   async ensureAutoHdrScaffold(projectId: string): Promise<{ jobId: string }> {
+    await requireBoardSchemaReady(this.env);
     return enqueueAutoHdrScaffold(this.env, projectId);
   }
 
   async backfillAutoHdrV2(params: BackfillParams): Promise<BackfillResult> {
+    await requireBoardSchemaReady(this.env);
     return backfillAutoHdrV2Impl(this.env, params);
   }
 
   async sendSelectedToAutoHdr(projectId: string, initiatedBy?: string): Promise<AutoHdrApiSendResult> {
+    await requireBoardSchemaReady(this.env);
     return claimAutoHdrApiSend(this.env, projectId, initiatedBy);
   }
 
   async startAutoHdr(projectId: string, initiatedBy?: string, options: { startNewRound?: boolean; resumeExisting?: boolean; removalSetHash?: string } = {}): Promise<AutoHdrResult> {
+    await requireBoardSchemaReady(this.env);
     if (!initiatedBy) {
       return {
         ok: false,
@@ -278,6 +287,7 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
   }
 
   async fetchEditedFromAutoHdr(projectId: string): Promise<AutoHdrFetchResult> {
+    await requireBoardSchemaReady(this.env);
     const db = dbFor(this.env);
     const mapping = await db.select({
       mappingId: autoHdrOutputMappings.id,
@@ -446,6 +456,7 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
 
   /** One account notification wakes both independent root-specific objects. */
   async handleDropboxWebhook(): Promise<void> {
+    await requireBoardSchemaReady(this.env);
     const db = dbFor(this.env);
     const connectionId = await canonicalDropboxConnectionId(db);
     await fanOutDropboxKicks(
@@ -622,6 +633,7 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
   }
 
   async processTonomoEvents(): Promise<void> {
+    await requireBoardSchemaReady(this.env);
     const id = this.env.TONOMO_PROCESSOR.idFromName("tonomo");
     await this.env.TONOMO_PROCESSOR.get(id).drain();
   }
@@ -751,6 +763,12 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
             break;
         }
       } catch (error) {
+        if (isBoardSchemaMaintenanceError(error)) {
+          // A migration window is an expected bounded maintenance state. Ack the message so a
+          // queue consumer does not create a retry storm; the operator can replay after 0037.
+          message.ack();
+          continue;
+        }
         const body = message.body;
         const renditionFailure = batch.queue === "quincy-renditions" && body && typeof body === "object" && (body as { type?: unknown }).type === "generate_renditions"
           ? safeRenditionFailure(error)

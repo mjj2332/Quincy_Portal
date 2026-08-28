@@ -12,6 +12,7 @@ import { newId, safeFilename } from "../lib/ids";
 import { completeMultipart, createMultipartPresign } from "../lib/r2s3";
 import { jsonInput } from "./helpers";
 import { resolveVisibleProject } from "../lib/visible-project-scope";
+import { isBoardSchemaMaintenanceError, requireBoardSchemaReady } from "../lib/board-schema";
 
 const manifestInput = z.object({ filenames: z.array(z.string().min(1)).min(1).max(10_000) });
 const presignInput = z.object({ projectId: z.string().uuid(), filename: z.string().min(1), bytes: z.number().int().positive().max(5 * 1024 * 1024 * 1024), collection: z.enum(["raw", "edited"]).default("raw") });
@@ -83,6 +84,10 @@ uploadsRoutes.put("/uploads/direct", terminalRoute("/uploads/direct", async (c) 
 uploadsRoutes.post("/uploads/complete", terminalRoute("/uploads/complete", async (c) => {
   if (c.get("user").role === "external_editor") return c.json({ error: "Forbidden", capability: "uploadEdited" }, 403);
   const data = await jsonInput(c, completeInput); if (data instanceof Response) return data;
+  if (data.collection === "raw") {
+    try { await requireBoardSchemaReady(c.env); }
+    catch (error) { if (isBoardSchemaMaintenanceError(error)) return c.json({ error: "Board schema migration is still being applied.", code: "board_schema_maintenance" }, 503); throw error; }
+  }
   const capability = data.collection === "edited" ? "uploadEdited" : "uploadRaw";
   if (!roleHasCapability(c.get("user").role, capability)) return c.json({ error: "Forbidden", capability }, 403);
   if (!await hasProjectAccess(c, data.projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);

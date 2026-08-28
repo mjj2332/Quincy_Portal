@@ -6,6 +6,14 @@ export { COLLECTION_RECEIVED_COUNT_SQL, collectionReceivedCountBindings } from "
 export { RAW_CLAIM_LEASE_MS } from "./raw-reconciliation-claims";
 export { guardedStageTransition, type GuardedStageTransitionInput } from "./stage-transition";
 export { buildProjectActivityStatements, type ProjectActivityStatementBundle } from "./project-activity";
+export {
+  BOARD_CONTRACT_FLAG,
+  BOARD_SCHEMA_MARKER_SQL,
+  boardContractEnabled,
+  boardSchemaVariant,
+  type BoardSchemaVariant,
+} from "./board-schema-variant";
+export { projectColumnsForVariant, projectColumnsPre0037 } from "./project-projections";
 export { emitExternalSafeLegacyNotification, emitExternalSubtaskNotification, type ExternalSafeLegacyInput, type ExternalSubtaskNotificationInput } from "./external-notifications";
 export { appendToStageBottomExpr, computeInsertPosition } from "./board-position";
 export { dashboardProjectOrder, orderDashboardStreetTies } from "./dashboard-order";

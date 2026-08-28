@@ -1,11 +1,14 @@
-import type { ExternalProjectSummaryDto, Role } from "@quincy/shared";
+import { authorizedBoardRank, type ExternalProjectSummaryDto, type Role } from "@quincy/shared";
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import { apiGet } from "./api";
 import { externalApiGet, externalProjectSummaryToDashboard } from "./external-api-response";
 import { projectQueryRetry } from "./project-data";
 import type { ProjectSummary } from "../screens/Dashboard";
 
-type ProjectsResponse = { projects: ProjectSummary[] };
+type ProjectsResponse = {
+  projects: ProjectSummary[];
+  board?: { contractEnabled: boolean; orderedProjectIdsByStage: Record<string, string[]> };
+};
 export type DashboardIdentity = { principalId: string; role: Role; authorizationEpoch: number };
 
 export function dashboardProjectsKey(principalId: string, role: Role, authorizationEpoch: number, archived: boolean) {
@@ -20,11 +23,26 @@ export function useDashboardProjects(archived: boolean, identity: DashboardIdent
     enabled: !external || !archived,
     queryFn: async ({ signal }) => {
       if (external) {
-        const response = await externalApiGet("project-list", "/api/projects", signal) as { projects: ExternalProjectSummaryDto[] };
-        return response.projects.map(externalProjectSummaryToDashboard) as ProjectSummary[];
+        const response = await externalApiGet("project-list", "/api/projects", signal) as {
+          projects: ExternalProjectSummaryDto[];
+          board: { contractEnabled: boolean; orderedProjectIdsByStage: Record<string, string[]> };
+        };
+        return response.projects.map((project) => externalProjectSummaryToDashboard(
+          project,
+          response.board.orderedProjectIdsByStage,
+          response.board.contractEnabled,
+        )) as ProjectSummary[];
       }
       const response = await apiGet<ProjectsResponse>(archived ? "/api/projects?archived=1" : "/api/projects", { signal });
-      return response.projects;
+      const board = response.board;
+      return response.projects.map((project) => ({
+        ...project,
+        boardRank: board ? authorizedBoardRank(project.id, project.stageKey, board.orderedProjectIdsByStage) : undefined,
+        boardMapPresent: Boolean(board && Object.keys(board.orderedProjectIdsByStage).length > 0),
+        // A missing board envelope is an old deployed server; an explicit false is the
+        // post-migration flag-off state and must hide Board mutation controls.
+        boardContractEnabled: board?.contractEnabled ?? true,
+      }));
     },
     staleTime: 15_000,
     refetchInterval: 30_000,

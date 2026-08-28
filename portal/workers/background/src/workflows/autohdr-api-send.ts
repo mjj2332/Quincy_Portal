@@ -10,6 +10,7 @@ import type { Env } from "../env";
 import { dbFor, errorMessage } from "../lib/db";
 import { setJobStatus } from "../lib/jobs";
 import { notifyProject } from "../notifications";
+import { requireBoardSchemaReady } from "../lib/board-schema";
 
 function chunked<T>(items: readonly T[], size = 80): T[][] {
   const result: T[][] = [];
@@ -20,6 +21,7 @@ function chunked<T>(items: readonly T[], size = 80): T[][] {
 export class AutoHdrApiSend extends WorkflowEntrypoint<Env, AutoHdrApiSendInput> {
   async run(event: Readonly<WorkflowEvent<AutoHdrApiSendInput>>, step: WorkflowStep): Promise<void> {
     const input = event.payload;
+    await requireBoardSchemaReady(this.env);
     try {
       const apiKey = this.env.AUTOHDR_API_KEY?.trim();
       if (!apiKey) throw new Error("The AutoHDR API key is not configured on the background Worker");

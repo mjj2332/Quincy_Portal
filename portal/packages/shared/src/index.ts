@@ -31,3 +31,4 @@ export * from "./external-project-dto";
 export * from "./external-upload";
 export * from "./external-notification";
 export * from "./external-project-policy";
+export * from "./board-projection";

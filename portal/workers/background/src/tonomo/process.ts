@@ -1,4 +1,5 @@
 import { and, eq, isNull, sql } from "drizzle-orm";
+import { boardSchemaVariant, projectColumnsForVariant, type BoardSchemaVariant } from "@quincy/db";
 import { COLLECTION_RECEIVED_COUNT_SQL, appendToStageBottomExpr, collectionReceivedCountBindings } from "@quincy/db";
 import { COLLECTION_KINDS, normaliseAddressKey, parseTonomoOrder, TonomoParseError, type CollectionKind, type TonomoOrder } from "@quincy/shared";
 import { auditLog, collectionLinks, collections, projectMembers, projects, user, webhookEvents } from "@quincy/db/schema";
@@ -7,12 +8,20 @@ import type { Env } from "../env";
 import { dbFor } from "../lib/db";
 import { enqueueAutoHdrScaffold } from "../autohdr/scaffold";
 
-type Project = typeof projects.$inferSelect;
+type Project = Pick<typeof projects.$inferSelect, "id" | "street" | "postcode" | "archivedAt" | "orderId" | "orderNo" | "suburb" | "agencyName" | "agentName" | "agentEmail" | "agentPhone" | "shootDate" | "timeWindow" | "notes" | "rawFolderLink" | "rawFolderPath">;
 
 export class TonomoApplyError extends Error {
+  code?: "board_schema_maintenance";
+
   constructor(reason: string) {
     super(reason);
     this.name = "TonomoApplyError";
+  }
+
+  static boardSchemaMaintenance() {
+    const error = new TonomoApplyError("Board schema migration is still being applied.");
+    error.code = "board_schema_maintenance";
+    return error;
   }
 }
 
@@ -67,9 +76,9 @@ async function writeAudit(
   });
 }
 
-async function findProject(env: Env, order: TonomoOrder): Promise<{ project: Project; linkedByAddress: boolean } | null> {
+async function findProject(env: Env, order: TonomoOrder, variant: BoardSchemaVariant): Promise<{ project: Project; linkedByAddress: boolean } | null> {
   const db = dbFor(env);
-  const byOrderId = await db.select().from(projects).where(eq(projects.orderId, order.orderId)).get();
+  const byOrderId = await db.select(projectColumnsForVariant(variant)).from(projects).where(eq(projects.orderId, order.orderId)).get() as Project | undefined;
   if (byOrderId) {
     if (byOrderId.archivedAt) {
       throw new TonomoApplyError(`order ${order.orderId} matches archived project ${byOrderId.street} — restore the project or discard this event`);
@@ -77,7 +86,7 @@ async function findProject(env: Env, order: TonomoOrder): Promise<{ project: Pro
     return { project: byOrderId, linkedByAddress: false };
   }
 
-  const candidates = await db.select().from(projects).where(order.postcode
+  const candidates = await db.select(projectColumnsForVariant(variant)).from(projects).where(order.postcode
     ? and(isNull(projects.orderId), isNull(projects.archivedAt), eq(projects.postcode, order.postcode))
     : and(isNull(projects.orderId), isNull(projects.archivedAt))).all();
   const key = normaliseAddressKey(order.street, order.postcode);
@@ -152,7 +161,9 @@ async function assignPhotographers(env: Env, projectId: string, emails: string[]
 }
 
 async function applyOrder(env: Env, order: TonomoOrder): Promise<string | null> {
-  const match = await findProject(env, order);
+  const variant = await boardSchemaVariant(env.DB);
+  if (variant === "pre_0037") throw TonomoApplyError.boardSchemaMaintenance();
+  const match = await findProject(env, order, variant);
   const action = match ? "project.update" : "project.create";
   const projectId = match
     ? await updateProject(env, match.project, match.linkedByAddress, order)

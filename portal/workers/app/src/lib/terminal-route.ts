@@ -246,7 +246,7 @@ export const PROJECT_SECURITY_ROUTE_CLASSIFICATION = PROJECT_SECURITY_ROUTE_CLAS
 })) satisfies readonly SecurityRouteRegistration[];
 
 export const CHECKED_IN_MIDDLEWARE_REGISTRATIONS = [
-  ["ALL", "/api/*"], ["ALL", "/api"], ["ALL", "/api/*"], ["ALL", "/api/*"],
+  ["ALL", "/api/*"], ["ALL", "/api"], ["ALL", "/api"], ["ALL", "/api/*"], ["ALL", "/api/*"], ["ALL", "/api/*"],
   ["ALL", "/media/*"], ["ALL", "/api/assets/:id"], ["ALL", "/api/integrations"],
   ["ALL", "/api/integrations/*"], ["ALL", "/api/notice-board"], ["ALL", "/api/notice-board/*"],
   ["ALL", "/api/users"], ["ALL", "/api/users/*"],

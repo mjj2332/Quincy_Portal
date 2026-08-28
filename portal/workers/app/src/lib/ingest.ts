@@ -4,6 +4,7 @@ import { enqueueRenditionSafely, parseXmpRating, XMP_SCAN_BYTES, xmpRatingToStar
 import type { Env } from "../env";
 import { audit, auditMeta, type AuditPrincipal } from "./audit";
 import { notifyProject } from "./notifications";
+import { requireBoardSchemaReady } from "./board-schema";
 
 export type FinalizeIngestDependencies = { beforeMetadataBatch?: () => void | Promise<void> };
 
@@ -118,6 +119,10 @@ export async function finalizeIngest(
   input: { actorId: string; auditPrincipal?: AuditPrincipal; projectId: string; assetId: string; key: string; originalFilename: string; contentHash?: string; collection?: "raw" | "edited"; manifestId?: string },
   dependencies: FinalizeIngestDependencies = {},
 ) {
+  // This check must precede RAW R2/D1 work: a pre-0037 completion cannot leave a durable asset
+  // behind while its automatic Stage writer is unavailable. Manual edited uploads do not write
+  // Stage and remain available during the migration window.
+  if ((input.collection ?? "raw") === "raw") await requireBoardSchemaReady(env);
   const object = await env.MEDIA.head(input.key);
   if (!object) throw new Error("Uploaded object was not found in R2");
   const header = await env.MEDIA.get(input.key, { range: { offset: 0, length: XMP_SCAN_BYTES } });
@@ -206,7 +211,7 @@ export async function finalizeIngest(
     };
   }
   // Queue failure cannot invalidate the durable source asset. A duplicate finalization also
-  // repairs missing generation work once the red gate has explicitly been enabled.
+  // repairs missing generation work.
   await enqueueRenditionSafely(env, effectiveAssetId, inserted ? "upload-ingest" : "upload-existing-asset");
   const currentRawAvailable = Boolean(await db.select({ id: schema.assets.id }).from(schema.assets)
     .where(and(eq(schema.assets.collectionId, targetCollection.id), eq(schema.assets.kind, "photo"), sql`${schema.assets.supersededAt} IS NULL`)).get());
