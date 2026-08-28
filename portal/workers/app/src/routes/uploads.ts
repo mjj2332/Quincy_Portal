@@ -34,12 +34,13 @@ async function uploadPrecondition(c: Context<AppEnv>, projectId: string, collect
 
 export const uploadsRoutes = new Hono<AppEnv>();
 uploadsRoutes.post("/projects/:id/upload-manifest", requireCapability("uploadRaw"), terminalRoute("/projects/:id/upload-manifest", async (c) => {
-  const projectId = c.req.param("id"); if (!await hasProjectAccess(c, projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403); {
+  const projectId = c.req.param("id");
+  const projectState = await createDb(c.env.DB).select({ archivedAt: schema.projects.archivedAt }).from(schema.projects).where(eq(schema.projects.id, projectId)).get();
+  if (projectState?.archivedAt) return c.json({ error: "Project is archived" }, 409);
+  if (!await hasProjectAccess(c, projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403); {
     const data = await jsonInput(c, manifestInput); if (data instanceof Response) return data;
     if (data.filenames.some((name) => !isAcceptedPhotoFilename(name))) return c.json({ error: "RAW uploads must be .jpg or .jpeg files" }, 400);
     const db = createDb(c.env.DB);
-    const project = await db.select({ archivedAt: schema.projects.archivedAt }).from(schema.projects).where(eq(schema.projects.id, projectId)).get();
-    if (project?.archivedAt) return c.json({ error: "Project is archived" }, 409);
     const raw = await db.select().from(schema.collections).where(and(eq(schema.collections.projectId, projectId), eq(schema.collections.kind, "raw"))).get(); if (!raw) return c.json({ error: "Project RAW collection not found" }, 404);
     const id = newId();
     await db.insert(schema.uploadManifests).values({ id, collectionId: raw.id, expectedCount: data.filenames.length, filenamesJson: JSON.stringify(data.filenames), status: "active", createdBy: c.get("user").id, createdAt: new Date() });
@@ -161,9 +162,9 @@ uploadsRoutes.post("/uploads/complete", terminalRoute("/uploads/complete", async
 // Exact-path Hono routes do not match a trailing slash. Keep the legacy provider-capability
 // boundary explicit so an External Editor cannot reach a permissive fallback through that form.
 for (const [method, path] of [["post", "/uploads/presign/"], ["put", "/uploads/direct/"], ["post", "/uploads/complete/"]] as const) {
-  uploadsRoutes[method](path, (c) => c.get("user").role === "external_editor"
+  uploadsRoutes[method](path, terminalRoute(path, (c) => c.get("user").role === "external_editor"
     ? c.json({ error: "Forbidden", capability: "uploadEdited" }, 403)
-    : c.notFound());
+    : c.notFound()));
 }
 uploadsRoutes.get("/projects/:id/ingest-status", terminalRoute("/projects/:id/ingest-status", async (c) => {
   const projectId = c.req.param("id");

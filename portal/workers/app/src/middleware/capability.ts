@@ -1,4 +1,6 @@
 import type { MiddlewareHandler } from "hono";
+import { and, eq } from "drizzle-orm";
+import { createDb, schema } from "@quincy/db";
 import { roleHasCapability, type Capability } from "@quincy/shared";
 import type { AppEnv, SessionUser } from "../env";
 import { resolveVisibleProject } from "../lib/visible-project-scope";
@@ -34,12 +36,14 @@ export async function hasProjectCollaborationAccessForUser(
   projectId: string,
 ) {
   if (currentUser.active !== true || !roleHasCapability(currentUser.role, "collaborateOnProject")) return false;
-  const context = await resolveVisibleProject(env, currentUser, projectId);
-  if (context) return true;
-  // Admin collaboration on an archived project is retained for internal operations; External
-  // and other scoped roles never take this branch because their visibility is assignment-bound.
-  if (currentUser.role !== "admin") return false;
-  return true;
+  if (currentUser.role === "admin") return true;
+  if (currentUser.role === "external_editor") return Boolean(await resolveVisibleProject(env, currentUser, projectId));
+  const db = createDb(env.DB);
+  return Boolean(await db.select({ id: schema.projectMembers.id }).from(schema.projectMembers)
+    .where(and(
+      eq(schema.projectMembers.projectId, projectId),
+      eq(schema.projectMembers.userId, currentUser.id),
+    )).get());
 }
 
 /** Use when a route has reloaded the principal and must not trust session-cached role state. */

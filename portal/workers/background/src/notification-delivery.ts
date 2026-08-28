@@ -1127,6 +1127,24 @@ function broadAdmission(outbox: OutboxRow, resolved: BroadResolvedRecipient, tok
     )`,
     values: [activity.id, ...baseValues, ...roles],
   };
+  const authorizationEpochChanged = {
+    sql: `EXISTS (
+      SELECT 1
+      FROM notification_outbox o
+      JOIN project_activity_events activity ON activity.id = ?
+      JOIN project_members member ON member.id = o.recipient_membership_cycle_id
+        AND member.project_id = o.project_id AND member.user_id = o.recipient_id AND member.role_on_project = 'editor'
+      JOIN user recipient ON recipient.id = o.recipient_id
+      WHERE ${conditions}
+        AND json_extract(o.payload_json, '$.authorizationAtOccurrence.membershipCycle') = member.id
+        AND json_extract(o.payload_json, '$.authorizationAtOccurrence.startedAt') = member.created_at
+        AND activity.occurred_at >= member.created_at
+        AND recipient.active = 1 AND recipient.role IN (${roles.map(() => "?").join(",")})
+        AND o.recipient_authorization_epoch IS NOT NULL
+        AND o.recipient_authorization_epoch <> recipient.authorization_epoch
+    )`,
+    values: [activity.id, ...baseValues, ...roles],
+  };
   const reservedTypes = Object.entries(PROJECT_ACTIVITY_REGISTRY)
     .filter(([, entry]) => entry.cutover === "reserved")
     .map(([type]) => type);
@@ -1141,16 +1159,8 @@ function broadAdmission(outbox: OutboxRow, resolved: BroadResolvedRecipient, tok
     values: [activity.id, activity.id, ...reservedTypes, activity.id],
   };
   const suppressionCode = {
-    sql: `CASE WHEN EXISTS (
-      SELECT 1
-      FROM notification_outbox o
-      JOIN project_activity_events activity ON activity.id = ?
-      JOIN user recipient ON recipient.id = o.recipient_id
-      WHERE ${conditions}
-        AND recipient.active = 1
-        AND (o.recipient_authorization_epoch IS NULL OR o.recipient_authorization_epoch <> recipient.authorization_epoch)
-    ) THEN 'authorization_epoch_changed' ELSE 'reauthorization_suppressed' END`,
-    values: [activity.id, ...baseValues],
+    sql: `CASE WHEN ${authorizationEpochChanged.sql} THEN 'authorization_epoch_changed' ELSE 'reauthorization_suppressed' END`,
+    values: authorizationEpochChanged.values,
   };
   return {
     structural,

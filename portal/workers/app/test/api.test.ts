@@ -896,6 +896,8 @@ describe("staff app API", () => {
     expect((await createUpload()).status).toBe(409);
     for (const session of sessions) expect((await SELF.fetch(`https://portal.test/api/external-uploads/${session.sessionToken}`, { method: "DELETE", headers: { cookie: externalCookie, origin: authEnv.APP_ORIGIN } })).status).toBe(200);
     expect((await SELF.fetch("https://portal.test/api/uploads/presign", { method: "POST", headers: { cookie: externalCookie, origin: authEnv.APP_ORIGIN, "content-type": "application/json" }, body: JSON.stringify({ projectId: delivered, filename: "raw.jpg", bytes: 1, collection: "raw" }) })).status).toBe(403);
+    // Keep this projection fixture from affecting the later global Stage activation test.
+    await database.DB.prepare("UPDATE projects SET stage_key = 'edited_review' WHERE id = ?").bind(delivered).run();
   }, 30_000);
 
   it("requires the exact configured Origin for custom API mutations while leaving safe and auth routes alone", async () => {

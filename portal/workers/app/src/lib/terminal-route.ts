@@ -155,8 +155,11 @@ export const PROJECT_SECURITY_ROUTE_CLASSIFICATION = [
   { method: "POST", path: "/api/projects", class: "scoped" },
   { method: "GET", path: "/api/stages", class: "withheld" },
   { method: "POST", path: "/api/uploads/complete", class: "withheld" },
+  { method: "POST", path: "/api/uploads/complete/", class: "withheld" },
   { method: "PUT", path: "/api/uploads/direct", class: "withheld" },
+  { method: "PUT", path: "/api/uploads/direct/", class: "withheld" },
   { method: "POST", path: "/api/uploads/presign", class: "withheld" },
+  { method: "POST", path: "/api/uploads/presign/", class: "withheld" },
   { method: "PATCH", path: "/api/users/:id", class: "withheld" },
   { method: "GET", path: "/api/users/impersonation-settings", class: "withheld" },
   { method: "PATCH", path: "/api/users/impersonation-settings", class: "withheld" },
@@ -176,6 +179,15 @@ export const CHECKED_IN_MIDDLEWARE_REGISTRATIONS = [
   ["ALL", "/media/*"], ["ALL", "/api/assets/:id"], ["ALL", "/api/integrations"],
   ["ALL", "/api/integrations/*"], ["ALL", "/api/notice-board"], ["ALL", "/api/notice-board/*"],
   ["ALL", "/api/users"], ["ALL", "/api/users/*"],
+  ["POST", "/api/auth/admin/impersonate-user"], ["POST", "/api/auth/admin/impersonate-user"], ["POST", "/api/auth/admin/impersonate-user"],
+  ["POST", "/api/auth/admin/impersonate-user/"], ["POST", "/api/auth/admin/impersonate-user/"], ["POST", "/api/auth/admin/impersonate-user/"],
+  ["POST", "/api/projects"],
+  ["POST", "/api/projects/:id/send-to-autohdr"], ["POST", "/api/projects/:id/fetch-edited"],
+  ["GET", "/api/projects/:id/autohdr-status"], ["GET", "/api/projects/:id/autohdr-history"],
+  ["POST", "/api/projects/:id/autohdr-coverage"], ["GET", "/api/projects/:id/manual-upload-jobs"],
+  ["GET", "/api/projects/:id/jobs"], ["POST", "/api/jobs/:id/retry"],
+  ["POST", "/api/projects/:id/upload-manifest"],
+  ["POST", "/api/assets/:id/select"], ["DELETE", "/api/assets/:id/select"],
 ] as const;
 
 export type HonoRouteLike = { method: string; path: string; handler: unknown };

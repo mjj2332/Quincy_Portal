@@ -87,7 +87,7 @@ export async function emitExternalSafeLegacyNotification(db: D1Database, input: 
     RETURNING id
   `).bind(
     policy.durableEvent, input.sourceKey, input.actorId,
-    policy.durableEvent, input.sourceKey, input.type, input.projectId, input.sourceId,
+    policy.durableEvent, input.sourceKey, input.type, input.sourceId,
     now, now, now, input.projectId, input.excludeUserId ?? null, input.excludeUserId ?? null,
   ).all<InsertedOutbox>();
   const outboxIds = rows.results.map((row) => row.id);
