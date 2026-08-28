@@ -26,14 +26,15 @@ agy --mode plan --effort high --sandbox --dangerously-skip-permissions \
 - `--sandbox` — OS-level terminal restrictions. A planning-only safety layer; see the build
   section, where it must be dropped.
 - `--effort low|medium|high` — use `high` for real planning work.
-- `--model <name>` — optional. `agy models` lists the account roster (2026-07-24:
-  `gemini-3.6-flash-{high,medium,low}`, `gemini-3.5-flash-{high,medium,low}`,
-  `gemini-3.1-pro-{high,low}`, `claude-sonnet-4-6`, `claude-opus-4-6-thinking`,
-  `gpt-oss-120b-medium`). The configured default is `gemini-3.6-flash-high`; pass it explicitly
-  rather than relying on the default, but don't invent a preference for a different underlying
-  model unasked.
+- `--model <name>` — optional. `agy models` lists the account roster (2026-08-28:
+  `gemini-3.7-flash-{high,medium,low}`, `gemini-3.6-flash-{high,medium,low}`,
+  `gemini-3.5-flash-{high,medium,low}`, `gemini-3.1-pro-{high,low}`, `claude-sonnet-4-6`,
+  `claude-opus-4-6-thinking`, `gpt-oss-120b-medium`). Default is `gemini-3.7-flash-high`; pass it
+  explicitly rather than relying on the default, but don't invent a preference for a different
+  underlying model unasked.
 - `--print-timeout <duration>` — default `5m0s`; `10m0s` handled a real cross-system
-  architecture plan.
+  architecture plan. On the print-mode shutdown hang (below) this also bounds dead wait time, so
+  don't set it lavishly wide on a run you aren't watching.
 
 Smoke-test any new invocation shape before spending a long task on it:
 
@@ -77,15 +78,63 @@ None of these print an error. All of them look like success.
 | Empty stdout, run did nothing | A shell tool call needed the `command` permission, which headless mode can't prompt for, so it was auto-denied. **The only signal is in stderr:** `jetski: no output produced — a tool required the "command" permission…` | `--dangerously-skip-permissions` on any headless task that reads files via `grep`/`cat`/`find` |
 | "done", file unchanged | `--sandbox` passed alongside `--mode accept-edits` | Drop `--sandbox` for builds |
 | "done", file unchanged | Target outside `trustedWorkspaces` | `--add-dir "<absolute repo root>"` |
+| Empty report file, non-zero exit after a long delay | Agy started a command it tracks as running async (e.g. it launched `wrangler dev` itself) and print mode waited for that command until `--print-timeout` | Start servers yourself; tell Agy the server is already up. The report is still in the conversation DB — recover it (next section). |
 
 So: check **stderr**, not just whether the report file has content, and confirm every Agy build
 actually touched disk (`git status`, read the file back) before trusting its self-report. Then
 run the full §5 gate as with any other builder.
 
+## Print-mode shutdown hang — a long run whose report never lands
+
+`agy --print` normally runs one turn and exits within seconds of finishing (verified 2026-08-28:
+trivial prompt 8 s, a shell+read+write build 20 s, a `chrome-devtools` navigate+snapshot 30 s).
+**A command Agy started and left tracked as running async breaks that.** When the turn ends with
+such a command still alive, Agy does not exit — it poll-loops one model call every 60 s until
+`--print-timeout` expires, then exits non-zero with empty stdout, discarding the buffered
+response. The conversation and any files it wrote are still saved; only the printed report is lost.
+
+Reproduced: a `-p` run told to start `python3 -m http.server` and not stop it hung the full
+`--print-timeout`, logging `printmode.go:521] Print mode: timed out after N polls (printed=2)`;
+the same run told to stop the server before replying exited cleanly in ~11 s. The TB4E QA matrix
+hit this — Agy ran `npx wrangler dev --port 8787` itself, finished the matrix and report in
+~7 min, then sat in the keepalive loop for 22 min until killed (0-byte report, ~22 wasted calls).
+
+**Keep long-running processes out of Agy's hands.** Bring `wrangler dev` up yourself before
+spawning Agy and say in the spec that the server is already running. If a task genuinely needs
+Agy to launch a background process, tell it to kill that process before it sends its final reply.
+
+**Recover a lost report** from Agy's conversation DB — the report survives as the last step even
+when the file is empty. The step payload is protobuf with the report as a plain-text field; pull
+the printable runs and start at the first heading:
+
+```bash
+DB=$(ls -t ~/.gemini/antigravity-cli/conversations/*.db | head -1)   # newest run — or match mtime
+python3 - "$DB" <<'PY'
+import re, sqlite3, sys
+db = sys.argv[1]
+idx = sqlite3.connect(db).execute("SELECT max(idx) FROM steps").fetchone()[0]   # last step = final reply
+payload = sqlite3.connect(db).execute("SELECT step_payload FROM steps WHERE idx=?", (idx,)).fetchone()[0]
+text = "\n".join(r.decode("utf-8", "replace") for r in re.findall(rb"[\x09\x0a\x20-\x7e]{6,}", payload))
+m = re.search(r"#\s+\w", text)                       # first markdown-ish heading
+print(text[m.start():] if m else text)
+PY
+```
+
+Protobuf tag bytes land as stray single chars between runs (e.g. `Fixture \n DELETE ME` where an
+em dash was) — cosmetic, fix by hand.
+
+`--output-format stream-json` is a lighter guard: it streams `step_update` events live (a watcher
+sees progress and turn completion as they land) and emits a final `result` event with
+`status:"ERROR"` on the hang instead of a silent 0-byte file. It still doesn't recover the answer
+text — the DB does.
+
 ## Chrome automation via `chrome-devtools-mcp` (verified 2026-08-27)
 
-Agy has no native browser tool — only `read_url_content` (static HTTP, no JS) and `search_web`.
-But it *can* drive a real Chrome through the
+`agy` v1.1.22 lists native `browser_*` tools (`open_browser_url`, `read_browser_page`,
+`browser_click_element`, `execute_browser_javascript`, …) alongside `read_url_content` (static
+HTTP, no JS) and `search_web` — but they are untested here for a human-authenticated Quincy
+session, and forging the better-auth cookie stays §6-forbidden. The verified path is driving a
+real Chrome through the
 [`chrome-devtools-mcp`](https://github.com/ChromeDevTools/chrome-devtools-mcp) MCP server.
 
 Tools exposed (~29): `navigate_page`, `new_page`, `select_page`, `list_pages`, `close_page`,
@@ -109,16 +158,16 @@ actually works reliably.
   `3.5` also on the roster) rejects `--effort medium`/`low` with `invalid model selection …
   conflicts with --effort` — the tier is baked into the model id, so always pass `--effort high`
   with a `*-high` model.
-- **Background the run through the harness (`Bash` `run_in_background: true`), never a bare
-  `nohup agy … &`.** The prompt travels as a `--print=` argument, not on stdin (see the
-  large-prompt section below), so a harness-supervised background launch has no stdin dependency
-  to trip on: the process keeps running and the orchestrating session is free while Agy works
-  (2026-08-28: a long QA-matrix run stayed healthy and progressing many minutes past the ~10 s
-  mark where `nohup &` dies). A bare `nohup agy -p … &` is the thing that fails — detaching from
-  the shell closes stdin, print mode ends early, and it exits in ~10 s with empty stdout *and*
-  stderr, task half-done, and can orphan an Option-B Chrome (Option A's Chrome is the human's own
-  process, nothing to orphan). Give `--print-timeout` real room — `10m0s`+ for a spec'd QA
-  matrix, more for a long one. In Option A the human signs in *before* Agy spawns, so there is no
+- **Launch through the harness (`Bash` `run_in_background: true`).** The prompt travels as a
+  `--print=` argument, not on stdin (see the large-prompt section below), so a harness-supervised
+  background launch has no stdin dependency: the process runs and the orchestrating session stays
+  free. A bare `nohup agy -p … &` is the one launch shape that fails this way — detaching from the
+  shell closes stdin, print mode ends early, and it exits in ~10 s with empty stdout *and* stderr,
+  task half-done, and can orphan an Option-B Chrome (Option A's Chrome is the human's own process,
+  nothing to orphan). Size `--print-timeout` to the task (`10m0s`+ for a spec'd QA matrix) but not
+  wider than you'll wait — on the print-mode shutdown hang it becomes dead time. For a long run,
+  watch the conversation DB step count and kill once the final reply step lands rather than
+  trusting a wide timeout. In Option A the human signs in *before* Agy spawns, so there is no
   in-run wait to worry about.
 - **Agy is the pipeline's tester** (§2.8) and carries danger-mode (§2.9) and YOLO-mode (§2.10)
   sanction as of 2026-08-27 — it took the testing role over from Luna after a trial pass on the

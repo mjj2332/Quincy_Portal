@@ -31,8 +31,8 @@ explicit user request.
 
 **Agy drives real Chrome through the `chrome-devtools-mcp` MCP server** — Option A: a Chrome a human
 has already signed in, attached over CDP. This is the pipeline's browser-testing path; setup, the
-`nohup &` backgrounding failure mode, and the silent-no-op failure modes are all in
-[§3a](subagents/agy-cli.md) — read it before any Agy task. Luna and Sol still carry their own
+backgrounding and print-mode shutdown-hang failure modes, and the silent-no-op failure modes are
+all in [§3a](subagents/agy-cli.md) — read it before any Agy task. Luna and Sol still carry their own
 Chrome-use and computer-use plugins for a `codex exec` run that needs a browser mid-build, but
 routine QA and diagnostics go to Agy.
 
@@ -176,10 +176,11 @@ its own flags, sandboxing, and file access, output read back from a file. There 
 
 - **Codex (Terra/Luna/Sol): [subagents/codex-cli.md](subagents/codex-cli.md)** — invocation, flags,
   and the MCP write-approval failure mode (§6).
-- **§3a — Agy: [subagents/agy-cli.md](subagents/agy-cli.md)** — invocation, the `nohup &`
-  backgrounding failure mode, the silent-no-op failure modes (a cheerful "done" with zero effect
-  and zero error output), and the `chrome-devtools-mcp` Option A setup that gives Agy an
-  authenticated Chrome.
+- **§3a — Agy: [subagents/agy-cli.md](subagents/agy-cli.md)** — invocation, the backgrounding and
+  print-mode shutdown-hang failure modes (a long run whose report never lands, recoverable from
+  the conversation DB), the silent-no-op failure modes (a cheerful "done" with zero effect and
+  zero error output), and the `chrome-devtools-mcp` Option A setup that gives Agy an authenticated
+  Chrome.
   Agy is the pipeline's tester (§2.8–§2.10) — read agy-cli.md before any Agy task.
 
 The `Agent` tool spawns *Claude* subagents: `model: opus` for both Opus review touchpoints, and
@@ -198,8 +199,11 @@ planning or building inline (§1).
    subprocess prompt and capturing the final report to its own file, so orchestration continues
    and a notification arrives on exit. This holds for Agy too: its prompt is a `--print=`
    argument, not stdin, so harness-supervised backgrounding is safe (2026-08-28). Only a bare
-   `nohup agy … &` fails — it closes stdin and dies in ~10s (§3a). In Option A the human signs
-   Agy's Chrome in *before* the spawn, so there is no in-run wait to block on either.
+   `nohup agy … &` fails at launch — it closes stdin and dies in ~10s (§3a). Separately, a long
+   Agy run that leaves a server it started running async hangs at shutdown until `--print-timeout`
+   and loses its printed report — never let Agy start `wrangler dev`; bring it up first (§3a). In
+   Option A the human signs Agy's Chrome in *before* the spawn, so there is no in-run wait to
+   block on either.
 3. **Read the report file, not the raw transcript** — Codex's `--output-last-message` exists for
    this; Agy's response goes to stdout, so redirect it to a report file. The full JSONL can
    overflow context.

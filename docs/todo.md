@@ -42,9 +42,10 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
   epoch, 120s TTL); an enforced route security manifest (integration probes hit every withheld +
   external-surface route with a real external session); winner-gated role-transition (atomic
   incompatible-membership `NOT EXISTS` + `DELETE FROM session`).
-  Follow-up before the first External Editor is provisioned: set background secrets
-  `CLOUDFLARE_ZONE_ID` + `CLOUDFLARE_CACHE_PURGE_TOKEN` (`wrangler secret put`), or a later
-  `external_editor` role transition fails the cache purge → 30-min provisioning freeze.
+  Follow-up before the first External Editor is provisioned: set the background-Worker-only
+  secrets `CLOUDFLARE_ZONE_ID` + `CLOUDFLARE_CACHE_PURGE_TOKEN`, or a later `external_editor` role
+  transition fails the cache purge → 30-min provisioning freeze. Step-by-step:
+  `docs/Cloudflare-Cache-Purge-Setup.md`.
   Pipeline: Sol draft → fresh-Sol review ×2 (7B+3S then 4B) → Opus plan-tier revert 1/2 (3 Blocking:
   transform-bearer replay; upload proxy transport; unsatisfiable manifest) → fresh-Sol revision
   (bearer state machine ~84→19 lines; migration 0036 6→3 columns; transport → `env.MEDIA` R2
@@ -61,9 +62,15 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
   withheld probe `>= 400`, explicit `sql\`1=1\``, deleted dead `visibleProjectScopeSql`). Sol
   diff-review at medium effort was unusable (regurgitated the pre-fix blocker list); Opus carried
   the final review. ~8 Codex credit exhaustions across the plan + build pipeline.
-  **Residual QA:** local mutating role-matrix (Agy) and a human authenticated prod spot-check still
-  to run. Deferred Opus nits: F4 (hoist `isMissingMultipartUploadError` to `@quincy/shared`),
-  F5 (bound the completing-session sweep alert).
+  **Residual QA:** local mutating role-matrix QA (Agy, Option A, `http://localhost:8787`) **DONE
+  2026-08-28** — all 33 checks PASS (Setup S1–S6, Matrix A/B/C/D), including the two Opus round-8
+  blockers verified live (staff archived-project-by-id 200; upload-cap slot frees after abort).
+  Agy's `agy --print` wrapper hung post-completion (it started `wrangler dev` itself → async
+  shutdown hang, see `docs/subagents/agy-cli.md`); the report was recovered verbatim from the
+  conversation DB and its D1 end-state independently re-verified. Human authenticated prod
+  spot-check **waived by the user 2026-08-28** (passive verification already clean). Deferred Opus
+  nits: F4 (hoist `isMissingMultipartUploadError` to `@quincy/shared`), F5 (bound the
+  completing-session sweep alert).
 - **TB4D (Checklist Scheduling & Ranges — every project checklist item carries one truthful
   optional schedule: unscheduled / due-only / start+end range, without changing the shipped
   `due_date` or its due-today reminder) is deployed to production, 2026-08-28**
