@@ -54,6 +54,25 @@ beforeAll(async () => {
 });
 
 describe("Kanban priority and manual-position API", () => {
+  it("freezes Priority's legacy coupling to board_position through priorityInsertNeighbors", async () => {
+    const first = crypto.randomUUID(); const second = crypto.randomUUID(); const third = crypto.randomUUID(); const target = crypto.randomUUID();
+    await seedProject(first, "priority-coupling", 1024, 1);
+    await seedProject(second, "priority-coupling", 1536, 3); // prior midpoint insert.
+    await seedProject(third, "priority-coupling", 2048);
+    await seedProject(target, "priority-coupling", 4096);
+
+    const response = await request(`/api/projects/${target}/priority`, adminToken, { method: "POST", body: JSON.stringify({ priority: 2 }) });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ priority: 2, boardPosition: 1792 });
+    expect((await database.DB.prepare("SELECT id, priority, board_position FROM projects WHERE id IN (?, ?, ?, ?) ORDER BY board_position, id")
+      .bind(first, second, third, target).all()).results).toEqual([
+      { id: first, priority: 1, board_position: 1024 },
+      { id: second, priority: 3, board_position: 1536 },
+      { id: target, priority: 2, board_position: 1792 },
+      { id: third, priority: null, board_position: 2048 },
+    ]);
+  });
+
   it("repositions only the edited card and keeps the worked-example sibling positions", async () => {
     const a = crypto.randomUUID(); const b = crypto.randomUUID(); const c = crypto.randomUUID();
     await seedProject(a, "raw_review", 1024); await seedProject(b, "raw_review", 2048); await seedProject(c, "raw_review", 3072);
@@ -114,5 +133,28 @@ describe("Kanban priority and manual-position API", () => {
     const secondMove = await request(`/api/projects/${second}/stage`, adminToken, { method: "POST", body: JSON.stringify({ stageKey: "delivered" }) });
     expect((await firstMove.json() as { boardPosition: number }).boardPosition).toBe(0);
     expect((await secondMove.json() as { boardPosition: number }).boardPosition).toBe(1024);
+  });
+
+  it("keeps archived Board rows absent while an inactive current Stage remains visible and escapable", async () => {
+    const inactiveCurrent = crypto.randomUUID();
+    const archived = crypto.randomUUID();
+    await seedProject(inactiveCurrent, "delivered", 1024);
+    await seedProject(archived, "raw_review", 2048);
+    expect((await request(`/api/projects/${archived}/archive`, adminToken, { method: "POST" })).status).toBe(200);
+    await database.DB.prepare("INSERT OR IGNORE INTO pipeline_stages (key, label, display_order, active) VALUES ('delivered', 'Delivered', 5, 1)").run();
+    await database.DB.prepare("UPDATE pipeline_stages SET active = 0 WHERE key = 'delivered'").run();
+    try {
+      const board = await request("/api/projects", adminToken);
+      expect(board.status).toBe(200);
+      const projects = (await board.json() as { projects: Array<{ id: string; stageKey: string }> }).projects;
+      expect(projects.find((project) => project.id === inactiveCurrent)).toMatchObject({ id: inactiveCurrent, stageKey: "delivered" });
+      expect(projects.some((project) => project.id === archived)).toBe(false);
+
+      const escape = await request(`/api/projects/${inactiveCurrent}/stage`, adminToken, { method: "POST", body: JSON.stringify({ stageKey: "raw_review" }) });
+      expect(escape.status).toBe(200);
+      expect(await database.DB.prepare("SELECT stage_key FROM projects WHERE id = ?").bind(inactiveCurrent).first()).toEqual({ stage_key: "raw_review" });
+    } finally {
+      await database.DB.prepare("UPDATE pipeline_stages SET active = 1 WHERE key = 'delivered'").run();
+    }
   });
 });
