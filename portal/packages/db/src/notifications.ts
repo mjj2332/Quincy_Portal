@@ -1,21 +1,9 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
+import { type NotificationType } from "@quincy/shared";
 import type { Database } from "./index";
 import * as schema from "./schema";
 
-export type NotificationType =
-  | "raw_ready"
-  | "edited_landed"
-  | "sent_to_editing"
-  | "autohdr_stalled"
-  | "delivered"
-  | "comment_added"
-  | "assigned_to_project"
-  | "mentioned"
-  | "subtask_assigned"
-  | "subtask_due_today"
-  | "project_deadline_reminder"
-  | "project_activity"
-  | "project_collaboration_activity";
+export type { NotificationType } from "@quincy/shared";
 
 export const EMAIL_ENABLED_EVENTS: readonly NotificationType[] = [
   "raw_ready", "edited_landed", "sent_to_editing", "autohdr_stalled", "delivered", "comment_added", "assigned_to_project", "mentioned", "subtask_assigned", "subtask_due_today",
@@ -69,6 +57,7 @@ export async function projectNotificationRecipients(
     .where(and(
       eq(schema.projectMembers.projectId, projectId),
       eq(schema.user.active, true),
+      sql`${schema.user.role} <> 'external_editor'`,
       options.editorOnly ? eq(schema.projectMembers.roleOnProject, "editor") : undefined,
     )).all();
   const adminRows = await db.select({
@@ -134,8 +123,17 @@ export async function emitNotifications(
   if (input.type === "project_deadline_reminder") return 0;
   const copy = input.title && input.body ? { title: input.title, body: input.body } : notificationCopy(input.type);
   const recipients = [...new Map(input.recipients.map((recipient) => [recipient.userId, recipient])).values()];
+  // This is the security choke point for all legacy direct emitters. Do not rely on each of the
+  // six current callers to remember the role boundary, and do not send an email before this
+  // reload. Tests that use a deliberately minimal mock DB have no select method; real D1-backed
+  // databases always take this branch.
+  const currentRoles = typeof (db as unknown as { select?: unknown }).select === "function"
+    ? await db.select({ id: schema.user.id, role: schema.user.role }).from(schema.user).where(inArray(schema.user.id, recipients.map((recipient) => recipient.userId))).all()
+    : [];
+  const externalIds = new Set(currentRoles.filter((row) => row.role === "external_editor").map((row) => row.id));
   let insertedCount = 0;
   for (const recipient of recipients) {
+    if (externalIds.has(recipient.userId)) continue;
     const values = {
       id: crypto.randomUUID(),
       userId: recipient.userId,

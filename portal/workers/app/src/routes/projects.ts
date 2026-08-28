@@ -1,8 +1,9 @@
 import { Hono } from "hono";
+import { terminalRoute } from "../lib/terminal-route";
 import type { Context } from "hono";
 import { appendToStageBottomExpr, buildProjectActivityStatements, computeInsertPosition, createDb, dashboardProjectOrder, orderDashboardStreetTies, schema } from "@quincy/db";
 import { and, asc, desc, eq, exists, gt, inArray, isNotNull, isNull, lte, notExists, sql } from "drizzle-orm";
-import { COLLECTION_KINDS, DOWNLOAD_SELECTION_MAX_ASSETS, DOWNLOAD_SELECTION_MAX_BYTES, isStageKey, PHOTOGRAPHER_VISIBLE_STAGES, PROJECT_ASSIGNMENT_ELIGIBLE_ROLES, ROLE_CAPABILITIES, projectActivityDeepLink, publishNotificationOutbox, roleHasCapability, type CollectionKind, type ProjectActivityIntent, type ProjectMemberRole, type ProjectMembershipDto, type Role } from "@quincy/shared";
+import { COLLECTION_KINDS, DOWNLOAD_SELECTION_MAX_ASSETS, DOWNLOAD_SELECTION_MAX_BYTES, isStageKey, PHOTOGRAPHER_VISIBLE_STAGES, PROJECT_ASSIGNMENT_ELIGIBLE_ROLES, projectActivityDeepLink, publishNotificationOutbox, roleHasCapability, type CollectionKind, type ProjectActivityIntent, type ProjectMemberRole, type ProjectMembershipDto, type Role } from "@quincy/shared";
 import { z } from "zod";
 import type { AppEnv } from "../env";
 import { hasProjectAccess, hasProjectAccessForUser, requireCapability } from "../middleware/capability";
@@ -17,14 +18,15 @@ import { abortMultipart } from "../lib/r2s3";
 import { isUserVisibleAsset } from "../lib/asset-visibility";
 import { manualInsertNeighbors, needsPositionRenumber, orderedBoardRows, priorityInsertNeighbors, renumberedInsertPosition, type BoardRow } from "../lib/kanban-ordering";
 import { readProjectDeadlineSchedule, suppressProjectDeadlineWork } from "../lib/project-deadline";
+import { listExternalProjects, readExternalProjectDetail } from "../lib/external-project-query";
 
 const nullable = <T extends z.ZodTypeAny>(item: T) => item.nullable().optional();
-const baseProjectFields = z.object({ street: z.string().min(1), suburb: nullable(z.string()), postcode: nullable(z.string()), agencyName: nullable(z.string()), agentName: nullable(z.string()), agentEmail: nullable(z.string().email()), agentPhone: nullable(z.string()), agencyId: nullable(z.string().uuid()), agentId: nullable(z.string().uuid()), shootDate: nullable(z.string()), timeWindow: nullable(z.string()), orderNo: nullable(z.string()), orderId: nullable(z.string()), invoiceAmount: nullable(z.number()), paymentStatus: nullable(z.string()), notes: nullable(z.string()), rawFolderLink: nullable(z.string().url()), rawFolderPath: nullable(z.string()), orderedServices: z.array(z.enum(COLLECTION_KINDS)).optional() });
+const baseProjectFields = z.object({ street: z.string().min(1), suburb: nullable(z.string()), postcode: nullable(z.string()), agencyName: nullable(z.string()), agentName: nullable(z.string()), agentEmail: nullable(z.string().email()), agentPhone: nullable(z.string()), agencyId: nullable(z.string().uuid()), agentId: nullable(z.string().uuid()), shootDate: nullable(z.string()), timeWindow: nullable(z.string()), orderNo: nullable(z.string()), orderId: nullable(z.string()), invoiceAmount: nullable(z.number()), paymentStatus: nullable(z.string()), notes: nullable(z.string()), productionNotes: nullable(z.string()), rawFolderLink: nullable(z.string().url()), rawFolderPath: nullable(z.string()), orderedServices: z.array(z.enum(COLLECTION_KINDS)).optional() });
 const createProjectFields = baseProjectFields.extend({ photographerUserIds: z.array(z.string().uuid()).optional(), editorUserIds: z.array(z.string().uuid()).optional() });
 const editFields = baseProjectFields.partial().strict();
 const deleteProjectMembershipInput = z.discriminatedUnion("clearSubtaskAssignments", [
-  z.object({ membershipCycle: z.string().uuid(), clearSubtaskAssignments: z.literal(false), confirmedAssignmentCount: z.literal(0) }).strict(),
-  z.object({ membershipCycle: z.string().uuid(), clearSubtaskAssignments: z.literal(true), confirmedAssignmentCount: z.number().int().nonnegative() }).strict(),
+  z.object({ membershipCycle: z.string().uuid(), clearSubtaskAssignments: z.literal(false), confirmedAssignmentCount: z.literal(0), confirmAccessLoss: z.boolean().optional() }).strict(),
+  z.object({ membershipCycle: z.string().uuid(), clearSubtaskAssignments: z.literal(true), confirmedAssignmentCount: z.number().int().nonnegative(), confirmAccessLoss: z.boolean().optional() }).strict(),
 ]);
 const coverInput = z.object({ assetId: z.string().uuid().nullable() });
 const priorityInput = z.object({ priority: z.number().int().min(1).max(10).nullable() });
@@ -253,7 +255,7 @@ async function details(db: ReturnType<typeof createDb>, d1: D1Database, projectI
   const counts = new Map(assignedCounts.map((row) => [row.userId, Number(row.assignedSubtaskCount ?? 0)]));
   const memberDtos: ProjectMembershipDto[] = members.map((member) => ({ ...member, active: Boolean(member.active), assignedSubtaskCount: counts.get(member.userId) ?? 0 }));
   const deadlineSchedule = await readProjectDeadlineSchedule(d1, projectId);
-  return projectStageForRole({ ...project, effectiveCoverAssetId: storedByProject.get(projectId) ?? automaticByProject.get(projectId) ?? null, collections, members: memberDtos, deadlineSchedule }, role);
+  return projectStageForRole({ ...project, editedUploadAvailable: Boolean(project.rawFolderPath || project.rawFolderLink), effectiveCoverAssetId: storedByProject.get(projectId) ?? automaticByProject.get(projectId) ?? null, collections, members: memberDtos, deadlineSchedule }, role);
 }
 
 type AssignmentCandidate = { id: string; name: string; email: string; globalRole: Role; active: true };
@@ -284,7 +286,7 @@ function createProjectResponse(data: z.infer<typeof createProjectFields>, id: st
     agencyName: data.agencyName ?? null, agentName: data.agentName ?? null, agentEmail: data.agentEmail ?? null, agentPhone: data.agentPhone ?? null,
     agencyId: data.agencyId ?? null, agentId: data.agentId ?? null, shootDate: data.shootDate ?? null, timeWindow: data.timeWindow ?? null,
     stageKey: "awaiting_raw", priority: null, boardPosition: 0, orderNo: data.orderNo ?? null, orderId: data.orderId ?? null,
-    invoiceAmount: data.invoiceAmount ?? null, paymentStatus: data.paymentStatus ?? null, notes: data.notes ?? null,
+    invoiceAmount: data.invoiceAmount ?? null, paymentStatus: data.paymentStatus ?? null, notes: data.notes ?? null, productionNotes: data.productionNotes ?? null,
     rawFolderLink: data.rawFolderLink ?? null, rawFolderPath: data.rawFolderPath ?? null, coverAssetId: null, effectiveCoverAssetId: null,
     archivedAt: null, archivedBy: null, members: memberships,
   };
@@ -313,18 +315,18 @@ async function createProjectAtomically(c: Context<AppEnv>, data: z.infer<typeof 
     projectId, data.street, data.suburb ?? null, data.postcode ?? null, data.agencyName ?? null, data.agentName ?? null,
     data.agentEmail ?? null, data.agentPhone ?? null, data.agencyId ?? null, data.agentId ?? null, data.shootDate ?? null,
     data.timeWindow ?? null, data.orderNo ?? null, data.orderId ?? null, data.invoiceAmount ?? null, data.paymentStatus ?? null,
-    data.notes ?? null, data.rawFolderLink ?? null, data.rawFolderPath ?? null, now, now,
+    data.notes ?? null, data.productionNotes ?? null, data.rawFolderLink ?? null, data.rawFolderPath ?? null, now, now,
   ];
   const projectInsert = raw.prepare(`
     INSERT INTO projects (
       id, street, suburb, postcode, agency_name, agent_name, agent_email, agent_phone,
       agency_id, agent_id, shoot_date, time_window, stage_key, board_position,
-      order_no, order_id, invoice_amount, payment_status, notes, raw_folder_link, raw_folder_path,
+      order_no, order_id, invoice_amount, payment_status, notes, production_notes, raw_folder_link, raw_folder_path,
       created_at, updated_at
     )
     SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'awaiting_raw',
       (SELECT COALESCE(MAX(board_position) + 1024, 0) FROM projects WHERE stage_key = 'awaiting_raw' AND archived_at IS NULL AND id != ?),
-      ?, ?, ?, ?, ?, ?, ?, ?, ?
+      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
     WHERE ${eligibilityPredicates.length ? eligibilityPredicates.join(" AND ") : "1 = 1"}
     RETURNING id
   `).bind(...fieldValues.slice(0, 12), projectId, ...fieldValues.slice(12), ...slots.flatMap((slot) => [slot.userId, ...PROJECT_ASSIGNMENT_ELIGIBLE_ROLES[slot.roleOnProject]]));
@@ -375,9 +377,10 @@ function rowsFromD1<T>(result: unknown): T[] {
 
 function firstD1<T>(result: unknown): T | undefined { return rowsFromD1<T>(result)[0]; }
 export const projectsRoutes = new Hono<AppEnv>();
-projectsRoutes.get("/projects", async (c) => {
+projectsRoutes.get("/projects", terminalRoute("/projects", async (c) => {
   const db = createDb(c.env.DB); const user = c.get("user");
-  const archived = c.req.query("archived") === "1" && ROLE_CAPABILITIES[user.role].includes("adminBackend");
+  if (user.role === "external_editor") return c.json(await listExternalProjects(c.env, user.id, user.role));
+  const archived = c.req.query("archived") === "1" && roleHasCapability(user.role, "adminBackend");
   const archivedFilter = archived ? isNotNull(schema.projects.archivedAt) : isNull(schema.projects.archivedAt);
   const base = db.select({ project: schema.projects, receivedCount: schema.collections.receivedCount, expectedCount: schema.collections.expectedCount }).from(schema.projects).leftJoin(schema.collections, and(eq(schema.collections.projectId, schema.projects.id), eq(schema.collections.kind, "raw")));
   const rows = user.role === "photographer"
@@ -387,14 +390,14 @@ projectsRoutes.get("/projects", async (c) => {
   const projectIds = orderedRows.map(({ project }) => project.id);
   const { storedByProject, automaticByProject } = await coverMaps(db, projectIds, user.role === "photographer");
   return c.json({ projects: orderedRows.map((r) => projectStageForRole({ ...r.project, coverAssetId: storedByProject.get(r.project.id) ?? automaticByProject.get(r.project.id) ?? null, receivedCount: r.receivedCount ?? 0, expectedCount: r.expectedCount, deadlineAt: r.project.deadlineAt, deadlineLocalCivil: r.project.deadlineLocalCivil, deadlineZone: r.project.deadlineZone }, user.role)) });
-});
-projectsRoutes.get("/project-assignment-candidates", async (c) => {
+}));
+projectsRoutes.get("/project-assignment-candidates", terminalRoute("/project-assignment-candidates", async (c) => {
   const user = c.get("user");
   if (!roleHasCapability(user.role, "createProject") && !roleHasCapability(user.role, "editProject")) return c.json({ error: "Forbidden", capability: "editProject" }, 403);
   return c.json(await assignmentCandidates(createDb(c.env.DB)));
-});
+}));
 
-projectsRoutes.post("/projects", requireCapability("createProject"), async (c) => {
+projectsRoutes.post("/projects", requireCapability("createProject"), terminalRoute("/projects", async (c) => {
   const data = await jsonInput(c, createProjectFields); if (data instanceof Response) return data;
   const slots = normalizedProjectSlots(data.photographerUserIds, data.editorUserIds);
   const candidates = await assignmentCandidates(createDb(c.env.DB));
@@ -407,12 +410,12 @@ projectsRoutes.post("/projects", requireCapability("createProject"), async (c) =
   const result = await createProjectAtomically(c, data, slots, candidates);
   if (!result.created) return c.json({ error: "One or more project assignments are not eligible", code: "ineligible_project_assignments", ineligibleSlots: result.ineligibleSlots }, 422);
   return c.json(result.response, 201);
-});
+}));
 
-projectsRoutes.post("/projects/:id/priority", async (c) => {
+projectsRoutes.post("/projects/:id/priority", terminalRoute("/projects/:id/priority", async (c) => {
   const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
   if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
-  if (!ROLE_CAPABILITIES[c.get("user").role].includes("prioritizeProjects")) return c.json({ error: "Forbidden", capability: "prioritizeProjects" }, 403);
+  if (!roleHasCapability(c.get("user").role, "prioritizeProjects")) return c.json({ error: "Forbidden", capability: "prioritizeProjects" }, 403);
   const data = await jsonInput(c, priorityInput); if (data instanceof Response) return data;
   const db = createDb(c.env.DB);
   const target = await db.select({ id: schema.projects.id, stageKey: schema.projects.stageKey, priority: schema.projects.priority, boardPosition: schema.projects.boardPosition })
@@ -449,12 +452,12 @@ projectsRoutes.post("/projects/:id/priority", async (c) => {
   const publicationIds = rowsFromD1<{ id: string }>(tailResults[1 + activityStatements.broadOutboxIndex]).map((row) => row.id);
   if (publicationIds.length) c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, publicationIds));
   return c.json({ priority: result.priority, boardPosition: result.boardPosition });
-});
+}));
 
-projectsRoutes.post("/projects/:id/board-position", async (c) => {
+projectsRoutes.post("/projects/:id/board-position", terminalRoute("/projects/:id/board-position", async (c) => {
   const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
   if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
-  if (!ROLE_CAPABILITIES[c.get("user").role].includes("prioritizeProjects")) return c.json({ error: "Forbidden", capability: "prioritizeProjects" }, 403);
+  if (!roleHasCapability(c.get("user").role, "prioritizeProjects")) return c.json({ error: "Forbidden", capability: "prioritizeProjects" }, 403);
   const data = await jsonInput(c, boardPositionInput); if (data instanceof Response) return data;
   const db = createDb(c.env.DB);
   const rows = await db.select({ id: schema.projects.id, stageKey: schema.projects.stageKey, priority: schema.projects.priority, boardPosition: schema.projects.boardPosition })
@@ -479,11 +482,11 @@ projectsRoutes.post("/projects/:id/board-position", async (c) => {
     return c.json({ error: "Project stage changed while board position was being updated" }, 409);
   }
   return c.json({ boardPosition: result.boardPosition });
-});
-projectsRoutes.patch("/projects/:id", async (c) => {
+}));
+projectsRoutes.patch("/projects/:id", terminalRoute("/projects/:id", async (c) => {
   const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
   if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
-  if (!ROLE_CAPABILITIES[c.get("user").role].includes("editProject")) return c.json({ error: "Forbidden", capability: "editProject" }, 403);
+  if (!roleHasCapability(c.get("user").role, "editProject")) return c.json({ error: "Forbidden", capability: "editProject" }, 403);
   const data = await jsonInput(c, editFields); if (data instanceof Response) return data;
   const db = createDb(c.env.DB);
   const existingProject = await db.select().from(schema.projects).where(eq(schema.projects.id, id)).get();
@@ -508,7 +511,7 @@ projectsRoutes.patch("/projects/:id", async (c) => {
   const blocked = removedCollections.filter((collection) => collection.receivedCount > 0 || (preCounts.assets.get(collection.id) ?? 0) > 0 || (preCounts.manifests.get(collection.id) ?? 0) > 0 || (preCounts.documents.get(collection.id) ?? 0) > 0 || (preCounts.links.get(collection.id) ?? 0) > 0);
   if (blocked.length) return c.json({ error: "Services with received media or active document uploads cannot be removed.", blocked: blocked.map((collection) => ({ kind: collection.kind, assetCount: preCounts.assets.get(collection.id) ?? 0, manifestCount: preCounts.manifests.get(collection.id) ?? 0, activeDocumentSessions: preCounts.documents.get(collection.id) ?? 0 })) }, 409);
 
-  const dbFieldMap: Record<string, string> = { street: "street", suburb: "suburb", postcode: "postcode", agencyName: "agency_name", agentName: "agent_name", agentEmail: "agent_email", agentPhone: "agent_phone", agencyId: "agency_id", agentId: "agent_id", shootDate: "shoot_date", timeWindow: "time_window", orderNo: "order_no", orderId: "order_id", invoiceAmount: "invoice_amount", paymentStatus: "payment_status", notes: "notes", rawFolderLink: "raw_folder_link", rawFolderPath: "raw_folder_path" };
+  const dbFieldMap: Record<string, string> = { street: "street", suburb: "suburb", postcode: "postcode", agencyName: "agency_name", agentName: "agent_name", agentEmail: "agent_email", agentPhone: "agent_phone", agencyId: "agency_id", agentId: "agent_id", shootDate: "shoot_date", timeWindow: "time_window", orderNo: "order_no", orderId: "order_id", invoiceAmount: "invoice_amount", paymentStatus: "payment_status", notes: "notes", productionNotes: "production_notes", rawFolderLink: "raw_folder_link", rawFolderPath: "raw_folder_path" };
   const updateParts: string[] = []; const updateBindings: unknown[] = []; const snapshotParts: string[] = []; const snapshotBindings: unknown[] = []; const changeParts: string[] = []; const changeBindings: unknown[] = [];
   for (const [key, column] of Object.entries(dbFieldMap)) {
     if (!Object.prototype.hasOwnProperty.call(projectUpdates, key)) continue;
@@ -528,7 +531,7 @@ projectsRoutes.patch("/projects/:id", async (c) => {
     changeParts.push(`(${serviceDelta})`); changeBindings.push(...requestedKinds, ...requestedKinds);
   }
   const auditId = newId(); const activityId = newId();
-  const safeFieldMap = { street: "address", shootDate: "shootDate", timeWindow: "timeWindow", agencyName: "agency", agentName: "agent" } as const;
+  const safeFieldMap = { street: "address", shootDate: "shootDate", timeWindow: "timeWindow", agencyName: "agency", agentName: "agent", productionNotes: "productionNotes" } as const;
   const safeChangedFields: string[] = (Object.keys(safeFieldMap) as Array<keyof typeof safeFieldMap>).flatMap((key) => Object.prototype.hasOwnProperty.call(projectUpdates, key) && projectUpdates[key] !== (existingProject as unknown as Record<string, unknown>)[key] ? [safeFieldMap[key]] : []);
   const servicesChanged = orderedServices !== undefined && (removedCollections.length > 0 || addedKinds.length > 0);
   if (servicesChanged) safeChangedFields.push("services");
@@ -541,7 +544,8 @@ projectsRoutes.patch("/projects/:id", async (c) => {
   const changePredicate = changeParts.length ? changeParts.join(" OR ") : "0 = 1";
   const updateWhere = ["id = ?", "stage_key = ?", "archived_at IS NULL", `(${snapshotPredicate})`, `(${changePredicate})`, removalSafe].join(" AND ");
   const projectUpdate = c.env.DB.prepare(`UPDATE projects SET ${[...updateParts, "updated_at = ?"].join(", ")} WHERE ${updateWhere} RETURNING id`).bind(...updateBindings, Date.now(), id, existingProject.stageKey, ...snapshotBindings, ...changeBindings, ...(orderedServices === undefined ? [] : desiredKinds));
-  const projectAuditMeta: Record<string, unknown> = { ...projectUpdates };
+  const projectAuditMeta: Record<string, unknown> = Object.fromEntries(Object.entries(projectUpdates).filter(([key]) => key !== "productionNotes"));
+  if (Object.prototype.hasOwnProperty.call(projectUpdates, "productionNotes")) projectAuditMeta.changedFields = [...(Array.isArray(projectAuditMeta.changedFields) ? projectAuditMeta.changedFields : []), "productionNotes"];
   if (orderedServices !== undefined) { projectAuditMeta.servicesAdded = addedKinds; projectAuditMeta.servicesRemoved = removedCollections.map((collection) => collection.kind); }
   const serviceStatements: D1PreparedStatement[] = [];
   if (orderedServices !== undefined) {
@@ -566,14 +570,14 @@ projectsRoutes.patch("/projects/:id", async (c) => {
   }
   if (projectUpdates.rawFolderPath !== undefined && projectUpdates.rawFolderPath !== existingProject.rawFolderPath) c.executionCtx.waitUntil(c.env.BACKGROUND.ensureAutoHdrScaffold(id).catch((error) => console.error("AutoHDR scaffold trigger failed", { projectId: id, error })));
   return c.json(await details(db, c.env.DB, id, c.get("user").role));
-});
+}));
 
 function projectMembershipRoute(roleOnProject: ProjectMemberRole, method: "put" | "delete") {
   const path = {
     photographer: "/projects/:projectId/photographers/:userId",
     editor: "/projects/:projectId/editors/:userId",
   }[roleOnProject];
-  return projectsRoutes[method](path, async (c) => {
+  return projectsRoutes[method](path, terminalRoute(path, async (c) => {
     const projectId = c.req.param("projectId") ?? "";
     const userId = c.req.param("userId") ?? "";
     if (!idCheck(projectId) || !idCheck(userId)) return c.json({ error: "Invalid project or user id" }, 400);
@@ -602,12 +606,12 @@ function projectMembershipRoute(roleOnProject: ProjectMemberRole, method: "put" 
       }
     }
 
-    const result = await removeProjectMemberCycle(c.env.DB, { projectId, userId, roleOnProject, membershipCycle: body!.membershipCycle, clearSubtaskAssignments: body!.clearSubtaskAssignments, confirmedAssignmentCount: body!.confirmedAssignmentCount, actorId: principal.id, auditPrincipal: principal });
+    const result = await removeProjectMemberCycle(c.env.DB, { projectId, userId, roleOnProject, membershipCycle: body!.membershipCycle, clearSubtaskAssignments: body!.clearSubtaskAssignments, confirmedAssignmentCount: body!.confirmedAssignmentCount, confirmAccessLoss: body!.confirmAccessLoss, actorId: principal.id, auditPrincipal: principal });
     if (result.outcome === "stale") return c.json({ error: "Project membership changed; refreshed current assignment", code: "membership_cycle_changed", requestedMembershipCycle: body!.membershipCycle, currentMembership: result.currentMembership }, 409);
-    if (result.outcome === "confirmation_required") return c.json({ error: "Checklist assignment state changed; confirm final-role removal again", code: "subtask_assignment_confirmation_required", assignmentCount: result.assignmentCount, currentMembership: result.currentMembership }, 422);
+    if (result.outcome === "confirmation_required") return c.json({ error: "Project access will be lost immediately; confirm final-role removal again", code: "subtask_assignment_confirmation_required", assignmentCount: result.assignmentCount, accessWillBeLost: result.accessWillBeLost, message: `Project access will be lost immediately. ${result.assignmentCount} checklist assignments will be cleared.`, currentMembership: result.currentMembership }, 422);
     if (result.notificationOutboxIds.length) c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, result.notificationOutboxIds));
     return c.json({ outcome: "removed", removed: { membershipCycle: body!.membershipCycle, userId, roleOnProject }, subtaskAssignmentsCleared: result.subtaskAssignmentsCleared }, 200);
-  });
+  }));
 }
 
 projectMembershipRoute("photographer", "put");
@@ -615,10 +619,10 @@ projectMembershipRoute("photographer", "delete");
 projectMembershipRoute("editor", "put");
 projectMembershipRoute("editor", "delete");
 
-projectsRoutes.post("/projects/:id/cover", async (c) => {
+projectsRoutes.post("/projects/:id/cover", terminalRoute("/projects/:id/cover", async (c) => {
   const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
   if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
-  if (!ROLE_CAPABILITIES[c.get("user").role].includes("editProject")) return c.json({ error: "Forbidden", capability: "editProject" }, 403);
+  if (!roleHasCapability(c.get("user").role, "editProject")) return c.json({ error: "Forbidden", capability: "editProject" }, 403);
   const data = await jsonInput(c, coverInput); if (data instanceof Response) return data;
   const db = createDb(c.env.DB);
   // hasProjectAccess passes for any id under viewAllProjects — without this check an admin
@@ -633,25 +637,25 @@ projectsRoutes.post("/projects/:id/cover", async (c) => {
   await db.update(schema.projects).set({ coverAssetId: data.assetId, updatedAt: new Date() }).where(eq(schema.projects.id, id));
   await audit(c.env, c.get("user"), "project.cover.set", "project", id, { assetId: data.assetId });
   return c.json({ coverAssetId: data.assetId });
-});
-projectsRoutes.post("/projects/:id/dropbox-sync", async (c) => {
+}));
+projectsRoutes.post("/projects/:id/dropbox-sync", terminalRoute("/projects/:id/dropbox-sync", async (c) => {
   const id = c.req.param("id");
   const user = c.get("user");
-  if (!ROLE_CAPABILITIES[user.role].includes("uploadRaw")) return c.json({ error: "Forbidden", capability: "uploadRaw" }, 403);
+  if (!roleHasCapability(user.role, "uploadRaw")) return c.json({ error: "Forbidden", capability: "uploadRaw" }, 403);
   if (!(await hasProjectAccess(c, id))) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   const project = await createDb(c.env.DB).select({ rawFolderPath: schema.projects.rawFolderPath, rawFolderLink: schema.projects.rawFolderLink }).from(schema.projects).where(eq(schema.projects.id, id)).get();
   if (!project?.rawFolderPath && !project?.rawFolderLink) return c.json({ error: "No Dropbox folder configured for this project" }, 400);
   const { jobId } = await c.env.BACKGROUND.triggerDropboxSync(id);
   await audit(c.env, user, "project.dropbox_sync", "project", id, { jobId });
   return c.json({ ok: true, jobId });
-});
+}));
 
-projectsRoutes.post("/projects/:id/sync-dropbox", async (c) => {
+projectsRoutes.post("/projects/:id/sync-dropbox", terminalRoute("/projects/:id/sync-dropbox", async (c) => {
   const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
   if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   const user = c.get("user");
-  const hasUploadRaw = ROLE_CAPABILITIES[user.role].includes("uploadRaw");
-  const isAdmin = ROLE_CAPABILITIES[user.role].includes("adminBackend");
+  const hasUploadRaw = roleHasCapability(user.role, "uploadRaw");
+  const isAdmin = roleHasCapability(user.role, "adminBackend");
   if (!hasUploadRaw && !isAdmin) return c.json({ error: "Forbidden" }, 403);
   const db = createDb(c.env.DB);
   const project = await db.select({ rawFolderPath: schema.projects.rawFolderPath, rawFolderLink: schema.projects.rawFolderLink, archivedAt: schema.projects.archivedAt })
@@ -698,9 +702,9 @@ projectsRoutes.post("/projects/:id/sync-dropbox", async (c) => {
   const editedNotApplicable = "skipped" in result.edited && (result.edited.skipped === "not_ready" || result.edited.skipped === "not_admin");
   if (rawNotApplicable && editedNotApplicable) return c.json({ error: "Nothing available to sync right now", result }, 409);
   return c.json(result);
-});
+}));
 
-projectsRoutes.post("/projects/:id/send-to-autohdr", requireCapability("adminBackend"), async (c) => {
+projectsRoutes.post("/projects/:id/send-to-autohdr", requireCapability("adminBackend"), terminalRoute("/projects/:id/send-to-autohdr", async (c) => {
   const id = c.req.param("id");
   if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
   if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
@@ -718,9 +722,9 @@ projectsRoutes.post("/projects/:id/send-to-autohdr", requireCapability("adminBac
     retrievalEnabled: false,
   });
   return c.json({ jobId: result.jobId });
-});
+}));
 
-projectsRoutes.post("/projects/:id/fetch-edited", requireCapability("adminBackend"), async (c) => {
+projectsRoutes.post("/projects/:id/fetch-edited", requireCapability("adminBackend"), terminalRoute("/projects/:id/fetch-edited", async (c) => {
   const id = c.req.param("id");
   if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
   if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
@@ -735,9 +739,9 @@ projectsRoutes.post("/projects/:id/fetch-edited", requireCapability("adminBacken
   }
   await audit(c.env, c.get("user"), "project.fetch_edited", "project", id, { jobId: result.jobId });
   return c.json({ jobId: result.jobId });
-});
+}));
 
-projectsRoutes.get("/projects/:id/autohdr-status", requireCapability("adminBackend"), async (c) => {
+projectsRoutes.get("/projects/:id/autohdr-status", requireCapability("adminBackend"), terminalRoute("/projects/:id/autohdr-status", async (c) => {
   const projectId = c.req.param("id");
   if (!idCheck(projectId)) return c.json({ error: "Invalid project id" }, 400);
   if (!await hasProjectAccess(c, projectId)) return c.json({ error: "Forbidden" }, 403);
@@ -771,9 +775,9 @@ projectsRoutes.get("/projects/:id/autohdr-status", requireCapability("adminBacke
       associations,
     },
   });
-});
+}));
 
-projectsRoutes.get("/projects/:id/autohdr-history", requireCapability("adminBackend"), async (c) => {
+projectsRoutes.get("/projects/:id/autohdr-history", requireCapability("adminBackend"), terminalRoute("/projects/:id/autohdr-history", async (c) => {
   const projectId = c.req.param("id");
   if (!idCheck(projectId)) return c.json({ error: "Invalid project id" }, 400);
   if (!await hasProjectAccess(c, projectId)) return c.json({ error: "Forbidden" }, 403);
@@ -792,9 +796,9 @@ projectsRoutes.get("/projects/:id/autohdr-history", requireCapability("adminBack
     .where(eq(schema.assets.source, "dropbox"))
     .orderBy(desc(schema.assets.createdAt)).all();
   return c.json({ assets: rows });
-});
+}));
 
-projectsRoutes.post("/projects/:id/autohdr-coverage", requireCapability("adminBackend"), async (c) => {
+projectsRoutes.post("/projects/:id/autohdr-coverage", requireCapability("adminBackend"), terminalRoute("/projects/:id/autohdr-coverage", async (c) => {
   const projectId = c.req.param("id");
   if (!idCheck(projectId)) return c.json({ error: "Invalid project id" }, 400);
   if (!await hasProjectAccess(c, projectId)) return c.json({ error: "Forbidden" }, 403);
@@ -814,13 +818,13 @@ projectsRoutes.post("/projects/:id/autohdr-coverage", requireCapability("adminBa
   }).onConflictDoNothing();
   await audit(c.env, c.get("user"), "autohdr.coverage.resolve", "asset", data.assetId, { projectId, handoffId: data.handoffId, readinessUnitKey: data.readinessUnitKey });
   return c.json({ ok: true });
-});
+}));
 
-projectsRoutes.get("/projects/:id/selected-raw.zip", async (c) => {
+projectsRoutes.get("/projects/:id/selected-raw.zip", terminalRoute("/projects/:id/selected-raw.zip", async (c) => {
   const id = c.req.param("id");
   if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
   if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
-  if (!ROLE_CAPABILITIES[c.get("user").role].includes("selectForEditing")) return c.json({ error: "Forbidden", capability: "selectForEditing" }, 403);
+  if (!roleHasCapability(c.get("user").role, "selectForEditing")) return c.json({ error: "Forbidden", capability: "selectForEditing" }, 403);
   const db = createDb(c.env.DB);
   const selected = await db.select({ r2Key: schema.assets.r2Key, originalFilename: schema.assets.originalFilename, bytes: schema.assets.bytes })
     .from(schema.selections)
@@ -841,9 +845,9 @@ projectsRoutes.get("/projects/:id/selected-raw.zip", async (c) => {
   }
   await audit(c.env, c.get("user"), "project.download_selected", "project", id, { count: selected.length });
   return new Response(createZipStream(entries()), { headers: { "content-type": "application/zip", "content-disposition": `attachment; filename="${filename}"` } });
-});
+}));
 
-projectsRoutes.post("/projects/:id/download-selection", async (c) => {
+projectsRoutes.post("/projects/:id/download-selection", terminalRoute("/projects/:id/download-selection", async (c) => {
   const projectId = c.req.param("id");
   if (!idCheck(projectId)) return c.json({ error: "Invalid project id" }, 400);
   const data = await jsonInput(c, downloadSelectionInput); if (data instanceof Response) return data;
@@ -861,11 +865,11 @@ projectsRoutes.post("/projects/:id/download-selection", async (c) => {
     createdAt: now,
   });
   return c.json({ downloadUrl: `/api/projects/${projectId}/download-selection/${ticket}/archive.zip` }, 201);
-});
+}));
 
 // `archive.zip` must remain a static path segment: in Hono, `:ticket.zip` creates a
 // parameter named "ticket.zip", rather than a `ticket` parameter with a literal suffix.
-projectsRoutes.get("/projects/:id/download-selection/:ticket/archive.zip", async (c) => {
+projectsRoutes.get("/projects/:id/download-selection/:ticket/archive.zip", terminalRoute("/projects/:id/download-selection/:ticket/archive.zip", async (c) => {
   const projectId = c.req.param("id");
   const ticketId = c.req.param("ticket");
   if (!idCheck(projectId)) return c.json({ error: "Invalid project id" }, 400);
@@ -914,9 +918,9 @@ projectsRoutes.get("/projects/:id/download-selection/:ticket/archive.zip", async
       "cache-control": "private, no-store",
     },
   });
-});
+}));
 
-projectsRoutes.get("/projects/:id/manual-upload-jobs", async (c) => {
+projectsRoutes.get("/projects/:id/manual-upload-jobs", requireCapability("adminBackend"), terminalRoute("/projects/:id/manual-upload-jobs", async (c) => {
   const id = c.req.param("id");
   if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
   if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
@@ -924,9 +928,9 @@ projectsRoutes.get("/projects/:id/manual-upload-jobs", async (c) => {
     id: schema.jobs.id, status: schema.jobs.status, error: schema.jobs.error,
   }).from(schema.jobs).where(and(eq(schema.jobs.projectId, id), inArray(schema.jobs.kind, ["manual_edited_publish", "manual_raw_publish"]))).orderBy(desc(schema.jobs.createdAt)).limit(50).all();
   return c.json({ jobs: rows });
-});
+}));
 
-projectsRoutes.get("/projects/:id/jobs", requireCapability("adminBackend"), async (c) => {
+projectsRoutes.get("/projects/:id/jobs", requireCapability("adminBackend"), terminalRoute("/projects/:id/jobs", async (c) => {
   const id = c.req.param("id");
   if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
   if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
@@ -936,9 +940,9 @@ projectsRoutes.get("/projects/:id/jobs", requireCapability("adminBackend"), asyn
     createdAt: schema.jobs.createdAt, updatedAt: schema.jobs.updatedAt,
   }).from(schema.jobs).where(and(eq(schema.jobs.projectId, id), inArray(schema.jobs.kind, ["autohdr_api_send", "autohdr", "fetch_edited", "autohdr_scaffold", "manual_edited_publish", "manual_raw_publish"]))).orderBy(desc(schema.jobs.createdAt)).limit(20).all();
   return c.json({ jobs: rows });
-});
+}));
 
-projectsRoutes.post("/jobs/:id/retry", requireCapability("adminBackend"), async (c) => {
+projectsRoutes.post("/jobs/:id/retry", requireCapability("adminBackend"), terminalRoute("/jobs/:id/retry", async (c) => {
   const id = c.req.param("id");
   if (!idCheck(id)) return c.json({ error: "Invalid job id" }, 400);
   const job = await createDb(c.env.DB).select({ id: schema.jobs.id, projectId: schema.jobs.projectId, kind: schema.jobs.kind, status: schema.jobs.status, payloadJson: schema.jobs.payloadJson })
@@ -965,11 +969,11 @@ projectsRoutes.post("/jobs/:id/retry", requireCapability("adminBackend"), async 
   const jobId = outcome.jobId;
   await audit(c.env, c.get("user"), job.kind === "autohdr" ? "project.retry_autohdr" : job.kind === "fetch_edited" ? "project.retry_fetch_edited" : job.kind === "autohdr_scaffold" ? "project.retry_autohdr_scaffold" : job.kind === "manual_raw_publish" ? "project.retry_manual_raw_publish" : "project.retry_manual_edited_publish", "project", job.projectId, { previousJobId: id, jobId });
   return c.json({ jobId });
-});
+}));
 
-for (const [path, archived] of [["/projects/:id/archive", true], ["/projects/:id/restore", false]] as const) projectsRoutes.post(path, async (c) => {
+for (const [path, archived] of [["/projects/:id/archive", true], ["/projects/:id/restore", false]] as const) projectsRoutes.post(path, terminalRoute(path, async (c) => {
   const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
-  if (!ROLE_CAPABILITIES[c.get("user").role].includes("archiveProject")) return c.json({ error: "Forbidden", capability: "archiveProject" }, 403);
+  if (!roleHasCapability(c.get("user").role, "archiveProject")) return c.json({ error: "Forbidden", capability: "archiveProject" }, 403);
   const db = createDb(c.env.DB); const now = new Date();
   if (archived) {
     // Ownership survives archive: retire the mapping and tombstone both permanent candidate
@@ -1058,14 +1062,14 @@ for (const [path, archived] of [["/projects/:id/archive", true], ["/projects/:id
     if (publicationIds.length) c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, publicationIds));
   }
   return c.json({ ok: true });
-});
-projectsRoutes.delete("/projects/:id", async (c) => {
+}));
+projectsRoutes.delete("/projects/:id", terminalRoute("/projects/:id", async (c) => {
   const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
+  // Keep this constant pre-lookup: a caller without the destructive capability must not learn
+  // whether a project id exists from a 404/403 distinction.
+  if (!roleHasCapability(c.get("user").role, "adminBackend")) return c.json({ error: "Forbidden", capability: "adminBackend" }, 403);
   const db = createDb(c.env.DB); const project = await db.select({ id: schema.projects.id, street: schema.projects.street, archivedAt: schema.projects.archivedAt }).from(schema.projects).where(eq(schema.projects.id, id)).get();
   if (!project) return c.json({ error: "Project not found" }, 404);
-  // Inline capability check like every other route — invoking the middleware factory manually
-  // with a body-closure `next` discards the closure's c.json() return and falls through to 404.
-  if (!ROLE_CAPABILITIES[c.get("user").role].includes("adminBackend")) return c.json({ error: "Forbidden", capability: "adminBackend" }, 403);
   if (!project.archivedAt) return c.json({ error: "Archive the project before deleting it." }, 409);
   const activeJobs = (await db.select({ count: sql<number>`count(*)` }).from(schema.jobs).where(and(eq(schema.jobs.projectId, id), inArray(schema.jobs.status, ["queued", "running"]))).get())?.count ?? 0;
   if (activeJobs) return c.json({ error: "Background work is still running for this project — wait for it to finish and try again.", activeJobs }, 409);
@@ -1105,14 +1109,14 @@ projectsRoutes.delete("/projects/:id", async (c) => {
     c.env.DB.prepare("DELETE FROM projects WHERE id = ?").bind(id),
   ]);
   return c.json({ ok: true, deletedObjects: keys.length });
-});
-projectsRoutes.post("/projects/:id/stage", async (c) => {
+}));
+projectsRoutes.post("/projects/:id/stage", terminalRoute("/projects/:id/stage", async (c) => {
   const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
   if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   {
-    if (!ROLE_CAPABILITIES[c.get("user").role].includes("selectForEditing")) return c.json({ error: "Forbidden", capability: "selectForEditing" }, 403);
+    if (!roleHasCapability(c.get("user").role, "selectForEditing")) return c.json({ error: "Forbidden", capability: "selectForEditing" }, 403);
     const data = await jsonInput(c, z.object({ stageKey: z.string() })); if (data instanceof Response) return data;
-    if (data.stageKey === "editing_autohdr" && !ROLE_CAPABILITIES[c.get("user").role].includes("adminBackend")) return c.json({ error: "Forbidden" }, 403);
+    if (data.stageKey === "editing_autohdr" && !roleHasCapability(c.get("user").role, "adminBackend")) return c.json({ error: "Forbidden" }, 403);
     if (!isStageKey(data.stageKey)) return c.json({ error: "Unknown stage" }, 400);
     const db = createDb(c.env.DB); const project = await db.select().from(schema.projects).where(eq(schema.projects.id, id)).get(); if (!project) return c.json({ error: "Project not found" }, 404);
     await ensurePipelineStages(db);
@@ -1127,11 +1131,15 @@ projectsRoutes.post("/projects/:id/stage", async (c) => {
     }
     return c.json({ ok: true, stageKey: data.stageKey, boardPosition: updated[0]?.boardPosition ?? 0 });
   }
-});
-projectsRoutes.get("/projects/:id", async (c) => {
+}));
+projectsRoutes.get("/projects/:id", terminalRoute("/projects/:id", async (c) => {
   const id = c.req.param("id");
   if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
+  if (c.get("user").role === "external_editor") {
+    const value = await readExternalProjectDetail(c.env, c.get("user").id, c.get("user").role, id);
+    return value ? c.json(value) : c.json({ error: "Project not found" }, 404);
+  }
   if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   const value = await details(createDb(c.env.DB), c.env.DB, id, c.get("user").role, c.get("user").role === "photographer");
   return value ? c.json(value) : c.json({ error: "Project not found" }, 404);
-});
+}));

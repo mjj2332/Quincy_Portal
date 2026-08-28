@@ -6,6 +6,7 @@ export { COLLECTION_RECEIVED_COUNT_SQL, collectionReceivedCountBindings } from "
 export { RAW_CLAIM_LEASE_MS } from "./raw-reconciliation-claims";
 export { guardedStageTransition, type GuardedStageTransitionInput } from "./stage-transition";
 export { buildProjectActivityStatements, type ProjectActivityStatementBundle } from "./project-activity";
+export { emitExternalSafeLegacyNotification, emitExternalSubtaskNotification, type ExternalSafeLegacyInput, type ExternalSubtaskNotificationInput } from "./external-notifications";
 export { appendToStageBottomExpr, computeInsertPosition } from "./board-position";
 export { dashboardProjectOrder, orderDashboardStreetTies } from "./dashboard-order";
 export {
@@ -21,6 +22,7 @@ export {
   type NotificationRecipient,
   type NotificationType,
 } from "./notifications";
+export { NOTIFICATION_TYPES } from "@quincy/shared";
 export type Database = ReturnType<typeof createDb>;
 
 export function createDb(d1: D1Database) {

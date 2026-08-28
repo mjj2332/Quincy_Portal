@@ -1,4 +1,5 @@
 import { Hono, type Context } from "hono";
+import { terminalRoute } from "../lib/terminal-route";
 import { eq } from "drizzle-orm";
 import { createDb, schema } from "@quincy/db";
 import type { AppEnv } from "../env";
@@ -17,9 +18,9 @@ async function readPreference(c: Context<AppEnv>) {
   return c.json({ projectDeadlineReminderEmails: row?.enabled === undefined ? true : Boolean(row.enabled) });
 }
 
-notificationPreferencesRoutes.get("/notification-preferences", readPreference);
+notificationPreferencesRoutes.get("/notification-preferences", terminalRoute("/notification-preferences", readPreference));
 
-notificationPreferencesRoutes.patch("/notification-preferences", async (c) => {
+notificationPreferencesRoutes.patch("/notification-preferences", terminalRoute("/notification-preferences", async (c) => {
   const data = await jsonInput(c, patchSchema);
   if (data instanceof Response) return data;
   const user = c.get("user");
@@ -34,4 +35,4 @@ notificationPreferencesRoutes.patch("/notification-preferences", async (c) => {
       .bind(crypto.randomUUID(), user.id, user.id, auditMeta(user, { projectDeadlineReminderEmails: data.projectDeadlineReminderEmails }), now),
   ]);
   return readPreference(c);
-});
+}));

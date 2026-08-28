@@ -4,6 +4,8 @@ import { CSS } from "@dnd-kit/utilities";
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { AnchoredPopover, useAnchoredPopover } from "./AnchoredPopover";
 import { ApiError, apiDelete, apiGet, apiPatch, apiPost } from "../lib/api";
+import { externalApiGet } from "../lib/external-api-response";
+import { useSession } from "../lib/auth";
 import { projectDataKeys, projectCollaborationDataGeneration, useOptionalProjectQueryClient, useProjectAccessTermination, useProjectSubtasksQuery, type ProjectSubtask } from "../lib/project-data";
 import { createProjectDataInvalidationMessage, getProjectQueryRuntime } from "../lib/project-query-sync";
 import { CHECKLIST_SCHEDULE_RANGES_ENABLED, CHECKLIST_SCHEDULE_ZONE, type ChecklistScheduleDto, type InitialChecklistScheduleInput, type SaveChecklistScheduleRequest } from "@quincy/shared";
@@ -158,7 +160,8 @@ function SortableSubtaskRow({ item, users, busy, editing, draftTitle, popover, s
 
 export function SubtaskChecklist({ projectId, onAccessFailure }: { projectId: string; onAccessFailure?: (error: unknown) => void }) {
   const queryClient = useOptionalProjectQueryClient();
-  const subtasksQuery = useProjectSubtasksQuery(projectId, true);
+  const session = useSession();
+  const subtasksQuery = useProjectSubtasksQuery(projectId, true, false, session.data?.user.role === "external_editor" ? "external_editor" : "admin");
   const queryRuntime = queryClient ? getProjectQueryRuntime(queryClient) : undefined;
   const terminateOnUnauthorized = useProjectAccessTermination();
   const onAccessFailureRef = useRef(onAccessFailure);
@@ -176,14 +179,17 @@ export function SubtaskChecklist({ projectId, onAccessFailure }: { projectId: st
   useEffect(() => { if (!queryRuntime) return; const owns = dragging || activePopover?.kind === "schedule"; if (!owns) return; return queryRuntime.acquireOwner(projectDataKeys.subtasks(projectId)); }, [activePopover?.kind, dragging, projectId, queryRuntime]);
   useEffect(() => {
     const generation = queryClient ? projectCollaborationDataGeneration(queryClient, projectId) : null;
-    void apiGet<{ users: MentionableUser[] }>(`/api/mentionable-users?projectId=${encodeURIComponent(projectId)}&q=`).then((response) => {
+    const request = session.data?.user.role === "external_editor"
+      ? externalApiGet("mentionable", `/api/mentionable-users?projectId=${encodeURIComponent(projectId)}&q=`) as Promise<{ users: MentionableUser[] }>
+      : apiGet<{ users: MentionableUser[] }>(`/api/mentionable-users?projectId=${encodeURIComponent(projectId)}&q=`);
+    void request.then((response) => {
       if (queryClient && projectCollaborationDataGeneration(queryClient, projectId) !== generation) return;
       setUsers(response.users ?? []);
     }).catch((error) => {
       if (queryClient && projectCollaborationDataGeneration(queryClient, projectId) !== generation) return;
       terminateOnUnauthorized(error); onAccessFailureRef.current?.(error); if (!(error instanceof Error && error.name === "AbortError")) setNotice("Assignees could not be loaded.");
     });
-  }, [projectId, queryClient, terminateOnUnauthorized]);
+  }, [projectId, queryClient, session.data?.user.role, terminateOnUnauthorized]);
   useLayoutEffect(() => { const changed = editingId !== priorEditingId.current; priorEditingId.current = editingId; if (!editingId || !changed || [...busy].some((key) => key.startsWith(`${editingId}:`))) return; const input = titleInputRefs.current.get(editingId); if (input && !input.disabled) input.focus(); }, [busy, editingId]);
   useLayoutEffect(() => { if (!composerOpen && restoreAddFocus.current) { restoreAddFocus.current = false; document.getElementById(`subtask-add-${projectId}`)?.focus(); } }, [composerOpen, projectId]);
   function setAction(id: string, value: boolean) { const next = new Set(busyRef.current); if (value) next.add(id); else next.delete(id); busyRef.current = next; setBusy(next); }

@@ -3,6 +3,8 @@ import { isAcceptedPhotoFilename } from "@quincy/shared";
 import { ApiError, apiPost } from "../lib/api";
 import { uploadMultipartFile, type MultipartPresign } from "../lib/multipart-upload";
 import { useProjectAccessTermination } from "../lib/project-data";
+import { useSession } from "../lib/auth";
+import { ExternalEditedUpload } from "./ExternalEditedUpload";
 
 type PresignResponse = MultipartPresign & {
   assetId?: string;
@@ -27,6 +29,7 @@ interface UploadDropzoneProps {
 }
 
 export function UploadDropzone({ projectId, collection = "raw", onComplete, onToast }: UploadDropzoneProps) {
+  const session = useSession();
   const fileInput = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [rejected, setRejected] = useState<string[]>([]);
@@ -43,9 +46,10 @@ export function UploadDropzone({ projectId, collection = "raw", onComplete, onTo
   const publishingJobIds = progress
     .filter((item) => item.state === "publishing" && item.jobId)
     .map((item) => item.jobId!);
+  const isExternalEditor = collection === "edited" && session.data?.user.role === "external_editor";
 
   useEffect(() => {
-    if (!publishingJobIds.length) return;
+    if (isExternalEditor || !publishingJobIds.length) return;
     let cancelled = false;
     const refreshPublishing = async () => {
       try {
@@ -74,7 +78,7 @@ export function UploadDropzone({ projectId, collection = "raw", onComplete, onTo
     void refreshPublishing();
     const interval = window.setInterval(() => void refreshPublishing(), 5_000);
     return () => { cancelled = true; window.clearInterval(interval); };
-  }, [projectId, publishingJobIds.join(","), terminateOnUnauthorized]);
+  }, [isExternalEditor, projectId, publishingJobIds.join(","), terminateOnUnauthorized]);
 
   async function upload(files: File[]) {
     const accepted = files.filter((file) => isAcceptedPhotoFilename(file.name));
@@ -133,6 +137,7 @@ export function UploadDropzone({ projectId, collection = "raw", onComplete, onTo
   function onDrop(event: DragEvent<HTMLDivElement>) { event.preventDefault(); setIsDragging(false); receive(event.dataTransfer.files); }
   function onChange(event: ChangeEvent<HTMLInputElement>) { if (event.target.files) receive(event.target.files); event.target.value = ""; }
   const overall = progress.length ? Math.round(progress.reduce((sum, item) => sum + item.percent, 0) / progress.length) : 0;
+  if (isExternalEditor) return <ExternalEditedUpload projectId={projectId} onComplete={onComplete} onToast={onToast} />;
 
   return (
     <section className={`upload-zone ${isDragging ? "is-dragging" : ""}`} onDragOver={(event) => { event.preventDefault(); setIsDragging(true); }} onDragLeave={() => setIsDragging(false)} onDrop={onDrop}>

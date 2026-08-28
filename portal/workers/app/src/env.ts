@@ -15,6 +15,9 @@ export interface Env {
   APP_ORIGIN: string;
   BETTER_AUTH_SECRET?: string;
   TRANSFORM_SOURCE_SECRET?: string;
+  /** Internal service principal used by background rendition generation. */
+  TRANSFORM_SOURCE_PRINCIPAL_ID?: string;
+  TRANSFORM_SOURCE_AUTHORIZATION_EPOCH?: string;
   RENDITIONS_ENABLED?: boolean;
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
@@ -28,5 +31,5 @@ export interface Env {
   NOTIFICATIONS_FROM_ADDRESS?: string;
 }
 
-export type SessionUser = { id: string; email: string; name: string; role: Role; active: boolean; impersonatedBy: string | null };
+export type SessionUser = { id: string; email: string; name: string; role: Role; active: boolean; authorizationEpoch: number; impersonatedBy: string | null };
 export type AppEnv = { Bindings: Env; Variables: { user: SessionUser } };

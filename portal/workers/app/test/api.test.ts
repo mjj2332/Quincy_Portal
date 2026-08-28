@@ -8,7 +8,7 @@ import type { Env } from "../src/env";
 import { createZipStream } from "../src/lib/zip-stream";
 import { signTransformSource } from "../src/lib/transform-source";
 import { liveTransformLocation } from "../src/routes/media";
-import { PROJECT_ACTIVITY_SYSTEM_OUTBOX_ACTOR_ID, RENDITION_SPEC_VERSION } from "@quincy/shared";
+import { EXTERNAL_API_RESPONSE_SCHEMAS, PROJECT_ACTIVITY_SYSTEM_OUTBOX_ACTOR_ID, RENDITION_SPEC_VERSION } from "@quincy/shared";
 import { createDb } from "@quincy/db";
 import { collectionLinkUrlConflict, uniqueVersionError } from "../src/routes/collections";
 import { finalizeIngest } from "../src/lib/ingest";
@@ -20,6 +20,7 @@ const photographerToken = "test-photographer-session-token";
 const adminToken = "test-admin-session-token";
 const secondPhotographerToken = "test-second-photographer-session-token";
 const editorToken = "test-editor-session-token";
+const externalEditorToken = "test-external-editor-session-token";
 const otherAdminToken = "test-other-admin-session-token";
 const seedAdminId = "6b851dc8-14cf-4f90-bd29-ce6c27f86385";
 // First photographer IS a member of the editable-comment project; the plain
@@ -28,6 +29,7 @@ const firstPhotographerToken = "test-first-photographer-session-token";
 const firstPhotographerId = "11111111-1111-4111-8111-111111111111";
 const secondPhotographerId = "22222222-2222-4222-8222-222222222222";
 const editorId = "33333333-3333-4333-8333-333333333333";
+const externalEditorId = "44444444-4444-4444-8444-444444444444";
 declare const __PORTAL_MIGRATION_SQL__: string;
 declare const __PORTAL_SEED_SQL__: string;
 
@@ -178,6 +180,9 @@ beforeAll(async () => {
     ).bind(id, name, email, 1, role, 1, now, now).run();
   }
   await database.DB.prepare(
+    "INSERT INTO user (id, name, email, email_verified, role, active, authorization_epoch, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)",
+  ).bind(externalEditorId, "External Editor", "external-editor@example.test", 1, "external_editor", 1, now, now).run();
+  await database.DB.prepare(
     "INSERT INTO session (id, expires_at, token, user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
   ).bind("test-second-photographer-session", now + 60 * 60 * 1000, secondPhotographerToken, secondPhotographerId, now, now).run();
   await database.DB.prepare(
@@ -186,6 +191,9 @@ beforeAll(async () => {
   await database.DB.prepare(
     "INSERT INTO session (id, expires_at, token, user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
   ).bind("test-editor-session", now + 60 * 60 * 1000, editorToken, editorId, now, now).run();
+  await database.DB.prepare(
+    "INSERT INTO session (id, expires_at, token, user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+  ).bind("test-external-editor-session", now + 60 * 60 * 1000, externalEditorToken, externalEditorId, now, now).run();
   await database.DB.prepare(
     "INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
   ).bind("test-other-admin", "Other Admin", "other-admin@example.test", 1, "admin", 1, now, now).run();
@@ -669,7 +677,12 @@ describe("staff app API", () => {
       expectStageStatus(await jsonRequest(`/api/projects/${fixture.projectId}`, photographerCookie, "GET"), accessStatus);
       expectStageStatus(await jsonRequest(`/media/asset/${fixture.assetId}/original`, photographerCookie, "GET"), accessStatus);
       expectStageStatus(await jsonRequest(`/api/assets/${fixture.assetId}/annotations`, photographerCookie, "GET"), accessStatus);
-      expectStageStatus(await jsonRequest(`/media/annotation/${fixture.annotationId}`, photographerCookie, "GET"), accessStatus);
+      const annotationMarkup = await jsonRequest(`/media/annotation/${fixture.annotationId}`, photographerCookie, "GET");
+      expectStageStatus(annotationMarkup, accessStatus);
+      if (visible && index === 0) {
+        expect(annotationMarkup.headers.get("cache-control")).toBe("private, no-store");
+        expect(annotationMarkup.headers.get("x-content-type-options")).toBe("nosniff");
+      }
       expectStageStatus(await jsonRequest(`/api/projects/${fixture.projectId}/assets?collection=raw`, photographerCookie, "GET"), accessStatus);
       expectStageStatus(await jsonRequest(`/api/assets/${fixture.assetId}/review`, photographerCookie, "POST", { recommended: true }), accessStatus);
 
@@ -711,7 +724,7 @@ describe("staff app API", () => {
       expectStageStatus(await jsonRequest(`/api/projects/${fixture.projectId}/cover`, photographerCookie, "POST", { assetId: null }), 403);
       expectStageStatus(await jsonRequest(`/api/projects/${fixture.projectId}/dropbox-sync`, photographerCookie, "POST"), visible ? 400 : 403);
       expectStageStatus(await jsonRequest(`/api/projects/${fixture.projectId}/sync-dropbox`, photographerCookie, "POST"), visible ? 409 : 403);
-      expectStageStatus(await jsonRequest(`/api/projects/${fixture.projectId}/manual-upload-jobs`, photographerCookie, "GET"), visible ? 200 : 403);
+      expectStageStatus(await jsonRequest(`/api/projects/${fixture.projectId}/manual-upload-jobs`, photographerCookie, "GET"), 403);
       expectStageStatus(await jsonRequest(`/api/projects/${fixture.projectId}/selected-raw.zip`, photographerCookie, "GET"), 403);
 
       // These routes retain their existing adminBackend middleware; the photographer is denied
@@ -793,6 +806,148 @@ describe("staff app API", () => {
     expect(reverted.status).toBe(200);
     expect(await listedIds(photographerCookie)).toContain(fixture.projectId);
   }, 15_000);
+
+  it("enforces External Editor assigned-scope projection, media, review, and upload boundaries", async () => {
+    const adminCookie = await sessionCookie(adminToken);
+    const externalCookie = await sessionCookie(externalEditorToken);
+    const createProject = async (street: string, assigned: boolean) => {
+      const response = await SELF.fetch("https://portal.test/api/projects", {
+        method: "POST",
+        headers: { cookie: adminCookie, "content-type": "application/json" },
+        body: JSON.stringify({ street, orderedServices: ["edited"], ...(assigned ? { editorUserIds: [externalEditorId] } : {}) }),
+      });
+      expect(response.status).toBe(201);
+      return (await response.json() as { id: string }).id;
+    };
+    const assigned = await createProject(`External assigned ${crypto.randomUUID()}`, true);
+    const delivered = await createProject(`External delivered ${crypto.randomUUID()}`, true);
+    const unassigned = await createProject(`External unassigned ${crypto.randomUUID()}`, false);
+    const archived = await createProject(`External archived ${crypto.randomUUID()}`, true);
+    await database.DB.prepare("UPDATE projects SET stage_key = 'delivered', notes = ?, production_notes = ?, raw_folder_path = ? WHERE id = ?")
+      .bind("INTERNAL_SENTINEL", "External-safe production note", "/Raw/External", delivered).run();
+    await database.DB.prepare("UPDATE projects SET notes = ?, production_notes = ? WHERE id = ?")
+      .bind("INTERNAL_SENTINEL", "Assigned production note", assigned).run();
+    expect((await SELF.fetch(`https://portal.test/api/projects/${archived}/archive`, { method: "POST", headers: { cookie: adminCookie } })).status).toBe(200);
+
+    const archivedRaw = await database.DB.prepare("SELECT id FROM collections WHERE project_id = ? AND kind = 'raw'").bind(archived).first<{ id: string }>();
+    const archivedAssetId = crypto.randomUUID();
+    const archivedAssetKey = `projects/${archived}/raw/${archivedAssetId}/archived.jpg`;
+    const archivedThumbKey = `renditions/${archivedAssetId}/content/${RENDITION_SPEC_VERSION}/thumb.webp`;
+    const archivedNow = Date.now();
+    await authEnv.MEDIA.put(archivedAssetKey, "archived-original", { httpMetadata: { contentType: "image/jpeg" } });
+    await authEnv.MEDIA.put(archivedThumbKey, "archived-thumb", { httpMetadata: { contentType: "image/webp" } });
+    await database.DB.batch([
+      database.DB.prepare("INSERT INTO assets (id, collection_id, r2_key, original_filename, bytes, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'upload', ?, ?)")
+        .bind(archivedAssetId, archivedRaw!.id, archivedAssetKey, "archived.jpg", 17, archivedNow, archivedNow),
+      database.DB.prepare("INSERT INTO asset_renditions (id, asset_id, variant, r2_key, bytes, content_type, width, height, spec_version, created_at) VALUES (?, ?, 'thumb', ?, ?, 'image/webp', 1, 1, ?, ?)")
+        .bind(crypto.randomUUID(), archivedAssetId, archivedThumbKey, 14, RENDITION_SPEC_VERSION, archivedNow),
+    ]);
+    expect((await SELF.fetch(`https://portal.test/api/projects/${archived}`, { headers: { cookie: adminCookie } })).status).toBe(200);
+    expect((await SELF.fetch(`https://portal.test/media/asset/${archivedAssetId}/thumb`, { headers: { cookie: adminCookie } })).status).toBe(200);
+
+    const listed = await SELF.fetch("https://portal.test/api/projects", { headers: { cookie: externalCookie } });
+    expect(listed.status).toBe(200);
+    const listedProjects = (await listed.json() as { projects: Array<{ id: string }> }).projects;
+    expect(listedProjects.map((project) => project.id)).toEqual(expect.arrayContaining([assigned, delivered]));
+    expect(listedProjects.map((project) => project.id)).not.toEqual(expect.arrayContaining([unassigned, archived]));
+
+    const detail = await SELF.fetch(`https://portal.test/api/projects/${assigned}`, { headers: { cookie: externalCookie } });
+    expect(detail.status).toBe(200);
+    const detailBody = await detail.json() as Record<string, unknown> & { productionNotes?: string | null; members?: Array<{ email: string; roleLabel: string }> };
+    expect(detailBody.productionNotes).toBe("Assigned production note");
+    expect(detailBody.notes).toBeUndefined();
+    expect(detailBody.members).toEqual(expect.arrayContaining([expect.objectContaining({ email: "external-editor@example.test", roleLabel: "External editor" })]));
+    const collaboration = await SELF.fetch(`https://portal.test/api/projects/${assigned}/collaboration-summary`, { headers: { cookie: externalCookie } });
+    expect(collaboration.status).toBe(200);
+    const collaborationBody = EXTERNAL_API_RESPONSE_SCHEMAS.collaboration.parse(await collaboration.json()) as { project: { id: string }; members: Array<Record<string, unknown>> };
+    expect(collaborationBody.project.id).toBe(assigned);
+    expect(collaborationBody.members).toEqual(expect.arrayContaining([expect.objectContaining({ id: externalEditorId, membershipCycleId: expect.any(String), assignedSubtaskCount: 0 })]));
+    expect(collaborationBody.members.flatMap((member) => Object.keys(member))).not.toContain("userId");
+    const me = await SELF.fetch("https://portal.test/api/me", { headers: { cookie: externalCookie } });
+    expect(me.status).toBe(200);
+    await expect(me.json()).resolves.toMatchObject({ user: { role: "external_editor", authorizationEpoch: 0 }, capabilities: ["uploadEdited", "viewRaw", "annotateRaw", "recommendRaw", "compareFrames", "viewEdited", "reviewEdited", "annotateEdited", "collaborateOnProject"] });
+
+    const nonexistent = crypto.randomUUID();
+    const projectMisses = await Promise.all([assigned, unassigned, archived, nonexistent].map((id) => SELF.fetch(`https://portal.test/api/projects/${id}`, { headers: { cookie: externalCookie } })));
+    expect(projectMisses.map((response) => response.status)).toEqual([200, 404, 404, 404]);
+    for (const id of [unassigned, archived, nonexistent]) {
+      const childMisses = await Promise.all([
+        SELF.fetch(`https://portal.test/api/projects/${id}/assets?collection=raw`, { headers: { cookie: externalCookie } }),
+        SELF.fetch(`https://portal.test/api/projects/${id}/links?collection=video`, { headers: { cookie: externalCookie } }),
+        SELF.fetch(`https://portal.test/api/projects/${id}/comments`, { headers: { cookie: externalCookie } }),
+        SELF.fetch(`https://portal.test/api/projects/${id}/subtasks`, { headers: { cookie: externalCookie } }),
+        SELF.fetch(`https://portal.test/api/projects/${id}/collaboration-summary`, { headers: { cookie: externalCookie } }),
+        SELF.fetch(`https://portal.test/api/mentionable-users?projectId=${id}`, { headers: { cookie: externalCookie } }),
+      ]);
+      expect(childMisses.map((response) => response.status)).toEqual([404, 404, 404, 404, 404, 404]);
+    }
+
+    const rawCollection = await database.DB.prepare("SELECT id FROM collections WHERE project_id = ? AND kind = 'raw'").bind(assigned).first<{ id: string }>();
+    const assetId = crypto.randomUUID();
+    const key = `projects/${assigned}/raw/${assetId}/external-raw.jpg`;
+    const now = Date.now();
+    await authEnv.MEDIA.put(key, "external-raw", { httpMetadata: { contentType: "image/jpeg" } });
+    await database.DB.prepare("INSERT INTO assets (id, collection_id, r2_key, original_filename, bytes, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+      .bind(assetId, rawCollection!.id, key, "external-raw.jpg", 12, "upload", now, now).run();
+    const assets = await SELF.fetch(`https://portal.test/api/projects/${assigned}/assets?collection=raw`, { headers: { cookie: externalCookie } });
+    expect(assets.status).toBe(200);
+    const assetBody = await assets.json() as { assets: Array<Record<string, unknown>> };
+    expect(assetBody.assets).toEqual(expect.arrayContaining([expect.objectContaining({ id: assetId, originalFilename: "external-raw.jpg" })]));
+    expect(JSON.stringify(assetBody)).not.toContain(key);
+    const original = await SELF.fetch(`https://portal.test/media/asset/${assetId}/original`, { headers: { cookie: externalCookie } });
+    expect(original.status).toBe(200);
+    expect(original.headers.get("cache-control")).toBe("private, no-store");
+    expect(original.headers.get("x-content-type-options")).toBe("nosniff");
+    expect((await SELF.fetch(`https://portal.test/media/asset/${assetId}/thumb`, { headers: { cookie: externalCookie } })).status).toBe(409);
+    expect((await SELF.fetch(`https://portal.test/media/asset/${crypto.randomUUID()}/original`, { headers: { cookie: externalCookie } })).status).toBe(403);
+
+    const review = await SELF.fetch(`https://portal.test/api/assets/${assetId}/review`, { method: "POST", headers: { cookie: externalCookie, "content-type": "application/json" }, body: JSON.stringify({ recommended: true }) });
+    expect(review.status).toBe(200);
+    expect((await SELF.fetch(`https://portal.test/api/assets/${assetId}/review`, { method: "POST", headers: { cookie: externalCookie, "content-type": "application/json" }, body: JSON.stringify({ stars: 5 }) })).status).toBe(403);
+    const annotation = await SELF.fetch(`https://portal.test/api/assets/${assetId}/annotations`, { method: "POST", headers: { cookie: externalCookie, "content-type": "application/json" }, body: JSON.stringify({ noteText: "External annotation", strokes: [{ points: [{ x: 0.1, y: 0.2 }], color: "#3f5b3a", width: 2 }] }) });
+    expect(annotation.status).toBe(201);
+    const annotationBody = await annotation.json() as Record<string, unknown>;
+    expect(annotationBody.strokeR2Key).toBeUndefined();
+    expect(annotationBody.author).toMatchObject({ roleLabel: "External editor", isExternal: true });
+    const annotationMarkup = await SELF.fetch(`https://portal.test/media/annotation/${annotationBody.id}`, { headers: { cookie: externalCookie } });
+    expect(annotationMarkup.status).toBe(200);
+    expect(annotationMarkup.headers.get("cache-control")).toBe("private, no-store");
+    expect(annotationMarkup.headers.get("x-content-type-options")).toBe("nosniff");
+
+    const createUpload = async () => SELF.fetch("https://portal.test/api/external-uploads", {
+      method: "POST", headers: { cookie: externalCookie, origin: authEnv.APP_ORIGIN, "content-type": "application/json" },
+      body: JSON.stringify({ projectId: delivered, filename: "edited.jpg", bytes: 1, collection: "edited" }),
+    });
+    const sessions = [] as Array<{ sessionToken: string }>;
+    for (let index = 0; index < 3; index += 1) {
+      const response = await createUpload();
+      expect(response.status).toBe(201);
+      sessions.push(await response.json() as { sessionToken: string });
+    }
+    expect((await createUpload()).status).toBe(409);
+    await database.DB.prepare("UPDATE external_edited_upload_sessions SET expires_at = ? WHERE created_by = ? AND status = 'open'").bind(Date.now() - 1, externalEditorId).run();
+    const expiredSlot = await createUpload();
+    expect(expiredSlot.status).toBe(201);
+    const expiredSlotBody = await expiredSlot.json() as { sessionToken: string };
+    expect((await SELF.fetch(`https://portal.test/api/external-uploads/${expiredSlotBody.sessionToken}`, { method: "DELETE", headers: { cookie: externalCookie, origin: authEnv.APP_ORIGIN } })).status).toBe(200);
+    for (const session of sessions) expect((await SELF.fetch(`https://portal.test/api/external-uploads/${session.sessionToken}`, { method: "DELETE", headers: { cookie: externalCookie, origin: authEnv.APP_ORIGIN } })).status).toBe(200);
+
+    const retrySession = await createUpload().then(async (response) => {
+      expect(response.status).toBe(201);
+      return response.json() as Promise<{ sessionToken: string; assetId: string }>;
+    });
+    const retryRow = await database.DB.prepare("SELECT id, r2_key AS r2Key, r2_upload_id AS r2UploadId FROM external_edited_upload_sessions WHERE asset_id = ?")
+      .bind(retrySession.assetId).first<{ id: string; r2Key: string; r2UploadId: string }>();
+    expect(retryRow).toBeDefined();
+    await authEnv.MEDIA.resumeMultipartUpload(retryRow!.r2Key, retryRow!.r2UploadId).abort();
+    await database.DB.prepare("UPDATE external_edited_upload_sessions SET status = 'aborting' WHERE id = ?").bind(retryRow!.id).run();
+    const retriedDelete = await SELF.fetch(`https://portal.test/api/external-uploads/${retrySession.sessionToken}`, { method: "DELETE", headers: { cookie: externalCookie, origin: authEnv.APP_ORIGIN } });
+    expect(retriedDelete.status).toBe(200);
+    await expect(database.DB.prepare("SELECT status FROM external_edited_upload_sessions WHERE id = ?").bind(retryRow!.id).first()).resolves.toEqual({ status: "aborted" });
+    expect((await SELF.fetch("https://portal.test/api/uploads/presign", { method: "POST", headers: { cookie: externalCookie, origin: authEnv.APP_ORIGIN, "content-type": "application/json" }, body: JSON.stringify({ projectId: delivered, filename: "raw.jpg", bytes: 1, collection: "raw" }) })).status).toBe(403);
+    // Keep this projection fixture from affecting the later global Stage activation test.
+    await database.DB.prepare("UPDATE projects SET stage_key = 'edited_review' WHERE id = ?").bind(delivered).run();
+  }, 30_000);
 
   it("requires the exact configured Origin for custom API mutations while leaving safe and auth routes alone", async () => {
     const cookie = await sessionCookie(adminToken);
@@ -918,25 +1073,43 @@ describe("staff app API", () => {
     const rendition = await SELF.fetch(`https://portal.test/media/asset/${assetId}/thumb`, { headers: { cookie }, redirect: "manual" });
     expect(rendition.status).toBe(302);
     expect(rendition.headers.get("location")).toContain("/cdn-cgi/image/");
-    const expiresAt = Math.floor(Date.now() / 1000) + 300;
-    const sig = await signTransformSource(env as unknown as Parameters<typeof signTransformSource>[0], key, expiresAt);
+    const expiresAt = Math.floor(Date.now() / 1000) + 120;
+    const sig = await signTransformSource(env as unknown as Parameters<typeof signTransformSource>[0], key, expiresAt, seedAdminId, 0);
     const encodedPath = "/__transform-source/" + key.split("/").map(encodeURIComponent).join("/");
     expect(encodedPath).toContain(encodeURIComponent("se.CR527827_4 EV #20Jul.jpg"));
-    const source = await SELF.fetch(`https://portal.test${encodedPath}?v=v2&exp=${expiresAt}&sig=${sig}`);
+    const source = await SELF.fetch(`https://portal.test${encodedPath}?v=v2&exp=${expiresAt}&p=${seedAdminId}&ae=0&sig=${sig}`);
     expect(source.status).toBe(200); await expect(source.text()).resolves.toBe(body);
     expect(source.headers.get("cache-control")).toBe("private, no-store");
-    expect((await SELF.fetch(`https://portal.test${encodedPath}?exp=${expiresAt}&sig=tampered`)).status).toBe(404);
-    expect((await SELF.fetch(`https://portal.test${encodedPath}?v=v-tampered&exp=${expiresAt}&sig=${sig}`)).status).toBe(404);
-    expect((await SELF.fetch(`https://portal.test${encodedPath}?v=v2&exp=${expiresAt}&sig=${sig}&extra=1`)).status).toBe(404);
+    expect((await SELF.fetch(`https://portal.test${encodedPath}?exp=${expiresAt}&p=${seedAdminId}&ae=0&sig=tampered`)).status).toBe(404);
+    expect((await SELF.fetch(`https://portal.test${encodedPath}?v=v-tampered&exp=${expiresAt}&p=${seedAdminId}&ae=0&sig=${sig}`)).status).toBe(404);
+    expect((await SELF.fetch(`https://portal.test${encodedPath}?v=v2&exp=${expiresAt}&p=${seedAdminId}&ae=0&sig=${sig}&extra=1`)).status).toBe(404);
     expect((await SELF.fetch("https://portal.test/__transform-source/bad%ZZ?exp=1&sig=tampered")).status).toBe(404);
+  });
+
+  it("rejects replay of an internal transform URL after the principal epoch changes", async () => {
+    const principalId = crypto.randomUUID();
+    const key = `projects/epoch-replay/${principalId}/source.jpg`;
+    const now = Date.now();
+    const media = env as unknown as { MEDIA: R2Bucket };
+    await database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, authorization_epoch, created_at, updated_at) VALUES (?, 'Transform principal', ?, 1, 'editor', 1, 0, ?, ?)")
+      .bind(principalId, `${principalId}@example.test`, now, now).run();
+    await media.MEDIA.put(key, "epoch-bound-source", { httpMetadata: { contentType: "image/jpeg" } });
+    const expiresAt = Math.floor(now / 1000) + 120;
+    const signature = await signTransformSource(authEnv as unknown as Parameters<typeof signTransformSource>[0], key, expiresAt, principalId, 0);
+    const encodedPath = "/__transform-source/" + key.split("/").map(encodeURIComponent).join("/");
+    const valid = await SELF.fetch(`https://portal.test${encodedPath}?v=v2&exp=${expiresAt}&p=${principalId}&ae=0&sig=${signature}`);
+    expect(valid.status).toBe(200);
+    await database.DB.prepare("UPDATE user SET role = 'external_editor', authorization_epoch = 1 WHERE id = ?").bind(principalId).run();
+    const replay = await SELF.fetch(`https://portal.test${encodedPath}?v=v2&exp=${expiresAt}&p=${principalId}&ae=0&sig=${signature}`);
+    expect(replay.status).toBe(404);
   });
 
   it("builds the production live-transform redirect with encoded source, cache version, and expiry", () => {
     const key = "projects/a raw/asset/space #?.jpg";
-    const location = liveTransformLocation("https://portal.test/media/asset/x/thumb", key, "thumb", { expiresAt: 1_800_000_300, signature: "a".repeat(64) });
+    const location = liveTransformLocation("https://portal.test/media/asset/x/thumb", key, "thumb", { expiresAt: 1_800_000_300, signature: "a".repeat(64), principalId: seedAdminId, authorizationEpoch: 0 });
     expect(location).toContain("width=640,height=640,fit=scale-down,quality=75,format=auto/");
     expect(location).toContain("__transform-source/projects/a%20raw/asset/space%20%23%3F.jpg");
-    expect(location).toContain("?v=v2&exp=1800000300&sig=");
+    expect(location).toContain(`?v=v2&exp=1800000300&p=${seedAdminId}&ae=0&sig=`);
   });
 
   it("serves only an authorized current stored rendition and falls back when it is stale or absent", async () => {

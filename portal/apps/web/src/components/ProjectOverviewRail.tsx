@@ -71,6 +71,11 @@ export function ProjectOverviewRail({
       <div className="kv"><span className="k">Agent</span><span className="vv">{project.agentName ?? "—"}</span></div>
     </section>
 
+    {project.productionNotes && <section className="rail__sec" aria-labelledby="project-overview-notes">
+      <div className="ey rail__section-label" id="project-overview-notes">Production notes</div>
+      <p className="muted" style={{ whiteSpace: "pre-wrap" }}>{project.productionNotes}</p>
+    </section>}
+
     <section className="rail__sec" aria-labelledby="project-overview-collections">
       <div className="ey rail__section-label" id="project-overview-collections">Collections</div>
       <div className="filterlist">{availableTabs.map((tab) => {

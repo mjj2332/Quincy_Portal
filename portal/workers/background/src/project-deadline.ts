@@ -70,9 +70,9 @@ export async function fireProjectDeadlineOccurrence(env: Env, occurrence: DueOcc
     env.DB.prepare(`
       INSERT INTO notification_outbox
         (id, schema_version, event_type, source_key, project_id, actor_id, recipient_id,
-         payload_json, status, available_at, publish_attempts, delivery_attempts, created_at, updated_at)
+         recipient_authorization_epoch, payload_json, status, available_at, publish_attempts, delivery_attempts, created_at, updated_at)
       SELECT ${outboxIdExpression}, 1, ?, occurrence.id, occurrence.project_id, occurrence.created_by,
-        recipient.id, ${payload}, 'pending', ?, 0, 0, ?, ?
+        recipient.id, recipient.authorization_epoch, ${payload}, 'pending', ?, 0, 0, ?, ?
       FROM project_deadline_occurrences occurrence
       INNER JOIN projects p ON p.id = occurrence.project_id
       INNER JOIN project_members member ON member.project_id = occurrence.project_id

@@ -3,6 +3,7 @@ import {
   PROJECT_ACTIVITY_REGISTRY,
   PROJECT_ACTIVITY_SYSTEM_OUTBOX_ACTOR_ID,
   PROJECT_ASSIGNMENT_ELIGIBLE_ROLES,
+  EXTERNAL_PROJECT_ACTIVITY_POLICY,
   parseProjectActivityIntent,
   projectActivityCoalesce,
   type ParsedProjectActivityIntent,
@@ -34,6 +35,9 @@ function uuidSql(): string {
 function broadOutboxSql(coalesce: ReturnType<typeof projectActivityCoalesce>, roles: readonly string[], excludeRecipientId?: string, broadMode: "emit" | "activity_only" = "emit"): string {
   if (broadMode === "activity_only") return "SELECT id FROM notification_outbox WHERE 0";
   const exclude = excludeRecipientId === undefined ? "" : " AND recipient.id <> ?";
+  const externalAllowedTypes = Object.entries(EXTERNAL_PROJECT_ACTIVITY_POLICY)
+    .filter(([, policy]) => policy.decision === "allowed")
+    .map(([type]) => type);
   const prior = coalesce
     ? `
       AND NOT EXISTS (
@@ -49,11 +53,11 @@ function broadOutboxSql(coalesce: ReturnType<typeof projectActivityCoalesce>, ro
     : "";
   return `
     INSERT INTO notification_outbox (
-      id, schema_version, event_type, source_key, project_id, actor_id, recipient_id,
+      id, schema_version, event_type, source_key, project_id, actor_id, recipient_id, recipient_authorization_epoch,
       payload_json, status, available_at, coalesce_key, coalesce_until,
       recipient_membership_cycle_id, created_at, updated_at
     )
-    SELECT ${uuidSql()}, 1, ?, activity.id, activity.project_id, ?, recipient.id,
+    SELECT ${uuidSql()}, 1, ?, activity.id, activity.project_id, ?, recipient.id, recipient.authorization_epoch,
       json_object(
         'schemaVersion', 1,
         'event', json_object('type', ?, 'sourceKey', activity.id, 'recipientId', member.user_id),
@@ -69,6 +73,7 @@ function broadOutboxSql(coalesce: ReturnType<typeof projectActivityCoalesce>, ro
       AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?)
       AND recipient.active = 1
       AND recipient.role IN (${roles.map(() => "?").join(", ")})
+      AND (recipient.role <> 'external_editor' OR activity.event_type IN (${externalAllowedTypes.map(() => "?").join(", ")}))
       ${exclude}
       ${prior}
     ON CONFLICT(event_type, source_key, recipient_id) DO NOTHING
@@ -118,6 +123,7 @@ export function buildProjectActivityStatements(input: AppendProjectActivityInput
     activity.id,
     input.winnerAuditId,
     ...eligibleRoles,
+    ...Object.entries(EXTERNAL_PROJECT_ACTIVITY_POLICY).filter(([, policy]) => policy.decision === "allowed").map(([type]) => type),
     ...(input.excludeRecipientId === undefined ? [] : [input.excludeRecipientId]),
     ...(coalesce ? [NOTIFICATION_OUTBOX_EVENT_TYPES.projectActivityBroad, coalesce.key, 300_000] : []),
   ];

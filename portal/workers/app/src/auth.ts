@@ -29,6 +29,7 @@ const ac = createAccessControl(adminStatements);
 const adminRole = ac.newRole({ user: ["impersonate"], session: [] });
 const photographerRole = ac.newRole({ user: [], session: [] });
 const editorRole = ac.newRole({ user: [], session: [] });
+const externalEditorRole = ac.newRole({ user: [], session: [] });
 
 export function createAuth(env: Env) {
   const db = createDb(env.DB);
@@ -41,12 +42,12 @@ export function createAuth(env: Env) {
     trustedOrigins: [env.APP_ORIGIN],
     plugins: [admin({
       ac,
-      roles: { admin: adminRole, photographer: photographerRole, editor: editorRole },
+      roles: { admin: adminRole, photographer: photographerRole, editor: editorRole, external_editor: externalEditorRole },
       defaultRole: "photographer",
       adminRoles: ["admin"],
       impersonationSessionDuration: 60 * 60,
     })],
-    user: { additionalFields: { role: { type: "string", input: false }, active: { type: "boolean", input: false } } },
+    user: { additionalFields: { role: { type: "string", input: false }, active: { type: "boolean", input: false }, authorizationEpoch: { type: "number", input: false } } },
     account: {
       accountLinking: {
         enabled: true,
@@ -70,7 +71,7 @@ export function createAuth(env: Env) {
         }
         const target = await db.select({ email: schema.user.email, role: schema.user.role, active: schema.user.active })
           .from(schema.user).where(eq(schema.user.id, session.userId)).get();
-        if (!target?.active || (target.role !== "photographer" && target.role !== "editor")) throw new APIError("FORBIDDEN", { message: "User impersonation is disabled." });
+        if (!target?.active || (target.role !== "photographer" && target.role !== "editor" && target.role !== "external_editor")) throw new APIError("FORBIDDEN", { message: "User impersonation is disabled." });
         await audit(env, { id: impersonatedBy, impersonatedBy: null }, "user.impersonate_start", "user", session.userId, { targetEmail: target.email, targetRole: target.role });
         void context;
       } },

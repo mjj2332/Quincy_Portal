@@ -52,7 +52,8 @@ describe("Dashboard Kanban sort control", () => {
   });
 
   it("hides only reorder arrows when shoot-date sorting is selected", async () => {
-    await act(async () => { root!.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); await Promise.resolve(); });
+    await act(async () => { root!.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); await Promise.resolve(); await vi.advanceTimersByTimeAsync(100); await Promise.resolve(); });
+    await vi.waitFor(() => expect(document.querySelector(".kcard")).not.toBeNull());
     expect(document.querySelector('[aria-label="Move project up"]')).not.toBeNull();
     expect(document.querySelector('[aria-label="Move project down"]')).not.toBeNull();
     const priority = document.querySelector('select[aria-label="Priority"]');
@@ -72,7 +73,8 @@ describe("Dashboard Kanban sort control", () => {
   });
 
   it("renders the Sydney deadline on Kanban cards and keeps RAW out of the card footer", async () => {
-    await act(async () => { root!.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); await Promise.resolve(); });
+    await act(async () => { root!.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); await Promise.resolve(); await vi.advanceTimersByTimeAsync(1); });
+    await vi.waitFor(() => expect(document.querySelector(".kcard")).not.toBeNull());
     const card = document.querySelector(".kcard")!;
     expect(card.querySelector("time")?.textContent).toContain("Due 2027-01-15 09:00 Sydney");
     expect(card.querySelector(".kcard__foot")?.textContent).not.toContain("RAW");

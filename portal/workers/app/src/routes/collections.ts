@@ -1,8 +1,9 @@
 import { Hono } from "hono";
+import { terminalRoute } from "../lib/terminal-route";
 import type { Context } from "hono";
 import { buildProjectActivityStatements, COLLECTION_RECEIVED_COUNT_SQL, collectionReceivedCountBindings, computeInsertPosition, createDb, schema } from "@quincy/db";
 import { and, asc, desc, eq, ne, sql } from "drizzle-orm";
-import { projectActivityDeepLink, publishNotificationOutbox, ROLE_CAPABILITIES, type CollectionKind, type ProjectActivityIntent } from "@quincy/shared";
+import { externalCollectionLinkListResponseSchema, externalCollectionLinkSchema, projectActivityDeepLink, publishNotificationOutbox, roleHasCapability, type CollectionKind, type ProjectActivityIntent } from "@quincy/shared";
 import { z } from "zod";
 import type { AppEnv } from "../env";
 import { hasProjectAccess } from "../middleware/capability";
@@ -10,6 +11,7 @@ import { audit, auditMeta } from "../lib/audit";
 import { newId, safeFilename } from "../lib/ids";
 import { abortMultipart, completeMultipart, createMultipartPresign } from "../lib/r2s3";
 import { jsonInput } from "./helpers";
+import { resolveVisibleProject } from "../lib/visible-project-scope";
 
 const collectionKinds = ["video", "floorplan", "copy"] as const;
 const fileInput = z.object({ filename: z.string().trim().min(1).max(255), bytes: z.number().int().positive(), contentType: z.string() });
@@ -37,7 +39,7 @@ type DocumentUpload = typeof schema.documentUploads.$inferSelect;
 
 function canManageCollection(c: Context<AppEnv>) {
   const role = c.get("user").role;
-  return ROLE_CAPABILITIES[role].includes("editProject") || ROLE_CAPABILITIES[role].includes("manageExtras");
+  return roleHasCapability(role, "editProject") || roleHasCapability(role, "manageExtras");
 }
 function forbidden(c: Context<AppEnv>) { return c.json({ error: "Forbidden", capability: "manageExtras" }, 403); }
 function documentCollection(kind: "copy_pdf" | "floorplan"): "copy" | "floorplan" { return kind === "floorplan" ? "floorplan" : "copy"; }
@@ -151,18 +153,25 @@ async function finishObject(c: Context<AppEnv>, upload: DocumentUpload, slot: "p
 
 export const collectionsRoutes = new Hono<AppEnv>();
 
-collectionsRoutes.get("/projects/:id/links", async (c) => {
+collectionsRoutes.get("/projects/:id/links", terminalRoute("/projects/:id/links", async (c) => {
   const projectId = c.req.param("id"); const collectionKind = c.req.query("collection");
   if (!z.string().uuid().safeParse(projectId).success || !z.enum(collectionKinds).safeParse(collectionKind).success) return c.json({ error: "A valid project and collection are required" }, 400);
+  if (c.get("user").role === "external_editor") {
+    if (!await resolveVisibleProject(c.env, c.get("user"), projectId)) return c.json({ error: "Project not found" }, 404);
+    const rows = await createDb(c.env.DB).select({ id: schema.collectionLinks.id, url: schema.collectionLinks.url, label: schema.collectionLinks.label, position: schema.collectionLinks.position, createdAt: schema.collectionLinks.createdAt })
+      .from(schema.collectionLinks).innerJoin(schema.collections, eq(schema.collectionLinks.collectionId, schema.collections.id))
+      .where(and(eq(schema.collections.projectId, projectId), eq(schema.collections.kind, collectionKind as CollectionKind))).orderBy(asc(schema.collectionLinks.position), asc(schema.collectionLinks.id)).all();
+    return c.json(externalCollectionLinkListResponseSchema.parse({ links: rows.map((row) => externalCollectionLinkSchema.parse({ ...row, createdAt: row.createdAt.toISOString() })) }));
+  }
   if (!await hasProjectAccess(c, projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
-  if (!ROLE_CAPABILITIES[c.get("user").role].includes("viewEdited")) return c.json({ error: "Forbidden", capability: "viewEdited" }, 403);
+  if (!roleHasCapability(c.get("user").role, "viewEdited")) return c.json({ error: "Forbidden", capability: "viewEdited" }, 403);
   const rows = await createDb(c.env.DB).select({ id: schema.collectionLinks.id, url: schema.collectionLinks.url, label: schema.collectionLinks.label, source: schema.collectionLinks.source, position: schema.collectionLinks.position, createdAt: schema.collectionLinks.createdAt })
     .from(schema.collectionLinks).innerJoin(schema.collections, eq(schema.collectionLinks.collectionId, schema.collections.id))
     .where(and(eq(schema.collections.projectId, projectId), eq(schema.collections.kind, collectionKind as CollectionKind))).orderBy(asc(schema.collectionLinks.position), asc(schema.collectionLinks.id)).all();
   return c.json({ links: rows });
-});
+}));
 
-collectionsRoutes.post("/projects/:id/links", async (c) => {
+collectionsRoutes.post("/projects/:id/links", terminalRoute("/projects/:id/links", async (c) => {
   const projectId = c.req.param("id"); if (!z.string().uuid().safeParse(projectId).success) return c.json({ error: "Invalid project id" }, 400);
   if (!await hasProjectAccess(c, projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   if (!canManageCollection(c)) return forbidden(c);
@@ -187,9 +196,9 @@ collectionsRoutes.post("/projects/:id/links", async (c) => {
     if (publicationIds.length) c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, publicationIds));
   }
   return c.json({ id: saved.id, url: saved.url, label: saved.label, source: saved.source, position: saved.position, createdAt: saved.createdAt }, saved.id === id ? 201 : 200);
-});
+}));
 
-collectionsRoutes.patch("/projects/:id/links/:linkId", async (c) => {
+collectionsRoutes.patch("/projects/:id/links/:linkId", terminalRoute("/projects/:id/links/:linkId", async (c) => {
   const projectId = c.req.param("id"), linkId = c.req.param("linkId");
   if (!z.string().uuid().safeParse(projectId).success || !z.string().uuid().safeParse(linkId).success) return c.json({ error: "Invalid project or link id" }, 400);
   if (!await hasProjectAccess(c, projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
@@ -243,9 +252,9 @@ collectionsRoutes.patch("/projects/:id/links/:linkId", async (c) => {
   if (current.source !== "manual") return c.json({ error: "Tonomo delivery links are immutable" }, 409);
   if (current.url === data.url && current.label === updatedLabel) return c.json({ id: current.id, url: current.url, label: current.label, source: current.source, position: current.position, createdAt: current.createdAt });
   return c.json({ error: "This link changed while you were editing; reload and try again" }, 409);
-});
+}));
 
-collectionsRoutes.post("/projects/:id/links/:linkId/reorder", async (c) => {
+collectionsRoutes.post("/projects/:id/links/:linkId/reorder", terminalRoute("/projects/:id/links/:linkId/reorder", async (c) => {
   const projectId = c.req.param("id"), linkId = c.req.param("linkId");
   if (!z.string().uuid().safeParse(projectId).success || !z.string().uuid().safeParse(linkId).success) return c.json({ error: "Invalid project or link id" }, 400);
   if (!await hasProjectAccess(c, projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
@@ -320,9 +329,9 @@ collectionsRoutes.post("/projects/:id/links/:linkId/reorder", async (c) => {
   const publicationIds = ((results[2 + reorderActivityBundle.broadOutboxIndex]?.results ?? []) as Array<{ id?: string }>).flatMap((row) => row.id ? [row.id] : []);
   if (publicationIds.length) c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, publicationIds));
   return c.json({ position });
-});
+}));
 
-collectionsRoutes.delete("/projects/:id/links/:linkId", async (c) => {
+collectionsRoutes.delete("/projects/:id/links/:linkId", terminalRoute("/projects/:id/links/:linkId", async (c) => {
   const projectId = c.req.param("id"), linkId = c.req.param("linkId");
   if (!z.string().uuid().safeParse(projectId).success || !z.string().uuid().safeParse(linkId).success) return c.json({ error: "Invalid project or link id" }, 400);
   if (!await hasProjectAccess(c, projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
@@ -347,12 +356,12 @@ collectionsRoutes.delete("/projects/:id/links/:linkId", async (c) => {
     if (publicationIds.length) c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, publicationIds));
   }
   return c.body(null, 204);
-});
+}));
 
 // Kept only to make old clients fail explicitly; document bytes must never enter Worker formData().
-collectionsRoutes.post("/projects/:id/documents", (c) => c.json({ error: "Document uploads now use the presign and completion endpoints" }, 410));
+collectionsRoutes.post("/projects/:id/documents", terminalRoute("/projects/:id/documents", (c) => c.json({ error: "Document uploads now use the presign and completion endpoints" }, 410)));
 
-collectionsRoutes.post("/projects/:id/documents/presign", async (c) => {
+collectionsRoutes.post("/projects/:id/documents/presign", terminalRoute("/projects/:id/documents/presign", async (c) => {
   const projectId = c.req.param("id"); if (!z.string().uuid().safeParse(projectId).success) return c.json({ error: "Invalid project id" }, 400);
   if (!await hasProjectAccess(c, projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   if (!canManageCollection(c)) return forbidden(c);
@@ -400,9 +409,9 @@ collectionsRoutes.post("/projects/:id/documents/presign", async (c) => {
     await db.update(schema.documentUploads).set({ status: aborted ? "failed" : "aborting", updatedAt: new Date() }).where(and(eq(schema.documentUploads.id, upload.id), eq(schema.documentUploads.status, "pending")));
     throw error;
   }
-});
+}));
 
-collectionsRoutes.put("/projects/:id/documents/direct/:sessionId/:slot", async (c) => {
+collectionsRoutes.put("/projects/:id/documents/direct/:sessionId/:slot", terminalRoute("/projects/:id/documents/direct/:sessionId/:slot", async (c) => {
   if (c.env.APP_ENV !== "dev") return c.json({ error: "Direct uploads are available only in dev" }, 404);
   const projectId = c.req.param("id"), sessionId = c.req.param("sessionId"), slot = c.req.param("slot");
   if (!z.string().uuid().safeParse(projectId).success || !z.string().uuid().safeParse(sessionId).success || (slot !== "pdf" && slot !== "preview")) return c.json({ error: "Invalid document upload session" }, 400);
@@ -412,9 +421,9 @@ collectionsRoutes.put("/projects/:id/documents/direct/:sessionId/:slot", async (
   if (slot === "preview" && !upload.previewKey) return c.json({ error: "This upload has no preview file" }, 400);
   await c.env.MEDIA.put(slot === "pdf" ? upload.pdfKey : upload.previewKey!, c.req.raw.body, { httpMetadata: { contentType: slot === "pdf" ? upload.pdfContentType : upload.previewContentType! } });
   return c.body(null, 204);
-});
+}));
 
-collectionsRoutes.post("/projects/:id/documents/complete", async (c) => {
+collectionsRoutes.post("/projects/:id/documents/complete", terminalRoute("/projects/:id/documents/complete", async (c) => {
   const projectId = c.req.param("id"); if (!z.string().uuid().safeParse(projectId).success) return c.json({ error: "Invalid project id" }, 400);
   if (!await hasProjectAccess(c, projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   if (!canManageCollection(c)) return forbidden(c);
@@ -472,9 +481,9 @@ collectionsRoutes.post("/projects/:id/documents/complete", async (c) => {
   const publicationIds = ((completionResults![activityStart + activityBundle.broadOutboxIndex]?.results ?? []) as Array<{ id?: string }>).flatMap((row) => row.id ? [row.id] : []);
   if (publicationIds.length) c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, publicationIds));
   return c.json(responseFor(completed), 201);
-});
+}));
 
-collectionsRoutes.post("/projects/:id/documents/:sessionId/abort", async (c) => {
+collectionsRoutes.post("/projects/:id/documents/:sessionId/abort", terminalRoute("/projects/:id/documents/:sessionId/abort", async (c) => {
   const projectId = c.req.param("id"), sessionId = c.req.param("sessionId");
   if (!z.string().uuid().safeParse(projectId).success || !z.string().uuid().safeParse(sessionId).success) return c.json({ error: "Invalid document upload session" }, 400);
   if (!await hasProjectAccess(c, projectId) || !canManageCollection(c)) return forbidden(c);
@@ -485,4 +494,4 @@ collectionsRoutes.post("/projects/:id/documents/:sessionId/abort", async (c) => 
   if (!await abortReservation(c, upload)) return c.json({ error: "Multipart abort is pending; retry this request" }, 503);
   await createDb(c.env.DB).update(schema.documentUploads).set({ status: "failed", updatedAt: new Date() }).where(and(eq(schema.documentUploads.id, upload.id), eq(schema.documentUploads.status, "aborting")));
   return c.body(null, 204);
-});
+}));

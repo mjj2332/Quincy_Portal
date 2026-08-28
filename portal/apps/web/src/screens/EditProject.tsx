@@ -9,7 +9,7 @@ import { confirm } from "../lib/confirm";
 
 type ProjectResponse = {
   id: string; street: string; suburb: string | null; postcode: string | null; agencyName: string | null; agentName: string | null; agentEmail: string | null; agentPhone: string | null;
-  shootDate: string | null; timeWindow: string | null; orderNo: string | null; orderId: string | null; invoiceAmount: number | null; paymentStatus: string | null; notes: string | null; rawFolderLink: string | null; rawFolderPath: string | null;
+  shootDate: string | null; timeWindow: string | null; orderNo: string | null; orderId: string | null; invoiceAmount: number | null; paymentStatus: string | null; notes: string | null; productionNotes: string | null; rawFolderLink: string | null; rawFolderPath: string | null;
   archivedAt: string | null;
   collections: Array<{ id: string; kind: CollectionKind }>;
 };
@@ -20,7 +20,7 @@ function optionalValue(value: string): string | null { return value.trim() || nu
 function formFromProject(project: ProjectResponse): ProjectForm {
   return {
     ...emptyProjectForm,
-    street: project.street, suburb: fieldValue(project.suburb), postcode: fieldValue(project.postcode), agencyName: fieldValue(project.agencyName), agentName: fieldValue(project.agentName), agentEmail: fieldValue(project.agentEmail), agentPhone: fieldValue(project.agentPhone), shootDate: fieldValue(project.shootDate), timeWindow: fieldValue(project.timeWindow), orderNo: fieldValue(project.orderNo), orderId: fieldValue(project.orderId), invoiceAmount: fieldValue(project.invoiceAmount), paymentStatus: fieldValue(project.paymentStatus), notes: fieldValue(project.notes), rawFolderLink: fieldValue(project.rawFolderLink), rawFolderPath: fieldValue(project.rawFolderPath), orderedServices: project.collections.flatMap((collection) => collection.kind === "raw" ? [] : [collection.kind]),
+    street: project.street, suburb: fieldValue(project.suburb), postcode: fieldValue(project.postcode), agencyName: fieldValue(project.agencyName), agentName: fieldValue(project.agentName), agentEmail: fieldValue(project.agentEmail), agentPhone: fieldValue(project.agentPhone), shootDate: fieldValue(project.shootDate), timeWindow: fieldValue(project.timeWindow), orderNo: fieldValue(project.orderNo), orderId: fieldValue(project.orderId), invoiceAmount: fieldValue(project.invoiceAmount), paymentStatus: fieldValue(project.paymentStatus), notes: fieldValue(project.notes), productionNotes: fieldValue(project.productionNotes), rawFolderLink: fieldValue(project.rawFolderLink), rawFolderPath: fieldValue(project.rawFolderPath), orderedServices: project.collections.flatMap((collection) => collection.kind === "raw" ? [] : [collection.kind]),
   };
 }
 
@@ -28,7 +28,7 @@ export function editProjectPayload(form: ProjectForm): Record<string, unknown> {
   return {
     street: form.street.trim(), suburb: optionalValue(form.suburb), postcode: optionalValue(form.postcode),
     agencyName: optionalValue(form.agencyName), agentName: optionalValue(form.agentName), agentEmail: optionalValue(form.agentEmail), agentPhone: optionalValue(form.agentPhone),
-    shootDate: optionalValue(form.shootDate), timeWindow: optionalValue(form.timeWindow), rawFolderLink: optionalValue(form.rawFolderLink), rawFolderPath: optionalValue(form.rawFolderPath),
+    shootDate: optionalValue(form.shootDate), timeWindow: optionalValue(form.timeWindow), productionNotes: optionalValue(form.productionNotes), rawFolderLink: optionalValue(form.rawFolderLink), rawFolderPath: optionalValue(form.rawFolderPath),
   };
 }
 

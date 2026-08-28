@@ -6,13 +6,15 @@ describe("project assignment eligibility", () => {
     expect(PROJECT_MEMBER_ROLES).toEqual(["photographer", "editor"]);
     expect(PROJECT_ASSIGNMENT_ELIGIBLE_ROLES).toEqual({
       photographer: ["photographer", "editor", "admin"],
-      editor: ["editor", "admin"],
+      editor: ["editor", "external_editor", "admin"],
     });
     expect(isProjectAssignmentEligible("photographer", "photographer")).toBe(true);
     expect(isProjectAssignmentEligible("photographer", "editor")).toBe(true);
     expect(isProjectAssignmentEligible("photographer", "admin")).toBe(true);
     expect(isProjectAssignmentEligible("editor", "photographer")).toBe(false);
     expect(isProjectAssignmentEligible("editor", "editor")).toBe(true);
+    expect(isProjectAssignmentEligible("editor", "external_editor")).toBe(true);
     expect(isProjectAssignmentEligible("editor", "admin")).toBe(true);
+    expect(isProjectAssignmentEligible("photographer", "external_editor")).toBe(false);
   });
 });

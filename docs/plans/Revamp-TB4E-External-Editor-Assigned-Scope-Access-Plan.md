@@ -163,9 +163,11 @@ cycles and never reuse history.
 ### TB4C registry, durable recipient contract, and the legacy direct-delivery gap
 
 Every activity registry entry currently has
-`actorRecipientRule:'eligible_editor_membership_only'`, `audience:'internal'`, and
-`externalProjection:'pending'` (`portal/packages/shared/src/project-activity.ts:106-145`). The live
-and reserved types are enumerated at `:14-43` and `:162-194`.
+`actorRecipientRule:'eligible_editor_membership_only'` and `audience:'internal'`
+(`portal/packages/shared/src/project-activity.ts:106-145`). The live and reserved types are
+enumerated at `:14-43` and `:162-194`. TB4E keeps that registry as the internal delivery inventory
+and adds the separate exhaustive `EXTERNAL_PROJECT_ACTIVITY_POLICY` in
+`external-project-policy.ts` as the External projection authority.
 
 The broad activity builder already derives Editor-recipient global roles from
 `PROJECT_ASSIGNMENT_ELIGIBLE_ROLES.editor`; the background delivery path reauthorizes the current
@@ -177,8 +179,10 @@ delivery-time gates decide whether content is safe.
 
 That reauthorization is not sufficient across `editor ↔ external_editor`: both roles remain
 Editor-slot eligible and preserve the same membership UUID. The live broad envelope has no global-
-role version (`workers/background/src/notification-delivery.ts:401-405`) and `broadAdmission()`
-currently checks only current role eligibility plus that preserved cycle (`:483-486`). TB4E adds the
+role version (`workers/background/src/notification-delivery.ts:401-405`) and
+`resolveBroadRecipient()` currently checks only current role eligibility plus that preserved cycle
+(`portal/workers/background/src/notification-delivery.ts:426-506`; the SQL admission itself is in
+`broadAdmission()` at `:904-988`). TB4E adds the
 durable per-user authorization epoch and outbox stamp specified below; membership-cycle provenance
 and role epoch are independent, mandatory fences.
 
@@ -190,7 +194,7 @@ Current app/background callers include RAW/Edited workflow, Stage-to-editing, de
 AutoHDR-stalled, annotation feedback, checklist assignment, and due-today delivery
 (`workers/app/src/lib/notifications.ts:13-118`; `workers/background/src/notifications.ts:15-210`).
 The checklist-assignment direct path has neither membership-cycle nor current assignment-version
-admission. None of these paths consults the TB4C activity registry's `externalProjection`.
+admission. None of these paths consults the separate TB4E External activity policy.
 
 The lifecycle vocabulary is fixed by
 `packages/db/migrations/0031_notification_outbox_and_delivery_ledger.sql:10-30,54-58`:
@@ -203,7 +207,8 @@ race.
 TB4E therefore treats the durable registry and legacy emitter as one security inventory. The
 exclusion choke point is **inside `emitNotifications()` itself**: it reloads every proposed
 recipient and removes any whose current role is `external_editor` before inserting a row or sending
-email. This covers all five current call sites, including `notifyNoticeBoardMentions()`, whose
+email. This covers all six current call sites (or, equivalently, every call site of
+`emitNotifications()`), including `notifyNoticeBoardMentions()`, whose
 recipient query bypasses `projectNotificationRecipients()` and whose Notice Board email contains a
 staff-post excerpt (`workers/app/src/lib/notifications.ts:49-63`;
 `packages/db/src/notifications.ts:112-123`). `projectNotificationRecipients()` may filter earlier
@@ -309,8 +314,9 @@ session and follows the full principal-clear path.
 - Add a monotonic per-user authorization epoch, bind every transform-source signature to its issuing
   principal's epoch, stamp it on every notification outbox recipient row,
   and make final delivery admission reject a pre-transition epoch even when membership is preserved.
-- Replace the activity registry's pending external projection with explicit per-type allowed or
-  suppressed policy and enforce it at occurrence and delivery time.
+- Keep the activity registry as the internal delivery inventory and add an explicit, exhaustive
+  per-type allowed or suppressed External policy in `external-project-policy.ts`; enforce it at
+  occurrence and delivery time.
 - Extend TB2 freshness with an authorization snapshot and targeted cache/UI revocation behavior.
 - Add automated security-boundary tests, repository audits, local authorization/projection proof,
   Agy role-matrix QA, migration proof, rollout, and data-retaining rollback.
@@ -347,8 +353,8 @@ session and follows the full principal-clear path.
 4. Widen `schema.user.role` and `schema.annotations.authorRole` Drizzle enum arrays. Add no role
    migration and no DB CHECK as collateral work.
 5. Add an external better-auth access-control role with no Admin permissions and include it in the
-   plugin role map. Session creation/API validation reload `active`, `authorization_epoch`, and null
-   conversion state; the bounded session principal exposes `authorizationEpoch` to key private client
+   plugin role map. Session creation/API validation reload `active` and `authorization_epoch`; the
+   bounded session principal exposes `authorizationEpoch` to key private client
    state and still validates role through shared `ROLES`.
 6. Make every role switch/type exhaustive. Delete hard-coded role arrays where a shared capability
    or assignment-eligibility helper is the real rule.
@@ -453,7 +459,7 @@ browser from `GET /api/projects`. The exact current/new cross-project surfaces a
 | `GET /api/notifications?limit&cursor` (`notifications.ts:11`) | All rows/counts for user | External role receives only current-scope, external-allowed/projected rows; unread count and cursor page are computed after the same visibility predicate |
 | `POST /api/notifications/:id/read` (`notifications.ts:33`) | Mutates any unread row owned by the user | For External, update only IDs selected by the identical `external_visible_notifications` CTE; hidden/absent both return the existing notification-not-found 404 |
 | `DELETE /api/notifications/:id` (`notifications.ts:44`) | Deletes any row owned by the user | For External, delete only IDs selected by that same CTE; hidden/absent are identical and the audit follows only a winning delete |
-| `POST /api/notifications/read-all` (`notifications.ts:57`) | Marks every owned unread row | For External, update only unread IDs selected by the same CTE; unlinked, invisible, suppressed, and superseded-cycle rows remain untouched |
+| `POST /api/notifications/read-all` (`portal/workers/app/src/routes/notifications.ts:55`) | Marks every owned unread row | For External, update only unread IDs selected by the same CTE; unlinked, invisible, suppressed, and superseded-cycle rows remain untouched |
 | `GET /api/project-access-snapshot` (new) | Absent | Return only currently visible project IDs plus membership-cycle IDs for scoped roles and a deterministic authorization fingerprint; no project/contact fields |
 
 `GET /api/stages` is a global configuration read, not a project list. It may return the role-safe
@@ -533,6 +539,18 @@ revocable internal bearer and returns the same 404 for every invalid/External-st
 a synonym for dropping `ALL` or wildcard registrations.
 
 The generated deduplicated actual set and classified expected set must be equal in both directions.
+This gate is fail-closed by count as well as set equality: `app.routes.length` must equal
+`markedTerminalRegistrations + checkedInMiddlewareRegistrations.length`, where the latter is an
+explicit checked-in list of every `use()` registration. A route registration without
+`terminalRoute()` is therefore counted but absent from both terminal set and expected set, making
+the suite fail instead of silently expanding the accepted set. The marker inspection unwraps
+`handler[COMPOSED_HANDLER]` from `hono/utils/constants` before checking the terminal symbol; the
+manifest also asserts that the mounted application does not set a custom `onError`, because that
+wrapper replaces handlers without preserving the terminal marker. The implementation scope is
+approximately 125 terminal registrations across approximately 20 route files (including about 23
+in `projects.ts`, 23 in `admin.ts`, 15 in `index.ts`, and 10 in `collections.ts`), each wrapped by
+an identity `terminalRoute()` marker. The regression test must be red both when one wrapper is
+deleted and when a new unwrapped route is added.
 `ALL /__transform-source` and `GET /__transform-source/*` must both survive normalization and are
 classified `withheld` from the External-client surface; their separate bearer-protocol probes still
 exercise the valid internal signature and uniform failure behavior below. A newly
@@ -697,7 +715,7 @@ returned; it does not mean a nullable/redacted key. Shared nested schemas named 
 | Collaboration summary / Team | project select only `id,street,stage_key`; members select exactly the Project-detail member join columns above | exactly `project:{id,street,stageKey},members:[ExternalParticipantDto plus assignedSubtaskCount]` | **Present only in `members[]`** |
 | Project mentionable users | active user select only `id,name,role,active`; eligibility is current project membership OR approved active Admin collaborator, after visible-project scope; no `user.email` select | exactly `{users:[ExternalPersonDto]}` (maximum 20) | None |
 | Notification list item | `notifications`: `id,user_id,project_id,type,title,body,read_at,created_at`; join sent ledger/outbox and current membership using the fail-closed predicate below; do not select email delivery/provider error fields or payload JSON into the response | exactly `id,projectId,type,title,body,readAt,createdAt` | None |
-| Reserved Calendar range | visible project select uses summary columns but returns only `id,street,stage_key`; Deadline selects canonical schedule/version; checklist selects item/schedule/version plus assignee `id,name,role,active`; filter people are derived from visible events only | exactly `{range:{start,end,zone:"Australia/Sydney"},events:[{id,projectId,kind:"project_deadline"|"checklist",title,start,end,allDay,project:{id,street,stageKey},assignee:ExternalPersonDto|null,version,permissions:{canDrag,canResize}}],filters:{projects:[{id,street}],people:[ExternalPersonDto],myTasksUserId}}` | None |
+| Reserved Calendar range | visible project select uses summary columns but returns only `id,street,stage_key`; Deadline selects canonical schedule/version; checklist selects item/schedule/version plus assignee `id,name,role,active`; filter people are derived from visible events only | TB5C-owned seam: the field list is explicitly non-normative for TB4E; the endpoint must use the shared visible-project obligation above, while TB5C settles the final DTO and permissions | None |
 | Reserved external export | Same explicit summary/detail, collection, asset, checklist, comment, participant selects as above; no alternate export query and no storage/provider columns | exactly `{schemaVersion:1,generatedAt,project:{all exact Project-detail keys except `cover.url` is regenerated},assets:[exact asset DTO],links:[exact link DTO],checklist:[exact checklist DTO],comments:[exact comment DTO]}` | **Present only in `project.members[]`** |
 
 `agencyDisplayName` is exactly `COALESCE(agencies.name, projects.agency_name)` and
@@ -857,12 +875,13 @@ canonical query fields covered by the HMAC. The new canonical query-name set is 
 negative, or unsafe-integer fields return the uniform 404. `signTransformSource()` and issuance
 reject a missing or invalid principal/epoch exactly as they reject a mismatched `cacheVersion`
 (`packages/shared/src/transform-source.ts:32-46,55-69`). On the root, sessionless
-`/__transform-source/*` route (`workers/app/src/index.ts:67`), `verifyTransformSource()` performs one
-primary-key read of
-that issuing user and fails closed unless the row exists, is active, is not `external_editor`, and
-its current epoch equals the signed epoch. This mirrors the existing `cacheVersion` equality check;
-the D1 read is intentionally paid only on the cold/slow source-fetch path
-(`workers/app/src/routes/media.ts:63-67`). The External branch still must neither issue nor serialize
+`/__transform-source/*` route (`workers/app/src/index.ts:67`), the app-side wrapper
+`portal/workers/app/src/lib/transform-source.ts:10` performs one primary-key read of that issuing
+user and fails closed unless the row exists, is active, is not `external_editor`, and its current
+epoch equals the signed epoch. The shared `verifyTransformSource()` only verifies the HMAC over
+the principal ID and epoch parameters; it has no D1 dependency. This mirrors the existing
+`cacheVersion` equality check; the D1 read is intentionally paid only on the cold/slow source-fetch
+path (`workers/app/src/routes/media.ts:63-67`). The External branch still must neither issue nor serialize
 this URL/signature.
 
 Set `TRANSFORM_SOURCE_TTL_SECONDS = 120`. This is the maximum source-fetch authorization window, not
@@ -871,8 +890,9 @@ src>` later gets an edge miss after that 120-second window, the source returns 4
 cannot be rebuilt; the client must request `/media/asset/...` again to obtain a fresh URL. Tests use
 the 30-second clock-skew rule already present and prove expiry/future-bound checks with the new TTL.
 
-Keep a full-zone purge as belt-and-braces because the repository establishes only that the Images
-cache lasts **at least** one hour (`packages/shared/src/transform-source.ts:5-8`), not an upper bound,
+Keep a full-zone purge because it is the sole control for the residual already-cached-edge-HIT window
+after conversion: the repository establishes only that the Images cache lasts **at least** one hour
+(`packages/shared/src/transform-source.ts:5-8`), not an upper bound,
 and an existing edge HIT does not call the revocation check. The ordinary one-batch role-change
 command commits conversion and enqueues an idempotent fire-and-forget purge job under its winner
 marker. The role write does not wait for purge success and has no conversion state machine. The
@@ -881,7 +901,9 @@ only the winner audit/user/epoch IDs. After a purge, replay of a captured old UR
 MISS, reaches the epoch check, returns the uniform 404 before R2, and cannot repopulate the cache.
 Opus must scrutinize the residual interval in which a pre-existing edge HIT can survive between the
 winning role commit and purge completion; the revocable signature prevents replay-based re-caching,
-while the purge removes already cached output.
+while the purge removes already cached output. On bounded retry exhaustion, the job records the
+retry count and deadline, freezes External Editor provisioning/conversion, and requires a manual
+Cloudflare zone purge before provisioning is unfrozen; the runbook records the operator evidence.
 
 Automated/local tests obtain the ordinary `/media/asset/...` and `/media/annotation/...` URLs as an
 assigned External Editor, fetch successfully, remove the final membership, and reuse the identical
@@ -932,7 +954,12 @@ type ExternalEditedUploadCreateResponse = {
 
 Creation resolves visible non-archived project + stored edited collection in one query, checks
 `uploadEdited`, `editedUploadState='available'`, exact Editor membership cycle, active
-`external_editor` role and current `authorization_epoch`, then creates the R2 multipart upload. It
+`external_editor` role and current `authorization_epoch`, then creates the R2 multipart upload.
+Before creating R2 state, it counts the principal's current `status='open'` sessions and rejects
+the request with `409 edited_upload_unavailable` when the principal already holds three open
+sessions. The `external_edited_upload_sessions_principal_status_idx` on
+`(created_by,status,expires_at)` exists to support this per-principal cap query (and expiry
+housekeeping); it is not an unbounded-session convenience index. It
 inserts the session plus one expected-part row per part in one D1 batch. The session holds the
 principal/project/collection/cycle/epoch/asset/filename/bytes, internal R2 key and binding upload ID,
 token hash, expiry, and `status='open'`; each part row holds its expected byte count. The response
@@ -957,7 +984,12 @@ path segment with `[external-upload-token]` and may record only the internal ses
 The Worker does not call `arrayBuffer()` or retain a whole part. After the header bound passes, it
 passes `c.req.raw.body` directly to
 `env.MEDIA.resumeMultipartUpload(r2Key,uploadId).uploadPart(partNumber, body)`. The request-level
-`Content-Length` equality is the non-buffering byte-count gate; the returned
+`Content-Length` is only an early rejection bound. `received_bytes` is counted server-side as
+the stream is consumed, not asserted from that header. The end-to-end integrity control is the
+final R2 `HEAD` size comparison (not the client's `Content-Length`). A non-decodable or
+non-JPEG asset must never leave `rendition_processing`; the rendition pipeline adds the
+decode/type gate before ready publication. Fixed `image/jpeg` content type plus
+`X-Content-Type-Options: nosniff` is the XSS control. The returned
 `R2UploadedPart {partNumber,etag}` is stored only in the guarded part row and never returned. A
 per-part `pending→uploading` lease prevents concurrent proxy writers; a stale lease is recoverable,
 and an already uploaded part returns the same success only when its stored expected/received lengths
@@ -1017,8 +1049,11 @@ retry/sweeper.
 
 Creation failure immediately best-effort aborts an R2 upload created before the D1 INSERT. The R2
 binding has no multipart-enumeration surface, so this plan does not invent an orphan-list scan. Build
-preflight must verify/configure the bucket lifecycle rule that aborts incomplete multipart uploads;
-the crash-only create-before-D1 orphan is unreachable media and is reclaimed by that rule. The D1
+preflight must verify/configure the bucket lifecycle rule to abort incomplete multipart uploads after
+**7 days**, with recorded configuration evidence. The crash-only create-before-D1 orphan is a zero-part,
+unreferenceable, uncompletable storage/billing-hygiene item—not a privacy item—and is reclaimed by
+that rule. Miniflare cannot exercise a bucket lifecycle rule, so lifecycle reclamation is a preflight
+configuration check, not an automated test assertion. The D1
 sweep claims expired `open` sessions as `aborting`, resumes their stored upload ID through the
 binding, aborts, and commits `expired`; it retries stale
 `aborting` rows. It never expires a live `completing` lease; stale completion follows the HEAD-first
@@ -1194,8 +1229,9 @@ does not revoke the user's global sessions.
 
 ### Registry type and payload decisions
 
-Replace `externalProjection:'pending'` with a required discriminated policy on **every** live and
-reserved entry:
+`RegistryEntry.externalProjection` is removed because it was only a type-level `"pending"` placeholder,
+not a per-entry policy or authority. Put the actual External policy in the separate, exhaustive
+`external-project-policy.ts` module:
 
 ```ts
 type ExternalProjectionPolicy =
@@ -1203,9 +1239,11 @@ type ExternalProjectionPolicy =
   | { decision: "suppressed"; reason: ExternalSuppressionReason };
 ```
 
-There is no default and no `pending`; adding a future activity type fails TypeScript/tests until its
-External policy is explicit. `audience` becomes an equally explicit internal-only versus
-internal-and-external declaration derived consistently from that policy.
+There is no default in `EXTERNAL_PROJECT_ACTIVITY_POLICY`; adding a future activity type fails
+TypeScript/tests until its External policy is explicit. `project-activity.ts` does not import
+projector types, so there is no circular dependency. `audience` is derived in
+`external-project-policy.ts` from that separate policy: allowed project activity types are
+internal-and-external only when their safe projector succeeds; suppressed types remain internal-only.
 
 Current exact classification:
 
@@ -1361,16 +1399,18 @@ internal integrity scan, never counted or returned.
   broad, assignment, mention, Deadline, and the three External-safe legacy adapters—constructs each
   recipient row with `recipient_authorization_epoch` selected from that recipient's current active
   `user` row in the **same occurrence INSERT ... SELECT** that validates its role/mapping. A caller
-  cannot supply the epoch, and a row without an exact current stamp is not publishable.
+  cannot supply the epoch. Newly-produced External-capable rows carry the exact current stamp;
+  legacy NULL rows remain internal-only and are not publishable to External recipients.
 - At occurrence time, internal Editor cycles are admitted as today. For an External Editor cycle, a
   suppressed policy creates no external in-app ledger/notification row. An allowed conditional
   projector that yields no safe fields also creates no row.
 - At resolve and again in the final lease-token-fenced admission batch, join the recipient `user`
-  row and require `o.recipient_authorization_epoch = user.authorization_epoch`, plus active role,
-  exact membership cycle/mapping, project archive state, and registry/legacy policy. Equality—not
-  `<=`—is the only admission. A role transition cannot cause a previously queued internal-only event
-  to render; an old-epoch row is suppressed with `authorization_epoch_changed` and creates no
-  notification/email.
+  row and require exact epoch equality for every stamped row; a legacy NULL stamp is accepted only
+  for a non-External internal recipient and is rejected for an External recipient. Alongside that
+  compatibility arm, require active role, exact membership cycle/mapping, project archive state,
+  and registry/legacy policy. Equality—not `<=`—is the only admission. A role transition cannot
+  cause a previously queued internal-only event to render; an old/missing-epoch External row is
+  suppressed with `authorization_epoch_changed` and creates no notification/email.
 - Leasing is not authorization. If a consumer leased a row before an epoch bump but its final
   admission serializes after the winning role-change batch, that same token-owned D1 batch changes
   every `pending|processing` channel to `suppressed`, inserts no `notifications` row or email work,
@@ -1601,7 +1641,7 @@ An always-mounted `PrincipalFreshnessBoundary` owns query key
 interval and on focus/reconnect, and also refetches the auth session. It pauses while hidden under the
 same TB2 rules. Same-browser project-data tombstones remain the acceleration path, not the only path.
 
-Dashboard currently owns `projects` as local React state (`Dashboard.tsx:135,161-191`), so there is
+Dashboard currently owns `projects` as local React state (`portal/apps/web/src/screens/Dashboard.tsx:135,161-191`), so there is
 no QueryClient entry for a freshness boundary to purge. TB4E moves the authoritative Dashboard fetch
 to `apps/web/src/lib/dashboard-projects.ts` with key
 `['dashboard-projects',principalId,role,authorizationEpoch,{archived:false}]`.
@@ -1659,6 +1699,11 @@ TB4E reserves this immutable contract for TB5C and builds no Calendar code:
   broaden scope.
 - Membership loss invalidates the full Calendar range query family on the next freshness signal.
 
+The field-level Calendar shape in the DTO matrix (including `permissions.canDrag` and
+`permissions.canResize`) is explicitly **non-normative for TB4E**; it is a reserved TB5C seam, not an
+endpoint or schema built by this plan. TB5C owns the final fields while retaining the shared
+`visibleProjectWhere` obligation.
+
 ## Additive migration `0036`
 
 ### Exact schema change
@@ -1670,8 +1715,7 @@ tables, and three indexes. The role enums remain schema-type-only:
 ALTER TABLE `projects` ADD COLUMN `production_notes` text;
 ALTER TABLE `user` ADD COLUMN `authorization_epoch` integer NOT NULL DEFAULT 0
   CHECK (`authorization_epoch` >= 0);
-ALTER TABLE `notification_outbox` ADD COLUMN `recipient_authorization_epoch` integer NOT NULL DEFAULT 0
-  CHECK (`recipient_authorization_epoch` >= 0);
+ALTER TABLE `notification_outbox` ADD COLUMN `recipient_authorization_epoch` integer;
 
 CREATE TABLE `external_edited_upload_sessions` (
   `id` text PRIMARY KEY NOT NULL,
@@ -1743,14 +1787,15 @@ CREATE INDEX `external_edited_upload_sessions_sweep_idx`
 ```
 
 There is no role CHECK to widen, no annotation/user table rebuild, no `project_members` change, and
-no semantic data backfill: existing users/outbox rows receive epoch `0`, so pre-TB4E delivery remains
-compatible until the first authorization transition bumps that user. `membership_cycle_id` is
+no semantic data backfill: existing users receive epoch `0`, while legacy outbox rows retain a
+`NULL` recipient epoch and therefore fail closed for External admission. Pre-TB4E internal delivery
+remains compatible until the first authorization transition bumps that user. `membership_cycle_id` is
 intentionally an immutable snapshot without a foreign key:
 final membership deletion must not be blocked or cascade away the upload audit binding. Every live
 operation still requires the matching current `project_members.id`; removal makes the session
 unusable. `asset_id` has no asset foreign key because the asset does not exist until completion.
-The nullable project column, epoch defaults, and unused upload tables are compatible with all
-currently deployed Workers. Drizzle models all fields and internal-only R2 binding values; none is
+The nullable project and outbox epoch columns, the user epoch default, and unused upload tables are
+compatible with all currently deployed Workers. Drizzle models all fields and internal-only R2 binding values; none is
 part of a shared External DTO.
 
 No new **membership-scope** index is planned; the three new indexes belong only to upload lifecycle
@@ -1828,12 +1873,14 @@ Keep the build reviewable in this order; no slice provisions a production accoun
 
 - Fresh and TB4D-upgrade databases produce nullable `projects.production_notes` and preserve every
   existing value/count.
-- Fresh/upgrade databases produce the exact three additive columns, epoch defaults/CHECKs, upload
+- Fresh/upgrade databases produce the exact three additive columns (including nullable outbox epoch),
+  the user epoch default/CHECK, upload
   session/part columns/CHECKs/FKs, and three indexes; membership deletion is not
   blocked and a removed cycle cannot use its retained session.
-- TB4D-upgrade fixtures give every existing user/outbox row epoch zero; a new shared producer row
-  carries the recipient's selected current epoch, conversion tokens and hashed upload tokens are
-  unique through their named indexes, and invalid negative epoch or illegal session/part state
+- TB4D-upgrade fixtures give every existing user row epoch zero and leave legacy outbox epoch stamps
+  NULL (which fail closed for External admission); a new shared producer row carries the recipient's
+  selected current epoch, and hashed upload tokens are unique through their named index. Invalid
+  negative epoch or illegal session/part state
   shapes fail their CHECKs.
 - `PRAGMA table_info(user)` and migration SQL prove `role` remains plain text with no CHECK;
   `annotations.author_role` likewise accepts the widened type without migration.
@@ -1922,8 +1969,9 @@ comment, notification, and future projection seams.
   response; before and after each binding `uploadPart`; after part success/before part-row commit;
   after completion lease claim; after binding completion/before HEAD; after HEAD/before the media
   batch; at every statement of the atomic media batch; after abort claim; after binding abort/before
-  terminal commit; and during the known-session expiry sweep. Verify the configured incomplete-
-  multipart lifecycle reclaims the untracked create-before-D1 crash orphan. Each retry converges to exactly one
+  terminal commit; and during the known-session expiry sweep. Record preflight evidence that the
+  incomplete-multipart lifecycle is configured for seven-day reclamation of the untracked
+  create-before-D1 crash orphan; Miniflare cannot assert bucket lifecycle behavior. Each retry converges to exactly one
   completed asset or one aborted/expired session, with no stuck live lease and no visible incomplete
   part. Stale completion always HEADs first; abort is idempotent.
 - Assert `editedUploadAvailable` is the only Workspace gate for all roles, matches the server-side
@@ -1968,7 +2016,7 @@ comment, notification, and future projection seams.
   `NotificationType` classifications for External occurrence fan-out, strict payload, copy, and
   exact channels.
   Suppressed types produce no external ledger and no redacted notification.
-- Prove the `emitNotifications()` choke point reloads and excludes an External recipient for all five
+- Prove the `emitNotifications()` choke point reloads and excludes an External recipient for all six
   current call sites, including the direct Notice Board mention path; earlier filtering in
   `projectNotificationRecipients()` is defense in depth. Each allowed legacy event enters its
   specified durable event; broad events never get an
@@ -1979,8 +2027,9 @@ comment, notification, and future projection seams.
   internal-only change with an empty safe intersection.
 - Same Editor membership-cycle SQL produces recipients for internal and External Editors; no second
   table/query path exists.
-- Every outbox producer stamps the recipient epoch via INSERT-SELECT; missing/stale stamps are not
-  publishable. Pause a consumer after leasing, then commit `editor→external_editor` and separately
+- Every new External-capable outbox producer stamps the recipient epoch via INSERT-SELECT; a missing
+  or stale stamp is not publishable to an External recipient. Legacy NULL stamps remain internal-only.
+  Pause a consumer after leasing, then commit `editor→external_editor` and separately
   `external_editor→editor` while preserving the membership UUID. Resumed final admission must change
   the row/channels to suppressed with `authorization_epoch_changed`, insert no notification, and
   make no email-provider call. A final admission committed before a later epoch bump remains the
@@ -2027,7 +2076,7 @@ rg -n 'hasProjectAccess|hasProjectCollaborationAccess|Forbidden: you are not ass
   workers/app/src
 rg -n '\["admin", "editor"\]|role === "editor"|role !== "editor"|ROLES|Role>' \
   packages workers apps
-rg -n 'externalProjection: "pending"|audience: "internal"' packages workers
+rg -n 'EXTERNAL_PROJECT_ACTIVITY_POLICY|audience: "internal"' packages workers
 rg -n 'external_editor' packages/db/migrations
 rg -n 'role_on_project.*external|PROJECT_MEMBER_ROLES.*external' packages workers apps
 rg -n 'moveProjectStage|viewProductionCalendar' packages/shared/src/capabilities.ts
@@ -2164,8 +2213,11 @@ Before migration/deploy:
    use existing membership indexes.
 7. Provision background-only `CLOUDFLARE_ZONE_ID` and secret
    `CLOUDFLARE_CACHE_PURGE_TOKEN`, limited to Cache Purge on that zone; validate credentials without
-   purging, confirm both are absent from app/web bindings/logs, verify the incomplete-multipart bucket
-   lifecycle, and verify the known-session expiry/recovery sweep configuration.
+   purging, confirm both are absent from app/web bindings/logs, verify/configure the incomplete-
+   multipart bucket lifecycle rule to abort uploads after seven days (record configuration evidence),
+   and verify the
+   known-session expiry/recovery sweep configuration. Lifecycle reclamation is a preflight
+   configuration check, not an automated Miniflare assertion.
 8. Record current background/app Worker rollback version IDs and Queue/cron health. Webhook ingress has no
    TB4E change.
 9. Confirm consumer compatibility: new background understands both old epoch-zero internal rows and explicit
@@ -2256,6 +2308,16 @@ Only after migration, deploy, passive verification, and acceptance are complete:
 - Add the incident fixture to the permanent projection/authorization regression gate before
   redeployment.
 
+### Transform purge exhaustion runbook
+
+- The asynchronous full-zone purge is the sole control for the residual already-cached-edge-HIT
+  window after conversion.
+- A bounded retry exhaustion records the retry count and deadline, freezes External Editor
+  provisioning/conversion, and pages the operator. Do not unfreeze or provision another External
+  Editor until an operator performs and records a manual Cloudflare zone purge, verifies the purge
+  response and the affected zone, and confirms the signed principal/epoch source route remains
+  revoked. The role/session epoch transition itself is never rolled back to wait for the purge.
+
 ## Opus scrutiny points
 
 Fresh-Sol round 1 approved archive/restore suppression, External impersonation for QA, and the
@@ -2274,9 +2336,10 @@ intact. With Sol rounds exhausted, fresh Opus should scrutinize these consequenc
    Scrutinize the retained asynchronous full-zone purge—especially the residual pre-purge edge-HIT
    interval, credential isolation, bounded retry/alert, and whether a documented cache upper bound
    would permit removing it later.
-2. **Authorization epoch:** confirm `user.authorization_epoch` plus the non-null outbox stamp and
-   final lease-fenced equality check establishes the intended delivery linearization across both
-   preserved-membership role directions.
+2. **Authorization epoch:** confirm `user.authorization_epoch` plus the producer-stamped outbox
+   epoch (nullable for legacy rows, which fail closed for External) and final lease-fenced equality
+   check establishes the intended delivery linearization across both preserved-membership role
+   directions.
 3. **Opaque upload recovery:** confirm the same-origin `env.MEDIA` binding proxy, internal token
    hash/R2 fields, session/part lease CHECKs, HEAD-first `resumeMultipartUpload` recovery, known-
    session expiry sweep, bucket lifecycle handling of untracked create-before-D1 orphans, and

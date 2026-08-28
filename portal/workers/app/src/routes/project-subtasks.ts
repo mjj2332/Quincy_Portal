@@ -1,13 +1,16 @@
 import { Hono } from "hono";
+import { terminalRoute } from "../lib/terminal-route";
 import type { Context } from "hono";
 import { buildProjectActivityStatements, computeInsertPosition, createDb, schema } from "@quincy/db";
 import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { alias } from "drizzle-orm/sqlite-core";
 import { z } from "zod";
 import type { AppEnv } from "../env";
 import { audit, auditMeta } from "../lib/audit";
 import { newId } from "../lib/ids";
-import { publishNotificationOutbox, projectActivityDeepLink, type ProjectActivityIntent } from "@quincy/shared";
+import { externalChecklistItemSchema, externalChecklistListResponseSchema, ROLE_LABELS, publishNotificationOutbox, projectActivityDeepLink, serializeChecklistSchedule, type ChecklistScheduleStorage, type ProjectActivityIntent } from "@quincy/shared";
 import { hasProjectCollaborationAccess } from "../middleware/capability";
+import { resolveVisibleProject, visibleProjectWhere } from "../lib/visible-project-scope";
 import { jsonInput } from "./helpers";
 import {
   finalizeProjectSubtaskCommandResult,
@@ -71,13 +74,56 @@ function subtaskQuery(db: ReturnType<typeof createDb>, projectId: string, subtas
     .where(and(eq(schema.projectSubtasks.projectId, projectId), subtaskId ? eq(schema.projectSubtasks.id, subtaskId) : undefined));
 }
 
+function externalSubtaskQuery(db: ReturnType<typeof createDb>, projectId: string, userId: string, subtaskId?: string) {
+  const assignee = alias(schema.user, "external_assignee");
+  const creator = alias(schema.user, "external_creator");
+  return db.select({
+    id: schema.projectSubtasks.id, title: schema.projectSubtasks.title, done: schema.projectSubtasks.done, position: schema.projectSubtasks.position,
+    assignmentVersion: schema.projectSubtasks.assignmentVersion, dueDate: schema.projectSubtasks.dueDate,
+    scheduleStartKind: schema.projectSubtasks.scheduleStartKind, scheduleStartCivil: schema.projectSubtasks.scheduleStartCivil, scheduleStartAt: schema.projectSubtasks.scheduleStartAt,
+    scheduleStartUtcOffsetMinutes: schema.projectSubtasks.scheduleStartUtcOffsetMinutes, scheduleStartFold: schema.projectSubtasks.scheduleStartFold,
+    scheduleEndKind: schema.projectSubtasks.scheduleEndKind, scheduleEndAt: schema.projectSubtasks.scheduleEndAt, scheduleEndUtcOffsetMinutes: schema.projectSubtasks.scheduleEndUtcOffsetMinutes,
+    scheduleEndFold: schema.projectSubtasks.scheduleEndFold, scheduleZone: schema.projectSubtasks.scheduleZone, scheduleVersion: schema.projectSubtasks.scheduleVersion,
+    createdAt: schema.projectSubtasks.createdAt, updatedAt: schema.projectSubtasks.updatedAt,
+    assigneeId: assignee.id, assigneeName: assignee.name, assigneeRole: assignee.role, assigneeActive: assignee.active,
+    creatorId: creator.id, creatorName: creator.name, creatorRole: creator.role, creatorActive: creator.active,
+  }).from(schema.projectSubtasks)
+    .innerJoin(schema.projects, eq(schema.projectSubtasks.projectId, schema.projects.id))
+    .leftJoin(schema.projectMembers, and(eq(schema.projectMembers.projectId, schema.projects.id), eq(schema.projectMembers.userId, userId)))
+    .leftJoin(assignee, eq(schema.projectSubtasks.assigneeId, assignee.id))
+    .innerJoin(creator, eq(schema.projectSubtasks.createdBy, creator.id))
+    .where(and(eq(schema.projectSubtasks.projectId, projectId), subtaskId ? eq(schema.projectSubtasks.id, subtaskId) : undefined, visibleProjectWhere({ id: userId, role: "external_editor", active: true })));
+}
+
+function externalSubtaskDto(row: Awaited<ReturnType<typeof externalSubtaskQuery>>[number]) {
+  const storage: ChecklistScheduleStorage = {
+    dueDate: row.dueDate, scheduleStartKind: row.scheduleStartKind, scheduleStartCivil: row.scheduleStartCivil, scheduleStartAt: row.scheduleStartAt,
+    scheduleStartUtcOffsetMinutes: row.scheduleStartUtcOffsetMinutes, scheduleStartFold: row.scheduleStartFold, scheduleEndKind: row.scheduleEndKind,
+    scheduleEndAt: row.scheduleEndAt, scheduleEndUtcOffsetMinutes: row.scheduleEndUtcOffsetMinutes, scheduleEndFold: row.scheduleEndFold,
+    scheduleZone: row.scheduleZone, scheduleVersion: row.scheduleVersion,
+  };
+  return externalChecklistItemSchema.parse({
+    id: row.id, title: row.title, done: Boolean(row.done), position: row.position,
+    assignee: row.assigneeId && row.assigneeName && row.assigneeRole ? { id: row.assigneeId, name: row.assigneeName, roleLabel: ROLE_LABELS[row.assigneeRole], isExternal: row.assigneeRole === "external_editor", active: Boolean(row.assigneeActive) } : null,
+    assignmentVersion: row.assignmentVersion, dueDate: row.dueDate, schedule: serializeChecklistSchedule(storage),
+    createdBy: row.creatorId && row.creatorName && row.creatorRole ? { id: row.creatorId, name: row.creatorName, roleLabel: ROLE_LABELS[row.creatorRole], isExternal: row.creatorRole === "external_editor", active: Boolean(row.creatorActive) } : { id: "00000000-0000-4000-8000-000000000000", name: "", roleLabel: "", isExternal: false, active: false },
+    createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString(),
+  });
+}
+
 function hasField(value: object, key: string): boolean { return Object.prototype.hasOwnProperty.call(value, key); }
 
-function commandResponse(c: Context<AppEnv>, result: Awaited<ReturnType<typeof saveProjectSubtask>>, status: 200 | 201 = 200) {
+async function commandResponse(c: Context<AppEnv>, projectId: string, result: Awaited<ReturnType<typeof saveProjectSubtask>>, status: 200 | 201 = 200) {
   switch (result.outcome) {
-    case "created": return c.json(result.item, status);
+    case "created":
     case "updated":
-    case "noop": return c.json(result.item, status);
+    case "noop": {
+      if (c.get("user").role === "external_editor") {
+        const row = await externalSubtaskQuery(createDb(c.env.DB), projectId, c.get("user").id, result.item.id).get();
+        return row ? c.json(externalSubtaskDto(row), status) : c.json({ error: "Subtask not found" }, 404);
+      }
+      return c.json(result.item, status);
+    }
     case "invalid_request": return c.json({ error: result.message, code: result.code, ...(result.details ? { details: result.details } : {}) }, result.status);
     case "forbidden": return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
     case "not_found": return c.json({ error: result.target === "project" ? "Project not found" : "Subtask not found" }, 404);
@@ -89,15 +135,21 @@ function commandResponse(c: Context<AppEnv>, result: Awaited<ReturnType<typeof s
 
 export const projectSubtasksRoutes = new Hono<AppEnv>();
 
-projectSubtasksRoutes.get("/projects/:projectId/subtasks", async (c) => {
+projectSubtasksRoutes.get("/projects/:projectId/subtasks", terminalRoute("/projects/:projectId/subtasks", async (c) => {
   const projectId = c.req.param("projectId"); if (!idParam.safeParse(projectId).success) return c.json({ error: "Invalid project id" }, 400);
+  if (c.get("user").role === "external_editor") {
+    if (!await resolveVisibleProject(c.env, c.get("user"), projectId)) return c.json({ error: "Project not found" }, 404);
+    const rows = await externalSubtaskQuery(createDb(c.env.DB), projectId, c.get("user").id).orderBy(asc(schema.projectSubtasks.position), asc(schema.projectSubtasks.id)).all();
+    return c.json(externalChecklistListResponseSchema.parse({ subtasks: rows.map(externalSubtaskDto) }));
+  }
   const project = await ensureProjectAccessAndExists(c, projectId); if (project === "forbidden") return c.json({ error: "Forbidden: you are not assigned to this project" }, 403); if (!project) return c.json({ error: "Project not found" }, 404);
   const rows = await subtaskQuery(createDb(c.env.DB), projectId).orderBy(asc(schema.projectSubtasks.position), asc(schema.projectSubtasks.id)).all();
   return c.json({ subtasks: rows.map(serializeSubtask) });
-});
+}));
 
-projectSubtasksRoutes.post("/projects/:projectId/subtasks", async (c) => {
+projectSubtasksRoutes.post("/projects/:projectId/subtasks", terminalRoute("/projects/:projectId/subtasks", async (c) => {
   const projectId = c.req.param("projectId"); if (!idParam.safeParse(projectId).success) return c.json({ error: "Invalid project id" }, 400);
+  if (c.get("user").role === "external_editor" && !await resolveVisibleProject(c.env, c.get("user"), projectId)) return c.json({ error: "Project not found" }, 404);
   const data = await jsonInput(c, createInput); if (data instanceof Response) return data;
   const result = await saveProjectSubtask({
     env: c.env,
@@ -106,12 +158,13 @@ projectSubtasksRoutes.post("/projects/:projectId/subtasks", async (c) => {
     operation: { kind: "create", item: { title: data.title, assigneeId: data.assigneeId ?? null }, schedule: data.schedule, legacyDueDate: data.dueDate },
   });
   await finalizeProjectSubtaskCommandResult({ env: c.env, executionCtx: c.executionCtx, result });
-  return commandResponse(c, result, result.outcome === "created" ? 201 : 200);
-});
+  return await commandResponse(c, projectId, result, result.outcome === "created" ? 201 : 200);
+}));
 
-projectSubtasksRoutes.patch("/projects/:projectId/subtasks/:subtaskId", async (c) => {
+projectSubtasksRoutes.patch("/projects/:projectId/subtasks/:subtaskId", terminalRoute("/projects/:projectId/subtasks/:subtaskId", async (c) => {
   const projectId = c.req.param("projectId"); const subtaskId = c.req.param("subtaskId");
   if (!idParam.safeParse(projectId).success || !idParam.safeParse(subtaskId).success) return c.json({ error: "Invalid project or subtask id" }, 400);
+  if (c.get("user").role === "external_editor" && !await resolveVisibleProject(c.env, c.get("user"), projectId)) return c.json({ error: "Project not found" }, 404);
   const data = await jsonInput(c, updateInput); if (data instanceof Response) return data;
   const hasSchedule = hasField(data, "schedule");
   const hasDueDate = hasField(data, "dueDate");
@@ -132,12 +185,13 @@ projectSubtasksRoutes.patch("/projects/:projectId/subtasks/:subtaskId", async (c
     },
   });
   await finalizeProjectSubtaskCommandResult({ env: c.env, executionCtx: c.executionCtx, result });
-  return commandResponse(c, result);
-});
+  return await commandResponse(c, projectId, result);
+}));
 
-projectSubtasksRoutes.post("/projects/:projectId/subtasks/:subtaskId/reorder", async (c) => {
+projectSubtasksRoutes.post("/projects/:projectId/subtasks/:subtaskId/reorder", terminalRoute("/projects/:projectId/subtasks/:subtaskId/reorder", async (c) => {
   const projectId = c.req.param("projectId"); const subtaskId = c.req.param("subtaskId");
   if (!idParam.safeParse(projectId).success || !idParam.safeParse(subtaskId).success) return c.json({ error: "Invalid project or subtask id" }, 400);
+  if (c.get("user").role === "external_editor" && !await resolveVisibleProject(c.env, c.get("user"), projectId)) return c.json({ error: "Project not found" }, 404);
   const project = await ensureProjectAccessAndExists(c, projectId); if (project === "forbidden") return c.json({ error: "Forbidden: you are not assigned to this project" }, 403); if (!project) return c.json({ error: "Project not found" }, 404);
   const data = await jsonInput(c, reorderInput); if (data instanceof Response) return data;
   if (data.beforeId === subtaskId || data.afterId === subtaskId) return c.json({ error: "A subtask cannot be its own neighbor" }, 400);
@@ -176,11 +230,12 @@ projectSubtasksRoutes.post("/projects/:projectId/subtasks/:subtaskId/reorder", a
   if (changes !== 1) return c.json({ error: "Subtask order changed; reload and try again" }, 409);
     await audit(c.env, c.get("user"), "project_subtask.reorder", "project_subtask", subtaskId, { beforeId: data.beforeId, afterId: data.afterId });
   return c.json({ position });
-});
+}));
 
-projectSubtasksRoutes.delete("/projects/:projectId/subtasks/:subtaskId", async (c) => {
+projectSubtasksRoutes.delete("/projects/:projectId/subtasks/:subtaskId", terminalRoute("/projects/:projectId/subtasks/:subtaskId", async (c) => {
   const projectId = c.req.param("projectId"); const subtaskId = c.req.param("subtaskId");
   if (!idParam.safeParse(projectId).success || !idParam.safeParse(subtaskId).success) return c.json({ error: "Invalid project or subtask id" }, 400);
+  if (c.get("user").role === "external_editor" && !await resolveVisibleProject(c.env, c.get("user"), projectId)) return c.json({ error: "Project not found" }, 404);
   const project = await ensureProjectAccessAndExists(c, projectId); if (project === "forbidden") return c.json({ error: "Forbidden: you are not assigned to this project" }, 403); if (!project) return c.json({ error: "Project not found" }, 404);
   const db = createDb(c.env.DB); const existing = await subtaskQuery(db, projectId, subtaskId).get(); if (!existing) return c.json({ error: "Subtask not found" }, 404);
   const auditId = newId(); const activityId = newId();
@@ -205,4 +260,4 @@ projectSubtasksRoutes.delete("/projects/:projectId/subtasks/:subtaskId", async (
   const publicationIds = rowsFromD1<{ id: string }>(results[2 + activityStatements.broadOutboxIndex]).map((row) => row.id);
   if (publicationIds.length) c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, publicationIds));
   return c.json({ ok: true });
-});
+}));

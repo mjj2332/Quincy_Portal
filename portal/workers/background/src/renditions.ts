@@ -7,10 +7,11 @@ import {
   TRANSFORM_CACHE_VERSION,
   type RenditionVariant,
 } from "@quincy/shared";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 
 import type { Env } from "./env";
 import { dbFor } from "./lib/db";
+import { user } from "@quincy/db/schema";
 
 const MAX_RENDITION_BYTES = 16 * 1024 * 1024;
 
@@ -123,34 +124,63 @@ function sha256Hex(bytes: Uint8Array): Promise<string> {
   return crypto.subtle.digest("SHA-256", new Uint8Array(bytes).buffer).then((digest) => [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join(""));
 }
 
-function transformUrl(origin: string, key: string, variant: RenditionVariant, secret: string | undefined): Promise<string> {
+function transformUrl(origin: string, key: string, variant: RenditionVariant, secret: string | undefined, principalId: string, authorizationEpoch: number): Promise<string> {
   const spec = RENDITION_SPECS[variant];
-  return issueTransformSource(secret, key).then((issued) => {
+  return issueTransformSource(secret, key, principalId, authorizationEpoch).then((issued) => {
     if (!issued) throw new Error("TRANSFORM_SOURCE_SECRET is required for rendition generation");
     const source = new URL(`/__transform-source/${key.split("/").map(encodeURIComponent).join("/")}`, origin);
     source.searchParams.set("v", TRANSFORM_CACHE_VERSION);
     source.searchParams.set("exp", String(issued.expiresAt));
+    source.searchParams.set("p", principalId);
+    source.searchParams.set("ae", String(authorizationEpoch));
     source.searchParams.set("sig", issued.signature);
     return new URL(`/cdn-cgi/image/width=${spec.maxEdge},height=${spec.maxEdge},fit=scale-down,quality=${spec.quality},format=webp/${source.href}`, origin).href;
   });
 }
 
+type RenditionGenerationEnv = Pick<Env, "APP_ORIGIN" | "TRANSFORM_SOURCE_SECRET" | "TRANSFORM_SOURCE_PRINCIPAL_ID" | "TRANSFORM_SOURCE_AUTHORIZATION_EPOCH" | "MEDIA"> & { DB?: D1Database };
+type TransformPrincipal = { id: string; authorizationEpoch: number };
+
+async function resolveTransformPrincipal(env: RenditionGenerationEnv): Promise<TransformPrincipal> {
+  // Production calls use the D1-backed default dependency. Select a current active internal
+  // principal so the app-side source wrapper can perform its required epoch read; never sign
+  // with the reserved system actor or a stale deployment-time epoch. Injected test fetchers keep
+  // the small pure harness independent of D1.
+  if (!env.DB) {
+    const principalId = env.TRANSFORM_SOURCE_PRINCIPAL_ID ?? "00000000-0000-4000-8000-000000000000";
+    const configuredEpoch = Number(env.TRANSFORM_SOURCE_AUTHORIZATION_EPOCH ?? "0");
+    return { id: principalId, authorizationEpoch: Number.isSafeInteger(configuredEpoch) && configuredEpoch >= 0 ? configuredEpoch : 0 };
+  }
+  const configured = env.TRANSFORM_SOURCE_PRINCIPAL_ID
+    ? eq(user.id, env.TRANSFORM_SOURCE_PRINCIPAL_ID)
+    : inArray(user.role, ["admin", "editor"]);
+  const principal = await dbFor(env as Env).select({ id: user.id, authorizationEpoch: user.authorizationEpoch })
+    .from(user)
+    .where(and(eq(user.active, true), configured))
+    .orderBy(user.id)
+    .get();
+  if (!principal) throw new Error("No active internal transform principal is available");
+  return { id: principal.id, authorizationEpoch: principal.authorizationEpoch };
+}
+
 export async function generateRenditions(
-  env: Pick<Env, "APP_ORIGIN" | "TRANSFORM_SOURCE_SECRET" | "MEDIA">,
+  env: RenditionGenerationEnv,
   assetId: string,
   // fetch MUST be wrapped, not passed bare: calling `dependencies.fetch(...)` invokes native
   // fetch with `this = dependencies`, which throws "Illegal invocation". The arrow calls the
   // free global fetch with correct binding. (Injected test fetchers are unaffected.)
-  dependencies: { store: RenditionStore; fetch: typeof fetch } = { store: createRenditionStore(env as Env), fetch: (...args: Parameters<typeof fetch>) => fetch(...args) },
+  dependencies?: { store: RenditionStore; fetch: typeof fetch },
 ): Promise<{ generated: RenditionVariant[]; skipped: RenditionVariant[] }> {
-  const asset = await dependencies.store.getAsset(assetId);
+  const resolvedDependencies = dependencies ?? { store: createRenditionStore(env as Env), fetch: (...args: Parameters<typeof fetch>) => fetch(...args) };
+  const asset = await resolvedDependencies.store.getAsset(assetId);
   if (!asset) return { generated: [], skipped: ["thumb", "web"] };
-  const existing = new Map((await dependencies.store.getRenditions(assetId)).map((row) => [row.variant, row]));
+  const existing = new Map((await resolvedDependencies.store.getRenditions(assetId)).map((row) => [row.variant, row]));
+  const principal = await resolveTransformPrincipal(env);
   const generated: RenditionVariant[] = []; const skipped: RenditionVariant[] = [];
   for (const variant of ["thumb", "web"] as const) {
     const previous = existing.get(variant);
     if (previous?.specVersion === RENDITION_SPEC_VERSION && await env.MEDIA.head(previous.r2Key)) { skipped.push(variant); continue; }
-    const response = await dependencies.fetch(await transformUrl(env.APP_ORIGIN, asset.r2Key, variant, env.TRANSFORM_SOURCE_SECRET), { headers: { accept: "image/webp" } });
+    const response = await resolvedDependencies.fetch(await transformUrl(env.APP_ORIGIN, asset.r2Key, variant, env.TRANSFORM_SOURCE_SECRET, principal.id, principal.authorizationEpoch), { headers: { accept: "image/webp" } });
     const contentType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
     const resized = response.headers.get("cf-resized");
     if (!response.ok || (contentType !== "image/webp" && contentType !== "image/jpeg") || /(?:^|[;,\s])err=/i.test(resized ?? "") || !/(?:^|[;,\s])internal=ok/i.test(resized ?? "")) {
@@ -172,7 +202,7 @@ export async function generateRenditions(
     if (!await env.MEDIA.head(r2Key)) {
       await env.MEDIA.put(r2Key, body, { httpMetadata: { contentType }, customMetadata: { specVersion: RENDITION_SPEC_VERSION, assetId, variant, outputDigest } });
     }
-    await dependencies.store.save({ assetId, variant, r2Key, specVersion: RENDITION_SPEC_VERSION, bytes: body.byteLength, contentType, width, height });
+    await resolvedDependencies.store.save({ assetId, variant, r2Key, specVersion: RENDITION_SPEC_VERSION, bytes: body.byteLength, contentType, width, height });
     generated.push(variant);
   }
   return { generated, skipped };

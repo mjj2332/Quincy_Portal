@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { terminalRoute } from "../lib/terminal-route";
 import { COLLECTION_RECEIVED_COUNT_SQL, RAW_CLAIM_LEASE_MS, collectionReceivedCountBindings, createDb, schema } from "@quincy/db";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
@@ -30,7 +31,7 @@ const ASSET_DELETE_CLAIM_RETRY_DELAY_MS = 150;
 export const assetsRoutes = new Hono<AppEnv>();
 assetsRoutes.use("/assets/:id", requireCapability("adminBackend"));
 
-assetsRoutes.delete("/assets/:id", async (c) => {
+assetsRoutes.delete("/assets/:id", terminalRoute("/assets/:id", async (c) => {
   const primaryAssetId = c.req.param("id");
   if (!z.string().uuid().safeParse(primaryAssetId).success) return c.json({ error: "Invalid asset id" }, 400);
   const db = createDb(c.env.DB);
@@ -205,4 +206,4 @@ assetsRoutes.delete("/assets/:id", async (c) => {
       await db.update(schema.jobs).set({ status: succeeded ? "done" : "failed", updatedAt: new Date() }).where(eq(schema.jobs.id, deleteJobId));
     }
   }
-});
+}));

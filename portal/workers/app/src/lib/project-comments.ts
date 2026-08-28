@@ -1,6 +1,6 @@
 import { and, desc, eq, lt, or } from "drizzle-orm";
 import { buildProjectActivityStatements, createDb, schema } from "@quincy/db";
-import { NOTIFICATION_OUTBOX_EVENT_TYPE, staffPathFor, type RichTextDoc } from "@quincy/shared";
+import { NOTIFICATION_OUTBOX_EVENT_TYPE, ROLE_LABELS, staffPathFor, type RichTextDoc, type Role } from "@quincy/shared";
 import type { ProjectActivityIntent } from "@quincy/shared";
 import { newId } from "./ids";
 import { auditMeta, type AuditPrincipal } from "./audit";
@@ -23,7 +23,7 @@ WHERE excluded.last_read_comment_created_at > project_comment_read_markers.last_
      AND excluded.last_read_comment_id > project_comment_read_markers.last_read_comment_id
    )`;
 
-type CommentRow = { comment: typeof schema.projectComments.$inferSelect; authorId: string; authorName: string };
+type CommentRow = { comment: typeof schema.projectComments.$inferSelect; authorId: string; authorName: string; authorRole: Role; authorActive: boolean };
 type CommentDb = ReturnType<typeof createDb>;
 
 export type ProjectCommentCursor = { createdAt: Date; id: string };
@@ -280,12 +280,12 @@ function mentionOutboxStatements(
     statements.push(db.prepare(`
       INSERT INTO notification_outbox (
         id, schema_version, event_type, source_key, project_id, actor_id,
-        recipient_id, payload_json, status, available_at, created_at, updated_at
-      ) SELECT ?, 1, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?
+        recipient_id, recipient_authorization_epoch, payload_json, status, available_at, created_at, updated_at
+      ) SELECT ?, 1, ?, ?, ?, ?, ?, (SELECT authorization_epoch FROM user WHERE id = ?), ?, 'pending', ?, ?, ?
       WHERE 1 = 1${auditGate}
     `).bind(
       outboxId, NOTIFICATION_OUTBOX_EVENT_TYPE, mention.id, projectId, actorId,
-      mention.mentionedUserId, JSON.stringify(payload), occurredAt, occurredAt, occurredAt,
+      mention.mentionedUserId, mention.mentionedUserId, JSON.stringify(payload), occurredAt, occurredAt, occurredAt,
       ...(winnerAuditId === undefined ? [] : [winnerAuditId]),
     ));
     for (const channel of ["in_app", "email"] as const) {
@@ -303,7 +303,7 @@ function mentionOutboxStatements(
 
 export async function listProjectComments(db: CommentDb, projectId: string, input: { limit: number; before?: ProjectCommentCursor | null }) {
   const before = input.before ?? null;
-  const rows = await db.select({ comment: schema.projectComments, authorId: schema.user.id, authorName: schema.user.name })
+  const rows = await db.select({ comment: schema.projectComments, authorId: schema.user.id, authorName: schema.user.name, authorRole: schema.user.role, authorActive: schema.user.active })
     .from(schema.projectComments)
     .innerJoin(schema.user, eq(schema.projectComments.authorId, schema.user.id))
     .where(and(
@@ -317,7 +317,7 @@ export async function listProjectComments(db: CommentDb, projectId: string, inpu
 }
 
 export async function findProjectComment(db: CommentDb, projectId: string, commentId: string) {
-  return await db.select({ comment: schema.projectComments, authorId: schema.user.id, authorName: schema.user.name })
+  return await db.select({ comment: schema.projectComments, authorId: schema.user.id, authorName: schema.user.name, authorRole: schema.user.role, authorActive: schema.user.active })
     .from(schema.projectComments)
     .innerJoin(schema.user, eq(schema.projectComments.authorId, schema.user.id))
     .where(and(eq(schema.projectComments.id, commentId), eq(schema.projectComments.projectId, projectId)))
@@ -449,7 +449,7 @@ export async function advanceProjectCommentReadMarker(db: D1Database, userId: st
 export function serializeProjectComment(row: CommentRow) {
   return {
     id: row.comment.id,
-    author: { id: row.authorId, name: row.authorName },
+    author: { id: row.authorId, name: row.authorName, roleLabel: ROLE_LABELS[row.authorRole], isExternal: row.authorRole === "external_editor", active: Boolean(row.authorActive) },
     body: row.comment.body,
     content: JSON.parse(row.comment.contentJson) as RichTextDoc,
     createdAt: row.comment.createdAt.toISOString(),

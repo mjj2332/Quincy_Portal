@@ -4,6 +4,7 @@ import { classifyEmailError } from "../../../workers/background/src/notification
 
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
 const migration = read("../migrations/0031_notification_outbox_and_delivery_ledger.sql");
+const migration36 = read("../migrations/0036_external_editor_assigned_scope.sql");
 const comments = read("../../../workers/app/src/lib/project-comments.ts");
 const commentRoutes = read("../../../workers/app/src/routes/project-comments.ts");
 const noticeRoutes = read("../../../workers/app/src/routes/notice-board.ts");
@@ -12,6 +13,11 @@ const projects = read("../../../workers/app/src/routes/projects.ts");
 const projectMembers = read("../../../workers/app/src/lib/project-members.ts");
 const sharedOutbox = read("../../../packages/shared/src/notification-outbox.ts");
 const delivery = read("../../../workers/background/src/notification-delivery.ts");
+const externalUploads = read("../../../workers/app/src/routes/external-uploads.ts");
+const media = read("../../../workers/app/src/routes/media.ts");
+const externalVisibility = read("../../../workers/app/src/lib/external-notification-visibility.ts");
+const externalScope = read("../../../workers/app/src/lib/visible-project-scope.ts");
+const externalPolicy = read("../../../packages/shared/src/external-project-policy.ts");
 const backgroundConfig = read("../../../workers/background/wrangler.jsonc");
 const appConfig = read("../../../workers/app/wrangler.jsonc");
 const admin = read("../../../workers/app/src/routes/admin.ts");
@@ -165,5 +171,54 @@ describe("TB4 implementation contracts", () => {
     expect(failure.indexOf("releaseBeforeRetry")).toBeLessThan(failure.indexOf("message.retry"));
     expect(delivery).toContain("message.retry({ delaySeconds });");
     expect(delivery).toContain("row.available_at > now");
+  });
+
+  it("17. keeps TB4E migration additive and generation-reconciled", () => {
+    expect((migration36.match(/ALTER TABLE [^\n]+ ADD COLUMN/g) ?? []).length).toBe(3);
+    expect((migration36.match(/CREATE TABLE /g) ?? []).length).toBe(2);
+    expect((migration36.match(/CREATE (?:UNIQUE )?INDEX /g) ?? []).length).toBe(3);
+    expect(migration36).not.toMatch(/PRAGMA foreign_keys|DROP TABLE|CREATE TABLE .*_new|INSERT INTO .*_new/i);
+    expect(migration36).toContain("recipient_authorization_epoch` integer");
+    expect(migration36).toContain("authorization_epoch` integer NOT NULL DEFAULT 0 CHECK");
+    expect(migration36).toContain("external_edited_upload_sessions_principal_status_idx");
+    expect(migration36).toContain("external_edited_upload_sessions_sweep_idx");
+  });
+
+  it("18. keeps External upload I/O provider-neutral and server-counted", () => {
+    expect(externalUploads).not.toContain("r2s3");
+    expect(externalUploads).not.toContain("fetch(");
+    expect(externalUploads).not.toContain("arrayBuffer(");
+    expect(externalUploads).toContain("c.env.MEDIA.createMultipartUpload");
+    expect(externalUploads).toContain("c.env.MEDIA.resumeMultipartUpload");
+    expect(externalUploads).toContain("new TransformStream");
+    expect(externalUploads).toContain("observedBytes += chunk.byteLength");
+    expect(externalUploads).toContain("const verified = await c.env.MEDIA.head(session.r2Key)");
+    expect(media).toContain('"x-content-type-options": "nosniff"');
+    expect(externalUploads).toContain("zero-part, unreferenceable, uncompletable orphan");
+  });
+
+  it("19. makes the External notification read predicate exact and reusable", () => {
+    for (const term of [
+      "json_valid(o.payload_json) = 1",
+      "$.event.type",
+      "$.event.sourceKey",
+      "$.event.recipientId",
+      "$.authorizationAtOccurrence.membershipCycle",
+      "project_comment_mentions",
+      "project_deadline_occurrences",
+      "project_subtasks",
+      "recipient_authorization_epoch = u.authorization_epoch",
+    ]) expect(externalVisibility).toContain(term);
+    expect(externalVisibility).toContain("$.assignment.assignmentVersion");
+    expect(externalVisibility).toContain("externalVisibleNotificationCte");
+    expect(externalVisibility).toContain("subtask.done = 0");
+  });
+
+  it("20. keeps the External policy exhaustive and the scope predicate assignment-only", () => {
+    expect(externalPolicy).toContain("Record<ProjectActivityType, ExternalActivityPolicy>");
+    expect(externalPolicy).toContain("EXTERNAL_PROJECT_ACTIVITY_POLICY");
+    expect(externalScope).toContain('eq(schema.projectMembers.roleOnProject, "editor")');
+    expect(externalScope).toContain("PHOTOGRAPHER_VISIBLE_STAGES");
+    expect(externalScope).not.toContain('roleOnProject, "external_editor"');
   });
 });

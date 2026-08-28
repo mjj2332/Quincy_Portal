@@ -1,4 +1,6 @@
 import {
+  emitExternalSafeLegacyNotification,
+  emitExternalSubtaskNotification,
   emitNotifications,
   notificationCopy,
   projectNotificationRecipients,
@@ -6,7 +8,7 @@ import {
 } from "@quincy/db";
 import { createDb } from "@quincy/db";
 import { projects, user } from "@quincy/db/schema";
-import { projectNotificationRoute, staffPathFor, truncateForEmail } from "@quincy/shared";
+import { PROJECT_ACTIVITY_SYSTEM_OUTBOX_ACTOR_ID, projectNotificationRoute, publishNotificationOutbox, staffPathFor, truncateForEmail } from "@quincy/shared";
 import { and, eq, inArray } from "drizzle-orm";
 import type { AppEnv } from "../env";
 
@@ -14,10 +16,15 @@ export async function notifyProject(
   env: AppEnv["Bindings"],
   projectId: string,
   type: NotificationType,
-  options: { editorOnly?: boolean; excludeUserId?: string } = {},
+  options: { editorOnly?: boolean; excludeUserId?: string; sourceKey?: string; sourceId?: string } = {},
 ): Promise<void> {
   try {
     const db = createDb(env.DB);
+    // Legacy workflow signals do not always have a caller-owned occurrence ID. Give the
+    // durable External adapter a stable project/type provenance in that case; callers with a
+    // more specific handoff/annotation ID still override it through options.
+    const sourceKey = options.sourceKey ?? `legacy:${type}:${projectId}`;
+    const sourceId = options.sourceId ?? sourceKey;
     const [project, recipients] = await Promise.all([
       db.select({ street: projects.street }).from(projects).where(eq(projects.id, projectId)).get(),
       projectNotificationRecipients(db, projectId, options),
@@ -32,9 +39,19 @@ export async function notifyProject(
       title: copy.title,
       body: copy.body,
       link,
+      sourceKey: options.sourceKey,
       email: env.EMAIL,
       fromAddress: env.NOTIFICATIONS_FROM_ADDRESS,
     });
+    const externalIds = await emitExternalSafeLegacyNotification(env.DB, {
+      projectId,
+      actorId: options.excludeUserId ?? PROJECT_ACTIVITY_SYSTEM_OUTBOX_ACTOR_ID,
+      type,
+      sourceKey,
+      sourceId,
+      excludeUserId: options.excludeUserId,
+    });
+    if (externalIds.length) await publishNotificationOutbox(env.NOTIFICATION_QUEUE, env.DB, externalIds);
   } catch (error) {
     console.error("App notification emission failed", { projectId, type, error });
   }
@@ -98,20 +115,14 @@ export async function notifySubtaskAssignee(
     // this is also the required emission-time eligibility re-check.
     const recipient = (await projectNotificationRecipients(db, input.projectId, { excludeUserId: input.actorId }))
       .find((candidate) => candidate.userId === input.assigneeId);
-    if (!recipient) return;
     const route = projectNotificationRoute(input.projectId, "subtask_assigned");
     const link = route?.kind === "project" ? `${env.APP_ORIGIN}${staffPathFor(route)}` : undefined;
-    await emitNotifications(db, {
-      projectId: input.projectId,
-      type: "subtask_assigned",
-      recipients: [recipient],
-      title: "Subtask assigned",
-      body: "You have been assigned a project subtask.",
-      sourceKey: `subtask-assignment:${input.subtaskId}:${input.assignmentVersion}`,
-      link,
-      email: env.EMAIL,
-      fromAddress: env.NOTIFICATIONS_FROM_ADDRESS,
-    });
+    const sourceKey = `subtask-assignment:${input.subtaskId}:${input.assignmentVersion}`;
+    if (recipient) {
+      await emitNotifications(db, { projectId: input.projectId, type: "subtask_assigned", recipients: [recipient], title: "Subtask assigned", body: "You have been assigned a project subtask.", sourceKey, link, email: env.EMAIL, fromAddress: env.NOTIFICATIONS_FROM_ADDRESS });
+    }
+    const externalIds = await emitExternalSubtaskNotification(env.DB, { ...input, assigneeId: input.assigneeId, sourceKey, kind: "assigned" });
+    if (externalIds.length) await publishNotificationOutbox(env.NOTIFICATION_QUEUE, env.DB, externalIds);
   } catch (error) {
     console.error("Subtask assignment notification emission failed", { projectId: input.projectId, error });
   }

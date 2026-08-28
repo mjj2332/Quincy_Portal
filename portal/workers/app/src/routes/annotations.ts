@@ -1,7 +1,8 @@
 import { Hono } from "hono";
+import { terminalRoute } from "../lib/terminal-route";
 import { createDb, schema } from "@quincy/db";
 import { and, asc, eq, isNull } from "drizzle-orm";
-import { roleHasCapability } from "@quincy/shared";
+import { externalAnnotationListResponseSchema, externalAnnotationSchema, ROLE_LABELS, roleHasCapability, type Role } from "@quincy/shared";
 import { z } from "zod";
 import type { Context } from "hono";
 import type { AppEnv } from "../env";
@@ -11,6 +12,7 @@ import { newId } from "../lib/ids";
 import { jsonInput } from "./helpers";
 import { isUserVisibleAsset, unpublishedAssetResponse } from "../lib/asset-visibility";
 import { notifyProject } from "../lib/notifications";
+import { visibleProjectWhere } from "../lib/visible-project-scope";
 
 const strokeInput = z.object({
   points: z.array(z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) })).min(1).max(2000),
@@ -37,6 +39,40 @@ async function assetContext(c: Context<AppEnv>, assetId: string): Promise<AssetC
     .where(and(eq(schema.assets.id, assetId), isNull(schema.assets.supersededAt))).get();
 }
 
+async function externalAssetContext(c: Context<AppEnv>, assetId: string) {
+  const user = c.get("user");
+  return createDb(c.env.DB).select({ assetId: schema.assets.id, projectId: schema.collections.projectId, kind: schema.collections.kind, publishStatus: schema.assets.publishStatus })
+    .from(schema.assets).innerJoin(schema.collections, eq(schema.assets.collectionId, schema.collections.id)).innerJoin(schema.projects, eq(schema.collections.projectId, schema.projects.id))
+    .leftJoin(schema.projectMembers, and(eq(schema.projectMembers.projectId, schema.projects.id), eq(schema.projectMembers.userId, user.id)))
+    .where(and(eq(schema.assets.id, assetId), isNull(schema.assets.supersededAt), visibleProjectWhere(user))).get();
+}
+
+async function externalAnnotationContext(c: Context<AppEnv>, annotationId: string) {
+  const user = c.get("user");
+  return createDb(c.env.DB).select({
+    id: schema.annotations.id, assetId: schema.annotations.assetId, authorId: schema.annotations.authorId, authorRole: schema.annotations.authorRole,
+    authorName: schema.user.name, authorActive: schema.user.active, scope: schema.annotations.scope, strokeR2Key: schema.annotations.strokeR2Key,
+    noteText: schema.annotations.noteText, createdAt: schema.annotations.createdAt, editedAt: schema.annotations.editedAt,
+    projectId: schema.collections.projectId, collectionKind: schema.collections.kind, publishStatus: schema.assets.publishStatus,
+  }).from(schema.annotations).innerJoin(schema.user, eq(schema.annotations.authorId, schema.user.id)).innerJoin(schema.assets, and(eq(schema.annotations.assetId, schema.assets.id), isNull(schema.assets.supersededAt)))
+    .innerJoin(schema.collections, eq(schema.assets.collectionId, schema.collections.id)).innerJoin(schema.projects, eq(schema.collections.projectId, schema.projects.id))
+    .leftJoin(schema.projectMembers, and(eq(schema.projectMembers.projectId, schema.projects.id), eq(schema.projectMembers.userId, user.id)))
+    .where(and(eq(schema.annotations.id, annotationId), visibleProjectWhere(user))).get();
+}
+
+function externalAnnotationDto(row: { id: string; authorId: string; authorName: string; authorRole: Role; authorActive: boolean; scope: "raw" | "edited"; strokeR2Key: string | null; noteText: string | null; createdAt: Date; editedAt: Date | null }, origin: string) {
+  return externalAnnotationSchema.parse({
+    id: row.id,
+    author: { id: row.authorId, name: row.authorName, roleLabel: ROLE_LABELS[row.authorRole], isExternal: row.authorRole === "external_editor", active: Boolean(row.authorActive) },
+    scope: row.scope,
+    hasMarkup: Boolean(row.strokeR2Key),
+    markupUrl: row.strokeR2Key ? new URL(`/media/annotation/${row.id}`, origin).href : null,
+    noteText: row.noteText,
+    createdAt: row.createdAt.toISOString(),
+    editedAt: row.editedAt?.toISOString() ?? null,
+  });
+}
+
 function scopeForAsset(c: Context<AppEnv>, asset: AssetContext): "raw" | "edited" | Response {
   if (!isUserVisibleAsset(asset.kind, asset.publishStatus)) return unpublishedAssetResponse(c);
   if (asset.kind !== "raw" && asset.kind !== "edited") return c.json({ error: "Annotations are available for RAW and edited photo assets only" }, 400);
@@ -55,9 +91,21 @@ async function canViewAsset(c: Context<AppEnv>, asset: AssetContext): Promise<Re
 
 export const annotationsRoutes = new Hono<AppEnv>();
 
-annotationsRoutes.get("/assets/:id/annotations", async (c) => {
+annotationsRoutes.get("/assets/:id/annotations", terminalRoute("/assets/:id/annotations", async (c) => {
   const assetId = c.req.param("id");
   if (!z.string().uuid().safeParse(assetId).success) return c.json({ error: "Invalid asset id" }, 400);
+  if (c.get("user").role === "external_editor") {
+    const asset = await externalAssetContext(c, assetId);
+    if (!asset || !isUserVisibleAsset(asset.kind, asset.publishStatus) || (asset.kind !== "raw" && asset.kind !== "edited")) return c.json({ error: "Asset not found" }, 404);
+    const capability = asset.kind === "raw" ? "annotateRaw" : "annotateEdited";
+    if (!roleHasCapability(c.get("user").role, capability)) return c.json({ error: "Forbidden", capability }, 403);
+    const rows = await createDb(c.env.DB).select({
+      id: schema.annotations.id, authorId: schema.annotations.authorId, authorRole: schema.annotations.authorRole, authorName: schema.user.name,
+      authorActive: schema.user.active, scope: schema.annotations.scope, strokeR2Key: schema.annotations.strokeR2Key, noteText: schema.annotations.noteText,
+      createdAt: schema.annotations.createdAt, editedAt: schema.annotations.editedAt,
+    }).from(schema.annotations).innerJoin(schema.user, eq(schema.annotations.authorId, schema.user.id)).where(eq(schema.annotations.assetId, assetId)).orderBy(asc(schema.annotations.createdAt)).all();
+    return c.json(externalAnnotationListResponseSchema.parse({ annotations: rows.map((row) => externalAnnotationDto(row, c.env.APP_ORIGIN)) }));
+  }
   const asset = await assetContext(c, assetId);
   if (!asset) return c.json({ error: "Asset not found" }, 404);
   const denied = await canViewAsset(c, asset); if (denied) return denied;
@@ -71,11 +119,28 @@ annotationsRoutes.get("/assets/:id/annotations", async (c) => {
       strokeR2Key: annotation.strokeR2Key, noteText: annotation.noteText, createdAt: annotation.createdAt, editedAt: annotation.editedAt,
     })),
   });
-});
+}));
 
-annotationsRoutes.post("/assets/:id/annotations", async (c) => {
+annotationsRoutes.post("/assets/:id/annotations", terminalRoute("/assets/:id/annotations", async (c) => {
   const assetId = c.req.param("id");
   if (!z.string().uuid().safeParse(assetId).success) return c.json({ error: "Invalid asset id" }, 400);
+  if (c.get("user").role === "external_editor") {
+    const asset = await externalAssetContext(c, assetId);
+    if (!asset || !isUserVisibleAsset(asset.kind, asset.publishStatus) || (asset.kind !== "raw" && asset.kind !== "edited")) return c.json({ error: "Asset not found" }, 404);
+    const scope = asset.kind as "raw" | "edited";
+    const capability = scope === "raw" ? "annotateRaw" : "annotateEdited";
+    if (!roleHasCapability(c.get("user").role, capability)) return c.json({ error: "Forbidden", capability }, 403);
+    const data = await jsonInput(c, annotationInput); if (data instanceof Response) return data;
+    let strokeJson: string | undefined;
+    if (data.strokes !== undefined) { try { strokeJson = JSON.stringify(data.strokes); } catch { return c.json({ error: "Markup must be JSON-serializable" }, 400); } if (strokeJson === undefined || byteLength(strokeJson) > 2_000_000) return c.json({ error: "Markup is too large" }, 400); }
+    const id = newId(); const strokeR2Key = strokeJson ? `projects/${asset.projectId}/${scope}/${assetId}/annotations/${id}.json` : null;
+    if (strokeR2Key && strokeJson) await c.env.MEDIA.put(strokeR2Key, strokeJson, { httpMetadata: { contentType: "application/json" } });
+    const user = c.get("user"); const createdAt = new Date();
+    await createDb(c.env.DB).insert(schema.annotations).values({ id, assetId, authorId: user.id, authorRole: user.role, scope, strokeR2Key, noteText: data.noteText || null, createdAt });
+    await audit(c.env, user, "asset.annotate", "asset", assetId, { annotationId: id, scope, hasStrokes: Boolean(strokeR2Key) });
+    await notifyProject(c.env, asset.projectId, "comment_added", { editorOnly: true, excludeUserId: user.id, sourceKey: `annotation:${id}`, sourceId: id });
+    return c.json(externalAnnotationDto({ id, authorId: user.id, authorName: user.name, authorRole: user.role, authorActive: true, scope, strokeR2Key, noteText: data.noteText || null, createdAt, editedAt: null }, c.env.APP_ORIGIN), 201);
+  }
   const asset = await assetContext(c, assetId);
   if (!asset) return c.json({ error: "Asset not found" }, 404);
   if (!await hasProjectAccess(c, asset.projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
@@ -95,14 +160,23 @@ annotationsRoutes.post("/assets/:id/annotations", async (c) => {
     strokeR2Key, noteText: data.noteText || null, createdAt,
   });
   await audit(c.env, c.get("user"), "asset.annotate", "asset", assetId, { annotationId: id, scope, hasStrokes: Boolean(strokeR2Key) });
-  await notifyProject(c.env, asset.projectId, "comment_added", { editorOnly: true, excludeUserId: c.get("user").id });
+  await notifyProject(c.env, asset.projectId, "comment_added", { editorOnly: true, excludeUserId: c.get("user").id, sourceKey: `annotation:${id}`, sourceId: id });
   const user = c.get("user");
   return c.json({ id, authorId: user.id, author: { id: user.id, name: user.name, role: user.role }, scope, strokeR2Key, noteText: data.noteText || null, createdAt: createdAt.toISOString(), editedAt: null }, 201);
-});
+}));
 
-annotationsRoutes.delete("/annotations/:id", async (c) => {
+annotationsRoutes.delete("/annotations/:id", terminalRoute("/annotations/:id", async (c) => {
   const id = c.req.param("id");
   if (!z.string().uuid().safeParse(id).success) return c.json({ error: "Invalid annotation id" }, 400);
+  if (c.get("user").role === "external_editor") {
+    const annotation = await externalAnnotationContext(c, id);
+    if (!annotation || !isUserVisibleAsset(annotation.collectionKind, annotation.publishStatus) || (annotation.collectionKind !== "raw" && annotation.collectionKind !== "edited")) return c.json({ error: "Annotation not found" }, 404);
+    if (!roleHasCapability(c.get("user").role, annotation.collectionKind === "raw" ? "annotateRaw" : "annotateEdited")) return c.json({ error: "Forbidden" }, 403);
+    if (annotation.authorId !== c.get("user").id) return c.json({ error: "Forbidden: only the author can delete this annotation." }, 403);
+    await createDb(c.env.DB).delete(schema.annotations).where(eq(schema.annotations.id, id));
+    await audit(c.env, c.get("user"), "annotation.delete", "annotation", id, { assetId: annotation.assetId, scope: annotation.scope, hadStrokes: Boolean(annotation.strokeR2Key) });
+    return c.json({ ok: true });
+  }
   const db = createDb(c.env.DB);
   const annotation = await db.select().from(schema.annotations).where(eq(schema.annotations.id, id)).get();
   if (!annotation) return c.json({ error: "Annotation not found" }, 404);
@@ -117,11 +191,35 @@ annotationsRoutes.delete("/annotations/:id", async (c) => {
   await db.delete(schema.annotations).where(eq(schema.annotations.id, id));
   await audit(c.env, c.get("user"), "annotation.delete", "annotation", id, { assetId: asset.assetId, scope, hadStrokes: Boolean(annotation.strokeR2Key) });
   return c.json({ ok: true });
-});
+}));
 
-annotationsRoutes.patch("/annotations/:id", async (c) => {
+annotationsRoutes.patch("/annotations/:id", terminalRoute("/annotations/:id", async (c) => {
   const id = c.req.param("id");
   if (!z.string().uuid().safeParse(id).success) return c.json({ error: "Invalid annotation id" }, 400);
+  if (c.get("user").role === "external_editor") {
+    const annotation = await externalAnnotationContext(c, id);
+    if (!annotation || !isUserVisibleAsset(annotation.collectionKind, annotation.publishStatus) || (annotation.collectionKind !== "raw" && annotation.collectionKind !== "edited")) return c.json({ error: "Annotation not found" }, 404);
+    if (!roleHasCapability(c.get("user").role, annotation.collectionKind === "raw" ? "annotateRaw" : "annotateEdited")) return c.json({ error: "Forbidden" }, 403);
+    if (annotation.authorId !== c.get("user").id) return c.json({ error: "Forbidden: only the author can edit this annotation." }, 403);
+    const data = await jsonInput(c, annotationEditInput); if (data instanceof Response) return data;
+    const patch: { noteText?: string | null; strokeR2Key?: string | null; editedAt: Date } = { editedAt: new Date() };
+    const changed: string[] = [];
+    if (data.noteText !== undefined) { patch.noteText = data.noteText; changed.push("note"); }
+    if (data.strokes !== undefined) {
+      changed.push("strokes");
+      if (!data.strokes.length) patch.strokeR2Key = null;
+      else {
+        let strokeJson: string; try { strokeJson = JSON.stringify(data.strokes); } catch { return c.json({ error: "Markup must be JSON-serializable" }, 400); }
+        if (byteLength(strokeJson) > 2_000_000) return c.json({ error: "Markup is too large" }, 400);
+        const dir = annotation.strokeR2Key ? annotation.strokeR2Key.slice(0, annotation.strokeR2Key.lastIndexOf("/")) : `projects/${annotation.projectId}/${annotation.scope}/${annotation.assetId}/annotations`;
+        patch.strokeR2Key = `${dir}/strokes-${Date.now()}-${crypto.randomUUID().slice(0, 8)}.json`;
+        await c.env.MEDIA.put(patch.strokeR2Key, strokeJson, { httpMetadata: { contentType: "application/json" } });
+      }
+    }
+    const updated = await createDb(c.env.DB).update(schema.annotations).set(patch).where(eq(schema.annotations.id, id)).returning().get();
+    await audit(c.env, c.get("user"), "annotation.edit", "annotation", id, { assetId: annotation.assetId, scope: annotation.scope, changed });
+    return c.json(externalAnnotationDto({ id: updated!.id, authorId: annotation.authorId, authorName: annotation.authorName, authorRole: annotation.authorRole, authorActive: annotation.authorActive, scope: updated!.scope, strokeR2Key: updated!.strokeR2Key, noteText: updated!.noteText, createdAt: updated!.createdAt, editedAt: updated!.editedAt }, c.env.APP_ORIGIN));
+  }
   const db = createDb(c.env.DB);
   const annotation = await db.select().from(schema.annotations).where(eq(schema.annotations.id, id)).get();
   if (!annotation) return c.json({ error: "Annotation not found" }, 404);
@@ -155,4 +253,4 @@ annotationsRoutes.patch("/annotations/:id", async (c) => {
   const updated = await db.update(schema.annotations).set(patch).where(eq(schema.annotations.id, id)).returning().get();
   await audit(c.env, c.get("user"), "annotation.edit", "annotation", id, { assetId: asset.assetId, scope, changed });
   return c.json(updated);
-});
+}));

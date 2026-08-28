@@ -1,10 +1,11 @@
 import { Hono } from "hono";
+import { terminalRoute } from "../lib/terminal-route";
 import type { Context } from "hono";
 import { createDb, schema } from "@quincy/db";
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { CollectionKind } from "@quincy/shared";
-import { RENDITION_SPEC_VERSION } from "@quincy/shared";
+import { externalAssetListResponseSchema, externalAssetSchema, RENDITION_SPEC_VERSION } from "@quincy/shared";
 import type { AppEnv } from "../env";
 import { hasProjectAccess, requireCapability } from "../middleware/capability";
 import { roleHasCapability } from "@quincy/shared";
@@ -12,17 +13,61 @@ import { audit } from "../lib/audit";
 import { newId } from "../lib/ids";
 import { jsonInput } from "./helpers";
 import { isUserVisibleAsset, unpublishedAssetResponse } from "../lib/asset-visibility";
+import { resolveVisibleProject, visibleProjectWhere } from "../lib/visible-project-scope";
 
 const reviewInput = z.object({ stars: z.number().int().min(1).max(5).nullable().optional(), colorLabel: z.enum(["select", "maybe", "cut", "hero"]).nullable().optional(), decision: z.enum(["approved", "flagged"]).nullable().optional(), recommended: z.boolean().optional() });
 async function assetContext(c: Context<AppEnv>, assetId: string) { return createDb(c.env.DB).select({ projectId: schema.collections.projectId, kind: schema.collections.kind, publishStatus: schema.assets.publishStatus }).from(schema.assets).innerJoin(schema.collections, eq(schema.assets.collectionId, schema.collections.id)).where(and(eq(schema.assets.id, assetId), sql`${schema.assets.supersededAt} IS NULL`)).get(); }
+async function externalAssetContext(c: Context<AppEnv>, assetId: string) {
+  const user = c.get("user");
+  return createDb(c.env.DB).select({ id: schema.assets.id, projectId: schema.collections.projectId, kind: schema.assets.kind, collectionKind: schema.collections.kind, publishStatus: schema.assets.publishStatus })
+    .from(schema.assets).innerJoin(schema.collections, eq(schema.assets.collectionId, schema.collections.id)).innerJoin(schema.projects, eq(schema.collections.projectId, schema.projects.id))
+    .leftJoin(schema.projectMembers, and(eq(schema.projectMembers.projectId, schema.projects.id), eq(schema.projectMembers.userId, user.id)))
+    .where(and(eq(schema.assets.id, assetId), isNull(schema.assets.supersededAt), visibleProjectWhere(user))).get();
+}
 function unavailableAsset(c: Context<AppEnv>, asset: { kind: string; publishStatus: string }): Response | null { return isUserVisibleAsset(asset.kind, asset.publishStatus) ? null : unpublishedAssetResponse(c); }
 export const reviewRoutes = new Hono<AppEnv>();
-reviewRoutes.get("/projects/:id/assets", async (c) => {
+reviewRoutes.get("/projects/:id/assets", terminalRoute("/projects/:id/assets", async (c) => {
   const projectId = c.req.param("id");
   const collection = c.req.query("collection");
   if (!z.string().uuid().safeParse(projectId).success) return c.json({ error: "Invalid project id" }, 400);
   if (!collection || !["raw", "edited", "video", "floorplan", "copy"].includes(collection)) return c.json({ error: "A valid collection is required" }, 400);
   const kind = collection as CollectionKind;
+  if (c.get("user").role === "external_editor") {
+    if (!await resolveVisibleProject(c.env, c.get("user"), projectId)) return c.json({ error: "Project not found" }, 404);
+    if (kind !== "raw" && kind !== "edited") return c.json({ error: "Forbidden" }, 403);
+    const rows = await createDb(c.env.DB).select({
+      id: schema.assets.id, collectionId: schema.assets.collectionId, kind: schema.assets.kind, originalFilename: schema.assets.originalFilename,
+      bytes: schema.assets.bytes, width: schema.assets.width, height: schema.assets.height, ratingFromMetadata: schema.assets.ratingFromMetadata,
+      section: schema.assets.section, createdAt: schema.assets.createdAt, sourceRawAssetId: schema.assets.sourceRawAssetId,
+      version: schema.assets.version, versionGroupId: schema.assets.versionGroupId, supersedesAssetId: schema.assets.supersedesAssetId,
+      publishStatus: schema.assets.publishStatus, supersededAt: schema.assets.supersededAt,
+      reviewStars: schema.assetReviewState.stars, reviewColorLabel: schema.assetReviewState.colorLabel,
+      reviewDecision: schema.assetReviewState.decision, reviewRecommended: schema.assetReviewState.recommended,
+      selectedId: schema.selections.id, renditionVariant: schema.assetRenditions.variant,
+    }).from(schema.assets).innerJoin(schema.collections, and(eq(schema.assets.collectionId, schema.collections.id), eq(schema.collections.projectId, projectId), eq(schema.collections.kind, kind)))
+      .innerJoin(schema.projects, eq(schema.collections.projectId, schema.projects.id))
+      .leftJoin(schema.projectMembers, and(eq(schema.projectMembers.projectId, schema.projects.id), eq(schema.projectMembers.userId, c.get("user").id)))
+      .leftJoin(schema.assetReviewState, eq(schema.assetReviewState.assetId, schema.assets.id))
+      .leftJoin(schema.assetRenditions, and(eq(schema.assetRenditions.assetId, schema.assets.id), inArray(schema.assetRenditions.variant, ["thumb", "web"]), eq(schema.assetRenditions.specVersion, RENDITION_SPEC_VERSION), sql`${schema.assetRenditions.contentType} in ('image/webp', 'image/jpeg')`))
+      .leftJoin(schema.selections, eq(schema.selections.assetId, schema.assets.id))
+      .where(and(isNull(schema.assets.supersededAt), kind === "edited" ? eq(schema.assets.publishStatus, "ready") : sql`1 = 1`, visibleProjectWhere(c.get("user"))))
+      .orderBy(asc(sql`lower(${schema.assets.originalFilename})`), asc(schema.assets.originalFilename), asc(schema.assets.id)).all();
+    const readiness = new Map<string, Set<"thumb" | "web">>();
+    const unique: typeof rows = [];
+    for (const row of rows) {
+      if (row.renditionVariant) readiness.set(row.id, new Set([...(readiness.get(row.id) ?? []), row.renditionVariant]));
+      if (!unique.some((item) => item.id === row.id)) unique.push(row);
+    }
+    return c.json(externalAssetListResponseSchema.parse({ assets: unique.map((asset) => externalAssetSchema.parse({
+      id: asset.id, collectionId: asset.collectionId, kind: asset.kind, originalFilename: asset.originalFilename, bytes: asset.bytes,
+      width: asset.width, height: asset.height, ratingFromMetadata: asset.ratingFromMetadata, section: asset.section,
+      renditionStatus: readiness.get(asset.id)?.has("thumb") && readiness.get(asset.id)?.has("web") ? "ready" : "processing",
+      createdAt: asset.createdAt.toISOString(), sourceRawAssetId: asset.sourceRawAssetId, version: asset.version,
+      versionGroupId: asset.versionGroupId, supersedesAssetId: asset.supersedesAssetId,
+      review: asset.reviewStars === null && asset.reviewColorLabel === null && asset.reviewDecision === null && !asset.reviewRecommended ? null : { stars: asset.reviewStars, colorLabel: asset.reviewColorLabel, decision: asset.reviewDecision, recommended: Boolean(asset.reviewRecommended) },
+      selected: asset.selectedId !== null,
+    })) }));
+  }
   if (!await hasProjectAccess(c, projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   const user = c.get("user");
   if (kind === "edited" && !roleHasCapability(user.role, "viewEdited")) return c.json({ error: "Forbidden", capability: "viewEdited" }, 403);
@@ -73,19 +118,37 @@ reviewRoutes.get("/projects/:id/assets", async (c) => {
     review: review ? { stars: review.stars, colorLabel: review.colorLabel, decision: review.decision, recommended: review.recommended } : null,
     selected: selection !== null,
   })) });
-});
-reviewRoutes.post("/assets/:id/review", async (c) => {
-  const id = c.req.param("id"); if (!z.string().uuid().safeParse(id).success) return c.json({ error: "Invalid asset id" }, 400); const asset = await assetContext(c, id); if (!asset) return c.json({ error: "Asset not found" }, 404); const unavailable = unavailableAsset(c, asset); if (unavailable) return unavailable;
+}));
+reviewRoutes.post("/assets/:id/review", terminalRoute("/assets/:id/review", async (c) => {
+  const id = c.req.param("id"); if (!z.string().uuid().safeParse(id).success) return c.json({ error: "Invalid asset id" }, 400);
+  if (c.get("user").role === "external_editor") {
+    const asset = await externalAssetContext(c, id);
+    if (!asset || !["raw", "edited"].includes(asset.collectionKind) || !isUserVisibleAsset(asset.collectionKind, asset.publishStatus)) return c.json({ error: "Asset not found" }, 404);
+    const data = await jsonInput(c, reviewInput); if (data instanceof Response) return data;
+    const keys = Object.keys(data);
+    if (asset.collectionKind === "raw") {
+      if (!roleHasCapability(c.get("user").role, "recommendRaw") || keys.length !== 1 || data.recommended === undefined) return c.json({ error: "Forbidden" }, 403);
+    } else if (!roleHasCapability(c.get("user").role, "reviewEdited") || data.recommended !== undefined) {
+      return c.json({ error: "Forbidden" }, 403);
+    }
+    const user = c.get("user");
+    const db = createDb(c.env.DB); const existing = await db.select({ id: schema.assetReviewState.id }).from(schema.assetReviewState).where(eq(schema.assetReviewState.assetId, id)).get();
+    if (existing) await db.update(schema.assetReviewState).set({ ...data, updatedBy: user.id, updatedAt: new Date() }).where(eq(schema.assetReviewState.id, existing.id));
+    else await db.insert(schema.assetReviewState).values({ id: newId(), assetId: id, stars: data.stars ?? null, colorLabel: data.colorLabel ?? null, decision: data.decision ?? null, recommended: data.recommended ?? false, updatedBy: user.id, updatedAt: new Date() });
+    await audit(c.env, user, "asset.review", "asset", id, asset.collectionKind === "raw" ? { recommended: data.recommended } : { stars: data.stars ?? null, colorLabel: data.colorLabel ?? null, decision: data.decision ?? null });
+    return c.json({ ok: true });
+  }
+  const asset = await assetContext(c, id); if (!asset) return c.json({ error: "Asset not found" }, 404); const unavailable = unavailableAsset(c, asset); if (unavailable) return unavailable;
   if (!await hasProjectAccess(c, asset.projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403); {
     const data = await jsonInput(c, reviewInput); if (data instanceof Response) return data; const user = c.get("user");
     if (user.role === "photographer") { if (data.recommended === undefined || data.stars !== undefined || data.colorLabel !== undefined || data.decision !== undefined) return c.json({ error: "Photographers may only set recommended" }, 403); }
     else if (asset.kind === "edited" && data.recommended !== undefined) return c.json({ error: "Edited assets cannot be recommended" }, 400);
-    else if (asset.kind === "raw" && !["admin", "editor"].includes(user.role)) return c.json({ error: "Forbidden" }, 403);
+    else if (asset.kind === "raw" && !roleHasCapability(user.role, "selectForEditing")) return c.json({ error: "Forbidden", capability: "selectForEditing" }, 403);
     else if (asset.kind === "edited" && !roleHasCapability(user.role, "reviewEdited")) return c.json({ error: "Forbidden", capability: "reviewEdited" }, 403);
     const db = createDb(c.env.DB); const existing = await db.select({ id: schema.assetReviewState.id }).from(schema.assetReviewState).where(eq(schema.assetReviewState.assetId, id)).get(); const values = { ...data, updatedBy: user.id, updatedAt: new Date() }; if (existing) await db.update(schema.assetReviewState).set(values).where(eq(schema.assetReviewState.id, existing.id)); else await db.insert(schema.assetReviewState).values({ id: newId(), assetId: id, stars: data.stars ?? null, colorLabel: data.colorLabel ?? null, decision: data.decision ?? null, recommended: data.recommended ?? false, updatedBy: user.id, updatedAt: new Date() }); await audit(c.env, user, "asset.review", "asset", id, data); return c.json({ ok: true });
   }
-});
-reviewRoutes.post("/assets/:id/select", requireCapability("selectForEditing"), async (c) => {
+}));
+reviewRoutes.post("/assets/:id/select", requireCapability("selectForEditing"), terminalRoute("/assets/:id/select", async (c) => {
   const id = c.req.param("id"); const asset = await assetContext(c, id); if (!asset) return c.json({ error: "Asset not found" }, 404); const unavailable = unavailableAsset(c, asset); if (unavailable) return unavailable; if (!await hasProjectAccess(c, asset.projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403); if (asset.kind !== "raw") return c.json({ error: "Only RAW assets can be selected for editing" }, 400); const db = createDb(c.env.DB); await db.insert(schema.selections).values({ id: newId(), assetId: id, selectedBy: c.get("user").id, state: "selected_for_editing", createdAt: new Date() }).onConflictDoUpdate({ target: schema.selections.assetId, set: { selectedBy: c.get("user").id, state: "selected_for_editing" } }); await audit(c.env, c.get("user"), "asset.select", "asset", id); return c.json({ ok: true });
-});
-reviewRoutes.delete("/assets/:id/select", requireCapability("selectForEditing"), async (c) => { const id = c.req.param("id"); const asset = await assetContext(c, id); if (!asset) return c.json({ error: "Asset not found" }, 404); const unavailable = unavailableAsset(c, asset); if (unavailable) return unavailable; if (!await hasProjectAccess(c, asset.projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403); if (asset.kind !== "raw") return c.json({ error: "Only RAW assets can be selected for editing" }, 400); await createDb(c.env.DB).delete(schema.selections).where(eq(schema.selections.assetId, id)); await audit(c.env, c.get("user"), "asset.unselect", "asset", id); return c.json({ ok: true }); });
+}));
+reviewRoutes.delete("/assets/:id/select", requireCapability("selectForEditing"), terminalRoute("/assets/:id/select", async (c) => { const id = c.req.param("id"); const asset = await assetContext(c, id); if (!asset) return c.json({ error: "Asset not found" }, 404); const unavailable = unavailableAsset(c, asset); if (unavailable) return unavailable; if (!await hasProjectAccess(c, asset.projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403); if (asset.kind !== "raw") return c.json({ error: "Only RAW assets can be selected for editing" }, 400); await createDb(c.env.DB).delete(schema.selections).where(eq(schema.selections.assetId, id)); await audit(c.env, c.get("user"), "asset.unselect", "asset", id); return c.json({ ok: true }); }));

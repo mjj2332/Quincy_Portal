@@ -34,33 +34,6 @@ them into the pipe rather than interpolating any of them into a quoted argument:
   > "$SCRATCH/wp-x-run.log" 2>&1
 ```
 
-## Resuming a session
-
-Every `codex exec` run prints a **session id** in its run-log banner — the `session id: <uuid>`
-line inside the `--------` block. That id continues the exact session, full accumulated context,
-via `codex exec resume`:
-
-```bash
-cat "$SCRATCH/wp-x-fix.md" | codex exec resume <session-id> \
-  -m gpt-5.6-luna -c model_reasoning_effort=xhigh -c 'sandbox_mode="workspace-write"' \
-  --output-last-message "$SCRATCH/wp-x-fix-report.md" - > "$SCRATCH/wp-x-fix-run.log" 2>&1
-```
-
-`resume` differs from a fresh `codex exec` in two ways: the session id is positional, and there is
-**no `--sandbox` flag** — pass `-c 'sandbox_mode="workspace-write"'` (or `"read-only"`) instead.
-The follow-up prompt comes from stdin, with a trailing `-` so `resume` reads it there. This is the
-fix-loop mechanism (`Subagent-Orchestration.md` §2 pipeline): resume the same agent with per-finding
-instructions rather than starting cold.
-
-**Credit exhaustion does not lose the session.** When the workspace hits `ERROR: Your workspace is
-out of credits` mid-run, top up or switch the Codex account, then `codex exec resume <session-id>`
-— the switched account continues that session from where it died (verified live 2026-08-28: a
-session started on one account resumed cleanly on another). A review that died at 300k tokens
-resumes from 300k, not from zero. Resume, never restart — a fresh spawn discards the dead run's
-work.
-
-(`codex resume` without `exec` is the interactive TUI picker — a different command.)
-
 ## Flags
 
 | Flag | Purpose |
@@ -85,6 +58,32 @@ work.
 - There is **no `--reasoning-effort` flag** — effort goes through `-c model_reasoning_effort`.
 - There is **no `--no-terminal` flag** on `codex exec`; that belongs to `acpx`'s Claude-session
   wrapper.
+
+## Resuming a session
+
+`codex exec resume <session-id>` continues an existing session with its full accumulated
+context. **Use it for one job: recovering a run that died on `ERROR: Your workspace is out of
+credits`.** Top up or switch the Codex account, then resume — the switched account picks the
+session up mid-task (cross-account resume verified live 2026-08-28), so a review that died at
+300k tokens continues from 300k, not from zero.
+
+Every other task starts a **fresh `codex exec`** with its own spec: a new build, a new plan, a
+fresh diff-review pass, and **each round of a fix loop** — so each run's context stays clean and
+scoped to that task.
+
+The session id is the `session id: <uuid>` line in the run-log `--------` banner. Capture it
+from any run that might hit the credit wall.
+
+```bash
+cat "$SCRATCH/wp-x-fix.md" | codex exec resume <session-id> \
+  -m gpt-5.6-luna -c model_reasoning_effort=xhigh -c 'sandbox_mode="workspace-write"' \
+  --output-last-message "$SCRATCH/wp-x-fix-report.md" - > "$SCRATCH/wp-x-fix-run.log" 2>&1
+```
+
+`resume` takes the session id positionally, has **no `--sandbox` flag** (pass
+`-c 'sandbox_mode="workspace-write"'` or `="read-only"`), and reads the follow-up prompt from
+stdin with a trailing `-`. (`codex resume` without `exec` is the interactive TUI picker — a
+different command.)
 
 ## Failure mode: MCP write actions
 

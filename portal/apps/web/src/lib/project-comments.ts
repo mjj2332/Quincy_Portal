@@ -11,8 +11,10 @@ import {
   type UseQueryResult,
 } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState, type RefCallback } from "react";
-import { RICH_TEXT_JSON_MAX_BYTES, type RichTextDoc } from "@quincy/shared";
+import { RICH_TEXT_JSON_MAX_BYTES, type RichTextDoc, type Role } from "@quincy/shared";
 import { ApiError, apiGet, apiPatch } from "./api";
+import { useSession } from "./auth";
+import { externalApiGet } from "./external-api-response";
 import {
   invalidateProjectResources,
   projectDataKeys,
@@ -32,7 +34,7 @@ import {
 
 export type Comment = {
   id: string;
-  author: { id: string; name: string };
+  author: { id: string; name: string; roleLabel?: string; isExternal?: boolean; active?: boolean };
   body: string;
   content: RichTextDoc;
   createdAt: string;
@@ -86,11 +88,14 @@ async function fetchProjectCommentsPage(
   queryClient: QueryClient,
   signal: AbortSignal,
   readAttemptRegistrar?: ProjectCommentReadAttemptRegistrar,
+  external = false,
 ) {
   ensureProjectIsLive(queryClient, projectId);
   const generation = projectCollaborationDataGeneration(queryClient, projectId);
   const attempt = before === null ? readAttemptRegistrar?.start(signal) : undefined;
-  const page = await apiGet<CommentResponse>(commentsPath(projectId, before), { signal });
+  const page = external
+    ? await externalApiGet("comment-list", commentsPath(projectId, before), signal) as CommentResponse
+    : await apiGet<CommentResponse>(commentsPath(projectId, before), { signal });
   assertNotAborted(signal);
   if (projectCollaborationDataGeneration(queryClient, projectId) !== generation) throw new DOMException("The operation was aborted.", "AbortError");
   ensureProjectIsLive(queryClient, projectId);
@@ -98,24 +103,26 @@ async function fetchProjectCommentsPage(
   return page;
 }
 
-export function projectCommentsInfiniteQueryOptions(projectId: string, readAttemptRegistrar?: ProjectCommentReadAttemptRegistrar) {
+export function projectCommentsInfiniteQueryOptions(projectId: string, readAttemptRegistrar?: ProjectCommentReadAttemptRegistrar, external = false) {
   return {
     queryKey: projectDataKeys.comments(projectId),
     initialPageParam: null as string | null,
     queryFn: ({ pageParam, signal, client }: QueryFunctionContext<ReturnType<typeof projectDataKeys.comments>, string | null>) =>
-      fetchProjectCommentsPage(projectId, pageParam, client, signal, pageParam === null ? readAttemptRegistrar : undefined),
+      fetchProjectCommentsPage(projectId, pageParam, client, signal, pageParam === null ? readAttemptRegistrar : undefined, external),
     getNextPageParam: (lastPage: CommentResponse) => lastPage.nextCursor ?? undefined,
   } as const;
 }
 
-export function projectCommentReadStateQueryOptions(projectId: string) {
+export function projectCommentReadStateQueryOptions(projectId: string, external = false) {
   return {
     queryKey: projectDataKeys.commentReadMarker(projectId),
     queryFn: async ({ signal, client }: QueryFunctionContext) => {
       ensureProjectIsLive(client, projectId);
       const generation = projectCollaborationDataGeneration(client, projectId);
       const requestSequence = nextProjectCommentReadStateRequestSequence(client, projectId);
-      const state = await apiGet<ProjectCommentReadState>(`/api/projects/${encodeURIComponent(projectId)}/comment-read-marker`, { signal });
+      const state = external
+        ? await externalApiGet("comment-read-state", `/api/projects/${encodeURIComponent(projectId)}/comment-read-marker`, signal) as ProjectCommentReadState
+        : await apiGet<ProjectCommentReadState>(`/api/projects/${encodeURIComponent(projectId)}/comment-read-marker`, { signal });
       assertNotAborted(signal);
       if (projectCollaborationDataGeneration(client, projectId) !== generation) throw new DOMException("The operation was aborted.", "AbortError");
       ensureProjectIsLive(client, projectId);
@@ -125,8 +132,10 @@ export function projectCommentReadStateQueryOptions(projectId: string) {
 }
 
 export function useProjectCommentsQuery(projectId: string, enabled: boolean, readAttemptRegistrar?: ProjectCommentReadAttemptRegistrar, open = enabled) {
+  const session = useSession();
+  const role = (session.data?.user as { role?: Role } | undefined)?.role;
   const runtime = useOwnedSnapshot();
-  const options = projectCommentsInfiniteQueryOptions(projectId, readAttemptRegistrar);
+  const options = projectCommentsInfiniteQueryOptions(projectId, readAttemptRegistrar, role === "external_editor");
   return useInfiniteQuery<CommentResponse, Error, CommentInfiniteData, typeof options.queryKey, string | null>({
     ...options,
     enabled: enabled && !runtime.isProjectRemoved(projectId),
@@ -149,9 +158,11 @@ export function useProjectCommentsCacheQuery(projectId: string) {
 }
 
 export function useProjectCommentReadStateQuery(projectId: string, enabled: boolean) {
+  const session = useSession();
+  const role = (session.data?.user as { role?: Role } | undefined)?.role;
   const runtime = useOwnedSnapshot();
   return useQuery<ProjectCommentReadState, Error>({
-    ...projectCommentReadStateQueryOptions(projectId),
+    ...projectCommentReadStateQueryOptions(projectId, role === "external_editor"),
     enabled: enabled && !runtime.isProjectRemoved(projectId),
     staleTime: 15_000,
     gcTime: 5 * 60_000,
@@ -173,9 +184,10 @@ export async function refreshProjectCommentsHead(
   projectId: string,
   readAttemptRegistrar: ProjectCommentReadAttemptRegistrar,
   signal: AbortSignal,
+  external = false,
 ) {
   const dataGeneration = projectCollaborationDataGeneration(queryClient, projectId);
-  const fresh = await fetchProjectCommentsPage(projectId, null, queryClient, signal, readAttemptRegistrar);
+  const fresh = await fetchProjectCommentsPage(projectId, null, queryClient, signal, readAttemptRegistrar, external);
   if (projectCollaborationDataGeneration(queryClient, projectId) !== dataGeneration || signal.aborted) return undefined;
   queryClient.setQueryData<CommentInfiniteData>(projectDataKeys.comments(projectId), (current) => {
     const first = current?.pages[0];
@@ -278,6 +290,8 @@ function commitProjectCommentReadState(
 type PresentationArgs = { projectId: string; open: boolean; onAccessError?: (error: unknown) => void };
 
 export function useProjectCommentPresentation({ projectId, open, onAccessError }: PresentationArgs) {
+  const session = useSession();
+  const role = (session.data?.user as { role?: Role } | undefined)?.role;
   const queryClient = useQueryClient();
   const runtime = useOwnedSnapshot();
   const anchorNodeRef = useRef<HTMLElement | null>(null);
@@ -360,12 +374,12 @@ export function useProjectCommentPresentation({ projectId, open, onAccessError }
     void queryClient.cancelQueries({ queryKey: projectDataKeys.comments(projectIdRef.current), exact: true }).then(async () => {
       if (controller.signal.aborted || activeGenerationRef.current !== generation || !eligibleNow(true)) return;
       try {
-        await refreshProjectCommentsHead(queryClient, projectIdRef.current, registrarRef.current, controller.signal);
+        await refreshProjectCommentsHead(queryClient, projectIdRef.current, registrarRef.current, controller.signal, role === "external_editor");
       } catch (error) {
         if (!(error instanceof Error && error.name === "AbortError")) onAccessErrorRef.current?.(error);
       }
     });
-  }, [eligibleNow, queryClient]);
+  }, [eligibleNow, queryClient, role]);
 
   const updateEligibility = useCallback(() => {
     const next = eligibleNow(false);

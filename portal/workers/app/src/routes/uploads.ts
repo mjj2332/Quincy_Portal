@@ -1,7 +1,8 @@
 import { Hono, type Context } from "hono";
+import { terminalRoute } from "../lib/terminal-route";
 import { createDb, schema } from "@quincy/db";
 import { and, desc, eq, sql } from "drizzle-orm";
-import { isAcceptedPhotoFilename, rawFolderGate, roleHasCapability, RAW_FOLDER_INVALID_MESSAGE, RAW_FOLDER_MISSING_MESSAGE } from "@quincy/shared";
+import { externalIngestStatusSchema, isAcceptedPhotoFilename, rawFolderGate, roleHasCapability, RAW_FOLDER_INVALID_MESSAGE, RAW_FOLDER_MISSING_MESSAGE } from "@quincy/shared";
 import { z } from "zod";
 import type { AppEnv } from "../env";
 import { hasProjectAccess, requireCapability } from "../middleware/capability";
@@ -10,6 +11,7 @@ import { finalizeIngest } from "../lib/ingest";
 import { newId, safeFilename } from "../lib/ids";
 import { completeMultipart, createMultipartPresign } from "../lib/r2s3";
 import { jsonInput } from "./helpers";
+import { resolveVisibleProject } from "../lib/visible-project-scope";
 
 const manifestInput = z.object({ filenames: z.array(z.string().min(1)).min(1).max(10_000) });
 const presignInput = z.object({ projectId: z.string().uuid(), filename: z.string().min(1), bytes: z.number().int().positive().max(5 * 1024 * 1024 * 1024), collection: z.enum(["raw", "edited"]).default("raw") });
@@ -31,13 +33,14 @@ async function uploadPrecondition(c: Context<AppEnv>, projectId: string, collect
 }
 
 export const uploadsRoutes = new Hono<AppEnv>();
-uploadsRoutes.post("/projects/:id/upload-manifest", requireCapability("uploadRaw"), async (c) => {
-  const projectId = c.req.param("id"); if (!await hasProjectAccess(c, projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403); {
+uploadsRoutes.post("/projects/:id/upload-manifest", requireCapability("uploadRaw"), terminalRoute("/projects/:id/upload-manifest", async (c) => {
+  const projectId = c.req.param("id");
+  const projectState = await createDb(c.env.DB).select({ archivedAt: schema.projects.archivedAt }).from(schema.projects).where(eq(schema.projects.id, projectId)).get();
+  if (projectState?.archivedAt) return c.json({ error: "Project is archived" }, 409);
+  if (!await hasProjectAccess(c, projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403); {
     const data = await jsonInput(c, manifestInput); if (data instanceof Response) return data;
     if (data.filenames.some((name) => !isAcceptedPhotoFilename(name))) return c.json({ error: "RAW uploads must be .jpg or .jpeg files" }, 400);
     const db = createDb(c.env.DB);
-    const project = await db.select({ archivedAt: schema.projects.archivedAt }).from(schema.projects).where(eq(schema.projects.id, projectId)).get();
-    if (project?.archivedAt) return c.json({ error: "Project is archived" }, 409);
     const raw = await db.select().from(schema.collections).where(and(eq(schema.collections.projectId, projectId), eq(schema.collections.kind, "raw"))).get(); if (!raw) return c.json({ error: "Project RAW collection not found" }, 404);
     const id = newId();
     await db.insert(schema.uploadManifests).values({ id, collectionId: raw.id, expectedCount: data.filenames.length, filenamesJson: JSON.stringify(data.filenames), status: "active", createdBy: c.get("user").id, createdAt: new Date() });
@@ -45,8 +48,9 @@ uploadsRoutes.post("/projects/:id/upload-manifest", requireCapability("uploadRaw
     await audit(c.env, c.get("user"), "upload.manifest", "upload_manifest", id, { projectId, expectedCount: data.filenames.length });
     return c.json({ manifestId: id });
   }
-});
-uploadsRoutes.post("/uploads/presign", async (c) => {
+}));
+uploadsRoutes.post("/uploads/presign", terminalRoute("/uploads/presign", async (c) => {
+  if (c.get("user").role === "external_editor") return c.json({ error: "Forbidden", capability: "uploadEdited" }, 403);
   const data = await jsonInput(c, presignInput); if (data instanceof Response) return data;
   const capability = data.collection === "edited" ? "uploadEdited" : "uploadRaw";
   if (!roleHasCapability(c.get("user").role, capability)) return c.json({ error: "Forbidden", capability }, 403);
@@ -61,8 +65,9 @@ uploadsRoutes.post("/uploads/presign", async (c) => {
     }
     await audit(c.env, c.get("user"), "upload.presign", "asset", assetId, { projectId: data.projectId, key, bytes: data.bytes }); return c.json({ assetId, ...multipart });
   }
-});
-uploadsRoutes.put("/uploads/direct", async (c) => {
+}));
+uploadsRoutes.put("/uploads/direct", terminalRoute("/uploads/direct", async (c) => {
+  if (c.get("user").role === "external_editor") return c.json({ error: "Forbidden", capability: "uploadEdited" }, 403);
   if (c.env.APP_ENV !== "dev") return c.json({ error: "Direct uploads are available only in dev" }, 404);
   const key = c.req.query("key"); if (!key || !key.startsWith("projects/")) return c.json({ error: "A valid R2 key is required" }, 400);
   const match = key.match(/^projects\/([0-9a-f-]{36})\/(raw|edited)\/([0-9a-f-]{36})\//); if (!match) return c.json({ error: "R2 key does not follow the required asset key convention" }, 400);
@@ -74,8 +79,9 @@ uploadsRoutes.put("/uploads/direct", async (c) => {
   await c.env.MEDIA.put(key, c.req.raw.body, { httpMetadata: { contentType: "image/jpeg" } });
   await audit(c.env, c.get("user"), "upload.direct", "asset", assetId, { projectId, key });
   return c.body(null, 204);
-});
-uploadsRoutes.post("/uploads/complete", async (c) => {
+}));
+uploadsRoutes.post("/uploads/complete", terminalRoute("/uploads/complete", async (c) => {
+  if (c.get("user").role === "external_editor") return c.json({ error: "Forbidden", capability: "uploadEdited" }, 403);
   const data = await jsonInput(c, completeInput); if (data instanceof Response) return data;
   const capability = data.collection === "edited" ? "uploadEdited" : "uploadRaw";
   if (!roleHasCapability(c.get("user").role, capability)) return c.json({ error: "Forbidden", capability }, 403);
@@ -151,9 +157,24 @@ uploadsRoutes.post("/uploads/complete", async (c) => {
       return c.json(completed, completed.publishStatus === "ready" ? 201 : 202);
     } catch (error) { return c.json({ error: error instanceof Error ? error.message : "Could not finalize upload" }, 409); }
   }
-});
-uploadsRoutes.get("/projects/:id/ingest-status", async (c) => {
+}));
+
+// Exact-path Hono routes do not match a trailing slash. Keep the legacy provider-capability
+// boundary explicit so an External Editor cannot reach a permissive fallback through that form.
+for (const [method, path] of [["post", "/uploads/presign/"], ["put", "/uploads/direct/"], ["post", "/uploads/complete/"]] as const) {
+  uploadsRoutes[method](path, terminalRoute(path, (c) => c.get("user").role === "external_editor"
+    ? c.json({ error: "Forbidden", capability: "uploadEdited" }, 403)
+    : c.notFound()));
+}
+uploadsRoutes.get("/projects/:id/ingest-status", terminalRoute("/projects/:id/ingest-status", async (c) => {
   const projectId = c.req.param("id");
+  if (c.get("user").role === "external_editor") {
+    if (!await resolveVisibleProject(c.env, c.get("user"), projectId)) return c.json({ error: "Project not found" }, 404);
+    const raw = await createDb(c.env.DB).select({ expectedCount: schema.collections.expectedCount, receivedCount: schema.collections.receivedCount })
+      .from(schema.collections).where(and(eq(schema.collections.projectId, projectId), eq(schema.collections.kind, "raw"))).get();
+    if (!raw) return c.json({ error: "Project RAW collection not found" }, 404);
+    return c.json(externalIngestStatusSchema.parse({ expectedCount: raw.expectedCount, receivedCount: raw.receivedCount, mismatch: raw.expectedCount !== null && raw.expectedCount !== raw.receivedCount }));
+  }
   if (!await hasProjectAccess(c, projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   const db = createDb(c.env.DB);
   const raw = await db.select({
@@ -196,4 +217,4 @@ uploadsRoutes.get("/projects/:id/ingest-status", async (c) => {
     receivedCount,
     mismatch: relevant.some((manifest) => Number(manifest.receivedCount) !== manifest.expectedCount),
   });
-});
+}));

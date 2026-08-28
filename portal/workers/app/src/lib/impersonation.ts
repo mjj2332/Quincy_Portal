@@ -39,7 +39,7 @@ export async function assertImpersonationSessionAllowed(
 
     const target = await db.select({ active: schema.user.active, role: schema.user.role })
       .from(schema.user).where(eq(schema.user.id, targetUserId)).get();
-    if (!target?.active || (target.role !== "photographer" && target.role !== "editor")) throw new ImpersonationNotAllowedError();
+    if (!target?.active || (target.role !== "photographer" && target.role !== "editor" && target.role !== "external_editor")) throw new ImpersonationNotAllowedError();
 
     const original = await db.select({ active: schema.user.active, role: schema.user.role })
       .from(schema.user).where(eq(schema.user.id, impersonatedBy)).get();

@@ -38,6 +38,8 @@ import type { AutoHdrErrorCode, AutoHdrFetchResult, AutoHdrResult } from "./auto
 import { notifyProject, pruneNotifications, scanDueSubtasks, scanStalledAutoHdr } from "./notifications";
 import { processNotificationDlqMessage, processNotificationMessage, recoverNotificationOutbox } from "./notification-delivery";
 import { scanProjectDeadlineOccurrences } from "./project-deadline";
+import { sweepExternalEditedUploads } from "./external-upload-sweep";
+import { processExternalRoleCachePurges } from "./external-role-cache-purge";
 
 export { AutoHdrApiSend, AutoHdrFetch, AutoHdrSend, ManualEditedPublish, DropboxSyncDO, TonomoProcessorDO };
 
@@ -65,6 +67,18 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
         console.log("Notification outbox recovery scan", { recovered });
       } catch (error) {
         console.error("Notification outbox recovery scan failed", { error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
+      }
+      try {
+        const swept = await sweepExternalEditedUploads(this.env, controller.scheduledTime);
+        console.log("External upload sweep", swept);
+      } catch (error) {
+        console.error("External upload sweep failed", { error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
+      }
+      try {
+        const purged = await processExternalRoleCachePurges(this.env, controller.scheduledTime);
+        if (purged) console.log("External role cache purge jobs", { purged });
+      } catch (error) {
+        console.error("External role cache purge failed", { error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
       }
       return;
     }
