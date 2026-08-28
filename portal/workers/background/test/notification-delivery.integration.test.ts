@@ -299,7 +299,8 @@ describe("TB4 notification delivery Worker integration", () => {
 
   it("permanently fails a broad message whose activity type is reserved", async () => {
     const fixture = await seedBroadDelivery();
-    await database.DB.prepare("UPDATE project_activity_events SET event_type = 'project.stage.changed' WHERE id = ?").bind(fixture.activityId).run();
+    // project.stage.changed became a live type in TB5A Slice 1; project.workflow.raw_ready is still reserved.
+    await database.DB.prepare("UPDATE project_activity_events SET event_type = 'project.workflow.raw_ready' WHERE id = ?").bind(fixture.activityId).run();
     const m = message(fixture.outboxId);
     await processNotificationMessage(deliveryEnv(), m);
     expect((m as { ack: ReturnType<typeof vi.fn> }).ack).toHaveBeenCalledOnce();

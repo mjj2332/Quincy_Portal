@@ -12,7 +12,7 @@ export type ProjectCollection = { id: string; kind: CollectionKind; status: stri
 export type ProjectMember = ProjectMembershipDto;
 export type ProjectDetail = {
   id: string; street: string; suburb: string | null; postcode: string | null; agencyName: string | null; agentName: string | null;
-  shootDate: string | null; stageKey: ProjectStageKey; rawFolderPath: string | null; rawFolderLink: string | null; productionNotes?: string | null; editedUploadAvailable?: boolean;
+  shootDate: string | null; stageKey: ProjectStageKey; rawFolderPath: string | null; rawFolderLink: string | null; productionNotes?: string | null; editedUploadAvailable?: boolean; boardRevision?: number; contractEnabled?: boolean;
   coverAssetId: string | null; effectiveCoverAssetId: string | null; collections: ProjectCollection[]; members: ProjectMember[]; deadlineSchedule: ProjectDeadlineSchedule;
 };
 export type ProjectSubtask = {

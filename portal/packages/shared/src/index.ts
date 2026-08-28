@@ -1,5 +1,6 @@
 export * from "./capabilities";
 export * from "./stages";
+export * from "./stage-move";
 export * from "./media";
 export * from "./xmp";
 export * from "./crypto";

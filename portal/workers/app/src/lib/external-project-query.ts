@@ -1,6 +1,6 @@
 import { createDb, schema } from "@quincy/db";
 import { and, asc, eq, isNull, sql } from "drizzle-orm";
-import { externalProjectDetailSchema, externalProjectListResponseSchema, externalProjectSummarySchema, ROLE_LABELS, type ExternalProjectDetailDto, type ExternalProjectSummaryDto, type Role } from "@quincy/shared";
+import { externalProjectDetailSchema, externalProjectListResponseSchema, externalProjectSummarySchema, ROLE_LABELS, stageTransportKeyForRole, type ExternalProjectDetailDto, type ExternalProjectSummaryDto, type Role, type StageKey } from "@quincy/shared";
 import type { Env } from "../env";
 import { readProjectDeadlineSchedule } from "./project-deadline";
 import { visibleProjectWhere } from "./visible-project-scope";
@@ -33,11 +33,6 @@ function person(row: { id: string; name: string; role: Role; active: boolean }) 
 
 function coverUrl(origin: string, assetId: string | null) {
   return assetId ? { assetId, url: new URL(`/media/asset/${assetId}/thumb`, origin).href } : null;
-}
-
-/** External projections never expose provider-specific workflow stage identifiers. */
-export function externalStageKey(stageKey: string) {
-  return stageKey === "editing_autohdr" ? "editing" : stageKey;
 }
 
 async function projectRows(db: Db, userId: string, role: Role, projectId?: string) {
@@ -110,7 +105,7 @@ function summaryFields(project: ProjectRow, services: ServiceRow[], deadline: Aw
     agentDisplayName: project.directoryAgentName ?? project.agentName,
     shootDate: project.shootDate,
     timeWindow: project.timeWindow,
-    stageKey: externalStageKey(project.stageKey),
+    stageKey: stageTransportKeyForRole(project.stageKey as StageKey, "external_editor"),
     deadline,
     productionNotes: project.productionNotes,
     services: services.map(({ id, kind, status, expectedCount, receivedCount }) => ({ id, kind, status, expectedCount, receivedCount })),

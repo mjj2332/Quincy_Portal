@@ -865,7 +865,7 @@ describe("staff app API", () => {
     expect(collaborationBody.members.flatMap((member) => Object.keys(member))).not.toContain("userId");
     const me = await SELF.fetch("https://portal.test/api/me", { headers: { cookie: externalCookie } });
     expect(me.status).toBe(200);
-    await expect(me.json()).resolves.toMatchObject({ user: { role: "external_editor", authorizationEpoch: 0 }, capabilities: ["uploadEdited", "viewRaw", "annotateRaw", "recommendRaw", "compareFrames", "viewEdited", "reviewEdited", "annotateEdited", "collaborateOnProject"] });
+    await expect(me.json()).resolves.toMatchObject({ user: { role: "external_editor", authorizationEpoch: 0 }, capabilities: ["uploadEdited", "viewRaw", "annotateRaw", "recommendRaw", "compareFrames", "viewEdited", "reviewEdited", "annotateEdited", "collaborateOnProject", "moveProjectStage"] });
 
     const nonexistent = crypto.randomUUID();
     const projectMisses = await Promise.all([assigned, unassigned, archived, nonexistent].map((id) => SELF.fetch(`https://portal.test/api/projects/${id}`, { headers: { cookie: externalCookie } })));

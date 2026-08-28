@@ -22,8 +22,9 @@ import {
 } from "../lib/project-comments";
 import { jsonInput } from "./helpers";
 import { resolveVisibleProject } from "../lib/visible-project-scope";
-import { assignedSubtaskCounts, externalStageKey } from "../lib/external-project-query";
+import { assignedSubtaskCounts } from "../lib/external-project-query";
 import { EXTERNAL_API_RESPONSE_SCHEMAS, ROLE_LABELS, externalCommentListResponseSchema, externalCommentSchema } from "@quincy/shared";
+import { stageTransportKeyForRole, type StageKey } from "@quincy/shared";
 
 const MAX_LIMIT = 50;
 const COMMENT_BODY_MAX_LENGTH = 10_000;
@@ -78,7 +79,7 @@ projectCommentsRoutes.get("/projects/:projectId/collaboration-summary", terminal
   if (c.get("user").role === "external_editor") {
     const subtaskCounts = await assignedSubtaskCounts(db, projectId);
     return c.json(EXTERNAL_API_RESPONSE_SCHEMAS.collaboration.parse({
-      project: { id: project.id, street: project.street, stageKey: externalStageKey(project.stageKey) },
+      project: { id: project.id, street: project.street, stageKey: stageTransportKeyForRole(project.stageKey as StageKey, "external_editor") },
       members: members.map((member) => ({
         id: member.userId, membershipCycleId: member.id, roleOnProject: member.roleOnProject,
         name: member.name, email: member.email, roleLabel: ROLE_LABELS[member.globalRole],

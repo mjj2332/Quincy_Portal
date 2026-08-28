@@ -32,10 +32,10 @@ const LIVE_TYPES = [
   "project.collection.document_completed",
   "project.workflow.manual_edited_ready",
   "project.collection.raw_sync_completed",
+  "project.stage.changed",
   "project.checklist.schedule_changed",
 ] as const;
 const RESERVED_TYPES = [
-  "project.stage.changed",
   "project.workflow.raw_ready",
   "project.workflow.sent_to_editing",
   "project.workflow.edited_ready",
@@ -180,7 +180,7 @@ export const PROJECT_ACTIVITY_REGISTRY = {
   "project.collection.document_completed": live("collection_delivery", "document completion route", ["workers/app/src/routes/collections.ts#complete-document"], "project_document", "project-document:<sessionId>:completed", "project", payloadSchemas["project.collection.document_completed"]),
   "project.workflow.manual_edited_ready": live("review_workflow", "manual edited publication workflow", ["workers/background/src/workflows/manual-edited-publish.ts"], "project_manual_edited", "project-manual-edited:<jobId>:<assetId>:ready", "project", payloadSchemas["project.workflow.manual_edited_ready"], null, "system"),
   "project.collection.raw_sync_completed": live("collection_delivery", "RAW Dropbox reconciliation", ["workers/background/src/dropbox/sync.ts#claim-completion"], "project_raw_sync", "project-raw-sync:<claimId>:completed", "project", payloadSchemas["project.collection.raw_sync_completed"], null, "system"),
-  "project.stage.changed": reserved("stage", "future canonical Stage owner", "project_stage", "project-stage:<projectId>:<transitionId>", "project"),
+  "project.stage.changed": live("stage", "moveProjectStage", ["workers/app/src/lib/project-stage.ts#moveProjectStage"], "project_stage", "project-stage:<projectId>:transition:<activityId>", "project", payloadSchemas["project.stage.changed"]),
   "project.checklist.schedule_changed": live("checklist", "TB4D saveProjectSubtask", ["workers/app/src/lib/project-subtasks.ts#saveProjectSubtask"], "project_checklist", "project-checklist-schedule:<projectId>:<itemId>:version:<version>", "project_collaboration", payloadSchemas["project.checklist.schedule_changed"], { strategy: "leading_edge", keyShape: "project-checklist-schedule:<projectId>:<itemId>:<actorId>", windowSeconds: 300 }, "user", {
     cutoverOwner: "TB4D saveProjectSubtask",
     // Explicit TB4D cutover metadata; do not inherit the TB4C helper default.
@@ -233,7 +233,7 @@ export function projectActivityDeepLink(type: ProjectActivityType, projectId: st
   return expectedDeepLink(type, projectId);
 }
 
-function sourceKeyMatches(type: ProjectActivityType, sourceId: string, key: string): boolean {
+function sourceKeyMatches(type: ProjectActivityType, sourceId: string, key: string, projectId?: string): boolean {
   const exact = (prefix: string, suffix: string) => key === `${prefix}${sourceId}${suffix}`;
   const oneToken = (prefix: string, suffix: string) => {
     const start = `${prefix}${sourceId}${suffix}`;
@@ -271,7 +271,7 @@ function sourceKeyMatches(type: ProjectActivityType, sourceId: string, key: stri
       return token.length > 0 && !token.includes(":");
     }
     case "project.collection.raw_sync_completed": return exact("project-raw-sync:", ":completed");
-    case "project.stage.changed": return key.startsWith("project-stage:");
+    case "project.stage.changed": return projectId !== undefined && key === `project-stage:${projectId}:transition:${sourceId}`;
     case "project.checklist.schedule_changed": {
       const match = /^project-checklist-schedule:([^:]+):([^:]+):version:(\d+)$/.exec(key);
       return Boolean(match && match[2] === sourceId && Number(match[3]) >= 1);
@@ -332,7 +332,7 @@ export function parseProjectActivityIntent(value: unknown): ParsedProjectActivit
   const source = activity.source;
   if (!source || typeof source !== "object" || Array.isArray(source)) return null;
   const sourceRecord = source as Record<string, unknown>;
-  if (sourceRecord.kind !== entry.sourceKind || typeof sourceRecord.id !== "string" || !sourceRecord.id || typeof sourceRecord.key !== "string" || !sourceRecord.key || !sourceKeyMatches(typed, sourceRecord.id, sourceRecord.key)) return null;
+  if (sourceRecord.kind !== entry.sourceKind || typeof sourceRecord.id !== "string" || !sourceRecord.id || typeof sourceRecord.key !== "string" || !sourceRecord.key || !sourceKeyMatches(typed, sourceRecord.id, sourceRecord.key, activity.projectId)) return null;
   const safePayload = entry.payloadSchema.safeParse(activity.safePayload);
   if (!safePayload.success || JSON.stringify(safePayload.data).length > 4_096) return null;
   if (typed === "project.checklist.schedule_changed" && !scheduleSourceIdentityMatches(activity.projectId, sourceRecord.id, sourceRecord.key, safePayload.data)) return null;

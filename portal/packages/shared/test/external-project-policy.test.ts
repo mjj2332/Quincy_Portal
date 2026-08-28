@@ -7,9 +7,10 @@ import {
 } from "../src/external-project-policy";
 import { PROJECT_ACTIVITY_TYPES } from "../src/project-activity";
 import { NOTIFICATION_TYPES } from "../src/notification-types";
-import { externalProjectSummarySchema } from "../src/external-project-dto";
+import { externalProjectDetailSchema, externalProjectSummarySchema } from "../src/external-project-dto";
 import { externalEditedUploadCreateRequestSchema } from "../src/external-upload";
 import { externalNotificationChannels, externalNotificationCopy } from "../src/external-notification";
+import { stageTransportKeyForRole } from "../src/stage-move";
 
 describe("TB4E external policy and DTO boundaries", () => {
   it("is exhaustive independently of the internal activity registry metadata", () => {
@@ -50,6 +51,20 @@ describe("TB4E external policy and DTO boundaries", () => {
     };
     expect(externalProjectSummarySchema.safeParse({ ...summary, secret: "nope" }).success).toBe(false);
     expect(externalProjectSummarySchema.safeParse(summary).success).toBe(true);
+    expect(externalProjectSummarySchema.safeParse({ ...summary, stageKey: "editing" }).success).toBe(true);
+    expect(externalProjectSummarySchema.safeParse({ ...summary, stageKey: "editing_autohdr" }).success).toBe(false);
+    expect(externalProjectSummarySchema.safeParse({ ...summary, stageKey: "unknown-stage" }).success).toBe(false);
+    const externalEditing = stageTransportKeyForRole("editing_autohdr", "external_editor");
+    expect(externalEditing).toBe("editing");
+    expect(externalProjectSummarySchema.safeParse({ ...summary, stageKey: externalEditing }).success).toBe(true);
+    expect(externalProjectDetailSchema.safeParse({
+      ...summary,
+      boardRevision: 4,
+      contractEnabled: false,
+      editedUploadAvailable: false,
+      collections: [],
+      members: [],
+    }).success).toBe(true);
     expect(externalEditedUploadCreateRequestSchema.safeParse({ projectId: summary.id, collection: "raw", filename: "image.jpg", bytes: 10 }).success).toBe(false);
     expect(externalEditedUploadCreateRequestSchema.safeParse({ projectId: summary.id, collection: "edited", filename: "image.jpg", bytes: 10 }).success).toBe(true);
   });

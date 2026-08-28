@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { EXTERNAL_EDITOR_CAPABILITIES, ROLE_LABELS } from "./capabilities";
 import { externalEditedCompleteResponseSchema, externalEditedUploadCreateResponseSchema } from "./external-upload";
+import { STAGE_PRESENTATION_KEYS } from "./stage-move";
 
 const iso = z.string().min(1);
 const uuid = z.string().uuid();
@@ -107,7 +108,7 @@ const projectSummaryShape = {
   agentDisplayName: z.string().nullable(),
   shootDate: z.string().nullable(),
   timeWindow: z.string().nullable(),
-  stageKey: z.string(),
+  stageKey: z.enum(STAGE_PRESENTATION_KEYS),
   deadline: externalDeadlineSchema.nullable(),
   productionNotes: z.string().nullable(),
   services: z.array(serviceSchema),
@@ -118,6 +119,8 @@ export const externalProjectSummarySchema = z.object(projectSummaryShape).strict
 export type ExternalProjectSummaryDto = z.infer<typeof externalProjectSummarySchema>;
 
 export const externalProjectDetailSchema = externalProjectSummarySchema.extend({
+  boardRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
+  contractEnabled: z.boolean().optional(),
   editedUploadAvailable: z.boolean(),
   collections: z.array(serviceSchema),
   members: z.array(externalParticipantSchema.extend({ assignedSubtaskCount: z.number().int().nonnegative() }).strict()),

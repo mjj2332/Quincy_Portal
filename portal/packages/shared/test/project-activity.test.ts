@@ -13,7 +13,7 @@ import {
 } from "../src/project-activity";
 import { PROJECT_ASSIGNMENT_ELIGIBLE_ROLES } from "../src/project-members";
 import { TB4D_SCHEDULE_ACTIVITY_CUTOVER_DATE } from "../src/checklist-schedule-config";
-import { EXTERNAL_PROJECT_ACTIVITY_POLICY } from "../src/external-project-policy";
+import { EXTERNAL_PROJECT_ACTIVITY_POLICY, projectExternalActivityPayload } from "../src/external-project-policy";
 
 const projectId = "project-activity-test";
 const userId = "11111111-1111-4111-8111-111111111111";
@@ -40,7 +40,7 @@ function sourceFor(type: ProjectActivityType, sourceId: string): { kind: string;
     "project.collection.document_completed": `project-document:${sourceId}:completed`,
     "project.workflow.manual_edited_ready": `project-manual-edited:job:${sourceId}:ready`,
     "project.collection.raw_sync_completed": `project-raw-sync:${sourceId}:completed`,
-    "project.stage.changed": `project-stage:${sourceId}`,
+    "project.stage.changed": `project-stage:${projectId}:transition:${sourceId}`,
     "project.checklist.schedule_changed": `project-checklist-schedule:${projectId}:${sourceId}:version:1`,
     "project.workflow.raw_ready": `project-workflow:${sourceId}:raw-ready:transition`,
     "project.workflow.sent_to_editing": `project-workflow:${sourceId}:sent-to-editing:transition`,
@@ -99,6 +99,25 @@ function intentFor(type: ProjectActivityType, options: { actorKind?: "user" | "s
 }
 
 describe("TB4C project activity registry", () => {
+  it("activates the human Stage activity with an empty safe payload and keeps generic copy", () => {
+    const entry = PROJECT_ACTIVITY_REGISTRY["project.stage.changed"];
+    expect(entry).toMatchObject({
+      category: "stage",
+      cutover: "live",
+      producerOwner: "moveProjectStage",
+      producerCallSites: ["workers/app/src/lib/project-stage.ts#moveProjectStage"],
+      sourceKind: "project_stage",
+      sourceKeyShape: "project-stage:<projectId>:transition:<activityId>",
+      coalescing: null,
+      channels: ["in_app"],
+      emailDefault: "off",
+    });
+    expect(entry.payloadSchema.safeParse({}).success).toBe(true);
+    expect(entry.payloadSchema.safeParse({ fromStageKey: "editing_autohdr" }).success).toBe(false);
+    expect(renderProjectActivityNotification("project.stage.changed", {}, "Maple House")).toEqual({ title: "Project activity", body: "Maple House has a project update." });
+    expect(projectExternalActivityPayload("project.stage.changed", {})).toEqual({ type: "project.stage.changed", payload: {} });
+  });
+
   it("declares the complete closed contract for every live and reserved type", () => {
     const entries = Object.entries(PROJECT_ACTIVITY_REGISTRY);
     expect(entries).toHaveLength(PROJECT_ACTIVITY_TYPES.length);
