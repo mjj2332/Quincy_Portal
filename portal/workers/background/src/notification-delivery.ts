@@ -981,6 +981,10 @@ async function suppressEmailChannel(env: Env, outbox: OutboxRow, token: string, 
 
 type ReminderAdmission = { sql: string; values: unknown[] };
 
+// Legacy rows created before TB4E (and internal-editor rows) may not carry an
+// authorization epoch. External rows must match the current epoch exactly.
+const AUTHORIZATION_EPOCH_MATCH = `(o.recipient_authorization_epoch = recipient.authorization_epoch OR (o.recipient_authorization_epoch IS NULL AND recipient.role <> 'external_editor'))`;
+
 function reminderAuthorization(outbox: OutboxRow, payload: ProjectDeadlineReminderOutboxPayload, token: string, channel?: "in_app" | "email"): ReminderAdmission {
   const roles = PROJECT_ASSIGNMENT_ELIGIBLE_ROLES.editor;
   const rolePlaceholders = roles.map(() => "?").join(",");
@@ -1008,7 +1012,7 @@ function reminderAuthorization(outbox: OutboxRow, payload: ProjectDeadlineRemind
         AND occurrence.deadline_local_civil = ? AND occurrence.deadline_zone = 'Australia/Sydney'
         AND occurrence.deadline_utc_offset_minutes = ? AND occurrence.deadline_fold = ?
         AND recipient.active = 1 AND recipient.role IN (${rolePlaceholders})
-        AND o.recipient_authorization_epoch = recipient.authorization_epoch
+        AND ${AUTHORIZATION_EPOCH_MATCH}
         AND member.created_at = ? AND member.created_at <= occurrence.fired_at
         ${channel ? "AND (? <> 'email' OR COALESCE(preference.project_deadline_reminder_emails, 1) = 1)" : ""}
     `,
@@ -1088,7 +1092,7 @@ function legacyAdmission(outbox: OutboxRow, resolved: LegacyResolvedRecipient, t
     ...PROJECT_ASSIGNMENT_ELIGIBLE_ROLES.editor,
   ])];
   const rolePlaceholders = allRoles.map(() => "?").join(",");
-  const epoch = `(o.recipient_authorization_epoch = recipient.authorization_epoch OR (o.recipient_authorization_epoch IS NULL AND recipient.role <> 'external_editor'))`;
+  const epoch = AUTHORIZATION_EPOCH_MATCH;
   const lease = "o.id = ? AND o.status = 'processing' AND o.lease_token = ? AND o.recipient_id = ?";
   if (outbox.event_type === "project.external_safe.direct") {
     return {
@@ -1320,8 +1324,7 @@ function broadAdmission(outbox: OutboxRow, resolved: BroadResolvedRecipient, tok
         AND json_extract(o.payload_json, '$.authorizationAtOccurrence.startedAt') = member.created_at
         AND activity.occurred_at >= member.created_at
         AND recipient.active = 1 AND recipient.role IN (${roles.map(() => "?").join(",")})
-        AND (o.recipient_authorization_epoch = recipient.authorization_epoch
-          OR (o.recipient_authorization_epoch IS NULL AND recipient.role <> 'external_editor'))
+        AND ${AUTHORIZATION_EPOCH_MATCH}
     )`,
     values: [activity.id, ...baseValues, ...roles],
   };

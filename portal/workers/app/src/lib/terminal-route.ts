@@ -257,6 +257,7 @@ export const CHECKED_IN_MIDDLEWARE_REGISTRATIONS = [
   ["POST", "/api/projects/:id/autohdr-coverage"],
   ["GET", "/api/projects/:id/jobs"], ["POST", "/api/jobs/:id/retry"],
   ["POST", "/api/projects/:id/upload-manifest"],
+  ["GET", "/api/projects/:id/manual-upload-jobs"],
   ["POST", "/api/assets/:id/select"], ["DELETE", "/api/assets/:id/select"],
 ] as const;
 
