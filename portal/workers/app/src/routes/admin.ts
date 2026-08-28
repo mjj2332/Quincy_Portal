@@ -1,6 +1,6 @@
 import { Hono, type Context } from "hono";
 import { terminalRoute } from "../lib/terminal-route";
-import { boardSchemaVariant, createDb, dashboardProjectOrder, orderDashboardStreetTies, projectColumnsForVariant, schema } from "@quincy/db";
+import { boardSchemaVariant, createDb, schema } from "@quincy/db";
 import { and, asc, desc, eq, isNotNull, isNull, notExists, sql } from "drizzle-orm";
 import { enqueueRenditionSafely, parseTonomoOrder, publishNotificationOutbox, renditionsEnabled, roleHasCapability } from "@quincy/shared";
 import { z } from "zod";
@@ -302,49 +302,6 @@ adminRoutes.post("/admin/notification-deliveries/:outboxId/discard", terminalRou
   }
   if ((results[0]?.meta.changes ?? 0) === 0 || (results[1]?.meta.changes ?? 0) === 0) return c.json({ error: "Notification delivery is no longer discardable", code: "delivery_changed" }, 409);
   return c.json({ item: await loadNotificationDeliveryRow(c, outboxId) });
-}));
-
-// Temporary, idempotent operator route for the priority/reordering migration. The initial
-// ordering is deliberately computed with the same dashboard query and Unicode tie-break as the
-// live dashboard; only a stage move observed during the write window is repaired afterwards.
-adminRoutes.post("/admin/backfill-board-position", terminalRoute("/admin/backfill-board-position", async (c) => {
-  if (!adminAllowed(c)) return c.json({ error: "Forbidden", capability: "adminBackend" }, 403);
-  const variant = await boardSchemaVariant(c.env.DB);
-  if (variant === "pre_0037") return c.json({ error: "Board schema migration is still being applied.", code: "board_schema_maintenance" }, 503);
-  const db = createDb(c.env.DB);
-  const rows = await db.select({ project: projectColumnsForVariant(variant) }).from(schema.projects)
-    .where(isNull(schema.projects.archivedAt)).orderBy(...dashboardProjectOrder).all();
-  const byStage = new Map<string, typeof rows>();
-  for (const row of rows) {
-    const group = byStage.get(row.project.stageKey) ?? [];
-    group.push(row); byStage.set(row.project.stageKey, group);
-  }
-  const expectedStage = new Map(rows.map((row) => [row.project.id, row.project.stageKey]));
-  const writes: D1PreparedStatement[] = [];
-  for (const group of byStage.values()) {
-    const ordered = orderDashboardStreetTies(group);
-    for (const [index, row] of ordered.entries()) {
-      writes.push(c.env.DB.prepare("UPDATE projects SET board_position = ? WHERE id = ? AND archived_at IS NULL").bind((index + 1) * 1024, row.project.id));
-    }
-  }
-  if (writes.length) await c.env.DB.batch(writes);
-
-  let corrected = 0;
-  let remaining: { id: string; stageKey: string }[] = [];
-  for (let pass = 0; pass < 3; pass += 1) {
-    const current = await db.select({ id: schema.projects.id, stageKey: schema.projects.stageKey })
-      .from(schema.projects).where(isNull(schema.projects.archivedAt)).all();
-    const moved = current.filter((row) => expectedStage.get(row.id) !== row.stageKey);
-    if (!moved.length) { remaining = []; break; }
-    remaining = moved;
-    await c.env.DB.batch(moved.map((row) => c.env.DB.prepare(
-      "UPDATE projects SET board_position = (SELECT COALESCE(MAX(board_position) + 1024, 0) FROM projects WHERE stage_key = ? AND archived_at IS NULL AND id != ?) WHERE id = ? AND stage_key = ? AND archived_at IS NULL",
-    ).bind(row.stageKey, row.id, row.id, row.stageKey)));
-    for (const row of moved) { expectedStage.set(row.id, row.stageKey); corrected += 1; }
-  }
-  if (remaining.length) return c.json({ error: "Projects changed stage during backfill; rerun required", corrected, remaining }, 409);
-  await audit(c.env, c.get("user"), "admin.board_position_backfill", "system", "board-position", { projectCount: rows.length, corrected });
-  return c.json({ ok: true, projectCount: rows.length, corrected, verified: true });
 }));
 
 // This is intentionally an operator endpoint, not an automatic deployment task. Each call

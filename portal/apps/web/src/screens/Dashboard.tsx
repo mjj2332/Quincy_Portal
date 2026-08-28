@@ -1,9 +1,10 @@
 import { useCallback, useContext, useMemo, useRef, useState, type DragEvent } from "react";
-import { compareByStreetThenId, formatSydneyCivil, isDeadlineOverdue, type StageKey } from "@quincy/shared";
+import { compareByStreetThenId, formatSydneyCivil, isDeadlineOverdue, type MoveProjectStageRequest, type StageKey, type StageMoveConfirmationReason } from "@quincy/shared";
 import { QueryClient, QueryClientContext, QueryClientProvider } from "@tanstack/react-query";
 import { StatusBadge } from "../components/atoms";
 import { LazyImage } from "../components/LazyImage";
-import { apiPost } from "../lib/api";
+import { ApiError, apiPost } from "../lib/api";
+import { confirm } from "../lib/confirm";
 import { useCapabilities } from "../lib/capabilities";
 import { type ProjectStageKey, useStages } from "../lib/stages";
 import { formatDashboardDate, initializeDashboardView, initializeKanbanSortMode, isCanonicalShootDate, type DashboardView, type KanbanSortMode } from "./dashboard-helpers";
@@ -141,7 +142,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   const { can } = useCapabilities();
   const { stages } = useStages();
   const canCreateProject = can("createProject");
-  const canMoveStagesCapability = can("selectForEditing");
+  const canMoveStagesCapability = can("moveProjectStage");
   const canPrioritize = can("prioritizeProjects");
   const canViewArchived = can("adminBackend");
   const canViewNoticeBoard = can("viewNoticeBoard");
@@ -212,18 +213,61 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     const project = dragging;
     setDragging(undefined);
     setDropStage(undefined);
-    if (!project || project.stageKey === stageKey) return;
-    updateProjects((current) => current.map((item) => item.id === project.id ? { ...item, stageKey } : item));
+    if (!project) return;
     setPendingMoves((current) => new Set(current).add(project.id));
+    const transportStageKey = role === "admin" || stageKey !== "editing_autohdr" ? stageKey : "editing";
+    const request: MoveProjectStageRequest = {
+      expected: { stageKey: project.stageKey, boardRevision: project.boardRevision },
+      targetStageKey: transportStageKey,
+      placement: { kind: "append" },
+    };
+    const submitStageMove = async (body: MoveProjectStageRequest) => {
+      try {
+        return await apiPost<{ changed: boolean; project: { stageKey: ProjectStageKey; boardRevision: number } }, MoveProjectStageRequest>(`/api/projects/${project.id}/stage`, body);
+      } catch (reason) {
+        if (!(reason instanceof ApiError) || reason.status !== 409 || !reason.details || typeof reason.details !== "object" || (reason.details as { code?: unknown }).code !== "stage_confirmation_required") throw reason;
+        const details = reason.details as { requiredConfirmation?: { reasons?: StageMoveConfirmationReason[] } };
+        const reasons = details.requiredConfirmation?.reasons ?? [];
+        const reasonCopy: Record<StageMoveConfirmationReason, string> = {
+          backward: "moves backward",
+          skipped_forward: "skips production steps",
+          delivered_boundary: "crosses the Delivered boundary",
+          editing_boundary: "crosses the Editing boundary",
+        };
+        const explanation = reasons.map((item) => reasonCopy[item]).filter(Boolean);
+        const accepted = await confirm({
+          title: "Confirm Stage move",
+          message: `This move ${explanation.length ? explanation.join(", ") : "changes the project Stage"}. Continue?`,
+          confirmLabel: "Move project",
+        });
+        if (!accepted) {
+          void projectsQuery.refetch();
+          return null;
+        }
+        return apiPost<{ changed: boolean; project: { stageKey: ProjectStageKey; boardRevision: number } }, MoveProjectStageRequest>(`/api/projects/${project.id}/stage`, { ...body, confirmation: { reasons } });
+      }
+    };
     try {
-      const response = await apiPost<{ ok: true; stageKey: StageKey; boardPosition: number }, { stageKey: StageKey }>(`/api/projects/${project.id}/stage`, { stageKey });
-      if (queryClient) await invalidateProjectResources(queryClient, { projectId: project.id, resources: [{ kind: "detail" }] });
-      updateProjects((current) => current.map((item) => item.id === project.id && item.stageKey === stageKey ? { ...item, boardPosition: response.boardPosition } : item));
+      // Confirmation is a server round trip: the server owns the cumulative reasons and the
+      // retry reuses the same expected revision and placement.
+      const response = await submitStageMove(request);
+      if (!response) return;
       const label = stages.find((stage) => stage.key === stageKey)?.label ?? stageKey;
+      updateProjects((current) => current.map((item) => item.id === project.id ? { ...item, stageKey: response.project.stageKey, boardRevision: response.project.boardRevision } : item));
+      void projectsQuery.refetch();
+      if (queryClient) await invalidateProjectResources(queryClient, { projectId: project.id, resources: [{ kind: "detail" }] });
       toast(`Moved to ${label}.`);
     } catch (reason) {
-      updateProjects((current) => current.map((item) => item.id === project.id && item.stageKey === stageKey ? { ...item, stageKey: project.stageKey, boardPosition: project.boardPosition } : item));
-      toast(reason instanceof Error ? reason.message : "The stage could not be updated.", "error");
+      if (reason instanceof ApiError && reason.status === 409 && reason.details && typeof reason.details === "object" && (reason.details as { code?: unknown }).code === "project_stage_conflict") {
+        const current = (reason.details as { current?: { stageKey: ProjectStageKey; boardRevision: number } | null }).current;
+        if (current) updateProjects((items) => items.map((item) => item.id === project.id ? { ...item, stageKey: current.stageKey, boardRevision: current.boardRevision } : item));
+        void projectsQuery.refetch();
+      }
+      if (reason instanceof ApiError && reason.status === 403 && reason.details && typeof reason.details === "object" && (reason.details as { code?: unknown }).code === "project_board_reorder_forbidden") {
+        toast("Manual Board reorder requires Priority access.", "error");
+      } else {
+        toast(reason instanceof Error ? reason.message : "The stage could not be updated.", "error");
+      }
     } finally {
       setPendingMoves((current) => { const next = new Set(current); next.delete(project.id); return next; });
     }
@@ -234,10 +278,12 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     updateProjects((current) => current.map((item) => item.id === project.id ? { ...item, priority } : item));
     setPendingOrdering((current) => new Set(current).add(project.id));
     try {
-      const response = await apiPost<{ priority: number | null; boardPosition: number }, { priority: number | null }>(`/api/projects/${project.id}/priority`, { priority });
-      updateProjects((current) => current.map((item) => item.id === project.id ? { ...item, priority: response.priority, boardPosition: response.boardPosition } : item));
+      const response = await apiPost<{ priority: number | null; boardRevision: number }, { priority: number | null }>(`/api/projects/${project.id}/priority`, { priority });
+      updateProjects((current) => current.map((item) => item.id === project.id ? { ...item, priority: response.priority, boardRevision: response.boardRevision } : item));
+      void projectsQuery.refetch();
     } catch (reason) {
-      updateProjects((current) => current.map((item) => item.id === project.id && item.priority === priority ? { ...item, priority: project.priority, boardPosition: project.boardPosition } : item));
+      updateProjects((current) => current.map((item) => item.id === project.id && item.priority === priority ? { ...item, priority: project.priority } : item));
+      void projectsQuery.refetch();
       toast(reason instanceof Error ? reason.message : "The project priority could not be updated.", "error");
     } finally {
       setPendingOrdering((current) => { const next = new Set(current); next.delete(project.id); return next; });
@@ -246,14 +292,13 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
 
   async function moveProjectPosition(project: ProjectSummary, direction: "up" | "down") {
     if (pendingOrdering.has(project.id)) return;
-    const optimistic = direction === "up" ? (project.boardPosition ?? 0) - 1024 : (project.boardPosition ?? 0) + 1024;
-    updateProjects((current) => current.map((item) => item.id === project.id ? { ...item, boardPosition: optimistic } : item));
     setPendingOrdering((current) => new Set(current).add(project.id));
     try {
-      const response = await apiPost<{ boardPosition: number }, { direction: "up" | "down" }>(`/api/projects/${project.id}/board-position`, { direction });
-      updateProjects((current) => current.map((item) => item.id === project.id ? { ...item, boardPosition: response.boardPosition } : item));
+      const response = await apiPost<{ project: { boardRevision: number } }, { direction: "up" | "down" }>(`/api/projects/${project.id}/board-position`, { direction });
+      updateProjects((current) => current.map((item) => item.id === project.id ? { ...item, boardRevision: response.project.boardRevision } : item));
+      void projectsQuery.refetch();
     } catch (reason) {
-      updateProjects((current) => current.map((item) => item.id === project.id && item.boardPosition === optimistic ? { ...item, boardPosition: project.boardPosition } : item));
+      void projectsQuery.refetch();
       toast(reason instanceof Error ? reason.message : "The project position could not be updated.", "error");
     } finally {
       setPendingOrdering((current) => { const next = new Set(current); next.delete(project.id); return next; });
@@ -344,7 +389,9 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
           {activeStages.map((stage) => {
             const stageProjects = sortKanbanProjects(filteredProjects.filter((project) => project.stageKey === stage.key), kanbanSort);
             const stageKey = stage.key === "editing" ? "editing_autohdr" : stage.key;
-            const canDropStage = canMoveStages && (canViewArchived || stage.key !== "editing");
+            const draggingStageKey = dragging?.stageKey === "editing" ? "editing_autohdr" : dragging?.stageKey;
+            const isSameStageDrop = dragging !== undefined && draggingStageKey === stageKey;
+            const canDropStage = dragging !== undefined && (isSameStageDrop ? boardContractEnabled && canPrioritize : canMoveStages);
             const isDropTarget = canDropStage && dropStage === stageKey;
             return <section className={`kcol ${isDropTarget ? "is-over" : ""}`} key={stage.key} onDragOver={(event) => { if (canDropStage && dragging) { event.preventDefault(); setDropStage(stageKey); } }} onDragLeave={() => { if (dropStage === stageKey) setDropStage(undefined); }} onDrop={(event) => { event.preventDefault(); if (canDropStage) void moveProject(stageKey); }}>
               <div className="kcol__head"><span className="row gap2"><StatusBadge stageKey={stage.key} /></span><span className="cnt">{stageProjects.length}</span></div>

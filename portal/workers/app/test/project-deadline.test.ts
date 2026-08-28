@@ -4,7 +4,6 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { createAuth } from "../src/auth";
 import type { Env } from "../src/env";
 import { ProjectDeadlineError, readProjectDeadlineSchedule, saveProjectDeadlineSchedule, suppressProjectDeadlineWork } from "../src/lib/project-deadline";
-import { scanProjectDeadlineOccurrences } from "../../background/src/project-deadline";
 
 const database = env as unknown as { DB: D1Database };
 const baseEnv = env as unknown as Env;
@@ -59,6 +58,7 @@ describe("TB4B Deadline and personal preference APIs", () => {
 
   beforeAll(async () => {
     await executeSql(__PORTAL_MIGRATION_SQL__);
+    await database.DB.prepare("UPDATE feature_flags SET enabled = 1 WHERE key = 'tb5a_board_contract_enabled'").run();
     const now = Date.now();
     await database.DB.batch([
       database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, 'TB4B Operator', ?, 1, 'admin', 1, ?, ?)").bind(userId, `${userId}@example.test`, now, now),
@@ -327,7 +327,7 @@ describe("TB4B Deadline and personal preference APIs", () => {
     expect(await readProjectDeadlineSchedule(database.DB, archivedProjectId, now + 3)).toMatchObject({ canResume: true });
   });
 
-  it("uses the real Stage route for Delivered races and leaves the residual window observable", async () => {
+  it("rolls back the Stage move when Delivered Deadline suppression fails", async () => {
     const now = Date.now();
     const projectIdForRace = crypto.randomUUID();
     await database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'Stage route Deadline race', 'editing_autohdr', ?, ?)").bind(projectIdForRace, now, now).run();
@@ -340,23 +340,24 @@ describe("TB4B Deadline and personal preference APIs", () => {
     const occurrence = await database.DB.prepare("SELECT id, fire_at AS fireAt FROM project_deadline_occurrences WHERE project_id = ? AND kind = 'due_now'").bind(projectIdForRace).first<{ id: string; fireAt: number }>();
     expect(saved.current.nextOccurrence).toMatchObject({ kind: "due_now" });
     await database.DB.exec("CREATE TRIGGER tb4b_stage_deadline_hook_failure BEFORE UPDATE OF status ON project_deadline_occurrences WHEN NEW.terminal_reason = 'project_delivered' BEGIN SELECT RAISE(ABORT, 'forced Deadline hook failure'); END;");
+    const moveBody = {
+      expected: { stageKey: "editing_autohdr", boardRevision: 0 },
+      targetStageKey: "delivered",
+      placement: { kind: "append" },
+      confirmation: { reasons: ["skipped_forward", "delivered_boundary", "editing_boundary"] },
+    };
     try {
-      const entered = await request(`/api/projects/${projectIdForRace}/stage`, token, "POST", { stageKey: "delivered" });
-      expect(entered.status).toBe(200);
+      const entered = await request(`/api/projects/${projectIdForRace}/stage`, token, "POST", moveBody);
+      expect(entered.status).toBe(500);
     } finally {
       await database.DB.exec("DROP TRIGGER IF EXISTS tb4b_stage_deadline_hook_failure;");
     }
-    expect(await database.DB.prepare("SELECT stage_key AS stageKey FROM projects WHERE id = ?").bind(projectIdForRace).first()).toEqual({ stageKey: "delivered" });
+    expect(await database.DB.prepare("SELECT stage_key AS stageKey, board_revision AS boardRevision FROM projects WHERE id = ?").bind(projectIdForRace).first()).toEqual({ stageKey: "editing_autohdr", boardRevision: 0 });
     expect(await database.DB.prepare("SELECT status FROM project_deadline_occurrences WHERE id = ?").bind(occurrence!.id).first()).toEqual({ status: "pending" });
-
-    const left = await request(`/api/projects/${projectIdForRace}/stage`, token, "POST", { stageKey: "editing_autohdr" });
-    expect(left.status).toBe(200);
-    const dueBeforeScan = await database.DB.prepare("SELECT id FROM project_deadline_occurrences WHERE status = 'pending' AND fire_at <= ? ORDER BY fire_at, project_id, id LIMIT 100").bind(occurrence!.fireAt + 1).all<{ id: string }>();
-    expect(dueBeforeScan.results.map((row) => row.id)).toContain(occurrence!.id);
-    const scan = await scanProjectDeadlineOccurrences({ DB: database.DB } as never, occurrence!.fireAt + 1);
-    expect(scan.scanned).toBe(dueBeforeScan.results.length);
-    expect(scan.fired).toBeGreaterThanOrEqual(1);
-    expect(await database.DB.prepare("SELECT status FROM project_deadline_occurrences WHERE id = ?").bind(occurrence!.id).first()).toEqual({ status: "fired" });
+    const entered = await request(`/api/projects/${projectIdForRace}/stage`, token, "POST", moveBody);
+    expect(entered.status).toBe(200);
+    expect(await database.DB.prepare("SELECT stage_key AS stageKey, board_revision AS boardRevision FROM projects WHERE id = ?").bind(projectIdForRace).first()).toEqual({ stageKey: "delivered", boardRevision: 1 });
+    expect(await database.DB.prepare("SELECT status, terminal_reason AS terminalReason FROM project_deadline_occurrences WHERE id = ?").bind(occurrence!.id).first()).toEqual({ status: "superseded", terminalReason: "project_delivered" });
   });
 
   it("atomically suppresses pending Deadline delivery channels in the real archive route", async () => {

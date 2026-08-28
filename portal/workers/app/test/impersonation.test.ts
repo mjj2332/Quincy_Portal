@@ -102,6 +102,7 @@ async function createAnnotationFixture(adminCookie: string): Promise<{ projectId
 beforeAll(async () => {
   await executeSql(__PORTAL_MIGRATION_SQL__);
   await executeSql(__PORTAL_SEED_SQL__);
+  await database.DB.prepare("UPDATE feature_flags SET enabled = 1 WHERE key = 'tb5a_board_contract_enabled'").run();
   await insertUser(editorId, "Impersonation Editor", "tb5-editor@example.test", "editor");
   await insertUser(photographerId, "Impersonation Photographer", "tb5-photographer@example.test", "photographer");
   await insertUser(otherPhotographerId, "Other Photographer", "tb5-other-photographer@example.test", "photographer");

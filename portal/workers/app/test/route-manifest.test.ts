@@ -52,6 +52,7 @@ const SELF = {
 
 beforeAll(async () => {
   await executeSql(__PORTAL_MIGRATION_SQL__);
+  await database.DB.prepare("UPDATE feature_flags SET enabled = 1 WHERE key = 'tb5a_board_contract_enabled'").run();
   const now = Date.now();
   await database.DB.batch([
     database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, authorization_epoch, created_at, updated_at) VALUES (?, 'Manifest External', ?, 1, 'external_editor', 1, 0, ?, ?)")

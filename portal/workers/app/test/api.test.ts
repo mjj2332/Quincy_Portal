@@ -160,6 +160,7 @@ async function seedAutoHdrGraph(projectId: string, assetId: string) {
 beforeAll(async () => {
   await executeSql(__PORTAL_MIGRATION_SQL__);
   await executeSql(__PORTAL_SEED_SQL__);
+  await database.DB.prepare("UPDATE feature_flags SET enabled = 1 WHERE key = 'tb5a_board_contract_enabled'").run();
   const now = Date.now();
   await database.DB.prepare(
     "INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -273,6 +274,17 @@ async function createVisibilityFixture(): Promise<VisibilityFixture> {
 async function setFixtureStage(fixture: VisibilityFixture, stageKey: string) {
   await database.DB.prepare("UPDATE projects SET stage_key = ?, updated_at = ? WHERE id = ?")
     .bind(stageKey, Date.now(), fixture.projectId).run();
+}
+
+async function moveStage(cookie: string, projectId: string, targetStageKey: string, expectedStageKey?: string, confirmationReasons?: string[]) {
+  const current = await database.DB.prepare("SELECT stage_key AS stageKey, board_revision AS boardRevision FROM projects WHERE id = ?")
+    .bind(projectId).first<{ stageKey: string; boardRevision: number }>();
+  return jsonRequest(`/api/projects/${projectId}/stage`, cookie, "POST", {
+    expected: { stageKey: expectedStageKey ?? current?.stageKey, boardRevision: current?.boardRevision },
+    targetStageKey,
+    placement: { kind: "append" },
+    ...(confirmationReasons ? { confirmation: { reasons: confirmationReasons } } : {}),
+  });
 }
 
 async function jsonRequest(path: string, cookie: string, method: "GET" | "POST" | "PATCH" | "DELETE", body?: unknown) {
@@ -735,7 +747,7 @@ describe("staff app API", () => {
       expectStageStatus(await jsonRequest(`/api/projects/${fixture.projectId}/autohdr-history`, photographerCookie, "GET"), 403);
       expectStageStatus(await jsonRequest(`/api/projects/${fixture.projectId}/autohdr-coverage`, photographerCookie, "POST", { handoffId: crypto.randomUUID(), assetId: fixture.assetId, readinessUnitKey: "stage" }), 403);
       expectStageStatus(await jsonRequest(`/api/projects/${fixture.projectId}/jobs`, photographerCookie, "GET"), 403);
-      expectStageStatus(await jsonRequest(`/api/projects/${fixture.projectId}/stage`, photographerCookie, "POST", { stageKey: "raw_review" }), 403);
+      expectStageStatus(await moveStage(photographerCookie, fixture.projectId, "raw_review"), 403);
       expectStageStatus(await jsonRequest(`/api/jobs/${crypto.randomUUID()}/retry`, photographerCookie, "POST"), 403);
 
       // Non-members must remain denied at every stage, even while the project itself is visible
@@ -760,8 +772,9 @@ describe("staff app API", () => {
     // Admin's explicit backward stage change must be observed immediately by the next request.
     await setFixtureStage(fixture, "editing_autohdr");
     expect((await jsonRequest(`/api/projects/${fixture.projectId}`, photographerCookie, "GET")).status).toBe(403);
-    const reverted = await jsonRequest(`/api/projects/${fixture.projectId}/stage`, await sessionCookie(adminToken), "POST", { stageKey: "raw_review" });
+    const reverted = await moveStage(await sessionCookie(adminToken), fixture.projectId, "raw_review", undefined, ["backward", "editing_boundary"]);
     expect(reverted.status).toBe(200);
+    await expect(reverted.json()).resolves.toMatchObject({ project: { stageKey: "raw_review" } });
     expect((await jsonRequest(`/api/projects/${fixture.projectId}`, photographerCookie, "GET")).status).toBe(200);
 
     // Editor and admin retain access at every stage; this guards the viewAllProjects short-circuit
@@ -802,7 +815,7 @@ describe("staff app API", () => {
       expect(await listedIds(adminCookie)).toContain(fixture.projectId);
     }
     await setFixtureStage(fixture, "editing_autohdr");
-    const reverted = await jsonRequest(`/api/projects/${fixture.projectId}/stage`, adminCookie, "POST", { stageKey: "raw_review" });
+    const reverted = await moveStage(adminCookie, fixture.projectId, "raw_review", undefined, ["backward", "editing_boundary"]);
     expect(reverted.status).toBe(200);
     expect(await listedIds(photographerCookie)).toContain(fixture.projectId);
   }, 15_000);
@@ -985,7 +998,7 @@ describe("staff app API", () => {
     });
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ projects: [], board: { contractEnabled: false, orderedProjectIdsByStage: {} } });
+    await expect(response.json()).resolves.toEqual({ projects: [], board: { contractEnabled: true, orderedProjectIdsByStage: {} } });
   });
 
   it("returns the migrated UUID from the existing signed Quincy Admin session", async () => {
@@ -1916,13 +1929,9 @@ describe("staff app API", () => {
     const project = await created.json() as { id: string };
     await database.DB.prepare("UPDATE projects SET stage_key = ? WHERE id = ?").bind("edited_review", project.id).run();
 
-    const response = await SELF.fetch(`https://portal.test/api/projects/${project.id}/stage`, {
-      method: "POST",
-      headers: { cookie: await sessionCookie(editorToken), "content-type": "application/json" },
-      body: JSON.stringify({ stageKey: "raw_review" }),
-    });
+    const response = await moveStage(await sessionCookie(editorToken), project.id, "raw_review", undefined, ["backward"]);
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({ stageKey: "raw_review" });
+    await expect(response.json()).resolves.toMatchObject({ project: { stageKey: "raw_review" } });
     const stored = await database.DB.prepare("SELECT stage_key FROM projects WHERE id = ?").bind(project.id).first<{ stage_key: string }>();
     expect(stored).toEqual(expect.objectContaining({ stage_key: "raw_review" }));
   });
@@ -2864,15 +2873,15 @@ describe("staff app API", () => {
       expect(response.status).toBe(403);
       await expect(response.json()).resolves.toEqual({ error: "Forbidden", capability: "adminBackend" });
     }
-    const internalStageDenied = await SELF.fetch(`https://portal.test/api/projects/${project.id}/stage`, { method: "POST", headers: { cookie: editorCookie, "content-type": "application/json" }, body: JSON.stringify({ stageKey: "editing_autohdr" }) });
-    expect(internalStageDenied.status).toBe(403);
-    await expect(internalStageDenied.json()).resolves.toEqual({ error: "Forbidden" });
+    const internalStageMove = await moveStage(editorCookie, project.id, "editing", "editing");
+    expect(internalStageMove.status).toBe(200);
+    await expect(internalStageMove.json()).resolves.toMatchObject({ project: { stageKey: "editing" } });
 
     const persisted = await database.DB.prepare("SELECT stage_key FROM projects WHERE id = ?").bind(project.id).first<{ stage_key: string }>();
     expect(persisted).toEqual({ stage_key: "editing_autohdr" });
-    const adminMutation = await SELF.fetch(`https://portal.test/api/projects/${project.id}/stage`, { method: "POST", headers: { cookie: adminCookie, "content-type": "application/json" }, body: JSON.stringify({ stageKey: "editing" }) });
-    expect(adminMutation.status).toBe(400);
-    await expect(adminMutation.json()).resolves.toEqual({ error: "Unknown stage" });
+    const adminMutation = await moveStage(adminCookie, project.id, "editing_autohdr", "editing_autohdr");
+    expect(adminMutation.status).toBe(200);
+    await expect(adminMutation.json()).resolves.toMatchObject({ project: { stageKey: "editing_autohdr" } });
   });
 
   it("keeps global Stage order developer-managed while preserving label and activation management", async () => {
@@ -2956,9 +2965,9 @@ describe("staff app API", () => {
     await database.DB.prepare("UPDATE pipeline_stages SET active = 0 WHERE key = ?").bind("raw_review").run();
     try {
       const created = await createUploadProject(cookie, "Inactive target stage");
-      const inactiveTarget = await SELF.fetch(`https://portal.test/api/projects/${created.id}/stage`, { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ stageKey: "raw_review" }) });
+      const inactiveTarget = await moveStage(cookie, created.id, "raw_review");
       expect(inactiveTarget.status).toBe(409);
-      await expect(inactiveTarget.json()).resolves.toEqual({ error: "Stage is deactivated" });
+      await expect(inactiveTarget.json()).resolves.toMatchObject({ code: "inactive_destination", current: { stageKey: "awaiting_raw" } });
     } finally {
       await database.DB.prepare("UPDATE pipeline_stages SET active = 1 WHERE key = ?").bind("raw_review").run();
     }
@@ -3504,6 +3513,49 @@ describe("staff app API", () => {
     const sanitized = await SELF.fetch(`https://portal.test/media/asset/${v2.id}/original`, { headers: { cookie: adminCookie } });
     expect(sanitized.headers.get("content-disposition")).toBe('inline; filename="floorplan-two.pdfInjected: no"');
     expect((await SELF.fetch(`https://portal.test/api/projects/${project.id}/documents`, { method: "POST", headers: { cookie: adminCookie } })).status).toBe(410);
+  });
+
+  it("denies same-Stage placement changes to internal and External Editors without mutation", async () => {
+    const adminCookie = await sessionCookie(adminToken);
+    const projectIds: string[] = [];
+    for (const label of ["first", "second", "third"]) {
+      const response = await SELF.fetch("https://portal.test/api/projects", {
+        method: "POST",
+        headers: { cookie: adminCookie, "content-type": "application/json" },
+        body: JSON.stringify({ street: `Same-Stage reorder ${label} ${crypto.randomUUID()}`, orderedServices: [], editorUserIds: [editorId, externalEditorId] }),
+      });
+      expect(response.status).toBe(201);
+      projectIds.push((await response.json() as { id: string }).id);
+    }
+    const target = projectIds[0]!;
+    const before = projectIds[1]!;
+    const after = projectIds[2]!;
+    const placementBody = {
+      expected: { stageKey: "awaiting_raw", boardRevision: 0 },
+      targetStageKey: "awaiting_raw",
+      placement: {
+        kind: "between" as const,
+        before: { projectId: before, boardRevision: 0 },
+        after: { projectId: after, boardRevision: 0 },
+      },
+    };
+    const footprint = async () => Promise.all([
+      database.DB.prepare("SELECT stage_key AS stageKey, board_position AS boardPosition, board_revision AS boardRevision FROM projects WHERE id IN (?, ?, ?) ORDER BY board_position, id").bind(target, before, after).all(),
+      database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE target_id = ?").bind(target).first(),
+      database.DB.prepare("SELECT count(*) AS count FROM project_activity_events WHERE project_id = ?").bind(target).first(),
+      database.DB.prepare("SELECT count(*) AS count FROM notification_outbox WHERE project_id = ?").bind(target).first(),
+    ]);
+    const beforeFootprint = await footprint();
+    for (const cookie of [await sessionCookie(editorToken), await sessionCookie(externalEditorToken)]) {
+      const response = await jsonRequest(`/api/projects/${target}/stage`, cookie, "POST", placementBody);
+      expect(response.status).toBe(403);
+      await expect(response.json()).resolves.toEqual({
+        error: "Forbidden: manual Board reorder requires prioritizeProjects.",
+        code: "project_board_reorder_forbidden",
+        capability: "prioritizeProjects",
+      });
+      expect(await footprint()).toEqual(beforeFootprint);
+    }
   });
 
   it("keeps direct document PUT unavailable in the production-shaped suite", async () => {
