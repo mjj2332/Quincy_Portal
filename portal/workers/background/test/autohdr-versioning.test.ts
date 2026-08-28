@@ -15,7 +15,10 @@ async function executeSql(source: string) {
     }
   }
 }
-beforeAll(() => executeSql(__PORTAL_MIGRATION_SQL__));
+beforeAll(async () => {
+  await executeSql(__PORTAL_MIGRATION_SQL__);
+  await executeSql("UPDATE feature_flags SET enabled = 1 WHERE key = 'tb5a_board_contract_enabled'");
+});
 
 const fakeDownload = vi.fn(async () => new Response(new Uint8Array([0xff, 0xd8, 0xff, 0xd9]), {
   headers: { "content-type": "image/jpeg" },
@@ -53,6 +56,10 @@ async function fixture(stage = "editing_autohdr") {
     bindings.DB.prepare("INSERT INTO autohdr_fetch_claims (id, project_id, handoff_id, mapping_id, mapping_generation, connection_id, workflow_id, job_id, state, lease_expires_at, trigger, trigger_json, started_at, created_at, updated_at) VALUES (?, ?, ?, ?, 1, ?, ?, ?, 'running', ?, 'dropbox_delta', '{}', ?, ?, ?)")
       .bind(fetchClaimId, projectId, handoffId, mappingId, connectionId, `fetch:${fetchClaimId}`, fetchJobId, now + 60_000, now, now, now),
   ]);
+  // This fixture represents a handoff that already won Editing entry. Production writes this
+  // token as the final statement of the entry bundle before any final can arrive.
+  await bindings.DB.prepare("UPDATE autohdr_handoffs SET editing_entry_board_revision = 0 WHERE id = ?")
+    .bind(handoffId).run();
   const context: FinalWriteContext = {
     projectId, jobId: fetchJobId, claimId: fetchClaimId, handoffId, manifestVersion: 1,
     mappingId, mappingGeneration: 1, connectionId,

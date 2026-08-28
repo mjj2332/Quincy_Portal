@@ -1,6 +1,6 @@
 import { WorkflowEntrypoint } from "cloudflare:workers";
 import type { WorkflowEvent, WorkflowStep } from "cloudflare:workers";
-import { COLLECTION_RECEIVED_COUNT_SQL, appendToStageBottomExpr, collectionReceivedCountBindings } from "@quincy/db";
+import { COLLECTION_RECEIVED_COUNT_SQL, collectionReceivedCountBindings } from "@quincy/db";
 import { assets, autoHdrFetchClaims, collections, projects, selections } from "@quincy/db/schema";
 import { enqueueRenditionSafely, isAcceptedPhotoFilename } from "@quincy/shared";
 import { and, eq, inArray } from "drizzle-orm";
@@ -14,6 +14,7 @@ import { setJobStatus } from "../lib/jobs";
 import { writeAutoHdrFinal, type FinalWriteContext } from "../autohdr/finals";
 import { notifyProject } from "../notifications";
 import { requireBoardSchemaReady } from "../lib/board-schema";
+import { commitAutomaticStage, jobEntryToken, logMissingJobProvenance } from "../lib/automatic-stage";
 
 export interface AutoHdrFetchInput {
   projectId: string;
@@ -30,6 +31,8 @@ export interface AutoHdrFetchInput {
   representativeChangedPath?: string;
   monitorScope?: "autohdr";
   monitorRoot?: "/AutoHDR";
+  stageEntrySourceJobId?: string;
+  stageEntryGeneration?: number;
 }
 
 interface RawAsset {
@@ -179,12 +182,56 @@ export class AutoHdrFetch extends WorkflowEntrypoint<Env, AutoHdrFetchInput> {
         const returnedSourceIds = new Set(editedAssets.flatMap((asset) => asset.sourceRawAssetId ? [asset.sourceRawAssetId] : []));
         const readyForReview = selectedRawAssets.length > 0 && selectedRawAssets.every((asset) => returnedSourceIds.has(asset.id));
         if (readyForReview) {
-          // Only advance from the canonical predecessor so a re-fetch on a delivered project
-          // never silently regresses its stage.
-          const result = await db.update(projects).set({ stageKey: "edited_review", boardPosition: appendToStageBottomExpr("edited_review", input.projectId), updatedAt: new Date() }).where(and(eq(projects.id, input.projectId), eq(projects.stageKey, "editing_autohdr"))).run();
-          const stageAdvanced = (result.meta.changes ?? 0) === 1;
-          if (stageAdvanced) await notifyProject(this.env, input.projectId, "edited_landed");
-          return { stageAdvanced };
+          const sourceJobId = input.stageEntrySourceJobId;
+          const generation = input.stageEntryGeneration;
+          if (!sourceJobId || generation === undefined) {
+            logMissingJobProvenance({ projectId: input.projectId, completionJobId: input.jobId, sourceJobId, generation });
+            return { stageAdvanced: false };
+          }
+          const entryRevision = await jobEntryToken(this.env.DB, {
+            sourceJobId,
+            projectId: input.projectId,
+            generation,
+            sourceJobKind: "autohdr",
+          });
+          if (entryRevision === null) {
+            logMissingJobProvenance({ projectId: input.projectId, completionJobId: input.jobId, sourceJobId, generation });
+            return { stageAdvanced: false };
+          }
+          const auditId = crypto.randomUUID();
+          const outcome = await commitAutomaticStage({
+            env: this.env,
+            projectId: input.projectId,
+            from: "editing_autohdr",
+            to: "edited_review",
+            oldBoardRevision: entryRevision,
+            auditId,
+            auditMetaJson: JSON.stringify({ from: "editing_autohdr", to: "edited_review", trigger: input.trigger ?? "autohdr_fetch", jobId: input.jobId, stageEntrySourceJobId: sourceJobId, stageEntryGeneration: generation }),
+            workflow: {
+              kind: "autohdr_job_completion",
+              prerequisite: {
+                kind: "autohdr_job",
+                jobId: input.jobId,
+                projectId: input.projectId,
+                generation,
+                jobKind: "fetch_edited",
+                sourceJobKind: "autohdr",
+                sourceJobId,
+                db: this.env.DB,
+                auditId,
+                now: Date.now(),
+              },
+            },
+            legacyWorkflowNotification: "edited_landed",
+          });
+          if (outcome.kind === "winner") {
+            try {
+              await notifyProject(this.env, input.projectId, "edited_landed");
+            } catch (error) {
+              console.error("AutoHDR fetch notification failed", { projectId: input.projectId, error });
+            }
+          }
+          return { stageAdvanced: outcome.kind === "winner" };
         }
         return { stageAdvanced: false };
       });

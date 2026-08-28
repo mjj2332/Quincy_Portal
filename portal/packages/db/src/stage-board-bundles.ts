@@ -29,7 +29,7 @@ export type DeadlineSuppressionIndexes = {
 
 export type GuardedTransitionPrerequisite =
   | { kind: "none" }
-  | { kind: "raw_reconciliation"; claimId: string; shootDate: string }
+  | { kind: "raw_reconciliation"; claimId: string; shootDate: string | null }
   | {
       kind: "autohdr_handoff";
       handoffId: string;
@@ -44,7 +44,8 @@ export type GuardedTransitionPrerequisite =
     }
   | {
       kind: "autohdr_final_claim";
-      claimId: string;
+      collectionId: string;
+      sourcePathKey: string;
       handoffId: string;
       mappingId: string;
       currentAssetId: string;
@@ -867,6 +868,8 @@ type WorkflowTailRuntime = {
   handoffState?: string;
   mappingState?: string;
   jobKind?: string;
+  sourceJobKind?: string;
+  sourceJobId?: string;
   expectedPriorToken?: number | null;
 };
 
@@ -892,7 +895,7 @@ export function buildWorkflowTail(
   if (kind === "raw_reconciliation") {
     if (prerequisite.kind !== "raw_reconciliation") throw new Error("raw_reconciliation tail requires its matching prerequisite");
     return {
-      statements: [selectStatement(prerequisite.db, `SELECT id FROM raw_reconciliation_claims WHERE id = ? AND state = 'running' AND EXISTS (SELECT 1 FROM projects WHERE projects.id = raw_reconciliation_claims.project_id AND projects.shoot_date = ?) ${AUDIT_EXISTS}`, [prerequisite.claimId, prerequisite.shootDate, prerequisite.auditId])],
+      statements: [selectStatement(prerequisite.db, `SELECT id FROM raw_reconciliation_claims WHERE id = ? AND state = 'running' AND EXISTS (SELECT 1 FROM projects WHERE projects.id = raw_reconciliation_claims.project_id AND projects.shoot_date IS ?) ${AUDIT_EXISTS}`, [prerequisite.claimId, prerequisite.shootDate, prerequisite.auditId])],
       indexes: { kind, prerequisiteMarker: 0 },
     };
   }
@@ -944,16 +947,16 @@ export function buildWorkflowTail(
   }
   if (kind === "autohdr_final_completion") {
     if (prerequisite.kind !== "autohdr_final_claim") throw new Error("autohdr_final_completion tail requires its matching prerequisite");
-    const prerequisiteMarker = selectStatement(prerequisite.db, `SELECT id FROM edited_source_claims WHERE id = ? AND handoff_id = ? AND current_asset_id = ? AND EXISTS (SELECT 1 FROM autohdr_output_mappings WHERE id = ? AND handoff_id = ?) ${AUDIT_EXISTS}`, [prerequisite.claimId, prerequisite.handoffId, prerequisite.currentAssetId, prerequisite.mappingId, prerequisite.handoffId, prerequisite.auditId]);
+    const prerequisiteMarker = selectStatement(prerequisite.db, `SELECT id FROM edited_source_claims WHERE collection_id = ? AND source_path_key = ? AND current_asset_id = ? AND handoff_id = ? AND EXISTS (SELECT 1 FROM autohdr_output_mappings WHERE id = ? AND handoff_id = ?) ${AUDIT_EXISTS}`, [prerequisite.collectionId, prerequisite.sourcePathKey, prerequisite.currentAssetId, prerequisite.handoffId, prerequisite.mappingId, prerequisite.handoffId, prerequisite.auditId]);
     const handoffState = selectStatement(prerequisite.db, `SELECT id, state FROM autohdr_handoffs WHERE id = ? ${AUDIT_EXISTS}`, [prerequisite.handoffId, prerequisite.auditId]);
     const mappingState = selectStatement(prerequisite.db, `SELECT id, state FROM autohdr_output_mappings WHERE id = ? AND handoff_id = ? ${AUDIT_EXISTS}`, [prerequisite.mappingId, prerequisite.handoffId, prerequisite.auditId]);
-    const finalClaimState = selectStatement(prerequisite.db, `SELECT id, current_asset_id FROM edited_source_claims WHERE id = ? AND handoff_id = ? AND current_asset_id = ? ${AUDIT_EXISTS}`, [prerequisite.claimId, prerequisite.handoffId, prerequisite.currentAssetId, prerequisite.auditId]);
+    const finalClaimState = selectStatement(prerequisite.db, `SELECT id, current_asset_id FROM edited_source_claims WHERE collection_id = ? AND source_path_key = ? AND current_asset_id = ? AND handoff_id = ? ${AUDIT_EXISTS}`, [prerequisite.collectionId, prerequisite.sourcePathKey, prerequisite.currentAssetId, prerequisite.handoffId, prerequisite.auditId]);
     return { statements: [prerequisiteMarker, handoffState, mappingState, finalClaimState], indexes: { kind, prerequisiteMarker: 0, handoffState: 1, mappingState: 2, finalClaimState: 3 } };
   }
   if (kind === "autohdr_job_entry") {
     if (prerequisite.kind !== "autohdr_job") throw new Error("autohdr_job_entry tail requires its matching prerequisite");
-    const prerequisiteMarker = selectStatement(prerequisite.db, `SELECT id FROM jobs WHERE id = ? AND project_id = ? AND json_valid(payload_json) AND CAST(json_extract(payload_json, '$.projectId') AS TEXT) = ? AND CAST(json_extract(payload_json, '$.generation') AS INTEGER) = ? ${AUDIT_EXISTS}`, [prerequisite.jobId, prerequisite.projectId, prerequisite.projectId, prerequisite.generation, prerequisite.auditId]);
-    const jobState = selectStatement(prerequisite.db, `SELECT id, status FROM jobs WHERE id = ? AND project_id = ? AND json_valid(payload_json) AND CAST(json_extract(payload_json, '$.generation') AS INTEGER) = ? AND status IN ('queued', 'running') ${AUDIT_EXISTS}`, [prerequisite.jobId, prerequisite.projectId, prerequisite.generation, prerequisite.auditId]);
+    const prerequisiteMarker = selectStatement(prerequisite.db, `SELECT id FROM jobs WHERE id = ? AND kind = ? AND project_id = ? AND json_valid(payload_json) AND CAST(json_extract(payload_json, '$.projectId') AS TEXT) = ? AND CAST(json_extract(payload_json, '$.generation') AS INTEGER) = ? ${AUDIT_EXISTS}`, [prerequisite.jobId, prerequisite.jobKind ?? "autohdr", prerequisite.projectId, prerequisite.projectId, prerequisite.generation, prerequisite.auditId]);
+    const jobState = selectStatement(prerequisite.db, `SELECT id, status FROM jobs WHERE id = ? AND kind = ? AND project_id = ? AND json_valid(payload_json) AND CAST(json_extract(payload_json, '$.generation') AS INTEGER) = ? AND status IN ('queued', 'running') ${AUDIT_EXISTS}`, [prerequisite.jobId, prerequisite.jobKind ?? "autohdr", prerequisite.projectId, prerequisite.generation, prerequisite.auditId]);
     const token = buildEditingEntryTokenTail({
       db: prerequisite.db,
       owner: "job",
@@ -969,9 +972,9 @@ export function buildWorkflowTail(
   }
   if (kind === "autohdr_job_completion") {
     if (prerequisite.kind !== "autohdr_job") throw new Error("autohdr_job_completion tail requires its matching prerequisite");
-    const prerequisiteMarker = selectStatement(prerequisite.db, `SELECT id FROM jobs WHERE id = ? AND project_id = ? AND json_valid(payload_json) AND CAST(json_extract(payload_json, '$.projectId') AS TEXT) = ? AND CAST(json_extract(payload_json, '$.generation') AS INTEGER) = ? ${AUDIT_EXISTS}`, [prerequisite.jobId, prerequisite.projectId, prerequisite.projectId, prerequisite.generation, prerequisite.auditId]);
-    const sourceEntryJob = selectStatement(prerequisite.db, `SELECT id, project_id, stage_entry_board_revision FROM jobs WHERE id = json_extract((SELECT payload_json FROM jobs WHERE id = ?), '$.stageEntrySourceJobId') AND project_id = ? AND json_valid(payload_json) AND CAST(json_extract(payload_json, '$.projectId') AS TEXT) = ? AND CAST(json_extract(payload_json, '$.generation') AS INTEGER) = ? AND stage_entry_board_revision IS NOT NULL ${AUDIT_EXISTS}`, [prerequisite.jobId, prerequisite.projectId, prerequisite.projectId, prerequisite.generation, prerequisite.auditId]);
-    const completionJobState = selectStatement(prerequisite.db, `SELECT id, status FROM jobs WHERE id = ? AND project_id = ? AND json_valid(payload_json) AND CAST(json_extract(payload_json, '$.generation') AS INTEGER) = ? AND status IN ('queued', 'running', 'done') ${AUDIT_EXISTS}`, [prerequisite.jobId, prerequisite.projectId, prerequisite.generation, prerequisite.auditId]);
+    const prerequisiteMarker = selectStatement(prerequisite.db, `SELECT id FROM jobs WHERE id = ? AND kind = ? AND project_id = ? AND json_valid(payload_json) AND CAST(json_extract(payload_json, '$.projectId') AS TEXT) = ? AND json_extract(payload_json, '$.stageEntrySourceJobId') = ? AND CAST(COALESCE(json_extract(payload_json, '$.stageEntryGeneration'), json_extract(payload_json, '$.generation')) AS INTEGER) = ? ${AUDIT_EXISTS}`, [prerequisite.jobId, prerequisite.jobKind ?? "fetch_edited", prerequisite.projectId, prerequisite.projectId, prerequisite.sourceJobId ?? "", prerequisite.generation, prerequisite.auditId]);
+    const sourceEntryJob = selectStatement(prerequisite.db, `SELECT id, project_id, stage_entry_board_revision FROM jobs WHERE id = ? AND project_id = ? AND kind = ? AND json_valid(payload_json) AND CAST(json_extract(payload_json, '$.projectId') AS TEXT) = ? AND json_extract(payload_json, '$.stageEntrySourceJobId') = id AND CAST(COALESCE(json_extract(payload_json, '$.stageEntryGeneration'), json_extract(payload_json, '$.generation')) AS INTEGER) = ? AND stage_entry_board_revision IS NOT NULL ${AUDIT_EXISTS}`, [prerequisite.sourceJobId ?? "", prerequisite.projectId, prerequisite.sourceJobKind ?? "autohdr", prerequisite.projectId, prerequisite.generation, prerequisite.auditId]);
+    const completionJobState = selectStatement(prerequisite.db, `SELECT id, status FROM jobs WHERE id = ? AND kind = ? AND project_id = ? AND json_valid(payload_json) AND CAST(COALESCE(json_extract(payload_json, '$.stageEntryGeneration'), json_extract(payload_json, '$.generation')) AS INTEGER) = ? AND status IN ('queued', 'running', 'done') ${AUDIT_EXISTS}`, [prerequisite.jobId, prerequisite.jobKind ?? "fetch_edited", prerequisite.projectId, prerequisite.generation, prerequisite.auditId]);
     return { statements: [prerequisiteMarker, sourceEntryJob, completionJobState], indexes: { kind, prerequisiteMarker: 0, sourceEntryJob: 1, completionJobState: 2 } };
   }
   const exhaustive: never = kind;

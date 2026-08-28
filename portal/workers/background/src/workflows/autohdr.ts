@@ -1,6 +1,5 @@
 import { WorkflowEntrypoint } from "cloudflare:workers";
 import type { WorkflowEvent, WorkflowStep } from "cloudflare:workers";
-import { appendToStageBottomExpr } from "@quincy/db";
 import { assets, autoHdrHandoffs, autoHdrSentFiles, collections, projects } from "@quincy/db/schema";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { computeRemovalAssetIds } from "@quincy/shared";
@@ -14,6 +13,7 @@ import { dbFor, errorMessage } from "../lib/db";
 import { setJobStatus } from "../lib/jobs";
 import { confirmAutoHdrHandoff } from "../autohdr/claims";
 import { notifyProject } from "../notifications";
+import { automaticBoardWritesEnabled, commitAutomaticStage } from "../lib/automatic-stage";
 import { requireBoardSchemaReady } from "../lib/board-schema";
 
 export interface AutoHdrInput {
@@ -25,6 +25,8 @@ export interface AutoHdrInput {
   mappingGeneration?: number;
   initiatedBy?: string | null;
   retiredHandoffId?: string;
+  stageEntrySourceJobId?: string;
+  stageEntryGeneration?: number;
 }
 
 interface RawAsset {
@@ -255,6 +257,10 @@ export class AutoHdrSend extends WorkflowEntrypoint<Env, AutoHdrInput> {
   async run(event: Readonly<WorkflowEvent<AutoHdrInput>>, step: WorkflowStep): Promise<void> {
     const input = event.payload;
     await requireBoardSchemaReady(this.env);
+    if (!await automaticBoardWritesEnabled(this.env)) {
+      console.log("AutoHDR send deferred while automatic Board writes are disabled", { projectId: input.projectId, jobId: input.jobId });
+      return;
+    }
     try {
       await step.do("mark-send-running", async () => {
         const db = dbFor(this.env);
@@ -278,10 +284,41 @@ export class AutoHdrSend extends WorkflowEntrypoint<Env, AutoHdrInput> {
             throw new Error("AutoHDR handoff confirmation lost its stage/ownership guard");
           }
         } else {
-          const result = await db.update(projects).set({ stageKey: "editing_autohdr", boardPosition: appendToStageBottomExpr("editing_autohdr", input.projectId), updatedAt: new Date() })
-            .where(and(eq(projects.id, input.projectId), eq(projects.stageKey, "raw_review"), sql`${projects.archivedAt} IS NULL`)).run();
-          if ((result.meta.changes ?? 0) === 1) {
-            await notifyProject(this.env, input.projectId, "sent_to_editing");
+          const stageAuditId = crypto.randomUUID();
+          const generation = input.stageEntryGeneration ?? 1;
+          const sourceJobId = input.jobId;
+          const stageOutcome = await commitAutomaticStage({
+            env: this.env,
+            projectId: input.projectId,
+            from: "raw_review",
+            to: "editing_autohdr",
+            auditId: stageAuditId,
+            auditActorId: input.initiatedBy,
+            auditMetaJson: JSON.stringify({ from: "raw_review", to: "editing_autohdr", trigger: "autohdr_send", jobId: input.jobId }),
+            prefix: [this.env.DB.prepare("UPDATE jobs SET payload_json = json_set(CASE WHEN json_valid(payload_json) THEN payload_json ELSE '{}' END, '$.projectId', ?, '$.generation', ?, '$.stageEntrySourceJobId', ?, '$.stageEntryGeneration', ?), updated_at = ? WHERE id = ? AND kind = 'autohdr' AND status = 'running'").bind(input.projectId, generation, sourceJobId, generation, Date.now(), input.jobId)],
+            workflow: {
+              kind: "autohdr_job_entry",
+              prerequisite: {
+                kind: "autohdr_job",
+                jobId: input.jobId,
+                projectId: input.projectId,
+                generation,
+                jobKind: "autohdr",
+                expectedPriorToken: null,
+                db: this.env.DB,
+                auditId: stageAuditId,
+                now: Date.now(),
+              },
+            },
+          });
+          if (stageOutcome.kind === "winner") {
+            try {
+              await notifyProject(this.env, input.projectId, "sent_to_editing");
+            } catch (error) {
+              console.error("AutoHDR send notification failed", { projectId: input.projectId, error });
+            }
+          } else if (stageOutcome.kind === "invariant_failure") {
+            throw new Error("AutoHDR send stage entry invariant failed");
           } else {
             const current = await db.select({ stageKey: projects.stageKey, archivedAt: projects.archivedAt })
               .from(projects).where(eq(projects.id, input.projectId)).get();

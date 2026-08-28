@@ -8,7 +8,7 @@ import {
   editedSourceClaims,
   projects,
 } from "@quincy/db/schema";
-import { COLLECTION_RECEIVED_COUNT_SQL, collectionReceivedCountBindings, guardedStageTransition } from "@quincy/db";
+import { COLLECTION_RECEIVED_COUNT_SQL, collectionReceivedCountBindings } from "@quincy/db";
 import { enqueueRenditionSafely } from "@quincy/shared";
 
 import type { Env } from "../env";
@@ -16,6 +16,7 @@ import { dbFor } from "../lib/db";
 import { download, type DropboxFile } from "../dropbox/client";
 import { dropboxPathKey, pathEqualsOrIsBelow } from "../dropbox/paths";
 import { notifyProject } from "../notifications";
+import { commitAutomaticStage } from "../lib/automatic-stage";
 
 export type FrozenReadinessUnit = { key: string; assetIds: string[] };
 export type FinalWriteContext = {
@@ -97,6 +98,75 @@ async function quarantine(env: Env, context: FinalWriteContext, file: DropboxFil
   return { status: "quarantined", stageAdvanced: false };
 }
 
+type FinalCoverage = NonNullable<Awaited<ReturnType<typeof credibleCoverage>>>;
+
+async function advanceFinalStage(
+  env: Env,
+  context: FinalWriteContext,
+  fence: { stageKey: string; editingEntryBoardRevision: number | null },
+  coverage: FinalCoverage | null,
+  collectionId: string,
+  sourcePathKey: string,
+  currentAssetId: string,
+): Promise<boolean> {
+  if (!coverage || fence.stageKey !== "editing_autohdr") return false;
+  if (fence.editingEntryBoardRevision === null) {
+    console.error("AutoHDR final completion permanently failed closed", {
+      projectId: context.projectId,
+      handoffId: context.handoffId,
+      mappingId: context.mappingId,
+      claimId: context.claimId,
+      jobId: context.jobId,
+      providerSecret: false,
+      reason: "missing editing-entry board revision",
+    });
+    return false;
+  }
+  const auditId = crypto.randomUUID();
+  const outcome = await commitAutomaticStage({
+    env,
+    projectId: context.projectId,
+    from: "editing_autohdr",
+    to: "edited_review",
+    oldBoardRevision: fence.editingEntryBoardRevision,
+    auditId,
+    auditMetaJson: JSON.stringify({
+      from: "editing_autohdr",
+      to: "edited_review",
+      trigger: context.trigger,
+      jobId: context.jobId,
+      handoffId: context.handoffId,
+      mappingGeneration: context.mappingGeneration,
+      sourcePathKey,
+      credibleCoverage: coverage.unitKey,
+    }),
+    workflow: {
+      kind: "autohdr_final_completion",
+      prerequisite: {
+        kind: "autohdr_final_claim",
+        collectionId,
+        sourcePathKey,
+        handoffId: context.handoffId,
+        mappingId: context.mappingId,
+        currentAssetId,
+        db: env.DB,
+        auditId,
+        now: Date.now(),
+      },
+    },
+    legacyWorkflowNotification: "edited_landed",
+  });
+  if (outcome.kind === "winner") {
+    try {
+      await notifyProject(env, context.projectId, "edited_landed");
+    } catch (error) {
+      console.error("AutoHDR final notification failed", { projectId: context.projectId, error });
+    }
+    return true;
+  }
+  return false;
+}
+
 /** Rechecks every trigger fence immediately before metadata and writes immutable current versions. */
 export async function writeAutoHdrFinal(
   env: Env,
@@ -118,6 +188,7 @@ export async function writeAutoHdrFinal(
     mappingConnectionId: autoHdrOutputMappings.connectionId,
     handoffState: autoHdrHandoffs.state,
     manifestVersion: autoHdrHandoffs.manifestVersion,
+    editingEntryBoardRevision: autoHdrHandoffs.editingEntryBoardRevision,
   }).from(projects)
     .innerJoin(autoHdrOutputMappings, eq(autoHdrOutputMappings.projectId, projects.id))
     .innerJoin(autoHdrHandoffs, eq(autoHdrOutputMappings.handoffId, autoHdrHandoffs.id))
@@ -188,20 +259,7 @@ export async function writeAutoHdrFinal(
     if ((replayResult[0]?.meta.changes ?? 0) !== 1) {
       return quarantine(env, context, file, "Final writer fence changed before same-hash replay repair");
     }
-    const stageAdvanced = coverage ? await guardedStageTransition(env.DB, {
-      projectId: context.projectId,
-      from: "editing_autohdr",
-      to: "edited_review",
-      meta: {
-        trigger: context.trigger,
-        jobId: context.jobId,
-        handoffId: context.handoffId,
-        mappingGeneration: context.mappingGeneration,
-        sourcePathKey,
-        credibleCoverage: coverage.unitKey,
-      },
-      onSuccess: () => notifyProject(env, context.projectId, "edited_landed"),
-    }) : false;
+    const stageAdvanced = await advanceFinalStage(env, context, fence, coverage, collectionId, sourcePathKey, current.currentAssetId);
     // A Workflow can fail after the D1 version commit but before its rendition handoff. Replays
     // deliberately re-enqueue the current winner; rendition generation is itself idempotent.
     await (dependencies.enqueue ?? enqueueRenditionSafely)(env, current.currentAssetId, "autohdr-existing-final");
@@ -243,24 +301,12 @@ export async function writeAutoHdrFinal(
         env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, NULL, 'autohdr.final_imported', 'asset', ?, ?, ? WHERE EXISTS (SELECT 1 FROM edited_source_claims WHERE collection_id = ? AND source_path_key = ? AND current_asset_id = ?)")
           .bind(crypto.randomUUID(), assetId, JSON.stringify({ projectId: context.projectId, sourcePathKey, trigger: context.trigger, jobId: context.jobId, handoffId: context.handoffId, mappingGeneration: context.mappingGeneration, connectionId: context.connectionId, credibleCoverage: coverage?.unitKey ?? null }), now.getTime(), collectionId, sourcePathKey, assetId),
         env.DB.prepare(COLLECTION_RECEIVED_COUNT_SQL).bind(...collectionReceivedCountBindings(collectionId, now.getTime())),
-        env.DB.prepare("UPDATE projects SET stage_key = 'edited_review', board_position = (SELECT COALESCE(MAX(board_position) + 1024, 0) FROM projects WHERE stage_key = 'edited_review' AND archived_at IS NULL AND id != ?), updated_at = ? WHERE id = ? AND stage_key = 'editing_autohdr' AND archived_at IS NULL AND ? = 1 AND EXISTS (SELECT 1 FROM edited_source_claims WHERE collection_id = ? AND source_path_key = ? AND current_asset_id = ?)")
-          .bind(context.projectId, now.getTime(), context.projectId, coverage ? 1 : 0, collectionId, sourcePathKey, assetId),
-        env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, NULL, 'stage.auto_advance', 'project', ?, ?, ? WHERE changes() = 1")
-          .bind(crypto.randomUUID(), context.projectId, JSON.stringify({ from: "editing_autohdr", to: "edited_review", trigger: context.trigger, jobId: context.jobId, handoffId: context.handoffId, mappingGeneration: context.mappingGeneration, sourcePathKey, credibleCoverage: coverage?.unitKey ?? null }), now.getTime()),
       );
       const result = await env.DB.batch(statements);
       if ((result[1]?.meta.changes ?? 0) !== 1) {
         return quarantine(env, context, file, "Final writer fence changed before first-version metadata commit");
       }
-      // Notify immediately once the D1 batch confirms the transition, before any other
-      // best-effort side effect — matching the sibling replacement-path's guardedStageTransition
-      // onSuccess hook below, which already fires at commit time. Emitting after enqueue would
-      // mean an enqueue failure (or any future change to it that starts throwing) could skip the
-      // notification on this attempt, and a retry would find the project already in
-      // edited_review (this guarded update only matches stage_key = 'editing_autohdr'), so the
-      // notification would never fire at all — not delayed, permanently lost.
-      const stageAdvanced = (result.at(-2)?.meta.changes ?? 0) === 1;
-      if (stageAdvanced) await notifyProject(env, context.projectId, "edited_landed");
+      const stageAdvanced = await advanceFinalStage(env, context, fence, coverage, collectionId, sourcePathKey, assetId);
       await dependencies.afterD1Commit?.();
       await (dependencies.enqueue ?? enqueueRenditionSafely)(env, assetId, "autohdr-fetch");
       return { status: "created", assetId, coveredUnit: coverage?.unitKey, stageAdvanced };
@@ -293,20 +339,7 @@ export async function writeAutoHdrFinal(
       }
       throw new Error("Lost AutoHDR replacement race to a different content hash");
     }
-    const stageAdvanced = coverage ? await guardedStageTransition(env.DB, {
-      projectId: context.projectId,
-      from: "editing_autohdr",
-      to: "edited_review",
-      meta: {
-        trigger: context.trigger,
-        jobId: context.jobId,
-        handoffId: context.handoffId,
-        mappingGeneration: context.mappingGeneration,
-        sourcePathKey,
-        credibleCoverage: coverage.unitKey,
-      },
-      onSuccess: () => notifyProject(env, context.projectId, "edited_landed"),
-    }) : false;
+    const stageAdvanced = await advanceFinalStage(env, context, fence, coverage, collectionId, sourcePathKey, assetId);
     await dependencies.afterD1Commit?.();
     await (dependencies.enqueue ?? enqueueRenditionSafely)(env, assetId, "autohdr-replacement");
     return { status: "replaced", assetId, coveredUnit: coverage?.unitKey, stageAdvanced };

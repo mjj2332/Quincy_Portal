@@ -15,7 +15,10 @@ async function executeSql(source: string) {
     }
   }
 }
-beforeAll(() => executeSql(__PORTAL_MIGRATION_SQL__));
+beforeAll(async () => {
+  await executeSql(__PORTAL_MIGRATION_SQL__);
+  await executeSql("UPDATE feature_flags SET enabled = 1 WHERE key = 'tb5a_board_contract_enabled'");
+});
 
 async function project(stage = "awaiting_raw", archived = false) {
   const id = crypto.randomUUID();
@@ -33,6 +36,8 @@ describe("durable RAW stage commit", () => {
       guardedStageTransition(database.DB, { projectId, from: "awaiting_raw", to: "raw_review", meta: { trigger: "direct_upload", durableRawEvidence: { newlyImported: 1, currentRawAvailable: true } } }),
     ]);
     expect(attempts.filter(Boolean)).toHaveLength(1);
+    const row = await database.DB.prepare("SELECT stage_key, board_position, board_revision FROM projects WHERE id = ?").bind(projectId).first();
+    expect(row).toMatchObject({ stage_key: "raw_review", board_revision: 1 });
     const audits = await database.DB.prepare("SELECT actor_id, action, meta_json FROM audit_log WHERE target_id = ?").bind(projectId).all();
     expect(audits.results).toHaveLength(1);
     expect(audits.results[0]).toMatchObject({ actor_id: null, action: "stage.auto_advance" });

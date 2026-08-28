@@ -6,6 +6,7 @@ import type { Env } from "../env";
 import { dbFor, errorMessage } from "../lib/db";
 import { setJobStatus } from "../lib/jobs";
 import { isWorkflowAlreadyExists } from "./claims";
+import { automaticBoardWritesEnabled } from "../lib/automatic-stage";
 
 export const AUTOHDR_API_SEND_JOB_KIND = "autohdr_api_send";
 
@@ -24,6 +25,10 @@ export type AutoHdrApiSendResult =
 
 export type AutoHdrApiSendJobPayload = {
   provider: "autohdr_api_v4";
+  projectId?: string;
+  generation?: number;
+  stageEntrySourceJobId?: string;
+  stageEntryGeneration?: number;
   assetIds: string[];
   initiatedBy: string;
   address?: string;
@@ -50,6 +55,10 @@ function parseJobPayload(value: string | null): AutoHdrApiSendJobPayload | null 
     if (!payload.assetIds.every((assetId) => typeof assetId === "string")) return null;
     return {
       provider: "autohdr_api_v4",
+      ...(typeof payload.projectId === "string" ? { projectId: payload.projectId } : {}),
+      ...(typeof payload.generation === "number" ? { generation: payload.generation } : {}),
+      ...(typeof payload.stageEntrySourceJobId === "string" ? { stageEntrySourceJobId: payload.stageEntrySourceJobId } : {}),
+      ...(typeof payload.stageEntryGeneration === "number" ? { stageEntryGeneration: payload.stageEntryGeneration } : {}),
       assetIds: payload.assetIds,
       initiatedBy: payload.initiatedBy,
       ...(typeof payload.address === "string" ? { address: payload.address } : {}),
@@ -96,6 +105,9 @@ async function ensureWorkflow(env: Env, projectId: string, jobId: string, payloa
 
 export async function claimAutoHdrApiSend(env: Env, projectId: string, initiatedBy?: string): Promise<AutoHdrApiSendResult> {
   if (!initiatedBy) return { ok: false, code: "ERR_SEND_SETUP_FAILED", message: "AutoHDR send requires an initiating staff identity" };
+  if (!await automaticBoardWritesEnabled(env)) {
+    return { ok: false, code: "ERR_STAGE_NOT_READY", message: "Automatic Stage writes are temporarily deferred; retry later" };
+  }
   if (!env.AUTOHDR_API_KEY?.trim()) {
     return { ok: false, code: "ERR_PROVIDER_NOT_CONFIGURED", message: "The AutoHDR API key is not configured on the background Worker" };
   }
@@ -135,14 +147,18 @@ export async function claimAutoHdrApiSend(env: Env, projectId: string, initiated
   }
 
   const assetIds = selected.map((row) => row.assetId);
+  const jobId = crypto.randomUUID();
   const payload: AutoHdrApiSendJobPayload = {
     provider: "autohdr_api_v4",
+    projectId,
+    generation: 1,
+    stageEntrySourceJobId: jobId,
+    stageEntryGeneration: 1,
     assetIds,
     initiatedBy,
     address: projectAddress(project),
     phase: "queued",
   };
-  const jobId = crypto.randomUUID();
   const correlationId = `autohdr_api_send:${projectId}`;
   const now = Date.now();
   const inserted = await env.DB.prepare(

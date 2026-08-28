@@ -318,19 +318,117 @@ describe("TB5A Slice 3 stage-board bundles", () => {
     }
   });
 
+  it("rejects every independently stale handoff token premise", async () => {
+    const cases = [
+      { name: "wrong connection", connectionId: "wrong-connection", generation: 1, state: "started", expectedPriorToken: null, projectStage: "editing_autohdr" },
+      { name: "wrong generation", connectionId: "connection", generation: 2, state: "started", expectedPriorToken: null, projectStage: "editing_autohdr" },
+      { name: "wrong state", connectionId: "connection", generation: 1, state: "starting", expectedPriorToken: null, projectStage: "editing_autohdr" },
+      { name: "non-null token when NULL expected", connectionId: "connection", generation: 1, state: "started", expectedPriorToken: null, projectStage: "editing_autohdr", storedToken: 4 },
+      { name: "project not in Editing", connectionId: "connection", generation: 1, state: "started", expectedPriorToken: null, projectStage: "raw_review" },
+    ] as const;
+
+    for (const premise of cases) {
+      const db = localSqlite();
+      try {
+        db.exec("PRAGMA foreign_keys = ON");
+        applyAllMigrations(db);
+        seedProject(db, { id: "target", stageKey: premise.projectStage, boardRevision: 5 });
+        db.prepare("INSERT INTO integration_connections (id, provider, status, created_at, updated_at) VALUES ('connection', 'dropbox', 'connected', 1, 1)").run();
+        db.prepare("INSERT INTO jobs (id, kind, status, project_id, payload_json, created_at, updated_at) VALUES ('entry-job', 'autohdr', 'running', 'target', '{\"projectId\":\"target\",\"generation\":1}', 1, 1)").run();
+        db.prepare("INSERT INTO autohdr_handoffs (id, project_id, connection_id, generation, selection_hash, selected_asset_ids_json, readiness_units_json, frozen_raw_folder_path, state, workflow_id, job_id, lease_expires_at, editing_entry_board_revision, created_at, updated_at) VALUES ('handoff', 'target', 'connection', 1, 'hash', '[]', '[]', '/Raw/target', 'started', 'workflow', 'entry-job', 2, ?, 1, 1)").run(premise.storedToken ?? null);
+        audit(db, "audit-token");
+        const d1 = localD1(db);
+        const token = buildEditingEntryTokenTail({
+          db: d1,
+          owner: "handoff",
+          projectId: "target",
+          handoffId: "handoff",
+          connectionId: premise.connectionId,
+          generation: premise.generation,
+          state: premise.state,
+          expectedPriorToken: premise.expectedPriorToken,
+          auditId: "audit-token",
+          updatedAt: 1_787_000_000_103,
+        });
+        expect((await executeBundle(d1, token))[0]!.results, premise.name).toEqual([]);
+      } finally {
+        db.close();
+      }
+    }
+  });
+
+  it("identifies a final claim by its natural key rather than a fetch-claim id", async () => {
+    const db = localSqlite();
+    try {
+      db.exec("PRAGMA foreign_keys = ON");
+      applyAllMigrations(db);
+      seedProject(db, { id: "target", stageKey: "editing_autohdr", boardRevision: 5 });
+      db.prepare("INSERT INTO integration_connections (id, provider, status, created_at, updated_at) VALUES ('connection', 'dropbox', 'connected', 1, 1)").run();
+      db.prepare("INSERT INTO collections (id, project_id, kind, status, received_count, created_at, updated_at) VALUES ('edited-collection', 'target', 'edited', 'received', 1, 1, 1)").run();
+      db.prepare("INSERT INTO assets (id, collection_id, r2_key, original_filename, bytes, source, created_at, updated_at) VALUES ('asset', 'edited-collection', 'edited/asset.jpg', 'asset.jpg', 1, 'dropbox', 1, 1)").run();
+      db.prepare("INSERT INTO jobs (id, kind, status, project_id, created_at, updated_at) VALUES ('send-job', 'autohdr', 'done', 'target', 1, 1)").run();
+      db.prepare("INSERT INTO autohdr_handoffs (id, project_id, connection_id, generation, selection_hash, selected_asset_ids_json, readiness_units_json, frozen_raw_folder_path, state, workflow_id, job_id, lease_expires_at, created_at, updated_at) VALUES ('handoff', 'target', 'connection', 1, 'hash', '[]', '[]', '/Raw/target', 'started', 'workflow', 'send-job', 2, 1, 1)").run();
+      db.prepare("INSERT INTO autohdr_output_mappings (id, project_id, handoff_id, connection_id, generation, state, created_at, updated_at) VALUES ('mapping', 'target', 'handoff', 'connection', 1, 'active', 1, 1)").run();
+      db.prepare("INSERT INTO edited_source_claims (id, collection_id, source_path_key, current_asset_id, content_hash, handoff_id, created_at, updated_at) VALUES ('edited-claim', 'edited-collection', '/autohdr/final/asset.jpg', 'asset', 'hash', 'handoff', 1, 1)").run();
+      audit(db, "audit-final");
+
+      const d1 = localD1(db);
+      const tail = buildWorkflowTail({
+        db: d1,
+        auditId: "audit-final",
+        kind: "autohdr_final_claim",
+        collectionId: "edited-collection",
+        sourcePathKey: "/autohdr/final/asset.jpg",
+        handoffId: "handoff",
+        mappingId: "mapping",
+        currentAssetId: "asset",
+      }, "autohdr_final_completion");
+      const results = await executeBundle(d1, tail);
+      expect(results[tail.indexes.prerequisiteMarker]!.results).toEqual([{ id: "edited-claim" }]);
+      expect(results[tail.indexes.finalClaimState]!.results).toEqual([{ id: "edited-claim", current_asset_id: "asset" }]);
+    } finally {
+      db.close();
+    }
+  });
+
   it("fails closed for missing source-entry-job provenance", async () => {
     const db = localSqlite();
     try {
       db.exec("PRAGMA foreign_keys = ON");
       applyAllMigrations(db);
       seedProject(db, { id: "target", stageKey: "editing_autohdr", boardRevision: 7 });
-      db.prepare("INSERT INTO jobs (id, kind, status, project_id, payload_json, created_at, updated_at) VALUES ('completion-job', 'fetch_edited', 'done', 'target', '{\"projectId\":\"target\",\"generation\":1}', 1, 1)").run();
+      db.prepare("INSERT INTO jobs (id, kind, status, project_id, payload_json, created_at, updated_at) VALUES ('completion-job', 'fetch_edited', 'done', 'target', '{\"projectId\":\"target\",\"generation\":1,\"stageEntrySourceJobId\":\"completion-job\"}', 1, 1)").run();
       audit(db, "audit-completion");
       const d1 = localD1(db);
-      const bundle = buildWorkflowTail({ db: d1, auditId: "audit-completion", kind: "autohdr_job", jobId: "completion-job", generation: 1, projectId: "target" }, "autohdr_job_completion");
+      const bundle = buildWorkflowTail({ db: d1, auditId: "audit-completion", kind: "autohdr_job", jobId: "completion-job", generation: 1, projectId: "target", jobKind: "fetch_edited", sourceJobKind: "autohdr", sourceJobId: "completion-job" }, "autohdr_job_completion");
       const results = await executeBundle(d1, bundle);
       expect(results[bundle.indexes.sourceEntryJob]!.results).toEqual([]);
       expect(bundle.indexes.completionJobState).toBe(2);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("uses the propagated source entry job and rejects an equal-revision impostor", async () => {
+    const db = localSqlite();
+    try {
+      db.exec("PRAGMA foreign_keys = ON");
+      applyAllMigrations(db);
+      seedProject(db, { id: "target", stageKey: "editing_autohdr", boardRevision: 5 });
+      db.prepare("INSERT INTO jobs (id, kind, status, project_id, payload_json, stage_entry_board_revision, created_at, updated_at) VALUES ('entry-job', 'autohdr', 'done', 'target', '{\"projectId\":\"target\",\"generation\":1,\"stageEntrySourceJobId\":\"entry-job\",\"stageEntryGeneration\":1}', 5, 1, 1)").run();
+      db.prepare("INSERT INTO jobs (id, kind, status, project_id, payload_json, stage_entry_board_revision, created_at, updated_at) VALUES ('completion-job', 'fetch_edited', 'done', 'target', '{\"projectId\":\"target\",\"generation\":1,\"stageEntrySourceJobId\":\"entry-job\",\"stageEntryGeneration\":1}', NULL, 1, 1)").run();
+      audit(db, "audit-completion");
+      const d1 = localD1(db);
+      const valid = buildWorkflowTail({ db: d1, auditId: "audit-completion", kind: "autohdr_job", jobId: "completion-job", generation: 1, projectId: "target", jobKind: "fetch_edited", sourceJobKind: "autohdr", sourceJobId: "entry-job" }, "autohdr_job_completion");
+      const validResults = await executeBundle(d1, valid);
+      expect(validResults[valid.indexes.sourceEntryJob]!.results).toEqual([{ id: "entry-job", project_id: "target", stage_entry_board_revision: 5 }]);
+      expect(validResults[valid.indexes.completionJobState]!.results).toEqual([{ id: "completion-job", status: "done" }]);
+
+      db.prepare("UPDATE jobs SET payload_json = '{\"projectId\":\"target\",\"generation\":1,\"stageEntrySourceJobId\":\"impostor-job\",\"stageEntryGeneration\":1}' WHERE id = 'completion-job'").run();
+      db.prepare("INSERT INTO jobs (id, kind, status, project_id, payload_json, stage_entry_board_revision, created_at, updated_at) VALUES ('impostor-job', 'autohdr', 'done', 'target', '{\"projectId\":\"target\",\"generation\":1}', 5, 1, 1)").run();
+      const impostor = buildWorkflowTail({ db: d1, auditId: "audit-completion", kind: "autohdr_job", jobId: "completion-job", generation: 1, projectId: "target", jobKind: "fetch_edited", sourceJobKind: "autohdr", sourceJobId: "impostor-job" }, "autohdr_job_completion");
+      const impostorResults = await executeBundle(d1, impostor);
+      expect(impostorResults[impostor.indexes.sourceEntryJob]!.results).toEqual([]);
     } finally {
       db.close();
     }
@@ -360,7 +458,7 @@ describe("TB5A Slice 3 stage-board bundles", () => {
       { kind: "raw_reconciliation" as const, claimId: "claim", shootDate: "2026-08-29" },
       { kind: "autohdr_handoff" as const, handoffId: "handoff", generation: 1, connectionId: "connection" },
       { kind: "autohdr_mapping" as const, mappingId: "mapping", handoffId: "handoff", generation: 1 },
-      { kind: "autohdr_final_claim" as const, claimId: "claim", handoffId: "handoff", mappingId: "mapping", currentAssetId: "asset" },
+      { kind: "autohdr_final_claim" as const, collectionId: "collection", sourcePathKey: "/autohdr/final/capture.jpg", handoffId: "handoff", mappingId: "mapping", currentAssetId: "asset" },
       { kind: "autohdr_job" as const, jobId: "job", generation: 1, projectId: "target" },
       { kind: "autohdr_job" as const, jobId: "job", generation: 1, projectId: "target" },
     ] as const;

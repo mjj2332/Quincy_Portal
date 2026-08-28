@@ -107,7 +107,7 @@ async function createProject(env: Env, order: TonomoOrder): Promise<string> {
     shootDate: order.shootDate, timeWindow: order.timeWindow, orderNo: order.orderNo, orderId: order.orderId,
     invoiceAmount: order.invoiceAmount, paymentStatus: order.paymentStatus, notes: order.notes,
     rawFolderLink: order.rawFolderLink, rawFolderPath: order.rawFolderPath,
-    stageKey: "awaiting_raw", boardPosition: appendToStageBottomExpr("awaiting_raw", id), createdAt: now, updatedAt: now,
+    stageKey: "awaiting_raw", boardPosition: appendToStageBottomExpr("awaiting_raw", id), boardRevision: 0, createdAt: now, updatedAt: now,
   });
   await enqueueAutoHdrScaffold(env, id).catch((error) =>
     console.error("AutoHDR scaffold trigger failed", { projectId: id, error }));

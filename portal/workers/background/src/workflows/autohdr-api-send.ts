@@ -11,6 +11,7 @@ import { dbFor, errorMessage } from "../lib/db";
 import { setJobStatus } from "../lib/jobs";
 import { notifyProject } from "../notifications";
 import { requireBoardSchemaReady } from "../lib/board-schema";
+import { automaticBoardWritesEnabled, commitAutomaticStage } from "../lib/automatic-stage";
 
 function chunked<T>(items: readonly T[], size = 80): T[][] {
   const result: T[][] = [];
@@ -22,6 +23,10 @@ export class AutoHdrApiSend extends WorkflowEntrypoint<Env, AutoHdrApiSendInput>
   async run(event: Readonly<WorkflowEvent<AutoHdrApiSendInput>>, step: WorkflowStep): Promise<void> {
     const input = event.payload;
     await requireBoardSchemaReady(this.env);
+    if (!await automaticBoardWritesEnabled(this.env)) {
+      console.log("AutoHDR API send deferred while automatic Board writes are disabled", { projectId: input.projectId, jobId: input.jobId });
+      return;
+    }
     try {
       const apiKey = this.env.AUTOHDR_API_KEY?.trim();
       if (!apiKey) throw new Error("The AutoHDR API key is not configured on the background Worker");
@@ -73,6 +78,10 @@ export class AutoHdrApiSend extends WorkflowEntrypoint<Env, AutoHdrApiSendInput>
       await step.do("record-autohdr-photoshoot", async () => {
         const payload: AutoHdrApiSendJobPayload = {
           provider: "autohdr_api_v4",
+          projectId: input.projectId,
+          generation: 1,
+          stageEntrySourceJobId: input.jobId,
+          stageEntryGeneration: 1,
           assetIds: input.assetIds,
           initiatedBy: input.initiatedBy,
           address: input.address,
@@ -113,6 +122,10 @@ export class AutoHdrApiSend extends WorkflowEntrypoint<Env, AutoHdrApiSendInput>
         const now = Date.now();
         const payload: AutoHdrApiSendJobPayload = {
           provider: "autohdr_api_v4",
+          projectId: input.projectId,
+          generation: 1,
+          stageEntrySourceJobId: input.jobId,
+          stageEntryGeneration: 1,
           assetIds: input.assetIds,
           initiatedBy: input.initiatedBy,
           address: input.address,
@@ -133,18 +146,40 @@ export class AutoHdrApiSend extends WorkflowEntrypoint<Env, AutoHdrApiSendInput>
           assetCount: input.assetIds.length,
           retrievalEnabled: false,
         });
-        const results = await this.env.DB.batch([
-          this.env.DB.prepare("UPDATE projects SET stage_key = 'editing_autohdr', board_position = (SELECT COALESCE(MAX(board_position) + 1024, 0) FROM projects WHERE stage_key = 'editing_autohdr' AND archived_at IS NULL AND id != ?), updated_at = ? WHERE id = ? AND stage_key = 'raw_review' AND archived_at IS NULL")
-            .bind(input.projectId, now, input.projectId),
-          this.env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, ?, 'stage.auto_advance', 'project', ?, ?, ? WHERE changes() = 1")
-            .bind(crypto.randomUUID(), input.initiatedBy, input.projectId, stageMeta, now),
-          this.env.DB.prepare("UPDATE jobs SET status = 'done', error = NULL, payload_json = ?, updated_at = ? WHERE id = ?")
-            .bind(JSON.stringify(payload), now, input.jobId),
-          this.env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) VALUES (?, ?, 'project.autohdr_api_send.finalized', 'project', ?, ?, ?)")
-            .bind(crypto.randomUUID(), input.initiatedBy, input.projectId, finalizedMeta, now),
-        ]);
-        if ((results[2]?.meta.changes ?? 0) !== 1) throw new Error(`AutoHDR job ${input.jobId} disappeared before completion`);
-        return { stageAdvanced: (results[0]?.meta.changes ?? 0) === 1 };
+        const stageAuditId = crypto.randomUUID();
+        const stageOutcome = await commitAutomaticStage({
+          env: this.env,
+          projectId: input.projectId,
+          from: "raw_review",
+          to: "editing_autohdr",
+          auditId: stageAuditId,
+          auditActorId: input.initiatedBy,
+          auditMetaJson: stageMeta,
+          now,
+          prefix: [
+            this.env.DB.prepare("UPDATE jobs SET error = NULL, payload_json = ?, updated_at = ? WHERE id = ? AND kind = 'autohdr_api_send' AND status = 'running'")
+              .bind(JSON.stringify(payload), now, input.jobId),
+            this.env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) VALUES (?, ?, 'project.autohdr_api_send.finalized', 'project', ?, ?, ?)")
+              .bind(crypto.randomUUID(), input.initiatedBy, input.projectId, finalizedMeta, now),
+          ],
+          workflow: {
+            kind: "autohdr_job_entry",
+            prerequisite: {
+              kind: "autohdr_job",
+              jobId: input.jobId,
+              projectId: input.projectId,
+              generation: 1,
+              jobKind: "autohdr_api_send",
+              expectedPriorToken: null,
+              db: this.env.DB,
+              auditId: stageAuditId,
+              now,
+            },
+          },
+        });
+        if (stageOutcome.kind === "invariant_failure") throw new Error(`AutoHDR job ${input.jobId} Stage entry invariant failed`);
+        await setJobStatus(dbFor(this.env), input.jobId, "done");
+        return { stageAdvanced: stageOutcome.kind === "winner" };
       });
 
       if (completion.stageAdvanced) {

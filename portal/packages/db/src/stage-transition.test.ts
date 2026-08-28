@@ -1,32 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { guardedStageTransition } from "./stage-transition";
 import { notificationCopy } from "./notifications";
-
-function database(changes: number): D1Database {
-  return {
-    prepare: vi.fn(() => ({ bind: vi.fn(() => ({})) })),
-    batch: vi.fn().mockResolvedValue([{ meta: { changes } }, { meta: { changes: changes ? 1 : 0 } }]),
-  } as unknown as D1Database;
-}
-
-describe("guardedStageTransition post-success hook", () => {
-  beforeEach(() => vi.restoreAllMocks());
-
-  it("runs once only for a real guarded transition", async () => {
-    const hook = vi.fn();
-    expect(await guardedStageTransition(database(1), { projectId: "p", from: "awaiting_raw", to: "raw_review", meta: {}, onSuccess: hook })).toBe(true);
-    expect(hook).toHaveBeenCalledTimes(1);
-    expect(await guardedStageTransition(database(0), { projectId: "p", from: "awaiting_raw", to: "raw_review", meta: {}, onSuccess: hook })).toBe(false);
-    expect(hook).toHaveBeenCalledTimes(1);
-  });
-
-  it("isolates a failed hook from the committed transition", async () => {
-    const error = new Error("email failed");
-    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    await expect(guardedStageTransition(database(1), { projectId: "p", from: "editing_autohdr", to: "edited_review", meta: {}, onSuccess: () => { throw error; } })).resolves.toBe(true);
-    expect(log).toHaveBeenCalledWith("Guarded stage transition post-success hook failed", expect.objectContaining({ projectId: "p", error }));
-  });
-});
 
 type SqliteStatement = { all: (...values: unknown[]) => unknown[]; get: (...values: unknown[]) => unknown; run: (...values: unknown[]) => { changes?: number | bigint } };
 type SqliteDatabase = { close: () => void; exec: (source: string) => void; prepare: (source: string) => SqliteStatement };
@@ -47,7 +21,13 @@ class LocalD1Statement {
         const result = statement.run(...values);
         return { meta: { changes: Number(result.changes ?? 0) } };
       },
+      first: async <T>() => statement.get(...values) as T | null,
+      all: async <T>() => ({ results: statement.all(...values) as T[] }),
     } as unknown as D1PreparedStatement;
+  }
+
+  async first<T>(): Promise<T | null> {
+    return this.db.prepare(this.sql).get() as T | null;
   }
 }
 
@@ -70,14 +50,16 @@ function localD1(db: SqliteDatabase): D1Database {
 }
 
 describe("guardedStageTransition current append contract", () => {
-  it("appends at MAX + 1024, writes one audit, and only hooks the winning batch", async () => {
+  it("appends at MAX + 1024, increments the Board revision, and writes one audit", async () => {
     const sqlite = localSqlite();
     try {
-      sqlite.exec("CREATE TABLE projects (id TEXT PRIMARY KEY, stage_key TEXT NOT NULL, board_position REAL NOT NULL, archived_at INTEGER, updated_at INTEGER NOT NULL)");
+      sqlite.exec("CREATE TABLE projects (id TEXT PRIMARY KEY, stage_key TEXT NOT NULL, board_position REAL NOT NULL, board_revision INTEGER NOT NULL DEFAULT 0, archived_at INTEGER, updated_at INTEGER NOT NULL)");
       sqlite.exec("CREATE TABLE audit_log (id TEXT PRIMARY KEY, actor_id TEXT, action TEXT NOT NULL, target_type TEXT NOT NULL, target_id TEXT, meta_json TEXT NOT NULL, created_at INTEGER NOT NULL)");
+      sqlite.exec("CREATE TABLE feature_flags (key TEXT PRIMARY KEY, enabled INTEGER NOT NULL)");
+      sqlite.exec("CREATE TABLE project_board_order_0037_rollback (project_id TEXT PRIMARY KEY)");
+      sqlite.exec("INSERT INTO feature_flags (key, enabled) VALUES ('tb5a_board_contract_enabled', 1)");
       sqlite.exec("INSERT INTO projects (id, stage_key, board_position, updated_at) VALUES ('target', 'awaiting_raw', 0, 1), ('raw-a', 'raw_review', 1024, 1), ('raw-b', 'raw_review', 1536, 1)");
 
-      const hook = vi.fn();
       const d1 = localD1(sqlite);
       await expect(guardedStageTransition(d1, {
         projectId: "target",
@@ -86,14 +68,12 @@ describe("guardedStageTransition current append contract", () => {
         meta: { trigger: "characterization" },
         auditId: "audit-target",
         now: new Date(2),
-        onSuccess: hook,
       })).resolves.toBe(true);
 
-      expect(sqlite.prepare("SELECT stage_key, board_position FROM projects WHERE id = 'target'").get()).toEqual({ stage_key: "raw_review", board_position: 2560 });
+      expect(sqlite.prepare("SELECT stage_key, board_position, board_revision FROM projects WHERE id = 'target'").get()).toEqual({ stage_key: "raw_review", board_position: 2560, board_revision: 1 });
       expect(sqlite.prepare("SELECT action, target_id, meta_json FROM audit_log WHERE target_id = 'target'").all()).toEqual([
         { action: "stage.auto_advance", target_id: "target", meta_json: JSON.stringify({ from: "awaiting_raw", to: "raw_review", trigger: "characterization" }) },
       ]);
-      expect(hook).toHaveBeenCalledTimes(1);
     } finally {
       sqlite.close();
     }

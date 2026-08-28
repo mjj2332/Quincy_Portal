@@ -1,4 +1,15 @@
-import { COLLECTION_RECEIVED_COUNT_SQL, collectionReceivedCountBindings, createDb, guardedStageTransition, schema } from "@quincy/db";
+import {
+  boardContractEnabled,
+  COLLECTION_RECEIVED_COUNT_SQL,
+  collectionReceivedCountBindings,
+  composeStageBundle,
+  createDb,
+  deriveStageFinalizerIntent,
+  buildNonCompactingStageWinner,
+  buildWorkflowTail,
+  schema,
+  type ExpectedTargetPlacementRow,
+} from "@quincy/db";
 import { and, eq, sql } from "drizzle-orm";
 import { enqueueRenditionSafely, parseXmpRating, XMP_SCAN_BYTES, xmpRatingToStars } from "@quincy/shared";
 import type { Env } from "../env";
@@ -122,7 +133,7 @@ export async function finalizeIngest(
   // This check must precede RAW R2/D1 work: a pre-0037 completion cannot leave a durable asset
   // behind while its automatic Stage writer is unavailable. Manual edited uploads do not write
   // Stage and remain available during the migration window.
-  if ((input.collection ?? "raw") === "raw") await requireBoardSchemaReady(env);
+  const boardVariant = (input.collection ?? "raw") === "raw" ? await requireBoardSchemaReady(env) : undefined;
   const object = await env.MEDIA.head(input.key);
   if (!object) throw new Error("Uploaded object was not found in R2");
   const header = await env.MEDIA.get(input.key, { range: { offset: 0, length: XMP_SCAN_BYTES } });
@@ -216,18 +227,76 @@ export async function finalizeIngest(
   const currentRawAvailable = Boolean(await db.select({ id: schema.assets.id }).from(schema.assets)
     .where(and(eq(schema.assets.collectionId, targetCollection.id), eq(schema.assets.kind, "photo"), sql`${schema.assets.supersededAt} IS NULL`)).get());
   if (currentRawAvailable) {
-    await guardedStageTransition(env.DB, {
-      projectId: input.projectId,
-      from: "awaiting_raw",
-      to: "raw_review",
-      meta: {
-        trigger: "direct_upload",
-        assetId: effectiveAssetId,
-        manifestId: input.manifestId ?? null,
-        durableRawEvidence: { newlyImported: inserted, currentRawAvailable },
-      },
-      onSuccess: () => notifyProject(env, input.projectId, "raw_ready"),
-    });
+    if (boardVariant && await boardContractEnabled(env.DB, boardVariant)) {
+      const source = await env.DB.prepare(
+        "SELECT board_revision AS boardRevision FROM projects WHERE id = ? AND stage_key = 'awaiting_raw' AND archived_at IS NULL",
+      ).bind(input.projectId).first<{ boardRevision: number }>();
+      const target = await env.DB.prepare(
+        "SELECT id AS projectId, stage_key AS stageKey, board_position AS boardPosition, board_revision AS boardRevision FROM projects WHERE stage_key = 'raw_review' AND archived_at IS NULL AND id <> ? ORDER BY board_position, id",
+      ).bind(input.projectId).all<ExpectedTargetPlacementRow>();
+      if (source) {
+        const auditId = crypto.randomUUID();
+        const stage = buildNonCompactingStageWinner({
+          db: env.DB,
+          projectId: input.projectId,
+          from: "awaiting_raw",
+          to: "raw_review",
+          oldBoardRevision: source.boardRevision,
+          expectedTarget: target.results,
+          expectedTargetRowCount: target.results.length,
+          placement: "append",
+          auditId,
+          actorId: null,
+          auditMetaJson: JSON.stringify({
+            from: "awaiting_raw",
+            to: "raw_review",
+            trigger: "direct_upload",
+            assetId: effectiveAssetId,
+            manifestId: input.manifestId ?? null,
+            durableRawEvidence: { newlyImported: inserted, currentRawAvailable },
+          }),
+          updatedAt: now.getTime(),
+        });
+        const bundle = composeStageBundle({
+          stage,
+          workflow: buildWorkflowTail({ db: env.DB, auditId, kind: "none" }, "none"),
+        });
+        const results = await env.DB.batch(bundle.statements);
+        const winnerRows = results[bundle.indexes.stage.winner]?.results ?? [];
+        const winner = winnerRows.length === 1
+          ? winnerRows[0] as { id?: string; stage_key?: string; board_position?: number; board_revision?: number }
+          : undefined;
+        const markerRows = results[bundle.indexes.stage.auditMarker]?.results ?? [];
+        const marker = markerRows.length === 1 ? markerRows[0] as { id?: string } : undefined;
+        if (winner
+          && winner.id === input.projectId
+          && winner.stage_key === "raw_review"
+          && typeof winner.board_position === "number"
+          && Number.isFinite(winner.board_position)
+          && typeof winner.board_revision === "number"
+          && Number.isInteger(winner.board_revision)
+          && winner.board_revision === source.boardRevision + 1
+          && marker?.id === auditId) {
+          const finalizer = deriveStageFinalizerIntent([{
+            kind: "winner",
+            row: { projectId: winner.id, stageKey: winner.stage_key as "raw_review", boardPosition: winner.board_position, boardRevision: winner.board_revision },
+            auditId: marker.id,
+            legacyWorkflowNotification: "raw_ready",
+          }]);
+          if (finalizer?.legacyWorkflowNotification === "raw_ready") {
+            try {
+              await notifyProject(env, input.projectId, "raw_ready");
+            } catch (error) {
+              console.error("RAW ingest notification failed", { projectId: input.projectId, error });
+            }
+          } else {
+            console.error("Automatic Stage finalizer invariant failure", { projectId: input.projectId, assetId: effectiveAssetId, providerSecret: false });
+          }
+        } else if (winnerRows.length > 0 || markerRows.length > 0) {
+          console.error("Automatic Stage bundle invariant failure", { projectId: input.projectId, assetId: effectiveAssetId, providerSecret: false });
+        }
+      }
+    }
   }
   const mirrored = await db.select({ sourcePath: schema.assets.sourcePath }).from(schema.assets).where(eq(schema.assets.id, effectiveAssetId)).get();
   return {
