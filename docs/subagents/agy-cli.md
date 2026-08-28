@@ -109,11 +109,17 @@ actually works reliably.
   `3.5` also on the roster) rejects `--effort medium`/`low` with `invalid model selection …
   conflicts with --effort` — the tier is baked into the model id, so always pass `--effort high`
   with a `*-high` model.
-- **Run Agy in the FOREGROUND.** `nohup agy -p … &` exits in ~10 s with empty stdout *and*
-  empty stderr and the task half-done (stdin EOF ends print mode early) — and it can orphan the
-  MCP server + its Chrome. Run it as a normal blocking `Bash` call with a generous
-  `--print-timeout` (`5m0s`+). This is a real constraint on offloading: a run that needs to
-  wait on a human (e.g. for sign-in) blocks the orchestrating session for its whole duration.
+- **Background the run through the harness (`Bash` `run_in_background: true`), never a bare
+  `nohup agy … &`.** The prompt travels as a `--print=` argument, not on stdin (see the
+  large-prompt section below), so a harness-supervised background launch has no stdin dependency
+  to trip on: the process keeps running and the orchestrating session is free while Agy works
+  (2026-08-28: a long QA-matrix run stayed healthy and progressing many minutes past the ~10 s
+  mark where `nohup &` dies). A bare `nohup agy -p … &` is the thing that fails — detaching from
+  the shell closes stdin, print mode ends early, and it exits in ~10 s with empty stdout *and*
+  stderr, task half-done, and can orphan an Option-B Chrome (Option A's Chrome is the human's own
+  process, nothing to orphan). Give `--print-timeout` real room — `10m0s`+ for a spec'd QA
+  matrix, more for a long one. In Option A the human signs in *before* Agy spawns, so there is no
+  in-run wait to worry about.
 - **Agy is the pipeline's tester** (§2.8) and carries danger-mode (§2.9) and YOLO-mode (§2.10)
   sanction as of 2026-08-27 — it took the testing role over from Luna after a trial pass on the
   TB4C QA matrix. Planning and building still never go to Agy (§2.6). Every QA finding still
@@ -144,9 +150,10 @@ agy mcp remove chrome-devtools 2>/dev/null
 agy mcp add chrome-devtools npx -y chrome-devtools-mcp@latest --browserUrl=http://127.0.0.1:9333
 agy mcp list
 
-# 4. run tasks (foreground)
+# 4. run tasks — harness-backgrounded (Bash run_in_background: true), -p kept last,
+#    --print-timeout sized to the task (10m0s+ for a QA matrix)
 agy --model gemini-3.7-flash-high --mode accept-edits --effort high \
-  --dangerously-skip-permissions --print-timeout 5m0s \
+  --dangerously-skip-permissions --print-timeout 30m0s \
   -p "$(cat "$SCRATCH/task.md")" > report.md 2> run.log
 ```
 
@@ -192,7 +199,12 @@ Smoke test (navigate `example.com` → `take_snapshot` → report `h1`/`title`) 
 ## Passing a large prompt safely — `-p` has no stdin equivalent
 
 Agy's `-p` takes a positional argument only; unlike `codex exec`, there is no stdin mode to fall
-back to (see [codex-cli.md](codex-cli.md)'s stdin-hang failure mode for why that matters there).
+back to (`--print=` with an empty value and a piped prompt errors `empty prompt`; see
+[codex-cli.md](codex-cli.md)'s stdin-hang failure mode for why the difference matters there).
+`--print`/`-p` also consumes the *next* token as its value, so keep it **last** on the command
+line — with `--mode`/`--effort`/etc. before it — or a following flag becomes the prompt and Agy
+errors (`--print took "--mode" as its prompt`). The invocation examples above already put `-p`
+last; preserve that when you reorder flags.
 For a large prompt, `-p "$(cat "$SCRATCH/prompt.md")"` is safe **as long as the entire argument
 is that one substitution and nothing else** — command-substitution output is not re-scanned for
 further `$`/backtick expansion, so backticks or `${...}` inside the file pass through literally

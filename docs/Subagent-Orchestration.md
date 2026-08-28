@@ -31,7 +31,7 @@ explicit user request.
 
 **Agy drives real Chrome through the `chrome-devtools-mcp` MCP server** — Option A: a Chrome a human
 has already signed in, attached over CDP. This is the pipeline's browser-testing path; setup, the
-**foreground-only** constraint, and the silent-no-op failure modes are all in
+`nohup &` backgrounding failure mode, and the silent-no-op failure modes are all in
 [§3a](subagents/agy-cli.md) — read it before any Agy task. Luna and Sol still carry their own
 Chrome-use and computer-use plugins for a `codex exec` run that needs a browser mid-build, but
 routine QA and diagnostics go to Agy.
@@ -176,9 +176,10 @@ its own flags, sandboxing, and file access, output read back from a file. There 
 
 - **Codex (Terra/Luna/Sol): [subagents/codex-cli.md](subagents/codex-cli.md)** — invocation, flags,
   and the MCP write-approval failure mode (§6).
-- **§3a — Agy: [subagents/agy-cli.md](subagents/agy-cli.md)** — invocation, the **foreground-only**
-  constraint, the silent-no-op failure modes (a cheerful "done" with zero effect and zero error
-  output), and the `chrome-devtools-mcp` Option A setup that gives Agy an authenticated Chrome.
+- **§3a — Agy: [subagents/agy-cli.md](subagents/agy-cli.md)** — invocation, the `nohup &`
+  backgrounding failure mode, the silent-no-op failure modes (a cheerful "done" with zero effect
+  and zero error output), and the `chrome-devtools-mcp` Option A setup that gives Agy an
+  authenticated Chrome.
   Agy is the pipeline's tester (§2.8–§2.10) — read agy-cli.md before any Agy task.
 
 The `Agent` tool spawns *Claude* subagents: `model: opus` for both Opus review touchpoints, and
@@ -193,11 +194,12 @@ planning or building inline (§1).
 
 1. **Write the spec to a scratchpad file first** — never inline a whole task as a raw string. Keeps
    prompts reviewable and reusable when a fix loop needs a second round.
-2. **Launch in the background** (`Bash`, `run_in_background: true`), `cat`-ing the spec in and
-   capturing the final report to its own file, so orchestration continues and a notification
-   arrives on exit. **Exception: Agy runs in the foreground** — `nohup agy … &` exits in ~10s with
-   the task half-done and can orphan its Chrome (§3a). An Agy test task blocks this session for its
-   whole run, including any wait on a human sign-in; that is the known cost of routing QA to Agy.
+2. **Launch in the background** (`Bash`, `run_in_background: true`), passing the spec as the
+   subprocess prompt and capturing the final report to its own file, so orchestration continues
+   and a notification arrives on exit. This holds for Agy too: its prompt is a `--print=`
+   argument, not stdin, so harness-supervised backgrounding is safe (2026-08-28). Only a bare
+   `nohup agy … &` fails — it closes stdin and dies in ~10s (§3a). In Option A the human signs
+   Agy's Chrome in *before* the spawn, so there is no in-run wait to block on either.
 3. **Read the report file, not the raw transcript** — Codex's `--output-last-message` exists for
    this; Agy's response goes to stdout, so redirect it to a report file. The full JSONL can
    overflow context.
