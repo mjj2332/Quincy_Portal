@@ -9,6 +9,7 @@ export { buildProjectActivityStatements, type ProjectActivityStatementBundle } f
 export { emitExternalSafeLegacyNotification, emitExternalSubtaskNotification, type ExternalSafeLegacyInput, type ExternalSubtaskNotificationInput } from "./external-notifications";
 export { appendToStageBottomExpr, computeInsertPosition } from "./board-position";
 export { dashboardProjectOrder, orderDashboardStreetTies } from "./dashboard-order";
+export { rollbackBoardOrder0037PreEnable } from "./board-order-rollback-0037";
 export {
   EMAIL_ENABLED_EVENTS,
   READ_NOTIFICATION_RETENTION_MS,
