@@ -141,8 +141,10 @@ focused pass → Opus final-draft review (skip per §1 when the session is Opus 
 deploy and commit. QA (Agy, §2.8–§2.10) runs against the deployed change or local dev — it is not a
 gate on the build pipeline itself.
 
-Fix loops go back to the *same* agent with per-finding instructions — resume it rather than start
-cold, and never hand back a vague "address the review comments."
+Fix loops go back to the same *persona* — Luna for build fixes, a fresh Sol for a review re-run —
+in a **new `codex exec`** with a per-finding spec written to its own scratchpad file. Sharp
+specifics every round, never a vague "address the review comments." (`codex exec resume` is
+credit-recovery only — §6.)
 
 ### Routing table
 
@@ -235,6 +237,13 @@ injection broke its assertion math while the code under test was correct.
 
 ## 6. Known failure modes
 
+- **Codex credit exhaustion.** A `codex exec` run dies mid-task with `ERROR: Your workspace is out
+  of credits` — chronic on this workspace, and top-ups get consumed within a run or two, so
+  provision for the whole revise→review→build→diff-review cycle before starting one. The session
+  survives: top up or switch the Codex account, then **`codex exec resume <session-id>`** (id from
+  the dead run's log banner) continues it with full context — the switched account picks it up.
+  Resume is *only* for this; every new task, each fix round included, starts a fresh `codex exec`.
+  Invocation: [subagents/codex-cli.md](subagents/codex-cli.md).
 - **Codex + MCP write actions.** `codex exec` runs with `approval: never`, and some MCP write tools
   need a per-call approval it cannot grant non-interactively — while read-only calls to the same
   server succeed in the same run. Don't tune the invocation; fall back to an authenticated CLI

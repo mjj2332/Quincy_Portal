@@ -59,6 +59,32 @@ them into the pipe rather than interpolating any of them into a quoted argument:
 - There is **no `--no-terminal` flag** on `codex exec`; that belongs to `acpx`'s Claude-session
   wrapper.
 
+## Resuming a session
+
+`codex exec resume <session-id>` continues an existing session with its full accumulated
+context. **Use it for one job: recovering a run that died on `ERROR: Your workspace is out of
+credits`.** Top up or switch the Codex account, then resume — the switched account picks the
+session up mid-task (cross-account resume verified live 2026-08-28), so a review that died at
+300k tokens continues from 300k, not from zero.
+
+Every other task starts a **fresh `codex exec`** with its own spec: a new build, a new plan, a
+fresh diff-review pass, and **each round of a fix loop** — so each run's context stays clean and
+scoped to that task.
+
+The session id is the `session id: <uuid>` line in the run-log `--------` banner. Capture it
+from any run that might hit the credit wall.
+
+```bash
+cat "$SCRATCH/wp-x-fix.md" | codex exec resume <session-id> \
+  -m gpt-5.6-luna -c model_reasoning_effort=xhigh -c 'sandbox_mode="workspace-write"' \
+  --output-last-message "$SCRATCH/wp-x-fix-report.md" - > "$SCRATCH/wp-x-fix-run.log" 2>&1
+```
+
+`resume` takes the session id positionally, has **no `--sandbox` flag** (pass
+`-c 'sandbox_mode="workspace-write"'` or `="read-only"`), and reads the follow-up prompt from
+stdin with a trailing `-`. (`codex resume` without `exec` is the interactive TUI picker — a
+different command.)
+
 ## Failure mode: MCP write actions
 
 `codex exec` runs with `approval: never`. Some MCP **write** tools require a per-call approval
