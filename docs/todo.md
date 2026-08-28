@@ -7,7 +7,7 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
 > counts, full diagnostic transcripts) has been cut in favor of what/when/deploy-state. See
 > `docs/lessons.md` for incident mechanics, and `docs/reviews/` for full QA-sweep detail.
 
-## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29, seed-admin UUID migration 2026-07-29, notification dismiss + stalled-guard 2026-07-30, download selection 2026-08-04, notice-board rich text + mentions 2026-08-17, project comments + collaboration panel 2026-08-17, project subtasks/checklist 2026-08-17, collaboration panel relocated to Project page 2026-08-17, collaboration panel UI fixes + due-time reminder 2026-08-17, notification click navigation 2026-08-17, comment ordering + Shift+Enter soft breaks 2026-08-17, mention-email content 2026-08-20, TB0 authority promotion 2026-08-24, TB0A React 19.2 deployed + accepted 2026-08-25, TB0B pipeline configuration boundary deployed 2026-08-24, TB1 Tailwind v4/shadcn foundation deployed 2026-08-25, TB2 route-safe project data freshness deployed 2026-08-25, TB3 project discussion v2 deployed 2026-08-25, TB4 notification outbox deployed 2026-08-26, confirmation modal + admin user impersonation deployed 2026-08-26, TB4A project workspace assignment rail deployed 2026-08-27, TB4B project deadline and reminders deployed 2026-08-27, TB4C editor-wide project-change notifications deployed 2026-08-27, TB4D checklist scheduling & ranges deployed 2026-08-28, TB4E external editor assigned-scope access deployed 2026-08-28)
+## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29, seed-admin UUID migration 2026-07-29, notification dismiss + stalled-guard 2026-07-30, download selection 2026-08-04, notice-board rich text + mentions 2026-08-17, project comments + collaboration panel 2026-08-17, project subtasks/checklist 2026-08-17, collaboration panel relocated to Project page 2026-08-17, collaboration panel UI fixes + due-time reminder 2026-08-17, notification click navigation 2026-08-17, comment ordering + Shift+Enter soft breaks 2026-08-17, mention-email content 2026-08-20, TB0 authority promotion 2026-08-24, TB0A React 19.2 deployed + accepted 2026-08-25, TB0B pipeline configuration boundary deployed 2026-08-24, TB1 Tailwind v4/shadcn foundation deployed 2026-08-25, TB2 route-safe project data freshness deployed 2026-08-25, TB3 project discussion v2 deployed 2026-08-25, TB4 notification outbox deployed 2026-08-26, confirmation modal + admin user impersonation deployed 2026-08-26, TB4A project workspace assignment rail deployed 2026-08-27, TB4B project deadline and reminders deployed 2026-08-27, TB4C editor-wide project-change notifications deployed 2026-08-27, TB4D checklist scheduling & ranges deployed 2026-08-28, TB4E external editor assigned-scope access deployed 2026-08-28, TB4E QA + cache-purge secrets done / phase fully closed 2026-08-28)
 
 - **TB4E (External Editor Assigned-Scope Access — a global `external_editor` role that does normal
   editing work only on explicitly assigned projects, sees external-safe data, discovers no
@@ -42,10 +42,12 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
   epoch, 120s TTL); an enforced route security manifest (integration probes hit every withheld +
   external-surface route with a real external session); winner-gated role-transition (atomic
   incompatible-membership `NOT EXISTS` + `DELETE FROM session`).
-  Follow-up before the first External Editor is provisioned: set the background-Worker-only
-  secrets `CLOUDFLARE_ZONE_ID` + `CLOUDFLARE_CACHE_PURGE_TOKEN`, or a later `external_editor` role
-  transition fails the cache purge → 30-min provisioning freeze. Step-by-step:
-  `docs/Cloudflare-Cache-Purge-Setup.md`.
+  Pre-provisioning follow-up **DONE 2026-08-28**: the background-Worker-only secrets
+  `CLOUDFLARE_ZONE_ID` (`7e11e946205d0674ed3c7557019d440b`) + `CLOUDFLARE_CACHE_PURGE_TOKEN`
+  (Zone·Cache Purge·Purge, scoped to `flamingfire.my`) are set on `quincy-portal-background` prod.
+  First token was rolled after exposure. Setup guide: `docs/Cloudflare-Cache-Purge-Setup.md`.
+  **TB4E is now fully closed** — provisioning the first `external_editor` account is a standalone
+  Admin decision, nothing dev-side blocks it.
   Pipeline: Sol draft → fresh-Sol review ×2 (7B+3S then 4B) → Opus plan-tier revert 1/2 (3 Blocking:
   transform-bearer replay; upload proxy transport; unsatisfiable manifest) → fresh-Sol revision
   (bearer state machine ~84→19 lines; migration 0036 6→3 columns; transport → `env.MEDIA` R2
