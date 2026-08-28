@@ -2,7 +2,7 @@ import { Hono, type Context } from "hono";
 import { terminalRoute } from "../lib/terminal-route";
 import { createDb, dashboardProjectOrder, orderDashboardStreetTies, schema } from "@quincy/db";
 import { and, asc, desc, eq, isNotNull, isNull, notExists, sql } from "drizzle-orm";
-import { enqueueRenditionSafely, parseTonomoOrder, publishNotificationOutbox, renditionsEnabled, ROLE_CAPABILITIES } from "@quincy/shared";
+import { enqueueRenditionSafely, parseTonomoOrder, publishNotificationOutbox, renditionsEnabled, roleHasCapability } from "@quincy/shared";
 import { z } from "zod";
 import type { AppEnv } from "../env";
 import { audit, auditMeta } from "../lib/audit";
@@ -23,7 +23,7 @@ const eventsQuery = z.object({ source: optionalQuery(z.literal("tonomo")), statu
 const idCheck = (value: string) => z.string().uuid().safeParse(value).success;
 
 function adminAllowed(c: Context<AppEnv>) {
-  return ROLE_CAPABILITIES[c.get("user").role].includes("adminBackend");
+  return roleHasCapability(c.get("user").role, "adminBackend");
 }
 
 function summary(payloadJson: string) {

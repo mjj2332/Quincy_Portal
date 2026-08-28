@@ -24,6 +24,10 @@ describe("PRD §4 capability matrix", () => {
     }
   });
 
+  it("fails closed for an unknown persisted global role", () => {
+    expect(roleHasCapability("client" as never, "collaborateOnProject")).toBe(false);
+  });
+
   it("keeps photographers strictly RAW-only", () => {
     expect(ROLE_CAPABILITIES.photographer).toEqual([
       "uploadRaw",

@@ -128,5 +128,5 @@ export const ROLE_CAPABILITIES: Record<Role, readonly Capability[]> = {
 };
 
 export function roleHasCapability(role: Role, capability: Capability): boolean {
-  return ROLE_CAPABILITIES[role].includes(capability);
+  return (ROLE_CAPABILITIES[role] ?? []).includes(capability);
 }

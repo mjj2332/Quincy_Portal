@@ -3,7 +3,7 @@ import { terminalRoute } from "../lib/terminal-route";
 import type { Context } from "hono";
 import { appendToStageBottomExpr, buildProjectActivityStatements, computeInsertPosition, createDb, dashboardProjectOrder, orderDashboardStreetTies, schema } from "@quincy/db";
 import { and, asc, desc, eq, exists, gt, inArray, isNotNull, isNull, lte, notExists, sql } from "drizzle-orm";
-import { COLLECTION_KINDS, DOWNLOAD_SELECTION_MAX_ASSETS, DOWNLOAD_SELECTION_MAX_BYTES, isStageKey, PHOTOGRAPHER_VISIBLE_STAGES, PROJECT_ASSIGNMENT_ELIGIBLE_ROLES, ROLE_CAPABILITIES, projectActivityDeepLink, publishNotificationOutbox, roleHasCapability, type CollectionKind, type ProjectActivityIntent, type ProjectMemberRole, type ProjectMembershipDto, type Role } from "@quincy/shared";
+import { COLLECTION_KINDS, DOWNLOAD_SELECTION_MAX_ASSETS, DOWNLOAD_SELECTION_MAX_BYTES, isStageKey, PHOTOGRAPHER_VISIBLE_STAGES, PROJECT_ASSIGNMENT_ELIGIBLE_ROLES, projectActivityDeepLink, publishNotificationOutbox, roleHasCapability, type CollectionKind, type ProjectActivityIntent, type ProjectMemberRole, type ProjectMembershipDto, type Role } from "@quincy/shared";
 import { z } from "zod";
 import type { AppEnv } from "../env";
 import { hasProjectAccess, hasProjectAccessForUser, requireCapability } from "../middleware/capability";
@@ -380,7 +380,7 @@ export const projectsRoutes = new Hono<AppEnv>();
 projectsRoutes.get("/projects", terminalRoute("/projects", async (c) => {
   const db = createDb(c.env.DB); const user = c.get("user");
   if (user.role === "external_editor") return c.json(await listExternalProjects(c.env, user.id, user.role));
-  const archived = c.req.query("archived") === "1" && ROLE_CAPABILITIES[user.role].includes("adminBackend");
+  const archived = c.req.query("archived") === "1" && roleHasCapability(user.role, "adminBackend");
   const archivedFilter = archived ? isNotNull(schema.projects.archivedAt) : isNull(schema.projects.archivedAt);
   const base = db.select({ project: schema.projects, receivedCount: schema.collections.receivedCount, expectedCount: schema.collections.expectedCount }).from(schema.projects).leftJoin(schema.collections, and(eq(schema.collections.projectId, schema.projects.id), eq(schema.collections.kind, "raw")));
   const rows = user.role === "photographer"
@@ -415,7 +415,7 @@ projectsRoutes.post("/projects", requireCapability("createProject"), terminalRou
 projectsRoutes.post("/projects/:id/priority", terminalRoute("/projects/:id/priority", async (c) => {
   const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
   if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
-  if (!ROLE_CAPABILITIES[c.get("user").role].includes("prioritizeProjects")) return c.json({ error: "Forbidden", capability: "prioritizeProjects" }, 403);
+  if (!roleHasCapability(c.get("user").role, "prioritizeProjects")) return c.json({ error: "Forbidden", capability: "prioritizeProjects" }, 403);
   const data = await jsonInput(c, priorityInput); if (data instanceof Response) return data;
   const db = createDb(c.env.DB);
   const target = await db.select({ id: schema.projects.id, stageKey: schema.projects.stageKey, priority: schema.projects.priority, boardPosition: schema.projects.boardPosition })
@@ -457,7 +457,7 @@ projectsRoutes.post("/projects/:id/priority", terminalRoute("/projects/:id/prior
 projectsRoutes.post("/projects/:id/board-position", terminalRoute("/projects/:id/board-position", async (c) => {
   const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
   if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
-  if (!ROLE_CAPABILITIES[c.get("user").role].includes("prioritizeProjects")) return c.json({ error: "Forbidden", capability: "prioritizeProjects" }, 403);
+  if (!roleHasCapability(c.get("user").role, "prioritizeProjects")) return c.json({ error: "Forbidden", capability: "prioritizeProjects" }, 403);
   const data = await jsonInput(c, boardPositionInput); if (data instanceof Response) return data;
   const db = createDb(c.env.DB);
   const rows = await db.select({ id: schema.projects.id, stageKey: schema.projects.stageKey, priority: schema.projects.priority, boardPosition: schema.projects.boardPosition })
@@ -486,7 +486,7 @@ projectsRoutes.post("/projects/:id/board-position", terminalRoute("/projects/:id
 projectsRoutes.patch("/projects/:id", terminalRoute("/projects/:id", async (c) => {
   const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
   if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
-  if (!ROLE_CAPABILITIES[c.get("user").role].includes("editProject")) return c.json({ error: "Forbidden", capability: "editProject" }, 403);
+  if (!roleHasCapability(c.get("user").role, "editProject")) return c.json({ error: "Forbidden", capability: "editProject" }, 403);
   const data = await jsonInput(c, editFields); if (data instanceof Response) return data;
   const db = createDb(c.env.DB);
   const existingProject = await db.select().from(schema.projects).where(eq(schema.projects.id, id)).get();
@@ -622,7 +622,7 @@ projectMembershipRoute("editor", "delete");
 projectsRoutes.post("/projects/:id/cover", terminalRoute("/projects/:id/cover", async (c) => {
   const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
   if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
-  if (!ROLE_CAPABILITIES[c.get("user").role].includes("editProject")) return c.json({ error: "Forbidden", capability: "editProject" }, 403);
+  if (!roleHasCapability(c.get("user").role, "editProject")) return c.json({ error: "Forbidden", capability: "editProject" }, 403);
   const data = await jsonInput(c, coverInput); if (data instanceof Response) return data;
   const db = createDb(c.env.DB);
   // hasProjectAccess passes for any id under viewAllProjects — without this check an admin
@@ -641,7 +641,7 @@ projectsRoutes.post("/projects/:id/cover", terminalRoute("/projects/:id/cover", 
 projectsRoutes.post("/projects/:id/dropbox-sync", terminalRoute("/projects/:id/dropbox-sync", async (c) => {
   const id = c.req.param("id");
   const user = c.get("user");
-  if (!ROLE_CAPABILITIES[user.role].includes("uploadRaw")) return c.json({ error: "Forbidden", capability: "uploadRaw" }, 403);
+  if (!roleHasCapability(user.role, "uploadRaw")) return c.json({ error: "Forbidden", capability: "uploadRaw" }, 403);
   if (!(await hasProjectAccess(c, id))) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   const project = await createDb(c.env.DB).select({ rawFolderPath: schema.projects.rawFolderPath, rawFolderLink: schema.projects.rawFolderLink }).from(schema.projects).where(eq(schema.projects.id, id)).get();
   if (!project?.rawFolderPath && !project?.rawFolderLink) return c.json({ error: "No Dropbox folder configured for this project" }, 400);
@@ -654,8 +654,8 @@ projectsRoutes.post("/projects/:id/sync-dropbox", terminalRoute("/projects/:id/s
   const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
   if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   const user = c.get("user");
-  const hasUploadRaw = ROLE_CAPABILITIES[user.role].includes("uploadRaw");
-  const isAdmin = ROLE_CAPABILITIES[user.role].includes("adminBackend");
+  const hasUploadRaw = roleHasCapability(user.role, "uploadRaw");
+  const isAdmin = roleHasCapability(user.role, "adminBackend");
   if (!hasUploadRaw && !isAdmin) return c.json({ error: "Forbidden" }, 403);
   const db = createDb(c.env.DB);
   const project = await db.select({ rawFolderPath: schema.projects.rawFolderPath, rawFolderLink: schema.projects.rawFolderLink, archivedAt: schema.projects.archivedAt })
@@ -824,7 +824,7 @@ projectsRoutes.get("/projects/:id/selected-raw.zip", terminalRoute("/projects/:i
   const id = c.req.param("id");
   if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
   if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
-  if (!ROLE_CAPABILITIES[c.get("user").role].includes("selectForEditing")) return c.json({ error: "Forbidden", capability: "selectForEditing" }, 403);
+  if (!roleHasCapability(c.get("user").role, "selectForEditing")) return c.json({ error: "Forbidden", capability: "selectForEditing" }, 403);
   const db = createDb(c.env.DB);
   const selected = await db.select({ r2Key: schema.assets.r2Key, originalFilename: schema.assets.originalFilename, bytes: schema.assets.bytes })
     .from(schema.selections)
@@ -974,7 +974,7 @@ projectsRoutes.post("/jobs/:id/retry", requireCapability("adminBackend"), termin
 
 for (const [path, archived] of [["/projects/:id/archive", true], ["/projects/:id/restore", false]] as const) projectsRoutes.post(path, terminalRoute(path, async (c) => {
   const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
-  if (!ROLE_CAPABILITIES[c.get("user").role].includes("archiveProject")) return c.json({ error: "Forbidden", capability: "archiveProject" }, 403);
+  if (!roleHasCapability(c.get("user").role, "archiveProject")) return c.json({ error: "Forbidden", capability: "archiveProject" }, 403);
   const db = createDb(c.env.DB); const now = new Date();
   if (archived) {
     // Ownership survives archive: retire the mapping and tombstone both permanent candidate
@@ -1070,7 +1070,7 @@ projectsRoutes.delete("/projects/:id", terminalRoute("/projects/:id", async (c) 
   if (!project) return c.json({ error: "Project not found" }, 404);
   // Inline capability check like every other route — invoking the middleware factory manually
   // with a body-closure `next` discards the closure's c.json() return and falls through to 404.
-  if (!ROLE_CAPABILITIES[c.get("user").role].includes("adminBackend")) return c.json({ error: "Forbidden", capability: "adminBackend" }, 403);
+  if (!roleHasCapability(c.get("user").role, "adminBackend")) return c.json({ error: "Forbidden", capability: "adminBackend" }, 403);
   if (!project.archivedAt) return c.json({ error: "Archive the project before deleting it." }, 409);
   const activeJobs = (await db.select({ count: sql<number>`count(*)` }).from(schema.jobs).where(and(eq(schema.jobs.projectId, id), inArray(schema.jobs.status, ["queued", "running"]))).get())?.count ?? 0;
   if (activeJobs) return c.json({ error: "Background work is still running for this project — wait for it to finish and try again.", activeJobs }, 409);
@@ -1115,9 +1115,9 @@ projectsRoutes.post("/projects/:id/stage", terminalRoute("/projects/:id/stage", 
   const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
   if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   {
-    if (!ROLE_CAPABILITIES[c.get("user").role].includes("selectForEditing")) return c.json({ error: "Forbidden", capability: "selectForEditing" }, 403);
+    if (!roleHasCapability(c.get("user").role, "selectForEditing")) return c.json({ error: "Forbidden", capability: "selectForEditing" }, 403);
     const data = await jsonInput(c, z.object({ stageKey: z.string() })); if (data instanceof Response) return data;
-    if (data.stageKey === "editing_autohdr" && !ROLE_CAPABILITIES[c.get("user").role].includes("adminBackend")) return c.json({ error: "Forbidden" }, 403);
+    if (data.stageKey === "editing_autohdr" && !roleHasCapability(c.get("user").role, "adminBackend")) return c.json({ error: "Forbidden" }, 403);
     if (!isStageKey(data.stageKey)) return c.json({ error: "Unknown stage" }, 400);
     const db = createDb(c.env.DB); const project = await db.select().from(schema.projects).where(eq(schema.projects.id, id)).get(); if (!project) return c.json({ error: "Project not found" }, 404);
     await ensurePipelineStages(db);

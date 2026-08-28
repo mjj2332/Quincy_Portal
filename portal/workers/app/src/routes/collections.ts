@@ -3,7 +3,7 @@ import { terminalRoute } from "../lib/terminal-route";
 import type { Context } from "hono";
 import { buildProjectActivityStatements, COLLECTION_RECEIVED_COUNT_SQL, collectionReceivedCountBindings, computeInsertPosition, createDb, schema } from "@quincy/db";
 import { and, asc, desc, eq, ne, sql } from "drizzle-orm";
-import { externalCollectionLinkListResponseSchema, externalCollectionLinkSchema, projectActivityDeepLink, publishNotificationOutbox, ROLE_CAPABILITIES, type CollectionKind, type ProjectActivityIntent } from "@quincy/shared";
+import { externalCollectionLinkListResponseSchema, externalCollectionLinkSchema, projectActivityDeepLink, publishNotificationOutbox, roleHasCapability, type CollectionKind, type ProjectActivityIntent } from "@quincy/shared";
 import { z } from "zod";
 import type { AppEnv } from "../env";
 import { hasProjectAccess } from "../middleware/capability";
@@ -39,7 +39,7 @@ type DocumentUpload = typeof schema.documentUploads.$inferSelect;
 
 function canManageCollection(c: Context<AppEnv>) {
   const role = c.get("user").role;
-  return ROLE_CAPABILITIES[role].includes("editProject") || ROLE_CAPABILITIES[role].includes("manageExtras");
+  return roleHasCapability(role, "editProject") || roleHasCapability(role, "manageExtras");
 }
 function forbidden(c: Context<AppEnv>) { return c.json({ error: "Forbidden", capability: "manageExtras" }, 403); }
 function documentCollection(kind: "copy_pdf" | "floorplan"): "copy" | "floorplan" { return kind === "floorplan" ? "floorplan" : "copy"; }
@@ -164,7 +164,7 @@ collectionsRoutes.get("/projects/:id/links", terminalRoute("/projects/:id/links"
     return c.json(externalCollectionLinkListResponseSchema.parse({ links: rows.map((row) => externalCollectionLinkSchema.parse({ ...row, createdAt: row.createdAt.toISOString() })) }));
   }
   if (!await hasProjectAccess(c, projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
-  if (!ROLE_CAPABILITIES[c.get("user").role].includes("viewEdited")) return c.json({ error: "Forbidden", capability: "viewEdited" }, 403);
+  if (!roleHasCapability(c.get("user").role, "viewEdited")) return c.json({ error: "Forbidden", capability: "viewEdited" }, 403);
   const rows = await createDb(c.env.DB).select({ id: schema.collectionLinks.id, url: schema.collectionLinks.url, label: schema.collectionLinks.label, source: schema.collectionLinks.source, position: schema.collectionLinks.position, createdAt: schema.collectionLinks.createdAt })
     .from(schema.collectionLinks).innerJoin(schema.collections, eq(schema.collectionLinks.collectionId, schema.collections.id))
     .where(and(eq(schema.collections.projectId, projectId), eq(schema.collections.kind, collectionKind as CollectionKind))).orderBy(asc(schema.collectionLinks.position), asc(schema.collectionLinks.id)).all();

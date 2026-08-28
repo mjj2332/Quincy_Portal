@@ -2,14 +2,14 @@ import { Hono } from "hono";
 import { terminalRoute } from "../lib/terminal-route";
 import { createDb, schema } from "@quincy/db";
 import { asc } from "drizzle-orm";
-import { DEFAULT_STAGES, ROLE_CAPABILITIES } from "@quincy/shared";
+import { DEFAULT_STAGES, roleHasCapability } from "@quincy/shared";
 import type { AppEnv } from "../env";
 
 const AUTOHDR_STAGE_KEY = "editing_autohdr";
 const PRESENTATION_EDITING_STAGE = { key: "editing", label: "Editing", displayOrder: 3, active: true };
 
 function isAdminBackend(role: AppEnv["Variables"]["user"]["role"]) {
-  return ROLE_CAPABILITIES[role].includes("adminBackend");
+  return roleHasCapability(role, "adminBackend");
 }
 
 /** Keep reads resilient when a seed was only partly applied. */
