@@ -12,11 +12,12 @@ import { CreateProject } from "./screens/CreateProject";
 import { EditProject } from "./screens/EditProject";
 import { NotificationPreferences } from "./screens/NotificationPreferences";
 import { ImpersonationBanner } from "./components/ImpersonationBanner";
+import { PrincipalFreshnessBoundary } from "./components/PrincipalFreshnessBoundary";
 import { StagesProvider } from "./lib/stages";
 import { QuincyQueryProvider } from "./lib/query-client";
 import type { Role } from "@quincy/shared";
 
-type SessionUser = { id: string; name?: string | null; email?: string | null; role: Role };
+type SessionUser = { id: string; name?: string | null; email?: string | null; role: Role; authorizationEpoch: number };
 type Notice = { path: string; message: string } | null;
 
 function viewFor(route: StaffRoute): AppView {
@@ -90,7 +91,7 @@ function Shell({ user, impersonating }: { user: SessionUser; impersonating: bool
     <div className={impersonating ? "app app--impersonating" : "app"}>
       <Topbar activeView={activeView} canAccessAdmin={canAccessAdmin} user={user} />
       {blocked && <main className="page"><div className="empty" role="status"><span className="serif">Returning to dashboard.</span></div></main>}
-      {!blocked && route.kind === "dashboard" && <Dashboard currentUserId={user.id} />}
+      {!blocked && route.kind === "dashboard" && <Dashboard currentUserId={user.id} role={user.role} authorizationEpoch={user.authorizationEpoch} />}
       {!blocked && route.kind === "project" && <ProjectWorkspace key={route.projectId} projectId={route.projectId} notice={notice?.path === pathname ? notice.message : null} onNoticeShown={() => setNotice(null)} collaborationOpenSignal={collaborationIntent?.projectId === route.projectId ? collaborationIntent.signal : undefined} onCollaborationOpenSignalConsumed={(signal) => acknowledgeCollaborationSignal(route.projectId, signal)} />}
       {!blocked && route.kind === "create-project" && <CreateProject onNavigate={navigate} />}
       {!blocked && route.kind === "edit-project" && <EditProject key={route.projectId} projectId={route.projectId} onNavigate={navigate} />}
@@ -106,12 +107,13 @@ export default function App() {
   const pathname = typeof window === "undefined" ? "/" : `${window.location.pathname}${window.location.search}`;
   if (session.isPending) return <div className="boot">Loading the studio…</div>;
   if (!session.data) return <SignIn pathname={pathname} />;
-  const user = session.data.user as unknown as SessionUser;
+  const sessionUser = session.data.user as unknown as Partial<SessionUser>;
+  const user = { ...sessionUser, id: sessionUser.id!, role: sessionUser.role!, authorizationEpoch: sessionUser.authorizationEpoch ?? 0 } as SessionUser;
   const sessionValue = session.data.session as unknown as { impersonatedBy?: string | null } | undefined;
   const impersonatedBy = sessionValue?.impersonatedBy ?? null;
-  const banner = impersonatedBy ? <ImpersonationBanner user={{ name: user.name || user.email || "Quincy user", role: user.role }} invalidated={user.role !== "photographer" && user.role !== "editor"} /> : null;
-  if (impersonatedBy && user.role !== "photographer" && user.role !== "editor") {
+  const banner = impersonatedBy ? <ImpersonationBanner user={{ name: user.name || user.email || "Quincy user", role: user.role }} invalidated={user.role === "admin"} /> : null;
+  if (impersonatedBy && user.role === "admin") {
     return <>{banner}<main className="impersonation-invalidated" role="alert">This impersonated session is no longer valid — exit to restore your Admin session.</main></>;
   }
-  return <>{banner}<QuincyQueryProvider key={`${user.id}:${user.role}`} principalId={user.id} role={user.role}><StagesProvider><Shell user={user} impersonating={Boolean(impersonatedBy)} /></StagesProvider></QuincyQueryProvider></>;
+  return <>{banner}<QuincyQueryProvider key={`${user.id}:${user.role}:${user.authorizationEpoch}`} principalId={user.id} role={user.role}><PrincipalFreshnessBoundary principalId={user.id} role={user.role} authorizationEpoch={user.authorizationEpoch}><StagesProvider><Shell user={user} impersonating={Boolean(impersonatedBy)} /></StagesProvider></PrincipalFreshnessBoundary></QuincyQueryProvider></>;
 }

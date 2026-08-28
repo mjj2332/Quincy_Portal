@@ -24,10 +24,11 @@ export const user = sqliteTable("user", {
   emailVerified: integer("email_verified", { mode: "boolean" }).notNull().default(false),
   image: text("image"),
   // Quincy profile fields
-  role: text("role", { enum: ["admin", "photographer", "editor"] })
+  role: text("role", { enum: ["admin", "photographer", "editor", "external_editor"] })
     .notNull()
     .default("photographer"),
   active: integer("active", { mode: "boolean" }).notNull().default(true),
+  authorizationEpoch: integer("authorization_epoch").notNull().default(0),
   banned: integer("banned", { mode: "boolean" }).notNull().default(false),
   banReason: text("ban_reason"),
   banExpires: integer("ban_expires", { mode: "timestamp_ms" }),
@@ -172,6 +173,7 @@ export const projects = sqliteTable(
     invoiceAmount: real("invoice_amount"),
     paymentStatus: text("payment_status"),
     notes: text("notes"),
+    productionNotes: text("production_notes"),
     rawFolderLink: text("raw_folder_link"),
     rawFolderPath: text("raw_folder_path"),
     coverAssetId: text("cover_asset_id"),
@@ -898,7 +900,7 @@ export const annotations = sqliteTable(
     authorId: text("author_id")
       .notNull()
       .references(() => user.id),
-    authorRole: text("author_role", { enum: ["admin", "photographer", "editor"] }).notNull(),
+    authorRole: text("author_role", { enum: ["admin", "photographer", "editor", "external_editor"] }).notNull(),
     scope: text("scope", { enum: ["raw", "edited"] }).notNull(),
     /** Dense freehand vector JSON lives in R2 (D1 2 MB row cap) — ref only. */
     strokeR2Key: text("stroke_r2_key"),
@@ -1110,6 +1112,9 @@ export const notificationOutbox = sqliteTable(
     coalesceKey: text("coalesce_key"),
     coalesceUntil: integer("coalesce_until"),
     recipientMembershipCycleId: text("recipient_membership_cycle_id"),
+    // Nullable so pre-TB4E outbox rows fail closed until a producer stamps the
+    // recipient's authorization epoch.
+    recipientAuthorizationEpoch: integer("recipient_authorization_epoch"),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
@@ -1157,5 +1162,70 @@ export const notificationDeliveryLedger = sqliteTable(
     check("notification_delivery_ledger_channel_check", sql`${t.channel} IN ('in_app', 'email')`),
     check("notification_delivery_ledger_status_check", sql`${t.status} IN ('pending', 'processing', 'sent', 'suppressed', 'failed', 'unknown', 'discarded')`),
     check("notification_delivery_ledger_attempts_check", sql`${t.attempts} >= 0`),
+  ],
+);
+
+/** Opaque same-origin multipart sessions for External Editor edited uploads. */
+export const externalEditedUploadSessions = sqliteTable(
+  "external_edited_upload_sessions",
+  {
+    id: id(),
+    tokenHash: text("token_hash").notNull(),
+    projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+    collectionId: text("collection_id").notNull().references(() => collections.id, { onDelete: "cascade" }),
+    assetId: text("asset_id").notNull(),
+    createdBy: text("created_by").notNull().references(() => user.id),
+    membershipCycleId: text("membership_cycle_id").notNull(),
+    authorizationEpoch: integer("authorization_epoch").notNull(),
+    originalFilename: text("original_filename").notNull(),
+    bytes: integer("bytes").notNull(),
+    r2Key: text("r2_key").notNull(),
+    r2UploadId: text("r2_upload_id").notNull(),
+    partBytes: integer("part_bytes").notNull(),
+    partCount: integer("part_count").notNull(),
+    status: text("status", { enum: ["open", "completing", "completed", "aborting", "aborted", "expired"] as const }).notNull().default("open"),
+    completionLeaseToken: text("completion_lease_token"),
+    completionLeaseExpiresAt: integer("completion_lease_expires_at"),
+    expiresAt: integer("expires_at").notNull(),
+    completedAt: integer("completed_at"),
+    terminalAt: integer("terminal_at"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("external_edited_upload_sessions_token_hash_idx").on(t.tokenHash),
+    index("external_edited_upload_sessions_principal_status_idx").on(t.createdBy, t.status, t.expiresAt),
+    index("external_edited_upload_sessions_sweep_idx").on(t.status, t.expiresAt, t.completionLeaseExpiresAt, t.id),
+    check("external_edited_upload_sessions_bytes_check", sql`${t.bytes} > 0 AND ${t.bytes} <= 5368709120`),
+    check("external_edited_upload_sessions_part_bytes_check", sql`${t.partBytes} > 0`),
+    check("external_edited_upload_sessions_part_count_check", sql`${t.partCount} > 0`),
+    check("external_edited_upload_sessions_authorization_epoch_check", sql`${t.authorizationEpoch} >= 0`),
+    check("external_edited_upload_sessions_status_check", sql`${t.status} IN ('open','completing','completed','aborting','aborted','expired')`),
+    check("external_edited_upload_sessions_completion_lease_check", sql`(${t.status} = 'completing' AND ${t.completionLeaseToken} IS NOT NULL AND ${t.completionLeaseExpiresAt} IS NOT NULL) OR (${t.status} != 'completing' AND ${t.completionLeaseToken} IS NULL AND ${t.completionLeaseExpiresAt} IS NULL)`),
+    check("external_edited_upload_sessions_terminal_check", sql`(${t.status} = 'completed' AND ${t.completedAt} IS NOT NULL AND ${t.terminalAt} IS NOT NULL) OR (${t.status} IN ('aborted','expired') AND ${t.completedAt} IS NULL AND ${t.terminalAt} IS NOT NULL) OR (${t.status} IN ('open','completing','aborting') AND ${t.completedAt} IS NULL AND ${t.terminalAt} IS NULL)`),
+  ],
+);
+
+export const externalEditedUploadParts = sqliteTable(
+  "external_edited_upload_parts",
+  {
+    sessionId: text("session_id").notNull().references(() => externalEditedUploadSessions.id, { onDelete: "cascade" }),
+    partNumber: integer("part_number").notNull(),
+    expectedBytes: integer("expected_bytes").notNull(),
+    receivedBytes: integer("received_bytes"),
+    etag: text("etag"),
+    status: text("status", { enum: ["pending", "uploading", "uploaded"] as const }).notNull().default("pending"),
+    uploadLeaseToken: text("upload_lease_token"),
+    uploadLeaseExpiresAt: integer("upload_lease_expires_at"),
+    uploadedAt: integer("uploaded_at"),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.sessionId, t.partNumber] }),
+    check("external_edited_upload_parts_number_check", sql`${t.partNumber} > 0`),
+    check("external_edited_upload_parts_expected_bytes_check", sql`${t.expectedBytes} > 0`),
+    check("external_edited_upload_parts_lease_check", sql`(${t.status} = 'uploading' AND ${t.uploadLeaseToken} IS NOT NULL AND ${t.uploadLeaseExpiresAt} IS NOT NULL) OR (${t.status} != 'uploading' AND ${t.uploadLeaseToken} IS NULL AND ${t.uploadLeaseExpiresAt} IS NULL)`),
+    check("external_edited_upload_parts_uploaded_check", sql`(${t.status} = 'uploaded' AND ${t.receivedBytes} = ${t.expectedBytes} AND ${t.etag} IS NOT NULL AND ${t.uploadedAt} IS NOT NULL) OR (${t.status} != 'uploaded' AND ${t.etag} IS NULL AND ${t.uploadedAt} IS NULL)`),
+    check("external_edited_upload_parts_status_check", sql`${t.status} IN ('pending','uploading','uploaded')`),
   ],
 );

@@ -1,4 +1,5 @@
 import { Hono, type Context } from "hono";
+import { terminalRoute } from "../lib/terminal-route";
 import { createDb, dashboardProjectOrder, orderDashboardStreetTies, schema } from "@quincy/db";
 import { and, asc, desc, eq, isNotNull, isNull, notExists, sql } from "drizzle-orm";
 import { enqueueRenditionSafely, parseTonomoOrder, publishNotificationOutbox, renditionsEnabled, ROLE_CAPABILITIES } from "@quincy/shared";
@@ -161,7 +162,7 @@ async function notificationDeliveryCounts(c: Parameters<typeof adminAllowed>[0],
   return Object.fromEntries(counts) as Record<typeof notificationDeliveryView['_type'], number>;
 }
 
-adminRoutes.get("/admin/notification-deliveries", async (c) => {
+adminRoutes.get("/admin/notification-deliveries", terminalRoute("/admin/notification-deliveries", async (c) => {
   if (!adminAllowed(c)) return c.json({ error: "Forbidden", capability: "adminBackend" }, 403);
   const parsed = notificationDeliveryQuery.safeParse(c.req.query());
   if (!parsed.success) return c.json({ error: "Invalid query", details: parsed.error.flatten() }, 400);
@@ -196,9 +197,9 @@ adminRoutes.get("/admin/notification-deliveries", async (c) => {
     nextCursor: last && rows.results.length === parsed.data.limit ? encodeNotificationCursor({ updatedAt: last.updatedAt, outboxId: last.outboxId }) : null,
     counts: await notificationDeliveryCounts(c, now),
   });
-});
+}));
 
-adminRoutes.post("/admin/notification-deliveries/:outboxId/replay", async (c) => {
+adminRoutes.post("/admin/notification-deliveries/:outboxId/replay", terminalRoute("/admin/notification-deliveries/:outboxId/replay", async (c) => {
   if (!adminAllowed(c)) return c.json({ error: "Forbidden", capability: "adminBackend" }, 403);
   const outboxId = c.req.param("outboxId"); if (!idCheck(outboxId)) return c.json({ error: "Invalid outbox id" }, 400);
   const data = await jsonInput(c, notificationReplayInput); if (data instanceof Response) return data;
@@ -253,9 +254,9 @@ adminRoutes.post("/admin/notification-deliveries/:outboxId/replay", async (c) =>
   if ((results[0]?.meta.changes ?? 0) === 0 || (results[1]?.meta.changes ?? 0) === 0) return c.json({ error: "Notification delivery is no longer replayable", code: "delivery_changed" }, 409);
   c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, [outboxId]));
   return c.json({ item: await loadNotificationDeliveryRow(c, outboxId) });
-});
+}));
 
-adminRoutes.post("/admin/notification-deliveries/:outboxId/discard", async (c) => {
+adminRoutes.post("/admin/notification-deliveries/:outboxId/discard", terminalRoute("/admin/notification-deliveries/:outboxId/discard", async (c) => {
   if (!adminAllowed(c)) return c.json({ error: "Forbidden", capability: "adminBackend" }, 403);
   const outboxId = c.req.param("outboxId"); if (!idCheck(outboxId)) return c.json({ error: "Invalid outbox id" }, 400);
   const existing = await c.env.DB.prepare("SELECT id, status, lease_expires_at AS leaseExpiresAt, updated_at AS updatedAt FROM notification_outbox WHERE id = ?").bind(outboxId).first<{ id: string; status: string; leaseExpiresAt: number | null; updatedAt: number }>();
@@ -300,12 +301,12 @@ adminRoutes.post("/admin/notification-deliveries/:outboxId/discard", async (c) =
   }
   if ((results[0]?.meta.changes ?? 0) === 0 || (results[1]?.meta.changes ?? 0) === 0) return c.json({ error: "Notification delivery is no longer discardable", code: "delivery_changed" }, 409);
   return c.json({ item: await loadNotificationDeliveryRow(c, outboxId) });
-});
+}));
 
 // Temporary, idempotent operator route for the priority/reordering migration. The initial
 // ordering is deliberately computed with the same dashboard query and Unicode tie-break as the
 // live dashboard; only a stage move observed during the write window is repaired afterwards.
-adminRoutes.post("/admin/backfill-board-position", async (c) => {
+adminRoutes.post("/admin/backfill-board-position", terminalRoute("/admin/backfill-board-position", async (c) => {
   if (!adminAllowed(c)) return c.json({ error: "Forbidden", capability: "adminBackend" }, 403);
   const db = createDb(c.env.DB);
   const rows = await db.select({ project: schema.projects }).from(schema.projects)
@@ -341,11 +342,11 @@ adminRoutes.post("/admin/backfill-board-position", async (c) => {
   if (remaining.length) return c.json({ error: "Projects changed stage during backfill; rerun required", corrected, remaining }, 409);
   await audit(c.env, c.get("user"), "admin.board_position_backfill", "system", "board-position", { projectCount: rows.length, corrected });
   return c.json({ ok: true, projectCount: rows.length, corrected, verified: true });
-});
+}));
 
 // This is intentionally an operator endpoint, not an automatic deployment task. Each call
 // advances at most one cursor page; production also requires an explicit body confirmation.
-adminRoutes.post("/admin/renditions/backfill", async (c) => {
+adminRoutes.post("/admin/renditions/backfill", terminalRoute("/admin/renditions/backfill", async (c) => {
   if (!adminAllowed(c)) return c.json({ error: "Forbidden", capability: "adminBackend" }, 403);
   const input = await jsonInput(c, renditionBackfill); if (input instanceof Response) return input;
   try {
@@ -355,16 +356,16 @@ adminRoutes.post("/admin/renditions/backfill", async (c) => {
   } catch (error) {
     return c.json({ error: error instanceof Error ? error.message : "Rendition backfill failed" }, 409);
   }
-});
+}));
 
-adminRoutes.post("/admin/autohdr/backfill", async (c) => {
+adminRoutes.post("/admin/autohdr/backfill", terminalRoute("/admin/autohdr/backfill", async (c) => {
   if (!adminAllowed(c)) return c.json({ error: "Forbidden", capability: "adminBackend" }, 403);
   const input = await jsonInput(c, autohdrBackfillInput);
   if (input instanceof Response) return input;
   const result = await c.env.BACKGROUND.backfillAutoHdrV2(input);
   await audit(c.env, c.get("user"), "admin.autohdr_backfill", "system", "backfill", { result });
   return c.json(result);
-});
+}));
 
 // One-off operator tool for projects whose raw_folder_path predates the implicit-scaffolding
 // rollout: ensureAutoHdrScaffold() only fires on a WRITE to raw_folder_path (project create,
@@ -373,7 +374,7 @@ adminRoutes.post("/admin/autohdr/backfill", async (c) => {
 // since a future data path could plausibly hit the same gap. Bounded and re-runnable: a project
 // already actively scaffolded is naturally skipped by ensureAutoHdrScaffold()'s own idempotent
 // convergence, so calling this again is always safe.
-adminRoutes.post("/admin/autohdr/scaffold-backfill", async (c) => {
+adminRoutes.post("/admin/autohdr/scaffold-backfill", terminalRoute("/admin/autohdr/scaffold-backfill", async (c) => {
   if (!adminAllowed(c)) return c.json({ error: "Forbidden", capability: "adminBackend" }, 403);
   const input = await jsonInput(c, autohdrScaffoldBackfillInput);
   if (input instanceof Response) return input;
@@ -405,12 +406,12 @@ adminRoutes.post("/admin/autohdr/scaffold-backfill", async (c) => {
   }
   await audit(c.env, c.get("user"), "admin.autohdr_scaffold_backfill", "system", "scaffold-backfill", { triggeredCount: items.length, items });
   return c.json({ dryRun: false, triggeredCount: items.length, items });
-});
+}));
 
 // Messages the quincy-renditions consumer's DLQ actually received (see background queue()'s
 // RENDITION_DLQ_QUEUE_NAME branch). Each row is append-only: a replay that fails 3x again lands
 // as a fresh "open" row rather than mutating this one.
-adminRoutes.get("/admin/renditions-dlq", async (c) => {
+adminRoutes.get("/admin/renditions-dlq", terminalRoute("/admin/renditions-dlq", async (c) => {
   if (!adminAllowed(c)) return c.json({ error: "Forbidden", capability: "adminBackend" }, 403);
   const parsed = z.object({ status: optionalQuery(z.enum(["open", "replayed", "discarded"])), limit: optionalQuery(z.coerce.number().int().min(1).max(200)) }).safeParse(c.req.query());
   if (!parsed.success) return c.json({ error: "Invalid query", details: parsed.error.flatten() }, 400);
@@ -426,9 +427,9 @@ adminRoutes.get("/admin/renditions-dlq", async (c) => {
     db.select({ count: sql<number>`count(*)` }).from(schema.renditionDlqEvents).where(eq(schema.renditionDlqEvents.status, "open")).get(),
   ]);
   return c.json({ events, openCount: openCount?.count ?? 0 });
-});
+}));
 
-adminRoutes.post("/admin/renditions-dlq/:id/replay", async (c) => {
+adminRoutes.post("/admin/renditions-dlq/:id/replay", terminalRoute("/admin/renditions-dlq/:id/replay", async (c) => {
   if (!adminAllowed(c)) return c.json({ error: "Forbidden", capability: "adminBackend" }, 403);
   const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid rendition DLQ event id" }, 400);
   const db = createDb(c.env.DB);
@@ -468,9 +469,9 @@ adminRoutes.post("/admin/renditions-dlq/:id/replay", async (c) => {
   }
   await audit(c.env, c.get("user"), "rendition.dlq.replay", "rendition_dlq_event", id, { assetId: event.assetId });
   return c.json({ ok: true });
-});
+}));
 
-adminRoutes.post("/admin/renditions-dlq/:id/discard", async (c) => {
+adminRoutes.post("/admin/renditions-dlq/:id/discard", terminalRoute("/admin/renditions-dlq/:id/discard", async (c) => {
   if (!adminAllowed(c)) return c.json({ error: "Forbidden", capability: "adminBackend" }, 403);
   const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid rendition DLQ event id" }, 400);
   const db = createDb(c.env.DB);
@@ -479,26 +480,26 @@ adminRoutes.post("/admin/renditions-dlq/:id/discard", async (c) => {
   if (result.meta.changes === 0) return c.json({ error: "Rendition DLQ event is not open" }, 409);
   await audit(c.env, c.get("user"), "rendition.dlq.discard", "rendition_dlq_event", id);
   return c.json({ ok: true });
-});
+}));
 
-adminRoutes.get("/admin/agencies", async (c) => {
+adminRoutes.get("/admin/agencies", terminalRoute("/admin/agencies", async (c) => {
   if (!adminAllowed(c)) return c.json({ error: "Forbidden", capability: "adminBackend" }, 403);
   const db = createDb(c.env.DB);
   const agencies = await db.select({ id: schema.agencies.id, name: schema.agencies.name, notes: schema.agencies.notes, createdAt: schema.agencies.createdAt, updatedAt: schema.agencies.updatedAt, agentCount: sql<number>`count(${schema.agents.id})` })
     .from(schema.agencies).leftJoin(schema.agents, eq(schema.agents.agencyId, schema.agencies.id)).groupBy(schema.agencies.id).orderBy(asc(schema.agencies.name)).all();
   return c.json({ agencies });
-});
+}));
 
-adminRoutes.post("/admin/agencies", async (c) => {
+adminRoutes.post("/admin/agencies", terminalRoute("/admin/agencies", async (c) => {
   if (!adminAllowed(c)) return c.json({ error: "Forbidden", capability: "adminBackend" }, 403);
   const data = await jsonInput(c, agencyCreate); if (data instanceof Response) return data;
   const id = newId(); const now = new Date(); const db = createDb(c.env.DB);
   await db.insert(schema.agencies).values({ id, ...data, createdAt: now, updatedAt: now });
   await audit(c.env, c.get("user"), "agency.create", "agency", id, data);
   return c.json(await db.select().from(schema.agencies).where(eq(schema.agencies.id, id)).get(), 201);
-});
+}));
 
-adminRoutes.patch("/admin/agencies/:id", async (c) => {
+adminRoutes.patch("/admin/agencies/:id", terminalRoute("/admin/agencies/:id", async (c) => {
   if (!adminAllowed(c)) return c.json({ error: "Forbidden", capability: "adminBackend" }, 403);
   const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid agency id" }, 400);
   const data = await jsonInput(c, agencyPatch); if (data instanceof Response) return data;
@@ -506,17 +507,17 @@ adminRoutes.patch("/admin/agencies/:id", async (c) => {
   await db.update(schema.agencies).set({ ...data, updatedAt: new Date() }).where(eq(schema.agencies.id, id));
   await audit(c.env, c.get("user"), "agency.update", "agency", id, data);
   return c.json(await db.select().from(schema.agencies).where(eq(schema.agencies.id, id)).get());
-});
+}));
 
-adminRoutes.get("/admin/agents", async (c) => {
+adminRoutes.get("/admin/agents", terminalRoute("/admin/agents", async (c) => {
   if (!adminAllowed(c)) return c.json({ error: "Forbidden", capability: "adminBackend" }, 403);
   const parsed = z.object({ agencyId: optionalQuery(z.string().uuid()) }).safeParse(c.req.query());
   if (!parsed.success) return c.json({ error: "Invalid query", details: parsed.error.flatten() }, 400);
   const db = createDb(c.env.DB); const rows = db.select({ id: schema.agents.id, agencyId: schema.agents.agencyId, agencyName: schema.agencies.name, name: schema.agents.name, email: schema.agents.email, phone: schema.agents.phone, createdAt: schema.agents.createdAt, updatedAt: schema.agents.updatedAt }).from(schema.agents).leftJoin(schema.agencies, eq(schema.agents.agencyId, schema.agencies.id));
   return c.json({ agents: await (parsed.data.agencyId ? rows.where(eq(schema.agents.agencyId, parsed.data.agencyId)) : rows).orderBy(asc(schema.agents.name)).all() });
-});
+}));
 
-adminRoutes.post("/admin/agents", async (c) => {
+adminRoutes.post("/admin/agents", terminalRoute("/admin/agents", async (c) => {
   if (!adminAllowed(c)) return c.json({ error: "Forbidden", capability: "adminBackend" }, 403);
   const data = await jsonInput(c, agentFields); if (data instanceof Response) return data;
   const id = newId(); const now = new Date(); const db = createDb(c.env.DB);
@@ -524,9 +525,9 @@ adminRoutes.post("/admin/agents", async (c) => {
   await db.insert(schema.agents).values({ id, ...data, createdAt: now, updatedAt: now });
   await audit(c.env, c.get("user"), "agent.create", "agent", id, data);
   return c.json(await db.select().from(schema.agents).where(eq(schema.agents.id, id)).get(), 201);
-});
+}));
 
-adminRoutes.patch("/admin/agents/:id", async (c) => {
+adminRoutes.patch("/admin/agents/:id", terminalRoute("/admin/agents/:id", async (c) => {
   if (!adminAllowed(c)) return c.json({ error: "Forbidden", capability: "adminBackend" }, 403);
   const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid agent id" }, 400);
   const data = await jsonInput(c, agentPatch); if (data instanceof Response) return data;
@@ -535,14 +536,14 @@ adminRoutes.patch("/admin/agents/:id", async (c) => {
   await db.update(schema.agents).set({ ...data, updatedAt: new Date() }).where(eq(schema.agents.id, id));
   await audit(c.env, c.get("user"), "agent.update", "agent", id, data);
   return c.json(await db.select().from(schema.agents).where(eq(schema.agents.id, id)).get());
-});
+}));
 
-adminRoutes.get("/admin/stages", async (c) => {
+adminRoutes.get("/admin/stages", terminalRoute("/admin/stages", async (c) => {
   if (!adminAllowed(c)) return c.json({ error: "Forbidden", capability: "adminBackend" }, 403);
   return c.json({ stages: await listPipelineStages(createDb(c.env.DB)) });
-});
+}));
 
-adminRoutes.patch("/admin/stages/:key", async (c) => {
+adminRoutes.patch("/admin/stages/:key", terminalRoute("/admin/stages/:key", async (c) => {
   if (!adminAllowed(c)) return c.json({ error: "Forbidden", capability: "adminBackend" }, 403);
   const key = c.req.param("key"); const data = await jsonInput(c, stagePatch); if (data instanceof Response) return data;
   const db = createDb(c.env.DB); await ensurePipelineStages(db); const stage = await db.select().from(schema.pipelineStages).where(eq(schema.pipelineStages.key, key)).get();
@@ -555,9 +556,9 @@ adminRoutes.patch("/admin/stages/:key", async (c) => {
   await db.update(schema.pipelineStages).set(data).where(eq(schema.pipelineStages.key, key));
   await audit(c.env, c.get("user"), "pipeline_stage.update", "pipeline_stage", key, data);
   return c.json(await db.select().from(schema.pipelineStages).where(eq(schema.pipelineStages.key, key)).get());
-});
+}));
 
-adminRoutes.get("/admin/webhook-events", async (c) => {
+adminRoutes.get("/admin/webhook-events", terminalRoute("/admin/webhook-events", async (c) => {
   if (!adminAllowed(c)) return c.json({ error: "Forbidden", capability: "adminBackend" }, 403);
   const parsed = eventsQuery.safeParse(c.req.query()); if (!parsed.success) return c.json({ error: "Invalid query", details: parsed.error.flatten() }, 400);
   const query = parsed.data; const filters = [eq(schema.webhookEvents.source, query.source ?? "tonomo")]; if (query.status) filters.push(eq(schema.webhookEvents.status, query.status));
@@ -567,16 +568,16 @@ adminRoutes.get("/admin/webhook-events", async (c) => {
     db.select({ count: sql<number>`count(*)` }).from(schema.webhookEvents).where(where).get(),
   ]);
   return c.json({ events: events.map(({ payloadJson, ...event }) => ({ ...event, summary: summary(payloadJson) })), total: count?.count ?? 0 });
-});
+}));
 
-adminRoutes.get("/admin/webhook-events/:id", async (c) => {
+adminRoutes.get("/admin/webhook-events/:id", terminalRoute("/admin/webhook-events/:id", async (c) => {
   if (!adminAllowed(c)) return c.json({ error: "Forbidden", capability: "adminBackend" }, 403);
   const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid webhook event id" }, 400);
   const event = await createDb(c.env.DB).select().from(schema.webhookEvents).where(and(eq(schema.webhookEvents.id, id), eq(schema.webhookEvents.source, "tonomo"))).get();
   return event ? c.json({ event }) : c.json({ error: "Webhook event not found" }, 404);
-});
+}));
 
-adminRoutes.post("/admin/webhook-events/:id/retry", async (c) => {
+adminRoutes.post("/admin/webhook-events/:id/retry", terminalRoute("/admin/webhook-events/:id/retry", async (c) => {
   if (!adminAllowed(c)) return c.json({ error: "Forbidden", capability: "adminBackend" }, 403);
   const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid webhook event id" }, 400);
   const db = createDb(c.env.DB); const event = await db.select({ id: schema.webhookEvents.id }).from(schema.webhookEvents).where(and(eq(schema.webhookEvents.id, id), eq(schema.webhookEvents.source, "tonomo"))).get();
@@ -588,9 +589,9 @@ adminRoutes.post("/admin/webhook-events/:id/retry", async (c) => {
     console.error("Tonomo webhook handoff failed", error);
   }));
   return c.json({ ok: true });
-});
+}));
 
-adminRoutes.post("/admin/webhook-events/:id/discard", async (c) => {
+adminRoutes.post("/admin/webhook-events/:id/discard", terminalRoute("/admin/webhook-events/:id/discard", async (c) => {
   if (!adminAllowed(c)) return c.json({ error: "Forbidden", capability: "adminBackend" }, 403);
   const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid webhook event id" }, 400);
   const db = createDb(c.env.DB); const event = await db.select({ error: schema.webhookEvents.error }).from(schema.webhookEvents).where(and(eq(schema.webhookEvents.id, id), eq(schema.webhookEvents.source, "tonomo"))).get();
@@ -599,9 +600,9 @@ adminRoutes.post("/admin/webhook-events/:id/discard", async (c) => {
   if (result.meta.changes === 0) return c.json({ error: "Event is no longer poison" }, 409);
   await audit(c.env, c.get("user"), "tonomo_event.discard", "webhook_event", id, { error: event.error });
   return c.json({ ok: true });
-});
+}));
 
-adminRoutes.get("/admin/tonomo-health", async (c) => {
+adminRoutes.get("/admin/tonomo-health", terminalRoute("/admin/tonomo-health", async (c) => {
   if (!adminAllowed(c)) return c.json({ error: "Forbidden", capability: "adminBackend" }, 403);
   const db = createDb(c.env.DB); const [latest, rows] = await Promise.all([
     db.select({ receivedAt: schema.webhookEvents.receivedAt }).from(schema.webhookEvents).where(eq(schema.webhookEvents.source, "tonomo")).orderBy(desc(schema.webhookEvents.receivedAt)).limit(1).get(),
@@ -609,4 +610,4 @@ adminRoutes.get("/admin/tonomo-health", async (c) => {
   ]);
   const counts = { received: 0, processed: 0, poison: 0 }; for (const row of rows) counts[row.status] = row.count;
   return c.json({ tonomo: { lastEventAt: latest?.receivedAt ?? null, counts, poisonCount: counts.poison } });
-});
+}));

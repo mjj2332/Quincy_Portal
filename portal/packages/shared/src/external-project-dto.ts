@@ -1,0 +1,270 @@
+import { z } from "zod";
+import { EXTERNAL_EDITOR_CAPABILITIES, ROLE_LABELS } from "./capabilities";
+import { externalEditedCompleteResponseSchema, externalEditedUploadCreateResponseSchema } from "./external-upload";
+
+const iso = z.string().min(1);
+const uuid = z.string().uuid();
+
+export const externalPersonSchema = z.object({
+  id: uuid,
+  name: z.string(),
+  roleLabel: z.string(),
+  isExternal: z.boolean(),
+  active: z.boolean(),
+}).strict();
+export type ExternalPersonDto = z.infer<typeof externalPersonSchema>;
+
+export const externalParticipantSchema = externalPersonSchema.extend({
+  email: z.string().email(),
+  membershipCycleId: uuid,
+  roleOnProject: z.enum(["photographer", "editor"]),
+}).strict();
+export type ExternalParticipantDto = z.infer<typeof externalParticipantSchema>;
+
+const externalDeadlineEndpointSchema = z.object({
+  localCivil: z.string(),
+  zone: z.literal("Australia/Sydney"),
+  utcOffsetMinutes: z.number().int(),
+  fold: z.union([z.literal(0), z.literal(1)]),
+  instant: iso,
+}).strict();
+
+export const externalDeadlineSchema = z.object({
+  version: z.number().int().nonnegative(),
+  deadline: externalDeadlineEndpointSchema.nullable(),
+  reminderOffsetsMinutes: z.array(z.number().int()),
+  state: z.enum(["unset", "scheduled", "overdue", "inactive_delivered", "inactive_archived"]),
+  nextOccurrence: z.object({
+    kind: z.enum(["advance", "due_now"]),
+    offsetMinutes: z.number().int(),
+    firesAt: iso,
+  }).strict().nullable(),
+  canResume: z.boolean(),
+  skippedReminderOffsetsMinutes: z.array(z.number().int()).optional(),
+}).strict();
+export type ExternalDeadlineDto = z.infer<typeof externalDeadlineSchema>;
+
+const externalScheduleEndpointSchema = z.object({
+  kind: z.enum(["date", "timed"]),
+  localCivil: z.string(),
+  instant: iso.nullable(),
+  utcOffsetMinutes: z.number().int().nullable(),
+  fold: z.union([z.literal(0), z.literal(1)]).nullable(),
+  resolution: z.enum(["stored", "derived_unambiguous"]),
+}).strict();
+
+export const externalScheduleSchema = z.union([
+  z.object({
+    state: z.enum(["unscheduled", "due_only", "range"]),
+    version: z.number().int().nonnegative(),
+    zone: z.literal("Australia/Sydney"),
+    start: externalScheduleEndpointSchema.nullable(),
+    end: externalScheduleEndpointSchema.nullable(),
+    due: z.string().nullable(),
+  }).strict(),
+  z.object({
+    state: z.literal("legacy_unresolved"),
+    version: z.literal(0),
+    zone: z.literal("Australia/Sydney"),
+    start: z.null(),
+    end: z.null(),
+    due: z.string(),
+    error: z.object({
+      code: z.literal("subtask_schedule_legacy_unresolved"),
+      reason: z.enum(["invalid_literal", "nonexistent_local_time", "repeated_local_time"]),
+      foldChoices: z.array(z.object({ disambiguation: z.enum(["earlier", "later"]), utcOffsetMinutes: z.number().int() }).strict()).optional(),
+    }).strict(),
+  }).strict(),
+  z.object({
+    state: z.literal("invalid"),
+    version: z.number().int().nonnegative(),
+    zone: z.null(),
+    start: z.null(),
+    end: z.null(),
+    due: z.string().nullable(),
+    error: z.object({
+      code: z.literal("subtask_schedule_storage_invalid"),
+      reason: z.enum(["shape_mismatch", "resolution_mismatch", "ordering_invalid"]),
+    }).strict(),
+  }).strict(),
+]);
+export type ExternalScheduleDto = z.infer<typeof externalScheduleSchema>;
+
+const serviceSchema = z.object({
+  id: uuid,
+  kind: z.string(),
+  status: z.string(),
+  expectedCount: z.number().int().nullable(),
+  receivedCount: z.number().int(),
+}).strict();
+
+const coverSchema = z.object({ assetId: uuid, url: z.string().url() }).strict();
+
+const projectSummaryShape = {
+  id: uuid,
+  address: z.object({ street: z.string(), suburb: z.string().nullable(), postcode: z.string().nullable() }).strict(),
+  agencyDisplayName: z.string().nullable(),
+  agentDisplayName: z.string().nullable(),
+  shootDate: z.string().nullable(),
+  timeWindow: z.string().nullable(),
+  stageKey: z.string(),
+  deadline: externalDeadlineSchema.nullable(),
+  productionNotes: z.string().nullable(),
+  services: z.array(serviceSchema),
+  cover: coverSchema.nullable(),
+};
+
+export const externalProjectSummarySchema = z.object(projectSummaryShape).strict();
+export type ExternalProjectSummaryDto = z.infer<typeof externalProjectSummarySchema>;
+
+export const externalProjectDetailSchema = externalProjectSummarySchema.extend({
+  editedUploadAvailable: z.boolean(),
+  collections: z.array(serviceSchema),
+  members: z.array(externalParticipantSchema.extend({ assignedSubtaskCount: z.number().int().nonnegative() }).strict()),
+}).strict();
+export type ExternalProjectDetailDto = z.infer<typeof externalProjectDetailSchema>;
+
+const reviewSchema = z.object({
+  stars: z.number().int().min(1).max(5).nullable(),
+  colorLabel: z.enum(["select", "maybe", "cut", "hero"]).nullable(),
+  decision: z.enum(["approved", "flagged"]).nullable(),
+  recommended: z.boolean(),
+}).strict();
+
+export const externalAssetSchema = z.object({
+  id: uuid,
+  collectionId: uuid,
+  kind: z.string(),
+  originalFilename: z.string(),
+  bytes: z.number().int().nonnegative(),
+  width: z.number().int().nullable(),
+  height: z.number().int().nullable(),
+  ratingFromMetadata: z.number().int().nullable(),
+  section: z.string().nullable(),
+  renditionStatus: z.enum(["ready", "processing"]),
+  createdAt: iso,
+  sourceRawAssetId: uuid.nullable(),
+  version: z.number().int().positive(),
+  versionGroupId: uuid.nullable(),
+  supersedesAssetId: uuid.nullable(),
+  review: reviewSchema.nullable(),
+  selected: z.boolean(),
+}).strict();
+export type ExternalAssetDto = z.infer<typeof externalAssetSchema>;
+
+export const externalAnnotationSchema = z.object({
+  id: uuid,
+  author: externalPersonSchema,
+  scope: z.enum(["raw", "edited"]),
+  hasMarkup: z.boolean(),
+  markupUrl: z.string().url().nullable(),
+  noteText: z.string().nullable(),
+  createdAt: iso,
+  editedAt: iso.nullable(),
+}).strict();
+export type ExternalAnnotationDto = z.infer<typeof externalAnnotationSchema>;
+
+export const externalCollectionLinkSchema = z.object({ id: uuid, url: z.string().url(), label: z.string().nullable(), position: z.number().int(), createdAt: iso }).strict();
+export type ExternalCollectionLinkDto = z.infer<typeof externalCollectionLinkSchema>;
+
+export const externalIngestStatusSchema = z.object({ expectedCount: z.number().int().nullable(), receivedCount: z.number().int(), mismatch: z.boolean() }).strict();
+export const externalChecklistItemSchema = z.object({
+  id: uuid,
+  title: z.string(),
+  done: z.boolean(),
+  position: z.number().int(),
+  assignee: externalPersonSchema.nullable(),
+  assignmentVersion: z.number().int().nonnegative(),
+  dueDate: z.string().nullable(),
+  schedule: externalScheduleSchema,
+  createdBy: externalPersonSchema,
+  createdAt: iso,
+  updatedAt: iso,
+}).strict();
+export const externalCommentSchema = z.object({ id: uuid, author: externalPersonSchema, body: z.string(), content: z.unknown(), createdAt: iso, editedAt: iso.nullable() }).strict();
+export const externalCommentReadStateSchema = z.object({
+  projectId: uuid,
+  marker: z.object({ throughCommentId: uuid, throughCreatedAt: iso, updatedAt: iso }).strict().nullable(),
+  latest: z.object({ commentId: uuid, createdAt: iso }).strict().nullable(),
+  unreadCount: z.number().int().nonnegative(),
+}).strict();
+export const externalMentionableUserSchema = externalPersonSchema;
+export const externalNotificationListItemSchema = z.object({ id: uuid, projectId: uuid, type: z.string(), title: z.string(), body: z.string().nullable(), readAt: iso.nullable(), createdAt: iso }).strict();
+
+export const externalCalendarRangeSchema = z.object({
+  range: z.object({ start: iso, end: iso, zone: z.literal("Australia/Sydney") }).strict(),
+  events: z.array(z.object({
+    id: uuid, projectId: uuid, kind: z.enum(["project_deadline", "checklist"]), title: z.string(), start: iso, end: iso,
+    allDay: z.boolean(), project: z.object({ id: uuid, street: z.string(), stageKey: z.string() }).strict(),
+    assignee: externalPersonSchema.nullable(), version: z.number().int(),
+    // Reserved for TB5C. This field list is intentionally non-normative until that tracer bullet owns Calendar.
+    permissions: z.object({ canDrag: z.boolean(), canResize: z.boolean() }).strict(),
+  }).strict()),
+  filters: z.object({ projects: z.array(z.object({ id: uuid, street: z.string() }).strict()), people: z.array(externalPersonSchema), myTasksUserId: uuid }).strict(),
+}).strict();
+
+export const externalProjectExportSchema = z.object({
+  schemaVersion: z.literal(1), generatedAt: iso,
+  project: externalProjectDetailSchema,
+  assets: z.array(externalAssetSchema), links: z.array(externalCollectionLinkSchema),
+  checklist: z.array(externalChecklistItemSchema), comments: z.array(externalCommentSchema),
+}).strict();
+
+export const externalProjectListResponseSchema = z.object({ projects: z.array(externalProjectSummarySchema) }).strict();
+export const externalAssetListResponseSchema = z.object({ assets: z.array(externalAssetSchema) }).strict();
+export const externalAnnotationListResponseSchema = z.object({ annotations: z.array(externalAnnotationSchema) }).strict();
+export const externalCommentListResponseSchema = z.object({
+  project: z.object({ id: uuid, street: z.string() }).strict(), comments: z.array(externalCommentSchema), nextCursor: z.string().max(2048).optional(),
+}).strict();
+export const externalChecklistListResponseSchema = z.object({ subtasks: z.array(externalChecklistItemSchema) }).strict();
+export const externalCollectionLinkListResponseSchema = z.object({ links: z.array(externalCollectionLinkSchema) }).strict();
+export const externalMentionableListResponseSchema = z.object({ users: z.array(externalMentionableUserSchema).max(20) }).strict();
+export const externalNotificationListResponseSchema = z.object({ notifications: z.array(externalNotificationListItemSchema), unreadCount: z.number().int().nonnegative() }).strict();
+export const externalMeResponseSchema = z.object({
+  user: z.object({ id: uuid, name: z.string(), email: z.string().email(), role: z.literal("external_editor"), active: z.literal(true), impersonatedBy: uuid.nullable(), authorizationEpoch: z.number().int().nonnegative() }).strict(),
+  capabilities: z.array(z.enum(EXTERNAL_EDITOR_CAPABILITIES)).length(EXTERNAL_EDITOR_CAPABILITIES.length),
+}).strict();
+export const externalNotificationPreferenceResponseSchema = z.object({ projectDeadlineReminderEmails: z.boolean() }).strict();
+export const externalMutationOkResponseSchema = z.object({ ok: z.literal(true) }).strict();
+export const externalProjectAccessSnapshotSchema = z.object({
+  principal: z.object({ id: uuid, role: z.string(), authorizationEpoch: z.number().int().nonnegative() }).strict(),
+  authorizationFingerprint: z.string().min(1),
+  projects: z.array(z.object({ projectId: uuid, membershipCycleIds: z.array(uuid) }).strict()),
+}).strict();
+export type ExternalProjectAccessSnapshotDto = z.infer<typeof externalProjectAccessSnapshotSchema>;
+
+export type ExternalApiSurface =
+  | "me" | "notification-preferences" | "project-list" | "project-detail" | "asset-list" | "annotation-list"
+  | "annotation-mutation" | "collection-links" | "ingest-status" | "collaboration" | "checklist" | "comment-list"
+  | "comment-mutation" | "comment-read-state" | "mentionable" | "notifications" | "notification-mutation"
+  | "review-mutation" | "external-upload" | "external-upload-complete" | "access-snapshot" | "calendar" | "export";
+
+export const EXTERNAL_API_RESPONSE_SCHEMAS: Readonly<Record<ExternalApiSurface, z.ZodTypeAny>> = {
+  me: externalMeResponseSchema,
+  "notification-preferences": externalNotificationPreferenceResponseSchema,
+  "project-list": externalProjectListResponseSchema,
+  "project-detail": externalProjectDetailSchema,
+  "asset-list": externalAssetListResponseSchema,
+  "annotation-list": externalAnnotationListResponseSchema,
+  "annotation-mutation": z.union([externalAnnotationSchema, externalMutationOkResponseSchema]),
+  "collection-links": externalCollectionLinkListResponseSchema,
+  "ingest-status": externalIngestStatusSchema,
+  collaboration: z.object({ project: z.object({ id: uuid, street: z.string(), stageKey: z.string() }).strict(), members: z.array(externalParticipantSchema.extend({ assignedSubtaskCount: z.number().int().nonnegative() }).strict()) }).strict(),
+  checklist: z.union([externalChecklistListResponseSchema, externalChecklistItemSchema, z.object({ position: z.number().int() }).strict(), externalMutationOkResponseSchema]),
+  "comment-list": externalCommentListResponseSchema,
+  "comment-mutation": z.union([externalCommentSchema, externalMutationOkResponseSchema]),
+  "comment-read-state": externalCommentReadStateSchema,
+  mentionable: externalMentionableListResponseSchema,
+  notifications: externalNotificationListResponseSchema,
+  "notification-mutation": externalMutationOkResponseSchema,
+  "review-mutation": externalMutationOkResponseSchema,
+  "external-upload": externalEditedUploadCreateResponseSchema,
+  "external-upload-complete": externalEditedCompleteResponseSchema,
+  "access-snapshot": externalProjectAccessSnapshotSchema,
+  calendar: externalCalendarRangeSchema,
+  export: externalProjectExportSchema,
+};
+
+export function externalRoleLabel(): string {
+  return ROLE_LABELS.external_editor;
+}

@@ -1,14 +1,16 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from "react";
+import { useCallback, useContext, useMemo, useRef, useState, type DragEvent } from "react";
 import { compareByStreetThenId, formatSydneyCivil, isDeadlineOverdue, type StageKey } from "@quincy/shared";
+import { QueryClient, QueryClientContext, QueryClientProvider } from "@tanstack/react-query";
 import { StatusBadge } from "../components/atoms";
 import { LazyImage } from "../components/LazyImage";
-import { apiGet, apiPost } from "../lib/api";
+import { apiPost } from "../lib/api";
 import { useCapabilities } from "../lib/capabilities";
 import { type ProjectStageKey, useStages } from "../lib/stages";
 import { formatDashboardDate, initializeDashboardView, initializeKanbanSortMode, isCanonicalShootDate, type DashboardView, type KanbanSortMode } from "./dashboard-helpers";
 import { InternalLink } from "../components/InternalLink";
 import { NoticeBoard } from "../components/NoticeBoard";
 import { invalidateProjectResources, useOptionalProjectQueryClient } from "../lib/project-data";
+import { dashboardProjectsKey, useDashboardProjects } from "../lib/dashboard-projects";
 
 export interface ProjectSummary {
   id: string;
@@ -49,10 +51,6 @@ export function sortKanbanProjects(projects: ProjectSummary[], sort: KanbanSortM
     (left.priority === null ? 1 : 0) - (right.priority === null ? 1 : 0)
     || left.boardPosition - right.boardPosition
     || left.id.localeCompare(right.id));
-}
-
-interface ProjectsResponse {
-  projects: ProjectSummary[];
 }
 
 type ProjectScope = "active" | "archived";
@@ -123,7 +121,9 @@ function ProjectListRow({ project }: { project: ProjectSummary }) {
   </div>;
 }
 
-export function Dashboard({ currentUserId }: { currentUserId: string }) {
+type DashboardProps = { currentUserId: string; role?: Parameters<typeof dashboardProjectsKey>[1]; authorizationEpoch?: number };
+
+function DashboardContent({ currentUserId, role = "photographer", authorizationEpoch = 0 }: DashboardProps) {
   const queryClient = useOptionalProjectQueryClient();
   const { can } = useCapabilities();
   const { stages } = useStages();
@@ -132,7 +132,6 @@ export function Dashboard({ currentUserId }: { currentUserId: string }) {
   const canPrioritize = can("prioritizeProjects");
   const canViewArchived = can("adminBackend");
   const canViewNoticeBoard = can("viewNoticeBoard");
-  const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [projectScope, setProjectScope] = useState<ProjectScope>("active");
   const [query, setQuery] = useState("");
   const [view, setView] = useState<DashboardView>(() => initializeDashboardView({
@@ -148,36 +147,22 @@ export function Dashboard({ currentUserId }: { currentUserId: string }) {
   const [pendingOrdering, setPendingOrdering] = useState<Set<string>>(new Set());
   const [dropStage, setDropStage] = useState<StageKey>();
   const [toasts, setToasts] = useState<Toast[]>([]);
-  const [error, setError] = useState<string>();
-  const [isLoading, setIsLoading] = useState(true);
-  const [reload, setReload] = useState(0);
+  const viewingArchived = projectScope === "archived";
+  const identity = { principalId: currentUserId, role, authorizationEpoch } as const;
+  const projectsQuery = useDashboardProjects(viewingArchived, identity);
+  const projects = projectsQuery.data ?? [];
+  const isLoading = projectsQuery.isPending && !projectsQuery.data;
+  const error = projectsQuery.error instanceof Error ? projectsQuery.error.message : projectsQuery.error ? "Projects could not be loaded." : undefined;
+  const dashboardKey = dashboardProjectsKey(currentUserId, role, authorizationEpoch, viewingArchived);
+  const updateProjects = useCallback((update: (current: ProjectSummary[]) => ProjectSummary[]) => {
+    queryClient?.setQueryData<ProjectSummary[]>(dashboardKey, (current) => update(current ?? []));
+  }, [dashboardKey, queryClient]);
 
   const toast = useCallback((message: string, tone: Toast["tone"] = "success") => {
     const id = Date.now() + Math.random();
     setToasts((current) => [...current, { id, message, tone }]);
     window.setTimeout(() => setToasts((current) => current.filter((item) => item.id !== id)), 3600);
   }, []);
-
-  useEffect(() => {
-    let isCurrent = true;
-    setIsLoading(true);
-    setError(undefined);
-
-    apiGet<ProjectsResponse>(projectScope === "archived" ? "/api/projects?archived=1" : "/api/projects")
-      .then((response) => {
-        if (isCurrent) setProjects(response.projects);
-      })
-      .catch((reason) => {
-        if (isCurrent) setError(reason instanceof Error ? reason.message : "Projects could not be loaded.");
-      })
-      .finally(() => {
-        if (isCurrent) setIsLoading(false);
-      });
-
-    return () => {
-      isCurrent = false;
-    };
-  }, [projectScope, reload]);
 
   const filteredProjects = useMemo(() => {
     const term = query.trim().toLocaleLowerCase();
@@ -190,7 +175,6 @@ export function Dashboard({ currentUserId }: { currentUserId: string }) {
   const needsReviewCount = projects.filter((project) => project.stageKey === "raw_review" || project.stageKey === "edited_review").length;
   const deliveredCount = projects.filter((project) => project.stageKey === "delivered").length;
   const activeStages = stages.filter((stage) => stage.active);
-  const viewingArchived = projectScope === "archived";
 
   function selectView(next: DashboardView) {
     setView(next);
@@ -214,16 +198,16 @@ export function Dashboard({ currentUserId }: { currentUserId: string }) {
     setDragging(undefined);
     setDropStage(undefined);
     if (!project || project.stageKey === stageKey) return;
-    setProjects((current) => current.map((item) => item.id === project.id ? { ...item, stageKey } : item));
+    updateProjects((current) => current.map((item) => item.id === project.id ? { ...item, stageKey } : item));
     setPendingMoves((current) => new Set(current).add(project.id));
     try {
       const response = await apiPost<{ ok: true; stageKey: StageKey; boardPosition: number }, { stageKey: StageKey }>(`/api/projects/${project.id}/stage`, { stageKey });
       if (queryClient) await invalidateProjectResources(queryClient, { projectId: project.id, resources: [{ kind: "detail" }] });
-      setProjects((current) => current.map((item) => item.id === project.id && item.stageKey === stageKey ? { ...item, boardPosition: response.boardPosition } : item));
+      updateProjects((current) => current.map((item) => item.id === project.id && item.stageKey === stageKey ? { ...item, boardPosition: response.boardPosition } : item));
       const label = stages.find((stage) => stage.key === stageKey)?.label ?? stageKey;
       toast(`Moved to ${label}.`);
     } catch (reason) {
-      setProjects((current) => current.map((item) => item.id === project.id && item.stageKey === stageKey ? { ...item, stageKey: project.stageKey, boardPosition: project.boardPosition } : item));
+      updateProjects((current) => current.map((item) => item.id === project.id && item.stageKey === stageKey ? { ...item, stageKey: project.stageKey, boardPosition: project.boardPosition } : item));
       toast(reason instanceof Error ? reason.message : "The stage could not be updated.", "error");
     } finally {
       setPendingMoves((current) => { const next = new Set(current); next.delete(project.id); return next; });
@@ -232,13 +216,13 @@ export function Dashboard({ currentUserId }: { currentUserId: string }) {
 
   async function setProjectPriority(project: ProjectSummary, priority: number | null) {
     if (pendingOrdering.has(project.id)) return;
-    setProjects((current) => current.map((item) => item.id === project.id ? { ...item, priority } : item));
+    updateProjects((current) => current.map((item) => item.id === project.id ? { ...item, priority } : item));
     setPendingOrdering((current) => new Set(current).add(project.id));
     try {
       const response = await apiPost<{ priority: number | null; boardPosition: number }, { priority: number | null }>(`/api/projects/${project.id}/priority`, { priority });
-      setProjects((current) => current.map((item) => item.id === project.id ? { ...item, priority: response.priority, boardPosition: response.boardPosition } : item));
+      updateProjects((current) => current.map((item) => item.id === project.id ? { ...item, priority: response.priority, boardPosition: response.boardPosition } : item));
     } catch (reason) {
-      setProjects((current) => current.map((item) => item.id === project.id && item.priority === priority ? { ...item, priority: project.priority, boardPosition: project.boardPosition } : item));
+      updateProjects((current) => current.map((item) => item.id === project.id && item.priority === priority ? { ...item, priority: project.priority, boardPosition: project.boardPosition } : item));
       toast(reason instanceof Error ? reason.message : "The project priority could not be updated.", "error");
     } finally {
       setPendingOrdering((current) => { const next = new Set(current); next.delete(project.id); return next; });
@@ -248,13 +232,13 @@ export function Dashboard({ currentUserId }: { currentUserId: string }) {
   async function moveProjectPosition(project: ProjectSummary, direction: "up" | "down") {
     if (pendingOrdering.has(project.id)) return;
     const optimistic = direction === "up" ? project.boardPosition - 1024 : project.boardPosition + 1024;
-    setProjects((current) => current.map((item) => item.id === project.id ? { ...item, boardPosition: optimistic } : item));
+    updateProjects((current) => current.map((item) => item.id === project.id ? { ...item, boardPosition: optimistic } : item));
     setPendingOrdering((current) => new Set(current).add(project.id));
     try {
       const response = await apiPost<{ boardPosition: number }, { direction: "up" | "down" }>(`/api/projects/${project.id}/board-position`, { direction });
-      setProjects((current) => current.map((item) => item.id === project.id ? { ...item, boardPosition: response.boardPosition } : item));
+      updateProjects((current) => current.map((item) => item.id === project.id ? { ...item, boardPosition: response.boardPosition } : item));
     } catch (reason) {
-      setProjects((current) => current.map((item) => item.id === project.id && item.boardPosition === optimistic ? { ...item, boardPosition: project.boardPosition } : item));
+      updateProjects((current) => current.map((item) => item.id === project.id && item.boardPosition === optimistic ? { ...item, boardPosition: project.boardPosition } : item));
       toast(reason instanceof Error ? reason.message : "The project position could not be updated.", "error");
     } finally {
       setPendingOrdering((current) => { const next = new Set(current); next.delete(project.id); return next; });
@@ -321,7 +305,7 @@ export function Dashboard({ currentUserId }: { currentUserId: string }) {
         <div className="empty" role="alert">
           <span className="serif">{viewingArchived ? "Archived projects" : "Projects"} are unavailable.</span>
           {error}
-          <div style={{ marginTop: 16 }}><button className="button button--secondary" type="button" onClick={() => setReload((value) => value + 1)}>Try again</button></div>
+          <div style={{ marginTop: 16 }}><button className="button button--secondary" type="button" onClick={() => void projectsQuery.refetch()}>Try again</button></div>
         </div>
       )}
 
@@ -360,4 +344,16 @@ export function Dashboard({ currentUserId }: { currentUserId: string }) {
       <div className="toasts" aria-live="polite">{toasts.map((item) => <div className={`toast ${item.tone === "error" ? "toast--error" : ""}`} key={item.id}>{item.tone === "error" ? "!" : "✓"}<span>{item.message}</span></div>)}</div>
     </main>
   );
+}
+
+function StandaloneDashboard(props: DashboardProps) {
+  const [queryClient] = useState(() => new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  return <QueryClientProvider client={queryClient}><DashboardContent {...props} /></QueryClientProvider>;
+}
+
+export function Dashboard(props: DashboardProps) {
+  // App normally supplies the principal-scoped provider. Keep an isolated screen renderable in
+  // previews/tests without changing the production cache boundary.
+  const queryClient = useContext(QueryClientContext);
+  return queryClient ? <DashboardContent {...props} /> : <StandaloneDashboard {...props} />;
 }

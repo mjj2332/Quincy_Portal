@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { terminalRoute } from "../lib/terminal-route";
 import { createDb, schema } from "@quincy/db";
 import { legacyBodyToRichTextDoc, normalizeRichTextMentionLabels, parseRichTextDoc, richTextMentionIds, richTextPlainText, type RichTextDoc } from "@quincy/shared";
 import { and, desc, eq, inArray } from "drizzle-orm";
@@ -63,22 +64,22 @@ export const noticeBoardRoutes = new Hono<AppEnv>();
 noticeBoardRoutes.use("/notice-board", requireCapability("viewNoticeBoard"));
 noticeBoardRoutes.use("/notice-board/*", requireCapability("viewNoticeBoard"));
 
-noticeBoardRoutes.get("/notice-board/posts", async (c) => {
+noticeBoardRoutes.get("/notice-board/posts", terminalRoute("/notice-board/posts", async (c) => {
   const parsed = postsQuery.safeParse(c.req.query());
   if (!parsed.success) return c.json({ error: "Invalid query", details: parsed.error.flatten() }, 400);
   const rows = await createDb(c.env.DB).select({ post: schema.noticeBoardPosts, authorName: schema.user.name })
     .from(schema.noticeBoardPosts).innerJoin(schema.user, eq(schema.noticeBoardPosts.authorId, schema.user.id))
     .orderBy(desc(schema.noticeBoardPosts.createdAt), desc(schema.noticeBoardPosts.id)).limit(parsed.data.limit ?? 50).all();
   return c.json({ posts: rows.map(serializePost) });
-});
+}));
 
-noticeBoardRoutes.get("/notice-board/posts/latest", async (c) => {
+noticeBoardRoutes.get("/notice-board/posts/latest", terminalRoute("/notice-board/posts/latest", async (c) => {
   const post = await createDb(c.env.DB).select({ id: schema.noticeBoardPosts.id, createdAt: schema.noticeBoardPosts.createdAt })
     .from(schema.noticeBoardPosts).orderBy(desc(schema.noticeBoardPosts.createdAt), desc(schema.noticeBoardPosts.id)).limit(1).get();
   return c.json({ id: post?.id ?? null, createdAt: post?.createdAt.toISOString() ?? null });
-});
+}));
 
-noticeBoardRoutes.post("/notice-board/posts", async (c) => {
+noticeBoardRoutes.post("/notice-board/posts", terminalRoute("/notice-board/posts", async (c) => {
   const data = await jsonInput(c, postInput); if (data instanceof Response) return data;
   const db = createDb(c.env.DB); const prepared = await normalizedContent(db, data.content);
   if (!prepared) return c.json({ error: "Invalid notice content or mention target" }, 400);
@@ -93,9 +94,9 @@ noticeBoardRoutes.post("/notice-board/posts", async (c) => {
   const post = await findPost(db, id);
   if (!post) return c.json({ error: "Post could not be created" }, 500);
   return c.json(serializePost(post), 201);
-});
+}));
 
-noticeBoardRoutes.patch("/notice-board/posts/:id", async (c) => {
+noticeBoardRoutes.patch("/notice-board/posts/:id", terminalRoute("/notice-board/posts/:id", async (c) => {
   const id = c.req.param("id"); if (!postId.safeParse(id).success) return c.json({ error: "Invalid post id" }, 400);
   const data = await jsonInput(c, postInput); if (data instanceof Response) return data;
   const db = createDb(c.env.DB); const existing = await db.select().from(schema.noticeBoardPosts).where(eq(schema.noticeBoardPosts.id, id)).get();
@@ -124,9 +125,9 @@ noticeBoardRoutes.patch("/notice-board/posts/:id", async (c) => {
   const post = await findPost(db, id);
   if (!post) return c.json({ error: "Post could not be updated" }, 500);
   return c.json(serializePost(post));
-});
+}));
 
-noticeBoardRoutes.delete("/notice-board/posts/:id", async (c) => {
+noticeBoardRoutes.delete("/notice-board/posts/:id", terminalRoute("/notice-board/posts/:id", async (c) => {
   const id = c.req.param("id"); if (!postId.safeParse(id).success) return c.json({ error: "Invalid post id" }, 400);
   const db = createDb(c.env.DB); const post = await db.select().from(schema.noticeBoardPosts).where(eq(schema.noticeBoardPosts.id, id)).get();
   if (!post) return c.json({ error: "Post not found" }, 404);
@@ -137,4 +138,4 @@ noticeBoardRoutes.delete("/notice-board/posts/:id", async (c) => {
   await db.delete(schema.noticeBoardPosts).where(eq(schema.noticeBoardPosts.id, id));
   await audit(c.env, user, "notice_board.delete", "notice_board_post", id);
   return c.json({ ok: true });
-});
+}));

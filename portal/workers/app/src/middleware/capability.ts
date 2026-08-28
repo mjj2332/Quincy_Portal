@@ -1,8 +1,7 @@
 import type { MiddlewareHandler } from "hono";
-import { createDb, schema } from "@quincy/db";
-import { and, eq } from "drizzle-orm";
-import { PHOTOGRAPHER_VISIBLE_STAGES, roleHasCapability, type Capability } from "@quincy/shared";
+import { roleHasCapability, type Capability } from "@quincy/shared";
 import type { AppEnv, SessionUser } from "../env";
+import { resolveVisibleProject } from "../lib/visible-project-scope";
 
 export const requireCapability = (capability: Capability): MiddlewareHandler<AppEnv> => async (c, next) => {
   const user = c.get("user");
@@ -16,7 +15,7 @@ export const requireProjectAccess = (projectId: string): MiddlewareHandler<AppEn
 };
 
 export async function hasProjectAccess(c: { env: AppEnv["Bindings"]; get: (key: "user") => AppEnv["Variables"]["user"] }, projectId: string) {
-  return hasProjectAccessForUser(c.env, c.get("user"), projectId);
+  return Boolean(await resolveVisibleProject(c.env, c.get("user"), projectId));
 }
 
 /**
@@ -34,22 +33,16 @@ export async function hasProjectCollaborationAccessForUser(
   currentUser: Pick<SessionUser, "id" | "role" | "active">,
   projectId: string,
 ) {
-  if (currentUser.active !== true) return false;
-  if (currentUser.role === "admin") return true;
-  const db = createDb(env.DB);
-  return Boolean(await db.select({ id: schema.projectMembers.id }).from(schema.projectMembers)
-    .where(and(eq(schema.projectMembers.projectId, projectId), eq(schema.projectMembers.userId, currentUser.id))).get());
+  if (currentUser.active !== true || !roleHasCapability(currentUser.role, "collaborateOnProject")) return false;
+  const context = await resolveVisibleProject(env, currentUser, projectId);
+  if (context) return true;
+  // Admin collaboration on an archived project is retained for internal operations; External
+  // and other scoped roles never take this branch because their visibility is assignment-bound.
+  if (currentUser.role !== "admin") return false;
+  return true;
 }
 
 /** Use when a route has reloaded the principal and must not trust session-cached role state. */
 export async function hasProjectAccessForUser(env: AppEnv["Bindings"], user: Pick<SessionUser, "id" | "role">, projectId: string) {
-  if (roleHasCapability(user.role, "viewAllProjects")) return true;
-  const db = createDb(env.DB);
-  const member = await db.select({ id: schema.projectMembers.id }).from(schema.projectMembers).where(and(eq(schema.projectMembers.projectId, projectId), eq(schema.projectMembers.userId, user.id))).get();
-  if (!member) return false;
-  if (user.role === "photographer") {
-    const project = await db.select({ stageKey: schema.projects.stageKey }).from(schema.projects).where(eq(schema.projects.id, projectId)).get();
-    return Boolean(project && (PHOTOGRAPHER_VISIBLE_STAGES as readonly string[]).includes(project.stageKey));
-  }
-  return true;
+  return Boolean(await resolveVisibleProject(env, { ...user, active: true }, projectId));
 }

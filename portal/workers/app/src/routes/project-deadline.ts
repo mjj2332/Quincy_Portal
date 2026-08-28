@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { terminalRoute } from "../lib/terminal-route";
 import { publishNotificationOutbox, roleHasCapability } from "@quincy/shared";
 import { z } from "zod";
 import type { AppEnv } from "../env";
@@ -19,7 +20,7 @@ const idCheck = (value: string) => z.string().uuid().safeParse(value).success;
 
 export const projectDeadlineRoutes = new Hono<AppEnv>();
 
-projectDeadlineRoutes.put("/projects/:id/deadline", async (c) => {
+projectDeadlineRoutes.put("/projects/:id/deadline", terminalRoute("/projects/:id/deadline", async (c) => {
   const projectId = c.req.param("id") ?? "";
   if (!idCheck(projectId)) return c.json({ error: "Invalid project id" }, 400);
   if (!await hasProjectAccess(c, projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
@@ -35,4 +36,4 @@ projectDeadlineRoutes.put("/projects/:id/deadline", async (c) => {
     if (!(error instanceof ProjectDeadlineError)) throw error;
     return c.json({ error: error.message, code: error.code, ...(error.details ?? {}) }, error.status);
   }
-});
+}));

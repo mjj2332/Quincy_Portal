@@ -51,8 +51,8 @@ export type ProjectActivityCoalescing = null | {
   windowSeconds: 300;
 };
 
-export type SafeProjectField = "address" | "shootDate" | "timeWindow" | "agency" | "agent" | "services";
-export const SAFE_PROJECT_FIELDS = ["address", "shootDate", "timeWindow", "agency", "agent", "services"] as const;
+export type SafeProjectField = "address" | "shootDate" | "timeWindow" | "agency" | "agent" | "services" | "productionNotes";
+export const SAFE_PROJECT_FIELDS = ["address", "shootDate", "timeWindow", "agency", "agent", "services", "productionNotes"] as const;
 
 type ActorKind = "user" | "system";
 type DeepLinkKind = "project" | "project_collaboration";
@@ -102,6 +102,7 @@ const payloadSchemas = {
 export type ProjectActivityPayload = {
   [K in ProjectActivityType]: z.infer<(typeof payloadSchemas)[K]>;
 }[ProjectActivityType];
+export type ProjectActivityPayloadFor<T extends ProjectActivityType> = Extract<ProjectActivityPayload, z.infer<(typeof payloadSchemas)[T]>>;
 
 type RegistryEntry = {
   schemaVersion: 1;
@@ -118,7 +119,6 @@ type RegistryEntry = {
   channels: readonly ["in_app"];
   emailDefault: "off";
   audience: "internal";
-  externalProjection: "pending";
   cutover: "live" | "reserved";
   cutoverOwner: string;
   cutoverDate: string;
@@ -140,7 +140,7 @@ const live = (
 ): RegistryEntry => ({
   schemaVersion: 1, category, producerOwner, producerCallSites, sourceKind, sourceKeyShape, actorRule,
   actorRecipientRule: "eligible_editor_membership_only", payloadSchema, deepLinkKind, coalescing,
-  channels: ["in_app"], emailDefault: "off", audience: "internal", externalProjection: "pending",
+  channels: ["in_app"], emailDefault: "off", audience: "internal",
   cutover: "live", cutoverOwner: metadata.cutoverOwner ?? producerOwner, cutoverDate: metadata.cutoverDate ?? "2026-08-27", backfill: "none",
   noBackfillNote: metadata.noBackfillNote ?? "TB4C has no history backfill; only committed semantic winners emit this type.",
 });

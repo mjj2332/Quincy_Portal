@@ -49,11 +49,11 @@ function broadOutboxSql(coalesce: ReturnType<typeof projectActivityCoalesce>, ro
     : "";
   return `
     INSERT INTO notification_outbox (
-      id, schema_version, event_type, source_key, project_id, actor_id, recipient_id,
+      id, schema_version, event_type, source_key, project_id, actor_id, recipient_id, recipient_authorization_epoch,
       payload_json, status, available_at, coalesce_key, coalesce_until,
       recipient_membership_cycle_id, created_at, updated_at
     )
-    SELECT ${uuidSql()}, 1, ?, activity.id, activity.project_id, ?, recipient.id,
+    SELECT ${uuidSql()}, 1, ?, activity.id, activity.project_id, ?, recipient.id, recipient.authorization_epoch,
       json_object(
         'schemaVersion', 1,
         'event', json_object('type', ?, 'sourceKey', activity.id, 'recipientId', member.user_id),

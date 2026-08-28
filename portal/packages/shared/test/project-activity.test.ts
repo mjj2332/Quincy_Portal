@@ -13,6 +13,7 @@ import {
 } from "../src/project-activity";
 import { PROJECT_ASSIGNMENT_ELIGIBLE_ROLES } from "../src/project-members";
 import { TB4D_SCHEDULE_ACTIVITY_CUTOVER_DATE } from "../src/checklist-schedule-config";
+import { EXTERNAL_PROJECT_ACTIVITY_POLICY } from "../src/external-project-policy";
 
 const projectId = "project-activity-test";
 const userId = "11111111-1111-4111-8111-111111111111";
@@ -103,13 +104,13 @@ describe("TB4C project activity registry", () => {
     expect(entries).toHaveLength(PROJECT_ACTIVITY_TYPES.length);
     expect(new Set(entries.map(([type]) => type)).size).toBe(entries.length);
     expect(new Set(entries.map(([, entry]) => `${entry.sourceKind}:${entry.sourceKeyShape}`)).size).toBe(entries.length);
-    for (const [, entry] of entries) {
+    for (const [type, entry] of entries) {
       expect(entry.schemaVersion).toBe(1);
       expect(entry.producerOwner).toBeTruthy();
       expect(entry.actorRecipientRule).toBe("eligible_editor_membership_only");
       expect(entry.channels).toEqual(["in_app"]);
       expect(entry.emailDefault).toBe("off");
-      expect(entry.externalProjection).toBe("pending");
+      expect(EXTERNAL_PROJECT_ACTIVITY_POLICY[type as ProjectActivityType]).toBeTruthy();
       expect(entry.backfill).toBe("none");
       expect(entry.noBackfillNote).toBeTruthy();
     }
@@ -229,7 +230,7 @@ describe("TB4C project activity registry", () => {
     expect(renderProjectActivityNotification("project.checklist.schedule_changed", { itemId: "item", checklistTitle: "Review images", scheduleState: "range", version: 2 }, "Maple House", "Ting")).toEqual({ title: "Checklist schedule updated", body: "Ting — Checklist “Review images” schedule was updated." });
   });
 
-  it("keeps the shared editor eligibility source unchanged", () => {
-    expect(PROJECT_ASSIGNMENT_ELIGIBLE_ROLES.editor).toEqual(["editor", "admin"]);
+  it("keeps the shared editor eligibility source aligned with External Editor assignment", () => {
+    expect(PROJECT_ASSIGNMENT_ELIGIBLE_ROLES.editor).toEqual(["editor", "external_editor", "admin"]);
   });
 });

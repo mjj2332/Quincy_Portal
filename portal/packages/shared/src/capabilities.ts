@@ -4,8 +4,15 @@
  * so D-06's future role split needs no rewrite of checks.
  */
 
-export const ROLES = ["admin", "photographer", "editor"] as const;
+export const ROLES = ["admin", "photographer", "editor", "external_editor"] as const;
 export type Role = (typeof ROLES)[number];
+
+export const ROLE_LABELS: Record<Role, string> = {
+  admin: "Admin",
+  photographer: "Photographer",
+  editor: "Editor",
+  external_editor: "External editor",
+};
 
 export const CAPABILITIES = [
   "viewAllProjects",
@@ -36,6 +43,18 @@ export const CAPABILITIES = [
   "prioritizeProjects",
 ] as const;
 export type Capability = (typeof CAPABILITIES)[number];
+
+export const EXTERNAL_EDITOR_CAPABILITIES = [
+  "uploadEdited",
+  "viewRaw",
+  "annotateRaw",
+  "recommendRaw",
+  "compareFrames",
+  "viewEdited",
+  "reviewEdited",
+  "annotateEdited",
+  "collaborateOnProject",
+] as const satisfies readonly Capability[];
 
 /** Foreground ZIP-selection limits shared by the API and its preflight UI. */
 export const DOWNLOAD_SELECTION_MAX_ASSETS = 500;
@@ -96,6 +115,7 @@ export const ROLE_CAPABILITIES: Record<Role, readonly Capability[]> = {
     "viewNoticeBoard",
     "collaborateOnProject",
   ],
+  external_editor: EXTERNAL_EDITOR_CAPABILITIES,
   photographer: [
     "uploadRaw",
     "viewRaw",

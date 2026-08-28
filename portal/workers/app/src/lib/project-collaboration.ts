@@ -1,8 +1,9 @@
 import { createDb, schema } from "@quincy/db";
+import type { Role } from "@quincy/shared";
 import { and, asc, eq, or } from "drizzle-orm";
 import type { AppEnv } from "../env";
 
-export type ProjectMentionableUser = { id: string; name: string; role: "admin" | "photographer" | "editor" };
+export type ProjectMentionableUser = { id: string; name: string; role: Role };
 
 /** The single eligibility query shared by the project picker and comment writes. */
 export async function projectMentionableUsers(env: AppEnv["Bindings"], projectId: string): Promise<ProjectMentionableUser[]> {

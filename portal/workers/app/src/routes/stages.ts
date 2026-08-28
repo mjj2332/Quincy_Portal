@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { terminalRoute } from "../lib/terminal-route";
 import { createDb, schema } from "@quincy/db";
 import { asc } from "drizzle-orm";
 import { DEFAULT_STAGES, ROLE_CAPABILITIES } from "@quincy/shared";
@@ -43,7 +44,7 @@ export function stagesForRole<T extends { key: string; displayOrder: number; act
 /** Session middleware is applied by the parent /api router. */
 export const stagesRoutes = new Hono<AppEnv>();
 
-stagesRoutes.get("/stages", async (c) => {
+stagesRoutes.get("/stages", terminalRoute("/stages", async (c) => {
   const stages = await listPipelineStages(createDb(c.env.DB));
   return c.json({ stages: stagesForRole(stages, c.get("user").role) });
-});
+}));

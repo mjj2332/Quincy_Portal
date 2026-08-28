@@ -13,6 +13,7 @@ export * from "./dashboard-order";
 export * from "./rich-text";
 export * from "./email-text";
 export * from "./notification-outbox";
+export * from "./notification-types";
 export * from "./project-members";
 export * from "./project-deadline";
 export {
@@ -25,3 +26,7 @@ export type { SydneyCivilDisambiguation, SydneyCivilResolution } from "./sydney-
 export * from "./checklist-schedule";
 export * from "./checklist-schedule-config";
 export * from "./project-activity";
+export * from "./external-project-dto";
+export * from "./external-upload";
+export * from "./external-notification";
+export * from "./external-project-policy";

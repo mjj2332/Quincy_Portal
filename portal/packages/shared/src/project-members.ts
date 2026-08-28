@@ -5,7 +5,7 @@ export type ProjectMemberRole = (typeof PROJECT_MEMBER_ROLES)[number];
 
 export const PROJECT_ASSIGNMENT_ELIGIBLE_ROLES = {
   photographer: ["photographer", "editor", "admin"],
-  editor: ["editor", "admin"],
+  editor: ["editor", "external_editor", "admin"],
 } as const satisfies Record<ProjectMemberRole, readonly Role[]>;
 
 export function isProjectAssignmentEligible(roleOnProject: ProjectMemberRole, globalRole: Role): boolean {

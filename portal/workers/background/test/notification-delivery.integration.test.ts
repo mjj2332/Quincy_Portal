@@ -338,6 +338,28 @@ describe("TB4 notification delivery Worker integration", () => {
     }
   });
 
+  it("suppresses a leased occurrence after both preserved-membership role directions bump the epoch", async () => {
+    const editorToExternal = await seedBroadDelivery();
+    await database.DB.prepare("UPDATE notification_outbox SET recipient_authorization_epoch = 0, status = 'processing', lease_token = 'epoch-editor-external', lease_expires_at = ? WHERE id = ?")
+      .bind(editorToExternal.now + NOTIFICATION_DELIVERY_LEASE_MS, editorToExternal.outboxId).run();
+    await database.DB.prepare("UPDATE user SET role = 'external_editor', authorization_epoch = 1 WHERE id = ?")
+      .bind(editorToExternal.recipientId).run();
+    const first = await database.DB.prepare("SELECT * FROM notification_outbox WHERE id = ?").bind(editorToExternal.outboxId).first();
+    expect(await deliverBroadInApp(deliveryEnv(), first as Parameters<typeof deliverBroadInApp>[1], "epoch-editor-external", resolvedBroadFixture(editorToExternal), editorToExternal.now)).toBe("suppressed");
+    expect(await database.DB.prepare("SELECT id FROM project_members WHERE id = ?").bind(editorToExternal.membershipId).first()).toEqual({ id: editorToExternal.membershipId });
+    expect(await database.DB.prepare("SELECT status, last_error_code AS code FROM notification_delivery_ledger WHERE outbox_id = ? AND channel = 'in_app'").bind(editorToExternal.outboxId).first()).toEqual({ status: "suppressed", code: "authorization_epoch_changed" });
+
+    const externalToEditor = await seedBroadDelivery();
+    await database.DB.prepare("UPDATE user SET role = 'external_editor', authorization_epoch = 1 WHERE id = ?").bind(externalToEditor.recipientId).run();
+    await database.DB.prepare("UPDATE notification_outbox SET recipient_authorization_epoch = 1, status = 'processing', lease_token = 'epoch-external-editor', lease_expires_at = ? WHERE id = ?")
+      .bind(externalToEditor.now + NOTIFICATION_DELIVERY_LEASE_MS, externalToEditor.outboxId).run();
+    await database.DB.prepare("UPDATE user SET role = 'editor', authorization_epoch = 2 WHERE id = ?").bind(externalToEditor.recipientId).run();
+    const second = await database.DB.prepare("SELECT * FROM notification_outbox WHERE id = ?").bind(externalToEditor.outboxId).first();
+    expect(await deliverBroadInApp(deliveryEnv(), second as Parameters<typeof deliverBroadInApp>[1], "epoch-external-editor", resolvedBroadFixture(externalToEditor), externalToEditor.now)).toBe("suppressed");
+    expect(await database.DB.prepare("SELECT id FROM project_members WHERE id = ?").bind(externalToEditor.membershipId).first()).toEqual({ id: externalToEditor.membershipId });
+    expect(await database.DB.prepare("SELECT status, last_error_code AS code FROM notification_delivery_ledger WHERE outbox_id = ? AND channel = 'in_app'").bind(externalToEditor.outboxId).first()).toEqual({ status: "suppressed", code: "authorization_epoch_changed" });
+  });
+
   it("records an in-batch broad structural failure with the bounded ledger code", async () => {
     const fixture = await seedBroadDelivery();
     const token = "broad-structural-failure";

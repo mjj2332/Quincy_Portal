@@ -147,11 +147,11 @@ export async function addProjectMemberWithAssignmentIntent(
     auditMeta(input.auditPrincipal, { projectId: input.projectId, userId: input.userId, roleOnProject: input.roleOnProject, membershipCycle }),
     now, membershipCycle, input.projectId, input.userId, input.roleOnProject);
   const outbox = db.prepare(`
-    INSERT INTO notification_outbox (id, schema_version, event_type, source_key, project_id, actor_id, recipient_id, payload_json, status, available_at, created_at, updated_at)
-    SELECT ?, 1, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?
+    INSERT INTO notification_outbox (id, schema_version, event_type, source_key, project_id, actor_id, recipient_id, recipient_authorization_epoch, payload_json, status, available_at, created_at, updated_at)
+    SELECT ?, 1, ?, ?, ?, ?, ?, (SELECT authorization_epoch FROM user WHERE id = ?), ?, 'pending', ?, ?, ?
     WHERE EXISTS (SELECT 1 FROM project_members WHERE id = ? AND project_id = ? AND user_id = ? AND role_on_project = ?)
   `).bind(outboxId, NOTIFICATION_OUTBOX_EVENT_TYPES.projectAssignmentCreated, membershipCycle, input.projectId, input.actorId,
-    input.userId, JSON.stringify(payload), now, now, now, membershipCycle, input.projectId, input.userId, input.roleOnProject);
+    input.userId, input.userId, JSON.stringify(payload), now, now, now, membershipCycle, input.projectId, input.userId, input.roleOnProject);
   const ledgers = (["in_app", "email"] as const).map((channel) => db.prepare(`
     INSERT INTO notification_delivery_ledger (id, outbox_id, event_type, source_key, recipient_id, channel, status, created_at, updated_at)
     SELECT ?, ?, ?, ?, ?, ?, 'pending', ?, ?
@@ -298,10 +298,10 @@ export function buildInitialProjectMemberStatementTuples(
       assignment: { projectId: input.projectId, userId: slot.userId, roleOnProject: slot.roleOnProject, membershipCycle },
     };
     statements.push(db.prepare(`
-      INSERT INTO notification_outbox (id, schema_version, event_type, source_key, project_id, actor_id, recipient_id, payload_json, status, available_at, created_at, updated_at)
-      SELECT ?, 1, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?
+      INSERT INTO notification_outbox (id, schema_version, event_type, source_key, project_id, actor_id, recipient_id, recipient_authorization_epoch, payload_json, status, available_at, created_at, updated_at)
+      SELECT ?, 1, ?, ?, ?, ?, ?, (SELECT authorization_epoch FROM user WHERE id = ?), ?, 'pending', ?, ?, ?
       WHERE EXISTS (SELECT 1 FROM project_members WHERE id = ? AND project_id = ? AND user_id = ? AND role_on_project = ?)
-    `).bind(outboxId, NOTIFICATION_OUTBOX_EVENT_TYPES.projectAssignmentCreated, membershipCycle, input.projectId, input.actorId, slot.userId, JSON.stringify(payload), now, now, now, membershipCycle, input.projectId, slot.userId, slot.roleOnProject));
+    `).bind(outboxId, NOTIFICATION_OUTBOX_EVENT_TYPES.projectAssignmentCreated, membershipCycle, input.projectId, input.actorId, slot.userId, slot.userId, JSON.stringify(payload), now, now, now, membershipCycle, input.projectId, slot.userId, slot.roleOnProject));
     for (const channel of ["in_app", "email"] as const) statements.push(db.prepare(`
       INSERT INTO notification_delivery_ledger (id, outbox_id, event_type, source_key, recipient_id, channel, status, created_at, updated_at)
       SELECT ?, ?, ?, ?, ?, ?, 'pending', ?, ?

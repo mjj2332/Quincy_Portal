@@ -7,6 +7,68 @@ import { notifyProject } from "./notifications";
 
 export type FinalizeIngestDependencies = { beforeMetadataBatch?: () => void | Promise<void> };
 
+export type FinalizeExternalEditedUploadInput = {
+  sessionId: string;
+  leaseToken: string;
+  projectId: string;
+  collectionId: string;
+  assetId: string;
+  key: string;
+  originalFilename: string;
+  bytes: number;
+  auditPrincipal: AuditPrincipal;
+  now?: number;
+};
+
+/**
+ * Commits the final edited asset and upload-session terminal state in one lease-fenced D1 batch.
+ * Unlike the legacy ingest path, this deliberately does not inspect the object body: the External
+ * upload route has already performed the final R2 HEAD size/content-type check, and the rendition
+ * pipeline is the decode/type gate before publication.
+ */
+export async function finalizeExternalEditedUpload(env: Env, input: FinalizeExternalEditedUploadInput): Promise<void> {
+  const now = input.now ?? Date.now();
+  const auditActorId = input.auditPrincipal?.id;
+  if (!auditActorId) throw new Error("Edited upload completion requires an audit principal");
+  const auditId = crypto.randomUUID();
+  const assetInsert = env.DB.prepare(`
+    INSERT INTO assets (
+      id, collection_id, r2_key, original_filename, bytes, content_hash, source,
+      source_raw_asset_id, section, publish_status, rating_from_metadata, created_at, updated_at
+    )
+    SELECT s.asset_id, s.collection_id, s.r2_key, s.original_filename, s.bytes, NULL, 'upload',
+      NULL, 'Manual', 'pending', NULL, ?, ?
+    FROM external_edited_upload_sessions s
+    INNER JOIN collections c ON c.id = s.collection_id AND c.project_id = s.project_id AND c.kind = 'edited'
+    INNER JOIN projects p ON p.id = s.project_id AND p.archived_at IS NULL
+    WHERE s.id = ? AND s.status = 'completing' AND s.completion_lease_token = ?
+      AND s.project_id = ? AND s.collection_id = ? AND s.asset_id = ?
+      AND s.r2_key = ? AND s.bytes = ? AND s.expires_at > ?
+    ON CONFLICT(id) DO NOTHING
+    RETURNING id
+  `).bind(now, now, input.sessionId, input.leaseToken, input.projectId, input.collectionId, input.assetId, input.key, input.bytes, now);
+  const audit = env.DB.prepare(`
+    INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
+    SELECT ?, ?, 'asset.ingested', 'asset', ?, ?, ?
+    WHERE EXISTS (SELECT 1 FROM assets WHERE id = ? AND collection_id = ? AND r2_key = ? AND bytes = ?)
+      AND NOT EXISTS (SELECT 1 FROM audit_log WHERE action = 'asset.ingested' AND target_type = 'asset' AND target_id = ?)
+  `).bind(
+    auditId, auditActorId, input.assetId,
+    auditMeta(input.auditPrincipal, { projectId: input.projectId, key: input.key, manifestId: null, ratingFromMetadata: null }), now,
+    input.assetId, input.collectionId, input.key, input.bytes, input.assetId,
+  );
+  const collectionCount = env.DB.prepare(COLLECTION_RECEIVED_COUNT_SQL).bind(...collectionReceivedCountBindings(input.collectionId, now));
+  const complete = env.DB.prepare(`
+    UPDATE external_edited_upload_sessions
+    SET status = 'completed', completion_lease_token = NULL, completion_lease_expires_at = NULL,
+        completed_at = ?, terminal_at = ?, updated_at = ?
+    WHERE id = ? AND status = 'completing' AND completion_lease_token = ? AND expires_at > ?
+      AND EXISTS (SELECT 1 FROM assets WHERE id = ? AND collection_id = ? AND r2_key = ? AND bytes = ?)
+  `).bind(now, now, now, input.sessionId, input.leaseToken, now, input.assetId, input.collectionId, input.key, input.bytes);
+  const results = await env.DB.batch([assetInsert, audit, collectionCount, complete]);
+  if ((results[3]?.meta.changes ?? 0) !== 1) throw new Error("Edited upload completion lease was lost");
+}
+
 export async function finalizeIngest(
   env: Env,
   input: { actorId: string; auditPrincipal?: AuditPrincipal; projectId: string; assetId: string; key: string; originalFilename: string; contentHash?: string; collection?: "raw" | "edited"; manifestId?: string },

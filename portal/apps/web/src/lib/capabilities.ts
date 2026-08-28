@@ -5,7 +5,7 @@ import { useSession } from "./auth";
 type SessionUser = { role?: unknown };
 
 function isRole(value: unknown): value is Role {
-  return value === "admin" || value === "editor" || value === "photographer";
+  return value === "admin" || value === "editor" || value === "photographer" || value === "external_editor";
 }
 
 export function useCapabilities() {

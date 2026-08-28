@@ -1,7 +1,9 @@
-import { isStageKey, type ChecklistScheduleDto, type CollectionKind, type ProjectDeadlineSchedule, type ProjectMembershipDto, type ProjectMemberRole } from "@quincy/shared";
+import { isStageKey, type ChecklistScheduleDto, type CollectionKind, type ProjectDeadlineSchedule, type ProjectMembershipDto, type ProjectMemberRole, type Role } from "@quincy/shared";
 import { QueryClient, QueryClientContext, useQuery, useQueryClient, type QueryFunctionContext, type QueryKey, type UseQueryResult } from "@tanstack/react-query";
 import { useCallback, useContext, useEffect, useState, useSyncExternalStore } from "react";
 import { ApiError, apiGet } from "./api";
+import { externalApiGet, externalProjectDetailToWorkspace } from "./external-api-response";
+import type { ExternalProjectDetailDto } from "@quincy/shared";
 import { createActiveProjectDetailsInvalidatedMessage, getProjectQueryRuntime, projectResourceKey, useProjectQueryRuntime, type ProjectDataResource } from "./project-query-sync";
 import type { ReviewPatch, WorkspaceAsset, Review } from "../components/PhotoGrid";
 import type { ProjectStageKey } from "./stages";
@@ -10,7 +12,7 @@ export type ProjectCollection = { id: string; kind: CollectionKind; status: stri
 export type ProjectMember = ProjectMembershipDto;
 export type ProjectDetail = {
   id: string; street: string; suburb: string | null; postcode: string | null; agencyName: string | null; agentName: string | null;
-  shootDate: string | null; stageKey: ProjectStageKey; rawFolderPath: string | null; rawFolderLink: string | null;
+  shootDate: string | null; stageKey: ProjectStageKey; rawFolderPath: string | null; rawFolderLink: string | null; productionNotes?: string | null; editedUploadAvailable?: boolean;
   coverAssetId: string | null; effectiveCoverAssetId: string | null; collections: ProjectCollection[]; members: ProjectMember[]; deadlineSchedule: ProjectDeadlineSchedule;
 };
 export type ProjectSubtask = {
@@ -146,7 +148,7 @@ export function useOwnedSnapshot() {
   return runtime;
 }
 
-export function useProjectDetailQuery(projectId: string, enabled: boolean, specialOwnerOwnsKey: boolean): UseQueryResult<ProjectDetail, Error> {
+export function useProjectDetailQuery(projectId: string, enabled: boolean, specialOwnerOwnsKey: boolean, role: Role = "admin"): UseQueryResult<ProjectDetail, Error> {
   const queryClient = useQueryClient();
   const runtime = useOwnedSnapshot();
   const ledgerVersion = useProjectMembershipLedgerVersion(projectId);
@@ -154,19 +156,33 @@ export function useProjectDetailQuery(projectId: string, enabled: boolean, speci
   const owned = specialOwnerOwnsKey || runtime.isOwned(key) || isProjectQueryLedgerPending(queryClient, key);
   const query = useQuery({
     ...projectDetailQueryOptions(projectId), enabled: enabled && !runtime.isProjectRemoved(projectId), staleTime: 15_000,
+    queryFn: async ({ signal, client }: QueryFunctionContext) => {
+      const detail = role === "external_editor"
+        ? externalProjectDetailToWorkspace(await externalApiGet("project-detail", detailPath(projectId), signal) as ExternalProjectDetailDto) as ProjectDetail
+        : await apiGet<ProjectDetail>(detailPath(projectId), { signal });
+      if (getProjectQueryRuntime(client)?.isProjectRemoved(projectId)) throw removedDataError();
+      return detail;
+    },
     refetchInterval: owned ? false : 30_000, refetchIntervalInBackground: false, refetchOnWindowFocus: owned ? false : true, refetchOnReconnect: owned ? false : true,
   });
   void ledgerVersion;
   return { ...query, data: query.data ? applyProjectMembershipOverlay(query.data, getProjectMembershipTokens(queryClient, projectId)) : query.data } as UseQueryResult<ProjectDetail, Error>;
 }
 
-export function useProjectAssetsQuery(projectId: string, collectionKind: CollectionKind, enabled: boolean, specialOwnerOwnsKey: boolean): UseQueryResult<WorkspaceAsset[], Error> {
+export function useProjectAssetsQuery(projectId: string, collectionKind: CollectionKind, enabled: boolean, specialOwnerOwnsKey: boolean, role: Role = "admin"): UseQueryResult<WorkspaceAsset[], Error> {
   const queryClient = useQueryClient();
   const runtime = useOwnedSnapshot();
   const key = projectDataKeys.assets(projectId, collectionKind);
   const owned = specialOwnerOwnsKey || runtime.isOwned(key) || isProjectQueryLedgerPending(queryClient, key);
   return useQuery({
     ...projectAssetsQueryOptions(projectId, collectionKind), enabled: enabled && !runtime.isProjectRemoved(projectId), staleTime: 15_000,
+    queryFn: async ({ signal, client }: QueryFunctionContext) => {
+      const response = role === "external_editor"
+        ? await externalApiGet("asset-list", assetsPath(projectId, collectionKind), signal) as { assets: WorkspaceAsset[] }
+        : await apiGet<AssetsResponse>(assetsPath(projectId, collectionKind), { signal });
+      if (getProjectQueryRuntime(client)?.isProjectRemoved(projectId)) throw removedDataError();
+      return response.assets;
+    },
     refetchInterval: owned ? false : 30_000, refetchIntervalInBackground: false, refetchOnWindowFocus: owned ? false : true, refetchOnReconnect: owned ? false : true,
   });
 }
@@ -185,7 +201,7 @@ export function useProjectCollaborationSummaryQuery(projectId: string, enabled: 
   return { ...query, data: query.data ? applyProjectCollaborationSummaryMembershipOverlay(query.data, getProjectMembershipTokens(queryClient, projectId)) : query.data } as UseQueryResult<ProjectCollaborationSummary, Error>;
 }
 
-export function useProjectSubtasksQuery(projectId: string, enabled: boolean, specialOwnerOwnsKey = false): UseQueryResult<ProjectSubtask[], Error> {
+export function useProjectSubtasksQuery(projectId: string, enabled: boolean, specialOwnerOwnsKey = false, role: Role = "admin"): UseQueryResult<ProjectSubtask[], Error> {
   const contextClient = useContext(QueryClientContext);
   const [fallbackClient] = useState(() => new QueryClient({ defaultOptions: { queries: { retry: false } } }));
   const queryClient = contextClient ?? fallbackClient;
@@ -200,14 +216,29 @@ export function useProjectSubtasksQuery(projectId: string, enabled: boolean, spe
   }, [key, queryClient, runtime?.principalTerminal]);
   return useQuery({
     ...projectSubtasksQueryOptions(projectId), enabled: enabled && !runtime?.isProjectRemoved(projectId) && !runtime?.principalTerminal, staleTime: 15_000,
+    queryFn: async ({ signal, client }: QueryFunctionContext) => {
+      const response = role === "external_editor"
+        ? await externalApiGet("checklist", subtasksPath(projectId), signal) as { subtasks?: ProjectSubtask[] }
+        : await apiGet<ProjectSubtasksResponse>(subtasksPath(projectId), { signal });
+      if (signal.aborted) throw new DOMException("The operation was aborted.", "AbortError");
+      if (getProjectQueryRuntime(client)?.isProjectRemoved(projectId)) throw removedDataError();
+      return (response.subtasks ?? []).slice().sort((a, b) => a.position - b.position || a.id.localeCompare(b.id));
+    },
     refetchInterval: owned ? false : 30_000, refetchIntervalInBackground: false, refetchOnWindowFocus: owned ? false : true, refetchOnReconnect: owned ? false : true, retry: projectQueryRetry,
   }, queryClient) as UseQueryResult<ProjectSubtask[], Error>;
 }
 
-export function usePassiveRawAssetsQuery(projectId: string, enabled: boolean): UseQueryResult<WorkspaceAsset[], Error> {
+export function usePassiveRawAssetsQuery(projectId: string, enabled: boolean, role: Role = "admin"): UseQueryResult<WorkspaceAsset[], Error> {
   const runtime = useOwnedSnapshot();
   return useQuery({
     ...projectAssetsQueryOptions(projectId, "raw"), enabled: enabled && !runtime.isProjectRemoved(projectId), staleTime: Infinity,
+    queryFn: async ({ signal, client }: QueryFunctionContext) => {
+      const response = role === "external_editor"
+        ? await externalApiGet("asset-list", assetsPath(projectId, "raw"), signal) as { assets: WorkspaceAsset[] }
+        : await apiGet<AssetsResponse>(assetsPath(projectId, "raw"), { signal });
+      if (getProjectQueryRuntime(client)?.isProjectRemoved(projectId)) throw removedDataError();
+      return response.assets;
+    },
     refetchInterval: false, refetchIntervalInBackground: false, refetchOnWindowFocus: false, refetchOnReconnect: false, refetchOnMount: false,
   });
 }
@@ -218,7 +249,7 @@ export type ProjectCollaborationSummary = {
   project: { id: string; street: string; stageKey: ProjectDetail["stageKey"] };
   members: Array<Pick<ProjectMember, "id" | "userId" | "roleOnProject" | "name" | "active">>;
 };
-export type ProjectAssignmentCandidate = { id: string; name: string; email: string; globalRole: "admin" | "photographer" | "editor"; active: true };
+export type ProjectAssignmentCandidate = { id: string; name: string; email: string; globalRole: "admin" | "photographer" | "editor" | "external_editor"; active: true };
 export type ProjectAssignmentCandidates = { photographers: ProjectAssignmentCandidate[]; editors: ProjectAssignmentCandidate[] };
 
 function isProjectCollaborationSummary(value: unknown, projectId: string): value is ProjectCollaborationSummary {

@@ -1,14 +1,17 @@
 import { Hono } from "hono";
+import { terminalRoute } from "../lib/terminal-route";
 import { and, desc, eq, isNull, lt, sql } from "drizzle-orm";
 import { createDb, schema } from "@quincy/db";
 import type { AppEnv } from "../env";
 import { audit } from "../lib/audit";
+import { externalNotificationListResponseSchema } from "@quincy/shared";
+import { externalVisibleNotificationCte } from "../lib/external-notification-visibility";
 
 const MAX_LIMIT = 50;
 
 export const notificationsRoutes = new Hono<AppEnv>();
 
-notificationsRoutes.get("/notifications", async (c) => {
+notificationsRoutes.get("/notifications", terminalRoute("/notifications", async (c) => {
   const rawLimit = Number(c.req.query("limit") ?? 25);
   const limit = Number.isInteger(rawLimit) ? Math.min(Math.max(rawLimit, 1), MAX_LIMIT) : 25;
   const cursorValue = c.req.query("cursor");
@@ -16,6 +19,13 @@ notificationsRoutes.get("/notifications", async (c) => {
   if (cursorValue && (!cursor || Number.isNaN(cursor.valueOf()))) return c.json({ error: "Invalid cursor" }, 400);
   const userId = c.get("user").id;
   const db = createDb(c.env.DB);
+  if (c.get("user").role === "external_editor") {
+    const visibility = externalVisibleNotificationCte(userId);
+    const rows = await c.env.DB.prepare(`${visibility.sql} SELECT n.id, n.project_id AS projectId, n.type, n.title, n.body, n.read_at AS readAt, n.created_at AS createdAt FROM notifications n INNER JOIN external_visible_notifications visible ON visible.id = n.id WHERE 1 = 1${cursor ? " AND n.created_at < ?" : ""} ORDER BY n.created_at DESC, n.id DESC LIMIT ?`)
+      .bind(...visibility.bindings, ...(cursor ? [cursor.getTime()] : []), limit).all<{ id: string; projectId: string; type: string; title: string; body: string | null; readAt: number | null; createdAt: number }>();
+    const unread = await c.env.DB.prepare(`${visibility.sql} SELECT COUNT(*) AS count FROM notifications n INNER JOIN external_visible_notifications visible ON visible.id = n.id WHERE n.read_at IS NULL`).bind(...visibility.bindings).first<{ count: number }>();
+    return c.json(externalNotificationListResponseSchema.parse({ notifications: rows.results.map((row) => ({ ...row, readAt: row.readAt === null ? null : new Date(row.readAt).toISOString(), createdAt: new Date(row.createdAt).toISOString() })), unreadCount: Number(unread?.count ?? 0) }));
+  }
   const conditions = [eq(schema.notifications.userId, userId), cursor ? lt(schema.notifications.createdAt, cursor) : undefined];
   const [rows, unread] = await Promise.all([
     db.select().from(schema.notifications).where(and(...conditions)).orderBy(desc(schema.notifications.createdAt), desc(schema.notifications.id)).limit(limit).all(),
@@ -28,34 +38,52 @@ notificationsRoutes.get("/notifications", async (c) => {
     })),
     unreadCount: unread?.count ?? 0,
   });
-});
+}));
 
-notificationsRoutes.post("/notifications/:id/read", async (c) => {
+notificationsRoutes.post("/notifications/:id/read", terminalRoute("/notifications/:id/read", async (c) => {
   const id = c.req.param("id");
   const userId = c.get("user").id;
+  if (c.get("user").role === "external_editor") {
+    const visibility = externalVisibleNotificationCte(userId);
+    const result = await c.env.DB.prepare(`${visibility.sql} UPDATE notifications SET read_at = ? WHERE id = ? AND read_at IS NULL AND id IN (SELECT id FROM external_visible_notifications)`).bind(...visibility.bindings, new Date().getTime(), id).run();
+    if ((result.meta.changes ?? 0) !== 1) return c.json({ error: "Notification not found" }, 404);
+    return c.json({ ok: true });
+  }
   const result = await createDb(c.env.DB).update(schema.notifications)
     .set({ readAt: new Date() })
     .where(and(eq(schema.notifications.id, id), eq(schema.notifications.userId, userId), isNull(schema.notifications.readAt)))
     .run();
   if ((result.meta.changes ?? 0) !== 1) return c.json({ error: "Notification not found" }, 404);
   return c.json({ ok: true });
-});
+}));
 
-notificationsRoutes.delete("/notifications/:id", async (c) => {
+notificationsRoutes.delete("/notifications/:id", terminalRoute("/notifications/:id", async (c) => {
   const id = c.req.param("id");
   const userId = c.get("user").id;
+  if (c.get("user").role === "external_editor") {
+    const visibility = externalVisibleNotificationCte(userId);
+    const result = await c.env.DB.prepare(`${visibility.sql} DELETE FROM notifications WHERE id = ? AND id IN (SELECT id FROM external_visible_notifications)`).bind(...visibility.bindings, id).run();
+    if ((result.meta.changes ?? 0) !== 1) return c.json({ error: "Notification not found" }, 404);
+    await audit(c.env, c.get("user"), "notification.delete", "notification", id);
+    return c.json({ ok: true });
+  }
   const result = await createDb(c.env.DB).delete(schema.notifications)
     .where(and(eq(schema.notifications.id, id), eq(schema.notifications.userId, userId)))
     .run();
   if ((result.meta.changes ?? 0) !== 1) return c.json({ error: "Notification not found" }, 404);
   await audit(c.env, c.get("user"), "notification.delete", "notification", id);
   return c.json({ ok: true });
-});
+}));
 
-notificationsRoutes.post("/notifications/read-all", async (c) => {
+notificationsRoutes.post("/notifications/read-all", terminalRoute("/notifications/read-all", async (c) => {
   const userId = c.get("user").id;
+  if (c.get("user").role === "external_editor") {
+    const visibility = externalVisibleNotificationCte(userId);
+    await c.env.DB.prepare(`${visibility.sql} UPDATE notifications SET read_at = ? WHERE read_at IS NULL AND id IN (SELECT id FROM external_visible_notifications)`).bind(...visibility.bindings, new Date().getTime()).run();
+    return c.json({ ok: true });
+  }
   await createDb(c.env.DB).update(schema.notifications)
     .set({ readAt: new Date() })
     .where(and(eq(schema.notifications.userId, userId), isNull(schema.notifications.readAt)));
   return c.json({ ok: true });
-});
+}));

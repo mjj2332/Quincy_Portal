@@ -7,7 +7,7 @@ import { QuincyField } from "@/components/quincy/QuincyField";
 export type User = { id: string; name: string; email: string; role: Role; active: boolean };
 export type ProjectForm = {
   street: string; suburb: string; postcode: string; agencyName: string; agentName: string; agentEmail: string; agentPhone: string;
-  shootDate: string; timeWindow: string; orderNo: string; orderId: string; invoiceAmount: string; paymentStatus: string; notes: string;
+  shootDate: string; timeWindow: string; orderNo: string; orderId: string; invoiceAmount: string; paymentStatus: string; notes: string; productionNotes: string;
   rawFolderLink: string; rawFolderPath: string; orderedServices: Exclude<CollectionKind, "raw">[]; photographerUserIds: string[]; editorUserIds: string[];
 };
 export type ProjectTextField = Exclude<keyof ProjectForm, "orderedServices" | "photographerUserIds" | "editorUserIds">;
@@ -27,7 +27,7 @@ export const SERVICES: Service[] = [
 
 export const emptyProjectForm: ProjectForm = {
   street: "", suburb: "", postcode: "", agencyName: "", agentName: "", agentEmail: "", agentPhone: "",
-  shootDate: "", timeWindow: "", orderNo: "", orderId: "", invoiceAmount: "", paymentStatus: "", notes: "",
+  shootDate: "", timeWindow: "", orderNo: "", orderId: "", invoiceAmount: "", paymentStatus: "", notes: "", productionNotes: "",
   rawFolderLink: "", rawFolderPath: "", orderedServices: [], photographerUserIds: [], editorUserIds: [],
 };
 
@@ -38,6 +38,7 @@ function isUrl(value: string): boolean {
 }
 
 function userName(user: User): string { return user.name || user.email; }
+function roleLabel(role: Role): string { return role === "external_editor" ? "External editor" : role === "admin" ? "admin" : role === "editor" ? "editor" : ""; }
 
 export function projectFieldsPolicy(mode: ProjectFieldsMode = "create") {
   const readOnly = mode === "edit";
@@ -81,7 +82,7 @@ export function ProjectFields({ form, errors, existingCollections = [], mode = "
   }, [loadUsers, mode]);
 
   const photographers = users.filter((user) => (user.role === "photographer" || user.role === "editor" || user.role === "admin") && (user.active || form.photographerUserIds.includes(user.id)));
-  const editors = users.filter((user) => (user.role === "editor" || user.role === "admin") && (user.active || form.editorUserIds.includes(user.id)));
+  const editors = users.filter((user) => (user.role === "editor" || user.role === "external_editor" || user.role === "admin") && (user.active || form.editorUserIds.includes(user.id)));
   const collectionExists = (kind: CollectionKind) => existingCollections.includes(kind);
   const policy = projectFieldsPolicy(mode);
 
@@ -118,11 +119,11 @@ export function ProjectFields({ form, errors, existingCollections = [], mode = "
       <div className="create-project__section-head"><div className="ey">Team</div><h2 className="serif" id="team-heading">Who is assigned?</h2></div>
       {isLoadingUsers && <div className="create-project__team-state" role="status">Loading available team members…</div>}
       {!isLoadingUsers && usersError && <div className="notice" role="alert">{usersError}<div style={{ marginTop: 12 }}><button className="button button--secondary" type="button" onClick={() => void loadUsers()}>Try again</button></div></div>}
-      {!isLoadingUsers && !usersError && <div className="create-project__team"><div><div className="ey">Photographers</div><div className="create-project__checklist">{photographers.length ? photographers.map((user) => <label className="create-project__check" key={user.id}><input type="checkbox" checked={form.photographerUserIds.includes(user.id)} onChange={() => onToggle("photographerUserIds", user.id)} /><span><strong>{userName(user)}</strong><small>{user.email}{user.role === "admin" && " · admin"}{user.role === "editor" && " · editor"}</small></span></label>) : <p>No active photographers are provisioned.</p>}</div></div><div><div className="ey">Editors</div><div className="create-project__checklist">{editors.length ? editors.map((user) => <label className="create-project__check" key={user.id}><input type="checkbox" checked={form.editorUserIds.includes(user.id)} onChange={() => onToggle("editorUserIds", user.id)} /><span><strong>{userName(user)}</strong><small>{user.email}{user.role === "admin" && " · admin"}</small></span></label>) : <p>No active editors are provisioned.</p>}</div></div></div>}
+      {!isLoadingUsers && !usersError && <div className="create-project__team"><div><div className="ey">Photographers</div><div className="create-project__checklist">{photographers.length ? photographers.map((user) => <label className="create-project__check" key={user.id}><input type="checkbox" checked={form.photographerUserIds.includes(user.id)} onChange={() => onToggle("photographerUserIds", user.id)} /><span><strong>{userName(user)}</strong><small>{user.email}{roleLabel(user.role) && ` · ${roleLabel(user.role)}`}</small></span></label>) : <p>No active photographers are provisioned.</p>}</div></div><div><div className="ey">Editors</div><div className="create-project__checklist">{editors.length ? editors.map((user) => <label className="create-project__check" key={user.id}><input type="checkbox" checked={form.editorUserIds.includes(user.id)} onChange={() => onToggle("editorUserIds", user.id)} /><span><strong>{userName(user)}</strong><small>{user.email}{user.role === "admin" && " · admin"}{user.role === "external_editor" && " · External editor"}</small></span></label>) : <p>No active editors are provisioned.</p>}</div></div></div>}
     </section>}
     <section className={`create-project__section ${policy.notesReadOnly ? "project-fields__section--readonly" : ""}`} aria-labelledby="notes-heading">
       <div className="create-project__section-head"><div className="ey">Notes</div><h2 className="serif" id="notes-heading">Anything the team should know?</h2>{policy.notesReadOnly && <p className="project-fields__readonly-note">Notes are retained from the original order.</p>}</div>
-      <label className="admin-field"><span>Production notes</span><textarea rows={5} value={form.notes} readOnly={policy.notesReadOnly} onChange={policy.notesReadOnly ? undefined : (event) => onChange("notes", event.target.value)} /></label>
+      <label className="admin-field"><span>Production notes</span><textarea rows={5} value={form.productionNotes} readOnly={policy.notesReadOnly} onChange={policy.notesReadOnly ? undefined : (event) => onChange("productionNotes", event.target.value)} /></label>
     </section>
   </>;
 }

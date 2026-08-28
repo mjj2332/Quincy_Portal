@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import type { CollectionKind } from "@quincy/shared";
+import type { CollectionKind, Role } from "@quincy/shared";
 import { type ProjectStageKey, useStages } from "../lib/stages";
 import { Lightbox } from "../components/Lightbox";
 import { PhotoGrid, type ReviewPatch, type WorkspaceAsset } from "../components/PhotoGrid";
 import { UploadDropzone } from "../components/UploadDropzone";
+import { ExternalEditedUpload } from "../components/ExternalEditedUpload";
 import { CollectionPanel } from "../components/CollectionPanel";
 import { ApiError, apiDelete, apiGet, apiPost } from "../lib/api";
 import { useCapabilities } from "../lib/capabilities";
@@ -59,7 +60,7 @@ export function ProjectWorkspace(props: ProjectWorkspaceProps) {
   const queryClient = useQueryClient();
   const runtime = useProjectQueryRuntime();
   const runtimeVersion = useSyncExternalStore(runtime.subscribe, runtime.getSnapshot, runtime.getSnapshot);
-  const { can } = useCapabilities();
+  const { can, role } = useCapabilities();
   const canAdminBackend = can("adminBackend");
   const canViewEdited = can("viewEdited");
   const terminateOnUnauthorized = useProjectAccessTermination();
@@ -310,7 +311,7 @@ export function ProjectWorkspace(props: ProjectWorkspaceProps) {
   if (viewState === "collaboration-unavailable") return <CollaborationOnlyUnavailable />;
   if (initialDetailProbe) return <main className="page"><div className="empty"><span className="serif">Loading project.</span>Preparing the workspace.</div></main>;
   return <>
-    <ProjectWorkspaceQueryOwner projectId={projectId} run={run} activeTab={activeTab} collectionDenied={collectionDenied} workspaceReady={workspaceReady} collaborationUnavailable={collaborationUnavailable} canViewEdited={canViewEdited} canAdminBackend={canAdminBackend} onDetailReady={(ownerRun, stageKey) => { if (ownerRun !== runRef.current) return; setStageKeyForManual(stageKey); startCompanionBatch(ownerRun); }} onDetailStage={(ownerRun, stageKey) => { if (ownerRun !== runRef.current) return; setStageKeyForManual(stageKey); }} onQueryReady={(ownerRun, defaultEdited) => { if (ownerRun !== runRef.current) return; setQueryReadyFor(ownerRun); if (defaultEdited && initialTabHandledRef.current !== ownerRun) { initialTabHandledRef.current = ownerRun; setActiveTab("edited"); } }} onAccessFailure={accessFailure} onCollectionDenied={(kind) => { setCollectionDenied((current) => current.has(kind) ? current : new Set(current).add(kind)); if (activeTab === kind) setActiveTab(kind === "raw" && canViewEdited ? "edited" : "raw"); }} activeTabChange={setActiveTab} openAssetId={openAssetId} setOpenAssetId={setOpenAssetId} lightboxOrderIds={lightboxOrderIds} setLightboxOrderIds={setLightboxOrderIds} ingest={ingest} jobs={jobs} autohdrStatus={autohdrStatus} isSyncing={isSyncing} isSending={isSending} onSyncDropbox={() => void syncDropbox()} onSendToAutoHdr={() => void sendToAutoHdr()} onRetryAutoHdr={(jobId) => void retryAutoHdr(jobId)} onUploadComplete={onUploadComplete} onDocumentsChanged={onDocumentsChanged} onLinksChanged={onLinksChanged} toast={toast} toasts={toasts} onInvalidate={invalidate} onRefreshDetail={forceDetailRead} canReadCollection={canReadCollection} />
+    <ProjectWorkspaceQueryOwner projectId={projectId} role={role ?? "photographer"} run={run} activeTab={activeTab} collectionDenied={collectionDenied} workspaceReady={workspaceReady} collaborationUnavailable={collaborationUnavailable} canViewEdited={canViewEdited} canAdminBackend={canAdminBackend} onDetailReady={(ownerRun, stageKey) => { if (ownerRun !== runRef.current) return; setStageKeyForManual(stageKey); startCompanionBatch(ownerRun); }} onDetailStage={(ownerRun, stageKey) => { if (ownerRun !== runRef.current) return; setStageKeyForManual(stageKey); }} onQueryReady={(ownerRun, defaultEdited) => { if (ownerRun !== runRef.current) return; setQueryReadyFor(ownerRun); if (defaultEdited && initialTabHandledRef.current !== ownerRun) { initialTabHandledRef.current = ownerRun; setActiveTab("edited"); } }} onAccessFailure={accessFailure} onCollectionDenied={(kind) => { setCollectionDenied((current) => current.has(kind) ? current : new Set(current).add(kind)); if (activeTab === kind) setActiveTab(kind === "raw" && canViewEdited ? "edited" : "raw"); }} activeTabChange={setActiveTab} openAssetId={openAssetId} setOpenAssetId={setOpenAssetId} lightboxOrderIds={lightboxOrderIds} setLightboxOrderIds={setLightboxOrderIds} ingest={ingest} jobs={jobs} autohdrStatus={autohdrStatus} isSyncing={isSyncing} isSending={isSending} onSyncDropbox={() => void syncDropbox()} onSendToAutoHdr={() => void sendToAutoHdr()} onRetryAutoHdr={(jobId) => void retryAutoHdr(jobId)} onUploadComplete={onUploadComplete} onDocumentsChanged={onDocumentsChanged} onLinksChanged={onLinksChanged} toast={toast} toasts={toasts} onInvalidate={invalidate} onRefreshDetail={forceDetailRead} canReadCollection={canReadCollection} />
     {viewState === "full-workspace" && (collaborationUnavailable ? <CollaborationOnlyUnavailable /> : <ProjectCollaborationPanel projectId={projectId} openSignal={collaborationOpenSignal} onOpenSignalConsumed={onCollaborationOpenSignalConsumed} onAccessFailure={accessFailure} />)}
     {viewState === "full-workspace" && <div className="toasts">{toasts.map((item) => <div className={`toast ${item.tone === "error" ? "toast--error" : ""}`} key={item.id}>{item.tone === "error" ? "!" : "✓"}<span>{item.message}</span></div>)}</div>}
   </>;
@@ -339,13 +340,13 @@ function CollaborationOnlyUnavailable() {
 function UnavailableProject({ message, toasts }: { message: string; toasts: Toast[] }) { return <main className="page"><div className="pagehead"><h1 className="serif">Project workspace</h1><InternalLink className="button button--secondary" to="/">Back to dashboard</InternalLink></div><div className="empty" role="alert"><span className="serif">Project unavailable.</span>{message}</div><div className="toasts">{toasts.map((item) => <div className={`toast ${item.tone === "error" ? "toast--error" : ""}`} key={item.id}>{item.tone === "error" ? "!" : "✓"}<span>{item.message}</span></div>)}</div></main>; }
 
 type QueryOwnerProps = {
-  projectId: string; run: number; activeTab: CollectionKind; collectionDenied: Set<CollectionKind>; workspaceReady: boolean; collaborationUnavailable: boolean; canViewEdited: boolean; canAdminBackend: boolean;
+  projectId: string; role: Role; run: number; activeTab: CollectionKind; collectionDenied: Set<CollectionKind>; workspaceReady: boolean; collaborationUnavailable: boolean; canViewEdited: boolean; canAdminBackend: boolean;
   onDetailReady: (run: number, stageKey: ProjectStageKey) => void; onDetailStage: (run: number, stageKey: ProjectStageKey) => void; onQueryReady: (run: number, defaultEdited: boolean) => void; onAccessFailure: (error: unknown, resource: AccessFailureResource, kind?: CollectionKind, initial?: boolean) => void; onCollectionDenied: (kind: CollectionKind) => void; activeTabChange: (kind: CollectionKind) => void;
   openAssetId: string | null; setOpenAssetId: (id: string | null) => void; lightboxOrderIds: string[] | null; setLightboxOrderIds: (ids: string[] | null) => void; ingest: IngestStatus | null; jobs: Job[]; autohdrStatus: AutoHdrStatusResponse["handoff"]; isSyncing: boolean; isSending: boolean; onSyncDropbox: () => void; onSendToAutoHdr: () => void; onRetryAutoHdr: (jobId: string) => void; onUploadComplete: (kind: "raw" | "edited") => Promise<void>; onDocumentsChanged: (kind: "floorplan" | "copy") => Promise<void>; onLinksChanged: () => Promise<void>; toast: (message: string, tone?: Toast["tone"]) => void; toasts: Toast[]; onInvalidate: (resources: ProjectDataResource[]) => Promise<void>; onRefreshDetail: () => Promise<ProjectDetail | undefined>; canReadCollection: (kind: CollectionKind) => boolean;
 };
 
 function ProjectWorkspaceQueryOwner(props: QueryOwnerProps) {
-  const detail = useProjectDetailQuery(props.projectId, true, false);
+  const detail = useProjectDetailQuery(props.projectId, true, false, props.role);
   const collaborationSummary = useProjectCollaborationSummaryQuery(props.projectId, Boolean(detail.data) && !props.collaborationUnavailable, false);
   const detailReadyReported = useRef<number | null>(null);
   const onDetailStageRef = useRef(props.onDetailStage);
@@ -366,7 +367,7 @@ function ProjectWorkspaceQueryOwner(props: QueryOwnerProps) {
 
 type ActiveAssetsProps = QueryOwnerProps & { detail: ProjectDetail; detailReady: boolean };
 function ActiveAssetsObserver(props: ActiveAssetsProps) {
-  const assetsQuery = useProjectAssetsQuery(props.projectId, props.activeTab, props.detailReady && props.canReadCollection(props.activeTab), false);
+  const assetsQuery = useProjectAssetsQuery(props.projectId, props.activeTab, props.detailReady && props.canReadCollection(props.activeTab), false, props.role);
   const bootstrapReported = useRef<number | null>(null);
   const classification = assetsQuery.error ? classifyProjectAccessError(assetsQuery.error, "assets", props.activeTab) : null;
   useEffect(() => { if (props.activeTab === "raw" && (assetsQuery.isSuccess || Boolean(assetsQuery.error)) && bootstrapReported.current !== props.run) { bootstrapReported.current = props.run; props.onQueryReady(props.run, props.canViewEdited && ["editing_autohdr", "edited_review", "delivered"].includes(props.detail.stageKey)); } }, [assetsQuery.error, assetsQuery.isSuccess, props]);
@@ -378,7 +379,7 @@ function ActiveAssetsObserver(props: ActiveAssetsProps) {
   return <WorkspaceBody {...props} assets={assets} rawAssets={assets} assetsPending={assetsQuery.isPending && !assetsQuery.data} />;
 }
 function NonRawWorkspaceBody(props: ActiveAssetsProps & { assets: WorkspaceAsset[]; assetsPending: boolean }) {
-  const raw = usePassiveRawAssetsQuery(props.projectId, true);
+  const raw = usePassiveRawAssetsQuery(props.projectId, true, props.role);
   const classification = raw.error ? classifyProjectAccessError(raw.error, "assets", "raw") : null;
   useEffect(() => { if (!raw.error) return; if (classification?.scope === "collection") props.onCollectionDenied("raw"); else props.onAccessFailure(raw.error, "assets", "raw", !raw.data); }, [classification, props, raw.data, raw.error]);
   const rawAssets = projectAssetsForRender(raw.data, raw.error, "raw");
@@ -395,7 +396,7 @@ function WorkspaceBody(props: WorkspaceBodyProps) {
   const canReview = isEdited ? can("reviewEdited") : can("selectForEditing"); const canRecommend = activeTab === "raw" && can("recommendRaw"); const canAnnotate = activeTab === "raw" ? can("annotateRaw") : isEdited && can("annotateEdited");
   const availableTabs = (can("viewEdited") ? ["raw", "edited", "video", "floorplan", "copy"] : ["raw"]).filter((kind) => !props.collectionDenied.has(kind as CollectionKind)) as CollectionKind[];
   const rawCollection = project.collections.find((collection) => collection.kind === "raw"); const selectionCount = rawAssets.filter((asset) => asset.selected).length;
-  const autoHdrApiJobs = props.jobs.filter((job) => job.kind === "autohdr_api_send"); const latestAutoHdrApiJob = autoHdrApiJobs[0]; const autoHdrApiSendActive = autoHdrApiJobs.some(activeJob); const usesSendOnlyAutoHdrApi = autoHdrApiJobs.length > 0; const hasRawFolder = Boolean(project.rawFolderPath || project.rawFolderLink);
+  const autoHdrApiJobs = props.jobs.filter((job) => job.kind === "autohdr_api_send"); const latestAutoHdrApiJob = autoHdrApiJobs[0]; const autoHdrApiSendActive = autoHdrApiJobs.some(activeJob); const usesSendOnlyAutoHdrApi = autoHdrApiJobs.length > 0; const hasRawFolder = project.editedUploadAvailable ?? Boolean(project.rawFolderPath || project.rawFolderLink);
   const autohdrTerminal = props.autohdrStatus?.state === "retired" || props.autohdrStatus?.state === "failed"; const autohdrBlocked = !autohdrTerminal && (props.autohdrStatus?.state === "blocked" || props.autohdrStatus?.mappingState === "blocked_collision");
   const autohdrStatusLabel = usesSendOnlyAutoHdrApi ? latestAutoHdrApiJob?.status === "done" ? "Sent to AutoHDR" : latestAutoHdrApiJob?.status === "failed" || latestAutoHdrApiJob?.status === "stuck" ? "AutoHDR send needs attention" : "Sending selected photos to AutoHDR" : autohdrBlocked ? "Blocked — staff resolution needed" : props.isSyncing ? "Checking Dropbox…" : props.autohdrStatus?.mappingState === "active" ? "Fetched" : props.autohdrStatus?.state === "started" ? "Waiting for AutoHDR output" : "Not yet sent to autoHDR";
   const autohdrMessage = usesSendOnlyAutoHdrApi ? "This integration is send-only. Quincy Portal does not fetch or retrieve the edited photos." : autohdrBlocked ? (props.autohdrStatus?.diagnostic ?? "AutoHDR output needs staff resolution before it can be fetched.") : "Pull finished edits from autoHDR's 04-FINAL-Photos into this collection.";

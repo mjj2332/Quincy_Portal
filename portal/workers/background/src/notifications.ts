@@ -1,4 +1,6 @@
 import {
+  emitExternalSafeLegacyNotification,
+  emitExternalSubtaskNotification,
   emitNotifications,
   notificationCopy,
   projectNotificationRecipients,
@@ -8,7 +10,7 @@ import {
 } from "@quincy/db";
 import { projects } from "@quincy/db/schema";
 import { eq } from "drizzle-orm";
-import { projectNotificationRoute, staffPathFor } from "@quincy/shared";
+import { PROJECT_ACTIVITY_SYSTEM_OUTBOX_ACTOR_ID, projectNotificationRoute, publishNotificationOutbox, staffPathFor } from "@quincy/shared";
 import type { Env } from "./env";
 import { dbFor } from "./lib/db";
 
@@ -16,10 +18,12 @@ export async function notifyProject(
   env: Env,
   projectId: string,
   type: NotificationType,
-  options: { sourceKey?: string } = {},
+  options: { sourceKey?: string; sourceId?: string } = {},
 ): Promise<void> {
   try {
     const db = dbFor(env);
+    const sourceKey = options.sourceKey ?? `legacy:${type}:${projectId}`;
+    const sourceId = options.sourceId ?? sourceKey;
     const [project, recipients] = await Promise.all([
       db.select({ street: projects.street }).from(projects).where(eq(projects.id, projectId)).get(),
       projectNotificationRecipients(db, projectId),
@@ -38,6 +42,14 @@ export async function notifyProject(
       email: env.EMAIL,
       fromAddress: env.NOTIFICATIONS_FROM_ADDRESS,
     });
+    const externalIds = await emitExternalSafeLegacyNotification(env.DB, {
+      projectId,
+      actorId: PROJECT_ACTIVITY_SYSTEM_OUTBOX_ACTOR_ID,
+      type,
+      sourceKey,
+      sourceId,
+    });
+    if (externalIds.length) await publishNotificationOutbox(env.NOTIFICATION_QUEUE, env.DB, externalIds);
   } catch (error) {
     console.error("Background notification emission failed", { projectId, type, error });
   }
@@ -69,7 +81,7 @@ function sydneyDateTime(now: number) {
   return { date: `${value("year")}-${value("month")}-${value("day")}`, hour: Number(value("hour")) };
 }
 
-export type DueSubtaskCandidate = { subtaskId: string; projectId: string; assigneeId: string; dueDate: string };
+export type DueSubtaskCandidate = { subtaskId: string; projectId: string; assigneeId: string; assignmentVersion: number; dueDate: string };
 export type DueSubtaskCandidateResult = { claimed: boolean; emitted: number };
 
 /** Claims one eligible due subtask before resolving its current assignee or emitting its one-shot alert. */
@@ -83,8 +95,9 @@ export async function processDueSubtaskCandidate(
     "UPDATE project_subtasks SET due_reminder_sent_at = ?, updated_at = ? " +
     "WHERE id = ? AND project_id = ? AND due_reminder_sent_at IS NULL AND done = 0 " +
     "AND due_date = ? AND substr(due_date, 1, 10) <= ? AND assignee_id = ? " +
+    "AND assignment_version = ? " +
     "AND EXISTS (SELECT 1 FROM projects p WHERE p.id = project_subtasks.project_id AND p.archived_at IS NULL)",
-  ).bind(now, now, row.subtaskId, row.projectId, row.dueDate, todaySydney, row.assigneeId).run();
+  ).bind(now, now, row.subtaskId, row.projectId, row.dueDate, todaySydney, row.assigneeId, row.assignmentVersion).run();
   if ((claim.meta.changes ?? 0) !== 1) {
     await logDueSubtaskClaimSkip(env, row, todaySydney);
     return { claimed: false, emitted: 0 };
@@ -108,6 +121,19 @@ export async function processDueSubtaskCandidate(
       email: env.EMAIL,
       fromAddress: env.NOTIFICATIONS_FROM_ADDRESS,
     });
+    const externalIds = await emitExternalSubtaskNotification(env.DB, {
+      projectId: row.projectId,
+      actorId: PROJECT_ACTIVITY_SYSTEM_OUTBOX_ACTOR_ID,
+      assigneeId: row.assigneeId,
+      subtaskId: row.subtaskId,
+      assignmentVersion: row.assignmentVersion,
+      sourceKey: `subtask-due:${row.subtaskId}:${row.dueDate}`,
+      kind: "due_today",
+      dueDate: row.dueDate,
+      claimAt: now,
+      now,
+    });
+    if (externalIds.length) await publishNotificationOutbox(env.NOTIFICATION_QUEUE, env.DB, externalIds, now);
     console.log("Claimed due subtask notification", { subtaskId: row.subtaskId, projectId: row.projectId, emitted });
     return { claimed: true, emitted };
   } catch (error) {
@@ -128,7 +154,7 @@ export async function scanDueSubtasks(env: Env, now = Date.now()): Promise<numbe
   const { date: todaySydney, hour } = sydneyDateTime(now);
   if (hour !== 8) return 0;
   const rows = await env.DB.prepare(
-    "SELECT s.id AS subtaskId, s.project_id AS projectId, s.assignee_id AS assigneeId, s.due_date AS dueDate " +
+    "SELECT s.id AS subtaskId, s.project_id AS projectId, s.assignee_id AS assigneeId, s.assignment_version AS assignmentVersion, s.due_date AS dueDate " +
     "FROM project_subtasks s INNER JOIN projects p ON p.id = s.project_id " +
     "WHERE s.done = 0 AND s.due_date IS NOT NULL AND substr(s.due_date, 1, 10) <= ? " +
     "AND s.due_reminder_sent_at IS NULL AND s.assignee_id IS NOT NULL AND p.archived_at IS NULL",

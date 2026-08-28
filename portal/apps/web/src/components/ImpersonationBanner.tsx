@@ -1,9 +1,10 @@
 import { useState, type JSX } from "react";
+import type { Role } from "@quincy/shared";
 import { stopImpersonating, useSession } from "../lib/auth";
 import { locationStore } from "../lib/router";
 
 export type ImpersonationBannerProps = {
-  user: { name: string; role: "admin" | "photographer" | "editor" };
+  user: { name: string; role: Role };
   invalidated: boolean;
 };
 

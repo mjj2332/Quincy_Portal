@@ -17,6 +17,9 @@ export interface Env {
   RENDITION_QUEUE?: Queue<RenditionMessage>;
   /** Dedicated shared secret for app source signing and background generation only. */
   TRANSFORM_SOURCE_SECRET?: string;
+  /** Active internal principal whose epoch authorizes background cold transforms. */
+  TRANSFORM_SOURCE_PRINCIPAL_ID?: string;
+  TRANSFORM_SOURCE_AUTHORIZATION_EPOCH?: string;
   RENDITIONS_ENABLED?: boolean;
   DROPBOX_RAW_AUTOMATION_ENABLED?: string | boolean;
   DROPBOX_AUTOHDR_AUTOMATION_ENABLED?: string | boolean;
@@ -35,4 +38,7 @@ export interface Env {
   DROPBOX_APP_SECRET: string;
   EMAIL?: SendEmail;
   NOTIFICATIONS_FROM_ADDRESS?: string;
+  /** Zone purge credentials remain on the background Worker; never expose them to the app. */
+  CF_ZONE_ID?: string;
+  CF_API_TOKEN?: string;
 }
