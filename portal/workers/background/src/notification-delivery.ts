@@ -985,9 +985,18 @@ type ReminderAdmission = { sql: string; values: unknown[] };
 // authorization epoch. External rows must match the current epoch exactly.
 const AUTHORIZATION_EPOCH_MATCH = `(o.recipient_authorization_epoch = recipient.authorization_epoch OR (o.recipient_authorization_epoch IS NULL AND recipient.role <> 'external_editor'))`;
 
-function reminderAuthorization(outbox: OutboxRow, payload: ProjectDeadlineReminderOutboxPayload, token: string, channel?: "in_app" | "email"): ReminderAdmission {
+function reminderAuthorization(
+  outbox: OutboxRow,
+  payload: ProjectDeadlineReminderOutboxPayload,
+  token: string,
+  channel?: "in_app" | "email",
+  outboxIdRef: "correlated" | "explicit" = "correlated",
+): ReminderAdmission {
   const roles = PROJECT_ASSIGNMENT_ELIGIBLE_ROLES.editor;
   const rolePlaceholders = roles.map(() => "?").join(",");
+  const outboxIdClause = outboxIdRef === "correlated"
+    ? "o.id = notification_delivery_ledger.outbox_id AND o.id = ?"
+    : "o.id = ?";
   return {
     sql: `
       SELECT 1
@@ -1000,8 +1009,8 @@ function reminderAuthorization(outbox: OutboxRow, payload: ProjectDeadlineRemind
         ON member.id = ? AND member.project_id = o.project_id
         AND member.user_id = o.recipient_id AND member.role_on_project = 'editor'
       LEFT JOIN notification_preferences preference ON preference.user_id = o.recipient_id
-      WHERE o.id = notification_delivery_ledger.outbox_id
-        AND o.id = ? AND o.status = 'processing' AND o.lease_token = ?
+      WHERE ${outboxIdClause}
+        AND o.status = 'processing' AND o.lease_token = ?
         AND o.schema_version = 1 AND o.event_type = 'project.deadline.reminder'
         AND o.source_key = ? AND o.project_id = ? AND o.recipient_id = ?
         AND p.archived_at IS NULL AND p.stage_key <> 'delivered'
@@ -1087,6 +1096,12 @@ async function beginReminderChannel(env: Env, outbox: OutboxRow, token: string, 
 type LegacyAdmission = { sql: string; values: unknown[] };
 
 function legacyAdmission(outbox: OutboxRow, resolved: LegacyResolvedRecipient, token: string): LegacyAdmission {
+  if (resolved.row.recipientRole !== "external_editor") {
+    return {
+      sql: "EXISTS (SELECT 1 FROM notification_outbox o WHERE o.id = ? AND o.status = 'processing' AND o.lease_token = ? AND o.recipient_id = ?)",
+      values: [outbox.id, token, outbox.recipient_id],
+    };
+  }
   const allRoles = [...new Set([
     ...PROJECT_ASSIGNMENT_ELIGIBLE_ROLES.photographer,
     ...PROJECT_ASSIGNMENT_ELIGIBLE_ROLES.editor,
@@ -1184,14 +1199,11 @@ function channelAdmission(outbox: OutboxRow, resolved: LegacyResolvedRecipient, 
   if (outbox.event_type === NOTIFICATION_OUTBOX_EVENT_TYPES.projectDeadlineReminder) {
     const payload = safeReminderPayload(outbox.payload_json, outbox);
     if (!payload) return { sql: "0", values: [] };
-    const admission = reminderAuthorization(outbox, payload, token, channel);
-    // reminderAuthorization is also used by the ledger UPDATE, where the target table is
-    // available as notification_delivery_ledger. The media/notification INSERT and convergence
-    // statements have no such target alias, so bind the outbox identity explicitly instead.
-    return {
-      sql: admission.sql.replace("o.id = notification_delivery_ledger.outbox_id", "o.id = ?"),
-      values: [outbox.id, ...admission.values],
-    };
+    // reminderAuthorization returns a bare `SELECT 1 …` (its ledger-UPDATE callers wrap it in
+    // `EXISTS (…)`). channelAdmission's consumers interpolate as `AND ${sql}`, matching
+    // legacyAdmission's `EXISTS (…)` shape — so wrap here too.
+    const admission = reminderAuthorization(outbox, payload, token, channel, "explicit");
+    return { sql: `EXISTS (${admission.sql})`, values: admission.values };
   }
   return legacyAdmission(outbox, resolved, token);
 }
@@ -1216,7 +1228,19 @@ async function deliverInApp(env: Env, outbox: OutboxRow, resolved: LegacyResolve
     if (!latest.ok && latest.kind === "suppress") await suppressWholeOccurrence(env, outbox, token, latest.reason, now, latest.code);
     return;
   }
-  const current = resolved;
+  let current: LegacyResolvedRecipient;
+  if (resolved.row.recipientRole === "external_editor") {
+    current = resolved;
+  } else {
+    const secondResolution = await resolveRecipient(env, outbox);
+    if (!secondResolution.ok) {
+      if (secondResolution.kind !== "suppress") throw new Error("Legacy recipient resolver returned a permanent failure");
+      await suppressWholeOccurrence(env, outbox, token, secondResolution.reason, now, secondResolution.code);
+      return;
+    }
+    if (secondResolution.kind !== "legacy") throw new Error("Legacy outbox resolved as a broad activity");
+    current = secondResolution;
+  }
   const admission = channelAdmission(outbox, current, token, "in_app");
   const notificationId = crypto.randomUUID();
   const inserted = env.DB.prepare(`
@@ -1583,7 +1607,6 @@ async function finishEmail(env: Env, outbox: OutboxRow, token: string, now: numb
   }
   emailReachedProcessing.value = true;
   const current = reauthorized;
-  const admission = channelAdmission(outbox, current, token, "email");
   try {
     const result = await env.EMAIL.send({
       from: env.NOTIFICATIONS_FROM_ADDRESS,
@@ -1592,12 +1615,16 @@ async function finishEmail(env: Env, outbox: OutboxRow, token: string, now: numb
       text: current.delivery.emailText,
       html: current.delivery.emailHtml,
     });
+    // The provider has accepted the message -- an irreversible external side effect. Full
+    // re-authorization already ran in beginChannel BEFORE the send; a race that lands after it
+    // must not strand the ledger in 'processing' (we would resend). Converge on lease
+    // ownership only, exactly like the 'failed'/'unknown' siblings below.
     const sentResult = await env.DB.prepare(`
       UPDATE notification_delivery_ledger
       SET status = 'sent', delivered_at = ?, email_message_id = ?, updated_at = ?, last_error_code = NULL, last_error = NULL
       WHERE outbox_id = ? AND channel = 'email' AND status = 'processing'
-        AND ${admission.sql}
-    `).bind(now, result.messageId, now, outbox.id, ...admission.values).run();
+        AND EXISTS (SELECT 1 FROM notification_outbox o WHERE o.id = ? AND o.status = 'processing' AND o.lease_token = ?)
+    `).bind(now, result.messageId, now, outbox.id, outbox.id, token).run();
     if ((sentResult.meta.changes ?? 0) === 1) await mirrorEmailOutcome(env, outbox.id, { emailSentAt: now, emailMessageId: result.messageId });
     await completeIfTerminal(env, outbox, token, now);
     return "done";
