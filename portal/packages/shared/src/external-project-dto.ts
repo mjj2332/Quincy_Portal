@@ -233,9 +233,13 @@ export const externalProjectAccessSnapshotSchema = z.object({
 }).strict();
 export type ExternalProjectAccessSnapshotDto = z.infer<typeof externalProjectAccessSnapshotSchema>;
 
+export const externalStageListResponseSchema = z.object({
+  stages: z.array(z.object({ key: z.string(), label: z.string(), displayOrder: z.number().int(), active: z.boolean() }).strict()),
+}).strict();
+
 export type ExternalApiSurface =
   | "me" | "notification-preferences" | "project-list" | "project-detail" | "asset-list" | "annotation-list"
-  | "annotation-mutation" | "collection-links" | "ingest-status" | "collaboration" | "checklist" | "comment-list"
+  | "annotation-mutation" | "collection-links" | "ingest-status" | "stages" | "collaboration" | "checklist" | "comment-list"
   | "comment-mutation" | "comment-read-state" | "mentionable" | "notifications" | "notification-mutation"
   | "review-mutation" | "external-upload" | "external-upload-complete" | "access-snapshot" | "calendar" | "export";
 
@@ -249,6 +253,7 @@ export const EXTERNAL_API_RESPONSE_SCHEMAS: Readonly<Record<ExternalApiSurface, 
   "annotation-mutation": z.union([externalAnnotationSchema, externalMutationOkResponseSchema]),
   "collection-links": externalCollectionLinkListResponseSchema,
   "ingest-status": externalIngestStatusSchema,
+  stages: externalStageListResponseSchema,
   collaboration: z.object({ project: z.object({ id: uuid, street: z.string(), stageKey: z.string() }).strict(), members: z.array(externalParticipantSchema.extend({ assignedSubtaskCount: z.number().int().nonnegative() }).strict()) }).strict(),
   checklist: z.union([externalChecklistListResponseSchema, externalChecklistItemSchema, z.object({ position: z.number().int() }).strict(), externalMutationOkResponseSchema]),
   "comment-list": externalCommentListResponseSchema,

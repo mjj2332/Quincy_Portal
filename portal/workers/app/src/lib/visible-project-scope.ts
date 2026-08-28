@@ -19,7 +19,10 @@ export type VisibleProjectWhereInput = Pick<SessionUser, "id" | "role" | "active
  */
 export function visibleProjectWhere(user: VisibleProjectWhereInput, projectId?: string) {
   const project = projectId ? eq(schema.projects.id, projectId) : undefined;
-  if (roleHasCapability(user.role, "viewAllProjects")) return project;
+  // viewAllProjects reaches any project by id regardless of archive state (list-mode archive
+  // filtering is the list route's job). State the "no predicate" case explicitly rather than
+  // letting a bare `undefined` silently mean "no filter".
+  if (roleHasCapability(user.role, "viewAllProjects")) return project ?? sql`1 = 1`;
   const membership = and(
     eq(schema.projectMembers.userId, user.id),
     user.role === "external_editor" ? eq(schema.projectMembers.roleOnProject, "editor") : undefined,
@@ -33,19 +36,6 @@ export function visibleProjectWhere(user: VisibleProjectWhereInput, projectId?: 
     membership,
     photographerStage.length ? or(...photographerStage) : undefined,
   );
-}
-
-export function visibleProjectScopeSql(user: VisibleProjectWhereInput, projectAlias = "p", memberAlias = "pm") {
-  const projectId = projectAlias === "p" ? "p.id" : `${projectAlias}.id`;
-  const archive = `${projectAlias}.archived_at IS NULL`;
-  if (roleHasCapability(user.role, "viewAllProjects")) return { sql: `${projectId} IS NOT NULL`, bindings: [] as unknown[] };
-  const stage = user.role === "photographer"
-    ? ` AND ${projectAlias}.stage_key IN (${PHOTOGRAPHER_VISIBLE_STAGES.map(() => "?").join(",")})`
-    : "";
-  return {
-    sql: `${projectId} IS NOT NULL AND ${archive} AND ${memberAlias}.user_id = ?${user.role === "external_editor" ? ` AND ${memberAlias}.role_on_project = 'editor'` : ""}${stage}`,
-    bindings: [user.id, ...(user.role === "photographer" ? [...PHOTOGRAPHER_VISIBLE_STAGES] : [])],
-  };
 }
 
 /** One scoped SELECT resolves visibility before any child-resource lookup or serialization. */

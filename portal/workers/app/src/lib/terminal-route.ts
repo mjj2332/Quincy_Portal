@@ -188,7 +188,7 @@ const PROJECT_SECURITY_ROUTE_CLASSIFICATION_SEED = [
   { method: "POST", path: "/api/projects/:projectId/subtasks", class: "scoped" },
   { method: "GET", path: "/api/projects", class: "scoped" },
   { method: "POST", path: "/api/projects", class: "withheld" },
-  { method: "GET", path: "/api/stages", class: "scoped", externalSurface: "stages" },
+  { method: "GET", path: "/api/stages", class: "global-self", externalSurface: "stages" },
   { method: "POST", path: "/api/uploads/complete", class: "withheld" },
   { method: "POST", path: "/api/uploads/complete/", class: "withheld" },
   { method: "PUT", path: "/api/uploads/direct", class: "withheld" },

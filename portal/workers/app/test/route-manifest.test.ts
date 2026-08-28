@@ -2,7 +2,6 @@ import { env, SELF as workerSelf } from "cloudflare:test";
 import { makeSignature } from "better-auth/crypto";
 import { Hono } from "hono";
 import { beforeAll, describe, expect, it } from "vitest";
-import { z } from "zod";
 import { EXTERNAL_API_RESPONSE_SCHEMAS } from "@quincy/shared";
 import { app } from "../src/index";
 import { createAuth } from "../src/auth";
@@ -50,10 +49,6 @@ const SELF = {
     return workerSelf.fetch(new Request(request, { headers }));
   },
 };
-
-const stagesResponseSchema = z.object({
-  stages: z.array(z.object({ key: z.string(), label: z.string(), displayOrder: z.number().int(), active: z.boolean() }).strict()),
-}).strict();
 
 beforeAll(async () => {
   await executeSql(__PORTAL_MIGRATION_SQL__);
@@ -134,15 +129,22 @@ describe("terminal route manifest", () => {
       },
       stages: {
         path: "/api/stages",
-        parse: (body: unknown) => stagesResponseSchema.parse(body),
+        parse: (body: unknown) => EXTERNAL_API_RESPONSE_SCHEMAS.stages.parse(body),
       },
     } as const;
+    // Each surface's honest scope: a project-child route resolves an assigned project;
+    // /api/stages is a principal-global configuration read with no project in the path.
+    const expectedScope: Record<keyof typeof probes, string> = {
+      "ingest-status": "assigned-project",
+      "collection-links": "assigned-project",
+      stages: "global-self",
+    };
     const declared = PROJECT_SECURITY_ROUTE_CLASSIFICATION.filter((route) => route.externalSurface);
     expect(new Set(declared.map((route) => route.externalSurface))).toEqual(new Set(Object.keys(probes)));
     const cookie = await externalCookie();
     for (const route of declared) {
       const probe = probes[route.externalSurface!];
-      expect(route.scope, `${route.method} ${route.path}`).toBe("assigned-project");
+      expect(route.scope, `${route.method} ${route.path}`).toBe(expectedScope[route.externalSurface!]);
       expect(route.projection, `${route.method} ${route.path}`).toBe("external-safe");
       expect(route.response, `${route.method} ${route.path}`).toBe("scoped");
       const response = await SELF.fetch(`https://portal.test${probe.path}`, { headers: { cookie } });
@@ -166,7 +168,9 @@ describe("terminal route manifest", () => {
         init.headers = headers; init.body = "{}";
       }
       const response = await SELF.fetch(`https://portal.test${path}`, init);
-      expect(response.status, `${route.method} ${route.path}`).toBeGreaterThanOrEqual(300);
+      // A withheld route must deny outright (401/403/404) — a 3xx redirect to a signed URL
+      // would be a successful disclosure that a `>= 300` check would wave through.
+      expect(response.status, `${route.method} ${route.path}`).toBeGreaterThanOrEqual(400);
     }
   });
 

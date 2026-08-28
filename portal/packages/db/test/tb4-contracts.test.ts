@@ -217,8 +217,8 @@ describe("TB4 implementation contracts", () => {
   it("20. keeps the External policy exhaustive and the scope predicate assignment-only", () => {
     expect(externalPolicy).toContain("Record<ProjectActivityType, ExternalActivityPolicy>");
     expect(externalPolicy).toContain("EXTERNAL_PROJECT_ACTIVITY_POLICY");
-    expect(externalScope).toContain("role_on_project = 'editor'");
+    expect(externalScope).toContain('eq(schema.projectMembers.roleOnProject, "editor")');
     expect(externalScope).toContain("PHOTOGRAPHER_VISIBLE_STAGES");
-    expect(externalScope).not.toContain("role_on_project = 'external_editor'");
+    expect(externalScope).not.toContain('roleOnProject, "external_editor"');
   });
 });
