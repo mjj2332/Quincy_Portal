@@ -18,6 +18,17 @@ const isFinalJpeg = (object: R2Object | null, bytes: number) => Boolean(
   object && object.size === bytes && object.httpMetadata?.contentType === "image/jpeg",
 );
 
+function isMissingMultipartUploadError(error: unknown): boolean {
+  for (let current: unknown = error; current; current = current instanceof Error ? current.cause : undefined) {
+    if (!current || typeof current !== "object") continue;
+    const value = current as { status?: unknown; code?: unknown; name?: unknown; message?: unknown };
+    if (value.status === 404 || value.code === "NoSuchUpload" || value.name === "NoSuchUpload") return true;
+    const text = [value.code, value.name, value.message].filter((item): item is string => typeof item === "string").join(" ");
+    if (/no such upload|multipart upload (?:was )?not found|upload (?:does not exist|has already been aborted)|already aborted/i.test(text)) return true;
+  }
+  return false;
+}
+
 /**
  * Reclaims only tracked multipart state. It never enumerates R2 and never deletes completed
  * media. A stale completion is terminalized after a HEAD-first check: a valid final object is
@@ -37,7 +48,14 @@ export async function sweepExternalEditedUploads(env: Pick<Env, "DB" | "MEDIA">,
   let reclaimed = 0;
   let reopened = 0;
   for (const row of rows.results) {
-    if (row.status === "completing") {
+    if (row.status === "open") {
+      const claimed = await env.DB.prepare(`
+        UPDATE external_edited_upload_sessions
+        SET status = 'aborting', updated_at = ?
+        WHERE id = ? AND status = 'open' AND expires_at <= ?
+      `).bind(now, row.id, now).run();
+      if ((claimed.meta.changes ?? 0) !== 1) continue;
+    } else if (row.status === "completing") {
       const final = await env.MEDIA.head(row.r2Key);
       if (isFinalJpeg(final, row.bytes)) {
         // R2 completion can win just before a worker crash, including after the session's
@@ -79,11 +97,20 @@ export async function sweepExternalEditedUploads(env: Pick<Env, "DB" | "MEDIA">,
                 completed_at = ?, terminal_at = ?, updated_at = ?
             WHERE id = ? AND status = 'completing'
               AND (completion_lease_expires_at <= ? OR expires_at <= ?)
+              AND EXISTS (
+                SELECT 1 FROM assets a
+                WHERE a.id = external_edited_upload_sessions.asset_id
+                  AND a.collection_id = external_edited_upload_sessions.collection_id
+                  AND a.r2_key = external_edited_upload_sessions.r2_key
+                  AND a.bytes = external_edited_upload_sessions.bytes
+              )
           `).bind(now, now, now, row.id, now, now),
         ]);
         if ((recovered[2]?.meta.changes ?? 0) === 1) {
           reclaimed += 1;
           reopened += 1; // Retained as the legacy metric name for recovered final objects.
+        } else {
+          console.error("External upload recovery left session completing after authorization check", { sessionId: row.id });
         }
         continue;
       }
@@ -96,7 +123,11 @@ export async function sweepExternalEditedUploads(env: Pick<Env, "DB" | "MEDIA">,
       if ((claimed.meta.changes ?? 0) !== 1) continue;
     }
     try {
-      await env.MEDIA.resumeMultipartUpload(row.r2Key, row.r2UploadId).abort();
+      try {
+        await env.MEDIA.resumeMultipartUpload(row.r2Key, row.r2UploadId).abort();
+      } catch (error) {
+        if (!isMissingMultipartUploadError(error)) throw error;
+      }
       const terminalStatus = row.expiresAt <= now ? "expired" : "aborted";
       const done = await env.DB.prepare(`
         UPDATE external_edited_upload_sessions

@@ -170,5 +170,5 @@ mediaRoutes.get("/annotation/:annotationId", terminalRoute("/annotation/:annotat
   if (!row.strokeR2Key) return c.json({ error: "This annotation has no markup" }, 404);
   const object = await c.env.MEDIA.get(row.strokeR2Key);
   if (!object) return c.json({ error: "Annotation markup was not found" }, 404);
-  return new Response(object.body, { headers: { "content-type": "application/json", "cache-control": "private, max-age=3600", "x-content-type-options": "nosniff" } });
+  return new Response(object.body, { headers: { "content-type": "application/json", "cache-control": "private, no-store", "x-content-type-options": "nosniff" } });
 }));

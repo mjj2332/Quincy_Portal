@@ -19,7 +19,7 @@ export type VisibleProjectWhereInput = Pick<SessionUser, "id" | "role" | "active
  */
 export function visibleProjectWhere(user: VisibleProjectWhereInput, projectId?: string) {
   const project = projectId ? eq(schema.projects.id, projectId) : undefined;
-  if (roleHasCapability(user.role, "viewAllProjects")) return and(project, isNull(schema.projects.archivedAt));
+  if (roleHasCapability(user.role, "viewAllProjects")) return project;
   const membership = and(
     eq(schema.projectMembers.userId, user.id),
     user.role === "external_editor" ? eq(schema.projectMembers.roleOnProject, "editor") : undefined,
@@ -38,7 +38,7 @@ export function visibleProjectWhere(user: VisibleProjectWhereInput, projectId?: 
 export function visibleProjectScopeSql(user: VisibleProjectWhereInput, projectAlias = "p", memberAlias = "pm") {
   const projectId = projectAlias === "p" ? "p.id" : `${projectAlias}.id`;
   const archive = `${projectAlias}.archived_at IS NULL`;
-  if (roleHasCapability(user.role, "viewAllProjects")) return { sql: `${projectId} IS NOT NULL AND ${archive}`, bindings: [] as unknown[] };
+  if (roleHasCapability(user.role, "viewAllProjects")) return { sql: `${projectId} IS NOT NULL`, bindings: [] as unknown[] };
   const stage = user.role === "photographer"
     ? ` AND ${projectAlias}.stage_key IN (${PHOTOGRAPHER_VISIBLE_STAGES.map(() => "?").join(",")})`
     : "";

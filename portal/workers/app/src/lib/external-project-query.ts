@@ -133,7 +133,7 @@ async function membersFor(db: Db, projectId: string): Promise<MemberRow[]> {
   return rows;
 }
 
-async function assignedSubtaskCounts(db: Db, projectId: string): Promise<Map<string, number>> {
+export async function assignedSubtaskCounts(db: Db, projectId: string): Promise<Map<string, number>> {
   const rows = await db.select({
     userId: schema.projectSubtasks.assigneeId,
     count: sql<number>`count(*)`,

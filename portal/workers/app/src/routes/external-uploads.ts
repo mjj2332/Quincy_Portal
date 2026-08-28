@@ -26,6 +26,17 @@ const LEASE_MS = 5 * 60 * 1000;
 const TOKEN_RE = /^[A-Za-z0-9_-]{43}$/;
 const DECIMAL_RE = /^(?:0|[1-9]\d*)$/;
 
+function isMissingMultipartUploadError(error: unknown): boolean {
+  for (let current: unknown = error; current; current = current instanceof Error ? current.cause : undefined) {
+    if (!current || typeof current !== "object") continue;
+    const value = current as { status?: unknown; code?: unknown; name?: unknown; message?: unknown };
+    if (value.status === 404 || value.code === "NoSuchUpload" || value.name === "NoSuchUpload") return true;
+    const text = [value.code, value.name, value.message].filter((item): item is string => typeof item === "string").join(" ");
+    if (/no such upload|multipart upload (?:was )?not found|upload (?:does not exist|has already been aborted)|already aborted/i.test(text)) return true;
+  }
+  return false;
+}
+
 type UploadSession = {
   id: string;
   projectId: string;
@@ -175,8 +186,8 @@ externalUploadsRoutes.post("/external-uploads", terminalRoute("/external-uploads
           AND u.authorization_epoch = ?
       )
         AND (SELECT COUNT(*) FROM external_edited_upload_sessions
-             WHERE created_by = ? AND status = 'open') < ?`)
-      .bind(session.id, tokenHash, session.projectId, session.collectionId, session.assetId, session.createdBy, session.membershipCycleId, session.authorizationEpoch, session.originalFilename, session.bytes, session.r2Key, session.r2UploadId, session.partBytes, session.partCount, session.expiresAt, now, now, session.membershipCycleId, session.projectId, session.createdBy, session.authorizationEpoch, session.createdBy, EXTERNAL_UPLOAD_MAX_SESSIONS_PER_PRINCIPAL)];
+             WHERE created_by = ? AND status = 'open' AND expires_at > ?) < ?`)
+      .bind(session.id, tokenHash, session.projectId, session.collectionId, session.assetId, session.createdBy, session.membershipCycleId, session.authorizationEpoch, session.originalFilename, session.bytes, session.r2Key, session.r2UploadId, session.partBytes, session.partCount, session.expiresAt, now, now, session.membershipCycleId, session.projectId, session.createdBy, session.authorizationEpoch, session.createdBy, now, EXTERNAL_UPLOAD_MAX_SESSIONS_PER_PRINCIPAL)];
     for (let partNumber = 1; partNumber <= partCount; partNumber += 1) {
       const remaining = data.bytes - (partNumber - 1) * EXTERNAL_UPLOAD_PART_BYTES;
       statements.push(c.env.DB.prepare(`INSERT INTO external_edited_upload_parts (session_id, part_number, expected_bytes, status, updated_at)
@@ -314,7 +325,11 @@ externalUploadsRoutes.delete("/external-uploads/:sessionToken", terminalRoute("/
     if (final && final.size === session.bytes && final.httpMetadata?.contentType === "image/jpeg") return errorResponse(c, "edited_upload_unavailable", 409);
     const claimed = await c.env.DB.prepare("UPDATE external_edited_upload_sessions SET status = 'aborting', completion_lease_token = NULL, completion_lease_expires_at = NULL, updated_at = ? WHERE id = ? AND (status IN ('open', 'aborting') OR (status = 'completing' AND completion_lease_expires_at <= ?))").bind(now, session.id, now).run();
     if ((claimed.meta.changes ?? 0) !== 1) return errorResponse(c, "edited_upload_unavailable", 409);
-    await c.env.MEDIA.resumeMultipartUpload(session.r2Key, session.r2UploadId).abort();
+    try {
+      await c.env.MEDIA.resumeMultipartUpload(session.r2Key, session.r2UploadId).abort();
+    } catch (error) {
+      if (!isMissingMultipartUploadError(error)) throw error;
+    }
     const terminalAt = Date.now();
     await c.env.DB.prepare("UPDATE external_edited_upload_sessions SET status = 'aborted', terminal_at = ?, updated_at = ? WHERE id = ? AND status = 'aborting'").bind(terminalAt, terminalAt, session.id).run();
     return c.json({ state: "aborted" }, 200);

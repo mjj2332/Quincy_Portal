@@ -44,9 +44,10 @@ export type SecurityRouteRegistration = {
   scope: SecurityRouteScope;
   projection: SecurityRouteProjection;
   response: SecurityRouteResponse;
+  externalSurface?: "ingest-status" | "collection-links" | "stages";
 };
 type LegacySecurityRouteClass = "scoped" | "constant-capability-denial" | "global-self" | "withheld" | "terminal-fallback";
-type LegacySecurityRouteRegistrationSeed = { method: string; path: string; class: LegacySecurityRouteClass };
+type LegacySecurityRouteRegistrationSeed = { method: string; path: string; class: LegacySecurityRouteClass; externalSurface?: SecurityRouteRegistration["externalSurface"] };
 
 function securityContractForClass(routeClass: SecurityRouteClass): Omit<SecurityRouteRegistration, "method" | "path" | "class"> {
   switch (routeClass) {
@@ -155,12 +156,12 @@ const PROJECT_SECURITY_ROUTE_CLASSIFICATION_SEED = [
   { method: "POST", path: "/api/projects/:id/download-selection", class: "withheld" },
   { method: "POST", path: "/api/projects/:id/dropbox-sync", class: "withheld" },
   { method: "POST", path: "/api/projects/:id/fetch-edited", class: "withheld" },
-  { method: "GET", path: "/api/projects/:id/ingest-status", class: "withheld" },
+  { method: "GET", path: "/api/projects/:id/ingest-status", class: "scoped", externalSurface: "ingest-status" },
   { method: "GET", path: "/api/projects/:id/jobs", class: "withheld" },
   { method: "POST", path: "/api/projects/:id/links/:linkId/reorder", class: "withheld" },
   { method: "DELETE", path: "/api/projects/:id/links/:linkId", class: "withheld" },
   { method: "PATCH", path: "/api/projects/:id/links/:linkId", class: "withheld" },
-  { method: "GET", path: "/api/projects/:id/links", class: "withheld" },
+  { method: "GET", path: "/api/projects/:id/links", class: "scoped", externalSurface: "collection-links" },
   { method: "POST", path: "/api/projects/:id/links", class: "withheld" },
   { method: "GET", path: "/api/projects/:id/manual-upload-jobs", class: "withheld" },
   { method: "POST", path: "/api/projects/:id/priority", class: "withheld" },
@@ -187,7 +188,7 @@ const PROJECT_SECURITY_ROUTE_CLASSIFICATION_SEED = [
   { method: "POST", path: "/api/projects/:projectId/subtasks", class: "scoped" },
   { method: "GET", path: "/api/projects", class: "scoped" },
   { method: "POST", path: "/api/projects", class: "withheld" },
-  { method: "GET", path: "/api/stages", class: "withheld" },
+  { method: "GET", path: "/api/stages", class: "scoped", externalSurface: "stages" },
   { method: "POST", path: "/api/uploads/complete", class: "withheld" },
   { method: "POST", path: "/api/uploads/complete/", class: "withheld" },
   { method: "PUT", path: "/api/uploads/direct", class: "withheld" },
