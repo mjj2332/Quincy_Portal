@@ -57,7 +57,7 @@ vi.mock("../lib/stages", () => ({
 }));
 vi.mock("../components/NoticeBoard", () => ({ NoticeBoard: () => null }));
 
-const boardOrder = { awaiting_raw: ["source"], raw_review: ["before", "target"], editing_autohdr: [] };
+const boardOrder = { awaiting_raw: ["source"], raw_review: ["before", "target"] };
 
 function summary(id: string, stageKey: ProjectSummary["stageKey"], boardRevision: number) {
   return {
@@ -75,7 +75,7 @@ function response() {
 function editingMoveResponse() {
   return {
     projects: [summary("source", "raw_review", 3), summary("before", "raw_review", 8), summary("target", "raw_review", 9)],
-    board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: [], raw_review: ["source", "before", "target"], editing_autohdr: [] } },
+    board: { contractEnabled: true, orderedProjectIdsByStage: { raw_review: ["source", "before", "target"] } },
   };
 }
 
@@ -88,7 +88,7 @@ function settleInitialResponse() {
       summary("before", "raw_review", 8),
       summary("target", "raw_review", 9),
     ],
-    board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: ["source", "source-sibling-a", "source-sibling-b"], raw_review: ["before", "target"], editing_autohdr: [] } },
+    board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: ["source", "source-sibling-a", "source-sibling-b"], raw_review: ["before", "target"] } },
   };
 }
 
@@ -290,6 +290,53 @@ describe("Dashboard Stage interactions", () => {
     await dndEnd("source", "raw_review", { id: "column:editing_autohdr", data: columnData("editing_autohdr") });
     await flush();
     expect(apiPostMock).toHaveBeenCalledWith("/api/projects/source/stage", expect.objectContaining({ targetStageKey: "editing_autohdr" }));
+  });
+
+  it("moves an Admin card into a keyless empty Stage with append placement and clean announcement", async () => {
+    let projectFetches = 0;
+    const settled = {
+      projects: [summary("source", "editing_autohdr", 4), summary("before", "raw_review", 8), summary("target", "raw_review", 9)],
+      board: { contractEnabled: true, orderedProjectIdsByStage: { raw_review: ["before", "target"], editing_autohdr: ["source"] } },
+    };
+    apiGetMock.mockImplementation((path) => path === "/api/projects"
+      ? (projectFetches += 1, Promise.resolve(projectFetches === 1 ? response() : settled))
+      : Promise.resolve({}));
+    apiPostMock.mockResolvedValueOnce({
+      changed: true,
+      project: { projectId: "source", stageKey: "editing_autohdr", boardRevision: 4 },
+      board: { sourceStageKey: "awaiting_raw", targetStageKey: "editing_autohdr", orderedVisibleProjectIds: ["source"] },
+    });
+    await act(async () => { root.render(<Dashboard currentUserId="admin-1" role="admin" />); await Promise.resolve(); }); await flush();
+    await dndStart("source", "awaiting_raw");
+    await dndOver("source", "awaiting_raw", "column:editing_autohdr", columnData("editing_autohdr"));
+    await dndEnd("source", "awaiting_raw", { id: "column:editing_autohdr", data: columnData("editing_autohdr") });
+    await flush(); await flush();
+
+    expect(apiPostMock).toHaveBeenCalledTimes(1);
+    expect(apiPostMock).toHaveBeenCalledWith("/api/projects/source/stage", expect.objectContaining({
+      targetStageKey: "editing_autohdr",
+      placement: { kind: "append" },
+    }));
+    const editingColumn = [...host.querySelectorAll<HTMLElement>(".kcol")].find((column) => column.querySelector('[data-droppable-id="column:editing_autohdr"]'))!;
+    expect([...editingColumn.querySelectorAll<HTMLElement>(".kcard__addr")].map((element) => element.textContent)).toEqual(["Source Street"]);
+    expect(host.querySelector(".dashboard-live-region")?.textContent).toBe("Moved Source Street to Editing · autoHDR, position 1 of 1.");
+    expect(host.querySelector(".dashboard-live-region")?.textContent).not.toContain("Cancelled");
+    expect(host.querySelector(".dashboard-live-region")?.textContent).not.toContain("That position changed");
+  });
+
+  it("offers and submits End of a keyless empty Stage from Move-to", async () => {
+    await act(async () => { root.render(<Dashboard currentUserId="admin-1" role="admin" />); await Promise.resolve(); }); await flush();
+    await act(async () => { card(host, "Source Street").querySelector<HTMLButtonElement>('[data-focus-key="move-to:source"]')!.click(); await Promise.resolve(); });
+    await act(async () => { [...document.querySelectorAll<HTMLButtonElement>('[role="radio"]')].find((button) => button.textContent === "Editing · autoHDR")!.click(); await Promise.resolve(); });
+    expect([...document.querySelectorAll<HTMLButtonElement>('[role="option"]')].map((button) => button.textContent)).toEqual(["End of Editing · autoHDR"]);
+    await act(async () => { document.querySelector<HTMLButtonElement>('[role="option"]')!.click(); await Promise.resolve(); });
+    await act(async () => { [...document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Move project")!.click(); await Promise.resolve(); });
+    await flush();
+    expect(apiPostMock).toHaveBeenCalledTimes(1);
+    expect(apiPostMock).toHaveBeenCalledWith("/api/projects/source/stage", expect.objectContaining({
+      targetStageKey: "editing_autohdr",
+      placement: { kind: "append" },
+    }));
   });
 
   it("keeps an assigned External Editor scoped while serializing a move into Editing", async () => {
@@ -568,7 +615,7 @@ describe("Dashboard Stage interactions", () => {
     ];
     const sortSnapshot = {
       projects: sortProjects,
-      board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: ["sort-source"], raw_review: ["board-first", "priority-first", "date-first"], editing_autohdr: [] } },
+      board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: ["sort-source"], raw_review: ["board-first", "priority-first", "date-first"] } },
     };
     let projectFetches = 0;
     apiGetMock.mockImplementation((path) => path === "/api/projects" ? (projectFetches += 1, Promise.resolve(sortSnapshot)) : Promise.resolve({}));
@@ -625,7 +672,7 @@ describe("Dashboard Stage interactions", () => {
         { ...summary("before", "raw_review", 8), shootDate: "2026-08-03", priority: 3 },
         { ...summary("target", "raw_review", 9), shootDate: "2026-08-01", priority: 2 },
       ],
-      board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: ["source"], raw_review: ["before", "target"], editing_autohdr: [] } },
+      board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: ["source"], raw_review: ["before", "target"] } },
     };
     let projectFetches = 0;
     apiGetMock.mockImplementation((path) => path === "/api/projects" ? (projectFetches += 1, Promise.resolve(noChangeSnapshot)) : Promise.resolve({}));
@@ -663,7 +710,7 @@ describe("Dashboard Stage interactions", () => {
     };
     const settledSnapshot = {
       projects: [summary("source", "raw_review", 4), summary("source-sibling-a", "awaiting_raw", 15), summary("source-sibling-b", "awaiting_raw", 16), summary("before", "raw_review", 8), summary("target", "raw_review", 9)],
-      board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: ["source-sibling-b", "source-sibling-a"], raw_review: ["target", "source", "before"], editing_autohdr: [] } },
+      board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: ["source-sibling-b", "source-sibling-a"], raw_review: ["target", "source", "before"] } },
     };
     apiGetMock.mockImplementation((path) => {
       if (path !== "/api/projects") return Promise.resolve({});
@@ -720,7 +767,7 @@ describe("Dashboard Stage interactions", () => {
     };
     const settledSnapshot = {
       projects: [summary("source", "raw_review", 4), summary("source-sibling-a", "awaiting_raw", 25), summary("source-sibling-b", "awaiting_raw", 26), summary("before", "raw_review", 8), summary("target", "raw_review", 9)],
-      board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: ["source-sibling-b", "source-sibling-a"], raw_review: ["target", "source", "before"], editing_autohdr: [] } },
+      board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: ["source-sibling-b", "source-sibling-a"], raw_review: ["target", "source", "before"] } },
     };
     apiGetMock.mockImplementation((path) => {
       if (path !== "/api/projects") return Promise.resolve({});
@@ -765,14 +812,14 @@ describe("Dashboard Stage interactions", () => {
     apiPostMock.mockRejectedValueOnce(new ApiError("Move rejected", 409, { code }));
     await act(async () => { root.render(<Dashboard currentUserId="admin-1" role="admin" />); await Promise.resolve(); }); await flush();
     await dndStart("source", "awaiting_raw");
-    // The target is active when rendered; the inactive_destination response models it being
-    // deactivated by a concurrent Stage edit before the command reaches the server.
-    await dndOver("source", "awaiting_raw", "column:editing_autohdr", columnData("editing_autohdr"));
-    await dndEnd("source", "awaiting_raw", { id: "column:editing_autohdr", data: columnData("editing_autohdr") });
+    // Keep the target populated so this exercises generic 409 handling, not the keyless-empty
+    // Stage path covered above; inactive_destination still models a concurrent Stage edit.
+    await dndOver("source", "awaiting_raw", "target", cardData("raw_review", "target"));
+    await dndEnd("source", "awaiting_raw", { id: "target", data: cardData("raw_review", "target") });
     await flush(); await flush();
     const rawColumn = [...host.querySelectorAll<HTMLElement>(".kcol")].find((column) => column.querySelector('[href="/projects/before"]'))!;
     expect([...rawColumn.querySelectorAll<HTMLElement>(".kcard__addr")].map((element) => element.textContent)).toEqual(["before Street", "target Street"]);
-    expect(apiPostMock).toHaveBeenCalledWith("/api/projects/source/stage", expect.objectContaining({ targetStageKey: "editing_autohdr" }));
+    expect(apiPostMock).toHaveBeenCalledWith("/api/projects/source/stage", expect.objectContaining({ targetStageKey: "raw_review" }));
     expect(apiPostMock).toHaveBeenCalledTimes(1);
     expect(projectFetches).toBe(2);
   });
@@ -801,7 +848,7 @@ describe("Dashboard Stage interactions", () => {
     const staleResponse = {
       ...response(),
       projects: [summary("source", "awaiting_raw", 3), summary("before", "raw_review", 8)],
-      board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: ["source"], raw_review: ["before"], editing_autohdr: [] } },
+      board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: ["source"], raw_review: ["before"] } },
     };
     apiGetMock.mockImplementation((path) => path === "/api/projects"
       ? Promise.resolve(projectFetches++ === 0 ? response() : staleResponse)

@@ -21,7 +21,6 @@ import {
   applyOptimisticOverlay,
   boardGapChangesOrder,
   buildMoveRequest,
-  classifyBoardMoveFailure,
   focusDescriptorFor,
   focusTargetAfter,
   isSameStagePlacementChange,
@@ -275,6 +274,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       }
       if (queryRuntime?.principalTerminal) return;
       acceptDashboardProjects(result.data, result.dataUpdatedAt);
+      // Keep this release outside acceptDashboardProjects; its acceptedQueryUpdatedAtRef/dataUpdatedAt dedupe guard could otherwise strand movementSettlePending.
       if (settling) {
         movementSettlePendingRef.current = false;
         setMovementSettlePending(false);
@@ -588,15 +588,11 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         movementAnnouncement({ type: "conflict" }, baselineModel, movingProject, sourceStageKey);
         toast("The project changed elsewhere; the Board was refreshed.", "error");
       } else {
-        const classified = classifyBoardMoveFailure(reason);
         if (isAccessLoss && queryRuntime) {
           queryRuntime.markPrincipalTerminal();
           return;
-        } else if (classified || isAccessLoss) {
-          setAnnouncement(reason instanceof Error ? reason.message : "The Board could not be updated.");
-        } else {
-          setAnnouncement(reason instanceof Error ? reason.message : "The Board could not be updated.");
         }
+        setAnnouncement(reason instanceof Error ? reason.message : "The Board could not be updated.");
         toast(reason instanceof Error ? reason.message : "The Board could not be updated.", "error");
       }
       shouldRefresh = true;

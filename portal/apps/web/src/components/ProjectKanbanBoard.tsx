@@ -812,7 +812,6 @@ export function ProjectKanbanBoard({
           : "drop-outside";
     const message = announceFor(announcementEvent, frozenGap ?? undefined);
     dndAnnouncementRef.current = valid ? message : undefined;
-    dndDropSuppressedRef.current = !valid;
     if (valid && snapshot && frozenGap && mover) {
       const kind = sourceStage === frozenGap.targetStageKey ? "same" : "cross";
       if (onBoardMove) onBoardMove(id, frozenGap, kind, snapshot.focusDescriptor);

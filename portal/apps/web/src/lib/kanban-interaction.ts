@@ -406,8 +406,9 @@ export function resolveSemanticGap(
 ): { placement: StageMovePlacement } | { stale: true } {
   const mover = model.projects.find((project) => project.id === movingProjectId);
   if (!mover) return { stale: true };
-  const targetOrder = orderForCanonicalStage(authorizedModelOrders(model) ?? {}, gap.targetStageKey);
-  if (!targetOrder) return { stale: true };
+  const orders = authorizedModelOrders(model);
+  if (!orders) return { stale: true };
+  const targetOrder = orderForCanonicalStage(orders, gap.targetStageKey) ?? [];
   const targetIds = targetOrder.filter((projectId) => projectId !== movingProjectId);
   if (gap.successor === "end") return { placement: { kind: "append" } };
   if (gap.successor === movingProjectId || !projectById(model.projects).has(gap.successor)) return { stale: true };
@@ -530,8 +531,7 @@ export function moveToPositionOptions(
   if (sameStage && !(role === "admin" && caps.canPrioritize && caps.sort === "board")) return [];
   if (!sameStage && !caps.canMoveProjectStage) return [];
 
-  const order = authorizedModelOrders(model)?.[target];
-  if (!order) return [];
+  const order = authorizedModelOrders(model)?.[target] ?? [];
   const visibleById = projectById(model.projects);
   const visibleSuccessors = order.filter((projectId) => {
     if (projectId === movingProjectId) return false;

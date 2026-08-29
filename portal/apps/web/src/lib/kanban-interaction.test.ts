@@ -201,10 +201,22 @@ describe("Kanban interaction model", () => {
   it("serializes canonical Editing targets for each role at the move-request boundary", () => {
     const model = board([
       project("source", "awaiting_raw", { boardRevision: 3 }),
-    ], { awaiting_raw: ["source"], editing_autohdr: [] });
+    ], { awaiting_raw: ["source"] });
     const gap = { targetStageKey: "editing_autohdr" as const, successor: "end" as const };
-    expect(buildMoveRequest(model, "source", gap, "editor")).toMatchObject({ targetStageKey: "editing" });
+    expect(resolveSemanticGap(gap, model, "source")).toEqual({ placement: { kind: "append" } });
+    expect(buildMoveRequest(model, "source", gap, "editor")).toEqual({
+      expected: { stageKey: "awaiting_raw", boardRevision: 3 },
+      targetStageKey: "editing",
+      placement: { kind: "append" },
+    });
     expect(buildMoveRequest(model, "source", gap, "admin")).toMatchObject({ targetStageKey: "editing_autohdr" });
+
+    const namedSuccessorOutsideTarget = board([
+      project("source", "awaiting_raw", { boardRevision: 3 }),
+      project("other", "raw_review", { boardRevision: 8 }),
+    ], { awaiting_raw: ["source"], raw_review: ["other"] });
+    expect(resolveSemanticGap({ targetStageKey: "editing_autohdr", successor: "other" }, namedSuccessorOutsideTarget, "source")).toEqual({ stale: true });
+    expect(resolveSemanticGap(gap, { projects: [project("source", "awaiting_raw", { boardRevision: 3 })] }, "source")).toEqual({ stale: true });
   });
 
   it("proposes card, column-body, and empty-column drops while removing the mover from source", () => {
@@ -219,7 +231,7 @@ describe("Kanban interaction model", () => {
     });
     const empty = board([
       project("source", "awaiting_raw", { boardRevision: 3 }),
-    ], { awaiting_raw: ["source"], raw_review: [] });
+    ], { awaiting_raw: ["source"] });
     expect(proposedOrdersForHover({ model: empty, movingProjectId: "source" }, { kind: "column", stageKey: "raw_review" })).toEqual({
       awaiting_raw: [], raw_review: ["source"],
     });
@@ -264,6 +276,11 @@ describe("Kanban interaction model", () => {
     expect(moveToPositionOptions(externalModel, "external-mover", "raw_review", "external_editor", caps)).toEqual([
       { label: "End of RAW review", successor: "end" },
       { label: "Before Visible Street — position 1", successor: "visible" },
+    ]);
+
+    const keylessTargetModel = board([mover], { awaiting_raw: ["mover"] });
+    expect(moveToPositionOptions(keylessTargetModel, "mover", "raw_review", "admin", caps)).toEqual([
+      { label: "End of RAW review", successor: "end" },
     ]);
   });
 

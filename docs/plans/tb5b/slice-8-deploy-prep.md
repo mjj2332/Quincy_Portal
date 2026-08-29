@@ -16,7 +16,7 @@ renders **disabled** (out of tab order), and the ↑/↓ arrows and "Move to…"
 movement request can be issued. The flag is currently **ON** in production (flipped at the TB5A
 deploy 2026-08-29).
 
-## Build proof (as of commit `834b185`, branch `tb5b-kanban-interaction-modernization`)
+## Build proof (fix-round worktree based on commit `6f27c20`, branch `tb5b-kanban-interaction-modernization`)
 
 ### Feature diff boundary — `git diff b4f8fda..HEAD` (measured at `a02f450`)
 
@@ -47,13 +47,13 @@ only their public APIs (`DndContext`, sensors, `SortableContext`, `useSortable`,
   (gzip ≈ 361 kB), `dist/assets/index-*.css` ≈ 128 kB (gzip ≈ 22 kB). The ">500 kB chunk" Vite
   warning is pre-existing (single-bundle SPA), not introduced by TB5B.
 
-### §5 gate (run from `portal/`, 2026-08-30, commit `834b185`)
+### §5 gate (run from `portal/`, 2026-08-30, fix-round worktree based on commit `6f27c20`)
 
 | Command | Result |
 |---|---|
 | `npm run typecheck` (6 workspaces) | PASS |
 | `npm run build -w @quincy/web` | PASS |
-| `npm run test --workspaces` | PASS — `packages/db` 109, `apps/web` node 135 + happy-dom 367, `workers/app` 261 (+1 skip), `workers/background` 253, `webhook-ingress` 13 |
+| `npm run test --workspaces` | PARTIAL — `packages/db` 109, `apps/web` node 135 + happy-dom 377, `webhook-ingress` 13; `workers/app` / `workers/background` blocked by sandbox `EPERM` on loopback bind and Wrangler log writes |
 | `npx vitest run --config packages/shared/vitest.config.ts` | PASS — 99 |
 
 `apps/web` node went 147→135 across Slice 7 — a verified 1:1 dedup of pure-logic assertions from
