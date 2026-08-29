@@ -21,7 +21,7 @@ import {
   type ProjectDetail,
 } from "../lib/project-data";
 import { projectCommentsInfiniteQueryOptions, useProjectCommentsCacheQuery } from "../lib/project-comments";
-import { createProjectDataInvalidationMessage, useProjectQueryRuntime } from "../lib/project-query-sync";
+import { createDashboardBoardInvalidatedMessage, createProjectDataInvalidationMessage, getProjectQueryRuntime, useProjectQueryRuntime } from "../lib/project-query-sync";
 import type { ProjectDataResource } from "../lib/project-query-sync";
 import { submitStageMoveWithConfirmation } from "../lib/stage-move";
 
@@ -390,7 +390,7 @@ function NonRawWorkspaceBody(props: ActiveAssetsProps & { assets: WorkspaceAsset
 
 type WorkspaceBodyProps = ActiveAssetsProps & { assets: WorkspaceAsset[]; rawAssets: WorkspaceAsset[]; assetsPending: boolean };
 function WorkspaceBody(props: WorkspaceBodyProps) {
-  const { can } = useCapabilities(); const queryClient = useQueryClient();
+  const { can } = useCapabilities(); const queryClient = useQueryClient(); const runtime = getProjectQueryRuntime(queryClient);
   const { stages } = useStages();
   const terminateOnUnauthorized = useProjectAccessTermination();
   const { detail: project, assets, rawAssets, activeTab, openAssetId, setOpenAssetId, lightboxOrderIds, setLightboxOrderIds, toast } = props;
@@ -430,6 +430,8 @@ function WorkspaceBody(props: WorkspaceBodyProps) {
         await props.onRefreshDetail().catch(() => undefined);
         return;
       }
+      runtime?.publish(createDashboardBoardInvalidatedMessage());
+      runtime?.publish(createProjectDataInvalidationMessage(project.id, [{ kind: "detail" }]));
       try {
         await props.onRefreshDetail();
       } catch (refreshError) {

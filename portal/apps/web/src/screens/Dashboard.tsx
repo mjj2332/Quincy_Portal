@@ -10,8 +10,8 @@ import { useStages } from "../lib/stages";
 import { formatDashboardDate, initializeDashboardView, initializeKanbanSortMode, type DashboardView, type KanbanSortMode } from "./dashboard-helpers";
 import { InternalLink } from "../components/InternalLink";
 import { NoticeBoard } from "../components/NoticeBoard";
-import { useOptionalProjectQueryClient } from "../lib/project-data";
-import { getProjectQueryRuntime } from "../lib/project-query-sync";
+import { invalidateProjectResources, useOptionalProjectQueryClient } from "../lib/project-data";
+import { createDashboardBoardInvalidatedMessage, createProjectDataInvalidationMessage, getProjectQueryRuntime } from "../lib/project-query-sync";
 import { dashboardProjectsKey, useDashboardProjects } from "../lib/dashboard-projects";
 import { submitStageMoveWithConfirmation } from "../lib/stage-move";
 
@@ -536,6 +536,16 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       movementRecoveryRef.current = response.changed
         ? { model: reconciled.model, projectId: intent.projectId, project: settledProject, settledStageKey: settledStage }
         : null;
+      if (response.changed) {
+        // Board invalidation is deliberately ID-free; each receiving tab invalidates only its
+        // own authorization-scoped dashboard query. The detail message is the separate,
+        // project-scoped freshness channel for an open Workspace.
+        queryRuntime?.publish(createDashboardBoardInvalidatedMessage());
+        if (queryClient) {
+          await invalidateProjectResources(queryClient, { projectId: intent.projectId, resources: [{ kind: "detail" }] }, false);
+          queryRuntime?.publish(createProjectDataInvalidationMessage(intent.projectId, [{ kind: "detail" }]));
+        }
+      }
       movementAnnouncement(
         response.changed
           ? (reconciled.sourceProvisional ? { type: "cross-stage-success" } : { type: "same-stage-success" })

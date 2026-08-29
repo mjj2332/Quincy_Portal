@@ -6,7 +6,7 @@ import { Dashboard, type ProjectSummary } from "./Dashboard";
 import { ConfirmModalHost } from "../components/ConfirmDialog";
 import { ApiError } from "../lib/api";
 import { dashboardProjectsKey } from "../lib/dashboard-projects";
-import { ProjectQueryRuntime, ProjectQueryRuntimeProvider } from "../lib/project-query-sync";
+import { createDashboardBoardInvalidatedMessage, ProjectQueryRuntime, ProjectQueryRuntimeProvider } from "../lib/project-query-sync";
 
 const authState = vi.hoisted(() => ({ role: "admin" as "admin" | "editor" | "external_editor", moved: false }));
 const apiGetMock = vi.hoisted(() => vi.fn<(path: string) => Promise<unknown>>());
@@ -365,6 +365,7 @@ describe("Dashboard Stage interactions", () => {
     const key = dashboardProjectsKey("admin-1", "photographer", 0, false);
     const serverSnapshot = queryClient.getQueryData<ProjectSummary[]>(key);
     const setQueryData = vi.spyOn(queryClient, "setQueryData");
+    const publish = vi.spyOn(runtime, "publish");
     await act(async () => { card(host, "target Street").querySelector<HTMLButtonElement>('[aria-label="Move project up"]')!.click(); await Promise.resolve(); });
     await flush();
     expect(setQueryData).not.toHaveBeenCalled();
@@ -373,6 +374,9 @@ describe("Dashboard Stage interactions", () => {
     expect([...rawColumn.querySelectorAll<HTMLElement>(".kcard__addr")].map((element) => element.textContent)).toEqual(["target Street", "before Street"]);
     resolveMove({ changed: true, project: { projectId: "target", stageKey: "raw_review", boardRevision: 10 }, board: { sourceStageKey: "raw_review", targetStageKey: "raw_review", orderedVisibleProjectIds: ["target", "before"] } });
     await flush();
+    const boardMessage = publish.mock.calls.map(([message]) => message).find((message) => message.type === "dashboard-board-invalidated");
+    expect(boardMessage).toEqual(expect.objectContaining({ version: 1, type: "dashboard-board-invalidated" }));
+    expect(boardMessage).not.toHaveProperty("projectId");
     runtime.dispose();
     queryClient.clear();
   });
@@ -462,6 +466,84 @@ describe("Dashboard Stage interactions", () => {
     expect(sort.value).toBe("board");
     expect([...card(host, "Source Street").closest<HTMLElement>(".kcol")!.querySelectorAll<HTMLElement>(".kcard__addr")].map((element) => element.textContent)).toEqual(["before Street", "Source Street", "target Street"]);
     await dndCancel("source", "awaiting_raw");
+  });
+
+  it("defers a cross-tab Board invalidation during drag, then performs one post-block refetch without rebroadcasting", async () => {
+    class FakeChannel {
+      static channels: FakeChannel[] = [];
+      readonly listeners = new Set<(event: MessageEvent<unknown>) => void>();
+      constructor(readonly name: string) { FakeChannel.channels.push(this); }
+      addEventListener(_type: string, listener: (event: MessageEvent<unknown>) => void) { this.listeners.add(listener); }
+      postMessage(data: unknown) { for (const channel of FakeChannel.channels.filter((item) => item.name === this.name)) for (const listener of channel.listeners) listener({ data } as MessageEvent<unknown>); }
+      close() { FakeChannel.channels = FakeChannel.channels.filter((item) => item !== this); this.listeners.clear(); }
+    }
+    vi.stubGlobal("BroadcastChannel", FakeChannel);
+    let projectFetches = 0;
+    const freshResponse = { ...response(), projects: response().projects.map((project) => project.id === "source" ? { ...project, street: "Fresh Street" } : project) };
+    apiGetMock.mockImplementation((path) => {
+      if (path !== "/api/projects") return Promise.resolve({});
+      projectFetches += 1;
+      return Promise.resolve(projectFetches === 1 ? response() : freshResponse);
+    });
+    const firstClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const firstRuntime = new ProjectQueryRuntime(firstClient, "drag-tab");
+    const secondClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const secondRuntime = new ProjectQueryRuntime(secondClient, "other-tab");
+    firstRuntime.start(); secondRuntime.start();
+    const publish = vi.spyOn(firstRuntime, "publish");
+    await act(async () => {
+      root.render(<ProjectQueryRuntimeProvider runtime={firstRuntime}><QueryClientProvider client={firstClient}><Dashboard currentUserId="admin-1" /></QueryClientProvider></ProjectQueryRuntimeProvider>);
+      await Promise.resolve();
+    });
+    await flush();
+    expect(projectFetches).toBe(1);
+
+    await dndStart("source", "awaiting_raw");
+    secondRuntime.publish(createDashboardBoardInvalidatedMessage());
+    await flush();
+    expect(projectFetches).toBe(2);
+    expect(host.textContent).toContain("Source Street");
+    expect(host.textContent).not.toContain("Fresh Street");
+    await dndCancel("source", "awaiting_raw");
+    await flush(); await flush();
+    expect(projectFetches).toBe(3);
+    expect(host.textContent).toContain("Fresh Street");
+    expect(publish).not.toHaveBeenCalled();
+    firstRuntime.dispose(); secondRuntime.dispose(); firstClient.clear(); secondClient.clear();
+    vi.unstubAllGlobals();
+  });
+
+  it("changes Kanban display order by sort without fetching a new authorization snapshot", async () => {
+    const sortProjects = [
+      { ...summary("board-first", "raw_review", 1), street: "Board First", priority: 5, shootDate: "2026-08-30" },
+      { ...summary("priority-first", "raw_review", 2), street: "Priority First", priority: 1, shootDate: "2026-09-01" },
+      { ...summary("date-first", "raw_review", 3), street: "Date First", priority: 2, shootDate: "2026-08-01" },
+    ];
+    const sortSnapshot = {
+      projects: sortProjects,
+      board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: [], raw_review: ["board-first", "priority-first", "date-first"], editing_autohdr: [] } },
+    };
+    let projectFetches = 0;
+    apiGetMock.mockImplementation((path) => path === "/api/projects" ? (projectFetches += 1, Promise.resolve(sortSnapshot)) : Promise.resolve({}));
+    await act(async () => { root.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); });
+    await flush();
+    const rawColumn = [...host.querySelectorAll<HTMLElement>(".kcol")].find((column) => column.querySelector('[href="/projects/board-first"]'))!;
+    const order = () => [...rawColumn.querySelectorAll<HTMLElement>(".kcard__addr")].map((element) => element.textContent);
+    expect(order()).toEqual(["Board First", "Priority First", "Date First"]);
+    expect(dashboardProjectsKey("admin-1", "photographer", 0, false)).toHaveLength(5);
+
+    const sort = host.querySelector<HTMLSelectElement>(".dashboard-sort select")!;
+    sort.value = "priority";
+    await act(async () => { sort.dispatchEvent(new Event("change", { bubbles: true })); await Promise.resolve(); });
+    await flush();
+    expect(projectFetches).toBe(1);
+    expect(order()).toEqual(["Priority First", "Date First", "Board First"]);
+
+    sort.value = "shootDate-asc";
+    await act(async () => { sort.dispatchEvent(new Event("change", { bubbles: true })); await Promise.resolve(); });
+    await flush();
+    expect(projectFetches).toBe(1);
+    expect(order()).toEqual(["Date First", "Board First", "Priority First"]);
   });
 
   it("holds the cross-Stage settle barrier until the full source projection is accepted", async () => {

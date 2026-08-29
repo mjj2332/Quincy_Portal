@@ -12,6 +12,12 @@ type ProjectsResponse = {
 };
 export type DashboardIdentity = { principalId: string; role: Role; authorizationEpoch: number };
 
+/**
+ * Option A: sort is a derived interaction identity, not a network input. Keep this five-element
+ * authorization-scoped key stable: removeProjectFromDashboardQueries relies on its
+ * ["dashboard-projects", principalId] prefix, and exact Dashboard invalidations rely on the full
+ * tuple. Future key widening must audit both consumers.
+ */
 export function dashboardProjectsKey(principalId: string, role: Role, authorizationEpoch: number, archived: boolean) {
   return ["dashboard-projects", principalId, role, authorizationEpoch, { archived }] as const;
 }

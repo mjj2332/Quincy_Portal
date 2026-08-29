@@ -177,6 +177,8 @@ function MoveToControl({ project, model, activeStages, role, sort, canMoveStages
     activeStageKeys: activeStages.map((stage) => moveToStageKey(stage.key)),
     stageLabels,
   }), [activeStages, canMoveStages, canPrioritize, sort, stageLabels]);
+  // Move-to stage and position options transitively carry the same sort-specific interaction
+  // identity through `caps.sort`.
   const boardStageOptions = useMemo(() => {
     const seen = new Set<StageKey>();
     return activeStages.filter((stage) => {
@@ -648,6 +650,8 @@ export function ProjectKanbanBoard({
   const dndAnnouncementRef = useRef<string | undefined>(undefined);
   const dndDropSuppressedRef = useRef(false);
   const dndOverGapRef = useRef<SemanticGap | null>(null);
+  // Derived interaction identity per the Option-A ruling: the network key stays authorization
+  // scoped, while display arrays and every dnd consumer rebuild for the effective sort.
   const baseOrders = useMemo(() => visualOrders(projects, activeStages, effectiveKanbanSort), [activeStages, effectiveKanbanSort, projects]);
   const boardModel = useMemo(() => canonicalBoardModel(projects), [projects]);
   const displayOrders = proposal?.orders ?? baseOrders;
@@ -692,6 +696,8 @@ export function ProjectKanbanBoard({
     const snapshot: DragSnapshot = {
       model: currentModel,
       movingProjectId: id,
+      // The drag-start snapshot is part of the derived interaction identity and must freeze the
+      // sort-specific display order used for this interaction.
       sort: effectiveKanbanSort,
       displayOrderByStage: baseOrders,
       focusDescriptor,

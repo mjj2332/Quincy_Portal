@@ -433,6 +433,7 @@ afterEach(async () => {
   it("moves Stage from the rail through the shared confirmation retry", async () => {
     authState.role = "admin";
     let stageKey: "raw_review" | "awaiting_raw" = "raw_review";
+    let queryClient: ReturnType<typeof import("../lib/query-client").createQuincyQueryClient> | undefined;
     apiGetMock.mockImplementation((path: string) => {
       if (path === "/api/projects/p1") return Promise.resolve({ ...projectFixture(), stageKey, boardRevision: stageKey === "raw_review" ? 7 : 8, contractEnabled: true });
       if (path.includes("/assets?collection=raw")) return Promise.resolve({ assets: rawAssets });
@@ -446,7 +447,9 @@ afterEach(async () => {
     apiPostMock
       .mockRejectedValueOnce(new ApiError("Confirmation required", 409, { code: "stage_confirmation_required", requiredConfirmation: { reasons: ["backward"] } }))
       .mockImplementationOnce(async () => { stageKey = "awaiting_raw"; return { changed: true, project: { stageKey, boardRevision: 8 } }; });
-    await render(<ProjectWorkspace projectId="p1" />); await flush();
+    await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>); await flush();
+    const runtime = getProjectQueryRuntime(queryClient!);
+    const publish = vi.spyOn(runtime!, "publish");
     const select = host.querySelector<HTMLSelectElement>('[aria-label="Move project Stage"]');
     expect(select).not.toBeNull();
     select!.value = "awaiting_raw";
@@ -456,6 +459,10 @@ afterEach(async () => {
       expected: { stageKey: "raw_review", boardRevision: 7 }, targetStageKey: "awaiting_raw", placement: { kind: "append" }, confirmation: { reasons: ["backward"] },
     });
     expect(host.textContent).toContain("Awaiting RAW");
+    const boardMessage = publish.mock.calls.map(([message]) => message).find((message) => message.type === "dashboard-board-invalidated");
+    expect(boardMessage).toEqual(expect.objectContaining({ version: 1, type: "dashboard-board-invalidated" }));
+    expect(boardMessage).not.toHaveProperty("projectId");
+    expect(publish).toHaveBeenCalledWith(expect.objectContaining({ type: "project-data-invalidated", projectId: "p1", resources: [{ kind: "detail" }] }));
   });
 
   it("uses the idempotent already-in message and restores rail focus after a 503", async () => {
