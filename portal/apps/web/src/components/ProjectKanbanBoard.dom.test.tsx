@@ -1,4 +1,4 @@
-// happy-dom cannot exercise TouchSensor, PointerSensor, KeyboardSensor activation, real collision geometry, autoscroll, or scroll containers. Those are QA-phase real-browser acceptance items.
+// happy-dom does not prove PointerSensor / TouchSensor / KeyboardSensor activation, real collision geometry, autoscroll, scroll containers, link-click suppression, screen-reader delivery, browser focus timing, or active-drag DragOverlay rendering; those are QA-phase real-browser acceptance items.
 import { Children, act, createElement, isValidElement, type ReactElement, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -220,7 +220,7 @@ describe("ProjectKanbanBoard", () => {
     expect(touchSensor?.options).toEqual({ activationConstraint: { delay: 250, tolerance: 8 } });
   });
 
-  it("keeps public auto-scroll enabled and remeasures droppables", async () => {
+  it("passes public auto-scroll configuration and remeasurement strategy", async () => {
     // Config only — real autoscroll is browser-only (QA phase).
     await renderBoard();
     const props = dnd.handlers[0]?.props;

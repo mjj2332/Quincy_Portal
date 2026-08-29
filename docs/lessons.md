@@ -797,3 +797,24 @@ was expensive: three wrong root causes were shipped before the plan page was eve
   specifically to gate one endpoint in front of a wildcard that serves everything else, register
   both the bare and trailing-slash forms of that exact path — don't assume the two are equivalent
   just because the thing being proxied to treats them the same way.
+
+## dnd-kit Kanban interaction timing in a real browser (TB5B — STUB, fill after QA)
+
+**This entry is a placeholder.** TB5B's dnd-kit rewrite was fully built and its happy-dom / Node
+suites are green, but happy-dom cannot exercise PointerSensor / TouchSensor / KeyboardSensor
+activation, real collision geometry, autoscroll, scroll containers, screen-reader delivery, or
+browser focus timing. The concrete observed behaviour + root cause + fix below must be filled from
+the QA-phase real-Chrome + VoiceOver/NVDA pass before this entry counts as a lesson; do not treat
+the placeholders as findings.
+
+- **Observed behavior:** [real pointer/touch/keyboard/autoscroll/focus/live-region behavior that
+  happy-dom did not reproduce — fill from QA].
+- **Root cause:** [event ordering / sensor activation / collision measurement / scroll-ancestor /
+  overlay / focus-restoration mechanism proven by instrumentation — fill from QA].
+- **Fix:** [the exact configuration/code boundary that resolved it — fill from QA, or "none needed;
+  behaviour was correct in Chrome" if the real-browser pass finds nothing].
+- **Rule:** dnd-kit reducer/placement and `DndContext`-handler mocks prove command wiring only;
+  [precise future rule for which interaction change must be verified in a real browser — fill].
+
+This follows the existing TipTap lessons: native listener / event timing and scroll/focus behavior
+can pass happy-dom while failing Chrome.

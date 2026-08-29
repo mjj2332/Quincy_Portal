@@ -109,6 +109,22 @@ describe("Kanban interaction model", () => {
     expect(sortKanbanProjects(rows, "shootDate-desc").map((row) => row.id)).toEqual(["late", "early", "invalid", "undated"]);
   });
 
+  it("uses street and id tie-breaks and ignores Priority and Board position in shoot-date views", () => {
+    const equalDateRows = [
+      project("b", "awaiting_raw", { street: "10 King Street", shootDate: "2026-01-01" }),
+      project("a", "awaiting_raw", { street: "10 King Street", shootDate: "2026-01-01" }),
+      project("accent", "awaiting_raw", { street: "10 Élan Street", shootDate: "2026-01-01" }),
+      project("other", "awaiting_raw", { street: "2 Apple Street", shootDate: "2026-01-01" }),
+    ];
+    expect(sortKanbanProjects(equalDateRows, "shootDate-asc").map((row) => row.id)).toEqual(["accent", "a", "b", "other"]);
+
+    const viewRows = [
+      project("priority-first", "awaiting_raw", { priority: 1, boardPosition: 0, shootDate: "2026-03-01" }),
+      project("unprioritized-earlier", "awaiting_raw", { priority: null, boardPosition: 50, shootDate: "2026-01-01" }),
+    ];
+    expect(sortKanbanProjects(viewRows, "shootDate-asc").map((row) => row.id)).toEqual(["unprioritized-earlier", "priority-first"]);
+  });
+
   it("builds first, middle, last, append, and stale exact card placements", () => {
     const rows = movementBoard().projects;
     expect(cardDropPlacement("source", "first", "raw_review", "before", rows)).toEqual({

@@ -1,6 +1,8 @@
 # Revamp TB5B — Kanban Interaction Modernization
 
-Status: APPROVED FOR BUILD — Opus plan-tier re-review APPROVE 2026-08-29 (after 2 Sol review rounds + 1 Opus revert). Sort-key ruled Option A by Opus. Not yet built. Four Opus residual non-blocking notes are carried into the Luna slice specs, not the plan body: (1) the §5 grep invariant "zero `setQueryData` on `dashboardProjectsKey`" must read "…from any Stage/position **movement** path" so it does not trip on Priority's deliberately-retained `updateProjects` path; (2) the settle bullet that sets `movementSettlePending` is cross-Stage only — same-Stage success clears both gates immediately; (3) the post-block settle refetch and any `queuedRefreshRef` refetch are one single network call, not two; (4) gate discipline — the orchestrating session runs all four §5 commands itself, agent-reported green is not evidence.
+Status: BUILT (slices 0–7, branch tb5b-kanban-interaction-modernization) — §5 gates green through Slice 6. Not yet diff-reviewed / deployed. Sort-key ruled Option A by Opus plan-tier review.
+
+Four Opus residual non-blocking notes are carried into the Luna slice specs, not the plan body: (1) the §5 grep invariant "zero `setQueryData` on `dashboardProjectsKey`" must read "…from any Stage/position **movement** path" so it does not trip on Priority's deliberately-retained `updateProjects` path; (2) the settle bullet that sets `movementSettlePending` is cross-Stage only — same-Stage success clears both gates immediately; (3) the post-block settle refetch and any `queuedRefreshRef` refetch are one single network call, not two; (4) gate discipline — the orchestrating session runs all four §5 commands itself, agent-reported green is not evidence.
 
 Baseline: `47e96757e554d41108ff4034b3454761e6cf042d` on `main`.
 

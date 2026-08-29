@@ -1167,6 +1167,18 @@ allowlist are silent no-ops otherwise). Full mechanics in `docs/subagents/agy-cl
 
 ## Implemented plans (see `docs/plans/implemented/`)
 
+- **TB5B (Kanban Interaction Modernization) — built on branch
+  `tb5b-kanban-interaction-modernization`, not yet reviewed/merged/deployed.** dnd-kit replaces the
+  board's native HTML5 drag over the shipped TB5A contract: dedicated drag handle, pointer + touch +
+  keyboard sensors, position-aware **Move to…**, `DragOverlay`, single-writer optimistic overlay,
+  two-gate freshness (`interactionBlocked` accept gate / `movementSettlePending` command gate),
+  ID-free cross-tab `dashboard-board-invalidated` broadcast, Workspace-rail parity. **UI-only** —
+  no schema/migration/Worker/`@quincy/shared`/dependency change (sort-key ruled **Option A** by
+  Opus plan-tier review: network key stays authorization-scoped, sort is a derived interaction
+  identity). Plan: `docs/plans/Revamp-TB5B-Kanban-Interaction-Modernization-Plan.md`. Pending:
+  fresh Sol diff review → Opus final-draft → Agy local-dev QA matrix (needs a real touch device +
+  VoiceOver/NVDA for Slice 5 acceptance) → app-Worker-only deploy.
+
 - **`Revamp-TB5A-Stage-And-Kanban-Ordering-Contract-Plan.md`** (+ `implemented/tb5a/`) — **deployed
   to production 2026-08-29**, merge `b4cda86`, migration `0037`, app `4ba551a3` / bg `fa876454`,
   `tb5a_board_contract_enabled` ON. `board_revision` optimistic token + `board_position` sole
