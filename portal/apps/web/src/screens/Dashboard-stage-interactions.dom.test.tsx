@@ -14,6 +14,7 @@ const apiGetMock = vi.hoisted(() => vi.fn<(path: string) => Promise<unknown>>())
 const apiPostMock = vi.hoisted(() => vi.fn<(path: string, body: unknown) => Promise<unknown>>());
 type DndTestEvent = { active: { id: string; data?: unknown }; over: { id: string; data?: unknown } | null; activatorEvent?: Event };
 const dnd = vi.hoisted(() => ({ handlers: [] as Array<{ props: Parameters<typeof import("@dnd-kit/core").DndContext>[0]; start?: (event: DndTestEvent) => void; over?: (event: DndTestEvent) => void; end?: (event: DndTestEvent) => void; cancel?: (event: DndTestEvent) => void }> }));
+const sortable = vi.hoisted(() => ({ contexts: [] as Array<readonly string[]> }));
 vi.mock("../lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/api")>();
   return { ...actual, apiGet: (path: string) => apiGetMock(path), apiPost: (path: string, body: unknown) => apiPostMock(path, body) };
@@ -25,6 +26,16 @@ vi.mock("@dnd-kit/core", async (importOriginal) => {
     DndContext: (props: Parameters<typeof actual.DndContext>[0]) => {
       dnd.handlers.push({ props, start: props.onDragStart as ((event: DndTestEvent) => void) | undefined, over: props.onDragOver as ((event: DndTestEvent) => void) | undefined, end: props.onDragEnd as ((event: DndTestEvent) => void) | undefined, cancel: props.onDragCancel as ((event: DndTestEvent) => void) | undefined });
       return createElement(actual.DndContext, props);
+    },
+  };
+});
+vi.mock("@dnd-kit/sortable", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@dnd-kit/sortable")>();
+  return {
+    ...actual,
+    SortableContext: (props: Parameters<typeof actual.SortableContext>[0]) => {
+      sortable.contexts.push(props.items.map(String));
+      return createElement(actual.SortableContext, props);
     },
   };
 });
@@ -197,6 +208,7 @@ describe("Dashboard Stage interactions", () => {
   beforeEach(() => {
     authState.role = "admin"; authState.moved = false; apiGetMock.mockReset(); apiPostMock.mockReset();
     dnd.handlers.length = 0;
+    sortable.contexts.length = 0;
     apiGetMock.mockImplementation((path) => path === "/api/projects" ? Promise.resolve(response()) : Promise.resolve({}));
     apiPostMock.mockImplementation((path) => path.endsWith("/board-position")
       ? Promise.resolve({ changed: true, project: { projectId: "before", stageKey: "raw_review", boardRevision: 10 }, board: { sourceStageKey: "raw_review", targetStageKey: "raw_review", orderedVisibleProjectIds: ["target", "before"] } })
@@ -319,6 +331,39 @@ describe("Dashboard Stage interactions", () => {
     expect([...rawColumn.querySelectorAll<HTMLElement>(".kcard__addr")].map((element) => element.textContent)).toEqual(["target Street", "before Street"]);
     resolveMove({ changed: true, project: { projectId: "target", stageKey: "raw_review", boardRevision: 10 }, board: { sourceStageKey: "raw_review", targetStageKey: "raw_review", orderedVisibleProjectIds: ["target", "before"] } });
     await flush();
+  });
+
+  it("releases the command gate for a same-Stage winner before its refresh settles", async () => {
+    let resolveRefresh!: (value: unknown) => void;
+    let projectFetches = 0;
+    apiGetMock.mockImplementation((path) => {
+      if (path !== "/api/projects") return Promise.resolve({});
+      projectFetches += 1;
+      return projectFetches === 1 ? Promise.resolve(response()) : new Promise((resolve) => { resolveRefresh = resolve; });
+    });
+    apiPostMock.mockImplementationOnce((path) => {
+      expect(path).toBe("/api/projects/target/board-position");
+      return Promise.resolve({ changed: true, project: { projectId: "target", stageKey: "raw_review", boardRevision: 10 }, board: { sourceStageKey: "raw_review", targetStageKey: "raw_review", orderedVisibleProjectIds: ["target", "before"] } });
+    });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const runtime = new ProjectQueryRuntime(queryClient, "dashboard-same-stage-gate-test");
+    await act(async () => {
+      root.render(<ProjectQueryRuntimeProvider runtime={runtime}><QueryClientProvider client={queryClient}><Dashboard currentUserId="admin-1" /></QueryClientProvider></ProjectQueryRuntimeProvider>);
+      await Promise.resolve();
+    });
+    await flush();
+    await act(async () => { card(host, "target Street").querySelector<HTMLButtonElement>('[aria-label="Move project up"]')!.click(); await Promise.resolve(); });
+    await flush();
+    expect(projectFetches).toBe(2);
+    const movedCard = card(host, "target Street");
+    expect([...movedCard.querySelectorAll<HTMLButtonElement>(".kcard-drag-handle, .kcard-move-to, .kcard-controls__arrow")].every((element) => !element.disabled)).toBe(true);
+    movedCard.querySelector<HTMLButtonElement>('[aria-label="Move project down"]')!.click();
+    await flush();
+    expect(apiPostMock).toHaveBeenCalledTimes(2);
+    resolveRefresh(response());
+    await flush();
+    runtime.dispose();
+    queryClient.clear();
   });
 
   it("routes an eligible keyboard cross-Stage drop through the exact Stage request and restores the handle", async () => {
@@ -516,13 +561,14 @@ describe("Dashboard Stage interactions", () => {
 
   it("changes Kanban display order by sort without fetching a new authorization snapshot", async () => {
     const sortProjects = [
+      { ...summary("sort-source", "awaiting_raw", 4), street: "Sort Source", priority: 9, shootDate: "2026-08-15" },
       { ...summary("board-first", "raw_review", 1), street: "Board First", priority: 5, shootDate: "2026-08-30" },
       { ...summary("priority-first", "raw_review", 2), street: "Priority First", priority: 1, shootDate: "2026-09-01" },
       { ...summary("date-first", "raw_review", 3), street: "Date First", priority: 2, shootDate: "2026-08-01" },
     ];
     const sortSnapshot = {
       projects: sortProjects,
-      board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: [], raw_review: ["board-first", "priority-first", "date-first"], editing_autohdr: [] } },
+      board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: ["sort-source"], raw_review: ["board-first", "priority-first", "date-first"], editing_autohdr: [] } },
     };
     let projectFetches = 0;
     apiGetMock.mockImplementation((path) => path === "/api/projects" ? (projectFetches += 1, Promise.resolve(sortSnapshot)) : Promise.resolve({}));
@@ -539,12 +585,72 @@ describe("Dashboard Stage interactions", () => {
     await flush();
     expect(projectFetches).toBe(1);
     expect(order()).toEqual(["Priority First", "Date First", "Board First"]);
+    expect(sortable.contexts.slice(-3)[1]).toEqual(["priority-first", "date-first", "board-first"]);
 
+    await dndStart("sort-source", "awaiting_raw");
+    await dndOver("sort-source", "awaiting_raw", "priority-first", cardData("raw_review", "priority-first"));
+    const proposedRawColumn = [...host.querySelectorAll<HTMLElement>(".kcol")].find((column) => column.querySelector('[href="/projects/priority-first"]'))!;
+    expect([...proposedRawColumn.querySelectorAll<HTMLElement>(".kcard__addr")].map((element) => element.textContent)).toEqual(["Sort Source", "Priority First", "Date First", "Board First"]);
+    await dndCancel("sort-source", "awaiting_raw");
+
+    const moveTo = card(host, "Sort Source").querySelector<HTMLButtonElement>('[data-focus-key="move-to:sort-source"]')!;
+    await act(async () => { moveTo.click(); await Promise.resolve(); });
+    await act(async () => { [...document.querySelectorAll<HTMLButtonElement>('[role="radio"]')].find((button) => button.textContent === "RAW review")!.click(); await Promise.resolve(); });
+    expect([...document.querySelectorAll<HTMLButtonElement>('[role="option"]')].map((button) => button.textContent)).toEqual([
+      "End of RAW review",
+      "Before Priority First — position 1",
+      "Before Date First — position 2",
+      "Before Board First — position 3",
+    ]);
+
+    // The drag-cancel above legitimately queues exactly one post-interaction reconcile refetch
+    // (scenario 2). The sort change itself must add none: capture the count first, then switch.
+    const fetchesBeforeSecondSort = projectFetches;
     sort.value = "shootDate-asc";
     await act(async () => { sort.dispatchEvent(new Event("change", { bubbles: true })); await Promise.resolve(); });
     await flush();
-    expect(projectFetches).toBe(1);
+    expect(projectFetches).toBe(fetchesBeforeSecondSort);
     expect(order()).toEqual(["Date First", "Board First", "Priority First"]);
+    expect(sortable.contexts.slice(-3)[1]).toEqual(["date-first", "board-first", "priority-first"]);
+  });
+
+  it.each([
+    ["Board", "board", 2],
+    ["Priority", "priority", 1],
+    ["shoot-date", "shootDate-asc", 2],
+  ] as const)("announces an authoritative changed:false result using the displayed %s order", async (_label, sortMode, expectedPosition) => {
+    const noChangeSnapshot = {
+      projects: [
+        { ...summary("source", "awaiting_raw", 3), shootDate: "2026-08-02", priority: 1 },
+        { ...summary("before", "raw_review", 8), shootDate: "2026-08-03", priority: 3 },
+        { ...summary("target", "raw_review", 9), shootDate: "2026-08-01", priority: 2 },
+      ],
+      board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: ["source"], raw_review: ["before", "target"], editing_autohdr: [] } },
+    };
+    let projectFetches = 0;
+    apiGetMock.mockImplementation((path) => path === "/api/projects" ? (projectFetches += 1, Promise.resolve(noChangeSnapshot)) : Promise.resolve({}));
+    apiPostMock.mockResolvedValueOnce({
+      changed: false,
+      project: { projectId: "source", stageKey: "raw_review", boardRevision: 4 },
+      board: { sourceStageKey: "awaiting_raw", targetStageKey: "raw_review", orderedVisibleProjectIds: ["target", "source", "before"] },
+    });
+    await act(async () => { root.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); });
+    await flush();
+    if (sortMode !== "board") {
+      const sort = host.querySelector<HTMLSelectElement>(".dashboard-sort select")!;
+      sort.value = sortMode;
+      await act(async () => { sort.dispatchEvent(new Event("change", { bubbles: true })); await Promise.resolve(); });
+      await flush();
+    }
+    await dndStart("source", "awaiting_raw");
+    await dndOver("source", "awaiting_raw", "target", cardData("raw_review", "target"));
+    await dndEnd("source", "awaiting_raw", { id: "target", data: cardData("raw_review", "target") });
+    await flush();
+    expect(host.querySelector(".dashboard-live-region")?.textContent).toBe(`Source Street is already in RAW review, position ${expectedPosition} of 3.`);
+    expect(host.querySelector(".kcard-wrap--drop-indicator")).toBeNull();
+    expect(document.querySelector(".kanban-overlay")).toBeNull();
+    expect([...host.querySelectorAll<HTMLElement>(".kcard-drag-handle, .kcard-move-to, .kcard-controls__arrow")].every((element) => !element.hasAttribute("disabled"))).toBe(true);
+    expect(projectFetches).toBeGreaterThanOrEqual(1);
   });
 
   it("holds the cross-Stage settle barrier until the full source projection is accepted", async () => {
@@ -878,6 +984,14 @@ describe("Dashboard Stage interactions", () => {
     runtime.markProjectRemoved("source");
     await flush();
     expect(host.querySelector('[href="/projects/source"]')).toBeNull();
+    const currentDnd = dnd.handlers.at(-1);
+    const cancelHandler = currentDnd?.cancel;
+    const announcementHandler = currentDnd?.props.accessibility?.announcements?.onDragCancel;
+    if (!cancelHandler || !announcementHandler) throw new Error("No terminal drag-cancel handlers were rendered");
+    await act(async () => { cancelHandler({ active: { id: "source", data: cardData("awaiting_raw", "source") }, over: null }); await Promise.resolve(); });
+    expect(announcementHandler({} as Parameters<typeof announcementHandler>[0])).toBeUndefined();
+    expect(document.querySelector(".kanban-overlay")).toBeNull();
+    expect(host.querySelector(".dashboard-live-region")?.textContent).not.toContain("Source Street");
     resolveLate!(freshResponse);
     await flush();
     expect(host.textContent).not.toContain("Fresh Street");

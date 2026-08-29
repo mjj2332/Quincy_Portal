@@ -533,7 +533,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       setRecoveryReason(null);
       const settledStage = canonicalStageKey(response.project.stageKey);
       const settledProject = reconciled.model.projects.find((project) => project.id === intent.projectId) ?? movingProject;
-      movementRecoveryRef.current = response.changed
+      movementRecoveryRef.current = response.changed && reconciled.sourceProvisional
         ? { model: reconciled.model, projectId: intent.projectId, project: settledProject, settledStageKey: settledStage }
         : null;
       if (response.changed) {
@@ -554,7 +554,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         settledProject,
         settledStage,
       );
-      if (response.changed) {
+      if (response.changed && reconciled.sourceProvisional) {
         movementSettlePendingRef.current = true;
         setMovementSettlePending(true);
       }

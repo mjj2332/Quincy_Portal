@@ -11,15 +11,18 @@ must all pass first.
 route/handler, no background/webhook-ingress change, no dependency change, no feature flag.
 
 TB5B is **inert whenever `tb5a_board_contract_enabled` is OFF** or the board schema reports
-maintenance — in those states the board renders ordinary cards/list with no drag handle, no arrows,
-no Move-to. The flag is currently **ON** in production (flipped at the TB5A deploy 2026-08-29).
+maintenance — in those states the board renders ordinary cards/list, the drag handle button
+renders **disabled** (out of tab order), and the ↑/↓ arrows and "Move to…" action are hidden. No
+movement request can be issued. The flag is currently **ON** in production (flipped at the TB5A
+deploy 2026-08-29).
 
 ## Build proof (as of commit `834b185`, branch `tb5b-kanban-interaction-modernization`)
 
-### Feature diff boundary — `git diff b4f8fda..HEAD`
+### Feature diff boundary — `git diff b4f8fda..HEAD` (measured at `a02f450`)
 
-- 26 files: 23 under `portal/apps/web/`, 3 under `docs/`. **Zero** changes to
-  `portal/package.json`, `portal/package-lock.json`, `portal/packages/**`, `portal/workers/**`.
+- 27 files: 23 under `portal/apps/web/`, 4 under `docs/` (`lessons.md`, `todo.md`, the plan, this
+  deploy-prep doc). **Zero** changes to `portal/package.json`, `portal/package-lock.json`,
+  `portal/packages/**`, `portal/workers/**`.
 - `ls portal/packages/db/migrations/*.sql | tail -1` → `0037_project_board_order_contract.sql`
   (unchanged — next migration number stays `0038` for a later phase).
 - `b4f8fda` (`fix(db-tests): repoint TB5A fence-design path`) is a **pre-existing `main` breakage**
@@ -128,8 +131,8 @@ cards/list) without a redeploy, as a faster mitigation for a board-interaction-o
       no request is made by just opening/closing it.
 - [ ] Sort control switches Board / Priority / shoot-date with no full-board reload and no blank
       flash; sort is disabled while a drag/proposal is active.
-- [ ] Flag-OFF spot check (if a maintenance window is used): board renders cards but no handle /
-      arrows / Move-to.
+- [ ] Flag-OFF spot check (if a maintenance window is used): board renders cards; the drag handle
+      is present but `disabled`; the ↑/↓ arrows and "Move to…" are hidden; no movement request fires.
 - [ ] Archived Dashboard is List-only.
 - [ ] Project Workspace rail Stage control renders and is keyboard-focusable
       (`data-focus-key="rail-stage:…"`).

@@ -430,8 +430,11 @@ function WorkspaceBody(props: WorkspaceBodyProps) {
         await props.onRefreshDetail().catch(() => undefined);
         return;
       }
-      runtime?.publish(createDashboardBoardInvalidatedMessage());
-      runtime?.publish(createProjectDataInvalidationMessage(project.id, [{ kind: "detail" }]));
+      if (response.changed) {
+        await queryClient.invalidateQueries({ queryKey: ["dashboard-projects"], refetchType: "active" });
+        runtime?.publish(createDashboardBoardInvalidatedMessage());
+        runtime?.publish(createProjectDataInvalidationMessage(project.id, [{ kind: "detail" }]));
+      }
       try {
         await props.onRefreshDetail();
       } catch (refreshError) {

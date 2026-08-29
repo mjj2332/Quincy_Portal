@@ -1,4 +1,4 @@
-import { act } from "react";
+import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -9,7 +9,18 @@ import { ProjectQueryRuntime, ProjectQueryRuntimeProvider } from "../lib/project
 import { projectDataKeys } from "../lib/project-data";
 
 const confirmMock = vi.hoisted(() => vi.fn(() => Promise.resolve(true)));
+const floating = vi.hoisted(() => ({ modalValues: [] as Array<boolean | undefined> }));
 vi.mock("../lib/confirm", () => ({ confirm: confirmMock }));
+vi.mock("@floating-ui/react", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@floating-ui/react")>();
+  return {
+    ...actual,
+    FloatingFocusManager: (props: Parameters<typeof actual.FloatingFocusManager>[0]) => {
+      floating.modalValues.push(props.modal);
+      return createElement(actual.FloatingFocusManager, props);
+    },
+  };
+});
 
 const apiGetMock = vi.fn<(path: string) => Promise<unknown>>();
 const apiPostMock = vi.fn<(path: string, body: unknown) => Promise<unknown>>();
@@ -32,7 +43,7 @@ async function typeInto(element: HTMLInputElement, value: string) { const setter
 function item(host: HTMLElement, title: string) { const result = [...host.querySelectorAll<HTMLElement>(".subtask-checklist__item")].find((element) => element.textContent?.includes(title)); if (!result) throw new Error(`No item ${title}`); return result; }
 function portal(id: string) { return document.getElementById(id)!; }
 
-beforeEach(() => { apiGetMock.mockReset().mockImplementation((path) => path.includes("mentionable-users") ? Promise.resolve({ users: [{ id: "user-2", name: "Nora Jones", role: "editor" }, { id: "user-3", name: "Ada Smith", role: "photographer" }] }) : Promise.resolve({ subtasks: [task, second] })); apiPostMock.mockReset().mockResolvedValue({ ...task, id: "task-new", title: "Schedule staging", position: 3072 }); apiPatchMock.mockReset().mockImplementation((path, body) => { const base = path.includes("task-2") ? second : task; return Promise.resolve({ ...base, ...("schedule" in (body as object) ? {} : body as object) }); }); apiDeleteMock.mockReset().mockResolvedValue({ ok: true }); confirmMock.mockReset().mockResolvedValue(true); });
+beforeEach(() => { floating.modalValues.length = 0; apiGetMock.mockReset().mockImplementation((path) => path.includes("mentionable-users") ? Promise.resolve({ users: [{ id: "user-2", name: "Nora Jones", role: "editor" }, { id: "user-3", name: "Ada Smith", role: "photographer" }] }) : Promise.resolve({ subtasks: [task, second] })); apiPostMock.mockReset().mockResolvedValue({ ...task, id: "task-new", title: "Schedule staging", position: 3072 }); apiPatchMock.mockReset().mockImplementation((path, body) => { const base = path.includes("task-2") ? second : task; return Promise.resolve({ ...base, ...("schedule" in (body as object) ? {} : body as object) }); }); apiDeleteMock.mockReset().mockResolvedValue({ ok: true }); confirmMock.mockReset().mockResolvedValue(true); });
 afterEach(async () => { await act(async () => root?.unmount()); root = null; document.body.replaceChildren(); });
 
 describe("SubtaskChecklist", () => {
@@ -42,6 +53,12 @@ describe("SubtaskChecklist", () => {
     expect(host.querySelector("select")).toBeNull(); expect([...host.querySelectorAll("button")].some((button) => button.textContent?.startsWith("Move "))).toBe(false);
     const title = item(host, "Call client").querySelector<HTMLButtonElement>(".subtask-checklist__title-trigger")!; await click(title); const input = item(host, "Call client").querySelector<HTMLInputElement>(".subtask-checklist__title")!; await typeInto(input, "Discarded"); const escape = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }); await act(async () => input.dispatchEvent(escape));
     expect(escape.defaultPrevented).toBe(true); expect(apiPatchMock).not.toHaveBeenCalled(); const reopened = item(host, "Call client").querySelector<HTMLButtonElement>(".subtask-checklist__title-trigger")!; reopened.focus(); await keydown(reopened, " "); const saveInput = item(host, "Call client").querySelector<HTMLInputElement>(".subtask-checklist__title")!; await typeInto(saveInput, "Saved title"); await keydown(saveInput, "Enter"); expect(apiPatchMock).toHaveBeenCalledWith(`/api/projects/${projectId}/subtasks/task-1`, { title: "Saved title" });
+  });
+
+  it("keeps the checklist popover non-modal by default", async () => {
+    const host = mount(); await render();
+    await click(item(host, "Call client").querySelector<HTMLButtonElement>('[aria-label="Schedule for Call client"]')!);
+    expect(floating.modalValues.at(-1)).toBe(false);
   });
 
   it("edits exact-minute schedule state and clears explicitly, while retaining the assignee popover", async () => {

@@ -2,7 +2,7 @@
 import { Children, act, createElement, isValidElement, type ReactElement, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { AutoScrollActivator, MeasuringStrategy } from "@dnd-kit/core";
+import { AutoScrollActivator, MeasuringStrategy, type Active, type ClientRect, type DroppableContainer } from "@dnd-kit/core";
 import { ProjectKanbanBoard, type BoardInteractionState } from "./ProjectKanbanBoard";
 import type { ProjectSummary } from "../lib/kanban-interaction";
 import type { PipelineStage } from "../lib/stages";
@@ -12,6 +12,7 @@ const dnd = vi.hoisted(() => ({
   handlers: [] as Array<{ props: Parameters<typeof import("@dnd-kit/core").DndContext>[0]; start?: (event: DndTestEvent) => void; over?: (event: DndTestEvent) => void; end?: (event: DndTestEvent) => void; cancel?: (event: DndTestEvent) => void }>,
 }));
 const sortable = vi.hoisted(() => ({ contexts: [] as Array<readonly string[]> }));
+const floating = vi.hoisted(() => ({ modalValues: [] as Array<boolean | undefined> }));
 
 vi.mock("../lib/capabilities", () => ({
   useCapabilities: () => ({ role: "admin", capabilities: ["adminBackend"], can: (capability: string) => capability === "adminBackend" }),
@@ -23,6 +24,16 @@ vi.mock("../lib/stages", async (importOriginal) => {
     { key: "raw_review" as const, label: "RAW review", displayOrder: 2, active: true },
     { key: "editing_autohdr" as const, label: "Editing", displayOrder: 3, active: true },
   ], presentationStageKey: (key: string) => key }) };
+});
+vi.mock("@floating-ui/react", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@floating-ui/react")>();
+  return {
+    ...actual,
+    FloatingFocusManager: (props: Parameters<typeof actual.FloatingFocusManager>[0]) => {
+      floating.modalValues.push(props.modal);
+      return createElement(actual.FloatingFocusManager, props);
+    },
+  };
 });
 vi.mock("@dnd-kit/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@dnd-kit/core")>();
@@ -193,6 +204,7 @@ describe("ProjectKanbanBoard", () => {
   beforeEach(() => {
     dnd.handlers.length = 0;
     sortable.contexts.length = 0;
+    floating.modalValues.length = 0;
     Object.values(callbacks).forEach((callback) => callback.mockReset());
     host = document.createElement("div");
     document.body.appendChild(host);
@@ -218,6 +230,46 @@ describe("ProjectKanbanBoard", () => {
     await renderBoard();
     const touchSensor = dnd.handlers[0]?.props.sensors?.find((descriptor) => descriptor.sensor.name === "TouchSensor");
     expect(touchSensor?.options).toEqual({ activationConstraint: { delay: 250, tolerance: 8 } });
+  });
+
+  it("keeps keyboard collision proximity ahead of Stage tie-breaking", async () => {
+    await renderBoard();
+    const collisionDetection = dnd.handlers[0]?.props.collisionDetection;
+    if (!collisionDetection) throw new Error("No collision detection strategy was rendered");
+    const rect = (left: number, top: number, width: number, height: number): ClientRect => ({ left, top, width, height, right: left + width, bottom: top + height });
+    const collisionRect = rect(0, 0, 100, 100);
+    const earlierStageCard: DroppableContainer = {
+      id: "earlier-stage-card",
+      key: "earlier-stage-card",
+      data: { current: { kind: "card", stageKey: "awaiting_raw", projectId: "earlier-stage-card" } },
+      disabled: false,
+      node: { current: null },
+      rect: { current: rect(500, 0, 100, 100) },
+    };
+    const laterStageCard: DroppableContainer = {
+      id: "later-stage-card",
+      key: "later-stage-card",
+      data: { current: { kind: "card", stageKey: "raw_review", projectId: "later-stage-card" } },
+      disabled: false,
+      node: { current: null },
+      rect: { current: rect(110, 0, 100, 100) },
+    };
+    const active: Active = {
+      id: "source",
+      data: { current: { kind: "card", stageKey: "awaiting_raw", projectId: "source" } },
+      rect: { current: { initial: collisionRect, translated: collisionRect } },
+    };
+    const collisions = collisionDetection({
+      active,
+      collisionRect,
+      droppableRects: new Map([
+        [earlierStageCard.id, earlierStageCard.rect.current!],
+        [laterStageCard.id, laterStageCard.rect.current!],
+      ]),
+      droppableContainers: [earlierStageCard, laterStageCard],
+      pointerCoordinates: null,
+    });
+    expect(collisions[0]?.id).toBe("later-stage-card");
   });
 
   it("passes public auto-scroll configuration and remeasurement strategy", async () => {
@@ -287,6 +339,12 @@ describe("ProjectKanbanBoard", () => {
     expect(dialog.getAttribute("data-step")).toBe("position");
     expect(dialog.querySelector('[role="listbox"]')?.textContent).toContain("End of RAW review");
     expect(dialog.textContent).toContain("Before visual-second Street — position 1");
+  });
+
+  it("enables the modal focus trap for the Move-to dialog", async () => {
+    await renderBoard();
+    await act(async () => { host.querySelector<HTMLButtonElement>('[aria-label="Move source Street to…"]')!.click(); await Promise.resolve(); });
+    expect(floating.modalValues.at(-1)).toBe(true);
   });
 
   it("passes the selected Move-to visual successor through the same semantic intent boundary", async () => {
@@ -389,15 +447,35 @@ describe("ProjectKanbanBoard", () => {
     expect(onBoardMove).toHaveBeenCalledWith("visual-first", { targetStageKey: "raw_review", successor: "visual-second" }, "same", expect.objectContaining({ projectId: "visual-first" }));
   });
 
-  it("captures keyboard drag origin and rejects an ineligible same-Stage destination", async () => {
+  it("rejects an ineligible same-Stage keyboard destination through the drag handlers", async () => {
     const onBoardMove = vi.fn();
     await renderBoard({ role: "editor", canPrioritize: false, sameStageReorderEnabled: false, onBoardMove });
+    const handle = host.querySelector<HTMLButtonElement>('[aria-label="Move visual-first Street"]')!;
+    handle.focus();
+    const handler = dnd.handlers.at(-1)?.start;
+    await act(async () => { handler?.({ ...event("visual-first", cardData("raw_review", "visual-first"), null), activatorEvent: new KeyboardEvent("keydown", { key: " " }) }); await Promise.resolve(); });
+    await overProject("visual-first", "raw_review", "visual-second", cardData("raw_review", "visual-second"));
+    await endProject("visual-first", "raw_review", { id: "visual-second", data: cardData("raw_review", "visual-second") });
+    expect(onBoardMove).not.toHaveBeenCalled();
+    expect(callbacks.onAnnounce).toHaveBeenCalledWith(expect.stringContaining("Cancelled moving visual-first Street"));
+    expect(document.activeElement?.getAttribute("data-focus-key")).toBe("move-handle:visual-first");
+  });
+
+  it("cancels a keyboard drag without a request and restores the initiating handle", async () => {
+    const onBoardMove = vi.fn();
+    await renderBoard({ onBoardMove });
+    const handle = host.querySelector<HTMLButtonElement>('[aria-label="Move source Street"]')!;
+    handle.focus();
     const handler = dnd.handlers.at(-1)?.start;
     await act(async () => { handler?.({ ...event("source", cardData("awaiting_raw", "source"), null), activatorEvent: new KeyboardEvent("keydown", { key: " " }) }); await Promise.resolve(); });
-    await overProject("source", "awaiting_raw", "visual-first", cardData("raw_review", "visual-first"));
-    await endProject("source", "awaiting_raw", { id: "source", data: cardData("awaiting_raw", "source") });
+    const cancel = dnd.handlers.at(-1)?.cancel;
+    if (!cancel) throw new Error("No drag-cancel handler was rendered");
+    await act(async () => { cancel(event("source", cardData("awaiting_raw", "source"), null)); await Promise.resolve(); });
+    const announcement = dnd.handlers.at(-1)?.props.accessibility?.announcements?.onDragCancel;
+    const message = announcement?.({} as Parameters<NonNullable<typeof announcement>>[0]);
     expect(onBoardMove).not.toHaveBeenCalled();
-    expect(callbacks.onAnnounce).toHaveBeenCalledWith(expect.stringContaining("Cancelled moving source Street"));
+    expect(message).toContain("Cancelled moving source Street");
+    expect(document.activeElement?.getAttribute("data-focus-key")).toBe("move-handle:source");
   });
 
   it("captures the empty-column semantic gap", async () => {

@@ -29,7 +29,7 @@ import {
 import { SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS as DndCSS } from "@dnd-kit/utilities";
 import { isDeadlineOverdue, formatSydneyCivil, type Role, type StageKey } from "@quincy/shared";
-import { useCallback, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type RefCallback } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type RefCallback } from "react";
 import { AnchoredPopover, useAnchoredPopover } from "./AnchoredPopover";
 import { StatusBadge } from "./atoms";
 import { InternalLink } from "./InternalLink";
@@ -220,7 +220,7 @@ function MoveToControl({ project, model, activeStages, role, sort, canMoveStages
       onKeyDown={floating.onKeyDown}
       onClick={openMoveTo}
     >Move to…</button>
-    {open && <AnchoredPopover className="kanban-move-popover" context={floating.context} floatingStyles={floating.floatingStyles} initialFocus={0} onKeyDown={floating.onKeyDown}>
+    {open && <AnchoredPopover className="kanban-move-popover" context={floating.context} floatingStyles={floating.floatingStyles} initialFocus={0} modal onKeyDown={floating.onKeyDown}>
       <div id={dialogId} className="kanban-move-popover__content" role="dialog" aria-label={`Move ${project.street} to…`} data-step={targetStageKey === null ? "stage" : "position"}>
         <div className="ey">{targetStageKey === null ? "Choose a Stage" : `Choose a position in ${targetLabel}`}</div>
         {targetStageKey === null ? <div className="kanban-move-popover__stages" role="radiogroup" aria-label={`Target Stage for ${project.street}`}>
@@ -449,6 +449,7 @@ function BoardCollisionDetection({ activeStages, displayOrders, canMoveStages, s
   sameStageReorderEnabled: boolean;
   activeProjectId: string | undefined;
 }): CollisionDetection {
+  const collisionTieEpsilon = 1;
   return ({ active, collisionRect, droppableRects, droppableContainers, pointerCoordinates }) => {
     const activeData = dataForActive(active);
     const sourceStage = activeData?.kind === "card" ? activeData.stageKey : undefined;
@@ -460,8 +461,6 @@ function BoardCollisionDetection({ activeStages, displayOrders, canMoveStages, s
       return canMoveStages;
     });
     const args = { active, collisionRect, droppableRects, droppableContainers: eligibleContainers, pointerCoordinates };
-    const pointerCollisions = pointerCoordinates ? pointerWithin(args) : [];
-    const collisions = pointerCollisions.length ? pointerCollisions : pointerCoordinates ? [] : closestCorners(args);
     const stageOrder = new Map(activeStages.map((stage, index) => [semanticStageKey(stage.key), index]));
     const candidateRank = (collision: Collision): [number, number, number, string] => {
       const data = collisionData(collision, eligibleContainers);
@@ -471,9 +470,22 @@ function BoardCollisionDetection({ activeStages, displayOrders, canMoveStages, s
       const successorRank = data.kind === "card" ? ids.indexOf(data.projectId) : ids.length;
       return [stageRank, data.kind === "card" ? 0 : 1, successorRank < 0 ? Number.MAX_SAFE_INTEGER : successorRank, String(collision.id)];
     };
-    return [...collisions].sort((left, right) => {
+    const sortByCandidateRank = (left: Collision, right: Collision) => {
       const a = candidateRank(left); const b = candidateRank(right);
       return a[0] - b[0] || a[1] - b[1] || a[2] - b[2] || a[3].localeCompare(b[3]);
+    };
+    if (pointerCoordinates !== null) {
+      const pointerCollisions = pointerWithin(args);
+      return pointerCollisions.length ? [...pointerCollisions].sort(sortByCandidateRank) : [];
+    }
+    const collisions = closestCorners(args);
+    return [...collisions].sort((left, right) => {
+      const leftValue = typeof left.data?.value === "number" ? left.data.value : null;
+      const rightValue = typeof right.data?.value === "number" ? right.data.value : null;
+      if (leftValue !== null && rightValue !== null && Math.abs(leftValue - rightValue) > collisionTieEpsilon) return leftValue - rightValue;
+      if (leftValue !== null && rightValue === null) return -1;
+      if (leftValue === null && rightValue !== null) return 1;
+      return sortByCandidateRank(left, right);
     });
   };
 }
@@ -546,6 +558,7 @@ function KanbanColumn({
 }: KanbanColumnProps) {
   const displayedIds = displayOrders[semanticKey] ?? [];
   const displayedProjects = displayedIds.map((id) => projects.find((project) => project.id === id)).filter((project): project is ProjectSummary => project !== undefined);
+  const moveToModel = useMemo(() => ({ ...boardModel, authorizedBoardOrder: cloneOrders(displayOrders) }), [boardModel, displayOrders]);
   const { setNodeRef: setColumnBodyRef, isOver } = useDroppable({ id: `column:${stage.key}`, data: { kind: "column", stageKey: semanticKey } satisfies DroppableData });
   const indicatorAfter = proposal?.gap.targetStageKey === semanticKey && proposal.gap.successor === "end";
   const stageIsOver = activeProjectId !== undefined && (isOver || proposal?.gap.targetStageKey === semanticKey);
@@ -569,7 +582,7 @@ function KanbanColumn({
                 canReorder: boardMutationEnabled && sameStageReorderEnabled && !pendingOrdering.has(project.id),
                 movementDisabled: movementDisabled || pendingMoves.size > 0 || pendingOrdering.size > 0,
                 stageOptions: activeStages,
-                boardModel,
+                boardModel: moveToModel,
                 role,
                 effectiveKanbanSort,
                 onMoveStage,
@@ -650,6 +663,7 @@ export function ProjectKanbanBoard({
   const dndAnnouncementRef = useRef<string | undefined>(undefined);
   const dndDropSuppressedRef = useRef(false);
   const dndOverGapRef = useRef<SemanticGap | null>(null);
+  const interactionTerminalRef = useRef(false);
   // Derived interaction identity per the Option-A ruling: the network key stays authorization
   // scoped, while display arrays and every dnd consumer rebuild for the effective sort.
   const baseOrders = useMemo(() => visualOrders(projects, activeStages, effectiveKanbanSort), [activeStages, effectiveKanbanSort, projects]);
@@ -664,7 +678,25 @@ export function ProjectKanbanBoard({
   }), [activeProjectId, activeStages, canMoveStages, displayOrders, sameStageReorderEnabled]);
   const movingProject = activeProjectId ? projects.find((project) => project.id === activeProjectId) : undefined;
 
+  const clearDragState = useCallback((clearAnnouncement = false) => {
+    snapshotRef.current = null;
+    proposalRef.current = null;
+    dndOverGapRef.current = null;
+    dndDropSuppressedRef.current = clearAnnouncement;
+    if (clearAnnouncement) dndAnnouncementRef.current = undefined;
+    setActiveProjectId(undefined);
+    setProposal(null);
+    onInteractionStateChange?.({ activeId: undefined, proposal: null });
+  }, [onInteractionStateChange]);
+
+  useLayoutEffect(() => {
+    if (!terminal || interactionTerminalRef.current) return;
+    interactionTerminalRef.current = true;
+    clearDragState(true);
+  }, [clearDragState, terminal]);
+
   const announceFor = (event: "start" | "over-card" | "over-end" | "valid-drop" | "dnd-cancel" | "drop-outside" | "unchanged-gap" | "invalid-keyboard-target", gap?: SemanticGap) => {
+    if (interactionTerminalRef.current || terminal) return undefined;
     const snapshot = snapshotRef.current;
     const project = snapshot?.model.projects.find((item) => item.id === snapshot.movingProjectId);
     if (!snapshot || !project) return undefined;
@@ -689,7 +721,10 @@ export function ProjectKanbanBoard({
   const handleDndStart = (event: DragStartEvent) => {
     const id = activeId(event.active);
     const project = projects.find((item) => item.id === id);
-    if (!project || movementDisabled || !boardMutationEnabled || (!canMoveStages && !sameStageReorderEnabled) || pendingMoves.has(id) || pendingOrdering.has(id)) return;
+    if (!project || terminal || movementDisabled || !boardMutationEnabled || (!canMoveStages && !sameStageReorderEnabled) || pendingMoves.has(id) || pendingOrdering.has(id)) return;
+    // A terminal latch is intentionally cleared only by a new eligible drag. A late dnd-kit
+    // callback after a purge can therefore never revive the private snapshot on its own.
+    interactionTerminalRef.current = false;
     const currentModel = canonicalBoardModel(projects);
     const keyboardOrigin = event.activatorEvent?.type === "keydown";
     const focusDescriptor = focusDescriptorFor(keyboardOrigin ? "keyboard" : "pointer", project, currentModel, "handle");
@@ -716,6 +751,7 @@ export function ProjectKanbanBoard({
   };
 
   const handleDndOver = (event: DragOverEvent) => {
+    if (interactionTerminalRef.current || terminal) return;
     const snapshot = snapshotRef.current;
     const hovered = dataForOver(event.over, event.collisions);
     if (!snapshot || !hovered) {
@@ -745,16 +781,8 @@ export function ProjectKanbanBoard({
     dndAnnouncementRef.current = message;
   };
 
-  const clearDragState = () => {
-    snapshotRef.current = null;
-    proposalRef.current = null;
-    dndOverGapRef.current = null;
-    setActiveProjectId(undefined);
-    setProposal(null);
-    onInteractionStateChange?.({ activeId: undefined, proposal: null });
-  };
-
   const handleDndEnd = (event: DragEndEvent) => {
+    if (interactionTerminalRef.current || terminal) return;
     const snapshot = snapshotRef.current;
     const id = activeId(event.active);
     const hovered = dataForOver(event.over, event.collisions);
@@ -798,6 +826,7 @@ export function ProjectKanbanBoard({
   };
 
   const handleDndCancel = (_event: DragCancelEvent) => {
+    if (interactionTerminalRef.current || terminal) return;
     const snapshot = snapshotRef.current;
     const message = announceFor("dnd-cancel");
     dndAnnouncementRef.current = message;
@@ -811,17 +840,17 @@ export function ProjectKanbanBoard({
   const accessibility: { restoreFocus: false; announcements: Announcements; screenReaderInstructions: { draggable: string } } = {
     restoreFocus: false,
     announcements: {
-      onDragStart: ({ active }) => terminal ? undefined : dndAnnouncementRef.current ?? (snapshotRef.current && activeId(active) === snapshotRef.current.movingProjectId ? announceFor("start") : undefined),
+      onDragStart: ({ active }) => interactionTerminalRef.current || terminal ? undefined : dndAnnouncementRef.current ?? (snapshotRef.current && activeId(active) === snapshotRef.current.movingProjectId ? announceFor("start") : undefined),
       onDragOver: ({ over }) => {
-        if (terminal) return undefined;
+        if (interactionTerminalRef.current || terminal) return undefined;
         const gap = proposalRef.current?.gap;
         if (!gap || !semanticGapChanged(dndOverGapRef.current, gap)) return undefined;
         const data = dataForOver(over);
         dndOverGapRef.current = gap;
         return announceFor(data?.kind === "column" ? "over-end" : "over-card", gap);
       },
-      onDragEnd: ({ over }) => terminal || dndDropSuppressedRef.current ? undefined : dndAnnouncementRef.current ?? (over ? announceFor("valid-drop", proposalRef.current?.gap) : announceFor("dnd-cancel")),
-      onDragCancel: () => terminal ? undefined : dndAnnouncementRef.current ?? announceFor("dnd-cancel"),
+      onDragEnd: ({ over }) => interactionTerminalRef.current || terminal || dndDropSuppressedRef.current ? undefined : dndAnnouncementRef.current ?? (over ? announceFor("valid-drop", proposalRef.current?.gap) : announceFor("dnd-cancel")),
+      onDragCancel: () => interactionTerminalRef.current || terminal ? undefined : dndAnnouncementRef.current ?? announceFor("dnd-cancel"),
     },
     screenReaderInstructions: {
       draggable: "To pick up a project, focus its Move project handle and press Space. Use the arrow keys to move within or between Stages. Press Space again to drop, or Escape to cancel. You can also use Move to… without dragging.",

@@ -450,6 +450,7 @@ afterEach(async () => {
     await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>); await flush();
     const runtime = getProjectQueryRuntime(queryClient!);
     const publish = vi.spyOn(runtime!, "publish");
+    const invalidate = vi.spyOn(queryClient!, "invalidateQueries");
     const select = host.querySelector<HTMLSelectElement>('[aria-label="Move project Stage"]');
     expect(select).not.toBeNull();
     select!.value = "awaiting_raw";
@@ -463,6 +464,7 @@ afterEach(async () => {
     expect(boardMessage).toEqual(expect.objectContaining({ version: 1, type: "dashboard-board-invalidated" }));
     expect(boardMessage).not.toHaveProperty("projectId");
     expect(publish).toHaveBeenCalledWith(expect.objectContaining({ type: "project-data-invalidated", projectId: "p1", resources: [{ kind: "detail" }] }));
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["dashboard-projects"], refetchType: "active" });
   });
 
   it("uses the idempotent already-in message and restores rail focus after a 503", async () => {
@@ -476,12 +478,18 @@ afterEach(async () => {
       return Promise.resolve({});
     });
     apiPostMock.mockResolvedValueOnce({ changed: false, project: { projectId: "p1", stageKey: "edited_review", boardRevision: 7 }, board: { sourceStageKey: "raw_review", targetStageKey: "edited_review", orderedVisibleProjectIds: [] } });
-    await render(<ProjectWorkspace projectId="p1" />); await flush();
+    let queryClient: ReturnType<typeof import("../lib/query-client").createQuincyQueryClient> | undefined;
+    await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>); await flush();
+    const runtime = getProjectQueryRuntime(queryClient!);
+    const publish = vi.spyOn(runtime!, "publish");
+    const invalidate = vi.spyOn(queryClient!, "invalidateQueries");
     const select = host.querySelector<HTMLSelectElement>('[data-focus-key="rail-stage:p1"]')!;
     select.value = "edited_review";
     await act(async () => { select.focus(); select.dispatchEvent(new Event("change", { bubbles: true })); await Promise.resolve(); }); await flush(20);
     expect(host.textContent).toContain("Already in Edited review.");
     expect(document.activeElement?.getAttribute("data-focus-key")).toBe("rail-stage:p1");
+    expect(publish).not.toHaveBeenCalled();
+    expect(invalidate).not.toHaveBeenCalledWith({ queryKey: ["dashboard-projects"], refetchType: "active" });
 
     apiPostMock.mockRejectedValueOnce(new ApiError("Board unavailable", 503, { code: "board_schema_maintenance" }));
     select.value = "awaiting_raw";

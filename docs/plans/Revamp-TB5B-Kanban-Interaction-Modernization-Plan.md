@@ -1,6 +1,6 @@
 # Revamp TB5B — Kanban Interaction Modernization
 
-Status: BUILT (slices 0–7, branch tb5b-kanban-interaction-modernization) — §5 gates green through Slice 6. Not yet diff-reviewed / deployed. Sort-key ruled Option A by Opus plan-tier review.
+Status: BUILT + DIFF-REVIEWED (slices 0–8, branch tb5b-kanban-interaction-modernization) — §5 gates green throughout; 2 fresh-Sol diff-review rounds (mid-build S1–S3 + full b4f8fda..HEAD) closed 2 blocking + 10 should-fix. Opus B1 (deadlock) / B4 (single-writer) and the full-review two-gate / role-safe-transport invariants all CONFIRMED. Awaiting: Sol focused pass → Opus final-draft → Agy local-dev QA (+ Slice-5 real-hardware acceptance) → app-Worker-only deploy. Sort-key ruled Option A by Opus plan-tier review.
 
 Four Opus residual non-blocking notes are carried into the Luna slice specs, not the plan body: (1) the §5 grep invariant "zero `setQueryData` on `dashboardProjectsKey`" must read "…from any Stage/position **movement** path" so it does not trip on Priority's deliberately-retained `updateProjects` path; (2) the settle bullet that sets `movementSettlePending` is cross-Stage only — same-Stage success clears both gates immediately; (3) the post-block settle refetch and any `queuedRefreshRef` refetch are one single network call, not two; (4) gate discipline — the orchestrating session runs all four §5 commands itself, agent-reported green is not evidence.
 
