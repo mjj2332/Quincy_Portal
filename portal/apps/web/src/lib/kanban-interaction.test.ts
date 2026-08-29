@@ -139,9 +139,9 @@ describe("Kanban interaction model", () => {
   it("resolves the same revision-free semantic gap independent of display sort", () => {
     const model = movementBoard();
     const gap = { targetStageKey: "raw_review" as const, successor: "middle" };
-    const boardRequest = buildMoveRequest(model, "source", gap);
-    const priorityRequest = buildMoveRequest(model, "source", gap);
-    const shootDateRequest = buildMoveRequest(model, "source", gap);
+    const boardRequest = buildMoveRequest(model, "source", gap, "admin");
+    const priorityRequest = buildMoveRequest(model, "source", gap, "admin");
+    const shootDateRequest = buildMoveRequest(model, "source", gap, "admin");
     expect(boardRequest).toEqual(priorityRequest);
     expect(priorityRequest).toEqual(shootDateRequest);
     expect(resolveSemanticGap({ targetStageKey: "raw_review", successor: "first" }, model, "source")).toEqual({
@@ -149,12 +149,12 @@ describe("Kanban interaction model", () => {
     });
     expect(resolveSemanticGap({ targetStageKey: "raw_review", successor: "end" }, model, "source")).toEqual({ placement: { kind: "append" } });
     expect(resolveSemanticGap({ targetStageKey: "raw_review", successor: "vanished" }, model, "source")).toEqual({ stale: true });
-    expect(buildMoveRequest(model, "source", { targetStageKey: "raw_review", successor: "vanished" })).toEqual({ stale: true });
+    expect(buildMoveRequest(model, "source", { targetStageKey: "raw_review", successor: "vanished" }, "admin")).toEqual({ stale: true });
 
     const freshModel = board(model.projects.map((item) => item.id === "middle" ? { ...item, boardRevision: 77 } : item), {
       awaiting_raw: ["source"], raw_review: ["first", "middle", "last"],
     });
-    expect(buildMoveRequest(freshModel, "source", gap)).toEqual({
+    expect(buildMoveRequest(freshModel, "source", gap, "admin")).toEqual({
       expected: { stageKey: "awaiting_raw", boardRevision: 3 },
       targetStageKey: "raw_review",
       placement: { kind: "between", before: { projectId: "first", boardRevision: 8 }, after: { projectId: "middle", boardRevision: 77 } },
@@ -165,11 +165,29 @@ describe("Kanban interaction model", () => {
     const model = movementBoard();
     const gap = { targetStageKey: "raw_review" as const, successor: "last" };
     expect(isSameStagePlacementChange({ gap, movingProject: model.projects.find((item) => item.id === "middle")! })).toBe(true);
-    expect(reorderIntentFromGap({ targetStageKey: "raw_review", successor: "last" }, model, "middle")).toEqual({
+    expect(reorderIntentFromGap({ targetStageKey: "raw_review", successor: "last" }, model, "middle", "admin")).toEqual({
+      targetStageKey: "raw_review",
       placement: { kind: "between", before: { projectId: "first", boardRevision: 8 }, after: { projectId: "last", boardRevision: 10 } },
     });
-    expect(reorderIntentFromGap({ targetStageKey: "raw_review", successor: "first" }, model, "source")).toEqual({ stale: true });
+    expect(reorderIntentFromGap({ targetStageKey: "raw_review", successor: "first" }, model, "source", "admin")).toEqual({ stale: true });
     expect(adjacentBoardGap("middle", "raw_review", "down", model.projects)).toEqual({ targetStageKey: "raw_review", successor: "end" });
+
+    const editingModel = board([
+      project("editing-mover", "editing", { boardRevision: 12 }),
+    ], { editing_autohdr: ["editing-mover"] });
+    expect(reorderIntentFromGap({ targetStageKey: "editing_autohdr", successor: "end" }, editingModel, "editing-mover", "editor")).toEqual({
+      targetStageKey: "editing",
+      placement: { kind: "append" },
+    });
+  });
+
+  it("serializes canonical Editing targets for each role at the move-request boundary", () => {
+    const model = board([
+      project("source", "awaiting_raw", { boardRevision: 3 }),
+    ], { awaiting_raw: ["source"], editing_autohdr: [] });
+    const gap = { targetStageKey: "editing_autohdr" as const, successor: "end" as const };
+    expect(buildMoveRequest(model, "source", gap, "editor")).toMatchObject({ targetStageKey: "editing" });
+    expect(buildMoveRequest(model, "source", gap, "admin")).toMatchObject({ targetStageKey: "editing_autohdr" });
   });
 
   it("proposes card, column-body, and empty-column drops while removing the mover from source", () => {
@@ -204,13 +222,16 @@ describe("Kanban interaction model", () => {
 
   it("overlays only authorized arrays and the mover Stage, keeps revisions, and rolls back completely", () => {
     const baseline = movementBoard();
-    const overlay = applyOptimisticOverlay(baseline, "source", { targetStageKey: "raw_review", successor: "middle" });
+    const overlay = applyOptimisticOverlay(baseline, "source", { targetStageKey: "raw_review", successor: "middle" }, "admin");
     expect(overlay.projects.find((item) => item.id === "source")).toMatchObject({ stageKey: "raw_review", boardRevision: 3 });
     expect(overlay.authorizedBoardOrder).toEqual({ awaiting_raw: [], raw_review: ["first", "source", "middle", "last"] });
     expect(overlay.projects.every((item) => JSON.stringify(item.authorizedBoardOrder) === JSON.stringify(overlay.authorizedBoardOrder))).toBe(true);
     expect(overlay.projects.find((item) => item.id === "first")?.boardRevision).toBe(8);
     expect(rollbackToBaseline(baseline)).toEqual(baseline);
     expect(JSON.stringify(rollbackToBaseline(baseline))).toBe(JSON.stringify(baseline));
+
+    const editorOverlay = applyOptimisticOverlay(baseline, "source", { targetStageKey: "editing_autohdr", successor: "end" }, "editor");
+    expect(editorOverlay.projects.find((item) => item.id === "source")).toMatchObject({ stageKey: "editing" });
   });
 
   it("uses the authoritative target array, provisional source, and settled priority-first snap", () => {
@@ -219,7 +240,7 @@ describe("Kanban interaction model", () => {
       project("first", "raw_review", { priority: 1, boardRevision: 8 }),
       project("last", "raw_review", { priority: null, boardRevision: 10 }),
     ], { awaiting_raw: ["source"], raw_review: ["first", "last"] });
-    const overlay = applyOptimisticOverlay(baseline, "source", { targetStageKey: "raw_review", successor: "first" });
+    const overlay = applyOptimisticOverlay(baseline, "source", { targetStageKey: "raw_review", successor: "first" }, "admin");
     expect(sortKanbanProjects(overlay.projects.filter((item) => item.stageKey === "raw_review"), "priority").map((item) => item.id)).toEqual(["first", "source", "last"]);
 
     const response: MoveProjectStageResponse = {

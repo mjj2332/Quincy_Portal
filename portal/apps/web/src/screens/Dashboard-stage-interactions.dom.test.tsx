@@ -12,7 +12,7 @@ const authState = vi.hoisted(() => ({ role: "admin" as "admin" | "editor" | "ext
 const apiGetMock = vi.hoisted(() => vi.fn<(path: string) => Promise<unknown>>());
 const apiPostMock = vi.hoisted(() => vi.fn<(path: string, body: unknown) => Promise<unknown>>());
 type DndTestEvent = { active: { id: string; data?: unknown }; over: { id: string; data?: unknown } | null };
-const dnd = vi.hoisted(() => ({ handlers: [] as Array<{ start?: (event: DndTestEvent) => void; over?: (event: DndTestEvent) => void; end?: (event: DndTestEvent) => void; cancel?: (event: DndTestEvent) => void }> }));
+const dnd = vi.hoisted(() => ({ handlers: [] as Array<{ props: Parameters<typeof import("@dnd-kit/core").DndContext>[0]; start?: (event: DndTestEvent) => void; over?: (event: DndTestEvent) => void; end?: (event: DndTestEvent) => void; cancel?: (event: DndTestEvent) => void }> }));
 vi.mock("../lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/api")>();
   return { ...actual, apiGet: (path: string) => apiGetMock(path), apiPost: (path: string, body: unknown) => apiPostMock(path, body) };
@@ -22,7 +22,7 @@ vi.mock("@dnd-kit/core", async (importOriginal) => {
   return {
     ...actual,
     DndContext: (props: Parameters<typeof actual.DndContext>[0]) => {
-      dnd.handlers.push({ start: props.onDragStart as ((event: DndTestEvent) => void) | undefined, over: props.onDragOver as ((event: DndTestEvent) => void) | undefined, end: props.onDragEnd as ((event: DndTestEvent) => void) | undefined, cancel: props.onDragCancel as ((event: DndTestEvent) => void) | undefined });
+      dnd.handlers.push({ props, start: props.onDragStart as ((event: DndTestEvent) => void) | undefined, over: props.onDragOver as ((event: DndTestEvent) => void) | undefined, end: props.onDragEnd as ((event: DndTestEvent) => void) | undefined, cancel: props.onDragCancel as ((event: DndTestEvent) => void) | undefined });
       return createElement(actual.DndContext, props);
     },
   };
@@ -32,21 +32,22 @@ vi.mock("../lib/capabilities", () => ({
   useCapabilities: () => ({ role: authState.role, capabilities: authState.role === "admin" ? ["moveProjectStage", "prioritizeProjects"] : ["moveProjectStage"], can: (capability: string) => capability === "moveProjectStage" || (capability === "prioritizeProjects" && authState.role === "admin") }),
 }));
 vi.mock("../lib/stages", () => ({
-  useStages: () => ({
-    stages: [
-      { key: "awaiting_raw", label: "Awaiting RAW", displayOrder: 1, active: true },
-      { key: "raw_review", label: "RAW review", displayOrder: 2, active: true },
-      { key: "editing_autohdr", label: "Editing · autoHDR", displayOrder: 3, active: true },
-      { key: "editing", label: "Editing", displayOrder: 3, active: true },
-    ],
-    presentationStageKey: (key: string) => key === "editing_autohdr" ? "editing" : key,
-  }),
+  useStages: () => {
+    const stages = [
+      { key: "awaiting_raw" as const, label: "Awaiting RAW", displayOrder: 1, active: true },
+      { key: "raw_review" as const, label: "RAW review", displayOrder: 2, active: true },
+      ...(authState.role === "admin"
+        ? [{ key: "editing_autohdr" as const, label: "Editing · autoHDR", displayOrder: 3, active: true }]
+        : [{ key: "editing" as const, label: "Editing", displayOrder: 3, active: true }]),
+    ];
+    return { stages, presentationStageKey: (key: string) => key === "editing_autohdr" && authState.role !== "admin" ? "editing" : key };
+  },
 }));
 vi.mock("../components/NoticeBoard", () => ({ NoticeBoard: () => null }));
 
 const boardOrder = { awaiting_raw: ["source"], raw_review: ["before", "target"], editing_autohdr: [] };
 
-function summary(id: string, stageKey: "awaiting_raw" | "raw_review" | "editing_autohdr", boardRevision: number) {
+function summary(id: string, stageKey: ProjectSummary["stageKey"], boardRevision: number) {
   return {
     id, street: id === "source" ? "Source Street" : `${id} Street`, suburb: null, postcode: null, agencyName: null, agentName: null,
     stageKey, shootDate: null, coverAssetId: null, receivedCount: 0, expectedCount: null, priority: id === "source" ? 1 : null,
@@ -57,6 +58,26 @@ function summary(id: string, stageKey: "awaiting_raw" | "raw_review" | "editing_
 function response() {
   const source = authState.moved ? { ...summary("source", "raw_review", 4), priority: 1 } : summary("source", "awaiting_raw", 3);
   return { projects: [source, summary("before", "raw_review", 8), summary("target", "raw_review", 9)], board: { contractEnabled: true, orderedProjectIdsByStage: boardOrder } };
+}
+
+function editingMoveResponse() {
+  return {
+    projects: [summary("source", "raw_review", 3), summary("before", "raw_review", 8), summary("target", "raw_review", 9)],
+    board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: [], raw_review: ["source", "before", "target"], editing_autohdr: [] } },
+  };
+}
+
+function settleInitialResponse() {
+  return {
+    projects: [
+      summary("source", "awaiting_raw", 3),
+      summary("source-sibling-a", "awaiting_raw", 5),
+      summary("source-sibling-b", "awaiting_raw", 6),
+      summary("before", "raw_review", 8),
+      summary("target", "raw_review", 9),
+    ],
+    board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: ["source", "source-sibling-a", "source-sibling-b"], raw_review: ["before", "target"], editing_autohdr: [] } },
+  };
 }
 
 function externalResponse() {
@@ -80,6 +101,30 @@ function externalResponse() {
   return {
     projects: [externalProject(firstId, "External First Street"), externalProject(secondId, "External Second Street")],
     board: { contractEnabled: true, orderedProjectIdsByStage: { editing: [secondId, firstId] } },
+  };
+}
+
+function externalEditingMoveResponse() {
+  const firstId = "123e4567-e89b-42d3-a456-426614174001";
+  const secondId = "123e4567-e89b-42d3-a456-426614174002";
+  const rawService = (id: string) => ({ id, kind: "raw", status: "active", expectedCount: null, receivedCount: 0 });
+  const externalProject = (id: string, street: string, stageKey: "raw_review" | "editing") => ({
+    id,
+    address: { street, suburb: "External suburb", postcode: "2000" },
+    agencyDisplayName: "External agency",
+    agentDisplayName: null,
+    shootDate: null,
+    timeWindow: null,
+    stageKey,
+    boardRevision: id === firstId ? 12 : 13,
+    deadline: null,
+    productionNotes: null,
+    services: [rawService(`${id.slice(0, -1)}3`)],
+    cover: null,
+  });
+  return {
+    projects: [externalProject(firstId, "External First Street", "raw_review"), externalProject(secondId, "External Second Street", "editing")],
+    board: { contractEnabled: true, orderedProjectIdsByStage: { raw_review: [firstId], editing: [secondId] } },
   };
 }
 
@@ -180,6 +225,63 @@ describe("Dashboard Stage interactions", () => {
     expect(apiPostMock).not.toHaveBeenCalled();
   });
 
+  it("serializes an internal Editor's cross-Stage move into Editing and overlays the role-safe Stage", async () => {
+    authState.role = "editor";
+    let resolveMove!: (value: unknown) => void;
+    apiGetMock.mockImplementation((path) => path === "/api/projects" ? Promise.resolve(editingMoveResponse()) : Promise.resolve({}));
+    apiPostMock
+      .mockRejectedValueOnce(new ApiError("Confirmation required", 409, {
+        code: "stage_confirmation_required",
+        requiredConfirmation: { reasons: ["editing_boundary"] },
+      }))
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveMove = resolve; }));
+    await act(async () => { root.render(<><Dashboard currentUserId="editor-1" role="editor" /><ConfirmModalHost /></>); await Promise.resolve(); }); await flush();
+
+    await dndStart("source", "raw_review");
+    await dndOver("source", "raw_review", "column:editing", columnData("editing_autohdr"));
+    await dndEnd("source", "raw_review", { id: "column:editing", data: columnData("editing_autohdr") });
+    await flush();
+    expect(apiPostMock).toHaveBeenNthCalledWith(1, "/api/projects/source/stage", expect.objectContaining({ targetStageKey: "editing" }));
+
+    document.querySelector<HTMLButtonElement>('[data-testid="confirm-modal-confirm"]')!.click();
+    await flush();
+    expect(apiPostMock).toHaveBeenNthCalledWith(2, "/api/projects/source/stage", expect.objectContaining({ targetStageKey: "editing", confirmation: { reasons: ["editing_boundary"] } }));
+    const editingColumn = [...host.querySelectorAll<HTMLElement>(".kcol")].find((column) => column.querySelector('[data-droppable-id="column:editing"]'))!;
+    expect([...editingColumn.querySelectorAll<HTMLElement>(".kcard__addr")].map((element) => element.textContent)).toContain("Source Street");
+
+    resolveMove({ changed: true, project: { projectId: "source", stageKey: "editing", boardRevision: 4 }, board: { sourceStageKey: "raw_review", targetStageKey: "editing", orderedVisibleProjectIds: ["source"] } });
+    await flush();
+  });
+
+  it("keeps Admin's internal Editing transport key for a cross-Stage move", async () => {
+    authState.role = "admin";
+    apiGetMock.mockImplementation((path) => path === "/api/projects" ? Promise.resolve(editingMoveResponse()) : Promise.resolve({}));
+    await act(async () => { root.render(<Dashboard currentUserId="admin-1" role="admin" />); await Promise.resolve(); }); await flush();
+    await dndStart("source", "raw_review");
+    await dndOver("source", "raw_review", "column:editing_autohdr", columnData("editing_autohdr"));
+    await dndEnd("source", "raw_review", { id: "column:editing_autohdr", data: columnData("editing_autohdr") });
+    await flush();
+    expect(apiPostMock).toHaveBeenCalledWith("/api/projects/source/stage", expect.objectContaining({ targetStageKey: "editing_autohdr" }));
+  });
+
+  it("keeps an assigned External Editor scoped while serializing a move into Editing", async () => {
+    authState.role = "external_editor";
+    const firstId = "123e4567-e89b-42d3-a456-426614174001";
+    const secondId = "123e4567-e89b-42d3-a456-426614174002";
+    apiGetMock.mockImplementation((path) => path === "/api/projects" ? Promise.resolve(externalEditingMoveResponse()) : Promise.resolve({}));
+    apiPostMock.mockResolvedValueOnce({ changed: true, project: { projectId: firstId, stageKey: "editing", boardRevision: 14 }, board: { sourceStageKey: "raw_review", targetStageKey: "editing", orderedVisibleProjectIds: [secondId, firstId] } });
+    await act(async () => { root.render(<Dashboard currentUserId="external-1" role="external_editor" />); await Promise.resolve(); }); await flush();
+    expect(host.textContent).toContain("External First Street");
+    expect(host.textContent).toContain("External Second Street");
+    await dndStart(firstId, "raw_review");
+    await dndOver(firstId, "raw_review", secondId, cardData("editing_autohdr", secondId));
+    await dndEnd(firstId, "raw_review", { id: secondId, data: cardData("editing_autohdr", secondId) });
+    await flush();
+    expect(apiPostMock).toHaveBeenCalledWith(`/api/projects/${firstId}/stage`, expect.objectContaining({ targetStageKey: "editing" }));
+    expect(host.querySelectorAll(".kcard__addr")).toHaveLength(2);
+    expect(host.textContent).not.toContain("Unassigned");
+  });
+
   it("routes Admin same-Stage Board-order drag to board-position with exact placement", async () => {
     let resolveMove!: (value: unknown) => void;
     apiPostMock.mockImplementationOnce((path) => {
@@ -268,6 +370,35 @@ describe("Dashboard Stage interactions", () => {
     expect(host.querySelector(".dashboard-live-region")?.textContent).toContain("Board changed elsewhere");
   });
 
+  it("keeps the principal alive when a Stage movement gets a capability 403", async () => {
+    let projectFetches = 0;
+    apiGetMock.mockImplementation((path) => path === "/api/projects"
+      ? (projectFetches += 1, Promise.resolve(response()))
+      : Promise.resolve({}));
+    apiPostMock.mockRejectedValueOnce(new ApiError("Forbidden", 403, { capability: "moveProjectStage" }));
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const runtime = new ProjectQueryRuntime(queryClient, "dashboard-movement-403-test");
+    const markPrincipalTerminal = vi.spyOn(runtime, "markPrincipalTerminal");
+    await act(async () => {
+      root.render(<ProjectQueryRuntimeProvider runtime={runtime}><QueryClientProvider client={queryClient}><Dashboard currentUserId="admin-1" /></QueryClientProvider></ProjectQueryRuntimeProvider>);
+      await Promise.resolve();
+    });
+    await flush();
+    await dndStart("source", "awaiting_raw");
+    await dndOver("source", "awaiting_raw", "target", cardData("raw_review", "target"));
+    await dndEnd("source", "awaiting_raw", { id: "target", data: cardData("raw_review", "target") });
+    await flush(); await flush();
+
+    expect(apiPostMock).toHaveBeenCalledWith("/api/projects/source/stage", expect.objectContaining({ targetStageKey: "raw_review" }));
+    expect(markPrincipalTerminal).not.toHaveBeenCalled();
+    expect(projectFetches).toBe(2);
+    expect(card(host, "Source Street").closest<HTMLElement>(".kcol")?.querySelector(".kcol__head")?.textContent).toContain("Awaiting RAW");
+    expect(card(host, "Source Street").querySelector<HTMLButtonElement>('[aria-label="Move Source Street"]')?.disabled).toBe(false);
+    expect(host.querySelector(".dashboard-live-region")?.textContent).toContain("Forbidden");
+    runtime.dispose();
+    queryClient.clear();
+  });
+
   it.each([
     ["board_contract_disabled", "Board interactions are temporarily unavailable while the Board contract is disabled."],
     ["board_schema_maintenance", "Board interactions are temporarily unavailable while the Board is being updated."],
@@ -292,6 +423,19 @@ describe("Dashboard Stage interactions", () => {
     await flush();
   });
 
+  it("locks Kanban sorting and preserves the drag proposal while an interaction is active", async () => {
+    await act(async () => { root.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); }); await flush();
+    const sort = host.querySelector<HTMLSelectElement>(".dashboard-sort select")!;
+    await dndStart("source", "awaiting_raw");
+    await dndOver("source", "awaiting_raw", "target", cardData("raw_review", "target"));
+    expect(sort.disabled).toBe(true);
+    sort.value = "shootDate-asc";
+    await act(async () => { sort.dispatchEvent(new Event("change", { bubbles: true })); await Promise.resolve(); });
+    expect(sort.value).toBe("board");
+    expect([...card(host, "Source Street").closest<HTMLElement>(".kcol")!.querySelectorAll<HTMLElement>(".kcard__addr")].map((element) => element.textContent)).toEqual(["before Street", "Source Street", "target Street"]);
+    await dndCancel("source", "awaiting_raw");
+  });
+
   it("holds the cross-Stage settle barrier until the full source projection is accepted", async () => {
     let projectFetches = 0;
     let resolveSettle!: (value: unknown) => void;
@@ -301,13 +445,13 @@ describe("Dashboard Stage interactions", () => {
       board: { sourceStageKey: "awaiting_raw", targetStageKey: "raw_review", orderedVisibleProjectIds: ["source", "before", "target"] },
     };
     const settledSnapshot = {
-      projects: [summary("source", "raw_review", 4), summary("before", "raw_review", 8), summary("target", "raw_review", 9)],
-      board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: [], raw_review: ["target", "source", "before"], editing_autohdr: [] } },
+      projects: [summary("source", "raw_review", 4), summary("source-sibling-a", "awaiting_raw", 15), summary("source-sibling-b", "awaiting_raw", 16), summary("before", "raw_review", 8), summary("target", "raw_review", 9)],
+      board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: ["source-sibling-b", "source-sibling-a"], raw_review: ["target", "source", "before"], editing_autohdr: [] } },
     };
     apiGetMock.mockImplementation((path) => {
       if (path !== "/api/projects") return Promise.resolve({});
       projectFetches += 1;
-      return projectFetches === 1 ? Promise.resolve(response()) : new Promise((resolve) => { resolveSettle = resolve; });
+      return projectFetches === 1 ? Promise.resolve(settleInitialResponse()) : new Promise((resolve) => { resolveSettle = resolve; });
     });
     apiPostMock.mockImplementationOnce((path) => {
       expect(path).toBe("/api/projects/source/stage");
@@ -335,11 +479,16 @@ describe("Dashboard Stage interactions", () => {
 
     const targetColumn = movedCard.closest<HTMLElement>(".kcol")!;
     expect([...targetColumn.querySelectorAll<HTMLElement>(".kcard__addr")].map((element) => element.textContent)).toEqual(["Source Street", "before Street", "target Street"]);
+    const provisionalSourceColumn = card(host, "source-sibling-a Street").closest<HTMLElement>(".kcol")!;
+    expect([...provisionalSourceColumn.querySelectorAll<HTMLElement>(".kcard__addr")].map((element) => element.textContent)).toEqual(["source-sibling-a Street", "source-sibling-b Street"]);
     resolveSettle(settledSnapshot);
     await flush();
     expect(projectFetches).toBe(2);
     const settledColumn = card(host, "Source Street").closest<HTMLElement>(".kcol")!;
     expect([...settledColumn.querySelectorAll<HTMLElement>(".kcard__addr")].map((element) => element.textContent)).toEqual(["target Street", "Source Street", "before Street"]);
+    const settledSourceColumn = card(host, "source-sibling-b Street").closest<HTMLElement>(".kcol")!;
+    expect([...settledSourceColumn.querySelectorAll<HTMLElement>(".kcard__addr")].map((element) => element.textContent)).toEqual(["source-sibling-b Street", "source-sibling-a Street"]);
+    expect([...host.querySelectorAll<HTMLElement>(".kcard-drag-handle, .kcard-stage-control select, .kcard-controls__arrow")].every((element) => !element.hasAttribute("disabled"))).toBe(true);
     expect(card(host, "Source Street").querySelector<HTMLButtonElement>('[aria-label="Move Source Street"]')?.disabled).toBe(false);
     runtime.dispose();
     queryClient.clear();
@@ -353,13 +502,13 @@ describe("Dashboard Stage interactions", () => {
       board: { sourceStageKey: "awaiting_raw", targetStageKey: "raw_review", orderedVisibleProjectIds: ["source", "before", "target"] },
     };
     const settledSnapshot = {
-      projects: [summary("source", "raw_review", 4), summary("before", "raw_review", 8), summary("target", "raw_review", 9)],
-      board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: [], raw_review: ["target", "source", "before"], editing_autohdr: [] } },
+      projects: [summary("source", "raw_review", 4), summary("source-sibling-a", "awaiting_raw", 25), summary("source-sibling-b", "awaiting_raw", 26), summary("before", "raw_review", 8), summary("target", "raw_review", 9)],
+      board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: ["source-sibling-b", "source-sibling-a"], raw_review: ["target", "source", "before"], editing_autohdr: [] } },
     };
     apiGetMock.mockImplementation((path) => {
       if (path !== "/api/projects") return Promise.resolve({});
       projectFetches += 1;
-      if (projectFetches === 1) return Promise.resolve(response());
+      if (projectFetches === 1) return Promise.resolve(settleInitialResponse());
       if (projectFetches === 2) return Promise.reject(new ApiError("Refresh failed", 409, { code: "project_stage_conflict" }));
       return Promise.resolve(settledSnapshot);
     });
@@ -377,6 +526,7 @@ describe("Dashboard Stage interactions", () => {
     await flush(); await flush();
     expect(projectFetches).toBe(2);
     expect(host.textContent).toContain("The move was saved, but the latest Board could not be loaded. Refresh to continue.");
+    expect([...card(host, "source-sibling-a Street").closest<HTMLElement>(".kcol")!.querySelectorAll<HTMLElement>(".kcard__addr")].map((element) => element.textContent)).toEqual(["source-sibling-a Street", "source-sibling-b Street"]);
     expect(card(host, "Source Street").querySelector<HTMLButtonElement>('[aria-label="Move Source Street"]')?.disabled).toBe(true);
     await act(async () => {
       void queryClient.invalidateQueries({ queryKey: dashboardProjectsKey("admin-1", "photographer", 0, false), exact: true, refetchType: "active" });
@@ -386,6 +536,8 @@ describe("Dashboard Stage interactions", () => {
     expect(projectFetches).toBe(3);
     expect(host.querySelector('.muted[role="status"]')?.textContent ?? "").not.toContain("The move was saved, but the latest Board could not be loaded. Refresh to continue.");
     expect(card(host, "Source Street").querySelector<HTMLButtonElement>('[aria-label="Move Source Street"]')?.disabled).toBe(false);
+    expect([...card(host, "source-sibling-b Street").closest<HTMLElement>(".kcol")!.querySelectorAll<HTMLElement>(".kcard__addr")].map((element) => element.textContent)).toEqual(["source-sibling-b Street", "source-sibling-a Street"]);
+    expect([...host.querySelectorAll<HTMLElement>(".kcard-drag-handle, .kcard-stage-control select, .kcard-controls__arrow")].every((element) => !element.hasAttribute("disabled"))).toBe(true);
     runtime.dispose();
     queryClient.clear();
   });
@@ -394,11 +546,16 @@ describe("Dashboard Stage interactions", () => {
     let projectFetches = 0;
     apiGetMock.mockImplementation((path) => path === "/api/projects" ? (projectFetches += 1, Promise.resolve(response())) : Promise.resolve({}));
     apiPostMock.mockRejectedValueOnce(new ApiError("Move rejected", 409, { code }));
-    await act(async () => { root.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); }); await flush();
-    await act(async () => { card(host, "target Street").querySelector<HTMLButtonElement>('[aria-label="Move project up"]')!.click(); await Promise.resolve(); });
+    await act(async () => { root.render(<Dashboard currentUserId="admin-1" role="admin" />); await Promise.resolve(); }); await flush();
+    await dndStart("source", "awaiting_raw");
+    // The target is active when rendered; the inactive_destination response models it being
+    // deactivated by a concurrent Stage edit before the command reaches the server.
+    await dndOver("source", "awaiting_raw", "column:editing_autohdr", columnData("editing_autohdr"));
+    await dndEnd("source", "awaiting_raw", { id: "column:editing_autohdr", data: columnData("editing_autohdr") });
     await flush(); await flush();
     const rawColumn = [...host.querySelectorAll<HTMLElement>(".kcol")].find((column) => column.querySelector('[href="/projects/before"]'))!;
     expect([...rawColumn.querySelectorAll<HTMLElement>(".kcard__addr")].map((element) => element.textContent)).toEqual(["before Street", "target Street"]);
+    expect(apiPostMock).toHaveBeenCalledWith("/api/projects/source/stage", expect.objectContaining({ targetStageKey: "editing_autohdr" }));
     expect(apiPostMock).toHaveBeenCalledTimes(1);
     expect(projectFetches).toBe(2);
   });
@@ -419,7 +576,7 @@ describe("Dashboard Stage interactions", () => {
     authState.moved = true;
     await act(async () => { move.dispatchEvent(new Event("change", { bubbles: true })); await Promise.resolve(); }); await flush(); await flush();
     expect(apiPostMock).toHaveBeenCalledWith("/api/projects/source/stage", expect.objectContaining({ targetStageKey: "raw_review", placement: { kind: "append" } }));
-    expect(["stage-heading:raw_review", "board", "move-stage:source"]).toContain(document.activeElement?.getAttribute("data-focus-key"));
+    expect(document.activeElement?.getAttribute("data-focus-key")).toBe("move-stage:source");
     expect(scrollTo).toHaveBeenCalledWith(window.scrollX, window.scrollY);
     expect(host.querySelector(".dashboard-live-region")?.textContent).toContain("Moved Source Street to RAW review, position");
   });

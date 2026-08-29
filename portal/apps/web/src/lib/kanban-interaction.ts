@@ -433,10 +433,18 @@ export function reorderIntentFromGap(
   gap: SemanticGap,
   model: BoardModel,
   movingProjectId: string,
-): { placement: StageMovePlacement } | { stale: true } {
+  role: Role,
+): { targetStageKey: StageTransportKey; placement: StageMovePlacement } | { stale: true } {
   const movingProject = model.projects.find((project) => project.id === movingProjectId);
   if (!movingProject || !isSameStagePlacementChange({ gap, movingProject })) return { stale: true };
-  return resolveSemanticGap(gap, model, movingProjectId);
+  const currentStageKey = projectStageKey(movingProject);
+  if (!currentStageKey) return { stale: true };
+  const resolved = resolveSemanticGap(gap, model, movingProjectId);
+  if ("stale" in resolved) return resolved;
+  return {
+    targetStageKey: stageTransportKeyForRole(currentStageKey, role),
+    placement: resolved.placement,
+  };
 }
 
 /** Detects a same-Stage gap which leaves the canonical Board order unchanged. */
@@ -458,6 +466,7 @@ export function buildMoveRequest(
   model: BoardModel,
   movingProjectId: string,
   gap: SemanticGap,
+  role: Role,
 ): MoveProjectStageRequest | { stale: true } {
   const moving = model.projects.find((project) => project.id === movingProjectId);
   if (!moving) return { stale: true };
@@ -468,7 +477,7 @@ export function buildMoveRequest(
       stageKey: moving.stageKey as StageTransportKey,
       boardRevision: moving.boardRevision,
     },
-    targetStageKey: gap.targetStageKey,
+    targetStageKey: stageTransportKeyForRole(gap.targetStageKey, role),
     placement: resolved.placement,
   };
 }
@@ -502,6 +511,7 @@ export function applyOptimisticOverlay(
   baseline: MovementBaseline,
   movingProjectId: string,
   gap: SemanticGap,
+  role: Role,
 ): BoardModel {
   const moving = baseline.projects.find((project) => project.id === movingProjectId);
   if (!moving) return rollbackToBaseline(baseline);
@@ -516,9 +526,7 @@ export function applyOptimisticOverlay(
   orders[gap.targetStageKey] = target;
   const nextProjects = baseline.projects.map((project) => {
     if (project.id !== movingProjectId) return { ...project };
-    const roleSafeStage: ProjectSummary["stageKey"] = project.stageKey === "editing" && gap.targetStageKey === "editing_autohdr"
-      ? "editing"
-      : gap.targetStageKey;
+    const roleSafeStage: ProjectSummary["stageKey"] = stageTransportKeyForRole(gap.targetStageKey, role);
     return { ...project, stageKey: roleSafeStage };
   });
   return attachOrders({ ...baseline, projects: nextProjects, provisionalSourceStageKey: undefined }, orders);

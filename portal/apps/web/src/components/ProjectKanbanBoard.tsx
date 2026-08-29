@@ -481,7 +481,6 @@ export function ProjectKanbanBoard({
   onPriorityChange,
   onMoveStage,
   onInteractionStateChange,
-  onAnnounce,
 }: ProjectKanbanBoardProps) {
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
   const [activeProjectId, setActiveProjectId] = useState<string>();
@@ -544,7 +543,6 @@ export function ProjectKanbanBoard({
     onInteractionStateChange?.({ activeId: id, proposal: null });
     const message = announceFor("start");
     dndAnnouncementRef.current = message;
-    onAnnounce?.(message);
   };
 
   const handleDndOver = (event: DragOverEvent) => {
@@ -574,7 +572,6 @@ export function ProjectKanbanBoard({
     if (!next || !semanticGapChanged(previousGap, next.gap)) return;
     const message = announceFor(hovered.kind === "column" ? "over-end" : "over-card", next.gap);
     dndAnnouncementRef.current = message;
-    onAnnounce?.(message);
   };
 
   const clearDragState = () => {
@@ -606,7 +603,6 @@ export function ProjectKanbanBoard({
     }) && (sourceStage !== frozenGap.targetStageKey || boardGapChangesOrder(frozenGap, snapshot.model, id)));
     const message = valid ? announceFor("valid-drop", frozenGap!) : announceFor("dnd-cancel");
     dndAnnouncementRef.current = message;
-    onAnnounce?.(message);
     if (valid && snapshot && frozenGap && mover) {
       const kind = sourceStage === frozenGap.targetStageKey ? "same" : "cross";
       if (onBoardMove) onBoardMove(id, frozenGap, kind, snapshot.focusDescriptor);
@@ -622,7 +618,6 @@ export function ProjectKanbanBoard({
     const snapshot = snapshotRef.current;
     const message = announceFor("dnd-cancel");
     dndAnnouncementRef.current = message;
-    onAnnounce?.(message);
     if (snapshot) {
       focusHandle(snapshot.focusDescriptor.projectId);
       restoreBoardScroll(snapshot);

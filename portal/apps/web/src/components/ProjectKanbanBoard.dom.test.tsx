@@ -174,6 +174,35 @@ describe("ProjectKanbanBoard", () => {
     expect(dnd.handlers[0]?.props.accessibility?.screenReaderInstructions?.draggable).toContain("focus its Move project handle");
   });
 
+  it("routes drag lifecycle announcements through dnd-kit's live region only", async () => {
+    await renderBoard();
+    await start();
+    expect(callbacks.onAnnounce).not.toHaveBeenCalled();
+
+    const started = dnd.handlers.at(-1)!.props.accessibility!.announcements!.onDragStart;
+    const startMessage = started?.({ active: { id: "source" } } as Parameters<NonNullable<typeof started>>[0]);
+    expect(startMessage).toContain("Picked up source Street");
+
+    await over("visual-first", cardData("raw_review", "visual-first"));
+    expect(callbacks.onAnnounce).not.toHaveBeenCalled();
+    const overAnnouncement = dnd.handlers.at(-1)!.props.accessibility!.announcements!.onDragOver;
+    const overMessage = overAnnouncement?.({ active: { id: "source" }, over: { id: "visual-first", data: cardData("raw_review", "visual-first") } } as unknown as Parameters<NonNullable<typeof overAnnouncement>>[0]);
+    expect(overMessage).toContain("source Street is over RAW review");
+
+    await end({ id: "visual-first", data: cardData("raw_review", "visual-first") });
+    expect(callbacks.onAnnounce).not.toHaveBeenCalled();
+    const ended = dnd.handlers.at(-1)!.props.accessibility!.announcements!.onDragEnd;
+    const endMessage = ended?.({ active: { id: "source" }, over: { id: "visual-first", data: cardData("raw_review", "visual-first") } } as unknown as Parameters<NonNullable<typeof ended>>[0]);
+    expect(endMessage).toContain("Dropped source Street in RAW review");
+
+    await start();
+    await act(async () => { dnd.handlers.at(-1)!.cancel?.(event("source", cardData("awaiting_raw", "source"), null)); await Promise.resolve(); });
+    expect(callbacks.onAnnounce).not.toHaveBeenCalled();
+    const cancelled = dnd.handlers.at(-1)!.props.accessibility!.announcements!.onDragCancel;
+    const cancelMessage = cancelled?.({} as Parameters<NonNullable<typeof cancelled>>[0]);
+    expect(cancelMessage).toContain("Cancelled moving source Street");
+  });
+
   it("keeps the handle as a disabled button sibling of a plain project anchor", async () => {
     await renderBoard({ boardMutationEnabled: false, canMoveStages: false });
     const anchor = host.querySelector<HTMLAnchorElement>('[href="/projects/source"]');
@@ -207,7 +236,7 @@ describe("ProjectKanbanBoard", () => {
     await start();
     await end({ id: "source", data: cardData("awaiting_raw", "source") });
     expect(callbacks.onCrossStageMove).not.toHaveBeenCalled();
-    expect(callbacks.onAnnounce).toHaveBeenCalledWith(expect.stringContaining("Cancelled moving source Street"));
+    expect(callbacks.onAnnounce).not.toHaveBeenCalled();
   });
 
   it("routes an eligible same-Stage drag through the general Board movement callback", async () => {

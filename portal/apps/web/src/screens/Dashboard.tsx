@@ -174,7 +174,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   }, [queryRuntime, replaceAcceptedProjects]);
 
   useLayoutEffect(() => {
-    if (boardOverlay?.key === dashboardKeyString && pendingMoves.size > 0) return;
+    if (pendingMoves.size > 0 || pendingOrdering.size > 0 || movementSettlePending) return;
     const restore = focusRestoreRef.current;
     if (!restore) return;
     focusRestoreRef.current = null;
@@ -185,7 +185,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       ? document.querySelector<HTMLElement>(`[data-focus-key="stage-heading:${restore.fallbackStageKey}"]`)
       : null;
     (fallback ?? document.querySelector<HTMLElement>('[data-focus-key="board"]'))?.focus();
-  }, [acceptedProjects, boardOverlay, boardUnavailableMessage, dashboardKeyString, pendingMoves, projects]);
+  }, [acceptedProjects, boardOverlay, boardUnavailableMessage, dashboardKeyString, movementSettlePending, pendingMoves, pendingOrdering, projects]);
 
   useEffect(() => {
     if (!queryProjects || queryRuntime?.principalTerminal) return;
@@ -318,11 +318,13 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   const activeStages = stages.filter((stage) => stage.active);
 
   function selectView(next: DashboardView) {
+    if (interactionBlockedRef.current) return;
     setView(next);
     try { window.localStorage.setItem("quincy:dashboard:view", next); } catch { /* Storage can be disabled by the browser. */ }
   }
 
   function selectKanbanSort(next: KanbanSortMode) {
+    if (interactionBlockedRef.current) return;
     if (next === "priority" && (!canPrioritize || !hasAuthorizedBoardMap)) return;
     setKanbanSort(next);
     try { window.localStorage.setItem("quincy:dashboard:kanbanSort", next); } catch { /* Storage can be disabled by the browser. */ }
@@ -389,7 +391,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
 
     let request: MoveProjectStageRequest;
     if (intent.kind === "same") {
-      const resolved = reorderIntentFromGap(intent.gap, baselineModel, intent.projectId);
+      const resolved = reorderIntentFromGap(intent.gap, baselineModel, intent.projectId, role);
       if ("stale" in resolved) {
         movementAnnouncement(intent.origin === "move-to" ? { type: "stale-move-to" } : { type: "dnd-cancel" }, baselineModel, movingProject, sourceStageKey);
         queueDashboardRefresh();
@@ -397,11 +399,11 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       }
       request = {
         expected: { stageKey: movingProject.stageKey, boardRevision: movingProject.boardRevision },
-        targetStageKey: intent.gap.targetStageKey,
+        targetStageKey: resolved.targetStageKey,
         placement: resolved.placement,
       };
     } else {
-      const resolved = buildMoveRequest(baselineModel, intent.projectId, intent.gap);
+      const resolved = buildMoveRequest(baselineModel, intent.projectId, intent.gap, role);
       if ("stale" in resolved) {
         movementAnnouncement(intent.origin === "move-to" ? { type: "stale-move-to" } : { type: "dnd-cancel" }, baselineModel, movingProject, sourceStageKey);
         queueDashboardRefresh();
@@ -409,7 +411,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       }
       request = resolved;
     }
-    const optimisticModel = applyOptimisticOverlay(baselineModel, intent.projectId, intent.gap);
+    const optimisticModel = applyOptimisticOverlay(baselineModel, intent.projectId, intent.gap, role);
     const optimismSafe = intent.kind === "same"
       || optimismSafeBeforeResponse(movingProject.stageKey, intent.gap.targetStageKey, role, false);
     const applyOverlay = () => {
@@ -472,7 +474,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       const capability = typeof details.capability === "string" ? details.capability : undefined;
       const isPriorityForbidden = reason instanceof ApiError && reason.status === 403
         && (capability === "prioritizeProjects" || code === "project_board_reorder_forbidden");
-      const isAccessLoss = reason instanceof ApiError && (reason.status === 401 || (reason.status === 403 && !isPriorityForbidden));
+      const isAccessLoss = reason instanceof ApiError && reason.status === 401;
       const isConflict = reason instanceof ApiError && reason.status === 409 && code === "project_stage_conflict";
       const isContractUnavailable = reason instanceof ApiError && reason.status === 503 && code === "board_contract_disabled";
       const isMaintenance = reason instanceof ApiError && reason.status === 503 && code === "board_schema_maintenance";
@@ -595,13 +597,13 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         {!viewingArchived && <>
         <span className="ey">View</span>
         <div className="segment" aria-label="Dashboard view">
-          <button className={view === "list" ? "is-active" : ""} type="button" onClick={() => selectView("list")}>List</button>
-          <button className={view === "kanban" ? "is-active" : ""} type="button" onClick={() => selectView("kanban")}>Kanban</button>
+          <button className={view === "list" ? "is-active" : ""} type="button" disabled={interactionBlocked} onClick={() => selectView("list")}>List</button>
+          <button className={view === "kanban" ? "is-active" : ""} type="button" disabled={interactionBlocked} onClick={() => selectView("kanban")}>Kanban</button>
         </div>
         {!viewingArchived && view === "kanban" && (
           <label className="dashboard-sort">
             <span className="sr-only">Sort Kanban board</span>
-            <select value={effectiveKanbanSort} onChange={(event) => selectKanbanSort(event.target.value as KanbanSortMode)}>
+            <select value={effectiveKanbanSort} disabled={interactionBlocked} onChange={(event) => selectKanbanSort(event.target.value as KanbanSortMode)}>
               <option value="board">Board order</option>
               {canPrioritize && hasAuthorizedBoardMap && <option value="priority">Priority</option>}
               <option value="shootDate-asc">Shoot date ↑</option>
