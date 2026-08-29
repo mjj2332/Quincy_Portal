@@ -293,6 +293,11 @@ export async function commitAutomaticStage(input: {
       const index = effect.bundle.indexes.ownershipAssertion;
       return typeof index === "number" && !exactOne(results[index]) ? { kind: "already_at_destination" } : { kind: "conflict" };
     }
+    if (effect.kind === "job_provenance" && typeof effect.bundle.indexes.ownershipAssertion === "number") {
+      const payloadUpdated = (results[effect.bundle.indexes.payloadUpdate]?.meta.changes ?? 0) === 1;
+      const ownershipHeld = (results[effect.bundle.indexes.ownershipAssertion]?.meta.changes ?? 0) === 0;
+      return payloadUpdated && ownershipHeld ? { kind: "already_at_destination" } : { kind: "conflict" };
+    }
     return (results[effect.bundle.indexes.payloadUpdate]?.meta.changes ?? 0) === 1 ? { kind: "already_at_destination" } : { kind: "conflict" };
   }
   if (snapshot.stageKey !== input.from) return { kind: "conflict" };

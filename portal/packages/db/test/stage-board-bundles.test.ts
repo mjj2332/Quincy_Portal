@@ -14,6 +14,7 @@ import {
   buildDeadlineSuppressionBundle,
   buildEditingEntryTokenTail,
   buildAutoHdrApiFinalizeBundle,
+  buildHandoffStartTail,
   buildOwnershipAssertionBundle,
   buildNonCompactingStageWinner,
   buildTerminalAssertionBundle,
@@ -24,6 +25,7 @@ import {
   composeStageBundle,
   deriveStageFinalizerIntent,
   type ChangedCompactionRow,
+  type ClosedOwnershipBundle,
   type ExpectedTargetCompactionRow,
   type ExpectedTargetPlacementRow,
   type GuardedTransitionPrerequisite,
@@ -474,6 +476,171 @@ describe("TB5A Slice 3 stage-board bundles", () => {
           updatedAt: 1_787_000_000_103,
         });
         expect((await executeBundle(d1, token))[0]!.results, premise.name).toEqual([]);
+      } finally {
+        db.close();
+      }
+    }
+  });
+
+  it("rolls back a job-entry Stage winner when its token tail returns zero rows", async () => {
+    const db = localSqlite();
+    try {
+      db.exec("PRAGMA foreign_keys = ON");
+      applyAllMigrations(db);
+      seedFeatureFlag(db);
+      seedProject(db, { id: "target", stageKey: "raw_review", boardRevision: 5 });
+      db.prepare("INSERT INTO jobs (id, kind, status, project_id, payload_json, created_at, updated_at) VALUES ('api-job', 'autohdr_api_send', 'running', 'target', '{\"projectId\":\"target\",\"generation\":1}', 1, 1)").run();
+
+      const d1 = localD1(db);
+      const premise: GuardedTransitionPrerequisite = {
+        kind: "autohdr_job",
+        mode: "entry",
+        projectId: "target",
+        jobId: "api-job",
+        jobKind: "autohdr_api_send",
+        generation: 1,
+        jobStates: ["running", "done"],
+        expectedPriorToken: null,
+      };
+      const stage = buildNonCompactingStageWinner({
+        ...baseStageInput(d1),
+        to: "editing_autohdr",
+        workflowPremise: premise,
+        placement: "append",
+        expectedTarget: [],
+        expectedTargetRowCount: 0,
+      });
+      const workflow = buildWorkflowTail({
+        ...premise,
+        db: d1,
+        auditId: "audit-stage",
+        now: 1_787_000_000_101,
+      }, "autohdr_job_entry");
+      // Deliberately stale the token premise. The stage and audit must not survive this
+      // zero-row tail because the job-entry workflow postcondition is token-bearing.
+      const token = buildEditingEntryTokenTail({
+        db: d1,
+        owner: "job",
+        projectId: "target",
+        jobId: "api-job",
+        jobKind: "autohdr_api_send",
+        generation: 1,
+        expectedPriorToken: 4,
+        auditId: "audit-stage",
+        updatedAt: 1_787_000_000_101,
+      });
+      const terminal = buildTerminalAssertionBundle({
+        db: d1,
+        projectId: "target",
+        destinationStage: "editing_autohdr",
+        oldBoardRevision: 5,
+        premise,
+        coupling: { kind: "none" },
+        auditId: "audit-stage",
+        winnerRequired: false,
+        assertedAt: 1_787_000_000_101,
+      });
+      const bundle = composeStageBundle({ stage, workflow, token, terminal });
+
+      await expect(executeBundle(d1, bundle)).rejects.toThrow(/audit_log\.id|bundle_assertion/i);
+      expect(db.prepare("SELECT stage_key, board_revision FROM projects WHERE id = 'target'").get()).toEqual({ stage_key: "raw_review", board_revision: 5 });
+      expect(db.prepare("SELECT count(*) AS count FROM audit_log WHERE target_id = 'target' AND action = 'stage.auto_advance'").get()).toEqual({ count: 0 });
+      expect(db.prepare("SELECT count(*) AS count FROM audit_log WHERE target_id = 'target'").get()).toEqual({ count: 0 });
+      expect(db.prepare("SELECT stage_entry_board_revision FROM jobs WHERE id = 'api-job'").get()).toEqual({ stage_entry_board_revision: null });
+    } finally {
+      db.close();
+    }
+  });
+
+  it.each(["exact", "append", "compacting"] as const)("rolls back the composed %s winner for every stale ownership premise", async (placement) => {
+    const cases = [
+      { name: "wrong generation", premise: { generation: 2 } },
+      { name: "wrong connection", premise: { connectionId: "wrong-connection" } },
+      { name: "wrong state", premise: { expectedStates: ["started"] as ["started"] } },
+      { name: "stale token", tokenExpectedPriorToken: 4 },
+      { name: "ABA revision", aba: true },
+      { name: "malformed premise", malformed: "premise" as const },
+      { name: "malformed coupling", malformed: "coupling" as const },
+    ] as const;
+
+    for (const stale of cases) {
+      const db = localSqlite();
+      try {
+        db.exec("PRAGMA foreign_keys = ON");
+        applyAllMigrations(db);
+        seedFeatureFlag(db);
+        const fixture = placement === "compacting" ? compactFixture(db) : (seedProject(db, { id: "target", stageKey: "raw_review", boardPosition: 0, boardRevision: 5 }), { expected: [] as ExpectedTargetPlacementRow[], changed: [] as ChangedCompactionRow[] });
+        db.prepare("INSERT INTO integration_connections (id, provider, status, created_at, updated_at) VALUES ('connection', 'dropbox', 'connected', 1, 1)").run();
+        db.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES ('actor', 'Actor', 'actor@test.invalid', 1, 'admin', 1, 1, 1)").run();
+        const d1 = localD1(db);
+        const premise: GuardedTransitionPrerequisite = {
+          kind: "autohdr_handoff",
+          projectId: "target",
+          handoffId: "handoff",
+          jobId: null,
+          generation: stale.premise?.generation ?? 1,
+          connectionId: stale.premise?.connectionId ?? "connection",
+          expectedStates: stale.premise?.expectedStates ?? ["starting"],
+          expectedPriorToken: null,
+        };
+        const coupling = { kind: "handoff_start" as const, handoffId: "handoff", connectionId: "connection", generation: 1 };
+        const preWinner = {
+          statements: [
+            d1.prepare("INSERT INTO jobs (id, kind, status, project_id, payload_json, created_at, updated_at) VALUES ('job', 'autohdr', 'done', 'target', '{}', 1, 1) RETURNING id"),
+            d1.prepare(`INSERT INTO autohdr_handoffs (
+  id, project_id, connection_id, generation, selection_hash, selected_asset_ids_json,
+  readiness_units_json, frozen_raw_folder_path, initiated_by, state, workflow_id, job_id,
+  lease_expires_at, created_at, updated_at
+) VALUES (?, ?, ?, ?, 'hash', '[]', '[]', '/Raw/target', 'actor', 'starting', 'workflow', 'job', ?, ?, ?)`)
+              .bind("handoff", "target", "connection", 1, 2, 1, 1),
+          ],
+          indexes: { job: 0, handoff: 1, mapping: 0, pathClaim: 0 },
+          kind: "implicit_claim" as const,
+          coupling,
+        } as unknown as ClosedOwnershipBundle;
+        const stage = placement === "compacting"
+          ? buildCompactingStageWinner({
+            ...baseStageInput(d1),
+            to: "editing_autohdr",
+            workflowPremise: premise,
+            expectedTarget: fixture.expected as ExpectedTargetCompactionRow[],
+            expectedTargetRowCount: fixture.expected.length,
+            changedPlan: fixture.changed,
+            expectedChangedRowCount: fixture.changed.length,
+          })
+          : buildNonCompactingStageWinner({
+            ...baseStageInput(d1),
+            to: "editing_autohdr",
+            workflowPremise: premise,
+            placement,
+            boardPosition: placement === "exact" ? 0 : undefined,
+            expectedTarget: fixture.expected as ExpectedTargetPlacementRow[],
+            expectedTargetRowCount: fixture.expected.length,
+          });
+        const state = buildHandoffStartTail({ db: d1, projectId: "target", handoffId: "handoff", connectionId: "connection", generation: 1, expectedStates: ["starting"], auditId: "audit-stage", updatedAt: 1_787_000_000_101 });
+        const workflow = buildWorkflowTail({ ...premise, db: d1, auditId: "audit-stage" }, "autohdr_handoff_entry");
+        const token = buildEditingEntryTokenTail({ db: d1, owner: "handoff", projectId: "target", handoffId: "handoff", connectionId: "connection", generation: 1, state: "started", expectedPriorToken: stale.tokenExpectedPriorToken ?? null, auditId: "audit-stage", updatedAt: 1_787_000_000_101 });
+        const validTerminal = buildTerminalAssertionBundle({ db: d1, projectId: "target", destinationStage: "editing_autohdr", oldBoardRevision: 5, premise, coupling, auditId: "audit-stage", winnerRequired: true, assertedAt: 1_787_000_000_101 });
+        let terminal = validTerminal;
+        if (stale.malformed) {
+          const source = validTerminal.statements[0] as unknown as LocalStatement;
+          const values = [...source.values];
+          values[stale.malformed === "premise" ? 3 : 7] = "{";
+          terminal = { statements: [d1.prepare(source.source).bind(...values)], indexes: { terminalAssertion: 0 } };
+        }
+        if (stale.aba) db.prepare("UPDATE projects SET board_revision = 7 WHERE id = 'target'").run();
+        const activity = buildStageActivityBundle({ db: d1, projectId: "target", activityId: "activity", actorId: "actor", winnerAuditId: "audit-stage", occurredAt: 1_787_000_000_101, createdAt: 1_787_000_000_101 });
+        const bundle = composeStageBundle({ preWinner, stage, state, workflow, token, activity, terminal });
+
+        await expect(executeBundle(d1, bundle), `${placement}: ${stale.name}`).rejects.toThrow(/audit_log\.id|bundle_assertion/i);
+        expect(db.prepare("SELECT stage_key, board_revision FROM projects WHERE id = 'target'").get()).toEqual({ stage_key: "raw_review", board_revision: stale.aba ? 7 : 5 });
+        expect(db.prepare("SELECT count(*) AS count FROM audit_log WHERE target_id = 'target' AND action = 'stage.auto_advance'").get()).toEqual({ count: 0 });
+        expect(db.prepare("SELECT count(*) AS count FROM project_activity_events WHERE project_id = 'target'").get()).toEqual({ count: 0 });
+        expect(db.prepare("SELECT count(*) AS count FROM notification_outbox WHERE project_id = 'target'").get()).toEqual({ count: 0 });
+        expect(db.prepare("SELECT count(*) AS count FROM notification_delivery_ledger").get()).toEqual({ count: 0 });
+        expect(db.prepare("SELECT count(*) AS count FROM notifications WHERE project_id = 'target'").get()).toEqual({ count: 0 });
+        expect(db.prepare("SELECT count(*) AS count FROM autohdr_handoffs WHERE id = 'handoff'").get()).toEqual({ count: 0 });
+        expect(db.prepare("SELECT count(*) AS count FROM jobs WHERE id = 'job'").get()).toEqual({ count: 0 });
       } finally {
         db.close();
       }

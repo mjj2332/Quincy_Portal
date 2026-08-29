@@ -2200,6 +2200,31 @@ describe("staff app API", () => {
     expect(await database.DB.prepare("SELECT count(*) AS count FROM notification_outbox WHERE project_id = ?").bind(project.id).first()).toEqual(before[2]);
   });
 
+  it("classifies a concurrent Stage change before an active upload when archiving loses", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const project = await createUploadProject(cookie, `Archive classifier ${crypto.randomUUID()}`);
+    const raw = await database.DB.prepare("SELECT id FROM collections WHERE project_id = ? AND kind = 'raw'")
+      .bind(project.id).first<{ id: string }>();
+    const uploadId = crypto.randomUUID();
+    const versionGroupId = crypto.randomUUID();
+    const now = Date.now();
+    await database.DB.prepare("INSERT INTO document_uploads (id, project_id, collection_id, created_by, kind, version_group_id, version, pdf_asset_id, pdf_key, pdf_filename, pdf_bytes, pdf_content_type, status, expires_at, completion_audit_id, created_at, updated_at) VALUES (?, ?, ?, ?, 'copy_pdf', ?, 1, ?, ?, 'pending.pdf', 1, 'application/pdf', 'completed', ?, ?, ?, ?)")
+      .bind(uploadId, project.id, raw!.id, seedAdminId, versionGroupId, crypto.randomUUID(), `projects/${project.id}/copy/pending.pdf`, now + 60_000, crypto.randomUUID(), now, now).run();
+    const triggerName = `archive_classifier_${project.id.replaceAll("-", "_")}`;
+    await database.DB.exec(`CREATE TRIGGER ${triggerName} BEFORE UPDATE OF archived_at ON projects WHEN NEW.id = '${project.id}' BEGIN UPDATE projects SET board_revision = board_revision + 1 WHERE id = NEW.id; UPDATE document_uploads SET status = 'pending' WHERE id = '${uploadId}'; SELECT RAISE(IGNORE); END;`);
+    try {
+      const response = await SELF.fetch(`https://portal.test/api/projects/${project.id}/archive`, { method: "POST", headers: { cookie } });
+      expect(response.status).toBe(409);
+      await expect(response.json()).resolves.toMatchObject({ code: "project_stage_conflict", error: "Project changed while archiving." });
+      await expect(database.DB.prepare("SELECT archived_at, board_revision FROM projects WHERE id = ?").bind(project.id).first())
+        .resolves.toEqual({ archived_at: null, board_revision: 1 });
+      await expect(database.DB.prepare("SELECT status FROM document_uploads WHERE id = ?").bind(uploadId).first())
+        .resolves.toEqual({ status: "pending" });
+    } finally {
+      await database.DB.exec(`DROP TRIGGER ${triggerName};`);
+    }
+  });
+
   it("refuses to delete an archived project while background work is active", async () => {
     const cookie = await sessionCookie(adminToken);
     const created = await SELF.fetch("https://portal.test/api/projects", {

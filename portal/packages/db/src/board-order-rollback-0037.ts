@@ -41,12 +41,18 @@ export async function rollbackBoardOrder0037PreEnable(d1: D1Database): Promise<{
       INSERT INTO _tb5a_0037_position_rollback_guard (ok)
       SELECT CASE
         WHEN EXISTS (SELECT 1 FROM feature_flags WHERE key = ?1)
-         AND NOT EXISTS (
-           SELECT 1
-           FROM feature_flags
-           WHERE key = ?1
-             AND (enabled = 1 OR updated_by IS NOT NULL)
-         ) THEN 1
+           AND NOT EXISTS (
+             SELECT 1
+             FROM feature_flags
+             WHERE key = ?1
+               AND enabled = 1
+           )
+           AND NOT EXISTS (
+             SELECT 1
+             FROM projects
+             WHERE archived_at IS NULL
+               AND board_revision >= 2
+           ) THEN 1
         ELSE 0
       END
     `).bind(BOARD_CONTRACT_FLAG),

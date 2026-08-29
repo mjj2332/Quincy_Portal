@@ -1,8 +1,10 @@
-import { describe, expect, it, vi } from "vitest";
+import { env } from "cloudflare:test";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import {
   RECONCILE_AWAITING_RAW_BATCH_SIZE,
   RECONCILE_AWAITING_RAW_SCAN_SQL,
   australiaSydneyBusinessDate,
+  advanceAwaitingRawProject,
   dueAwaitingRawProjects,
   isCanonicalCalendarDate,
   reconcileAwaitingRaw,
@@ -10,6 +12,23 @@ import {
 } from "../src/reconcile-awaiting-raw";
 
 declare const __BACKGROUND_WRANGLER_CONFIG__: string;
+declare const __PORTAL_MIGRATION_SQL__: string;
+const database = env as unknown as { DB: D1Database };
+
+async function executeSql(source: string) {
+  for (const chunk of source.split("--> statement-breakpoint")) {
+    const sql = chunk.split("\n").filter((line) => !line.trim().startsWith("--")).join("\n");
+    for (const statement of sql.split(";")) {
+      const flat = statement.replace(/\s+/g, " ").trim();
+      if (flat) await database.DB.exec(`${flat};`);
+    }
+  }
+}
+
+beforeAll(async () => {
+  await executeSql(__PORTAL_MIGRATION_SQL__);
+  await executeSql("UPDATE feature_flags SET enabled = 1 WHERE key = 'tb5a_board_contract_enabled'");
+});
 
 describe("awaiting RAW reconciliation dates", () => {
   it("derives Australia/Sydney business dates across DST without parsing date-only text", () => {
@@ -118,5 +137,22 @@ describe("awaiting RAW reconciliation mutation", () => {
     await expect(reconcileAwaitingRaw(store, "2026-07-22")).resolves.toEqual({ attempted: 2, advanced: 2, skipped: 0, failures: 0 });
     expect(scan).toHaveBeenCalledTimes(2);
     expect(projects.every((project) => project.stageKey === "raw_review")).toBe(true);
+  });
+
+  it("rolls back a real-D1 Stage attempt when shoot_date changes after scan", async () => {
+    const projectId = crypto.randomUUID();
+    const now = Date.now();
+    await database.DB.prepare("INSERT INTO projects (id, street, shoot_date, stage_key, created_at, updated_at) VALUES (?, 'Reconcile race', '2026-08-28', 'awaiting_raw', ?, ?)")
+      .bind(projectId, now, now).run();
+    const candidate = { id: projectId, shootDate: "2026-08-28", stageKey: "awaiting_raw", archivedAt: null } as const;
+    await database.DB.prepare("UPDATE projects SET shoot_date = '2026-08-29' WHERE id = ?").bind(projectId).run();
+
+    await expect(advanceAwaitingRawProject(database.DB, candidate, "2026-08-29", now + 1)).resolves.toBe(false);
+    await expect(database.DB.prepare("SELECT stage_key, board_revision FROM projects WHERE id = ?").bind(projectId).first())
+      .resolves.toEqual({ stage_key: "awaiting_raw", board_revision: 0 });
+    await expect(database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE target_id = ? AND action = 'stage.auto_advance'").bind(projectId).first())
+      .resolves.toEqual({ count: 0 });
+    await expect(database.DB.prepare("SELECT count(*) AS count FROM notification_outbox WHERE project_id = ?").bind(projectId).first())
+      .resolves.toEqual({ count: 0 });
   });
 });

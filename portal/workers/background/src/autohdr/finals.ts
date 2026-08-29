@@ -43,6 +43,7 @@ export type FinalWriteResult = {
 export type FinalWriteDependencies = {
   download?: typeof download;
   enqueue?: typeof enqueueRenditionSafely;
+  beforeFinalStage?: () => void | Promise<void>;
   afterR2Write?: () => void | Promise<void>;
   afterD1Commit?: () => void | Promise<void>;
 };
@@ -282,6 +283,7 @@ export async function writeAutoHdrFinal(
     if ((replayResult[0]?.meta.changes ?? 0) !== 1) {
       return quarantine(env, context, file, "Final writer fence changed before same-hash replay repair");
     }
+    await dependencies.beforeFinalStage?.();
     const stageAdvanced = await advanceFinalStage(env, context, fence, coverage, collectionId, sourcePathKey, current.currentAssetId);
     // A Workflow can fail after the D1 version commit but before its rendition handoff. Replays
     // deliberately re-enqueue the current winner; rendition generation is itself idempotent.
@@ -365,6 +367,7 @@ AND EXISTS (
       if ((result[1]?.meta.changes ?? 0) !== 1) {
         return quarantine(env, context, file, "Final writer fence changed before first-version metadata commit");
       }
+      await dependencies.beforeFinalStage?.();
       const stageAdvanced = await advanceFinalStage(env, context, fence, coverage, collectionId, sourcePathKey, assetId);
       await dependencies.afterD1Commit?.();
       await (dependencies.enqueue ?? enqueueRenditionSafely)(env, assetId, "autohdr-fetch");
@@ -396,6 +399,7 @@ AND EXISTS (
       }
       throw new Error("Lost AutoHDR replacement race to a different content hash");
     }
+    await dependencies.beforeFinalStage?.();
     const stageAdvanced = await advanceFinalStage(env, context, fence, coverage, collectionId, sourcePathKey, assetId);
     await dependencies.afterD1Commit?.();
     await (dependencies.enqueue ?? enqueueRenditionSafely)(env, assetId, "autohdr-replacement");

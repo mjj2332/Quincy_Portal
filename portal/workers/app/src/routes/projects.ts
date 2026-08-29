@@ -3,7 +3,7 @@ import { terminalRoute } from "../lib/terminal-route";
 import type { Context } from "hono";
 import { boardContractEnabled, boardSchemaVariant, buildDeadlineSuppressionBundle, buildProjectActivityStatements, createDb, dashboardProjectOrder, orderDashboardStreetTies, projectColumnsForVariant, schema, type BoardSchemaVariant } from "@quincy/db";
 import { and, asc, desc, eq, exists, gt, inArray, isNotNull, isNull, lte, notExists, sql } from "drizzle-orm";
-import { COLLECTION_KINDS, DOWNLOAD_SELECTION_MAX_ASSETS, DOWNLOAD_SELECTION_MAX_BYTES, moveProjectStageRequestSchema, moveProjectStageRequestSchemaForProject, PHOTOGRAPHER_VISIBLE_STAGES, PROJECT_ASSIGNMENT_ELIGIBLE_ROLES, projectActivityDeepLink, publishNotificationOutbox, roleHasCapability, type CollectionKind, type MoveProjectStageRequest, type ProjectActivityIntent, type ProjectMemberRole, type ProjectMembershipDto, type Role, type StageKey, type StageTransportKey } from "@quincy/shared";
+import { COLLECTION_KINDS, DOWNLOAD_SELECTION_MAX_ASSETS, DOWNLOAD_SELECTION_MAX_BYTES, moveProjectStageRequestSchemaForProject, PHOTOGRAPHER_VISIBLE_STAGES, PROJECT_ASSIGNMENT_ELIGIBLE_ROLES, projectActivityDeepLink, publishNotificationOutbox, roleHasCapability, type CollectionKind, type MoveProjectStageRequest, type ProjectActivityIntent, type ProjectMemberRole, type ProjectMembershipDto, type Role, type StageKey, type StageTransportKey } from "@quincy/shared";
 import { z } from "zod";
 import type { AppEnv } from "../env";
 import { hasProjectAccess, hasProjectAccessForUser, requireCapability } from "../middleware/capability";
@@ -20,6 +20,7 @@ import { listExternalProjects, readExternalProjectDetail } from "../lib/external
 import { boardContractDisabled, boardSchemaMaintenance } from "../lib/board-schema-maintenance";
 import { moveProjectStage } from "../lib/project-stage";
 import { moveProjectBoardOrder } from "../lib/project-board-order";
+import { classifyProjectArchiveLoser, type ProjectArchiveSource } from "../lib/project-archive";
 
 const nullable = <T extends z.ZodTypeAny>(item: T) => item.nullable().optional();
 const baseProjectFields = z.object({ street: z.string().min(1), suburb: nullable(z.string()), postcode: nullable(z.string()), agencyName: nullable(z.string()), agentName: nullable(z.string()), agentEmail: nullable(z.string().email()), agentPhone: nullable(z.string()), agencyId: nullable(z.string().uuid()), agentId: nullable(z.string().uuid()), shootDate: nullable(z.string()), timeWindow: nullable(z.string()), orderNo: nullable(z.string()), orderId: nullable(z.string()), invoiceAmount: nullable(z.number()), paymentStatus: nullable(z.string()), notes: nullable(z.string()), productionNotes: nullable(z.string()), rawFolderLink: nullable(z.string().url()), rawFolderPath: nullable(z.string()), orderedServices: z.array(z.enum(COLLECTION_KINDS)).optional() });
@@ -31,7 +32,6 @@ const deleteProjectMembershipInput = z.discriminatedUnion("clearSubtaskAssignmen
 ]);
 const coverInput = z.object({ assetId: z.string().uuid().nullable() });
 const priorityInput = z.object({ priority: z.number().int().min(1).max(10).nullable() });
-const boardPositionInput = moveProjectStageRequestSchema;
 const downloadSelectionInput = z.object({
   assetIds: z.array(z.string().uuid()).min(1).max(DOWNLOAD_SELECTION_MAX_ASSETS)
     .superRefine((assetIds, ctx) => {
@@ -445,7 +445,7 @@ projectsRoutes.post("/projects/:id/priority", terminalRoute("/projects/:id/prior
 
 projectsRoutes.post("/projects/:id/board-position", terminalRoute("/projects/:id/board-position", async (c) => {
   const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
-  const data = await jsonInput(c, boardPositionInput); if (data instanceof Response) return data;
+  const data = await jsonInput(c, moveProjectStageRequestSchemaForProject(id)); if (data instanceof Response) return data;
   const result = await moveProjectBoardOrder({ env: c.env, principal: c.get("user"), projectId: id, request: data });
   if (result.kind === "schema_maintenance") return boardSchemaMaintenance(c);
   if (result.kind === "disabled") return boardContractDisabled(c);
@@ -966,7 +966,21 @@ for (const [path, archived] of [["/projects/:id/archive", true], ["/projects/:id
   if (variant === "pre_0037") return boardSchemaMaintenance(c);
   if (!await boardContractEnabled(c.env.DB, variant)) return boardContractDisabled(c);
   const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
-  const db = createDb(c.env.DB); const now = new Date();
+  const now = new Date();
+  const classifyLoser = async (source: ProjectArchiveSource | null) => {
+    const current = await c.env.DB.prepare("SELECT id, archived_at AS archivedAt, stage_key AS stageKey, board_revision AS boardRevision FROM projects WHERE id = ?")
+      .bind(id).first<{ id: string; archivedAt: number | null; stageKey: StageKey; boardRevision: number }>();
+    const hasActiveUpload = archived && Boolean(await c.env.DB.prepare("SELECT id FROM document_uploads WHERE project_id = ? AND status IN ('pending', 'completing', 'aborting') LIMIT 1").bind(id).first<{ id: string }>());
+    const outcome = classifyProjectArchiveLoser({ archived, source, current, hasActiveUpload });
+    if (outcome.kind === "not_found") return c.json({ error: "Project not found" }, 404);
+    if (outcome.kind === "already_done") return c.json({ ok: true });
+    if (outcome.kind === "active_upload") return c.json({ error: "Active document uploads must be aborted before archiving." }, 409);
+    return c.json({
+      error: archived ? "Project changed while archiving." : "Project changed while restoring.",
+      code: "project_stage_conflict",
+      current: { projectId: id, stageKey: outcome.current.stageKey, boardRevision: Number(outcome.current.boardRevision) },
+    }, 409);
+  };
   if (archived) {
     // Ownership survives archive: retire the mapping and tombstone both permanent candidate
     // claims, never release them for silent reuse.
@@ -981,10 +995,7 @@ for (const [path, archived] of [["/projects/:id/archive", true], ["/projects/:id
     const archiveActivityStatements = buildProjectActivityStatements({ db: c.env.DB, intent: archiveActivity, winnerAuditId: archiveAuditId, createdAt: archivedAt });
     const source = await c.env.DB.prepare("SELECT stage_key AS stageKey, board_revision AS boardRevision FROM projects WHERE id = ? AND archived_at IS NULL").bind(id).first<{ stageKey: StageKey; boardRevision: number }>();
     if (!source) {
-      const existing = await db.select({ id: schema.projects.id, archivedAt: schema.projects.archivedAt }).from(schema.projects).where(eq(schema.projects.id, id)).get();
-      if (existing?.archivedAt !== null && existing?.archivedAt !== undefined) return c.json({ ok: true });
-      if (!existing) return c.json({ error: "Project not found" }, 404);
-      return c.json({ error: "Active document uploads must be aborted before archiving." }, 409);
+      return classifyLoser(null);
     }
     const deadlineSuppression = buildDeadlineSuppressionBundle({ db: c.env.DB, projectId: id, now: archivedAt, reason: "project_archived", auditId: archiveAuditId });
     const archiveStatementStart = 8;
@@ -1006,19 +1017,7 @@ for (const [path, archived] of [["/projects/:id/archive", true], ["/projects/:id
       ...archiveActivityStatements.statements,
     ]);
     if ((result[0]?.meta.changes ?? 0) !== 1) {
-      const current = await db.select({ id: schema.projects.id, archivedAt: schema.projects.archivedAt, stageKey: schema.projects.stageKey, boardRevision: schema.projects.boardRevision }).from(schema.projects).where(eq(schema.projects.id, id)).get();
-      if (current?.archivedAt !== null && current?.archivedAt !== undefined) return c.json({ ok: true });
-      if (!current) return c.json({ error: "Project not found" }, 404);
-      const activeUpload = await c.env.DB.prepare("SELECT id FROM document_uploads WHERE project_id = ? AND status in ('pending', 'completing', 'aborting') LIMIT 1").bind(id).first<{ id: string }>();
-      if (activeUpload) return c.json({ error: "Active document uploads must be aborted before archiving." }, 409);
-      if (current.stageKey !== source.stageKey || Number(current.boardRevision) !== Number(source.boardRevision)) {
-        return c.json({
-          error: "Project stage changed; reload and try again.",
-          code: "project_stage_conflict",
-          current: { projectId: id, stageKey: current.stageKey, boardRevision: Number(current.boardRevision) },
-        }, 409);
-      }
-      return c.json({ error: "Project changed while archiving; reload and try again.", code: "project_stage_conflict", current: { projectId: id, stageKey: current.stageKey, boardRevision: Number(current.boardRevision) } }, 409);
+      return classifyLoser(source);
     }
     const publicationIds = rowsFromD1<{ id: string }>(result[archiveStatementStart + archiveActivityStatements.broadOutboxIndex]).map((row) => row.id);
     if (publicationIds.length) c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, publicationIds));
@@ -1032,8 +1031,7 @@ for (const [path, archived] of [["/projects/:id/archive", true], ["/projects/:id
     const restoreActivityStatements = buildProjectActivityStatements({ db: c.env.DB, intent: restoreActivity, winnerAuditId: restoreAuditId, createdAt: now.getTime() });
     const source = await c.env.DB.prepare("SELECT stage_key AS stageKey, board_revision AS boardRevision FROM projects WHERE id = ? AND archived_at IS NOT NULL").bind(id).first<{ stageKey: StageKey; boardRevision: number }>();
     if (!source) {
-      if (!await db.select({ id: schema.projects.id }).from(schema.projects).where(eq(schema.projects.id, id)).get()) return c.json({ error: "Project not found" }, 404);
-      return c.json({ ok: true });
+      return classifyLoser(null);
     }
     const result = await c.env.DB.batch([
       c.env.DB.prepare("UPDATE projects SET archived_at = NULL, archived_by = NULL, board_position = (SELECT COALESCE(MAX(board_position) + 1024, 0) FROM projects WHERE stage_key = ? AND archived_at IS NULL AND id != ?), board_revision = board_revision + 1, updated_at = ? WHERE id = ? AND archived_at IS NOT NULL AND stage_key = ? AND board_revision = ? RETURNING id").bind(source.stageKey, id, now.getTime(), id, source.stageKey, source.boardRevision),
@@ -1042,8 +1040,7 @@ for (const [path, archived] of [["/projects/:id/archive", true], ["/projects/:id
     ]);
     const restored = rowsFromD1<{ id: string }>(result[0]).length > 0;
     if (!restored) {
-      if (!await db.select({ id: schema.projects.id }).from(schema.projects).where(eq(schema.projects.id, id)).get()) return c.json({ error: "Project not found" }, 404);
-      return c.json({ ok: true });
+      return classifyLoser(source);
     }
     const publicationIds = rowsFromD1<{ id: string }>(result[2 + restoreActivityStatements.broadOutboxIndex]).map((row) => row.id);
     if (publicationIds.length) c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, publicationIds));

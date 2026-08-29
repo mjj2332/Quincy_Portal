@@ -289,17 +289,33 @@ describe("TB5A Slice 8 consolidated migration and SQL proof", () => {
     }
   });
 
-  it("refuses rollback after durable enable-then-disable history", async () => {
+  it("refuses rollback after a Board mutation even when flag updater evidence is deleted", async () => {
     const db = localSqlite();
     try {
       db.exec("PRAGMA foreign_keys = ON");
       applyThrough(db, 36);
       seedLegacyProject(db, { id: "history", stageKey: "awaiting_raw", boardPosition: 20 });
-      db.prepare("INSERT INTO user (id, name, email, email_verified, role, active, authorization_epoch, created_at, updated_at) VALUES ('history-actor', 'History Actor', 'history-actor@example.test', 1, 'admin', 1, 0, ?, ?)").run(FIXTURE_NOW, FIXTURE_NOW);
       applyMigration(db, MIGRATION_NAME);
-      const actor = db.prepare("SELECT id FROM user LIMIT 1").get() as { id: string };
-      db.prepare("UPDATE feature_flags SET enabled = 1, updated_by = ? WHERE key = 'tb5a_board_contract_enabled'").run(actor.id);
-      db.prepare("UPDATE feature_flags SET enabled = 0 WHERE key = 'tb5a_board_contract_enabled'").run();
+      db.prepare("UPDATE projects SET board_revision = 2 WHERE id = 'history'").run();
+      db.prepare("UPDATE feature_flags SET enabled = 0, updated_by = NULL WHERE key = 'tb5a_board_contract_enabled'").run();
+      const before = db.prepare("SELECT id, board_position, board_revision FROM projects ORDER BY id").all();
+
+      await expect(rollbackBoardOrder0037PreEnable(localD1(db))).rejects.toThrow();
+      expect(db.prepare("SELECT id, board_position, board_revision FROM projects ORDER BY id").all()).toEqual(before);
+      expect(objectExists(db, "table", "_tb5a_0037_position_rollback_guard")).toBe(false);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("refuses rollback when every captured row is at revision one but one capture row is missing", async () => {
+    const db = localSqlite();
+    try {
+      db.exec("PRAGMA foreign_keys = ON");
+      applyThrough(db, 36);
+      seedLegacyProject(db, { id: "captured", stageKey: "awaiting_raw", boardPosition: 20 });
+      applyMigration(db, MIGRATION_NAME);
+      seedContractProject(db, { id: "missing-capture", stageKey: "awaiting_raw", boardPosition: 2048, boardRevision: 1 });
       const before = db.prepare("SELECT id, board_position, board_revision FROM projects ORDER BY id").all();
 
       await expect(rollbackBoardOrder0037PreEnable(localD1(db))).rejects.toThrow();

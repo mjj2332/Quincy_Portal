@@ -15,7 +15,7 @@ import { confirmAutoHdrHandoff } from "../autohdr/claims";
 import { notifyProject } from "../notifications";
 import { automaticBoardWritesEnabled, commitAutomaticStage } from "../lib/automatic-stage";
 import { requireBoardSchemaReady } from "../lib/board-schema";
-import { buildJobEntryProvenanceBundle } from "@quincy/db";
+import { buildJobEntryProvenanceBundle, buildOwnershipAssertionBundle } from "@quincy/db";
 export interface AutoHdrInput {
   projectId: string;
   assetIds: string[];
@@ -260,7 +260,7 @@ export class AutoHdrSend extends WorkflowEntrypoint<Env, AutoHdrInput> {
           if (!input.connectionId || input.mappingGeneration === undefined || !input.initiatedBy) {
             throw new Error("Frozen AutoHDR handoff input is incomplete");
           }
-          await confirmAutoHdrHandoff(this.env, {
+          const confirmed = await confirmAutoHdrHandoff(this.env, {
             projectId: input.projectId,
             handoffId: input.handoffId,
             connectionId: input.connectionId,
@@ -268,17 +268,19 @@ export class AutoHdrSend extends WorkflowEntrypoint<Env, AutoHdrInput> {
             initiatedBy: input.initiatedBy,
             jobId: input.jobId
           });
-          const confirmed = await db.select({ state: autoHdrHandoffs.state, stageKey: projects.stageKey })
-            .from(autoHdrHandoffs).innerJoin(projects, eq(autoHdrHandoffs.projectId, projects.id))
-            .where(eq(autoHdrHandoffs.id, input.handoffId)).get();
-          if (confirmed?.state !== "started" || confirmed.stageKey !== "editing_autohdr") {
+          if (!confirmed) {
             throw new Error("AutoHDR handoff confirmation lost its stage/ownership guard");
           }
         } else {
           const stageAuditId = crypto.randomUUID();
           const generation = input.stageEntryGeneration ?? 1;
-          const sourceJobId = input.jobId;
           const provenance = buildJobEntryProvenanceBundle({ db: this.env.DB, projectId: input.projectId, jobId: input.jobId, jobKind: "autohdr", generation, updatedAt: Date.now() });
+          const provenanceAssertion = buildOwnershipAssertionBundle({ db: this.env.DB, projectId: input.projectId, destinationStage: "editing_autohdr", coupling: provenance.coupling, assertedAt: Date.now() });
+          const destinationProvenance = {
+            ...provenance,
+            statements: [...provenance.statements, ...provenanceAssertion.statements],
+            indexes: { payloadUpdate: provenance.indexes.payloadUpdate, ownershipAssertion: provenance.statements.length + provenanceAssertion.indexes.ownershipAssertion },
+          };
           const stageOutcome = await commitAutomaticStage({
             env: this.env,
             projectId: input.projectId,
@@ -299,12 +301,9 @@ export class AutoHdrSend extends WorkflowEntrypoint<Env, AutoHdrInput> {
             },
             coupling: provenance.coupling,
             preWinnerProvenance: provenance,
-            // A legacy send can already be in editing_autohdr without a Stage-entry token.
-            // Preserve the durable payload stamp, but do not require the token-bearing
-            // ownership assertion on this compatibility path.
             alreadyAtDestination: {
               allowed: true,
-              effect: { kind: "job_provenance", bundle: provenance }
+              effect: { kind: "job_provenance", bundle: destinationProvenance }
             }
           });
           if (stageOutcome.kind === "winner") {

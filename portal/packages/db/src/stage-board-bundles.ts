@@ -506,8 +506,28 @@ export function workflowPremiseCte(premiseParam: number, projectParam: number, o
   SELECT 1 AS ok
   WHERE ${genericWorkflowPremiseSql(premiseParam, projectParam, oldRevisionParam)}
 )`; }
+function jobEntryProvenancePostconditionSql(param: number, expectedEntryRevision?: string): string {
+  const token = expectedEntryRevision === undefined ? "" : `\n    AND j.stage_entry_board_revision = ${expectedEntryRevision}`;
+  return String.raw`EXISTS (
+  SELECT 1
+  FROM jobs j
+  WHERE j.id = ${json(param, "jobId")}
+    AND j.kind = ${json(param, "jobKind")}
+    AND j.project_id = ?1
+    AND j.status IN (
+      SELECT value
+      FROM ${jsonArray(param, "jobStates")}
+    )
+    AND json_valid(j.payload_json)
+    AND json_extract(j.payload_json, '$.projectId') = ?1
+    AND json_extract(j.payload_json, '$.generation') = ${json(param, "generation")}
+    AND json_extract(j.payload_json, '$.stageEntrySourceJobId') = ${json(param, "jobId")}
+    AND json_extract(j.payload_json, '$.stageEntryGeneration') = ${json(param, "generation")}${token}
+)`;
+}
 function workflowDurablePostconditionSql(premise: GuardedTransitionPrerequisite, param = 4): string {
-  if (premise.kind === "none" ||( premise.kind === "autohdr_job" && premise.mode === "entry")) return "1";
+  if (premise.kind === "none") return "1";
+  if (premise.kind === "autohdr_job" && premise.mode === "entry") return jobEntryProvenancePostconditionSql(param, "?3 + 1");
   if (premise.kind === "raw_reconciliation") { return String.raw`EXISTS (
   SELECT 1
   FROM projects p
@@ -649,23 +669,7 @@ function couplingPostconditionSql(coupling: ClosedAutomaticCoupling, param: numb
     AND h.state = 'started'
     AND h.started_at IS NOT NULL
 )`; }
-  if (coupling.kind === "job_entry_provenance") { return String.raw`EXISTS (
-  SELECT 1
-  FROM jobs j
-  WHERE j.id = ${json(param, "jobId")}
-    AND j.kind = ${json(param, "jobKind")}
-    AND j.project_id = ?1
-    AND j.status IN (
-      SELECT value
-      FROM ${jsonArray(param, "jobStates")}
-    )
-    AND json_valid(j.payload_json)
-    AND json_extract(j.payload_json, '$.projectId') = ?1
-    AND json_extract(j.payload_json, '$.generation') = ${json(param, "generation")}
-    AND json_extract(j.payload_json, '$.stageEntrySourceJobId') = ${json(param, "jobId")}
-    AND json_extract(j.payload_json, '$.stageEntryGeneration') = ${json(param, "generation")}
-    AND j.stage_entry_board_revision = ?3 + 1
-)`; }
+  if (coupling.kind === "job_entry_provenance") return jobEntryProvenancePostconditionSql(param);
   if (coupling.kind === "autohdr_api_finalize") { return String.raw`EXISTS (
   SELECT 1
   FROM jobs j

@@ -121,6 +121,19 @@ describe("Kanban priority and Board commands", () => {
     expect(await database.DB.prepare("SELECT board_position, board_revision FROM projects WHERE id = ?").bind(target).first()).toEqual({ board_position: 0, board_revision: 0 });
   });
 
+  it("rejects the moving project as a between-neighbour during body parsing", async () => {
+    const target = crypto.randomUUID();
+    await seedProject(target, "edited_review", 1024);
+    const response = await request(`/api/projects/${target}/board-position`, adminToken, { method: "POST", body: JSON.stringify({
+      expected: { stageKey: "edited_review", boardRevision: 0 },
+      targetStageKey: "edited_review",
+      placement: { kind: "between", before: null, after: { projectId: target, boardRevision: 0 } },
+    }) });
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ error: "Invalid input" });
+    expect(await database.DB.prepare("SELECT board_position, board_revision FROM projects WHERE id = ?").bind(target).first()).toEqual({ board_position: 1024, board_revision: 0 });
+  });
+
   it("returns no_change for an unchanged logical slot without mutating", async () => {
     const first = crypto.randomUUID(); const target = crypto.randomUUID();
     await seedProject(first, "delivered", 0); await seedProject(target, "delivered", 1024);

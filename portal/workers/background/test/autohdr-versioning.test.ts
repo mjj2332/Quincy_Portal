@@ -295,4 +295,34 @@ describe("immutable AutoHDR final writer", () => {
       expect(count?.count).toBe(0);
     }
   });
+
+  it("fails closed when final completion sees an independently stale handoff fence", async () => {
+    const cases = [
+      { name: "handoff state", update: "UPDATE autohdr_handoffs SET state = 'starting' WHERE id = ?" },
+      { name: "mapping state", update: "UPDATE autohdr_output_mappings SET state = 'retired' WHERE id = ?" },
+      { name: "fetch state", update: "UPDATE autohdr_fetch_claims SET state = 'done' WHERE id = ?" },
+      { name: "manifest version", update: "UPDATE autohdr_handoffs SET manifest_version = 2 WHERE id = ?" },
+      { name: "final path", update: "UPDATE autohdr_output_mappings SET final_path_key = '/autohdr/versioning/04-other-photos' WHERE id = ?" },
+    ] as const;
+
+    for (const testCase of cases) {
+      const context = await fixture();
+      const beforeFinalStage = async () => {
+        const id = testCase.name === "mapping state" || testCase.name === "final path" ? context.mappingId
+          : testCase.name === "fetch state" ? context.claimId : context.handoffId;
+        await bindings.DB.prepare(testCase.update).bind(id).run();
+      };
+      const result = await writeAutoHdrFinal(bindings as never, context, file(`stale-${testCase.name}`), {
+        ...deps,
+        beforeFinalStage,
+      });
+      expect(result, testCase.name).toMatchObject({ status: "created", stageAdvanced: false });
+      await expect(bindings.DB.prepare("SELECT stage_key, board_revision FROM projects WHERE id = ?").bind(context.projectId).first())
+        .resolves.toEqual({ stage_key: "editing_autohdr", board_revision: 0 });
+      await expect(bindings.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE target_id = ? AND action = 'stage.auto_advance'").bind(context.projectId).first())
+        .resolves.toEqual({ count: 0 });
+      await expect(bindings.DB.prepare("SELECT count(*) AS count FROM notification_outbox WHERE project_id = ?").bind(context.projectId).first())
+        .resolves.toEqual({ count: 0 });
+    }
+  });
 });
