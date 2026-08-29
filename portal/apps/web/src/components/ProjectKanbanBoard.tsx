@@ -42,6 +42,7 @@ import {
   type BoardInteractionOrigin,
   type BoardModel,
   type BoardProposal,
+  boardGapChangesOrder,
   type DroppableData,
   type FocusDescriptor,
   type ProjectSummary,
@@ -62,6 +63,7 @@ export type KanbanCardProps = {
   isDragging?: boolean;
   canPrioritize?: boolean;
   canReorder?: boolean;
+  movementDisabled?: boolean;
   onPriorityChange?: (project: ProjectSummary, priority: number | null) => void;
   onBoardPosition?: (project: ProjectSummary, direction: "up" | "down") => void;
   stageOptions?: readonly PipelineStage[];
@@ -118,6 +120,7 @@ export function KanbanCard({
   canReorder = false,
   onPriorityChange,
   onBoardPosition,
+  movementDisabled = false,
   stageOptions,
   onMoveStage,
   dragHandleAttributes,
@@ -165,13 +168,13 @@ export function KanbanCard({
         {Array.from({ length: 10 }, (_, index) => index + 1).map((value) => <option value={value} key={value}>{value}</option>)}
       </select>
       {canReorder && <>
-        <button type="button" className="kcard-controls__arrow" aria-label="Move project up" onClick={() => onBoardPosition?.(project, "up")}>↑</button>
-        <button type="button" className="kcard-controls__arrow" aria-label="Move project down" onClick={() => onBoardPosition?.(project, "down")}>↓</button>
+        <button type="button" className="kcard-controls__arrow" data-focus-key={`arrow-up:${project.id}`} aria-label="Move project up" disabled={movementDisabled} onClick={() => onBoardPosition?.(project, "up")}>↑</button>
+        <button type="button" className="kcard-controls__arrow" data-focus-key={`arrow-down:${project.id}`} aria-label="Move project down" disabled={movementDisabled} onClick={() => onBoardPosition?.(project, "down")}>↓</button>
       </>}
     </div>}
     {canMove && <div className="kcard-stage-control">
       <label className="sr-only" htmlFor={`move-stage-${project.id}`}>Move {project.street} to Stage</label>
-      <select id={`move-stage-${project.id}`} data-focus-key={`move-stage:${project.id}`} aria-label={`Move ${project.street} to Stage`} value={moveStageValue} onChange={(event) => {
+      <select id={`move-stage-${project.id}`} data-focus-key={`move-stage:${project.id}`} aria-label={`Move ${project.street} to Stage`} value={moveStageValue} disabled={movementDisabled} onChange={(event) => {
         const targetStageKey = event.target.value as ProjectStageKey;
         setMoveStageValue("");
         if (targetStageKey && targetStageKey !== project.stageKey) onMoveStage?.(project, targetStageKey);
@@ -301,10 +304,11 @@ function collisionData(collision: Collision, droppableContainers: DroppableConta
   return container ? droppableData(container.data) : null;
 }
 
-function BoardCollisionDetection({ activeStages, displayOrders, canMoveStages, activeProjectId }: {
+function BoardCollisionDetection({ activeStages, displayOrders, canMoveStages, sameStageReorderEnabled, activeProjectId }: {
   activeStages: readonly PipelineStage[];
   displayOrders: Record<string, string[]>;
   canMoveStages: boolean;
+  sameStageReorderEnabled: boolean;
   activeProjectId: string | undefined;
 }): CollisionDetection {
   return ({ active, collisionRect, droppableRects, droppableContainers, pointerCoordinates }) => {
@@ -314,8 +318,7 @@ function BoardCollisionDetection({ activeStages, displayOrders, canMoveStages, a
       const data = droppableData(container.data);
       if (!data) return false;
       if (data.kind === "card" && data.projectId === activeProjectId) return false;
-      // Slice 2: same-Stage drops are not a drag target yet (Slice 3 re-enables them for prioritizeProjects).
-      if (sourceStage === data.stageKey) return false;
+      if (sourceStage === data.stageKey) return sameStageReorderEnabled;
       return canMoveStages;
     });
     const args = { active, collisionRect, droppableRects, droppableContainers: eligibleContainers, pointerCoordinates };
@@ -366,6 +369,8 @@ type KanbanColumnProps = {
   canMoveStages: boolean;
   canPrioritize: boolean;
   boardMutationEnabled: boolean;
+  movementDisabled?: boolean;
+  sameStageReorderEnabled?: boolean;
   pendingMoves: ReadonlySet<string>;
   pendingOrdering: ReadonlySet<string>;
   effectiveKanbanSort: KanbanSortMode;
@@ -385,6 +390,8 @@ function KanbanColumn({
   canMoveStages,
   canPrioritize,
   boardMutationEnabled,
+  movementDisabled = false,
+  sameStageReorderEnabled = false,
   pendingMoves,
   pendingOrdering,
   effectiveKanbanSort,
@@ -400,7 +407,7 @@ function KanbanColumn({
   const stageIsOver = activeProjectId !== undefined && (isOver || proposal?.gap.targetStageKey === semanticKey);
 
   return <section className={`kcol ${stageIsOver ? "is-over" : ""}`}>
-    <div className="kcol__head"><span className="row gap2"><StatusBadge stageKey={stage.key} /></span><span className="cnt">{displayedProjects.length}</span></div>
+    <div className="kcol__head" data-focus-key={`stage-heading:${semanticKey}`} tabIndex={-1}><span className="row gap2"><StatusBadge stageKey={stage.key} /></span><span className="cnt">{displayedProjects.length}</span></div>
     <SortableContext items={displayedIds} strategy={verticalListSortingStrategy}>
       <div ref={setColumnBodyRef} className="kcol__body" data-droppable-id={`column:${stage.key}`}>
         {displayedProjects.length === 0 && <div className="kcol__empty">—</div>}
@@ -414,7 +421,8 @@ function KanbanColumn({
               {...{
                 canMove: canMoveStages && !pendingMoves.has(project.id),
                 canPrioritize: canPrioritize && projects.some((item) => item.boardMapPresent === true || item.boardRank !== undefined || item.authorizedBoardOrder?.[item.stageKey] !== undefined) && !pendingOrdering.has(project.id),
-                canReorder: boardMutationEnabled && canPrioritize && effectiveKanbanSort === "board" && !pendingOrdering.has(project.id),
+                canReorder: boardMutationEnabled && sameStageReorderEnabled && !pendingOrdering.has(project.id),
+                movementDisabled: movementDisabled || pendingMoves.size > 0 || pendingOrdering.size > 0,
                 stageOptions: activeStages,
                 onMoveStage,
                 onPriorityChange,
@@ -422,7 +430,7 @@ function KanbanColumn({
               }}
               project={displayProject}
               semanticStageKey={semanticKey}
-              canDragThisCard={boardMutationEnabled && canMoveStages && !movementPending}
+              canDragThisCard={!movementDisabled && !pendingMoves.size && !pendingOrdering.size && boardMutationEnabled && (canMoveStages || sameStageReorderEnabled) && !movementPending}
               isDragging={activeProjectId === project.id}
             />
           </div>;
@@ -439,11 +447,15 @@ export type ProjectKanbanBoardProps = {
   canMoveStages: boolean;
   canPrioritize: boolean;
   boardMutationEnabled: boolean;
+  movementDisabled?: boolean;
+  sameStageReorderEnabled?: boolean;
   effectiveKanbanSort: KanbanSortMode;
   pendingMoves: ReadonlySet<string>;
   pendingOrdering: ReadonlySet<string>;
   terminal: boolean;
-  onCrossStageMove: (projectId: string, gap: SemanticGap, focusDescriptor: FocusDescriptor) => void;
+  onBoardMove?: (projectId: string, gap: SemanticGap, kind: "cross" | "same", focusDescriptor: FocusDescriptor) => void;
+  /** Compatibility seam for Slice 2 callers; all current Dashboard movement uses onBoardMove. */
+  onCrossStageMove?: (projectId: string, gap: SemanticGap, focusDescriptor: FocusDescriptor) => void;
   onBoardPosition: (project: ProjectSummary, direction: "up" | "down") => void;
   onPriorityChange: (project: ProjectSummary, priority: number | null) => void;
   onMoveStage: (project: ProjectSummary, targetStageKey: ProjectStageKey) => void;
@@ -457,10 +469,13 @@ export function ProjectKanbanBoard({
   canMoveStages,
   canPrioritize,
   boardMutationEnabled,
+  movementDisabled = false,
+  sameStageReorderEnabled = false,
   effectiveKanbanSort,
   pendingMoves,
   pendingOrdering,
   terminal,
+  onBoardMove,
   onCrossStageMove,
   onBoardPosition,
   onPriorityChange,
@@ -481,8 +496,9 @@ export function ProjectKanbanBoard({
     activeStages,
     displayOrders,
     canMoveStages,
+    sameStageReorderEnabled,
     activeProjectId,
-  }), [activeProjectId, activeStages, canMoveStages, displayOrders]);
+  }), [activeProjectId, activeStages, canMoveStages, displayOrders, sameStageReorderEnabled]);
   const movingProject = activeProjectId ? projects.find((project) => project.id === activeProjectId) : undefined;
 
   const announceFor = (event: "start" | "over-card" | "over-end" | "valid-drop" | "dnd-cancel", gap?: SemanticGap) => {
@@ -508,7 +524,7 @@ export function ProjectKanbanBoard({
   const handleDndStart = (event: DragStartEvent) => {
     const id = activeId(event.active);
     const project = projects.find((item) => item.id === id);
-    if (!project || !boardMutationEnabled || !canMoveStages || pendingMoves.has(id)) return;
+    if (!project || movementDisabled || !boardMutationEnabled || (!canMoveStages && !sameStageReorderEnabled) || pendingMoves.has(id) || pendingOrdering.has(id)) return;
     const currentModel = canonicalBoardModel(projects);
     const focusDescriptor = focusDescriptorFor("pointer" satisfies BoardInteractionOrigin, project, currentModel, "handle");
     const snapshot: DragSnapshot = {
@@ -543,7 +559,7 @@ export function ProjectKanbanBoard({
     const mover = snapshot.model.projects.find((project) => project.id === snapshot.movingProjectId);
     const sourceStage = mover ? semanticStageKey(mover.stageKey) : null;
     const eligible = sourceStage !== null
-      && sourceStage !== hovered.stageKey
+      && (sourceStage !== hovered.stageKey ? canMoveStages : sameStageReorderEnabled)
       && eligibleTarget(hovered.kind === "column" ? { targetStageKey: hovered.stageKey, successor: "end" } : { targetStageKey: hovered.stageKey, successor: hovered.projectId }, snapshot.model, snapshot.movingProjectId, {
         canMoveProjectStage: canMoveStages,
         canPrioritize,
@@ -582,17 +598,19 @@ export function ProjectKanbanBoard({
         ? proposalRef.current.gap
         : overGap
       : null;
-    const valid = Boolean(snapshot && mover && frozenGap && sourceStage !== frozenGap.targetStageKey && eligibleTarget(frozenGap, snapshot.model, id, {
+    const valid = Boolean(snapshot && mover && frozenGap && (sourceStage !== frozenGap.targetStageKey ? canMoveStages : sameStageReorderEnabled) && eligibleTarget(frozenGap, snapshot.model, id, {
       canMoveProjectStage: canMoveStages,
       canPrioritize,
       sort: effectiveKanbanSort,
       activeStageKeys: [...new Set(activeStages.map((stage) => semanticStageKey(stage.key)))],
-    }));
+    }) && (sourceStage !== frozenGap.targetStageKey || boardGapChangesOrder(frozenGap, snapshot.model, id)));
     const message = valid ? announceFor("valid-drop", frozenGap!) : announceFor("dnd-cancel");
     dndAnnouncementRef.current = message;
     onAnnounce?.(message);
     if (valid && snapshot && frozenGap && mover) {
-      onCrossStageMove(id, frozenGap, snapshot.focusDescriptor);
+      const kind = sourceStage === frozenGap.targetStageKey ? "same" : "cross";
+      if (onBoardMove) onBoardMove(id, frozenGap, kind, snapshot.focusDescriptor);
+      else if (kind === "cross") onCrossStageMove?.(id, frozenGap, snapshot.focusDescriptor);
     } else if (snapshot) {
       focusHandle(snapshot.focusDescriptor.projectId);
       restoreBoardScroll(snapshot);
@@ -615,16 +633,17 @@ export function ProjectKanbanBoard({
   const accessibility: { restoreFocus: false; announcements: Announcements; screenReaderInstructions: { draggable: string } } = {
     restoreFocus: false,
     announcements: {
-      onDragStart: ({ active }) => dndAnnouncementRef.current ?? (snapshotRef.current && activeId(active) === snapshotRef.current.movingProjectId ? announceFor("start") : undefined),
+      onDragStart: ({ active }) => terminal ? undefined : dndAnnouncementRef.current ?? (snapshotRef.current && activeId(active) === snapshotRef.current.movingProjectId ? announceFor("start") : undefined),
       onDragOver: ({ over }) => {
+        if (terminal) return undefined;
         const gap = proposalRef.current?.gap;
         if (!gap || !semanticGapChanged(dndOverGapRef.current, gap)) return undefined;
         const data = dataForOver(over);
         dndOverGapRef.current = gap;
         return announceFor(data?.kind === "column" ? "over-end" : "over-card", gap);
       },
-      onDragEnd: ({ over }) => dndAnnouncementRef.current ?? (over ? announceFor("valid-drop", proposalRef.current?.gap) : announceFor("dnd-cancel")),
-      onDragCancel: () => dndAnnouncementRef.current ?? announceFor("dnd-cancel"),
+      onDragEnd: ({ over }) => terminal ? undefined : dndAnnouncementRef.current ?? (over ? announceFor("valid-drop", proposalRef.current?.gap) : announceFor("dnd-cancel")),
+      onDragCancel: () => terminal ? undefined : dndAnnouncementRef.current ?? announceFor("dnd-cancel"),
     },
     screenReaderInstructions: {
       draggable: "To pick up a project, focus its Move project handle and press Space. Use the arrow keys to move within or between Stages. Press Space again to drop, or Escape to cancel. You can also use Move to… without dragging.",
@@ -644,7 +663,7 @@ export function ProjectKanbanBoard({
   };
 
   return <DndContext {...dndContextProps}>
-    <div className="kanban" aria-label="Project pipeline board">
+    <div className="kanban" data-focus-key="board" tabIndex={-1} aria-label="Project pipeline board">
       {activeStages.map((stage) => {
         return <KanbanColumn
           key={stage.key}
@@ -657,6 +676,8 @@ export function ProjectKanbanBoard({
           canMoveStages={canMoveStages}
           canPrioritize={canPrioritize}
           boardMutationEnabled={boardMutationEnabled}
+          movementDisabled={movementDisabled}
+          sameStageReorderEnabled={sameStageReorderEnabled}
           pendingMoves={pendingMoves}
           pendingOrdering={pendingOrdering}
           effectiveKanbanSort={effectiveKanbanSort}

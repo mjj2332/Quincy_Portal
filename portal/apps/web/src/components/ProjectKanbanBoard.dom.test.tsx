@@ -121,16 +121,34 @@ async function start() {
   await act(async () => { handler(event("source", cardData("awaiting_raw", "source"), null)); await Promise.resolve(); });
 }
 
+async function startProject(projectId: string, stageKey: "awaiting_raw" | "raw_review") {
+  const handler = dnd.handlers.at(-1)?.start;
+  if (!handler) throw new Error("No drag-start handler");
+  await act(async () => { handler(event(projectId, cardData(stageKey, projectId), null)); await Promise.resolve(); });
+}
+
 async function over(overId: string, overData: unknown) {
   const handler = dnd.handlers.at(-1)?.over;
   if (!handler) throw new Error("No drag-over handler");
   await act(async () => { handler(event("source", cardData("awaiting_raw", "source"), { id: overId, data: overData })); await Promise.resolve(); });
 }
 
+async function overProject(activeId: string, activeStage: "awaiting_raw" | "raw_review", overId: string, overData: unknown) {
+  const handler = dnd.handlers.at(-1)?.over;
+  if (!handler) throw new Error("No drag-over handler");
+  await act(async () => { handler(event(activeId, cardData(activeStage, activeId), { id: overId, data: overData })); await Promise.resolve(); });
+}
+
 async function end(overTarget: { id: string; data: unknown } | null) {
   const handler = dnd.handlers.at(-1)?.end;
   if (!handler) throw new Error("No drag-end handler");
   await act(async () => { handler(event("source", cardData("awaiting_raw", "source"), overTarget)); await Promise.resolve(); });
+}
+
+async function endProject(activeId: string, activeStage: "awaiting_raw" | "raw_review", overTarget: { id: string; data: unknown } | null) {
+  const handler = dnd.handlers.at(-1)?.end;
+  if (!handler) throw new Error("No drag-end handler");
+  await act(async () => { handler(event(activeId, cardData(activeStage, activeId), overTarget)); await Promise.resolve(); });
 }
 
 describe("ProjectKanbanBoard", () => {
@@ -190,6 +208,15 @@ describe("ProjectKanbanBoard", () => {
     await end({ id: "source", data: cardData("awaiting_raw", "source") });
     expect(callbacks.onCrossStageMove).not.toHaveBeenCalled();
     expect(callbacks.onAnnounce).toHaveBeenCalledWith(expect.stringContaining("Cancelled moving source Street"));
+  });
+
+  it("routes an eligible same-Stage drag through the general Board movement callback", async () => {
+    const onBoardMove = vi.fn();
+    await renderBoard({ sameStageReorderEnabled: true, onBoardMove });
+    await startProject("visual-first", "raw_review");
+    await overProject("visual-first", "raw_review", "visual-second", cardData("raw_review", "visual-second"));
+    await endProject("visual-first", "raw_review", { id: "visual-second", data: cardData("raw_review", "visual-second") });
+    expect(onBoardMove).toHaveBeenCalledWith("visual-first", { targetStageKey: "raw_review", successor: "visual-second" }, "same", expect.objectContaining({ projectId: "visual-first" }));
   });
 
   it("captures the empty-column semantic gap", async () => {

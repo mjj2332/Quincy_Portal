@@ -45,13 +45,20 @@ export type StageMoveSubmit<T> = (request: MoveProjectStageRequest) => Promise<T
 export async function submitStageMoveWithConfirmation<T>(
   request: MoveProjectStageRequest,
   submit: StageMoveSubmit<T>,
-  options: { confirm?: typeof defaultConfirm } = {},
+  options: {
+    confirm?: typeof defaultConfirm;
+    confirmationPolicy?: "stage-move" | "forbidden";
+    onConfirmationRequired?: () => void;
+    beforeConfirmedSubmit?: () => void;
+  } = {},
 ): Promise<T | null> {
   try {
     return await submit(request);
   } catch (reason) {
     if (!isConfirmationRequired(reason)) throw reason;
+    if (options.confirmationPolicy === "forbidden") throw reason;
     const reasons = confirmationReasons(reason);
+    options.onConfirmationRequired?.();
     const explanation = reasons.map((item) => STAGE_MOVE_REASON_COPY[item]).filter(Boolean);
     const accepted = await (options.confirm ?? defaultConfirm)({
       title: "Confirm Stage move",
@@ -59,6 +66,7 @@ export async function submitStageMoveWithConfirmation<T>(
       confirmLabel: "Move project",
     });
     if (!accepted) return null;
+    options.beforeConfirmedSubmit?.();
     return submit({ ...request, confirmation: { reasons } });
   }
 }

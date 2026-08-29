@@ -3,6 +3,7 @@ import type { MoveProjectStageResponse } from "@quincy/shared";
 import {
   QuincyGuardedDirectManipulationPolicy,
   adjacentBoardPlacement,
+  adjacentBoardGap,
   announce,
   applyOptimisticOverlay,
   authorizedOrderForStage,
@@ -12,14 +13,17 @@ import {
   eligibleTarget,
   focusDescriptorFor,
   focusTargetAfter,
+  isSameStagePlacementChange,
   optimismSafeBeforeResponse,
   proposeMultiContainerDrop,
   proposedOrdersForHover,
   reconcileAuthoritativeResponse,
   resolveSemanticGap,
+  reorderIntentFromGap,
   rollbackToBaseline,
   semanticGapChanged,
   sortKanbanProjects,
+  transitionMovementSettle,
   type BoardAnnouncementEvent,
   type BoardModel,
   type BoardDragStartSnapshot,
@@ -157,6 +161,17 @@ describe("Kanban interaction model", () => {
     });
   });
 
+  it("resolves same-Stage gaps to board-position neighbour revisions", () => {
+    const model = movementBoard();
+    const gap = { targetStageKey: "raw_review" as const, successor: "last" };
+    expect(isSameStagePlacementChange({ gap, movingProject: model.projects.find((item) => item.id === "middle")! })).toBe(true);
+    expect(reorderIntentFromGap({ targetStageKey: "raw_review", successor: "last" }, model, "middle")).toEqual({
+      placement: { kind: "between", before: { projectId: "first", boardRevision: 8 }, after: { projectId: "last", boardRevision: 10 } },
+    });
+    expect(reorderIntentFromGap({ targetStageKey: "raw_review", successor: "first" }, model, "source")).toEqual({ stale: true });
+    expect(adjacentBoardGap("middle", "raw_review", "down", model.projects)).toEqual({ targetStageKey: "raw_review", successor: "end" });
+  });
+
   it("proposes card, column-body, and empty-column drops while removing the mover from source", () => {
     const model = movementBoard();
     const snapshot: BoardDragStartSnapshot = { model, movingProjectId: "source", sort: "board" };
@@ -232,6 +247,28 @@ describe("Kanban interaction model", () => {
     expect(optimismSafeBeforeResponse("raw_review", "editing", "editor", false)).toBe(false);
     expect(optimismSafeBeforeResponse("not-a-stage", "raw_review", "editor", false)).toBe(false);
     expect(optimismSafeBeforeResponse("not-a-stage", "also-not-a-stage", "editor", true)).toBe(true);
+  });
+
+  it("reconciles same-Stage responses as authoritative without a provisional source", () => {
+    const baseline = movementBoard();
+    const response: MoveProjectStageResponse = {
+      changed: true,
+      project: { projectId: "middle", stageKey: "raw_review", boardRevision: 11 },
+      board: { sourceStageKey: "raw_review", targetStageKey: "raw_review", orderedVisibleProjectIds: ["middle", "first", "last"] },
+    };
+    const settled = reconcileAuthoritativeResponse(baseline, "middle", response);
+    expect(settled.sourceProvisional).toBe(false);
+    expect(settled.model.authorizedBoardOrder?.raw_review).toEqual(["middle", "first", "last"]);
+    expect(settled.model.projects.find((item) => item.id === "middle")).toMatchObject({ boardRevision: 11, stageKey: "raw_review" });
+  });
+
+  it("keeps the settle barrier through a failed refetch and clears it only on success", () => {
+    const initial = { pending: false, recoveryReason: null };
+    const pending = transitionMovementSettle(initial, { type: "winner" });
+    expect(pending).toEqual({ pending: true, recoveryReason: null });
+    expect(transitionMovementSettle(pending, { type: "refetch-failed", reason: "Refresh failed." })).toEqual({ pending: true, recoveryReason: "Refresh failed." });
+    expect(transitionMovementSettle(pending, { type: "refetch-succeeded" })).toEqual(initial);
+    expect(transitionMovementSettle(transitionMovementSettle(initial, { type: "winner" }), { type: "refetch-succeeded" })).toEqual(initial);
   });
 
   it("classifies generic 409 codes as full rollback, one refetch, and no retry", () => {

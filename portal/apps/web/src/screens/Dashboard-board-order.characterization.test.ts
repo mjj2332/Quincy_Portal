@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { ApiError } from "../lib/api";
 import { submitStageMoveWithConfirmation } from "../lib/stage-move";
-import { adjacentBoardPlacement, cardDropPlacement, sortKanbanProjects, type ProjectSummary } from "./Dashboard";
+import { adjacentBoardGap, adjacentBoardPlacement, cardDropPlacement, sortKanbanProjects, type ProjectSummary } from "./Dashboard";
 
 const project: ProjectSummary = {
   id: "123e4567-e89b-42d3-a456-426614174000",
@@ -122,6 +122,16 @@ describe("TB5A authorized Board comparator", () => {
 		expect(adjacentBoardPlacement("first", "awaiting_raw", "up", rows)).toBeNull();
 		expect(adjacentBoardPlacement("middle", "unknown_stage", "up", rows)).toBeNull();
 		expect(adjacentBoardPlacement("last", "awaiting_raw", "up", rows.filter((row) => row.id !== "middle"))).toBeNull();
+	});
+
+	it("derives arrows as revision-free same-Stage gaps for the shared orchestrator", () => {
+		const rows = [
+			{ ...project, id: "first", boardRevision: 4, authorizedBoardOrder: { awaiting_raw: ["first", "middle", "last"] } },
+			{ ...project, id: "middle", boardRevision: 5, authorizedBoardOrder: { awaiting_raw: ["first", "middle", "last"] } },
+			{ ...project, id: "last", boardRevision: 6, authorizedBoardOrder: { awaiting_raw: ["first", "middle", "last"] } },
+		];
+		expect(adjacentBoardGap("last", "awaiting_raw", "up", rows)).toEqual({ targetStageKey: "awaiting_raw", successor: "middle" });
+		expect(adjacentBoardPlacement("last", "awaiting_raw", "up", rows)).toEqual({ kind: "between", before: { projectId: "first", boardRevision: 4 }, after: { projectId: "middle", boardRevision: 5 } });
 	});
 
 	it("cancelling server-required confirmation resolves null without a second request", async () => {

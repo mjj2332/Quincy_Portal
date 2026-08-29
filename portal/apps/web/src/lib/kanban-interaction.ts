@@ -210,6 +210,22 @@ export function adjacentBoardPlacement(
   direction: "up" | "down",
   projects: ProjectSummary[],
 ): StageMovePlacement | null {
+  const gap = adjacentBoardGap(movingProjectId, targetStageKey, direction, projects);
+  if (!gap) return null;
+  const moving = projects.find((project) => project.id === movingProjectId);
+  const authorizedBoardOrder = projects.find((project) => project.authorizedBoardOrder !== undefined)?.authorizedBoardOrder;
+  if (!moving || !authorizedBoardOrder) return null;
+  const resolved = resolveSemanticGap(gap, { projects, authorizedBoardOrder }, movingProjectId);
+  return "stale" in resolved ? null : resolved.placement;
+}
+
+/** Returns the revision-free gap used by an adjacent Board arrow. */
+export function adjacentBoardGap(
+  movingProjectId: string,
+  targetStageKey: string,
+  direction: "up" | "down",
+  projects: ProjectSummary[],
+): SemanticGap | null {
   const order = authorizedOrderForStage(projects, targetStageKey);
   if (!order) return null;
   const movingIndex = order.indexOf(movingProjectId);
@@ -220,13 +236,7 @@ export function adjacentBoardPlacement(
     ? Math.max(0, currentIndex - 1)
     : Math.min(withoutMoving.length, currentIndex + 1);
   if (desiredIndex === currentIndex) return null;
-  if (desiredIndex >= withoutMoving.length) return { kind: "append" };
-  const byId = projectById(projects);
-  const before = desiredIndex > 0 ? expectedNeighbour(withoutMoving[desiredIndex - 1]!, byId) : null;
-  const after = expectedNeighbour(withoutMoving[desiredIndex]!, byId);
-  if (desiredIndex > 0 && !before) return null;
-  if (!after) return null;
-  return { kind: "between", before, after };
+  return { targetStageKey: canonicalStageKey(targetStageKey) ?? targetStageKey as StageKey, successor: withoutMoving[desiredIndex] ?? "end" };
 }
 
 function cloneOrders(orders: Record<string, readonly string[]>): Record<string, string[]> {
@@ -408,6 +418,42 @@ export function resolveSemanticGap(
   return { placement: { kind: "between", before, after } };
 }
 
+/** Same-Stage movement is a Board-position command, never a Stage command. */
+export function isSameStagePlacementChange(
+  input: { gap: SemanticGap; movingProject: ProjectSummary },
+): boolean {
+  const movingStage = projectStageKey(input.movingProject);
+  return movingStage !== null
+    && movingStage === canonicalStageKey(input.gap.targetStageKey)
+    && input.gap.successor !== input.movingProject.id;
+}
+
+/** Resolves a same-Stage gap to the exact neighbour revisions required by /board-position. */
+export function reorderIntentFromGap(
+  gap: SemanticGap,
+  model: BoardModel,
+  movingProjectId: string,
+): { placement: StageMovePlacement } | { stale: true } {
+  const movingProject = model.projects.find((project) => project.id === movingProjectId);
+  if (!movingProject || !isSameStagePlacementChange({ gap, movingProject })) return { stale: true };
+  return resolveSemanticGap(gap, model, movingProjectId);
+}
+
+/** Detects a same-Stage gap which leaves the canonical Board order unchanged. */
+export function boardGapChangesOrder(
+  gap: SemanticGap,
+  model: BoardModel,
+  movingProjectId: string,
+): boolean {
+  const moving = model.projects.find((project) => project.id === movingProjectId);
+  if (!moving || projectStageKey(moving) !== canonicalStageKey(gap.targetStageKey)) return true;
+  const order = modelOrders(model)[canonicalStageKey(gap.targetStageKey) ?? gap.targetStageKey] ?? [];
+  const withoutMoving = order.filter((projectId) => projectId !== movingProjectId);
+  const currentIndex = order.indexOf(movingProjectId);
+  const targetIndex = gap.successor === "end" ? withoutMoving.length : withoutMoving.indexOf(gap.successor);
+  return currentIndex < 0 || targetIndex < 0 || targetIndex !== withoutMoving.slice(0, currentIndex).length;
+}
+
 export function buildMoveRequest(
   model: BoardModel,
   movingProjectId: string,
@@ -537,6 +583,25 @@ export function optimismSafeBeforeResponse(
   const to = normalizeStageTransport(toStageKey, role);
   if (!from || !to) return false;
   return stageMoveConfirmationReasons(from, to).length === 0;
+}
+
+export type MovementSettleState = {
+  pending: boolean;
+  recoveryReason: string | null;
+};
+
+export type MovementSettleEvent =
+  | { type: "winner" }
+  | { type: "refetch-succeeded" }
+  | { type: "refetch-failed"; reason: string }
+  | { type: "terminal" };
+
+/** Pure settle-barrier transition table used by the Dashboard command boundary. */
+export function transitionMovementSettle(state: MovementSettleState, event: MovementSettleEvent): MovementSettleState {
+  if (event.type === "winner") return { pending: true, recoveryReason: null };
+  if (event.type === "refetch-failed") return state.pending ? { pending: true, recoveryReason: event.reason } : state;
+  if (event.type === "refetch-succeeded" || event.type === "terminal") return { pending: false, recoveryReason: null };
+  return state;
 }
 
 export type BoardMoveRollbackCode = "project_archived_read_only" | "inactive_destination" | "stage_contract_reload_required";

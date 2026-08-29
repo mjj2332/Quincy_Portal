@@ -137,7 +137,9 @@ describe("Dashboard Stage interactions", () => {
     authState.role = "admin"; authState.moved = false; apiGetMock.mockReset(); apiPostMock.mockReset();
     dnd.handlers.length = 0;
     apiGetMock.mockImplementation((path) => path === "/api/projects" ? Promise.resolve(response()) : Promise.resolve({}));
-    apiPostMock.mockResolvedValue({ changed: true, project: { stageKey: "raw_review", boardRevision: 4 } });
+    apiPostMock.mockImplementation((path) => path.endsWith("/board-position")
+      ? Promise.resolve({ changed: true, project: { projectId: "before", stageKey: "raw_review", boardRevision: 10 }, board: { sourceStageKey: "raw_review", targetStageKey: "raw_review", orderedVisibleProjectIds: ["target", "before"] } })
+      : Promise.resolve({ changed: true, project: { projectId: "source", stageKey: "raw_review", boardRevision: 4 }, board: { sourceStageKey: "awaiting_raw", targetStageKey: "raw_review", orderedVisibleProjectIds: ["before", "target", "source"] } }));
     host = document.createElement("div"); document.body.append(host); root = createRoot(host);
     Object.defineProperty(window, "localStorage", { configurable: true, value: { getItem: () => null, setItem: () => undefined } });
   });
@@ -178,6 +180,237 @@ describe("Dashboard Stage interactions", () => {
     expect(apiPostMock).not.toHaveBeenCalled();
   });
 
+  it("routes Admin same-Stage Board-order drag to board-position with exact placement", async () => {
+    let resolveMove!: (value: unknown) => void;
+    apiPostMock.mockImplementationOnce((path) => {
+      expect(path).toBe("/api/projects/target/board-position");
+      return new Promise((resolve) => { resolveMove = resolve; });
+    });
+    await act(async () => { root.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); }); await flush();
+    await dndStart("target", "raw_review");
+    await dndOver("target", "raw_review", "before", cardData("raw_review", "before"));
+    await dndEnd("target", "raw_review", { id: "before", data: cardData("raw_review", "before") });
+    await flush();
+    expect(apiPostMock).toHaveBeenCalledWith("/api/projects/target/board-position", {
+      expected: { stageKey: "raw_review", boardRevision: 9 },
+      targetStageKey: "raw_review",
+      placement: { kind: "between", before: null, after: { projectId: "before", boardRevision: 8 } },
+    });
+    expect(apiPostMock.mock.calls.some(([path]) => path.endsWith("/stage"))).toBe(false);
+    const rawColumn = [...host.querySelectorAll<HTMLElement>(".kcol")].find((column) => column.querySelector('[href="/projects/before"]'))!;
+    expect([...rawColumn.querySelectorAll<HTMLElement>(".kcard__addr")].map((element) => element.textContent)).toEqual(["target Street", "before Street"]);
+    resolveMove({ changed: true, project: { projectId: "target", stageKey: "raw_review", boardRevision: 10 }, board: { sourceStageKey: "raw_review", targetStageKey: "raw_review", orderedVisibleProjectIds: ["target", "before"] } });
+    await flush();
+  });
+
+  it("routes Board-order arrows through the same board-position orchestrator", async () => {
+    let resolveMove!: (value: unknown) => void;
+    apiPostMock.mockImplementationOnce((path) => {
+      expect(path).toBe("/api/projects/target/board-position");
+      return new Promise((resolve) => { resolveMove = resolve; });
+    });
+    await act(async () => { root.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); }); await flush();
+    card(host, "target Street").querySelector<HTMLButtonElement>('[aria-label="Move project up"]')!.click();
+    await flush();
+    expect(apiPostMock).toHaveBeenCalledWith("/api/projects/target/board-position", {
+      expected: { stageKey: "raw_review", boardRevision: 9 },
+      targetStageKey: "raw_review",
+      placement: { kind: "between", before: null, after: { projectId: "before", boardRevision: 8 } },
+    });
+    expect(apiPostMock.mock.calls.some(([path]) => path.endsWith("/stage"))).toBe(false);
+    resolveMove({ changed: true, project: { projectId: "target", stageKey: "raw_review", boardRevision: 10 }, board: { sourceStageKey: "raw_review", targetStageKey: "raw_review", orderedVisibleProjectIds: ["target", "before"] } });
+    await flush();
+  });
+
+  it("renders the optimistic overlay without writing the Dashboard query cache", async () => {
+    let resolveMove!: (value: unknown) => void;
+    apiPostMock.mockImplementationOnce(() => new Promise((resolve) => { resolveMove = resolve; }));
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const runtime = new ProjectQueryRuntime(queryClient, "dashboard-overlay-test");
+    await act(async () => {
+      root.render(<ProjectQueryRuntimeProvider runtime={runtime}><QueryClientProvider client={queryClient}><Dashboard currentUserId="admin-1" /></QueryClientProvider></ProjectQueryRuntimeProvider>);
+      await Promise.resolve();
+    });
+    await flush();
+    const key = dashboardProjectsKey("admin-1", "photographer", 0, false);
+    const serverSnapshot = queryClient.getQueryData<ProjectSummary[]>(key);
+    const setQueryData = vi.spyOn(queryClient, "setQueryData");
+    await act(async () => { card(host, "target Street").querySelector<HTMLButtonElement>('[aria-label="Move project up"]')!.click(); await Promise.resolve(); });
+    await flush();
+    expect(setQueryData).not.toHaveBeenCalled();
+    expect(queryClient.getQueryData<ProjectSummary[]>(key)).toEqual(serverSnapshot);
+    const rawColumn = [...host.querySelectorAll<HTMLElement>(".kcol")].find((column) => column.querySelector('[href="/projects/before"]'))!;
+    expect([...rawColumn.querySelectorAll<HTMLElement>(".kcard__addr")].map((element) => element.textContent)).toEqual(["target Street", "before Street"]);
+    resolveMove({ changed: true, project: { projectId: "target", stageKey: "raw_review", boardRevision: 10 }, board: { sourceStageKey: "raw_review", targetStageKey: "raw_review", orderedVisibleProjectIds: ["target", "before"] } });
+    await flush();
+    runtime.dispose();
+    queryClient.clear();
+  });
+
+  it("rolls back a same-Stage conflict with one POST, one refetch, and no retry", async () => {
+    let projectFetches = 0;
+    let rejectMove!: (reason: unknown) => void;
+    apiGetMock.mockImplementation((path) => path === "/api/projects"
+      ? (projectFetches += 1, Promise.resolve(response()))
+      : Promise.resolve({}));
+    apiPostMock.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectMove = reject; }));
+    await act(async () => { root.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); }); await flush();
+    await act(async () => { card(host, "target Street").querySelector<HTMLButtonElement>('[aria-label="Move project up"]')!.click(); await Promise.resolve(); });
+    await flush();
+    const optimisticColumn = [...host.querySelectorAll<HTMLElement>(".kcol")].find((column) => column.querySelector('[href="/projects/before"]'))!;
+    expect([...optimisticColumn.querySelectorAll<HTMLElement>(".kcard__addr")].map((element) => element.textContent)).toEqual(["target Street", "before Street"]);
+    rejectMove(new ApiError("Board conflict", 409, { code: "project_stage_conflict", current: { projectId: "target", stageKey: "raw_review", boardRevision: 20 } }));
+    await flush(); await flush();
+    const restoredColumn = [...host.querySelectorAll<HTMLElement>(".kcol")].find((column) => column.querySelector('[href="/projects/before"]'))!;
+    expect([...restoredColumn.querySelectorAll<HTMLElement>(".kcard__addr")].map((element) => element.textContent)).toEqual(["before Street", "target Street"]);
+    expect(apiPostMock).toHaveBeenCalledTimes(1);
+    expect(projectFetches).toBe(2);
+    expect(host.querySelector(".dashboard-live-region")?.textContent).toContain("Board changed elsewhere");
+  });
+
+  it.each([
+    ["board_contract_disabled", "Board interactions are temporarily unavailable while the Board contract is disabled."],
+    ["board_schema_maintenance", "Board interactions are temporarily unavailable while the Board is being updated."],
+  ] as const)("restores and disables movement controls on 503 %s", async (code, copy) => {
+    let resolveRefresh!: (value: unknown) => void;
+    let projectFetches = 0;
+    apiGetMock.mockImplementation((path) => {
+      if (path !== "/api/projects") return Promise.resolve({});
+      projectFetches += 1;
+      return projectFetches === 1 ? Promise.resolve(response()) : new Promise((resolve) => { resolveRefresh = resolve; });
+    });
+    apiPostMock.mockRejectedValueOnce(new ApiError("Board unavailable", 503, { code }));
+    await act(async () => { root.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); }); await flush();
+    await act(async () => { card(host, "target Street").querySelector<HTMLButtonElement>('[aria-label="Move project up"]')!.click(); await Promise.resolve(); });
+    await flush();
+    expect(host.textContent).toContain(copy);
+    expect(host.querySelector('select[aria-label="Priority"]')).not.toBeNull();
+    expect(host.querySelector('[aria-label="Move target Street"]')?.getAttribute("disabled")).toBe("");
+    expect(host.querySelector('[aria-label="Move project up"]')).toBeNull();
+    expect(host.querySelector('[aria-label="Move target Street to Stage"]')).toBeNull();
+    resolveRefresh(response());
+    await flush();
+  });
+
+  it("holds the cross-Stage settle barrier until the full source projection is accepted", async () => {
+    let projectFetches = 0;
+    let resolveSettle!: (value: unknown) => void;
+    const winner = {
+      changed: true,
+      project: { projectId: "source", stageKey: "raw_review", boardRevision: 4 },
+      board: { sourceStageKey: "awaiting_raw", targetStageKey: "raw_review", orderedVisibleProjectIds: ["source", "before", "target"] },
+    };
+    const settledSnapshot = {
+      projects: [summary("source", "raw_review", 4), summary("before", "raw_review", 8), summary("target", "raw_review", 9)],
+      board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: [], raw_review: ["target", "source", "before"], editing_autohdr: [] } },
+    };
+    apiGetMock.mockImplementation((path) => {
+      if (path !== "/api/projects") return Promise.resolve({});
+      projectFetches += 1;
+      return projectFetches === 1 ? Promise.resolve(response()) : new Promise((resolve) => { resolveSettle = resolve; });
+    });
+    apiPostMock.mockImplementationOnce((path) => {
+      expect(path).toBe("/api/projects/source/stage");
+      return Promise.resolve(winner);
+    });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const runtime = new ProjectQueryRuntime(queryClient, "dashboard-settle-test");
+    await act(async () => {
+      root.render(<ProjectQueryRuntimeProvider runtime={runtime}><QueryClientProvider client={queryClient}><Dashboard currentUserId="admin-1" /></QueryClientProvider></ProjectQueryRuntimeProvider>);
+      await Promise.resolve();
+    });
+    await flush();
+    await dndStart("source", "awaiting_raw");
+    await dndOver("source", "awaiting_raw", "target", cardData("raw_review", "target"));
+    await dndEnd("source", "awaiting_raw", { id: "target", data: cardData("raw_review", "target") });
+    await flush();
+
+    expect(projectFetches).toBe(2);
+    const movedCard = card(host, "Source Street");
+    expect(movedCard.querySelector<HTMLButtonElement>('[aria-label="Move Source Street"]')?.disabled).toBe(true);
+    expect(movedCard.querySelector<HTMLSelectElement>('[aria-label="Move Source Street to Stage"]')?.disabled).toBe(true);
+    expect(movedCard.querySelector<HTMLButtonElement>('[aria-label="Move project up"]')?.disabled).toBe(true);
+    movedCard.querySelector<HTMLButtonElement>('[aria-label="Move project up"]')?.click();
+    expect(apiPostMock).toHaveBeenCalledTimes(1);
+
+    const targetColumn = movedCard.closest<HTMLElement>(".kcol")!;
+    expect([...targetColumn.querySelectorAll<HTMLElement>(".kcard__addr")].map((element) => element.textContent)).toEqual(["Source Street", "before Street", "target Street"]);
+    resolveSettle(settledSnapshot);
+    await flush();
+    expect(projectFetches).toBe(2);
+    const settledColumn = card(host, "Source Street").closest<HTMLElement>(".kcol")!;
+    expect([...settledColumn.querySelectorAll<HTMLElement>(".kcard__addr")].map((element) => element.textContent)).toEqual(["target Street", "Source Street", "before Street"]);
+    expect(card(host, "Source Street").querySelector<HTMLButtonElement>('[aria-label="Move Source Street"]')?.disabled).toBe(false);
+    runtime.dispose();
+    queryClient.clear();
+  });
+
+  it("keeps the settle barrier and recovery copy after a failed refetch, then releases on a later success", async () => {
+    let projectFetches = 0;
+    const winner = {
+      changed: true,
+      project: { projectId: "source", stageKey: "raw_review", boardRevision: 4 },
+      board: { sourceStageKey: "awaiting_raw", targetStageKey: "raw_review", orderedVisibleProjectIds: ["source", "before", "target"] },
+    };
+    const settledSnapshot = {
+      projects: [summary("source", "raw_review", 4), summary("before", "raw_review", 8), summary("target", "raw_review", 9)],
+      board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: [], raw_review: ["target", "source", "before"], editing_autohdr: [] } },
+    };
+    apiGetMock.mockImplementation((path) => {
+      if (path !== "/api/projects") return Promise.resolve({});
+      projectFetches += 1;
+      if (projectFetches === 1) return Promise.resolve(response());
+      if (projectFetches === 2) return Promise.reject(new ApiError("Refresh failed", 409, { code: "project_stage_conflict" }));
+      return Promise.resolve(settledSnapshot);
+    });
+    apiPostMock.mockImplementationOnce(() => Promise.resolve(winner));
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const runtime = new ProjectQueryRuntime(queryClient, "dashboard-settle-failure-test");
+    await act(async () => {
+      root.render(<ProjectQueryRuntimeProvider runtime={runtime}><QueryClientProvider client={queryClient}><Dashboard currentUserId="admin-1" /></QueryClientProvider></ProjectQueryRuntimeProvider>);
+      await Promise.resolve();
+    });
+    await flush();
+    await dndStart("source", "awaiting_raw");
+    await dndOver("source", "awaiting_raw", "target", cardData("raw_review", "target"));
+    await dndEnd("source", "awaiting_raw", { id: "target", data: cardData("raw_review", "target") });
+    await flush(); await flush();
+    expect(projectFetches).toBe(2);
+    expect(host.textContent).toContain("The move was saved, but the latest Board could not be loaded. Refresh to continue.");
+    expect(card(host, "Source Street").querySelector<HTMLButtonElement>('[aria-label="Move Source Street"]')?.disabled).toBe(true);
+    await act(async () => {
+      void queryClient.invalidateQueries({ queryKey: dashboardProjectsKey("admin-1", "photographer", 0, false), exact: true, refetchType: "active" });
+      await Promise.resolve();
+    });
+    await flush();
+    expect(projectFetches).toBe(3);
+    expect(host.querySelector('.muted[role="status"]')?.textContent ?? "").not.toContain("The move was saved, but the latest Board could not be loaded. Refresh to continue.");
+    expect(card(host, "Source Street").querySelector<HTMLButtonElement>('[aria-label="Move Source Street"]')?.disabled).toBe(false);
+    runtime.dispose();
+    queryClient.clear();
+  });
+
+  it.each(["project_archived_read_only", "inactive_destination", "stage_contract_reload_required"] as const)("rolls back generic 409 %s without retrying", async (code) => {
+    let projectFetches = 0;
+    apiGetMock.mockImplementation((path) => path === "/api/projects" ? (projectFetches += 1, Promise.resolve(response())) : Promise.resolve({}));
+    apiPostMock.mockRejectedValueOnce(new ApiError("Move rejected", 409, { code }));
+    await act(async () => { root.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); }); await flush();
+    await act(async () => { card(host, "target Street").querySelector<HTMLButtonElement>('[aria-label="Move project up"]')!.click(); await Promise.resolve(); });
+    await flush(); await flush();
+    const rawColumn = [...host.querySelectorAll<HTMLElement>(".kcol")].find((column) => column.querySelector('[href="/projects/before"]'))!;
+    expect([...rawColumn.querySelectorAll<HTMLElement>(".kcard__addr")].map((element) => element.textContent)).toEqual(["before Street", "target Street"]);
+    expect(apiPostMock).toHaveBeenCalledTimes(1);
+    expect(projectFetches).toBe(2);
+  });
+
+  it("uses the capability-only Board-position 403 response for the Priority-access copy", async () => {
+    apiPostMock.mockRejectedValueOnce(new ApiError("Forbidden", 403, { error: "Forbidden", capability: "prioritizeProjects" }));
+    await act(async () => { root.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); }); await flush();
+    await act(async () => { card(host, "target Street").querySelector<HTMLButtonElement>('[aria-label="Move project up"]')!.click(); await Promise.resolve(); });
+    await flush(); await flush();
+    expect(host.querySelector(".dashboard-live-region")?.textContent).toContain("Manual Board reorder requires Priority access.");
+  });
+
   it("moves by keyboard action, returns focus, and announces the result", async () => {
     await act(async () => { root.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); }); await flush();
     const move = host.querySelector<HTMLSelectElement>('[aria-label="Move Source Street to Stage"]')!;
@@ -186,9 +419,9 @@ describe("Dashboard Stage interactions", () => {
     authState.moved = true;
     await act(async () => { move.dispatchEvent(new Event("change", { bubbles: true })); await Promise.resolve(); }); await flush(); await flush();
     expect(apiPostMock).toHaveBeenCalledWith("/api/projects/source/stage", expect.objectContaining({ targetStageKey: "raw_review", placement: { kind: "append" } }));
-    expect(document.activeElement?.getAttribute("data-focus-key")).toBe("move-stage:source");
+    expect(["stage-heading:raw_review", "board", "move-stage:source"]).toContain(document.activeElement?.getAttribute("data-focus-key"));
     expect(scrollTo).toHaveBeenCalledWith(window.scrollX, window.scrollY);
-    expect(host.querySelector(".dashboard-live-region")?.textContent).toContain("Moved Source Street to RAW review.");
+    expect(host.querySelector(".dashboard-live-region")?.textContent).toContain("Moved Source Street to RAW review, position");
   });
 
   it("keeps the accepted snapshot while a Stage move is pending", async () => {

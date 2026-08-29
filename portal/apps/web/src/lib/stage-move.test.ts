@@ -37,6 +37,22 @@ describe("shared Stage confirmation submission", () => {
     expect(submit).toHaveBeenCalledTimes(1);
   });
 
+  it("rethrows confirmation for a forbidden path without opening the modal or retrying", async () => {
+    const confirmation = new ApiError("Confirmation required", 409, {
+      code: "stage_confirmation_required",
+      requiredConfirmation: { reasons: ["backward"] },
+    });
+    const submit = vi.fn().mockRejectedValue(confirmation);
+    const confirm = vi.fn();
+
+    await expect(submitStageMoveWithConfirmation(request, submit, {
+      confirmationPolicy: "forbidden",
+      confirm,
+    })).rejects.toBe(confirmation);
+    expect(submit).toHaveBeenCalledTimes(1);
+    expect(confirm).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["missing", undefined],
     ["duplicated", ["backward", "backward"]],
