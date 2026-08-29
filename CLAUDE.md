@@ -142,7 +142,16 @@ added better-auth admin-plugin compatibility columns (`user.banned`/`ban_reason`
 columns (`coalesce_key`, `coalesce_until`, `recipient_membership_cycle_id`) and one index, applied
 2026-08-27 (TB4C); 0035 added 11 nullable `project_subtasks` schedule columns plus
 `schedule_version` (all bare `ALTER TABLE ADD COLUMN`, single-column NULL-safe CHECKs), applied
-2026-08-28 (TB4D) — next available number is **0036**. Branch off `main`.
+2026-08-28 (TB4D); 0036 added `projects.production_notes`, `user.authorization_epoch` (NOT NULL
+DEFAULT 0, `>= 0` CHECK), a nullable `notification_outbox.recipient_authorization_epoch`, and the
+additive `external_edited_upload_sessions`/`external_edited_upload_parts` tables plus three indexes,
+applied 2026-08-28 06:57:57 UTC (TB4E); 0037 added `projects.board_revision` (NOT NULL DEFAULT 0)
+plus nullable `autohdr_handoffs.editing_entry_board_revision` and `jobs.stage_entry_board_revision`,
+seeded the `tb5a_board_contract_enabled` flag OFF, normalized every unarchived project's
+`board_position` to per-Stage gap-1024 ranks with `board_revision = 1` (preflight + postflight
+CHECKs, 76-row `project_board_order_0037_rollback` capture table), and added a
+`projects(stage_key, archived_at, board_position, id)` index, applied 2026-08-29 (TB5A) — next
+available number is **0038**. Branch off `main`.
 **Prefer a bare `ALTER TABLE ADD COLUMN col TYPE CHECK(...)` over `drizzle-kit generate`'s
 table-rebuild form when the check is single-column and NULL-satisfiable** — the rebuild form's
 `PRAGMA foreign_keys=OFF` doesn't reliably persist across D1's remote migration execution even
