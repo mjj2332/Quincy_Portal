@@ -1380,16 +1380,9 @@ allowlist are silent no-ops otherwise). Full mechanics in `docs/subagents/agy-cl
 
 ## Open plans (see `docs/plans/`)
 
-- **`Revamp-TB0A-React-19-2-Runtime-Upgrade-Plan.md`** — drafted and approved (2 Sol rounds + Opus
-  review). Code-level upgrade built and independently re-verified locally (typecheck/build/tests
-  green, manual runtime checks partially exercised — see the plan's own verification sections for
-  what's covered and what's deferred to production smoke); not yet committed, not deployed, not
-  accepted. A prerequisite local-dev R2 upload fix (unrelated to React 19, found during TB0A
-  verification) is built alongside it, not yet committed.
-- **`Revamp-TB0B-Pipeline-Configuration-Boundary-Plan.md`** — drafted and approved (2 Sol rounds +
-  Opus review). Not yet built; the scope brief exists at
-  `docs/plans/revamp_2026_portal/roadmap/TB0B-Pipeline-Configuration-Boundary.md`. Sequenced after
-  TB0A per its own plan; no pipeline-order implementation is built or live.
+<!-- TB0A and TB0B shipped weeks ago (2026-08-24/25) — see the "Implemented plans" section and the
+     dedicated "deployed" entries above. Their stale "not yet deployed" bullets were removed here
+     2026-08-29; both plan files are in docs/plans/implemented/ and React is pinned at 19.2.8. -->
 
 - **`ProjectWorkspace-Asset-Tab-Sync-Plan.md`** — stub only, not yet drafted as a full plan.
   `ProjectWorkspace.tsx`'s `assets` state is shared across every collection tab and only updates
