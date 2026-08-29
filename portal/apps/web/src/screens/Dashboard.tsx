@@ -23,6 +23,7 @@ import {
   buildMoveRequest,
   classifyBoardMoveFailure,
   focusDescriptorFor,
+  focusTargetAfter,
   isSameStagePlacementChange,
   optimismSafeBeforeResponse,
   reconcileAuthoritativeResponse,
@@ -42,8 +43,32 @@ export { KanbanCard } from "../components/ProjectKanbanBoard";
 type ProjectScope = "active" | "archived";
 type Toast = { id: number; message: string; tone: "success" | "error" };
 type BoardOverlay = { key: string; baseline: ProjectSummary[]; model: ProjectSummary[]; movingProjectId: string };
+type FocusRestore = { key: string | null; x: number; y: number; fallbackStageKey?: StageKey };
+type MovementRecovery = { model: BoardModel; projectId: string; project: ProjectSummary; settledStageKey: StageKey };
 const noRuntimeSubscribe = () => () => undefined;
 const zeroRuntimeSnapshot = () => 0;
+
+function focusKeyForControl(control: FocusDescriptor["control"], projectId: string): string {
+  if (control === "handle") return `move-handle:${projectId}`;
+  if (control === "move-to") return `move-to:${projectId}`;
+  if (control === "rail-stage") return `rail-stage:${projectId}`;
+  return `${control}:${projectId}`;
+}
+
+function postSuccessRefetchFailureAnnouncement(recovery: MovementRecovery | null, sort: KanbanSortMode, terminal: boolean): string | undefined {
+  if (!recovery) return announce({ type: "post-success-refetch-failure" }, { terminal });
+  const targetColumn = sortKanbanProjects(
+    recovery.model.projects.filter((project) => canonicalStageKey(project.stageKey) === recovery.settledStageKey),
+    sort,
+  );
+  const index = targetColumn.findIndex((project) => project.id === recovery.projectId);
+  return announce({ type: "post-success-refetch-failure" }, {
+    terminal,
+    street: recovery.project.street,
+    position: index < 0 ? targetColumn.length : index + 1,
+    count: targetColumn.length,
+  });
+}
 
 function CoverMedia({ project, className = "", inlinePlaceholder = false, retryToken, onFailedChange }: { project: ProjectSummary; className?: string; inlinePlaceholder?: boolean; retryToken?: number; onFailedChange?: (failed: boolean) => void }) {
   if (project.coverAssetId) return <LazyImage className={className} preload="background" assetId={project.coverAssetId} alt={`Preview of ${project.street}`} retryToken={retryToken} onFailedChange={onFailedChange} />;
@@ -125,7 +150,8 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   movementSettlePendingRef.current = movementSettlePending;
   const movementBusyRef = useRef(false);
   const queuedRefreshRef = useRef(false);
-  const focusRestoreRef = useRef<{ key: string | null; x: number; y: number; fallbackStageKey?: StageKey } | null>(null);
+  const focusRestoreRef = useRef<FocusRestore | null>(null);
+  const movementRecoveryRef = useRef<MovementRecovery | null>(null);
   const acceptedQueryUpdatedAtRef = useRef<number | null>(null);
   const projects = boardOverlay?.key === dashboardKeyString
     ? boardOverlay.model
@@ -149,10 +175,15 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     queryClient?.setQueryData<ProjectSummary[]>(dashboardKey, (current) => update(current ?? []));
   }, [dashboardKey, queryClient]);
 
-  const captureFocusForRefresh = useCallback((fallbackStageKey?: StageKey) => {
+  const captureFocusForRefresh = useCallback((fallbackStageKey?: StageKey, descriptor?: FocusDescriptor) => {
     if (focusRestoreRef.current) return;
     const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    focusRestoreRef.current = { key: active?.getAttribute("data-focus-key") ?? null, x: window.scrollX, y: window.scrollY, fallbackStageKey };
+    focusRestoreRef.current = {
+      key: descriptor ? focusKeyForControl(descriptor.control, descriptor.projectId) : active?.getAttribute("data-focus-key") ?? null,
+      x: window.scrollX,
+      y: window.scrollY,
+      fallbackStageKey: descriptor?.sourceStageKey ?? fallbackStageKey,
+    };
   }, []);
 
   const setFocusFallbackStage = useCallback((stageKey: StageKey) => {
@@ -164,6 +195,25 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     setAcceptedProjects({ key: dashboardKeyString, projects: next });
   }, [captureFocusForRefresh, dashboardKeyString]);
 
+  const captureFocusTarget = useCallback((outcome: Parameters<typeof focusTargetAfter>[0], descriptor: FocusDescriptor, model: BoardModel, settledStageKey?: StageKey) => {
+    const target = focusTargetAfter(outcome, descriptor, model, settledStageKey);
+    const fallbackStageKey = outcome !== "stale-move-to"
+      ? settledStageKey ?? descriptor.sourceStageKey
+      : undefined;
+    const next: FocusRestore = {
+      key: "control" in target ? focusKeyForControl(target.control, target.projectId) : null,
+      x: window.scrollX,
+      y: window.scrollY,
+      fallbackStageKey,
+    };
+    if (focusRestoreRef.current) {
+      focusRestoreRef.current.key = next.key;
+      focusRestoreRef.current.fallbackStageKey = next.fallbackStageKey;
+    } else {
+      focusRestoreRef.current = next;
+    }
+  }, []);
+
   const acceptDashboardProjects = useCallback((next: ProjectSummary[], dataUpdatedAt?: number) => {
     if (queryRuntime?.principalTerminal) return;
     if (dataUpdatedAt !== undefined && acceptedQueryUpdatedAtRef.current === dataUpdatedAt) return;
@@ -174,7 +224,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   }, [queryRuntime, replaceAcceptedProjects]);
 
   useLayoutEffect(() => {
-    if (pendingMoves.size > 0 || pendingOrdering.size > 0 || movementSettlePending) return;
+    if (pendingMoves.size > 0 || pendingOrdering.size > 0 || (movementSettlePending && !recoveryReason)) return;
     const restore = focusRestoreRef.current;
     if (!restore) return;
     focusRestoreRef.current = null;
@@ -185,7 +235,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       ? document.querySelector<HTMLElement>(`[data-focus-key="stage-heading:${restore.fallbackStageKey}"]`)
       : null;
     (fallback ?? document.querySelector<HTMLElement>('[data-focus-key="board"]'))?.focus();
-  }, [acceptedProjects, boardOverlay, boardUnavailableMessage, dashboardKeyString, movementSettlePending, pendingMoves, pendingOrdering, projects]);
+  }, [acceptedProjects, announcement, boardOverlay, boardUnavailableMessage, dashboardKeyString, movementSettlePending, pendingMoves, pendingOrdering, projects, recoveryReason]);
 
   useEffect(() => {
     if (!queryProjects || queryRuntime?.principalTerminal) return;
@@ -199,6 +249,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       movementSettlePendingRef.current = false;
       setMovementSettlePending(false);
       setRecoveryReason(null);
+      movementRecoveryRef.current = null;
     }
   }, [acceptDashboardProjects, interactionBlocked, queryDataUpdatedAt, queryProjects, queryRuntime]);
 
@@ -211,7 +262,8 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         if (settling) {
           const message = "The move was saved, but the latest Board could not be loaded. Refresh to continue.";
           setRecoveryReason(message);
-          if (!queryRuntime?.principalTerminal) setAnnouncement(message);
+          const recoveryMessage = postSuccessRefetchFailureAnnouncement(movementRecoveryRef.current, effectiveKanbanSort, Boolean(queryRuntime?.principalTerminal));
+          if (recoveryMessage !== undefined) setAnnouncement(recoveryMessage);
         } else if (interactionBlockedRef.current) {
           queuedRefreshRef.current = true;
         }
@@ -227,17 +279,19 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         movementSettlePendingRef.current = false;
         setMovementSettlePending(false);
         setRecoveryReason(null);
+        movementRecoveryRef.current = null;
       }
     }).catch(() => {
       if (movementSettlePendingRef.current) {
         const message = "The move was saved, but the latest Board could not be loaded. Refresh to continue.";
         setRecoveryReason(message);
-        if (!queryRuntime?.principalTerminal) setAnnouncement(message);
+        const recoveryMessage = postSuccessRefetchFailureAnnouncement(movementRecoveryRef.current, effectiveKanbanSort, Boolean(queryRuntime?.principalTerminal));
+        if (recoveryMessage !== undefined) setAnnouncement(recoveryMessage);
       } else if (interactionBlockedRef.current) {
         queuedRefreshRef.current = true;
       }
     });
-  }, [acceptDashboardProjects, interactionBlocked, projectsQuery.refetch, queryRuntime]);
+  }, [acceptDashboardProjects, effectiveKanbanSort, interactionBlocked, projectsQuery.refetch, queryRuntime]);
 
   useEffect(() => {
     if (!queryRuntime) return;
@@ -248,6 +302,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       setBoardOverlay(null);
       setMovementSettlePending(false);
       setRecoveryReason(null);
+      movementRecoveryRef.current = null;
       focusRestoreRef.current = null;
       setBoardInteraction({ activeId: undefined, proposal: null });
       setPendingMoves(new Set());
@@ -369,22 +424,42 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     if (movementBusyRef.current || movementSettlePendingRef.current || pendingMoves.size > 0 || activeConfirm || pendingOrdering.size > 0) return;
     const baselineModel = boardModelFromProjects(projects);
     const movingProject = baselineModel.projects.find((project) => project.id === intent.projectId);
-    if (!movingProject || isMovementTerminal(intent.projectId)) return;
+    if (!movingProject) {
+      if (intent.origin === "move-to") {
+        captureFocusForRefresh(intent.focusDescriptor.sourceStageKey, intent.focusDescriptor);
+        const message = announce({ type: "stale-move-to" }, { terminal: Boolean(queryRuntime?.principalTerminal) });
+        if (message !== undefined) setAnnouncement(message);
+        queueDashboardRefresh();
+      }
+      return;
+    }
+    if (isMovementTerminal(intent.projectId)) return;
     const sourceStageKey = canonicalStageKey(movingProject.stageKey);
     const sameStage = isSameStagePlacementChange({ gap: intent.gap, movingProject });
     const sameStageEnabled = canPrioritize && hasAuthorizedBoardMap && effectiveKanbanSort === "board";
     const fallbackStage = intent.focusDescriptor.sourceStageKey;
-    captureFocusForRefresh(fallbackStage);
+    captureFocusForRefresh(fallbackStage, intent.focusDescriptor);
+
+    const activeStageKeys = new Set(activeStages.map((stage) => canonicalStageKey(stage.key)));
+    if (!activeStageKeys.has(intent.gap.targetStageKey)) {
+      captureFocusTarget(intent.origin === "move-to" ? "stale-move-to" : "dnd-cancel", intent.focusDescriptor, baselineModel, sourceStageKey);
+      movementAnnouncement(intent.origin === "move-to" ? { type: "stale-move-to" } : { type: "dnd-cancel" }, baselineModel, movingProject, sourceStageKey);
+      if (intent.origin === "move-to") queueDashboardRefresh();
+      return;
+    }
 
     if ((intent.kind === "same" && (!sameStage || !sameStageEnabled)) || (intent.kind === "cross" && sameStage)) {
+      captureFocusTarget(intent.origin === "keyboard" ? "invalid-keyboard-target" : "dnd-cancel", intent.focusDescriptor, baselineModel, sourceStageKey);
       movementAnnouncement(intent.origin === "keyboard" ? { type: "invalid-keyboard-target" } : { type: "dnd-cancel" }, baselineModel, movingProject, sourceStageKey);
       return;
     }
     if (intent.kind === "same" && !boardGapChangesOrder(intent.gap, baselineModel, intent.projectId)) {
+      captureFocusTarget("no-op", intent.focusDescriptor, baselineModel, sourceStageKey);
       movementAnnouncement({ type: "unchanged-gap" }, baselineModel, movingProject, sourceStageKey);
       return;
     }
     if (intent.kind === "cross" && !canMoveStages) {
+      captureFocusTarget("dnd-cancel", intent.focusDescriptor, baselineModel, sourceStageKey);
       movementAnnouncement({ type: "dnd-cancel" }, baselineModel, movingProject, sourceStageKey);
       return;
     }
@@ -393,8 +468,9 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     if (intent.kind === "same") {
       const resolved = reorderIntentFromGap(intent.gap, baselineModel, intent.projectId, role);
       if ("stale" in resolved) {
+        captureFocusTarget(intent.origin === "move-to" ? "stale-move-to" : "dnd-cancel", intent.focusDescriptor, baselineModel, sourceStageKey);
         movementAnnouncement(intent.origin === "move-to" ? { type: "stale-move-to" } : { type: "dnd-cancel" }, baselineModel, movingProject, sourceStageKey);
-        queueDashboardRefresh();
+        if (intent.origin === "move-to") queueDashboardRefresh();
         return;
       }
       request = {
@@ -405,8 +481,9 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     } else {
       const resolved = buildMoveRequest(baselineModel, intent.projectId, intent.gap, role);
       if ("stale" in resolved) {
+        captureFocusTarget(intent.origin === "move-to" ? "stale-move-to" : "dnd-cancel", intent.focusDescriptor, baselineModel, sourceStageKey);
         movementAnnouncement(intent.origin === "move-to" ? { type: "stale-move-to" } : { type: "dnd-cancel" }, baselineModel, movingProject, sourceStageKey);
-        queueDashboardRefresh();
+        if (intent.origin === "move-to") queueDashboardRefresh();
         return;
       }
       request = resolved;
@@ -440,6 +517,8 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       );
       if (!response) {
         setBoardOverlay(null);
+        movementRecoveryRef.current = null;
+        captureFocusTarget("modal-cancel", intent.focusDescriptor, baselineModel, sourceStageKey);
         movementAnnouncement({ type: "modal-cancel" }, baselineModel, movingProject, sourceStageKey);
         shouldRefresh = true;
         return;
@@ -448,19 +527,24 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       const reconciled = reconcileAuthoritativeResponse(baselineModel, intent.projectId, response);
       if (isMovementTerminal(intent.projectId)) return;
       setFocusFallbackStage(canonicalStageKey(response.project.stageKey));
+      captureFocusTarget(response.changed ? "success" : "no-op", intent.focusDescriptor, reconciled.model, canonicalStageKey(response.project.stageKey));
       replaceAcceptedProjects(reconciled.model.projects);
       setBoardOverlay(null);
       setRecoveryReason(null);
       const settledStage = canonicalStageKey(response.project.stageKey);
+      const settledProject = reconciled.model.projects.find((project) => project.id === intent.projectId) ?? movingProject;
+      movementRecoveryRef.current = response.changed
+        ? { model: reconciled.model, projectId: intent.projectId, project: settledProject, settledStageKey: settledStage }
+        : null;
       movementAnnouncement(
         response.changed
           ? (reconciled.sourceProvisional ? { type: "cross-stage-success" } : { type: "same-stage-success" })
           : { type: "no-change" },
         reconciled.model,
-        reconciled.model.projects.find((project) => project.id === intent.projectId) ?? movingProject,
+        settledProject,
         settledStage,
       );
-      if (reconciled.sourceProvisional) {
+      if (response.changed) {
         movementSettlePendingRef.current = true;
         setMovementSettlePending(true);
       }
@@ -478,6 +562,8 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       const isConflict = reason instanceof ApiError && reason.status === 409 && code === "project_stage_conflict";
       const isContractUnavailable = reason instanceof ApiError && reason.status === 503 && code === "board_contract_disabled";
       const isMaintenance = reason instanceof ApiError && reason.status === 503 && code === "board_schema_maintenance";
+      const focusOutcome = isConflict ? "conflict" : (isContractUnavailable || isMaintenance ? "503" : "conflict");
+      captureFocusTarget(focusOutcome, intent.focusDescriptor, baselineModel, sourceStageKey);
       if (isPriorityForbidden) {
         setAnnouncement("Manual Board reorder requires Priority access.");
         toast("Manual Board reorder requires Priority access.", "error");
@@ -515,18 +601,8 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     void runBoardMovement({ projectId, gap, kind, origin: focusDescriptor.path, focusDescriptor });
   }
 
-  function onMoveToStage(project: ProjectSummary, targetStageKey: string) {
-    const currentProject = projects.find((item) => item.id === project.id);
-    if (!currentProject) return;
-    const model = boardModelFromProjects(projects);
-    const focusDescriptor = focusDescriptorFor("move-to", currentProject, model, "move-to");
-    void runBoardMovement({
-      projectId: currentProject.id,
-      gap: { targetStageKey: canonicalStageKey(targetStageKey as ProjectSummary["stageKey"]), successor: "end" },
-      kind: "cross",
-      origin: "move-to",
-      focusDescriptor,
-    });
+  function onMoveToStage(project: ProjectSummary, gap: SemanticGap, kind: "cross" | "same", focusDescriptor: FocusDescriptor) {
+    void runBoardMovement({ projectId: project.id, gap, kind, origin: "move-to", focusDescriptor });
   }
 
   async function setProjectPriority(project: ProjectSummary, priority: number | null) {
@@ -647,9 +723,10 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
           activeStages={activeStages}
           canMoveStages={canMoveStages}
           canPrioritize={canPrioritize && hasAuthorizedBoardMap}
+          role={role}
           boardMutationEnabled={boardMutationEnabled}
           movementDisabled={movementSettlePending || !boardMutationEnabled}
-          sameStageReorderEnabled={canPrioritize && hasAuthorizedBoardMap && effectiveKanbanSort === "board"}
+          sameStageReorderEnabled={boardMutationEnabled && canPrioritize && hasAuthorizedBoardMap && effectiveKanbanSort === "board"}
           effectiveKanbanSort={effectiveKanbanSort}
           pendingMoves={pendingMoves}
           pendingOrdering={pendingOrdering}
@@ -658,6 +735,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
           onBoardPosition={moveProjectPosition}
           onPriorityChange={setProjectPriority}
           onMoveStage={onMoveToStage}
+          onMoveToProposalChange={(proposal) => setBoardInteraction((current) => ({ activeId: current.activeId, proposal }))}
           onInteractionStateChange={setBoardInteraction}
           onAnnounce={(message) => { if (message !== undefined) setAnnouncement(message); }}
         />

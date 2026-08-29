@@ -141,7 +141,10 @@ export function sortKanbanProjectsByShootDate(
 
 export function sortKanbanProjects(projects: ProjectSummary[], sort: KanbanSortMode = "board"): ProjectSummary[] {
   const boardRank = (project: ProjectSummary): number => {
-    const order = project.authorizedBoardOrder?.[project.stageKey];
+    const canonical = canonicalStageKey(project.stageKey);
+    const order = canonical
+      ? project.authorizedBoardOrder?.[canonical] ?? project.authorizedBoardOrder?.[project.stageKey]
+      : project.authorizedBoardOrder?.[project.stageKey];
     if (order !== undefined) {
       const rank = order.indexOf(project.id);
       return rank < 0 ? Number.POSITIVE_INFINITY : rank;
@@ -156,6 +159,7 @@ export function sortKanbanProjects(projects: ProjectSummary[], sort: KanbanSortM
   if (sort !== "board") return sortKanbanProjectsByShootDate(projects, sort);
   const hasAuthorizedMap = projects.some((project) => project.boardMapPresent === true
     || project.boardRank !== undefined
+    || project.authorizedBoardOrder?.[canonicalStageKey(project.stageKey) ?? project.stageKey] !== undefined
     || project.authorizedBoardOrder?.[project.stageKey] !== undefined);
   if (hasAuthorizedMap) {
     return [...projects].sort((left, right) => boardRank(left) - boardRank(right) || left.id.localeCompare(right.id));
@@ -458,6 +462,7 @@ export function boardGapChangesOrder(
   const order = modelOrders(model)[canonicalStageKey(gap.targetStageKey) ?? gap.targetStageKey] ?? [];
   const withoutMoving = order.filter((projectId) => projectId !== movingProjectId);
   const currentIndex = order.indexOf(movingProjectId);
+  if (gap.successor === movingProjectId) return false;
   const targetIndex = gap.successor === "end" ? withoutMoving.length : withoutMoving.indexOf(gap.successor);
   return currentIndex < 0 || targetIndex < 0 || targetIndex !== withoutMoving.slice(0, currentIndex).length;
 }
@@ -489,6 +494,60 @@ export type EligibleTargetCapabilities = {
   activeStageKeys: readonly StageKey[];
 };
 
+export type MoveToPositionOption = {
+  label: string;
+  successor: string | "end";
+};
+
+export type MoveToPositionCapabilities = EligibleTargetCapabilities & {
+  stageLabel?: string;
+  stageLabels?: Readonly<Record<string, string>>;
+};
+
+function fallbackStageLabel(stageKey: StageKey): string {
+  if (stageKey === "editing_autohdr") return "Editing";
+  return stageKey.split("_").map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ");
+}
+
+/**
+ * Returns the complete, role-safe position menu for the non-drag Move-to action.
+ * The authorized order is only a source of candidate IDs; the visible project map
+ * is the allow-list that prevents hidden projects leaking into the menu.
+ */
+export function moveToPositionOptions(
+  model: BoardModel,
+  movingProjectId: string,
+  targetStageKey: StageKey,
+  role: Role,
+  caps: MoveToPositionCapabilities,
+): MoveToPositionOption[] {
+  const moving = model.projects.find((project) => project.id === movingProjectId);
+  const target = canonicalStageKey(targetStageKey);
+  if (!moving || !target || !caps.activeStageKeys.some((key) => canonicalStageKey(key) === target)) return [];
+  const source = projectStageKey(moving);
+  if (!source) return [];
+  const sameStage = source === target;
+  if (sameStage && !(role === "admin" && caps.canPrioritize && caps.sort === "board")) return [];
+  if (!sameStage && !caps.canMoveProjectStage) return [];
+
+  const order = authorizedModelOrders(model)?.[target];
+  if (!order) return [];
+  const visibleById = projectById(model.projects);
+  const visibleSuccessors = order.filter((projectId) => {
+    if (projectId === movingProjectId) return false;
+    const candidate = visibleById.get(projectId);
+    return candidate !== undefined && projectStageKey(candidate) === target;
+  });
+  const label = caps.stageLabels?.[target] ?? caps.stageLabel ?? fallbackStageLabel(target);
+  return [
+    { label: `End of ${label}`, successor: "end" },
+    ...visibleSuccessors.map((successor, index) => ({
+      label: `Before ${visibleById.get(successor)!.street} — position ${index + 1}`,
+      successor,
+    })),
+  ];
+}
+
 export function eligibleTarget(
   gap: SemanticGap,
   model: BoardModel,
@@ -496,10 +555,11 @@ export function eligibleTarget(
   caps: EligibleTargetCapabilities,
 ): boolean {
   const mover = model.projects.find((project) => project.id === movingProjectId);
-  if (!mover || gap.successor === movingProjectId || !caps.activeStageKeys.includes(gap.targetStageKey)) return false;
+  const targetStage = canonicalStageKey(gap.targetStageKey);
+  if (!mover || !targetStage || gap.successor === movingProjectId || !caps.activeStageKeys.some((key) => canonicalStageKey(key) === targetStage)) return false;
   const sourceStage = projectStageKey(mover);
   if (!sourceStage) return false;
-  if (sourceStage === gap.targetStageKey) return caps.canPrioritize && caps.sort === "board";
+  if (sourceStage === targetStage) return caps.canPrioritize && caps.sort === "board";
   return caps.canMoveProjectStage;
 }
 
@@ -681,6 +741,7 @@ export function focusTargetAfter(
   outcome: FocusOutcome,
   descriptor: FocusDescriptor,
   model: BoardModel,
+  settledStageKey?: StageKey,
 ): { control: FocusDescriptor["control"]; projectId: string } | { fallback: "stage-heading" | "board" } {
   const railOutcome = descriptor.path === "rail" || outcome === "rail";
   if (railOutcome) return hasProject(model, descriptor.projectId)
@@ -689,11 +750,12 @@ export function focusTargetAfter(
   if (outcome === "stale-move-to") return hasProject(model, descriptor.projectId)
     ? { control: "move-to", projectId: descriptor.projectId }
     : { fallback: "board" };
-  const control = outcome === "drop-outside" || outcome === "no-op" || outcome === "invalid-keyboard-target"
-    ? "handle"
-    : descriptor.control;
+  const control = descriptor.control;
   if (hasProject(model, descriptor.projectId)) return { control, projectId: descriptor.projectId };
-  return hasStage(model, descriptor.sourceStageKey) ? { fallback: "stage-heading" } : { fallback: "board" };
+  const fallbackStage = outcome === "success" || outcome === "post-success-refetch-failure"
+    ? settledStageKey ?? descriptor.sourceStageKey
+    : descriptor.sourceStageKey;
+  return hasStage(model, fallbackStage) ? { fallback: "stage-heading" } : { fallback: "board" };
 }
 
 export type BoardAnnouncementEventType =

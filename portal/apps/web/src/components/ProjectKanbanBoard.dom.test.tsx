@@ -5,7 +5,7 @@ import { ProjectKanbanBoard, type BoardInteractionState } from "./ProjectKanbanB
 import type { ProjectSummary } from "../lib/kanban-interaction";
 import type { PipelineStage } from "../lib/stages";
 
-type DndTestEvent = { active: { id: string; data?: unknown }; over: { id: string; data?: unknown } | null };
+type DndTestEvent = { active: { id: string; data?: unknown }; over: { id: string; data?: unknown } | null; activatorEvent?: Event };
 const dnd = vi.hoisted(() => ({
   handlers: [] as Array<{ props: Parameters<typeof import("@dnd-kit/core").DndContext>[0]; start?: (event: DndTestEvent) => void; over?: (event: DndTestEvent) => void; end?: (event: DndTestEvent) => void; cancel?: (event: DndTestEvent) => void }>,
 }));
@@ -16,7 +16,11 @@ vi.mock("../lib/capabilities", () => ({
 }));
 vi.mock("../lib/stages", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/stages")>();
-  return { ...actual, useStages: () => ({ stages: [], presentationStageKey: (key: string) => key }) };
+  return { ...actual, useStages: () => ({ stages: [
+    { key: "awaiting_raw" as const, label: "Awaiting RAW", displayOrder: 1, active: true },
+    { key: "raw_review" as const, label: "RAW review", displayOrder: 2, active: true },
+    { key: "editing_autohdr" as const, label: "Editing", displayOrder: 3, active: true },
+  ], presentationStageKey: (key: string) => key }) };
 });
 vi.mock("@dnd-kit/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@dnd-kit/core")>();
@@ -115,6 +119,10 @@ function event(activeId: string, activeData: unknown, over: { id: string; data: 
   return { active: { id: activeId, data: activeData }, over };
 }
 
+function bodyPopover(id: string) {
+  return document.getElementById(id);
+}
+
 async function start() {
   const handler = dnd.handlers.at(-1)?.start;
   if (!handler) throw new Error("No drag-start handler");
@@ -172,6 +180,46 @@ describe("ProjectKanbanBoard", () => {
     expect(sortable.contexts).toEqual([["source"], ["visual-second", "visual-first"], []]);
     expect(dnd.handlers[0]?.props.accessibility?.restoreFocus).toBe(false);
     expect(dnd.handlers[0]?.props.accessibility?.screenReaderInstructions?.draggable).toContain("focus its Move project handle");
+    expect(dnd.handlers[0]?.props.sensors?.some((descriptor) => descriptor.sensor.name === "KeyboardSensor")).toBe(true);
+  });
+
+  it("opens the two-step position-aware Move-to disclosure", async () => {
+    await renderBoard();
+    const trigger = host.querySelector<HTMLButtonElement>('[aria-label="Move source Street to…"]')!;
+    await act(async () => { trigger.click(); await Promise.resolve(); });
+    expect(bodyPopover("move-to-dialog-source")?.getAttribute("data-step")).toBe("stage");
+    const stage = [...document.querySelectorAll<HTMLButtonElement>('[role="radio"]')].find((button) => button.textContent === "RAW review")!;
+    await act(async () => { stage.click(); await Promise.resolve(); });
+    const dialog = bodyPopover("move-to-dialog-source")!;
+    expect(dialog.getAttribute("data-step")).toBe("position");
+    expect(dialog.querySelector('[role="listbox"]')?.textContent).toContain("End of RAW review");
+    expect(dialog.textContent).toContain("Before visual-second Street — position 1");
+  });
+
+  it("passes the selected Move-to visual successor through the same semantic intent boundary", async () => {
+    await renderBoard();
+    const trigger = host.querySelector<HTMLButtonElement>('[aria-label="Move source Street to…"]')!;
+    await act(async () => { trigger.click(); await Promise.resolve(); });
+    await act(async () => { [...document.querySelectorAll<HTMLButtonElement>('[role="radio"]')].find((button) => button.textContent === "RAW review")!.click(); await Promise.resolve(); });
+    const dialog = bodyPopover("move-to-dialog-source")!;
+    await act(async () => { [...dialog.querySelectorAll<HTMLButtonElement>('[role="option"]')].find((button) => button.textContent?.includes("Before visual-first Street"))!.click(); await Promise.resolve(); });
+    const submit = bodyPopover("move-to-dialog-source")!.querySelector<HTMLButtonElement>(".button:not(.button--secondary)")!;
+    await act(async () => { submit.click(); await Promise.resolve(); });
+    expect(callbacks.onMoveStage).toHaveBeenCalledWith(expect.objectContaining({ id: "source" }), { targetStageKey: "raw_review", successor: "visual-first" }, "cross", expect.objectContaining({ control: "move-to" }));
+  });
+
+  it("does not expose same-Stage Move-to choices outside Admin Board order", async () => {
+    await renderBoard({ role: "editor", canPrioritize: false, canMoveStages: true });
+    const editorTrigger = host.querySelector<HTMLButtonElement>('[aria-label="Move visual-first Street to…"]')!;
+    await act(async () => { editorTrigger.click(); await Promise.resolve(); });
+    expect([...document.querySelectorAll<HTMLButtonElement>('[role="radio"]')].map((button) => button.textContent)).not.toContain("RAW review");
+    act(() => root.unmount());
+    host.replaceChildren();
+    root = createRoot(host);
+    await renderBoard({ role: "admin", canPrioritize: true, effectiveKanbanSort: "priority" });
+    const priorityTrigger = host.querySelector<HTMLButtonElement>('[aria-label="Move visual-first Street to…"]')!;
+    await act(async () => { priorityTrigger.click(); await Promise.resolve(); });
+    expect([...document.querySelectorAll<HTMLButtonElement>('[role="radio"]')].map((button) => button.textContent)).not.toContain("RAW review");
   });
 
   it("routes drag lifecycle announcements through dnd-kit's live region only", async () => {
@@ -236,7 +284,7 @@ describe("ProjectKanbanBoard", () => {
     await start();
     await end({ id: "source", data: cardData("awaiting_raw", "source") });
     expect(callbacks.onCrossStageMove).not.toHaveBeenCalled();
-    expect(callbacks.onAnnounce).not.toHaveBeenCalled();
+    expect(callbacks.onAnnounce).toHaveBeenCalledWith(expect.stringContaining("Cancelled moving source Street"));
   });
 
   it("routes an eligible same-Stage drag through the general Board movement callback", async () => {
@@ -246,6 +294,17 @@ describe("ProjectKanbanBoard", () => {
     await overProject("visual-first", "raw_review", "visual-second", cardData("raw_review", "visual-second"));
     await endProject("visual-first", "raw_review", { id: "visual-second", data: cardData("raw_review", "visual-second") });
     expect(onBoardMove).toHaveBeenCalledWith("visual-first", { targetStageKey: "raw_review", successor: "visual-second" }, "same", expect.objectContaining({ projectId: "visual-first" }));
+  });
+
+  it("captures keyboard drag origin and rejects an ineligible same-Stage destination", async () => {
+    const onBoardMove = vi.fn();
+    await renderBoard({ role: "editor", canPrioritize: false, sameStageReorderEnabled: false, onBoardMove });
+    const handler = dnd.handlers.at(-1)?.start;
+    await act(async () => { handler?.({ ...event("source", cardData("awaiting_raw", "source"), null), activatorEvent: new KeyboardEvent("keydown", { key: " " }) }); await Promise.resolve(); });
+    await overProject("source", "awaiting_raw", "visual-first", cardData("raw_review", "visual-first"));
+    await endProject("source", "awaiting_raw", { id: "source", data: cardData("awaiting_raw", "source") });
+    expect(onBoardMove).not.toHaveBeenCalled();
+    expect(callbacks.onAnnounce).toHaveBeenCalledWith(expect.stringContaining("Cancelled moving source Street"));
   });
 
   it("captures the empty-column semantic gap", async () => {

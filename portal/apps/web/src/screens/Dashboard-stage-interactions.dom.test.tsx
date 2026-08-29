@@ -11,7 +11,7 @@ import { ProjectQueryRuntime, ProjectQueryRuntimeProvider } from "../lib/project
 const authState = vi.hoisted(() => ({ role: "admin" as "admin" | "editor" | "external_editor", moved: false }));
 const apiGetMock = vi.hoisted(() => vi.fn<(path: string) => Promise<unknown>>());
 const apiPostMock = vi.hoisted(() => vi.fn<(path: string, body: unknown) => Promise<unknown>>());
-type DndTestEvent = { active: { id: string; data?: unknown }; over: { id: string; data?: unknown } | null };
+type DndTestEvent = { active: { id: string; data?: unknown }; over: { id: string; data?: unknown } | null; activatorEvent?: Event };
 const dnd = vi.hoisted(() => ({ handlers: [] as Array<{ props: Parameters<typeof import("@dnd-kit/core").DndContext>[0]; start?: (event: DndTestEvent) => void; over?: (event: DndTestEvent) => void; end?: (event: DndTestEvent) => void; cancel?: (event: DndTestEvent) => void }> }));
 vi.mock("../lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/api")>();
@@ -136,14 +136,14 @@ function columnData(stageKey: "awaiting_raw" | "raw_review" | "editing_autohdr")
   return { current: { kind: "column", stageKey } };
 }
 
-function dndEvent(activeId: string, activeData: unknown, over: { id: string; data: unknown } | null = null): DndTestEvent {
-  return { active: { id: activeId, data: activeData }, over };
+function dndEvent(activeId: string, activeData: unknown, over: { id: string; data: unknown } | null = null, activatorEvent?: Event): DndTestEvent {
+  return { active: { id: activeId, data: activeData }, over, activatorEvent };
 }
 
-async function dndStart(activeId: string, stageKey: "awaiting_raw" | "raw_review" | "editing_autohdr") {
+async function dndStart(activeId: string, stageKey: "awaiting_raw" | "raw_review" | "editing_autohdr", keyboard = false) {
   const handler = dnd.handlers.at(-1)?.start;
   if (!handler) throw new Error("No DndContext drag-start handler was rendered");
-  await act(async () => { handler(dndEvent(activeId, cardData(stageKey, activeId))); await Promise.resolve(); });
+  await act(async () => { handler(dndEvent(activeId, cardData(stageKey, activeId), null, keyboard ? new KeyboardEvent("keydown", { key: " " }) : undefined)); await Promise.resolve(); });
 }
 
 async function dndOver(activeId: string, activeStage: "awaiting_raw" | "raw_review" | "editing_autohdr", overId: string, overData: unknown) {
@@ -168,6 +168,21 @@ function card(host: HTMLElement, street: string) {
   const address = [...host.querySelectorAll<HTMLElement>(".kcard__addr")].find((element) => element.textContent === street);
   if (!address) throw new Error(`Missing card ${street}`);
   return address.closest<HTMLElement>(".kcard-wrap")!;
+}
+
+async function moveToEnd(host: HTMLElement, street: string, targetLabel: string) {
+  const trigger = card(host, street).querySelector<HTMLButtonElement>('[data-focus-key^="move-to:"]');
+  if (!trigger) throw new Error(`Missing Move-to trigger for ${street}`);
+  await act(async () => { trigger.click(); await Promise.resolve(); });
+  const stage = [...document.querySelectorAll<HTMLButtonElement>('[role="radio"]')].find((button) => button.textContent === targetLabel);
+  if (!stage) throw new Error(`Missing target Stage ${targetLabel}`);
+  await act(async () => { stage.click(); await Promise.resolve(); });
+  const position = [...document.querySelectorAll<HTMLButtonElement>('[role="option"]')].find((button) => button.textContent?.startsWith("End of "));
+  if (!position) throw new Error("Missing Move-to end position");
+  await act(async () => { position.click(); await Promise.resolve(); });
+  const submit = [...document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Move project");
+  if (!submit) throw new Error("Missing Move-to submit button");
+  await act(async () => { submit.click(); await Promise.resolve(); });
 }
 
 async function flush() {
@@ -305,6 +320,19 @@ describe("Dashboard Stage interactions", () => {
     await flush();
   });
 
+  it("routes an eligible keyboard cross-Stage drop through the exact Stage request and restores the handle", async () => {
+    apiPostMock.mockResolvedValueOnce({ changed: true, project: { projectId: "source", stageKey: "raw_review", boardRevision: 4 }, board: { sourceStageKey: "awaiting_raw", targetStageKey: "raw_review", orderedVisibleProjectIds: ["before", "target", "source"] } });
+    await act(async () => { root.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); }); await flush();
+    const handle = card(host, "Source Street").querySelector<HTMLButtonElement>('[aria-label="Move Source Street"]')!;
+    handle.focus();
+    await dndStart("source", "awaiting_raw", true);
+    await dndOver("source", "awaiting_raw", "target", cardData("raw_review", "target"));
+    await dndEnd("source", "awaiting_raw", { id: "target", data: cardData("raw_review", "target") });
+    await flush();
+    expect(apiPostMock).toHaveBeenCalledWith("/api/projects/source/stage", expect.objectContaining({ targetStageKey: "raw_review", placement: { kind: "between", before: { projectId: "before", boardRevision: 8 }, after: { projectId: "target", boardRevision: 9 } } }));
+    expect(document.activeElement?.getAttribute("data-focus-key")).toBe("move-handle:source");
+  });
+
   it("routes Board-order arrows through the same board-position orchestrator", async () => {
     let resolveMove!: (value: unknown) => void;
     apiPostMock.mockImplementationOnce((path) => {
@@ -418,7 +446,7 @@ describe("Dashboard Stage interactions", () => {
     expect(host.querySelector('select[aria-label="Priority"]')).not.toBeNull();
     expect(host.querySelector('[aria-label="Move target Street"]')?.getAttribute("disabled")).toBe("");
     expect(host.querySelector('[aria-label="Move project up"]')).toBeNull();
-    expect(host.querySelector('[aria-label="Move target Street to Stage"]')).toBeNull();
+    expect(host.querySelector('[aria-label="Move target Street to…"]')).toBeNull();
     resolveRefresh(response());
     await flush();
   });
@@ -472,7 +500,7 @@ describe("Dashboard Stage interactions", () => {
     expect(projectFetches).toBe(2);
     const movedCard = card(host, "Source Street");
     expect(movedCard.querySelector<HTMLButtonElement>('[aria-label="Move Source Street"]')?.disabled).toBe(true);
-    expect(movedCard.querySelector<HTMLSelectElement>('[aria-label="Move Source Street to Stage"]')?.disabled).toBe(true);
+    expect(movedCard.querySelector<HTMLButtonElement>('[aria-label="Move Source Street to…"]')?.disabled).toBe(true);
     expect(movedCard.querySelector<HTMLButtonElement>('[aria-label="Move project up"]')?.disabled).toBe(true);
     movedCard.querySelector<HTMLButtonElement>('[aria-label="Move project up"]')?.click();
     expect(apiPostMock).toHaveBeenCalledTimes(1);
@@ -488,7 +516,7 @@ describe("Dashboard Stage interactions", () => {
     expect([...settledColumn.querySelectorAll<HTMLElement>(".kcard__addr")].map((element) => element.textContent)).toEqual(["target Street", "Source Street", "before Street"]);
     const settledSourceColumn = card(host, "source-sibling-b Street").closest<HTMLElement>(".kcol")!;
     expect([...settledSourceColumn.querySelectorAll<HTMLElement>(".kcard__addr")].map((element) => element.textContent)).toEqual(["source-sibling-b Street", "source-sibling-a Street"]);
-    expect([...host.querySelectorAll<HTMLElement>(".kcard-drag-handle, .kcard-stage-control select, .kcard-controls__arrow")].every((element) => !element.hasAttribute("disabled"))).toBe(true);
+    expect([...host.querySelectorAll<HTMLElement>(".kcard-drag-handle, .kcard-move-to, .kcard-controls__arrow")].every((element) => !element.hasAttribute("disabled"))).toBe(true);
     expect(card(host, "Source Street").querySelector<HTMLButtonElement>('[aria-label="Move Source Street"]')?.disabled).toBe(false);
     runtime.dispose();
     queryClient.clear();
@@ -537,7 +565,7 @@ describe("Dashboard Stage interactions", () => {
     expect(host.querySelector('.muted[role="status"]')?.textContent ?? "").not.toContain("The move was saved, but the latest Board could not be loaded. Refresh to continue.");
     expect(card(host, "Source Street").querySelector<HTMLButtonElement>('[aria-label="Move Source Street"]')?.disabled).toBe(false);
     expect([...card(host, "source-sibling-b Street").closest<HTMLElement>(".kcol")!.querySelectorAll<HTMLElement>(".kcard__addr")].map((element) => element.textContent)).toEqual(["source-sibling-b Street", "source-sibling-a Street"]);
-    expect([...host.querySelectorAll<HTMLElement>(".kcard-drag-handle, .kcard-stage-control select, .kcard-controls__arrow")].every((element) => !element.hasAttribute("disabled"))).toBe(true);
+    expect([...host.querySelectorAll<HTMLElement>(".kcard-drag-handle, .kcard-move-to, .kcard-controls__arrow")].every((element) => !element.hasAttribute("disabled"))).toBe(true);
     runtime.dispose();
     queryClient.clear();
   });
@@ -570,15 +598,47 @@ describe("Dashboard Stage interactions", () => {
 
   it("moves by keyboard action, returns focus, and announces the result", async () => {
     await act(async () => { root.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); }); await flush();
-    const move = host.querySelector<HTMLSelectElement>('[aria-label="Move Source Street to Stage"]')!;
     const scrollTo = vi.spyOn(window, "scrollTo").mockImplementation(() => undefined);
-    move.focus(); move.value = "raw_review";
     authState.moved = true;
-    await act(async () => { move.dispatchEvent(new Event("change", { bubbles: true })); await Promise.resolve(); }); await flush(); await flush();
+    await moveToEnd(host, "Source Street", "RAW review"); await flush(); await flush();
     expect(apiPostMock).toHaveBeenCalledWith("/api/projects/source/stage", expect.objectContaining({ targetStageKey: "raw_review", placement: { kind: "append" } }));
-    expect(document.activeElement?.getAttribute("data-focus-key")).toBe("move-stage:source");
+    expect(document.activeElement?.getAttribute("data-focus-key")).toBe("move-to:source");
     expect(scrollTo).toHaveBeenCalledWith(window.scrollX, window.scrollY);
     expect(host.querySelector(".dashboard-live-region")?.textContent).toContain("Moved Source Street to RAW review, position");
+  });
+
+  it("aborts a stale Move-to position locally, refetches, and restores its trigger", async () => {
+    let projectFetches = 0;
+    const staleResponse = {
+      ...response(),
+      projects: [summary("source", "awaiting_raw", 3), summary("before", "raw_review", 8)],
+      board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: ["source"], raw_review: ["before"], editing_autohdr: [] } },
+    };
+    apiGetMock.mockImplementation((path) => path === "/api/projects"
+      ? Promise.resolve(projectFetches++ === 0 ? response() : staleResponse)
+      : Promise.resolve({}));
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const runtime = new ProjectQueryRuntime(queryClient, "dashboard-move-to-stale-test");
+    await act(async () => {
+      root.render(<ProjectQueryRuntimeProvider runtime={runtime}><QueryClientProvider client={queryClient}><Dashboard currentUserId="admin-1" /></QueryClientProvider></ProjectQueryRuntimeProvider>);
+      await Promise.resolve();
+    });
+    await flush();
+    const trigger = card(host, "Source Street").querySelector<HTMLButtonElement>('[data-focus-key="move-to:source"]')!;
+    await act(async () => { trigger.click(); await Promise.resolve(); });
+    await act(async () => { [...document.querySelectorAll<HTMLButtonElement>('[role="radio"]')].find((button) => button.textContent === "RAW review")!.click(); await Promise.resolve(); });
+    await act(async () => { [...document.querySelectorAll<HTMLButtonElement>('[role="option"]')].find((button) => button.textContent?.includes("Before target Street"))!.click(); await Promise.resolve(); });
+    runtime.markProjectRemoved("target");
+    await flush();
+    const submit = document.querySelector<HTMLButtonElement>(".kanban-move-popover .button:not(.button--secondary)")!;
+    await act(async () => { submit.click(); await Promise.resolve(); });
+    await flush(); await flush();
+    expect(apiPostMock).not.toHaveBeenCalled();
+    expect(host.querySelector(".dashboard-live-region")?.textContent).toContain("That position changed");
+    expect(projectFetches).toBe(2);
+    expect(document.activeElement?.getAttribute("data-focus-key")).toBe("move-to:source");
+    runtime.dispose();
+    queryClient.clear();
   });
 
   it("keeps the accepted snapshot while a Stage move is pending", async () => {
@@ -598,9 +658,7 @@ describe("Dashboard Stage interactions", () => {
       await Promise.resolve();
     });
     await flush();
-    const move = host.querySelector<HTMLSelectElement>('[aria-label="Move Source Street to Stage"]')!;
-    move.value = "raw_review";
-    await act(async () => { move.dispatchEvent(new Event("change", { bubbles: true })); await Promise.resolve(); });
+    await moveToEnd(host, "Source Street", "RAW review");
     await flush();
     expect(apiPostMock).toHaveBeenCalledWith("/api/projects/source/stage", expect.objectContaining({ expected: { stageKey: "awaiting_raw", boardRevision: 3 } }));
 
@@ -637,9 +695,7 @@ describe("Dashboard Stage interactions", () => {
       await Promise.resolve();
     });
     await flush();
-    const move = host.querySelector<HTMLSelectElement>('[aria-label="Move Source Street to Stage"]')!;
-    move.value = "raw_review";
-    await act(async () => { move.dispatchEvent(new Event("change", { bubbles: true })); await Promise.resolve(); });
+    await moveToEnd(host, "Source Street", "RAW review");
     await flush();
     expect(document.querySelector('[data-testid="confirm-modal"]')).not.toBeNull();
 

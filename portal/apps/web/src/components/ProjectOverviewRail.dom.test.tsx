@@ -64,6 +64,7 @@ describe("Project Overview rail Stage control", () => {
     roleState.inactive = true;
     render(<ProjectOverviewRail {...baseProps(project({ stageKey: "edited_review" }), onStageMove)} />);
     const select = host.querySelector<HTMLSelectElement>('[aria-label="Move project Stage"]')!;
+    expect(select.getAttribute("data-focus-key")).toBe("rail-stage:project-1");
     expect(select.disabled).toBe(false);
     expect((select.querySelector('option[value="edited_review"]') as HTMLOptionElement | null)?.disabled).toBe(true);
     select.value = "edited_review";

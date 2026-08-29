@@ -14,6 +14,7 @@ import {
   focusDescriptorFor,
   focusTargetAfter,
   isSameStagePlacementChange,
+  moveToPositionOptions,
   optimismSafeBeforeResponse,
   proposeMultiContainerDrop,
   proposedOrdersForHover,
@@ -220,6 +221,36 @@ describe("Kanban interaction model", () => {
     expect(eligibleTarget({ targetStageKey: "awaiting_raw", successor: "end" }, model, "source", { ...baseCaps, canPrioritize: true, sort: "priority" })).toBe(false);
   });
 
+  it("builds role-safe Move-to position options with End first and visible successors only", () => {
+    const mover = project("mover", "awaiting_raw", { boardRevision: 3 });
+    const visible = project("visible", "raw_review", { street: "Visible Street", boardRevision: 8 });
+    const model = board([mover, visible], {
+      awaiting_raw: ["mover"],
+      raw_review: ["hidden", "visible"],
+    });
+    const caps = {
+      canMoveProjectStage: true,
+      canPrioritize: true,
+      sort: "board" as const,
+      activeStageKeys: ["awaiting_raw", "raw_review"] as const,
+      stageLabels: { awaiting_raw: "Awaiting RAW", raw_review: "RAW review" },
+    };
+    expect(moveToPositionOptions(model, "mover", "raw_review", "admin", caps)).toEqual([
+      { label: "End of RAW review", successor: "end" },
+      { label: "Before Visible Street — position 1", successor: "visible" },
+    ]);
+    expect(moveToPositionOptions(model, "mover", "awaiting_raw", "editor", caps)).toEqual([]);
+    expect(moveToPositionOptions(model, "mover", "awaiting_raw", "admin", { ...caps, sort: "priority" })).toEqual([]);
+    const externalModel = board([
+      project("external-mover", "editing", { boardRevision: 12 }),
+      visible,
+    ], { editing_autohdr: ["external-mover"], raw_review: ["hidden", "visible"] });
+    expect(moveToPositionOptions(externalModel, "external-mover", "raw_review", "external_editor", caps)).toEqual([
+      { label: "End of RAW review", successor: "end" },
+      { label: "Before Visible Street — position 1", successor: "visible" },
+    ]);
+  });
+
   it("overlays only authorized arrays and the mover Stage, keeps revisions, and rolls back completely", () => {
     const baseline = movementBoard();
     const overlay = applyOptimisticOverlay(baseline, "source", { targetStageKey: "raw_review", successor: "middle" }, "admin");
@@ -330,7 +361,7 @@ describe("Kanban interaction model", () => {
     expect(semanticGapChanged({ targetStageKey: "raw_review", successor: "first" }, { targetStageKey: "raw_review", successor: "end" })).toBe(true);
   });
 
-  it("returns deterministic focus descriptors and outcome targets/fallbacks", () => {
+  it("returns deterministic focus descriptors and outcome targets/fallbacks for every origin", () => {
     const model = movementBoard();
     const source = model.projects.find((item) => item.id === "source")!;
     const pointer = focusDescriptorFor("pointer", source, model);
@@ -338,19 +369,23 @@ describe("Kanban interaction model", () => {
     expect(focusDescriptorFor("move-to", source, model).control).toBe("move-to");
     expect(focusDescriptorFor("arrow", source, model, "arrow-down").control).toBe("arrow-down");
     expect(focusDescriptorFor("rail", source, model).control).toBe("rail-stage");
-    expect(focusTargetAfter("success", pointer, model)).toEqual({ control: "handle", projectId: "source" });
-    expect(focusTargetAfter("dnd-cancel", pointer, model)).toEqual({ control: "handle", projectId: "source" });
-    expect(focusTargetAfter("modal-cancel", focusDescriptorFor("move-to", source, model), model)).toEqual({ control: "move-to", projectId: "source" });
-    expect(focusTargetAfter("drop-outside", pointer, model)).toEqual({ control: "handle", projectId: "source" });
-    expect(focusTargetAfter("no-op", pointer, model)).toEqual({ control: "handle", projectId: "source" });
-    expect(focusTargetAfter("invalid-keyboard-target", pointer, model)).toEqual({ control: "handle", projectId: "source" });
-    expect(focusTargetAfter("stale-move-to", pointer, model)).toEqual({ control: "move-to", projectId: "source" });
-    expect(focusTargetAfter("conflict", pointer, model)).toEqual({ control: "handle", projectId: "source" });
-    expect(focusTargetAfter("503", pointer, model)).toEqual({ control: "handle", projectId: "source" });
-    expect(focusTargetAfter("post-success-refetch-failure", pointer, model)).toEqual({ control: "handle", projectId: "source" });
+    const origins = [
+      ["pointer", pointer],
+      ["keyboard", focusDescriptorFor("keyboard", source, model)],
+      ["move-to", focusDescriptorFor("move-to", source, model)],
+      ["arrow", focusDescriptorFor("arrow", source, model, "arrow-down")],
+    ] as const;
+    const outcomes = ["success", "dnd-cancel", "modal-cancel", "conflict", "503", "drop-outside", "no-op", "invalid-keyboard-target", "post-success-refetch-failure"] as const;
+    for (const [, descriptor] of origins) {
+      for (const outcome of outcomes) expect(focusTargetAfter(outcome, descriptor, model)).toEqual({ control: descriptor.control, projectId: "source" });
+    }
+    for (const [, descriptor] of origins) expect(focusTargetAfter("stale-move-to", descriptor, model)).toEqual({ control: "move-to", projectId: "source" });
+    expect(focusTargetAfter("rail", focusDescriptorFor("rail", source, model), model)).toEqual({ control: "rail-stage", projectId: "source" });
     const missing = { ...pointer, projectId: "gone" };
     expect(focusTargetAfter("conflict", missing, model)).toEqual({ fallback: "stage-heading" });
     expect(focusTargetAfter("rail", missing, model)).toEqual({ fallback: "board" });
+    const movedWithoutSource = { ...model, projects: model.projects.filter((project) => project.id !== "source") };
+    expect(focusTargetAfter("success", missing, movedWithoutSource, "raw_review")).toEqual({ fallback: "stage-heading" });
   });
 
   it("documents all eight engine-neutral guarded manipulation rules", () => {

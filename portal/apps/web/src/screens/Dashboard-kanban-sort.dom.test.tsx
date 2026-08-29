@@ -87,7 +87,7 @@ describe("Dashboard Kanban sort control", () => {
     expect(document.querySelector(".kcard__foot")?.textContent).toContain("Priority 1");
     expect(document.querySelector('[aria-label="Move project up"]')).toBeNull();
     expect(document.querySelector('[aria-label="Move project down"]')).toBeNull();
-    expect(document.querySelector('[aria-label="Move Flag Off Street to Stage"]')).toBeNull();
+    expect(document.querySelector('[aria-label="Move Flag Off Street to…"]')).toBeNull();
     expect(document.querySelector<HTMLButtonElement>('[aria-label="Move Flag Off Street"]')?.disabled).toBe(true);
   });
 

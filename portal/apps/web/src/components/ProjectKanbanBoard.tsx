@@ -2,6 +2,7 @@ import {
   AutoScrollActivator,
   DndContext,
   DragOverlay,
+  KeyboardSensor,
   MeasuringStrategy,
   closestCorners,
   pointerWithin,
@@ -24,10 +25,11 @@ import {
   type UniqueIdentifier,
 } from "@dnd-kit/core";
 import { PointerSensor } from "@dnd-kit/core";
-import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS as DndCSS } from "@dnd-kit/utilities";
-import { isDeadlineOverdue, formatSydneyCivil, type StageKey } from "@quincy/shared";
-import { useMemo, useRef, useState, type CSSProperties, type RefCallback } from "react";
+import { isDeadlineOverdue, formatSydneyCivil, type Role, type StageKey } from "@quincy/shared";
+import { useCallback, useMemo, useRef, useState, type CSSProperties, type RefCallback } from "react";
+import { AnchoredPopover, useAnchoredPopover } from "./AnchoredPopover";
 import { StatusBadge } from "./atoms";
 import { InternalLink } from "./InternalLink";
 import { LazyImage } from "./LazyImage";
@@ -35,11 +37,11 @@ import {
   announce,
   eligibleTarget,
   focusDescriptorFor,
+  moveToPositionOptions,
   proposeMultiContainerDrop,
   semanticGapChanged,
   sortKanbanProjects,
   type BoardDragStartSnapshot,
-  type BoardInteractionOrigin,
   type BoardModel,
   type BoardProposal,
   boardGapChangesOrder,
@@ -56,18 +58,25 @@ export type BoardInteractionState = {
   proposal: SemanticGap | null;
 };
 
+type BoardMoveHandler = (project: ProjectSummary, gap: SemanticGap, kind: "cross" | "same", focusDescriptor: FocusDescriptor) => void;
+
 export type KanbanCardProps = {
   project: ProjectSummary;
   canMove: boolean;
+  canMoveStages?: boolean;
   canDragThisCard?: boolean;
   isDragging?: boolean;
   canPrioritize?: boolean;
   canReorder?: boolean;
   movementDisabled?: boolean;
+  boardModel?: BoardModel;
+  role?: Role;
+  effectiveKanbanSort?: KanbanSortMode;
   onPriorityChange?: (project: ProjectSummary, priority: number | null) => void;
   onBoardPosition?: (project: ProjectSummary, direction: "up" | "down") => void;
   stageOptions?: readonly PipelineStage[];
-  onMoveStage?: (project: ProjectSummary, targetStageKey: ProjectStageKey) => void;
+  onMoveStage?: BoardMoveHandler;
+  onMoveToProposalChange?: (proposal: SemanticGap | null) => void;
   dragHandleAttributes?: DraggableAttributes;
   dragHandleListeners?: DraggableSyntheticListeners;
   setDragHandleRef?: RefCallback<HTMLButtonElement>;
@@ -106,6 +115,107 @@ function deadlineLabel(project: ProjectSummary) {
   return project.deadlineAt === null ? null : (project.deadlineLocalCivil ?? formatSydneyCivil(project.deadlineAt)).replace("T", " ");
 }
 
+function moveToStageKey(value: ProjectStageKey): StageKey {
+  return value === "editing" ? "editing_autohdr" : value;
+}
+
+function MoveToControl({ project, model, activeStages, role, sort, canMoveStages, canPrioritize, movementDisabled, onMoveStage, onMoveToProposalChange }: {
+  project: ProjectSummary;
+  model: BoardModel;
+  activeStages: readonly PipelineStage[];
+  role: Role;
+  sort: KanbanSortMode;
+  canMoveStages: boolean;
+  canPrioritize: boolean;
+  movementDisabled: boolean;
+  onMoveStage?: BoardMoveHandler;
+  onMoveToProposalChange?: (proposal: SemanticGap | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [targetStageKey, setTargetStageKey] = useState<StageKey | null>(null);
+  const [successor, setSuccessor] = useState<string | "end" | null>(null);
+  const focusDescriptorRef = useRef<FocusDescriptor | null>(null);
+  const triggerRef = useRef<HTMLElement | null>(null);
+  const close = useCallback(() => {
+    setOpen(false);
+    setTargetStageKey(null);
+    setSuccessor(null);
+    onMoveToProposalChange?.(null);
+    triggerRef.current?.focus();
+  }, [onMoveToProposalChange]);
+  const floating = useAnchoredPopover({ open, onClose: close, placement: "bottom-end" });
+  const stageLabels = useMemo(() => Object.fromEntries(activeStages.map((stage) => [moveToStageKey(stage.key), stage.label])), [activeStages]);
+  const caps = useMemo(() => ({
+    canMoveProjectStage: canMoveStages,
+    canPrioritize,
+    sort,
+    activeStageKeys: activeStages.map((stage) => moveToStageKey(stage.key)),
+    stageLabels,
+  }), [activeStages, canMoveStages, canPrioritize, sort, stageLabels]);
+  const boardStageOptions = useMemo(() => {
+    const seen = new Set<StageKey>();
+    return activeStages.filter((stage) => {
+      const key = moveToStageKey(stage.key);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return moveToPositionOptions(model, project.id, key, role, caps).length > 0;
+    });
+  }, [activeStages, caps, model, project.id, role]);
+  const positions = targetStageKey === null ? [] : moveToPositionOptions(model, project.id, targetStageKey, role, caps);
+  const targetLabel = targetStageKey === null ? "" : stageLabels[targetStageKey] ?? targetStageKey;
+  const dialogId = `move-to-dialog-${project.id}`;
+
+  const openMoveTo = () => {
+    focusDescriptorRef.current = focusDescriptorFor("move-to", project, model, "move-to");
+    setTargetStageKey(null);
+    setSuccessor(null);
+    onMoveToProposalChange?.(null);
+    setOpen(true);
+  };
+  const confirmMoveTo = () => {
+    if (targetStageKey === null || successor === null) return;
+    const descriptor = focusDescriptorRef.current ?? focusDescriptorFor("move-to", project, model, "move-to");
+    const kind = moveToStageKey(project.stageKey) === targetStageKey ? "same" : "cross";
+    close();
+    onMoveStage?.(project, { targetStageKey, successor }, kind, descriptor);
+  };
+
+  return <>
+    <button
+      ref={(node) => { floating.refs.setReference(node); triggerRef.current = node; }}
+      type="button"
+      className="kcard-move-to"
+      data-focus-key={`move-to:${project.id}`}
+      aria-label={`Move ${project.street} to…`}
+      aria-expanded={open}
+      aria-controls={open ? dialogId : undefined}
+      disabled={movementDisabled || boardStageOptions.length === 0}
+      onKeyDown={floating.onKeyDown}
+      onClick={openMoveTo}
+    >Move to…</button>
+    {open && <AnchoredPopover className="kanban-move-popover" context={floating.context} floatingStyles={floating.floatingStyles} initialFocus={0} onKeyDown={floating.onKeyDown}>
+      <div id={dialogId} className="kanban-move-popover__content" role="dialog" aria-label={`Move ${project.street} to…`} data-step={targetStageKey === null ? "stage" : "position"}>
+        <div className="ey">{targetStageKey === null ? "Choose a Stage" : `Choose a position in ${targetLabel}`}</div>
+        {targetStageKey === null ? <div className="kanban-move-popover__stages" role="radiogroup" aria-label={`Target Stage for ${project.street}`}>
+          {boardStageOptions.map((stage) => {
+            const key = moveToStageKey(stage.key);
+            return <button key={key} type="button" role="radio" aria-checked={false} className="kanban-move-popover__option" onClick={() => { setTargetStageKey(key); setSuccessor(null); }}>{stage.label}</button>;
+          })}
+        </div> : <>
+          <div className="kanban-move-popover__positions" role="listbox" aria-label={`Position in ${targetLabel}`}>
+            {positions.map((option) => <button key={option.successor} type="button" role="option" aria-selected={successor === option.successor} className="kanban-move-popover__option" onClick={() => { setSuccessor(option.successor); onMoveToProposalChange?.({ targetStageKey, successor: option.successor }); }}>{option.label}</button>)}
+          </div>
+          <div className="kanban-move-popover__actions">
+            <button type="button" className="button button--secondary" onClick={() => { setTargetStageKey(null); setSuccessor(null); onMoveToProposalChange?.(null); }}>Back</button>
+            <button type="button" className="button button--secondary" onClick={close}>Cancel</button>
+            <button type="button" className="button" disabled={successor === null} onClick={confirmMoveTo}>Move project</button>
+          </div>
+        </>}
+      </div>
+    </AnchoredPopover>}
+  </>;
+}
+
 /**
  * The card is deliberately presentation-only. Board drag state belongs to the sortable wrapper,
  * and its activator is a sibling button so ordinary anchor behavior remains browser-native.
@@ -113,6 +223,7 @@ function deadlineLabel(project: ProjectSummary) {
 export function KanbanCard({
   project,
   canMove,
+  canMoveStages = canMove,
   canDragThisCard = false,
   isDragging = false,
   initialCoverFailed = false,
@@ -121,8 +232,12 @@ export function KanbanCard({
   onPriorityChange,
   onBoardPosition,
   movementDisabled = false,
+  boardModel,
+  role = "admin",
+  effectiveKanbanSort = "board",
   stageOptions,
   onMoveStage,
+  onMoveToProposalChange,
   dragHandleAttributes,
   dragHandleListeners,
   setDragHandleRef,
@@ -133,8 +248,8 @@ export function KanbanCard({
   const projectDeadlineLabel = deadlineLabel(project);
   const [coverFailed, setCoverFailed] = useState(initialCoverFailed);
   const [coverRetry, setCoverRetry] = useState(0);
-  const [moveStageValue, setMoveStageValue] = useState("");
-  const moveStageOptions = (stageOptions ?? []).filter((stage) => stage.active);
+  const activeStageOptions = (stageOptions ?? []).filter((stage) => stage.active);
+  const moveModel = boardModel ?? { projects: [project], ...(project.authorizedBoardOrder ? { authorizedBoardOrder: project.authorizedBoardOrder } : {}) };
 
   return <div ref={setCardRef} style={cardStyle} className={`kcard-wrap ${isDragging ? "is-dragging" : ""}`}>
     <InternalLink className="kcard" to={`/projects/${encodeURIComponent(project.id)}`}>
@@ -173,15 +288,7 @@ export function KanbanCard({
       </>}
     </div>}
     {canMove && <div className="kcard-stage-control">
-      <label className="sr-only" htmlFor={`move-stage-${project.id}`}>Move {project.street} to Stage</label>
-      <select id={`move-stage-${project.id}`} data-focus-key={`move-stage:${project.id}`} aria-label={`Move ${project.street} to Stage`} value={moveStageValue} disabled={movementDisabled} onChange={(event) => {
-        const targetStageKey = event.target.value as ProjectStageKey;
-        setMoveStageValue("");
-        if (targetStageKey && targetStageKey !== project.stageKey) onMoveStage?.(project, targetStageKey);
-      }}>
-        <option value="">Move Stage…</option>
-        {moveStageOptions.map((stage) => <option value={stage.key} key={stage.key}>{stage.label}</option>)}
-      </select>
+      <MoveToControl project={project} model={moveModel} activeStages={activeStageOptions} role={role} sort={effectiveKanbanSort} canMoveStages={canMoveStages} canPrioritize={canPrioritize} movementDisabled={movementDisabled} onMoveStage={onMoveStage} onMoveToProposalChange={onMoveToProposalChange} />
     </div>}
     {coverFailed && <button className="kcard__retry button button--secondary" type="button" onClick={() => { setCoverFailed(false); setCoverRetry((current) => current + 1); }}>Retry cover image</button>}
   </div>;
@@ -262,8 +369,12 @@ function dataForActive(active: Active | { id: UniqueIdentifier; data?: unknown }
   return droppableData("data" in active ? active.data : undefined);
 }
 
-function dataForOver(over: Over | { id: UniqueIdentifier; data?: unknown } | null): DroppableData | null {
-  return over ? droppableData("data" in over ? over.data : undefined) : null;
+function dataForOver(over: Over | { id: UniqueIdentifier; data?: unknown } | null, collisions?: Collision[] | null): DroppableData | null {
+  if (!over) return null;
+  const direct = droppableData("data" in over ? over.data : undefined);
+  if (direct) return direct;
+  const collision = collisions?.find((candidate) => candidate.id === over.id);
+  return collision ? collisionData(collision, []) : null;
 }
 
 function cloneOrders(orders: Record<string, readonly string[]>): Record<string, string[]> {
@@ -368,6 +479,8 @@ type KanbanColumnProps = {
   proposal: BoardProposal | null;
   canMoveStages: boolean;
   canPrioritize: boolean;
+  role: Role;
+  boardModel: BoardModel;
   boardMutationEnabled: boolean;
   movementDisabled?: boolean;
   sameStageReorderEnabled?: boolean;
@@ -376,7 +489,8 @@ type KanbanColumnProps = {
   effectiveKanbanSort: KanbanSortMode;
   onPriorityChange: (project: ProjectSummary, priority: number | null) => void;
   onBoardPosition: (project: ProjectSummary, direction: "up" | "down") => void;
-  onMoveStage: (project: ProjectSummary, targetStageKey: ProjectStageKey) => void;
+  onMoveStage: BoardMoveHandler;
+  onMoveToProposalChange: (proposal: SemanticGap | null) => void;
   semanticStageKey: StageKey;
 };
 
@@ -389,6 +503,8 @@ function KanbanColumn({
   proposal,
   canMoveStages,
   canPrioritize,
+  role,
+  boardModel,
   boardMutationEnabled,
   movementDisabled = false,
   sameStageReorderEnabled = false,
@@ -398,6 +514,7 @@ function KanbanColumn({
   onPriorityChange,
   onBoardPosition,
   onMoveStage,
+  onMoveToProposalChange,
   semanticStageKey: semanticKey,
 }: KanbanColumnProps) {
   const displayedIds = displayOrders[semanticKey] ?? [];
@@ -419,12 +536,17 @@ function KanbanColumn({
             {isDropBefore && <div className="kcard-wrap--drop-indicator" aria-hidden="true" />}
             <SortableKanbanCard
               {...{
-                canMove: canMoveStages && !pendingMoves.has(project.id),
+                canMove: (canMoveStages || sameStageReorderEnabled) && !pendingMoves.has(project.id),
+                canMoveStages,
                 canPrioritize: canPrioritize && projects.some((item) => item.boardMapPresent === true || item.boardRank !== undefined || item.authorizedBoardOrder?.[item.stageKey] !== undefined) && !pendingOrdering.has(project.id),
                 canReorder: boardMutationEnabled && sameStageReorderEnabled && !pendingOrdering.has(project.id),
                 movementDisabled: movementDisabled || pendingMoves.size > 0 || pendingOrdering.size > 0,
                 stageOptions: activeStages,
+                boardModel,
+                role,
+                effectiveKanbanSort,
                 onMoveStage,
+                onMoveToProposalChange,
                 onPriorityChange,
                 onBoardPosition,
               }}
@@ -446,6 +568,7 @@ export type ProjectKanbanBoardProps = {
   activeStages: readonly PipelineStage[];
   canMoveStages: boolean;
   canPrioritize: boolean;
+  role?: Role;
   boardMutationEnabled: boolean;
   movementDisabled?: boolean;
   sameStageReorderEnabled?: boolean;
@@ -458,7 +581,8 @@ export type ProjectKanbanBoardProps = {
   onCrossStageMove?: (projectId: string, gap: SemanticGap, focusDescriptor: FocusDescriptor) => void;
   onBoardPosition: (project: ProjectSummary, direction: "up" | "down") => void;
   onPriorityChange: (project: ProjectSummary, priority: number | null) => void;
-  onMoveStage: (project: ProjectSummary, targetStageKey: ProjectStageKey) => void;
+  onMoveStage: BoardMoveHandler;
+  onMoveToProposalChange?: (proposal: SemanticGap | null) => void;
   onInteractionStateChange?: (state: BoardInteractionState) => void;
   onAnnounce?: (message: string | undefined) => void;
 };
@@ -468,6 +592,7 @@ export function ProjectKanbanBoard({
   activeStages,
   canMoveStages,
   canPrioritize,
+  role = "admin",
   boardMutationEnabled,
   movementDisabled = false,
   sameStageReorderEnabled = false,
@@ -480,16 +605,23 @@ export function ProjectKanbanBoard({
   onBoardPosition,
   onPriorityChange,
   onMoveStage,
+  onMoveToProposalChange,
   onInteractionStateChange,
+  onAnnounce,
 }: ProjectKanbanBoardProps) {
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
   const [activeProjectId, setActiveProjectId] = useState<string>();
   const [proposal, setProposal] = useState<BoardProposal | null>(null);
   const snapshotRef = useRef<DragSnapshot | null>(null);
   const proposalRef = useRef<BoardProposal | null>(null);
   const dndAnnouncementRef = useRef<string | undefined>(undefined);
+  const dndDropSuppressedRef = useRef(false);
   const dndOverGapRef = useRef<SemanticGap | null>(null);
   const baseOrders = useMemo(() => visualOrders(projects, activeStages, effectiveKanbanSort), [activeStages, effectiveKanbanSort, projects]);
+  const boardModel = useMemo(() => canonicalBoardModel(projects), [projects]);
   const displayOrders = proposal?.orders ?? baseOrders;
   const collisionDetection = useMemo(() => BoardCollisionDetection({
     activeStages,
@@ -500,7 +632,7 @@ export function ProjectKanbanBoard({
   }), [activeProjectId, activeStages, canMoveStages, displayOrders, sameStageReorderEnabled]);
   const movingProject = activeProjectId ? projects.find((project) => project.id === activeProjectId) : undefined;
 
-  const announceFor = (event: "start" | "over-card" | "over-end" | "valid-drop" | "dnd-cancel", gap?: SemanticGap) => {
+  const announceFor = (event: "start" | "over-card" | "over-end" | "valid-drop" | "dnd-cancel" | "drop-outside" | "unchanged-gap" | "invalid-keyboard-target", gap?: SemanticGap) => {
     const snapshot = snapshotRef.current;
     const project = snapshot?.model.projects.find((item) => item.id === snapshot.movingProjectId);
     if (!snapshot || !project) return undefined;
@@ -512,7 +644,9 @@ export function ProjectKanbanBoard({
       const sourceOrder = orders[sourceStage] ?? [];
       return announce({ type: "start", street: project.street, stageLabel: sourceStageLabel, sourceStageLabel, position: Math.max(1, sourceOrder.indexOf(project.id) + 1), count: sourceOrder.length }, { terminal });
     }
-    if (event === "dnd-cancel" || !selectedGap) return announce({ type: "dnd-cancel", street: project.street, sourceStageLabel }, { terminal });
+    if (event === "dnd-cancel" || event === "drop-outside" || event === "unchanged-gap" || event === "invalid-keyboard-target" || !selectedGap) {
+      return announce({ type: event === "dnd-cancel" || !selectedGap ? "dnd-cancel" : event, street: project.street, sourceStageLabel }, { terminal });
+    }
     const destination = stageLabel(activeStages, selectedGap.targetStageKey);
     const position = displayPosition(orders, selectedGap, project.id);
     if (event === "over-card") return announce({ type: "over-card", street: project.street, stageLabel: destination, sourceStageLabel, position: position.position, count: position.count }, { terminal });
@@ -525,7 +659,8 @@ export function ProjectKanbanBoard({
     const project = projects.find((item) => item.id === id);
     if (!project || movementDisabled || !boardMutationEnabled || (!canMoveStages && !sameStageReorderEnabled) || pendingMoves.has(id) || pendingOrdering.has(id)) return;
     const currentModel = canonicalBoardModel(projects);
-    const focusDescriptor = focusDescriptorFor("pointer" satisfies BoardInteractionOrigin, project, currentModel, "handle");
+    const keyboardOrigin = event.activatorEvent?.type === "keydown";
+    const focusDescriptor = focusDescriptorFor(keyboardOrigin ? "keyboard" : "pointer", project, currentModel, "handle");
     const snapshot: DragSnapshot = {
       model: currentModel,
       movingProjectId: id,
@@ -538,6 +673,7 @@ export function ProjectKanbanBoard({
     snapshotRef.current = snapshot;
     proposalRef.current = null;
     dndOverGapRef.current = null;
+    dndDropSuppressedRef.current = false;
     setActiveProjectId(id);
     setProposal(null);
     onInteractionStateChange?.({ activeId: id, proposal: null });
@@ -547,10 +683,11 @@ export function ProjectKanbanBoard({
 
   const handleDndOver = (event: DragOverEvent) => {
     const snapshot = snapshotRef.current;
-    const hovered = dataForOver(event.over);
+    const hovered = dataForOver(event.over, event.collisions);
     if (!snapshot || !hovered) {
       proposalRef.current = null;
       setProposal(null);
+      dndOverGapRef.current = null;
       onInteractionStateChange?.({ activeId: activeProjectId, proposal: null });
       return;
     }
@@ -586,7 +723,7 @@ export function ProjectKanbanBoard({
   const handleDndEnd = (event: DragEndEvent) => {
     const snapshot = snapshotRef.current;
     const id = activeId(event.active);
-    const hovered = dataForOver(event.over);
+    const hovered = dataForOver(event.over, event.collisions);
     const mover = snapshot?.model.projects.find((project) => project.id === id);
     const sourceStage = mover ? semanticStageKey(mover.stageKey) : null;
     const overGap = hovered ? (hovered.kind === "column" ? { targetStageKey: hovered.stageKey, successor: "end" as const } : { targetStageKey: hovered.stageKey, successor: hovered.projectId }) : null;
@@ -601,8 +738,19 @@ export function ProjectKanbanBoard({
       sort: effectiveKanbanSort,
       activeStageKeys: [...new Set(activeStages.map((stage) => semanticStageKey(stage.key)))],
     }) && (sourceStage !== frozenGap.targetStageKey || boardGapChangesOrder(frozenGap, snapshot.model, id)));
-    const message = valid ? announceFor("valid-drop", frozenGap!) : announceFor("dnd-cancel");
-    dndAnnouncementRef.current = message;
+    const sameStage = sourceStage !== null && frozenGap?.targetStageKey === sourceStage;
+    const invalidKeyboardTarget = Boolean(snapshot && mover && sameStage && !sameStageReorderEnabled && snapshot.focusDescriptor.path === "keyboard");
+    const unchangedGap = Boolean(snapshot && valid === false && frozenGap && sameStage && !boardGapChangesOrder(frozenGap, snapshot.model, id));
+    const announcementEvent = valid
+      ? "valid-drop"
+      : invalidKeyboardTarget
+        ? "invalid-keyboard-target"
+        : unchangedGap
+          ? "unchanged-gap"
+          : "drop-outside";
+    const message = announceFor(announcementEvent, frozenGap ?? undefined);
+    dndAnnouncementRef.current = valid ? message : undefined;
+    dndDropSuppressedRef.current = !valid;
     if (valid && snapshot && frozenGap && mover) {
       const kind = sourceStage === frozenGap.targetStageKey ? "same" : "cross";
       if (onBoardMove) onBoardMove(id, frozenGap, kind, snapshot.focusDescriptor);
@@ -610,6 +758,7 @@ export function ProjectKanbanBoard({
     } else if (snapshot) {
       focusHandle(snapshot.focusDescriptor.projectId);
       restoreBoardScroll(snapshot);
+      if (!valid) onAnnounce?.(message);
     }
     clearDragState();
   };
@@ -637,7 +786,7 @@ export function ProjectKanbanBoard({
         dndOverGapRef.current = gap;
         return announceFor(data?.kind === "column" ? "over-end" : "over-card", gap);
       },
-      onDragEnd: ({ over }) => terminal ? undefined : dndAnnouncementRef.current ?? (over ? announceFor("valid-drop", proposalRef.current?.gap) : announceFor("dnd-cancel")),
+      onDragEnd: ({ over }) => terminal || dndDropSuppressedRef.current ? undefined : dndAnnouncementRef.current ?? (over ? announceFor("valid-drop", proposalRef.current?.gap) : announceFor("dnd-cancel")),
       onDragCancel: () => terminal ? undefined : dndAnnouncementRef.current ?? announceFor("dnd-cancel"),
     },
     screenReaderInstructions: {
@@ -670,6 +819,8 @@ export function ProjectKanbanBoard({
           proposal={proposal}
           canMoveStages={canMoveStages}
           canPrioritize={canPrioritize}
+          role={role}
+          boardModel={boardModel}
           boardMutationEnabled={boardMutationEnabled}
           movementDisabled={movementDisabled}
           sameStageReorderEnabled={sameStageReorderEnabled}
@@ -679,6 +830,7 @@ export function ProjectKanbanBoard({
           onPriorityChange={onPriorityChange}
           onBoardPosition={onBoardPosition}
           onMoveStage={onMoveStage}
+          onMoveToProposalChange={onMoveToProposalChange ?? (() => undefined)}
           semanticStageKey={semanticStageKey(stage.key)}
         />;
       })}

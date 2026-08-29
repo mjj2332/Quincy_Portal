@@ -45,14 +45,15 @@ export function useAnchoredPopover({ open, onClose, placement = "bottom-end" }: 
   return { ...floating, onKeyDown };
 }
 
-export function AnchoredPopover({ children, context, floatingStyles, initialFocus = 0, onKeyDown }: {
+export function AnchoredPopover({ children, context, floatingStyles, initialFocus = 0, onKeyDown, className = "subtask-popover" }: {
   children: React.ReactNode;
   context: ReturnType<typeof useFloating>["context"];
   floatingStyles: React.CSSProperties;
   initialFocus?: number | React.MutableRefObject<HTMLElement | null>;
   onKeyDown: (event: React.KeyboardEvent) => void;
+  className?: string;
 }) {
   return <FloatingPortal><FloatingFocusManager context={context} modal={false} returnFocus={false} order={["reference", "floating", "content"]} initialFocus={initialFocus}>
-    <div ref={context.refs.setFloating} className="subtask-popover" style={floatingStyles} onKeyDown={onKeyDown}>{children}</div>
+    <div ref={context.refs.setFloating} className={className} style={floatingStyles} onKeyDown={onKeyDown}>{children}</div>
   </FloatingFocusManager></FloatingPortal>;
 }
