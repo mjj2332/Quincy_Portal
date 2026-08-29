@@ -13,7 +13,7 @@ const project: ProjectSummary = {
 describe("dashboard project card markup", () => {
   it("keeps the project anchor and retry button as siblings", () => {
     const html = renderToStaticMarkup(createElement(KanbanCard, {
-      project, canMove: false, isDragging: false, initialCoverFailed: true, onDragStart: () => undefined, onDragEnd: () => undefined,
+      project, canMove: false, isDragging: false, initialCoverFailed: true,
     }));
     expect(html).toMatch(/<a class="kcard"[^>]*href="\/projects\/123e4567-e89b-42d3-a456-426614174000">[\s\S]*<\/a><button/);
   });
@@ -78,9 +78,8 @@ describe("dashboard project card markup", () => {
   it("keeps ordering controls outside the project link", () => {
     const html = renderToStaticMarkup(createElement(KanbanCard, {
       project, canMove: false, canPrioritize: true, canReorder: true, isDragging: false,
-      onDragStart: () => undefined, onDragEnd: () => undefined,
     }));
-    expect(html).toMatch(/<a class="kcard"[\s\S]*<\/a><div class="kcard-controls"/);
+    expect(html).toMatch(/<a class="kcard"[\s\S]*<\/a><button[^>]*class="kcard-drag-handle"[\s\S]*<\/button><div class="kcard-controls"/);
     expect(html).toContain('aria-label="Move project up"');
   });
 
@@ -92,7 +91,6 @@ describe("dashboard project card markup", () => {
   ])("renders priority and reorder controls independently (%o)", ({ canPrioritize, canReorder, expectedPriority, expectedArrows }) => {
     const html = renderToStaticMarkup(createElement(KanbanCard, {
       project, canMove: false, canPrioritize, canReorder, isDragging: false,
-      onDragStart: () => undefined, onDragEnd: () => undefined,
     }));
     expect(html.includes('aria-label="Priority"')).toBe(expectedPriority);
     expect(html.includes('aria-label="Move project up"')).toBe(expectedArrows);

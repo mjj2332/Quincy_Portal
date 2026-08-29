@@ -10,11 +10,28 @@ import type { WorkspaceAsset } from "./PhotoGrid";
 const confirmMock = vi.hoisted(() => vi.fn(() => Promise.resolve(true)));
 vi.mock("../lib/confirm", () => ({ confirm: confirmMock }));
 
-const dnd = vi.hoisted(() => ({ handlers: [] as Array<(event: { active: { id: string }; over: { id: string } | null }) => void> }));
+type DndTestEvent = { active: { id: string }; over: { id: string } | null };
+const dnd = vi.hoisted(() => ({
+  handlers: [] as Array<(event: DndTestEvent) => void>,
+  starts: [] as Array<(event: DndTestEvent) => void>,
+  overs: [] as Array<(event: DndTestEvent) => void>,
+  cancels: [] as Array<(event: DndTestEvent) => void>,
+  accessibilities: [] as Array<Parameters<typeof import("@dnd-kit/core").DndContext>[0]["accessibility"]>,
+}));
 vi.mock("@dnd-kit/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@dnd-kit/core")>();
   const { createElement } = await import("react");
-  return { ...actual, DndContext: (props: Parameters<typeof actual.DndContext>[0]) => { dnd.handlers.push(props.onDragEnd as (event: { active: { id: string }; over: { id: string } | null }) => void); return createElement(actual.DndContext, props); } };
+  return {
+    ...actual,
+    DndContext: (props: Parameters<typeof actual.DndContext>[0]) => {
+      dnd.handlers.push(props.onDragEnd as (event: DndTestEvent) => void);
+      dnd.starts.push(props.onDragStart as unknown as (event: DndTestEvent) => void);
+      dnd.overs.push(props.onDragOver as unknown as (event: DndTestEvent) => void);
+      dnd.cancels.push(props.onDragCancel as unknown as (event: DndTestEvent) => void);
+      dnd.accessibilities.push(props.accessibility);
+      return createElement(actual.DndContext, props);
+    },
+  };
 });
 
 const apiGetMock = vi.fn<(path: string) => Promise<unknown>>();
@@ -75,6 +92,7 @@ describe("CollectionPanel version history deletion wiring", () => {
     host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
     confirmMock.mockReset().mockResolvedValue(true);
     dnd.handlers.length = 0;
+    dnd.starts.length = 0; dnd.overs.length = 0; dnd.cancels.length = 0; dnd.accessibilities.length = 0;
     apiGetMock.mockReset().mockImplementation((path) => Promise.resolve(path.includes("collection=video") ? { links: videoLinks() } : { links: [] }));
     apiPatchMock.mockReset();
     apiPostMock.mockReset();

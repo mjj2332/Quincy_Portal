@@ -1,5 +1,5 @@
-import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type DragEvent } from "react";
-import { formatSydneyCivil, isDeadlineOverdue, type MoveProjectStageRequest, type StageMovePlacement } from "@quincy/shared";
+import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { formatSydneyCivil, type MoveProjectStageRequest, type StageMovePlacement } from "@quincy/shared";
 import { QueryClient, QueryClientContext, QueryClientProvider } from "@tanstack/react-query";
 import { StatusBadge } from "../components/atoms";
 import { LazyImage } from "../components/LazyImage";
@@ -15,10 +15,12 @@ import { getProjectQueryRuntime } from "../lib/project-query-sync";
 import { dashboardProjectsKey, useDashboardProjects } from "../lib/dashboard-projects";
 import { submitStageMoveWithConfirmation } from "../lib/stage-move";
 
-import { adjacentBoardPlacement, cardDropPlacement, sortKanbanProjects, type ProjectSummary } from "../lib/kanban-interaction";
+import { adjacentBoardPlacement, announce, buildMoveRequest, type BoardModel, type FocusDescriptor, type ProjectSummary, type SemanticGap } from "../lib/kanban-interaction";
+import { ProjectKanbanBoard, type BoardInteractionState } from "../components/ProjectKanbanBoard";
 
 export { adjacentBoardPlacement, cardDropPlacement, sortKanbanProjects } from "../lib/kanban-interaction";
 export type { ProjectSummary } from "../lib/kanban-interaction";
+export { KanbanCard } from "../components/ProjectKanbanBoard";
 
 type ProjectScope = "active" | "archived";
 type Toast = { id: number; message: string; tone: "success" | "error" };
@@ -32,71 +34,6 @@ function CoverMedia({ project, className = "", inlinePlaceholder = false, retryT
 }
 
 function location(project: ProjectSummary) { return [project.suburb, project.postcode].filter(Boolean).join(" · ") || "Location pending"; }
-
-export function KanbanCard({ project, canMove, isDragging, onDragStart, onDragEnd, initialCoverFailed = false, canPrioritize = false, canReorder = false, onPriorityChange, onBoardPosition, stageOptions, onMoveStage, onCardDragOver, onCardDrop, cardDropEdge }: {
-  project: ProjectSummary;
-  canMove: boolean;
-  isDragging: boolean;
-  onDragStart: (project: ProjectSummary, event: DragEvent<HTMLAnchorElement>) => void;
-  onDragEnd: () => void;
-  canPrioritize?: boolean;
-  canReorder?: boolean;
-  onPriorityChange?: (project: ProjectSummary, priority: number | null) => void;
-  onBoardPosition?: (project: ProjectSummary, direction: "up" | "down") => void;
-  stageOptions?: readonly { key: ProjectStageKey; label: string; active: boolean }[];
-  onMoveStage?: (project: ProjectSummary, targetStageKey: ProjectStageKey) => void;
-  onCardDragOver?: (project: ProjectSummary, event: DragEvent<HTMLDivElement>) => void;
-  onCardDrop?: (project: ProjectSummary, edge: "before" | "after", event: DragEvent<HTMLDivElement>) => void;
-  cardDropEdge?: "before" | "after";
-  /** Used by the Node markup test; normal cards begin with their cover available. */
-  initialCoverFailed?: boolean;
-}) {
-  const overdue = isDeadlineOverdue(project.deadlineAt);
-  const deadlineLabel = project.deadlineAt === null ? null : (project.deadlineLocalCivil ?? formatSydneyCivil(project.deadlineAt)).replace("T", " ");
-  const [coverFailed, setCoverFailed] = useState(initialCoverFailed); const [coverRetry, setCoverRetry] = useState(0);
-  const [moveStageValue, setMoveStageValue] = useState("");
-  const suppressNavigation = useRef(false);
-  const moveStageOptions = (stageOptions ?? []).filter((stage) => stage.active);
-  return <div className={`kcard-wrap ${isDragging ? "is-dragging" : ""}${cardDropEdge ? ` is-drop-${cardDropEdge}` : ""}`} onDragOver={onCardDragOver ? (event) => onCardDragOver(project, event) : undefined} onDrop={onCardDrop ? (event) => {
-    event.preventDefault();
-    const bounds = event.currentTarget.getBoundingClientRect();
-    const edge = event.clientY < bounds.top + bounds.height / 2 ? "before" : "after";
-    onCardDrop(project, edge, event);
-  } : undefined}>
-    <InternalLink className="kcard" to={`/projects/${encodeURIComponent(project.id)}`} draggable={canMove} onClick={(event) => { if (suppressNavigation.current) { event.preventDefault(); suppressNavigation.current = false; } }} onDragStart={(event) => onDragStart(project, event)} onDragEnd={() => { suppressNavigation.current = true; window.setTimeout(() => { suppressNavigation.current = false; }, 0); onDragEnd(); }}>
-      <div className="kcard__media"><CoverMedia project={project} retryToken={coverRetry} onFailedChange={setCoverFailed} /></div>
-      <div className="kcard__b">
-        <div className="kcard__addr serif">{project.street}</div>
-        <div className="kcard__meta">{location(project)}</div>
-        <div className="kcard__meta">{project.agencyName || "Agency pending"}</div>
-        <div className="kcard__foot">{deadlineLabel && <time className={overdue ? "project-deadline__overdue" : ""} dateTime={new Date(project.deadlineAt!).toISOString()}>{overdue ? "Overdue" : "Due"} {deadlineLabel} Sydney</time>}{project.priority !== null && <span className="ey">Priority {project.priority}</span>}</div>
-      </div>
-    </InternalLink>
-    {canPrioritize && <div className="kcard-controls" aria-label={`Order controls for ${project.street}`}>
-      <label className="sr-only" htmlFor={`priority-${project.id}`}>Priority</label>
-      <select id={`priority-${project.id}`} value={project.priority ?? ""} aria-label="Priority" onChange={(event) => onPriorityChange?.(project, event.target.value === "" ? null : Number(event.target.value))}>
-        <option value="">—</option>
-        {Array.from({ length: 10 }, (_, index) => index + 1).map((value) => <option value={value} key={value}>{value}</option>)}
-      </select>
-      {canReorder && <>
-        <button type="button" className="kcard-controls__arrow" aria-label="Move project up" onClick={() => onBoardPosition?.(project, "up")}>↑</button>
-        <button type="button" className="kcard-controls__arrow" aria-label="Move project down" onClick={() => onBoardPosition?.(project, "down")}>↓</button>
-      </>}
-    </div>}
-    {canMove && <div className="kcard-stage-control">
-      <label className="sr-only" htmlFor={`move-stage-${project.id}`}>Move {project.street} to Stage</label>
-      <select id={`move-stage-${project.id}`} data-focus-key={`move-stage:${project.id}`} aria-label={`Move ${project.street} to Stage`} value={moveStageValue} onChange={(event) => {
-        const targetStageKey = event.target.value as ProjectStageKey;
-        setMoveStageValue("");
-        if (targetStageKey && targetStageKey !== project.stageKey) onMoveStage?.(project, targetStageKey);
-      }}>
-        <option value="">Move Stage…</option>
-        {moveStageOptions.map((stage) => <option value={stage.key} key={stage.key}>{stage.label}</option>)}
-      </select>
-    </div>}
-    {coverFailed && <button className="kcard__retry button button--secondary" type="button" onClick={() => { setCoverFailed(false); setCoverRetry((current) => current + 1); }}>Retry cover image</button>}
-  </div>;
-}
 
 function ProjectListRow({ project }: { project: ProjectSummary }) {
   const [coverFailed, setCoverFailed] = useState(false); const [coverRetry, setCoverRetry] = useState(0);
@@ -134,11 +71,9 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     read: () => window.localStorage.getItem("quincy:dashboard:kanbanSort"),
     write: (next) => window.localStorage.setItem("quincy:dashboard:kanbanSort", next),
   }));
-  const [dragging, setDragging] = useState<ProjectSummary>();
+  const [boardInteraction, setBoardInteraction] = useState<BoardInteractionState>({ activeId: undefined, proposal: null });
   const [pendingMoves, setPendingMoves] = useState<Set<string>>(new Set());
   const [pendingOrdering, setPendingOrdering] = useState<Set<string>>(new Set());
-  const [dropStage, setDropStage] = useState<ProjectStageKey>();
-  const [dropTarget, setDropTarget] = useState<{ stageKey: ProjectStageKey; projectId: string; edge: "before" | "after" }>();
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [announcement, setAnnouncement] = useState("");
   const [boardUnavailableReason, setBoardUnavailableReason] = useState<string | null>(null);
@@ -153,7 +88,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   const queryRuntime = queryClient ? getProjectQueryRuntime(queryClient) : undefined;
   const runtimeVersion = useSyncExternalStore(queryRuntime?.subscribe ?? noRuntimeSubscribe, queryRuntime?.getSnapshot ?? zeroRuntimeSnapshot, queryRuntime?.getSnapshot ?? zeroRuntimeSnapshot);
   const activeConfirm = useSyncExternalStore(confirmStore.subscribe, confirmStore.getSnapshot, () => null);
-  const interactionBlocked = Boolean(dragging || pendingMoves.size > 0 || pendingOrdering.size > 0 || activeConfirm);
+  const interactionBlocked = Boolean(boardInteraction.activeId || boardInteraction.proposal || pendingMoves.size > 0 || pendingOrdering.size > 0 || activeConfirm);
   const interactionBlockedRef = useRef(interactionBlocked);
   interactionBlockedRef.current = interactionBlocked;
   const queuedRefreshRef = useRef(false);
@@ -277,18 +212,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     try { window.localStorage.setItem("quincy:dashboard:kanbanSort", next); } catch { /* Storage can be disabled by the browser. */ }
   }
 
-  function beginDrag(project: ProjectSummary, event: DragEvent<HTMLAnchorElement>) {
-    if (!canMoveStages || pendingMoves.has(project.id)) return;
-    event.dataTransfer.effectAllowed = "move";
-    event.dataTransfer.setData("text/plain", project.id);
-    setDropTarget(undefined);
-    setDragging(project);
-  }
-
   async function moveProject(project: ProjectSummary | undefined, stageKey: ProjectStageKey, placement: StageMovePlacement = { kind: "append" }) {
-    setDragging(undefined);
-    setDropStage(undefined);
-    setDropTarget(undefined);
     if (!project) return;
     captureFocusForRefresh();
     setPendingMoves((current) => new Set(current).add(project.id));
@@ -333,38 +257,22 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     }
   }
 
-  function canDropOnCard(target: ProjectSummary) {
-    const project = dragging;
-    if (!project || project.id === target.id) return false;
-    if (project.stageKey !== target.stageKey) return canMoveStages;
-    return boardMutationEnabled && canPrioritize && effectiveKanbanSort === "board";
-  }
-
-  function cardDragOver(target: ProjectSummary, event: DragEvent<HTMLDivElement>) {
-    if (!canDropOnCard(target)) return;
-    event.preventDefault();
-    event.stopPropagation();
-    const bounds = event.currentTarget.getBoundingClientRect();
-    const edge = event.clientY < bounds.top + bounds.height / 2 ? "before" : "after";
-    setDropStage(target.stageKey);
-    setDropTarget({ stageKey: target.stageKey, projectId: target.id, edge });
-  }
-
-  function cardDrop(target: ProjectSummary, edge: "before" | "after", event: DragEvent<HTMLDivElement>) {
-    if (!canDropOnCard(target)) return;
-    event.stopPropagation();
-    const project = dragging;
-    setDragging(undefined);
-    setDropStage(undefined);
-    setDropTarget(undefined);
-    if (!project || project.id === target.id) return;
-    if (project.stageKey === target.stageKey) {
-      const placement = cardDropPlacement(project.id, target.id, target.stageKey, edge, projects);
-      if (placement) void moveProject(project, target.stageKey, placement);
+  function onCrossStageMove(projectId: string, gap: SemanticGap, _focusDescriptor: FocusDescriptor) {
+    const model: BoardModel = {
+      projects,
+      ...(projects.find((project) => project.authorizedBoardOrder !== undefined)?.authorizedBoardOrder
+        ? { authorizedBoardOrder: projects.find((project) => project.authorizedBoardOrder !== undefined)?.authorizedBoardOrder }
+        : {}),
+    };
+    const request = buildMoveRequest(model, projectId, gap);
+    if ("stale" in request) {
+      const message = announce({ type: "stale-move-to" }, { terminal: Boolean(queryRuntime?.principalTerminal) });
+      if (message !== undefined) setAnnouncement(message);
+      queueDashboardRefresh();
       return;
     }
-    const placement = cardDropPlacement(project.id, target.id, target.stageKey, edge, projects);
-    if (placement) void moveProject(project, target.stageKey, placement);
+    const project = projects.find((item) => item.id === projectId);
+    if (project) void moveProject(project, gap.targetStageKey, request.placement);
   }
 
   async function setProjectPriority(project: ProjectSummary, priority: number | null) {
@@ -494,24 +402,23 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       )}
 
       {!isLoading && !error && !viewingArchived && filteredProjects.length > 0 && view === "kanban" && (
-        <div className="kanban" aria-label="Project pipeline board">
-          {activeStages.map((stage) => {
-            const stageProjects = sortKanbanProjects(filteredProjects.filter((project) => project.stageKey === stage.key), effectiveKanbanSort);
-            const stageKey = stage.key;
-            const isSameStageDrop = dragging !== undefined && dragging.stageKey === stageKey;
-            const canDropStage = dragging !== undefined && (isSameStageDrop
-              ? boardMutationEnabled && canPrioritize && effectiveKanbanSort === "board"
-              : canMoveStages);
-            const isDropTarget = canDropStage && dropStage === stageKey;
-            return <section className={`kcol ${isDropTarget ? "is-over" : ""}`} key={stage.key} onDragOver={(event) => { if (canDropStage && dragging) { event.preventDefault(); setDropStage(stageKey); } }} onDragLeave={() => { if (dropStage === stageKey) setDropStage(undefined); }} onDrop={(event) => { event.preventDefault(); if (canDropStage) void moveProject(dragging, stageKey); }}>
-              <div className="kcol__head"><span className="row gap2"><StatusBadge stageKey={stage.key} /></span><span className="cnt">{stageProjects.length}</span></div>
-              <div className="kcol__body">
-                {stageProjects.length === 0 && <div className="kcol__empty">—</div>}
-                {stageProjects.map((project) => <KanbanCard key={project.id} project={project} canMove={canMoveStages && !pendingMoves.has(project.id)} canPrioritize={canPrioritize && hasAuthorizedBoardMap && !pendingOrdering.has(project.id)} canReorder={boardMutationEnabled && canPrioritize && effectiveKanbanSort === "board" && !pendingOrdering.has(project.id)} stageOptions={activeStages} onMoveStage={(item, targetStageKey) => { void moveProject(item, targetStageKey); }} isDragging={dragging?.id === project.id} cardDropEdge={dropTarget?.stageKey === stage.key && dropTarget.projectId === project.id ? dropTarget.edge : undefined} onCardDragOver={cardDragOver} onCardDrop={cardDrop} onPriorityChange={setProjectPriority} onBoardPosition={moveProjectPosition} onDragStart={beginDrag} onDragEnd={() => { setDragging(undefined); setDropStage(undefined); setDropTarget(undefined); }} />)}
-              </div>
-            </section>;
-          })}
-        </div>
+        <ProjectKanbanBoard
+          projects={filteredProjects}
+          activeStages={activeStages}
+          canMoveStages={canMoveStages}
+          canPrioritize={canPrioritize && hasAuthorizedBoardMap}
+          boardMutationEnabled={boardMutationEnabled}
+          effectiveKanbanSort={effectiveKanbanSort}
+          pendingMoves={pendingMoves}
+          pendingOrdering={pendingOrdering}
+          terminal={Boolean(queryRuntime?.principalTerminal)}
+          onCrossStageMove={onCrossStageMove}
+          onBoardPosition={moveProjectPosition}
+          onPriorityChange={setProjectPriority}
+          onMoveStage={(project, targetStageKey) => { void moveProject(project, targetStageKey); }}
+          onInteractionStateChange={setBoardInteraction}
+          onAnnounce={(message) => { if (message !== undefined) setAnnouncement(message); }}
+        />
       )}
       <div className="dashboard-live-region sr-only" aria-live="polite" aria-atomic="true">{announcement}</div>
       <div className="toasts" aria-live="polite">{toasts.map((item) => <div className={`toast ${item.tone === "error" ? "toast--error" : ""}`} key={item.id}>{item.tone === "error" ? "!" : "✓"}<span>{item.message}</span></div>)}</div>

@@ -1,4 +1,4 @@
-import { act } from "react";
+import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -11,9 +11,21 @@ import { ProjectQueryRuntime, ProjectQueryRuntimeProvider } from "../lib/project
 const authState = vi.hoisted(() => ({ role: "admin" as "admin" | "editor" | "external_editor", moved: false }));
 const apiGetMock = vi.hoisted(() => vi.fn<(path: string) => Promise<unknown>>());
 const apiPostMock = vi.hoisted(() => vi.fn<(path: string, body: unknown) => Promise<unknown>>());
+type DndTestEvent = { active: { id: string; data?: unknown }; over: { id: string; data?: unknown } | null };
+const dnd = vi.hoisted(() => ({ handlers: [] as Array<{ start?: (event: DndTestEvent) => void; over?: (event: DndTestEvent) => void; end?: (event: DndTestEvent) => void; cancel?: (event: DndTestEvent) => void }> }));
 vi.mock("../lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/api")>();
   return { ...actual, apiGet: (path: string) => apiGetMock(path), apiPost: (path: string, body: unknown) => apiPostMock(path, body) };
+});
+vi.mock("@dnd-kit/core", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@dnd-kit/core")>();
+  return {
+    ...actual,
+    DndContext: (props: Parameters<typeof actual.DndContext>[0]) => {
+      dnd.handlers.push({ start: props.onDragStart as ((event: DndTestEvent) => void) | undefined, over: props.onDragOver as ((event: DndTestEvent) => void) | undefined, end: props.onDragEnd as ((event: DndTestEvent) => void) | undefined, cancel: props.onDragCancel as ((event: DndTestEvent) => void) | undefined });
+      return createElement(actual.DndContext, props);
+    },
+  };
 });
 vi.mock("../lib/auth", () => ({ useSession: () => ({ data: { user: { id: "user-1", role: authState.role } } }) }));
 vi.mock("../lib/capabilities", () => ({
@@ -71,11 +83,40 @@ function externalResponse() {
   };
 }
 
-function dragEvent(type: string, clientY = 10) {
-  const event = new Event(type, { bubbles: true, cancelable: true });
-  Object.defineProperty(event, "clientY", { value: clientY });
-  Object.defineProperty(event, "dataTransfer", { value: { effectAllowed: "", setData: vi.fn() } });
-  return event;
+function cardData(stageKey: "awaiting_raw" | "raw_review" | "editing_autohdr", projectId: string) {
+  return { current: { kind: "card", stageKey, projectId } };
+}
+
+function columnData(stageKey: "awaiting_raw" | "raw_review" | "editing_autohdr") {
+  return { current: { kind: "column", stageKey } };
+}
+
+function dndEvent(activeId: string, activeData: unknown, over: { id: string; data: unknown } | null = null): DndTestEvent {
+  return { active: { id: activeId, data: activeData }, over };
+}
+
+async function dndStart(activeId: string, stageKey: "awaiting_raw" | "raw_review" | "editing_autohdr") {
+  const handler = dnd.handlers.at(-1)?.start;
+  if (!handler) throw new Error("No DndContext drag-start handler was rendered");
+  await act(async () => { handler(dndEvent(activeId, cardData(stageKey, activeId))); await Promise.resolve(); });
+}
+
+async function dndOver(activeId: string, activeStage: "awaiting_raw" | "raw_review" | "editing_autohdr", overId: string, overData: unknown) {
+  const handler = dnd.handlers.at(-1)?.over;
+  if (!handler) throw new Error("No DndContext drag-over handler was rendered");
+  await act(async () => { handler(dndEvent(activeId, cardData(activeStage, activeId), { id: overId, data: overData })); await Promise.resolve(); });
+}
+
+async function dndEnd(activeId: string, activeStage: "awaiting_raw" | "raw_review" | "editing_autohdr", over: { id: string; data: unknown } | null) {
+  const handler = dnd.handlers.at(-1)?.end;
+  if (!handler) throw new Error("No DndContext drag-end handler was rendered");
+  await act(async () => { handler(dndEvent(activeId, cardData(activeStage, activeId), over)); await Promise.resolve(); });
+}
+
+async function dndCancel(activeId: string, stageKey: "awaiting_raw" | "raw_review" | "editing_autohdr") {
+  const handler = dnd.handlers.at(-1)?.cancel;
+  if (!handler) throw new Error("No DndContext drag-cancel handler was rendered");
+  await act(async () => { handler(dndEvent(activeId, cardData(stageKey, activeId))); await Promise.resolve(); });
 }
 
 function card(host: HTMLElement, street: string) {
@@ -94,6 +135,7 @@ let host: HTMLElement;
 describe("Dashboard Stage interactions", () => {
   beforeEach(() => {
     authState.role = "admin"; authState.moved = false; apiGetMock.mockReset(); apiPostMock.mockReset();
+    dnd.handlers.length = 0;
     apiGetMock.mockImplementation((path) => path === "/api/projects" ? Promise.resolve(response()) : Promise.resolve({}));
     apiPostMock.mockResolvedValue({ changed: true, project: { stageKey: "raw_review", boardRevision: 4 } });
     host = document.createElement("div"); document.body.append(host); root = createRoot(host);
@@ -104,10 +146,9 @@ describe("Dashboard Stage interactions", () => {
   it("uses exact authorized-map neighbours for a card boundary and append for a column background", async () => {
     await act(async () => { root.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); }); await flush();
     const source = card(host, "Source Street"); const target = card(host, "target Street");
-    vi.spyOn(target, "getBoundingClientRect").mockReturnValue({ top: 0, height: 100 } as DOMRect);
-    await act(async () => { source.querySelector<HTMLAnchorElement>(".kcard")!.dispatchEvent(dragEvent("dragstart")); await Promise.resolve(); });
-    target.dispatchEvent(dragEvent("dragover", 10));
-    target.dispatchEvent(dragEvent("drop", 10));
+    await dndStart("source", "awaiting_raw");
+    await dndOver("source", "awaiting_raw", "target", cardData("raw_review", "target"));
+    await dndEnd("source", "awaiting_raw", { id: "target", data: cardData("raw_review", "target") });
     await flush();
     expect(apiPostMock).toHaveBeenCalledWith("/api/projects/source/stage", expect.objectContaining({
       expected: { stageKey: "awaiting_raw", boardRevision: 3 },
@@ -116,9 +157,9 @@ describe("Dashboard Stage interactions", () => {
     }));
 
     const nextSource = card(host, "Source Street");
-    await act(async () => { nextSource.querySelector<HTMLAnchorElement>(".kcard")!.dispatchEvent(dragEvent("dragstart")); await Promise.resolve(); });
-    const rawColumn = host.querySelectorAll<HTMLElement>(".kcol")[1]!;
-    rawColumn.dispatchEvent(dragEvent("drop"));
+    await dndStart("source", "awaiting_raw");
+    await dndOver("source", "awaiting_raw", "column:raw_review", columnData("raw_review"));
+    await dndEnd("source", "awaiting_raw", { id: "column:raw_review", data: columnData("raw_review") });
     await flush();
     expect(apiPostMock).toHaveBeenLastCalledWith("/api/projects/source/stage", expect.objectContaining({
       expected: { stageKey: "awaiting_raw", boardRevision: 3 },
@@ -130,10 +171,9 @@ describe("Dashboard Stage interactions", () => {
   it("does not offer same-column reorder to an Editor without prioritizeProjects", async () => {
     authState.role = "editor";
     await act(async () => { root.render(<Dashboard currentUserId="editor-1" />); await Promise.resolve(); }); await flush();
-    const source = card(host, "before Street"); const target = card(host, "target Street");
-    vi.spyOn(target, "getBoundingClientRect").mockReturnValue({ top: 0, height: 100 } as DOMRect);
-    await act(async () => { source.querySelector<HTMLAnchorElement>(".kcard")!.dispatchEvent(dragEvent("dragstart")); await Promise.resolve(); });
-    target.dispatchEvent(dragEvent("drop", 10));
+    await dndStart("before", "raw_review");
+    await dndOver("before", "raw_review", "target", cardData("raw_review", "target"));
+    await dndEnd("before", "raw_review", { id: "target", data: cardData("raw_review", "target") });
     await flush();
     expect(apiPostMock).not.toHaveBeenCalled();
   });
@@ -254,7 +294,7 @@ describe("Dashboard Stage interactions", () => {
     expect(host.textContent).toContain("Source Street");
 
     const source = card(host, "Source Street");
-    await act(async () => { source.querySelector<HTMLAnchorElement>(".kcard")!.dispatchEvent(dragEvent("dragstart")); await Promise.resolve(); });
+    await dndStart("source", "awaiting_raw");
     await act(async () => {
       void queryClient.invalidateQueries({ queryKey: dashboardProjectsKey("admin-1", "photographer", 0, false), exact: true, refetchType: "active" });
       await Promise.resolve();
@@ -265,13 +305,13 @@ describe("Dashboard Stage interactions", () => {
     expect(host.textContent).toContain("Source Street");
     expect(host.textContent).not.toContain("Fresh Street");
 
-    source.querySelector<HTMLAnchorElement>(".kcard")!.dispatchEvent(dragEvent("dragend"));
+    await dndCancel("source", "awaiting_raw");
     await flush();
     expect(requestCount).toBe(3);
     expect(host.textContent).toContain("Fresh Street");
 
     const fresh = card(host, "Fresh Street");
-    await act(async () => { fresh.querySelector<HTMLAnchorElement>(".kcard")!.dispatchEvent(dragEvent("dragstart")); await Promise.resolve(); });
+    await dndStart("source", "awaiting_raw");
     await act(async () => {
       void queryClient.invalidateQueries({ queryKey: dashboardProjectsKey("admin-1", "photographer", 0, false), exact: true, refetchType: "active" });
       await Promise.resolve();
@@ -300,7 +340,7 @@ describe("Dashboard Stage interactions", () => {
     await act(async () => { root.render(<ProjectQueryRuntimeProvider runtime={runtime}><QueryClientProvider client={queryClient}><Dashboard currentUserId="admin-1" /></QueryClientProvider></ProjectQueryRuntimeProvider>); await Promise.resolve(); });
     await flush();
     const source = card(host, "Source Street");
-    await act(async () => { source.querySelector<HTMLAnchorElement>(".kcard")!.dispatchEvent(dragEvent("dragstart")); await Promise.resolve(); });
+    await dndStart("source", "awaiting_raw");
     await act(async () => {
       void queryClient.invalidateQueries({ queryKey: dashboardProjectsKey("admin-1", "photographer", 0, false), exact: true, refetchType: "active" });
       await Promise.resolve();
@@ -308,7 +348,7 @@ describe("Dashboard Stage interactions", () => {
     expect(requestCount).toBe(2);
     runtime.markProjectRemoved("source");
     await flush();
-    expect(host.textContent).not.toContain("Source Street");
+    expect(host.querySelector('[href="/projects/source"]')).toBeNull();
     resolveLate!(freshResponse);
     await flush();
     expect(host.textContent).not.toContain("Fresh Street");
@@ -347,6 +387,8 @@ describe("Dashboard Stage interactions", () => {
 
   it("keeps External Editor order and presentation stages from the external authorized projection", async () => {
     authState.role = "external_editor";
+    const firstId = "123e4567-e89b-42d3-a456-426614174001";
+    const secondId = "123e4567-e89b-42d3-a456-426614174002";
     apiGetMock.mockImplementation((path) => path === "/api/projects" ? Promise.resolve(externalResponse()) : Promise.resolve({}));
     await act(async () => { root.render(<Dashboard currentUserId="external-1" role="external_editor" />); await Promise.resolve(); });
     await flush();
@@ -359,11 +401,9 @@ describe("Dashboard Stage interactions", () => {
     expect(host.querySelector('[aria-label="Move project down"]')).toBeNull();
     expect([...host.querySelectorAll<HTMLElement>(".kcol")].some((column) => /Priority|Shoot date/.test(column.textContent ?? ""))).toBe(false);
 
-    const source = card(host, "External First Street");
-    const target = card(host, "External Second Street");
-    vi.spyOn(target, "getBoundingClientRect").mockReturnValue({ top: 0, height: 100 } as DOMRect);
-    await act(async () => { source.querySelector<HTMLAnchorElement>(".kcard")!.dispatchEvent(dragEvent("dragstart")); await Promise.resolve(); });
-    target.dispatchEvent(dragEvent("drop", 10));
+    await dndStart(firstId, "editing_autohdr");
+    await dndOver(firstId, "editing_autohdr", secondId, cardData("editing_autohdr", secondId));
+    await dndEnd(firstId, "editing_autohdr", { id: secondId, data: cardData("editing_autohdr", secondId) });
     await flush();
     expect(apiPostMock).not.toHaveBeenCalled();
   });

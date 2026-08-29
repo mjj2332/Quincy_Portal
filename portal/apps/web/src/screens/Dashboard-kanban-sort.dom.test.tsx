@@ -88,7 +88,7 @@ describe("Dashboard Kanban sort control", () => {
     expect(document.querySelector('[aria-label="Move project up"]')).toBeNull();
     expect(document.querySelector('[aria-label="Move project down"]')).toBeNull();
     expect(document.querySelector('[aria-label="Move Flag Off Street to Stage"]')).toBeNull();
-    expect(document.querySelector(".kcard")?.getAttribute("draggable")).toBe("false");
+    expect(document.querySelector<HTMLButtonElement>('[aria-label="Move Flag Off Street"]')?.disabled).toBe(true);
   });
 
   it("renders the Sydney deadline on Kanban cards and keeps RAW out of the card footer", async () => {
@@ -100,7 +100,6 @@ describe("Dashboard Kanban sort control", () => {
     expect(card.querySelector("time")?.getAttribute("dateTime")).toBe("2027-01-14T22:00:00.000Z");
     expect(card.getAttribute("href")).toBe("/projects/project-1");
     expect(card.getAttribute("target")).toBeNull();
-    expect(card.getAttribute("draggable")).toBe("true");
 
     await act(async () => { (document.querySelector('[aria-label="Dashboard view"] button') as HTMLButtonElement).click(); await Promise.resolve(); });
     expect(document.querySelector(".prow-wrap .prow")?.getAttribute("href")).toBe("/projects/project-1");
@@ -123,58 +122,4 @@ describe("Dashboard Kanban sort control", () => {
     expect(document.querySelector('[aria-label="Dashboard view"]')).toBeNull();
   });
 
-  it("characterizes every native Board drag surface currently owned by the card", async () => {
-    apiGetMock.mockImplementation((path) => path === "/api/projects" ? Promise.resolve({ projects: [
-      {
-        id: "drag-source", street: "Drag Source Street", suburb: null, postcode: null, agencyName: null, agentName: null,
-        stageKey: "awaiting_raw", shootDate: null, coverAssetId: null, receivedCount: 0, expectedCount: null, priority: null,
-        boardPosition: 999, boardRevision: 2, deadlineAt: null, deadlineLocalCivil: null, deadlineZone: null,
-      },
-      {
-        id: "drag-target", street: "Drag Target Street", suburb: null, postcode: null, agencyName: null, agentName: null,
-        stageKey: "awaiting_raw", shootDate: null, coverAssetId: null, receivedCount: 0, expectedCount: null, priority: null,
-        boardPosition: 0, boardRevision: 3, deadlineAt: null, deadlineLocalCivil: null, deadlineZone: null,
-      },
-    ], board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: ["drag-source", "drag-target"] } } }) : Promise.resolve({ stages: [] }));
-    await act(async () => { root!.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); await Promise.resolve(); await vi.advanceTimersByTimeAsync(100); await Promise.resolve(); });
-    await vi.waitFor(() => expect(document.querySelectorAll(".kcard")).toHaveLength(2));
-    const source = document.querySelector<HTMLAnchorElement>('[href="/projects/drag-source"]')!;
-    const target = document.querySelector<HTMLAnchorElement>('[href="/projects/drag-target"]')!;
-    const targetWrap = target.closest<HTMLElement>(".kcard-wrap")!;
-    const column = targetWrap.closest<HTMLElement>(".kcol")!;
-    vi.spyOn(targetWrap, "getBoundingClientRect").mockReturnValue({ top: 0, height: 100 } as DOMRect);
-
-    // SLICE 0 CHARACTERIZATION — Slice 2 rewrites/removes this; not proof of dnd sensors.
-    expect(source.getAttribute("draggable")).toBe("true");
-    const dataTransfer = { effectAllowed: "", setData: vi.fn() };
-    const start = new Event("dragstart", { bubbles: true, cancelable: true });
-    Object.defineProperty(start, "dataTransfer", { value: dataTransfer });
-    await act(async () => { source.dispatchEvent(start); await Promise.resolve(); });
-    expect(dataTransfer.effectAllowed).toBe("move");
-    expect(dataTransfer.setData).toHaveBeenCalledWith("text/plain", "drag-source");
-
-    // SLICE 0 CHARACTERIZATION — Slice 2 rewrites/removes this; not proof of dnd sensors.
-    const dragOver = new Event("dragover", { bubbles: true, cancelable: true });
-    Object.defineProperty(dragOver, "clientY", { value: 10 });
-    await act(async () => { targetWrap.dispatchEvent(dragOver); await Promise.resolve(); });
-    expect(dragOver.defaultPrevented).toBe(true);
-    expect(column.classList.contains("is-over")).toBe(true);
-
-    // SLICE 0 CHARACTERIZATION — Slice 2 rewrites/removes this; not proof of dnd sensors.
-    await act(async () => { column.dispatchEvent(new Event("dragleave", { bubbles: true })); await Promise.resolve(); });
-    expect(column.classList.contains("is-over")).toBe(false);
-
-    // SLICE 0 CHARACTERIZATION — Slice 2 rewrites/removes this; not proof of dnd sensors.
-    const secondDragOver = new Event("dragover", { bubbles: true, cancelable: true });
-    Object.defineProperty(secondDragOver, "clientY", { value: 10 });
-    await act(async () => { targetWrap.dispatchEvent(secondDragOver); await Promise.resolve(); });
-    const drop = new Event("drop", { bubbles: true, cancelable: true });
-    Object.defineProperty(drop, "clientY", { value: 10 });
-    await act(async () => { targetWrap.dispatchEvent(drop); await Promise.resolve(); });
-    expect(apiPostMock).toHaveBeenCalledWith("/api/projects/drag-source/stage", expect.objectContaining({ placement: { kind: "between", before: null, after: { projectId: "drag-target", boardRevision: 3 } } }));
-
-    // SLICE 0 CHARACTERIZATION — Slice 2 rewrites/removes this; not proof of dnd sensors.
-    await act(async () => { source.dispatchEvent(new Event("dragend", { bubbles: true, cancelable: true })); await Promise.resolve(); });
-    expect(source.closest(".kcard-wrap")?.classList.contains("is-dragging")).toBe(false);
-  });
 });
