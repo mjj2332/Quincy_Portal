@@ -76,10 +76,18 @@ suites. No coverage lost.
 - No native drag: zero `draggable=` / `dataTransfer` / `DragEvent` / `suppressNavigation` in
   `Dashboard.tsx` + `ProjectKanbanBoard.tsx`; zero synthetic native `DragEvent` in tests.
 
+## Review status
+
+1. **Fresh Sol diff review** of `b4f8fda..HEAD` — **DONE** (2 rounds: mid-build S1–S3 + full diff;
+   5 blocking + 8 should-fix + 2 nits closed) → Luna fix rounds → **Sol focused verify pass DONE**
+   (all closed, all invariants CONFIRMED).
+2. **Opus final-draft review** (`Agent` tool, `model: opus`) — **DONE**: all four load-bearing
+   invariants + the shipped TB5A contract independently CONFIRMED, gate reproduced green; **1
+   blocking regression** (empty-Stage-column moves) found + fixed (`71203f1`); **Sol focused confirm
+   DONE — CLEARED FOR QA + DEPLOY**.
+
 ## Still required before deploy
 
-1. **Fresh Sol diff review** of `b4f8fda..HEAD` (read-only) → Luna fix rounds → Sol focused pass.
-2. **Opus final-draft review** (`Agent` tool, `model: opus`).
 3. **Agy local-dev QA matrix** against `http://localhost:8787` (needs a human Google sign-in in
    Agy's dedicated Chrome; see `docs/Subagent-Orchestration.md` §2.8). Plus the **Slice 5
    acceptance items that need real hardware** (orchestrator/owner action):
