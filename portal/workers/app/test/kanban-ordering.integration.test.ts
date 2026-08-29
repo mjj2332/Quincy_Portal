@@ -8,6 +8,8 @@ const database = env as unknown as { DB: D1Database };
 const appEnv = env as unknown as Env;
 const adminId = crypto.randomUUID();
 const adminToken = `kanban-admin-${crypto.randomUUID()}`;
+const photographerId = crypto.randomUUID();
+const photographerToken = `kanban-photographer-${crypto.randomUUID()}`;
 const authSecret = appEnv.BETTER_AUTH_SECRET ?? "dev-only-replace-better-auth-secret-32-bytes";
 declare const __PORTAL_MIGRATION_SQL__: string;
 
@@ -49,6 +51,10 @@ beforeAll(async () => {
       .bind(adminId, `${adminId}@example.test`, now, now),
     database.DB.prepare("INSERT INTO session (id, expires_at, token, user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
       .bind(crypto.randomUUID(), now + 3_600_000, adminToken, adminId, now, now),
+    database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, authorization_epoch, created_at, updated_at) VALUES (?, 'Kanban Photographer', ?, 1, 'photographer', 1, 0, ?, ?)")
+      .bind(photographerId, `${photographerId}@example.test`, now, now),
+    database.DB.prepare("INSERT INTO session (id, expires_at, token, user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
+      .bind(crypto.randomUUID(), now + 3_600_000, photographerToken, photographerId, now, now),
   ]);
 });
 
@@ -160,6 +166,27 @@ describe("Kanban priority and Board commands", () => {
     expect((await confirmed.json()).project).toMatchObject({ projectId: target, stageKey: "delivered", boardRevision: 1 });
     expect(await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE target_id = ? AND action = 'stage.set'").bind(target).first()).toEqual({ count: 1 });
     expect(await database.DB.prepare("SELECT count(*) AS count FROM project_activity_events WHERE project_id = ? AND event_type = 'project.stage.changed'").bind(target).first()).toEqual({ count: 1 });
+  });
+
+  it("returns the Stage capability denial before either Board operational gate", async () => {
+    const target = crypto.randomUUID();
+    await seedProject(target, "raw_review", 1024);
+    const body = JSON.stringify({
+      expected: { stageKey: "raw_review", boardRevision: 0 },
+      targetStageKey: "editing_autohdr",
+      placement: { kind: "append" },
+      confirmation: { reasons: ["editing_boundary"] },
+    });
+    try {
+      for (const enabled of [false, true]) {
+        await database.DB.prepare("UPDATE feature_flags SET enabled = ? WHERE key = 'tb5a_board_contract_enabled'").bind(enabled ? 1 : 0).run();
+        const response = await request(`/api/projects/${target}/stage`, photographerToken, { method: "POST", body });
+        expect(response.status).toBe(403);
+        await expect(response.json()).resolves.toEqual({ error: "Forbidden", capability: "moveProjectStage" });
+      }
+    } finally {
+      await database.DB.prepare("UPDATE feature_flags SET enabled = 1 WHERE key = 'tb5a_board_contract_enabled'").run();
+    }
   });
 
   it("rejects the exact legacy body before mutation", async () => {

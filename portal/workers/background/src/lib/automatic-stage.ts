@@ -1,4 +1,4 @@
-import { buildHandoffStartTail, buildOwnershipAssertionBundle, buildNonCompactingStageWinner, buildTerminalAssertionBundle, buildWorkflowCheckBundle, buildWorkflowTail, buildEditingEntryTokenTail, compileClosedAutomaticCoupling, composeStageBundle,
+import { buildHandoffStartTail, buildOwnershipAssertionBundle, buildNonCompactingStageWinner, buildTerminalAssertionBundle, buildWorkflowTail, buildEditingEntryTokenTail, compileClosedAutomaticCoupling, composeStageBundle,
   deriveStageFinalizerIntent,
   type ClosedAutomaticCoupling, type ClosedOwnershipBundle, type CommittedStageFinalizerIntent,
   type ExpectedTargetPlacementRow,
@@ -22,6 +22,7 @@ export type AutomaticStageOutcome = { kind: "winner"; finalizer: CommittedStageF
 
 type StageSnapshot = { stageKey: StageKey; oldBoardRevision: number;
   expectedTarget: ExpectedTargetPlacementRow[]; archivedAt: number | null; };
+type JobEntryProvenancePrefixBundle = Pick<JobEntryProvenanceBundle, "statements" | "kind" | "coupling"> & { indexes: { payloadUpdate: number; }; };
 
 async function stageSnapshot(
   database: D1Database,
@@ -189,11 +190,11 @@ function validateClosedComposition(input: {
   workflow: GuardedTransitionPrerequisite;
   coupling?: ClosedAutomaticCoupling;
   preWinnerOwnership?: ClosedOwnershipBundle;
-  preWinnerProvenance?: JobEntryProvenanceBundle;
+  preWinnerProvenance?: JobEntryProvenancePrefixBundle;
   postMarkerHandoffStart?: HandoffStartBundle;
   alreadyAtDestination: { allowed: false; } | {
     allowed: true;
-    effect: { kind: "none"; } | { kind: "handoff_start"; bundle: HandoffStartBundle; } | { kind: "ownership"; bundle: ClosedOwnershipBundle; } | { kind: "job_provenance"; bundle: JobEntryProvenanceBundle; } | { kind: "workflow_check"; workflow: GuardedTransitionPrerequisite; };
+    effect: { kind: "none"; } | { kind: "handoff_start"; bundle: HandoffStartBundle; } | { kind: "ownership"; bundle: ClosedOwnershipBundle; } | { kind: "job_provenance"; bundle: JobEntryProvenanceBundle; };
   };
 }): void {
   if (input.workflow.kind !== "none" && input.workflow.projectId !== input.projectId) throw new Error("Automatic workflow and project documents disagree");
@@ -215,16 +216,8 @@ function validateClosedComposition(input: {
     if (effect.kind === "handoff_start" && (!input.coupling || compileClosedAutomaticCoupling(effect.bundle.coupling) !== compileClosedAutomaticCoupling(input.coupling))) throw new Error("Destination handoff-start and coupling documents disagree");
     if (effect.kind === "ownership" && (!input.coupling || compileClosedAutomaticCoupling(effect.bundle.coupling) !== compileClosedAutomaticCoupling(input.coupling))) throw new Error("Destination ownership and coupling documents disagree");
     if (effect.kind === "job_provenance" && (!input.coupling || effect.bundle.coupling.kind !== "job_entry_provenance" || compileClosedAutomaticCoupling(effect.bundle.coupling) !== compileClosedAutomaticCoupling(input.coupling))) throw new Error("Destination provenance and coupling documents disagree");
-    if (effect.kind === "workflow_check") {
-      if (effect.workflow.kind !== "autohdr_handoff" && effect.workflow.kind !== "autohdr_mapping") throw new Error("workflow_check destination effect is only valid for handoff/mapping");
-      if (effect.workflow.projectId !== input.projectId) throw new Error("Destination workflow and project documents disagree");
-    }
+    if ((effect.kind === "ownership" || effect.kind === "job_provenance") && typeof effect.bundle.indexes.ownershipAssertion !== "number") throw new Error("Destination ownership effect requires an ownership assertion index");
   }
-}
-function destinationWorkflow(workflow: GuardedTransitionPrerequisite, boardRevision: number): GuardedTransitionPrerequisite {
-  if (workflow.kind === "autohdr_handoff") return { ...workflow, expectedPriorToken: boardRevision - 1 };
-  if (workflow.kind === "autohdr_mapping") return { ...workflow, expectedPriorToken: boardRevision - 1 };
-  return workflow;
 }
 export async function commitAutomaticStage(input: {
   env: AutomaticStageBindings;
@@ -239,11 +232,11 @@ export async function commitAutomaticStage(input: {
   workflow: GuardedTransitionPrerequisite;
   coupling?: ClosedAutomaticCoupling;
   preWinnerOwnership?: ClosedOwnershipBundle;
-  preWinnerProvenance?: JobEntryProvenanceBundle;
+  preWinnerProvenance?: JobEntryProvenancePrefixBundle;
   postMarkerHandoffStart?: HandoffStartBundle;
   alreadyAtDestination: { allowed: false; } | {
     allowed: true;
-    effect: { kind: "none"; } | { kind: "handoff_start"; bundle: HandoffStartBundle; } | { kind: "ownership"; bundle: ClosedOwnershipBundle; } | { kind: "job_provenance"; bundle: JobEntryProvenanceBundle; } | { kind: "workflow_check"; workflow: GuardedTransitionPrerequisite; };
+    effect: { kind: "none"; } | { kind: "handoff_start"; bundle: HandoffStartBundle; } | { kind: "ownership"; bundle: ClosedOwnershipBundle; } | { kind: "job_provenance"; bundle: JobEntryProvenanceBundle; };
   };
   legacyWorkflowNotification?: CommittedStageFinalizerIntent["legacyWorkflowNotification"];
 }): Promise<AutomaticStageOutcome> {
@@ -256,18 +249,6 @@ export async function commitAutomaticStage(input: {
     if (!input.alreadyAtDestination.allowed) return { kind: "conflict" };
     const effect = input.alreadyAtDestination.effect;
     if (effect.kind === "none") return { kind: "already_at_destination" };
-    if (effect.kind === "workflow_check") {
-      if (effect.workflow.kind !== "autohdr_handoff" && effect.workflow.kind !== "autohdr_mapping") throw new Error("workflow_check destination effect is only valid for handoff/mapping");
-      const check = buildWorkflowCheckBundle({
-        db: input.env.DB,
-        projectId: input.projectId,
-        destinationStage: input.to,
-        oldBoardRevision: snapshot.oldBoardRevision - 1,
-        workflow: destinationWorkflow(effect.workflow, snapshot.oldBoardRevision)
-      });
-      const results = await input.env.DB.batch(check.statements);
-      return exactOne(results[check.indexes.workflowCheck]) ? { kind: "already_at_destination" } : { kind: "conflict" };
-    }
     if (effect.kind === "handoff_start") {
       const assertion = buildOwnershipAssertionBundle({
         db: input.env.DB,
@@ -291,14 +272,14 @@ export async function commitAutomaticStage(input: {
     }
     if (effect.kind === "ownership") {
       const index = effect.bundle.indexes.ownershipAssertion;
-      return typeof index === "number" && !exactOne(results[index]) ? { kind: "already_at_destination" } : { kind: "conflict" };
+      return typeof index === "number" && (results[index]?.meta.changes ?? 0) === 0 ? { kind: "already_at_destination" } : { kind: "conflict" };
     }
-    if (effect.kind === "job_provenance" && typeof effect.bundle.indexes.ownershipAssertion === "number") {
+    if (effect.kind === "job_provenance") {
       const payloadUpdated = (results[effect.bundle.indexes.payloadUpdate]?.meta.changes ?? 0) === 1;
       const ownershipHeld = (results[effect.bundle.indexes.ownershipAssertion]?.meta.changes ?? 0) === 0;
       return payloadUpdated && ownershipHeld ? { kind: "already_at_destination" } : { kind: "conflict" };
     }
-    return (results[effect.bundle.indexes.payloadUpdate]?.meta.changes ?? 0) === 1 ? { kind: "already_at_destination" } : { kind: "conflict" };
+    return { kind: "conflict" };
   }
   if (snapshot.stageKey !== input.from) return { kind: "conflict" };
   const oldBoardRevision = input.oldBoardRevision ?? snapshot.oldBoardRevision;

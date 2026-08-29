@@ -795,6 +795,17 @@ describe("TB5A Slice 3 stage-board bundles", () => {
       workflow: { statements: [], indexes: { kind: "none" } },
     });
     expect(Object.hasOwn(optionalIndex.indexes.preWinner ?? {}, "optional")).toBe(false);
+
+    const tupleBearingStage = {
+      statements: stage.statements,
+      indexes: { ...stage.indexes, pathClaims: [0, 1] as const },
+    } as unknown as typeof stage;
+    const tupleOffset = composeStageBundle({
+      preWinner: { statements: [stage.statements[0]!], indexes: { payloadUpdate: 0 } },
+      stage: tupleBearingStage,
+      workflow: { statements: [], indexes: { kind: "none" } },
+    });
+    expect(tupleOffset.indexes.stage).toMatchObject({ pathClaims: [1, 2] });
   });
 
   it("derives a finalizer only from full winner agreement", () => {

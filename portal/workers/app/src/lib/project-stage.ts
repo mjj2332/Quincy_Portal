@@ -130,12 +130,12 @@ function finalizerFromResults(results: D1Result<unknown>[], projectId: string, a
 }
 
 export async function moveProjectStage(input: MoveProjectStageInput): Promise<MoveProjectStageResult> {
+  const principal = input.principal;
+  if (!principal.active || !roleHasCapability(principal.role, "moveProjectStage")) return { kind: "forbidden", capability: "moveProjectStage" };
   const variant = await boardSchemaVariant(input.env.DB);
   if (variant === "pre_0037") return { kind: "schema_maintenance" };
   if (!await boardContractEnabled(input.env.DB, variant)) return { kind: "disabled" };
   const db = input.env.DB;
-  const principal = input.principal;
-  if (!principal.active || !roleHasCapability(principal.role, "moveProjectStage")) return { kind: "forbidden", capability: "moveProjectStage" };
 
   // External visibility is intentionally resolved before the project lookup: an invisible id is
   // indistinguishable from a missing id and never reaches a more revealing branch.

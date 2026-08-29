@@ -15,7 +15,7 @@ import { confirmAutoHdrHandoff } from "../autohdr/claims";
 import { notifyProject } from "../notifications";
 import { automaticBoardWritesEnabled, commitAutomaticStage } from "../lib/automatic-stage";
 import { requireBoardSchemaReady } from "../lib/board-schema";
-import { buildJobEntryProvenanceBundle, buildOwnershipAssertionBundle } from "@quincy/db";
+import { buildJobEntryProvenanceBundle } from "@quincy/db";
 export interface AutoHdrInput {
   projectId: string;
   assetIds: string[];
@@ -274,12 +274,11 @@ export class AutoHdrSend extends WorkflowEntrypoint<Env, AutoHdrInput> {
         } else {
           const stageAuditId = crypto.randomUUID();
           const generation = input.stageEntryGeneration ?? 1;
-          const provenance = buildJobEntryProvenanceBundle({ db: this.env.DB, projectId: input.projectId, jobId: input.jobId, jobKind: "autohdr", generation, updatedAt: Date.now() });
-          const provenanceAssertion = buildOwnershipAssertionBundle({ db: this.env.DB, projectId: input.projectId, destinationStage: "editing_autohdr", coupling: provenance.coupling, assertedAt: Date.now() });
-          const destinationProvenance = {
+          const provenance = buildJobEntryProvenanceBundle({ db: this.env.DB, projectId: input.projectId, destinationStage: "editing_autohdr", jobId: input.jobId, jobKind: "autohdr", generation, updatedAt: Date.now() });
+          const preWinnerProvenance = {
             ...provenance,
-            statements: [...provenance.statements, ...provenanceAssertion.statements],
-            indexes: { payloadUpdate: provenance.indexes.payloadUpdate, ownershipAssertion: provenance.statements.length + provenanceAssertion.indexes.ownershipAssertion },
+            statements: provenance.statements.slice(0, provenance.indexes.ownershipAssertion),
+            indexes: { payloadUpdate: provenance.indexes.payloadUpdate },
           };
           const stageOutcome = await commitAutomaticStage({
             env: this.env,
@@ -300,10 +299,10 @@ export class AutoHdrSend extends WorkflowEntrypoint<Env, AutoHdrInput> {
               expectedPriorToken: null
             },
             coupling: provenance.coupling,
-            preWinnerProvenance: provenance,
+            preWinnerProvenance,
             alreadyAtDestination: {
               allowed: true,
-              effect: { kind: "job_provenance", bundle: destinationProvenance }
+              effect: { kind: "job_provenance", bundle: provenance }
             }
           });
           if (stageOutcome.kind === "winner") {

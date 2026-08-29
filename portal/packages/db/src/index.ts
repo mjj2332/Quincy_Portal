@@ -35,7 +35,6 @@ export {
   buildJobEntryProvenanceBundle,
   buildAutoHdrApiFinalizeBundle,
   buildTerminalAssertionBundle,
-  buildWorkflowCheckBundle,
   buildCompactingStageWinner,
   buildDeadlineSuppressionBundle,
   buildEditingEntryTokenTail,

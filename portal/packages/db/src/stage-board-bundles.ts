@@ -37,7 +37,7 @@ export type EditingEntryTokenTailIndexes = { editingEntryToken: number; };
 export type TerminalAssertionIndexes = { terminalAssertion: number; };
 export type OwnershipAssertionIndexes = { ownershipAssertion: number; };
 export type AutoHdrApiFinalizeIndexes = { payloadUpdate: number; finalizedAudit: number; ownershipAssertion: number; };
-export type JobEntryProvenanceBundle = PreparedStatementBundle<{ payloadUpdate: number; ownershipAssertion?: number; }> & {
+export type JobEntryProvenanceBundle = PreparedStatementBundle<{ payloadUpdate: number; ownershipAssertion: number; }> & {
   kind: "job_entry_provenance";
   coupling: Extract<ClosedAutomaticCoupling, { kind: "job_entry_provenance"; }>;
 };
@@ -520,7 +520,7 @@ function jobEntryProvenancePostconditionSql(param: number, expectedEntryRevision
     )
     AND json_valid(j.payload_json)
     AND json_extract(j.payload_json, '$.projectId') = ?1
-    AND json_extract(j.payload_json, '$.generation') = ${json(param, "generation")}
+    AND CAST(json_extract(j.payload_json, '$.generation') AS INTEGER) = ${json(param, "generation")}
     AND json_extract(j.payload_json, '$.stageEntrySourceJobId') = ${json(param, "jobId")}
     AND json_extract(j.payload_json, '$.stageEntryGeneration') = ${json(param, "generation")}${token}
 )`;
@@ -1813,11 +1813,13 @@ export function buildOwnershipAssertionBundle(input: { db: D1Database; projectId
     indexes: { ownershipAssertion: 0 }
   };
 }
-export function buildJobEntryProvenanceBundle(input: { db: D1Database; projectId: string; jobId: string; jobKind: "autohdr" | "autohdr_api_send"; generation: number; updatedAt: number; }): JobEntryProvenanceBundle {
+export function buildJobEntryProvenanceBundle(input: { db: D1Database; projectId: string; destinationStage: StageKey; jobId: string; jobKind: "autohdr" | "autohdr_api_send"; generation: number; updatedAt: number; }): JobEntryProvenanceBundle {
   const coupling = { kind: "job_entry_provenance" as const, jobId: input.jobId, jobKind: input.jobKind, generation: input.generation, jobStates: ["running", "done"] as ["running", "done"] };
+  const payloadUpdate = input.db.prepare("UPDATE jobs SET payload_json = json_set(CASE WHEN json_valid(payload_json) THEN payload_json ELSE '{}' END, '$.projectId', ?, '$.generation', ?, '$.stageEntrySourceJobId', ?, '$.stageEntryGeneration', ?), updated_at = ? WHERE id = ? AND kind = ? AND project_id = ? AND status IN ('running', 'done')").bind(input.projectId, input.generation, input.jobId, input.generation, input.updatedAt, input.jobId, input.jobKind, input.projectId);
+  const assertion = buildOwnershipAssertionBundle({ db: input.db, projectId: input.projectId, destinationStage: input.destinationStage, coupling, assertedAt: input.updatedAt });
   return {
-    statements: [input.db.prepare("UPDATE jobs SET payload_json = json_set(CASE WHEN json_valid(payload_json) THEN payload_json ELSE '{}' END, '$.projectId', ?, '$.generation', ?, '$.stageEntrySourceJobId', ?, '$.stageEntryGeneration', ?), updated_at = ? WHERE id = ? AND kind = ? AND project_id = ? AND status IN ('running', 'done')").bind(input.projectId, input.generation, input.jobId, input.generation, input.updatedAt, input.jobId, input.jobKind, input.projectId)],
-    indexes: { payloadUpdate: 0 },
+    statements: [payloadUpdate, ...assertion.statements],
+    indexes: { payloadUpdate: 0, ownershipAssertion: assertion.indexes.ownershipAssertion + 1 },
     kind: "job_entry_provenance",
     coupling
   };
@@ -1838,12 +1840,6 @@ export function buildAutoHdrApiFinalizeBundle(input: { db: D1Database; projectId
     coupling
   };
 }
-export function buildWorkflowCheckBundle(input: { db: D1Database; projectId: string; destinationStage: StageKey; oldBoardRevision: number; workflow: GuardedTransitionPrerequisite; }): PreparedStatementBundle<{ workflowCheck: number; }> {
-  return {
-    statements: [input.db.prepare(`SELECT 1 WHERE COALESCE((${workflowDurablePostconditionSql(input.workflow)}), 0)`).bind(input.projectId, input.destinationStage, input.oldBoardRevision, compileGuardedTransitionPrerequisite(input.workflow))],
-    indexes: { workflowCheck: 0 }
-  };
-}
 export function composeStageBundle(input: {
   preWinner?: PreparedStatementBundle<Record<string, number | readonly [number, number] | undefined>>;
   stage: PreparedStatementBundle<StageWinnerIndexes>;
@@ -1855,11 +1851,17 @@ export function composeStageBundle(input: {
   terminal?: PreparedStatementBundle<TerminalAssertionIndexes>;
 }): PreparedStatementBundle<ComposedStageBundleIndexes> {
   const statements: D1PreparedStatement[] = [];
+  const isIndexTuple = (value: unknown): value is readonly [number, number] => Array.isArray(value) && value.length === 2 && value.every((entry) => typeof entry === "number");
   function append<T extends Record<string, unknown>>(bundle: PreparedStatementBundle<T>): T {
     const offset = statements.length;
     statements.push(...bundle.statements);
     const indexes: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(bundle.indexes)) { if (value === undefined) continue; indexes[key] = typeof value === "number" ? value + offset : value; }
+    for (const [key, value] of Object.entries(bundle.indexes)) {
+      if (value === undefined) continue;
+      if (typeof value === "number") indexes[key] = value + offset;
+      else if (isIndexTuple(value)) indexes[key] = [value[0] + offset, value[1] + offset] as const;
+      else indexes[key] = value;
+    }
     return indexes as T;
   }
   const preWinner = input.preWinner ? append(input.preWinner) : undefined;

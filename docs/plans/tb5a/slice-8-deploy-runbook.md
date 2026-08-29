@@ -38,6 +38,13 @@ Complete this freeze before applying `0037`; no old Stage writer may execute aft
       creation, or reconciliation.
 - [ ] Pause app Board writes: creation, Stage, Priority-coupled legacy order, archive, restore,
       and manual reorder.
+- [ ] Pause **direct RAW upload / ingest finalization** (`workers/app/src/lib/ingest.ts#finalizeIngest`).
+      It is an app-side automatic Stage writer (`awaiting_raw → raw_review`) not covered by the
+      Workflow/Cron freeze. Under the flag-OFF window a direct RAW upload still commits the asset
+      but its Stage advance is fenced off; the project stays in `awaiting_raw` until the flag is ON
+      and either the next hourly reconciliation (only if `shoot_date <= today`) or a manual
+      `moveProjectStage` replays it. If uploads cannot be paused, record every project that
+      received a direct RAW upload during the window and Stage-nudge each one after enablement.
 - [ ] Pause Dropbox reconciliation, Tonomo, AutoHDR claims/finals, Queue consumers, Workflow
       consumers, and any other Stage-capable background trigger.
 - [ ] Query audits, jobs, workflows, queues, and Stage/position aggregates twice across a quiet
@@ -132,9 +139,15 @@ Never restore a writer that mutates Stage or position without revision/token fen
 
 ### Migration fault before enablement
 
-Keep the flag OFF. Use the all-or-zero rollback batch only if every captured row remains at
-baseline revision `1` and explicit incident authority approves it. A count mismatch aborts the
-complete rollback batch. Do not delete the permanent rollback table or edit `d1_migrations`.
+Keep the flag OFF. The all-or-zero pre-enable rollback batch (`rollbackBoardOrder0037PreEnable`)
+is effectively **single-use and expires on the first legal flag-OFF write**: it refuses (aborts
+the whole batch, restores nothing) if the flag has ever been enabled (evidenced monotonically by
+any unarchived project at `board_revision >= 2`), if any unarchived project lacks a
+`project_board_order_0037_rollback` capture row (i.e. a project was **created** after `0037`), or
+if the drifted-row count does not match the capture count (i.e. a project was **archived** or
+**restored**, both of which bump `board_revision`). So run it only in a genuinely untouched
+never-enabled window, with explicit incident authority. If it refuses, fix forward — do not force
+it, do not delete the permanent rollback table, do not edit `d1_migrations`.
 
 ### Fault after enablement
 

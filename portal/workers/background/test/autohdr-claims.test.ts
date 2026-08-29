@@ -2,7 +2,7 @@ import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { claimAutoHdrFetch, claimAutoHdrHandoff, claimBackfillAutoHdrHandoff, claimImplicitAutoHdrHandoff, confirmAutoHdrHandoff } from "../src/autohdr/claims";
 import { commitAutomaticStage } from "../src/lib/automatic-stage";
-import { buildJobEntryProvenanceBundle, buildOwnershipAssertionBundle } from "@quincy/db";
+import { buildJobEntryProvenanceBundle } from "@quincy/db";
 import { acquireManualIngestLease, refreshManualIngestLease, releaseManualIngestLease } from "../src/autohdr/manual-supplement";
 import { routeAutoHdrDelta, type RoutedAutoHdrMapping } from "../src/autohdr/mapping";
 import { routeAutoHdrManualDropDelta, routeAutoHdrProviderDelta } from "../src/autohdr/routers";
@@ -428,11 +428,10 @@ describe("atomic AutoHDR ownership", () => {
       database.DB.prepare("UPDATE projects SET stage_key = 'editing_autohdr' WHERE id = ?").bind(data.projectId),
       database.DB.prepare("INSERT INTO jobs (id, kind, status, project_id, payload_json, created_at, updated_at) VALUES (?, 'autohdr', 'done', ?, '{}', ?, ?)").bind(jobId, data.projectId, now, now),
     ]);
-    const provenance = buildJobEntryProvenanceBundle({ db: database.DB, projectId: data.projectId, jobId, jobKind: "autohdr", generation: 1, updatedAt: now });
-    const assertion = buildOwnershipAssertionBundle({ db: database.DB, projectId: data.projectId, destinationStage: "editing_autohdr", coupling: provenance.coupling, assertedAt: now });
+    const provenance = buildJobEntryProvenanceBundle({ db: database.DB, projectId: data.projectId, destinationStage: "editing_autohdr", jobId, jobKind: "autohdr", generation: 1, updatedAt: now });
     const brokenDestination = {
       ...provenance,
-      statements: [database.DB.prepare("UPDATE jobs SET payload_json = '{}' WHERE id = ?").bind(jobId), ...assertion.statements],
+      statements: [database.DB.prepare("UPDATE jobs SET payload_json = '{}' WHERE id = ?").bind(jobId), provenance.statements[provenance.indexes.ownershipAssertion]!],
       indexes: { payloadUpdate: 0, ownershipAssertion: 1 },
     };
 
@@ -450,6 +449,31 @@ describe("atomic AutoHDR ownership", () => {
     })).resolves.toMatchObject({ kind: "conflict" });
     await expect(database.DB.prepare("SELECT payload_json FROM jobs WHERE id = ?").bind(jobId).first())
       .resolves.toEqual({ payload_json: "{}" });
+  });
+
+  it("rejects a destination provenance bundle without an ownership assertion index", async () => {
+    const data = await fixture();
+    const jobId = crypto.randomUUID();
+    const now = Date.now();
+    await database.DB.batch([
+      database.DB.prepare("UPDATE projects SET stage_key = 'editing_autohdr' WHERE id = ?").bind(data.projectId),
+      database.DB.prepare("INSERT INTO jobs (id, kind, status, project_id, payload_json, created_at, updated_at) VALUES (?, 'autohdr', 'done', ?, '{}', ?, ?)").bind(jobId, data.projectId, now, now),
+    ]);
+    const provenance = buildJobEntryProvenanceBundle({ db: database.DB, projectId: data.projectId, destinationStage: "editing_autohdr", jobId, jobKind: "autohdr", generation: 1, updatedAt: now });
+    const missingAssertion = { ...provenance, indexes: { payloadUpdate: provenance.indexes.payloadUpdate } } as unknown as typeof provenance;
+
+    await expect(commitAutomaticStage({
+      env: { DB: database.DB },
+      projectId: data.projectId,
+      from: "raw_review",
+      to: "editing_autohdr",
+      auditId: crypto.randomUUID(),
+      auditMetaJson: "{}",
+      now,
+      workflow: { kind: "none" },
+      coupling: provenance.coupling,
+      alreadyAtDestination: { allowed: true, effect: { kind: "job_provenance", bundle: missingAssertion } },
+    })).rejects.toThrow(/ownership assertion index/);
   });
 
   it("atomically promotes one pending candidate and blocks if its sibling appears later", async () => {
