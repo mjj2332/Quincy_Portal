@@ -4,6 +4,8 @@ import {
   DragOverlay,
   KeyboardSensor,
   MeasuringStrategy,
+  PointerSensor,
+  TouchSensor,
   closestCorners,
   pointerWithin,
   useDroppable,
@@ -24,11 +26,10 @@ import {
   type Over,
   type UniqueIdentifier,
 } from "@dnd-kit/core";
-import { PointerSensor } from "@dnd-kit/core";
 import { SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS as DndCSS } from "@dnd-kit/utilities";
 import { isDeadlineOverdue, formatSydneyCivil, type Role, type StageKey } from "@quincy/shared";
-import { useCallback, useMemo, useRef, useState, type CSSProperties, type RefCallback } from "react";
+import { useCallback, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type RefCallback } from "react";
 import { AnchoredPopover, useAnchoredPopover } from "./AnchoredPopover";
 import { StatusBadge } from "./atoms";
 import { InternalLink } from "./InternalLink";
@@ -57,6 +58,30 @@ export type BoardInteractionState = {
   activeId: string | undefined;
   proposal: SemanticGap | null;
 };
+
+const reducedMotionMediaQuery = "(prefers-reduced-motion: reduce)";
+
+function getPrefersReducedMotionSnapshot() {
+  return typeof window !== "undefined"
+    && typeof window.matchMedia === "function"
+    && window.matchMedia(reducedMotionMediaQuery).matches;
+}
+
+function subscribeToPrefersReducedMotion(onStoreChange: () => void) {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return () => undefined;
+  const mediaQuery = window.matchMedia(reducedMotionMediaQuery);
+  const onChange = () => onStoreChange();
+  if (typeof mediaQuery.addEventListener === "function") mediaQuery.addEventListener("change", onChange);
+  else mediaQuery.addListener(onChange);
+  return () => {
+    if (typeof mediaQuery.removeEventListener === "function") mediaQuery.removeEventListener("change", onChange);
+    else mediaQuery.removeListener(onChange);
+  };
+}
+
+function usePrefersReducedMotion() {
+  return useSyncExternalStore(subscribeToPrefersReducedMotion, getPrefersReducedMotionSnapshot, () => false);
+}
 
 type BoardMoveHandler = (project: ProjectSummary, gap: SemanticGap, kind: "cross" | "same", focusDescriptor: FocusDescriptor) => void;
 
@@ -609,8 +634,11 @@ export function ProjectKanbanBoard({
   onInteractionStateChange,
   onAnnounce,
 }: ProjectKanbanBoardProps) {
+  const reducedMotion = usePrefersReducedMotion();
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    // A press-and-hold on the handle starts a touch drag; quick touches elsewhere remain scrolling/flinging.
+    useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 8 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
   const [activeProjectId, setActiveProjectId] = useState<string>();
@@ -835,7 +863,7 @@ export function ProjectKanbanBoard({
         />;
       })}
     </div>
-    <DragOverlay className="kanban-overlay" dropAnimation={typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? null : { duration: 180, easing: "ease-out" }}>
+    <DragOverlay className="kanban-overlay" dropAnimation={reducedMotion ? null : { duration: 180, easing: "ease-out" }}>
       {movingProject ? <KanbanCardPreview project={movingProject} /> : null}
     </DragOverlay>
   </DndContext>;

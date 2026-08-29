@@ -597,11 +597,20 @@ button { font-family: var(--font-sans); }
 .prow__retry { margin-top: var(--space-2); }
 
 .kanban-overlay { pointer-events: none; z-index: 10; }
-.kanban-card-preview { width: min(100%, 320px); box-shadow: 0 18px 36px color-mix(in srgb, var(--ink-900) 22%, transparent); pointer-events: none; }
+.kanban-card-preview { width: min(320px, calc(100vw - 24px)); max-width: calc(100vw - 24px); box-sizing: border-box; box-shadow: 0 18px 36px color-mix(in srgb, var(--ink-900) 22%, transparent); pointer-events: none; }
 .kanban-card-preview .kcard__media { pointer-events: none; }
 
 @media (pointer: coarse), (max-width: 640px) {
   .kcard-drag-handle { width: 44px; height: 44px; }
+  .kcard-controls { flex-wrap: wrap; }
+  .kcard-controls select { min-height: 44px; }
+  .kcard-controls__arrow { width: 44px; min-width: 44px; height: 44px; }
+  .kcard-move-to { min-height: 44px; }
+}
+
+@media (max-width: 640px) {
+  .kanban { grid-auto-columns: minmax(240px, 1fr); }
+  .kanban-move-popover { box-sizing: border-box; max-width: calc(100vw - 16px); }
 }
 
 /* ---------------------------------------------------------------------

@@ -1,3 +1,4 @@
+// happy-dom cannot exercise TouchSensor, PointerSensor, KeyboardSensor activation, real collision geometry, autoscroll, or scroll containers. Those are QA-phase real-browser acceptance items.
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";

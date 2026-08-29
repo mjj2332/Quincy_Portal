@@ -1,6 +1,8 @@
-import { act, createElement } from "react";
+// happy-dom cannot exercise TouchSensor, PointerSensor, KeyboardSensor activation, real collision geometry, autoscroll, or scroll containers. Those are QA-phase real-browser acceptance items.
+import { Children, act, createElement, isValidElement, type ReactElement, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { AutoScrollActivator, MeasuringStrategy } from "@dnd-kit/core";
 import { ProjectKanbanBoard, type BoardInteractionState } from "./ProjectKanbanBoard";
 import type { ProjectSummary } from "../lib/kanban-interaction";
 import type { PipelineStage } from "../lib/stages";
@@ -123,6 +125,34 @@ function bodyPopover(id: string) {
   return document.getElementById(id);
 }
 
+type TestElement = ReactElement<{ className?: string; dropAnimation?: unknown }>;
+
+function isTestElement(child: ReactNode): child is TestElement {
+  return isValidElement<{ className?: string; dropAnimation?: unknown }>(child);
+}
+
+function dragOverlayElement() {
+  const overlay = Children.toArray(dnd.handlers.at(-1)?.props.children).find((child) => isTestElement(child) && child.props.className === "kanban-overlay");
+  if (!isTestElement(overlay)) throw new Error("No DragOverlay element");
+  return overlay;
+}
+
+function mockMatchMedia(reducedMotion: boolean) {
+  const originalMatchMedia = window.matchMedia;
+  const matchMedia = vi.fn(() => ({
+    matches: reducedMotion,
+    media: "(prefers-reduced-motion: reduce)",
+    onchange: null,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+  }));
+  Object.defineProperty(window, "matchMedia", { configurable: true, value: matchMedia });
+  return () => Object.defineProperty(window, "matchMedia", { configurable: true, value: originalMatchMedia });
+}
+
 async function start() {
   const handler = dnd.handlers.at(-1)?.start;
   if (!handler) throw new Error("No drag-start handler");
@@ -181,6 +211,69 @@ describe("ProjectKanbanBoard", () => {
     expect(dnd.handlers[0]?.props.accessibility?.restoreFocus).toBe(false);
     expect(dnd.handlers[0]?.props.accessibility?.screenReaderInstructions?.draggable).toContain("focus its Move project handle");
     expect(dnd.handlers[0]?.props.sensors?.some((descriptor) => descriptor.sensor.name === "KeyboardSensor")).toBe(true);
+  });
+
+  it("passes the constrained TouchSensor descriptor to DndContext", async () => {
+    // Config only — real touch activation timing is browser-only (QA phase).
+    await renderBoard();
+    const touchSensor = dnd.handlers[0]?.props.sensors?.find((descriptor) => descriptor.sensor.name === "TouchSensor");
+    expect(touchSensor?.options).toEqual({ activationConstraint: { delay: 250, tolerance: 8 } });
+  });
+
+  it("keeps public auto-scroll enabled and remeasures droppables", async () => {
+    // Config only — real autoscroll is browser-only (QA phase).
+    await renderBoard();
+    const props = dnd.handlers[0]?.props;
+    expect(typeof props?.autoScroll).toBe("object");
+    expect(props?.autoScroll).toEqual(expect.objectContaining({ activator: AutoScrollActivator.Pointer, layoutShiftCompensation: true, threshold: { x: 0.2, y: 0.2 } }));
+    expect(props?.measuring?.droppable?.strategy).toBe(MeasuringStrategy.Always);
+  });
+
+  it("disables the DragOverlay drop animation when reduced motion is preferred", async () => {
+    // Config only — this does not prove browser motion or animation-frame behavior (QA phase).
+    const restoreMatchMedia = mockMatchMedia(true);
+    try {
+      await renderBoard();
+      expect(dragOverlayElement().props.dropAnimation).toBeNull();
+    } finally {
+      restoreMatchMedia();
+    }
+  });
+
+  it("keeps the DragOverlay drop animation when reduced motion is not preferred", async () => {
+    // Config only — this does not prove browser motion or animation-frame behavior (QA phase).
+    const restoreMatchMedia = mockMatchMedia(false);
+    try {
+      await renderBoard();
+      expect(dragOverlayElement().props.dropAnimation).toEqual({ duration: 180, easing: "ease-out" });
+    } finally {
+      restoreMatchMedia();
+    }
+  });
+
+  it("keeps touch-action scoped to the dedicated drag handle", async () => {
+    // Markup/class only — this does not prove touch gesture routing or scroll behavior (QA phase).
+    await renderBoard();
+    const handle = host.querySelector<HTMLButtonElement>(".kcard-drag-handle");
+    const card = host.querySelector<HTMLElement>(".kcard");
+    const board = host.querySelector<HTMLElement>(".kanban");
+    expect(handle?.classList.contains("kcard-drag-handle")).toBe(true);
+    expect(card?.className).toBe("kcard");
+    expect(board?.className).toBe("kanban");
+    expect(card?.getAttribute("style") ?? "").not.toMatch(/touch-action\s*:\s*none/);
+    expect(board?.getAttribute("style") ?? "").not.toMatch(/touch-action\s*:\s*none/);
+  });
+
+  it("renders the DragOverlay as a direct sibling of the kanban element", async () => {
+    // Markup only — active overlay placement and clipping require a real browser (QA phase).
+    await renderBoard();
+    const children = Children.toArray(dnd.handlers[0]?.props.children).filter(isTestElement);
+    const boardIndex = children.findIndex((child) => child.props.className === "kanban");
+    const overlayIndex = children.findIndex((child) => child.props.className === "kanban-overlay");
+    expect(children).toHaveLength(2);
+    expect(boardIndex).toBeGreaterThanOrEqual(0);
+    expect(overlayIndex).toBeGreaterThanOrEqual(0);
+    expect(overlayIndex).not.toBe(boardIndex);
   });
 
   it("opens the two-step position-aware Move-to disclosure", async () => {
