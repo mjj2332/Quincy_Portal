@@ -1,5 +1,5 @@
 export type DashboardView = "kanban" | "list";
-export type KanbanSortMode = "board" | "shootDate-asc" | "shootDate-desc";
+export type KanbanSortMode = "board" | "priority" | "shootDate-asc" | "shootDate-desc";
 
 export type DashboardPreferenceStorage = {
   read: () => string | null;
@@ -43,7 +43,7 @@ export function initializeDashboardView(storage: DashboardPreferenceStorage): Da
 }
 
 export function normalizeKanbanSortMode(value: string | null): KanbanSortMode {
-  return value === "shootDate-asc" || value === "shootDate-desc" ? value : "board";
+  return value === "priority" || value === "shootDate-asc" || value === "shootDate-desc" ? value : "board";
 }
 
 export function initializeKanbanSortMode(storage: KanbanSortPreferenceStorage): KanbanSortMode {

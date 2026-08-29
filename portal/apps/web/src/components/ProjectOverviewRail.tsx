@@ -4,6 +4,7 @@ import { InternalLink } from "./InternalLink";
 import { ProjectTeamControl } from "./ProjectTeamControl";
 import { ProjectDeadlineControl } from "./ProjectDeadlineControl";
 import { useStages } from "../lib/stages";
+import { useCapabilities } from "../lib/capabilities";
 import type { ProjectDetail } from "../lib/project-data";
 
 function date(value: string | null) {
@@ -14,6 +15,32 @@ function date(value: string | null) {
 
 function collectionLabel(value: string) {
   return value === "raw" ? "RAW" : value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function StageControl({ project, currentStageKey, stages, contractEnabled, pending, disabledReason, onMove }: {
+  project: ProjectDetail;
+  currentStageKey: ProjectDetail["stageKey"];
+  stages: ReturnType<typeof useStages>["stages"];
+  contractEnabled: boolean;
+  pending: boolean;
+  disabledReason?: string | null;
+  onMove?: (stageKey: ProjectDetail["stageKey"]) => void;
+}) {
+  const current = stages.find((item) => item.key === currentStageKey);
+  const unavailable = disabledReason ?? (!contractEnabled ? "Stage movement is temporarily unavailable." : null);
+  const disabled = pending || Boolean(unavailable);
+  return <div className="stage-control">
+    <div className="kv"><span className="k">Stage</span><span className="vv">{current?.label ?? currentStageKey}</span></div>
+    <label className="sr-only" htmlFor={`project-stage-${project.id}`}>Move project Stage</label>
+    <select id={`project-stage-${project.id}`} aria-label="Move project Stage" value={currentStageKey} disabled={disabled} aria-busy={pending || undefined} onChange={(event) => {
+      const next = event.target.value as ProjectDetail["stageKey"];
+      if (next !== currentStageKey) onMove?.(next);
+    }}>
+      {stages.filter((stage) => stage.active || stage.key === currentStageKey).map((stage) => <option value={stage.key} key={stage.key} disabled={!stage.active && stage.key === currentStageKey}>{stage.label}</option>)}
+      {!current && <option value={currentStageKey}>{currentStageKey}</option>}
+    </select>
+    {unavailable && <span className="muted stage-control__message">{unavailable}</span>}
+  </div>;
 }
 
 export function ProjectOverviewRail({
@@ -28,6 +55,9 @@ export function ProjectOverviewRail({
   isSyncing,
   onSyncDropbox,
   onActiveTabChange,
+  onStageMove,
+  stageMovePending = false,
+  stageMoveDisabledReason = null,
 }: {
   project: ProjectDetail;
   activeTab: CollectionKind;
@@ -40,9 +70,15 @@ export function ProjectOverviewRail({
   isSyncing: boolean;
   onSyncDropbox: () => void;
   onActiveTabChange: (kind: CollectionKind) => void;
+  onStageMove?: (stageKey: ProjectDetail["stageKey"]) => void;
+  stageMovePending?: boolean;
+  stageMoveDisabledReason?: string | null;
 }) {
   const { presentationStageKey, stages } = useStages();
+  const { can } = useCapabilities();
   const stage = stages.find((item) => item.key === presentationStageKey(project.stageKey));
+  const currentStageKey = presentationStageKey(project.stageKey);
+  const canMoveStage = can("moveProjectStage") && !project.archivedAt;
 
   return <aside className="rail" aria-label="Project Overview">
     <div className="project-overview__heading">Project Overview</div>
@@ -54,7 +90,7 @@ export function ProjectOverviewRail({
 
     <section className="rail__sec" aria-labelledby="project-overview-production">
       <div className="ey rail__section-label" id="project-overview-production">Production</div>
-      <div className="kv"><span className="k">Stage</span><span className="vv">{stage?.label ?? project.stageKey}</span></div>
+      {canMoveStage ? <StageControl project={project} currentStageKey={currentStageKey} stages={stages} contractEnabled={project.contractEnabled} pending={stageMovePending} disabledReason={stageMoveDisabledReason} onMove={onStageMove} /> : <div className="kv"><span className="k">Stage</span><span className="vv">{stage?.label ?? project.stageKey}</span></div>}
       <div className="kv"><span className="k">Shoot</span><span className="vv">{date(project.shootDate)}</span></div>
       <ProjectDeadlineControl projectId={project.id} schedule={project.deadlineSchedule} canEdit={canEdit} />
       {canEdit && <InternalLink className="button button--secondary rail__edit" to={`/projects/${encodeURIComponent(project.id)}/edit`}>Edit details</InternalLink>}

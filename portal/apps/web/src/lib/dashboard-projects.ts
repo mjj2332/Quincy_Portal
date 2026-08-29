@@ -3,6 +3,7 @@ import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import { apiGet } from "./api";
 import { externalApiGet, externalProjectSummaryToDashboard } from "./external-api-response";
 import { projectQueryRetry } from "./project-data";
+import { getProjectQueryRuntime } from "./project-query-sync";
 import type { ProjectSummary } from "../screens/Dashboard";
 
 type ProjectsResponse = {
@@ -21,7 +22,8 @@ export function useDashboardProjects(archived: boolean, identity: DashboardIdent
   return useQuery<ProjectSummary[], Error>({
     queryKey: dashboardProjectsKey(principalId, role, authorizationEpoch, archived),
     enabled: !external || !archived,
-    queryFn: async ({ signal }) => {
+    queryFn: async ({ signal, client }) => {
+      const runtime = getProjectQueryRuntime(client);
       if (external) {
         const response = await externalApiGet("project-list", "/api/projects", signal) as {
           projects: ExternalProjectSummaryDto[];
@@ -31,7 +33,7 @@ export function useDashboardProjects(archived: boolean, identity: DashboardIdent
           project,
           response.board.orderedProjectIdsByStage,
           response.board.contractEnabled,
-        )) as ProjectSummary[];
+        )).filter((project) => !runtime?.isProjectRemoved(project.id)) as ProjectSummary[];
       }
       const response = await apiGet<ProjectsResponse>(archived ? "/api/projects?archived=1" : "/api/projects", { signal });
       const board = response.board;
@@ -39,10 +41,11 @@ export function useDashboardProjects(archived: boolean, identity: DashboardIdent
         ...project,
         boardRank: board ? authorizedBoardRank(project.id, project.stageKey, board.orderedProjectIdsByStage) : undefined,
         boardMapPresent: Boolean(board && Object.keys(board.orderedProjectIdsByStage).length > 0),
+        authorizedBoardOrder: board?.orderedProjectIdsByStage,
         // A missing board envelope is an old deployed server; an explicit false is the
         // post-migration flag-off state and must hide Board mutation controls.
         boardContractEnabled: board?.contractEnabled ?? true,
-      }));
+      })).filter((project) => !runtime?.isProjectRemoved(project.id));
     },
     staleTime: 15_000,
     refetchInterval: 30_000,

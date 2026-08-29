@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { sortKanbanProjects, type ProjectSummary } from "./Dashboard";
+import { cardDropPlacement, sortKanbanProjects, type ProjectSummary } from "./Dashboard";
 
 const project: ProjectSummary = {
   id: "123e4567-e89b-42d3-a456-426614174000",
@@ -21,24 +21,45 @@ const project: ProjectSummary = {
   deadlineZone: null,
 };
 
-describe("TB5A Slice 0 internal Board comparator", () => {
-  it("groups non-null Priority first, then board_position, then id", () => {
-    const rows = [
-      { ...project, id: "null-first", priority: null, boardPosition: 512 },
-      { ...project, id: "priority-midpoint", priority: 2, boardPosition: 1536 }, // prior midpoint insert.
-      { ...project, id: "priority-tie-b", priority: 7, boardPosition: 2048 },
-      { ...project, id: "priority-tie-a", priority: 1, boardPosition: 2048 },
-      { ...project, id: "null-tie-b", priority: null, boardPosition: 3072 },
-      { ...project, id: "null-tie-a", priority: null, boardPosition: 3072 },
-    ];
+describe("TB5A authorized Board comparator", () => {
+	it("uses the authorized Board map and never boardPosition", () => {
+		const rows = [
+			{ ...project, id: "a", boardPosition: 999, authorizedBoardOrder: { awaiting_raw: ["b", "a", "c"] } },
+			{ ...project, id: "b", boardPosition: 1, authorizedBoardOrder: { awaiting_raw: ["b", "a", "c"] } },
+			{ ...project, id: "c", boardPosition: 2, authorizedBoardOrder: { awaiting_raw: ["b", "a", "c"] } },
+		];
 
-    expect(sortKanbanProjects(rows).map((row) => row.id)).toEqual([
-      "priority-midpoint",
-      "priority-tie-a",
-      "priority-tie-b",
-      "null-first",
-      "null-tie-a",
-      "null-tie-b",
-    ]);
-  });
+		expect(sortKanbanProjects(rows).map((row) => row.id)).toEqual(["b", "a", "c"]);
+	});
+
+	it("sorts Priority 1..10, null last, then Board rank and id", () => {
+		const rows = [
+			{ ...project, id: "null-b", priority: null, authorizedBoardOrder: { awaiting_raw: ["null-b", "null-a"] } },
+			{ ...project, id: "priority-2", priority: 2, authorizedBoardOrder: { awaiting_raw: ["priority-2", "priority-1"] } },
+			{ ...project, id: "priority-1", priority: 1, authorizedBoardOrder: { awaiting_raw: ["priority-2", "priority-1"] } },
+			{ ...project, id: "null-a", priority: null, authorizedBoardOrder: { awaiting_raw: ["null-b", "null-a"] } },
+		];
+
+		expect(sortKanbanProjects(rows, "priority").map((row) => row.id)).toEqual(["priority-1", "priority-2", "null-b", "null-a"]);
+	});
+
+	it("builds card-boundary neighbours from the authorized map revisions", () => {
+		const rows = [
+			{ ...project, id: "source", stageKey: "awaiting_raw" as const, boardRevision: 3, authorizedBoardOrder: { raw_review: ["before", "target", "after"] } },
+			{ ...project, id: "before", stageKey: "raw_review" as const, boardRevision: 8, authorizedBoardOrder: { raw_review: ["before", "target", "after"] } },
+			{ ...project, id: "target", stageKey: "raw_review" as const, boardRevision: 9, authorizedBoardOrder: { raw_review: ["before", "target", "after"] } },
+			{ ...project, id: "after", stageKey: "raw_review" as const, boardRevision: 10, authorizedBoardOrder: { raw_review: ["before", "target", "after"] } },
+		];
+
+		expect(cardDropPlacement("source", "target", "raw_review", "before", rows)).toEqual({
+			kind: "between",
+			before: { projectId: "before", boardRevision: 8 },
+			after: { projectId: "target", boardRevision: 9 },
+		});
+		expect(cardDropPlacement("source", "target", "raw_review", "after", rows)).toEqual({
+			kind: "between",
+			before: { projectId: "target", boardRevision: 9 },
+			after: { projectId: "after", boardRevision: 10 },
+		});
+	});
 });

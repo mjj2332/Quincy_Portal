@@ -42,6 +42,7 @@ export function externalProjectSummaryToDashboard(
     priority: null,
     boardRank: authorizedBoardRank(project.id, project.stageKey, orderedProjectIdsByStage),
     boardMapPresent: Object.keys(orderedProjectIdsByStage ?? {}).length > 0,
+    authorizedBoardOrder: orderedProjectIdsByStage,
     boardContractEnabled: contractEnabled,
     boardRevision: project.boardRevision,
     deadlineAt: project.deadline?.deadline?.instant ? Date.parse(project.deadline.deadline.instant) : null,

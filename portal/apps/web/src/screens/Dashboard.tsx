@@ -1,17 +1,19 @@
-import { useCallback, useContext, useMemo, useRef, useState, type DragEvent } from "react";
-import { compareByStreetThenId, formatSydneyCivil, isDeadlineOverdue, type MoveProjectStageRequest, type StageKey, type StageMoveConfirmationReason } from "@quincy/shared";
+import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type DragEvent } from "react";
+import { compareByStreetThenId, formatSydneyCivil, isDeadlineOverdue, type ExpectedBoardProject, type MoveProjectStageRequest, type StageMovePlacement } from "@quincy/shared";
 import { QueryClient, QueryClientContext, QueryClientProvider } from "@tanstack/react-query";
 import { StatusBadge } from "../components/atoms";
 import { LazyImage } from "../components/LazyImage";
 import { ApiError, apiPost } from "../lib/api";
-import { confirm } from "../lib/confirm";
+import { confirmStore } from "../lib/confirm";
 import { useCapabilities } from "../lib/capabilities";
 import { type ProjectStageKey, useStages } from "../lib/stages";
 import { formatDashboardDate, initializeDashboardView, initializeKanbanSortMode, isCanonicalShootDate, type DashboardView, type KanbanSortMode } from "./dashboard-helpers";
 import { InternalLink } from "../components/InternalLink";
 import { NoticeBoard } from "../components/NoticeBoard";
 import { invalidateProjectResources, useOptionalProjectQueryClient } from "../lib/project-data";
+import { getProjectQueryRuntime } from "../lib/project-query-sync";
 import { dashboardProjectsKey, useDashboardProjects } from "../lib/dashboard-projects";
+import { submitStageMoveWithConfirmation } from "../lib/stage-move";
 
 export interface ProjectSummary {
   id: string;
@@ -26,7 +28,10 @@ export interface ProjectSummary {
   receivedCount: number;
   expectedCount: number | null;
   priority: number | null;
+  /** Legacy wire field retained for compatibility; Board rendering never reads it. */
   boardPosition?: number;
+  /** The one authorized board projection carried through the web adapter for interactions. */
+  authorizedBoardOrder?: Record<string, string[]>;
   /** Private, non-wire rendering rank derived from the authorized Board ID map. */
   boardRank?: number;
   /** Private marker: Board ordering is authoritative even when this card's ID is absent. */
@@ -53,22 +58,90 @@ function sortKanbanProjectsByShootDate(projects: ProjectSummary[], mode: "shootD
 }
 
 export function sortKanbanProjects(projects: ProjectSummary[], sort: KanbanSortMode = "board"): ProjectSummary[] {
+  const boardRank = (project: ProjectSummary) => {
+    const order = project.authorizedBoardOrder?.[project.stageKey];
+    if (order !== undefined) {
+      const rank = order.indexOf(project.id);
+      return rank < 0 ? Number.POSITIVE_INFINITY : rank;
+    }
+    return project.boardRank ?? Number.POSITIVE_INFINITY;
+  };
+  if (sort === "priority") return [...projects].sort((left, right) =>
+    (left.priority === null ? 1 : 0) - (right.priority === null ? 1 : 0)
+    || (left.priority ?? 0) - (right.priority ?? 0)
+    || boardRank(left) - boardRank(right)
+    || left.id.localeCompare(right.id));
   if (sort !== "board") return sortKanbanProjectsByShootDate(projects, sort);
-  const hasAuthorizedMap = projects.some((project) => project.boardMapPresent === true || project.boardRank !== undefined);
+  const hasAuthorizedMap = projects.some((project) => project.boardMapPresent === true || project.boardRank !== undefined || project.authorizedBoardOrder?.[project.stageKey] !== undefined);
   if (hasAuthorizedMap) {
     return [...projects].sort((left, right) =>
-      (left.boardRank === undefined ? Number.POSITIVE_INFINITY : left.boardRank)
-      - (right.boardRank === undefined ? Number.POSITIVE_INFINITY : right.boardRank)
+      boardRank(left) - boardRank(right)
       || left.id.localeCompare(right.id));
   }
-  return [...projects].sort((left, right) =>
-    (left.priority === null ? 1 : 0) - (right.priority === null ? 1 : 0)
-    || (left.boardPosition ?? 0) - (right.boardPosition ?? 0)
-    || left.id.localeCompare(right.id));
+  // Pre-contract servers do not provide a board map. Their list order is the only
+  // authoritative order available; never infer render order from the private position field.
+  return [...projects];
+}
+
+function projectById(projects: ProjectSummary[]) {
+  return new Map(projects.map((project) => [project.id, project]));
+}
+
+function authorizedOrderForStage(projects: ProjectSummary[], stageKey: string) {
+  return projects.find((project) => project.authorizedBoardOrder?.[stageKey] !== undefined)?.authorizedBoardOrder?.[stageKey];
+}
+
+function expectedNeighbour(projectId: string, projects: Map<string, ProjectSummary>): ExpectedBoardProject | null {
+  const project = projects.get(projectId);
+  return project ? { projectId, boardRevision: project.boardRevision } : null;
+}
+
+/** Build the exact visible neighbour tuple from the authorized map, never from boardPosition. */
+export function cardDropPlacement(
+  movingProjectId: string,
+  targetProjectId: string,
+  targetStageKey: string,
+  edge: "before" | "after",
+  projects: ProjectSummary[],
+): StageMovePlacement | null {
+  const order = authorizedOrderForStage(projects, targetStageKey);
+  if (!order) return null;
+  const withoutMoving = order.filter((projectId) => projectId !== movingProjectId);
+  const targetIndex = withoutMoving.indexOf(targetProjectId);
+  if (targetIndex < 0) return null;
+  const insertionIndex = edge === "before" ? targetIndex : targetIndex + 1;
+  if (insertionIndex >= withoutMoving.length) return { kind: "append" };
+  const byId = projectById(projects);
+  const before = insertionIndex > 0 ? expectedNeighbour(withoutMoving[insertionIndex - 1]!, byId) : null;
+  const after = expectedNeighbour(withoutMoving[insertionIndex]!, byId);
+  if (insertionIndex > 0 && !before) return null;
+  if (!after) return null;
+  return { kind: "between", before, after };
+}
+
+export function cardDropDirection(
+  movingProjectId: string,
+  targetProjectId: string,
+  targetStageKey: string,
+  edge: "before" | "after",
+  projects: ProjectSummary[],
+): "up" | "down" | null {
+  const order = authorizedOrderForStage(projects, targetStageKey);
+  if (!order || movingProjectId === targetProjectId) return null;
+  const movingIndex = order.indexOf(movingProjectId);
+  const withoutMoving = order.filter((projectId) => projectId !== movingProjectId);
+  const targetIndex = withoutMoving.indexOf(targetProjectId);
+  if (movingIndex < 0 || targetIndex < 0) return null;
+  const currentIndex = withoutMoving.slice(0, movingIndex).length;
+  const desiredIndex = edge === "before" ? targetIndex : targetIndex + 1;
+  if (desiredIndex === currentIndex) return null;
+  return desiredIndex < currentIndex ? "up" : "down";
 }
 
 type ProjectScope = "active" | "archived";
 type Toast = { id: number; message: string; tone: "success" | "error" };
+const noRuntimeSubscribe = () => () => undefined;
+const zeroRuntimeSnapshot = () => 0;
 
 function CoverMedia({ project, className = "", inlinePlaceholder = false, retryToken, onFailedChange }: { project: ProjectSummary; className?: string; inlinePlaceholder?: boolean; retryToken?: number; onFailedChange?: (failed: boolean) => void }) {
   if (project.coverAssetId) return <LazyImage className={className} preload="background" assetId={project.coverAssetId} alt={`Preview of ${project.street}`} retryToken={retryToken} onFailedChange={onFailedChange} />;
@@ -78,7 +151,7 @@ function CoverMedia({ project, className = "", inlinePlaceholder = false, retryT
 
 function location(project: ProjectSummary) { return [project.suburb, project.postcode].filter(Boolean).join(" · ") || "Location pending"; }
 
-export function KanbanCard({ project, canMove, isDragging, onDragStart, onDragEnd, initialCoverFailed = false, canPrioritize = false, canReorder = false, onPriorityChange, onBoardPosition }: {
+export function KanbanCard({ project, canMove, isDragging, onDragStart, onDragEnd, initialCoverFailed = false, canPrioritize = false, canReorder = false, onPriorityChange, onBoardPosition, stageOptions, onMoveStage, onCardDragOver, onCardDrop, cardDropEdge }: {
   project: ProjectSummary;
   canMove: boolean;
   isDragging: boolean;
@@ -88,14 +161,26 @@ export function KanbanCard({ project, canMove, isDragging, onDragStart, onDragEn
   canReorder?: boolean;
   onPriorityChange?: (project: ProjectSummary, priority: number | null) => void;
   onBoardPosition?: (project: ProjectSummary, direction: "up" | "down") => void;
+  stageOptions?: readonly { key: ProjectStageKey; label: string; active: boolean }[];
+  onMoveStage?: (project: ProjectSummary, targetStageKey: ProjectStageKey) => void;
+  onCardDragOver?: (project: ProjectSummary, event: DragEvent<HTMLDivElement>) => void;
+  onCardDrop?: (project: ProjectSummary, edge: "before" | "after", event: DragEvent<HTMLDivElement>) => void;
+  cardDropEdge?: "before" | "after";
   /** Used by the Node markup test; normal cards begin with their cover available. */
   initialCoverFailed?: boolean;
 }) {
   const overdue = isDeadlineOverdue(project.deadlineAt);
   const deadlineLabel = project.deadlineAt === null ? null : (project.deadlineLocalCivil ?? formatSydneyCivil(project.deadlineAt)).replace("T", " ");
   const [coverFailed, setCoverFailed] = useState(initialCoverFailed); const [coverRetry, setCoverRetry] = useState(0);
+  const [moveStageValue, setMoveStageValue] = useState("");
   const suppressNavigation = useRef(false);
-  return <div className={`kcard-wrap ${isDragging ? "is-dragging" : ""}`}>
+  const moveStageOptions = (stageOptions ?? []).filter((stage) => stage.active);
+  return <div className={`kcard-wrap ${isDragging ? "is-dragging" : ""}${cardDropEdge ? ` is-drop-${cardDropEdge}` : ""}`} onDragOver={onCardDragOver ? (event) => onCardDragOver(project, event) : undefined} onDrop={onCardDrop ? (event) => {
+    event.preventDefault();
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const edge = event.clientY < bounds.top + bounds.height / 2 ? "before" : "after";
+    onCardDrop(project, edge, event);
+  } : undefined}>
     <InternalLink className="kcard" to={`/projects/${encodeURIComponent(project.id)}`} draggable={canMove} onClick={(event) => { if (suppressNavigation.current) { event.preventDefault(); suppressNavigation.current = false; } }} onDragStart={(event) => onDragStart(project, event)} onDragEnd={() => { suppressNavigation.current = true; window.setTimeout(() => { suppressNavigation.current = false; }, 0); onDragEnd(); }}>
       <div className="kcard__media"><CoverMedia project={project} retryToken={coverRetry} onFailedChange={setCoverFailed} /></div>
       <div className="kcard__b">
@@ -115,6 +200,17 @@ export function KanbanCard({ project, canMove, isDragging, onDragStart, onDragEn
         <button type="button" className="kcard-controls__arrow" aria-label="Move project up" onClick={() => onBoardPosition?.(project, "up")}>↑</button>
         <button type="button" className="kcard-controls__arrow" aria-label="Move project down" onClick={() => onBoardPosition?.(project, "down")}>↓</button>
       </>}
+    </div>}
+    {canMove && <div className="kcard-stage-control">
+      <label className="sr-only" htmlFor={`move-stage-${project.id}`}>Move {project.street} to Stage</label>
+      <select id={`move-stage-${project.id}`} data-focus-key={`move-stage:${project.id}`} aria-label={`Move ${project.street} to Stage`} value={moveStageValue} onChange={(event) => {
+        const targetStageKey = event.target.value as ProjectStageKey;
+        setMoveStageValue("");
+        if (targetStageKey && targetStageKey !== project.stageKey) onMoveStage?.(project, targetStageKey);
+      }}>
+        <option value="">Move Stage…</option>
+        {moveStageOptions.map((stage) => <option value={stage.key} key={stage.key}>{stage.label}</option>)}
+      </select>
     </div>}
     {coverFailed && <button className="kcard__retry button button--secondary" type="button" onClick={() => { setCoverFailed(false); setCoverRetry((current) => current + 1); }}>Retry cover image</button>}
   </div>;
@@ -159,20 +255,116 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   const [dragging, setDragging] = useState<ProjectSummary>();
   const [pendingMoves, setPendingMoves] = useState<Set<string>>(new Set());
   const [pendingOrdering, setPendingOrdering] = useState<Set<string>>(new Set());
-  const [dropStage, setDropStage] = useState<StageKey>();
+  const [dropStage, setDropStage] = useState<ProjectStageKey>();
+  const [dropTarget, setDropTarget] = useState<{ stageKey: ProjectStageKey; projectId: string; edge: "before" | "after" }>();
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [announcement, setAnnouncement] = useState("");
+  const [boardUnavailableReason, setBoardUnavailableReason] = useState<string | null>(null);
   const viewingArchived = projectScope === "archived";
   const identity = { principalId: currentUserId, role, authorizationEpoch } as const;
   const projectsQuery = useDashboardProjects(viewingArchived, identity);
-  const projects = projectsQuery.data ?? [];
+  const dashboardKey = dashboardProjectsKey(currentUserId, role, authorizationEpoch, viewingArchived);
+  const dashboardKeyString = JSON.stringify(dashboardKey);
+  const queryProjects = projectsQuery.data;
+  const queryDataUpdatedAt = projectsQuery.dataUpdatedAt;
+  const [acceptedProjects, setAcceptedProjects] = useState<{ key: string; projects: ProjectSummary[] }>();
+  const queryRuntime = queryClient ? getProjectQueryRuntime(queryClient) : undefined;
+  const runtimeVersion = useSyncExternalStore(queryRuntime?.subscribe ?? noRuntimeSubscribe, queryRuntime?.getSnapshot ?? zeroRuntimeSnapshot, queryRuntime?.getSnapshot ?? zeroRuntimeSnapshot);
+  const activeConfirm = useSyncExternalStore(confirmStore.subscribe, confirmStore.getSnapshot, () => null);
+  const interactionBlocked = Boolean(dragging || pendingMoves.size > 0 || pendingOrdering.size > 0 || activeConfirm);
+  const interactionBlockedRef = useRef(interactionBlocked);
+  interactionBlockedRef.current = interactionBlocked;
+  const queuedRefreshRef = useRef(false);
+  const focusRestoreRef = useRef<{ key: string | null; x: number; y: number } | null>(null);
+  const projects = acceptedProjects?.key === dashboardKeyString ? acceptedProjects.projects : queryProjects ?? [];
   const boardContractEnabled = projects.some((project) => project.boardContractEnabled === true);
-  const canMoveStages = boardContractEnabled && canMoveStagesCapability;
+  const hasAuthorizedBoardMap = projects.some((project) => project.boardMapPresent === true || project.boardRank !== undefined || project.authorizedBoardOrder?.[project.stageKey] !== undefined);
+  const effectiveKanbanSort: KanbanSortMode = !canPrioritize && kanbanSort === "priority" ? "board" : kanbanSort;
+  const boardContractDisabled = projects.some((project) => project.boardContractEnabled === false);
+  const boardUnavailableMessage = boardUnavailableReason ?? (boardContractDisabled ? "Board interactions are temporarily unavailable while the Board contract is disabled." : null);
+  const boardMutationEnabled = boardContractEnabled && !boardUnavailableMessage;
+  const canMoveStages = boardMutationEnabled && canMoveStagesCapability;
   const isLoading = projectsQuery.isPending && !projectsQuery.data;
   const error = projectsQuery.error instanceof Error ? projectsQuery.error.message : projectsQuery.error ? "Projects could not be loaded." : undefined;
-  const dashboardKey = dashboardProjectsKey(currentUserId, role, authorizationEpoch, viewingArchived);
   const updateProjects = useCallback((update: (current: ProjectSummary[]) => ProjectSummary[]) => {
     queryClient?.setQueryData<ProjectSummary[]>(dashboardKey, (current) => update(current ?? []));
   }, [dashboardKey, queryClient]);
+
+  const captureFocusForRefresh = useCallback(() => {
+    if (focusRestoreRef.current) return;
+    const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    focusRestoreRef.current = { key: active?.getAttribute("data-focus-key") ?? null, x: window.scrollX, y: window.scrollY };
+  }, []);
+
+  const replaceAcceptedProjects = useCallback((next: ProjectSummary[]) => {
+    captureFocusForRefresh();
+    setAcceptedProjects({ key: dashboardKeyString, projects: next });
+  }, [captureFocusForRefresh, dashboardKeyString]);
+
+  const acceptDashboardProjects = useCallback((next: ProjectSummary[]) => {
+    if (queryRuntime?.principalTerminal) return;
+    const safeProjects = queryRuntime ? next.filter((project) => !queryRuntime.isProjectRemoved(project.id)) : next;
+    replaceAcceptedProjects(safeProjects);
+  }, [queryRuntime, replaceAcceptedProjects]);
+
+  useLayoutEffect(() => {
+    const restore = focusRestoreRef.current;
+    if (!restore) return;
+    focusRestoreRef.current = null;
+    window.scrollTo(restore.x, restore.y);
+    if (!restore.key) return;
+    const target = [...document.querySelectorAll<HTMLElement>("[data-focus-key]")].find((element) => element.getAttribute("data-focus-key") === restore.key);
+    target?.focus();
+  }, [acceptedProjects]);
+
+  useEffect(() => {
+    if (!queryProjects || queryRuntime?.principalTerminal) return;
+    if (interactionBlocked) {
+      queuedRefreshRef.current = true;
+      return;
+    }
+    if (queuedRefreshRef.current) return;
+    acceptDashboardProjects(queryProjects);
+  }, [acceptDashboardProjects, interactionBlocked, queryDataUpdatedAt, queryProjects, queryRuntime]);
+
+  useEffect(() => {
+    if (interactionBlocked || !queuedRefreshRef.current) return;
+    queuedRefreshRef.current = false;
+    void projectsQuery.refetch().then((result) => {
+      if (!result.data || interactionBlockedRef.current) {
+        if (interactionBlockedRef.current) queuedRefreshRef.current = true;
+        return;
+      }
+      acceptDashboardProjects(result.data);
+    });
+  }, [acceptDashboardProjects, interactionBlocked, projectsQuery.refetch]);
+
+  useEffect(() => {
+    if (!queryRuntime) return;
+    if (queryRuntime.principalTerminal) {
+      queuedRefreshRef.current = false;
+      setAcceptedProjects((current) => current?.key === dashboardKeyString && current.projects.length === 0 ? current : { key: dashboardKeyString, projects: [] });
+      return;
+    }
+    const current = acceptedProjects?.key === dashboardKeyString ? acceptedProjects.projects : undefined;
+    if (!current?.some((project) => queryRuntime.isProjectRemoved(project.id))) return;
+    const filtered = current.filter((project) => !queryRuntime.isProjectRemoved(project.id));
+    setAcceptedProjects((previous) => previous?.key === dashboardKeyString && previous.projects.length === filtered.length ? previous : { key: dashboardKeyString, projects: filtered });
+  }, [acceptedProjects, dashboardKeyString, queryRuntime, runtimeVersion]);
+
+  useEffect(() => {
+    if (!(projectsQuery.error instanceof ApiError) || (projectsQuery.error.status !== 401 && projectsQuery.error.status !== 403)) return;
+    queuedRefreshRef.current = false;
+    setAcceptedProjects({ key: dashboardKeyString, projects: [] });
+  }, [dashboardKeyString, projectsQuery.error]);
+
+  const queueDashboardRefresh = useCallback(() => {
+    queuedRefreshRef.current = true;
+    if (!interactionBlockedRef.current) {
+      queuedRefreshRef.current = false;
+      void projectsQuery.refetch();
+    }
+  }, [projectsQuery.refetch]);
 
   const toast = useCallback((message: string, tone: Toast["tone"] = "success") => {
     const id = Date.now() + Math.random();
@@ -198,6 +390,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   }
 
   function selectKanbanSort(next: KanbanSortMode) {
+    if (next === "priority" && (!canPrioritize || !hasAuthorizedBoardMap)) return;
     setKanbanSort(next);
     try { window.localStorage.setItem("quincy:dashboard:kanbanSort", next); } catch { /* Storage can be disabled by the browser. */ }
   }
@@ -206,71 +399,90 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     if (!canMoveStages || pendingMoves.has(project.id)) return;
     event.dataTransfer.effectAllowed = "move";
     event.dataTransfer.setData("text/plain", project.id);
+    setDropTarget(undefined);
     setDragging(project);
   }
 
-  async function moveProject(stageKey: StageKey) {
-    const project = dragging;
+  async function moveProject(project: ProjectSummary | undefined, stageKey: ProjectStageKey, placement: StageMovePlacement = { kind: "append" }) {
     setDragging(undefined);
     setDropStage(undefined);
-    if (!project) return;
+    setDropTarget(undefined);
+    if (!project || (project.stageKey === stageKey && placement.kind === "append")) return;
+    captureFocusForRefresh();
     setPendingMoves((current) => new Set(current).add(project.id));
-    const transportStageKey = role === "admin" || stageKey !== "editing_autohdr" ? stageKey : "editing";
     const request: MoveProjectStageRequest = {
       expected: { stageKey: project.stageKey, boardRevision: project.boardRevision },
-      targetStageKey: transportStageKey,
-      placement: { kind: "append" },
-    };
-    const submitStageMove = async (body: MoveProjectStageRequest) => {
-      try {
-        return await apiPost<{ changed: boolean; project: { stageKey: ProjectStageKey; boardRevision: number } }, MoveProjectStageRequest>(`/api/projects/${project.id}/stage`, body);
-      } catch (reason) {
-        if (!(reason instanceof ApiError) || reason.status !== 409 || !reason.details || typeof reason.details !== "object" || (reason.details as { code?: unknown }).code !== "stage_confirmation_required") throw reason;
-        const details = reason.details as { requiredConfirmation?: { reasons?: StageMoveConfirmationReason[] } };
-        const reasons = details.requiredConfirmation?.reasons ?? [];
-        const reasonCopy: Record<StageMoveConfirmationReason, string> = {
-          backward: "moves backward",
-          skipped_forward: "skips production steps",
-          delivered_boundary: "crosses the Delivered boundary",
-          editing_boundary: "crosses the Editing boundary",
-        };
-        const explanation = reasons.map((item) => reasonCopy[item]).filter(Boolean);
-        const accepted = await confirm({
-          title: "Confirm Stage move",
-          message: `This move ${explanation.length ? explanation.join(", ") : "changes the project Stage"}. Continue?`,
-          confirmLabel: "Move project",
-        });
-        if (!accepted) {
-          void projectsQuery.refetch();
-          return null;
-        }
-        return apiPost<{ changed: boolean; project: { stageKey: ProjectStageKey; boardRevision: number } }, MoveProjectStageRequest>(`/api/projects/${project.id}/stage`, { ...body, confirmation: { reasons } });
-      }
+      targetStageKey: stageKey,
+      placement,
     };
     try {
-      // Confirmation is a server round trip: the server owns the cumulative reasons and the
-      // retry reuses the same expected revision and placement.
-      const response = await submitStageMove(request);
-      if (!response) return;
+      const response = await submitStageMoveWithConfirmation(request, (body) => apiPost<{ changed: boolean; project: { stageKey: ProjectStageKey; boardRevision: number } }, MoveProjectStageRequest>(`/api/projects/${project.id}/stage`, body));
+      if (!response) {
+        setAnnouncement("Stage move cancelled.");
+        return;
+      }
       const label = stages.find((stage) => stage.key === stageKey)?.label ?? stageKey;
       updateProjects((current) => current.map((item) => item.id === project.id ? { ...item, stageKey: response.project.stageKey, boardRevision: response.project.boardRevision } : item));
-      void projectsQuery.refetch();
       if (queryClient) await invalidateProjectResources(queryClient, { projectId: project.id, resources: [{ kind: "detail" }] });
+      setAnnouncement(`Moved ${project.street} to ${label}.`);
       toast(`Moved to ${label}.`);
     } catch (reason) {
       if (reason instanceof ApiError && reason.status === 409 && reason.details && typeof reason.details === "object" && (reason.details as { code?: unknown }).code === "project_stage_conflict") {
         const current = (reason.details as { current?: { stageKey: ProjectStageKey; boardRevision: number } | null }).current;
         if (current) updateProjects((items) => items.map((item) => item.id === project.id ? { ...item, stageKey: current.stageKey, boardRevision: current.boardRevision } : item));
-        void projectsQuery.refetch();
-      }
-      if (reason instanceof ApiError && reason.status === 403 && reason.details && typeof reason.details === "object" && (reason.details as { code?: unknown }).code === "project_board_reorder_forbidden") {
+        setAnnouncement("The project changed elsewhere. Showing the authoritative Stage.");
+        toast("The project changed elsewhere; the board was refreshed.", "error");
+      } else if (reason instanceof ApiError && reason.status === 403 && reason.details && typeof reason.details === "object" && (reason.details as { code?: unknown }).code === "project_board_reorder_forbidden") {
+        setAnnouncement("Manual Board reorder requires Priority access.");
         toast("Manual Board reorder requires Priority access.", "error");
+      } else if (reason instanceof ApiError && reason.status === 503 && reason.details && typeof reason.details === "object" && (reason.details as { code?: unknown }).code === "board_contract_disabled") {
+        setBoardUnavailableReason("Board interactions are temporarily unavailable while the Board contract is disabled.");
+        setAnnouncement("Board interactions are temporarily unavailable while the Board contract is disabled.");
+      } else if (reason instanceof ApiError && reason.status === 503 && reason.details && typeof reason.details === "object" && (reason.details as { code?: unknown }).code === "board_schema_maintenance") {
+        setBoardUnavailableReason("Board interactions are temporarily unavailable while the Board is being updated.");
+        setAnnouncement("Board interactions are temporarily unavailable while the Board is being updated.");
       } else {
+        setAnnouncement(reason instanceof Error ? reason.message : "The Stage could not be updated.");
         toast(reason instanceof Error ? reason.message : "The stage could not be updated.", "error");
       }
     } finally {
+      queueDashboardRefresh();
       setPendingMoves((current) => { const next = new Set(current); next.delete(project.id); return next; });
     }
+  }
+
+  function canDropOnCard(target: ProjectSummary) {
+    const project = dragging;
+    if (!project || project.id === target.id) return false;
+    if (project.stageKey !== target.stageKey) return canMoveStages;
+    return boardMutationEnabled && canPrioritize && effectiveKanbanSort === "board";
+  }
+
+  function cardDragOver(target: ProjectSummary, event: DragEvent<HTMLDivElement>) {
+    if (!canDropOnCard(target)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const edge = event.clientY < bounds.top + bounds.height / 2 ? "before" : "after";
+    setDropStage(target.stageKey);
+    setDropTarget({ stageKey: target.stageKey, projectId: target.id, edge });
+  }
+
+  function cardDrop(target: ProjectSummary, edge: "before" | "after", event: DragEvent<HTMLDivElement>) {
+    if (!canDropOnCard(target)) return;
+    event.stopPropagation();
+    const project = dragging;
+    setDragging(undefined);
+    setDropStage(undefined);
+    setDropTarget(undefined);
+    if (!project || project.id === target.id) return;
+    if (project.stageKey === target.stageKey) {
+      const direction = cardDropDirection(project.id, target.id, target.stageKey, edge, projects);
+      if (direction) void moveProjectPosition(project, direction);
+      return;
+    }
+    const placement = cardDropPlacement(project.id, target.id, target.stageKey, edge, projects);
+    if (placement) void moveProject(project, target.stageKey, placement);
   }
 
   async function setProjectPriority(project: ProjectSummary, priority: number | null) {
@@ -280,10 +492,12 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     try {
       const response = await apiPost<{ priority: number | null; boardRevision: number }, { priority: number | null }>(`/api/projects/${project.id}/priority`, { priority });
       updateProjects((current) => current.map((item) => item.id === project.id ? { ...item, priority: response.priority, boardRevision: response.boardRevision } : item));
-      void projectsQuery.refetch();
+      queueDashboardRefresh();
     } catch (reason) {
+      if (reason instanceof ApiError && reason.status === 503 && reason.details && typeof reason.details === "object" && ((reason.details as { code?: unknown }).code === "board_contract_disabled" || (reason.details as { code?: unknown }).code === "board_schema_maintenance")) setBoardUnavailableReason("Board interactions are temporarily unavailable while the Board is being updated.");
       updateProjects((current) => current.map((item) => item.id === project.id && item.priority === priority ? { ...item, priority: project.priority } : item));
-      void projectsQuery.refetch();
+      queueDashboardRefresh();
+      setAnnouncement("Project priority could not be updated.");
       toast(reason instanceof Error ? reason.message : "The project priority could not be updated.", "error");
     } finally {
       setPendingOrdering((current) => { const next = new Set(current); next.delete(project.id); return next; });
@@ -296,9 +510,12 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     try {
       const response = await apiPost<{ project: { boardRevision: number } }, { direction: "up" | "down" }>(`/api/projects/${project.id}/board-position`, { direction });
       updateProjects((current) => current.map((item) => item.id === project.id ? { ...item, boardRevision: response.project.boardRevision } : item));
-      void projectsQuery.refetch();
+      queueDashboardRefresh();
+      setAnnouncement(`Moved ${project.street} ${direction}.`);
     } catch (reason) {
-      void projectsQuery.refetch();
+      if (reason instanceof ApiError && reason.status === 503 && reason.details && typeof reason.details === "object" && ((reason.details as { code?: unknown }).code === "board_contract_disabled" || (reason.details as { code?: unknown }).code === "board_schema_maintenance")) setBoardUnavailableReason("Board interactions are temporarily unavailable while the Board is being updated.");
+      queueDashboardRefresh();
+      setAnnouncement("The project position could not be updated.");
       toast(reason instanceof Error ? reason.message : "The project position could not be updated.", "error");
     } finally {
       setPendingOrdering((current) => { const next = new Set(current); next.delete(project.id); return next; });
@@ -349,8 +566,9 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         {!viewingArchived && view === "kanban" && (
           <label className="dashboard-sort">
             <span className="sr-only">Sort Kanban board</span>
-            <select value={kanbanSort} onChange={(event) => selectKanbanSort(event.target.value as KanbanSortMode)}>
+            <select value={effectiveKanbanSort} onChange={(event) => selectKanbanSort(event.target.value as KanbanSortMode)}>
               <option value="board">Board order</option>
+              {canPrioritize && hasAuthorizedBoardMap && <option value="priority">Priority</option>}
               <option value="shootDate-asc">Shoot date ↑</option>
               <option value="shootDate-desc">Shoot date ↓</option>
             </select>
@@ -358,6 +576,8 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         )}
         </>}
       </div>
+
+      {boardUnavailableMessage && !viewingArchived && <div className="muted" role="status" style={{ marginBottom: 16 }}>{boardUnavailableMessage}</div>}
 
       {isLoading && <div className="empty" role="status"><span className="serif">Loading {viewingArchived ? "archived " : ""}projects.</span>Preparing the production desk.</div>}
 
@@ -387,22 +607,22 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       {!isLoading && !error && !viewingArchived && filteredProjects.length > 0 && view === "kanban" && (
         <div className="kanban" aria-label="Project pipeline board">
           {activeStages.map((stage) => {
-            const stageProjects = sortKanbanProjects(filteredProjects.filter((project) => project.stageKey === stage.key), kanbanSort);
-            const stageKey = stage.key === "editing" ? "editing_autohdr" : stage.key;
-            const draggingStageKey = dragging?.stageKey === "editing" ? "editing_autohdr" : dragging?.stageKey;
-            const isSameStageDrop = dragging !== undefined && draggingStageKey === stageKey;
-            const canDropStage = dragging !== undefined && (isSameStageDrop ? boardContractEnabled && canPrioritize : canMoveStages);
+            const stageProjects = sortKanbanProjects(filteredProjects.filter((project) => project.stageKey === stage.key), effectiveKanbanSort);
+            const stageKey = stage.key;
+            const isSameStageDrop = dragging !== undefined && dragging.stageKey === stageKey;
+            const canDropStage = dragging !== undefined && !isSameStageDrop && canMoveStages;
             const isDropTarget = canDropStage && dropStage === stageKey;
-            return <section className={`kcol ${isDropTarget ? "is-over" : ""}`} key={stage.key} onDragOver={(event) => { if (canDropStage && dragging) { event.preventDefault(); setDropStage(stageKey); } }} onDragLeave={() => { if (dropStage === stageKey) setDropStage(undefined); }} onDrop={(event) => { event.preventDefault(); if (canDropStage) void moveProject(stageKey); }}>
+            return <section className={`kcol ${isDropTarget ? "is-over" : ""}`} key={stage.key} onDragOver={(event) => { if (canDropStage && dragging) { event.preventDefault(); setDropStage(stageKey); } }} onDragLeave={() => { if (dropStage === stageKey) setDropStage(undefined); }} onDrop={(event) => { event.preventDefault(); if (canDropStage) void moveProject(dragging, stageKey); }}>
               <div className="kcol__head"><span className="row gap2"><StatusBadge stageKey={stage.key} /></span><span className="cnt">{stageProjects.length}</span></div>
               <div className="kcol__body">
                 {stageProjects.length === 0 && <div className="kcol__empty">—</div>}
-                {stageProjects.map((project) => <KanbanCard key={project.id} project={project} canMove={canMoveStages && !pendingMoves.has(project.id)} canPrioritize={boardContractEnabled && canPrioritize && !pendingOrdering.has(project.id)} canReorder={boardContractEnabled && canPrioritize && kanbanSort === "board" && !pendingOrdering.has(project.id)} isDragging={dragging?.id === project.id} onPriorityChange={setProjectPriority} onBoardPosition={moveProjectPosition} onDragStart={beginDrag} onDragEnd={() => { setDragging(undefined); setDropStage(undefined); }} />)}
+                {stageProjects.map((project) => <KanbanCard key={project.id} project={project} canMove={canMoveStages && !pendingMoves.has(project.id)} canPrioritize={boardContractEnabled && canPrioritize && !pendingOrdering.has(project.id)} canReorder={boardMutationEnabled && canPrioritize && effectiveKanbanSort === "board" && !pendingOrdering.has(project.id)} stageOptions={activeStages} onMoveStage={(item, targetStageKey) => { void moveProject(item, targetStageKey); }} isDragging={dragging?.id === project.id} cardDropEdge={dropTarget?.stageKey === stage.key && dropTarget.projectId === project.id ? dropTarget.edge : undefined} onCardDragOver={cardDragOver} onCardDrop={cardDrop} onPriorityChange={setProjectPriority} onBoardPosition={moveProjectPosition} onDragStart={beginDrag} onDragEnd={() => { setDragging(undefined); setDropStage(undefined); setDropTarget(undefined); }} />)}
               </div>
             </section>;
           })}
         </div>
       )}
+      <div className="dashboard-live-region sr-only" aria-live="polite" aria-atomic="true">{announcement}</div>
       <div className="toasts" aria-live="polite">{toasts.map((item) => <div className={`toast ${item.tone === "error" ? "toast--error" : ""}`} key={item.id}>{item.tone === "error" ? "!" : "✓"}<span>{item.message}</span></div>)}</div>
     </main>
   );
