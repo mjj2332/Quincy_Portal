@@ -28,13 +28,16 @@ function StageControl({ project, currentStageKey, stages, contractEnabled, pendi
 }) {
   const current = stages.find((item) => item.key === currentStageKey);
   const unavailable = disabledReason ?? (!contractEnabled ? "Stage movement is temporarily unavailable." : null);
-  const disabled = pending || Boolean(unavailable);
+  // Keep an already-focused select focusable after a command-level 503 so the
+  // workspace can return focus to the same control while exposing the reason.
+  // The contract-off state remains a genuinely disabled control.
+  const disabled = pending || (!contractEnabled && !disabledReason);
   return <div className="stage-control">
     <div className="kv"><span className="k">Stage</span><span className="vv">{current?.label ?? currentStageKey}</span></div>
     <label className="sr-only" htmlFor={`project-stage-${project.id}`}>Move project Stage</label>
-    <select id={`project-stage-${project.id}`} aria-label="Move project Stage" value={currentStageKey} disabled={disabled} aria-busy={pending || undefined} onChange={(event) => {
+    <select id={`project-stage-${project.id}`} data-focus-key={`rail-stage:${project.id}`} aria-label="Move project Stage" value={currentStageKey} disabled={disabled} aria-disabled={unavailable ? "true" : undefined} aria-busy={pending || undefined} onChange={(event) => {
       const next = event.target.value as ProjectDetail["stageKey"];
-      if (next !== currentStageKey) onMove?.(next);
+      if (!unavailable && next !== currentStageKey) onMove?.(next);
     }}>
       {stages.filter((stage) => stage.active || stage.key === currentStageKey).map((stage) => <option value={stage.key} key={stage.key} disabled={!stage.active && stage.key === currentStageKey}>{stage.label}</option>)}
       {!current && <option value={currentStageKey}>{currentStageKey}</option>}

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { CollectionKind, MoveProjectStageRequest, MoveProjectStageResponse, Role } from "@quincy/shared";
 import { type ProjectStageKey, useStages } from "../lib/stages";
@@ -21,7 +21,7 @@ import {
   type ProjectDetail,
 } from "../lib/project-data";
 import { projectCommentsInfiniteQueryOptions, useProjectCommentsCacheQuery } from "../lib/project-comments";
-import { createProjectDataInvalidationMessage, useProjectQueryRuntime } from "../lib/project-query-sync";
+import { createDashboardBoardInvalidatedMessage, createProjectDataInvalidationMessage, getProjectQueryRuntime, useProjectQueryRuntime } from "../lib/project-query-sync";
 import type { ProjectDataResource } from "../lib/project-query-sync";
 import { submitStageMoveWithConfirmation } from "../lib/stage-move";
 
@@ -390,7 +390,7 @@ function NonRawWorkspaceBody(props: ActiveAssetsProps & { assets: WorkspaceAsset
 
 type WorkspaceBodyProps = ActiveAssetsProps & { assets: WorkspaceAsset[]; rawAssets: WorkspaceAsset[]; assetsPending: boolean };
 function WorkspaceBody(props: WorkspaceBodyProps) {
-  const { can } = useCapabilities(); const queryClient = useQueryClient();
+  const { can } = useCapabilities(); const queryClient = useQueryClient(); const runtime = getProjectQueryRuntime(queryClient);
   const { stages } = useStages();
   const terminateOnUnauthorized = useProjectAccessTermination();
   const { detail: project, assets, rawAssets, activeTab, openAssetId, setOpenAssetId, lightboxOrderIds, setLightboxOrderIds, toast } = props;
@@ -400,6 +400,13 @@ function WorkspaceBody(props: WorkspaceBodyProps) {
   const rawCollection = project.collections.find((collection) => collection.kind === "raw"); const selectionCount = rawAssets.filter((asset) => asset.selected).length;
   const [stageMovePending, setStageMovePending] = useState(false);
   const [stageMoveDisabledReason, setStageMoveDisabledReason] = useState<string | null>(null);
+  const restoreStageFocusRef = useRef(false);
+  useLayoutEffect(() => {
+    if (!restoreStageFocusRef.current || stageMovePending) return;
+    restoreStageFocusRef.current = false;
+    const control = document.querySelector<HTMLSelectElement>(`[data-focus-key="rail-stage:${project.id}"]`);
+    if (control && !control.disabled) control.focus();
+  }, [project.id, project.stageKey, stageMovePending]);
   const autoHdrApiJobs = props.jobs.filter((job) => job.kind === "autohdr_api_send"); const latestAutoHdrApiJob = autoHdrApiJobs[0]; const autoHdrApiSendActive = autoHdrApiJobs.some(activeJob); const usesSendOnlyAutoHdrApi = autoHdrApiJobs.length > 0; const hasRawFolder = project.editedUploadAvailable ?? Boolean(project.rawFolderPath || project.rawFolderLink);
   const autohdrTerminal = props.autohdrStatus?.state === "retired" || props.autohdrStatus?.state === "failed"; const autohdrBlocked = !autohdrTerminal && (props.autohdrStatus?.state === "blocked" || props.autohdrStatus?.mappingState === "blocked_collision");
   const autohdrStatusLabel = usesSendOnlyAutoHdrApi ? latestAutoHdrApiJob?.status === "done" ? "Sent to AutoHDR" : latestAutoHdrApiJob?.status === "failed" || latestAutoHdrApiJob?.status === "stuck" ? "AutoHDR send needs attention" : "Sending selected photos to AutoHDR" : autohdrBlocked ? "Blocked — staff resolution needed" : props.isSyncing ? "Checking Dropbox…" : props.autohdrStatus?.mappingState === "active" ? "Fetched" : props.autohdrStatus?.state === "started" ? "Waiting for AutoHDR output" : "Not yet sent to autoHDR";
@@ -409,6 +416,7 @@ function WorkspaceBody(props: WorkspaceBodyProps) {
   const updateCover = useCallback(async (assetId: string | null) => { try { await apiPost(`/api/projects/${encodeURIComponent(project.id)}/cover`, { assetId }); await props.onInvalidate([{ kind: "detail" }]); toast(assetId === null ? "Cover cleared — using the first RAW frame." : "Cover updated."); } catch (reason) { terminateOnUnauthorized(reason); toast(reason instanceof Error ? reason.message : "The project cover could not be updated.", "error"); } }, [project.id, props, terminateOnUnauthorized, toast]);
   const moveStage = useCallback(async (targetStageKey: ProjectStageKey) => {
     if (stageMovePending || !can("moveProjectStage") || project.archivedAt || !project.contractEnabled) return;
+    restoreStageFocusRef.current = true;
     setStageMovePending(true);
     setStageMoveDisabledReason(null);
     const request: MoveProjectStageRequest = {
@@ -417,24 +425,40 @@ function WorkspaceBody(props: WorkspaceBodyProps) {
       placement: { kind: "append" },
     };
     try {
-      const response = await submitStageMoveWithConfirmation(request, (body) => apiPost<MoveProjectStageResponse, MoveProjectStageRequest>(`/api/projects/${encodeURIComponent(project.id)}/stage`, body));
+      const response = await submitStageMoveWithConfirmation(request, (body) => apiPost<MoveProjectStageResponse, MoveProjectStageRequest>(`/api/projects/${encodeURIComponent(project.id)}/stage`, body), { confirmationPolicy: "stage-move" });
       if (!response) {
         await props.onRefreshDetail().catch(() => undefined);
         return;
       }
-      await props.onRefreshDetail();
+      if (response.changed) {
+        await queryClient.invalidateQueries({ queryKey: ["dashboard-projects"], refetchType: "active" });
+        runtime?.publish(createDashboardBoardInvalidatedMessage());
+        runtime?.publish(createProjectDataInvalidationMessage(project.id, [{ kind: "detail" }]));
+      }
+      try {
+        await props.onRefreshDetail();
+      } catch (refreshError) {
+        setStageMoveDisabledReason("The Stage move was saved, but the latest project could not be loaded. Refresh to continue.");
+        toast(refreshError instanceof Error ? refreshError.message : "The latest project could not be loaded.", "error");
+        return;
+      }
       const label = stages.find((stage) => stage.key === targetStageKey)?.label ?? targetStageKey;
-      toast(`Moved to ${label}.`);
+      toast(response.changed ? `Moved to ${label}.` : `Already in ${label}.`);
     } catch (reason) {
-      terminateOnUnauthorized(reason);
       const code = reason instanceof ApiError && reason.details && typeof reason.details === "object" ? (reason.details as { code?: unknown }).code : undefined;
-      if (reason instanceof ApiError && reason.status === 503 && code === "board_contract_disabled") {
+      if (reason instanceof ApiError && reason.status === 401) {
+        terminateOnUnauthorized(reason);
+        return;
+      } else if (reason instanceof ApiError && reason.status === 503 && code === "board_contract_disabled") {
         setStageMoveDisabledReason("Stage movement is temporarily unavailable while the Board contract is disabled.");
       } else if (reason instanceof ApiError && reason.status === 503 && code === "board_schema_maintenance") {
         setStageMoveDisabledReason("Stage movement is temporarily unavailable while the Board is being updated.");
       } else if (reason instanceof ApiError && reason.status === 409 && code === "project_stage_conflict") {
         await props.onRefreshDetail().catch(() => undefined);
         toast("The project changed elsewhere; the Stage was refreshed.", "error");
+      } else if (reason instanceof ApiError && reason.status === 403) {
+        await props.onRefreshDetail().catch(() => undefined);
+        toast(reason.message, "error");
       } else {
         toast(reason instanceof Error ? reason.message : "The Stage could not be updated.", "error");
       }

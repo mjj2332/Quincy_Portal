@@ -1,15 +1,17 @@
+// happy-dom does not prove PointerSensor / TouchSensor / KeyboardSensor activation, real collision geometry, autoscroll, scroll containers, link-click suppression, screen-reader delivery, browser focus timing, or active-drag DragOverlay rendering; those are QA-phase real-browser acceptance items.
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Dashboard } from "./Dashboard";
 
 const apiGetMock = vi.fn<(path: string) => Promise<unknown>>();
+const apiPostMock = vi.fn<(path: string, body: unknown) => Promise<unknown>>();
 vi.mock("../lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/api")>();
-  return { ...actual, apiGet: (path: string) => apiGetMock(path) };
+  return { ...actual, apiGet: (path: string) => apiGetMock(path), apiPost: (path: string, body: unknown) => apiPostMock(path, body) };
 });
 vi.mock("../lib/capabilities", () => ({
-  useCapabilities: () => ({ role: "admin", capabilities: ["prioritizeProjects"], can: (capability: string) => capability === "prioritizeProjects" }),
+  useCapabilities: () => ({ role: "admin", capabilities: ["prioritizeProjects", "moveProjectStage", "adminBackend"], can: (capability: string) => capability === "prioritizeProjects" || capability === "moveProjectStage" || capability === "adminBackend" }),
 }));
 vi.mock("../lib/stages", () => ({
   useStages: () => ({
@@ -28,10 +30,11 @@ describe("Dashboard Kanban sort control", () => {
     apiGetMock.mockReset();
     apiGetMock.mockImplementation((path) => path === "/api/projects" ? Promise.resolve({ projects: [{
       id: "project-1", street: "1 Test Street", suburb: null, postcode: null, agencyName: null, agentName: null,
-      stageKey: "awaiting_raw", shootDate: "2026-01-01", coverAssetId: null, receivedCount: 0,
+      stageKey: "awaiting_raw", shootDate: "2026-01-01", coverAssetId: null, receivedCount: 7,
       expectedCount: null, priority: 1, boardPosition: 0, deadlineAt: Date.parse("2027-01-14T22:00:00.000Z"), deadlineLocalCivil: "2027-01-15T09:00", deadlineZone: "Australia/Sydney",
       boardRevision: 0,
     }], board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: ["project-1"] } } }) : Promise.resolve({ stages: [] }));
+    apiPostMock.mockReset().mockResolvedValue({ changed: true, project: { stageKey: "awaiting_raw", boardRevision: 1 } });
     const values = new Map<string, string>();
     Object.defineProperty(window, "localStorage", {
       configurable: true,
@@ -85,7 +88,8 @@ describe("Dashboard Kanban sort control", () => {
     expect(document.querySelector(".kcard__foot")?.textContent).toContain("Priority 1");
     expect(document.querySelector('[aria-label="Move project up"]')).toBeNull();
     expect(document.querySelector('[aria-label="Move project down"]')).toBeNull();
-    expect(document.querySelector(".kcard")?.getAttribute("draggable")).toBe("false");
+    expect(document.querySelector('[aria-label="Move Flag Off Street to…"]')).toBeNull();
+    expect(document.querySelector<HTMLButtonElement>('[aria-label="Move Flag Off Street"]')?.disabled).toBe(true);
   });
 
   it("renders the Sydney deadline on Kanban cards and keeps RAW out of the card footer", async () => {
@@ -95,5 +99,28 @@ describe("Dashboard Kanban sort control", () => {
     expect(card.querySelector("time")?.textContent).toContain("Due 2027-01-15 09:00 Sydney");
     expect(card.querySelector(".kcard__foot")?.textContent).not.toContain("RAW");
     expect(card.querySelector("time")?.getAttribute("dateTime")).toBe("2027-01-14T22:00:00.000Z");
+    expect(card.getAttribute("href")).toBe("/projects/project-1");
+    expect(card.getAttribute("target")).toBeNull();
+
+    await act(async () => { (document.querySelector('[aria-label="Dashboard view"] button') as HTMLButtonElement).click(); await Promise.resolve(); });
+    expect(document.querySelector(".prow-wrap .prow")?.getAttribute("href")).toBe("/projects/project-1");
+    expect(document.querySelector(".prow-wrap .prow__raw")?.textContent).toBe("7");
   });
+
+  it("renders the current overdue label and keeps archived Dashboard scope List-only", async () => {
+    apiGetMock.mockImplementation((path) => path === "/api/projects" || path === "/api/projects?archived=1" ? Promise.resolve({ projects: [{
+      id: "archived-project", street: "Archived Street", suburb: null, postcode: null, agencyName: null, agentName: null,
+      stageKey: "awaiting_raw", shootDate: null, coverAssetId: null, receivedCount: 4, expectedCount: null, priority: null,
+      boardPosition: 10, deadlineAt: Date.parse("2020-01-01T00:00:00.000Z"), deadlineLocalCivil: "2020-01-01T11:00", deadlineZone: "Australia/Sydney", boardRevision: 1,
+    }], board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: ["archived-project"] } } }) : Promise.resolve({ stages: [] }));
+    await act(async () => { root!.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); await Promise.resolve(); await vi.advanceTimersByTimeAsync(100); await Promise.resolve(); });
+    await vi.waitFor(() => expect(document.querySelector(".kcard")).not.toBeNull());
+    expect(document.querySelector(".kcard time")?.textContent).toContain("Overdue 2020-01-01 11:00 Sydney");
+
+    await act(async () => { (document.querySelector('[aria-label="Project status"] button:last-child') as HTMLButtonElement).click(); await Promise.resolve(); await vi.advanceTimersByTimeAsync(100); await Promise.resolve(); });
+    await vi.waitFor(() => expect(document.querySelector(".prow-wrap .prow")).not.toBeNull());
+    expect(document.querySelector(".kanban")).toBeNull();
+    expect(document.querySelector('[aria-label="Dashboard view"]')).toBeNull();
+  });
+
 });

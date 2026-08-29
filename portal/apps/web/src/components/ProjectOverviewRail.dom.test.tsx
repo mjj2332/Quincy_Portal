@@ -1,3 +1,4 @@
+// happy-dom does not prove PointerSensor / TouchSensor / KeyboardSensor activation, real collision geometry, autoscroll, scroll containers, link-click suppression, screen-reader delivery, browser focus timing, or active-drag DragOverlay rendering; those are QA-phase real-browser acceptance items.
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { ReactNode } from "react";
@@ -64,6 +65,7 @@ describe("Project Overview rail Stage control", () => {
     roleState.inactive = true;
     render(<ProjectOverviewRail {...baseProps(project({ stageKey: "edited_review" }), onStageMove)} />);
     const select = host.querySelector<HTMLSelectElement>('[aria-label="Move project Stage"]')!;
+    expect(select.getAttribute("data-focus-key")).toBe("rail-stage:project-1");
     expect(select.disabled).toBe(false);
     expect((select.querySelector('option[value="edited_review"]') as HTMLOptionElement | null)?.disabled).toBe(true);
     select.value = "edited_review";

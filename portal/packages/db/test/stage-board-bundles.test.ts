@@ -65,7 +65,7 @@ function migrationNames(): string[] {
 }
 
 function fenceReworkSqlBlocks(): string[] {
-  const design = readFileSync(new URL("../../../../docs/plans/tb5a/fence-rework-sol-design.md", import.meta.url), "utf8");
+  const design = readFileSync(new URL("../../../../docs/plans/implemented/tb5a/fence-rework-sol-design.md", import.meta.url), "utf8");
   return [...design.matchAll(/```sql\n([\s\S]*?)```/g)].map((match) => match[1]!);
 }
 

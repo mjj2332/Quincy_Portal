@@ -433,6 +433,7 @@ afterEach(async () => {
   it("moves Stage from the rail through the shared confirmation retry", async () => {
     authState.role = "admin";
     let stageKey: "raw_review" | "awaiting_raw" = "raw_review";
+    let queryClient: ReturnType<typeof import("../lib/query-client").createQuincyQueryClient> | undefined;
     apiGetMock.mockImplementation((path: string) => {
       if (path === "/api/projects/p1") return Promise.resolve({ ...projectFixture(), stageKey, boardRevision: stageKey === "raw_review" ? 7 : 8, contractEnabled: true });
       if (path.includes("/assets?collection=raw")) return Promise.resolve({ assets: rawAssets });
@@ -446,7 +447,10 @@ afterEach(async () => {
     apiPostMock
       .mockRejectedValueOnce(new ApiError("Confirmation required", 409, { code: "stage_confirmation_required", requiredConfirmation: { reasons: ["backward"] } }))
       .mockImplementationOnce(async () => { stageKey = "awaiting_raw"; return { changed: true, project: { stageKey, boardRevision: 8 } }; });
-    await render(<ProjectWorkspace projectId="p1" />); await flush();
+    await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>); await flush();
+    const runtime = getProjectQueryRuntime(queryClient!);
+    const publish = vi.spyOn(runtime!, "publish");
+    const invalidate = vi.spyOn(queryClient!, "invalidateQueries");
     const select = host.querySelector<HTMLSelectElement>('[aria-label="Move project Stage"]');
     expect(select).not.toBeNull();
     select!.value = "awaiting_raw";
@@ -456,6 +460,61 @@ afterEach(async () => {
       expected: { stageKey: "raw_review", boardRevision: 7 }, targetStageKey: "awaiting_raw", placement: { kind: "append" }, confirmation: { reasons: ["backward"] },
     });
     expect(host.textContent).toContain("Awaiting RAW");
+    const boardMessage = publish.mock.calls.map(([message]) => message).find((message) => message.type === "dashboard-board-invalidated");
+    expect(boardMessage).toEqual(expect.objectContaining({ version: 1, type: "dashboard-board-invalidated" }));
+    expect(boardMessage).not.toHaveProperty("projectId");
+    expect(publish).toHaveBeenCalledWith(expect.objectContaining({ type: "project-data-invalidated", projectId: "p1", resources: [{ kind: "detail" }] }));
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["dashboard-projects"], refetchType: "active" });
+  });
+
+  it("uses the idempotent already-in message and restores rail focus after a 503", async () => {
+    authState.role = "admin";
+    apiGetMock.mockImplementation((path: string) => {
+      if (path === "/api/projects/p1") return Promise.resolve({ ...projectFixture(), stageKey: "raw_review", boardRevision: 7, contractEnabled: true });
+      if (path.includes("/assets?collection=raw")) return Promise.resolve({ assets: rawAssets });
+      if (path.includes("/ingest-status")) return Promise.resolve({ expectedCount: null, receivedCount: 2, mismatch: false });
+      if (path.endsWith("/jobs")) return Promise.resolve({ jobs: [] });
+      if (path.includes("/autohdr-status")) return Promise.resolve({ handoff: null });
+      return Promise.resolve({});
+    });
+    apiPostMock.mockResolvedValueOnce({ changed: false, project: { projectId: "p1", stageKey: "edited_review", boardRevision: 7 }, board: { sourceStageKey: "raw_review", targetStageKey: "edited_review", orderedVisibleProjectIds: [] } });
+    let queryClient: ReturnType<typeof import("../lib/query-client").createQuincyQueryClient> | undefined;
+    await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>); await flush();
+    const runtime = getProjectQueryRuntime(queryClient!);
+    const publish = vi.spyOn(runtime!, "publish");
+    const invalidate = vi.spyOn(queryClient!, "invalidateQueries");
+    const select = host.querySelector<HTMLSelectElement>('[data-focus-key="rail-stage:p1"]')!;
+    select.value = "edited_review";
+    await act(async () => { select.focus(); select.dispatchEvent(new Event("change", { bubbles: true })); await Promise.resolve(); }); await flush(20);
+    expect(host.textContent).toContain("Already in Edited review.");
+    expect(document.activeElement?.getAttribute("data-focus-key")).toBe("rail-stage:p1");
+    expect(publish).not.toHaveBeenCalled();
+    expect(invalidate).not.toHaveBeenCalledWith({ queryKey: ["dashboard-projects"], refetchType: "active" });
+
+    apiPostMock.mockRejectedValueOnce(new ApiError("Board unavailable", 503, { code: "board_schema_maintenance" }));
+    select.value = "awaiting_raw";
+    await act(async () => { select.focus(); select.dispatchEvent(new Event("change", { bubbles: true })); await Promise.resolve(); }); await flush(20);
+    expect(host.textContent).toContain("Stage movement is temporarily unavailable while the Board is being updated.");
+    expect(document.activeElement?.getAttribute("data-focus-key")).toBe("rail-stage:p1");
+  });
+
+  it("treats a Stage capability 403 as a command failure without terminating the workspace", async () => {
+    authState.role = "admin";
+    apiGetMock.mockImplementation((path: string) => {
+      if (path === "/api/projects/p1") return Promise.resolve({ ...projectFixture(), stageKey: "raw_review", boardRevision: 7, contractEnabled: true });
+      if (path.includes("/assets?collection=raw")) return Promise.resolve({ assets: rawAssets });
+      if (path.includes("/ingest-status")) return Promise.resolve({ expectedCount: null, receivedCount: 2, mismatch: false });
+      if (path.endsWith("/jobs")) return Promise.resolve({ jobs: [] });
+      if (path.includes("/autohdr-status")) return Promise.resolve({ handoff: null });
+      return Promise.resolve({});
+    });
+    apiPostMock.mockRejectedValueOnce(new ApiError("Stage movement forbidden", 403, { capability: "moveProjectStage" }));
+    await render(<ProjectWorkspace projectId="p1" />); await flush();
+    const select = host.querySelector<HTMLSelectElement>('[data-focus-key="rail-stage:p1"]')!;
+    select.value = "awaiting_raw";
+    await act(async () => { select.focus(); select.dispatchEvent(new Event("change", { bubbles: true })); await Promise.resolve(); }); await flush(20);
+    expect(host.textContent).toContain("12 Example St");
+    expect(host.textContent).toContain("Stage movement forbidden");
   });
 
   it("keeps a PhotoGrid filter through a background refetch", async () => {

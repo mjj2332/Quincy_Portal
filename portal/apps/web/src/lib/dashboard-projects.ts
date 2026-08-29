@@ -4,7 +4,7 @@ import { apiGet } from "./api";
 import { externalApiGet, externalProjectSummaryToDashboard } from "./external-api-response";
 import { projectQueryRetry } from "./project-data";
 import { getProjectQueryRuntime } from "./project-query-sync";
-import type { ProjectSummary } from "../screens/Dashboard";
+import type { ProjectSummary } from "./kanban-interaction";
 
 type ProjectsResponse = {
   projects: ProjectSummary[];
@@ -12,6 +12,12 @@ type ProjectsResponse = {
 };
 export type DashboardIdentity = { principalId: string; role: Role; authorizationEpoch: number };
 
+/**
+ * Option A: sort is a derived interaction identity, not a network input. Keep this five-element
+ * authorization-scoped key stable: removeProjectFromDashboardQueries relies on its
+ * ["dashboard-projects", principalId] prefix, and exact Dashboard invalidations rely on the full
+ * tuple. Future key widening must audit both consumers.
+ */
 export function dashboardProjectsKey(principalId: string, role: Role, authorizationEpoch: number, archived: boolean) {
   return ["dashboard-projects", principalId, role, authorizationEpoch, { archived }] as const;
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ExternalProjectDetailDto, ExternalProjectSummaryDto } from "@quincy/shared";
-import { sortKanbanProjects, type ProjectSummary } from "../screens/Dashboard";
+import { sortKanbanProjects, type ProjectSummary } from "./kanban-interaction";
 import { externalProjectSummaryToDashboard } from "./external-api-response";
 import { externalProjectDetailToWorkspace } from "./external-api-response";
 

@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { QueryClient } from "@tanstack/react-query";
+import { QueryClient, QueryObserver } from "@tanstack/react-query";
 import {
   PROJECT_DATA_CHANNEL, ProjectQueryRuntime, createActiveProjectDetailsInvalidatedMessage,
-  createProjectDataInvalidationMessage, createProjectDataRemovedMessage, parseProjectDataSyncMessage, projectResourceKey,
+  createDashboardBoardInvalidatedMessage, createProjectDataInvalidationMessage, createProjectDataRemovedMessage,
+  parseProjectDataSyncMessage, projectResourceKey,
 } from "./project-query-sync";
 import { beginAssetOptimisticMutation, beginProjectMembershipMutation, projectDataKeys } from "./project-data";
+import { dashboardProjectsKey } from "./dashboard-projects";
 
 afterEach(() => { /* each test creates and disposes its own client/runtime */ });
 
@@ -44,6 +46,18 @@ describe("project-data BroadcastChannel contract", () => {
     expect(parseProjectDataSyncMessage({ ...removed, sourceTabId: "a" })).toEqual({ ...removed, sourceTabId: "a" });
     expect(parseProjectDataSyncMessage({ ...active, sourceTabId: "a" })).toEqual({ ...active, sourceTabId: "a" });
     expect(parseProjectDataSyncMessage({ ...active, sourceTabId: "a", projectId: "p" })).toBeNull();
+  });
+
+  it("accepts only the exact ID-free Board invalidation shape", () => {
+    const message = createDashboardBoardInvalidatedMessage();
+    const valid = { ...message, sourceTabId: "sender" };
+    expect(Object.keys(valid).sort()).toEqual(["committedAt", "sourceTabId", "type", "version"]);
+    expect(parseProjectDataSyncMessage(valid)).toEqual(valid);
+    expect(parseProjectDataSyncMessage({ ...valid, projectId: "private" })).toBeNull();
+    expect(parseProjectDataSyncMessage({ ...valid, version: 2 })).toBeNull();
+    expect(parseProjectDataSyncMessage({ ...valid, committedAt: "" })).toBeNull();
+    expect(parseProjectDataSyncMessage({ ...valid, committedAt: undefined })).toBeNull();
+    expect(parseProjectDataSyncMessage({ version: 1, type: "dashboard-board-invalidated", committedAt: valid.committedAt })).toBeNull();
   });
 
   it("uses exact receiver invalidation and ignores the sender", async () => {
@@ -185,5 +199,91 @@ describe("project-data BroadcastChannel contract", () => {
     await new Promise<void>((resolve) => queueMicrotask(resolve)); await new Promise<void>((resolve) => setTimeout(resolve, 0));
     expect(queryClient.getQueriesData({ queryKey: projectKey })).toHaveLength(0);
     runtime.dispose(); queryClient.clear();
+  });
+
+  it("invalidates active dashboard queries in other tabs, ignores its own message, and never rebroadcasts", () => {
+    class FakeChannel {
+      static channels: FakeChannel[] = [];
+      readonly listeners = new Set<(event: MessageEvent<unknown>) => void>();
+      constructor(readonly name: string) { FakeChannel.channels.push(this); }
+      addEventListener(_type: string, listener: (event: MessageEvent<unknown>) => void) { this.listeners.add(listener); }
+      postMessage(data: unknown) { for (const channel of FakeChannel.channels.filter((item) => item.name === this.name)) for (const listener of channel.listeners) listener({ data } as MessageEvent<unknown>); }
+      close() { FakeChannel.channels = FakeChannel.channels.filter((item) => item !== this); this.listeners.clear(); }
+    }
+    vi.stubGlobal("BroadcastChannel", FakeChannel);
+    const senderClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const receiverClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const sender = new ProjectQueryRuntime(senderClient, "principal-a");
+    const receiver = new ProjectQueryRuntime(receiverClient, "principal-b");
+    const senderKey = dashboardProjectsKey("principal-a", "admin", 0, false);
+    const receiverKey = dashboardProjectsKey("principal-b", "editor", 0, false);
+    senderClient.setQueryData(senderKey, []);
+    receiverClient.setQueryData(receiverKey, []);
+    const senderObserver = new QueryObserver(senderClient, { queryKey: senderKey, queryFn: () => new Promise<unknown[]>(() => undefined), staleTime: Infinity });
+    const receiverObserver = new QueryObserver(receiverClient, { queryKey: receiverKey, queryFn: () => new Promise<unknown[]>(() => undefined), staleTime: Infinity });
+    const releaseSender = senderObserver.subscribe(() => undefined);
+    const releaseReceiver = receiverObserver.subscribe(() => undefined);
+    sender.start(); receiver.start();
+    const publish = vi.spyOn(receiver, "publish");
+    sender.publish(createDashboardBoardInvalidatedMessage());
+    expect(senderClient.getQueryCache().find({ queryKey: senderKey, exact: true })?.state.isInvalidated).toBe(false);
+    expect(receiverClient.getQueryCache().find({ queryKey: receiverKey, exact: true })?.state.isInvalidated).toBe(true);
+    expect(publish).not.toHaveBeenCalled();
+    releaseSender(); releaseReceiver(); sender.dispose(); receiver.dispose(); senderClient.clear(); receiverClient.clear();
+  });
+
+  it("keeps Board invalidation scope local to each runtime, including an impersonated runtime", () => {
+    class FakeChannel {
+      static channels: FakeChannel[] = [];
+      readonly listeners = new Set<(event: MessageEvent<unknown>) => void>();
+      constructor(readonly name: string) { FakeChannel.channels.push(this); }
+      addEventListener(_type: string, listener: (event: MessageEvent<unknown>) => void) { this.listeners.add(listener); }
+      postMessage(data: unknown) { for (const channel of FakeChannel.channels.filter((item) => item.name === this.name)) for (const listener of channel.listeners) listener({ data } as MessageEvent<unknown>); }
+      close() { FakeChannel.channels = FakeChannel.channels.filter((item) => item !== this); this.listeners.clear(); }
+    }
+    vi.stubGlobal("BroadcastChannel", FakeChannel);
+    const principalA = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const principalB = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const impersonated = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const runtimeA = new ProjectQueryRuntime(principalA, "tab-a");
+    const runtimeB = new ProjectQueryRuntime(principalB, "tab-b");
+    const runtimeImpersonated = new ProjectQueryRuntime(impersonated, "tab-impersonated");
+    const keyA = dashboardProjectsKey("admin-a", "admin", 0, false);
+    const keyB = dashboardProjectsKey("editor-b", "editor", 0, false);
+    const keyImpersonated = dashboardProjectsKey("photographer-b", "photographer", 4, false);
+    const observe = (client: QueryClient, key: readonly unknown[]) => {
+      client.setQueryData(key, []);
+      const observer = new QueryObserver(client, { queryKey: key, queryFn: () => new Promise<unknown[]>(() => undefined), staleTime: Infinity });
+      return observer.subscribe(() => undefined);
+    };
+    const release = [observe(principalA, keyA), observe(principalB, keyB), observe(impersonated, keyImpersonated)];
+    runtimeA.start(); runtimeB.start(); runtimeImpersonated.start();
+    const outgoing = createDashboardBoardInvalidatedMessage();
+    const serialized = JSON.parse(JSON.stringify({ ...outgoing, sourceTabId: "tab-a" })) as Record<string, unknown>;
+    expect(Object.keys(serialized).sort()).toEqual(["committedAt", "sourceTabId", "type", "version"]);
+    expect(serialized).not.toHaveProperty("projectId");
+    expect(serialized).not.toHaveProperty("stage");
+    expect(serialized).not.toHaveProperty("revision");
+    expect(serialized).not.toHaveProperty("role");
+    runtimeA.publish(outgoing);
+    expect(principalA.getQueryCache().find({ queryKey: keyA, exact: true })?.state.isInvalidated).toBe(false);
+    expect(principalB.getQueryCache().find({ queryKey: keyB, exact: true })?.state.isInvalidated).toBe(true);
+    expect(impersonated.getQueryCache().find({ queryKey: keyImpersonated, exact: true })?.state.isInvalidated).toBe(true);
+    for (const releaseQuery of release) releaseQuery();
+    runtimeA.dispose(); runtimeB.dispose(); runtimeImpersonated.dispose(); principalA.clear(); principalB.clear(); impersonated.clear();
+  });
+
+  it("makes publish a no-op when BroadcastChannel is unavailable or cannot be constructed", () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const runtime = new ProjectQueryRuntime(queryClient, "unsupported-channel");
+    vi.stubGlobal("BroadcastChannel", undefined);
+    expect(() => { runtime.start(); runtime.publish(createDashboardBoardInvalidatedMessage()); }).not.toThrow();
+    runtime.dispose();
+
+    class ThrowingChannel { constructor() { throw new Error("unsupported"); } }
+    const second = new ProjectQueryRuntime(queryClient, "throwing-channel");
+    vi.stubGlobal("BroadcastChannel", ThrowingChannel);
+    expect(() => { second.start(); second.publish(createDashboardBoardInvalidatedMessage()); }).not.toThrow();
+    second.dispose(); queryClient.clear();
   });
 });
