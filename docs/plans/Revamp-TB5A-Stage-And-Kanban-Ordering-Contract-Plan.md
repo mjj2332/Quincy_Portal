@@ -1490,6 +1490,8 @@ Every malformed case updates zero rows and produces no audit or tail footprint.
 
 ## Automatic workflow safety and ABA fencing
 
+> Superseded during the TB5A build — see docs/plans/tb5a/fence-rework-sol-design.md (+ fence-rework-opus-fixes.md) for the authoritative fenced design. This section is retained as the original intent.
+
 Every automatic writer uses a DB-owned winner bundle while retaining its workflow owner:
 
 - exact source Stage remains mandatory;

@@ -1,6 +1,6 @@
 import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
-import { guardedStageTransition } from "@quincy/db";
+import { commitAutomaticStage } from "../src/lib/automatic-stage";
 import { renewRawReconciliationClaim } from "../src/dropbox/sync";
 
 declare const __PORTAL_MIGRATION_SQL__: string;
@@ -28,12 +28,26 @@ async function project(stage = "awaiting_raw", archived = false) {
   return id;
 }
 
+async function advance(projectId: string, trigger: string): Promise<boolean> {
+  const outcome = await commitAutomaticStage({
+    env: { DB: database.DB },
+    projectId,
+    from: "awaiting_raw",
+    to: "raw_review",
+    auditId: crypto.randomUUID(),
+    auditMetaJson: JSON.stringify({ trigger }),
+    workflow: { kind: "raw_reconciliation", projectId, claimId: null, claimStates: ["running"], shootDate: null },
+    alreadyAtDestination: { allowed: true, effect: { kind: "none" } },
+  });
+  return outcome.kind === "winner";
+}
+
 describe("durable RAW stage commit", () => {
   it("concurrent qualifying intake advances once with exactly one system audit", async () => {
     const projectId = await project();
     const attempts = await Promise.all([
-      guardedStageTransition(database.DB, { projectId, from: "awaiting_raw", to: "raw_review", meta: { trigger: "dropbox_delta", durableRawEvidence: { newlyImported: 1, currentRawAvailable: true } } }),
-      guardedStageTransition(database.DB, { projectId, from: "awaiting_raw", to: "raw_review", meta: { trigger: "direct_upload", durableRawEvidence: { newlyImported: 1, currentRawAvailable: true } } }),
+      advance(projectId, "dropbox_delta"),
+      advance(projectId, "direct_upload"),
     ]);
     expect(attempts.filter(Boolean)).toHaveLength(1);
     const row = await database.DB.prepare("SELECT stage_key, board_position, board_revision FROM projects WHERE id = ?").bind(projectId).first();
@@ -46,10 +60,7 @@ describe("durable RAW stage commit", () => {
   it("archive and later-stage races lose safely without regressions or audits", async () => {
     for (const [stage, archived] of [["delivered", false], ["awaiting_raw", true]] as const) {
       const projectId = await project(stage, archived);
-      await expect(guardedStageTransition(database.DB, {
-        projectId, from: "awaiting_raw", to: "raw_review",
-        meta: { trigger: "manual_dropbox_sync", durableRawEvidence: { newlyImported: 0, currentRawAvailable: true } },
-      })).resolves.toBe(false);
+      await expect(advance(projectId, "manual_dropbox_sync")).resolves.toBe(false);
       const row = await database.DB.prepare("SELECT stage_key FROM projects WHERE id = ?").bind(projectId).first();
       expect(row).toEqual({ stage_key: stage });
       const audit = await database.DB.prepare("SELECT count(*) count FROM audit_log WHERE target_id = ?").bind(projectId).first<{ count: number }>();

@@ -4,14 +4,13 @@ import * as schema from "./schema";
 export * as schema from "./schema";
 export { COLLECTION_RECEIVED_COUNT_SQL, collectionReceivedCountBindings } from "./collection-count";
 export { RAW_CLAIM_LEASE_MS } from "./raw-reconciliation-claims";
-export { guardedStageTransition, type GuardedStageTransitionInput } from "./stage-transition";
 export { buildProjectActivityStatements, type ProjectActivityStatementBundle } from "./project-activity";
 export {
   BOARD_CONTRACT_FLAG,
   BOARD_SCHEMA_MARKER_SQL,
   boardContractEnabled,
   boardSchemaVariant,
-  type BoardSchemaVariant,
+  type BoardSchemaVariant
 } from "./board-schema-variant";
 export { projectColumnsForVariant, projectColumnsPre0037 } from "./project-projections";
 export { emitExternalSafeLegacyNotification, emitExternalSubtaskNotification, type ExternalSafeLegacyInput, type ExternalSubtaskNotificationInput } from "./external-notifications";
@@ -24,16 +23,31 @@ export {
   NORMATIVE_COMPACTING_SQL,
   NORMATIVE_HANDOFF_EDITING_ENTRY_TOKEN_SQL,
   NORMATIVE_JOB_EDITING_ENTRY_TOKEN_SQL,
+  NORMATIVE_NON_COMPACTING_APPEND_SQL,
   NORMATIVE_NON_COMPACTING_EXACT_SQL,
+  NORMATIVE_OWNERSHIP_ASSERTION_SQL,
+  NORMATIVE_TERMINAL_ASSERTION_SQL,
+  NON_COMPACTING_APPEND_SQL,
+  NON_COMPACTING_EXACT_SQL,
+  COMPACTING_SQL,
+  buildHandoffStartTail,
+  buildOwnershipAssertionBundle,
+  buildJobEntryProvenanceBundle,
+  buildAutoHdrApiFinalizeBundle,
+  buildTerminalAssertionBundle,
+  buildWorkflowCheckBundle,
   buildCompactingStageWinner,
   buildDeadlineSuppressionBundle,
   buildEditingEntryTokenTail,
   buildNonCompactingStageWinner,
   buildStageActivityBundle,
   buildWorkflowTail,
+  compileClosedAutomaticCoupling,
+  compileGuardedTransitionPrerequisite,
   composeStageBundle,
   deriveStageFinalizerIntent,
   type ActivityBundleIndexes,
+  type AutoHdrApiFinalizeIndexes,
   type ChangedCompactionRow,
   type CommittedStageFinalizerIntent,
   type CompactingStageWinnerInput,
@@ -45,6 +59,13 @@ export {
   type ExpectedTargetCompactionRow,
   type ExpectedTargetPlacementRow,
   type GuardedTransitionPrerequisite,
+  type ClosedAutomaticCoupling,
+  type ClosedOwnershipBundle,
+  type ClosedPathClaimPlan,
+  type HandoffStartBundle,
+  type JobEntryProvenanceBundle,
+  type LifecycleSet,
+  type ClosedSet,
   type NonCompactingStageWinnerInput,
   type PreparedStatementBundle,
   type StageActivityBundleInput,
@@ -54,7 +75,7 @@ export {
   type StageWinnerResultRow,
   type WorkflowTailIndexes,
   type WorkflowTailKind,
-  type WorkflowTailPrerequisite,
+  workflowPremiseCte,
 } from "./stage-board-bundles";
 export {
   EMAIL_ENABLED_EVENTS,
@@ -67,7 +88,7 @@ export {
   type EmitNotificationInput,
   type NotificationEmail,
   type NotificationRecipient,
-  type NotificationType,
+  type NotificationType
 } from "./notifications";
 export { NOTIFICATION_TYPES } from "@quincy/shared";
 export type Database = ReturnType<typeof createDb>;

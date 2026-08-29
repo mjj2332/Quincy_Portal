@@ -6,7 +6,10 @@ import {
   NORMATIVE_COMPACTING_SQL,
   NORMATIVE_HANDOFF_EDITING_ENTRY_TOKEN_SQL,
   NORMATIVE_JOB_EDITING_ENTRY_TOKEN_SQL,
+  NORMATIVE_NON_COMPACTING_APPEND_SQL,
   NORMATIVE_NON_COMPACTING_EXACT_SQL,
+  NORMATIVE_OWNERSHIP_ASSERTION_SQL,
+  NORMATIVE_TERMINAL_ASSERTION_SQL,
   buildCompactingStageWinner,
   buildNonCompactingStageWinner,
   rollbackBoardOrder0037PreEnable,
@@ -81,6 +84,11 @@ function stageInput(db: D1Database) {
   };
 }
 
+function fenceReworkSqlBlocks(): string[] {
+  const design = readFileSync(new URL("../../../../docs/plans/tb5a/fence-rework-sol-design.md", import.meta.url), "utf8");
+  return [...design.matchAll(/```sql\n([\s\S]*?)```/g)].map((match) => match[1]!);
+}
+
 async function executeBundle(db: D1Database, statements: D1PreparedStatement[]): Promise<D1Result<unknown>[]> {
   return db.batch(statements);
 }
@@ -143,14 +151,26 @@ describe("TB5A Slice 8 consolidated migration and SQL proof", () => {
     }
     expect(source).not.toMatch(/\bEND\b(?=[^\s;])/i);
 
-    const plan = readFileSync(new URL("../../../../docs/plans/Revamp-TB5A-Stage-And-Kanban-Ordering-Contract-Plan.md", import.meta.url), "utf8");
-    const blocks = [...plan.matchAll(/```sql\n([\s\S]*?)```/g)].map((match) => match[1]!);
-    expect(APPEND_STAGE_BOTTOM_SQL).toBe(blocks.find((block) => block.includes("SELECT COALESCE(MAX(board_position) + 1024, 0)")));
-    expect(NORMATIVE_NON_COMPACTING_EXACT_SQL).toBe(blocks.find((block) => block.includes("board_position = ?8")));
-    expect(NORMATIVE_COMPACTING_SQL).toBe(blocks.find((block) => block.includes("changed_plan AS")));
-    expect(NORMATIVE_AUDIT_MARKER_SQL).toBe(blocks.find((block) => block.includes("WHERE changes() = ?7")));
-    expect(NORMATIVE_HANDOFF_EDITING_ENTRY_TOKEN_SQL).toBe(blocks.find((block) => block.includes("UPDATE autohdr_handoffs")));
-    expect(NORMATIVE_JOB_EDITING_ENTRY_TOKEN_SQL).toBe(blocks.find((block) => block.includes("UPDATE jobs") && block.includes("stage_entry_board_revision")));
+    const blocks = fenceReworkSqlBlocks();
+    const appendBottomBlock = blocks.find((block) => block.startsWith("SELECT COALESCE(MAX(board_position) + 1024, 0)"));
+    const exactBlock = blocks.find((block) => block.startsWith("WITH\n") && block.includes("board_position = ?8") && !block.includes("changed_plan AS"));
+    const appendWinnerBlock = blocks.find((block) => block.startsWith("WITH\n") && block.includes("board_position = (\n    SELECT COALESCE(MAX(board_position) + 1024, 0)"));
+    const compactingBlock = blocks.find((block) => block.startsWith("WITH\n") && block.includes("changed_plan AS"));
+    const auditBlock = blocks.find((block) => block.startsWith("INSERT INTO audit_log (\n") && block.includes("WHERE changes() = ?7"));
+    const handoffTokenBlock = blocks.find((block) => block.startsWith("UPDATE autohdr_handoffs\n") && block.includes("editing_entry_board_revision = ("));
+    const jobTokenBlock = blocks.find((block) => block.startsWith("UPDATE jobs\n") && block.includes("stage_entry_board_revision = ("));
+    const terminalBlock = blocks.find((block) => block.startsWith("WITH assertion_input AS MATERIALIZED (\n") && block.includes("stage.auto_advance.bundle_assertion"));
+    const ownershipBlock = blocks.find((block) => block.startsWith("WITH assertion_input AS MATERIALIZED (\n") && block.includes("automatic.closed_bundle_assertion"));
+
+    expect(APPEND_STAGE_BOTTOM_SQL).toBe(appendBottomBlock);
+    expect(NORMATIVE_NON_COMPACTING_EXACT_SQL).toBe(exactBlock);
+    expect(NORMATIVE_NON_COMPACTING_APPEND_SQL).toBe(appendWinnerBlock);
+    expect(NORMATIVE_COMPACTING_SQL).toBe(compactingBlock);
+    expect(NORMATIVE_AUDIT_MARKER_SQL).toBe(auditBlock);
+    expect(NORMATIVE_HANDOFF_EDITING_ENTRY_TOKEN_SQL).toBe(handoffTokenBlock);
+    expect(NORMATIVE_JOB_EDITING_ENTRY_TOKEN_SQL).toBe(jobTokenBlock);
+    expect(NORMATIVE_TERMINAL_ASSERTION_SQL).toBe(terminalBlock);
+    expect(NORMATIVE_OWNERSHIP_ASSERTION_SQL).toBe(ownershipBlock);
   });
 
   it("aborts preflight and postflight transactionally without advancing the migration journal", () => {

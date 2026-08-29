@@ -1,6 +1,7 @@
 import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { writeAutoHdrFinal, type FinalWriteContext } from "../src/autohdr/finals";
+import { workflowTailAgrees } from "../src/lib/automatic-stage";
 import type { DropboxFile } from "../src/dropbox/client";
 
 declare const __PORTAL_MIGRATION_SQL__: string;
@@ -93,6 +94,43 @@ async function seedCurrent(context: Awaited<ReturnType<typeof fixture>>, hash: s
 }
 
 describe("immutable AutoHDR final writer", () => {
+  it("uses N+1 for an editing-entry token and N for a completion token", () => {
+    const result = (rows: Record<string, unknown>[]) => ({ results: rows, meta: { changes: 0 } }) as never;
+    expect(workflowTailAgrees(
+      [result([{ id: "handoff" }]), result([{ editing_entry_board_revision: 6 }])],
+      "autohdr_handoff_entry",
+      { kind: "autohdr_handoff_entry", prerequisiteMarker: 0, editingEntryToken: 1 },
+      5,
+    )).toBe(true);
+    expect(workflowTailAgrees(
+      [result([{ id: "handoff" }]), result([{ editing_entry_board_revision: 5 }])],
+      "autohdr_handoff_entry",
+      { kind: "autohdr_handoff_entry", prerequisiteMarker: 0, editingEntryToken: 1 },
+      5,
+    )).toBe(false);
+    expect(workflowTailAgrees(
+      [result([{ id: "completion" }]), result([{ stage_entry_board_revision: 5 }]), result([{ id: "completion", status: "done" }])],
+      "autohdr_job_completion",
+      { kind: "autohdr_job_completion", prerequisiteMarker: 0, sourceEntryJob: 1, completionJobState: 2 },
+      5,
+    )).toBe(true);
+    expect(workflowTailAgrees(
+      [result([{ id: "completion" }]), result([{ stage_entry_board_revision: 6 }]), result([{ id: "completion", status: "done" }])],
+      "autohdr_job_completion",
+      { kind: "autohdr_job_completion", prerequisiteMarker: 0, sourceEntryJob: 1, completionJobState: 2 },
+      5,
+    )).toBe(false);
+  });
+
+  it("advances the final writer and emits edited_landed after the corrected completion fence", async () => {
+    const context = await fixture();
+    const result = await writeAutoHdrFinal(bindings as never, context, file("edited-landed"), deps);
+    expect(result).toMatchObject({ status: "created", stageAdvanced: true });
+    const notification = await bindings.DB.prepare("SELECT count(*) count FROM notifications WHERE project_id = ? AND type = 'edited_landed'")
+      .bind(context.projectId).first<{ count: number }>();
+    expect(notification?.count).toBe(1);
+  });
+
   it("creates the first current covered final, advances once, and replays same hash as a no-op", async () => {
     const context = await fixture();
     const first = await writeAutoHdrFinal(bindings as never, context, file("hash-one"), deps);

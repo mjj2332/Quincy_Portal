@@ -150,8 +150,7 @@ export async function emitNotifications(
       // `DO NOTHING`, but SQLite requires a partial unique index's predicate *before*
       // DO NOTHING (as part of the conflict target itself) — the builder-generated SQL is
       // a syntax error against real D1. Raw SQL sidesteps the builder for just this
-      // statement, matching this repo's existing pattern (guardedStageTransition,
-      // pruneReadNotifications in this same module) of dropping to the raw driver when
+      // statement, matching this repo's existing raw-driver pattern when
       // drizzle/D1 can't express something correctly.
       const result = await db.run(sql`
         insert into notifications (id, user_id, project_id, type, title, body, source_key, created_at)

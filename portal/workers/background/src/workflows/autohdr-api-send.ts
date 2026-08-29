@@ -1,10 +1,16 @@
 import { WorkflowEntrypoint } from "cloudflare:workers";
 import type { WorkflowEvent, WorkflowStep } from "cloudflare:workers";
+import { buildAutoHdrApiFinalizeBundle } from "@quincy/db";
 import { assets, collections, projects } from "@quincy/db/schema";
 import { and, eq, inArray, isNull } from "drizzle-orm";
-import { isAcceptedPhotoFilename } from "@quincy/shared";
+import { isAcceptedPhotoFilename, type StageKey } from "@quincy/shared";
 
-import { createAutoHdrPresignedPhotoshoot, finalizeAutoHdrPhotoshoot, uploadAutoHdrPresignedFile } from "../autohdr/api-client";
+import {
+  createAutoHdrPresignedPhotoshoot,
+  finalizeAutoHdrPhotoshoot,
+  uploadAutoHdrPresignedFile,
+} from "../autohdr/api-client";
+
 import type { AutoHdrApiSendInput, AutoHdrApiSendJobPayload } from "../autohdr/api-send";
 import type { Env } from "../env";
 import { dbFor, errorMessage } from "../lib/db";
@@ -15,7 +21,10 @@ import { automaticBoardWritesEnabled, commitAutomaticStage } from "../lib/automa
 
 function chunked<T>(items: readonly T[], size = 80): T[][] {
   const result: T[][] = [];
-  for (let index = 0; index < items.length; index += size) result.push(items.slice(index, index + size));
+
+  for (let index = 0; index < items.length; index += size)
+    result.push(items.slice(index, index + size));
+
   return result;
 }
 
@@ -23,55 +32,103 @@ export class AutoHdrApiSend extends WorkflowEntrypoint<Env, AutoHdrApiSendInput>
   async run(event: Readonly<WorkflowEvent<AutoHdrApiSendInput>>, step: WorkflowStep): Promise<void> {
     const input = event.payload;
     await requireBoardSchemaReady(this.env);
-    if (!await automaticBoardWritesEnabled(this.env)) {
-      console.log("AutoHDR API send deferred while automatic Board writes are disabled", { projectId: input.projectId, jobId: input.jobId });
+
+    if (!(await automaticBoardWritesEnabled(this.env))) {
+      console.log("AutoHDR API send deferred while automatic Board writes are disabled", {
+        projectId: input.projectId,
+        jobId: input.jobId
+      });
+
       return;
     }
+
+    let providerFinalized = false;
+
     try {
       const apiKey = this.env.AUTOHDR_API_KEY?.trim();
-      if (!apiKey) throw new Error("The AutoHDR API key is not configured on the background Worker");
+
+      if (!apiKey)
+        throw new Error("The AutoHDR API key is not configured on the background Worker");
+
       await step.do("mark-autohdr-api-send-running", async () => {
         await setJobStatus(dbFor(this.env), input.jobId, "running");
-        return { status: "running" };
+
+        return {
+          status: "running"
+        };
       });
 
       const selectedAssets = await step.do("load-autohdr-api-assets", async () => {
         const db = dbFor(this.env);
-        const project = await db.select({ archivedAt: projects.archivedAt })
-          .from(projects).where(eq(projects.id, input.projectId)).get();
-        if (!project) throw new Error(`Project ${input.projectId} no longer exists`);
-        if (project.archivedAt) throw new Error(`Project ${input.projectId} is archived — AutoHDR send refused`);
 
-        const rows: Array<{ id: string; r2Key: string; filename: string; bytes: number }> = [];
+        const project = await db.select({
+          archivedAt: projects.archivedAt
+        }).from(projects).where(eq(projects.id, input.projectId)).get();
+
+        if (!project)
+          throw new Error(`Project ${input.projectId} no longer exists`);
+
+        if (project.archivedAt)
+          throw new Error(`Project ${input.projectId} is archived — AutoHDR send refused`);
+
+        const rows: Array<{
+          id: string;
+          r2Key: string;
+          filename: string;
+          bytes: number;
+        }> = [];
+
         for (const ids of chunked(input.assetIds)) {
-          rows.push(...await db.select({
+          rows.push(...(await db.select({
             id: assets.id,
             r2Key: assets.r2Key,
             filename: assets.originalFilename,
-            bytes: assets.bytes,
-          }).from(assets)
-            .innerJoin(collections, and(eq(assets.collectionId, collections.id), eq(collections.projectId, input.projectId), eq(collections.kind, "raw")))
-            .where(and(inArray(assets.id, ids), isNull(assets.supersededAt)))
-            .all());
+            bytes: assets.bytes
+          }).from(assets).innerJoin(collections, and(
+            eq(assets.collectionId, collections.id),
+            eq(collections.projectId, input.projectId),
+            eq(collections.kind, "raw")
+          )).where(and(inArray(assets.id, ids), isNull(assets.supersededAt))).all()));
         }
-        if (rows.length !== input.assetIds.length) throw new Error("One or more selected RAW assets are no longer available");
-        const byId = new Map(rows.map((row) => [row.id, row]));
-        const ordered = input.assetIds.map((assetId) => byId.get(assetId));
-        if (ordered.some((row) => !row)) throw new Error("One or more selected RAW assets are no longer available");
+
+        if (rows.length !== input.assetIds.length)
+          throw new Error("One or more selected RAW assets are no longer available");
+
+        const byId = new Map(rows.map(row => [row.id, row]));
+        const ordered = input.assetIds.map(assetId => byId.get(assetId));
+
+        if (ordered.some(row => !row))
+          throw new Error("One or more selected RAW assets are no longer available");
+
         const filenames = new Set<string>();
+
         for (const row of ordered) {
-          if (!row || !isAcceptedPhotoFilename(row.filename)) throw new Error(`Unsupported selected RAW filename: ${row?.filename ?? "unknown"}`);
+          if (!row || !isAcceptedPhotoFilename(row.filename))
+            throw new Error(`Unsupported selected RAW filename: ${row?.filename ?? "unknown"}`);
+
           const key = row.filename.toLowerCase();
-          if (filenames.has(key)) throw new Error(`Duplicate selected RAW filename: ${row.filename}`);
+
+          if (filenames.has(key))
+            throw new Error(`Duplicate selected RAW filename: ${row.filename}`);
+
           filenames.add(key);
         }
-        return ordered as Array<{ id: string; r2Key: string; filename: string; bytes: number }>;
+
+        return ordered as Array<{
+          id: string;
+          r2Key: string;
+          filename: string;
+          bytes: number;
+        }>;
       });
 
       const photoshoot = await step.do("create-autohdr-presigned-photoshoot", async () => {
         return createAutoHdrPresignedPhotoshoot(apiKey, {
-          files: selectedAssets.map((asset) => ({ filename: asset.filename })),
-          address: input.address,
+          files: selectedAssets.map(asset => ({
+            filename: asset.filename
+          })),
+
+          address: input.address
         });
       });
 
@@ -86,40 +143,80 @@ export class AutoHdrApiSend extends WorkflowEntrypoint<Env, AutoHdrApiSendInput>
           initiatedBy: input.initiatedBy,
           address: input.address,
           phase: "created",
-          uid: photoshoot.uid,
+          uid: photoshoot.uid
         };
-        await this.env.DB.prepare("UPDATE jobs SET payload_json = ?, updated_at = ? WHERE id = ? AND status = 'running'")
-          .bind(JSON.stringify(payload), Date.now(), input.jobId).run();
-        return { uid: photoshoot.uid };
+
+        await this.env.DB.prepare(
+          "UPDATE jobs SET payload_json = ?, updated_at = ? WHERE id = ? AND status = 'running'"
+        ).bind(JSON.stringify(payload), Date.now(), input.jobId).run();
+
+        return {
+          uid: photoshoot.uid
+        };
       });
 
       for (let index = 0; index < selectedAssets.length; index += 1) {
         const asset = selectedAssets[index]!;
         const uploadUrl = photoshoot.uploadedFiles[index]!;
+
         await step.do(`upload-autohdr-${index + 1}-${asset.id}`, async () => {
           const object = await this.env.MEDIA.get(asset.r2Key);
-          if (!object?.body) throw new Error(`Selected RAW asset ${asset.id} is missing from R2`);
-          if (object.size !== asset.bytes) throw new Error(`Selected RAW asset ${asset.id} has an unexpected byte length`);
+
+          if (!object?.body)
+            throw new Error(`Selected RAW asset ${asset.id} is missing from R2`);
+
+          if (object.size !== asset.bytes)
+            throw new Error(`Selected RAW asset ${asset.id} has an unexpected byte length`);
+
           await uploadAutoHdrPresignedFile(uploadUrl, object.body, "image/jpeg");
-          return { assetId: asset.id, bytes: object.size };
+
+          return {
+            assetId: asset.id,
+            bytes: object.size
+          };
         });
       }
 
       await step.do("verify-project-before-autohdr-finalize", async () => {
-        const project = await dbFor(this.env).select({ archivedAt: projects.archivedAt })
-          .from(projects).where(eq(projects.id, input.projectId)).get();
-        if (!project) throw new Error(`Project ${input.projectId} no longer exists`);
-        if (project.archivedAt) throw new Error(`Project ${input.projectId} was archived before AutoHDR finalization`);
-        return { active: true };
+        const project = await dbFor(this.env).select({
+          archivedAt: projects.archivedAt
+        }).from(projects).where(eq(projects.id, input.projectId)).get();
+
+        if (!project)
+          throw new Error(`Project ${input.projectId} no longer exists`);
+
+        if (project.archivedAt)
+          throw new Error(`Project ${input.projectId} was archived before AutoHDR finalization`);
+
+        return {
+          active: true
+        };
       });
 
       await step.do("finalize-autohdr-photoshoot", async () => {
         await finalizeAutoHdrPhotoshoot(apiKey, photoshoot.uid);
-        return { uid: photoshoot.uid, finalized: true };
+
+        return {
+          uid: photoshoot.uid,
+          finalized: true
+        };
       });
 
-      const completion = await step.do("complete-autohdr-api-send", async () => {
+      // This assignment intentionally follows the awaited Workflow step. On replay the step
+      // result is restored and the sentinel is set again before any post-provider work runs.
+      providerFinalized = true;
+
+      const finalized = await step.do("record-autohdr-api-finalized", async () => {
         const now = Date.now();
+
+        const project = await dbFor(this.env).select({
+          stageKey: projects.stageKey,
+          archivedAt: projects.archivedAt
+        }).from(projects).where(eq(projects.id, input.projectId)).get();
+
+        if (!project || project.archivedAt)
+          throw new Error(`Project ${input.projectId} is unavailable for AutoHDR finalization truth`);
+
         const payload: AutoHdrApiSendJobPayload = {
           provider: "autohdr_api_v4",
           projectId: input.projectId,
@@ -130,23 +227,40 @@ export class AutoHdrApiSend extends WorkflowEntrypoint<Env, AutoHdrApiSendInput>
           initiatedBy: input.initiatedBy,
           address: input.address,
           phase: "finalized",
-          uid: photoshoot.uid,
+          uid: photoshoot.uid
         };
-        const stageMeta = JSON.stringify({
-          from: "raw_review",
-          to: "editing_autohdr",
-          trigger: "autohdr_api_send",
-          jobId: input.jobId,
-          uid: photoshoot.uid,
-        });
-        const finalizedMeta = JSON.stringify({
-          provider: "autohdr_api_v4",
+
+        const finalizedAuditId = `autohdr-api-finalized:${input.jobId}`;
+
+        const truth = buildAutoHdrApiFinalizeBundle({
+          db: this.env.DB,
+          projectId: input.projectId,
+          destinationStage: project.stageKey as StageKey,
           jobId: input.jobId,
           uid: photoshoot.uid,
           assetCount: input.assetIds.length,
-          retrievalEnabled: false,
+          finalizedAuditId,
+          payloadJson: JSON.stringify(payload),
+          actorId: input.initiatedBy,
+          assertedAt: now
         });
+
+        const results = await this.env.DB.batch(truth.statements);
+
+        if ((results[truth.indexes.payloadUpdate]?.meta.changes ?? 0) !== 1 || ![0, 1].includes(results[truth.indexes.finalizedAudit]?.meta.changes ?? 0) || (results[truth.indexes.ownershipAssertion]?.meta.changes ?? 0) !== 0) {
+          throw new Error(`AutoHDR API finalization truth fence failed for job ${input.jobId}`);
+        }
+
+        return {
+          finalizedAuditId,
+          uid: photoshoot.uid
+        };
+      });
+
+      const completion = await step.do("attempt-autohdr-api-stage", async () => {
+        const now = Date.now();
         const stageAuditId = crypto.randomUUID();
+
         const stageOutcome = await commitAutomaticStage({
           env: this.env,
           projectId: input.projectId,
@@ -154,32 +268,59 @@ export class AutoHdrApiSend extends WorkflowEntrypoint<Env, AutoHdrApiSendInput>
           to: "editing_autohdr",
           auditId: stageAuditId,
           auditActorId: input.initiatedBy,
-          auditMetaJson: stageMeta,
+
+          auditMetaJson: JSON.stringify({
+            from: "raw_review",
+            to: "editing_autohdr",
+            trigger: "autohdr_api_send",
+            jobId: input.jobId,
+            uid: finalized.uid
+          }),
+
           now,
-          prefix: [
-            this.env.DB.prepare("UPDATE jobs SET error = NULL, payload_json = ?, updated_at = ? WHERE id = ? AND kind = 'autohdr_api_send' AND status = 'running'")
-              .bind(JSON.stringify(payload), now, input.jobId),
-            this.env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) VALUES (?, ?, 'project.autohdr_api_send.finalized', 'project', ?, ?, ?)")
-              .bind(crypto.randomUUID(), input.initiatedBy, input.projectId, finalizedMeta, now),
-          ],
+
           workflow: {
-            kind: "autohdr_job_entry",
-            prerequisite: {
-              kind: "autohdr_job",
-              jobId: input.jobId,
-              projectId: input.projectId,
-              generation: 1,
-              jobKind: "autohdr_api_send",
-              expectedPriorToken: null,
-              db: this.env.DB,
-              auditId: stageAuditId,
-              now,
-            },
+            kind: "autohdr_job",
+            mode: "entry",
+            projectId: input.projectId,
+            jobId: input.jobId,
+            jobKind: "autohdr_api_send",
+            generation: 1,
+            jobStates: ["running", "done"],
+            expectedPriorToken: null
           },
+
+          coupling: {
+            kind: "none"
+          },
+
+          alreadyAtDestination: {
+            allowed: true,
+
+            effect: {
+              kind: "none"
+            }
+          }
         });
-        if (stageOutcome.kind === "invariant_failure") throw new Error(`AutoHDR job ${input.jobId} Stage entry invariant failed`);
+
+        if (stageOutcome.kind === "invariant_failure") {
+          console.error("AutoHDR API send Stage entry invariant failed", {
+            projectId: input.projectId,
+            jobId: input.jobId
+          });
+
+          await setJobStatus(dbFor(this.env), input.jobId, "done");
+
+          return {
+            stageAdvanced: false
+          };
+        }
+
         await setJobStatus(dbFor(this.env), input.jobId, "done");
-        return { stageAdvanced: stageOutcome.kind === "winner" };
+
+        return {
+          stageAdvanced: stageOutcome.kind === "winner"
+        };
       });
 
       if (completion.stageAdvanced) {
@@ -191,12 +332,24 @@ export class AutoHdrApiSend extends WorkflowEntrypoint<Env, AutoHdrApiSendInput>
           console.error("AutoHDR API send notification failed", {
             projectId: input.projectId,
             jobId: input.jobId,
-            error: errorMessage(notificationError),
+            error: errorMessage(notificationError)
           });
         }
       }
     } catch (error) {
-      await setJobStatus(dbFor(this.env), input.jobId, "failed", errorMessage(error));
+      if (!providerFinalized) {
+        await setJobStatus(dbFor(this.env), input.jobId, "failed", errorMessage(error));
+      } else {
+        console.error(
+          "AutoHDR API send failed after provider finalization; preserving non-failed job state",
+          {
+            projectId: input.projectId,
+            jobId: input.jobId,
+            error: errorMessage(error)
+          }
+        );
+      }
+
       throw error;
     }
   }

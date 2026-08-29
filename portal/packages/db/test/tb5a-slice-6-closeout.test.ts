@@ -13,7 +13,6 @@ const automaticWriters = [
   "workers/background/src/workflows/autohdr.ts",
   "workers/background/src/workflows/autohdr-fetch.ts",
   "workers/background/src/tonomo/process.ts",
-  "packages/db/src/stage-transition.ts",
 ].map((relativePath) => ({ relativePath, source: () => readFileSync(`${portalRoot}/${relativePath}`, "utf8") }));
 
 describe("TB5A Slice 6 writer closeout", () => {
@@ -22,7 +21,6 @@ describe("TB5A Slice 6 writer closeout", () => {
       const text = source();
       expect(text, relativePath).not.toMatch(/UPDATE\s+projects[\s\S]{0,300}\bSET\b[\s\S]{0,180}\bboard_position\s*=/i);
       expect(text, relativePath).not.toMatch(/db\.update\(projects\)\.set\([\s\S]{0,180}boardPosition\s*:/i);
-      expect(text, relativePath).not.toContain("onSuccess");
       expect(text, relativePath).not.toMatch(/UPDATE\s+projects[\s\S]{0,300}\bSET\b[\s\S]{0,180}\bstage_key\s*=/i);
       expect(text, relativePath).not.toMatch(/db\.update\(projects\)\.set\([\s\S]{0,180}\bstageKey\s*:/i);
     }

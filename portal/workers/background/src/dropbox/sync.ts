@@ -380,18 +380,14 @@ export async function syncProjectRawFolder(
           durableRawEvidence: { newlyImported, currentRawAvailable },
         }),
         now: Date.now(),
-        workflow: {
-          kind: "raw_reconciliation",
-          prerequisite: {
+          workflow: {
             kind: "raw_reconciliation",
-            claimId,
-            shootDate: project.shootDate,
-            db: env.DB,
-            auditId,
             projectId,
-            now: Date.now(),
+            claimId,
+            claimStates: ["running"],
+            shootDate: project.shootDate,
           },
-        },
+          alreadyAtDestination: { allowed: true, effect: { kind: "none" } },
         legacyWorkflowNotification: "raw_ready",
       });
       if (outcome.kind === "winner" && outcome.finalizer.legacyWorkflowNotification === "raw_ready") {

@@ -5,7 +5,7 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import { computeRemovalAssetIds } from "@quincy/shared";
 
 import { autoHdrRawInputPath, deriveAutoHdrFolderName, reconstructSourcePath } from "../autohdr/paths";
-import { copyBatch, copyBatchCheck, createFolder, deleteBatch, deleteBatchCheck, getMetadata, isDropboxPathNotFound, listFolderContinue, listFolderIfExists, type DropboxCopyBatchEntryResult, type DropboxDeleteBatchCheckResult, type DropboxDeleteBatchResult, upload } from "../dropbox/client";
+import { copyBatch, copyBatchCheck, createFolder, deleteBatch, deleteBatchCheck, getMetadata, isDropboxPathNotFound, listFolderContinue, listFolderIfExists, type DropboxCopyBatchEntryResult, type DropboxDeleteBatchCheckResult, type DropboxDeleteBatchResult, upload, } from "../dropbox/client";
 import { dropboxPathKey } from "../dropbox/paths";
 import { pathFromRawFolderLink } from "../dropbox/sync";
 import type { Env } from "../env";
@@ -15,7 +15,7 @@ import { confirmAutoHdrHandoff } from "../autohdr/claims";
 import { notifyProject } from "../notifications";
 import { automaticBoardWritesEnabled, commitAutomaticStage } from "../lib/automatic-stage";
 import { requireBoardSchemaReady } from "../lib/board-schema";
-
+import { buildJobEntryProvenanceBundle } from "@quincy/db";
 export interface AutoHdrInput {
   projectId: string;
   assetIds: string[];
@@ -28,7 +28,6 @@ export interface AutoHdrInput {
   stageEntrySourceJobId?: string;
   stageEntryGeneration?: number;
 }
-
 interface RawAsset {
   id: string;
   originalFilename: string;
@@ -50,12 +49,12 @@ async function loadRawAssets(env: Env, input: AutoHdrInput): Promise<RawAsset[]>
       source: assets.source,
       sourcePath: assets.sourcePath,
       projectId: collections.projectId,
-      collectionKind: collections.kind,
-    })
+      collectionKind: collections.kind
+  })
     .from(assets)
     .innerJoin(collections, eq(assets.collectionId, collections.id))
     .where(inArray(assets.id, input.assetIds));
-  if (rows.length !== input.assetIds.length || rows.some((row) => row.projectId !== input.projectId || row.collectionKind !== "raw")) {
+  if (rows.length !== input.assetIds.length || rows.some(row => row.projectId !== input.projectId || row.collectionKind !== "raw")) {
     throw new Error("All autoHDR asset IDs must be RAW assets in the requested project");
   }
   // Each selected frame maps to one Dropbox path by filename; a case-insensitive collision would
@@ -72,8 +71,7 @@ async function loadRawAssets(env: Env, input: AutoHdrInput): Promise<RawAsset[]>
     r2Key,
     section,
     source,
-    sourcePath,
-  }));
+    sourcePath }));
 }
 
 function tagOf(value: unknown): string | undefined {
@@ -95,8 +93,8 @@ function isDestinationConflict(failure: Record<string, unknown>): boolean {
   return tagOf(reloc.to) === "conflict";
 }
 
-export function throwOnCopyFailures(entries: DropboxCopyBatchEntryResult[], inputs: { from_path: string; to_path: string }[]): void {
-  const hard: { from?: string; to?: string; failure: Record<string, unknown> }[] = [];
+export function throwOnCopyFailures(entries: DropboxCopyBatchEntryResult[], inputs: { from_path: string; to_path: string; }[]): void {
+  const hard: { from?: string; to?: string; failure: Record<string, unknown>; }[] = [];
   entries.forEach((entry, index) => {
     if (entry[".tag"] !== "failure") return;
     if (isDestinationConflict(entry.failure)) return;
@@ -115,26 +113,24 @@ export async function recordSentFiles(
   env: Env,
   input: AutoHdrInput,
   entries: DropboxCopyBatchEntryResult[],
-  destinations: { assetId: string; toPath: string }[],
-): Promise<void> {
+  destinations: { assetId: string; toPath: string; }[]): Promise<void> {
   const successful = entries.flatMap((entry, index) => entry[".tag"] === "success" && destinations[index] ? [destinations[index]!] : []);
   if (!successful.length || !input.handoffId) return;
-  if (!await handoffIsStarted(env, input.handoffId)) return;
+  if (!(await handoffIsStarted(env, input.handoffId))) return;
   const now = Date.now();
-  await env.DB.batch(successful.map((item) => env.DB.prepare(
-    "INSERT INTO autohdr_sent_files (id, handoff_id, asset_id, dropbox_path, dropbox_path_key, created_at) SELECT ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM autohdr_handoffs WHERE id = ? AND state = 'started') ON CONFLICT (handoff_id, asset_id) DO NOTHING",
-  ).bind(crypto.randomUUID(), input.handoffId, item.assetId, item.toPath, dropboxPathKey(item.toPath), now, input.handoffId)));
+  await env.DB.batch(successful.map(item => env.DB.prepare(
+    "INSERT INTO autohdr_sent_files (id, handoff_id, asset_id, dropbox_path, dropbox_path_key, created_at) SELECT ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM autohdr_handoffs WHERE id = ? AND state = 'started') ON CONFLICT (handoff_id, asset_id) DO NOTHING").bind(crypto.randomUUID(), input.handoffId, item.assetId, item.toPath, dropboxPathKey(item.toPath), now, input.handoffId)));
 }
 
-type RemovalOutcome = { assetId: string; path: string; outcome: "removed" | "alreadyGone" | "failed"; reason?: string };
-export type RemovalCandidate = { assetId: string; dropboxPath: string; dropboxPathKey: string; connectionId: string };
-export type RemovalSelectedAsset = { assetId: string; filename: string };
+type RemovalOutcome = { assetId: string; path: string; outcome: "removed" | "alreadyGone" | "failed"; reason?: string; };
+export type RemovalCandidate = { assetId: string; dropboxPath: string; dropboxPathKey: string; connectionId: string; };
+export type RemovalSelectedAsset = { assetId: string; filename: string; };
 export type RemovalAuditSummary = {
   retiredHandoffId?: string;
   newHandoffId?: string;
   removed: number;
   alreadyGone: number;
-  failed: { assetId: string; path: string; reason?: string }[];
+  failed: { assetId: string; path: string; reason?: string; }[];
 };
 export type RemoveDeselectedDependencies = {
   loadSent?: () => Promise<RemovalCandidate[]>;
@@ -148,8 +144,7 @@ export type RemoveDeselectedDependencies = {
 export async function removeDeselected(
   env: Env,
   input: AutoHdrInput,
-  dependencies: RemoveDeselectedDependencies = {},
-): Promise<{ removed: number; alreadyGone: number; failed: number }> {
+  dependencies: RemoveDeselectedDependencies = {}): Promise<{ removed: number; alreadyGone: number; failed: number; }> {
   const outcomes: RemovalOutcome[] = [];
   try {
     if (input.retiredHandoffId) {
@@ -158,19 +153,17 @@ export async function removeDeselected(
         assetId: autoHdrSentFiles.assetId,
         dropboxPath: autoHdrSentFiles.dropboxPath,
         dropboxPathKey: autoHdrSentFiles.dropboxPathKey,
-        connectionId: autoHdrHandoffs.connectionId,
+        connectionId: autoHdrHandoffs.connectionId
       }).from(autoHdrSentFiles).innerJoin(autoHdrHandoffs, eq(autoHdrSentFiles.handoffId, autoHdrHandoffs.id)).where(and(
         eq(autoHdrSentFiles.handoffId, input.retiredHandoffId!),
-        eq(autoHdrHandoffs.projectId, input.projectId),
-      ))))();
+        eq(autoHdrHandoffs.projectId, input.projectId)))))();
       const selected = await (dependencies.loadSelected ?? (async () => db.select({ assetId: assets.id, filename: assets.originalFilename }).from(assets)
         .innerJoin(collections, eq(assets.collectionId, collections.id)).where(and(
           eq(collections.projectId, input.projectId),
           eq(collections.kind, "raw"),
-          inArray(assets.id, input.assetIds),
-        ))))();
+          inArray(assets.id, input.assetIds)))))();
       const removalIds = new Set(computeRemovalAssetIds(sent, selected));
-      const candidates = sent.filter((row) => removalIds.has(row.assetId));
+      const candidates = sent.filter(row => removalIds.has(row.assetId));
       for (const candidate of candidates) {
         try {
           const metadata = await (dependencies.getMetadata ?? getMetadata)(env, db, candidate.dropboxPathKey, candidate.connectionId);
@@ -186,21 +179,20 @@ export async function removeDeselected(
           }
         }
       }
-      const toDelete = candidates.filter((candidate) => !outcomes.some((outcome) => outcome.assetId === candidate.assetId));
+      const toDelete = candidates.filter(candidate => !outcomes.some(outcome => outcome.assetId === candidate.assetId));
       for (let offset = 0; offset < toDelete.length; offset += COPY_BATCH_MAX_ENTRIES) {
         const chunk = toDelete.slice(offset, offset + COPY_BATCH_MAX_ENTRIES);
         const live = await db.select({ id: autoHdrHandoffs.id }).from(autoHdrHandoffs).innerJoin(projects, eq(autoHdrHandoffs.projectId, projects.id)).where(and(
           eq(autoHdrHandoffs.id, input.handoffId ?? ""),
           eq(autoHdrHandoffs.state, "started"),
           eq(projects.id, input.projectId),
-          sql`${projects.archivedAt} IS NULL`,
-        )).get();
+          sql`${projects.archivedAt} IS NULL`)).get();
         if (!live) {
           for (const candidate of chunk) outcomes.push({ assetId: candidate.assetId, path: candidate.dropboxPath, outcome: "failed", reason: "Project or new AutoHDR handoff is no longer live" });
           continue;
         }
         try {
-          let result: DropboxDeleteBatchResult | DropboxDeleteBatchCheckResult = await (dependencies.deleteBatch ?? deleteBatch)(env, db, chunk.map((candidate) => ({ path: candidate.dropboxPath })), chunk[0]!.connectionId);
+          let result: DropboxDeleteBatchResult | DropboxDeleteBatchCheckResult = await (dependencies.deleteBatch ?? deleteBatch)(env, db, chunk.map(candidate => ({ path: candidate.dropboxPath })), chunk[0]!.connectionId);
           let asyncJobId = result[".tag"] === "async_job_id" ? result.async_job_id : null;
           for (let poll = 1; asyncJobId && poll <= COPY_BATCH_MAX_POLLS; poll += 1) {
             result = await (dependencies.deleteBatchCheck ?? deleteBatchCheck)(env, db, asyncJobId, chunk[0]!.connectionId);
@@ -230,9 +222,9 @@ export async function removeDeselected(
   const summary: RemovalAuditSummary = {
       retiredHandoffId: input.retiredHandoffId,
       newHandoffId: input.handoffId,
-      removed: outcomes.filter((item) => item.outcome === "removed").length,
-      alreadyGone: outcomes.filter((item) => item.outcome === "alreadyGone").length,
-      failed: outcomes.filter((item) => item.outcome === "failed").map((item) => ({ assetId: item.assetId, path: item.path, reason: item.reason })),
+      removed: outcomes.filter(item => item.outcome === "removed").length,
+      alreadyGone: outcomes.filter(item => item.outcome === "alreadyGone").length,
+      failed: outcomes.filter(item => item.outcome === "failed").map(item => ({ assetId: item.assetId, path: item.path, reason: item.reason }))
   };
   try {
     if (dependencies.writeAuditLog) await dependencies.writeAuditLog(summary);
@@ -246,8 +238,7 @@ export async function removeDeselected(
   return {
     removed: summary.removed,
     alreadyGone: summary.alreadyGone,
-    failed: summary.failed.length,
-  };
+    failed: summary.failed.length };
 }
 
 const COPY_BATCH_MAX_ENTRIES = 1_000;
@@ -257,7 +248,7 @@ export class AutoHdrSend extends WorkflowEntrypoint<Env, AutoHdrInput> {
   async run(event: Readonly<WorkflowEvent<AutoHdrInput>>, step: WorkflowStep): Promise<void> {
     const input = event.payload;
     await requireBoardSchemaReady(this.env);
-    if (!await automaticBoardWritesEnabled(this.env)) {
+    if (!(await automaticBoardWritesEnabled(this.env))) {
       console.log("AutoHDR send deferred while automatic Board writes are disabled", { projectId: input.projectId, jobId: input.jobId });
       return;
     }
@@ -275,7 +266,7 @@ export class AutoHdrSend extends WorkflowEntrypoint<Env, AutoHdrInput> {
             connectionId: input.connectionId,
             mappingGeneration: input.mappingGeneration,
             initiatedBy: input.initiatedBy,
-            jobId: input.jobId,
+            jobId: input.jobId
           });
           const confirmed = await db.select({ state: autoHdrHandoffs.state, stageKey: projects.stageKey })
             .from(autoHdrHandoffs).innerJoin(projects, eq(autoHdrHandoffs.projectId, projects.id))
@@ -287,6 +278,7 @@ export class AutoHdrSend extends WorkflowEntrypoint<Env, AutoHdrInput> {
           const stageAuditId = crypto.randomUUID();
           const generation = input.stageEntryGeneration ?? 1;
           const sourceJobId = input.jobId;
+          const provenance = buildJobEntryProvenanceBundle({ db: this.env.DB, projectId: input.projectId, jobId: input.jobId, jobKind: "autohdr", generation, updatedAt: Date.now() });
           const stageOutcome = await commitAutomaticStage({
             env: this.env,
             projectId: input.projectId,
@@ -295,21 +287,25 @@ export class AutoHdrSend extends WorkflowEntrypoint<Env, AutoHdrInput> {
             auditId: stageAuditId,
             auditActorId: input.initiatedBy,
             auditMetaJson: JSON.stringify({ from: "raw_review", to: "editing_autohdr", trigger: "autohdr_send", jobId: input.jobId }),
-            prefix: [this.env.DB.prepare("UPDATE jobs SET payload_json = json_set(CASE WHEN json_valid(payload_json) THEN payload_json ELSE '{}' END, '$.projectId', ?, '$.generation', ?, '$.stageEntrySourceJobId', ?, '$.stageEntryGeneration', ?), updated_at = ? WHERE id = ? AND kind = 'autohdr' AND status = 'running'").bind(input.projectId, generation, sourceJobId, generation, Date.now(), input.jobId)],
             workflow: {
-              kind: "autohdr_job_entry",
-              prerequisite: {
-                kind: "autohdr_job",
+              kind: "autohdr_job",
+              mode: "entry",
+              projectId: input.projectId,
                 jobId: input.jobId,
-                projectId: input.projectId,
+              jobKind: "autohdr",
                 generation,
-                jobKind: "autohdr",
-                expectedPriorToken: null,
-                db: this.env.DB,
-                auditId: stageAuditId,
-                now: Date.now(),
-              },
+              jobStates: ["running", "done"],
+              expectedPriorToken: null
             },
+            coupling: provenance.coupling,
+            preWinnerProvenance: provenance,
+            // A legacy send can already be in editing_autohdr without a Stage-entry token.
+            // Preserve the durable payload stamp, but do not require the token-bearing
+            // ownership assertion on this compatibility path.
+            alreadyAtDestination: {
+              allowed: true,
+              effect: { kind: "job_provenance", bundle: provenance }
+            }
           });
           if (stageOutcome.kind === "winner") {
             try {
@@ -340,7 +336,7 @@ export class AutoHdrSend extends WorkflowEntrypoint<Env, AutoHdrInput> {
           : await db.select({ rawFolderPath: projects.rawFolderPath, rawFolderLink: projects.rawFolderLink })
             .from(projects).where(eq(projects.id, input.projectId)).get();
         if (!project) throw new Error(`Project ${input.projectId} does not exist`);
-        const rawFolderPath = project.rawFolderPath ?? await pathFromRawFolderLink(this.env, project.rawFolderLink, input.connectionId);
+        const rawFolderPath = project.rawFolderPath ?? (await pathFromRawFolderLink(this.env, project.rawFolderLink, input.connectionId));
         if (!rawFolderPath) throw new Error(`Project ${input.projectId} has no Dropbox RAW folder configured`);
         return { rawFolderPath, inputPath: autoHdrRawInputPath(deriveAutoHdrFolderName(rawFolderPath)) };
       });
@@ -359,7 +355,7 @@ export class AutoHdrSend extends WorkflowEntrypoint<Env, AutoHdrInput> {
           if (!page.has_more) break;
           page = await listFolderContinue(this.env, db, page.cursor, input.connectionId);
         }
-        const copyable: { assetId: string; fromPath: string; toPath: string }[] = [];
+        const copyable: { assetId: string; fromPath: string; toPath: string; }[] = [];
         const fallback: RawAsset[] = [];
         for (const asset of rawAssets) {
           if (existingNames.has(asset.originalFilename.toLowerCase())) continue;
@@ -380,7 +376,7 @@ export class AutoHdrSend extends WorkflowEntrypoint<Env, AutoHdrInput> {
         const chunkNumber = (offset / COPY_BATCH_MAX_ENTRIES) + 1;
         const copyStepName = chunkNumber === 1 ? "copy-batch" : `copy-batch-${chunkNumber}`;
         const started = await step.do(copyStepName, async () => {
-          if (input.handoffId && !await handoffIsStarted(this.env, input.handoffId)) return { asyncJobId: null, entries: null, superseded: true };
+          if (input.handoffId && !(await handoffIsStarted(this.env, input.handoffId))) return { asyncJobId: null, entries: null, superseded: true };
           const result = await copyBatch(this.env, dbFor(this.env), submitted, input.connectionId);
           if (result[".tag"] === "complete") {
             return { asyncJobId: null, entries: result.entries, superseded: false };
@@ -407,7 +403,7 @@ export class AutoHdrSend extends WorkflowEntrypoint<Env, AutoHdrInput> {
           await step.do(chunkNumber === 1 ? "record-sent-files" : `record-sent-files-${chunkNumber}`, async () => {
             await recordSentFiles(this.env, input, completedEntries!, chunk.map(({ assetId, toPath }) => ({ assetId, toPath })));
             throwOnCopyFailures(completedEntries!, submitted);
-            return { recorded: completedEntries!.filter((entry) => entry[".tag"] === "success").length };
+            return { recorded: completedEntries!.filter(entry => entry[".tag"] === "success").length };
           });
         }
       }
@@ -415,7 +411,7 @@ export class AutoHdrSend extends WorkflowEntrypoint<Env, AutoHdrInput> {
       for (const asset of transfers.fallback) {
         if (superseded) break;
         await step.do(`copy-fallback-${asset.id}`, async () => {
-          if (input.handoffId && !await handoffIsStarted(this.env, input.handoffId)) { superseded = true; return { assetId: asset.id, superseded: true }; }
+          if (input.handoffId && !(await handoffIsStarted(this.env, input.handoffId))) { superseded = true; return { assetId: asset.id, superseded: true }; }
           const object = await this.env.MEDIA.get(asset.r2Key);
           if (!object) throw new Error(`Original RAW asset ${asset.id} is missing from R2`);
           const toPath = `${inputPath}/${asset.originalFilename}`;

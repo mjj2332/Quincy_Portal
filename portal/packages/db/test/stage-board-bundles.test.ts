@@ -6,18 +6,27 @@ import {
   NORMATIVE_COMPACTING_SQL,
   NORMATIVE_HANDOFF_EDITING_ENTRY_TOKEN_SQL,
   NORMATIVE_JOB_EDITING_ENTRY_TOKEN_SQL,
+  NORMATIVE_NON_COMPACTING_APPEND_SQL,
   NORMATIVE_NON_COMPACTING_EXACT_SQL,
+  NORMATIVE_OWNERSHIP_ASSERTION_SQL,
+  NORMATIVE_TERMINAL_ASSERTION_SQL,
   buildCompactingStageWinner,
   buildDeadlineSuppressionBundle,
   buildEditingEntryTokenTail,
+  buildAutoHdrApiFinalizeBundle,
+  buildOwnershipAssertionBundle,
   buildNonCompactingStageWinner,
+  buildTerminalAssertionBundle,
   buildStageActivityBundle,
   buildWorkflowTail,
+  compileClosedAutomaticCoupling,
+  compileGuardedTransitionPrerequisite,
   composeStageBundle,
   deriveStageFinalizerIntent,
   type ChangedCompactionRow,
   type ExpectedTargetCompactionRow,
   type ExpectedTargetPlacementRow,
+  type GuardedTransitionPrerequisite,
 } from "../src/index";
 
 type SqliteRow = Record<string, unknown>;
@@ -51,6 +60,11 @@ function migrationNames(): string[] {
   return readdirSync(directory)
     .filter((value) => /^\d{4}_.*\.sql$/.test(value))
     .sort((a, b) => Number(a.slice(0, 4)) - Number(b.slice(0, 4)));
+}
+
+function fenceReworkSqlBlocks(): string[] {
+  const design = readFileSync(new URL("../../../../docs/plans/tb5a/fence-rework-sol-design.md", import.meta.url), "utf8");
+  return [...design.matchAll(/```sql\n([\s\S]*?)```/g)].map((match) => match[1]!);
 }
 
 function applyAllMigrations(db: SqliteDatabase): void {
@@ -159,15 +173,124 @@ function compactFixture(db: SqliteDatabase): { expected: ExpectedTargetCompactio
 }
 
 describe("TB5A Slice 3 stage-board bundles", () => {
-  it("keeps every normative SQL block byte-for-byte equal to the approved plan", () => {
-    const plan = readFileSync(new URL("../../../../docs/plans/Revamp-TB5A-Stage-And-Kanban-Ordering-Contract-Plan.md", import.meta.url), "utf8");
-    const blocks = [...plan.matchAll(/```sql\n([\s\S]*?)```/g)].map((match) => match[1]!);
-    expect(APPEND_STAGE_BOTTOM_SQL).toBe(blocks.find((block) => block.includes("SELECT COALESCE(MAX(board_position) + 1024, 0)")));
-    expect(NORMATIVE_NON_COMPACTING_EXACT_SQL).toBe(blocks.find((block) => block.includes("board_position = ?8")));
-    expect(NORMATIVE_COMPACTING_SQL).toBe(blocks.find((block) => block.includes("changed_plan AS")));
-    expect(NORMATIVE_AUDIT_MARKER_SQL).toBe(blocks.find((block) => block.includes("WHERE changes() = ?7")));
-    expect(NORMATIVE_HANDOFF_EDITING_ENTRY_TOKEN_SQL).toBe(blocks.find((block) => block.includes("UPDATE autohdr_handoffs")));
-    expect(NORMATIVE_JOB_EDITING_ENTRY_TOKEN_SQL).toBe(blocks.find((block) => block.includes("UPDATE jobs") && block.includes("stage_entry_board_revision")));
+  it("keeps every normative SQL block byte-for-byte equal to the approved fence-rework design", () => {
+    const blocks = fenceReworkSqlBlocks();
+    const appendBottomBlock = blocks.find((block) => block.startsWith("SELECT COALESCE(MAX(board_position) + 1024, 0)"));
+    const exactBlock = blocks.find((block) => block.startsWith("WITH\n") && block.includes("board_position = ?8") && !block.includes("changed_plan AS"));
+    const appendWinnerBlock = blocks.find((block) => block.startsWith("WITH\n") && block.includes("board_position = (\n    SELECT COALESCE(MAX(board_position) + 1024, 0)"));
+    const compactingBlock = blocks.find((block) => block.startsWith("WITH\n") && block.includes("changed_plan AS"));
+    const auditBlock = blocks.find((block) => block.startsWith("INSERT INTO audit_log (\n") && block.includes("WHERE changes() = ?7"));
+    const handoffTokenBlock = blocks.find((block) => block.startsWith("UPDATE autohdr_handoffs\n") && block.includes("editing_entry_board_revision = ("));
+    const jobTokenBlock = blocks.find((block) => block.startsWith("UPDATE jobs\n") && block.includes("stage_entry_board_revision = ("));
+    const terminalBlock = blocks.find((block) => block.startsWith("WITH assertion_input AS MATERIALIZED (\n") && block.includes("stage.auto_advance.bundle_assertion"));
+    const ownershipBlock = blocks.find((block) => block.startsWith("WITH assertion_input AS MATERIALIZED (\n") && block.includes("automatic.closed_bundle_assertion"));
+
+    expect(APPEND_STAGE_BOTTOM_SQL).toBe(appendBottomBlock);
+    expect(NORMATIVE_NON_COMPACTING_EXACT_SQL).toBe(exactBlock);
+    expect(NORMATIVE_NON_COMPACTING_APPEND_SQL).toBe(appendWinnerBlock);
+    expect(NORMATIVE_COMPACTING_SQL).toBe(compactingBlock);
+    expect(NORMATIVE_AUDIT_MARKER_SQL).toBe(auditBlock);
+    expect(NORMATIVE_HANDOFF_EDITING_ENTRY_TOKEN_SQL).toBe(handoffTokenBlock);
+    expect(NORMATIVE_JOB_EDITING_ENTRY_TOKEN_SQL).toBe(jobTokenBlock);
+    expect(NORMATIVE_TERMINAL_ASSERTION_SQL).toBe(terminalBlock);
+    expect(NORMATIVE_OWNERSHIP_ASSERTION_SQL).toBe(ownershipBlock);
+  });
+
+  it("compiles closed premise/coupling documents canonically and never binds null for coupling", () => {
+    const handoff: GuardedTransitionPrerequisite = {
+      kind: "autohdr_handoff",
+      projectId: "target",
+      handoffId: "handoff",
+      jobId: null,
+      generation: 1,
+      connectionId: "connection",
+      expectedStates: ["started", "starting"],
+      expectedPriorToken: null,
+    };
+    expect(JSON.parse(compileGuardedTransitionPrerequisite(handoff))).toEqual({
+      kind: "autohdr_handoff",
+      projectId: "target",
+      handoffId: "handoff",
+      jobId: null,
+      generation: 1,
+      connectionId: "connection",
+      expectedStates: ["starting", "started"],
+      expectedPriorToken: null,
+    });
+
+    const repeat = {
+      kind: "repeat_claim" as const,
+      retiredHandoffId: "old-handoff",
+      retiredMappingId: "old-mapping",
+      handoffId: "handoff",
+      mappingId: "mapping",
+      jobId: "job",
+      workflowId: "workflow",
+      generation: 1,
+      connectionId: "connection",
+      selectionHash: "selection",
+      expectedFinalHandoffState: "started" as const,
+      pathClaims: [
+        { kind: "insert" as const, claimId: "claim-a", candidate: "final" as const, path: "/Final", pathKey: "/final" },
+        { kind: "reactivate" as const, claimId: "claim-b", candidate: "finals" as const, path: "/Finals", pathKey: "/finals" },
+      ] as const,
+    };
+    expect(JSON.parse(compileClosedAutomaticCoupling(repeat))).toMatchObject({
+      kind: "repeat_claim",
+      expectedFinalHandoffState: "started",
+      pathClaims: repeat.pathClaims,
+    });
+
+    expect(() => compileGuardedTransitionPrerequisite({ ...handoff, expectedPriorToken: undefined } as never)).toThrow(/undefined/);
+    expect(() => compileGuardedTransitionPrerequisite({ ...handoff, projectId: "" })).toThrow(/non-empty/);
+    expect(() => compileGuardedTransitionPrerequisite({ ...handoff, generation: Number.MAX_SAFE_INTEGER + 1 })).toThrow(/safe integer/);
+    expect(() => compileGuardedTransitionPrerequisite({ ...handoff, currentAssetId: "unexpected" } as never)).toThrow(/key mismatch/);
+    expect(() => compileGuardedTransitionPrerequisite({
+      kind: "autohdr_final_claim", projectId: "target", collectionId: "collection", sourcePathKey: "/source", currentAssetId: null,
+      handoffId: "handoff", mappingId: "mapping", fetchClaimId: "claim", fetchJobId: "job", generation: 1, connectionId: "connection",
+      mappingStates: ["active"], handoffStates: ["started"], fetchStates: ["starting"], manifestVersion: 1, finalPathKey: "/final", expectedPriorToken: 5,
+    } as never)).toThrow(/non-empty/);
+    expect(() => compileClosedAutomaticCoupling({ ...repeat, pathClaims: [repeat.pathClaims[0]!] } as never)).toThrow(/exactly two/);
+    expect(() => compileClosedAutomaticCoupling({ ...repeat, pathClaims: [repeat.pathClaims[0]!, { ...repeat.pathClaims[1]!, pathKey: "/final" }] } as never)).toThrow(/distinct/);
+    expect(() => compileClosedAutomaticCoupling({ ...repeat, expectedFinalHandoffState: "retired" } as never)).toThrow(/expectedFinalHandoffState/);
+    expect(() => compileClosedAutomaticCoupling({ kind: "none", extra: null } as never)).toThrow(/key mismatch/);
+
+    const bound: unknown[][] = [];
+    const db = { prepare: () => ({ bind: (...values: unknown[]) => { bound.push(values); return {}; } }) } as unknown as D1Database;
+    buildTerminalAssertionBundle({ db, projectId: "target", destinationStage: "edited_review", oldBoardRevision: 5, premise: { kind: "none" }, coupling: { kind: "none" }, auditId: "audit", winnerRequired: false, assertedAt: 1 });
+    buildOwnershipAssertionBundle({ db, projectId: "target", destinationStage: "edited_review", coupling: { kind: "none" }, assertedAt: 1 });
+    expect(bound[0]?.[7]).toBe('{"kind":"none"}');
+    expect(bound[0]?.[7]).not.toBeNull();
+    expect(bound[1]?.[2]).toBe('{"kind":"none"}');
+  });
+
+  it("replays the API finalization truth batch with one deterministic finalized audit", async () => {
+    const db = localSqlite();
+    try {
+      db.exec("PRAGMA foreign_keys = ON");
+      applyAllMigrations(db);
+      seedProject(db, { id: "target", stageKey: "raw_review" });
+      db.prepare("INSERT INTO jobs (id, kind, status, project_id, payload_json, created_at, updated_at) VALUES (?, 'autohdr_api_send', 'running', ?, '{}', ?, ?)")
+        .run("api-job", "target", 1_787_000_000_000, 1_787_000_000_000);
+      const payloadJson = JSON.stringify({ provider: "autohdr_api_v4", projectId: "target", generation: 1, stageEntrySourceJobId: "api-job", stageEntryGeneration: 1, phase: "finalized", uid: "uid-1", assetIds: ["a", "b"], initiatedBy: "operator" });
+      const d1 = localD1(db);
+      const input = { db: d1, projectId: "target", destinationStage: "raw_review" as const, jobId: "api-job", uid: "uid-1", assetCount: 2, finalizedAuditId: "autohdr-api-finalized:api-job", payloadJson, assertedAt: 1_787_000_000_100 };
+      const first = buildAutoHdrApiFinalizeBundle(input);
+      const firstResults = await executeBundle(d1, first);
+      expect(firstResults[first.indexes.payloadUpdate]!.meta.changes).toBe(1);
+      expect(firstResults[first.indexes.finalizedAudit]!.meta.changes).toBe(1);
+      expect(firstResults[first.indexes.ownershipAssertion]!.meta.changes).toBe(0);
+
+      db.prepare("UPDATE jobs SET status = 'done' WHERE id = 'api-job'").run();
+      const replay = buildAutoHdrApiFinalizeBundle(input);
+      const replayResults = await executeBundle(d1, replay);
+      expect(replayResults[replay.indexes.payloadUpdate]!.meta.changes).toBe(1);
+      expect(replayResults[replay.indexes.finalizedAudit]!.meta.changes).toBe(0);
+      expect(replayResults[replay.indexes.ownershipAssertion]!.meta.changes).toBe(0);
+      expect(db.prepare("SELECT count(*) AS count FROM audit_log WHERE id = 'autohdr-api-finalized:api-job'").get()).toEqual({ count: 1 });
+    } finally {
+      db.close();
+    }
   });
 
   it("runs the non-compacting append winner at MAX + 1024 and fences exact placement", async () => {
@@ -377,11 +500,22 @@ describe("TB5A Slice 3 stage-board bundles", () => {
         db: d1,
         auditId: "audit-final",
         kind: "autohdr_final_claim",
+        projectId: "target",
         collectionId: "edited-collection",
         sourcePathKey: "/autohdr/final/asset.jpg",
+        currentAssetId: "asset",
         handoffId: "handoff",
         mappingId: "mapping",
-        currentAssetId: "asset",
+        fetchClaimId: "fetch-claim",
+        fetchJobId: "fetch-job",
+        generation: 1,
+        connectionId: "connection",
+        mappingStates: ["active"],
+        handoffStates: ["started"],
+        fetchStates: ["starting", "running"],
+        manifestVersion: 1,
+        finalPathKey: "/autohdr/final",
+        expectedPriorToken: 5,
       }, "autohdr_final_completion");
       const results = await executeBundle(d1, tail);
       expect(results[tail.indexes.prerequisiteMarker]!.results).toEqual([{ id: "edited-claim" }]);
@@ -400,7 +534,7 @@ describe("TB5A Slice 3 stage-board bundles", () => {
       db.prepare("INSERT INTO jobs (id, kind, status, project_id, payload_json, created_at, updated_at) VALUES ('completion-job', 'fetch_edited', 'done', 'target', '{\"projectId\":\"target\",\"generation\":1,\"stageEntrySourceJobId\":\"completion-job\"}', 1, 1)").run();
       audit(db, "audit-completion");
       const d1 = localD1(db);
-      const bundle = buildWorkflowTail({ db: d1, auditId: "audit-completion", kind: "autohdr_job", jobId: "completion-job", generation: 1, projectId: "target", jobKind: "fetch_edited", sourceJobKind: "autohdr", sourceJobId: "completion-job" }, "autohdr_job_completion");
+      const bundle = buildWorkflowTail({ db: d1, auditId: "audit-completion", kind: "autohdr_job", mode: "completion", jobId: "completion-job", generation: 1, projectId: "target", jobKind: "fetch_edited", jobStates: ["queued", "running", "done"], sourceJobKinds: ["autohdr"], sourceJobStates: ["queued", "running", "done"], sourceJobId: "completion-job", expectedPriorToken: 7 }, "autohdr_job_completion");
       const results = await executeBundle(d1, bundle);
       expect(results[bundle.indexes.sourceEntryJob]!.results).toEqual([]);
       expect(bundle.indexes.completionJobState).toBe(2);
@@ -419,14 +553,14 @@ describe("TB5A Slice 3 stage-board bundles", () => {
       db.prepare("INSERT INTO jobs (id, kind, status, project_id, payload_json, stage_entry_board_revision, created_at, updated_at) VALUES ('completion-job', 'fetch_edited', 'done', 'target', '{\"projectId\":\"target\",\"generation\":1,\"stageEntrySourceJobId\":\"entry-job\",\"stageEntryGeneration\":1}', NULL, 1, 1)").run();
       audit(db, "audit-completion");
       const d1 = localD1(db);
-      const valid = buildWorkflowTail({ db: d1, auditId: "audit-completion", kind: "autohdr_job", jobId: "completion-job", generation: 1, projectId: "target", jobKind: "fetch_edited", sourceJobKind: "autohdr", sourceJobId: "entry-job" }, "autohdr_job_completion");
+      const valid = buildWorkflowTail({ db: d1, auditId: "audit-completion", kind: "autohdr_job", mode: "completion", jobId: "completion-job", generation: 1, projectId: "target", jobKind: "fetch_edited", jobStates: ["queued", "running", "done"], sourceJobKinds: ["autohdr"], sourceJobStates: ["queued", "running", "done"], sourceJobId: "entry-job", expectedPriorToken: 5 }, "autohdr_job_completion");
       const validResults = await executeBundle(d1, valid);
       expect(validResults[valid.indexes.sourceEntryJob]!.results).toEqual([{ id: "entry-job", project_id: "target", stage_entry_board_revision: 5 }]);
       expect(validResults[valid.indexes.completionJobState]!.results).toEqual([{ id: "completion-job", status: "done" }]);
 
       db.prepare("UPDATE jobs SET payload_json = '{\"projectId\":\"target\",\"generation\":1,\"stageEntrySourceJobId\":\"impostor-job\",\"stageEntryGeneration\":1}' WHERE id = 'completion-job'").run();
       db.prepare("INSERT INTO jobs (id, kind, status, project_id, payload_json, stage_entry_board_revision, created_at, updated_at) VALUES ('impostor-job', 'autohdr', 'done', 'target', '{\"projectId\":\"target\",\"generation\":1}', 5, 1, 1)").run();
-      const impostor = buildWorkflowTail({ db: d1, auditId: "audit-completion", kind: "autohdr_job", jobId: "completion-job", generation: 1, projectId: "target", jobKind: "fetch_edited", sourceJobKind: "autohdr", sourceJobId: "impostor-job" }, "autohdr_job_completion");
+      const impostor = buildWorkflowTail({ db: d1, auditId: "audit-completion", kind: "autohdr_job", mode: "completion", jobId: "completion-job", generation: 1, projectId: "target", jobKind: "fetch_edited", jobStates: ["queued", "running", "done"], sourceJobKinds: ["autohdr"], sourceJobStates: ["queued", "running", "done"], sourceJobId: "impostor-job", expectedPriorToken: 5 }, "autohdr_job_completion");
       const impostorResults = await executeBundle(d1, impostor);
       expect(impostorResults[impostor.indexes.sourceEntryJob]!.results).toEqual([]);
     } finally {
@@ -455,12 +589,12 @@ describe("TB5A Slice 3 stage-board bundles", () => {
     ] as const;
     const prerequisites = [
       { kind: "none" as const },
-      { kind: "raw_reconciliation" as const, claimId: "claim", shootDate: "2026-08-29" },
-      { kind: "autohdr_handoff" as const, handoffId: "handoff", generation: 1, connectionId: "connection" },
-      { kind: "autohdr_mapping" as const, mappingId: "mapping", handoffId: "handoff", generation: 1 },
-      { kind: "autohdr_final_claim" as const, collectionId: "collection", sourcePathKey: "/autohdr/final/capture.jpg", handoffId: "handoff", mappingId: "mapping", currentAssetId: "asset" },
-      { kind: "autohdr_job" as const, jobId: "job", generation: 1, projectId: "target" },
-      { kind: "autohdr_job" as const, jobId: "job", generation: 1, projectId: "target" },
+      { kind: "raw_reconciliation" as const, projectId: "target", claimId: "claim", claimStates: ["running"] as ["running"], shootDate: "2026-08-29" },
+      { kind: "autohdr_handoff" as const, projectId: "target", handoffId: "handoff", jobId: null, generation: 1, connectionId: "connection", expectedStates: ["starting", "started"] as ["starting", "started"], expectedPriorToken: null },
+      { kind: "autohdr_mapping" as const, projectId: "target", mappingId: "mapping", handoffId: "handoff", generation: 1, connectionId: "connection", mappingStates: ["active"] as ["active"], handoffStates: ["starting", "started"] as ["starting", "started"], expectedPriorToken: null },
+      { kind: "autohdr_final_claim" as const, projectId: "target", collectionId: "collection", sourcePathKey: "/autohdr/final/capture.jpg", currentAssetId: "asset", handoffId: "handoff", mappingId: "mapping", fetchClaimId: "fetch-claim", fetchJobId: "fetch-job", generation: 1, connectionId: "connection", mappingStates: ["active"] as ["active"], handoffStates: ["started"] as ["started"], fetchStates: ["starting", "running"] as ["starting", "running"], manifestVersion: 1, finalPathKey: "/autohdr/final", expectedPriorToken: 5 },
+      { kind: "autohdr_job" as const, mode: "entry" as const, jobId: "job", generation: 1, projectId: "target", jobKind: "autohdr" as const, jobStates: ["running", "done"] as ["running", "done"], expectedPriorToken: null },
+      { kind: "autohdr_job" as const, mode: "completion" as const, jobId: "job", generation: 1, projectId: "target", jobKind: "fetch_edited" as const, jobStates: ["queued", "running", "done"] as ["queued", "running", "done"], sourceJobId: "source-job", sourceJobKinds: ["autohdr", "autohdr_api_send"] as ["autohdr", "autohdr_api_send"], sourceJobStates: ["queued", "running", "done"] as ["queued", "running", "done"], expectedPriorToken: 5 },
     ] as const;
     const optionalShapes = [
       {},
@@ -475,18 +609,25 @@ describe("TB5A Slice 3 stage-board bundles", () => {
         expect(composed.indexes.stage).toEqual({ winner: 0, auditMarker: 1 });
         const activityCount = optional.activity ? 3 : 0;
         const deadlineCount = optional.deadline ? 3 : 0;
-        if (optional.activity) expect(composed.indexes.activity).toEqual({ activity: 2, broadOutbox: 3, broadLedger: 4 });
+        const workflowCount = workflow.statements.length;
+        if (optional.activity) expect(composed.indexes.activity).toEqual({ activity: 2 + workflowCount, broadOutbox: 3 + workflowCount, broadLedger: 4 + workflowCount });
         else expect(composed.indexes.activity).toBeUndefined();
-        if (optional.deadline) expect(composed.indexes.deadline).toEqual({ occurrences: 2 + activityCount, ledgers: 3 + activityCount, outboxes: 4 + activityCount });
+        if (optional.deadline) expect(composed.indexes.deadline).toEqual({ occurrences: 2 + workflowCount + activityCount, ledgers: 3 + workflowCount + activityCount, outboxes: 4 + workflowCount + activityCount });
         else expect(composed.indexes.deadline).toBeUndefined();
         expect(composed.indexes.workflow.kind).toBe(workflowKind);
-        const workflowBase = 2 + activityCount + deadlineCount;
+        const workflowBase = 2;
         for (const [key, value] of Object.entries(workflow.indexes)) {
           if (typeof value === "number") expect((composed.indexes.workflow as Record<string, unknown>)[key]).toBe(workflowBase + value);
         }
       }
     }
     expect(prepares.length).toBeGreaterThan(0);
+    const optionalIndex = composeStageBundle({
+      preWinner: { statements: [], indexes: { optional: undefined } },
+      stage,
+      workflow: { statements: [], indexes: { kind: "none" } },
+    });
+    expect(Object.hasOwn(optionalIndex.indexes.preWinner ?? {}, "optional")).toBe(false);
   });
 
   it("derives a finalizer only from full winner agreement", () => {

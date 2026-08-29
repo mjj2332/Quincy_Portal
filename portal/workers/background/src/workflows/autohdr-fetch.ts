@@ -6,7 +6,7 @@ import { enqueueRenditionSafely, isAcceptedPhotoFilename } from "@quincy/shared"
 import { and, eq, inArray } from "drizzle-orm";
 
 import { autoHdrFinalPathCandidates, deriveAutoHdrFolderName } from "../autohdr/paths";
-import { createDropboxClientContext, download, listFolderContinue, listFolderIfExists, type DropboxFile } from "../dropbox/client";
+import { createDropboxClientContext, download, listFolderContinue, listFolderIfExists, type DropboxFile, } from "../dropbox/client";
 import { pathFromRawFolderLink } from "../dropbox/sync";
 import type { Env } from "../env";
 import { dbFor, errorMessage } from "../lib/db";
@@ -32,9 +32,9 @@ export interface AutoHdrFetchInput {
   monitorScope?: "autohdr";
   monitorRoot?: "/AutoHDR";
   stageEntrySourceJobId?: string;
+  stageEntrySourceJobKind?: "autohdr" | "autohdr_api_send";
   stageEntryGeneration?: number;
 }
-
 interface RawAsset {
   id: string;
   originalFilename: string;
@@ -53,7 +53,7 @@ function strippedBasename(filename: string): string {
   return plainBasename(filename).replace(/[ _-]+(?:vs|staged)$/i, "");
 }
 
-async function ensureEditedCollection(env: Env, projectId: string): Promise<{ id: string }> {
+async function ensureEditedCollection(env: Env, projectId: string): Promise<{ id: string; }> {
   const db = dbFor(env);
   await db
     .insert(collections)
@@ -74,7 +74,7 @@ async function rawAssetsByBasename(env: Env, projectId: string): Promise<Map<str
     .from(assets)
     .innerJoin(collections, eq(assets.collectionId, collections.id))
     .where(and(eq(collections.projectId, projectId), eq(collections.kind, "raw")));
-  return new Map(rows.map((row) => [plainBasename(row.originalFilename), row]));
+  return new Map(rows.map(row => [plainBasename(row.originalFilename), row]));
 }
 
 export class AutoHdrFetch extends WorkflowEntrypoint<Env, AutoHdrFetchInput> {
@@ -96,7 +96,7 @@ export class AutoHdrFetch extends WorkflowEntrypoint<Env, AutoHdrFetchInput> {
           .where(eq(projects.id, input.projectId))
           .get();
         if (!project) throw new Error(`Project ${input.projectId} does not exist`);
-        const rawFolderPath = project.rawFolderPath ?? await pathFromRawFolderLink(this.env, project.rawFolderLink);
+        const rawFolderPath = project.rawFolderPath ?? (await pathFromRawFolderLink(this.env, project.rawFolderLink));
         if (!rawFolderPath) throw new Error(`Project ${input.projectId} has no Dropbox RAW folder configured`);
         return autoHdrFinalPathCandidates(deriveAutoHdrFolderName(rawFolderPath));
       });
@@ -121,8 +121,7 @@ export class AutoHdrFetch extends WorkflowEntrypoint<Env, AutoHdrFetchInput> {
         const db = dbFor(this.env);
         const [editedCollection, rawByBasename] = await Promise.all([
           ensureEditedCollection(this.env, input.projectId),
-          rawAssetsByBasename(this.env, input.projectId),
-        ]);
+          rawAssetsByBasename(this.env, input.projectId)]);
         let ingested = 0;
         let skipped = 0;
         for (const file of finalFiles) {
@@ -158,8 +157,7 @@ export class AutoHdrFetch extends WorkflowEntrypoint<Env, AutoHdrFetchInput> {
           await this.env.DB.batch([
             this.env.DB.prepare("INSERT INTO assets (id, collection_id, kind, r2_key, original_filename, bytes, content_hash, source, source_raw_asset_id, section, created_at, updated_at) VALUES (?, ?, 'photo', ?, ?, ?, ?, 'dropbox', ?, 'AutoHDR', ?, ?)")
               .bind(assetId, editedCollection.id, r2Key, file.name, file.size, file.content_hash ?? null, matched?.id ?? null, now.getTime(), now.getTime()),
-            this.env.DB.prepare(COLLECTION_RECEIVED_COUNT_SQL).bind(...collectionReceivedCountBindings(editedCollection.id, now.getTime())),
-          ]);
+            this.env.DB.prepare(COLLECTION_RECEIVED_COUNT_SQL).bind(...collectionReceivedCountBindings(editedCollection.id, now.getTime()))]);
           await enqueueRenditionSafely(this.env, assetId, "autohdr-fetch");
           ingested += 1;
         }
@@ -177,10 +175,9 @@ export class AutoHdrFetch extends WorkflowEntrypoint<Env, AutoHdrFetchInput> {
           db.select({ sourceRawAssetId: assets.sourceRawAssetId })
             .from(assets)
             .innerJoin(collections, eq(assets.collectionId, collections.id))
-            .where(and(eq(collections.projectId, input.projectId), eq(collections.kind, "edited"))),
-        ]);
-        const returnedSourceIds = new Set(editedAssets.flatMap((asset) => asset.sourceRawAssetId ? [asset.sourceRawAssetId] : []));
-        const readyForReview = selectedRawAssets.length > 0 && selectedRawAssets.every((asset) => returnedSourceIds.has(asset.id));
+            .where(and(eq(collections.projectId, input.projectId), eq(collections.kind, "edited")))]);
+        const returnedSourceIds = new Set(editedAssets.flatMap(asset => asset.sourceRawAssetId ? [asset.sourceRawAssetId] : []));
+        const readyForReview = selectedRawAssets.length > 0 && selectedRawAssets.every(asset => returnedSourceIds.has(asset.id));
         if (readyForReview) {
           const sourceJobId = input.stageEntrySourceJobId;
           const generation = input.stageEntryGeneration;
@@ -188,12 +185,12 @@ export class AutoHdrFetch extends WorkflowEntrypoint<Env, AutoHdrFetchInput> {
             logMissingJobProvenance({ projectId: input.projectId, completionJobId: input.jobId, sourceJobId, generation });
             return { stageAdvanced: false };
           }
+          const sourceJobKind = input.stageEntrySourceJobKind ?? "autohdr";
           const entryRevision = await jobEntryToken(this.env.DB, {
             sourceJobId,
             projectId: input.projectId,
             generation,
-            sourceJobKind: "autohdr",
-          });
+            sourceJobKind });
           if (entryRevision === null) {
             logMissingJobProvenance({ projectId: input.projectId, completionJobId: input.jobId, sourceJobId, generation });
             return { stageAdvanced: false };
@@ -208,21 +205,23 @@ export class AutoHdrFetch extends WorkflowEntrypoint<Env, AutoHdrFetchInput> {
             auditId,
             auditMetaJson: JSON.stringify({ from: "editing_autohdr", to: "edited_review", trigger: input.trigger ?? "autohdr_fetch", jobId: input.jobId, stageEntrySourceJobId: sourceJobId, stageEntryGeneration: generation }),
             workflow: {
-              kind: "autohdr_job_completion",
-              prerequisite: {
-                kind: "autohdr_job",
-                jobId: input.jobId,
-                projectId: input.projectId,
-                generation,
-                jobKind: "fetch_edited",
-                sourceJobKind: "autohdr",
-                sourceJobId,
-                db: this.env.DB,
-                auditId,
-                now: Date.now(),
-              },
+              kind: "autohdr_job",
+              mode: "completion",
+              projectId: input.projectId,
+              jobId: input.jobId,
+              jobKind: "fetch_edited",
+              jobStates: ["queued", "running", "done"],
+              sourceJobId,
+              sourceJobKinds: [sourceJobKind],
+              sourceJobStates: ["queued", "running", "done"],
+              generation,
+              expectedPriorToken: entryRevision
             },
-            legacyWorkflowNotification: "edited_landed",
+            alreadyAtDestination: {
+              allowed: true,
+              effect: { kind: "none" }
+            },
+            legacyWorkflowNotification: "edited_landed"
           });
           if (outcome.kind === "winner") {
             try {
@@ -249,9 +248,8 @@ export class AutoHdrFetch extends WorkflowEntrypoint<Env, AutoHdrFetchInput> {
   private async runClaimed(input: AutoHdrFetchInput, step: WorkflowStep): Promise<void> {
     const required = [
       input.claimId, input.handoffId, input.mappingId, input.connectionId,
-      input.finalPath, input.finalPathKey, input.trigger,
-    ];
-    if (required.some((value) => !value) || input.mappingGeneration === undefined || input.manifestVersion === undefined) {
+      input.finalPath, input.finalPathKey, input.trigger];
+    if (required.some(value => !value) || input.mappingGeneration === undefined || input.manifestVersion === undefined) {
       throw new Error("Claimed AutoHDR fetch input is incomplete");
     }
     const context: FinalWriteContext = {
@@ -265,7 +263,7 @@ export class AutoHdrFetch extends WorkflowEntrypoint<Env, AutoHdrFetchInput> {
       connectionId: input.connectionId!,
       finalPath: input.finalPath!,
       finalPathKey: input.finalPathKey!,
-      trigger: input.trigger!,
+      trigger: input.trigger!
     };
     try {
       await step.do("confirm-fetch-owner", async () => {
@@ -296,20 +294,18 @@ export class AutoHdrFetch extends WorkflowEntrypoint<Env, AutoHdrFetchInput> {
       }
       await step.do("complete-claimed-fetch", async () => {
         const db = dbFor(this.env);
-        const quarantined = results.some((result) => result.status === "quarantined");
+        const quarantined = results.some(result => result.status === "quarantined");
         await db.update(autoHdrFetchClaims).set({
           state: quarantined ? "quarantined" : "done",
           completedAt: new Date(),
-          updatedAt: new Date(),
-        }).where(eq(autoHdrFetchClaims.id, input.claimId!));
+          updatedAt: new Date() }).where(eq(autoHdrFetchClaims.id, input.claimId!));
         await setJobStatus(db, input.jobId, quarantined ? "failed" : "done", quarantined ? "One or more finals were quarantined" : undefined);
         return { count: results.length, quarantined };
       });
     } catch (error) {
       const db = dbFor(this.env);
       await db.update(autoHdrFetchClaims).set({
-        state: "failed", lastError: errorMessage(error), completedAt: new Date(), updatedAt: new Date(),
-      }).where(eq(autoHdrFetchClaims.id, input.claimId!));
+        state: "failed", lastError: errorMessage(error), completedAt: new Date(), updatedAt: new Date() }).where(eq(autoHdrFetchClaims.id, input.claimId!));
       await setJobStatus(db, input.jobId, "failed", errorMessage(error));
       throw error;
     }

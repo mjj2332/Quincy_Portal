@@ -92,9 +92,13 @@ export async function advanceAwaitingRawProject(database: D1Database, project: D
     auditMetaJson: metadata,
     now,
     workflow: {
-      kind: "none",
-      prerequisite: { kind: "none", db: database, auditId, projectId: project.id, now },
+      kind: "raw_reconciliation",
+      projectId: project.id,
+      claimId: null,
+      claimStates: ["running"],
+      shootDate: project.shootDate,
     },
+    alreadyAtDestination: { allowed: true, effect: { kind: "none" } },
   });
   return result.kind === "winner";
 }

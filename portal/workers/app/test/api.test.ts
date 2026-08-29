@@ -3540,7 +3540,7 @@ describe("staff app API", () => {
       },
     };
     const footprint = async () => Promise.all([
-      database.DB.prepare("SELECT stage_key AS stageKey, board_position AS boardPosition, board_revision AS boardRevision FROM projects WHERE id IN (?, ?, ?) ORDER BY board_position, id").bind(target, before, after).all(),
+      database.DB.prepare("SELECT stage_key AS stageKey, board_position AS boardPosition, board_revision AS boardRevision FROM projects WHERE id IN (?, ?, ?) ORDER BY board_position, id").bind(target, before, after).all().then((result) => result.results),
       database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE target_id = ?").bind(target).first(),
       database.DB.prepare("SELECT count(*) AS count FROM project_activity_events WHERE project_id = ?").bind(target).first(),
       database.DB.prepare("SELECT count(*) AS count FROM notification_outbox WHERE project_id = ?").bind(target).first(),
