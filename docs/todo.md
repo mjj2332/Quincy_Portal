@@ -7,7 +7,7 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
 > counts, full diagnostic transcripts) has been cut in favor of what/when/deploy-state. See
 > `docs/lessons.md` for incident mechanics, and `docs/reviews/` for full QA-sweep detail.
 
-## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29, seed-admin UUID migration 2026-07-29, notification dismiss + stalled-guard 2026-07-30, download selection 2026-08-04, notice-board rich text + mentions 2026-08-17, project comments + collaboration panel 2026-08-17, project subtasks/checklist 2026-08-17, collaboration panel relocated to Project page 2026-08-17, collaboration panel UI fixes + due-time reminder 2026-08-17, notification click navigation 2026-08-17, comment ordering + Shift+Enter soft breaks 2026-08-17, mention-email content 2026-08-20, TB0 authority promotion 2026-08-24, TB0A React 19.2 deployed + accepted 2026-08-25, TB0B pipeline configuration boundary deployed 2026-08-24, TB1 Tailwind v4/shadcn foundation deployed 2026-08-25, TB2 route-safe project data freshness deployed 2026-08-25, TB3 project discussion v2 deployed 2026-08-25, TB4 notification outbox deployed 2026-08-26, confirmation modal + admin user impersonation deployed 2026-08-26, TB4A project workspace assignment rail deployed 2026-08-27, TB4B project deadline and reminders deployed 2026-08-27, TB4C editor-wide project-change notifications deployed 2026-08-27, TB4D checklist scheduling & ranges deployed 2026-08-28, TB4E external editor assigned-scope access deployed 2026-08-28, TB4E QA + cache-purge secrets done / phase fully closed 2026-08-28, TB5A Stage & Kanban Ordering Contract built + reviewed + merged to main 2026-08-29 — NOT LIVE, awaiting prod migration 0037 + flag flip per slice-8-deploy-runbook.md)
+## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29, seed-admin UUID migration 2026-07-29, notification dismiss + stalled-guard 2026-07-30, download selection 2026-08-04, notice-board rich text + mentions 2026-08-17, project comments + collaboration panel 2026-08-17, project subtasks/checklist 2026-08-17, collaboration panel relocated to Project page 2026-08-17, collaboration panel UI fixes + due-time reminder 2026-08-17, notification click navigation 2026-08-17, comment ordering + Shift+Enter soft breaks 2026-08-17, mention-email content 2026-08-20, TB0 authority promotion 2026-08-24, TB0A React 19.2 deployed + accepted 2026-08-25, TB0B pipeline configuration boundary deployed 2026-08-24, TB1 Tailwind v4/shadcn foundation deployed 2026-08-25, TB2 route-safe project data freshness deployed 2026-08-25, TB3 project discussion v2 deployed 2026-08-25, TB4 notification outbox deployed 2026-08-26, confirmation modal + admin user impersonation deployed 2026-08-26, TB4A project workspace assignment rail deployed 2026-08-27, TB4B project deadline and reminders deployed 2026-08-27, TB4C editor-wide project-change notifications deployed 2026-08-27, TB4D checklist scheduling & ranges deployed 2026-08-28, TB4E external editor assigned-scope access deployed 2026-08-28, TB4E QA + cache-purge secrets done / phase fully closed 2026-08-28, TB5A Stage & Kanban Ordering Contract deployed to production 2026-08-29 — migration 0037 applied, tb5a_board_contract_enabled flipped ON, app 4ba551a3 / bg fa876454)
 
 - **TB4E (External Editor Assigned-Scope Access — a global `external_editor` role that does normal
   editing work only on explicitly assigned projects, sees external-safe data, discovers no
@@ -1167,6 +1167,19 @@ allowlist are silent no-ops otherwise). Full mechanics in `docs/subagents/agy-cl
 
 ## Implemented plans (see `docs/plans/implemented/`)
 
+- **`Revamp-TB5A-Stage-And-Kanban-Ordering-Contract-Plan.md`** (+ `implemented/tb5a/`) — **deployed
+  to production 2026-08-29**, merge `b4cda86`, migration `0037`, app `4ba551a3` / bg `fa876454`,
+  `tb5a_board_contract_enabled` ON. `board_revision` optimistic token + `board_position` sole
+  persisted manual order; migration `0037` one-time normalization to `0,1024,2048,…`;
+  `moveProjectStage` command + shared `/stage` route + typed cumulative confirmation reasons;
+  transactional workflow-premise fence for every automatic Stage writer (a stale/ABA premise
+  yields a zero-row winner — nothing commits, replacing the old post-hoc "interpret trailing
+  SELECTs" approach); schema-variant seam (`pre_0037` → 503, `tb5a_0037` + flag-OFF →
+  inert-by-fence, creation + Priority still work); Dashboard/rail exact-neighbour drag + keyboard
+  Move Stage + Priority view. Reviews: 2 full Sol diff-review rounds (15 + 6 blockers, all closed);
+  the fence mechanism took 3 Sol design rounds + 3 Opus verification passes; Opus final-draft MERGE.
+  Deferred follow-ups: SF5 (Workflow `deferred` return completes the Workflow) + SF6
+  (maintenance-window queue/alarm replay) — see `implemented/tb5a/slice-6-writer-closeout.md`.
 - **`Dropbox-Webhook-Automation-Plan.md`** — Wave 3: event-driven Dropbox intake, dual
   root-scoped monitors, AutoHDR handoff/versioning. Live (automation flags off by default).
 - **`staff-routing-and-deep-link-plan.md`** — Wave 1a: SPA History-API router, `/d/*` Worker
@@ -1366,23 +1379,6 @@ allowlist are silent no-ops otherwise). Full mechanics in `docs/subagents/agy-cl
   not implemented.
 
 ## Open plans (see `docs/plans/`)
-
-- **`Revamp-TB5A-Stage-And-Kanban-Ordering-Contract-Plan.md`** — **BUILT, REVIEWED, MERGED to `main`
-  (`b4cda86`, 2026-08-29). NOT LIVE.** `board_revision` optimistic-concurrency token +
-  `board_position` as the sole persisted manual order; migration `0037` one-time normalization; the
-  `moveProjectStage` command + shared `/stage` route + typed cumulative confirmation reasons;
-  transactional workflow-premise fence for every automatic Stage writer (stale/ABA premise → zero-row
-  winner, nothing commits); schema-variant seam (`pre_0037` → 503, `tb5a_0037` + flag-OFF →
-  inert-by-fence); Dashboard/rail exact-neighbour drag + keyboard Move Stage + Priority view.
-  8 build slices + slices 6b–6e of fixes; 2 full Sol diff-review rounds (15 + 6 blockers, all
-  closed); fence design took 3 Sol rounds + 3 Opus verification passes; Opus final-draft verdict
-  MERGE (prod risk LOW). §5 gate green on `main`. **Remaining = operator work in
-  `docs/plans/tb5a/slice-8-deploy-runbook.md`:** freeze all Stage writers (incl. direct RAW
-  upload/`finalizeIngest`) → recovery export → confirm remote `d1_migrations` tail = `0036` →
-  `wrangler d1 migrations apply` `0037` → deploy background→webhook-ingress(if changed)→app with
-  `tb5a_board_contract_enabled` OFF → flag-OFF verification → Agy local QA → flip the flag to 1 →
-  resume drained consumers. Plan moves to `implemented/` only after prod verification. SF5/SF6
-  (Workflow deferred-return, maintenance-window queue replay) are documented post-TB5A deferrals.
 
 - **`Revamp-TB0A-React-19-2-Runtime-Upgrade-Plan.md`** — drafted and approved (2 Sol rounds + Opus
   review). Code-level upgrade built and independently re-verified locally (typecheck/build/tests

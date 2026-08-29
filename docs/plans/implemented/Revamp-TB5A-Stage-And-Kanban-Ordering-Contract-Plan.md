@@ -1,15 +1,27 @@
 # Revamp TB5A — Project Stage and Kanban Ordering Contract
 
-**Status:** APPROVED by Opus plan-tier review — round 3 folds in the APPROVE conditions; build-ready.
+**Status: IMPLEMENTED and DEPLOYED to production — 2026-08-29.** Merge `b4cda86` on `main`
+(build: slices 0–8 + fix slices 6b–6e; 2 full Sol diff-review rounds — 15 + 6 blockers closed;
+the automatic-writer fence took 3 Sol design rounds + 3 Opus verification passes; Opus final-draft
+verdict MERGE). Production: migration `0037` applied to remote D1
+(`Executed 16 commands`, preflight + postflight CHECKs passed, 76 unarchived projects normalized to
+`board_revision = 1` and positions `0,1024,2048,…`, rollback capture table = 76 rows, FK +
+`quick_check` clean); app Worker `4ba551a3-e009-4c56-9051-e9eed47a6aef`, background Worker
+`fa876454-666e-4bf7-b6e4-582ab154ed19`; `tb5a_board_contract_enabled` flipped to `1` with the
+flag-flip audit recorded; local runtime QA + prod flag-OFF and flag-ON smoke tests all green.
+Deployed following `docs/plans/implemented/tb5a/slice-8-deploy-runbook.md`. Recovery point:
+`db-recovery/quincy-portal-pre-0037-2026-08-29.sql` (SHA-256 `9b6415c8…d64277df`) + D1 Time Travel
+bookmark `00000636-00001bb2-000050d6-d616b6db73e26945e34d144e3c7a99e5`.
 
-**Review-state note:** APPROVED by Opus plan-tier review — round 3 folds in the APPROVE conditions;
-build-ready. This remains a plan-only artifact. It authorizes no code, migration, deployment, or
-production mutation. The implementation baseline / parent commit is
-`8b7b3f96b1195c8dbaef547348962a7bb9bd3079`; the draft commit is
-`7f04955e9456eccf482bb87befccad02eea4fac9`. The checked-in migration journal ends at `0036`,
-and `docs/todo.md` records migration `0036` applied to production on 2026-08-28. The read-only
-planning sandbox could not query production D1, so implementation must still verify that the remote
-`d1_migrations` tail is `0036` before claiming `0037`.
+Deferred post-TB5A follow-ups (documented in `tb5a/slice-6-writer-closeout.md`): SF5 (a Workflow
+`deferred` return completes the Workflow instead of pausing it) and SF6 (maintenance-window queue
+/ alarm replay intent). Neither is a rollout hazard — the deploy freeze covered them.
+
+---
+
+**Original review-state note (retained):** APPROVED by Opus plan-tier review — round 3 folds in
+the APPROVE conditions; build-ready. The implementation baseline / parent commit was
+`8b7b3f96b1195c8dbaef547348962a7bb9bd3079`; the draft commit `7f04955e9456eccf482bb87befccad02eea4fac9`.
 
 TB5A targets the deployed React/React DOM `19.2.8` baseline. It does not change React, routing,
 Tailwind, shadcn, or dnd-kit.
