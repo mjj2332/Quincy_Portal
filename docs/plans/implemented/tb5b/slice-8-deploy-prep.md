@@ -1,9 +1,14 @@
 # TB5B Slice 8 — proof, deploy prep, rollback
 
-Companion to `docs/plans/Revamp-TB5B-Kanban-Interaction-Modernization-Plan.md`. Records the
-pre-deploy proof and the deploy/rollback procedure. **Not deploy authorization** — the fresh Sol
-diff review, the Opus final-draft review, the Agy local-dev QA matrix, and a clean final §5 gate
-must all pass first.
+Companion to `docs/plans/implemented/Revamp-TB5B-Kanban-Interaction-Modernization-Plan.md`. Records
+the pre-deploy proof and the deploy/rollback procedure.
+
+> **DEPLOYED 2026-08-30.** Merge `578d2a1` → `main`; app Worker `2b515484` (app Worker only — no
+> migration, no background/webhook-ingress). Rollback target app `4ba551a3`. All gates passed:
+> fresh Sol diff review, Opus final-draft review, Agy local-dev functional QA matrix (independently
+> §5-re-verified), Slice-5 real-hardware acceptance (touch + VoiceOver/NVDA), final §5 gate on
+> `main` post-merge, passive prod verification. The procedure below is retained for the rollback
+> path and as the record of what ran.
 
 ## Scope of the change
 

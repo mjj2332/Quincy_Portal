@@ -7,7 +7,7 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
 > counts, full diagnostic transcripts) has been cut in favor of what/when/deploy-state. See
 > `docs/lessons.md` for incident mechanics, and `docs/reviews/` for full QA-sweep detail.
 
-## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29, seed-admin UUID migration 2026-07-29, notification dismiss + stalled-guard 2026-07-30, download selection 2026-08-04, notice-board rich text + mentions 2026-08-17, project comments + collaboration panel 2026-08-17, project subtasks/checklist 2026-08-17, collaboration panel relocated to Project page 2026-08-17, collaboration panel UI fixes + due-time reminder 2026-08-17, notification click navigation 2026-08-17, comment ordering + Shift+Enter soft breaks 2026-08-17, mention-email content 2026-08-20, TB0 authority promotion 2026-08-24, TB0A React 19.2 deployed + accepted 2026-08-25, TB0B pipeline configuration boundary deployed 2026-08-24, TB1 Tailwind v4/shadcn foundation deployed 2026-08-25, TB2 route-safe project data freshness deployed 2026-08-25, TB3 project discussion v2 deployed 2026-08-25, TB4 notification outbox deployed 2026-08-26, confirmation modal + admin user impersonation deployed 2026-08-26, TB4A project workspace assignment rail deployed 2026-08-27, TB4B project deadline and reminders deployed 2026-08-27, TB4C editor-wide project-change notifications deployed 2026-08-27, TB4D checklist scheduling & ranges deployed 2026-08-28, TB4E external editor assigned-scope access deployed 2026-08-28, TB4E QA + cache-purge secrets done / phase fully closed 2026-08-28, TB5A Stage & Kanban Ordering Contract deployed to production 2026-08-29 — migration 0037 applied, tb5a_board_contract_enabled flipped ON, app 4ba551a3 / bg fa876454)
+## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29, seed-admin UUID migration 2026-07-29, notification dismiss + stalled-guard 2026-07-30, download selection 2026-08-04, notice-board rich text + mentions 2026-08-17, project comments + collaboration panel 2026-08-17, project subtasks/checklist 2026-08-17, collaboration panel relocated to Project page 2026-08-17, collaboration panel UI fixes + due-time reminder 2026-08-17, notification click navigation 2026-08-17, comment ordering + Shift+Enter soft breaks 2026-08-17, mention-email content 2026-08-20, TB0 authority promotion 2026-08-24, TB0A React 19.2 deployed + accepted 2026-08-25, TB0B pipeline configuration boundary deployed 2026-08-24, TB1 Tailwind v4/shadcn foundation deployed 2026-08-25, TB2 route-safe project data freshness deployed 2026-08-25, TB3 project discussion v2 deployed 2026-08-25, TB4 notification outbox deployed 2026-08-26, confirmation modal + admin user impersonation deployed 2026-08-26, TB4A project workspace assignment rail deployed 2026-08-27, TB4B project deadline and reminders deployed 2026-08-27, TB4C editor-wide project-change notifications deployed 2026-08-27, TB4D checklist scheduling & ranges deployed 2026-08-28, TB4E external editor assigned-scope access deployed 2026-08-28, TB4E QA + cache-purge secrets done / phase fully closed 2026-08-28, TB5A Stage & Kanban Ordering Contract deployed to production 2026-08-29 — migration 0037 applied, tb5a_board_contract_enabled flipped ON, app 4ba551a3 / bg fa876454, TB5B Kanban Interaction Modernization (dnd-kit) deployed to production 2026-08-30 — UI-only, merge 578d2a1, app Worker 2b515484 only, no migration, rollback target app 4ba551a3)
 
 - **TB4E (External Editor Assigned-Scope Access — a global `external_editor` role that does normal
   editing work only on explicitly assigned projects, sees external-safe data, discovers no
@@ -1167,17 +1167,22 @@ allowlist are silent no-ops otherwise). Full mechanics in `docs/subagents/agy-cl
 
 ## Implemented plans (see `docs/plans/implemented/`)
 
-- **TB5B (Kanban Interaction Modernization) — built on branch
-  `tb5b-kanban-interaction-modernization`, not yet reviewed/merged/deployed.** dnd-kit replaces the
-  board's native HTML5 drag over the shipped TB5A contract: dedicated drag handle, pointer + touch +
-  keyboard sensors, position-aware **Move to…**, `DragOverlay`, single-writer optimistic overlay,
-  two-gate freshness (`interactionBlocked` accept gate / `movementSettlePending` command gate),
-  ID-free cross-tab `dashboard-board-invalidated` broadcast, Workspace-rail parity. **UI-only** —
-  no schema/migration/Worker/`@quincy/shared`/dependency change (sort-key ruled **Option A** by
-  Opus plan-tier review: network key stays authorization-scoped, sort is a derived interaction
-  identity). Plan: `docs/plans/Revamp-TB5B-Kanban-Interaction-Modernization-Plan.md`. Pending:
-  fresh Sol diff review → Opus final-draft → Agy local-dev QA matrix (needs a real touch device +
-  VoiceOver/NVDA for Slice 5 acceptance) → app-Worker-only deploy.
+- **`Revamp-TB5B-Kanban-Interaction-Modernization-Plan.md`** (+ `implemented/tb5b/`) — **deployed
+  to production 2026-08-30**, merge `578d2a1`, **app Worker `2b515484` only** (no migration, no
+  background/webhook-ingress, no `@quincy/shared`, no dependency change), rollback target app
+  `4ba551a3`. dnd-kit replaces the board's native HTML5 drag over the shipped TB5A contract:
+  dedicated drag handle, pointer + touch + keyboard sensors, position-aware **Move to…**,
+  `DragOverlay`, single-writer optimistic overlay in component state (never the query cache),
+  two orthogonal gates (`interactionBlocked` accept gate / `movementSettlePending` cross-Stage
+  command gate — never merged), target-authoritative/source-provisional reconcile, ID-free
+  cross-tab `dashboard-board-invalidated` broadcast, Workspace-rail Stage parity + deterministic
+  focus restore. Sort-key ruled **Option A** (Opus plan-tier: network key stays
+  authorization-scoped, sort is a derived interaction identity). Review pipeline: Opus plan-tier
+  APPROVE → 9 slices → mid-build + full Sol diff-review → Sol focused verify → Opus cross-model
+  final-draft (1 blocking regression on empty-Stage-column moves, fixed `71203f1`) → Sol focused
+  confirm CLEARED → Agy local-dev functional QA matrix PASS (independently §5-re-verified) →
+  Slice-5 real-hardware acceptance (touch + VoiceOver/NVDA) PASS. Also carried `b4f8fda`
+  (pre-existing `main` breakage: TB5A fence-design test path).
 
 - **`Revamp-TB5A-Stage-And-Kanban-Ordering-Contract-Plan.md`** (+ `implemented/tb5a/`) — **deployed
   to production 2026-08-29**, merge `b4cda86`, migration `0037`, app `4ba551a3` / bg `fa876454`,

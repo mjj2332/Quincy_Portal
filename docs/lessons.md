@@ -798,23 +798,37 @@ was expensive: three wrong root causes were shipped before the plan page was eve
   both the bare and trailing-slash forms of that exact path — don't assume the two are equivalent
   just because the thing being proxied to treats them the same way.
 
-## dnd-kit Kanban interaction timing in a real browser (TB5B — STUB, fill after QA)
+## dnd-kit Kanban interaction timing in a real browser (TB5B)
 
-**This entry is a placeholder.** TB5B's dnd-kit rewrite was fully built and its happy-dom / Node
-suites are green, but happy-dom cannot exercise PointerSensor / TouchSensor / KeyboardSensor
-activation, real collision geometry, autoscroll, scroll containers, screen-reader delivery, or
-browser focus timing. The concrete observed behaviour + root cause + fix below must be filled from
-the QA-phase real-Chrome + VoiceOver/NVDA pass before this entry counts as a lesson; do not treat
-the placeholders as findings.
+TB5B's dnd-kit rewrite shipped with green happy-dom / Node suites, but happy-dom cannot exercise
+PointerSensor / TouchSensor / KeyboardSensor activation, real collision geometry, autoscroll,
+scroll containers, screen-reader delivery, or browser focus timing. Those paths were verified
+out-of-band before deploy (`578d2a1`, app Worker `2b515484`).
 
-- **Observed behavior:** [real pointer/touch/keyboard/autoscroll/focus/live-region behavior that
-  happy-dom did not reproduce — fill from QA].
-- **Root cause:** [event ordering / sensor activation / collision measurement / scroll-ancestor /
-  overlay / focus-restoration mechanism proven by instrumentation — fill from QA].
-- **Fix:** [the exact configuration/code boundary that resolved it — fill from QA, or "none needed;
-  behaviour was correct in Chrome" if the real-browser pass finds nothing].
-- **Rule:** dnd-kit reducer/placement and `DndContext`-handler mocks prove command wiring only;
-  [precise future rule for which interaction change must be verified in a real browser — fill].
+- **Observed behavior:** no real-browser defect that the unit suites missed. The Agy local-dev
+  functional matrix (Chrome, admin + impersonated Editor/External) and a separate real-hardware
+  pass (touch device + VoiceOver/NVDA) both came back clean. What the mocks could NOT have caught
+  but the real passes confirmed: (a) dragging into an **empty** Stage column issues exactly one
+  `POST /stage` `placement:{kind:"append"}` with the correct single polite announcement — this
+  was the one real regression, found by cross-model plan review (not a browser), fixed in
+  `71203f1` before QA, and then re-confirmed in Chrome; (b) touch-drag activates on the 250 ms
+  hold and does not fight scroll-fling; (c) keyboard drag → confirmation-required keeps focus
+  inside the modal across animation frames; (d) the assertive dnd-kit live region and the polite
+  Dashboard region do not stomp each other under a real AT.
+- **Root cause:** n/a — behaviour was correct in Chrome. The empty-column bug's root cause (see
+  `71203f1`): `resolveSemanticGap` treated a Stage key **absent** from the server board map as
+  `{stale:true}`, but the server omits the key entirely for an empty column (it is never `[]`), so
+  every "drop into empty column" looked stale and silently cancelled.
+- **Fix:** none needed at the browser layer. The only code fix was the pre-QA `?? []` fallback in
+  `resolveSemanticGap` / `moveToPositionOptions` and server-shaped test fixtures (`71203f1`).
+- **Rule:** dnd-kit reducer/placement and `DndContext`-handler mocks prove command wiring only.
+  Any change to sensor activation constraints, collision detection, autoscroll config, the
+  optimistic-overlay/reconcile boundary, live-region politeness, or focus restoration must be
+  re-verified in a real browser (functional matrix) and, for touch/AT-facing changes, on real
+  hardware — the happy-dom suite passing is necessary, never sufficient. Also: when a fixture
+  encodes a server response shape, derive it from the actual server projection, not from what
+  feels natural (`stageKey: []` for an empty column was wrong in every TB5B fixture until
+  `71203f1`).
 
 This follows the existing TipTap lessons: native listener / event timing and scroll/focus behavior
 can pass happy-dom while failing Chrome.
