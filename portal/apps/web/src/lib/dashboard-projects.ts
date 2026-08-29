@@ -4,7 +4,7 @@ import { apiGet } from "./api";
 import { externalApiGet, externalProjectSummaryToDashboard } from "./external-api-response";
 import { projectQueryRetry } from "./project-data";
 import { getProjectQueryRuntime } from "./project-query-sync";
-import type { ProjectSummary } from "../screens/Dashboard";
+import type { ProjectSummary } from "./kanban-interaction";
 
 type ProjectsResponse = {
   projects: ProjectSummary[];

@@ -1,5 +1,5 @@
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type DragEvent } from "react";
-import { compareByStreetThenId, formatSydneyCivil, isDeadlineOverdue, type ExpectedBoardProject, type MoveProjectStageRequest, type StageMovePlacement } from "@quincy/shared";
+import { formatSydneyCivil, isDeadlineOverdue, type MoveProjectStageRequest, type StageMovePlacement } from "@quincy/shared";
 import { QueryClient, QueryClientContext, QueryClientProvider } from "@tanstack/react-query";
 import { StatusBadge } from "../components/atoms";
 import { LazyImage } from "../components/LazyImage";
@@ -7,7 +7,7 @@ import { ApiError, apiPost } from "../lib/api";
 import { confirmStore } from "../lib/confirm";
 import { useCapabilities } from "../lib/capabilities";
 import { type ProjectStageKey, useStages } from "../lib/stages";
-import { formatDashboardDate, initializeDashboardView, initializeKanbanSortMode, isCanonicalShootDate, type DashboardView, type KanbanSortMode } from "./dashboard-helpers";
+import { formatDashboardDate, initializeDashboardView, initializeKanbanSortMode, type DashboardView, type KanbanSortMode } from "./dashboard-helpers";
 import { InternalLink } from "../components/InternalLink";
 import { NoticeBoard } from "../components/NoticeBoard";
 import { invalidateProjectResources, useOptionalProjectQueryClient } from "../lib/project-data";
@@ -15,135 +15,10 @@ import { getProjectQueryRuntime } from "../lib/project-query-sync";
 import { dashboardProjectsKey, useDashboardProjects } from "../lib/dashboard-projects";
 import { submitStageMoveWithConfirmation } from "../lib/stage-move";
 
-export interface ProjectSummary {
-  id: string;
-  street: string;
-  suburb: string | null;
-  postcode: string | null;
-  agencyName: string | null;
-  agentName: string | null;
-  stageKey: ProjectStageKey;
-  shootDate: string | null;
-  coverAssetId: string | null;
-  receivedCount: number;
-  expectedCount: number | null;
-  priority: number | null;
-  /** Legacy wire field retained for compatibility; Board rendering never reads it. */
-  boardPosition?: number;
-  /** The one authorized board projection carried through the web adapter for interactions. */
-  authorizedBoardOrder?: Record<string, string[]>;
-  /** Private, non-wire rendering rank derived from the authorized Board ID map. */
-  boardRank?: number;
-  /** Private marker: Board ordering is authoritative even when this card's ID is absent. */
-  boardMapPresent?: boolean;
-  boardContractEnabled?: boolean;
-  boardRevision: number;
-  deadlineAt: number | null;
-  deadlineLocalCivil: string | null;
-  deadlineZone: "Australia/Sydney" | null;
-}
+import { adjacentBoardPlacement, cardDropPlacement, sortKanbanProjects, type ProjectSummary } from "../lib/kanban-interaction";
 
-function sortKanbanProjectsByShootDate(projects: ProjectSummary[], mode: "shootDate-asc" | "shootDate-desc"): ProjectSummary[] {
-  const direction = mode === "shootDate-asc" ? 1 : -1;
-  return [...projects].sort((left, right) => {
-    const leftDate = isCanonicalShootDate(left.shootDate) ? left.shootDate : null;
-    const rightDate = isCanonicalShootDate(right.shootDate) ? right.shootDate : null;
-    if (leftDate === null || rightDate === null) {
-      if (leftDate === rightDate) return compareByStreetThenId(left, right); // both null or both non-canonical
-      return leftDate === null ? 1 : -1; // no usable date sorts last, either direction
-    }
-    if (leftDate !== rightDate) return direction * (leftDate < rightDate ? -1 : 1);
-    return compareByStreetThenId(left, right);
-  });
-}
-
-export function sortKanbanProjects(projects: ProjectSummary[], sort: KanbanSortMode = "board"): ProjectSummary[] {
-  const boardRank = (project: ProjectSummary) => {
-    const order = project.authorizedBoardOrder?.[project.stageKey];
-    if (order !== undefined) {
-      const rank = order.indexOf(project.id);
-      return rank < 0 ? Number.POSITIVE_INFINITY : rank;
-    }
-    return project.boardRank ?? Number.POSITIVE_INFINITY;
-  };
-  if (sort === "priority") return [...projects].sort((left, right) =>
-    (left.priority === null ? 1 : 0) - (right.priority === null ? 1 : 0)
-    || (left.priority ?? 0) - (right.priority ?? 0)
-    || boardRank(left) - boardRank(right)
-    || left.id.localeCompare(right.id));
-  if (sort !== "board") return sortKanbanProjectsByShootDate(projects, sort);
-  const hasAuthorizedMap = projects.some((project) => project.boardMapPresent === true || project.boardRank !== undefined || project.authorizedBoardOrder?.[project.stageKey] !== undefined);
-  if (hasAuthorizedMap) {
-    return [...projects].sort((left, right) =>
-      boardRank(left) - boardRank(right)
-      || left.id.localeCompare(right.id));
-  }
-  // Pre-contract servers do not provide a board map. Their list order is the only
-  // authoritative order available; never infer render order from the private position field.
-  return [...projects];
-}
-
-function projectById(projects: ProjectSummary[]) {
-  return new Map(projects.map((project) => [project.id, project]));
-}
-
-function authorizedOrderForStage(projects: ProjectSummary[], stageKey: string) {
-  return projects.find((project) => project.authorizedBoardOrder?.[stageKey] !== undefined)?.authorizedBoardOrder?.[stageKey];
-}
-
-function expectedNeighbour(projectId: string, projects: Map<string, ProjectSummary>): ExpectedBoardProject | null {
-  const project = projects.get(projectId);
-  return project ? { projectId, boardRevision: project.boardRevision } : null;
-}
-
-/** Build the exact visible neighbour tuple from the authorized map, never from boardPosition. */
-export function cardDropPlacement(
-  movingProjectId: string,
-  targetProjectId: string,
-  targetStageKey: string,
-  edge: "before" | "after",
-  projects: ProjectSummary[],
-): StageMovePlacement | null {
-  const order = authorizedOrderForStage(projects, targetStageKey);
-  if (!order) return null;
-  const withoutMoving = order.filter((projectId) => projectId !== movingProjectId);
-  const targetIndex = withoutMoving.indexOf(targetProjectId);
-  if (targetIndex < 0) return null;
-  const insertionIndex = edge === "before" ? targetIndex : targetIndex + 1;
-  if (insertionIndex >= withoutMoving.length) return { kind: "append" };
-  const byId = projectById(projects);
-  const before = insertionIndex > 0 ? expectedNeighbour(withoutMoving[insertionIndex - 1]!, byId) : null;
-  const after = expectedNeighbour(withoutMoving[insertionIndex]!, byId);
-  if (insertionIndex > 0 && !before) return null;
-  if (!after) return null;
-  return { kind: "between", before, after };
-}
-
-/** Build the exact adjacent placement used by the arrow/keyboard controls. */
-export function adjacentBoardPlacement(
-  movingProjectId: string,
-  targetStageKey: string,
-  direction: "up" | "down",
-  projects: ProjectSummary[],
-): StageMovePlacement | null {
-  const order = authorizedOrderForStage(projects, targetStageKey);
-  if (!order) return null;
-  const movingIndex = order.indexOf(movingProjectId);
-  const withoutMoving = order.filter((projectId) => projectId !== movingProjectId);
-  if (movingIndex < 0) return null;
-  const currentIndex = withoutMoving.slice(0, movingIndex).length;
-  const desiredIndex = direction === "up"
-    ? Math.max(0, currentIndex - 1)
-    : Math.min(withoutMoving.length, currentIndex + 1);
-  if (desiredIndex === currentIndex) return null;
-  if (desiredIndex >= withoutMoving.length) return { kind: "append" };
-  const byId = projectById(projects);
-  const before = desiredIndex > 0 ? expectedNeighbour(withoutMoving[desiredIndex - 1]!, byId) : null;
-  const after = expectedNeighbour(withoutMoving[desiredIndex]!, byId);
-  if (desiredIndex > 0 && !before) return null;
-  if (!after) return null;
-  return { kind: "between", before, after };
-}
+export { adjacentBoardPlacement, cardDropPlacement, sortKanbanProjects } from "../lib/kanban-interaction";
+export type { ProjectSummary } from "../lib/kanban-interaction";
 
 type ProjectScope = "active" | "archived";
 type Toast = { id: number; message: string; tone: "success" | "error" };
