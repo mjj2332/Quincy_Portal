@@ -8,8 +8,9 @@ import {
   type ProjectDeadlineScheduleEventIntent,
   type SaveProjectDeadlineRequest,
 } from "@quincy/shared";
-import { buildProjectActivityStatements } from "@quincy/db";
+import { buildDeadlineSuppressionBundle, buildProjectActivityStatements } from "@quincy/db";
 import { auditMeta, type AuditPrincipal } from "./audit";
+import { newId } from "./ids";
 
 export class ProjectDeadlineError extends Error {
   constructor(
@@ -63,41 +64,15 @@ export type SaveProjectDeadlineScheduleInput = {
 
 export type ProjectDeadlineSuppressionReason = "project_delivered" | "project_archived";
 
-/** Best-effort lifecycle follow-up used after the existing Delivered ORM write. */
+/** Compatibility helper for callers outside a lifecycle winner bundle. */
 export async function suppressProjectDeadlineWork(db: D1Database, projectId: string, now = Date.now(), reason: ProjectDeadlineSuppressionReason): Promise<void> {
-  await db.batch([
-    db.prepare(`
-      UPDATE project_deadline_occurrences
-      SET status = 'superseded', terminal_reason = ?, fired_at = NULL, updated_at = ?
-      WHERE project_id = ? AND status = 'pending'
-        AND EXISTS (
-          SELECT 1 FROM projects p
-          WHERE p.id = project_deadline_occurrences.project_id
-            AND ((? = 'project_archived' AND p.archived_at IS NOT NULL) OR (? = 'project_delivered' AND p.stage_key = 'delivered'))
-        )
-    `).bind(reason, now, projectId, reason, reason),
-    db.prepare(`
-      UPDATE notification_delivery_ledger
-      SET status = 'suppressed', last_error_code = 'reauthorization_suppressed',
-        last_error = ?, updated_at = ?
-      WHERE event_type = 'project.deadline.reminder' AND status = 'pending'
-        AND EXISTS (
-          SELECT 1 FROM notification_outbox o
-          WHERE o.id = notification_delivery_ledger.outbox_id
-            AND o.project_id = ? AND o.event_type = 'project.deadline.reminder'
-            AND o.source_key IN (SELECT id FROM project_deadline_occurrences WHERE project_id = ?)
-        )
-    `).bind(`Deadline reminder suppressed: ${reason}.`, now, projectId, projectId),
-    db.prepare(`
-      UPDATE notification_outbox
-      SET status = 'suppressed', lease_token = NULL, lease_expires_at = NULL,
-        completed_at = ?, last_error_code = 'reauthorization_suppressed',
-        last_error = ?, updated_at = ?
-      WHERE project_id = ? AND event_type = 'project.deadline.reminder'
-        AND status IN ('pending', 'queued')
-        AND NOT EXISTS (SELECT 1 FROM notification_delivery_ledger WHERE outbox_id = notification_outbox.id AND status IN ('pending', 'processing'))
-    `).bind(now, `Deadline reminder suppressed: ${reason}.`, now, projectId),
-  ]);
+  const auditId = newId();
+  const marker = db.prepare(`
+    INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
+    VALUES (?, NULL, 'project.deadline_suppression', 'project', ?, NULL, ?)
+  `).bind(auditId, projectId, now);
+  const bundle = buildDeadlineSuppressionBundle({ db, projectId, now, reason, auditId });
+  await db.batch([marker, ...bundle.statements]);
 }
 
 async function readProject(db: D1Database, projectId: string): Promise<ProjectDeadlineProjectRow | null> {

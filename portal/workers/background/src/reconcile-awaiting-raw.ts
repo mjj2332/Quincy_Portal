@@ -1,3 +1,5 @@
+import { commitAutomaticStage, automaticBoardWritesEnabled } from "./lib/automatic-stage";
+
 export type AwaitingRawProject = {
   id: string;
   shootDate: string | null;
@@ -11,6 +13,7 @@ type ReconciliationStore = {
   scan: (businessDate: string) => Promise<AwaitingRawProject[]>;
   advance: (project: DueAwaitingRawProject, businessDate: string) => Promise<boolean>;
 };
+type ReconciliationNotifier = (projectId: string) => void | Promise<void>;
 
 const SYDNEY_TIME_ZONE = "Australia/Sydney";
 export const RECONCILE_AWAITING_RAW_BATCH_SIZE = 100;
@@ -48,24 +51,6 @@ export function dueAwaitingRawProjects(projects: AwaitingRawProject[], businessD
   ));
 }
 
-export const RECONCILE_AWAITING_RAW_UPDATE_SQL = `
-  UPDATE projects
-  SET stage_key = 'raw_review', board_position = (SELECT COALESCE(MAX(board_position) + 1024, 0) FROM projects WHERE stage_key = 'raw_review' AND archived_at IS NULL AND id != ?), updated_at = ?
-  WHERE id = ?
-    AND stage_key = 'awaiting_raw'
-    AND archived_at IS NULL
-    AND shoot_date = ?
-`;
-
-// SQLite changes() is connection-local and reports the immediately preceding UPDATE. D1 batch
-// executes its statements transactionally on that connection, so this insert can only happen
-// when the guarded update in the same batch changed one project row.
-export const RECONCILE_AWAITING_RAW_AUDIT_SQL = `
-  INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
-  SELECT ?, NULL, 'stage.auto_advance', 'project', ?, ?, ?
-  WHERE changes() = 1
-`;
-
 // The date() equality prefilter keeps malformed legacy text from occupying a
 // stable-id page indefinitely. Code still validates calendar dates defensively.
 export const RECONCILE_AWAITING_RAW_SCAN_SQL = `
@@ -87,7 +72,9 @@ export async function scanAwaitingRawProjects(database: D1Database, businessDate
   return result.results;
 }
 
-export async function advanceAwaitingRawProject(database: D1Database, project: DueAwaitingRawProject, businessDate: string, now = Date.now(), onSuccess?: () => void | Promise<void>): Promise<boolean> {
+export async function advanceAwaitingRawProject(database: D1Database, project: DueAwaitingRawProject, businessDate: string, now = Date.now()): Promise<boolean> {
+  if (!await automaticBoardWritesEnabled({ DB: database })) return false;
+  const auditId = crypto.randomUUID();
   const metadata = JSON.stringify({
     actor: "system",
     trigger: "hourly-awaiting-raw-reconciliation",
@@ -96,37 +83,69 @@ export async function advanceAwaitingRawProject(database: D1Database, project: D
     from: "awaiting_raw",
     to: "raw_review",
   });
-  const result = await database.batch([
-    database.prepare(RECONCILE_AWAITING_RAW_UPDATE_SQL).bind(project.id, now, project.id, project.shootDate),
-    database.prepare(RECONCILE_AWAITING_RAW_AUDIT_SQL).bind(crypto.randomUUID(), project.id, metadata, now),
-  ]);
-  const changed = result[0]?.meta.changes === 1;
-  if (changed) await onSuccess?.();
-  return changed;
+  const result = await commitAutomaticStage({
+    env: { DB: database },
+    projectId: project.id,
+    from: "awaiting_raw",
+    to: "raw_review",
+    auditId,
+    auditActorId: null,
+    auditMetaJson: metadata,
+    now,
+    workflow: {
+      kind: "raw_reconciliation",
+      projectId: project.id,
+      claimId: null,
+      claimStates: ["running"],
+      shootDate: project.shootDate,
+    },
+    alreadyAtDestination: { allowed: true, effect: { kind: "none" } },
+  });
+  return result.kind === "winner";
 }
 
 export type ReconciliationSummary = { attempted: number; advanced: number; skipped: number; failures: number };
 
-export async function reconcileAwaitingRaw(store: ReconciliationStore, businessDate: string): Promise<ReconciliationSummary> {
+export async function reconcileAwaitingRaw(store: ReconciliationStore, businessDate: string, onAdvanced?: ReconciliationNotifier): Promise<ReconciliationSummary> {
   const candidates = dueAwaitingRawProjects(await store.scan(businessDate), businessDate);
   let advanced = 0; let failures = 0;
+  const advancedProjectIds: string[] = [];
   for (const project of candidates) {
     try {
-      if (await store.advance(project, businessDate)) advanced += 1;
+      if (await store.advance(project, businessDate)) {
+        advanced += 1;
+        advancedProjectIds.push(project.id);
+      }
     } catch (error) {
       failures += 1;
       console.error("Awaiting RAW reconciliation candidate failed", { projectId: project.id, error: error instanceof Error ? error.message : String(error) });
     }
   }
-  return { attempted: candidates.length, advanced, skipped: candidates.length - advanced - failures, failures };
+  const summary = { attempted: candidates.length, advanced, skipped: candidates.length - advanced - failures, failures };
+  // Notification is best effort and deliberately runs after the mutation result is counted.
+  // An outage must not turn a committed Stage winner into a reconciliation failure.
+  for (const projectId of advancedProjectIds) {
+    try {
+      await onAdvanced?.(projectId);
+    } catch (error) {
+      console.error("Awaiting RAW reconciliation notification failed", { projectId, error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  return summary;
 }
 
 export async function reconcileAwaitingRawProjects(database: D1Database, scheduledTime: Date | number, onAdvanced?: (projectId: string) => void | Promise<void>): Promise<ReconciliationSummary> {
+  if (!await automaticBoardWritesEnabled({ DB: database })) {
+    // The marker check deliberately precedes construction of the legacy stage UPDATE.
+    return { attempted: 0, advanced: 0, skipped: 0, failures: 0 };
+  }
   const businessDate = australiaSydneyBusinessDate(scheduledTime);
   const summary = await reconcileAwaitingRaw({
     scan: (date) => scanAwaitingRawProjects(database, date),
-    advance: (project, date) => advanceAwaitingRawProject(database, project, date, Date.now(), () => onAdvanced?.(project.id)),
-  }, businessDate);
+    advance: async (project, date) => {
+      return advanceAwaitingRawProject(database, project, date, Date.now());
+    },
+  }, businessDate, onAdvanced);
   console.log("Awaiting RAW reconciliation", { businessDate, ...summary });
   return summary;
 }

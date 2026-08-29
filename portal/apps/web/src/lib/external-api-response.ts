@@ -1,8 +1,10 @@
 import {
   EXTERNAL_API_RESPONSE_SCHEMAS,
+  authorizedBoardRank,
   type ExternalApiSurface,
   type ExternalProjectDetailDto,
   type ExternalProjectSummaryDto,
+  type AuthorizedBoardOrder,
 } from "@quincy/shared";
 import { apiGet } from "./api";
 
@@ -19,7 +21,11 @@ export async function externalApiGet<S extends ExternalApiSurface>(surface: S, p
   return decodeExternalResponse(surface, await apiGet<unknown>(path, signal ? { signal } : undefined));
 }
 
-export function externalProjectSummaryToDashboard(project: ExternalProjectSummaryDto) {
+export function externalProjectSummaryToDashboard(
+  project: ExternalProjectSummaryDto,
+  orderedProjectIdsByStage?: AuthorizedBoardOrder,
+  contractEnabled = false,
+) {
   const raw = project.services.find((service) => service.kind === "raw");
   return {
     id: project.id,
@@ -34,7 +40,11 @@ export function externalProjectSummaryToDashboard(project: ExternalProjectSummar
     receivedCount: raw?.receivedCount ?? 0,
     expectedCount: raw?.expectedCount ?? null,
     priority: null,
-    boardPosition: 0,
+    boardRank: authorizedBoardRank(project.id, project.stageKey, orderedProjectIdsByStage),
+    boardMapPresent: Object.keys(orderedProjectIdsByStage ?? {}).length > 0,
+    authorizedBoardOrder: orderedProjectIdsByStage,
+    boardContractEnabled: contractEnabled,
+    boardRevision: project.boardRevision,
     deadlineAt: project.deadline?.deadline?.instant ? Date.parse(project.deadline.deadline.instant) : null,
     deadlineLocalCivil: project.deadline?.deadline?.localCivil ?? null,
     deadlineZone: project.deadline?.deadline?.zone ?? null,
@@ -52,6 +62,8 @@ export function externalProjectDetailToWorkspace(project: ExternalProjectDetailD
     shootDate: project.shootDate,
     timeWindow: project.timeWindow,
     stageKey: project.stageKey,
+    boardRevision: project.boardRevision,
+    contractEnabled: project.contractEnabled,
     productionNotes: project.productionNotes,
     editedUploadAvailable: project.editedUploadAvailable,
     rawFolderPath: null,

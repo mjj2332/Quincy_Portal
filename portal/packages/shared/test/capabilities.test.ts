@@ -3,17 +3,18 @@ import { CAPABILITIES, EXTERNAL_EDITOR_CAPABILITIES, ROLE_CAPABILITIES, ROLE_LAB
 import { PHOTOGRAPHER_VISIBLE_STAGES, STAGE_KEYS, STAGE_TRANSITIONS } from "../src/stages";
 
 describe("PRD §4 capability matrix", () => {
-  it("keeps the External Editor role and exact nine-capability allow-list closed", () => {
+  it("keeps the External Editor role and exact ten-capability allow-list closed", () => {
     expect(ROLES).toEqual(["admin", "photographer", "editor", "external_editor"]);
     expect(ROLE_LABELS.external_editor).toBe("External editor");
     expect(EXTERNAL_EDITOR_CAPABILITIES).toEqual([
       "uploadEdited", "viewRaw", "annotateRaw", "recommendRaw", "compareFrames",
       "viewEdited", "reviewEdited", "annotateEdited", "collaborateOnProject",
+      "moveProjectStage",
     ]);
     expect(ROLE_CAPABILITIES.external_editor).toEqual(EXTERNAL_EDITOR_CAPABILITIES);
-    expect(EXTERNAL_EDITOR_CAPABILITIES).toHaveLength(9);
+    expect(EXTERNAL_EDITOR_CAPABILITIES).toHaveLength(10);
     expect(ROLE_CAPABILITIES.external_editor.every((capability) => CAPABILITIES.includes(capability))).toBe(true);
-    expect(roleHasCapability("external_editor", "moveProjectStage" as never)).toBe(false);
+    expect(roleHasCapability("external_editor", "moveProjectStage")).toBe(true);
     expect(roleHasCapability("external_editor", "viewProductionCalendar" as never)).toBe(false);
   });
 
@@ -74,6 +75,24 @@ describe("PRD §4 capability matrix", () => {
     expect(ROLE_CAPABILITIES.admin).toContain("prioritizeProjects");
     expect(ROLE_CAPABILITIES.editor).not.toContain("prioritizeProjects");
     expect(ROLE_CAPABILITIES.photographer).not.toContain("prioritizeProjects");
+  });
+
+  it("allows Stage movement for Admin, Editor, and External Editor, but not Photographer", () => {
+    expect(roleHasCapability("admin", "moveProjectStage")).toBe(true);
+    expect(roleHasCapability("editor", "moveProjectStage")).toBe(true);
+    expect(roleHasCapability("external_editor", "moveProjectStage")).toBe(true);
+    expect(roleHasCapability("photographer", "moveProjectStage")).toBe(false);
+  });
+
+  it("leaves the existing selection and prioritization capability boundaries unchanged", () => {
+    expect(roleHasCapability("admin", "selectForEditing")).toBe(true);
+    expect(roleHasCapability("editor", "selectForEditing")).toBe(true);
+    expect(roleHasCapability("external_editor", "selectForEditing")).toBe(false);
+    expect(roleHasCapability("photographer", "selectForEditing")).toBe(false);
+    expect(roleHasCapability("admin", "prioritizeProjects")).toBe(true);
+    expect(roleHasCapability("editor", "prioritizeProjects")).toBe(false);
+    expect(roleHasCapability("external_editor", "prioritizeProjects")).toBe(false);
+    expect(roleHasCapability("photographer", "prioritizeProjects")).toBe(false);
   });
 });
 

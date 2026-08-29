@@ -8,7 +8,7 @@ import {
   editedSourceClaims,
   projects,
 } from "@quincy/db/schema";
-import { COLLECTION_RECEIVED_COUNT_SQL, collectionReceivedCountBindings, guardedStageTransition } from "@quincy/db";
+import { COLLECTION_RECEIVED_COUNT_SQL, collectionReceivedCountBindings } from "@quincy/db";
 import { enqueueRenditionSafely } from "@quincy/shared";
 
 import type { Env } from "../env";
@@ -16,8 +16,9 @@ import { dbFor } from "../lib/db";
 import { download, type DropboxFile } from "../dropbox/client";
 import { dropboxPathKey, pathEqualsOrIsBelow } from "../dropbox/paths";
 import { notifyProject } from "../notifications";
+import { commitAutomaticStage } from "../lib/automatic-stage";
 
-export type FrozenReadinessUnit = { key: string; assetIds: string[] };
+export type FrozenReadinessUnit = { key: string; assetIds: string[]; };
 export type FinalWriteContext = {
   projectId: string;
   jobId: string;
@@ -42,6 +43,7 @@ export type FinalWriteResult = {
 export type FinalWriteDependencies = {
   download?: typeof download;
   enqueue?: typeof enqueueRenditionSafely;
+  beforeFinalStage?: () => void | Promise<void>;
   afterR2Write?: () => void | Promise<void>;
   afterD1Commit?: () => void | Promise<void>;
 };
@@ -49,14 +51,13 @@ export type FinalWriteDependencies = {
 export function plainBasename(filename: string): string {
   return filename.replace(/\.[^.]+$/, "").toLowerCase();
 }
-
 export function strippedBasename(filename: string): string {
   return plainBasename(filename).replace(/[ _-]+(?:vs|staged)$/i, "");
 }
 
 async function shortDigest(value: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
-  return [...new Uint8Array(digest).slice(0, 10)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  return [...new Uint8Array(digest).slice(0, 10)].map(byte => byte.toString(16).padStart(2, "0")).join("");
 }
 
 async function ensureEditedCollection(env: Env, projectId: string): Promise<string> {
@@ -72,17 +73,16 @@ async function credibleCoverage(env: Env, context: FinalWriteContext, filename: 
   const db = dbFor(env);
   const handoff = await db.select({
     selectedJson: autoHdrHandoffs.selectedAssetIdsJson,
-    unitsJson: autoHdrHandoffs.readinessUnitsJson,
-  }).from(autoHdrHandoffs).where(eq(autoHdrHandoffs.id, context.handoffId)).get();
+    unitsJson: autoHdrHandoffs.readinessUnitsJson }).from(autoHdrHandoffs).where(eq(autoHdrHandoffs.id, context.handoffId)).get();
   if (!handoff) return null;
   const selectedIds = JSON.parse(handoff.selectedJson) as string[];
   const units = JSON.parse(handoff.unitsJson) as FrozenReadinessUnit[];
   const raws = await db.select({ id: assets.id, filename: assets.originalFilename }).from(assets)
     .where(inArray(assets.id, selectedIds));
-  const exact = raws.find((raw) => plainBasename(raw.filename) === plainBasename(filename));
-  const matched = exact ?? raws.find((raw) => plainBasename(raw.filename) === strippedBasename(filename));
+  const exact = raws.find(raw => plainBasename(raw.filename) === plainBasename(filename));
+  const matched = exact ?? raws.find(raw => plainBasename(raw.filename) === strippedBasename(filename));
   if (!matched) return null;
-  const unit = units.find((candidate) => candidate.assetIds.includes(matched.id));
+  const unit = units.find(candidate => candidate.assetIds.includes(matched.id));
   return unit ? { rawAssetId: matched.id, unitKey: unit.key, matchKind: exact ? "exact" as const : "suffix" as const } : null;
 }
 
@@ -92,9 +92,85 @@ async function quarantine(env: Env, context: FinalWriteContext, file: DropboxFil
     env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) VALUES (?, NULL, 'autohdr.final_quarantined', 'project', ?, ?, ?)")
       .bind(crypto.randomUUID(), context.projectId, JSON.stringify({ reason, sourcePath: file.path_display ?? file.path_lower, jobId: context.jobId, handoffId: context.handoffId }), now),
     env.DB.prepare("UPDATE autohdr_fetch_claims SET state = 'quarantined', last_error = ?, updated_at = ? WHERE id = ? AND state in ('starting', 'running')")
-      .bind(reason, now, context.claimId),
-  ]);
+      .bind(reason, now, context.claimId)]);
   return { status: "quarantined", stageAdvanced: false };
+}
+
+type FinalCoverage = NonNullable<Awaited<ReturnType<typeof credibleCoverage>>>;
+
+async function advanceFinalStage(
+  env: Env,
+  context: FinalWriteContext,
+  fence: { stageKey: string; editingEntryBoardRevision: number | null; },
+  coverage: FinalCoverage | null,
+  collectionId: string,
+  sourcePathKey: string,
+  currentAssetId: string): Promise<boolean> {
+  if (!coverage || !["editing_autohdr", "edited_review"].includes(fence.stageKey)) return false;
+  if (fence.editingEntryBoardRevision === null) {
+    console.error("AutoHDR final completion permanently failed closed", {
+      projectId: context.projectId,
+      handoffId: context.handoffId,
+      mappingId: context.mappingId,
+      claimId: context.claimId,
+      jobId: context.jobId,
+      providerSecret: false,
+      reason: "missing editing-entry board revision"
+    });
+    return false;
+  }
+  const auditId = crypto.randomUUID();
+  const outcome = await commitAutomaticStage({
+    env,
+    projectId: context.projectId,
+    from: "editing_autohdr",
+    to: "edited_review",
+    oldBoardRevision: fence.editingEntryBoardRevision,
+    auditId,
+    auditMetaJson: JSON.stringify({
+      from: "editing_autohdr",
+      to: "edited_review",
+      trigger: context.trigger,
+      jobId: context.jobId,
+      handoffId: context.handoffId,
+      mappingGeneration: context.mappingGeneration,
+      sourcePathKey,
+      credibleCoverage: coverage.unitKey
+    }),
+    workflow: {
+      kind: "autohdr_final_claim",
+      projectId: context.projectId,
+      collectionId,
+      sourcePathKey,
+      currentAssetId,
+      handoffId: context.handoffId,
+      mappingId: context.mappingId,
+      fetchClaimId: context.claimId,
+      fetchJobId: context.jobId,
+      generation: context.mappingGeneration,
+      connectionId: context.connectionId,
+      mappingStates: ["active"],
+      handoffStates: ["started"],
+      fetchStates: ["starting", "running"],
+      manifestVersion: context.manifestVersion,
+      finalPathKey: context.finalPathKey,
+      expectedPriorToken: fence.editingEntryBoardRevision
+    },
+    alreadyAtDestination: {
+      allowed: true,
+      effect: { kind: "none" }
+    },
+    legacyWorkflowNotification: "edited_landed"
+  });
+  if (outcome.kind === "winner") {
+    try {
+      await notifyProject(env, context.projectId, "edited_landed");
+    } catch (error) {
+      console.error("AutoHDR final notification failed", { projectId: context.projectId, error });
+    }
+    return true;
+  }
+  return false;
 }
 
 /** Rechecks every trigger fence immediately before metadata and writes immutable current versions. */
@@ -102,8 +178,7 @@ export async function writeAutoHdrFinal(
   env: Env,
   context: FinalWriteContext,
   file: DropboxFile,
-  dependencies: FinalWriteDependencies = {},
-): Promise<FinalWriteResult> {
+  dependencies: FinalWriteDependencies = {}): Promise<FinalWriteResult> {
   const sourcePath = file.path_display ?? file.path_lower;
   const sourcePathKey = dropboxPathKey(file.path_lower);
   if (!file.content_hash) return quarantine(env, context, file, "Dropbox final has no trusted content hash");
@@ -118,6 +193,7 @@ export async function writeAutoHdrFinal(
     mappingConnectionId: autoHdrOutputMappings.connectionId,
     handoffState: autoHdrHandoffs.state,
     manifestVersion: autoHdrHandoffs.manifestVersion,
+    editingEntryBoardRevision: autoHdrHandoffs.editingEntryBoardRevision
   }).from(projects)
     .innerJoin(autoHdrOutputMappings, eq(autoHdrOutputMappings.projectId, projects.id))
     .innerJoin(autoHdrHandoffs, eq(autoHdrOutputMappings.handoffId, autoHdrHandoffs.id))
@@ -128,13 +204,11 @@ export async function writeAutoHdrFinal(
       eq(autoHdrFetchClaims.mappingId, autoHdrOutputMappings.id),
       eq(autoHdrFetchClaims.connectionId, context.connectionId),
       eq(autoHdrFetchClaims.mappingGeneration, context.mappingGeneration),
-      inArray(autoHdrFetchClaims.state, ["starting", "running"]),
-    ))
+      inArray(autoHdrFetchClaims.state, ["starting", "running"])))
     .where(and(
       eq(projects.id, context.projectId),
       eq(autoHdrOutputMappings.id, context.mappingId),
-      eq(autoHdrHandoffs.id, context.handoffId),
-    )).get();
+      eq(autoHdrHandoffs.id, context.handoffId))).get();
   if (!fence || fence.archivedAt || !["editing_autohdr", "edited_review"].includes(fence.stageKey) ||
       fence.mappingState !== "active" || fence.mappingGeneration !== context.mappingGeneration ||
       fence.finalPathKey !== context.finalPathKey || fence.mappingConnectionId !== context.connectionId ||
@@ -147,7 +221,7 @@ export async function writeAutoHdrFinal(
   const current = await db.select({
     claimId: editedSourceClaims.id,
     currentAssetId: editedSourceClaims.currentAssetId,
-    contentHash: editedSourceClaims.contentHash,
+    contentHash: editedSourceClaims.contentHash
   }).from(editedSourceClaims)
     .where(and(eq(editedSourceClaims.collectionId, collectionId), eq(editedSourceClaims.sourcePathKey, sourcePathKey))).get();
   if (!current) {
@@ -156,52 +230,61 @@ export async function writeAutoHdrFinal(
       eq(assets.source, "dropbox"),
       eq(assets.originalFilename, file.name),
       sql`${assets.sourcePathKey} IS NULL`,
-      sql`${assets.supersededAt} IS NULL`,
-    )).get();
+      sql`${assets.supersededAt} IS NULL`)).get();
     if (ambiguousLegacy) return quarantine(env, context, file, "Legacy edited asset with no source key requires reconciliation");
   }
   if (current && !current.currentAssetId) return quarantine(env, context, file, "Edited source claim has no current asset and requires recovery");
   if (current?.contentHash === file.content_hash && current.currentAssetId) {
-    const replayGuard = env.DB.prepare(
-      "UPDATE edited_source_claims SET updated_at = updated_at WHERE id = ? AND current_asset_id = ? AND content_hash = ? " +
-      "AND EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at IS NULL AND stage_key in ('editing_autohdr','edited_review')) " +
-      "AND EXISTS (SELECT 1 FROM autohdr_output_mappings m JOIN autohdr_handoffs h ON h.id = m.handoff_id JOIN autohdr_fetch_claims f ON f.mapping_id = m.id AND f.handoff_id = h.id " +
-      "WHERE m.id = ? AND m.state = 'active' AND m.generation = ? AND m.final_path_key = ? AND m.connection_id = ? " +
-      "AND h.id = ? AND h.state = 'started' AND h.manifest_version = ? AND f.id = ? AND f.connection_id = ? AND f.mapping_generation = ? AND f.state in ('starting','running'))",
-    ).bind(
+    const replayGuard = env.DB.prepare(`UPDATE edited_source_claims
+       SET updated_at = updated_at
+       WHERE id = ?
+         AND current_asset_id = ?
+         AND content_hash = ?
+         AND EXISTS (
+           SELECT 1
+           FROM projects
+           WHERE id = ?
+             AND archived_at IS NULL
+             AND stage_key IN ('editing_autohdr', 'edited_review')
+         )
+         AND EXISTS (
+           SELECT 1
+           FROM autohdr_output_mappings m
+           JOIN autohdr_handoffs h ON h.id = m.handoff_id
+           JOIN autohdr_fetch_claims f
+             ON f.mapping_id = m.id
+            AND f.handoff_id = h.id
+           WHERE m.id = ?
+             AND m.state = 'active'
+             AND m.generation = ?
+             AND m.final_path_key = ?
+             AND m.connection_id = ?
+             AND h.id = ?
+             AND h.state = 'started'
+             AND h.manifest_version = ?
+             AND f.id = ?
+             AND f.connection_id = ?
+             AND f.mapping_generation = ?
+             AND f.state IN ('starting', 'running')
+         )`).bind(
       current.claimId, current.currentAssetId, file.content_hash, context.projectId,
       context.mappingId, context.mappingGeneration, context.finalPathKey, context.connectionId,
       context.handoffId, context.manifestVersion, context.claimId, context.connectionId,
-      context.mappingGeneration,
-    );
+      context.mappingGeneration);
     const replayStatements = [replayGuard];
     if (coverage) {
       replayStatements.push(env.DB.prepare(
         "INSERT INTO autohdr_final_associations (id, handoff_id, asset_id, readiness_unit_key, match_kind, created_at) " +
-        "SELECT ?, ?, ?, ?, ?, ? WHERE changes() = 1 ON CONFLICT DO NOTHING",
-      ).bind(
+        "SELECT ?, ?, ?, ?, ?, ? WHERE changes() = 1 ON CONFLICT DO NOTHING").bind(
         crypto.randomUUID(), context.handoffId, current.currentAssetId, coverage.unitKey,
-        coverage.matchKind, Date.now(),
-      ));
+        coverage.matchKind, Date.now()));
     }
     const replayResult = await env.DB.batch(replayStatements);
     if ((replayResult[0]?.meta.changes ?? 0) !== 1) {
       return quarantine(env, context, file, "Final writer fence changed before same-hash replay repair");
     }
-    const stageAdvanced = coverage ? await guardedStageTransition(env.DB, {
-      projectId: context.projectId,
-      from: "editing_autohdr",
-      to: "edited_review",
-      meta: {
-        trigger: context.trigger,
-        jobId: context.jobId,
-        handoffId: context.handoffId,
-        mappingGeneration: context.mappingGeneration,
-        sourcePathKey,
-        credibleCoverage: coverage.unitKey,
-      },
-      onSuccess: () => notifyProject(env, context.projectId, "edited_landed"),
-    }) : false;
+    await dependencies.beforeFinalStage?.();
+    const stageAdvanced = await advanceFinalStage(env, context, fence, coverage, collectionId, sourcePathKey, current.currentAssetId);
     // A Workflow can fail after the D1 version commit but before its rendition handoff. Replays
     // deliberately re-enqueue the current winner; rendition generation is itself idempotent.
     await (dependencies.enqueue ?? enqueueRenditionSafely)(env, current.currentAssetId, "autohdr-existing-final");
@@ -215,52 +298,77 @@ export async function writeAutoHdrFinal(
   await env.MEDIA.put(r2Key, source.body, { httpMetadata: { contentType: "image/jpeg" } });
   await dependencies.afterR2Write?.();
   const now = new Date();
-  const baseInsert = env.DB.prepare(
-    "INSERT INTO assets (id, collection_id, kind, r2_key, original_filename, bytes, content_hash, source, source_path, source_path_key, source_raw_asset_id, section, publish_status, autohdr_handoff_id, created_at, updated_at) " +
-    "SELECT ?, ?, 'photo', ?, ?, ?, ?, 'dropbox', ?, ?, ?, 'AutoHDR', 'ready', ?, ?, ? " +
-    "WHERE EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at IS NULL AND stage_key in ('editing_autohdr','edited_review')) " +
-    "AND EXISTS (SELECT 1 FROM autohdr_output_mappings m JOIN autohdr_handoffs h ON h.id = m.handoff_id JOIN autohdr_fetch_claims f ON f.mapping_id = m.id AND f.handoff_id = h.id " +
-    "WHERE m.id = ? AND m.state = 'active' AND m.generation = ? AND m.final_path_key = ? AND m.connection_id = ? " +
-    "AND h.id = ? AND h.state = 'started' AND h.manifest_version = ? AND f.id = ? AND f.connection_id = ? AND f.mapping_generation = ? AND f.state in ('starting','running'))",
-  ).bind(
+  const baseInsert = env.DB.prepare(`INSERT INTO assets (
+  id,
+  collection_id,
+  kind,
+  r2_key,
+  original_filename,
+  bytes,
+  content_hash,
+  source,
+  source_path,
+  source_path_key,
+  source_raw_asset_id,
+  section,
+  publish_status,
+  autohdr_handoff_id,
+  created_at,
+  updated_at
+)
+SELECT
+  ?, ?, 'photo', ?, ?, ?, ?, 'dropbox', ?, ?, ?, 'AutoHDR', 'ready', ?, ?, ?
+WHERE EXISTS (
+  SELECT 1
+  FROM projects
+  WHERE id = ?
+    AND archived_at IS NULL
+    AND stage_key IN ('editing_autohdr', 'edited_review')
+)
+AND EXISTS (
+  SELECT 1
+  FROM autohdr_output_mappings m
+  JOIN autohdr_handoffs h ON h.id = m.handoff_id
+  JOIN autohdr_fetch_claims f
+    ON f.mapping_id = m.id
+   AND f.handoff_id = h.id
+  WHERE m.id = ?
+    AND m.state = 'active'
+    AND m.generation = ?
+    AND m.final_path_key = ?
+    AND m.connection_id = ?
+    AND h.id = ?
+    AND h.state = 'started'
+    AND h.manifest_version = ?
+    AND f.id = ?
+    AND f.connection_id = ?
+    AND f.mapping_generation = ?
+    AND f.state IN ('starting', 'running')
+)`).bind(
     assetId, collectionId, r2Key, file.name, file.size, file.content_hash, sourcePath,
     sourcePathKey, coverage?.rawAssetId ?? null, context.handoffId, now.getTime(), now.getTime(),
     context.projectId, context.mappingId, context.mappingGeneration, context.finalPathKey,
     context.connectionId, context.handoffId, context.manifestVersion, context.claimId,
-    context.connectionId, context.mappingGeneration,
-  );
+    context.connectionId, context.mappingGeneration);
 
   try {
     if (!current) {
       const statements = [
         baseInsert,
         env.DB.prepare("INSERT INTO edited_source_claims (id, collection_id, source_path_key, current_asset_id, content_hash, handoff_id, created_at, updated_at) SELECT ?, ?, ?, ?, ?, ?, ?, ? WHERE changes() = 1")
-          .bind(crypto.randomUUID(), collectionId, sourcePathKey, assetId, file.content_hash, context.handoffId, now.getTime(), now.getTime()),
-      ];
+          .bind(crypto.randomUUID(), collectionId, sourcePathKey, assetId, file.content_hash, context.handoffId, now.getTime(), now.getTime())];
       if (coverage) statements.push(env.DB.prepare("INSERT INTO autohdr_final_associations (id, handoff_id, asset_id, readiness_unit_key, match_kind, created_at) SELECT ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM edited_source_claims WHERE collection_id = ? AND source_path_key = ? AND current_asset_id = ?)")
         .bind(crypto.randomUUID(), context.handoffId, assetId, coverage.unitKey, coverage.matchKind, now.getTime(), collectionId, sourcePathKey, assetId));
       statements.push(
         env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, NULL, 'autohdr.final_imported', 'asset', ?, ?, ? WHERE EXISTS (SELECT 1 FROM edited_source_claims WHERE collection_id = ? AND source_path_key = ? AND current_asset_id = ?)")
           .bind(crypto.randomUUID(), assetId, JSON.stringify({ projectId: context.projectId, sourcePathKey, trigger: context.trigger, jobId: context.jobId, handoffId: context.handoffId, mappingGeneration: context.mappingGeneration, connectionId: context.connectionId, credibleCoverage: coverage?.unitKey ?? null }), now.getTime(), collectionId, sourcePathKey, assetId),
-        env.DB.prepare(COLLECTION_RECEIVED_COUNT_SQL).bind(...collectionReceivedCountBindings(collectionId, now.getTime())),
-        env.DB.prepare("UPDATE projects SET stage_key = 'edited_review', board_position = (SELECT COALESCE(MAX(board_position) + 1024, 0) FROM projects WHERE stage_key = 'edited_review' AND archived_at IS NULL AND id != ?), updated_at = ? WHERE id = ? AND stage_key = 'editing_autohdr' AND archived_at IS NULL AND ? = 1 AND EXISTS (SELECT 1 FROM edited_source_claims WHERE collection_id = ? AND source_path_key = ? AND current_asset_id = ?)")
-          .bind(context.projectId, now.getTime(), context.projectId, coverage ? 1 : 0, collectionId, sourcePathKey, assetId),
-        env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, NULL, 'stage.auto_advance', 'project', ?, ?, ? WHERE changes() = 1")
-          .bind(crypto.randomUUID(), context.projectId, JSON.stringify({ from: "editing_autohdr", to: "edited_review", trigger: context.trigger, jobId: context.jobId, handoffId: context.handoffId, mappingGeneration: context.mappingGeneration, sourcePathKey, credibleCoverage: coverage?.unitKey ?? null }), now.getTime()),
-      );
+        env.DB.prepare(COLLECTION_RECEIVED_COUNT_SQL).bind(...collectionReceivedCountBindings(collectionId, now.getTime())));
       const result = await env.DB.batch(statements);
       if ((result[1]?.meta.changes ?? 0) !== 1) {
         return quarantine(env, context, file, "Final writer fence changed before first-version metadata commit");
       }
-      // Notify immediately once the D1 batch confirms the transition, before any other
-      // best-effort side effect — matching the sibling replacement-path's guardedStageTransition
-      // onSuccess hook below, which already fires at commit time. Emitting after enqueue would
-      // mean an enqueue failure (or any future change to it that starts throwing) could skip the
-      // notification on this attempt, and a retry would find the project already in
-      // edited_review (this guarded update only matches stage_key = 'editing_autohdr'), so the
-      // notification would never fire at all — not delayed, permanently lost.
-      const stageAdvanced = (result.at(-2)?.meta.changes ?? 0) === 1;
-      if (stageAdvanced) await notifyProject(env, context.projectId, "edited_landed");
+      await dependencies.beforeFinalStage?.();
+      const stageAdvanced = await advanceFinalStage(env, context, fence, coverage, collectionId, sourcePathKey, assetId);
       await dependencies.afterD1Commit?.();
       await (dependencies.enqueue ?? enqueueRenditionSafely)(env, assetId, "autohdr-fetch");
       return { status: "created", assetId, coveredUnit: coverage?.unitKey, stageAdvanced };
@@ -272,15 +380,13 @@ export async function writeAutoHdrFinal(
         .bind(now.getTime(), assetId, now.getTime(), current.currentAssetId, current.contentHash),
       baseInsert,
       env.DB.prepare("UPDATE edited_source_claims SET current_asset_id = ?, content_hash = ?, handoff_id = ?, updated_at = ? WHERE id = ? AND current_asset_id = ? AND EXISTS (SELECT 1 FROM assets WHERE id = ? AND superseded_at = ?)")
-        .bind(assetId, file.content_hash, context.handoffId, now.getTime(), current.claimId, current.currentAssetId, current.currentAssetId, now.getTime()),
-    ];
+        .bind(assetId, file.content_hash, context.handoffId, now.getTime(), current.claimId, current.currentAssetId, current.currentAssetId, now.getTime())];
     if (coverage) statements.push(env.DB.prepare("INSERT INTO autohdr_final_associations (id, handoff_id, asset_id, readiness_unit_key, match_kind, created_at) SELECT ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM edited_source_claims WHERE id = ? AND current_asset_id = ?)")
       .bind(crypto.randomUUID(), context.handoffId, assetId, coverage.unitKey, coverage.matchKind, now.getTime(), current.claimId, assetId));
     statements.push(
       env.DB.prepare(COLLECTION_RECEIVED_COUNT_SQL).bind(...collectionReceivedCountBindings(collectionId, now.getTime())),
       env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, NULL, 'autohdr.final_replaced', 'asset', ?, ?, ? WHERE EXISTS (SELECT 1 FROM edited_source_claims WHERE id = ? AND current_asset_id = ?)")
-        .bind(crypto.randomUUID(), assetId, JSON.stringify({ priorAssetId: current.currentAssetId, sourcePathKey, handoffId: context.handoffId, jobId: context.jobId, trigger: context.trigger, mappingGeneration: context.mappingGeneration, connectionId: context.connectionId }), now.getTime(), current.claimId, assetId),
-    );
+        .bind(crypto.randomUUID(), assetId, JSON.stringify({ priorAssetId: current.currentAssetId, sourcePathKey, handoffId: context.handoffId, jobId: context.jobId, trigger: context.trigger, mappingGeneration: context.mappingGeneration, connectionId: context.connectionId }), now.getTime(), current.claimId, assetId));
     const result = await env.DB.batch(statements);
     if ((result[2]?.meta.changes ?? 0) !== 1) {
       const winner = await db.select({ currentAssetId: editedSourceClaims.currentAssetId, contentHash: editedSourceClaims.contentHash })
@@ -293,20 +399,8 @@ export async function writeAutoHdrFinal(
       }
       throw new Error("Lost AutoHDR replacement race to a different content hash");
     }
-    const stageAdvanced = coverage ? await guardedStageTransition(env.DB, {
-      projectId: context.projectId,
-      from: "editing_autohdr",
-      to: "edited_review",
-      meta: {
-        trigger: context.trigger,
-        jobId: context.jobId,
-        handoffId: context.handoffId,
-        mappingGeneration: context.mappingGeneration,
-        sourcePathKey,
-        credibleCoverage: coverage.unitKey,
-      },
-      onSuccess: () => notifyProject(env, context.projectId, "edited_landed"),
-    }) : false;
+    await dependencies.beforeFinalStage?.();
+    const stageAdvanced = await advanceFinalStage(env, context, fence, coverage, collectionId, sourcePathKey, assetId);
     await dependencies.afterD1Commit?.();
     await (dependencies.enqueue ?? enqueueRenditionSafely)(env, assetId, "autohdr-replacement");
     return { status: "replaced", assetId, coveredUnit: coverage?.unitKey, stageAdvanced };

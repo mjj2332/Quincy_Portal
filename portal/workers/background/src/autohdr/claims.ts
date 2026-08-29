@@ -13,7 +13,8 @@ import {
   projects,
   selections,
 } from "@quincy/db/schema";
-import type { Database } from "@quincy/db";
+import { buildOwnershipAssertionBundle } from "@quincy/db";
+import type { ClosedOwnershipBundle, Database } from "@quincy/db";
 import { computeRemovalAssetIds } from "@quincy/shared";
 
 import type { Env } from "../env";
@@ -24,7 +25,8 @@ import { setJobStatus } from "../lib/jobs";
 import type { RoutedAutoHdrMapping } from "./mapping";
 import { AutoHdrClaimError } from "./errors";
 import { notifyProject } from "../notifications";
-
+import { automaticBoardWritesEnabled, commitAutomaticStage, isAutomaticBundleAssertionError, } from "../lib/automatic-stage";
+import { buildHandoffStartTail } from "@quincy/db";
 const START_LEASE_MS = 10 * 60_000;
 
 export function isUniqueConflict(error: unknown): boolean {
@@ -33,7 +35,6 @@ export function isUniqueConflict(error: unknown): boolean {
   }
   return false;
 }
-
 export function isWorkflowAlreadyExists(error: unknown): boolean {
   for (let cause: unknown = error; cause instanceof Error; cause = cause.cause) {
     if (/(?:workflow|instance).*(?:already exists|duplicate)|\b409\b/i.test(cause.message)) return true;
@@ -43,13 +44,13 @@ export function isWorkflowAlreadyExists(error: unknown): boolean {
 
 async function sha256(value: string): Promise<string> {
   const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
-  return [...new Uint8Array(bytes)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  return [...new Uint8Array(bytes)].map(byte => byte.toString(16).padStart(2, "0")).join("");
 }
 
 type SelectionSnapshot = {
-  rows: { assetId: string; filename: string; bracketGroup: string | null }[];
+  rows: { assetId: string; filename: string; bracketGroup: string | null; }[];
   ids: string[];
-  readinessUnits: { key: string; assetIds: string[] }[];
+  readinessUnits: { key: string; assetIds: string[]; }[];
   selectionHash: string;
 };
 
@@ -57,16 +58,14 @@ async function currentSelection(db: Database, projectId: string): Promise<Select
   const rows = await db.select({
     assetId: assets.id,
     filename: assets.originalFilename,
-    bracketGroup: selections.bracketGroup,
-  }).from(selections)
+    bracketGroup: selections.bracketGroup }).from(selections)
     .innerJoin(assets, eq(selections.assetId, assets.id))
     .innerJoin(collections, eq(assets.collectionId, collections.id))
     .where(and(
       eq(selections.state, "selected_for_editing"),
       eq(collections.projectId, projectId),
       eq(collections.kind, "raw"),
-      sql`${assets.supersededAt} IS NULL`,
-    ));
+      sql`${assets.supersededAt} IS NULL`));
   rows.sort((a, b) => a.assetId.localeCompare(b.assetId));
   if (!rows.length) throw new AutoHdrClaimError("ERR_NO_RAW_SELECTION", "No RAW assets are selected for editing");
   const filenames = new Set<string>();
@@ -84,9 +83,9 @@ async function currentSelection(db: Database, projectId: string): Promise<Select
     .map(([key, assetIds]) => ({ key, assetIds }));
   return {
     rows,
-    ids: rows.map((row) => row.assetId),
+    ids: rows.map(row => row.assetId),
     readinessUnits,
-    selectionHash: await sha256(JSON.stringify(rows.map((row) => [row.assetId, row.bracketGroup]))),
+    selectionHash: await sha256(JSON.stringify(rows.map(row => [row.assetId, row.bracketGroup])))
   };
 }
 
@@ -94,9 +93,11 @@ async function removalSetHash(ids: readonly string[]): Promise<string> {
   return sha256(JSON.stringify([...ids].sort((left, right) => left.localeCompare(right))));
 }
 
-export type HandoffOwner = { handoffId: string; jobId: string; workflowId: string; reused: boolean; retiredHandoffId?: string };
-export type HandoffClaimOptions = { startNewRound?: boolean; resumeExisting?: boolean; removalSetHash?: string };
-export type HandoffClaimDependencies = { beforeClaimBatch?: () => void | Promise<void>; beforeRepeatBatch?: () => void | Promise<void>; beforeBatch?: () => void | Promise<void> };
+export type HandoffOwner = { handoffId: string; jobId: string; workflowId: string; reused: boolean; retiredHandoffId?: string; };
+export type HandoffClaimOptions = { startNewRound?: boolean; resumeExisting?: boolean; removalSetHash?: string; };
+export type HandoffClaimDependencies = { beforeClaimBatch?: () => void | Promise<void>; beforeRepeatBatch?: () => void | Promise<void>; beforeBatch?: () => void | Promise<void>;
+};
+export type AutomaticClaimDependencies = { beforeStageCommit?: () => void | Promise<void>; };
 export type ImplicitHandoffResult = {
   handoffId: string;
   jobId: string;
@@ -108,34 +109,83 @@ export type ImplicitHandoffResult = {
   finalPathKey: string;
   isCollision: boolean;
 };
-export type BackfillHandoffClaim =
-  | { ok: true; handoff: ImplicitHandoffResult }
-  | { ok: false; reason: string };
+export type BackfillHandoffClaim = { ok: true; handoff: ImplicitHandoffResult; }
+  | { ok: false; reason: string; };
 
 export async function confirmAutoHdrHandoff(
   env: Env,
-  input: { projectId: string; handoffId: string; connectionId: string; mappingGeneration: number; initiatedBy: string; jobId: string },
-): Promise<boolean> {
+  input: { projectId: string; handoffId: string; connectionId: string; mappingGeneration: number; initiatedBy: string; jobId: string;
+}): Promise<boolean> {
+  if (!(await automaticBoardWritesEnabled(env))) return false;
   const now = Date.now();
-  const result = await env.DB.batch([
-    env.DB.prepare("UPDATE projects SET stage_key = 'editing_autohdr', board_position = (SELECT COALESCE(MAX(board_position) + 1024, 0) FROM projects WHERE stage_key = 'editing_autohdr' AND archived_at IS NULL AND id != ?), updated_at = ? WHERE id = ? AND stage_key = 'raw_review' AND archived_at IS NULL")
-      .bind(input.projectId, now, input.projectId),
-    env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, ?, 'stage.auto_advance', 'project', ?, ?, ? WHERE changes() = 1")
-      .bind(crypto.randomUUID(), input.initiatedBy, input.projectId, JSON.stringify({ from: "raw_review", to: "editing_autohdr", trigger: "autohdr_handoff", handoffId: input.handoffId, jobId: input.jobId, mappingGeneration: input.mappingGeneration, connectionId: input.connectionId }), now),
-    env.DB.prepare("UPDATE autohdr_handoffs SET state = 'started', started_at = coalesce(started_at, ?), updated_at = ? WHERE id = ? AND project_id = ? AND connection_id = ? AND generation = ? AND state in ('starting','started') AND EXISTS (SELECT 1 FROM projects WHERE id = ? AND stage_key = 'editing_autohdr' AND archived_at IS NULL)")
-      .bind(now, now, input.handoffId, input.projectId, input.connectionId, input.mappingGeneration, input.projectId),
-  ]);
-  // Two distinct signals from the same batch, used for two distinct purposes: `stageAdvanced`
-  // (statement 1, the project update) is true only for whichever concurrent caller actually
-  // performed the transition — gates the notification so concurrent callers never double-notify.
-  // `confirmed` (statement 3, the handoff-state update, gated on the project already being in
-  // the target stage regardless of who put it there) is this function's original idempotent
-  // "is the handoff now confirmed" signal that existing callers/tests already depend on — both
-  // concurrent callers see `confirmed === true` once either one wins, by design.
-  const stageAdvanced = (result[0]?.meta.changes ?? 0) === 1;
-  const confirmed = (result[2]?.meta.changes ?? 0) === 1;
-  if (stageAdvanced) await notifyProject(env, input.projectId, "sent_to_editing");
-  return confirmed;
+  const auditId = crypto.randomUUID();
+  const destinationStart = buildHandoffStartTail({
+    db: env.DB,
+    projectId: input.projectId,
+    handoffId: input.handoffId,
+    connectionId: input.connectionId,
+    generation: input.mappingGeneration,
+    expectedStates: ["starting", "started"],
+    updatedAt: now
+  });
+  const outcome = await commitAutomaticStage({
+    env,
+    projectId: input.projectId,
+    from: "raw_review",
+    to: "editing_autohdr",
+    auditId,
+    auditActorId: input.initiatedBy,
+    auditMetaJson: JSON.stringify({ from: "raw_review", to: "editing_autohdr", trigger: "autohdr_handoff", handoffId: input.handoffId, jobId: input.jobId, mappingGeneration: input.mappingGeneration, connectionId: input.connectionId }),
+    now,
+    workflow: {
+      kind: "autohdr_handoff",
+      projectId: input.projectId,
+        handoffId: input.handoffId,
+      jobId: input.jobId,
+      generation: input.mappingGeneration,
+        connectionId: input.connectionId,
+      expectedStates: ["starting", "started"],
+        expectedPriorToken: null
+    },
+    coupling: { kind: "handoff_start", handoffId: input.handoffId, connectionId: input.connectionId, generation: input.mappingGeneration },
+    alreadyAtDestination: {
+      allowed: true,
+      effect: { kind: "handoff_start", bundle: destinationStart }
+    },
+    legacyWorkflowNotification: "sent_to_editing"
+  });
+  if (outcome.kind === "winner" && outcome.finalizer.legacyWorkflowNotification === "sent_to_editing") {
+    try {
+      await notifyProject(env, input.projectId, "sent_to_editing");
+    } catch (error) {
+      console.error("AutoHDR handoff notification failed", { projectId: input.projectId, error });
+    }
+    return true;
+  }
+  if (outcome.kind === "already_at_destination") return await confirmAutoHdrHandoffRecheck(env, input);
+  if (outcome.kind === "loser") return await confirmAutoHdrHandoffRecheck(env, input);
+  return false;
+}
+
+async function confirmAutoHdrHandoffRecheck(env: Env, input: { projectId: string; handoffId: string; connectionId: string; mappingGeneration: number; }): Promise<boolean> {
+  const row = await env.DB.prepare(`SELECT h.id
+FROM autohdr_handoffs h
+JOIN projects p ON p.id = h.project_id
+WHERE h.id = ?1
+  AND h.project_id = ?2
+  AND h.connection_id = ?3
+  AND h.generation = ?4
+  AND h.state = 'started'
+  AND h.editing_entry_board_revision IS NOT NULL
+  AND p.archived_at IS NULL
+  AND p.stage_key = 'editing_autohdr'
+  AND p.board_revision = h.editing_entry_board_revision`).bind(
+    input.handoffId,
+    input.projectId,
+    input.connectionId,
+    input.mappingGeneration,
+  ).first<{ id: string }>();
+  return Boolean(row?.id);
 }
 
 /** Creates the frozen send owner and both permanent candidate claims before Workflow creation. */
@@ -144,8 +194,10 @@ export async function claimAutoHdrHandoff(
   projectId: string,
   initiatedBy: string,
   optionsOrDependencies: HandoffClaimOptions | HandoffClaimDependencies = {},
-  dependencies: HandoffClaimDependencies = {},
-): Promise<HandoffOwner> {
+  dependencies: HandoffClaimDependencies = {}): Promise<HandoffOwner> {
+  if (!(await automaticBoardWritesEnabled(env))) {
+    throw new AutoHdrClaimError("ERR_HANDOFF_BLOCKED", "Automatic Stage writes are temporarily deferred; retry later");
+  }
   const isDependencies = "beforeClaimBatch" in optionsOrDependencies || "beforeRepeatBatch" in optionsOrDependencies || "beforeBatch" in optionsOrDependencies;
   const options: HandoffClaimOptions = isDependencies ? {} : optionsOrDependencies as HandoffClaimOptions;
   if (isDependencies) dependencies = optionsOrDependencies as HandoffClaimDependencies;
@@ -163,7 +215,7 @@ export async function claimAutoHdrHandoff(
     mappingId: autoHdrOutputMappings.id,
     mappingState: autoHdrOutputMappings.state,
     connectionId: autoHdrHandoffs.connectionId,
-    generation: autoHdrHandoffs.generation,
+    generation: autoHdrHandoffs.generation
   })
     .from(autoHdrHandoffs)
     .leftJoin(autoHdrOutputMappings, eq(autoHdrOutputMappings.handoffId, autoHdrHandoffs.id))
@@ -176,7 +228,7 @@ export async function claimAutoHdrHandoff(
       try {
         const payload = active.jobPayloadJson ? JSON.parse(active.jobPayloadJson) : null;
         if (payload && typeof payload.retiredHandoffId === "string") retiredHandoffId = payload.retiredHandoffId;
-      } catch { /* malformed payload — leave undefined, matching pre-fix behavior */ }
+      } catch {}
       return { handoffId: active.id, jobId: active.jobId, workflowId: active.workflowId, reused: true, retiredHandoffId };
     }
     const selection = await currentSelection(db, projectId);
@@ -193,8 +245,7 @@ export async function claimAutoHdrHandoff(
         active.state === "blocked"
           ? "The existing AutoHDR handoff is blocked and requires confirmation before starting a new round."
           : "A different AutoHDR selection is already active; confirmation is required before starting a new round.",
-        { removalCount: removalIds.length, removalSetHash: await removalSetHash(removalIds) },
-      );
+        { removalCount: removalIds.length, removalSetHash: await removalSetHash(removalIds) });
     }
     if (active.mappingState === "pending_discovery") {
       throw new AutoHdrClaimError("ERR_HANDOFF_BLOCKED", "AutoHDR hasn't delivered anything for this project yet; wait for the first result before starting a new round");
@@ -203,8 +254,7 @@ export async function claimAutoHdrHandoff(
   }
 
   const project = await db.select({
-    stageKey: projects.stageKey, archivedAt: projects.archivedAt, rawFolderPath: projects.rawFolderPath,
-  }).from(projects).where(eq(projects.id, projectId)).get();
+    stageKey: projects.stageKey, archivedAt: projects.archivedAt, rawFolderPath: projects.rawFolderPath }).from(projects).where(eq(projects.id, projectId)).get();
   if (!project) throw new Error(`Project ${projectId} does not exist`);
   if (project.archivedAt) throw new Error(`Project ${projectId} is archived`);
   if (project.stageKey !== "raw_review") throw new Error("AutoHDR handoff requires the project to be exactly in Raw Review");
@@ -217,7 +267,7 @@ export async function claimAutoHdrHandoff(
   const connectionId = await canonicalDropboxConnectionId(db);
   const folderName = deriveAutoHdrFolderName(project.rawFolderPath);
   const candidates = autoHdrFinalPathCandidates(folderName);
-  if (candidates.some((candidate) => !pathEqualsOrIsBelow(candidate, "/AutoHDR"))) throw new Error("Invalid AutoHDR final candidate");
+  if (candidates.some(candidate => !pathEqualsOrIsBelow(candidate, "/AutoHDR"))) throw new Error("Invalid AutoHDR final candidate");
   const prior = await db.select({ generation: autoHdrHandoffs.generation }).from(autoHdrHandoffs)
     .where(eq(autoHdrHandoffs.projectId, projectId)).orderBy(desc(autoHdrHandoffs.generation)).limit(1);
   const generation = (prior[0]?.generation ?? 0) + 1;
@@ -234,21 +284,69 @@ export async function claimAutoHdrHandoff(
     const results = await env.DB.batch([
       env.DB.prepare("INSERT INTO jobs (id, kind, status, correlation_id, project_id, payload_json, retries, created_at, updated_at) VALUES (?, 'autohdr', 'queued', ?, ?, ?, 0, ?, ?)")
         .bind(jobId, `autohdr:${projectId}:${generation}`, projectId, JSON.stringify({ handoffId, generation, connectionId, assetIds: selectedIds }), now.getTime(), now.getTime()),
-      env.DB.prepare("INSERT INTO autohdr_handoffs (id, project_id, connection_id, generation, manifest_version, selection_hash, selected_asset_ids_json, readiness_units_json, frozen_raw_folder_path, initiated_by, expected_origin_stage, state, workflow_id, job_id, lease_expires_at, created_at, updated_at) SELECT ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, 'raw_review', 'starting', ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at IS NULL AND stage_key = 'raw_review')")
+      env.DB.prepare(`INSERT INTO autohdr_handoffs (
+  id,
+  project_id,
+  connection_id,
+  generation,
+  manifest_version,
+  selection_hash,
+  selected_asset_ids_json,
+  readiness_units_json,
+  frozen_raw_folder_path,
+  initiated_by,
+  expected_origin_stage,
+  state,
+  workflow_id,
+  job_id,
+  lease_expires_at,
+  created_at,
+  updated_at
+)
+SELECT
+  ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, 'raw_review', 'starting', ?, ?, ?, ?, ?
+WHERE EXISTS (
+  SELECT 1
+  FROM projects
+  WHERE id = ?
+    AND archived_at IS NULL
+    AND stage_key = 'raw_review'
+)`)
         .bind(handoffId, projectId, connectionId, generation, selectionHash, JSON.stringify(selectedIds), JSON.stringify(readinessUnits), project.rawFolderPath, initiatedBy, workflowId, jobId, lease.getTime(), now.getTime(), now.getTime(), projectId),
       env.DB.prepare("INSERT INTO autohdr_output_mappings (id, project_id, handoff_id, connection_id, generation, state, created_at, updated_at) SELECT ?, ?, ?, ?, ?, 'pending_discovery', ?, ? WHERE EXISTS (SELECT 1 FROM autohdr_handoffs WHERE id = ? AND state = 'starting')")
         .bind(mappingId, projectId, handoffId, connectionId, generation, now.getTime(), now.getTime(), handoffId),
       ...candidates.map((candidate, index) => env.DB.prepare("INSERT INTO autohdr_path_claims (id, mapping_id, handoff_id, project_id, connection_id, candidate, path, path_key, state, created_at, updated_at) SELECT ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ? WHERE EXISTS (SELECT 1 FROM autohdr_output_mappings WHERE id = ? AND handoff_id = ?)")
-        .bind(crypto.randomUUID(), mappingId, handoffId, projectId, connectionId, index === 0 ? "final" : "finals", candidate, dropboxPathKey(candidate), now.getTime(), now.getTime(), mappingId, handoffId)),
-    ]);
+        .bind(crypto.randomUUID(), mappingId, handoffId, projectId, connectionId, index === 0 ? "final" : "finals", candidate, dropboxPathKey(candidate), now.getTime(), now.getTime(), mappingId, handoffId))]);
     if ((results[1]?.meta.changes ?? 0) !== 1) {
       const diagnostic = "AutoHDR handoff eligibility changed before claim commit: project must be active in Raw Review.";
       await env.DB.batch([
         env.DB.prepare("UPDATE jobs SET status = 'failed', error = ?, updated_at = ? WHERE id = ?")
           .bind(diagnostic, now.getTime(), jobId),
-        env.DB.prepare("INSERT INTO autohdr_handoffs (id, project_id, connection_id, generation, manifest_version, selection_hash, selected_asset_ids_json, readiness_units_json, frozen_raw_folder_path, initiated_by, expected_origin_stage, state, workflow_id, job_id, lease_expires_at, last_error, created_at, updated_at) SELECT ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, 'raw_review', 'blocked', ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM projects WHERE id = ?) AND NOT EXISTS (SELECT 1 FROM autohdr_handoffs WHERE id = ?)")
-          .bind(handoffId, projectId, connectionId, generation, selectionHash, JSON.stringify(selectedIds), JSON.stringify(readinessUnits), project.rawFolderPath, initiatedBy, workflowId, jobId, lease.getTime(), diagnostic, now.getTime(), now.getTime(), projectId, handoffId),
-      ]);
+        env.DB.prepare(`INSERT INTO autohdr_handoffs (
+  id,
+  project_id,
+  connection_id,
+  generation,
+  manifest_version,
+  selection_hash,
+  selected_asset_ids_json,
+  readiness_units_json,
+  frozen_raw_folder_path,
+  initiated_by,
+  expected_origin_stage,
+  state,
+  workflow_id,
+  job_id,
+  lease_expires_at,
+  last_error,
+  created_at,
+  updated_at
+)
+SELECT
+  ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, 'raw_review', 'blocked', ?, ?, ?, ?, ?, ?
+WHERE EXISTS (SELECT 1 FROM projects WHERE id = ?)
+  AND NOT EXISTS (SELECT 1 FROM autohdr_handoffs WHERE id = ?)`)
+          .bind(handoffId, projectId, connectionId, generation, selectionHash, JSON.stringify(selectedIds), JSON.stringify(readinessUnits), project.rawFolderPath, initiatedBy, workflowId, jobId, lease.getTime(), diagnostic, now.getTime(), now.getTime(), projectId, handoffId)]);
       throw new Error(diagnostic);
     }
   } catch (error) {
@@ -275,11 +373,30 @@ export async function claimAutoHdrHandoff(
       await env.DB.batch([
         env.DB.prepare("INSERT INTO jobs (id, kind, status, correlation_id, project_id, payload_json, retries, error, created_at, updated_at) VALUES (?, 'autohdr', 'failed', ?, ?, ?, 0, ?, ?, ?)")
           .bind(jobId, `autohdr:${projectId}:${generation}`, projectId, JSON.stringify({ handoffId, generation, connectionId, assetIds: selectedIds }), diagnostic, now.getTime(), now.getTime()),
-        env.DB.prepare("INSERT INTO autohdr_handoffs (id, project_id, connection_id, generation, manifest_version, selection_hash, selected_asset_ids_json, readiness_units_json, frozen_raw_folder_path, initiated_by, expected_origin_stage, state, workflow_id, job_id, lease_expires_at, last_error, created_at, updated_at) VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, 'raw_review', 'blocked', ?, ?, ?, ?, ?, ?)")
+        env.DB.prepare(`INSERT INTO autohdr_handoffs (
+  id,
+  project_id,
+  connection_id,
+  generation,
+  manifest_version,
+  selection_hash,
+  selected_asset_ids_json,
+  readiness_units_json,
+  frozen_raw_folder_path,
+  initiated_by,
+  expected_origin_stage,
+  state,
+  workflow_id,
+  job_id,
+  lease_expires_at,
+  last_error,
+  created_at,
+  updated_at
+)
+VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, 'raw_review', 'blocked', ?, ?, ?, ?, ?, ?)`)
           .bind(handoffId, projectId, connectionId, generation, selectionHash, JSON.stringify(selectedIds), JSON.stringify(readinessUnits), project.rawFolderPath, initiatedBy, workflowId, jobId, lease.getTime(), diagnostic, now.getTime(), now.getTime()),
         env.DB.prepare("INSERT INTO autohdr_output_mappings (id, project_id, handoff_id, connection_id, generation, state, diagnostic, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'blocked_collision', ?, ?, ?)")
-          .bind(mappingId, projectId, handoffId, connectionId, generation, diagnostic, now.getTime(), now.getTime()),
-      ]);
+          .bind(mappingId, projectId, handoffId, connectionId, generation, diagnostic, now.getTime(), now.getTime())]);
       throw new Error(diagnostic);
     }
     throw error;
@@ -299,8 +416,10 @@ async function claimAutoHdrRepeatSend(
   },
   selection: SelectionSnapshot,
   options: HandoffClaimOptions,
-  dependencies: HandoffClaimDependencies,
-): Promise<HandoffOwner> {
+  dependencies: HandoffClaimDependencies): Promise<HandoffOwner> {
+  if (!(await automaticBoardWritesEnabled(env))) {
+    throw new AutoHdrClaimError("ERR_HANDOFF_BLOCKED", "Automatic Stage writes are temporarily deferred; retry later");
+  }
   if (!active.mappingId || !["active", "blocked_collision"].includes(active.mappingState ?? "")) {
     throw new AutoHdrClaimError("ERR_HANDOFF_BLOCKED", "AutoHDR output is not ready for a repeat send; wait for folder discovery to complete");
   }
@@ -324,16 +443,16 @@ async function claimAutoHdrRepeatSend(
   if (options.removalSetHash !== computedRemovalHash) {
     throw new AutoHdrClaimError("ERR_REMOVAL_SET_CHANGED", "The selected assets changed while the repeat-send confirmation was open; review the new removal count and confirm again", {
       removalCount: removalIds.length,
-      removalSetHash: computedRemovalHash,
-    });
+      removalSetHash: computedRemovalHash });
   }
   const sentFilesCountAtCheck = sentFiles.length;
   const activeFetch = await db.select({ id: autoHdrFetchClaims.id }).from(autoHdrFetchClaims).where(and(
     eq(autoHdrFetchClaims.mappingId, mappingId),
-    inArray(autoHdrFetchClaims.state, ["starting", "running"]),
-  )).get();
+    inArray(autoHdrFetchClaims.state, ["starting", "running"]))).get();
   if (activeFetch) throw new AutoHdrClaimError("ERR_FETCH_IN_PROGRESS", "An AutoHDR fetch is still in progress for the current round; wait for it to finish before starting a new round");
 
+  const activeManualIngest = await db.select({ mappingId: autoHdrManualIngestLeases.mappingId }).from(autoHdrManualIngestLeases).where(and(eq(autoHdrManualIngestLeases.mappingId, mappingId), gt(autoHdrManualIngestLeases.leaseExpiresAt, new Date(nowMs)))).get();
+  if (activeManualIngest) throw new AutoHdrClaimError("ERR_MANUAL_INGEST_IN_PROGRESS", "A manual AutoHDR ingest is still in progress for the current round; wait for it to finish before starting a new round");
   const project = await db.select({ rawFolderPath: projects.rawFolderPath, stageKey: projects.stageKey, archivedAt: projects.archivedAt })
     .from(projects).where(eq(projects.id, projectId)).get();
   if (!project || project.archivedAt || !["editing_autohdr", "edited_review"].includes(project.stageKey)) {
@@ -342,7 +461,7 @@ async function claimAutoHdrRepeatSend(
   if (!project.rawFolderPath) throw new AutoHdrClaimError("ERR_HANDOFF_BLOCKED", "AutoHDR repeat send requires a canonical Dropbox RAW folder path");
   const connectionId = await canonicalDropboxConnectionId(db);
   const candidates = autoHdrFinalPathCandidates(deriveAutoHdrFolderName(project.rawFolderPath));
-  const existingByCandidatePath = new Map<string, { id: string; candidate: string; path: string; pathKey: string }>();
+  const existingByCandidatePath = new Map<string, { id: string; candidate: string; path: string; pathKey: string; }>();
   const candidateKeys = new Set(candidates.map(dropboxPathKey));
   const projectClaims = await db.select({ id: autoHdrPathClaims.id, candidate: autoHdrPathClaims.candidate, path: autoHdrPathClaims.path, pathKey: autoHdrPathClaims.pathKey })
     .from(autoHdrPathClaims).where(and(eq(autoHdrPathClaims.projectId, projectId), inArray(autoHdrPathClaims.pathKey, [...candidateKeys])));
@@ -354,11 +473,100 @@ async function claimAutoHdrRepeatSend(
   const workflowId = `autohdr-send-${handoffId}`;
   const lease = new Date(nowMs + START_LEASE_MS);
   const diagnostic = "AutoHDR repeat-send claim could not reclaim both candidate paths; staff resolution is required.";
+  const pathPlans = candidates.map((path, index) => {
+    const pathKey = dropboxPathKey(path);
+    const existing = existingByCandidatePath.get(pathKey);
+    return {
+      kind: existing ? "reactivate" as const : "insert" as const,
+      claimId: existing?.id ?? crypto.randomUUID(),
+      candidate: index === 0 ? "final" as const : "finals" as const,
+      path,
+      pathKey,
+      existing
+    };
+  });
   await (dependencies.beforeRepeatBatch ?? dependencies.beforeBatch)?.();
-  let results: Awaited<ReturnType<Env["DB"]["batch"]>>;
-  try {
-    results = await env.DB.batch([
-      env.DB.prepare("UPDATE autohdr_output_mappings SET state = 'retired', retired_at = ?, updated_at = ? WHERE id = ? AND handoff_id = ? AND state IN ('active', 'blocked_collision') AND EXISTS (SELECT 1 FROM autohdr_handoffs WHERE id = ? AND project_id = ? AND state IN ('starting','started','blocked')) AND EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at IS NULL AND stage_key IN ('editing_autohdr','edited_review')) AND NOT EXISTS (SELECT 1 FROM autohdr_fetch_claims WHERE mapping_id = ? AND state IN ('starting','running')) AND NOT EXISTS (SELECT 1 FROM autohdr_manual_ingest_leases WHERE mapping_id = ? AND lease_expires_at > ?) AND (SELECT COUNT(*) FROM autohdr_final_associations WHERE handoff_id = ?) = ? AND (SELECT COUNT(*) FROM autohdr_sent_files WHERE handoff_id = ?) = ? AND (SELECT COUNT(*) FROM autohdr_path_claims WHERE mapping_id = ? AND state IN ('active','pending','blocked')) = 2 AND EXISTS (SELECT 1 FROM autohdr_handoffs h JOIN jobs j ON j.id = h.job_id WHERE h.id = ? AND j.status NOT IN ('queued','running'))")
+  const insertRepeatHandoff = (state: "starting" | "started", startedAt: number | null) => env.DB.prepare(`INSERT INTO autohdr_handoffs (
+  id,
+  project_id,
+  connection_id,
+  generation,
+  manifest_version,
+  selection_hash,
+  selected_asset_ids_json,
+  readiness_units_json,
+  frozen_raw_folder_path,
+  initiated_by,
+  expected_origin_stage,
+  state,
+  started_at,
+  workflow_id,
+  job_id,
+  lease_expires_at,
+  created_at,
+  updated_at
+)
+SELECT
+  ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+WHERE changes() = 1
+  AND EXISTS (
+    SELECT 1
+    FROM projects
+    WHERE id = ?
+      AND archived_at IS NULL
+      AND stage_key IN ('editing_autohdr', 'edited_review')
+  )`).bind(
+    handoffId, projectId, connectionId, active.generation + 1, selection.selectionHash,
+    JSON.stringify(selection.ids), JSON.stringify(selection.readinessUnits), project.rawFolderPath,
+    initiatedBy, project.stageKey, state, startedAt, workflowId, jobId, lease.getTime(), nowMs, nowMs,
+    projectId);
+  const ownershipStatements = [
+      env.DB.prepare(`UPDATE autohdr_output_mappings
+     SET state = 'retired', retired_at = ?, updated_at = ?
+     WHERE id = ?
+       AND handoff_id = ?
+       AND state IN ('active', 'blocked_collision')
+       AND EXISTS (
+         SELECT 1
+         FROM autohdr_handoffs
+         WHERE id = ?
+           AND project_id = ?
+           AND state IN ('starting', 'started', 'blocked')
+       )
+       AND EXISTS (
+         SELECT 1
+         FROM projects
+         WHERE id = ?
+           AND archived_at IS NULL
+           AND stage_key IN ('editing_autohdr', 'edited_review')
+       )
+       AND NOT EXISTS (
+         SELECT 1
+         FROM autohdr_fetch_claims
+         WHERE mapping_id = ?
+           AND state IN ('starting', 'running')
+       )
+       AND NOT EXISTS (
+         SELECT 1
+         FROM autohdr_manual_ingest_leases
+         WHERE mapping_id = ?
+           AND lease_expires_at > ?
+       )
+       AND (SELECT COUNT(*) FROM autohdr_final_associations WHERE handoff_id = ?) = ?
+       AND (SELECT COUNT(*) FROM autohdr_sent_files WHERE handoff_id = ?) = ?
+       AND (
+         SELECT COUNT(*)
+         FROM autohdr_path_claims
+         WHERE mapping_id = ?
+           AND state IN ('active', 'pending', 'blocked')
+       ) = 2
+       AND EXISTS (
+         SELECT 1
+         FROM autohdr_handoffs h
+         JOIN jobs j ON j.id = h.job_id
+         WHERE h.id = ?
+           AND j.status NOT IN ('queued', 'running')
+       )`)
         .bind(nowMs, nowMs, mappingId, active.id, active.id, projectId, projectId, mappingId, mappingId, nowMs, active.id, associationCountAtCheck, active.id, sentFilesCountAtCheck, mappingId, active.id),
       env.DB.prepare("UPDATE autohdr_handoffs SET state = 'retired', updated_at = ? WHERE id = ? AND state IN ('starting','started','blocked') AND changes() = 1")
         .bind(nowMs, active.id),
@@ -366,53 +574,97 @@ async function claimAutoHdrRepeatSend(
         .bind(nowMs, mappingId),
       env.DB.prepare("INSERT INTO jobs (id, kind, status, correlation_id, project_id, payload_json, retries, created_at, updated_at) SELECT ?, 'autohdr', 'queued', ?, ?, ?, 0, ?, ? WHERE changes() = 2")
         .bind(jobId, `autohdr:${projectId}:${active.generation + 1}`, projectId, JSON.stringify({ handoffId, generation: active.generation + 1, connectionId, assetIds: selection.ids, retiredHandoffId: active.id }), nowMs, nowMs),
-      env.DB.prepare("INSERT INTO autohdr_handoffs (id, project_id, connection_id, generation, manifest_version, selection_hash, selected_asset_ids_json, readiness_units_json, frozen_raw_folder_path, initiated_by, expected_origin_stage, state, workflow_id, job_id, lease_expires_at, created_at, updated_at) SELECT ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, 'starting', ?, ?, ?, ?, ? WHERE changes() = 1 AND EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at IS NULL AND stage_key IN ('editing_autohdr','edited_review'))")
-        .bind(handoffId, projectId, connectionId, active.generation + 1, selection.selectionHash, JSON.stringify(selection.ids), JSON.stringify(selection.readinessUnits), project.rawFolderPath, initiatedBy, project.stageKey, workflowId, jobId, lease.getTime(), nowMs, nowMs, projectId),
+      insertRepeatHandoff("starting", null),
       env.DB.prepare("INSERT INTO autohdr_output_mappings (id, project_id, handoff_id, connection_id, generation, state, created_at, updated_at) SELECT ?, ?, ?, ?, ?, 'pending_discovery', ?, ? WHERE changes() = 1 AND EXISTS (SELECT 1 FROM autohdr_handoffs WHERE id = ?)")
         .bind(mappingNewId, projectId, handoffId, connectionId, active.generation + 1, nowMs, nowMs, handoffId),
-      env.DB.prepare("UPDATE projects SET stage_key = 'editing_autohdr', board_position = (SELECT COALESCE(MAX(board_position) + 1024, 0) FROM projects WHERE stage_key = 'editing_autohdr' AND archived_at IS NULL AND id != ?), updated_at = ? WHERE id = ? AND stage_key = 'edited_review' AND archived_at IS NULL AND EXISTS (SELECT 1 FROM autohdr_output_mappings WHERE id = ?)")
-        .bind(projectId, nowMs, projectId, mappingNewId),
-      env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, ?, 'stage.auto_advance', 'project', ?, ?, ? WHERE changes() = 1")
-        .bind(crypto.randomUUID(), initiatedBy, projectId, JSON.stringify({ from: "edited_review", to: "editing_autohdr", trigger: "autohdr_repeat_send", handoffId, jobId, mappingGeneration: active.generation + 1, connectionId }), nowMs),
-      ...candidates.map((candidate, index) => {
-        const path = candidate;
-        const pathKey = dropboxPathKey(path);
-        const existing = existingByCandidatePath.get(pathKey);
-        return existing
+      ...pathPlans.map(plan => plan.existing
           ? env.DB.prepare("UPDATE autohdr_path_claims SET state = 'pending', handoff_id = ?, mapping_id = ?, connection_id = ?, folder_id = NULL, diagnostic = NULL, updated_at = ? WHERE id = ? AND project_id = ? AND state = 'tombstone' AND EXISTS (SELECT 1 FROM autohdr_output_mappings WHERE id = ?)")
-            .bind(handoffId, mappingNewId, connectionId, nowMs, existing.id, projectId, mappingNewId)
+            .bind(handoffId, mappingNewId, connectionId, nowMs, plan.claimId, projectId, mappingNewId)
           : env.DB.prepare("INSERT INTO autohdr_path_claims (id, mapping_id, handoff_id, project_id, connection_id, candidate, path, path_key, state, created_at, updated_at) SELECT ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ? WHERE EXISTS (SELECT 1 FROM autohdr_output_mappings WHERE id = ?)")
-            .bind(crypto.randomUUID(), mappingNewId, handoffId, projectId, connectionId, index === 0 ? "final" : "finals", path, pathKey, nowMs, nowMs, mappingNewId);
-      }),
-    ]);
-  } catch (error) {
-    if (isUniqueConflict(error)) throw new AutoHdrClaimError("ERR_MAPPING_BLOCKED", "AutoHDR path ownership collided with another project; staff resolution is required");
-    throw error;
+            .bind(plan.claimId, mappingNewId, handoffId, projectId, connectionId, plan.candidate, plan.path, plan.pathKey, nowMs, nowMs, mappingNewId))];
+  const ownership: ClosedOwnershipBundle = {
+    statements: ownershipStatements,
+    indexes: {
+      retireMapping: 0,
+      retireHandoff: 1,
+      tombstonePaths: 2,
+      insertJob: 3,
+      insertHandoff: 4,
+      insertMapping: 5,
+      pathClaims: [6, 7]
+    },
+    kind: "repeat_claim",
+    coupling: {
+      kind: "repeat_claim",
+      retiredHandoffId: active.id,
+      retiredMappingId: mappingId,
+      handoffId,
+      mappingId: mappingNewId,
+      jobId,
+      workflowId,
+      generation: active.generation + 1,
+      connectionId,
+      selectionHash: selection.selectionHash,
+      expectedFinalHandoffState: "started",
+      pathClaims: pathPlans.map(({ kind, claimId, candidate, path, pathKey }) => ({ kind, claimId, candidate, path, pathKey })) as [{ kind: "reactivate" | "insert"; claimId: string; candidate: "final" | "finals"; path: string; pathKey: string; }, { kind: "reactivate" | "insert"; claimId: string; candidate: "final" | "finals"; path: string; pathKey: string; }]
+    }
+  };
+  const repeatAssertion = buildOwnershipAssertionBundle({ db: env.DB, projectId, destinationStage: "editing_autohdr", coupling: ownership.coupling, assertedAt: nowMs });
+  const destinationOwnershipStatements = [
+    ...ownershipStatements.slice(0, 4),
+    insertRepeatHandoff("started", nowMs),
+    ...ownershipStatements.slice(5),
+    ...repeatAssertion.statements,
+  ];
+  const destinationOwnership: ClosedOwnershipBundle = {
+    statements: destinationOwnershipStatements,
+    indexes: {
+      retireMapping: 0,
+      retireHandoff: 1,
+      tombstonePaths: 2,
+      insertJob: 3,
+      insertHandoff: 4,
+      insertMapping: 5,
+      pathClaims: [6, 7],
+      ownershipAssertion: 8
+    },
+    kind: "repeat_claim",
+    coupling: ownership.coupling
+  };
+  const stageAuditId = crypto.randomUUID();
+  let stageOutcome: Awaited<ReturnType<typeof commitAutomaticStage>>;
+  try {
+    stageOutcome = await commitAutomaticStage({
+    env,
+    projectId,
+    from: "edited_review",
+    to: "editing_autohdr",
+    auditId: stageAuditId,
+    auditActorId: initiatedBy,
+    auditMetaJson: JSON.stringify({ from: "edited_review", to: "editing_autohdr", trigger: "autohdr_repeat_send", handoffId, jobId, mappingGeneration: active.generation + 1, connectionId }),
+    now: nowMs,
+      workflow: {
+      kind: "autohdr_handoff",
+        projectId,
+        handoffId,
+        jobId,
+        generation: active.generation + 1,
+        connectionId,
+        expectedStates: ["starting"],
+        expectedPriorToken: null
+      },
+      coupling: ownership.coupling,
+      preWinnerOwnership: ownership,
+      alreadyAtDestination: {
+        allowed: true,
+        effect: { kind: "ownership", bundle: destinationOwnership }
+      }
+    });
+  } catch (error) { if (isUniqueConflict(error)) throw new AutoHdrClaimError("ERR_MAPPING_BLOCKED", "AutoHDR path ownership collided with another project; staff resolution is required"); throw error; }
+  if (stageOutcome.kind === "invariant_failure") {
+    throw new AutoHdrClaimError("ERR_HANDOFF_BLOCKED", "AutoHDR repeat send was created but its Stage entry could not be finalized");
   }
-
-  if ((results[0]?.meta.changes ?? 0) !== 1) {
-    const stillFetching = await db.select({ id: autoHdrFetchClaims.id }).from(autoHdrFetchClaims).where(and(eq(autoHdrFetchClaims.mappingId, mappingId), inArray(autoHdrFetchClaims.state, ["starting", "running"]))).get();
-    if (stillFetching) throw new AutoHdrClaimError("ERR_FETCH_IN_PROGRESS", "An AutoHDR fetch is still in progress for the current round; wait for it to finish before starting a new round");
-    const stillIngesting = await db.select({ mappingId: autoHdrManualIngestLeases.mappingId })
-      .from(autoHdrManualIngestLeases)
-      .where(and(
-        eq(autoHdrManualIngestLeases.mappingId, mappingId),
-        gt(autoHdrManualIngestLeases.leaseExpiresAt, new Date(nowMs)),
-      ))
-      .get();
-    if (stillIngesting) throw new AutoHdrClaimError("ERR_MANUAL_INGEST_IN_PROGRESS", "A manual AutoHDR ingest is still in progress for the current round; wait for it to finish before starting a new round");
-    throw new AutoHdrClaimError("ERR_HANDOFF_BLOCKED", "The current AutoHDR round changed while the repeat send was starting; try again");
-  }
-  const reactivationResults = results.slice(8, 10);
-  if (reactivationResults.some((result) => (result.meta.changes ?? 0) !== 1)) {
-    await env.DB.batch([
-      env.DB.prepare("UPDATE jobs SET status = 'failed', error = ?, updated_at = ? WHERE id = ?").bind(diagnostic, nowMs, jobId),
-      env.DB.prepare("UPDATE autohdr_output_mappings SET state = 'blocked_collision', diagnostic = ?, updated_at = ? WHERE id = ?").bind(diagnostic, nowMs, mappingNewId),
-      env.DB.prepare("UPDATE autohdr_handoffs SET state = 'blocked', last_error = ?, updated_at = ? WHERE id = ?").bind(diagnostic, nowMs, handoffId),
-      env.DB.prepare("UPDATE autohdr_path_claims SET state = 'blocked', diagnostic = ?, updated_at = ? WHERE mapping_id = ?").bind(diagnostic, nowMs, mappingNewId),
-    ]);
-    throw new AutoHdrClaimError("ERR_MAPPING_BLOCKED", diagnostic);
-  }
+  if (stageOutcome.kind !== "winner" && stageOutcome.kind !== "already_at_destination") { throw new AutoHdrClaimError("ERR_HANDOFF_BLOCKED", "AutoHDR repeat send lost its Stage ownership race; retry later"); }
   return { handoffId, jobId, workflowId, reused: false, retiredHandoffId: active.id };
 }
 
@@ -431,7 +683,8 @@ export async function claimImplicitAutoHdrHandoff(
   projectId: string,
   connectionId: string,
   targetPath: string,
-): Promise<ImplicitHandoffResult | null> {
+  dependencies: AutomaticClaimDependencies = {}): Promise<ImplicitHandoffResult | null> {
+  if (!(await automaticBoardWritesEnabled(env))) return null;
   const db = (await import("../lib/db")).dbFor(env);
   const now = new Date();
   const nowMs = now.getTime();
@@ -444,13 +697,12 @@ export async function claimImplicitAutoHdrHandoff(
     mappingId: autoHdrOutputMappings.id,
     finalPath: autoHdrOutputMappings.finalPath,
     finalPathKey: autoHdrOutputMappings.finalPathKey,
-    handoffState: autoHdrHandoffs.state,
+    handoffState: autoHdrHandoffs.state
   }).from(autoHdrHandoffs)
     .innerJoin(autoHdrOutputMappings, eq(autoHdrHandoffs.id, autoHdrOutputMappings.handoffId))
     .where(and(
       eq(autoHdrHandoffs.projectId, projectId),
-      inArray(autoHdrHandoffs.state, ["starting", "started", "blocked"]),
-    )).get();
+      inArray(autoHdrHandoffs.state, ["starting", "started", "blocked"]))).get();
   if (activeWinner?.finalPath && activeWinner.finalPathKey) {
     return {
       handoffId: activeWinner.handoffId,
@@ -461,18 +713,19 @@ export async function claimImplicitAutoHdrHandoff(
       mappingId: activeWinner.mappingId,
       finalPath: activeWinner.finalPath,
       finalPathKey: activeWinner.finalPathKey,
-      isCollision: activeWinner.handoffState === "blocked",
+      isCollision: activeWinner.handoffState === "blocked"
     };
   }
 
+  const project = await db.select({ stageKey: projects.stageKey, archivedAt: projects.archivedAt }).from(projects).where(eq(projects.id, projectId)).get();
+  if (!project || project.archivedAt || !["raw_review", "editing_autohdr"].includes(project.stageKey)) return null;
+  const destinationStage: "raw_review" | "editing_autohdr" = project.stageKey === "editing_autohdr" ? "editing_autohdr" : "raw_review";
   const collidingClaim = await db.select({
     id: autoHdrPathClaims.id,
     projectId: autoHdrPathClaims.projectId,
-    state: autoHdrPathClaims.state,
-  }).from(autoHdrPathClaims).where(and(
+    state: autoHdrPathClaims.state }).from(autoHdrPathClaims).where(and(
     eq(autoHdrPathClaims.connectionId, connectionId),
-    eq(autoHdrPathClaims.pathKey, targetPathKey),
-  )).get();
+    eq(autoHdrPathClaims.pathKey, targetPathKey))).get();
   const isCollision = Boolean(collidingClaim && collidingClaim.projectId !== projectId);
   const diagnostic = isCollision
     ? `AutoHDR path collision at ${targetPathKey}; owned by project ${collidingClaim!.projectId}.`
@@ -490,8 +743,7 @@ export async function claimImplicitAutoHdrHandoff(
     jobId,
     mappingGeneration: 1,
     connectionId,
-    targetPath,
-  });
+    targetPath });
 
   const batchStatements: ReturnType<typeof env.DB.prepare>[] = [
     env.DB.prepare(`
@@ -513,8 +765,7 @@ export async function claimImplicitAutoHdrHandoff(
       nowMs,
       nowMs,
       projectId,
-      projectId,
-    ),
+      projectId),
     env.DB.prepare(`
       INSERT INTO autohdr_handoffs (
         id, project_id, connection_id, generation, manifest_version, selection_hash,
@@ -544,8 +795,7 @@ export async function claimImplicitAutoHdrHandoff(
       nowMs,
       projectId,
       jobId,
-      projectId,
-    ),
+      projectId),
     env.DB.prepare(`
       INSERT INTO autohdr_output_mappings (
         id, project_id, handoff_id, connection_id, generation,
@@ -565,9 +815,7 @@ export async function claimImplicitAutoHdrHandoff(
       nowMs,
       nowMs,
       nowMs,
-      handoffId,
-    ),
-  ];
+      handoffId)];
   const handoffInsertIndex = 1;
 
   if (!isCollision && collidingClaim?.projectId === projectId) {
@@ -596,29 +844,74 @@ export async function claimImplicitAutoHdrHandoff(
       targetPathKey,
       nowMs,
       nowMs,
-      mappingId,
-    ));
+      mappingId));
   }
 
-  batchStatements.push(
-    env.DB.prepare(`
-      UPDATE projects
-      SET stage_key = 'editing_autohdr', board_position = (SELECT COALESCE(MAX(board_position) + 1024, 0) FROM projects WHERE stage_key = 'editing_autohdr' AND archived_at IS NULL AND id != ?), updated_at = ?
-      WHERE id = ? AND stage_key = 'raw_review' AND archived_at IS NULL
-        AND ? = 0
-        AND EXISTS (SELECT 1 FROM autohdr_handoffs WHERE id = ?)
-    `).bind(projectId, nowMs, projectId, isCollision ? 1 : 0, handoffId),
-    env.DB.prepare(`
-      INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
-      SELECT ?, NULL, 'stage.auto_advance', 'project', ?, ?, ?
-      WHERE changes() = 1
-    `).bind(crypto.randomUUID(), projectId, metaJson, nowMs),
-  );
-  const stageUpdateIndex = batchStatements.length - 2;
-
-  const results = await env.DB.batch(batchStatements);
-  if ((results[handoffInsertIndex]?.meta.changes ?? 0) !== 1) return null;
-  if ((results[stageUpdateIndex]?.meta.changes ?? 0) === 1) await notifyProject(env, projectId, "sent_to_editing");
+  const normalCoupling = { kind: "implicit_claim" as const, handoffId, mappingId, jobId, workflowId, connectionId, targetPath, targetPathKey };
+  if (isCollision) {
+    const coupling = {
+      kind: "implicit_claim_collision" as const,
+      handoffId,
+      mappingId,
+      jobId,
+      workflowId,
+      connectionId,
+      targetPath,
+      targetPathKey,
+      diagnostic: diagnostic!,
+      collisionOwnerProjectId: collidingClaim!.projectId
+    };
+    const assertion = buildOwnershipAssertionBundle({ db: env.DB, projectId, destinationStage, coupling, assertedAt: nowMs });
+    batchStatements.push(...assertion.statements);
+    let results: Awaited<ReturnType<Env["DB"]["batch"]>>;
+    try { results = await env.DB.batch(batchStatements); } catch (error) { if (isAutomaticBundleAssertionError(error)) throw new AutoHdrClaimError("ERR_MAPPING_BLOCKED", "AutoHDR collision could not be durably recorded"); throw error; }
+    if ((results[handoffInsertIndex]?.meta.changes ?? 0) !== 1 || (results[batchStatements.length - 1]?.meta.changes ?? 0) !== 0) { throw new AutoHdrClaimError("ERR_MAPPING_BLOCKED", "AutoHDR collision could not be durably recorded"); }
+  } else {
+    const coupling = normalCoupling;
+    const ownership: ClosedOwnershipBundle = {
+      statements: batchStatements,
+      indexes: { job: 0, handoff: 1, mapping: 2, pathClaim: 3 },
+      kind: "implicit_claim",
+      coupling
+    };
+    const assertion = buildOwnershipAssertionBundle({ db: env.DB, projectId, destinationStage, coupling, assertedAt: nowMs });
+    const destinationOwnership: ClosedOwnershipBundle = {
+      statements: [...batchStatements, ...assertion.statements],
+      indexes: { job: 0, handoff: 1, mapping: 2, pathClaim: 3, ownershipAssertion: 4 },
+      kind: "implicit_claim",
+      coupling
+    };
+    const stageAuditId = crypto.randomUUID();
+    await dependencies.beforeStageCommit?.();
+    const stageOutcome = await commitAutomaticStage({
+      env,
+      projectId,
+      from: "raw_review",
+      to: "editing_autohdr",
+      auditId: stageAuditId,
+      auditMetaJson: metaJson,
+      now: nowMs,
+      workflow: {
+        kind: "autohdr_handoff", projectId, handoffId, jobId, generation: 1,
+          connectionId, expectedStates: ["started"],
+          expectedPriorToken: null },
+      coupling,
+      preWinnerOwnership: ownership,
+      alreadyAtDestination: {
+        allowed: true,
+        effect: { kind: "ownership", bundle: destinationOwnership }
+      },
+      legacyWorkflowNotification: "sent_to_editing"
+    });
+    if (stageOutcome.kind === "winner" && stageOutcome.finalizer.legacyWorkflowNotification === "sent_to_editing") {
+      try {
+        await notifyProject(env, projectId, "sent_to_editing");
+      } catch (error) {
+        console.error("Implicit AutoHDR handoff notification failed", { projectId, error });
+      }
+    }
+    if (stageOutcome.kind !== "winner" && stageOutcome.kind !== "already_at_destination") return null;
+  }
   return {
     handoffId,
     jobId,
@@ -628,7 +921,7 @@ export async function claimImplicitAutoHdrHandoff(
     mappingId,
     finalPath: targetPath,
     finalPathKey: targetPathKey,
-    isCollision,
+    isCollision
   };
 }
 
@@ -639,7 +932,10 @@ export async function claimBackfillAutoHdrHandoff(
   connectionId: string,
   targetPath: string,
   folderId: string,
-): Promise<BackfillHandoffClaim> {
+  dependencies: AutomaticClaimDependencies = {}): Promise<BackfillHandoffClaim> {
+  if (!(await automaticBoardWritesEnabled(env))) {
+    return { ok: false, reason: "Automatic Stage writes are temporarily deferred; retry later" };
+  }
   const db = (await import("../lib/db")).dbFor(env);
   const now = new Date();
   const nowMs = now.getTime();
@@ -647,29 +943,29 @@ export async function claimBackfillAutoHdrHandoff(
   const activeHandoff = await db.select({ id: autoHdrHandoffs.id }).from(autoHdrHandoffs)
     .where(and(
       eq(autoHdrHandoffs.projectId, projectId),
-      inArray(autoHdrHandoffs.state, ["starting", "started", "blocked"]),
-    )).get();
+      inArray(autoHdrHandoffs.state, ["starting", "started", "blocked"]))).get();
   if (activeHandoff) return { ok: false, reason: "An active AutoHDR handoff already exists" };
 
+  const project = await db.select({ stageKey: projects.stageKey, archivedAt: projects.archivedAt }).from(projects).where(eq(projects.id, projectId)).get();
+  if (!project || project.archivedAt || !["raw_review", "editing_autohdr"].includes(project.stageKey)) {
+    return { ok: false, reason: "The project is no longer eligible for an AutoHDR backfill" };
+  }
+  const destinationStage: "raw_review" | "editing_autohdr" = project.stageKey === "editing_autohdr" ? "editing_autohdr" : "raw_review";
   const collidingClaim = await db.select({
     id: autoHdrPathClaims.id,
     projectId: autoHdrPathClaims.projectId,
-    state: autoHdrPathClaims.state,
-  }).from(autoHdrPathClaims).where(and(
+    state: autoHdrPathClaims.state }).from(autoHdrPathClaims).where(and(
     eq(autoHdrPathClaims.connectionId, connectionId),
-    eq(autoHdrPathClaims.pathKey, targetPathKey),
-  )).get();
+    eq(autoHdrPathClaims.pathKey, targetPathKey))).get();
   if (collidingClaim && collidingClaim.projectId !== projectId) {
     return {
       ok: false,
-      reason: `AutoHDR path collision at ${targetPathKey}; owned by project ${collidingClaim.projectId}`,
-    };
+      reason: `AutoHDR path collision at ${targetPathKey}; owned by project ${collidingClaim.projectId}` };
   }
   if (collidingClaim && !["tombstone", "blocked"].includes(collidingClaim.state)) {
     return {
       ok: false,
-      reason: `Existing AutoHDR path claim is ${collidingClaim.state} and cannot be reactivated`,
-    };
+      reason: `Existing AutoHDR path claim is ${collidingClaim.state} and cannot be reactivated` };
   }
 
   const maxGenRow = await db.select({ maxGen: sql<number>`COALESCE(MAX(${autoHdrHandoffs.generation}), 0)` })
@@ -700,8 +996,7 @@ export async function claimBackfillAutoHdrHandoff(
       nowMs,
       nowMs,
       projectId,
-      projectId,
-    ),
+      projectId),
     env.DB.prepare(`
       INSERT INTO autohdr_handoffs (
         id, project_id, connection_id, generation, manifest_version, selection_hash,
@@ -729,8 +1024,7 @@ export async function claimBackfillAutoHdrHandoff(
       nowMs,
       projectId,
       projectId,
-      jobId,
-    ),
+      jobId),
     env.DB.prepare(`
       INSERT INTO autohdr_output_mappings (
         id, project_id, handoff_id, connection_id, generation,
@@ -749,9 +1043,7 @@ export async function claimBackfillAutoHdrHandoff(
       nowMs,
       nowMs,
       nowMs,
-      handoffId,
-    ),
-  ];
+      handoffId)];
   const handoffInsertIndex = 1;
   if (collidingClaim) {
     batchStatements.push(env.DB.prepare(`
@@ -780,94 +1072,95 @@ export async function claimBackfillAutoHdrHandoff(
       folderId,
       nowMs,
       nowMs,
-      mappingId,
-    ));
+      mappingId));
   }
-  batchStatements.push(
-    env.DB.prepare(`
-      UPDATE projects
-      SET stage_key = 'editing_autohdr', board_position = (SELECT COALESCE(MAX(board_position) + 1024, 0) FROM projects WHERE stage_key = 'editing_autohdr' AND archived_at IS NULL AND id != ?), updated_at = ?
-      WHERE id = ? AND stage_key = 'raw_review' AND archived_at IS NULL
-        AND EXISTS (SELECT 1 FROM autohdr_handoffs WHERE id = ?)
-    `).bind(projectId, nowMs, projectId, handoffId),
-    env.DB.prepare(`
-      INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
-      SELECT ?, NULL, 'stage.auto_advance', 'project', ?, ?, ?
-      WHERE changes() = 1
-    `).bind(
-      crypto.randomUUID(),
-      projectId,
-      JSON.stringify({
-        from: "raw_review",
-        to: "editing_autohdr",
-        trigger: "autohdr_backfill",
-        handoffId,
-        jobId,
-        mappingGeneration: generation,
-        connectionId,
-        targetPath,
-      }),
-      nowMs,
-    ),
-  );
-  const stageUpdateIndex = batchStatements.length - 2;
-
-  let results: D1Result[];
+  const coupling = {
+    kind: "backfill_claim" as const,
+    handoffId,
+    mappingId,
+    jobId,
+    workflowId,
+    connectionId,
+    generation,
+    targetPath,
+    targetPathKey,
+    folderId
+  };
+  const ownership: ClosedOwnershipBundle = {
+    statements: batchStatements,
+    indexes: { job: 0, handoff: 1, mapping: 2, pathClaim: 3 },
+    kind: "backfill_claim",
+    coupling
+  };
+  const assertion = buildOwnershipAssertionBundle({ db: env.DB, projectId, destinationStage, coupling, assertedAt: nowMs });
+  const destinationOwnership: ClosedOwnershipBundle = {
+    statements: [...batchStatements, ...assertion.statements],
+    indexes: { job: 0, handoff: 1, mapping: 2, pathClaim: 3, ownershipAssertion: 4 },
+    kind: "backfill_claim",
+    coupling
+  };
+  const stageAuditId = crypto.randomUUID();
+  let stageOutcome: Awaited<ReturnType<typeof commitAutomaticStage>>;
   try {
-    results = await env.DB.batch(batchStatements);
+    await dependencies.beforeStageCommit?.();
+    stageOutcome = await commitAutomaticStage({
+      env,
+      projectId,
+      from: "raw_review",
+      to: "editing_autohdr",
+      auditId: stageAuditId,
+      auditMetaJson: JSON.stringify({ from: "raw_review", to: "editing_autohdr", trigger: "autohdr_backfill", handoffId, jobId, mappingGeneration: generation, connectionId, targetPath }),
+      now: nowMs,
+      workflow: { kind: "autohdr_handoff", projectId, handoffId, jobId, generation, connectionId, expectedStates: ["started"], expectedPriorToken: null },
+      coupling,
+      preWinnerOwnership: ownership,
+      alreadyAtDestination: {
+        allowed: true,
+        effect: { kind: "ownership", bundle: destinationOwnership }
+      },
+      legacyWorkflowNotification: "sent_to_editing"
+    });
   } catch (error) {
     if (!isUniqueConflict(error)) throw error;
     const concurrent = await db.select({ id: autoHdrHandoffs.id }).from(autoHdrHandoffs)
       .where(and(
         eq(autoHdrHandoffs.projectId, projectId),
-        inArray(autoHdrHandoffs.state, ["starting", "started", "blocked"]),
-      )).get();
-    if (concurrent && concurrent.id !== handoffId) {
-      return {
+        inArray(autoHdrHandoffs.state, ["starting", "started", "blocked"]))).get();
+    if (concurrent && concurrent.id !== handoffId) return {
         ok: false,
-        reason: "A concurrent handoff claimed this project during backfill — skipping, it's no longer stranded",
-      };
-    }
+        reason: "A concurrent handoff claimed this project during backfill — skipping, it's no longer stranded" };
     const holder = await db.select({ projectId: autoHdrPathClaims.projectId }).from(autoHdrPathClaims)
       .where(and(
         eq(autoHdrPathClaims.connectionId, connectionId),
-        eq(autoHdrPathClaims.pathKey, targetPathKey),
-      )).get();
-    if (holder && holder.projectId !== projectId) {
-      return {
+        eq(autoHdrPathClaims.pathKey, targetPathKey))).get();
+    if (holder && holder.projectId !== projectId) return {
         ok: false,
-        reason: `AutoHDR path collision at ${targetPathKey}; owned by project ${holder.projectId}`,
-      };
-    }
+        reason: `AutoHDR path collision at ${targetPathKey}; owned by project ${holder.projectId}` };
     throw error;
   }
 
-  if ((results[handoffInsertIndex]?.meta.changes ?? 0) !== 1) {
+  if (stageOutcome.kind !== "winner" && stageOutcome.kind !== "already_at_destination") {
     const current = await db.select({
       archivedAt: projects.archivedAt,
-      stageKey: projects.stageKey,
-    }).from(projects).where(eq(projects.id, projectId)).get();
-    if (current?.archivedAt) {
-      return { ok: false, reason: "Project was archived between selection and write" };
-    }
-    const concurrent = await db.select({ id: autoHdrHandoffs.id }).from(autoHdrHandoffs)
-      .where(and(
-        eq(autoHdrHandoffs.projectId, projectId),
-        inArray(autoHdrHandoffs.state, ["starting", "started", "blocked"]),
-      )).get();
-    if (concurrent) {
-      return {
-        ok: false,
-        reason: "A concurrent handoff claimed this project during backfill — skipping, it's no longer stranded",
-      };
-    }
-    return {
-      ok: false,
-      reason: `Project is no longer eligible for backfill${current ? ` (stage ${current.stageKey})` : ""}`,
-    };
+      stageKey: projects.stageKey }).from(projects).where(eq(projects.id, projectId)).get();
+    const reason = stageOutcome.kind === "deferred"
+      ? "Automatic Stage writes are temporarily deferred; retry later"
+      : stageOutcome.kind === "loser"
+        ? "AutoHDR backfill lost its Stage ownership race; retry later"
+        : stageOutcome.kind === "invariant_failure"
+          ? "AutoHDR backfill Stage entry invariant failed; retry later"
+          : current?.archivedAt
+            ? "Project was archived between selection and write"
+            : `Project is no longer eligible for backfill${current ? ` (stage ${current.stageKey})` : ""}`;
+    return { ok: false, reason };
   }
-
-  if ((results[stageUpdateIndex]?.meta.changes ?? 0) === 1) await notifyProject(env, projectId, "sent_to_editing");
+  if (stageOutcome.kind === "winner" && stageOutcome.finalizer.legacyWorkflowNotification === "sent_to_editing") {
+    try {
+      await notifyProject(env, projectId, "sent_to_editing");
+    } catch (error) {
+      console.error("Backfill AutoHDR handoff notification failed", { projectId, error });
+    }
+  }
 
   return {
     ok: true,
@@ -880,8 +1173,8 @@ export async function claimBackfillAutoHdrHandoff(
       mappingId,
       finalPath: targetPath,
       finalPathKey: targetPathKey,
-      isCollision: false,
-    },
+      isCollision: false
+    }
   };
 }
 
@@ -900,16 +1193,15 @@ export type FetchOwner = {
   reused: boolean;
   state: "starting" | "running";
 };
-export type FetchRouteNoLongerValid = { routeNoLongerValid: true; reason: string };
+export type FetchRouteNoLongerValid = { routeNoLongerValid: true; reason: string; };
 export type FetchClaimResult = FetchOwner | FetchRouteNoLongerValid;
-export type FetchClaimDependencies = { beforeClaimBatch?: () => void | Promise<void>; beforeBatch?: () => void | Promise<void> };
+export type FetchClaimDependencies = { beforeClaimBatch?: () => void | Promise<void>; beforeBatch?: () => void | Promise<void>; };
 
 async function fetchRouteIsValid(db: Database, route: RoutedAutoHdrMapping): Promise<boolean> {
   const row = await db.select({ mappingId: autoHdrOutputMappings.id }).from(autoHdrOutputMappings)
     .innerJoin(autoHdrHandoffs, and(
       eq(autoHdrHandoffs.id, autoHdrOutputMappings.handoffId),
-      eq(autoHdrHandoffs.projectId, autoHdrOutputMappings.projectId),
-    ))
+      eq(autoHdrHandoffs.projectId, autoHdrOutputMappings.projectId)))
     .where(and(
       eq(autoHdrOutputMappings.id, route.mappingId),
       eq(autoHdrOutputMappings.handoffId, route.handoffId),
@@ -921,8 +1213,7 @@ async function fetchRouteIsValid(db: Database, route: RoutedAutoHdrMapping): Pro
       eq(autoHdrHandoffs.projectId, route.projectId),
       eq(autoHdrHandoffs.connectionId, route.connectionId),
       eq(autoHdrHandoffs.generation, route.generation),
-      eq(autoHdrHandoffs.state, "started"),
-    )).get();
+      eq(autoHdrHandoffs.state, "started"))).get();
   return Boolean(row);
 }
 
@@ -931,55 +1222,50 @@ export async function claimAutoHdrFetch(
   env: Env,
   route: RoutedAutoHdrMapping,
   trigger: FetchTrigger,
-  dependencies: FetchClaimDependencies = {},
-): Promise<FetchClaimResult> {
+  dependencies: FetchClaimDependencies = {}): Promise<FetchClaimResult> {
   const db = (await import("../lib/db")).dbFor(env);
-  if (!await fetchRouteIsValid(db, route)) return { routeNoLongerValid: true, reason: "AutoHDR mapping or handoff is no longer active" };
+  if (!(await fetchRouteIsValid(db, route))) return { routeNoLongerValid: true, reason: "AutoHDR mapping or handoff is no longer active" };
   const now = new Date();
   // Reclaim the same owner/Workflow ID. Minting another deterministic ID here could overlap a
   // Workflow that was created successfully just before its confirmation write was interrupted.
   await db.update(autoHdrFetchClaims).set({
     leaseExpiresAt: new Date(now.getTime() + START_LEASE_MS),
     lastError: "orphaned start lease recovered",
-    updatedAt: now,
-  })
+    updatedAt: now })
     .where(and(
       eq(autoHdrFetchClaims.projectId, route.projectId),
       eq(autoHdrFetchClaims.mappingGeneration, route.generation),
       eq(autoHdrFetchClaims.state, "starting"),
-      lt(autoHdrFetchClaims.leaseExpiresAt, now),
-    ));
+      lt(autoHdrFetchClaims.leaseExpiresAt, now)));
   const existing = await db.select().from(autoHdrFetchClaims).where(and(
     eq(autoHdrFetchClaims.projectId, route.projectId),
     eq(autoHdrFetchClaims.mappingGeneration, route.generation),
     eq(autoHdrFetchClaims.mappingId, route.mappingId),
     eq(autoHdrFetchClaims.handoffId, route.handoffId),
     eq(autoHdrFetchClaims.connectionId, route.connectionId),
-    inArray(autoHdrFetchClaims.state, ["starting", "running"]),
-  )).get();
-  if (existing && await fetchRouteIsValid(db, route)) return {
+    inArray(autoHdrFetchClaims.state, ["starting", "running"]))).get();
+  if (existing && (await fetchRouteIsValid(db, route))) return {
     claimId: existing.id,
     jobId: existing.jobId,
     workflowId: existing.workflowId,
     input: JSON.parse(existing.triggerJson) as import("../workflows/autohdr-fetch").AutoHdrFetchInput,
     reused: true,
-    state: existing.state as "starting" | "running",
+    state: existing.state as "starting" | "running"
   };
   if (existing) return { routeNoLongerValid: true, reason: "AutoHDR mapping or handoff is no longer active" };
   const anyExisting = await db.select({ id: autoHdrFetchClaims.id }).from(autoHdrFetchClaims).where(and(
     eq(autoHdrFetchClaims.projectId, route.projectId),
     eq(autoHdrFetchClaims.mappingGeneration, route.generation),
-    inArray(autoHdrFetchClaims.state, ["starting", "running"]),
-  )).get();
+    inArray(autoHdrFetchClaims.state, ["starting", "running"]))).get();
   if (anyExisting) return { routeNoLongerValid: true, reason: "An existing AutoHDR fetch claim is pinned to a different route" };
   const claimId = crypto.randomUUID();
   const jobId = crypto.randomUUID();
   const priorCount = await db.select({ count: sql<number>`count(*)` }).from(autoHdrFetchClaims).where(and(
     eq(autoHdrFetchClaims.projectId, route.projectId),
-    eq(autoHdrFetchClaims.mappingGeneration, route.generation),
-  )).get();
+    eq(autoHdrFetchClaims.mappingGeneration, route.generation))).get();
   // Same instance-id constraint as the send path above: "-" separators only, never ":".
   const workflowId = `autohdr-fetch-${route.projectId}-${route.generation}-${Number(priorCount?.count ?? 0) + 1}`;
+  const sourceJob = await db.select({ id: autoHdrHandoffs.jobId, kind: jobs.kind }).from(autoHdrHandoffs).innerJoin(jobs, eq(jobs.id, autoHdrHandoffs.jobId)).where(and(eq(autoHdrHandoffs.id, route.handoffId), eq(autoHdrHandoffs.projectId, route.projectId))).get();
   const input: import("../workflows/autohdr-fetch").AutoHdrFetchInput = {
     projectId: route.projectId,
     jobId,
@@ -995,15 +1281,45 @@ export async function claimAutoHdrFetch(
     representativeChangedPath: trigger.representativeChangedPath,
     monitorScope: trigger.monitorScope,
     monitorRoot: trigger.monitorRoot,
+    ...(sourceJob?.id ? { stageEntrySourceJobId: sourceJob.id } : {}),
+    ...(sourceJob?.kind === "autohdr" || sourceJob?.kind === "autohdr_api_send" ? { stageEntrySourceJobKind: sourceJob.kind } : {}),
+    stageEntryGeneration: route.generation
   };
   try {
     await (dependencies.beforeClaimBatch ?? dependencies.beforeBatch)?.();
     const results = await env.DB.batch([
-      env.DB.prepare("INSERT INTO jobs (id, kind, status, correlation_id, project_id, payload_json, retries, created_at, updated_at) SELECT ?, 'fetch_edited', 'queued', ?, ?, ?, 0, ?, ? WHERE EXISTS (SELECT 1 FROM autohdr_output_mappings m JOIN autohdr_handoffs h ON h.id = m.handoff_id AND h.project_id = m.project_id WHERE m.id = ? AND m.state = 'active' AND m.connection_id = ? AND m.generation = ? AND m.project_id = ? AND h.id = ? AND h.state = 'started' AND h.generation = ? AND h.connection_id = ?)")
+      env.DB.prepare(`INSERT INTO jobs (
+  id,
+  kind,
+  status,
+  correlation_id,
+  project_id,
+  payload_json,
+  retries,
+  created_at,
+  updated_at
+)
+SELECT
+  ?, 'fetch_edited', 'queued', ?, ?, ?, 0, ?, ?
+WHERE EXISTS (
+  SELECT 1
+  FROM autohdr_output_mappings m
+  JOIN autohdr_handoffs h
+    ON h.id = m.handoff_id
+   AND h.project_id = m.project_id
+  WHERE m.id = ?
+    AND m.state = 'active'
+    AND m.connection_id = ?
+    AND m.generation = ?
+    AND m.project_id = ?
+    AND h.id = ?
+    AND h.state = 'started'
+    AND h.generation = ?
+    AND h.connection_id = ?
+)`)
         .bind(jobId, `fetch_edited:${route.projectId}:${route.generation}`, route.projectId, JSON.stringify(input), now.getTime(), now.getTime(), route.mappingId, route.connectionId, route.generation, route.projectId, route.handoffId, route.generation, route.connectionId),
       env.DB.prepare("INSERT INTO autohdr_fetch_claims (id, project_id, handoff_id, mapping_id, mapping_generation, connection_id, workflow_id, job_id, state, lease_expires_at, trigger, trigger_json, created_at, updated_at) SELECT ?, ?, ?, ?, ?, ?, ?, ?, 'starting', ?, ?, ?, ?, ? WHERE changes() = 1")
-        .bind(claimId, route.projectId, route.handoffId, route.mappingId, route.generation, route.connectionId, workflowId, jobId, now.getTime() + START_LEASE_MS, trigger.trigger, JSON.stringify(input), now.getTime(), now.getTime()),
-    ]);
+        .bind(claimId, route.projectId, route.handoffId, route.mappingId, route.generation, route.connectionId, workflowId, jobId, now.getTime() + START_LEASE_MS, trigger.trigger, JSON.stringify(input), now.getTime(), now.getTime())]);
     if ((results[1]?.meta.changes ?? 0) !== 1) return { routeNoLongerValid: true, reason: "AutoHDR mapping or handoff was retired before fetch claim commit" };
   } catch (error) {
     if (!isUniqueConflict(error)) throw error;
@@ -1013,10 +1329,9 @@ export async function claimAutoHdrFetch(
       eq(autoHdrFetchClaims.mappingId, route.mappingId),
       eq(autoHdrFetchClaims.handoffId, route.handoffId),
       eq(autoHdrFetchClaims.connectionId, route.connectionId),
-      inArray(autoHdrFetchClaims.state, ["starting", "running"]),
-    )).get();
+      inArray(autoHdrFetchClaims.state, ["starting", "running"]))).get();
     if (!winner) {
-      if (!await fetchRouteIsValid(db, route)) return { routeNoLongerValid: true, reason: "AutoHDR mapping or handoff is no longer active" };
+      if (!(await fetchRouteIsValid(db, route))) return { routeNoLongerValid: true, reason: "AutoHDR mapping or handoff is no longer active" };
       throw error;
     }
     return { claimId: winner.id, jobId: winner.jobId, workflowId: winner.workflowId, input: JSON.parse(winner.triggerJson), reused: true, state: winner.state as "starting" | "running" };

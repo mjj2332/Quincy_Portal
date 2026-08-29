@@ -7,6 +7,7 @@ const project: ProjectSummary = {
   id: "123e4567-e89b-42d3-a456-426614174000", street: "12 Kings Road", suburb: null, postcode: null,
   agencyName: null, agentName: null, stageKey: "awaiting_raw", shootDate: null, coverAssetId: null,
   receivedCount: 0, expectedCount: null, priority: null, boardPosition: 0, deadlineAt: null, deadlineLocalCivil: null, deadlineZone: null,
+  boardRevision: 0,
 };
 
 describe("dashboard project card markup", () => {
@@ -17,31 +18,32 @@ describe("dashboard project card markup", () => {
     expect(html).toMatch(/<a class="kcard"[^>]*href="\/projects\/123e4567-e89b-42d3-a456-426614174000">[\s\S]*<\/a><button/);
   });
 
-  it("sorts Kanban cards by board position and then id", () => {
-    const rows = [
-      { ...project, id: "b", boardPosition: 10 },
-      { ...project, id: "c", boardPosition: 10 },
-      { ...project, id: "a", boardPosition: 2 },
-    ];
+	it("sorts Kanban cards by the authorized Board map and then id", () => {
+		const rows = [
+			{ ...project, id: "b", boardPosition: 10, authorizedBoardOrder: { awaiting_raw: ["a", "b", "c"] } },
+			{ ...project, id: "c", boardPosition: 10, authorizedBoardOrder: { awaiting_raw: ["a", "b", "c"] } },
+			{ ...project, id: "a", boardPosition: 2, authorizedBoardOrder: { awaiting_raw: ["a", "b", "c"] } },
+		];
     expect(sortKanbanProjects(rows).map((row) => row.id)).toEqual(["a", "b", "c"]);
   });
 
-  it("groups priority-set cards before cards without priority", () => {
-    const rows = [
-      { ...project, id: "unprioritized", priority: null, boardPosition: 1 },
-      { ...project, id: "prioritized", priority: 1, boardPosition: 2 },
-    ];
-    expect(sortKanbanProjects(rows).map((row) => row.id)).toEqual(["prioritized", "unprioritized"]);
-  });
+	it("does not let Board order infer a Priority view", () => {
+		const rows = [
+			{ ...project, id: "unprioritized", priority: null, authorizedBoardOrder: { awaiting_raw: ["unprioritized", "prioritized"] } },
+			{ ...project, id: "prioritized", priority: 1, authorizedBoardOrder: { awaiting_raw: ["unprioritized", "prioritized"] } },
+		];
+		expect(sortKanbanProjects(rows).map((row) => row.id)).toEqual(["unprioritized", "prioritized"]);
+		expect(sortKanbanProjects(rows, "priority").map((row) => row.id)).toEqual(["prioritized", "unprioritized"]);
+	});
 
-  it("keeps board position and id ordering within each priority group", () => {
-    const rows = [
-      { ...project, id: "null-b", priority: null, boardPosition: 8 },
-      { ...project, id: "priority-b", priority: 2, boardPosition: 6 },
-      { ...project, id: "null-a", priority: null, boardPosition: 8 },
-      { ...project, id: "priority-a", priority: 1, boardPosition: 6 },
-    ];
-    expect(sortKanbanProjects(rows).map((row) => row.id)).toEqual(["priority-a", "priority-b", "null-a", "null-b"]);
+	it("uses Board rank and id only after equal Priority", () => {
+		const rows = [
+			{ ...project, id: "priority-b", priority: 2, authorizedBoardOrder: { awaiting_raw: ["priority-a", "priority-b"] } },
+			{ ...project, id: "priority-a", priority: 2, authorizedBoardOrder: { awaiting_raw: ["priority-a", "priority-b"] } },
+			{ ...project, id: "null-b", priority: null, authorizedBoardOrder: { awaiting_raw: ["null-a", "null-b"] } },
+			{ ...project, id: "null-a", priority: null, authorizedBoardOrder: { awaiting_raw: ["null-a", "null-b"] } },
+		];
+		expect(sortKanbanProjects(rows, "priority").map((row) => row.id)).toEqual(["priority-a", "priority-b", "null-a", "null-b"]);
   });
 
   it("sorts by shoot date in either direction and leaves unusable dates last", () => {

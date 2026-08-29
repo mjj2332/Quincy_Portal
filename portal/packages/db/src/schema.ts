@@ -168,6 +168,7 @@ export const projects = sqliteTable(
     stageKey: text("stage_key").notNull().default("awaiting_raw"),
     priority: integer("priority"),
     boardPosition: real("board_position").notNull().default(0),
+    boardRevision: integer("board_revision").notNull().default(0),
     orderNo: text("order_no"),
     orderId: text("order_id"),
     invoiceAmount: real("invoice_amount"),
@@ -193,6 +194,7 @@ export const projects = sqliteTable(
     index("projects_stage_idx").on(t.stageKey),
     index("projects_order_idx").on(t.orderId),
     index("projects_archived_idx").on(t.archivedAt),
+    check("projects_board_revision_check", sql`typeof(${t.boardRevision}) = 'integer' AND ${t.boardRevision} >= 0 AND ${t.boardRevision} <= 9007199254740991`),
     check("projects_priority_check", sql`${t.priority} IS NULL OR (typeof(${t.priority}) = 'integer' AND ${t.priority} >= 1 AND ${t.priority} <= 10)`),
     check("projects_deadline_zone_check", sql`${t.deadlineZone} IS NULL OR ${t.deadlineZone} = 'Australia/Sydney'`),
     check("projects_deadline_utc_offset_check", sql`${t.deadlineUtcOffsetMinutes} IS NULL OR (typeof(${t.deadlineUtcOffsetMinutes}) = 'integer' AND ${t.deadlineUtcOffsetMinutes} BETWEEN -840 AND 840)`),
@@ -631,6 +633,7 @@ export const autoHdrHandoffs = sqliteTable(
     frozenRawFolderPath: text("frozen_raw_folder_path").notNull(),
     initiatedBy: text("initiated_by").references(() => user.id),
     expectedOriginStage: text("expected_origin_stage").notNull().default("raw_review"),
+    editingEntryBoardRevision: integer("editing_entry_board_revision"),
     state: text("state", { enum: ["starting", "started", "blocked", "retired", "failed"] }).notNull().default("starting"),
     workflowId: text("workflow_id").notNull().unique(),
     jobId: text("job_id").notNull().references(() => jobs.id),
@@ -646,6 +649,7 @@ export const autoHdrHandoffs = sqliteTable(
     uniqueIndex("autohdr_handoffs_active_project_unique").on(t.projectId)
       .where(sql`${t.state} in ('starting', 'started', 'blocked')`),
     index("autohdr_handoffs_connection_idx").on(t.connectionId),
+    check("autohdr_handoffs_editing_entry_board_revision_check", sql`${t.editingEntryBoardRevision} IS NULL OR (typeof(${t.editingEntryBoardRevision}) = 'integer' AND ${t.editingEntryBoardRevision} >= 0 AND ${t.editingEntryBoardRevision} <= 9007199254740991)`),
   ],
 );
 
@@ -1035,6 +1039,7 @@ export const jobs = sqliteTable(
       .default("queued"),
     correlationId: text("correlation_id"),
     projectId: text("project_id").references(() => projects.id),
+    stageEntryBoardRevision: integer("stage_entry_board_revision"),
     payloadJson: text("payload_json"),
     retries: integer("retries").notNull().default(0),
     error: text("error"),
@@ -1047,6 +1052,7 @@ export const jobs = sqliteTable(
     uniqueIndex("jobs_manual_upload_publish_active_unique")
       .on(t.correlationId)
       .where(sql`${t.kind} in ('manual_edited_publish', 'manual_raw_publish') and ${t.status} in ('queued', 'running')`),
+    check("jobs_stage_entry_board_revision_check", sql`${t.stageEntryBoardRevision} IS NULL OR (typeof(${t.stageEntryBoardRevision}) = 'integer' AND ${t.stageEntryBoardRevision} >= 0 AND ${t.stageEntryBoardRevision} <= 9007199254740991)`),
   ],
 );
 

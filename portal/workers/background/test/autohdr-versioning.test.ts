@@ -1,6 +1,7 @@
 import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { writeAutoHdrFinal, type FinalWriteContext } from "../src/autohdr/finals";
+import { workflowTailAgrees } from "../src/lib/automatic-stage";
 import type { DropboxFile } from "../src/dropbox/client";
 
 declare const __PORTAL_MIGRATION_SQL__: string;
@@ -15,7 +16,10 @@ async function executeSql(source: string) {
     }
   }
 }
-beforeAll(() => executeSql(__PORTAL_MIGRATION_SQL__));
+beforeAll(async () => {
+  await executeSql(__PORTAL_MIGRATION_SQL__);
+  await executeSql("UPDATE feature_flags SET enabled = 1 WHERE key = 'tb5a_board_contract_enabled'");
+});
 
 const fakeDownload = vi.fn(async () => new Response(new Uint8Array([0xff, 0xd8, 0xff, 0xd9]), {
   headers: { "content-type": "image/jpeg" },
@@ -53,6 +57,10 @@ async function fixture(stage = "editing_autohdr") {
     bindings.DB.prepare("INSERT INTO autohdr_fetch_claims (id, project_id, handoff_id, mapping_id, mapping_generation, connection_id, workflow_id, job_id, state, lease_expires_at, trigger, trigger_json, started_at, created_at, updated_at) VALUES (?, ?, ?, ?, 1, ?, ?, ?, 'running', ?, 'dropbox_delta', '{}', ?, ?, ?)")
       .bind(fetchClaimId, projectId, handoffId, mappingId, connectionId, `fetch:${fetchClaimId}`, fetchJobId, now + 60_000, now, now, now),
   ]);
+  // This fixture represents a handoff that already won Editing entry. Production writes this
+  // token as the final statement of the entry bundle before any final can arrive.
+  await bindings.DB.prepare("UPDATE autohdr_handoffs SET editing_entry_board_revision = 0 WHERE id = ?")
+    .bind(handoffId).run();
   const context: FinalWriteContext = {
     projectId, jobId: fetchJobId, claimId: fetchClaimId, handoffId, manifestVersion: 1,
     mappingId, mappingGeneration: 1, connectionId,
@@ -86,6 +94,43 @@ async function seedCurrent(context: Awaited<ReturnType<typeof fixture>>, hash: s
 }
 
 describe("immutable AutoHDR final writer", () => {
+  it("uses N+1 for an editing-entry token and N for a completion token", () => {
+    const result = (rows: Record<string, unknown>[]) => ({ results: rows, meta: { changes: 0 } }) as never;
+    expect(workflowTailAgrees(
+      [result([{ id: "handoff" }]), result([{ editing_entry_board_revision: 6 }])],
+      "autohdr_handoff_entry",
+      { kind: "autohdr_handoff_entry", prerequisiteMarker: 0, editingEntryToken: 1 },
+      5,
+    )).toBe(true);
+    expect(workflowTailAgrees(
+      [result([{ id: "handoff" }]), result([{ editing_entry_board_revision: 5 }])],
+      "autohdr_handoff_entry",
+      { kind: "autohdr_handoff_entry", prerequisiteMarker: 0, editingEntryToken: 1 },
+      5,
+    )).toBe(false);
+    expect(workflowTailAgrees(
+      [result([{ id: "completion" }]), result([{ stage_entry_board_revision: 5 }]), result([{ id: "completion", status: "done" }])],
+      "autohdr_job_completion",
+      { kind: "autohdr_job_completion", prerequisiteMarker: 0, sourceEntryJob: 1, completionJobState: 2 },
+      5,
+    )).toBe(true);
+    expect(workflowTailAgrees(
+      [result([{ id: "completion" }]), result([{ stage_entry_board_revision: 6 }]), result([{ id: "completion", status: "done" }])],
+      "autohdr_job_completion",
+      { kind: "autohdr_job_completion", prerequisiteMarker: 0, sourceEntryJob: 1, completionJobState: 2 },
+      5,
+    )).toBe(false);
+  });
+
+  it("advances the final writer and emits edited_landed after the corrected completion fence", async () => {
+    const context = await fixture();
+    const result = await writeAutoHdrFinal(bindings as never, context, file("edited-landed"), deps);
+    expect(result).toMatchObject({ status: "created", stageAdvanced: true });
+    const notification = await bindings.DB.prepare("SELECT count(*) count FROM notifications WHERE project_id = ? AND type = 'edited_landed'")
+      .bind(context.projectId).first<{ count: number }>();
+    expect(notification?.count).toBe(1);
+  });
+
   it("creates the first current covered final, advances once, and replays same hash as a no-op", async () => {
     const context = await fixture();
     const first = await writeAutoHdrFinal(bindings as never, context, file("hash-one"), deps);
@@ -248,6 +293,36 @@ describe("immutable AutoHDR final writer", () => {
         .resolves.toMatchObject({ status: "quarantined" });
       const count = await bindings.DB.prepare("SELECT count(*) count FROM assets WHERE collection_id = ?").bind(context.editedCollectionId).first<{ count: number }>();
       expect(count?.count).toBe(0);
+    }
+  });
+
+  it("fails closed when final completion sees an independently stale handoff fence", async () => {
+    const cases = [
+      { name: "handoff state", update: "UPDATE autohdr_handoffs SET state = 'starting' WHERE id = ?" },
+      { name: "mapping state", update: "UPDATE autohdr_output_mappings SET state = 'retired' WHERE id = ?" },
+      { name: "fetch state", update: "UPDATE autohdr_fetch_claims SET state = 'done' WHERE id = ?" },
+      { name: "manifest version", update: "UPDATE autohdr_handoffs SET manifest_version = 2 WHERE id = ?" },
+      { name: "final path", update: "UPDATE autohdr_output_mappings SET final_path_key = '/autohdr/versioning/04-other-photos' WHERE id = ?" },
+    ] as const;
+
+    for (const testCase of cases) {
+      const context = await fixture();
+      const beforeFinalStage = async () => {
+        const id = testCase.name === "mapping state" || testCase.name === "final path" ? context.mappingId
+          : testCase.name === "fetch state" ? context.claimId : context.handoffId;
+        await bindings.DB.prepare(testCase.update).bind(id).run();
+      };
+      const result = await writeAutoHdrFinal(bindings as never, context, file(`stale-${testCase.name}`), {
+        ...deps,
+        beforeFinalStage,
+      });
+      expect(result, testCase.name).toMatchObject({ status: "created", stageAdvanced: false });
+      await expect(bindings.DB.prepare("SELECT stage_key, board_revision FROM projects WHERE id = ?").bind(context.projectId).first())
+        .resolves.toEqual({ stage_key: "editing_autohdr", board_revision: 0 });
+      await expect(bindings.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE target_id = ? AND action = 'stage.auto_advance'").bind(context.projectId).first())
+        .resolves.toEqual({ count: 0 });
+      await expect(bindings.DB.prepare("SELECT count(*) AS count FROM notification_outbox WHERE project_id = ?").bind(context.projectId).first())
+        .resolves.toEqual({ count: 0 });
     }
   });
 });

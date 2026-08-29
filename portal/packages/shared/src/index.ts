@@ -1,5 +1,6 @@
 export * from "./capabilities";
 export * from "./stages";
+export * from "./stage-move";
 export * from "./media";
 export * from "./xmp";
 export * from "./crypto";
@@ -30,3 +31,4 @@ export * from "./external-project-dto";
 export * from "./external-upload";
 export * from "./external-notification";
 export * from "./external-project-policy";
+export * from "./board-projection";

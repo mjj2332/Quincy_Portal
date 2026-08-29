@@ -1,6 +1,6 @@
-import { createDb, schema } from "@quincy/db";
+import { boardContractEnabled, boardSchemaVariant, createDb, projectColumnsForVariant, schema, type BoardSchemaVariant } from "@quincy/db";
 import { and, asc, eq, isNull, sql } from "drizzle-orm";
-import { externalProjectDetailSchema, externalProjectListResponseSchema, externalProjectSummarySchema, ROLE_LABELS, type ExternalProjectDetailDto, type ExternalProjectSummaryDto, type Role } from "@quincy/shared";
+import { externalProjectDetailSchema, externalProjectListResponseSchema, externalProjectSummarySchema, ROLE_LABELS, stageTransportKeyForRole, type ExternalProjectDetailDto, type ExternalProjectListResponse, type ExternalProjectSummaryDto, type Role, type StageKey, type StageTransportKey } from "@quincy/shared";
 import type { Env } from "../env";
 import { readProjectDeadlineSchedule } from "./project-deadline";
 import { visibleProjectWhere } from "./visible-project-scope";
@@ -22,6 +22,9 @@ type ProjectRow = {
   productionNotes: string | null;
   coverAssetId: string | null;
   editedUploadAvailable: boolean;
+  boardRevision: number;
+  priority: number | null;
+  boardPosition: number;
 };
 
 type ServiceRow = { projectId: string; id: string; kind: string; status: string; expectedCount: number | null; receivedCount: number };
@@ -35,26 +38,13 @@ function coverUrl(origin: string, assetId: string | null) {
   return assetId ? { assetId, url: new URL(`/media/asset/${assetId}/thumb`, origin).href } : null;
 }
 
-/** External projections never expose provider-specific workflow stage identifiers. */
-export function externalStageKey(stageKey: string) {
-  return stageKey === "editing_autohdr" ? "editing" : stageKey;
-}
-
-async function projectRows(db: Db, userId: string, role: Role, projectId?: string) {
+async function projectRows(db: Db, userId: string, role: Role, variant: BoardSchemaVariant, projectId?: string) {
+  // This explicit variant selection is reached only after the one old-schema-safe marker query.
+  const projectColumns = projectColumnsForVariant(variant);
   return db.select({
-    id: schema.projects.id,
-    street: schema.projects.street,
-    suburb: schema.projects.suburb,
-    postcode: schema.projects.postcode,
-    agencyName: schema.projects.agencyName,
-    agentName: schema.projects.agentName,
+    ...projectColumns,
     directoryAgencyName: schema.agencies.name,
     directoryAgentName: schema.agents.name,
-    shootDate: schema.projects.shootDate,
-    timeWindow: schema.projects.timeWindow,
-    stageKey: schema.projects.stageKey,
-    productionNotes: schema.projects.productionNotes,
-    coverAssetId: schema.projects.coverAssetId,
     editedUploadAvailable: sql<boolean>`(${schema.projects.rawFolderPath} IS NOT NULL OR ${schema.projects.rawFolderLink} IS NOT NULL)`,
     serviceId: schema.collections.id,
     serviceProjectId: schema.collections.projectId,
@@ -94,6 +84,9 @@ function toProjectRow(row: Awaited<ReturnType<typeof projectRows>>[number]): { p
       shootDate: row.shootDate, timeWindow: row.timeWindow, stageKey: row.stageKey,
       productionNotes: row.productionNotes, coverAssetId: row.coverAssetId,
       editedUploadAvailable: Boolean(row.editedUploadAvailable),
+      boardRevision: Number("boardRevision" in row ? row.boardRevision ?? 0 : 0),
+      priority: row.priority,
+      boardPosition: Number(row.boardPosition),
     },
     service: row.serviceId ? {
       projectId: row.serviceProjectId!, id: row.serviceId, kind: row.serviceKind!, status: row.serviceStatus!,
@@ -110,7 +103,8 @@ function summaryFields(project: ProjectRow, services: ServiceRow[], deadline: Aw
     agentDisplayName: project.directoryAgentName ?? project.agentName,
     shootDate: project.shootDate,
     timeWindow: project.timeWindow,
-    stageKey: externalStageKey(project.stageKey),
+    stageKey: stageTransportKeyForRole(project.stageKey as StageKey, "external_editor"),
+    boardRevision: project.boardRevision,
     deadline,
     productionNotes: project.productionNotes,
     services: services.map(({ id, kind, status, expectedCount, receivedCount }) => ({ id, kind, status, expectedCount, receivedCount })),
@@ -143,9 +137,26 @@ export async function assignedSubtaskCounts(db: Db, projectId: string): Promise<
   return new Map(rows.flatMap((row) => row.userId ? [[row.userId, Number(row.count)]] as const : []));
 }
 
-export async function listExternalProjects(env: Env, userId: string, role: Role): Promise<{ projects: ExternalProjectSummaryDto[] }> {
+function canonicalExternalBoardOrder(groups: Iterable<{ project: ProjectRow }>): Partial<Record<"awaiting_raw" | "raw_review" | "editing" | "edited_review" | "delivered", string[]>> {
+  const byStage = new Map<StageTransportKey, ProjectRow[]>();
+  for (const { project } of groups) {
+    const stageKey = stageTransportKeyForRole(project.stageKey as StageKey, "external_editor");
+    const rows = byStage.get(stageKey) ?? [];
+    rows.push(project);
+    byStage.set(stageKey, rows);
+  }
+  const orderedProjectIdsByStage: Partial<Record<"awaiting_raw" | "raw_review" | "editing" | "edited_review" | "delivered", string[]>> = {};
+  for (const [stageKey, rows] of byStage) {
+    rows.sort((left, right) => (left.priority === null ? 1 : 0) - (right.priority === null ? 1 : 0) || left.boardPosition - right.boardPosition || left.id.localeCompare(right.id));
+    orderedProjectIdsByStage[stageKey as keyof typeof orderedProjectIdsByStage] = rows.map((row) => row.id);
+  }
+  return orderedProjectIdsByStage;
+}
+
+export async function listExternalProjects(env: Env, userId: string, role: Role): Promise<ExternalProjectListResponse> {
+  const variant = await boardSchemaVariant(env.DB);
   const db = createDb(env.DB);
-  const rows = await projectRows(db, userId, role);
+  const rows = await projectRows(db, userId, role, variant);
   const grouped = new Map<string, { project: ProjectRow; services: ServiceRow[] }>();
   for (const raw of rows) {
     const { project, service } = toProjectRow(raw);
@@ -154,12 +165,19 @@ export async function listExternalProjects(env: Env, userId: string, role: Role)
     grouped.set(project.id, current);
   }
   const projects = await Promise.all([...grouped.values()].map(async ({ project, services }) => summaryFields(project, services, await readProjectDeadlineSchedule(env.DB, project.id), await coverFor(db, project), env.APP_ORIGIN)));
-  return externalProjectListResponseSchema.parse({ projects });
+  return externalProjectListResponseSchema.parse({
+    projects,
+    board: {
+      contractEnabled: await boardContractEnabled(env.DB, variant),
+      orderedProjectIdsByStage: variant === "tb5a_0037" ? canonicalExternalBoardOrder(grouped.values()) : {},
+    },
+  });
 }
 
 export async function readExternalProjectDetail(env: Env, userId: string, role: Role, projectId: string): Promise<ExternalProjectDetailDto | null> {
+  const variant = await boardSchemaVariant(env.DB);
   const db = createDb(env.DB);
-  const rows = await projectRows(db, userId, role, projectId);
+  const rows = await projectRows(db, userId, role, variant, projectId);
   if (!rows.length) return null;
   const first = toProjectRow(rows[0]!);
   const services = rows.flatMap((row) => {
@@ -175,6 +193,7 @@ export async function readExternalProjectDetail(env: Env, userId: string, role: 
   const summary = summaryFields(first.project, services, deadline, coverAsset, env.APP_ORIGIN);
   return externalProjectDetailSchema.parse({
     ...summary,
+    contractEnabled: await boardContractEnabled(env.DB, variant),
     editedUploadAvailable: first.project.editedUploadAvailable,
     collections: summary.services,
     members: members.map((member) => ({

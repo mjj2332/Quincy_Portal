@@ -430,6 +430,34 @@ afterEach(async () => {
     expect(apiGetMock.mock.calls.some(([path]) => path.includes("/autohdr-status"))).toBe(true);
   });
 
+  it("moves Stage from the rail through the shared confirmation retry", async () => {
+    authState.role = "admin";
+    let stageKey: "raw_review" | "awaiting_raw" = "raw_review";
+    apiGetMock.mockImplementation((path: string) => {
+      if (path === "/api/projects/p1") return Promise.resolve({ ...projectFixture(), stageKey, boardRevision: stageKey === "raw_review" ? 7 : 8, contractEnabled: true });
+      if (path.includes("/assets?collection=raw")) return Promise.resolve({ assets: rawAssets });
+      if (path.includes("/ingest-status")) return Promise.resolve({ expectedCount: null, receivedCount: 2, mismatch: false });
+      if (path.endsWith("/jobs")) return Promise.resolve({ jobs: [] });
+      if (path.includes("/autohdr-status")) return Promise.resolve({ handoff: null });
+      return Promise.resolve({});
+    });
+    confirmMock.mockReset();
+    confirmMock.mockResolvedValue(true);
+    apiPostMock
+      .mockRejectedValueOnce(new ApiError("Confirmation required", 409, { code: "stage_confirmation_required", requiredConfirmation: { reasons: ["backward"] } }))
+      .mockImplementationOnce(async () => { stageKey = "awaiting_raw"; return { changed: true, project: { stageKey, boardRevision: 8 } }; });
+    await render(<ProjectWorkspace projectId="p1" />); await flush();
+    const select = host.querySelector<HTMLSelectElement>('[aria-label="Move project Stage"]');
+    expect(select).not.toBeNull();
+    select!.value = "awaiting_raw";
+    await act(async () => { select!.dispatchEvent(new Event("change", { bubbles: true })); await Promise.resolve(); }); await flush(20);
+    expect(confirmMock).toHaveBeenCalledWith({ title: "Confirm Stage move", message: "This move moves backward. Continue?", confirmLabel: "Move project" });
+    expect(apiPostMock).toHaveBeenNthCalledWith(2, "/api/projects/p1/stage", {
+      expected: { stageKey: "raw_review", boardRevision: 7 }, targetStageKey: "awaiting_raw", placement: { kind: "append" }, confirmation: { reasons: ["backward"] },
+    });
+    expect(host.textContent).toContain("Awaiting RAW");
+  });
+
   it("keeps a PhotoGrid filter through a background refetch", async () => {
     let queryClient: ReturnType<typeof import("../lib/query-client").createQuincyQueryClient> | undefined;
     rawAssets = [workspaceAsset("rated", { review: { stars: 5, colorLabel: null, decision: null, recommended: false } }), workspaceAsset("unrated")];

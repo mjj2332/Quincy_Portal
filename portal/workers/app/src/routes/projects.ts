@@ -1,24 +1,26 @@
 import { Hono } from "hono";
 import { terminalRoute } from "../lib/terminal-route";
 import type { Context } from "hono";
-import { appendToStageBottomExpr, buildProjectActivityStatements, computeInsertPosition, createDb, dashboardProjectOrder, orderDashboardStreetTies, schema } from "@quincy/db";
+import { boardContractEnabled, boardSchemaVariant, buildDeadlineSuppressionBundle, buildProjectActivityStatements, createDb, dashboardProjectOrder, orderDashboardStreetTies, projectColumnsForVariant, schema, type BoardSchemaVariant } from "@quincy/db";
 import { and, asc, desc, eq, exists, gt, inArray, isNotNull, isNull, lte, notExists, sql } from "drizzle-orm";
-import { COLLECTION_KINDS, DOWNLOAD_SELECTION_MAX_ASSETS, DOWNLOAD_SELECTION_MAX_BYTES, isStageKey, PHOTOGRAPHER_VISIBLE_STAGES, PROJECT_ASSIGNMENT_ELIGIBLE_ROLES, projectActivityDeepLink, publishNotificationOutbox, roleHasCapability, type CollectionKind, type ProjectActivityIntent, type ProjectMemberRole, type ProjectMembershipDto, type Role } from "@quincy/shared";
+import { COLLECTION_KINDS, DOWNLOAD_SELECTION_MAX_ASSETS, DOWNLOAD_SELECTION_MAX_BYTES, moveProjectStageRequestSchemaForProject, PHOTOGRAPHER_VISIBLE_STAGES, PROJECT_ASSIGNMENT_ELIGIBLE_ROLES, projectActivityDeepLink, publishNotificationOutbox, roleHasCapability, type CollectionKind, type MoveProjectStageRequest, type ProjectActivityIntent, type ProjectMemberRole, type ProjectMembershipDto, type Role, type StageKey, type StageTransportKey } from "@quincy/shared";
 import { z } from "zod";
 import type { AppEnv } from "../env";
 import { hasProjectAccess, hasProjectAccessForUser, requireCapability } from "../middleware/capability";
 import { audit, auditMeta } from "../lib/audit";
 import { newId } from "../lib/ids";
-import { notifyProject } from "../lib/notifications";
 import { addProjectMemberWithAssignmentIntent, buildInitialProjectMemberStatementTuples, ProjectMemberIneligibleError, removeProjectMemberCycle, type InitialProjectMemberSlot } from "../lib/project-members";
 import { createZipStream } from "../lib/zip-stream";
 import { jsonInput } from "./helpers";
-import { ensurePipelineStages, projectStageForRole } from "./stages";
+import { projectStageForRole } from "./stages";
 import { abortMultipart } from "../lib/r2s3";
 import { isUserVisibleAsset } from "../lib/asset-visibility";
-import { manualInsertNeighbors, needsPositionRenumber, orderedBoardRows, priorityInsertNeighbors, renumberedInsertPosition, type BoardRow } from "../lib/kanban-ordering";
-import { readProjectDeadlineSchedule, suppressProjectDeadlineWork } from "../lib/project-deadline";
+import { readProjectDeadlineSchedule } from "../lib/project-deadline";
 import { listExternalProjects, readExternalProjectDetail } from "../lib/external-project-query";
+import { boardContractDisabled, boardSchemaMaintenance } from "../lib/board-schema-maintenance";
+import { moveProjectStage } from "../lib/project-stage";
+import { moveProjectBoardOrder } from "../lib/project-board-order";
+import { classifyProjectArchiveLoser, type ProjectArchiveSource } from "../lib/project-archive";
 
 const nullable = <T extends z.ZodTypeAny>(item: T) => item.nullable().optional();
 const baseProjectFields = z.object({ street: z.string().min(1), suburb: nullable(z.string()), postcode: nullable(z.string()), agencyName: nullable(z.string()), agentName: nullable(z.string()), agentEmail: nullable(z.string().email()), agentPhone: nullable(z.string()), agencyId: nullable(z.string().uuid()), agentId: nullable(z.string().uuid()), shootDate: nullable(z.string()), timeWindow: nullable(z.string()), orderNo: nullable(z.string()), orderId: nullable(z.string()), invoiceAmount: nullable(z.number()), paymentStatus: nullable(z.string()), notes: nullable(z.string()), productionNotes: nullable(z.string()), rawFolderLink: nullable(z.string().url()), rawFolderPath: nullable(z.string()), orderedServices: z.array(z.enum(COLLECTION_KINDS)).optional() });
@@ -30,7 +32,6 @@ const deleteProjectMembershipInput = z.discriminatedUnion("clearSubtaskAssignmen
 ]);
 const coverInput = z.object({ assetId: z.string().uuid().nullable() });
 const priorityInput = z.object({ priority: z.number().int().min(1).max(10).nullable() });
-const boardPositionInput = z.object({ direction: z.enum(["up", "down"]) });
 const downloadSelectionInput = z.object({
   assetIds: z.array(z.string().uuid()).min(1).max(DOWNLOAD_SELECTION_MAX_ASSETS)
     .superRefine((assetIds, ctx) => {
@@ -38,82 +39,14 @@ const downloadSelectionInput = z.object({
     }),
 }).strict();
 const idCheck = (v: string) => z.string().uuid().safeParse(v).success;
+function isExactLegacyStageBody(body: unknown): body is { stageKey: string } {
+  return typeof body === "object" && body !== null && !Array.isArray(body)
+    && Object.keys(body).length === 1 && Object.prototype.hasOwnProperty.call(body, "stageKey")
+    && typeof (body as { stageKey?: unknown }).stageKey === "string";
+}
 const DOWNLOAD_SELECTION_TICKET_MS = 5 * 60 * 1000;
 const unavailableSelectionError = "One or more selected assets are not available in this project";
 const unsupportedSelectionError = "Download Selection supports one RAW or Edited photo selection";
-
-async function guardedBoardUpdate(
-  d1: D1Database,
-  target: BoardRow,
-  rows: BoardRow[],
-  beforeId: string | null,
-  afterId: string | null,
-  position: number,
-  newPriority: number | null | undefined,
-  tail: D1PreparedStatement[] = [],
-  winnerMarkerId?: string,
-) {
-  const plan = plannedBoardState(rows, target.id, beforeId, afterId, position, newPriority);
-  const snapshot = target.stageKey;
-  const finalPosition = plan.position;
-  const finalSql = newPriority === undefined
-    ? `UPDATE projects SET board_position = ?, updated_at = ? WHERE id = ? AND stage_key = ? AND archived_at IS NULL AND board_position IS NOT ? RETURNING priority, board_position AS boardPosition`
-    : `UPDATE projects SET priority = ?, board_position = ?, updated_at = ? WHERE id = ? AND stage_key = ? AND archived_at IS NULL AND (priority IS NOT ? OR board_position IS NOT ?) RETURNING priority, board_position AS boardPosition`;
-  const finalStatement = newPriority === undefined
-    ? d1.prepare(finalSql).bind(finalPosition, Date.now(), target.id, snapshot, finalPosition)
-    : d1.prepare(finalSql).bind(newPriority, finalPosition, Date.now(), target.id, snapshot, newPriority, finalPosition);
-
-  if (!plan.renumbered.length && !tail.length) {
-    const result = await d1.batch([finalStatement]);
-    const row = firstD1<{ priority: number | null; boardPosition: number }>(result[0]);
-    return row ? { ...row, tailResults: [] as D1Result<unknown>[] } : null;
-  }
-
-  const renumberStatements = plan.renumbered
-    .filter((row) => row.id !== target.id)
-    .map((row) => d1.prepare(
-      "UPDATE projects SET board_position = ?, updated_at = ? WHERE id = ? AND stage_key = ? AND archived_at IS NULL AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?)",
-    ).bind(plan.positions.get(row.id), Date.now(), row.id, snapshot, winnerMarkerId));
-  const result = await d1.batch([
-    finalStatement,
-    ...(tail.length ? [tail[0]!] : []),
-    ...renumberStatements,
-    ...tail.slice(1),
-  ]);
-  const row = firstD1<{ priority: number | null; boardPosition: number }>(result[0]);
-  if (!row) return null;
-  const activityStart = 1 + (tail.length ? renumberStatements.length + 1 : renumberStatements.length);
-  const tailResults = tail.length
-    ? [result[1]!, ...result.slice(activityStart)]
-    : [];
-  return { ...row, tailResults };
-}
-
-function plannedBoardState(rows: BoardRow[], targetId: string, beforeId: string | null, afterId: string | null, position: number, newPriority: number | null | undefined) {
-  const before = beforeId ? rows.find((row) => row.id === beforeId)?.boardPosition ?? null : null;
-  const after = afterId ? rows.find((row) => row.id === afterId)?.boardPosition ?? null : null;
-  const renumber = needsPositionRenumber(position, before, after);
-  if (!renumber) {
-    return {
-      renumbered: [] as BoardRow[],
-      positions: new Map<string, number>(),
-      position,
-      expectedRows: rows.map((row) => row.id === targetId ? { ...row, priority: newPriority === undefined ? row.priority : newPriority, boardPosition: position } : row),
-    };
-  }
-  const { renumbered, position: recomputedPosition } = renumberedInsertPosition(rows, beforeId, afterId);
-  return {
-    renumbered: orderedBoardRows(rows),
-    positions: renumbered,
-    position: recomputedPosition,
-    expectedRows: rows.map((row) => ({ ...row, priority: row.id === targetId && newPriority !== undefined ? newPriority : row.priority, boardPosition: renumbered.get(row.id)! })),
-  };
-}
-
-async function currentBoardTarget(db: ReturnType<typeof createDb>, projectId: string) {
-  return await db.select({ id: schema.projects.id, stageKey: schema.projects.stageKey, priority: schema.projects.priority, boardPosition: schema.projects.boardPosition })
-    .from(schema.projects).where(and(eq(schema.projects.id, projectId), isNull(schema.projects.archivedAt))).get() as BoardRow | undefined;
-}
 
 type DropboxSyncResult = {
   raw: { jobId: string } | { skipped: "no_raw_folder" | "not_permitted" | "error"; message?: string };
@@ -243,8 +176,9 @@ async function abortActiveDocumentSessions(c: Context<AppEnv>, projectId: string
   }
   return sessions.length;
 }
-async function details(db: ReturnType<typeof createDb>, d1: D1Database, projectId: string, role: AppEnv["Variables"]["user"]["role"], viewerSeesRawOnly = false) {
-  const project = await db.select().from(schema.projects).where(eq(schema.projects.id, projectId)).get();
+async function details(db: ReturnType<typeof createDb>, d1: D1Database, projectId: string, role: AppEnv["Variables"]["user"]["role"], variant: BoardSchemaVariant, contractEnabled: boolean, viewerSeesRawOnly = false) {
+  // Do not replace this with select(). The post-0037 Drizzle schema contains board_revision.
+  const project = await db.select(projectColumnsForVariant(variant)).from(schema.projects).where(eq(schema.projects.id, projectId)).get();
   if (!project) return null;
   const [{ storedByProject, automaticByProject }, collections, members, assignedCounts] = await Promise.all([
     coverMaps(db, [projectId], viewerSeesRawOnly),
@@ -255,7 +189,32 @@ async function details(db: ReturnType<typeof createDb>, d1: D1Database, projectI
   const counts = new Map(assignedCounts.map((row) => [row.userId, Number(row.assignedSubtaskCount ?? 0)]));
   const memberDtos: ProjectMembershipDto[] = members.map((member) => ({ ...member, active: Boolean(member.active), assignedSubtaskCount: counts.get(member.userId) ?? 0 }));
   const deadlineSchedule = await readProjectDeadlineSchedule(d1, projectId);
-  return projectStageForRole({ ...project, editedUploadAvailable: Boolean(project.rawFolderPath || project.rawFolderLink), effectiveCoverAssetId: storedByProject.get(projectId) ?? automaticByProject.get(projectId) ?? null, collections, members: memberDtos, deadlineSchedule }, role);
+  return projectStageForRole({
+    ...project,
+    boardRevision: variant === "tb5a_0037" && "boardRevision" in project ? Number(project.boardRevision) : 0,
+    contractEnabled,
+    editedUploadAvailable: Boolean(project.rawFolderPath || project.rawFolderLink),
+    effectiveCoverAssetId: storedByProject.get(projectId) ?? automaticByProject.get(projectId) ?? null,
+    collections,
+    members: memberDtos,
+    deadlineSchedule,
+  }, role);
+}
+
+function authorizedInternalBoardOrder(rows: Array<{ project: { id: string; stageKey: string; priority: number | null; boardPosition: number } }>, role: Role): Partial<Record<StageTransportKey, string[]>> {
+  const groups = new Map<StageTransportKey, Array<{ id: string; priority: number | null; boardPosition: number }>>();
+  for (const { project } of rows) {
+    const stageKey = projectStageForRole(project, role).stageKey as StageTransportKey;
+    const group = groups.get(stageKey) ?? [];
+    group.push(project);
+    groups.set(stageKey, group);
+  }
+  const orderedProjectIdsByStage: Partial<Record<StageTransportKey, string[]>> = {};
+  for (const [stageKey, group] of groups) {
+    group.sort((left, right) => (left.priority === null ? 1 : 0) - (right.priority === null ? 1 : 0) || left.boardPosition - right.boardPosition || left.id.localeCompare(right.id));
+    orderedProjectIdsByStage[stageKey] = group.map((project) => project.id);
+  }
+  return orderedProjectIdsByStage;
 }
 
 type AssignmentCandidate = { id: string; name: string; email: string; globalRole: Role; active: true };
@@ -285,7 +244,7 @@ function createProjectResponse(data: z.infer<typeof createProjectFields>, id: st
     id, street: data.street, suburb: data.suburb ?? null, postcode: data.postcode ?? null,
     agencyName: data.agencyName ?? null, agentName: data.agentName ?? null, agentEmail: data.agentEmail ?? null, agentPhone: data.agentPhone ?? null,
     agencyId: data.agencyId ?? null, agentId: data.agentId ?? null, shootDate: data.shootDate ?? null, timeWindow: data.timeWindow ?? null,
-    stageKey: "awaiting_raw", priority: null, boardPosition: 0, orderNo: data.orderNo ?? null, orderId: data.orderId ?? null,
+    stageKey: "awaiting_raw", priority: null, boardPosition: 0, boardRevision: 0, orderNo: data.orderNo ?? null, orderId: data.orderId ?? null,
     invoiceAmount: data.invoiceAmount ?? null, paymentStatus: data.paymentStatus ?? null, notes: data.notes ?? null, productionNotes: data.productionNotes ?? null,
     rawFolderLink: data.rawFolderLink ?? null, rawFolderPath: data.rawFolderPath ?? null, coverAssetId: null, effectiveCoverAssetId: null,
     archivedAt: null, archivedBy: null, members: memberships,
@@ -321,11 +280,13 @@ async function createProjectAtomically(c: Context<AppEnv>, data: z.infer<typeof 
     INSERT INTO projects (
       id, street, suburb, postcode, agency_name, agent_name, agent_email, agent_phone,
       agency_id, agent_id, shoot_date, time_window, stage_key, board_position,
+      board_revision,
       order_no, order_id, invoice_amount, payment_status, notes, production_notes, raw_folder_link, raw_folder_path,
       created_at, updated_at
     )
     SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'awaiting_raw',
       (SELECT COALESCE(MAX(board_position) + 1024, 0) FROM projects WHERE stage_key = 'awaiting_raw' AND archived_at IS NULL AND id != ?),
+      0,
       ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
     WHERE ${eligibilityPredicates.length ? eligibilityPredicates.join(" AND ") : "1 = 1"}
     RETURNING id
@@ -378,18 +339,36 @@ function rowsFromD1<T>(result: unknown): T[] {
 function firstD1<T>(result: unknown): T | undefined { return rowsFromD1<T>(result)[0]; }
 export const projectsRoutes = new Hono<AppEnv>();
 projectsRoutes.get("/projects", terminalRoute("/projects", async (c) => {
+  const variant = await boardSchemaVariant(c.env.DB);
   const db = createDb(c.env.DB); const user = c.get("user");
   if (user.role === "external_editor") return c.json(await listExternalProjects(c.env, user.id, user.role));
   const archived = c.req.query("archived") === "1" && roleHasCapability(user.role, "adminBackend");
   const archivedFilter = archived ? isNotNull(schema.projects.archivedAt) : isNull(schema.projects.archivedAt);
-  const base = db.select({ project: schema.projects, receivedCount: schema.collections.receivedCount, expectedCount: schema.collections.expectedCount }).from(schema.projects).leftJoin(schema.collections, and(eq(schema.collections.projectId, schema.projects.id), eq(schema.collections.kind, "raw")));
+  const projectColumns = projectColumnsForVariant(variant);
+  const base = db.select({ project: projectColumns, receivedCount: schema.collections.receivedCount, expectedCount: schema.collections.expectedCount }).from(schema.projects).leftJoin(schema.collections, and(eq(schema.collections.projectId, schema.projects.id), eq(schema.collections.kind, "raw")));
   const rows = user.role === "photographer"
     ? await base.where(and(archivedFilter, exists(db.select({ id: schema.projectMembers.id }).from(schema.projectMembers).where(and(eq(schema.projectMembers.projectId, schema.projects.id), eq(schema.projectMembers.userId, user.id)))), inArray(schema.projects.stageKey, PHOTOGRAPHER_VISIBLE_STAGES))).orderBy(...dashboardProjectOrder).all()
     : await base.where(archivedFilter).orderBy(...dashboardProjectOrder).all();
   const orderedRows = orderDashboardStreetTies(rows);
   const projectIds = orderedRows.map(({ project }) => project.id);
   const { storedByProject, automaticByProject } = await coverMaps(db, projectIds, user.role === "photographer");
-  return c.json({ projects: orderedRows.map((r) => projectStageForRole({ ...r.project, coverAssetId: storedByProject.get(r.project.id) ?? automaticByProject.get(r.project.id) ?? null, receivedCount: r.receivedCount ?? 0, expectedCount: r.expectedCount, deadlineAt: r.project.deadlineAt, deadlineLocalCivil: r.project.deadlineLocalCivil, deadlineZone: r.project.deadlineZone }, user.role)) });
+  const enabled = await boardContractEnabled(c.env.DB, variant);
+  return c.json({
+    projects: orderedRows.map((r) => projectStageForRole({
+      ...r.project,
+      boardRevision: variant === "tb5a_0037" && "boardRevision" in r.project ? Number(r.project.boardRevision) : 0,
+      coverAssetId: storedByProject.get(r.project.id) ?? automaticByProject.get(r.project.id) ?? null,
+      receivedCount: r.receivedCount ?? 0,
+      expectedCount: r.expectedCount,
+      deadlineAt: r.project.deadlineAt,
+      deadlineLocalCivil: r.project.deadlineLocalCivil,
+      deadlineZone: r.project.deadlineZone,
+    }, user.role)),
+    board: {
+      contractEnabled: enabled,
+      orderedProjectIdsByStage: variant === "tb5a_0037" && !archived ? authorizedInternalBoardOrder(orderedRows, user.role) : {},
+    },
+  });
 }));
 projectsRoutes.get("/project-assignment-candidates", terminalRoute("/project-assignment-candidates", async (c) => {
   const user = c.get("user");
@@ -398,6 +377,12 @@ projectsRoutes.get("/project-assignment-candidates", terminalRoute("/project-ass
 }));
 
 projectsRoutes.post("/projects", requireCapability("createProject"), terminalRoute("/projects", async (c) => {
+  const variant = await boardSchemaVariant(c.env.DB);
+  if (variant === "pre_0037") return boardSchemaMaintenance(c);
+  // Creation is an INSERT of a new row (append at Stage bottom, board_revision 0). It does not
+  // mutate an existing Board row, so it is not flag-gated: the studio must be able to onboard
+  // shoots throughout the flag-OFF rollout window. Stage move / reorder / archive / restore stay
+  // flag-gated because they change existing rows' position/revision.
   const data = await jsonInput(c, createProjectFields); if (data instanceof Response) return data;
   const slots = normalizedProjectSlots(data.photographerUserIds, data.editorUserIds);
   const candidates = await assignmentCandidates(createDb(c.env.DB));
@@ -409,27 +394,23 @@ projectsRoutes.post("/projects", requireCapability("createProject"), terminalRou
   if (prevalidationFailures.length) return c.json({ error: "One or more project assignments are not eligible", code: "ineligible_project_assignments", ineligibleSlots: prevalidationFailures }, 422);
   const result = await createProjectAtomically(c, data, slots, candidates);
   if (!result.created) return c.json({ error: "One or more project assignments are not eligible", code: "ineligible_project_assignments", ineligibleSlots: result.ineligibleSlots }, 422);
-  return c.json(result.response, 201);
+  return c.json({ ...result.response, contractEnabled: await boardContractEnabled(c.env.DB, variant) }, 201);
 }));
 
 projectsRoutes.post("/projects/:id/priority", terminalRoute("/projects/:id/priority", async (c) => {
+  const variant = await boardSchemaVariant(c.env.DB);
+  if (variant === "pre_0037") return boardSchemaMaintenance(c);
   const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
   if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   if (!roleHasCapability(c.get("user").role, "prioritizeProjects")) return c.json({ error: "Forbidden", capability: "prioritizeProjects" }, 403);
   const data = await jsonInput(c, priorityInput); if (data instanceof Response) return data;
   const db = createDb(c.env.DB);
-  const target = await db.select({ id: schema.projects.id, stageKey: schema.projects.stageKey, priority: schema.projects.priority, boardPosition: schema.projects.boardPosition })
-    .from(schema.projects).where(and(eq(schema.projects.id, id), isNull(schema.projects.archivedAt))).get() as BoardRow | undefined;
+  const target = await c.env.DB.prepare(`
+    SELECT id, stage_key AS stageKey, priority, board_position AS boardPosition, board_revision AS boardRevision
+    FROM projects WHERE id = ? AND archived_at IS NULL
+  `).bind(id).first<{ id: string; stageKey: StageKey; priority: number | null; boardPosition: number; boardRevision: number }>();
   if (!target) return c.json({ error: "Project not found" }, 404);
-  const others = await db.select({ id: schema.projects.id, stageKey: schema.projects.stageKey, priority: schema.projects.priority, boardPosition: schema.projects.boardPosition })
-    .from(schema.projects).where(and(eq(schema.projects.stageKey, target.stageKey), isNull(schema.projects.archivedAt), sql`${schema.projects.id} <> ${id}`)).all() as BoardRow[];
-  const desiredPriority = data.priority;
-  const neighbors = priorityInsertNeighbors([target, ...others], id, desiredPriority);
-  const { beforeId, afterId, before, after } = neighbors;
-  const position = computeInsertPosition(before, after);
-  const plan = plannedBoardState([target, ...others], target.id, beforeId, afterId, position, desiredPriority);
-  const plannedTarget = plan.expectedRows.find((row) => row.id === target.id)!;
-  if (!plan.renumbered.length && target.priority === plannedTarget.priority && target.boardPosition === plannedTarget.boardPosition) return c.json({ priority: target.priority, boardPosition: target.boardPosition });
+  if (target.priority === data.priority) return c.json({ priority: target.priority, boardRevision: target.boardRevision });
   const now = Date.now();
   const auditId = newId(); const activityId = newId();
   const activity: ProjectActivityIntent = {
@@ -439,57 +420,53 @@ projectsRoutes.post("/projects/:id/priority", terminalRoute("/projects/:id/prior
   };
   const activityStatements = buildProjectActivityStatements({ db: c.env.DB, intent: activity, winnerAuditId: auditId, createdAt: now });
   const auditStatement = c.env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, ?, 'project.priority_set', 'project', ?, ?, ? WHERE changes() = 1 RETURNING id").bind(auditId, c.get("user").id, id, auditMeta(c.get("user"), { from: target.priority, to: data.priority }), now);
-  const result = await guardedBoardUpdate(c.env.DB, target, [target, ...others], beforeId, afterId, position, data.priority, [auditStatement, ...activityStatements.statements], auditId);
-  if (!result) {
-    const current = await currentBoardTarget(db, id);
-    if (current && current.priority === plannedTarget.priority && current.boardPosition === plannedTarget.boardPosition) {
-      return c.json({ priority: current.priority, boardPosition: current.boardPosition });
-    }
-    return c.json({ error: "Project stage changed while priority was being updated" }, 409);
+  const updateStatement = c.env.DB.prepare(`
+    UPDATE projects
+    SET priority = ?1, updated_at = ?2
+    WHERE id = ?3 AND archived_at IS NULL AND priority IS NOT ?1
+      AND stage_key = ?4 AND board_position IS ?5 AND board_revision = ?6
+    RETURNING priority, board_revision
+  `).bind(data.priority, now, id, target.stageKey, target.boardPosition, target.boardRevision);
+  const result = await c.env.DB.batch([updateStatement, auditStatement, ...activityStatements.statements]);
+  const rawUpdated = firstD1<{ priority: number | null; boardRevision?: number; board_revision?: number }>(result[0]);
+  const updated = rawUpdated && {
+    priority: rawUpdated.priority,
+    boardRevision: rawUpdated.boardRevision ?? rawUpdated.board_revision,
+  };
+  if (!updated || updated.boardRevision === undefined || !rowsFromD1(result[1]).length) {
+    const current = await c.env.DB.prepare("SELECT priority, stage_key AS stageKey, board_position AS boardPosition, board_revision AS boardRevision FROM projects WHERE id = ? AND archived_at IS NULL").bind(id).first<{ priority: number | null; stageKey: StageKey; boardPosition: number; boardRevision: number }>();
+    if (current && current.priority === data.priority && current.stageKey === target.stageKey && current.boardPosition === target.boardPosition && current.boardRevision === target.boardRevision) return c.json({ priority: current.priority, boardRevision: current.boardRevision });
+    return c.json({ error: "Project changed while priority was being updated", code: "project_priority_conflict" }, 409);
   }
-  const tailResults = result.tailResults ?? [];
-  if (!rowsFromD1(tailResults[0]).length) return c.json({ error: "Project changed while priority was being recorded" }, 409);
-  const publicationIds = rowsFromD1<{ id: string }>(tailResults[1 + activityStatements.broadOutboxIndex]).map((row) => row.id);
+  const publicationIds = rowsFromD1<{ id: string }>(result[2 + activityStatements.broadOutboxIndex]).map((row) => row.id);
   if (publicationIds.length) c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, publicationIds));
-  return c.json({ priority: result.priority, boardPosition: result.boardPosition });
+  return c.json(updated);
 }));
 
 projectsRoutes.post("/projects/:id/board-position", terminalRoute("/projects/:id/board-position", async (c) => {
   const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
-  if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
-  if (!roleHasCapability(c.get("user").role, "prioritizeProjects")) return c.json({ error: "Forbidden", capability: "prioritizeProjects" }, 403);
-  const data = await jsonInput(c, boardPositionInput); if (data instanceof Response) return data;
-  const db = createDb(c.env.DB);
-  const rows = await db.select({ id: schema.projects.id, stageKey: schema.projects.stageKey, priority: schema.projects.priority, boardPosition: schema.projects.boardPosition })
-    .from(schema.projects).where(and(isNull(schema.projects.archivedAt), eq(schema.projects.id, id))).get();
-  if (!rows) return c.json({ error: "Project not found" }, 404);
-  const target = rows as BoardRow;
-  const column = orderedBoardRows(await db.select({ id: schema.projects.id, stageKey: schema.projects.stageKey, priority: schema.projects.priority, boardPosition: schema.projects.boardPosition })
-    .from(schema.projects).where(and(eq(schema.projects.stageKey, target.stageKey), isNull(schema.projects.archivedAt))).all() as BoardRow[]);
-  const neighbors = manualInsertNeighbors(column, id, data.direction);
-  if (!neighbors) return c.json({ boardPosition: target.boardPosition });
-  const { beforeId, afterId, before, after } = neighbors;
-  const position = computeInsertPosition(before, after);
-  const boardPlan = plannedBoardState(column, target.id, beforeId, afterId, position, undefined);
-  const plannedTarget = boardPlan.expectedRows.find((row) => row.id === target.id)!;
-  if (!boardPlan.renumbered.length && target.boardPosition === plannedTarget.boardPosition) return c.json({ boardPosition: target.boardPosition });
-  const auditId = newId();
-  const auditStatement = c.env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, ?, 'project.board_position_set', 'project', ?, ?, ? WHERE changes() = 1 RETURNING id").bind(auditId, c.get("user").id, id, auditMeta(c.get("user"), { direction: data.direction }), Date.now());
-  const result = await guardedBoardUpdate(c.env.DB, target, column, beforeId, afterId, position, undefined, [auditStatement], auditId);
-  if (!result) {
-    const current = await currentBoardTarget(db, id);
-    if (current && current.boardPosition === plannedTarget.boardPosition) return c.json({ boardPosition: current.boardPosition });
-    return c.json({ error: "Project stage changed while board position was being updated" }, 409);
+  const data = await jsonInput(c, moveProjectStageRequestSchemaForProject(id)); if (data instanceof Response) return data;
+  const result = await moveProjectBoardOrder({ env: c.env, principal: c.get("user"), projectId: id, request: data });
+  if (result.kind === "schema_maintenance") return boardSchemaMaintenance(c);
+  if (result.kind === "disabled") return boardContractDisabled(c);
+  if (result.kind === "forbidden") return c.json({ error: "Forbidden", capability: result.capability }, 403);
+  if (result.kind === "not_found") return c.json({ error: "Project not found" }, 404);
+  if (result.kind === "conflict") return c.json({ error: "Project changed while board position was being updated", code: "project_stage_conflict", current: result.current }, 409);
+  if (result.kind === "moved") {
+    if (result.finalizer.publicationIds.length) c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, result.finalizer.publicationIds));
+    return c.json(result.response);
   }
-  return c.json({ boardPosition: result.boardPosition });
+  return c.json(result.response);
 }));
 projectsRoutes.patch("/projects/:id", terminalRoute("/projects/:id", async (c) => {
   const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
   if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   if (!roleHasCapability(c.get("user").role, "editProject")) return c.json({ error: "Forbidden", capability: "editProject" }, 403);
   const data = await jsonInput(c, editFields); if (data instanceof Response) return data;
+  const variant = await boardSchemaVariant(c.env.DB);
   const db = createDb(c.env.DB);
-  const existingProject = await db.select().from(schema.projects).where(eq(schema.projects.id, id)).get();
+  // Explicit variant selection prevents a 0036 deployment from preparing board_revision.
+  const existingProject = await db.select(projectColumnsForVariant(variant)).from(schema.projects).where(eq(schema.projects.id, id)).get();
   if (!existingProject) return c.json({ error: "Project not found" }, 404);
   const { orderedServices, ...projectUpdates } = data;
   const existing = await db.select({ id: schema.collections.id, kind: schema.collections.kind, receivedCount: schema.collections.receivedCount }).from(schema.collections).where(eq(schema.collections.projectId, id)).all();
@@ -556,11 +533,11 @@ projectsRoutes.patch("/projects/:id", terminalRoute("/projects/:id", async (c) =
   statements.push(...serviceStatements); if (activityBundle) statements.push(...activityBundle.statements);
   const result = await c.env.DB.batch(statements);
   if (!rowsFromD1<{ id: string }>(result[0]).length) {
-    const currentProject = await db.select().from(schema.projects).where(eq(schema.projects.id, id)).get();
+    const currentProject = await db.select(projectColumnsForVariant(variant)).from(schema.projects).where(eq(schema.projects.id, id)).get();
     const currentCollections = await db.select({ kind: schema.collections.kind }).from(schema.collections).where(eq(schema.collections.projectId, id)).all();
     const projectMatches = currentProject?.archivedAt === null && Object.entries(projectUpdates).every(([key, value]) => (currentProject as unknown as Record<string, unknown>)[key] === (value ?? null));
     const servicesMatch = orderedServices === undefined || (currentCollections.length === desiredServices!.size && currentCollections.every((collection) => desiredServices!.has(collection.kind as CollectionKind)));
-    if (projectMatches && servicesMatch) return c.json(await details(db, c.env.DB, id, c.get("user").role));
+    if (projectMatches && servicesMatch) return c.json(await details(db, c.env.DB, id, c.get("user").role, variant, await boardContractEnabled(c.env.DB, variant)));
     const currentCounts = await countsFor(removedCollections.map((collection) => collection.id));
     return c.json({ error: "Services or project details changed while saving; reload and try again", blocked: removedCollections.filter((collection) => collection.receivedCount > 0 || (currentCounts.assets.get(collection.id) ?? 0) > 0 || (currentCounts.manifests.get(collection.id) ?? 0) > 0 || (currentCounts.documents.get(collection.id) ?? 0) > 0 || (currentCounts.links.get(collection.id) ?? 0) > 0).map((collection) => ({ kind: collection.kind, assetCount: currentCounts.assets.get(collection.id) ?? 0, manifestCount: currentCounts.manifests.get(collection.id) ?? 0, activeDocumentSessions: currentCounts.documents.get(collection.id) ?? 0 })) }, 409);
   }
@@ -569,7 +546,7 @@ projectsRoutes.patch("/projects/:id", terminalRoute("/projects/:id", async (c) =
     if (publicationIds.length) c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, publicationIds));
   }
   if (projectUpdates.rawFolderPath !== undefined && projectUpdates.rawFolderPath !== existingProject.rawFolderPath) c.executionCtx.waitUntil(c.env.BACKGROUND.ensureAutoHdrScaffold(id).catch((error) => console.error("AutoHDR scaffold trigger failed", { projectId: id, error })));
-  return c.json(await details(db, c.env.DB, id, c.get("user").role));
+  return c.json(await details(db, c.env.DB, id, c.get("user").role, variant, await boardContractEnabled(c.env.DB, variant)));
 }));
 
 function projectMembershipRoute(roleOnProject: ProjectMemberRole, method: "put" | "delete") {
@@ -639,7 +616,9 @@ projectsRoutes.post("/projects/:id/cover", terminalRoute("/projects/:id/cover", 
   return c.json({ coverAssetId: data.assetId });
 }));
 projectsRoutes.post("/projects/:id/dropbox-sync", terminalRoute("/projects/:id/dropbox-sync", async (c) => {
-  const id = c.req.param("id");
+  const id = c.req.param("id") ?? "";
+  const variant = await boardSchemaVariant(c.env.DB);
+  if (variant === "pre_0037") return boardSchemaMaintenance(c);
   const user = c.get("user");
   if (!roleHasCapability(user.role, "uploadRaw")) return c.json({ error: "Forbidden", capability: "uploadRaw" }, 403);
   if (!(await hasProjectAccess(c, id))) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
@@ -652,6 +631,8 @@ projectsRoutes.post("/projects/:id/dropbox-sync", terminalRoute("/projects/:id/d
 
 projectsRoutes.post("/projects/:id/sync-dropbox", terminalRoute("/projects/:id/sync-dropbox", async (c) => {
   const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
+  const variant = await boardSchemaVariant(c.env.DB);
+  if (variant === "pre_0037") return boardSchemaMaintenance(c);
   if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   const user = c.get("user");
   const hasUploadRaw = roleHasCapability(user.role, "uploadRaw");
@@ -706,6 +687,8 @@ projectsRoutes.post("/projects/:id/sync-dropbox", terminalRoute("/projects/:id/s
 
 projectsRoutes.post("/projects/:id/send-to-autohdr", requireCapability("adminBackend"), terminalRoute("/projects/:id/send-to-autohdr", async (c) => {
   const id = c.req.param("id");
+  const variant = await boardSchemaVariant(c.env.DB);
+  if (variant === "pre_0037") return boardSchemaMaintenance(c);
   if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
   if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   const result = await c.env.BACKGROUND.sendSelectedToAutoHdr(id, c.get("user").id);
@@ -726,6 +709,8 @@ projectsRoutes.post("/projects/:id/send-to-autohdr", requireCapability("adminBac
 
 projectsRoutes.post("/projects/:id/fetch-edited", requireCapability("adminBackend"), terminalRoute("/projects/:id/fetch-edited", async (c) => {
   const id = c.req.param("id");
+  const variant = await boardSchemaVariant(c.env.DB);
+  if (variant === "pre_0037") return boardSchemaMaintenance(c);
   if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
   if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   const target = await createDb(c.env.DB).select({ archivedAt: schema.projects.archivedAt }).from(schema.projects).where(eq(schema.projects.id, id)).get();
@@ -948,6 +933,10 @@ projectsRoutes.post("/jobs/:id/retry", requireCapability("adminBackend"), termin
   const job = await createDb(c.env.DB).select({ id: schema.jobs.id, projectId: schema.jobs.projectId, kind: schema.jobs.kind, status: schema.jobs.status, payloadJson: schema.jobs.payloadJson })
     .from(schema.jobs).where(eq(schema.jobs.id, id)).get();
   if (!job || !job.projectId || !["autohdr", "fetch_edited", "autohdr_scaffold", "manual_edited_publish", "manual_raw_publish"].includes(job.kind)) return c.json({ error: "Background job not found" }, 404);
+  if (["autohdr", "fetch_edited", "autohdr_scaffold"].includes(job.kind)) {
+    const variant = await boardSchemaVariant(c.env.DB);
+    if (variant === "pre_0037") return boardSchemaMaintenance(c);
+  }
   if (!await hasProjectAccess(c, job.projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   if (job.status !== "stuck" && job.status !== "failed") return c.json({ error: "Only stuck or failed background jobs can be retried" }, 409);
   const isManualPublish = job.kind === "manual_edited_publish" || job.kind === "manual_raw_publish";
@@ -972,9 +961,26 @@ projectsRoutes.post("/jobs/:id/retry", requireCapability("adminBackend"), termin
 }));
 
 for (const [path, archived] of [["/projects/:id/archive", true], ["/projects/:id/restore", false]] as const) projectsRoutes.post(path, terminalRoute(path, async (c) => {
-  const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
   if (!roleHasCapability(c.get("user").role, "archiveProject")) return c.json({ error: "Forbidden", capability: "archiveProject" }, 403);
-  const db = createDb(c.env.DB); const now = new Date();
+  const variant = await boardSchemaVariant(c.env.DB);
+  if (variant === "pre_0037") return boardSchemaMaintenance(c);
+  if (!await boardContractEnabled(c.env.DB, variant)) return boardContractDisabled(c);
+  const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
+  const now = new Date();
+  const classifyLoser = async (source: ProjectArchiveSource | null) => {
+    const current = await c.env.DB.prepare("SELECT id, archived_at AS archivedAt, stage_key AS stageKey, board_revision AS boardRevision FROM projects WHERE id = ?")
+      .bind(id).first<{ id: string; archivedAt: number | null; stageKey: StageKey; boardRevision: number }>();
+    const hasActiveUpload = archived && Boolean(await c.env.DB.prepare("SELECT id FROM document_uploads WHERE project_id = ? AND status IN ('pending', 'completing', 'aborting') LIMIT 1").bind(id).first<{ id: string }>());
+    const outcome = classifyProjectArchiveLoser({ archived, source, current, hasActiveUpload });
+    if (outcome.kind === "not_found") return c.json({ error: "Project not found" }, 404);
+    if (outcome.kind === "already_done") return c.json({ ok: true });
+    if (outcome.kind === "active_upload") return c.json({ error: "Active document uploads must be aborted before archiving." }, 409);
+    return c.json({
+      error: archived ? "Project changed while archiving." : "Project changed while restoring.",
+      code: "project_stage_conflict",
+      current: { projectId: id, stageKey: outcome.current.stageKey, boardRevision: Number(outcome.current.boardRevision) },
+    }, 409);
+  };
   if (archived) {
     // Ownership survives archive: retire the mapping and tombstone both permanent candidate
     // claims, never release them for silent reuse.
@@ -987,43 +993,21 @@ for (const [path, archived] of [["/projects/:id/archive", true], ["/projects/:id
       broadDelivery: { registryKey: "project.archived", sourceActivityId: archiveActivityId, coalesce: null },
     };
     const archiveActivityStatements = buildProjectActivityStatements({ db: c.env.DB, intent: archiveActivity, winnerAuditId: archiveAuditId, createdAt: archivedAt });
+    const source = await c.env.DB.prepare("SELECT stage_key AS stageKey, board_revision AS boardRevision FROM projects WHERE id = ? AND archived_at IS NULL").bind(id).first<{ stageKey: StageKey; boardRevision: number }>();
+    if (!source) {
+      return classifyLoser(null);
+    }
+    const deadlineSuppression = buildDeadlineSuppressionBundle({ db: c.env.DB, projectId: id, now: archivedAt, reason: "project_archived", auditId: archiveAuditId });
     const archiveStatementStart = 8;
     const result = await c.env.DB.batch([
-        c.env.DB.prepare("UPDATE projects SET archived_at = ?, archived_by = ?, updated_at = ? WHERE id = ? AND archived_at IS NULL AND NOT EXISTS (SELECT 1 FROM document_uploads WHERE project_id = ? AND status in ('pending', 'completing', 'aborting'))")
-        .bind(archivedAt, c.get("user").id, archivedAt, id, id),
+        c.env.DB.prepare("UPDATE projects SET archived_at = ?, archived_by = ?, board_revision = board_revision + 1, updated_at = ? WHERE id = ? AND archived_at IS NULL AND stage_key = ? AND board_revision = ? AND NOT EXISTS (SELECT 1 FROM document_uploads WHERE project_id = ? AND status in ('pending', 'completing', 'aborting')) RETURNING id")
+        .bind(archivedAt, c.get("user").id, archivedAt, id, source.stageKey, source.boardRevision, id),
       c.env.DB.prepare(`
         INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
         SELECT ?, ?, 'project.archive', 'project', ?, ?, ?
         WHERE changes() = 1 RETURNING id
       `).bind(archiveAuditId, c.get("user").id, id, auditMeta(c.get("user")), archivedAt),
-      c.env.DB.prepare(`
-        UPDATE project_deadline_occurrences
-        SET status = 'superseded', terminal_reason = 'project_archived', fired_at = NULL, updated_at = ?
-        WHERE project_id = ? AND status = 'pending'
-          AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?)
-      `).bind(archivedAt, id, archiveAuditId),
-      c.env.DB.prepare(`
-        UPDATE notification_delivery_ledger
-        SET status = 'suppressed', last_error_code = 'reauthorization_suppressed',
-          last_error = 'Deadline reminder suppressed: project_archived.', updated_at = ?
-        WHERE event_type = 'project.deadline.reminder' AND status = 'pending'
-          AND EXISTS (
-            SELECT 1 FROM notification_outbox o
-            WHERE o.id = notification_delivery_ledger.outbox_id AND o.project_id = ?
-              AND o.source_key IN (SELECT id FROM project_deadline_occurrences WHERE project_id = ?)
-          )
-          AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?)
-      `).bind(archivedAt, id, id, archiveAuditId),
-      c.env.DB.prepare(`
-        UPDATE notification_outbox
-        SET status = 'suppressed', lease_token = NULL, lease_expires_at = NULL,
-          completed_at = ?, last_error_code = 'reauthorization_suppressed',
-          last_error = 'Deadline reminder suppressed: project_archived.', updated_at = ?
-        WHERE project_id = ? AND event_type = 'project.deadline.reminder'
-          AND status IN ('pending', 'queued')
-          AND NOT EXISTS (SELECT 1 FROM notification_delivery_ledger WHERE outbox_id = notification_outbox.id AND status IN ('pending', 'processing'))
-          AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?)
-      `).bind(archivedAt, archivedAt, id, archiveAuditId),
+      ...deadlineSuppression.statements,
       c.env.DB.prepare("UPDATE autohdr_output_mappings SET state = 'retired', retired_at = ?, updated_at = ? WHERE project_id = ? AND EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at = ?)")
         .bind(archivedAt, archivedAt, id, id, archivedAt),
       c.env.DB.prepare("UPDATE autohdr_path_claims SET state = 'tombstone', updated_at = ? WHERE project_id = ? AND EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at = ?)")
@@ -1033,10 +1017,7 @@ for (const [path, archived] of [["/projects/:id/archive", true], ["/projects/:id
       ...archiveActivityStatements.statements,
     ]);
     if ((result[0]?.meta.changes ?? 0) !== 1) {
-      const current = await db.select({ id: schema.projects.id, archivedAt: schema.projects.archivedAt }).from(schema.projects).where(eq(schema.projects.id, id)).get();
-      if (current?.archivedAt !== null && current?.archivedAt !== undefined) return c.json({ ok: true });
-      if (!current) return c.json({ error: "Project not found" }, 404);
-      return c.json({ error: "Active document uploads must be aborted before archiving." }, 409);
+      return classifyLoser(source);
     }
     const publicationIds = rowsFromD1<{ id: string }>(result[archiveStatementStart + archiveActivityStatements.broadOutboxIndex]).map((row) => row.id);
     if (publicationIds.length) c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, publicationIds));
@@ -1048,15 +1029,18 @@ for (const [path, archived] of [["/projects/:id/archive", true], ["/projects/:id
       broadDelivery: { registryKey: "project.restored", sourceActivityId: restoreActivityId, coalesce: null },
     };
     const restoreActivityStatements = buildProjectActivityStatements({ db: c.env.DB, intent: restoreActivity, winnerAuditId: restoreAuditId, createdAt: now.getTime() });
+    const source = await c.env.DB.prepare("SELECT stage_key AS stageKey, board_revision AS boardRevision FROM projects WHERE id = ? AND archived_at IS NOT NULL").bind(id).first<{ stageKey: StageKey; boardRevision: number }>();
+    if (!source) {
+      return classifyLoser(null);
+    }
     const result = await c.env.DB.batch([
-      c.env.DB.prepare("UPDATE projects SET archived_at = NULL, archived_by = NULL, updated_at = ? WHERE id = ? AND archived_at IS NOT NULL RETURNING id").bind(now.getTime(), id),
+      c.env.DB.prepare("UPDATE projects SET archived_at = NULL, archived_by = NULL, board_position = (SELECT COALESCE(MAX(board_position) + 1024, 0) FROM projects WHERE stage_key = ? AND archived_at IS NULL AND id != ?), board_revision = board_revision + 1, updated_at = ? WHERE id = ? AND archived_at IS NOT NULL AND stage_key = ? AND board_revision = ? RETURNING id").bind(source.stageKey, id, now.getTime(), id, source.stageKey, source.boardRevision),
       c.env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, ?, 'project.restore', 'project', ?, ?, ? WHERE changes() = 1 RETURNING id").bind(restoreAuditId, c.get("user").id, id, auditMeta(c.get("user")), now.getTime()),
       ...restoreActivityStatements.statements,
     ]);
     const restored = rowsFromD1<{ id: string }>(result[0]).length > 0;
     if (!restored) {
-      if (!await db.select({ id: schema.projects.id }).from(schema.projects).where(eq(schema.projects.id, id)).get()) return c.json({ error: "Project not found" }, 404);
-      return c.json({ ok: true });
+      return classifyLoser(source);
     }
     const publicationIds = rowsFromD1<{ id: string }>(result[2 + restoreActivityStatements.broadOutboxIndex]).map((row) => row.id);
     if (publicationIds.length) c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, publicationIds));
@@ -1110,28 +1094,44 @@ projectsRoutes.delete("/projects/:id", terminalRoute("/projects/:id", async (c) 
   ]);
   return c.json({ ok: true, deletedObjects: keys.length });
 }));
-projectsRoutes.post("/projects/:id/stage", terminalRoute("/projects/:id/stage", async (c) => {
-  const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
-  if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
-  {
-    if (!roleHasCapability(c.get("user").role, "selectForEditing")) return c.json({ error: "Forbidden", capability: "selectForEditing" }, 403);
-    const data = await jsonInput(c, z.object({ stageKey: z.string() })); if (data instanceof Response) return data;
-    if (data.stageKey === "editing_autohdr" && !roleHasCapability(c.get("user").role, "adminBackend")) return c.json({ error: "Forbidden" }, 403);
-    if (!isStageKey(data.stageKey)) return c.json({ error: "Unknown stage" }, 400);
-    const db = createDb(c.env.DB); const project = await db.select().from(schema.projects).where(eq(schema.projects.id, id)).get(); if (!project) return c.json({ error: "Project not found" }, 404);
-    await ensurePipelineStages(db);
-    const target = await db.select({ active: schema.pipelineStages.active }).from(schema.pipelineStages).where(eq(schema.pipelineStages.key, data.stageKey)).get();
-    if (!target?.active) return c.json({ error: "Stage is deactivated" }, 409);
-    const updated = await db.update(schema.projects).set({ stageKey: data.stageKey, boardPosition: appendToStageBottomExpr(data.stageKey, id), updatedAt: new Date() }).where(eq(schema.projects.id, id)).returning({ boardPosition: schema.projects.boardPosition, stageKey: schema.projects.stageKey }).all();
-    await audit(c.env, c.get("user"), "stage.set", "project", id, { from: project.stageKey, to: data.stageKey });
-    if (project.stageKey !== "delivered" && data.stageKey === "delivered" && updated.length === 1) {
-      try { await suppressProjectDeadlineWork(c.env.DB, id, Date.now(), "project_delivered"); }
-      catch (error) { console.error("Delivered Deadline suppression follow-up failed", { projectId: id, error: error instanceof Error ? error.message.slice(0, 200) : "unknown" }); }
-      await notifyProject(c.env, id, "delivered");
-    }
-    return c.json({ ok: true, stageKey: data.stageKey, boardPosition: updated[0]?.boardPosition ?? 0 });
+const stageHandler = async (c: Context<AppEnv>) => {
+  const id = c.req.param("id") ?? "";
+  if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
+  let body: unknown;
+  try { body = await c.req.json(); }
+  catch { return c.json({ error: "Invalid JSON" }, 400); }
+  if (isExactLegacyStageBody(body)) {
+    return c.json({ error: "Reload the application before moving this project.", code: "stage_contract_reload_required" }, 409);
   }
-}));
+  const parsed = moveProjectStageRequestSchemaForProject(id).safeParse(body);
+  if (!parsed.success) return c.json({ error: "Invalid input", details: parsed.error.flatten() }, 400);
+  const result = await moveProjectStage({ env: c.env, principal: c.get("user"), projectId: id, request: parsed.data as MoveProjectStageRequest });
+  if (result.kind === "moved") {
+    if (result.finalizer.publicationIds.length) c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, result.finalizer.publicationIds));
+    return c.json(result.response);
+  }
+  if (result.kind === "no_change") return c.json(result.response);
+  if (result.kind === "forbidden") return c.json({ error: "Forbidden", capability: result.capability }, 403);
+  if (result.kind === "reorder_forbidden") return c.json({ error: "Forbidden: manual Board reorder requires prioritizeProjects.", code: result.code, capability: result.capability }, 403);
+  if (result.kind === "not_found") return c.json({ error: "Project not found" }, 404);
+  if (result.kind === "archived") return c.json({ error: "Project is archived and read-only.", code: "project_archived_read_only", current: result.current }, 409);
+  if (result.kind === "inactive_destination") return c.json({ error: "Destination Stage is inactive.", code: "inactive_destination", current: result.current }, 409);
+  if (result.kind === "confirmation_required") return c.json({
+    error: "Confirmation is required for this Stage move.", code: "stage_confirmation_required",
+    requiredConfirmation: {
+      fromStageKey: result.required.fromStageKey,
+      toStageKey: result.required.toStageKey,
+      reasons: result.required.reasons,
+    },
+    current: result.current,
+  }, 409);
+  if (result.kind === "conflict") return c.json({ error: "Project stage changed; reload and try again.", code: "project_stage_conflict", current: result.current }, 409);
+  if (result.kind === "disabled") return boardContractDisabled(c);
+  if (result.kind === "schema_maintenance") return boardSchemaMaintenance(c);
+  return c.json({ error: "Stage move failed" }, 500);
+};
+projectsRoutes.post("/projects/:id/stage", terminalRoute("/projects/:id/stage", stageHandler));
+projectsRoutes.post("/projects/:id/stage/", terminalRoute("/projects/:id/stage/", stageHandler));
 projectsRoutes.get("/projects/:id", terminalRoute("/projects/:id", async (c) => {
   const id = c.req.param("id");
   if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
@@ -1140,6 +1140,7 @@ projectsRoutes.get("/projects/:id", terminalRoute("/projects/:id", async (c) => 
     return value ? c.json(value) : c.json({ error: "Project not found" }, 404);
   }
   if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
-  const value = await details(createDb(c.env.DB), c.env.DB, id, c.get("user").role, c.get("user").role === "photographer");
+  const variant = await boardSchemaVariant(c.env.DB);
+  const value = await details(createDb(c.env.DB), c.env.DB, id, c.get("user").role, variant, await boardContractEnabled(c.env.DB, variant), c.get("user").role === "photographer");
   return value ? c.json(value) : c.json({ error: "Project not found" }, 404);
 }));

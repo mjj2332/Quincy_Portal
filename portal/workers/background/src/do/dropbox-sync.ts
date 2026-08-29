@@ -27,6 +27,7 @@ import {
   type ManualSupplementRoute,
 } from "../autohdr/routers";
 import { claimAutoHdrFetch, startClaimedFetch } from "../autohdr/claims";
+import { isBoardSchemaMaintenanceError, requireBoardSchemaReady } from "../lib/board-schema";
 import {
   acquireManualIngestLease,
   ingestManualSupplement,
@@ -122,6 +123,18 @@ export class DropboxSyncDO extends DurableObject<Env> {
     if (!identity) {
       await this.ctx.storage.deleteAlarm();
       return;
+    }
+    try {
+      await requireBoardSchemaReady(this.env);
+    } catch (error) {
+      if (isBoardSchemaMaintenanceError(error)) {
+        // The alarm is a durable retry mechanism; leaving it armed here would create a
+        // migration-window retry storm. A later kick after 0037 will arm it again.
+        await this.ctx.storage.deleteAlarm();
+        console.warn("Dropbox monitor held for board schema rollout", { scope: identity.scope });
+        return;
+      }
+      throw error;
     }
     // A disabled scope must not consume its initial baseline cursor. Its first wake after
     // deliberate activation starts at the fixed root with the idempotency/claim writers live.

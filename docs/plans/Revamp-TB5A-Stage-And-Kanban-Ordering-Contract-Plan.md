@@ -1490,6 +1490,8 @@ Every malformed case updates zero rows and produces no audit or tail footprint.
 
 ## Automatic workflow safety and ABA fencing
 
+> Superseded during the TB5A build — see docs/plans/tb5a/fence-rework-sol-design.md (+ fence-rework-opus-fixes.md) for the authoritative fenced design. This section is retained as the original intent.
+
 Every automatic writer uses a DB-owned winner bundle while retaining its workflow owner:
 
 - exact source Stage remains mandatory;
@@ -1876,11 +1878,7 @@ WHERE p.id = r.project_id
 --> statement-breakpoint
 INSERT INTO _tb5a_0037_normalization_postflight (ok)
 SELECT CASE
-  WHEN changes() = (
-    SELECT COUNT(*)
-    FROM project_board_order_0037_rollback
-  )
-  AND NOT EXISTS (
+  WHEN NOT EXISTS (
     SELECT 1
     FROM project_board_order_0037_rollback r
     LEFT JOIN projects p
@@ -1892,12 +1890,33 @@ SELECT CASE
        OR p.board_position IS NOT r.normalized_board_position
        OR p.board_revision <> 1
   )
+  AND NOT EXISTS (
+    SELECT 1
+    FROM projects p
+    WHERE p.archived_at IS NULL
+      AND NOT EXISTS (
+        SELECT 1
+        FROM project_board_order_0037_rollback r
+        WHERE r.project_id = p.id
+      )
+  )
   THEN 1
   ELSE 0
 END;
 --> statement-breakpoint
 DROP TABLE _tb5a_0037_normalization_postflight;
 ```
+
+**Postflight is `changes()`-free (build finding, Slice 2).** An earlier draft gated the postflight
+on `changes() = (SELECT COUNT(*) FROM project_board_order_0037_rollback)`. `changes()` reflects the
+prior statement only on a connection that ran that statement; `wrangler d1 migrations apply` does,
+but the worker-app test harness applies each `--> statement-breakpoint` segment as a separate
+`D1.exec()` call, so `changes()` there does not see the normalization `UPDATE`. The two `NOT
+EXISTS` blocks above are the equivalent (stronger) guarantee with no cross-statement state: block 1
+— every captured row maps to a project that is unarchived, same Stage/Priority, at its normalized
+position, revision `1`; block 2 — every unarchived project has a captured row (so a missed row is
+caught, not only a wrong one). The abort mechanism is unchanged: a `0` fails `CHECK (ok = 1)` and
+`wrangler d1 migrations apply` rolls the migration back.
 
 The preflight CHECK aborts on a noncanonical unarchived Stage. The postflight CHECK aborts unless
 the guarded update affected every captured row and every captured row matches normalized state.

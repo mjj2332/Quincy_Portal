@@ -41,6 +41,7 @@ export const CAPABILITIES = [
   "viewNoticeBoard",
   "collaborateOnProject",
   "prioritizeProjects",
+  "moveProjectStage",
 ] as const;
 export type Capability = (typeof CAPABILITIES)[number];
 
@@ -54,6 +55,7 @@ export const EXTERNAL_EDITOR_CAPABILITIES = [
   "reviewEdited",
   "annotateEdited",
   "collaborateOnProject",
+  "moveProjectStage",
 ] as const satisfies readonly Capability[];
 
 /** Foreground ZIP-selection limits shared by the API and its preflight UI. */
@@ -95,6 +97,7 @@ export const ROLE_CAPABILITIES: Record<Role, readonly Capability[]> = {
     "viewNoticeBoard",
     "collaborateOnProject",
     "prioritizeProjects",
+    "moveProjectStage",
   ],
   editor: [
     "viewAllProjects",
@@ -114,6 +117,7 @@ export const ROLE_CAPABILITIES: Record<Role, readonly Capability[]> = {
     "downloadFinal",
     "viewNoticeBoard",
     "collaborateOnProject",
+    "moveProjectStage",
   ],
   external_editor: EXTERNAL_EDITOR_CAPABILITIES,
   photographer: [

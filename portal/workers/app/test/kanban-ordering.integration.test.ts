@@ -7,9 +7,9 @@ import type { Env } from "../src/env";
 const database = env as unknown as { DB: D1Database };
 const appEnv = env as unknown as Env;
 const adminId = crypto.randomUUID();
-const editorId = crypto.randomUUID();
 const adminToken = `kanban-admin-${crypto.randomUUID()}`;
-const editorToken = `kanban-editor-${crypto.randomUUID()}`;
+const photographerId = crypto.randomUUID();
+const photographerToken = `kanban-photographer-${crypto.randomUUID()}`;
 const authSecret = appEnv.BETTER_AUTH_SECRET ?? "dev-only-replace-better-auth-secret-32-bytes";
 declare const __PORTAL_MIGRATION_SQL__: string;
 
@@ -38,81 +38,163 @@ async function request(path: string, token: string, init: RequestInit = {}) {
 
 async function seedProject(id: string, stageKey: string, boardPosition: number, priority: number | null = null) {
   const now = Date.now();
-  await database.DB.prepare("INSERT INTO projects (id, street, stage_key, priority, board_position, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+  await database.DB.prepare("INSERT INTO projects (id, street, stage_key, priority, board_position, board_revision, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 0, ?, ?)")
     .bind(id, id, stageKey, priority, boardPosition, now, now).run();
 }
 
 beforeAll(async () => {
   await executeSql(__PORTAL_MIGRATION_SQL__);
+  await database.DB.prepare("UPDATE feature_flags SET enabled = 1 WHERE key = 'tb5a_board_contract_enabled'").run();
   const now = Date.now();
   await database.DB.batch([
-    database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, 'Kanban Admin', ?, 1, 'admin', 1, ?, ?), (?, 'Kanban Editor', ?, 1, 'editor', 1, ?, ?)")
-      .bind(adminId, `${adminId}@example.test`, now, now, editorId, `${editorId}@example.test`, now, now),
-    database.DB.prepare("INSERT INTO session (id, expires_at, token, user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?)")
-      .bind(crypto.randomUUID(), now + 3_600_000, adminToken, adminId, now, now, crypto.randomUUID(), now + 3_600_000, editorToken, editorId, now, now),
+    database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, authorization_epoch, created_at, updated_at) VALUES (?, 'Kanban Admin', ?, 1, 'admin', 1, 0, ?, ?)")
+      .bind(adminId, `${adminId}@example.test`, now, now),
+    database.DB.prepare("INSERT INTO session (id, expires_at, token, user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
+      .bind(crypto.randomUUID(), now + 3_600_000, adminToken, adminId, now, now),
+    database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, authorization_epoch, created_at, updated_at) VALUES (?, 'Kanban Photographer', ?, 1, 'photographer', 1, 0, ?, ?)")
+      .bind(photographerId, `${photographerId}@example.test`, now, now),
+    database.DB.prepare("INSERT INTO session (id, expires_at, token, user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
+      .bind(crypto.randomUUID(), now + 3_600_000, photographerToken, photographerId, now, now),
   ]);
 });
 
-describe("Kanban priority and manual-position API", () => {
-  it("repositions only the edited card and keeps the worked-example sibling positions", async () => {
-    const a = crypto.randomUUID(); const b = crypto.randomUUID(); const c = crypto.randomUUID();
-    await seedProject(a, "raw_review", 1024); await seedProject(b, "raw_review", 2048); await seedProject(c, "raw_review", 3072);
-    expect((await request(`/api/projects/${a}/priority`, adminToken, { method: "POST", body: JSON.stringify({ priority: 8 }) })).status).toBe(200);
-    const bBefore = await database.DB.prepare("SELECT board_position FROM projects WHERE id = ?").bind(b).first<{ board_position: number }>();
-    const aBefore = await database.DB.prepare("SELECT board_position FROM projects WHERE id = ?").bind(a).first<{ board_position: number }>();
-    expect((await request(`/api/projects/${b}/board-position`, adminToken, { method: "POST", body: JSON.stringify({ direction: "up" }) })).status).toBe(200);
-    expect((await request(`/api/projects/${c}/priority`, adminToken, { method: "POST", body: JSON.stringify({ priority: 5 }) })).status).toBe(200);
-    expect((await database.DB.prepare("SELECT board_position FROM projects WHERE id = ?").bind(b).first<{ board_position: number }>())!.board_position).toBe(bBefore!.board_position - 2048);
-    expect((await database.DB.prepare("SELECT board_position FROM projects WHERE id = ?").bind(a).first<{ board_position: number }>())!.board_position).toBe(aBefore!.board_position);
+describe("Kanban priority and Board commands", () => {
+  it("changes Priority metadata without changing position or Board revision", async () => {
+    const first = crypto.randomUUID(); const target = crypto.randomUUID();
+    await seedProject(first, "raw_review", 1024, 1); await seedProject(target, "raw_review", 4096);
+    const response = await request(`/api/projects/${target}/priority`, adminToken, { method: "POST", body: JSON.stringify({ priority: 2 }) });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ priority: 2, boardRevision: 0 });
+    expect(await database.DB.prepare("SELECT priority, board_position, board_revision FROM projects WHERE id = ?").bind(target).first()).toEqual({ priority: 2, board_position: 4096, board_revision: 0 });
   });
 
-  it("treats concurrent ambiguous same-priority retries as one winner and one no-op", async () => {
-    const sibling = crypto.randomUUID(); const target = crypto.randomUUID();
-    await seedProject(sibling, "priority-retry", 1024, 1); await seedProject(target, "priority-retry", 2048);
-    const [first, second] = await Promise.all([
-      request(`/api/projects/${target}/priority`, adminToken, { method: "POST", body: JSON.stringify({ priority: 5 }) }),
-      request(`/api/projects/${target}/priority`, adminToken, { method: "POST", body: JSON.stringify({ priority: 5 }) }),
-    ]);
-    expect([first.status, second.status].sort()).toEqual([200, 200]);
-    expect(await database.DB.prepare("SELECT priority, board_position FROM projects WHERE id = ?").bind(target).first()).toEqual({ priority: 5, board_position: 0 });
-    expect(await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE action = 'project.priority_set' AND target_id = ?").bind(target).first()).toEqual({ count: 1 });
-    expect(await database.DB.prepare("SELECT count(*) AS count FROM project_activity_events WHERE project_id = ? AND event_type = 'project.priority.changed'").bind(target).first()).toEqual({ count: 1 });
-    expect(await database.DB.prepare("SELECT count(*) AS count FROM notification_outbox WHERE project_id = ?").bind(target).first()).toEqual({ count: 0 });
+  it("moves a same-Stage card to the exact requested boundary", async () => {
+    const first = crypto.randomUUID(); const middle = crypto.randomUUID(); const target = crypto.randomUUID();
+    await seedProject(first, "edited_review", 1024); await seedProject(middle, "edited_review", 2048); await seedProject(target, "edited_review", 3072);
+    const response = await request(`/api/projects/${target}/board-position`, adminToken, { method: "POST", body: JSON.stringify({
+      expected: { stageKey: "edited_review", boardRevision: 0 },
+      targetStageKey: "edited_review",
+      placement: { kind: "between", before: null, after: { projectId: first, boardRevision: 0 } },
+    }) });
+    expect(response.status).toBe(200);
+    expect((await response.json()).project).toMatchObject({ projectId: target, boardRevision: 1 });
+    expect(await database.DB.prepare("SELECT board_position, board_revision FROM projects WHERE id = ?").bind(target).first()).toEqual({ board_position: 0, board_revision: 1 });
+    expect(await database.DB.prepare("SELECT action FROM audit_log WHERE target_id = ? ORDER BY created_at DESC LIMIT 1").bind(target).first()).toEqual({ action: "project.board_position_set" });
   });
 
-  it("handles no-anchor, tie, clear, validation, and capability cases", async () => {
-    const first = crypto.randomUUID(); const second = crypto.randomUUID(); const target = crypto.randomUUID();
-    await seedProject(first, "edited_review", 4096, 1); await seedProject(second, "edited_review", 5120, 2); await seedProject(target, "edited_review", 8192);
-    const noAnchor = await request(`/api/projects/${target}/priority`, adminToken, { method: "POST", body: JSON.stringify({ priority: 10 }) });
-    expect(noAnchor.status).toBe(200);
-    expect((await noAnchor.json() as { boardPosition: number }).boardPosition).toBe(3072);
-    for (const value of [0, 11, 5.5]) {
-      expect((await request(`/api/projects/${target}/priority`, adminToken, { method: "POST", body: JSON.stringify({ priority: value }) })).status).toBe(400);
-    }
-    expect((await request(`/api/projects/${target}/priority`, editorToken, { method: "POST", body: JSON.stringify({ priority: 5 }) })).status).toBe(403);
-    expect((await request(`/api/projects/${target}/board-position`, editorToken, { method: "POST", body: JSON.stringify({ direction: "up" }) })).status).toBe(403);
-  });
-
-  it("rejects invalid priorities at the database level itself, bypassing the API's Zod validation entirely", async () => {
-    // The API route's Zod schema already rejects these (tested above) — this proves the
-    // `projects_priority_check` CHECK constraint holds against the real D1/Miniflare binding
-    // this test suite otherwise uses, not just SQLite via node:sqlite (packages/db/test/
-    // migration-0020.test.ts) or the application-layer validator.
-    for (const priority of [0, 11, 5.5]) {
-      await expect(
-        database.DB.prepare("INSERT INTO projects (id, street, priority, created_at, updated_at) VALUES (?, ?, ?, ?, ?)")
-          .bind(crypto.randomUUID(), `invalid-${priority}`, priority, Date.now(), Date.now())
-          .run(),
-      ).rejects.toThrow(/CHECK constraint failed/);
+  it("creates at the awaiting-RAW bottom while the Board mutation flag is off", async () => {
+    const street = `Flag-off create ${crypto.randomUUID()}`;
+    const before = await database.DB.prepare("SELECT COALESCE(MAX(board_position) + 1024, 0) AS position FROM projects WHERE stage_key = 'awaiting_raw' AND archived_at IS NULL").first<{ position: number }>();
+    await database.DB.prepare("UPDATE feature_flags SET enabled = 0 WHERE key = 'tb5a_board_contract_enabled'").run();
+    try {
+      const response = await request("/api/projects", adminToken, { method: "POST", body: JSON.stringify({ street, orderedServices: [] }) });
+      expect(response.status).toBe(201);
+      const created = await response.json() as { id: string };
+      expect(await database.DB.prepare("SELECT stage_key, board_position, board_revision FROM projects WHERE id = ?").bind(created.id).first()).toEqual({ stage_key: "awaiting_raw", board_position: before?.position ?? 0, board_revision: 0 });
+    } finally {
+      await database.DB.prepare("UPDATE feature_flags SET enabled = 1 WHERE key = 'tb5a_board_contract_enabled'").run();
     }
   });
 
-  it("appends cross-column moves at 0 then strictly above it and returns the position", async () => {
-    const first = crypto.randomUUID(); const second = crypto.randomUUID();
-    await seedProject(first, "raw_review", 1024, 10); await seedProject(second, "raw_review", 2048, 9);
-    const firstMove = await request(`/api/projects/${first}/stage`, adminToken, { method: "POST", body: JSON.stringify({ stageKey: "delivered" }) });
-    const secondMove = await request(`/api/projects/${second}/stage`, adminToken, { method: "POST", body: JSON.stringify({ stageKey: "delivered" }) });
-    expect((await firstMove.json() as { boardPosition: number }).boardPosition).toBe(0);
-    expect((await secondMove.json() as { boardPosition: number }).boardPosition).toBe(1024);
+  it("appends a non-bottom card on a column-background drop", async () => {
+    // This suite seeds with beforeAll (no per-test cleanup), so raw_review already holds rows from
+    // earlier tests. Assert the relative outcome — target moves past every other visible card —
+    // rather than an absolute board_position that depends on the column's prior contents.
+    const stage = "raw_review";
+    const target = crypto.randomUUID(); const middle = crypto.randomUUID(); const tail = crypto.randomUUID();
+    const base = (await database.DB.prepare("SELECT COALESCE(MAX(board_position), 0) AS position FROM projects WHERE stage_key = ? AND archived_at IS NULL").bind(stage).first<{ position: number }>())?.position ?? 0;
+    await seedProject(target, stage, base + 1024); await seedProject(middle, stage, base + 2048); await seedProject(tail, stage, base + 3072);
+    const response = await request(`/api/projects/${target}/board-position`, adminToken, { method: "POST", body: JSON.stringify({
+      expected: { stageKey: stage, boardRevision: 0 }, targetStageKey: stage, placement: { kind: "append" },
+    }) });
+    expect(response.status).toBe(200);
+    const rows = (await database.DB.prepare("SELECT id, board_position, board_revision FROM projects WHERE id IN (?, ?, ?) ORDER BY board_position, id").bind(target, middle, tail).all<{ id: string; board_position: number; board_revision: number }>()).results;
+    expect(rows.map((row) => row.id)).toEqual([middle, tail, target]);
+    expect(rows.find((row) => row.id === target)).toMatchObject({ board_revision: 1 });
+    expect(rows.find((row) => row.id === target)!.board_position).toBeGreaterThan(rows.find((row) => row.id === tail)!.board_position);
+  });
+
+  it("rejects a stale placement neighbour with a stage conflict", async () => {
+    const target = crypto.randomUUID(); const neighbour = crypto.randomUUID();
+    await seedProject(target, "edited_review", 0); await seedProject(neighbour, "edited_review", 1024);
+    await database.DB.prepare("UPDATE projects SET board_revision = 1 WHERE id = ?").bind(neighbour).run();
+    const response = await request(`/api/projects/${target}/board-position`, adminToken, { method: "POST", body: JSON.stringify({
+      expected: { stageKey: "edited_review", boardRevision: 0 }, targetStageKey: "edited_review",
+      placement: { kind: "between", before: null, after: { projectId: neighbour, boardRevision: 0 } },
+    }) });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ code: "project_stage_conflict" });
+    expect(await database.DB.prepare("SELECT board_position, board_revision FROM projects WHERE id = ?").bind(target).first()).toEqual({ board_position: 0, board_revision: 0 });
+  });
+
+  it("rejects the moving project as a between-neighbour during body parsing", async () => {
+    const target = crypto.randomUUID();
+    await seedProject(target, "edited_review", 1024);
+    const response = await request(`/api/projects/${target}/board-position`, adminToken, { method: "POST", body: JSON.stringify({
+      expected: { stageKey: "edited_review", boardRevision: 0 },
+      targetStageKey: "edited_review",
+      placement: { kind: "between", before: null, after: { projectId: target, boardRevision: 0 } },
+    }) });
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ error: "Invalid input" });
+    expect(await database.DB.prepare("SELECT board_position, board_revision FROM projects WHERE id = ?").bind(target).first()).toEqual({ board_position: 1024, board_revision: 0 });
+  });
+
+  it("returns no_change for an unchanged logical slot without mutating", async () => {
+    const first = crypto.randomUUID(); const target = crypto.randomUUID();
+    await seedProject(first, "delivered", 0); await seedProject(target, "delivered", 1024);
+    const beforeAudit = await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE target_id = ?").bind(target).first();
+    const response = await request(`/api/projects/${target}/board-position`, adminToken, { method: "POST", body: JSON.stringify({
+      expected: { stageKey: "delivered", boardRevision: 0 }, targetStageKey: "delivered",
+      placement: { kind: "between", before: { projectId: first, boardRevision: 0 }, after: null },
+    }) });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ changed: false });
+    expect(await database.DB.prepare("SELECT board_position, board_revision FROM projects WHERE id = ?").bind(target).first()).toEqual({ board_position: 1024, board_revision: 0 });
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE target_id = ?").bind(target).first()).toEqual(beforeAudit);
+  });
+
+  it("requires exact cumulative confirmation and publishes the human Stage activity", async () => {
+    const target = crypto.randomUUID();
+    await seedProject(target, "raw_review", 1024);
+    const body = { expected: { stageKey: "raw_review", boardRevision: 0 }, targetStageKey: "delivered", placement: { kind: "append" } };
+    const first = await request(`/api/projects/${target}/stage`, adminToken, { method: "POST", body: JSON.stringify(body) });
+    expect(first.status).toBe(409);
+    expect(await first.json()).toMatchObject({ code: "stage_confirmation_required", requiredConfirmation: { reasons: ["skipped_forward", "delivered_boundary"] } });
+    const confirmed = await request(`/api/projects/${target}/stage`, adminToken, { method: "POST", body: JSON.stringify({ ...body, confirmation: { reasons: ["skipped_forward", "delivered_boundary"] } }) });
+    expect(confirmed.status).toBe(200);
+    expect((await confirmed.json()).project).toMatchObject({ projectId: target, stageKey: "delivered", boardRevision: 1 });
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE target_id = ? AND action = 'stage.set'").bind(target).first()).toEqual({ count: 1 });
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM project_activity_events WHERE project_id = ? AND event_type = 'project.stage.changed'").bind(target).first()).toEqual({ count: 1 });
+  });
+
+  it("returns the Stage capability denial before either Board operational gate", async () => {
+    const target = crypto.randomUUID();
+    await seedProject(target, "raw_review", 1024);
+    const body = JSON.stringify({
+      expected: { stageKey: "raw_review", boardRevision: 0 },
+      targetStageKey: "editing_autohdr",
+      placement: { kind: "append" },
+      confirmation: { reasons: ["editing_boundary"] },
+    });
+    try {
+      for (const enabled of [false, true]) {
+        await database.DB.prepare("UPDATE feature_flags SET enabled = ? WHERE key = 'tb5a_board_contract_enabled'").bind(enabled ? 1 : 0).run();
+        const response = await request(`/api/projects/${target}/stage`, photographerToken, { method: "POST", body });
+        expect(response.status).toBe(403);
+        await expect(response.json()).resolves.toEqual({ error: "Forbidden", capability: "moveProjectStage" });
+      }
+    } finally {
+      await database.DB.prepare("UPDATE feature_flags SET enabled = 1 WHERE key = 'tb5a_board_contract_enabled'").run();
+    }
+  });
+
+  it("rejects the exact legacy body before mutation", async () => {
+    const target = crypto.randomUUID();
+    await seedProject(target, "raw_review", 1024);
+    const response = await request(`/api/projects/${target}/stage/`, adminToken, { method: "POST", body: JSON.stringify({ stageKey: "delivered" }) });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: "Reload the application before moving this project.", code: "stage_contract_reload_required" });
+    expect(await database.DB.prepare("SELECT stage_key, board_revision FROM projects WHERE id = ?").bind(target).first()).toEqual({ stage_key: "raw_review", board_revision: 0 });
   });
 });

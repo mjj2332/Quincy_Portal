@@ -32,7 +32,10 @@ async function executeSql(source: string): Promise<void> {
   }
 }
 
-beforeAll(() => executeSql(__PORTAL_MIGRATION_SQL__));
+beforeAll(async () => {
+  await executeSql(__PORTAL_MIGRATION_SQL__);
+  await executeSql("UPDATE feature_flags SET enabled = 1 WHERE key = 'tb5a_board_contract_enabled'");
+});
 
 const fakeDownload = vi.fn(async () => new Response(new Uint8Array([0xff, 0xd8, 0xff, 0xd9]), {
   headers: { "content-type": "image/jpeg" },

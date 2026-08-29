@@ -1,11 +1,10 @@
-import { describe, expect, it, vi } from "vitest";
+import { env } from "cloudflare:test";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import {
   RECONCILE_AWAITING_RAW_BATCH_SIZE,
-  RECONCILE_AWAITING_RAW_AUDIT_SQL,
   RECONCILE_AWAITING_RAW_SCAN_SQL,
-  RECONCILE_AWAITING_RAW_UPDATE_SQL,
-  advanceAwaitingRawProject,
   australiaSydneyBusinessDate,
+  advanceAwaitingRawProject,
   dueAwaitingRawProjects,
   isCanonicalCalendarDate,
   reconcileAwaitingRaw,
@@ -13,6 +12,23 @@ import {
 } from "../src/reconcile-awaiting-raw";
 
 declare const __BACKGROUND_WRANGLER_CONFIG__: string;
+declare const __PORTAL_MIGRATION_SQL__: string;
+const database = env as unknown as { DB: D1Database };
+
+async function executeSql(source: string) {
+  for (const chunk of source.split("--> statement-breakpoint")) {
+    const sql = chunk.split("\n").filter((line) => !line.trim().startsWith("--")).join("\n");
+    for (const statement of sql.split(";")) {
+      const flat = statement.replace(/\s+/g, " ").trim();
+      if (flat) await database.DB.exec(`${flat};`);
+    }
+  }
+}
+
+beforeAll(async () => {
+  await executeSql(__PORTAL_MIGRATION_SQL__);
+  await executeSql("UPDATE feature_flags SET enabled = 1 WHERE key = 'tb5a_board_contract_enabled'");
+});
 
 describe("awaiting RAW reconciliation dates", () => {
   it("derives Australia/Sydney business dates across DST without parsing date-only text", () => {
@@ -59,35 +75,6 @@ describe("awaiting RAW reconciliation mutation", () => {
     expect(bind).toHaveBeenCalledWith("2026-07-22", RECONCILE_AWAITING_RAW_BATCH_SIZE);
   });
 
-  it("uses one guarded update and conditional system audit in its D1 batch", () => {
-    expect(RECONCILE_AWAITING_RAW_UPDATE_SQL).toContain("stage_key = 'awaiting_raw'");
-    expect(RECONCILE_AWAITING_RAW_UPDATE_SQL).toContain("archived_at IS NULL");
-    expect(RECONCILE_AWAITING_RAW_UPDATE_SQL).toContain("shoot_date = ?");
-    expect(RECONCILE_AWAITING_RAW_AUDIT_SQL).toContain("actor_id");
-    expect(RECONCILE_AWAITING_RAW_AUDIT_SQL).toContain("WHERE changes() = 1");
-  });
-
-  it("records one system audit only when its guarded update advances the row", async () => {
-    const statements: Array<{ sql: string; args: unknown[] }> = [];
-    let stage = "awaiting_raw"; const audits: unknown[] = [];
-    const database = {
-      prepare(sql: string) {
-        return { bind(...args: unknown[]) { const statement = { sql, args }; statements.push(statement); return statement; } };
-      },
-      async batch(batch: Array<{ sql: string; args: unknown[] }>) {
-        const changed = stage === "awaiting_raw" ? 1 : 0;
-        if (changed) stage = "raw_review";
-        if (changed && batch[1].sql.includes("WHERE changes() = 1")) audits.push(batch[1].args[2]);
-        return [{ meta: { changes: changed } }, { meta: { changes: audits.length } }];
-      },
-    };
-    const candidate = { id: "project-id", shootDate: "2026-07-22", stageKey: "awaiting_raw", archivedAt: null } as const;
-    await expect(advanceAwaitingRawProject(database as never, candidate, "2026-07-22", 1)).resolves.toBe(true);
-    await expect(advanceAwaitingRawProject(database as never, candidate, "2026-07-22", 2)).resolves.toBe(false);
-    expect(statements).toHaveLength(4); expect(audits).toHaveLength(1);
-    expect(audits[0]).toEqual(JSON.stringify({ actor: "system", trigger: "hourly-awaiting-raw-reconciliation", businessDate: "2026-07-22", shootDate: "2026-07-22", from: "awaiting_raw", to: "raw_review" }));
-  });
-
   it("is repeat-safe, does not regress a concurrently moved project, and continues after failures", async () => {
     const projects = [
       { id: "advance", shootDate: "2026-07-21", stageKey: "awaiting_raw", archivedAt: null },
@@ -110,6 +97,20 @@ describe("awaiting RAW reconciliation mutation", () => {
     await expect(reconcileAwaitingRaw(store, "2026-07-22")).resolves.toEqual({ attempted: 1, advanced: 0, skipped: 0, failures: 1 });
     expect(projects.find((project) => project.id === "moved")?.stageKey).toBe("edited_review");
     expect(audits).toEqual(["advance"]); expect(error).toHaveBeenCalledTimes(2);
+    error.mockRestore();
+  });
+
+  it("keeps a committed winner counted when its best-effort notification fails", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const store = {
+      scan: async () => [{ id: "advanced", shootDate: "2026-07-21", stageKey: "awaiting_raw", archivedAt: null }],
+      advance: async () => true,
+    };
+    const notify = vi.fn().mockRejectedValue(new Error("notification outage"));
+
+    await expect(reconcileAwaitingRaw(store, "2026-07-22", notify)).resolves.toEqual({ attempted: 1, advanced: 1, skipped: 0, failures: 0 });
+    expect(notify).toHaveBeenCalledWith("advanced");
+    expect(error).toHaveBeenCalledWith("Awaiting RAW reconciliation notification failed", { projectId: "advanced", error: "notification outage" });
     error.mockRestore();
   });
 
@@ -136,5 +137,22 @@ describe("awaiting RAW reconciliation mutation", () => {
     await expect(reconcileAwaitingRaw(store, "2026-07-22")).resolves.toEqual({ attempted: 2, advanced: 2, skipped: 0, failures: 0 });
     expect(scan).toHaveBeenCalledTimes(2);
     expect(projects.every((project) => project.stageKey === "raw_review")).toBe(true);
+  });
+
+  it("rolls back a real-D1 Stage attempt when shoot_date changes after scan", async () => {
+    const projectId = crypto.randomUUID();
+    const now = Date.now();
+    await database.DB.prepare("INSERT INTO projects (id, street, shoot_date, stage_key, created_at, updated_at) VALUES (?, 'Reconcile race', '2026-08-28', 'awaiting_raw', ?, ?)")
+      .bind(projectId, now, now).run();
+    const candidate = { id: projectId, shootDate: "2026-08-28", stageKey: "awaiting_raw", archivedAt: null } as const;
+    await database.DB.prepare("UPDATE projects SET shoot_date = '2026-08-29' WHERE id = ?").bind(projectId).run();
+
+    await expect(advanceAwaitingRawProject(database.DB, candidate, "2026-08-29", now + 1)).resolves.toBe(false);
+    await expect(database.DB.prepare("SELECT stage_key, board_revision FROM projects WHERE id = ?").bind(projectId).first())
+      .resolves.toEqual({ stage_key: "awaiting_raw", board_revision: 0 });
+    await expect(database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE target_id = ? AND action = 'stage.auto_advance'").bind(projectId).first())
+      .resolves.toEqual({ count: 0 });
+    await expect(database.DB.prepare("SELECT count(*) AS count FROM notification_outbox WHERE project_id = ?").bind(projectId).first())
+      .resolves.toEqual({ count: 0 });
   });
 });

@@ -1,4 +1,4 @@
-import { buildProjectActivityStatements, COLLECTION_RECEIVED_COUNT_SQL, RAW_CLAIM_LEASE_MS, collectionReceivedCountBindings, guardedStageTransition } from "@quincy/db";
+import { buildProjectActivityStatements, COLLECTION_RECEIVED_COUNT_SQL, RAW_CLAIM_LEASE_MS, collectionReceivedCountBindings } from "@quincy/db";
 import { assetIngestIdentities, assets, collections, jobs, projects, rawReconciliationClaims } from "@quincy/db/schema";
 import { enqueueRenditionSafely, isAcceptedPhotoFilename, parseXmpRating, projectActivityDeepLink, publishNotificationOutbox, XMP_SCAN_BYTES, xmpRatingToStars, type ProjectActivityIntent } from "@quincy/shared";
 import { and, eq, isNull, sql } from "drizzle-orm";
@@ -11,6 +11,8 @@ import { normalisePath } from "./paths";
 import { dropboxPathKey } from "./paths";
 import { enqueueAutoHdrScaffold } from "../autohdr/scaffold";
 import { notifyProject } from "../notifications";
+import { requireBoardSchemaReady } from "../lib/board-schema";
+import { commitAutomaticStage } from "../lib/automatic-stage";
 
 // Each downloaded file costs ~9-10 subrequests (2 Dropbox content calls, an R2 put, a
 // rendition enqueue, and several D1 statements) — 150 once overran the pre-2026 Free-tier
@@ -123,6 +125,8 @@ export async function syncProjectRawFolder(
   connectionId?: string,
   trigger: "dropbox_delta" | "manual_dropbox_sync" | "queue_retry" = jobId ? "queue_retry" : "manual_dropbox_sync",
 ): Promise<{ newlyImported: number; currentRawAvailable: boolean; claimed: boolean }> {
+  // Do not create a job, claim, asset, or legacy Stage statement on a pre-0037 database.
+  await requireBoardSchemaReady(env);
   const db = dbFor(env);
   const trackingJobId = jobId ?? await createJob(db, {
     kind: "dropbox_sync",
@@ -173,7 +177,7 @@ export async function syncProjectRawFolder(
       }
     };
     const [project] = await db
-      .select({ rawFolderPath: projects.rawFolderPath, rawFolderLink: projects.rawFolderLink, archivedAt: projects.archivedAt })
+      .select({ rawFolderPath: projects.rawFolderPath, rawFolderLink: projects.rawFolderLink, archivedAt: projects.archivedAt, shootDate: projects.shootDate })
       .from(projects)
       .where(eq(projects.id, projectId))
       .limit(1);
@@ -360,19 +364,39 @@ export async function syncProjectRawFolder(
     const currentRawAvailable = Boolean(await db.select({ id: assets.id }).from(assets)
       .where(and(eq(assets.collectionId, collection.id), sql`${assets.supersededAt} IS NULL`)).get());
     if (currentRawAvailable) {
-      await guardedStageTransition(env.DB, {
+      const auditId = crypto.randomUUID();
+      const outcome = await commitAutomaticStage({
+        env,
         projectId,
         from: "awaiting_raw",
         to: "raw_review",
-        meta: {
+        auditId,
+        auditActorId: null,
+        auditMetaJson: JSON.stringify({
           trigger,
           reconciliationClaimId: claimId,
           jobId: trackingJobId,
           connectionId: connectionId ?? null,
           durableRawEvidence: { newlyImported, currentRawAvailable },
-        },
-        onSuccess: () => notifyProject(env, projectId, "raw_ready"),
+        }),
+        now: Date.now(),
+          workflow: {
+            kind: "raw_reconciliation",
+            projectId,
+            claimId,
+            claimStates: ["running"],
+            shootDate: project.shootDate,
+          },
+          alreadyAtDestination: { allowed: true, effect: { kind: "none" } },
+        legacyWorkflowNotification: "raw_ready",
       });
+      if (outcome.kind === "winner" && outcome.finalizer.legacyWorkflowNotification === "raw_ready") {
+        try {
+          await notifyProject(env, projectId, "raw_ready");
+        } catch (error) {
+          console.error("Dropbox RAW notification failed", { projectId, error });
+        }
+      }
     }
     const completedAt = Date.now();
     const completionAuditId = crypto.randomUUID();

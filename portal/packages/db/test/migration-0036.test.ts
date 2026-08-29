@@ -64,16 +64,17 @@ describe("migration 0036 External Editor assigned-scope access", () => {
     db.close();
   });
 
-  it("keeps the migration journal and snapshot tail at 0036", () => {
+  it("keeps the 0036 snapshot and committed migration entry", () => {
     const directory = new URL("../migrations/", import.meta.url);
     const journal = JSON.parse(readFileSync(new URL("../migrations/meta/_journal.json", import.meta.url), "utf8")) as { entries: Array<{ idx: number; tag: string }> };
     const snapshot = JSON.parse(readFileSync(new URL("../migrations/meta/0036_snapshot.json", import.meta.url), "utf8")) as { tables: Record<string, unknown> };
-    expect(journal.entries.at(-1)).toMatchObject({ idx: 36, tag: "0036_external_editor_assigned_scope" });
+    expect(journal.entries.find((entry) => entry.idx === 36)).toMatchObject({ idx: 36, tag: "0036_external_editor_assigned_scope" });
+    expect(journal.entries.at(-1)).toMatchObject({ idx: 37, tag: "0037_project_board_order_contract" });
     expect(snapshot.tables).toHaveProperty("external_edited_upload_sessions");
     expect(snapshot.tables).toHaveProperty("external_edited_upload_parts");
     expect(snapshot.tables).toHaveProperty("projects");
     expect(snapshot.tables).toHaveProperty("user");
     expect(snapshot.tables).toHaveProperty("notification_outbox");
-    expect(readdirSync(directory).filter((value) => /^\d{4}_.*\.sql$/.test(value)).at(-1)).toBe("0036_external_editor_assigned_scope.sql");
+    expect(readdirSync(directory).filter((value) => /^\d{4}_.*\.sql$/.test(value)).at(-1)).toBe("0037_project_board_order_contract.sql");
   });
 });

@@ -32,7 +32,10 @@ async function executeSql(source: string) {
   }
 }
 
-beforeAll(() => executeSql(__PORTAL_MIGRATION_SQL__));
+beforeAll(async () => {
+  await executeSql(__PORTAL_MIGRATION_SQL__);
+  await executeSql("UPDATE feature_flags SET enabled = 1 WHERE key = 'tb5a_board_contract_enabled'");
+});
 beforeEach(() => vi.clearAllMocks());
 
 async function round() {
@@ -61,9 +64,12 @@ async function round() {
   const handoff = await database.DB.prepare("SELECT connection_id, generation FROM autohdr_handoffs WHERE id = ?")
     .bind(owner.handoffId).first<{ connection_id: string; generation: number }>();
   await database.DB.batch([
-    database.DB.prepare("UPDATE projects SET stage_key = 'editing_autohdr' WHERE id = ?").bind(projectId),
+    // This fixture pre-positions the project as an already-entered destination. Keep the
+    // board revision and handoff entry token aligned so the confirmation recheck can prove
+    // that identity instead of treating this as a tokenless stage jump.
+    database.DB.prepare("UPDATE projects SET stage_key = 'editing_autohdr', board_revision = 5 WHERE id = ?").bind(projectId),
     database.DB.prepare("UPDATE jobs SET status = 'done' WHERE id = ?").bind(owner.jobId),
-    database.DB.prepare("UPDATE autohdr_handoffs SET state = 'started' WHERE id = ?").bind(owner.handoffId),
+    database.DB.prepare("UPDATE autohdr_handoffs SET state = 'started', editing_entry_board_revision = 5 WHERE id = ?").bind(owner.handoffId),
     database.DB.prepare("UPDATE autohdr_output_mappings SET state = 'active' WHERE handoff_id = ?").bind(owner.handoffId),
     database.DB.prepare("UPDATE autohdr_path_claims SET state = 'active' WHERE handoff_id = ?").bind(owner.handoffId),
   ]);

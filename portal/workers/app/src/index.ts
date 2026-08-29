@@ -30,9 +30,14 @@ import { projectAccessSnapshotRoutes } from "./routes/project-access-snapshot";
 import { verifyTransformSource } from "./lib/transform-source";
 import { requireAppOrigin } from "./middleware/origin";
 import { safeStaffDestination } from "@quincy/shared";
+import { boardSchemaVariant } from "@quincy/db";
 
 export const app = new Hono<AppEnv>();
 app.use("/api/*", async (c, next) => cors({ origin: c.env.APP_ORIGIN, credentials: true, allowHeaders: ["content-type"], allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"] })(c, next));
+// This is the app isolate's one schema-version read. It runs before any API/auth handler can
+// touch D1; board-aware routes reuse the memoized result rather than probing independently.
+app.use("/api", async (c, next) => { await boardSchemaVariant(c.env.DB); await next(); });
+app.use("/api/*", async (c, next) => { await boardSchemaVariant(c.env.DB); await next(); });
 // Scope this middleware to /api explicitly: router-wide '*' middleware mounted at
 // '/' can leak into sibling routes (see docs/lessons.md).
 app.use("/api", requireAppOrigin);

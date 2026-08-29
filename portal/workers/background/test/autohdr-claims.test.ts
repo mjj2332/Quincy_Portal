@@ -1,6 +1,8 @@
 import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { claimAutoHdrFetch, claimAutoHdrHandoff, claimBackfillAutoHdrHandoff, claimImplicitAutoHdrHandoff, confirmAutoHdrHandoff } from "../src/autohdr/claims";
+import { commitAutomaticStage } from "../src/lib/automatic-stage";
+import { buildJobEntryProvenanceBundle } from "@quincy/db";
 import { acquireManualIngestLease, refreshManualIngestLease, releaseManualIngestLease } from "../src/autohdr/manual-supplement";
 import { routeAutoHdrDelta, type RoutedAutoHdrMapping } from "../src/autohdr/mapping";
 import { routeAutoHdrManualDropDelta, routeAutoHdrProviderDelta } from "../src/autohdr/routers";
@@ -23,7 +25,10 @@ async function executeSql(source: string) {
   }
 }
 
-beforeAll(() => executeSql(__PORTAL_MIGRATION_SQL__));
+beforeAll(async () => {
+  await executeSql(__PORTAL_MIGRATION_SQL__);
+  await executeSql("UPDATE feature_flags SET enabled = 1 WHERE key = 'tb5a_board_contract_enabled'");
+});
 
 async function fixture() {
   const now = Date.now();
@@ -376,6 +381,101 @@ describe("atomic AutoHDR ownership", () => {
     expect(auditCount?.count).toBe(1);
   });
 
+  it("requires the exact destination confirmation identity, archive state, and entry token", async () => {
+    const cases = [
+      { name: "wrong project", mutate: async () => undefined, input: (value: Awaited<ReturnType<typeof confirmedInput>>) => ({ ...value, projectId: crypto.randomUUID() }) },
+      { name: "wrong connection", mutate: async () => undefined, input: (value: Awaited<ReturnType<typeof confirmedInput>>) => ({ ...value, connectionId: "wrong-connection" }) },
+      { name: "wrong generation", mutate: async () => undefined, input: (value: Awaited<ReturnType<typeof confirmedInput>>) => ({ ...value, mappingGeneration: value.mappingGeneration + 1 }) },
+      { name: "archived", mutate: async (value: Awaited<ReturnType<typeof confirmedInput>>) => { await database.DB.prepare("UPDATE projects SET archived_at = ? WHERE id = ?").bind(Date.now(), value.projectId).run(); }, input: (value: Awaited<ReturnType<typeof confirmedInput>>) => value },
+      { name: "ABA token mismatch", mutate: async (value: Awaited<ReturnType<typeof confirmedInput>>) => {
+        await database.DB.batch([
+          database.DB.prepare("UPDATE projects SET stage_key = 'raw_review', board_revision = board_revision + 1 WHERE id = ?").bind(value.projectId),
+          database.DB.prepare("UPDATE projects SET stage_key = 'editing_autohdr', board_revision = board_revision + 1 WHERE id = ?").bind(value.projectId),
+        ]);
+      }, input: (value: Awaited<ReturnType<typeof confirmedInput>>) => value },
+    ] as const;
+
+    async function confirmedInput() {
+      const data = await fixture();
+      const owner = await claimAutoHdrHandoff({ DB: database.DB } as never, data.projectId, data.userId);
+      const handoff = await database.DB.prepare("SELECT connection_id, generation FROM autohdr_handoffs WHERE id = ?")
+        .bind(owner.handoffId).first<{ connection_id: string; generation: number }>();
+      const input = {
+        projectId: data.projectId,
+        handoffId: owner.handoffId,
+        connectionId: handoff!.connection_id,
+        mappingGeneration: handoff!.generation,
+        initiatedBy: data.userId,
+        jobId: owner.jobId,
+      };
+      await expect(confirmAutoHdrHandoff({ DB: database.DB } as never, input)).resolves.toBe(true);
+      return input;
+    }
+
+    for (const testCase of cases) {
+      const value = await confirmedInput();
+      await testCase.mutate(value);
+      const result = await confirmAutoHdrHandoff({ DB: database.DB } as never, testCase.input(value));
+      expect(result, testCase.name).toBe(false);
+    }
+  });
+
+  it("aborts a destination provenance bundle when its ownership predicate is broken", async () => {
+    const data = await fixture();
+    const jobId = crypto.randomUUID();
+    const now = Date.now();
+    await database.DB.batch([
+      database.DB.prepare("UPDATE projects SET stage_key = 'editing_autohdr' WHERE id = ?").bind(data.projectId),
+      database.DB.prepare("INSERT INTO jobs (id, kind, status, project_id, payload_json, created_at, updated_at) VALUES (?, 'autohdr', 'done', ?, '{}', ?, ?)").bind(jobId, data.projectId, now, now),
+    ]);
+    const provenance = buildJobEntryProvenanceBundle({ db: database.DB, projectId: data.projectId, destinationStage: "editing_autohdr", jobId, jobKind: "autohdr", generation: 1, updatedAt: now });
+    const brokenDestination = {
+      ...provenance,
+      statements: [database.DB.prepare("UPDATE jobs SET payload_json = '{}' WHERE id = ?").bind(jobId), provenance.statements[provenance.indexes.ownershipAssertion]!],
+      indexes: { payloadUpdate: 0, ownershipAssertion: 1 },
+    };
+
+    await expect(commitAutomaticStage({
+      env: { DB: database.DB },
+      projectId: data.projectId,
+      from: "raw_review",
+      to: "editing_autohdr",
+      auditId: crypto.randomUUID(),
+      auditMetaJson: "{}",
+      now,
+      workflow: { kind: "none" },
+      coupling: provenance.coupling,
+      alreadyAtDestination: { allowed: true, effect: { kind: "job_provenance", bundle: brokenDestination } },
+    })).resolves.toMatchObject({ kind: "conflict" });
+    await expect(database.DB.prepare("SELECT payload_json FROM jobs WHERE id = ?").bind(jobId).first())
+      .resolves.toEqual({ payload_json: "{}" });
+  });
+
+  it("rejects a destination provenance bundle without an ownership assertion index", async () => {
+    const data = await fixture();
+    const jobId = crypto.randomUUID();
+    const now = Date.now();
+    await database.DB.batch([
+      database.DB.prepare("UPDATE projects SET stage_key = 'editing_autohdr' WHERE id = ?").bind(data.projectId),
+      database.DB.prepare("INSERT INTO jobs (id, kind, status, project_id, payload_json, created_at, updated_at) VALUES (?, 'autohdr', 'done', ?, '{}', ?, ?)").bind(jobId, data.projectId, now, now),
+    ]);
+    const provenance = buildJobEntryProvenanceBundle({ db: database.DB, projectId: data.projectId, destinationStage: "editing_autohdr", jobId, jobKind: "autohdr", generation: 1, updatedAt: now });
+    const missingAssertion = { ...provenance, indexes: { payloadUpdate: provenance.indexes.payloadUpdate } } as unknown as typeof provenance;
+
+    await expect(commitAutomaticStage({
+      env: { DB: database.DB },
+      projectId: data.projectId,
+      from: "raw_review",
+      to: "editing_autohdr",
+      auditId: crypto.randomUUID(),
+      auditMetaJson: "{}",
+      now,
+      workflow: { kind: "none" },
+      coupling: provenance.coupling,
+      alreadyAtDestination: { allowed: true, effect: { kind: "job_provenance", bundle: missingAssertion } },
+    })).rejects.toThrow(/ownership assertion index/);
+  });
+
   it("atomically promotes one pending candidate and blocks if its sibling appears later", async () => {
     const data = await fixture();
     const localEnv = { DB: database.DB } as never;
@@ -500,6 +600,101 @@ describe("repeat AutoHDR sends", () => {
     ]);
     return { handoffId, jobId };
   }
+
+  it("commits destination repeat ownership as started without Stage effects", async () => {
+    const { data, localEnv, first } = await activeRound("editing_autohdr");
+    const before = await database.DB.prepare(
+      "SELECT (SELECT stage_key FROM projects WHERE id = ?) AS stage_key, " +
+      "(SELECT board_revision FROM projects WHERE id = ?) AS board_revision, " +
+      "(SELECT count(*) FROM audit_log WHERE target_id = ? AND action = 'stage.auto_advance') AS stage_audits, " +
+      "(SELECT count(*) FROM project_activity_events WHERE project_id = ?) AS activity_count, " +
+      "(SELECT count(*) FROM notification_outbox WHERE project_id = ?) AS outbox_count, " +
+      "(SELECT count(*) FROM notification_delivery_ledger WHERE event_type = 'project.stage.changed') AS ledger_count, " +
+      "(SELECT count(*) FROM notifications WHERE project_id = ?) AS notification_count",
+    ).bind(data.projectId, data.projectId, data.projectId, data.projectId, data.projectId, data.projectId).first();
+
+    const next = await claimAutoHdrHandoff(localEnv, data.projectId, data.userId, {
+      startNewRound: true,
+      removalSetHash: await emptyRemovalHash(),
+    });
+    expect(next).toMatchObject({ reused: false, retiredHandoffId: first.handoffId });
+    await expect(database.DB.prepare("SELECT state, started_at FROM autohdr_handoffs WHERE id = ?").bind(next.handoffId).first())
+      .resolves.toMatchObject({ state: "started", started_at: expect.any(Number) });
+    await expect(database.DB.prepare(
+      "SELECT (SELECT stage_key FROM projects WHERE id = ?) AS stage_key, " +
+      "(SELECT board_revision FROM projects WHERE id = ?) AS board_revision, " +
+      "(SELECT count(*) FROM audit_log WHERE target_id = ? AND action = 'stage.auto_advance') AS stage_audits, " +
+      "(SELECT count(*) FROM project_activity_events WHERE project_id = ?) AS activity_count, " +
+      "(SELECT count(*) FROM notification_outbox WHERE project_id = ?) AS outbox_count, " +
+      "(SELECT count(*) FROM notification_delivery_ledger WHERE event_type = 'project.stage.changed') AS ledger_count, " +
+      "(SELECT count(*) FROM notifications WHERE project_id = ?) AS notification_count",
+    ).bind(data.projectId, data.projectId, data.projectId, data.projectId, data.projectId, data.projectId).first()).resolves.toEqual(before);
+  });
+
+  it("returns no implicit owner when the Board flag flips before Stage composition", async () => {
+    const data = await fixture();
+    await expect(claimImplicitAutoHdrHandoff(
+      { DB: database.DB } as never,
+      data.projectId,
+      data.connectionId,
+      `/AutoHDR/Implicit-${data.projectId}/04-FINAL-Photos`,
+      { beforeStageCommit: async () => { await database.DB.prepare("UPDATE feature_flags SET enabled = 0 WHERE key = 'tb5a_board_contract_enabled'").run(); } },
+    )).resolves.toBeNull();
+    try {
+      await expect(database.DB.prepare("SELECT count(*) AS count FROM autohdr_handoffs WHERE project_id = ?").bind(data.projectId).first()).resolves.toEqual({ count: 0 });
+      await expect(database.DB.prepare("SELECT count(*) AS count FROM jobs WHERE project_id = ?").bind(data.projectId).first()).resolves.toEqual({ count: 0 });
+    } finally {
+      await database.DB.prepare("UPDATE feature_flags SET enabled = 1 WHERE key = 'tb5a_board_contract_enabled'").run();
+    }
+  });
+
+  it("returns no backfill owner when the Board flag flips before Stage composition", async () => {
+    const data = await fixture();
+    await expect(claimBackfillAutoHdrHandoff(
+      { DB: database.DB } as never,
+      data.projectId,
+      data.connectionId,
+      `/AutoHDR/Backfill-${data.projectId}/04-FINAL-Photos`,
+      "id:backfill-folder",
+      { beforeStageCommit: async () => { await database.DB.prepare("UPDATE feature_flags SET enabled = 0 WHERE key = 'tb5a_board_contract_enabled'").run(); } },
+    )).resolves.toMatchObject({ ok: false, reason: expect.stringContaining("deferred") });
+    try {
+      await expect(database.DB.prepare("SELECT count(*) AS count FROM autohdr_handoffs WHERE project_id = ?").bind(data.projectId).first()).resolves.toEqual({ count: 0 });
+      await expect(database.DB.prepare("SELECT count(*) AS count FROM jobs WHERE project_id = ?").bind(data.projectId).first()).resolves.toEqual({ count: 0 });
+    } finally {
+      await database.DB.prepare("UPDATE feature_flags SET enabled = 1 WHERE key = 'tb5a_board_contract_enabled'").run();
+    }
+  });
+
+  it("returns ERR_HANDOFF_BLOCKED without a repeat owner when the Board flag flips before Stage composition", async () => {
+    const { data, localEnv, first } = await activeRound("editing_autohdr");
+    const beforeOwnership = await database.DB.prepare(
+      "SELECT " +
+      "(SELECT count(*) FROM autohdr_handoffs WHERE project_id = ?) AS handoffs, " +
+      "(SELECT count(*) FROM jobs WHERE project_id = ?) AS jobs, " +
+      "(SELECT count(*) FROM autohdr_output_mappings WHERE project_id = ?) AS mappings, " +
+      "(SELECT count(*) FROM autohdr_path_claims WHERE project_id = ?) AS path_claims",
+    ).bind(data.projectId, data.projectId, data.projectId, data.projectId).first();
+    try {
+      await expect(claimAutoHdrHandoff(localEnv, data.projectId, data.userId, {
+        startNewRound: true,
+        removalSetHash: await emptyRemovalHash(),
+      }, {
+        beforeRepeatBatch: async () => { await database.DB.prepare("UPDATE feature_flags SET enabled = 0 WHERE key = 'tb5a_board_contract_enabled'").run(); },
+      })).rejects.toMatchObject({ code: "ERR_HANDOFF_BLOCKED" });
+      await expect(database.DB.prepare(
+        "SELECT " +
+        "(SELECT count(*) FROM autohdr_handoffs WHERE project_id = ?) AS handoffs, " +
+        "(SELECT count(*) FROM jobs WHERE project_id = ?) AS jobs, " +
+        "(SELECT count(*) FROM autohdr_output_mappings WHERE project_id = ?) AS mappings, " +
+        "(SELECT count(*) FROM autohdr_path_claims WHERE project_id = ?) AS path_claims",
+      ).bind(data.projectId, data.projectId, data.projectId, data.projectId).first()).resolves.toEqual(beforeOwnership);
+      await expect(database.DB.prepare("SELECT stage_key, board_revision FROM projects WHERE id = ?").bind(data.projectId).first()).resolves.toEqual({ stage_key: "editing_autohdr", board_revision: 0 });
+      expect(first.handoffId).toBeTruthy();
+    } finally {
+      await database.DB.prepare("UPDATE feature_flags SET enabled = 1 WHERE key = 'tb5a_board_contract_enabled'").run();
+    }
+  });
 
   it("keeps a same-selection started handoff idempotent and resumes selection drift explicitly", async () => {
     const { data, localEnv, first } = await activeRound();

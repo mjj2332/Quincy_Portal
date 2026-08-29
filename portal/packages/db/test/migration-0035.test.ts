@@ -55,13 +55,14 @@ describe("migration 0035 checklist scheduling ranges", () => {
     db.close();
   });
 
-  it("keeps the 0035 snapshot and the journal tail at 0036", () => {
+  it("keeps the 0035 snapshot and the committed migration entries", () => {
     const directory = new URL("../migrations/", import.meta.url);
     const journal = JSON.parse(readFileSync(new URL("../migrations/meta/_journal.json", import.meta.url), "utf8")) as { entries: Array<{ idx: number; tag: string }> };
     const snapshot = JSON.parse(readFileSync(new URL("../migrations/meta/0035_snapshot.json", import.meta.url), "utf8")) as { tables: Record<string, unknown> };
     expect(journal.entries.find((entry) => entry.idx === 35)).toMatchObject({ idx: 35, tag: "0035_project_subtask_scheduling_ranges" });
     expect(snapshot.tables).toHaveProperty("project_subtasks");
-    expect(journal.entries.at(-1)).toMatchObject({ idx: 36, tag: "0036_external_editor_assigned_scope" });
-    expect(readdirSync(directory).filter((value) => /^\d{4}_.*\.sql$/.test(value)).at(-1)).toBe("0036_external_editor_assigned_scope.sql");
+    expect(journal.entries.find((entry) => entry.idx === 36)).toMatchObject({ idx: 36, tag: "0036_external_editor_assigned_scope" });
+    expect(journal.entries.at(-1)).toMatchObject({ idx: 37, tag: "0037_project_board_order_contract" });
+    expect(readdirSync(directory).filter((value) => /^\d{4}_.*\.sql$/.test(value)).at(-1)).toBe("0037_project_board_order_contract.sql");
   });
 });

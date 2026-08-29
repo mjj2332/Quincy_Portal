@@ -18,7 +18,7 @@ function client(gcTime = Infinity) { return new QueryClient({ defaultOptions: { 
 function asset(id: string, patch: Partial<WorkspaceAsset> = {}): WorkspaceAsset {
   return { id, collectionId: "c", kind: "photo", originalFilename: `${id}.jpg`, bytes: 1, width: null, height: null, ratingFromMetadata: null, section: null, renditionStatus: "ready", createdAt: "2026-08-25T00:00:00.000Z", sourceRawAssetId: null, version: 1, versionGroupId: null, supersedesAssetId: null, review: null, selected: false, ...patch };
 }
-function detail(id: string): ProjectDetail { return { id, street: id, suburb: null, postcode: null, agencyName: null, agentName: null, shootDate: null, stageKey: "raw_review", rawFolderPath: null, rawFolderLink: null, coverAssetId: null, effectiveCoverAssetId: null, collections: [], members: [], deadlineSchedule: { version: 0, deadline: null, reminderOffsetsMinutes: [], state: "unset", nextOccurrence: null, canResume: false } }; }
+function detail(id: string): ProjectDetail { return { id, street: id, suburb: null, postcode: null, agencyName: null, agentName: null, shootDate: null, stageKey: "raw_review", rawFolderPath: null, rawFolderLink: null, boardRevision: 0, contractEnabled: false, coverAssetId: null, effectiveCoverAssetId: null, collections: [], members: [], deadlineSchedule: { version: 0, deadline: null, reminderOffsetsMinutes: [], state: "unset", nextOccurrence: null, canResume: false } }; }
 
 afterEach(() => { vi.restoreAllMocks(); apiGetMock.mockReset(); });
 

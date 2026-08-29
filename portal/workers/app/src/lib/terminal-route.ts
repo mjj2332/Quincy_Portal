@@ -44,7 +44,7 @@ export type SecurityRouteRegistration = {
   scope: SecurityRouteScope;
   projection: SecurityRouteProjection;
   response: SecurityRouteResponse;
-  externalSurface?: "ingest-status" | "collection-links" | "stages";
+  externalSurface?: "ingest-status" | "collection-links" | "stage" | "stages";
 };
 type LegacySecurityRouteClass = "scoped" | "constant-capability-denial" | "global-self" | "withheld" | "terminal-fallback";
 type LegacySecurityRouteRegistrationSeed = { method: string; path: string; class: LegacySecurityRouteClass; externalSurface?: SecurityRouteRegistration["externalSurface"] };
@@ -80,7 +80,6 @@ const PROJECT_SECURITY_ROUTE_CLASSIFICATION_SEED = [
   { method: "POST", path: "/api/admin/agents", class: "withheld" },
   { method: "POST", path: "/api/admin/autohdr/backfill", class: "withheld" },
   { method: "POST", path: "/api/admin/autohdr/scaffold-backfill", class: "withheld" },
-  { method: "POST", path: "/api/admin/backfill-board-position", class: "withheld" },
   { method: "POST", path: "/api/admin/notification-deliveries/:outboxId/discard", class: "withheld" },
   { method: "POST", path: "/api/admin/notification-deliveries/:outboxId/replay", class: "withheld" },
   { method: "GET", path: "/api/admin/notification-deliveries", class: "withheld" },
@@ -168,7 +167,8 @@ const PROJECT_SECURITY_ROUTE_CLASSIFICATION_SEED = [
   { method: "POST", path: "/api/projects/:id/restore", class: "withheld" },
   { method: "GET", path: "/api/projects/:id/selected-raw.zip", class: "withheld" },
   { method: "POST", path: "/api/projects/:id/send-to-autohdr", class: "withheld" },
-  { method: "POST", path: "/api/projects/:id/stage", class: "withheld" },
+  { method: "POST", path: "/api/projects/:id/stage", class: "scoped", externalSurface: "stage" },
+  { method: "POST", path: "/api/projects/:id/stage/", class: "scoped", externalSurface: "stage" },
   { method: "POST", path: "/api/projects/:id/sync-dropbox", class: "withheld" },
   { method: "POST", path: "/api/projects/:id/upload-manifest", class: "withheld" },
   { method: "DELETE", path: "/api/projects/:id", class: "scoped" },
@@ -246,7 +246,7 @@ export const PROJECT_SECURITY_ROUTE_CLASSIFICATION = PROJECT_SECURITY_ROUTE_CLAS
 })) satisfies readonly SecurityRouteRegistration[];
 
 export const CHECKED_IN_MIDDLEWARE_REGISTRATIONS = [
-  ["ALL", "/api/*"], ["ALL", "/api"], ["ALL", "/api/*"], ["ALL", "/api/*"],
+  ["ALL", "/api/*"], ["ALL", "/api"], ["ALL", "/api"], ["ALL", "/api/*"], ["ALL", "/api/*"], ["ALL", "/api/*"],
   ["ALL", "/media/*"], ["ALL", "/api/assets/:id"], ["ALL", "/api/integrations"],
   ["ALL", "/api/integrations/*"], ["ALL", "/api/notice-board"], ["ALL", "/api/notice-board/*"],
   ["ALL", "/api/users"], ["ALL", "/api/users/*"],
