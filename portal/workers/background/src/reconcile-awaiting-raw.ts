@@ -13,6 +13,7 @@ type ReconciliationStore = {
   scan: (businessDate: string) => Promise<AwaitingRawProject[]>;
   advance: (project: DueAwaitingRawProject, businessDate: string) => Promise<boolean>;
 };
+type ReconciliationNotifier = (projectId: string) => void | Promise<void>;
 
 const SYDNEY_TIME_ZONE = "Australia/Sydney";
 export const RECONCILE_AWAITING_RAW_BATCH_SIZE = 100;
@@ -105,18 +106,32 @@ export async function advanceAwaitingRawProject(database: D1Database, project: D
 
 export type ReconciliationSummary = { attempted: number; advanced: number; skipped: number; failures: number };
 
-export async function reconcileAwaitingRaw(store: ReconciliationStore, businessDate: string): Promise<ReconciliationSummary> {
+export async function reconcileAwaitingRaw(store: ReconciliationStore, businessDate: string, onAdvanced?: ReconciliationNotifier): Promise<ReconciliationSummary> {
   const candidates = dueAwaitingRawProjects(await store.scan(businessDate), businessDate);
   let advanced = 0; let failures = 0;
+  const advancedProjectIds: string[] = [];
   for (const project of candidates) {
     try {
-      if (await store.advance(project, businessDate)) advanced += 1;
+      if (await store.advance(project, businessDate)) {
+        advanced += 1;
+        advancedProjectIds.push(project.id);
+      }
     } catch (error) {
       failures += 1;
       console.error("Awaiting RAW reconciliation candidate failed", { projectId: project.id, error: error instanceof Error ? error.message : String(error) });
     }
   }
-  return { attempted: candidates.length, advanced, skipped: candidates.length - advanced - failures, failures };
+  const summary = { attempted: candidates.length, advanced, skipped: candidates.length - advanced - failures, failures };
+  // Notification is best effort and deliberately runs after the mutation result is counted.
+  // An outage must not turn a committed Stage winner into a reconciliation failure.
+  for (const projectId of advancedProjectIds) {
+    try {
+      await onAdvanced?.(projectId);
+    } catch (error) {
+      console.error("Awaiting RAW reconciliation notification failed", { projectId, error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  return summary;
 }
 
 export async function reconcileAwaitingRawProjects(database: D1Database, scheduledTime: Date | number, onAdvanced?: (projectId: string) => void | Promise<void>): Promise<ReconciliationSummary> {
@@ -128,11 +143,9 @@ export async function reconcileAwaitingRawProjects(database: D1Database, schedul
   const summary = await reconcileAwaitingRaw({
     scan: (date) => scanAwaitingRawProjects(database, date),
     advance: async (project, date) => {
-      const advanced = await advanceAwaitingRawProject(database, project, date, Date.now());
-      if (advanced) await onAdvanced?.(project.id);
-      return advanced;
+      return advanceAwaitingRawProject(database, project, date, Date.now());
     },
-  }, businessDate);
+  }, businessDate, onAdvanced);
   console.log("Awaiting RAW reconciliation", { businessDate, ...summary });
   return summary;
 }

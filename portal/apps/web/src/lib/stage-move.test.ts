@@ -36,4 +36,21 @@ describe("shared Stage confirmation submission", () => {
     await expect(submitStageMoveWithConfirmation(request, submit, { confirm: vi.fn().mockResolvedValue(false) })).resolves.toBeNull();
     expect(submit).toHaveBeenCalledTimes(1);
   });
+
+  it.each([
+    ["missing", undefined],
+    ["duplicated", ["backward", "backward"]],
+    ["reordered", ["delivered_boundary", "skipped_forward"]],
+    ["unknown", ["not_a_reason"]],
+  ])("surfaces a malformed %s reason list without resubmitting", async (_label, reasons) => {
+    const submit = vi.fn().mockRejectedValue(new ApiError("Confirmation required", 409, {
+      code: "stage_confirmation_required",
+      requiredConfirmation: { reasons },
+    }));
+    const confirm = vi.fn().mockResolvedValue(true);
+
+    await expect(submitStageMoveWithConfirmation(request, submit, { confirm })).rejects.toThrow("Invalid Stage confirmation response.");
+    expect(confirm).not.toHaveBeenCalled();
+    expect(submit).toHaveBeenCalledTimes(1);
+  });
 });

@@ -32,6 +32,7 @@ import { ensurePipelineStages } from "../routes/stages";
 import {
   moveProjectBoardOrder,
   planBoardPlacement,
+  placementChangesLogicalSlot,
   readBoardProject,
   readBoardRows,
   readVisibleBoardRows,
@@ -153,6 +154,10 @@ export async function moveProjectStage(input: MoveProjectStageInput): Promise<Mo
   if (targetStageKey === project.stageKey) {
     const rows = await readBoardRows(db, project.stageKey);
     const visibleRows = await readVisibleBoardRows(db, principal, project.stageKey);
+    if (placementChangesLogicalSlot({ target: project, destinationRows: rows, visibleRows, request: { ...input.request, targetStageKey } })
+      && !roleHasCapability(principal.role, "prioritizeProjects")) {
+      return { kind: "reorder_forbidden", code: "project_board_reorder_forbidden", capability: "prioritizeProjects" };
+    }
     const placement = planBoardPlacement({ target: project, destinationRows: rows, visibleRows, request: { ...input.request, targetStageKey } });
     if (!placement) return { kind: "conflict", current };
     if (!placement.changed) return { kind: "no_change", response: responseFor(project, principal.role, project.stageKey, visibleRows, false) };

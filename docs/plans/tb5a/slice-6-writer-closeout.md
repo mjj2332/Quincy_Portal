@@ -181,3 +181,12 @@ worker-background suite could not be executed in this managed sandbox: Wrangler/
 denied writing the user Wrangler log and listening on `127.0.0.1` (`EPERM`). The post-fix count is
 therefore pending the orchestrating environment’s worker run; the gate output above records all
 non-worker results available here.
+
+## Slice 6c deferred follow-ups
+
+SF5 and SF6 remain deferred to a post-TB5A follow-up:
+
+- SF5: make the `autohdr.ts` / `autohdr-api-send.ts` deferred return complete the calling Workflow rather than returning from the writer path.
+- SF6: define maintenance-window queue/alarm replay intent for in-flight automatic work.
+
+Neither is a rollout blocker. The deploy runbook freezes and drains Queue, Workflow, Cron, and AutoHDR work before the migration, then resumes them after the Board contract flag flips ON; no in-flight automatic work exists during the flag-OFF window.

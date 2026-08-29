@@ -119,23 +119,30 @@ export function cardDropPlacement(
   return { kind: "between", before, after };
 }
 
-export function cardDropDirection(
+/** Build the exact adjacent placement used by the arrow/keyboard controls. */
+export function adjacentBoardPlacement(
   movingProjectId: string,
-  targetProjectId: string,
   targetStageKey: string,
-  edge: "before" | "after",
+  direction: "up" | "down",
   projects: ProjectSummary[],
-): "up" | "down" | null {
+): StageMovePlacement | null {
   const order = authorizedOrderForStage(projects, targetStageKey);
-  if (!order || movingProjectId === targetProjectId) return null;
+  if (!order) return null;
   const movingIndex = order.indexOf(movingProjectId);
   const withoutMoving = order.filter((projectId) => projectId !== movingProjectId);
-  const targetIndex = withoutMoving.indexOf(targetProjectId);
-  if (movingIndex < 0 || targetIndex < 0) return null;
+  if (movingIndex < 0) return null;
   const currentIndex = withoutMoving.slice(0, movingIndex).length;
-  const desiredIndex = edge === "before" ? targetIndex : targetIndex + 1;
+  const desiredIndex = direction === "up"
+    ? Math.max(0, currentIndex - 1)
+    : Math.min(withoutMoving.length, currentIndex + 1);
   if (desiredIndex === currentIndex) return null;
-  return desiredIndex < currentIndex ? "up" : "down";
+  if (desiredIndex >= withoutMoving.length) return { kind: "append" };
+  const byId = projectById(projects);
+  const before = desiredIndex > 0 ? expectedNeighbour(withoutMoving[desiredIndex - 1]!, byId) : null;
+  const after = expectedNeighbour(withoutMoving[desiredIndex]!, byId);
+  if (desiredIndex > 0 && !before) return null;
+  if (!after) return null;
+  return { kind: "between", before, after };
 }
 
 type ProjectScope = "active" | "archived";
@@ -407,7 +414,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     setDragging(undefined);
     setDropStage(undefined);
     setDropTarget(undefined);
-    if (!project || (project.stageKey === stageKey && placement.kind === "append")) return;
+    if (!project) return;
     captureFocusForRefresh();
     setPendingMoves((current) => new Set(current).add(project.id));
     const request: MoveProjectStageRequest = {
@@ -477,8 +484,8 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     setDropTarget(undefined);
     if (!project || project.id === target.id) return;
     if (project.stageKey === target.stageKey) {
-      const direction = cardDropDirection(project.id, target.id, target.stageKey, edge, projects);
-      if (direction) void moveProjectPosition(project, direction);
+      const placement = cardDropPlacement(project.id, target.id, target.stageKey, edge, projects);
+      if (placement) void moveProject(project, target.stageKey, placement);
       return;
     }
     const placement = cardDropPlacement(project.id, target.id, target.stageKey, edge, projects);
@@ -506,9 +513,16 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
 
   async function moveProjectPosition(project: ProjectSummary, direction: "up" | "down") {
     if (pendingOrdering.has(project.id)) return;
+    const placement = adjacentBoardPlacement(project.id, project.stageKey, direction, projects);
+    if (!placement) return;
     setPendingOrdering((current) => new Set(current).add(project.id));
     try {
-      const response = await apiPost<{ project: { boardRevision: number } }, { direction: "up" | "down" }>(`/api/projects/${project.id}/board-position`, { direction });
+      const request: MoveProjectStageRequest = {
+        expected: { stageKey: project.stageKey, boardRevision: project.boardRevision },
+        targetStageKey: project.stageKey,
+        placement,
+      };
+      const response = await apiPost<{ project: { boardRevision: number } }, MoveProjectStageRequest>(`/api/projects/${project.id}/board-position`, request);
       updateProjects((current) => current.map((item) => item.id === project.id ? { ...item, boardRevision: response.project.boardRevision } : item));
       queueDashboardRefresh();
       setAnnouncement(`Moved ${project.street} ${direction}.`);
@@ -610,13 +624,15 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
             const stageProjects = sortKanbanProjects(filteredProjects.filter((project) => project.stageKey === stage.key), effectiveKanbanSort);
             const stageKey = stage.key;
             const isSameStageDrop = dragging !== undefined && dragging.stageKey === stageKey;
-            const canDropStage = dragging !== undefined && !isSameStageDrop && canMoveStages;
+            const canDropStage = dragging !== undefined && (isSameStageDrop
+              ? boardMutationEnabled && canPrioritize && effectiveKanbanSort === "board"
+              : canMoveStages);
             const isDropTarget = canDropStage && dropStage === stageKey;
             return <section className={`kcol ${isDropTarget ? "is-over" : ""}`} key={stage.key} onDragOver={(event) => { if (canDropStage && dragging) { event.preventDefault(); setDropStage(stageKey); } }} onDragLeave={() => { if (dropStage === stageKey) setDropStage(undefined); }} onDrop={(event) => { event.preventDefault(); if (canDropStage) void moveProject(dragging, stageKey); }}>
               <div className="kcol__head"><span className="row gap2"><StatusBadge stageKey={stage.key} /></span><span className="cnt">{stageProjects.length}</span></div>
               <div className="kcol__body">
                 {stageProjects.length === 0 && <div className="kcol__empty">—</div>}
-                {stageProjects.map((project) => <KanbanCard key={project.id} project={project} canMove={canMoveStages && !pendingMoves.has(project.id)} canPrioritize={boardContractEnabled && canPrioritize && !pendingOrdering.has(project.id)} canReorder={boardMutationEnabled && canPrioritize && effectiveKanbanSort === "board" && !pendingOrdering.has(project.id)} stageOptions={activeStages} onMoveStage={(item, targetStageKey) => { void moveProject(item, targetStageKey); }} isDragging={dragging?.id === project.id} cardDropEdge={dropTarget?.stageKey === stage.key && dropTarget.projectId === project.id ? dropTarget.edge : undefined} onCardDragOver={cardDragOver} onCardDrop={cardDrop} onPriorityChange={setProjectPriority} onBoardPosition={moveProjectPosition} onDragStart={beginDrag} onDragEnd={() => { setDragging(undefined); setDropStage(undefined); setDropTarget(undefined); }} />)}
+                {stageProjects.map((project) => <KanbanCard key={project.id} project={project} canMove={canMoveStages && !pendingMoves.has(project.id)} canPrioritize={canPrioritize && hasAuthorizedBoardMap && !pendingOrdering.has(project.id)} canReorder={boardMutationEnabled && canPrioritize && effectiveKanbanSort === "board" && !pendingOrdering.has(project.id)} stageOptions={activeStages} onMoveStage={(item, targetStageKey) => { void moveProject(item, targetStageKey); }} isDragging={dragging?.id === project.id} cardDropEdge={dropTarget?.stageKey === stage.key && dropTarget.projectId === project.id ? dropTarget.edge : undefined} onCardDragOver={cardDragOver} onCardDrop={cardDrop} onPriorityChange={setProjectPriority} onBoardPosition={moveProjectPosition} onDragStart={beginDrag} onDragEnd={() => { setDragging(undefined); setDropStage(undefined); setDropTarget(undefined); }} />)}
               </div>
             </section>;
           })}

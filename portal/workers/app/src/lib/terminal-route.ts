@@ -44,7 +44,7 @@ export type SecurityRouteRegistration = {
   scope: SecurityRouteScope;
   projection: SecurityRouteProjection;
   response: SecurityRouteResponse;
-  externalSurface?: "ingest-status" | "collection-links" | "stages";
+  externalSurface?: "ingest-status" | "collection-links" | "stage" | "stages";
 };
 type LegacySecurityRouteClass = "scoped" | "constant-capability-denial" | "global-self" | "withheld" | "terminal-fallback";
 type LegacySecurityRouteRegistrationSeed = { method: string; path: string; class: LegacySecurityRouteClass; externalSurface?: SecurityRouteRegistration["externalSurface"] };
@@ -167,8 +167,8 @@ const PROJECT_SECURITY_ROUTE_CLASSIFICATION_SEED = [
   { method: "POST", path: "/api/projects/:id/restore", class: "withheld" },
   { method: "GET", path: "/api/projects/:id/selected-raw.zip", class: "withheld" },
   { method: "POST", path: "/api/projects/:id/send-to-autohdr", class: "withheld" },
-  { method: "POST", path: "/api/projects/:id/stage", class: "withheld" },
-  { method: "POST", path: "/api/projects/:id/stage/", class: "withheld" },
+  { method: "POST", path: "/api/projects/:id/stage", class: "scoped", externalSurface: "stage" },
+  { method: "POST", path: "/api/projects/:id/stage/", class: "scoped", externalSurface: "stage" },
   { method: "POST", path: "/api/projects/:id/sync-dropbox", class: "withheld" },
   { method: "POST", path: "/api/projects/:id/upload-manifest", class: "withheld" },
   { method: "DELETE", path: "/api/projects/:id", class: "scoped" },

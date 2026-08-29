@@ -87,6 +87,25 @@ describe("TB5A board schema variant", () => {
     expect(Object.hasOwn(projectColumnsForVariant(variant), "boardRevision")).toBe(false);
   });
 
+  it("evicts a rejected marker query so a transient D1 error is retryable", async () => {
+    let calls = 0;
+    const database = {
+      prepare() {
+        return {
+          first: async <T>() => {
+            calls += 1;
+            if (calls === 1) throw new Error("temporary D1 failure");
+            return { tb5a_0037_exists: 0 } as T;
+          },
+        } as unknown as D1PreparedStatement;
+      },
+    } as unknown as D1Database;
+
+    await expect(boardSchemaVariant(database)).rejects.toThrow("temporary D1 failure");
+    await expect(boardSchemaVariant(database)).resolves.toBe("pre_0037");
+    expect(calls).toBe(2);
+  });
+
   it("keeps every audited full-project read behind an explicit variant projection", () => {
     const appProjects = readFileSync(new URL("../../../workers/app/src/routes/projects.ts", import.meta.url), "utf8");
     const tonomo = readFileSync(new URL("../../../workers/background/src/tonomo/process.ts", import.meta.url), "utf8");

@@ -194,6 +194,7 @@ export const projects = sqliteTable(
     index("projects_stage_idx").on(t.stageKey),
     index("projects_order_idx").on(t.orderId),
     index("projects_archived_idx").on(t.archivedAt),
+    check("projects_board_revision_check", sql`typeof(${t.boardRevision}) = 'integer' AND ${t.boardRevision} >= 0 AND ${t.boardRevision} <= 9007199254740991`),
     check("projects_priority_check", sql`${t.priority} IS NULL OR (typeof(${t.priority}) = 'integer' AND ${t.priority} >= 1 AND ${t.priority} <= 10)`),
     check("projects_deadline_zone_check", sql`${t.deadlineZone} IS NULL OR ${t.deadlineZone} = 'Australia/Sydney'`),
     check("projects_deadline_utc_offset_check", sql`${t.deadlineUtcOffsetMinutes} IS NULL OR (typeof(${t.deadlineUtcOffsetMinutes}) = 'integer' AND ${t.deadlineUtcOffsetMinutes} BETWEEN -840 AND 840)`),
@@ -648,6 +649,7 @@ export const autoHdrHandoffs = sqliteTable(
     uniqueIndex("autohdr_handoffs_active_project_unique").on(t.projectId)
       .where(sql`${t.state} in ('starting', 'started', 'blocked')`),
     index("autohdr_handoffs_connection_idx").on(t.connectionId),
+    check("autohdr_handoffs_editing_entry_board_revision_check", sql`${t.editingEntryBoardRevision} IS NULL OR (typeof(${t.editingEntryBoardRevision}) = 'integer' AND ${t.editingEntryBoardRevision} >= 0 AND ${t.editingEntryBoardRevision} <= 9007199254740991)`),
   ],
 );
 
@@ -1050,6 +1052,7 @@ export const jobs = sqliteTable(
     uniqueIndex("jobs_manual_upload_publish_active_unique")
       .on(t.correlationId)
       .where(sql`${t.kind} in ('manual_edited_publish', 'manual_raw_publish') and ${t.status} in ('queued', 'running')`),
+    check("jobs_stage_entry_board_revision_check", sql`${t.stageEntryBoardRevision} IS NULL OR (typeof(${t.stageEntryBoardRevision}) = 'integer' AND ${t.stageEntryBoardRevision} >= 0 AND ${t.stageEntryBoardRevision} <= 9007199254740991)`),
   ],
 );
 

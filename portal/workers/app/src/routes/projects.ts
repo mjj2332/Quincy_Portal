@@ -3,7 +3,7 @@ import { terminalRoute } from "../lib/terminal-route";
 import type { Context } from "hono";
 import { boardContractEnabled, boardSchemaVariant, buildDeadlineSuppressionBundle, buildProjectActivityStatements, createDb, dashboardProjectOrder, orderDashboardStreetTies, projectColumnsForVariant, schema, type BoardSchemaVariant } from "@quincy/db";
 import { and, asc, desc, eq, exists, gt, inArray, isNotNull, isNull, lte, notExists, sql } from "drizzle-orm";
-import { COLLECTION_KINDS, DOWNLOAD_SELECTION_MAX_ASSETS, DOWNLOAD_SELECTION_MAX_BYTES, moveProjectStageRequestSchemaForProject, PHOTOGRAPHER_VISIBLE_STAGES, PROJECT_ASSIGNMENT_ELIGIBLE_ROLES, projectActivityDeepLink, publishNotificationOutbox, roleHasCapability, type CollectionKind, type MoveProjectStageRequest, type ProjectActivityIntent, type ProjectMemberRole, type ProjectMembershipDto, type Role, type StageKey, type StageTransportKey } from "@quincy/shared";
+import { COLLECTION_KINDS, DOWNLOAD_SELECTION_MAX_ASSETS, DOWNLOAD_SELECTION_MAX_BYTES, moveProjectStageRequestSchema, moveProjectStageRequestSchemaForProject, PHOTOGRAPHER_VISIBLE_STAGES, PROJECT_ASSIGNMENT_ELIGIBLE_ROLES, projectActivityDeepLink, publishNotificationOutbox, roleHasCapability, type CollectionKind, type MoveProjectStageRequest, type ProjectActivityIntent, type ProjectMemberRole, type ProjectMembershipDto, type Role, type StageKey, type StageTransportKey } from "@quincy/shared";
 import { z } from "zod";
 import type { AppEnv } from "../env";
 import { hasProjectAccess, hasProjectAccessForUser, requireCapability } from "../middleware/capability";
@@ -31,7 +31,7 @@ const deleteProjectMembershipInput = z.discriminatedUnion("clearSubtaskAssignmen
 ]);
 const coverInput = z.object({ assetId: z.string().uuid().nullable() });
 const priorityInput = z.object({ priority: z.number().int().min(1).max(10).nullable() });
-const boardPositionInput = z.object({ direction: z.enum(["up", "down"]) });
+const boardPositionInput = moveProjectStageRequestSchema;
 const downloadSelectionInput = z.object({
   assetIds: z.array(z.string().uuid()).min(1).max(DOWNLOAD_SELECTION_MAX_ASSETS)
     .superRefine((assetIds, ctx) => {
@@ -289,7 +289,6 @@ async function createProjectAtomically(c: Context<AppEnv>, data: z.infer<typeof 
       0,
       ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
     WHERE ${eligibilityPredicates.length ? eligibilityPredicates.join(" AND ") : "1 = 1"}
-      AND EXISTS (SELECT 1 FROM feature_flags WHERE key = 'tb5a_board_contract_enabled' AND enabled = 1)
     RETURNING id
   `).bind(...fieldValues.slice(0, 12), projectId, ...fieldValues.slice(12), ...slots.flatMap((slot) => [slot.userId, ...PROJECT_ASSIGNMENT_ELIGIBLE_ROLES[slot.roleOnProject]]));
   const collectionRecords = services.map((kind) => ({ id: newId(), kind }));
@@ -962,11 +961,11 @@ projectsRoutes.post("/jobs/:id/retry", requireCapability("adminBackend"), termin
 }));
 
 for (const [path, archived] of [["/projects/:id/archive", true], ["/projects/:id/restore", false]] as const) projectsRoutes.post(path, terminalRoute(path, async (c) => {
+  if (!roleHasCapability(c.get("user").role, "archiveProject")) return c.json({ error: "Forbidden", capability: "archiveProject" }, 403);
   const variant = await boardSchemaVariant(c.env.DB);
   if (variant === "pre_0037") return boardSchemaMaintenance(c);
   if (!await boardContractEnabled(c.env.DB, variant)) return boardContractDisabled(c);
   const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
-  if (!roleHasCapability(c.get("user").role, "archiveProject")) return c.json({ error: "Forbidden", capability: "archiveProject" }, 403);
   const db = createDb(c.env.DB); const now = new Date();
   if (archived) {
     // Ownership survives archive: retire the mapping and tombstone both permanent candidate
@@ -1007,10 +1006,19 @@ for (const [path, archived] of [["/projects/:id/archive", true], ["/projects/:id
       ...archiveActivityStatements.statements,
     ]);
     if ((result[0]?.meta.changes ?? 0) !== 1) {
-      const current = await db.select({ id: schema.projects.id, archivedAt: schema.projects.archivedAt }).from(schema.projects).where(eq(schema.projects.id, id)).get();
+      const current = await db.select({ id: schema.projects.id, archivedAt: schema.projects.archivedAt, stageKey: schema.projects.stageKey, boardRevision: schema.projects.boardRevision }).from(schema.projects).where(eq(schema.projects.id, id)).get();
       if (current?.archivedAt !== null && current?.archivedAt !== undefined) return c.json({ ok: true });
       if (!current) return c.json({ error: "Project not found" }, 404);
-      return c.json({ error: "Active document uploads must be aborted before archiving." }, 409);
+      const activeUpload = await c.env.DB.prepare("SELECT id FROM document_uploads WHERE project_id = ? AND status in ('pending', 'completing', 'aborting') LIMIT 1").bind(id).first<{ id: string }>();
+      if (activeUpload) return c.json({ error: "Active document uploads must be aborted before archiving." }, 409);
+      if (current.stageKey !== source.stageKey || Number(current.boardRevision) !== Number(source.boardRevision)) {
+        return c.json({
+          error: "Project stage changed; reload and try again.",
+          code: "project_stage_conflict",
+          current: { projectId: id, stageKey: current.stageKey, boardRevision: Number(current.boardRevision) },
+        }, 409);
+      }
+      return c.json({ error: "Project changed while archiving; reload and try again.", code: "project_stage_conflict", current: { projectId: id, stageKey: current.stageKey, boardRevision: Number(current.boardRevision) } }, 409);
     }
     const publicationIds = rowsFromD1<{ id: string }>(result[archiveStatementStart + archiveActivityStatements.broadOutboxIndex]).map((row) => row.id);
     if (publicationIds.length) c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, publicationIds));

@@ -81,6 +81,20 @@ describe("awaiting RAW reconciliation mutation", () => {
     error.mockRestore();
   });
 
+  it("keeps a committed winner counted when its best-effort notification fails", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const store = {
+      scan: async () => [{ id: "advanced", shootDate: "2026-07-21", stageKey: "awaiting_raw", archivedAt: null }],
+      advance: async () => true,
+    };
+    const notify = vi.fn().mockRejectedValue(new Error("notification outage"));
+
+    await expect(reconcileAwaitingRaw(store, "2026-07-22", notify)).resolves.toEqual({ attempted: 1, advanced: 1, skipped: 0, failures: 0 });
+    expect(notify).toHaveBeenCalledWith("advanced");
+    expect(error).toHaveBeenCalledWith("Awaiting RAW reconciliation notification failed", { projectId: "advanced", error: "notification outage" });
+    error.mockRestore();
+  });
+
   it("drains an existing eligible backlog in bounded hourly batches", async () => {
     const projects = Array.from({ length: RECONCILE_AWAITING_RAW_BATCH_SIZE + 2 }, (_, index) => ({
       id: `project-${String(index).padStart(3, "0")}`,

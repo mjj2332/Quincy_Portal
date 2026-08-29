@@ -3535,7 +3535,7 @@ describe("staff app API", () => {
       targetStageKey: "awaiting_raw",
       placement: {
         kind: "between" as const,
-        before: { projectId: before, boardRevision: 0 },
+        before: { projectId: before, boardRevision: 9999 },
         after: { projectId: after, boardRevision: 0 },
       },
     };

@@ -1,4 +1,5 @@
 import { projectActivityDeepLink, type ProjectActivityType, type StageKey } from "@quincy/shared";
+import { BOARD_CONTRACT_FLAG } from "./board-schema-variant";
 import { buildProjectActivityStatements } from "./project-activity";
 export type PreparedStatementBundle<TIndexes> = { statements: D1PreparedStatement[]; indexes: TIndexes; };
 export type StageWinnerIndexes = { winner: number; auditMarker: number; };
@@ -67,7 +68,6 @@ export type StageWinnerInput = {
   expectedTargetJson?: string;
   expectedTarget?: readonly ExpectedTargetPlacementRow[] | readonly ExpectedTargetCompactionRow[];
   expectedTargetRowCount?: number;
-  featureFlagKey?: string;
   workflowPremise?: GuardedTransitionPrerequisite;
   auditId: string;
   actorId?: string | null;
@@ -1584,7 +1584,7 @@ export function buildNonCompactingStageWinner(input: NonCompactingStageWinnerInp
   const premise = compileGuardedTransitionPrerequisite(input.workflowPremise ?? { kind: "none" });
   const position = input.boardPosition ?? input.exactBoardPosition ?? input.position;
   if (input.placement === "exact" && position === undefined) throw new Error("Exact Stage placement requires boardPosition");
-  const values = input.placement === "append" ? [expected.json, input.featureFlagKey ?? "tb5a_board_contract_enabled", count, to, input.projectId, from, oldRevision, null, updatedAt, premise] : [expected.json, input.featureFlagKey ?? "tb5a_board_contract_enabled", count, to, input.projectId, from, oldRevision, position, updatedAt, premise];
+  const values = input.placement === "append" ? [expected.json, BOARD_CONTRACT_FLAG, count, to, input.projectId, from, oldRevision, null, updatedAt, premise] : [expected.json, BOARD_CONTRACT_FLAG, count, to, input.projectId, from, oldRevision, position, updatedAt, premise];
   return winnerBundle(input.db.prepare(input.placement === "append" ? NON_COMPACTING_APPEND_SQL : NON_COMPACTING_EXACT_SQL).bind(...values), input.db.prepare(AUDIT_MARKER_SQL).bind(...auditValues(input, from, to, 1)));
 }
 export function buildCompactingStageWinner(input: CompactingStageWinnerInput): PreparedStatementBundle<StageWinnerIndexes> {
@@ -1595,7 +1595,7 @@ export function buildCompactingStageWinner(input: CompactingStageWinnerInput): P
   const changedCount = input.expectedChangedRowCount ?? changed.count;
   const updatedAt = input.updatedAt ?? input.now ?? Date.now();
   const premise = compileGuardedTransitionPrerequisite(input.workflowPremise ?? { kind: "none" });
-  return winnerBundle(input.db.prepare(COMPACTING_SQL).bind(expected.json, changed.json, input.featureFlagKey ?? "tb5a_board_contract_enabled", changedCount, expectedCount, to, input.projectId, from, oldRevision, updatedAt, premise), input.db.prepare(AUDIT_MARKER_SQL).bind(...auditValues(input, from, to, changedCount)));
+  return winnerBundle(input.db.prepare(COMPACTING_SQL).bind(expected.json, changed.json, BOARD_CONTRACT_FLAG, changedCount, expectedCount, to, input.projectId, from, oldRevision, updatedAt, premise), input.db.prepare(AUDIT_MARKER_SQL).bind(...auditValues(input, from, to, changedCount)));
 }
 export type StageActivityBundleInput = { db: D1Database; projectId: string; activityId: string; actorId: string; occurredAt?: number; createdAt?: number; winnerAuditId: string; excludeRecipientId?: string; };
 export function buildStageActivityBundle(input: StageActivityBundleInput): PreparedStatementBundle<ActivityBundleIndexes> {

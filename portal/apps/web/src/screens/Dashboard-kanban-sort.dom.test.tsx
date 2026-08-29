@@ -31,7 +31,7 @@ describe("Dashboard Kanban sort control", () => {
       stageKey: "awaiting_raw", shootDate: "2026-01-01", coverAssetId: null, receivedCount: 0,
       expectedCount: null, priority: 1, boardPosition: 0, deadlineAt: Date.parse("2027-01-14T22:00:00.000Z"), deadlineLocalCivil: "2027-01-15T09:00", deadlineZone: "Australia/Sydney",
       boardRevision: 0,
-    }] }) : Promise.resolve({ stages: [] }));
+    }], board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: ["project-1"] } } }) : Promise.resolve({ stages: [] }));
     const values = new Map<string, string>();
     Object.defineProperty(window, "localStorage", {
       configurable: true,
@@ -73,15 +73,16 @@ describe("Dashboard Kanban sort control", () => {
     expect(document.querySelector('select[aria-label="Priority"]')).toBe(priority);
   });
 
-  it("hides Board mutation controls when the server contract flag is off", async () => {
+  it("keeps Priority available while the Board mutation flag is off", async () => {
     apiGetMock.mockImplementationOnce((path) => path === "/api/projects" ? Promise.resolve({ projects: [{
       id: "project-flag-off", street: "Flag Off Street", suburb: null, postcode: null, agencyName: null, agentName: null,
       stageKey: "awaiting_raw", shootDate: null, coverAssetId: null, receivedCount: 0, expectedCount: null,
       priority: 1, boardPosition: 0, boardRevision: 0, deadlineAt: null, deadlineLocalCivil: null, deadlineZone: null,
-    }], board: { contractEnabled: false, orderedProjectIdsByStage: {} } }) : Promise.resolve({ stages: [] }));
+    }], board: { contractEnabled: false, orderedProjectIdsByStage: { awaiting_raw: ["project-flag-off"] } } }) : Promise.resolve({ stages: [] }));
     await act(async () => { root!.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); await Promise.resolve(); await vi.advanceTimersByTimeAsync(100); await Promise.resolve(); });
     await vi.waitFor(() => expect(document.querySelector(".kcard")).not.toBeNull());
-    expect(document.querySelector('select[aria-label="Priority"]')).toBeNull();
+    expect(document.querySelector('select[aria-label="Priority"]')).not.toBeNull();
+    expect(document.querySelector(".kcard__foot")?.textContent).toContain("Priority 1");
     expect(document.querySelector('[aria-label="Move project up"]')).toBeNull();
     expect(document.querySelector('[aria-label="Move project down"]')).toBeNull();
     expect(document.querySelector(".kcard")?.getAttribute("draggable")).toBe("false");

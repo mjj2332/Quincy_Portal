@@ -1,3 +1,5 @@
+import { BOARD_CONTRACT_FLAG } from "./board-schema-variant";
+
 /**
  * Restore the positions captured by migration 0037 while its board contract is still disabled.
  *
@@ -19,6 +21,35 @@ export async function rollbackBoardOrder0037PreEnable(d1: D1Database): Promise<{
         ok INTEGER NOT NULL CHECK (ok = 1)
       )
     `),
+    d1.prepare(`
+      INSERT INTO _tb5a_0037_position_rollback_guard (ok)
+      SELECT CASE
+        WHEN NOT EXISTS (
+          SELECT 1
+          FROM projects p
+          WHERE p.archived_at IS NULL
+            AND NOT EXISTS (
+              SELECT 1
+              FROM project_board_order_0037_rollback r
+              WHERE r.project_id = p.id
+            )
+        ) THEN 1
+        ELSE 0
+      END
+    `),
+    d1.prepare(`
+      INSERT INTO _tb5a_0037_position_rollback_guard (ok)
+      SELECT CASE
+        WHEN EXISTS (SELECT 1 FROM feature_flags WHERE key = ?1)
+         AND NOT EXISTS (
+           SELECT 1
+           FROM feature_flags
+           WHERE key = ?1
+             AND (enabled = 1 OR updated_by IS NOT NULL)
+         ) THEN 1
+        ELSE 0
+      END
+    `).bind(BOARD_CONTRACT_FLAG),
     d1.prepare(`
       UPDATE projects AS p
       SET board_position = r.old_board_position

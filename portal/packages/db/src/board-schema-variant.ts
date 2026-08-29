@@ -32,6 +32,10 @@ export function boardSchemaVariant(database: D1Database): Promise<BoardSchemaVar
       // Cache only the terminal state; keep re-checking while pre_0037 (see the type doc).
       if (variant !== "tb5a_0037") variantByDatabase.delete(database);
       return variant;
+    })
+    .catch((error) => {
+      variantByDatabase.delete(database);
+      throw error;
     });
   variantByDatabase.set(database, pending);
   return pending;
@@ -44,4 +48,3 @@ export async function boardContractEnabled(database: D1Database, variant: BoardS
   ).bind(BOARD_CONTRACT_FLAG).first<{ enabled: number | boolean }>();
   return row?.enabled === 1 || row?.enabled === true;
 }
-

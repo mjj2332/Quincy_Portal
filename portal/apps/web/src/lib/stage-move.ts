@@ -1,4 +1,4 @@
-import type { MoveProjectStageRequest, StageMoveConfirmationReason } from "@quincy/shared";
+import { STAGE_MOVE_CONFIRMATION_REASONS, type MoveProjectStageRequest, type StageMoveConfirmationReason } from "@quincy/shared";
 import { ApiError } from "./api";
 import { confirm as defaultConfirm } from "./confirm";
 
@@ -21,7 +21,18 @@ function isConfirmationRequired(reason: unknown): reason is ApiError & { details
 
 function confirmationReasons(reason: ApiError & { details: ConfirmationDetails }): StageMoveConfirmationReason[] {
   const reasons = reason.details.requiredConfirmation?.reasons;
-  return Array.isArray(reasons) ? reasons as StageMoveConfirmationReason[] : [];
+  if (!Array.isArray(reasons)) throw new Error("Invalid Stage confirmation response.");
+  const canonical = STAGE_MOVE_CONFIRMATION_REASONS as readonly string[];
+  if (new Set(reasons).size !== reasons.length || reasons.some((item) => typeof item !== "string" || !canonical.includes(item))) {
+    throw new Error("Invalid Stage confirmation response.");
+  }
+  let previousIndex = -1;
+  for (const item of reasons) {
+    const index = canonical.indexOf(item as string);
+    if (index <= previousIndex) throw new Error("Invalid Stage confirmation response.");
+    previousIndex = index;
+  }
+  return reasons as StageMoveConfirmationReason[];
 }
 
 export type StageMoveSubmit<T> = (request: MoveProjectStageRequest) => Promise<T>;

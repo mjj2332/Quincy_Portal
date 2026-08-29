@@ -11,7 +11,6 @@ import {
   type CommittedStageFinalizerIntent,
 } from "@quincy/db";
 import {
-  PHOTOGRAPHER_VISIBLE_STAGES,
   roleHasCapability,
   stageTransportKeyForRole,
   parseStageTransportKey,
@@ -25,7 +24,6 @@ import { resolveVisibleProject } from "./visible-project-scope";
 import { auditMeta } from "./audit";
 import { newId } from "./ids";
 import type { AppEnv, SessionUser } from "../env";
-import { ensurePipelineStages } from "../routes/stages";
 
 export type BoardProjectRow = {
   id: string;
@@ -69,7 +67,7 @@ export type ProjectBoardOrderInput = {
   env: AppEnv["Bindings"];
   principal: SessionUser;
   projectId: string;
-  request: MoveProjectStageRequest | { direction: "up" | "down" };
+  request: MoveProjectStageRequest;
   now?: number;
 };
 
@@ -156,6 +154,49 @@ function normalizedPlacement(request: MoveProjectStageRequest) {
     && request.placement.after === null
     ? { kind: "append" as const }
     : request.placement;
+}
+
+/**
+ * Classifies the requested logical slot without reading neighbour revisions. This is deliberately
+ * separate from planBoardPlacement: capability denial must not be replaced by a stale-neighbour
+ * conflict for an unauthorized same-stage reorder.
+ */
+export function placementChangesLogicalSlot(input: {
+  target: BoardProjectRow;
+  destinationRows: BoardProjectRow[];
+  visibleRows: BoardProjectRow[];
+  request: MoveProjectStageRequest;
+}): boolean {
+  const placement = normalizedPlacement(input.request);
+  const destinationWithoutTarget = input.destinationRows.filter((row) => row.id !== input.target.id).sort(compareRows);
+  const visibleWithoutTarget = input.visibleRows.filter((row) => row.id !== input.target.id).sort(compareRows);
+  const fullById = new Map(destinationWithoutTarget.map((row) => [row.id, row]));
+  let insertionIndex = destinationWithoutTarget.length;
+
+  if (placement.kind === "between") {
+    const { before, after } = placement;
+    if (before && (!fullById.has(before.projectId) || !visibleWithoutTarget.some((row) => row.id === before.projectId))) return true;
+    if (after && (!fullById.has(after.projectId) || !visibleWithoutTarget.some((row) => row.id === after.projectId))) return true;
+    if (before && after) {
+      const beforeIndex = visibleWithoutTarget.findIndex((row) => row.id === before.projectId);
+      const afterIndex = visibleWithoutTarget.findIndex((row) => row.id === after.projectId);
+      if (beforeIndex < 0 || afterIndex !== beforeIndex + 1) return true;
+      insertionIndex = destinationWithoutTarget.findIndex((row) => row.id === after.projectId);
+      if (insertionIndex < 0) return true;
+    } else if (after) {
+      if (visibleWithoutTarget[0]?.id !== after.projectId) return true;
+      insertionIndex = destinationWithoutTarget.findIndex((row) => row.id === after.projectId);
+      if (insertionIndex < 0) return true;
+    } else if (before) {
+      if (visibleWithoutTarget.at(-1)?.id !== before.projectId) return true;
+      // A null after anchor means global append, including when hidden rows follow the anchor.
+      insertionIndex = destinationWithoutTarget.length;
+    }
+  }
+
+  const requestedDestinationStage = input.request.targetStageKey === "editing" ? "editing_autohdr" : input.request.targetStageKey as StageKey;
+  const currentIndex = input.destinationRows.slice().sort(compareRows).findIndex((row) => row.id === input.target.id);
+  return input.target.stageKey !== requestedDestinationStage || currentIndex < 0 || currentIndex !== insertionIndex;
 }
 
 /**
@@ -270,24 +311,6 @@ export function planBoardPlacement(input: {
   };
 }
 
-function directionPlacement(rows: BoardProjectRow[], targetId: string, direction: "up" | "down"): MoveProjectStageRequest["placement"] {
-  const index = rows.findIndex((row) => row.id === targetId);
-  if (index < 0) return { kind: "append" };
-  const destination = [...rows];
-  const neighbourIndex = direction === "up" ? index - 1 : index + 1;
-  if (neighbourIndex < 0 || neighbourIndex >= rows.length) return { kind: "between", before: null, after: null };
-  const [target] = destination.splice(index, 1);
-  destination.splice(neighbourIndex, 0, target!);
-  const newIndex = neighbourIndex;
-  const before = destination[newIndex - 1];
-  const after = destination[newIndex + 1];
-  return {
-    kind: "between",
-    before: before ? { projectId: before.id, boardRevision: before.boardRevision } : null,
-    after: after ? { projectId: after.id, boardRevision: after.boardRevision } : null,
-  };
-}
-
 function finalizerFromResults(results: D1Result<unknown>[], projectId: string, auditIndex: number, winnerIndex: number, activityIndex?: number) {
   const winner = (results[winnerIndex]?.results ?? []).find((row) => (row as { id?: unknown }).id === projectId) as { id?: string; stageKey?: StageKey; stage_key?: StageKey; boardPosition?: number; board_position?: number; boardRevision?: number; board_revision?: number } | undefined;
   const auditRow = results[auditIndex]?.results?.[0] as { id?: string } | undefined;
@@ -314,16 +337,17 @@ async function readPrincipal(db: D1Database, principal: SessionUser): Promise<Se
 }
 
 export async function moveProjectBoardOrder(input: ProjectBoardOrderInput): Promise<BoardOrderResult> {
-  const variant = await boardSchemaVariant(input.env.DB);
-  if (variant === "pre_0037") return { kind: "schema_maintenance" };
-  if (!await boardContractEnabled(input.env.DB, variant)) return { kind: "disabled" };
   const db = input.env.DB;
   const principal = await readPrincipal(db, input.principal);
   if (!principal || !roleHasCapability(principal.role, "prioritizeProjects")) return { kind: "forbidden", capability: "prioritizeProjects" };
+  const variant = await boardSchemaVariant(db);
+  if (variant === "pre_0037") return { kind: "schema_maintenance" };
+  if (!await boardContractEnabled(db, variant)) return { kind: "disabled" };
   if (!await resolveVisibleProject(input.env, principal, input.projectId)) return { kind: "not_found" };
   const current = await readBoardProject(db, input.projectId);
   if (!current || current.archivedAt !== null) return { kind: "not_found" };
-  const expected = "direction" in input.request ? { stageKey: current.stageKey, boardRevision: current.boardRevision } : input.request.expected;
+  const request = input.request;
+  const expected = request.expected;
   const expectedStage = parseStageTransportKey(expected.stageKey, principal.role);
   const destinationStage = current.stageKey;
   if (expectedStage !== current.stageKey || expected.boardRevision !== current.boardRevision) {
@@ -331,16 +355,6 @@ export async function moveProjectBoardOrder(input: ProjectBoardOrderInput): Prom
   }
   const rows = await readBoardRows(db, destinationStage);
   const visibleRows = await readVisibleBoardRows(db, principal, destinationStage);
-  if ("direction" in input.request) {
-    const index = visibleRows.findIndex((row) => row.id === current.id);
-    const neighbourIndex = input.request.direction === "up" ? index - 1 : index + 1;
-    if (index < 0 || neighbourIndex < 0 || neighbourIndex >= visibleRows.length) {
-      return { kind: "no_change", response: responseFor(current, principal.role, current.stageKey, visibleRows, false) };
-    }
-  }
-  const request: MoveProjectStageRequest = "direction" in input.request
-    ? { expected: { stageKey: stageTransportKeyForRole(current.stageKey, principal.role), boardRevision: current.boardRevision }, targetStageKey: stageTransportKeyForRole(current.stageKey, principal.role), placement: directionPlacement(visibleRows, current.id, input.request.direction) }
-    : input.request;
   const targetStage = parseStageTransportKey(request.targetStageKey, principal.role);
   if (targetStage !== current.stageKey) return { kind: "conflict", current: currentState(current, principal.role) };
   const plan = planBoardPlacement({ target: current, destinationRows: rows, visibleRows, request: { ...request, targetStageKey: targetStage } });

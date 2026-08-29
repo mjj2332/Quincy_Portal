@@ -1633,7 +1633,12 @@
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
-      "checkConstraints": {}
+      "checkConstraints": {
+        "autohdr_handoffs_editing_entry_board_revision_check": {
+          "name": "autohdr_handoffs_editing_entry_board_revision_check",
+          "value": "\"autohdr_handoffs\".\"editing_entry_board_revision\" IS NULL OR (typeof(\"autohdr_handoffs\".\"editing_entry_board_revision\") = 'integer' AND \"autohdr_handoffs\".\"editing_entry_board_revision\" >= 0 AND \"autohdr_handoffs\".\"editing_entry_board_revision\" <= 9007199254740991)"
+        }
+      }
     },
     "autohdr_manual_ingest_leases": {
       "name": "autohdr_manual_ingest_leases",
@@ -3876,7 +3881,12 @@
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
-      "checkConstraints": {}
+      "checkConstraints": {
+        "jobs_stage_entry_board_revision_check": {
+          "name": "jobs_stage_entry_board_revision_check",
+          "value": "\"jobs\".\"stage_entry_board_revision\" IS NULL OR (typeof(\"jobs\".\"stage_entry_board_revision\") = 'integer' AND \"jobs\".\"stage_entry_board_revision\" >= 0 AND \"jobs\".\"stage_entry_board_revision\" <= 9007199254740991)"
+        }
+      }
     },
     "notice_board_post_mentions": {
       "name": "notice_board_post_mentions",
@@ -6125,6 +6135,10 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {
+        "projects_board_revision_check": {
+          "name": "projects_board_revision_check",
+          "value": "typeof(\"projects\".\"board_revision\") = 'integer' AND \"projects\".\"board_revision\" >= 0 AND \"projects\".\"board_revision\" <= 9007199254740991"
+        },
         "projects_priority_check": {
           "name": "projects_priority_check",
           "value": "\"projects\".\"priority\" IS NULL OR (typeof(\"projects\".\"priority\") = 'integer' AND \"projects\".\"priority\" >= 1 AND \"projects\".\"priority\" <= 10)"

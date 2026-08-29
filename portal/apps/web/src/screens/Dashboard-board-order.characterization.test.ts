@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cardDropPlacement, sortKanbanProjects, type ProjectSummary } from "./Dashboard";
+import { adjacentBoardPlacement, cardDropPlacement, sortKanbanProjects, type ProjectSummary } from "./Dashboard";
 
 const project: ProjectSummary = {
   id: "123e4567-e89b-42d3-a456-426614174000",
@@ -61,5 +61,20 @@ describe("TB5A authorized Board comparator", () => {
 			before: { projectId: "target", boardRevision: 9 },
 			after: { projectId: "after", boardRevision: 10 },
 		});
+	});
+
+	it("builds an exact adjacent placement with current neighbour revisions", () => {
+		const rows = [
+			{ ...project, id: "first", boardRevision: 4, authorizedBoardOrder: { awaiting_raw: ["first", "middle", "last"] } },
+			{ ...project, id: "middle", boardRevision: 5, authorizedBoardOrder: { awaiting_raw: ["first", "middle", "last"] } },
+			{ ...project, id: "last", boardRevision: 6, authorizedBoardOrder: { awaiting_raw: ["first", "middle", "last"] } },
+		];
+
+		expect(adjacentBoardPlacement("last", "awaiting_raw", "up", rows)).toEqual({
+			kind: "between",
+			before: { projectId: "first", boardRevision: 4 },
+			after: { projectId: "middle", boardRevision: 5 },
+		});
+		expect(adjacentBoardPlacement("last", "awaiting_raw", "down", rows)).toBeNull();
 	});
 });
