@@ -21,3 +21,6 @@ Test Images with star rating/
 
 # Unrelated local tool scaffolding, not project content
 .agents/
+
+# Local QA screenshots / evidence — transient, not part of the software project
+qa-evidence/
