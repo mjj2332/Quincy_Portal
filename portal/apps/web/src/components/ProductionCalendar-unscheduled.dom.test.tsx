@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   adminProductionCalendarRangeResponseSchema,
+  externalCalendarRangeSchema,
   PRODUCTION_CALENDAR_ZONE,
   resolveSydneyCivilMinute,
   type CalendarUnscheduledEntryDto,
@@ -37,18 +38,20 @@ const projectContext = { id: projectId, street: "12 Harbour Street", stageKey: "
 const person = { id: assigneeId, name: "Maya Editor", roleLabel: "Editor", isExternal: false, active: true };
 const unscheduledProject: CalendarUnscheduledEntryDto = { id: "project-deadline:unscheduled", kind: "project_deadline", reason: "unscheduled", title: "Project handoff", project: projectContext, permissions: { canDrag: true, canResize: false }, deadlineVersion: 7, reminderOffsetsMinutes: [] };
 const unscheduledChecklist: ChecklistCalendarUnscheduledEntryDto = { id: "checklist:unscheduled", kind: "checklist", reason: "unscheduled", title: "Select hero images", project: projectContext, assignee: person, schedule: { state: "unscheduled", version: 4, zone: PRODUCTION_CALENDAR_ZONE, start: null, end: null, due: null }, permissions: { canDrag: true, canResize: false, canOpenScheduleEditor: true, canScheduleRange: true } };
+const legacyChecklist: ChecklistCalendarUnscheduledEntryDto = { id: "checklist:legacy", kind: "checklist", reason: "schedule_needs_attention", attentionReason: "legacy_unresolved", title: "Repair legacy task", project: projectContext, assignee: null, schedule: { state: "legacy_unresolved", version: 0, zone: PRODUCTION_CALENDAR_ZONE, start: null, end: null, due: "2026-10-04T02:30", error: { code: "subtask_schedule_legacy_unresolved", reason: "nonexistent_local_time" } }, permissions: { canDrag: false, canResize: false, canOpenScheduleEditor: true, canScheduleRange: true } };
 
 function calendar(subview: DashboardCalendarState["subview"] = "month"): DashboardCalendarState {
   return { view: "calendar", date: "2026-08-12", subview, layers: ["project", "checklist"], editorIds: [], includeUnassigned: false, stageKeys: [], showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false };
 }
 
-function response(subview: DashboardCalendarState["subview"], entries: CalendarUnscheduledEntryDto[] = [unscheduledProject, unscheduledChecklist]): ProductionCalendarRangeResponse {
-  return adminProductionCalendarRangeResponseSchema.parse({
+function response(subview: DashboardCalendarState["subview"], entries: CalendarUnscheduledEntryDto[] = [unscheduledProject, unscheduledChecklist], role: "admin" | "external_editor" = "admin"): ProductionCalendarRangeResponse {
+  const payload = {
     range: { start: "2026-08-10", end: "2026-08-24", date: "2026-08-12", subview, zone: PRODUCTION_CALENDAR_ZONE, appliedFilters: { layers: ["project", "checklist"], editorIds: [], includeUnassigned: false, stageKeys: [], showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false } },
     events: [],
     unscheduled: entries,
     filterFacets: { projects: [{ id: projectId, street: projectContext.street }], people: [person], myTasksUserId: assigneeId, unscheduled: { project: { matched: entries.filter((entry) => entry.kind === "project_deadline").length, returned: entries.filter((entry) => entry.kind === "project_deadline").length, truncated: false }, checklist: { matched: entries.filter((entry) => entry.kind === "checklist").length, returned: entries.filter((entry) => entry.kind === "checklist").length, truncated: false } } },
-  });
+  };
+  return (role === "external_editor" ? externalCalendarRangeSchema : adminProductionCalendarRangeResponseSchema).parse(payload);
 }
 
 function dueSchedule(localCivil: string) {
@@ -71,33 +74,52 @@ describe("ProductionCalendar unscheduled external drops", () => {
   let client: QueryClient;
   let putBodies: unknown[];
   let patchBodies: unknown[];
-  let revert: ReturnType<typeof vi.fn>;
   let currentResponse: ProductionCalendarRangeResponse;
+  let getCount: number;
+  let putResponder: ((body: unknown) => Response | Promise<Response>) | undefined;
+  let patchResponder: ((body: unknown) => Response | Promise<Response>) | undefined;
+  let getResponder: (() => Response | Promise<Response>) | undefined;
 
   beforeEach(() => {
     host = document.createElement("div"); document.body.append(host); root = createRoot(host); client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    putBodies = []; patchBodies = []; revert = vi.fn(); lastSurfaceProps = null; invalidateProjectResourcesMock.mockClear(); confirmMock.mockReset().mockResolvedValue(true);
+    putBodies = []; patchBodies = []; getCount = 0; putResponder = undefined; patchResponder = undefined; getResponder = undefined; lastSurfaceProps = null; invalidateProjectResourcesMock.mockClear(); confirmMock.mockReset().mockResolvedValue(true);
   });
 
   afterEach(() => { act(() => root.unmount()); host.remove(); vi.unstubAllGlobals(); });
 
-  async function render(subview: DashboardCalendarState["subview"], entries: CalendarUnscheduledEntryDto[] = [unscheduledProject, unscheduledChecklist]) {
-    currentResponse = response(subview, entries);
+  async function render(subview: DashboardCalendarState["subview"], entries: CalendarUnscheduledEntryDto[] = [unscheduledProject, unscheduledChecklist], role: "admin" | "external_editor" = "admin") {
+    currentResponse = response(subview, entries, role);
     vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       const method = init?.method ?? "GET";
-      if (method === "PUT") { putBodies.push(JSON.parse(String(init?.body))); return new Response(JSON.stringify({ changed: true, current: { version: 8, deadline: { localCivil: "2026-08-20T17:00", instant: "2026-08-20T07:00:00.000Z" }, reminderOffsetsMinutes: [] }, eventIntent: null, publicationIds: [] }), { status: 200, headers: { "content-type": "application/json" } }); }
-      if (method === "PATCH") { patchBodies.push(JSON.parse(String(init?.body))); const body = JSON.parse(String(init?.body)); const schedule = body.schedule.schedule.state === "due_only" ? dueSchedule(body.schedule.schedule.end.localCivil) : timedSchedule(body.schedule.schedule.start.localCivil); return new Response(JSON.stringify(mutationResponse(unscheduledChecklist, schedule)), { status: 200, headers: { "content-type": "application/json" } }); }
-      return new Response(JSON.stringify(currentResponse), { status: 200, headers: { "content-type": "application/json" } });
+      if (method === "PUT") { const body = JSON.parse(String(init?.body)); putBodies.push(body); return putResponder ? putResponder(body) : new Response(JSON.stringify({ changed: true, current: { version: 8, deadline: { localCivil: "2026-08-20T17:00", instant: "2026-08-20T07:00:00.000Z" }, reminderOffsetsMinutes: [] }, eventIntent: null, publicationIds: [] }), { status: 200, headers: { "content-type": "application/json" } }); }
+      if (method === "PATCH") { const body = JSON.parse(String(init?.body)); patchBodies.push(body); if (patchResponder) return patchResponder(body); const schedule = body.schedule.schedule.state === "due_only" ? dueSchedule(body.schedule.schedule.end.localCivil) : timedSchedule(body.schedule.schedule.start.localCivil); return new Response(JSON.stringify(mutationResponse(unscheduledChecklist, schedule)), { status: 200, headers: { "content-type": "application/json" } }); }
+      getCount += 1;
+      return getResponder ? getResponder() : new Response(JSON.stringify(currentResponse), { status: 200, headers: { "content-type": "application/json" } });
     }));
-    await act(async () => { root.render(<QueryClientProvider client={client}><ProductionCalendar identity={{ principalId: projectId, role: "admin", authorizationEpoch: 0 }} calendar={calendar(subview)} onNavigate={() => undefined} /></QueryClientProvider>); await Promise.resolve(); });
+    await act(async () => { root.render(<QueryClientProvider client={client}><ProductionCalendar identity={{ principalId: projectId, role, authorizationEpoch: 0 }} calendar={calendar(subview)} onNavigate={() => undefined} /></QueryClientProvider>); await Promise.resolve(); });
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); await Promise.resolve(); await Promise.resolve(); });
   }
 
-  async function externalDrop(value: { date: Date; dateStr: string; allDay: boolean }, entry: CalendarUnscheduledEntryDto) {
-    const row = host.querySelector<HTMLElement>(`[data-unscheduled-id="${entry.id}"]`);
+  async function externalDrop(value: { date: Date; dateStr: string; allDay: boolean }, entry: CalendarUnscheduledEntryDto, draggedEl = host.querySelector<HTMLElement>(`[data-unscheduled-id="${entry.id}"]`), settle = true) {
+    const row = draggedEl;
     if (!row) throw new Error("Unscheduled row is missing");
-    await act(async () => { lastSurfaceProps?.drop?.({ ...value, draggedEl: row, revert }); await Promise.resolve(); await Promise.resolve(); });
+    await act(async () => { lastSurfaceProps?.drop?.({ ...value, draggedEl: row }); await Promise.resolve(); await Promise.resolve(); });
+    if (!settle) return;
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); await Promise.resolve(); await Promise.resolve(); });
+  }
+
+  async function externalReceive() {
+    const receiveRevert = vi.fn();
+    await act(async () => { lastSurfaceProps?.eventReceive?.({ event: { extendedProps: {} }, revert: receiveRevert }); await Promise.resolve(); });
+    return receiveRevert;
+  }
+
+  async function change(element: HTMLInputElement | HTMLSelectElement, value: string) {
+    await act(async () => { Object.getOwnPropertyDescriptor(Object.getPrototypeOf(element), "value")?.set?.call(element, value); element.dispatchEvent(new Event("input", { bubbles: true })); element.dispatchEvent(new Event("change", { bubbles: true })); await Promise.resolve(); });
+  }
+
+  function jsonResponse(payload: unknown, status = 200) {
+    return new Response(JSON.stringify(payload), { status, headers: { "content-type": "application/json" } });
   }
 
   it("maps a project Month drop to 17:00 with the exact empty reminder list after confirmation", async () => {
@@ -109,7 +131,6 @@ describe("ProductionCalendar unscheduled external drops", () => {
     expect(content.props.consequences).toEqual([]);
     expect(renderToStaticMarkup(content)).toContain("No reminders are set.");
     expect(putBodies).toEqual([{ expectedVersion: 7, deadline: { localCivil: "2026-08-20T17:00" }, reminderOffsetsMinutes: [] }]);
-    expect(revert).not.toHaveBeenCalled();
   });
 
   it("maps a project Week drop to a 15-minute Sydney slot and cancels without a request", async () => {
@@ -118,12 +139,25 @@ describe("ProductionCalendar unscheduled external drops", () => {
     expect(putBodies).toEqual([{ expectedVersion: 7, deadline: { localCivil: "2026-08-20T10:00" }, reminderOffsetsMinutes: [] }]);
 
     await act(async () => { root.unmount(); root = createRoot(host); });
-    putBodies = []; revert = vi.fn();
+    putBodies = [];
     confirmMock.mockReset().mockResolvedValue(false);
     await render("month", [unscheduledProject]);
     await externalDrop({ date: new Date("2026-08-20T00:00:00.000Z"), dateStr: "2026-08-20", allDay: true }, unscheduledProject);
     expect(putBodies).toHaveLength(0);
-    expect(revert).toHaveBeenCalledOnce();
+    expect(host.querySelector(`[data-unscheduled-id="${unscheduledProject.id}"]`)).not.toBeNull();
+    expect(lastSurfaceProps?.droppable).toBe(true);
+    expect(await externalReceive()).toHaveBeenCalledOnce();
+  });
+
+  it("rejects a non-draggable external row without disturbing another draggable row", async () => {
+    const rejectedProject = { ...unscheduledProject, permissions: { ...unscheduledProject.permissions, canDrag: false } };
+    await render("week", [rejectedProject, unscheduledChecklist]);
+    await externalDrop({ date: new Date("2026-08-20T00:07:00.000Z"), dateStr: "2026-08-20T00:07:00.000Z", allDay: false }, rejectedProject);
+    expect(putBodies).toHaveLength(0);
+    expect(patchBodies).toHaveLength(0);
+    expect(host.querySelector(`[data-unscheduled-id="${rejectedProject.id}"]`)).not.toBeNull();
+    expect(lastSurfaceProps?.droppable).toBe(true);
+    expect(await externalReceive()).toHaveBeenCalledOnce();
   });
 
   it("maps checklist Month and Week drops without confirmation", async () => {
@@ -143,8 +177,10 @@ describe("ProductionCalendar unscheduled external drops", () => {
     await render("week", [unscheduledChecklist]);
     await externalDrop({ date: new Date("2026-10-03T15:45:00.000Z"), dateStr: "2026-10-03T15:45:00.000Z", allDay: false }, unscheduledChecklist);
     expect(patchBodies).toHaveLength(0);
-    expect(revert).toHaveBeenCalledOnce();
+    expect(host.querySelector(`[data-unscheduled-id="${unscheduledChecklist.id}"]`)).not.toBeNull();
+    expect(lastSurfaceProps?.droppable).toBe(true);
     expect(host.textContent).toContain("That time does not exist in Sydney");
+    expect(await externalReceive()).toHaveBeenCalledOnce();
   });
 
   it("uses the Slice 8 fold-choice arm for a Week range end", async () => {
@@ -152,6 +188,156 @@ describe("ProductionCalendar unscheduled external drops", () => {
     await externalDrop({ date: new Date("2026-04-04T14:45:00.000Z"), dateStr: "2026-04-04T14:45:00.000Z", allDay: false }, unscheduledChecklist);
     expect(patchBodies).toHaveLength(0);
     expect(document.querySelector('[data-testid="calendar-fold-choice"]')).not.toBeNull();
+    expect(await externalReceive()).toHaveBeenCalledOnce();
+  });
+
+  it("rolls back a failed checklist mutation and refetches the authoritative range", async () => {
+    patchResponder = () => jsonResponse({ error: "Checklist schedule changed; review the latest schedule before saving.", code: "subtask_schedule_version_conflict", current: { version: 5 } }, 409);
+    await render("month", [unscheduledChecklist]);
+    await externalDrop({ date: new Date("2026-08-20T00:00:00.000Z"), dateStr: "2026-08-20", allDay: true }, unscheduledChecklist);
+    expect(patchBodies).toHaveLength(1);
+    expect(lastSurfaceProps?.events?.some((event: any) => event.id === unscheduledChecklist.id)).toBe(false);
+    expect(host.querySelector(`[data-unscheduled-id="${unscheduledChecklist.id}"]`)).not.toBeNull();
+    expect(lastSurfaceProps?.droppable).toBe(true);
+    expect(host.textContent).toContain("schedule changed elsewhere");
+    expect(getCount).toBeGreaterThan(1);
+    expect(await externalReceive()).toHaveBeenCalledOnce();
+  });
+
+  it("rolls back a failed project mutation and refetches the authoritative range", async () => {
+    putResponder = () => jsonResponse({ error: "server exploded" }, 500);
+    await render("month", [unscheduledProject]);
+    await externalDrop({ date: new Date("2026-08-20T00:00:00.000Z"), dateStr: "2026-08-20", allDay: true }, unscheduledProject);
+    expect(putBodies).toHaveLength(1);
+    expect(lastSurfaceProps?.events?.some((event: any) => event.id === unscheduledProject.id)).toBe(false);
+    expect(host.querySelector(`[data-unscheduled-id="${unscheduledProject.id}"]`)).not.toBeNull();
+    expect(lastSurfaceProps?.droppable).toBe(true);
+    expect(getCount).toBeGreaterThan(1);
+  });
+
+  it("refuses a second external command while the first checklist mutation is pending", async () => {
+    let resolvePatch!: (value: Response) => void;
+    patchResponder = () => new Promise<Response>((resolve) => { resolvePatch = resolve; });
+    await render("month", [unscheduledChecklist]);
+    const draggedEl = host.querySelector<HTMLElement>(`[data-unscheduled-id="${unscheduledChecklist.id}"]`)!;
+    await externalDrop({ date: new Date("2026-08-20T00:00:00.000Z"), dateStr: "2026-08-20", allDay: true }, unscheduledChecklist, draggedEl, false);
+    await externalDrop({ date: new Date("2026-08-21T00:00:00.000Z"), dateStr: "2026-08-21", allDay: true }, unscheduledChecklist, draggedEl, false);
+    expect(patchBodies).toHaveLength(1);
+    resolvePatch(jsonResponse(mutationResponse(unscheduledChecklist, dueSchedule("2026-08-20"))));
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); await Promise.resolve(); await Promise.resolve(); });
+  });
+
+  it("keeps the external project deadline row non-draggable while checklist eligibility drives droppable", async () => {
+    const externalProject = { ...unscheduledProject, project: { ...projectContext, stageKey: "editing" as const }, permissions: { ...unscheduledProject.permissions, canDrag: false } };
+    const externalChecklist = { ...unscheduledChecklist, project: { ...projectContext, stageKey: "editing" as const } };
+    await render("month", [externalProject, externalChecklist], "external_editor");
+    expect(host.querySelector(`[data-unscheduled-id="${externalProject.id}"]`)?.getAttribute("data-event")).toBeNull();
+    expect(host.querySelector(`[data-unscheduled-id="${externalChecklist.id}"]`)?.getAttribute("data-event")).not.toBeNull();
+    expect(lastSurfaceProps?.droppable).toBe(true);
+
+    await act(async () => { root.unmount(); root = createRoot(host); });
+    client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    await render("month", [externalProject], "external_editor");
+    expect(host.querySelector(`[data-unscheduled-id="${externalProject.id}"]`)?.getAttribute("data-event")).toBeNull();
+    expect(lastSurfaceProps?.droppable).toBe(false);
+  });
+
+  it("reopens an external project fold as Schedule Deadline and retries with the source version", async () => {
+    const choices = [{ disambiguation: "earlier" as const, utcOffsetMinutes: 660 }, { disambiguation: "later" as const, utcOffsetMinutes: 600 }];
+    let putCount = 0;
+    putResponder = () => {
+      putCount += 1;
+      return putCount === 1
+        ? jsonResponse({ error: "That Sydney wall-clock time occurs twice on that date.", code: "deadline_repeated_local_time", choices }, 400)
+        : jsonResponse({ changed: true, current: { version: 8, deadline: { localCivil: "2026-08-20T17:00", instant: "2026-08-20T07:00:00.000Z" }, reminderOffsetsMinutes: [] }, eventIntent: null, publicationIds: [] });
+    };
+    await render("month", [unscheduledProject]);
+    await externalDrop({ date: new Date("2026-08-20T00:00:00.000Z"), dateStr: "2026-08-20", allDay: true }, unscheduledProject);
+    expect(confirmMock).toHaveBeenCalledOnce();
+    expect(document.querySelector('[data-testid="calendar-move-dialog"]')).not.toBeNull();
+    await act(async () => {
+      document.querySelector<HTMLInputElement>('input[type="radio"][value="later"]')!.click();
+      document.querySelector<HTMLButtonElement>('[data-testid="calendar-move-submit"]')!.click();
+      await Promise.resolve();
+    });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); await Promise.resolve(); await Promise.resolve(); });
+    expect(confirmMock).toHaveBeenNthCalledWith(2, expect.objectContaining({ title: "Schedule Deadline" }));
+    expect(putBodies[1]).toEqual({ expectedVersion: 7, deadline: { localCivil: "2026-08-20T17:00", disambiguation: "later" }, reminderOffsetsMinutes: [] });
+  });
+
+  it("rebases an unscheduled Deadline version conflict onto the refetched entry version", async () => {
+    let putCount = 0;
+    putResponder = () => {
+      putCount += 1;
+      return putCount === 1
+        ? jsonResponse({ error: "The Deadline changed; review the latest before saving.", code: "deadline_version_conflict", current: { version: 8 } }, 409)
+        : jsonResponse({ changed: true, current: { version: 9, deadline: { localCivil: "2026-08-20T17:00", instant: "2026-08-20T07:00:00.000Z" }, reminderOffsetsMinutes: [] }, eventIntent: null, publicationIds: [] });
+    };
+    let servedInitial = false;
+    getResponder = () => {
+      const entry = servedInitial ? { ...unscheduledProject, deadlineVersion: 8 } : unscheduledProject;
+      servedInitial = true;
+      return jsonResponse(response("month", [entry]));
+    };
+    await render("month", [unscheduledProject]);
+    await externalDrop({ date: new Date("2026-08-20T00:00:00.000Z"), dateStr: "2026-08-20", allDay: true }, unscheduledProject);
+    expect(putBodies[0]).toEqual({ expectedVersion: 7, deadline: { localCivil: "2026-08-20T17:00" }, reminderOffsetsMinutes: [] });
+    expect(document.querySelector('[data-testid="calendar-move-dialog"]')).not.toBeNull();
+    await act(async () => { document.querySelector<HTMLButtonElement>('[data-testid="calendar-move-submit"]')!.click(); await Promise.resolve(); await Promise.resolve(); });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); await Promise.resolve(); await Promise.resolve(); });
+    expect(confirmMock).toHaveBeenNthCalledWith(2, expect.objectContaining({ title: "Schedule Deadline" }));
+    expect(putBodies[1]).toEqual({ expectedVersion: 8, deadline: { localCivil: "2026-08-20T17:00" }, reminderOffsetsMinutes: [] });
+  });
+
+  it("executes the Agenda Schedule Deadline action", async () => {
+    await render("agenda", [unscheduledProject]);
+    expect(lastSurfaceProps?.droppable).toBe(false);
+    const action = [...host.querySelectorAll<HTMLButtonElement>(".qc-calendar-unscheduled__action")].find((button) => button.textContent === "Schedule Deadline");
+    expect(action).not.toBeUndefined();
+    await act(async () => { action!.click(); await Promise.resolve(); });
+    expect(document.querySelector('[data-testid="calendar-move-dialog"]')).not.toBeNull();
+    await act(async () => { document.querySelector<HTMLButtonElement>('[data-testid="calendar-move-submit"]')!.click(); await Promise.resolve(); await Promise.resolve(); });
+    expect(confirmMock).toHaveBeenCalledWith(expect.objectContaining({ title: "Schedule Deadline" }));
+    expect(putBodies).toEqual([{ expectedVersion: 7, deadline: { localCivil: "2026-08-12T17:00" }, reminderOffsetsMinutes: [] }]);
+  });
+
+  it("repairs a legacy unresolved checklist with a version-zero schedule command", async () => {
+    await render("month", [legacyChecklist]);
+    const repair = host.querySelector<HTMLButtonElement>(`[data-unscheduled-id="${legacyChecklist.id}"] .qc-calendar-unscheduled__action`);
+    expect(repair?.textContent).toBe("Repair schedule");
+    await act(async () => { repair!.click(); await Promise.resolve(); });
+    await change(document.querySelector<HTMLSelectElement>('[aria-label="Checklist endpoint mode"]')!, "date");
+    await change(document.querySelector<HTMLInputElement>('[aria-label="Checklist end date"]')!, "2026-08-20");
+    await act(async () => { document.querySelector<HTMLButtonElement>('[data-testid="calendar-schedule-submit"]')!.click(); await Promise.resolve(); await Promise.resolve(); });
+    expect(patchBodies).toEqual([{ schedule: { expectedVersion: 0, schedule: { state: "due_only", end: { kind: "date", localCivil: "2026-08-20" } } } }]);
+    expect(JSON.stringify(patchBodies[0])).not.toContain("dueDate");
+  });
+
+  it("removes and restores a checklist row and its facet count across the optimistic settle window", async () => {
+    let resolvePatch!: (value: Response) => void;
+    let resolveGet!: (value: Response) => void;
+    let initialGet = true;
+    patchResponder = () => new Promise<Response>((resolve) => { resolvePatch = resolve; });
+    getResponder = () => initialGet
+      ? (initialGet = false, jsonResponse(currentResponse))
+      : new Promise<Response>((resolve) => { resolveGet = resolve; });
+    await render("month", [unscheduledChecklist]);
+    await externalDrop({ date: new Date("2026-08-20T00:00:00.000Z"), dateStr: "2026-08-20", allDay: true }, unscheduledChecklist);
+    expect(host.querySelector(`[data-unscheduled-id="${unscheduledChecklist.id}"]`)).toBeNull();
+    expect(lastSurfaceProps?.events?.some((event: any) => event.id === unscheduledChecklist.id)).toBe(true);
+    expect(host.querySelector('[aria-label="Unscheduled checklist items"]')?.textContent).toContain("Showing 0 of 0");
+
+    resolvePatch(jsonResponse(mutationResponse(unscheduledChecklist, dueSchedule("2026-08-20"))));
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); await Promise.resolve(); await Promise.resolve(); });
+    expect(host.querySelector(`[data-unscheduled-id="${unscheduledChecklist.id}"]`)).toBeNull();
+    expect(lastSurfaceProps?.events?.some((event: any) => event.id === unscheduledChecklist.id)).toBe(true);
+    expect(host.querySelector('[aria-label="Unscheduled checklist items"]')?.textContent).toContain("Showing 0 of 0");
+    if (!resolveGet) throw new Error("settle refetch did not start");
+    resolveGet(jsonResponse(currentResponse));
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); await Promise.resolve(); await Promise.resolve(); });
+    expect(host.querySelector(`[data-unscheduled-id="${unscheduledChecklist.id}"]`)).not.toBeNull();
+    expect(lastSurfaceProps?.events?.some((event: any) => event.id === unscheduledChecklist.id)).toBe(false);
+    expect(host.querySelector('[aria-label="Unscheduled checklist items"]')?.textContent).toContain("Showing 1 of 1");
   });
 
   it("keeps Agenda external drag off while exposing schedule actions", async () => {

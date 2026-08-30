@@ -71,12 +71,20 @@ function externalEventData(title: string, id: string, kind: "project" | "checkli
   return JSON.stringify({ title, extendedProps: { unscheduledId: id, unscheduledKind: kind } });
 }
 
+export function unscheduledProjectDraggable(entry: ProjectCalendarUnscheduledEntryDto): boolean {
+  return !entry.project.delivered && entry.permissions.canDrag;
+}
+
+export function unscheduledChecklistDraggable(entry: ChecklistCalendarUnscheduledEntryDto, rangesEnabled: boolean): boolean {
+  return rangesEnabled && entry.reason === "unscheduled" && entry.permissions.canDrag && entry.permissions.canScheduleRange;
+}
+
 function projectCanDrag(entry: ProjectCalendarUnscheduledEntryDto, disabled: boolean): boolean {
-  return !disabled && !entry.project.delivered && entry.permissions.canDrag;
+  return !disabled && unscheduledProjectDraggable(entry);
 }
 
 function checklistCanDrag(entry: ChecklistCalendarUnscheduledEntryDto, rangesEnabled: boolean, disabled: boolean): boolean {
-  return !disabled && rangesEnabled && entry.reason === "unscheduled" && entry.permissions.canDrag && entry.permissions.canScheduleRange;
+  return !disabled && unscheduledChecklistDraggable(entry, rangesEnabled);
 }
 
 function ProjectRow({ entry, subview, onSchedule, disabled }: {
