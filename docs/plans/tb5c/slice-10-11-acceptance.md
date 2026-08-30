@@ -51,17 +51,19 @@ future FC version reintroduces one. The remaining real-VoiceOver/NVDA pass is th
 confirmation that Quincy's polite region reads cleanly on a keyboard Move/Reschedule — not a
 cadence-conflict test.
 
-## Still owed on real hardware (does not block the app-Worker deploy diff; record when done)
+## Real-hardware obligations — WAIVED by owner 2026-08-31
 
-- **Physical phone** Week: confirm on a real touch device that events cannot be dragged, every
-  event exposes Move/Reschedule, and ordinary scrolling reaches all 24 hours. (Agy emulated
-  390×844 + coarse pointer; real-device touch/scroll is the acceptance.)
-- **Real VoiceOver or NVDA**: a keyboard Move/Reschedule on a Deadline and on a checklist range,
-  in each subview — confirm focus containment/return, and that the polite region's
-  saving/saved/reverted/conflict/DST/access-loss copy is announced in order with no duplication
-  from a drag mirror.
+The plan's §Deployment precondition ("physical phone Week and real AT keyboard acceptance all
+pass") was **waived by the owner (Terry) on 2026-08-31** — deploy proceeds on the strength of
+the Agy matrix + the FullCalendar-v7-has-no-live-region finding (which removes the specific
+cadence risk the AT check was for). Precedent: the TB4E production spot-check was similarly
+waived. The two checks below remain available as a post-deploy confirmation if desired:
 
-Append the results here when run.
+- **Physical phone** Week: events cannot be dragged, every event exposes Move/Reschedule,
+  ordinary scrolling reaches all 24 hours.
+- **Real VoiceOver or NVDA**: a keyboard Move/Reschedule on a Deadline and on a checklist range —
+  focus containment/return, and the polite region's saving/saved/reverted/conflict/DST/access-loss
+  copy announced in order with no drag-mirror duplication.
 
 ## Bundle / chunk evidence (final, supersedes the Slice-5 proof's 274 kB figure)
 

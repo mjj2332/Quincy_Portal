@@ -1,6 +1,22 @@
 # Revamp TB5C — Production Calendar
 
-**Status:** APPROVED FOR BUILD (Opus plan-tier review, 2026-08-30) — revision 4 applied (Opus APPROVE: 0 Blocking; its 8 Should-fix + 5 Nit folded into the plan by the orchestrating session); revision 3 retained (Opus plan-tier revert #1: 4 Blocking + 12 Should-fix + 8 Nit); revision 2 retained (fresh-Sol review round 2: 2 Blocking + 3 Should-fix); revision 1 retained (6 Blocking + 9 Should-fix + 3 Nit). Review pipeline: Sol draft → fresh-Sol review ×2 → 3 fresh-Sol revisions → Opus plan-tier REVERT #1 → fresh-Sol revision → Opus plan-tier APPROVE. `@ilamy/calendar` was evaluated on a throwaway branch 2026-08-30 and rejected (no public external-drop API); FullCalendar v7 retained. **Build in progress on branch `tb5c-production-calendar`** (off `main` `6fad404`): Slice 0 `6ed2487`, Slice 1 `0470733`, Slice 2 `ced5d37`. Each slice ends with the four-command §5 gate run by the orchestrating session per §"Numbered implementation slices".
+**Status:** BUILT — ready for deploy prep (2026-08-31). All 12 slices implemented on branch
+`tb5c-production-calendar` (off `main` `f6af664`), HEAD `8853fb2`. Review pipeline complete:
+per-slice fresh-Sol + mid-slice Sol + confirm passes; fresh-Sol whole-branch review (2 passes,
+APPROVE after fixes); Opus final-draft review → **APPROVE WITH FOLLOW-UPS** (all resolved: S3
+fixed `a6a6bc7`, S2 fixed `5697bd3`, S1 documented `d81fc99` as a known corpus-proportional-density
+limit). Agy Slice 10/11 acceptance matrix → all 12 checks PASS, 0 mutations
+(`docs/plans/tb5c/slice-10-11-acceptance.md`); FullCalendar v7 has no live region of its own so
+`SUPPRESS_FULLCALENDAR_DROP_ANNOUNCEMENT` stays off. Physical-phone + real-AT checks **waived by
+owner 2026-08-31**. Full 6-workspace gate green (typecheck; build web; web 190 node + 529 dom;
+shared 126; workers/app 279 +1 skip; background 253; webhook 13). Deploy boundary confirmed:
+**app Worker only, no D1 migration** (0038 still free), no `feature_flags` seed, no
+`workers/background` / `workers/webhook-ingress` / `prototype/` / schema change; rollback =
+`wrangler rollback` to app Worker version `2b515484-44c6-4550-a1e2-62f88c6a8b73` (the TB5B
+deploy). Prior status history: Opus plan-tier APPROVE (revision 4) after Sol draft → fresh-Sol ×2
+→ 3 fresh-Sol revisions → Opus REVERT #1 → fresh-Sol revision → Opus APPROVE. `@ilamy/calendar`
+evaluated on a throwaway branch 2026-08-30 and rejected (no public external-drop API); FullCalendar
+v7 retained.
 
 **Slice-3 factual delta (2026-08-30, design unchanged):** FullCalendar v7 restructured its packages — the separate view/interaction packages stopped at v6; v7 ships plugins as `@fullcalendar/react` subpaths. §"FullCalendar v7 dependency and visual boundary" corrected: pin `@fullcalendar/{core,react}@7.0.2` + `temporal-polyfill@1.0.4` only (`@full-ui/headless-calendar@7.0.2` transitive); import plugins from `@fullcalendar/react/{daygrid,timegrid,list,interaction}` and CSS from `@fullcalendar/react/skeleton.css` + `@fullcalendar/react/themes/pulse/theme.css`. No Radix in the FullCalendar packages themselves.
 
