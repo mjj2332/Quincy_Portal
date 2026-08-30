@@ -832,3 +832,31 @@ out-of-band before deploy (`578d2a1`, app Worker `2b515484`).
 
 This follows the existing TipTap lessons: native listener / event timing and scroll/focus behavior
 can pass happy-dom while failing Chrome.
+
+## A circular import in `@quincy/shared` that only `vite serve` catches (2026-08-30)
+
+- **Symptom:** `npm run dev -w @quincy/web` (or the `quincy-web-dev` launch config) rendered a
+  blank page. Console: `Uncaught ReferenceError: Cannot access 'externalAssetSchema' before
+  initialization` at `packages/shared/src/external-upload.ts`. `npm run build -w @quincy/web`,
+  `npm run typecheck`, and every vitest suite were **green** — the bug was invisible to all of
+  them.
+- **Root cause:** `external-upload.ts` imported `externalAssetSchema` from `external-project-dto.ts`
+  and used it **eagerly** at module-init (`z.object({ asset: externalAssetSchema })`);
+  `external-project-dto.ts` imported the upload response schemas back and used them eagerly in its
+  `EXTERNAL_API_RESPONSE_SCHEMAS` record. A cycle. The `@quincy/shared` barrel exports
+  `external-project-dto` then `external-upload`, so under Vite dev's **unbundled, per-file, source-
+  order ESM evaluation** the cycle resolved upload-first and hit `externalAssetSchema` in its TDZ.
+  `vite build` (rollup) and vitest (imports specific modules, not the whole barrel in order) both
+  reorder past it, so only the dev server broke.
+- **Fix (`f6af664`):** extract `externalAssetSchema` / `ExternalAssetDto` (+ its private
+  `reviewSchema`) into a new **leaf** module `external-asset-dto.ts` with zero shared-package
+  imports. Both `external-upload.ts` and `external-project-dto.ts` import the leaf; neither imports
+  the other's asset schema. `external-project-dto.ts` re-exports the two names so the barrel API is
+  unchanged (no consumer edits). `external-project-dto.ts` still imports the upload response
+  schemas one-directionally — that is fine, the cycle is gone.
+- **Rule:** `npm run build` / `typecheck` / vitest all passing is **not** proof the app loads.
+  After any change to `packages/shared` import structure — especially adding an import between two
+  modules that already share a dependency — start `vite serve` and confirm `/` renders with a
+  clean console. And in `@quincy/shared`, never let two modules import each other when either uses
+  the imported value at module-init (zod schema composition counts); factor the shared value into a
+  leaf module instead.
