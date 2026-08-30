@@ -17,6 +17,7 @@ export type ProductionCalendarUnscheduledPanelProps = {
   onScheduleProject: (entry: ProjectCalendarUnscheduledEntryDto) => void;
   onScheduleChecklist: (entry: ChecklistCalendarUnscheduledEntryDto) => void;
   disabled?: boolean;
+  dragSuppressed?: boolean;
 };
 
 const STAGE_LABELS: Record<string, string> = {
@@ -87,25 +88,29 @@ function checklistCanDrag(entry: ChecklistCalendarUnscheduledEntryDto, rangesEna
   return !disabled && unscheduledChecklistDraggable(entry, rangesEnabled);
 }
 
-function ProjectRow({ entry, subview, onSchedule, disabled }: {
+function ProjectRow({ entry, subview, onSchedule, disabled, dragSuppressed }: {
   entry: ProjectCalendarUnscheduledEntryDto;
   subview: ProductionCalendarSubview;
   onSchedule: (entry: ProjectCalendarUnscheduledEntryDto) => void;
   disabled: boolean;
+  dragSuppressed: boolean;
 }) {
-  const canDrag = projectCanDrag(entry, disabled);
-  const agendaAction = subview === "agenda" && canDrag;
-  const staticDisabled = !canDrag && !agendaAction;
+  // Eligibility is a permanent property of the entry (not delivered, has the
+  // capability). Transient `disabled` (interaction blocked / settling) only
+  // disables the action button — it must never demote an eligible entry to the
+  // "Deadline is read-only" row, which is reserved for genuine ineligibility.
+  const eligible = unscheduledProjectDraggable(entry);
+  const actionMode = subview === "agenda" || dragSuppressed || disabled;
   const content = <ProjectContent entry={entry} />;
 
-  if (staticDisabled) {
+  if (!eligible) {
     return <button type="button" className="qc-calendar-unscheduled__row qc-calendar-unscheduled__row--project is-disabled" disabled aria-label={`${entry.project.street}: Deadline is read-only`} data-unscheduled-id={entry.id}>
       {content}
       <span className="qc-calendar-unscheduled__readonly">Deadline is read-only</span>
     </button>;
   }
 
-  if (agendaAction) {
+  if (actionMode) {
     return <article className="qc-calendar-unscheduled__row qc-calendar-unscheduled__row--project" data-unscheduled-id={entry.id}>
       {content}
       <button className="button button--text qc-calendar-unscheduled__action" type="button" disabled={disabled} onClick={() => onSchedule(entry)}>Schedule Deadline</button>
@@ -123,18 +128,20 @@ function ProjectRow({ entry, subview, onSchedule, disabled }: {
   >{content}</article>;
 }
 
-function ChecklistRow({ entry, subview, rangesEnabled, onSchedule, disabled }: {
+function ChecklistRow({ entry, subview, rangesEnabled, onSchedule, disabled, dragSuppressed }: {
   entry: ChecklistCalendarUnscheduledEntryDto;
   subview: ProductionCalendarSubview;
   rangesEnabled: boolean;
   onSchedule: (entry: ChecklistCalendarUnscheduledEntryDto) => void;
   disabled: boolean;
+  dragSuppressed: boolean;
 }) {
   const attention = entry.reason === "schedule_needs_attention";
   const legacy = attention && entry.attentionReason === "legacy_unresolved";
   const invalid = attention && entry.attentionReason === "invalid";
-  const canDrag = subview !== "agenda" && checklistCanDrag(entry, rangesEnabled, disabled);
-  const showAction = entry.permissions.canOpenScheduleEditor && (subview === "agenda" || !canDrag);
+  const actionMode = subview === "agenda" || dragSuppressed;
+  const canDrag = !actionMode && checklistCanDrag(entry, rangesEnabled, disabled);
+  const showAction = entry.permissions.canOpenScheduleEditor && (actionMode || !canDrag);
   const content = <ChecklistContent entry={entry} />;
 
   if (canDrag) {
@@ -161,9 +168,9 @@ function Section<T>({ label, facet, entries, children }: { label: string; facet:
   </section>;
 }
 
-export function ProductionCalendarUnscheduledPanel({ projectEntries, checklistEntries, facets, subview, rangesEnabled, onScheduleProject, onScheduleChecklist, disabled = false }: ProductionCalendarUnscheduledPanelProps) {
+export function ProductionCalendarUnscheduledPanel({ projectEntries, checklistEntries, facets, subview, rangesEnabled, onScheduleProject, onScheduleChecklist, disabled = false, dragSuppressed = false }: ProductionCalendarUnscheduledPanelProps) {
   const panelRef = useRef<HTMLElement | null>(null);
-  const hasExternalDraggable = !disabled && subview !== "agenda" && (
+  const hasExternalDraggable = !disabled && !dragSuppressed && subview !== "agenda" && (
     projectEntries.some((entry) => projectCanDrag(entry, disabled))
     || checklistEntries.some((entry) => checklistCanDrag(entry, rangesEnabled, disabled))
   );
@@ -176,10 +183,10 @@ export function ProductionCalendarUnscheduledPanel({ projectEntries, checklistEn
 
   return <aside ref={panelRef} className={`qc-calendar-unscheduled${disabled ? " is-disabled" : ""}`} aria-label="Unscheduled work">
     <Section label="Unscheduled projects" facet={facets.project} entries={projectEntries}>
-      {projectEntries.map((entry) => <ProjectRow key={entry.id} entry={entry} subview={subview} onSchedule={onScheduleProject} disabled={disabled} />)}
+      {projectEntries.map((entry) => <ProjectRow key={entry.id} entry={entry} subview={subview} onSchedule={onScheduleProject} disabled={disabled} dragSuppressed={dragSuppressed} />)}
     </Section>
     <Section label="Unscheduled checklist items" facet={facets.checklist} entries={checklistEntries}>
-      {checklistEntries.map((entry) => <ChecklistRow key={entry.id} entry={entry} subview={subview} rangesEnabled={rangesEnabled} onSchedule={onScheduleChecklist} disabled={disabled} />)}
+      {checklistEntries.map((entry) => <ChecklistRow key={entry.id} entry={entry} subview={subview} rangesEnabled={rangesEnabled} onSchedule={onScheduleChecklist} disabled={disabled} dragSuppressed={dragSuppressed} />)}
     </Section>
   </aside>;
 }

@@ -10,8 +10,9 @@ function classNamesFor(event: CalendarEventDto): string[] {
   return classes;
 }
 
-export function mapCalendarEventToFullCalendar(event: CalendarEventDto): EventInput {
+export function mapCalendarEventToFullCalendar(event: CalendarEventDto, options?: { actionOnly?: boolean }): EventInput {
   const timing = event.timing;
+  const editable = options?.actionOnly === true ? false : event.permissions.canDrag;
   return {
     id: event.id,
     title: event.title,
@@ -19,14 +20,14 @@ export function mapCalendarEventToFullCalendar(event: CalendarEventDto): EventIn
     ...(timing.end === null ? {} : { end: timing.end }),
     allDay: timing.allDay,
     extendedProps: { dto: event },
-    editable: event.permissions.canDrag,
-    startEditable: event.permissions.canDrag,
-    durationEditable: event.kind === "checklist" && event.schedule.state === "range" ? event.permissions.canResize : false,
+    editable,
+    startEditable: editable,
+    durationEditable: options?.actionOnly === true ? false : event.kind === "checklist" && event.schedule.state === "range" ? event.permissions.canResize : false,
     resourceEditable: false,
     classNames: classNamesFor(event),
   };
 }
 
-export function mapCalendarEventsToFullCalendar(events: readonly CalendarEventDto[]): EventInput[] {
-  return events.map(mapCalendarEventToFullCalendar);
+export function mapCalendarEventsToFullCalendar(events: readonly CalendarEventDto[], options?: { actionOnly?: boolean }): EventInput[] {
+  return events.map((event) => mapCalendarEventToFullCalendar(event, options));
 }

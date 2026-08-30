@@ -15,6 +15,7 @@
   --quincy-calendar-critical: #7a2420;
   --quincy-calendar-info: #2f3b4d;
   --quincy-calendar-focus: #0a0a0a;
+  --focus-ring: var(--signal-info, #2f3b4d);
 
   /* Pulse supported variables: controls, event content, neutral surfaces, and borders. */
   --fc-pulse-primary: var(--quincy-calendar-positive);
@@ -86,6 +87,23 @@
   border-color: var(--fc-event-color);
 }
 
+/* FullCalendar v7 exposes the drag clone as a mirror. Its accessible state is
+ * set in the Surface eventDidMount seam; CSS only prevents pointer interaction. */
+.fc-event-mirror, .production-calendar .fc-event-mirror {
+  pointer-events: none;
+}
+
+/* FullCalendar 7's rendered mirror may use an internal class rather than the
+ * documented name; the Surface seam marks it aria-hidden in either case. */
+.production-calendar :where(.fc-event)[aria-hidden="true"] {
+  pointer-events: none;
+}
+
+.production-calendar[data-suppress-fullcalendar-drop-announcement="true"] :where(.fc-liveregion) {
+  /* Disabled by default; held for the Slice 11 real VoiceOver/NVDA cadence test. */
+  display: none !important;
+}
+
 .qc-calendar-screen { min-width: 0; }
 .qc-calendar-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(250px, 320px); align-items: start; gap: 20px; }
 .qc-calendar-grid { min-width: 0; }
@@ -131,6 +149,7 @@
 .qc-cal-pill { display: inline-flex; align-items: center; max-width: 100%; padding: 2px 6px; border-radius: 999px; font: 600 9px/1.2 var(--font-body, Apfel Grotezk, sans-serif); letter-spacing: .05em; text-transform: uppercase; }
 .qc-cal-pill--overdue { background: color-mix(in srgb, var(--signal-critical, #7a2420) 12%, transparent); color: var(--signal-critical, #7a2420); }
 .qc-cal-pill--delivered, .qc-cal-pill--completed { background: color-mix(in srgb, var(--signal-positive, #3f5b3a) 14%, transparent); color: var(--signal-positive, #3f5b3a); }
+.qc-cal-pill--overlap { background: color-mix(in srgb, var(--signal-caution, #9a6a1f) 14%, transparent); color: var(--signal-caution, #9a6a1f); }
 .qc-cal-event-card.is-compact .qc-cal-event-card__details { margin-top: 3px; }
 .qc-cal-event-card__move { margin-top: 8px; padding: 0; font-size: 11px; }
 .qc-cal-event-card__attention { margin: 8px 0 0; color: var(--signal-critical, #7a2420); font-size: 11px; line-height: 1.35; }
@@ -202,4 +221,57 @@
   .qc-cal-filters__head { align-items: stretch; flex-direction: column; gap: 8px; }
   .qc-cal-filters__head .button { align-self: start; }
   .qc-cal-filters__groups { grid-template-columns: 1fr; }
+}
+
+/* A Calendar action remains visually compact on desktop, but coarse and
+ * phone controls get a real 44px hit area rather than relying on a sensor. */
+@media (pointer: coarse), (max-width: 720px) {
+  .qc-cal-event-card__move,
+  .qc-calendar-unscheduled__action,
+  .qc-cal-toolbar button,
+  .qc-cal-filters button,
+  .qc-calendar-recovery button,
+  [data-modal-variant="calendar"] button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .qc-cal-event-card__move,
+  .qc-calendar-unscheduled__action { padding: 8px 4px; }
+  .qc-cal-filter-option { min-height: 44px; align-items: center; }
+  .qc-cal-filter-option input { width: 24px; height: 24px; }
+  [data-modal-variant="calendar"] :where(input, select) { min-height: 44px; }
+}
+
+/* This selector covers controls rendered in the FullCalendar tree and the
+ * Calendar dialogs rendered through FloatingPortal outside that tree. */
+.production-calendar :where(.fc-event, button, [role="button"], input, select, textarea, [tabindex]):focus-visible,
+.qc-calendar-screen :where(button, [role="button"], input, select, textarea, [tabindex]):focus-visible,
+[data-modal-variant="calendar"] :where(button, input, select, textarea, [tabindex]):focus-visible,
+.qc-cal-event-card:focus-visible {
+  /* Fallback literal: --focus-ring is scoped to .production-calendar, but the
+   * portaled Calendar dialogs render outside that subtree. */
+  outline: 2px solid var(--focus-ring, #2f3b4d);
+  outline-offset: 2px;
+}
+
+/* App-wide reduced-motion rules do not see JS-mocked media queries. The data
+ * attribute mirrors that preference for Calendar-only transitions while
+ * retaining the state changes themselves. */
+@media (prefers-reduced-motion: reduce) {
+  .production-calendar :where(.fc, .fc *),
+  .qc-calendar-screen,
+  .qc-calendar-screen *,
+  [data-modal-variant="calendar"] * {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+.production-calendar[data-reduced-motion="true"] :where(.fc, .fc *),
+.qc-calendar-screen[data-reduced-motion="true"],
+.qc-calendar-screen[data-reduced-motion="true"] *,
+:root:has(.qc-calendar-screen[data-reduced-motion="true"]) [data-modal-variant="calendar"] * {
+  transition: none !important;
+  animation: none !important;
 }

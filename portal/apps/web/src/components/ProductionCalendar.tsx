@@ -73,6 +73,7 @@ import { ProductionCalendarScheduleEditor, type ProductionCalendarScheduleEditor
 import { ProductionCalendarUnscheduledPanel, unscheduledChecklistDraggable, unscheduledProjectDraggable } from "./ProductionCalendarUnscheduledPanel";
 import { presentationStages, useStages } from "../lib/stages";
 import { useCapabilities } from "../lib/capabilities";
+import { useMediaQuery, usePrefersReducedMotion } from "../lib/use-media-query";
 
 export type ProductionCalendarProps = {
   identity: DashboardIdentity;
@@ -353,6 +354,12 @@ function checklistInputFromSchedule(schedule: ChecklistScheduleDto): InitialChec
   };
 }
 
+function checklistCurrentCivil(event: ChecklistCalendarEventDto): string {
+  if (event.schedule.state === "due_only") return event.schedule.end?.localCivil ?? event.timing.start;
+  if (event.schedule.state === "range") return event.schedule.start?.localCivil ?? event.timing.start;
+  return event.timing.start;
+}
+
 function inputDisambiguation(schedule: InitialChecklistScheduleInput, endpoint: "start" | "end"): "earlier" | "later" | undefined {
   const value = schedule.state === "range" ? schedule[endpoint] : schedule.state === "due_only" && endpoint === "end" ? schedule.end : undefined;
   return value?.kind === "timed" ? value.disambiguation : undefined;
@@ -443,6 +450,10 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
   const queryClient = useOptionalProjectQueryClient();
   const { stages } = useStages();
   const { can } = useCapabilities();
+  const prefersReducedMotion = usePrefersReducedMotion();
+  const coarsePointer = useMediaQuery("(pointer: coarse)");
+  const phoneViewport = useMediaQuery("(max-width: 720px)");
+  const actionOnlyWeek = coarsePointer && phoneViewport && calendar.subview === "week";
   const canAdminBackend = can("adminBackend");
   const stageOptions = useMemo(() => {
     const presented = presentationStages(stages, canAdminBackend);
@@ -465,6 +476,7 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
   const [checklistRangeSchedulingDisabled, setChecklistRangeSchedulingDisabled] = useState(false);
   const [checklistNeedsAttention, setChecklistNeedsAttention] = useState<Set<string>>(() => new Set());
   const [announcement, setAnnouncement] = useState("");
+  const [calendarAccessLost, setCalendarAccessLost] = useState(false);
   const acceptedResponseRef = useRef<ProductionCalendarRangeResponse | null>(null);
   const snapshotRef = useRef<CalendarAcceptedSnapshot | null>(null);
   const acceptGateRef = useRef(false);
@@ -544,6 +556,7 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
     // The reset permits a newly navigated Calendar route to recover from an
     // access purge; the token bump above still fences every older async path.
     accessLostRef.current = false;
+    setCalendarAccessLost(false);
     if (confirmStore.getSnapshot()) confirmStore.resolve(false);
   }, [calendar.date, calendar.subview, calendar.layers, calendar.editorIds, calendar.includeUnassigned, calendar.stageKeys, calendar.showCompletedChecklist, calendar.showDeliveredProjects, calendar.overdueOnly, calendar.search, calendar.myTasks, identity.principalId, identity.role, identity.authorizationEpoch, setAcceptGate, setOverlay, setSettle]);
 
@@ -588,7 +601,7 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
     return canDrag === event.permissions.canDrag ? event : { ...event, permissions: { ...event.permissions, canDrag } } as CalendarEventDto;
   }), [calendar.subview, calendarInteractionBlocked, calendarSettle.pending, checklistNeedsAttention, deadlineMovementDisabled, identity.role, rangesEnabled, sourceEvents]);
   const displayEvents = useMemo(() => applyOptimisticOverlay(renderEvents, optimisticOverlay), [optimisticOverlay, renderEvents]);
-  const mappedEvents = useMemo(() => mapCalendarEventsToFullCalendar(displayEvents), [displayEvents]);
+  const mappedEvents = useMemo(() => mapCalendarEventsToFullCalendar(displayEvents, { actionOnly: actionOnlyWeek }), [actionOnlyWeek, displayEvents]);
   const sourceUnscheduled = acceptedResponse?.unscheduled ?? (!calendarInteractionBlocked ? query.data?.unscheduled ?? [] : []);
   const renderUnscheduled = useMemo(() => optimisticOverlay && "kind" in optimisticOverlay && optimisticOverlay.kind === "reschedule-unscheduled"
     ? sourceUnscheduled.filter((entry) => entry.id !== optimisticOverlay.entryId)
@@ -627,6 +640,10 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
     if (message) setAnnouncement(message);
   }, []);
 
+  const announceChecklistLifecycle = useCallback((kind: Parameters<typeof calendarAnnouncement>[0], context: Omit<Parameters<typeof calendarAnnouncement>[1], "entity">) => {
+    announceLifecycle(kind, { ...context, entity: "checklist" });
+  }, [announceLifecycle]);
+
   const focusDescriptor = useCallback((descriptor: CalendarFocusDescriptor) => {
     if (accessLostRef.current) return;
     if (descriptor.control === "safe-fallback") {
@@ -649,6 +666,7 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
 
   const handleAccessLoss = useCallback(() => {
     accessLostRef.current = true;
+    setCalendarAccessLost(true);
     operationTokenRef.current += 1;
     commandLockRef.current.active = false;
     setAcceptGate(false);
@@ -725,7 +743,7 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
     commandLockRef.current.active = false;
     snapshotRef.current = null;
     setAcceptGate(false);
-    announceLifecycle("cancelled", { street: snapshot?.event.project.street, oldCivil });
+    announceLifecycle("cancelled", { entity: "deadline", street: snapshot?.event.project.street, oldCivil });
     focusDescriptor(snapshot?.focus ?? { eventId: snapshot?.event.id ?? "", control: "event" });
     if (flush) flushQueuedRefetch();
   }, [announceLifecycle, flushQueuedRefetch, focusDescriptor, setAcceptGate, setOverlay]);
@@ -755,7 +773,7 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
   const runConfirmedProposal = useCallback(async (proposal: DeadlineProposal) => {
     const token = operationTokenRef.current;
     if (accessLostRef.current || token !== operationTokenRef.current) return;
-    announceLifecycle("confirm-required", { street: proposal.event.project.street, oldCivil: proposal.event.deadlineLocalCivil, newCivil: proposal.localCivil });
+    announceLifecycle("confirm-required", { entity: "deadline", street: proposal.event.project.street, oldCivil: proposal.event.deadlineLocalCivil, newCivil: proposal.localCivil });
     const consequences = previewProjectDeadlineReminderConsequences({
       oldDeadline: { localCivil: proposal.event.deadlineLocalCivil, instant: proposal.event.timing.allDay ? undefined : proposal.event.timing.start },
       newDeadline: { localCivil: proposal.localCivil, instant: proposal.timing.allDay ? undefined : proposal.timing.start },
@@ -780,7 +798,7 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
     setOverlay(proposal.unscheduledEntry
       ? { kind: "reschedule-unscheduled", entryId: proposal.unscheduledEntry.id, timing: proposal.timing, asEvent: { ...proposal.event, timing: proposal.timing, deadlineLocalCivil: proposal.localCivil } }
       : { eventId: proposal.event.id, timing: proposal.timing });
-    announceLifecycle("saving", { street: proposal.event.project.street, newCivil: proposal.localCivil });
+    announceLifecycle("saving", { entity: "deadline", street: proposal.event.project.street, newCivil: proposal.localCivil });
     try {
       const response = await apiPut<SaveResponse, SaveProjectDeadlineRequest>(`/api/projects/${encodeURIComponent(proposal.event.project.id)}/deadline`, proposal.request);
       if (accessLostRef.current || token !== operationTokenRef.current) return;
@@ -791,7 +809,7 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
         commandLockRef.current.active = false;
         snapshotRef.current = null;
         setAcceptGate(false);
-        announceLifecycle("no-change", {});
+        announceLifecycle("no-change", { entity: "deadline" });
         flushQueuedRefetch();
         return;
       }
@@ -810,10 +828,10 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
       if (settled.ok) {
         setSettle({ type: "refetch-succeeded" });
         setOverlay(null);
-        announceLifecycle("saved", { street: proposal.event.project.street, newCivil: proposal.localCivil });
+        announceLifecycle("saved", { entity: "deadline", street: proposal.event.project.street, newCivil: proposal.localCivil });
       } else if (!accessLostRef.current) {
         setSettle({ type: "refetch-failed", reason: "The latest Calendar could not be loaded." });
-        announceLifecycle("settle-failed", {});
+        announceLifecycle("settle-failed", { entity: "deadline" });
       }
     } catch (error) {
       if (accessLostRef.current || token !== operationTokenRef.current) return;
@@ -838,7 +856,7 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
         commandLockRef.current.active = false;
         await refetchAuthoritative();
         if (accessLostRef.current || token !== operationTokenRef.current) return;
-        setAnnouncement("The move could not be saved. Reloaded the latest.");
+        announceLifecycle("rollback", { entity: "deadline" });
         focusDescriptor({ eventId: proposal.event.id, control: "event" });
         return;
       }
@@ -884,14 +902,14 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
       if (mapped.error.code === "nonexistent_local_time") {
         drop.revert();
         setMoveDialog({ event, snapshot, initialCivil: localCivil, drop });
-        setAnnouncement("That time does not exist in Sydney on that date (daylight-saving gap). Pick another time.");
+        announceLifecycle("dst-gap", { entity: "deadline" });
         return;
       }
       drop.revert();
       setAcceptGate(false);
       commandLockRef.current.active = false;
       snapshotRef.current = null;
-      setAnnouncement(mapped.error.code === "nonexistent_local_time" ? "That time does not exist in Sydney on that date (daylight-saving gap). Pick another time." : "That is not a valid Sydney time. Adjust the value and try again.");
+      announceLifecycle(mapped.error.code === "nonexistent_local_time" ? "dst-gap" : "invalid", { entity: "deadline" });
       focusDescriptor({ eventId: event.id, control: "event" });
       flushQueuedRefetch();
       return;
@@ -928,7 +946,7 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
       if (mapped.error.code === "nonexistent_local_time") {
         drop?.revert();
         setMoveDialog({ event, snapshot, initialCivil: localCivil, drop, unscheduledEntry: entry });
-        setAnnouncement("That time does not exist in Sydney on that date (daylight-saving gap). Pick another time.");
+        announceLifecycle("dst-gap", { entity: "deadline" });
         return;
       }
       drop?.revert();
@@ -936,7 +954,7 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
       setAcceptGate(false);
       commandLockRef.current.active = false;
       snapshotRef.current = null;
-      setAnnouncement("That is not a valid Sydney time. Adjust the value and try again.");
+      announceLifecycle("invalid", { entity: "deadline" });
       focusDescriptor({ eventId: entry.id, control: "event" });
       flushQueuedRefetch();
       return;
@@ -960,6 +978,7 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
   }, [flushQueuedRefetch, focusDescriptor, proposalFromRequest, runConfirmedProposal, setAcceptGate, setOverlay]);
 
   const handleDeadlineDrop = useCallback((info: CalendarDropInfo) => {
+    if (actionOnlyWeek) { info.revert(); return; }
     if (calendar.subview === "agenda") { info.revert(); return; }
     const dto = info.event.extendedProps.dto;
     if (!dto || typeof dto !== "object" || (dto as { kind?: unknown }).kind !== "project_deadline") { info.revert(); return; }
@@ -970,7 +989,7 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
       civil = fullCalendarCallbackToSydneyCivil({ allDay: info.event.allDay, date: info.event.start!, dateStr: info.event.startStr });
     } catch {
       info.revert();
-      setAnnouncement("That is not a valid Sydney time. Adjust the value and try again.");
+      announceLifecycle("invalid", { entity: "deadline" });
       return;
     }
     const localCivil = civil.allDay ? proposedCivilForAllDay(event, civil.date) : civil.localCivil;
@@ -978,16 +997,16 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
     const snapshot = acceptForInteraction(event, { eventId: event.id, control: "event" });
     if (!snapshot) { info.revert(); return; }
     commandLockRef.current.active = true;
-    announceLifecycle("picked-up", { street: event.project.street, oldCivil: event.deadlineLocalCivil });
+    announceLifecycle("picked-up", { entity: "deadline", street: event.project.street, oldCivil: event.deadlineLocalCivil });
     mapAndRunDropProposal(snapshot, event, localCivil, subview, undefined, info);
-  }, [acceptForInteraction, announceLifecycle, calendar.subview, deadlineMovementDisabled, identity.role, mapAndRunDropProposal]);
+  }, [acceptForInteraction, actionOnlyWeek, announceLifecycle, calendar.subview, deadlineMovementDisabled, identity.role, mapAndRunDropProposal]);
 
   const openMoveDialog = useCallback((event: ProjectDeadlineCalendarEventDto) => {
     if (identity.role !== "admin" || !event.permissions.canDrag || deadlineMovementDisabled || settleRef.current.pending || !canStartCalendarCommand(commandLockRef.current)) return;
     const snapshot = acceptForInteraction(event, { eventId: event.id, control: "move-reschedule" });
     if (!snapshot) return;
     commandLockRef.current.active = true;
-    announceLifecycle("picked-up", { street: event.project.street, oldCivil: event.deadlineLocalCivil });
+    announceLifecycle("picked-up", { entity: "deadline", street: event.project.street, oldCivil: event.deadlineLocalCivil });
     setMoveDialog({ event, snapshot, initialCivil: event.deadlineLocalCivil });
   }, [acceptForInteraction, announceLifecycle, deadlineMovementDisabled, identity.role]);
 
@@ -999,7 +1018,7 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
     const snapshot = { ...sourceSnapshot, event } as CalendarAcceptedSnapshot<ProjectDeadlineCalendarEventDto>;
     const initialCivil = `${calendar.date}T17:00`;
     commandLockRef.current.active = true;
-    announceLifecycle("picked-up", { street: entry.project.street, oldCivil: "Not scheduled" });
+    announceLifecycle("picked-up", { entity: "deadline", street: entry.project.street, oldCivil: "Not scheduled" });
     setMoveDialog({ event, snapshot, initialCivil, unscheduledEntry: entry });
   }, [acceptForInteraction, announceLifecycle, calendar.date, calendarInteractionBlocked, rangesEnabled]);
 
@@ -1034,10 +1053,10 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
         setAcceptGate(true);
         commandLockRef.current.active = true;
         setMoveDialog({ ...state, initialCivil: localCivil, foldChoices: proposalResult.choices });
-        setAnnouncement("That time occurs twice in Sydney that day. Choose the earlier or later occurrence.");
+        announceLifecycle("fold-choice", { entity: "deadline" });
       } else if (proposalResult.reason === "gap") {
         setMoveDialog({ ...state, initialCivil: localCivil, foldChoices: undefined });
-        setAnnouncement("That time does not exist in Sydney on that date (daylight-saving gap). Pick another time.");
+        announceLifecycle("dst-gap", { entity: "deadline" });
       } else {
         setMoveDialog({ ...state, initialCivil: localCivil, foldChoices: undefined });
       }
@@ -1057,7 +1076,7 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
     finishInteraction(state.drop, state.snapshot.event.deadlineLocalCivil);
   }, [finishInteraction, moveDialog]);
 
-  const finishChecklistInteraction = useCallback((operation: ChecklistOperationInfo, source: ChecklistSource, message?: string, flush = true) => {
+  const finishChecklistInteraction = useCallback((operation: ChecklistOperationInfo, source: ChecklistSource, announcement?: { kind: Parameters<typeof calendarAnnouncement>[0]; context?: Omit<Parameters<typeof calendarAnnouncement>[1], "entity"> }, flush = true) => {
     operation.drop?.revert();
     operation.resize?.revert();
     setOverlay(null);
@@ -1066,10 +1085,10 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
     commandLockRef.current.active = false;
     snapshotRef.current = null;
     setAcceptGate(false);
-    if (message) setAnnouncement(message);
+    if (announcement) announceChecklistLifecycle(announcement.kind, announcement.context ?? {});
     focusDescriptor({ eventId: source.id, control: "event" });
     if (flush) flushQueuedRefetch();
-  }, [flushQueuedRefetch, focusDescriptor, setAcceptGate, setOverlay]);
+  }, [announceChecklistLifecycle, flushQueuedRefetch, focusDescriptor, setAcceptGate, setOverlay]);
 
   const runChecklistMutation = useCallback(async (proposal: ChecklistProposal) => {
     const token = operationTokenRef.current;
@@ -1083,7 +1102,7 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
         ? { kind: "reschedule-unscheduled", entryId: proposal.source.id, timing: proposal.timing, asEvent: optimisticEvent }
         : { eventId: proposal.source.id, timing: proposal.timing }
       : null);
-    setAnnouncement(`Saving checklist item for ${proposal.source.project.street}.`);
+    announceChecklistLifecycle("saving", { street: proposal.source.project.street });
     try {
       // The captured role chooses the response arm before this request. The
       // internal Worker DTO is intentionally not treated as the External DTO.
@@ -1105,7 +1124,7 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
         commandLockRef.current.active = false;
         snapshotRef.current = null;
         setAcceptGate(false);
-        setAnnouncement("No change.");
+        announceChecklistLifecycle("no-change", {});
         flushQueuedRefetch();
         return;
       }
@@ -1126,10 +1145,10 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
       if (settled.ok) {
         setSettle({ type: "refetch-succeeded" });
         setOverlay(null);
-        setAnnouncement(`Saved checklist item for ${proposal.source.project.street}.`);
+        announceChecklistLifecycle("saved", { street: proposal.source.project.street });
       } else if (!accessLostRef.current) {
         setSettle({ type: "refetch-failed", reason: "The latest Calendar could not be loaded." });
-        setAnnouncement("The schedule was saved, but the latest Calendar could not be loaded. Refresh to continue.");
+        announceChecklistLifecycle("settle-failed", {});
       }
     } catch (error) {
       if (accessLostRef.current || token !== operationTokenRef.current) return;
@@ -1170,7 +1189,7 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
         snapshotRef.current = null;
         await refetchAuthoritative();
         if (accessLostRef.current || token !== operationTokenRef.current) return;
-        setAnnouncement("The checklist schedule could not be saved. Reloaded the latest.");
+        announceChecklistLifecycle("rollback", {});
         focusDescriptor({ eventId: proposal.source.id, control: "event" });
         return;
       }
@@ -1194,7 +1213,7 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
       setAnnouncement(action.announce);
       if (!action.refetch && action.code !== "subtask_schedule_storage_invalid") flushQueuedRefetch();
     }
-  }, [acceptRange, flushQueuedRefetch, focusDescriptor, handleAccessLoss, identity.role, queryClient, refetchAuthoritative, setAcceptGate, setOverlay, setSettle]);
+  }, [acceptRange, announceChecklistLifecycle, flushQueuedRefetch, focusDescriptor, handleAccessLoss, identity.role, queryClient, refetchAuthoritative, setAcceptGate, setOverlay, setSettle]);
 
   const mapChecklistCommand = useCallback((snapshot: ChecklistSnapshot, event: ChecklistSource, target: CalendarManipulationTarget, operation: ChecklistOperationInfo, disambiguation?: ChecklistDisambiguation, edge?: "end") => {
     const mapped = edge
@@ -1209,22 +1228,19 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
         const sourceSchedule = checklistInputFromSchedule(event.schedule);
         const proposal: ChecklistProposal = { snapshot, source: event, request: { expectedVersion: event.schedule.version, schedule: sourceSchedule }, schedule: sourceSchedule, timing: "timing" in event ? event.timing : null, operation, target, ...(edge ? { edge } : {}) };
         setChecklistFold({ proposal, disambiguation: typeof disambiguation === "object" ? disambiguation : {}, endpoint: mapped.error.endpoint, choices: mapped.error.choices });
-        setAnnouncement("That time occurs twice in Sydney that day. Choose the earlier or later occurrence for each endpoint.");
+        announceChecklistLifecycle("fold-choice", {});
         return;
       }
-      const message = nonexistent
-        ? "That time does not exist in Sydney on that date (daylight-saving gap)."
-        : "That schedule change isn't valid.";
-      finishChecklistInteraction(operation, event, message);
+      finishChecklistInteraction(operation, event, { kind: nonexistent ? "dst-gap" : "invalid" });
       return;
     }
     if (!rangesEnabled && mapped.value.schedule.state === "range") {
-      finishChecklistInteraction(operation, event, "Range scheduling is unavailable in this app version.");
+      finishChecklistInteraction(operation, event, { kind: "range-disabled" });
       return;
     }
     const normalized = normalizeChecklistSchedule(mapped.value.schedule, mapped.value.expectedVersion);
     if (!normalized.ok) {
-      finishChecklistInteraction(operation, event, "That schedule change isn't valid.");
+      finishChecklistInteraction(operation, event, { kind: "invalid" });
       return;
     }
     const proposal: ChecklistProposal = {
@@ -1238,7 +1254,7 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
       ...(edge ? { edge } : {}),
     };
     void runChecklistMutation(proposal);
-  }, [finishChecklistInteraction, rangesEnabled, runChecklistMutation]);
+  }, [announceChecklistLifecycle, finishChecklistInteraction, rangesEnabled, runChecklistMutation]);
 
   const handleChecklistFoldSubmit = useCallback((choice: "earlier" | "later") => {
     const state = checklistFold;
@@ -1251,10 +1267,11 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
   const handleChecklistFoldCancel = useCallback(() => {
     const state = checklistFold;
     if (!state) return;
-    finishChecklistInteraction(state.proposal.operation, state.proposal.source, "Cancelled scheduling the checklist item.");
+    finishChecklistInteraction(state.proposal.operation, state.proposal.source, { kind: "cancelled" });
   }, [checklistFold, finishChecklistInteraction]);
 
   const handleChecklistDrop = useCallback((info: CalendarDropInfo) => {
+    if (actionOnlyWeek) { info.revert(); return; }
     const dto = info.event.extendedProps.dto;
     if (!dto || typeof dto !== "object" || (dto as { kind?: unknown }).kind !== "checklist") { info.revert(); return; }
     const event = dto as ChecklistCalendarEventDto;
@@ -1264,7 +1281,7 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
       civil = fullCalendarCallbackToSydneyCivil({ allDay: info.event.allDay, date: info.event.start!, dateStr: info.event.startStr });
     } catch {
       info.revert();
-      setAnnouncement("That schedule change isn't valid.");
+      announceChecklistLifecycle("invalid", {});
       focusDescriptor({ eventId: event.id, control: "event" });
       return;
     }
@@ -1274,16 +1291,18 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
     if (subview === "month") {
       target = { subview, targetDate, ...(event.schedule.state === "range" ? { end: info.event.endStr, exclusiveEnd: info.event.endStr } : {}) };
     } else {
-      if (civil.allDay) { info.revert(); setAnnouncement("That schedule change isn't valid."); focusDescriptor({ eventId: event.id, control: "event" }); return; }
+      if (civil.allDay) { info.revert(); announceChecklistLifecycle("invalid", {}); focusDescriptor({ eventId: event.id, control: "event" }); return; }
       target = { subview, targetDate, targetCivilMinute: civil.localCivil };
     }
     const snapshot = acceptForInteraction(event, { eventId: event.id, control: "event" });
     if (!snapshot) { info.revert(); return; }
     commandLockRef.current.active = true;
+    announceChecklistLifecycle("picked-up", { street: event.project.street, oldCivil: checklistCurrentCivil(event), overlap: event.status.sameAssigneeOverlap === true, assignee: event.assignee?.name });
     mapChecklistCommand(snapshot, event, target, { drop: info });
-  }, [acceptForInteraction, calendar.subview, focusDescriptor, mapChecklistCommand, rangesEnabled]);
+  }, [acceptForInteraction, actionOnlyWeek, announceChecklistLifecycle, calendar.subview, focusDescriptor, mapChecklistCommand, rangesEnabled]);
 
   const handleChecklistResize = useCallback((info: CalendarResizeInfo) => {
+    if (actionOnlyWeek) { info.revert(); return; }
     const dto = info.event.extendedProps.dto;
     if (!dto || typeof dto !== "object" || (dto as { kind?: unknown }).kind !== "checklist") { info.revert(); return; }
     const event = dto as ChecklistCalendarEventDto;
@@ -1306,18 +1325,19 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
       }
     } catch {
       info.revert();
-      setAnnouncement("That schedule change isn't valid.");
+      announceChecklistLifecycle("invalid", {});
       focusDescriptor({ eventId: event.id, control: "event" });
       return;
     }
     const snapshot = acceptForInteraction(event, { eventId: event.id, control: "event" });
     if (!snapshot) { info.revert(); return; }
     commandLockRef.current.active = true;
+    announceChecklistLifecycle("picked-up", { street: event.project.street, oldCivil: checklistCurrentCivil(event), overlap: event.status.sameAssigneeOverlap === true, assignee: event.assignee?.name });
     mapChecklistCommand(snapshot, event, target, { resize: info }, undefined, "end");
-  }, [acceptForInteraction, calendar.subview, focusDescriptor, mapChecklistCommand, rangesEnabled]);
+  }, [acceptForInteraction, actionOnlyWeek, announceChecklistLifecycle, calendar.subview, focusDescriptor, mapChecklistCommand, rangesEnabled]);
 
   const handleUnscheduledDrop = useCallback((info: CalendarExternalDropInfo) => {
-    if (calendar.subview === "agenda" || calendarInteractionBlocked || settleRef.current.pending || !canStartCalendarCommand(commandLockRef.current)) {
+    if (calendar.subview === "agenda" || actionOnlyWeek || calendarInteractionBlocked || settleRef.current.pending || !canStartCalendarCommand(commandLockRef.current)) {
       return;
     }
     const unscheduledId = info.draggedEl.dataset.unscheduledId;
@@ -1334,7 +1354,7 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
     try {
       civil = fullCalendarCallbackToSydneyCivil({ allDay: info.allDay, date: info.date, dateStr: info.dateStr });
     } catch {
-      setAnnouncement("That is not a valid Sydney time. Adjust the value and try again.");
+      announceLifecycle("invalid", { entity: entry.kind === "checklist" ? "checklist" : "deadline" });
       return;
     }
     const subview = calendar.subview === "month" ? "month" : "week";
@@ -1344,7 +1364,7 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
       target = { subview, targetDate };
     } else {
       if (civil.allDay) {
-        setAnnouncement("That schedule change isn't valid.");
+        announceLifecycle("invalid", { entity: entry.kind === "checklist" ? "checklist" : "deadline" });
         return;
       }
       target = { subview, targetDate, targetCivilMinute: civil.localCivil };
@@ -1359,24 +1379,30 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
       const event = projectDeadlinePlaceholder(entry);
       const deadlineSnapshot = { ...snapshot, event } as CalendarAcceptedSnapshot<ProjectDeadlineCalendarEventDto>;
       const localCivil = subview === "month" ? `${targetDate}T17:00` : target.targetCivilMinute!;
-      announceLifecycle("picked-up", { street: entry.project.street, oldCivil: "Not scheduled" });
+      announceLifecycle("picked-up", { entity: "deadline", street: entry.project.street, oldCivil: "Not scheduled" });
       mapAndRunUnscheduledProjectProposal(deadlineSnapshot, entry, event, localCivil, target, undefined, undefined);
       return;
     }
     mapChecklistCommand(snapshot as ChecklistSnapshot, entry, target, { external: true });
-  }, [acceptForInteraction, announceLifecycle, calendar.subview, calendarInteractionBlocked, mapAndRunUnscheduledProjectProposal, mapChecklistCommand, rangesEnabled, setAcceptGate]);
+  }, [acceptForInteraction, actionOnlyWeek, announceChecklistLifecycle, announceLifecycle, calendar.subview, calendarInteractionBlocked, mapAndRunUnscheduledProjectProposal, mapChecklistCommand, rangesEnabled, setAcceptGate]);
 
   const handleUnscheduledReceive = useCallback((info: CalendarExternalReceiveInfo) => {
     info.revert();
   }, []);
 
   const openChecklistScheduleEditor = useCallback((source: ChecklistSource, initialSchedule?: InitialChecklistScheduleInput) => {
-    if (source.schedule.state === "invalid" || !source.permissions.canOpenScheduleEditor || settleRef.current.pending || !canStartCalendarCommand(commandLockRef.current)) return;
+    if (source.schedule.state === "invalid" || !source.permissions.canOpenScheduleEditor || calendarInteractionBlocked || settleRef.current.pending || !canStartCalendarCommand(commandLockRef.current)) return;
     const snapshot = acceptForInteraction(source, { eventId: source.id, control: "move-reschedule" });
     if (!snapshot) return;
     commandLockRef.current.active = true;
+    announceChecklistLifecycle("picked-up", {
+      street: source.project.street,
+      oldCivil: "timing" in source ? checklistCurrentCivil(source) : "Not scheduled",
+      ...("timing" in source && source.assignee?.name ? { assignee: source.assignee.name } : {}),
+      ...("timing" in source && source.status.sameAssigneeOverlap === true ? { overlap: true } : {}),
+    });
     setScheduleEditor({ source, snapshot, ...(initialSchedule ? { initialSchedule } : {}) });
-  }, [acceptForInteraction]);
+  }, [acceptForInteraction, announceChecklistLifecycle, calendarInteractionBlocked]);
 
   const openUnscheduledChecklistScheduleEditor = useCallback((entry: ChecklistCalendarUnscheduledEntryDto) => {
     const initialSchedule: InitialChecklistScheduleInput | undefined = entry.reason === "unscheduled"
@@ -1412,7 +1438,7 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
   const handleScheduleEditorCancel = useCallback(() => {
     const state = scheduleEditor;
     if (!state) return;
-    finishChecklistInteraction({ editor: true }, state.source, "Cancelled scheduling the checklist item.");
+    finishChecklistInteraction({ editor: true }, state.source, { kind: "cancelled" });
   }, [finishChecklistInteraction, scheduleEditor]);
 
   const handleCalendarDrop = useCallback((info: CalendarDropInfo) => {
@@ -1451,7 +1477,7 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
   }, [setOverlay, setSettle]);
 
   return (
-    <section className="qc-calendar-screen" aria-label="Production Calendar" tabIndex={-1} data-focus-key="calendar-safe-fallback">
+    <section className="qc-calendar-screen" aria-label="Production Calendar" tabIndex={-1} data-focus-key="calendar-safe-fallback" data-reduced-motion={prefersReducedMotion ? "true" : undefined}>
       <ProductionCalendarToolbar calendar={calendar} range={range} onNavigate={(next) => { if (!calendarInteractionBlocked) { clearSettleOnNavigation(); onNavigate(next); } }} />
       <ProductionCalendarFiltersPanel
         filters={productionCalendarFiltersFor(calendar)}
@@ -1472,7 +1498,7 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
         </div>
       )}
 
-      {acceptedResponse && <div className="qc-calendar-layout">
+      {acceptedResponse && !calendarAccessLost && <div className="qc-calendar-layout">
         <div className="qc-calendar-grid">
           {acceptedResponse.events.length === 0 && <div className="empty qc-calendar-state" role="status">No scheduled work in this range.</div>}
           <ProductionCalendarSurface
@@ -1482,12 +1508,14 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
             visibleRange={range}
             headerToolbar={false}
             events={mappedEvents}
-            editable={mappedEvents.some((event) => event.editable === true)}
-            eventStartEditable
-            eventDurationEditable
+            editable={!actionOnlyWeek && mappedEvents.some((event) => event.editable === true)}
+            eventStartEditable={!actionOnlyWeek}
+            eventDurationEditable={!actionOnlyWeek}
             eventResizableFromStart={false}
-            droppable={panelHasDraggableEntry && calendar.subview !== "agenda" && !calendarInteractionBlocked && !calendarSettle.pending}
+            dragScroll={!actionOnlyWeek}
+            droppable={!actionOnlyWeek && panelHasDraggableEntry && calendar.subview !== "agenda" && !calendarInteractionBlocked && !calendarSettle.pending}
             selectable={false}
+            reducedMotion={prefersReducedMotion}
             weekends
             firstDay={1}
             slotMinTime="00:00:00"
@@ -1523,6 +1551,7 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
           onScheduleProject={openUnscheduledProjectDialog}
           onScheduleChecklist={openUnscheduledChecklistScheduleEditor}
           disabled={calendarInteractionBlocked || calendarSettle.pending}
+          dragSuppressed={actionOnlyWeek}
         />
       </div>}
       <div className="dashboard-live-region sr-only" aria-live="polite" aria-atomic="true">{announcement}</div>

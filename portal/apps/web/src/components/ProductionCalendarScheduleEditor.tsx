@@ -142,7 +142,7 @@ export function ProductionCalendarScheduleEditor({ event, rangesEnabled, onSubmi
     onSubmit(input);
   };
 
-  return <Modal title="Schedule checklist item" eyebrow={event.project.street} onClose={onCancel} wide initialFocus={0} testId="calendar-schedule-editor" footer={<>
+  return <Modal title="Schedule checklist item" eyebrow={event.project.street} onClose={onCancel} wide initialFocus={0} testId="calendar-schedule-editor" variant="calendar" footer={<>
     <button className="button button--secondary" type="button" data-testid="calendar-schedule-cancel" onClick={onCancel}>Cancel</button>
     <button className="button" type="button" data-testid="calendar-schedule-submit" onClick={submit}>Save schedule</button>
   </>}>

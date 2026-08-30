@@ -44,7 +44,7 @@ export function ProductionCalendarMoveDialog({ event, initialCivil, foldChoices,
   const localCivil = `${date}T${time}`;
   const valid = validCivil(localCivil) && (!foldChoices || foldChoices.length === 0 || disambiguation !== undefined);
 
-  return <Modal title="Move / Reschedule Deadline" eyebrow={event.project.street} onClose={onCancel} initialFocus={0} testId="calendar-move-dialog" footer={<>
+  return <Modal title="Move / Reschedule Deadline" eyebrow={event.project.street} onClose={onCancel} initialFocus={0} testId="calendar-move-dialog" variant="calendar" footer={<>
     <button className="button button--secondary" type="button" data-testid="calendar-move-cancel" onClick={onCancel}>Cancel</button>
     <button className="button" type="button" data-testid="calendar-move-submit" disabled={!valid} onClick={() => onSubmit(localCivil, disambiguation)}>Save Deadline</button>
   </>}>

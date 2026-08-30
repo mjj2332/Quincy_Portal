@@ -69,6 +69,13 @@ describe("production calendar FullCalendar event mapping", () => {
     expect(mapCalendarEventToFullCalendar({ ...checklist, permissions: { ...checklist.permissions, canDrag: false } })).toMatchObject({ editable: false, startEditable: false, durationEditable: true });
   });
 
+  it("forces every event to be non-editable in action-only mode", () => {
+    expect(mapCalendarEventsToFullCalendar([deadline(), checklist], { actionOnly: true })).toEqual(expect.arrayContaining([
+      expect.objectContaining({ editable: false, startEditable: false, durationEditable: false, resourceEditable: false }),
+      expect.objectContaining({ editable: false, startEditable: false, durationEditable: false, resourceEditable: false }),
+    ]));
+  });
+
   it("derives Quincy-scoped kind and status classes", () => {
     expect(mapCalendarEventToFullCalendar(deadline({ status: { overdue: true, delivered: true, completed: false, sameAssigneeOverlap: false } })).classNames).toEqual(expect.arrayContaining(["qc-event--project", "is-overdue", "is-delivered"]));
     expect(mapCalendarEventToFullCalendar(checklist).classNames).toEqual(expect.arrayContaining(["qc-event--checklist", "is-completed", "is-overlap"]));

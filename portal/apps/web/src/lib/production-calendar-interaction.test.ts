@@ -158,13 +158,42 @@ describe("Production Calendar interaction model", () => {
   it("builds lifecycle copy and omits private detail when street is absent", () => {
     const kinds = ["picked-up", "confirm-required", "cancelled", "saving", "saved", "no-change", "settle-failed"] as const;
     for (const kind of kinds) {
-      const message = calendarAnnouncement(kind, { oldCivil: "2026-08-10T09:30", newCivil: "2026-08-20T09:30" });
+      const message = calendarAnnouncement(kind, { entity: "deadline", oldCivil: "2026-08-10T09:30", newCivil: "2026-08-20T09:30" });
       expect(message ?? "").not.toContain("undefined");
       expect(message ?? "").not.toContain("Street");
     }
-    expect(calendarAnnouncement("picked-up", { street: "12 Harbour Street", oldCivil: "2026-08-10T09:30" })).toContain("12 Harbour Street");
-    expect(calendarAnnouncement("settle-failed", {})).toBe("The move was saved, but the latest Calendar could not be loaded. Refresh to continue.");
-    expect(calendarAnnouncement("saved", { street: "12 Harbour Street", terminal: true })).toBeUndefined();
+    expect(calendarAnnouncement("picked-up", { entity: "deadline", street: "12 Harbour Street", oldCivil: "2026-08-10T09:30" })).toContain("12 Harbour Street");
+    expect(calendarAnnouncement("settle-failed", { entity: "deadline" })).toBe("The move was saved, but the latest Calendar could not be loaded. Refresh to continue.");
+    expect(calendarAnnouncement("saved", { entity: "deadline", street: "12 Harbour Street", terminal: true })).toBeUndefined();
+  });
+
+  it("builds every checklist lifecycle branch, including overlap and terminal suppression", () => {
+    const context = { entity: "checklist" as const, street: "12 Harbour Street", oldCivil: "2026-08-10T09:30", newCivil: "2026-08-20T09:30" };
+    expect(calendarAnnouncement("picked-up", { ...context, overlap: true })).toBe("Picked up the checklist schedule for 12 Harbour Street. Current time: 2026-08-10 09:30. This item overlaps another task for the same assignee.");
+    expect(calendarAnnouncement("picked-up", context)).not.toContain("overlaps another task");
+    expect(calendarAnnouncement("confirm-required", context)).toBe("Save the checklist schedule for 12 Harbour Street from 2026-08-10 09:30 to 2026-08-20 09:30. Confirmation required.");
+    expect(calendarAnnouncement("saving", context)).toBe("Saving the checklist schedule for 12 Harbour Street.");
+    expect(calendarAnnouncement("saved", context)).toBe("Saved the checklist schedule for 12 Harbour Street.");
+    expect(calendarAnnouncement("cancelled", context)).toBe("Cancelled scheduling the checklist item.");
+    expect(calendarAnnouncement("no-change", context)).toBe("No change.");
+    expect(calendarAnnouncement("conflict", context)).toBe("The checklist schedule changed elsewhere. Reloaded the latest; no retry was made.");
+    expect(calendarAnnouncement("rollback", context)).toBe("The checklist schedule could not be saved. Reloaded the latest.");
+    expect(calendarAnnouncement("settle-failed", context)).toBe("The schedule was saved, but the latest Calendar could not be loaded. Refresh to continue.");
+    expect(calendarAnnouncement("dst-gap", context)).toBe("That time does not exist in Sydney on that date (daylight-saving gap).");
+    expect(calendarAnnouncement("fold-choice", context)).toBe("That time occurs twice in Sydney that day. Choose the earlier or later occurrence for each endpoint.");
+    expect(calendarAnnouncement("invalid", context)).toBe("That schedule change isn't valid.");
+    expect(calendarAnnouncement("range-disabled", context)).toBe("Range scheduling is unavailable in this app version.");
+    expect(calendarAnnouncement("saved", { ...context, terminal: true })).toBeUndefined();
+  });
+
+  it("keeps checklist conflict copy identical to its classified failure arm", () => {
+    const classified = classifyChecklistFailure(new ApiError("conflict", 409, { code: "subtask_schedule_version_conflict" }), { eventId: "checklist:test" });
+    expect(calendarAnnouncement("conflict", { entity: "checklist" })).toBe(classified?.announce);
+  });
+
+  it("keeps deadline conflict copy identical to its classified failure arm", () => {
+    const classified = classifyDeadlineFailure(new ApiError("conflict", 409, { code: "deadline_version_conflict" }), { eventId: "x" });
+    expect(calendarAnnouncement("conflict", { entity: "deadline" })).toBe(classified?.announce);
   });
 
   it("serializes one command and keeps optimism behind confirmation", () => {

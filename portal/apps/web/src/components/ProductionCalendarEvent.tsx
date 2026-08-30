@@ -5,7 +5,7 @@ function StageBadge({ stageKey }: { stageKey: string }) {
   return <span className="qc-cal-stage" title={`Stage: ${stageKey}`}>Stage: {stageKey}</span>;
 }
 
-function Pill({ children, tone }: { children: string; tone: "overdue" | "delivered" | "completed" }) {
+function Pill({ children, tone }: { children: string; tone: "overdue" | "delivered" | "completed" | "overlap" }) {
   return <span className={`qc-cal-pill qc-cal-pill--${tone}`}>{children}</span>;
 }
 
@@ -46,6 +46,7 @@ export function ProductionCalendarEvent({ event, subview, compact = false, onMov
         {event.status.completed && <Pill tone="completed">✓ Completed</Pill>}
         {event.status.overdue && <Pill tone="overdue">Overdue</Pill>}
         {event.status.delivered && <Pill tone="delivered">Delivered</Pill>}
+        {event.status.sameAssigneeOverlap === true && <Pill tone="overlap">Overlaps another task</Pill>}
       </div>
       {needsAttention ? <p className="qc-cal-event-card__attention" role="status">Schedule data needs attention. Repair is unavailable in Calendar.</p> : !compact && event.permissions.canOpenScheduleEditor && onChecklistSchedule && <button className="button button--text qc-cal-event-card__move" type="button" data-focus-key={`calendar-move:${event.id}`} onClick={() => onChecklistSchedule(event)}>{checklistScheduleEditorButtonLabel(event)}</button>}
     </article>

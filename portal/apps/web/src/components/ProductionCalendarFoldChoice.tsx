@@ -19,7 +19,7 @@ function offsetLabel(minutes: number): string {
 export function ProductionCalendarFoldChoice({ title = "Choose Sydney time", eyebrow, endpoint, choices, onSubmit, onCancel }: ProductionCalendarFoldChoiceProps): JSX.Element {
   const [choice, setChoice] = useState<"earlier" | "later" | undefined>();
   const name = useId();
-  return <Modal title={title} eyebrow={eyebrow} onClose={onCancel} initialFocus={0} testId="calendar-fold-choice" footer={<>
+  return <Modal title={title} eyebrow={eyebrow} onClose={onCancel} initialFocus={0} testId="calendar-fold-choice" variant="calendar" footer={<>
     <button className="button button--secondary" type="button" data-testid="calendar-fold-cancel" onClick={onCancel}>Cancel</button>
     <button className="button" type="button" data-testid="calendar-fold-submit" disabled={!choice} onClick={() => { if (choice) onSubmit(choice); }}>Use this time</button>
   </>}>

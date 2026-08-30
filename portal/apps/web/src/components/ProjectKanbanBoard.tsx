@@ -29,7 +29,7 @@ import {
 import { SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS as DndCSS } from "@dnd-kit/utilities";
 import { isDeadlineOverdue, formatSydneyCivil, type Role, type StageKey } from "@quincy/shared";
-import { useCallback, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type RefCallback } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefCallback } from "react";
 import { AnchoredPopover, useAnchoredPopover } from "./AnchoredPopover";
 import { StatusBadge } from "./atoms";
 import { InternalLink } from "./InternalLink";
@@ -53,35 +53,12 @@ import {
   type KanbanSortMode,
 } from "../lib/kanban-interaction";
 import type { ProjectStageKey, PipelineStage } from "../lib/stages";
+import { usePrefersReducedMotion } from "../lib/use-media-query";
 
 export type BoardInteractionState = {
   activeId: string | undefined;
   proposal: SemanticGap | null;
 };
-
-const reducedMotionMediaQuery = "(prefers-reduced-motion: reduce)";
-
-function getPrefersReducedMotionSnapshot() {
-  return typeof window !== "undefined"
-    && typeof window.matchMedia === "function"
-    && window.matchMedia(reducedMotionMediaQuery).matches;
-}
-
-function subscribeToPrefersReducedMotion(onStoreChange: () => void) {
-  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return () => undefined;
-  const mediaQuery = window.matchMedia(reducedMotionMediaQuery);
-  const onChange = () => onStoreChange();
-  if (typeof mediaQuery.addEventListener === "function") mediaQuery.addEventListener("change", onChange);
-  else mediaQuery.addListener(onChange);
-  return () => {
-    if (typeof mediaQuery.removeEventListener === "function") mediaQuery.removeEventListener("change", onChange);
-    else mediaQuery.removeListener(onChange);
-  };
-}
-
-function usePrefersReducedMotion() {
-  return useSyncExternalStore(subscribeToPrefersReducedMotion, getPrefersReducedMotionSnapshot, () => false);
-}
 
 type BoardMoveHandler = (project: ProjectSummary, gap: SemanticGap, kind: "cross" | "same", focusDescriptor: FocusDescriptor) => void;
 
