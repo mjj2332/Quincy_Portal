@@ -113,6 +113,11 @@ function normalizeSearch(value: string | undefined): string {
   return (value ?? "").trim().replace(/\s+/gu, " ");
 }
 
+/** Query/API normalization; live input sanitization remains a web-state concern. */
+export function normalizeProductionCalendarSearch(value: string): string {
+  return normalizeSearch(value);
+}
+
 function normalizeFilters(input: ProductionCalendarFiltersInput): ProductionCalendarFilters {
   return {
     layers: canonicalize(input.layers, PRODUCTION_CALENDAR_LAYERS, PRODUCTION_CALENDAR_LAYERS),

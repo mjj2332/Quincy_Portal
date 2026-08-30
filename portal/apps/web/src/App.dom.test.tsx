@@ -33,6 +33,11 @@ async function click(element: Element) { await act(async () => { element.dispatc
 afterEach(async () => { if (root) await act(async () => root!.unmount()); root = null; document.body.replaceChildren(); seenSignals.splice(0); window.history.replaceState(null, "", "/"); });
 
 describe("App collaboration arrival transport", () => {
+  it("renders the Dashboard for a valid Calendar root location", async () => {
+    const host = await renderAt("/?view=calendar&date=2026-08-30&sub=agenda&layers=project%2Cchecklist");
+    expect(host.textContent).toContain("Dashboard");
+  });
+
   it("cleans each acknowledged intent and observes a later identical history arrival as a fresh signal", async () => {
     const projectId = "123e4567-e89b-42d3-a456-426614174000";
     const host = await renderAt(`/projects/${projectId}?collaboration=open`);
