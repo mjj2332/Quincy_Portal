@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { EXTERNAL_EDITOR_CAPABILITIES, ROLE_LABELS } from "./capabilities";
+import { externalAssetSchema } from "./external-asset-dto";
 import { externalEditedCompleteResponseSchema, externalEditedUploadCreateResponseSchema } from "./external-upload";
 import { STAGE_PRESENTATION_KEYS } from "./stage-move";
 
@@ -127,33 +128,7 @@ export const externalProjectDetailSchema = externalProjectSummarySchema.extend({
 }).strict();
 export type ExternalProjectDetailDto = z.infer<typeof externalProjectDetailSchema>;
 
-const reviewSchema = z.object({
-  stars: z.number().int().min(1).max(5).nullable(),
-  colorLabel: z.enum(["select", "maybe", "cut", "hero"]).nullable(),
-  decision: z.enum(["approved", "flagged"]).nullable(),
-  recommended: z.boolean(),
-}).strict();
-
-export const externalAssetSchema = z.object({
-  id: uuid,
-  collectionId: uuid,
-  kind: z.string(),
-  originalFilename: z.string(),
-  bytes: z.number().int().nonnegative(),
-  width: z.number().int().nullable(),
-  height: z.number().int().nullable(),
-  ratingFromMetadata: z.number().int().nullable(),
-  section: z.string().nullable(),
-  renditionStatus: z.enum(["ready", "processing"]),
-  createdAt: iso,
-  sourceRawAssetId: uuid.nullable(),
-  version: z.number().int().positive(),
-  versionGroupId: uuid.nullable(),
-  supersedesAssetId: uuid.nullable(),
-  review: reviewSchema.nullable(),
-  selected: z.boolean(),
-}).strict();
-export type ExternalAssetDto = z.infer<typeof externalAssetSchema>;
+export { externalAssetSchema, type ExternalAssetDto } from "./external-asset-dto";
 
 export const externalAnnotationSchema = z.object({
   id: uuid,

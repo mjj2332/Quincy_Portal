@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { externalAssetSchema, type ExternalAssetDto } from "./external-project-dto";
+import { externalAssetSchema } from "./external-asset-dto";
 
 export const EXTERNAL_UPLOAD_MAX_BYTES = 5 * 1024 * 1024 * 1024;
 export const EXTERNAL_UPLOAD_PART_BYTES = 64 * 1024 * 1024;
