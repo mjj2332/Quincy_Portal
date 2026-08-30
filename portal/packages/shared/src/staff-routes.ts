@@ -60,7 +60,7 @@ function unsafeText(value: string): boolean {
  * `search` containing a backslash serializes to `?q=%5C`, fails the parse guard,
  * and collapses `safeStaffDestination` to `/`.
  */
-function stripUnsafeText(value: string): string {
+export function stripUnsafeText(value: string): string {
   return Array.from(value).filter((char) => !unsafeText(char)).join("");
 }
 

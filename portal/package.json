@@ -19,12 +19,12 @@
     "db:migrate:local": "npm run migrate:local -w @quincy/db"
   },
   "dependencies": {
-    "@fullcalendar/core": "7.0.2",
-    "@fullcalendar/react": "7.0.2",
     "@base-ui/react": "1.7.0",
     "@dnd-kit/core": "6.3.1",
     "@dnd-kit/sortable": "10.0.0",
     "@dnd-kit/utilities": "3.2.2",
+    "@fullcalendar/core": "7.0.2",
+    "@fullcalendar/react": "7.0.2",
     "@floating-ui/react": "0.27.16",
     "@tanstack/react-query": "5.102.3",
     "@tiptap/core": "3.30.2",

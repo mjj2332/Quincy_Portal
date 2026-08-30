@@ -63,6 +63,14 @@ describe("production calendar query family", () => {
     );
   });
 
+  it("strips parse-unsafe characters from the API q parameter", () => {
+    const dirty = `smith${String.fromCharCode(92)}${String.fromCharCode(7)} street`;
+    const query = buildProductionCalendarQuery(calendar({ search: dirty }), { start: "2026-07-27", end: "2026-09-07" });
+    expect(query).toContain("q=smith+street");
+    expect(query.includes(String.fromCharCode(92))).toBe(false);
+    expect(query.includes("%5C")).toBe(false);
+  });
+
   it("selects strict Admin and External domains and rejects a cross-fed stage", async () => {
     const admin = response("editing_autohdr");
     const external = response("editing");

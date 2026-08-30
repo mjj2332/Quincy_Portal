@@ -797,6 +797,9 @@ export function mapChecklistEndResizeToCommand<TStage extends StageTransportKey>
   const disambiguation = endpointDisambiguation(input.disambiguation, "end");
   let nextEnd: ChecklistScheduleEndpointInput;
   if (oldEnd.kind === "date") {
+    // `targetDate` doubles as the exclusive all-day end when the dedicated field is
+    // absent (see CalendarManipulationTarget). A non-advancing result (inclusive
+    // end <= start) is rejected downstream by normalizedRequest.
     const exclusive = target.end ?? target.exclusiveEnd ?? target.targetEnd ?? target.targetDate;
     const inclusive = shiftDateValue(exclusive, -1);
     if (!inclusive.ok) return inclusive;

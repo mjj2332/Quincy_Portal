@@ -6,6 +6,7 @@ import {
   externalCalendarRangeSchema,
   externalChecklistItemSchema,
   productionCalendarFiltersSchema,
+  stripUnsafeText,
   type CalendarPerson,
   type ChecklistScheduleDto,
   type DashboardCalendarState,
@@ -56,7 +57,10 @@ function assertCanonicalFilters(calendar: DashboardCalendarState, filters: Produ
  */
 export function buildProductionCalendarQuery(calendar: DashboardCalendarState, window = deriveProductionCalendarWindow(calendar.date, calendar.subview)): string {
   const filters = productionCalendarFiltersFor(calendar);
-  const normalizedSearch = filters.search;
+  // Mirror calendarPathFor's serialization-side guard: the server's unsafeText
+  // check rejects a backslash / C0 char with 400, so strip on the API path too
+  // rather than trusting the caller (same fixed-point rationale as 806c499).
+  const normalizedSearch = stripUnsafeText(filters.search);
   assertCanonicalFilters(calendar, filters);
 
   const route = staffPathFor({ kind: "dashboard", calendar } satisfies DashboardCalendarRoute);
