@@ -19,9 +19,10 @@ export function mapCalendarEventToFullCalendar(event: CalendarEventDto): EventIn
     ...(timing.end === null ? {} : { end: timing.end }),
     allDay: timing.allDay,
     extendedProps: { dto: event },
-    editable: event.kind === "project_deadline" ? event.permissions.canDrag : false,
-    startEditable: event.kind === "project_deadline" ? event.permissions.canDrag : false,
-    durationEditable: false,
+    editable: event.permissions.canDrag,
+    startEditable: event.permissions.canDrag,
+    durationEditable: event.kind === "checklist" && event.schedule.state === "range" ? event.permissions.canResize : false,
+    resourceEditable: false,
     classNames: classNamesFor(event),
   };
 }

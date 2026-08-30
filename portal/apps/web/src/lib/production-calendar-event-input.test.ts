@@ -38,6 +38,14 @@ const checklist: CalendarEventDto = {
   permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true, canScheduleRange: true },
 };
 
+const dueOnlyChecklist: CalendarEventDto = {
+  ...checklist,
+  id: "checklist:due-only",
+  timing: { allDay: true, start: "2026-08-12", end: null },
+  schedule: { state: "due_only", version: 2, zone: PRODUCTION_CALENDAR_ZONE, start: null, end: { kind: "date", localCivil: "2026-08-12", instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" }, due: "2026-08-12" },
+  permissions: { canDrag: true, canResize: false, canOpenScheduleEditor: true, canScheduleRange: true },
+};
+
 describe("production calendar FullCalendar event mapping", () => {
   it("keeps timed instants verbatim and omits milestone ends", () => {
     const mapped = mapCalendarEventToFullCalendar(deadline());
@@ -49,9 +57,16 @@ describe("production calendar FullCalendar event mapping", () => {
   it("preserves all-day exclusive ends and carries the complete DTO", () => {
     const mapped = mapCalendarEventToFullCalendar(checklist);
     expect(mapped).toMatchObject({ start: "2026-08-12", end: "2026-08-14", allDay: true, extendedProps: { dto: checklist } });
-    expect(mapped.editable).toBe(false);
-    expect(mapped.startEditable).toBe(false);
-    expect(mapped.durationEditable).toBe(false);
+    expect(mapped.editable).toBe(true);
+    expect(mapped.startEditable).toBe(true);
+    expect(mapped.durationEditable).toBe(true);
+    expect(mapped.resourceEditable).toBe(false);
+  });
+
+  it("maps checklist drag and resize flags from server permissions", () => {
+    expect(mapCalendarEventToFullCalendar(dueOnlyChecklist)).toMatchObject({ editable: true, startEditable: true, durationEditable: false, resourceEditable: false });
+    expect(mapCalendarEventToFullCalendar({ ...checklist, permissions: { ...checklist.permissions, canResize: false } })).toMatchObject({ editable: true, startEditable: true, durationEditable: false });
+    expect(mapCalendarEventToFullCalendar({ ...checklist, permissions: { ...checklist.permissions, canDrag: false } })).toMatchObject({ editable: false, startEditable: false, durationEditable: true });
   });
 
   it("derives Quincy-scoped kind and status classes", () => {

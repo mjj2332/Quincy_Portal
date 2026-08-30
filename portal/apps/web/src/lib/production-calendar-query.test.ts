@@ -3,6 +3,7 @@ import { QueryClient } from "@tanstack/react-query";
 import { PRODUCTION_CALENDAR_ZONE, type DashboardCalendarState } from "@quincy/shared";
 import {
   buildProductionCalendarQuery,
+  decodeChecklistMutationResponse,
   decodeProductionCalendarResponse,
   productionCalendarKey,
   productionCalendarRangeQueryOptions,
@@ -81,5 +82,64 @@ describe("production calendar query family", () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+});
+
+describe("checklist mutation response domains", () => {
+  const itemId = "33333333-3333-4333-8333-333333333333";
+  const personId = "44444444-4444-4444-8444-444444444444";
+  const schedule = {
+    state: "due_only" as const,
+    version: 9,
+    zone: PRODUCTION_CALENDAR_ZONE,
+    start: null,
+    end: { kind: "date" as const, localCivil: "2026-08-20", instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const },
+    due: "2026-08-20",
+  };
+
+  it("projects the strict External checklist item and derives its version", () => {
+    const result = decodeChecklistMutationResponse("external_editor", {
+      id: itemId,
+      title: "Select hero images",
+      done: false,
+      position: 1024,
+      assignee: { id: personId, name: "Maya Editor", roleLabel: "Editor", isExternal: false, active: true },
+      assignmentVersion: 2,
+      dueDate: "2026-08-20",
+      schedule,
+      createdBy: { id: personId, name: "Maya Editor", roleLabel: "Editor", isExternal: false, active: true },
+      createdAt: "2026-08-01T00:00:00.000Z",
+      updatedAt: "2026-08-20T00:00:00.000Z",
+    });
+    expect(result).toMatchObject({ id: itemId, title: "Select hero images", scheduleVersion: 9, assignee: { id: personId, name: "Maya Editor" } });
+  });
+
+  it("accepts an additive internal Worker field but rejects a cross-fed internal shape", () => {
+    const internal = decodeChecklistMutationResponse("editor", { id: itemId, title: "Select hero images", done: true, assignee: { id: personId, name: "Maya Editor" }, position: 2048, schedule, futureWorkerField: "ignored" });
+    expect(internal.scheduleVersion).toBe(9);
+    expect(internal.assignee).toMatchObject({ id: personId, name: "Maya Editor" });
+    expect(() => decodeChecklistMutationResponse("external_editor", { id: itemId, title: "Select hero images", done: true, assignee: { id: personId, name: "Maya Editor" }, position: 2048, schedule })).toThrow();
+    // The internal decoder is not a privacy boundary; a full External-shaped body
+    // (extra top-level Worker keys) still decodes, projecting only the fields the
+    // Calendar reconciles. A stray field *inside* an endpoint is still rejected.
+    expect(decodeChecklistMutationResponse("editor", { id: itemId, title: "Select hero images", done: false, position: 1024, assignee: { id: personId, name: "Maya Editor" }, assignmentVersion: 2, dueDate: "2026-08-20", schedule, createdBy: { id: personId, name: "Maya Editor" }, createdAt: "x", updatedAt: "y" }).scheduleVersion).toBe(9);
+    expect(() => decodeChecklistMutationResponse("editor", { id: itemId, title: "t", done: false, position: 1, assignee: { id: personId, name: "M" }, schedule: { ...schedule, end: { ...schedule.end, strayEndpointField: 1 } } })).toThrow();
+  });
+
+  it("rejects a range response with null endpoints while tolerating additive top-level fields", () => {
+    expect(() => decodeChecklistMutationResponse("editor", {
+      id: itemId,
+      title: "Select hero images",
+      done: true,
+      assignee: { id: personId, name: "Maya Editor" },
+      position: 2048,
+      schedule: { ...schedule, state: "range", start: null, end: null, due: null },
+      futureWorkerField: "ignored",
+    })).toThrow();
+  });
+
+  it("does not fall back between selected domains and rejects photographers", () => {
+    expect(() => decodeChecklistMutationResponse("external_editor", { id: itemId, title: "Wrong", done: false, assignee: null, position: 1, schedule })).toThrow();
+    expect(() => decodeChecklistMutationResponse("photographer", {})).toThrow(/domain/);
   });
 });

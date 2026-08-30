@@ -1,9 +1,13 @@
 import type {
   CalendarEventDto,
   CalendarEventTiming,
+  CalendarUnscheduledEntryDto,
+  ChecklistScheduleDto,
   ProjectDeadlineCalendarEventDto,
   ProductionCalendarFilters,
 } from "@quincy/shared";
+
+export type CalendarInteractionSource = CalendarEventDto | CalendarUnscheduledEntryDto;
 
 export type CalendarFocusDescriptor = {
   eventId: string;
@@ -11,8 +15,8 @@ export type CalendarFocusDescriptor = {
 };
 
 /** An interaction-start copy of the accepted response, never a query-cache reference. */
-export type CalendarAcceptedSnapshot = {
-  event: ProjectDeadlineCalendarEventDto;
+export type CalendarAcceptedSnapshot<TEvent extends CalendarInteractionSource = CalendarInteractionSource> = {
+  event: TEvent;
   filters: ProductionCalendarFilters;
   principalId: string;
   authorizationEpoch: number;
@@ -20,17 +24,51 @@ export type CalendarAcceptedSnapshot = {
   capturedNow: number;
 };
 
-export function beginCalendarInteraction(input: Omit<CalendarAcceptedSnapshot, "capturedNow"> & { capturedNow?: number }): CalendarAcceptedSnapshot {
+function cloneChecklistSchedule(schedule: ChecklistScheduleDto): ChecklistScheduleDto {
+  if (schedule.state === "legacy_unresolved") {
+    return {
+      ...schedule,
+      error: {
+        ...schedule.error,
+        ...(schedule.error.foldChoices ? { foldChoices: schedule.error.foldChoices.map((choice) => ({ ...choice })) } : {}),
+      },
+    };
+  }
+  if (schedule.state === "invalid") return { ...schedule, error: { ...schedule.error } };
+  return {
+    ...schedule,
+    start: schedule.start ? { ...schedule.start } : null,
+    end: schedule.end ? { ...schedule.end } : null,
+  } as typeof schedule;
+}
+
+/** The single authoritative deep clone for interaction snapshots and accepted data. */
+export function cloneSource<TEvent extends CalendarInteractionSource>(event: TEvent): TEvent {
+  const project = { ...event.project, checklist: { ...event.project.checklist } };
+  const timingFields = "timing" in event ? { timing: { ...event.timing }, status: { ...event.status } } : {};
+  if (event.kind === "project_deadline") {
+    return {
+      ...event,
+      project,
+      permissions: { ...event.permissions },
+      reminderOffsetsMinutes: [...event.reminderOffsetsMinutes],
+      ...timingFields,
+    } as TEvent;
+  }
+  return {
+    ...event,
+    project,
+    assignee: event.assignee ? { ...event.assignee } : null,
+    permissions: { ...event.permissions },
+    ...timingFields,
+    schedule: cloneChecklistSchedule(event.schedule),
+  } as TEvent;
+}
+
+export function beginCalendarInteraction<TEvent extends CalendarInteractionSource>(input: Omit<CalendarAcceptedSnapshot<TEvent>, "capturedNow"> & { capturedNow?: number }): CalendarAcceptedSnapshot<TEvent> {
   return {
     ...input,
-    event: {
-      ...input.event,
-      project: { ...input.event.project, checklist: { ...input.event.project.checklist } },
-      timing: { ...input.event.timing },
-      status: { ...input.event.status },
-      permissions: { ...input.event.permissions },
-      reminderOffsetsMinutes: [...input.event.reminderOffsetsMinutes],
-    },
+    event: cloneSource(input.event),
     filters: { ...input.filters, layers: [...input.filters.layers], editorIds: [...input.filters.editorIds], stageKeys: [...input.filters.stageKeys] },
     capturedNow: input.capturedNow ?? Date.now(),
   };
@@ -68,6 +106,21 @@ export type DeadlineFailureAction = {
   retainDraft: boolean;
   disableMovement: boolean;
   askFold: boolean;
+  accessLoss: boolean;
+  focus: CalendarFocusDescriptor["control"];
+  announce: string;
+};
+
+export type ChecklistFailureAction = {
+  code: string;
+  rollback: true;
+  refetch: boolean;
+  retry: false;
+  retainDraft: boolean;
+  askFold: boolean;
+  rangeDisabled: boolean;
+  needsAttention: boolean;
+  mappingDefect: boolean;
   accessLoss: boolean;
   focus: CalendarFocusDescriptor["control"];
   announce: string;
@@ -133,6 +186,46 @@ export function classifyDeadlineFailure(value: unknown, ctx: { eventId: string }
       return action(code, { refetch: true, retainDraft: false, disableMovement: false, askFold: false, accessLoss: false, focus: "recovery", announce: "Scheduling could not be resolved. Reloaded the latest; try again." });
     case "project_not_found":
       return action(code, { refetch: true, retainDraft: false, disableMovement: true, askFold: false, accessLoss: false, focus: "safe-fallback", announce: "That project is no longer available." });
+    default:
+      return null;
+  }
+}
+
+export function classifyChecklistFailure(value: unknown, ctx: { eventId: string; fromEditor?: boolean }): ChecklistFailureAction | null {
+  const status = statusOf(value);
+  if (status === 401 || status === 403) {
+    return {
+      code: String(status), rollback: true, refetch: false, retry: false, retainDraft: false,
+      askFold: false, rangeDisabled: false, needsAttention: false, mappingDefect: false,
+      accessLoss: true, focus: "safe-fallback", announce: "",
+    };
+  }
+
+  const code = codeOf(value);
+  const retainDraft = Boolean(ctx.fromEditor);
+  switch (code) {
+    case "subtask_schedule_version_conflict":
+      return { code, rollback: true, refetch: true, retry: false, retainDraft, askFold: false, rangeDisabled: false, needsAttention: false, mappingDefect: false, accessLoss: false, focus: "event", announce: "The checklist schedule changed elsewhere. Reloaded the latest; review before saving again." };
+    case "subtask_item_conflict":
+      return { code, rollback: true, refetch: true, retry: false, retainDraft: false, askFold: false, rangeDisabled: false, needsAttention: false, mappingDefect: false, accessLoss: false, focus: "event", announce: "The checklist item changed elsewhere. Reloaded the latest item; no retry was made." };
+    case "subtask_schedule_ranges_disabled":
+      return { code, rollback: true, refetch: true, retry: false, retainDraft: false, askFold: false, rangeDisabled: true, needsAttention: false, mappingDefect: false, accessLoss: false, focus: "event", announce: "Range scheduling is unavailable in this app version." };
+    case "subtask_schedule_storage_invalid":
+      return { code, rollback: true, refetch: false, retry: false, retainDraft: false, askFold: false, rangeDisabled: false, needsAttention: true, mappingDefect: false, accessLoss: false, focus: "event", announce: "This checklist schedule needs attention. Repair is unavailable in Calendar." };
+    case "subtask_schedule_reload_required":
+      return { code, rollback: true, refetch: true, retry: false, retainDraft: false, askFold: false, rangeDisabled: false, needsAttention: false, mappingDefect: true, accessLoss: false, focus: "event", announce: "The checklist schedule could not be applied. Reloaded the latest; try again." };
+    case "subtask_schedule_nonexistent_local_time":
+      return { code, rollback: true, refetch: false, retry: false, retainDraft, askFold: false, rangeDisabled: false, needsAttention: false, mappingDefect: false, accessLoss: false, focus: retainDraft ? "move-reschedule" : "event", announce: "That time does not exist in Sydney on that date (daylight-saving gap)." };
+    case "subtask_schedule_repeated_local_time":
+      return { code, rollback: true, refetch: false, retry: false, retainDraft, askFold: true, rangeDisabled: false, needsAttention: false, mappingDefect: false, accessLoss: false, focus: retainDraft ? "move-reschedule" : "event", announce: "That time occurs twice in Sydney that day. Choose the earlier or later occurrence for each endpoint." };
+    case "subtask_schedule_invalid_order":
+    case "subtask_schedule_mixed_endpoint_kinds":
+    case "subtask_schedule_missing_endpoint":
+    case "subtask_schedule_start_without_end":
+    case "subtask_schedule_invalid_local_time":
+    case "subtask_schedule_invalid_version":
+    case "subtask_schedule_resolver_defect":
+      return { code, rollback: true, refetch: false, retry: false, retainDraft, askFold: false, rangeDisabled: false, needsAttention: false, mappingDefect: false, accessLoss: false, focus: retainDraft ? "move-reschedule" : "event", announce: "That schedule change isn't valid." };
     default:
       return null;
   }

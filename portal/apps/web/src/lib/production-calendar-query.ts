@@ -1,15 +1,20 @@
 import {
   adminProductionCalendarRangeResponseSchema,
+  CHECKLIST_SCHEDULE_ZONE,
   deriveProductionCalendarWindow,
   editorProductionCalendarRangeResponseSchema,
   externalCalendarRangeSchema,
+  externalChecklistItemSchema,
   productionCalendarFiltersSchema,
+  type CalendarPerson,
+  type ChecklistScheduleDto,
   type DashboardCalendarState,
   type DashboardCalendarRoute,
   type ProductionCalendarFilters,
   type ProductionCalendarRangeResponse,
   type Role,
 } from "@quincy/shared";
+import { z } from "zod";
 import { useQuery, type QueryClient, type QueryFunctionContext, type UseQueryResult } from "@tanstack/react-query";
 import { apiGet } from "./api";
 import { externalApiGet } from "./external-api-response";
@@ -72,6 +77,122 @@ function responseSchemaFor(role: Role): { parse: (value: unknown) => ProductionC
   if (role === "editor") return editorProductionCalendarRangeResponseSchema;
   if (role === "external_editor") return externalCalendarRangeSchema;
   throw new RangeError("Photographers do not have a Production Calendar response domain.");
+}
+
+export type ChecklistMutationResult = {
+  id: string;
+  title: string;
+  done: boolean;
+  assignee: CalendarPerson | null;
+  position: number;
+  schedule: ChecklistScheduleDto;
+  scheduleVersion: number;
+};
+
+const mutationEndpointSchema = z.object({
+  kind: z.enum(["date", "timed"]),
+  localCivil: z.string(),
+  instant: z.string().nullable(),
+  utcOffsetMinutes: z.number().int().nullable(),
+  fold: z.union([z.literal(0), z.literal(1)]).nullable(),
+  resolution: z.enum(["stored", "derived_unambiguous"]),
+}).strict();
+
+const mutationScheduleSchema: z.ZodType<ChecklistScheduleDto> = z.union([
+  z.object({
+    state: z.literal("unscheduled"),
+    version: z.number().int().nonnegative(),
+    zone: z.literal(CHECKLIST_SCHEDULE_ZONE),
+    start: z.null(),
+    end: z.null(),
+    due: z.null(),
+  }).strict(),
+  z.object({
+    state: z.literal("due_only"),
+    version: z.number().int().nonnegative(),
+    zone: z.literal(CHECKLIST_SCHEDULE_ZONE),
+    start: z.null(),
+    end: mutationEndpointSchema,
+    due: z.string(),
+  }).strict(),
+  z.object({
+    state: z.literal("range"),
+    version: z.number().int().nonnegative(),
+    zone: z.literal(CHECKLIST_SCHEDULE_ZONE),
+    start: mutationEndpointSchema,
+    end: mutationEndpointSchema,
+    due: z.string().nullable(),
+  }).strict(),
+  z.object({
+    state: z.literal("legacy_unresolved"),
+    version: z.literal(0),
+    zone: z.literal(CHECKLIST_SCHEDULE_ZONE),
+    start: z.null(),
+    end: z.null(),
+    due: z.string(),
+    error: z.object({
+      code: z.literal("subtask_schedule_legacy_unresolved"),
+      reason: z.enum(["invalid_literal", "nonexistent_local_time", "repeated_local_time"]),
+      foldChoices: z.array(z.object({ disambiguation: z.enum(["earlier", "later"]), utcOffsetMinutes: z.number().int() }).passthrough()).optional(),
+    }).passthrough(),
+  }).passthrough(),
+  z.object({
+    state: z.literal("invalid"),
+    version: z.number().int().nonnegative(),
+    zone: z.null(),
+    start: z.null(),
+    end: z.null(),
+    due: z.string().nullable(),
+    error: z.object({
+      code: z.literal("subtask_schedule_storage_invalid"),
+      reason: z.enum(["shape_mismatch", "resolution_mismatch", "ordering_invalid"]),
+    }).passthrough(),
+  }).passthrough(),
+]) as z.ZodType<ChecklistScheduleDto>;
+
+// The internal Worker DTO has no compile-time link to @quincy/shared. This
+// decoder intentionally accepts additive top-level Worker fields so an
+// unrelated server addition cannot break Calendar reconciliation.
+const internalChecklistMutationSchema = z.object({
+  id: z.string().min(1),
+  title: z.string(),
+  done: z.boolean(),
+  assignee: z.object({ id: z.string().min(1), name: z.string() }).passthrough().nullable(),
+  position: z.number().int(),
+  schedule: mutationScheduleSchema,
+}).passthrough();
+
+function internalAssignee(person: { id: string; name: string } | null): CalendarPerson | null {
+  return person ? { id: person.id, name: person.name, roleLabel: "Assignee", isExternal: false, active: true } : null;
+}
+
+/** Select one mutation response domain from the captured principal. */
+export function decodeChecklistMutationResponse(role: Role, value: unknown): ChecklistMutationResult {
+  if (role === "external_editor") {
+    const parsed = externalChecklistItemSchema.parse(value);
+    return {
+      id: parsed.id,
+      title: parsed.title,
+      done: parsed.done,
+      assignee: parsed.assignee,
+      position: parsed.position,
+      schedule: parsed.schedule,
+      scheduleVersion: parsed.schedule.version,
+    };
+  }
+  if (role === "admin" || role === "editor") {
+    const parsed = internalChecklistMutationSchema.parse(value);
+    return {
+      id: parsed.id,
+      title: parsed.title,
+      done: parsed.done,
+      assignee: internalAssignee(parsed.assignee),
+      position: parsed.position,
+      schedule: parsed.schedule,
+      scheduleVersion: parsed.schedule.version,
+    };
+  }
+  throw new RangeError("Photographers do not have a checklist mutation response domain.");
 }
 
 /** Select exactly one authenticated role-domain decoder, with no permissive fallback. */

@@ -91,10 +91,10 @@ describe("ProductionCalendar container", () => {
     const surface = host.querySelector<HTMLElement>('[data-testid="calendar-surface"]')!;
     expect(surface.dataset.editable).toBe("true");
     expect(surface.dataset.eventStartEditable).toBe("true");
-    expect(surface.dataset.eventDurationEditable).toBe("false");
+    expect(surface.dataset.eventDurationEditable).toBe("true");
     expect(surface.dataset.droppable).toBe("false");
     expect(surface.dataset.hasEventDrop).toBe("true");
-    expect(surface.dataset.hasEventResize).toBe("false");
+    expect(surface.dataset.hasEventResize).toBe("true");
     expect(surface.dataset.hasDrop).toBe("false");
     expect(surface.dataset.hasEventReceive).toBe("false");
     expect(surface.dataset.hasEventChange).toBe("false");
@@ -116,12 +116,12 @@ describe("ProductionCalendar container", () => {
     expect(disclosure?.querySelectorAll("button")).toHaveLength(1);
   });
 
-  it("uses the strict External fixture and remains read-only", async () => {
+  it("uses the strict External fixture and preserves server-granted checklist collaboration", async () => {
     const external = externalCalendarRangeSchema.parse(rawResponse("editing"));
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(external), { status: 200, headers: { "content-type": "application/json" } })));
     await act(async () => { root.render(<QueryClientProvider client={client}><ProductionCalendar identity={{ principalId: principal, role: "external_editor", authorizationEpoch: 0 }} calendar={calendar()} onNavigate={() => undefined} /></QueryClientProvider>); await Promise.resolve(); });
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
     expect(host.textContent).toContain("Project handoff");
-    expect(host.querySelector<HTMLElement>('[data-testid="calendar-surface"]')?.dataset.editable).toBe("false");
+    expect(host.querySelector<HTMLElement>('[data-testid="calendar-surface"]')?.dataset.editable).toBe("true");
   });
 });
