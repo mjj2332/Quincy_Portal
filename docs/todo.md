@@ -7,7 +7,7 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
 > counts, full diagnostic transcripts) has been cut in favor of what/when/deploy-state. See
 > `docs/lessons.md` for incident mechanics, and `docs/reviews/` for full QA-sweep detail.
 
-## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29, seed-admin UUID migration 2026-07-29, notification dismiss + stalled-guard 2026-07-30, download selection 2026-08-04, notice-board rich text + mentions 2026-08-17, project comments + collaboration panel 2026-08-17, project subtasks/checklist 2026-08-17, collaboration panel relocated to Project page 2026-08-17, collaboration panel UI fixes + due-time reminder 2026-08-17, notification click navigation 2026-08-17, comment ordering + Shift+Enter soft breaks 2026-08-17, mention-email content 2026-08-20, TB0 authority promotion 2026-08-24, TB0A React 19.2 deployed + accepted 2026-08-25, TB0B pipeline configuration boundary deployed 2026-08-24, TB1 Tailwind v4/shadcn foundation deployed 2026-08-25, TB2 route-safe project data freshness deployed 2026-08-25, TB3 project discussion v2 deployed 2026-08-25, TB4 notification outbox deployed 2026-08-26, confirmation modal + admin user impersonation deployed 2026-08-26, TB4A project workspace assignment rail deployed 2026-08-27, TB4B project deadline and reminders deployed 2026-08-27, TB4C editor-wide project-change notifications deployed 2026-08-27, TB4D checklist scheduling & ranges deployed 2026-08-28, TB4E external editor assigned-scope access deployed 2026-08-28, TB4E QA + cache-purge secrets done / phase fully closed 2026-08-28, TB5A Stage & Kanban Ordering Contract deployed to production 2026-08-29 — migration 0037 applied, tb5a_board_contract_enabled flipped ON, app 4ba551a3 / bg fa876454, TB5B Kanban Interaction Modernization (dnd-kit) deployed to production 2026-08-30 — UI-only, merge 578d2a1, app Worker 2b515484 only, no migration, rollback target app 4ba551a3)
+## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29, seed-admin UUID migration 2026-07-29, notification dismiss + stalled-guard 2026-07-30, download selection 2026-08-04, notice-board rich text + mentions 2026-08-17, project comments + collaboration panel 2026-08-17, project subtasks/checklist 2026-08-17, collaboration panel relocated to Project page 2026-08-17, collaboration panel UI fixes + due-time reminder 2026-08-17, notification click navigation 2026-08-17, comment ordering + Shift+Enter soft breaks 2026-08-17, mention-email content 2026-08-20, TB0 authority promotion 2026-08-24, TB0A React 19.2 deployed + accepted 2026-08-25, TB0B pipeline configuration boundary deployed 2026-08-24, TB1 Tailwind v4/shadcn foundation deployed 2026-08-25, TB2 route-safe project data freshness deployed 2026-08-25, TB3 project discussion v2 deployed 2026-08-25, TB4 notification outbox deployed 2026-08-26, confirmation modal + admin user impersonation deployed 2026-08-26, TB4A project workspace assignment rail deployed 2026-08-27, TB4B project deadline and reminders deployed 2026-08-27, TB4C editor-wide project-change notifications deployed 2026-08-27, TB4D checklist scheduling & ranges deployed 2026-08-28, TB4E external editor assigned-scope access deployed 2026-08-28, TB4E QA + cache-purge secrets done / phase fully closed 2026-08-28, TB5A Stage & Kanban Ordering Contract deployed to production 2026-08-29 — migration 0037 applied, tb5a_board_contract_enabled flipped ON, app 4ba551a3 / bg fa876454, TB5B Kanban Interaction Modernization (dnd-kit) deployed to production 2026-08-30 — UI-only, merge 578d2a1, app Worker 2b515484 only, no migration, rollback target app 4ba551a3, TB5C Production Calendar deployed to production 2026-08-31 — merge a7684d8, app Worker 2ba08078 only, no migration, rollback target app 2b515484)
 
 - **TB4E (External Editor Assigned-Scope Access — a global `external_editor` role that does normal
   editing work only on explicitly assigned projects, sees external-safe data, discovers no
@@ -1166,6 +1166,31 @@ with zero error) and `--add-dir "<repo root>"` (writes outside Agy's `trustedWor
 allowlist are silent no-ops otherwise). Full mechanics in `docs/subagents/agy-cli.md`.
 
 ## Implemented plans (see `docs/plans/implemented/`)
+
+- **`Revamp-TB5C-Production-Calendar-Plan.md`** (+ `docs/plans/tb5c/`) — **deployed to production
+  2026-08-31**, merge `a7684d8`, **app Worker `2ba08078` only** (no D1 migration — 0038 still
+  free — no `feature_flags` seed, no background/webhook-ingress, no `prototype/`), rollback target
+  app `2b515484` (the TB5B deploy). Third Dashboard view (List | Kanban | **Calendar**;
+  Month/Week/Agenda) — a **read + direct-manipulation projection** over the existing TB4B
+  project-Deadline and TB4D checklist-schedule commands; every write goes through the unchanged
+  `PUT /api/projects/:id/deadline` / `PATCH /api/projects/:projectId/subtasks/:id`. New:
+  `GET /api/production-calendar` (bounded ≤2-`.all()` three-principal range endpoint, 42-day cap,
+  corpus-proportional 10k density ceiling — see `tb5c/slice-4-query-review.md`), the shared
+  `production-calendar.ts` domain module (query schema + strict DTOs + pure Sydney-DST drag→command
+  mappers), the `viewProductionCalendar` capability (admin / internal editor / external_editor —
+  NOT photographer; `EXTERNAL_EDITOR_CAPABILITIES` → 11), FullCalendar v7
+  (`@fullcalendar/{core,react}@7.0.2` + `temporal-polyfill@1.0.4`, lazy route chunk). Two Calendar
+  gates never merged and never joined to the Board's state machine: `calendarInteractionBlocked`
+  (accept gate — defers/coalesces refetches) vs `calendarSettle` (command gate — disables
+  activators after a changed winner, never blocks navigation). ID-free `production-calendar-invalidated`
+  cross-tab broadcast. Overlap indicator (text, not colour). Phone Week = action-only (coarse
+  pointer + ≤720px). `prefers-reduced-motion`, 44×44 touch targets, drag-mirror `aria-hidden`.
+  Review pipeline: Sol draft → fresh-Sol ×2 → 3 Sol revisions → Opus plan-tier REVERT #1 → Sol
+  revision → Opus plan-tier APPROVE → 12 slices each with mid-slice + confirm Sol passes → fresh
+  Sol whole-branch review (2 passes) → Opus final-draft **APPROVE WITH FOLLOW-UPS** (S3 fixed, S2
+  fixed, S1 documented as a known corpus-density limit) → Agy Slice 10/11 acceptance matrix all-PASS.
+  Physical-phone + real-VoiceOver/NVDA checks **waived by owner** (FC v7 has no live region of its
+  own, so the cadence risk the AT check was for does not exist).
 
 - **`Revamp-TB5B-Kanban-Interaction-Modernization-Plan.md`** (+ `implemented/tb5b/`) — **deployed
   to production 2026-08-30**, merge `578d2a1`, **app Worker `2b515484` only** (no migration, no
