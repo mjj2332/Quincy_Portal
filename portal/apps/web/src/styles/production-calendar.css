@@ -1,0 +1,87 @@
+@import "@fullcalendar/react/skeleton.css";
+@import "@fullcalendar/react/themes/pulse/theme.css";
+
+/*
+ * Pulse's supported variables are mapped here, at the Calendar boundary. The upstream
+ * theme remains intact; these values keep its geometry while making its surfaces and
+ * signals belong to Quincy. The dark selector in the upstream stylesheet cannot win over
+ * these later, wrapper-scoped values, so this surface has no dark-mode variant.
+ */
+.production-calendar {
+  --quincy-calendar-ink: #0a0a0a;
+  --quincy-calendar-paper: #faf8f2;
+  --quincy-calendar-positive: #3f5b3a;
+  --quincy-calendar-caution: #9a6a1f;
+  --quincy-calendar-critical: #7a2420;
+  --quincy-calendar-info: #2f3b4d;
+  --quincy-calendar-focus: #0a0a0a;
+
+  /* Pulse supported variables: controls, event content, neutral surfaces, and borders. */
+  --fc-pulse-primary: var(--quincy-calendar-positive);
+  --fc-pulse-primary-over: #52734e;
+  --fc-pulse-primary-down: #30472e;
+  --fc-pulse-primary-foreground: var(--quincy-calendar-paper);
+  --fc-pulse-secondary: var(--quincy-calendar-paper);
+  --fc-pulse-secondary-over: #f4f0e7;
+  --fc-pulse-secondary-down: #ece6d8;
+  --fc-pulse-secondary-foreground: var(--quincy-calendar-ink);
+  --fc-pulse-secondary-icon: #8f8775;
+  --fc-pulse-secondary-icon-over: #4d473c;
+  --fc-pulse-tertiary: var(--quincy-calendar-info);
+  --fc-pulse-tertiary-over: #46566d;
+  --fc-pulse-tertiary-down: #25303f;
+  --fc-pulse-tertiary-foreground: var(--quincy-calendar-paper);
+  --fc-pulse-background: var(--quincy-calendar-paper);
+  --fc-pulse-faint: #f4f0e7;
+  --fc-pulse-highlight: #3f5b3a1a;
+  --fc-pulse-muted: #ece6d8;
+  --fc-pulse-strong: #e4ded0;
+  --fc-pulse-stronger: #cfc7b6;
+  --fc-pulse-strongest: #b3aa97;
+  --fc-pulse-foreground: var(--quincy-calendar-ink);
+  --fc-pulse-faint-foreground: #8f8775;
+  --fc-pulse-muted-foreground: #4d473c;
+  --fc-pulse-selected: var(--quincy-calendar-info);
+  --fc-pulse-selected-foreground: var(--quincy-calendar-paper);
+  --fc-pulse-unselected: #ece6d8;
+  --fc-pulse-unselected-foreground: var(--quincy-calendar-ink);
+  --fc-pulse-border: #cfc7b6;
+  --fc-pulse-strong-border: #b3aa97;
+  --fc-pulse-now: var(--quincy-calendar-critical);
+  --fc-pulse-event: var(--quincy-calendar-info);
+  --fc-pulse-event-contrast: var(--quincy-calendar-paper);
+  --fc-pulse-background-event: var(--quincy-calendar-caution);
+  --fc-pulse-ring-color: var(--quincy-calendar-focus);
+  --fc-event-color: var(--quincy-calendar-info);
+  --fc-event-contrast-color: var(--quincy-calendar-paper);
+  --fc-pulse-border-style: solid;
+
+  color: var(--quincy-calendar-ink);
+  background: var(--quincy-calendar-paper);
+  font-family: var(--font-body, Apfel Grotezk, system-ui, sans-serif);
+}
+
+.production-calendar :where(.fc) {
+  min-width: 0;
+  color: inherit;
+  background: var(--quincy-calendar-paper);
+}
+
+.production-calendar :where(.fc a) {
+  color: inherit;
+}
+
+.production-calendar :where(.fc [tabindex]:focus-visible) {
+  outline: 2px solid var(--quincy-calendar-focus);
+  outline-offset: 2px;
+}
+
+.production-calendar :where(.fc-button):focus-visible,
+.production-calendar :where(button):focus-visible {
+  outline: 2px solid var(--quincy-calendar-focus);
+  outline-offset: 2px;
+}
+
+.production-calendar :where(.fc-event) {
+  border-color: var(--fc-event-color);
+}

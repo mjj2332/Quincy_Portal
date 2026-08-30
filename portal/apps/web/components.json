@@ -11,6 +11,9 @@
     "prefix": ""
   },
   "iconLibrary": "lucide",
+  "registries": {
+    "@fullcalendar": "https://shadcn-registry.fullcalendar.io/{name}.json"
+  },
   "aliases": {
     "components": "@/components",
     "ui": "@/components/ui",
