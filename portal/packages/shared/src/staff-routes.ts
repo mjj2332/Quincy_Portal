@@ -53,6 +53,17 @@ function unsafeText(value: string): boolean {
   return /[\\\u0000-\u001f\u007f]/.test(value);
 }
 
+/**
+ * Serialization-side guard: drops exactly the characters `unsafeText` rejects on
+ * parse, so `calendarPathFor` -> `parseStaffLocation` is a fixed point regardless
+ * of whether the caller pre-sanitized the free-text search. Without it a stored
+ * `search` containing a backslash serializes to `?q=%5C`, fails the parse guard,
+ * and collapses `safeStaffDestination` to `/`.
+ */
+function stripUnsafeText(value: string): string {
+  return Array.from(value).filter((char) => !unsafeText(char)).join("");
+}
+
 /** Parse an unescaped pathname only; query and hash are intentionally out of contract. */
 export function parseStaffPathname(pathname: string): StaffRoute {
   if (!pathname.startsWith("/") || pathname.includes("?") || pathname.includes("#") || unsafeText(pathname)) return { kind: "not-found" };
@@ -222,7 +233,8 @@ function calendarPathFor(calendar: DashboardCalendarState): string {
   if (calendar.showDeliveredProjects !== calendarFilterDefaults.showDeliveredProjects) params.set("delivered", "1");
   if (calendar.overdueOnly !== calendarFilterDefaults.overdueOnly) params.set("overdue", "1");
   if (calendar.myTasks !== calendarFilterDefaults.myTasks) params.set("mine", "1");
-  if (calendar.search !== calendarFilterDefaults.search) params.set("q", calendar.search);
+  const safeSearch = stripUnsafeText(calendar.search);
+  if (safeSearch !== calendarFilterDefaults.search) params.set("q", safeSearch);
   return `/?${params.toString()}`;
 }
 

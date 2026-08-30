@@ -125,6 +125,19 @@ describe("shared staff route contract", () => {
     expect(withSearch.indexOf("mine=1")).toBeLessThan(withSearch.indexOf("q=a+b"));
   });
 
+  it("strips parse-unsafe characters from a serialized search so the route round-trips", () => {
+    // A DashboardCalendarState whose search was not client-sanitized (restored
+    // state, direct construction) must not produce a path that fails its own
+    // parse guard and collapses safeStaffDestination to "/".
+    const dirty = "smith" + String.fromCharCode(92) + "street" + String.fromCharCode(7) + " road";
+    const route = { kind: "dashboard" as const, calendar: calendar({ layers: ["project"], search: dirty }) };
+    const path = staffPathFor(route);
+    expect(path.includes(String.fromCharCode(92))).toBe(false);
+    expect(path).toContain("q=smithstreet+road");
+    expect(parseStaffLocation(path)).toEqual({ kind: "dashboard", calendar: calendar({ layers: ["project"], search: "smithstreet road" }) });
+    expect(safeStaffDestination(path)).toBe(path);
+  });
+
   it("accepts the role-independent presentation editing stage and rejects autoHDR", () => {
     const editing = calendarUrl("view=calendar&date=2026-08-30&sub=month&layers=project&stages=editing");
     expect(parseStaffLocation(editing)).toMatchObject({ kind: "dashboard", calendar: { stageKeys: ["editing"] } });
