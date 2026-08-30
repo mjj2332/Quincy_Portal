@@ -220,7 +220,9 @@ beforeAll(async () => {
   }
 
   await insertProject(denseProjectId, "15 Density Street", "editing_autohdr");
-  await database.DB.exec(`WITH digits(n) AS (VALUES (0),(1),(2),(3),(4),(5),(6),(7),(8),(9)), numbers(n) AS (SELECT a.n * 1000 + b.n * 100 + c.n * 10 + d.n + 1 FROM digits a CROSS JOIN digits b CROSS JOIN digits c CROSS JOIN digits d WHERE a.n * 1000 + b.n * 100 + c.n * 10 + d.n < 10000 UNION ALL SELECT 10001) INSERT INTO project_subtasks (id, project_id, title, done, position, assignee_id, assignment_version, due_date, schedule_end_kind, schedule_zone, schedule_version, created_by, created_at, updated_at) SELECT printf('90000000-0000-4000-8000-%012d', n), '${denseProjectId}', printf('Dense checklist %05d', n), 0, n, NULL, 0, '2030-01-01', 'date', 'Australia/Sydney', 1, '${adminId}', 0, 0 FROM numbers`);
+  // Every dense row is done=1 so it is excluded from the default (completed=0) candidate set —
+  // only the density test, which passes completed=1, pulls these 10,001 rows into scope.
+  await database.DB.exec(`WITH digits(n) AS (VALUES (0),(1),(2),(3),(4),(5),(6),(7),(8),(9)), numbers(n) AS (SELECT a.n * 1000 + b.n * 100 + c.n * 10 + d.n + 1 FROM digits a CROSS JOIN digits b CROSS JOIN digits c CROSS JOIN digits d WHERE a.n * 1000 + b.n * 100 + c.n * 10 + d.n < 10000 UNION ALL SELECT 10001) INSERT INTO project_subtasks (id, project_id, title, done, position, assignee_id, assignment_version, due_date, schedule_end_kind, schedule_zone, schedule_version, created_by, created_at, updated_at) SELECT printf('90000000-0000-4000-8000-%012d', n), '${denseProjectId}', printf('Dense checklist %05d', n), 1, n, NULL, 0, '2030-01-01', 'date', 'Australia/Sydney', 1, '${adminId}', 0, 0 FROM numbers`);
 });
 
 describe("TB5C production Calendar range endpoint", () => {
@@ -407,6 +409,17 @@ describe("TB5C production Calendar range endpoint", () => {
     expect(allInaccessible.events).toEqual(noFilter.events);
     expect(allInaccessible.unscheduled).toEqual(noFilter.unscheduled);
 
+    // No ID oracle: a real editor whose only work is out of this q=Calendar scope
+    // (assigneeOnlyEditorId, assignee of a subtask on "6 Assignee Only Street") must be
+    // indistinguishable from a fabricated UUID — byte-identical response, and identical to
+    // the unfiltered result. A caller cannot learn whether an ID names a real person.
+    const realOutOfScope = await request(`/api/production-calendar?${range}&q=Calendar&editors=${assigneeOnlyEditorId}`, tokens.admin);
+    const fabricated = await request(`/api/production-calendar?${range}&q=Calendar&editors=${fakeId}`, tokens.admin);
+    expect(await realOutOfScope.text()).toEqual(await fabricated.text());
+    const realOutOfScopeBody = await adminCalendar(`/api/production-calendar?${range}&q=Calendar&editors=${assigneeOnlyEditorId}`);
+    expect(realOutOfScopeBody.events).toEqual(noFilter.events);
+    expect(realOutOfScopeBody.range.appliedFilters.editorIds).toEqual([]);
+
     const partial = await adminCalendar(`/api/production-calendar?${range}&q=Calendar&editors=${editorId},${fakeId}`);
     expect(partial.range.appliedFilters.editorIds).toEqual([editorId]);
     expect(JSON.stringify(partial)).not.toContain(fakeId);
@@ -420,6 +433,15 @@ describe("TB5C production Calendar range endpoint", () => {
     expect(response.status).toBe(200);
     const body = editorProductionCalendarRangeResponseSchema.parse(await response.json());
     expect(body.events.map((event) => event.title)).toEqual(["Assignee without editor membership"]);
+
+    // mine=1 is a checklist-assignee filter only: it must not touch the project-deadline layer
+    // (a project has no single assignee). Same query with both layers, with and without mine=1 —
+    // the project_deadline event set is identical.
+    const withMine = editorProductionCalendarRangeResponseSchema.parse(await (await request(`/api/production-calendar?${range}&q=Calendar&mine=1`, tokens.assigneeOnly)).json());
+    const withoutMine = editorProductionCalendarRangeResponseSchema.parse(await (await request(`/api/production-calendar?${range}&q=Calendar`, tokens.assigneeOnly)).json());
+    const deadlineEvents = (r: typeof withMine) => r.events.filter((event) => event.kind === "project_deadline").map((event) => event.id).sort();
+    expect(deadlineEvents(withMine)).toEqual(deadlineEvents(withoutMine));
+    expect(deadlineEvents(withMine).length).toBeGreaterThan(0);
   });
 
   it("caps each unscheduled kind in JavaScript with matched counts and deterministic order", async () => {
@@ -519,7 +541,7 @@ describe("TB5C production Calendar range endpoint", () => {
         };
       },
     } as unknown as D1Database;
-    const url = "https://portal.test/api/production-calendar?start=2030-01-01&end=2030-01-02&date=2030-01-01&sub=agenda&scope=active&layers=checklist&q=Dense";
+    const url = "https://portal.test/api/production-calendar?start=2030-01-01&end=2030-01-02&date=2030-01-01&sub=agenda&scope=active&layers=checklist&q=Dense&completed=1";
     const context = {
       req: { url, query: () => Object.fromEntries(new URL(url).searchParams.entries()) },
       env: { DB: db },

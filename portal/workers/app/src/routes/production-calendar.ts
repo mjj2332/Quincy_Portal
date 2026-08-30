@@ -424,25 +424,16 @@ project_event_candidates AS (
 project_unscheduled_candidates AS (
   SELECT * FROM project_filtered_candidates WHERE deadline_at IS NULL
 ),
-scheduled_checklist_candidates AS (
-  SELECT c.subtask_id
-  FROM checklist_filtered_candidates c
-  CROSS JOIN request r
-  WHERE c.coarse_shape = 1 AND (
-    (c.schedule_version = 0 AND length(c.due_date) = 10
-      AND c.due_date >= r.start_date AND c.due_date < r.end_date)
-    OR (c.schedule_version = 0 AND length(c.due_date) = 16
-      AND substr(c.due_date, 1, 10) >= r.start_date AND substr(c.due_date, 1, 10) < r.end_date)
-    OR (c.schedule_start_kind IS NULL AND c.schedule_end_kind = 'date' AND c.due_date >= r.start_date AND c.due_date < r.end_date)
-    OR (c.schedule_start_kind IS NULL AND c.schedule_end_kind = 'timed' AND c.schedule_end_at >= r.start_instant AND c.schedule_end_at < r.end_instant)
-    OR (c.schedule_start_kind = 'date' AND c.schedule_end_kind = 'date' AND c.schedule_start_civil < r.end_date AND c.due_date >= r.start_date)
-    OR (c.schedule_start_kind = 'timed' AND c.schedule_start_at < r.end_instant AND c.schedule_end_at > r.start_instant)
-  )
-),
+-- Candidate load = every row statement 1 emits: project events + project unscheduled +
+-- ALL checklist candidates (in-range, out-of-range, and repair rows alike, because B1 moved
+-- authoritative classification into the handler and statement 1 must carry every visible
+-- checklist row). Guarding the whole set — not just the in-range scheduled subset — bounds
+-- the number of rows the handler will deserialize and classify. Scheduled events are a subset
+-- of this count, so the same ceiling still refuses any range that would produce > MAX events.
 density_candidates AS (
-  SELECT project_id AS candidate_id FROM project_event_candidates
+  SELECT project_id AS candidate_id FROM project_filtered_candidates
   UNION ALL
-  SELECT subtask_id AS candidate_id FROM scheduled_checklist_candidates
+  SELECT subtask_id AS candidate_id FROM checklist_filtered_candidates
 ),
 density_ranked AS (
   SELECT COUNT(*) OVER () AS scheduled_total FROM density_candidates
@@ -825,7 +816,7 @@ async function productionCalendarHandlerImpl(c: Context<AppEnv>): Promise<Respon
   const first = await c.env.DB.prepare(productionCalendarRangeSql(role)).bind(...params).all<CalendarSqlRow>();
   const rows = first.results ?? [];
   const density = rows.find((row) => row.row_kind === "density");
-  if (density) return c.json({ error: "Calendar range is too dense; refine the date range or filters.", code: "calendar_range_too_dense", count: Number(density.scheduled_total), max: PRODUCTION_CALENDAR_MAX_SCHEDULED_EVENTS, refinement: "Refine the date range, Stage, Editor, layer, or search filters." }, 422);
+  if (density) return c.json({ error: "This Calendar view spans too many projects and checklist items to load; narrow the filters.", code: "calendar_range_too_dense", count: Number(density.scheduled_total), max: PRODUCTION_CALENDAR_MAX_SCHEDULED_EVENTS, refinement: "Refine the date range, Stage, Editor, layer, or search filters." }, 422);
   const second = await c.env.DB.prepare(productionCalendarFacetsSql(role)).bind(...params).all<CalendarFacetRow>();
   const response = responseFromRows(role, parsed, rows, second.results ?? []);
   if (role === "external_editor") return c.json(EXTERNAL_API_RESPONSE_SCHEMAS.calendar.parse(response));

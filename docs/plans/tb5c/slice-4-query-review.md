@@ -80,17 +80,27 @@ A single dense project seeded with valid in-range timed `due_only` checklist row
 | 7,701  | 200 | ~259 ms | 6,176,466 (~5.89 MiB) |
 | 10,001 | 422 | ~16 ms  | 213 |
 
-Wall time is `performance.now()` around `SELF.fetch` on the dev machine, so it includes
-router, auth-cookie verification, JSON serialization, and Zod strict-parse — actual Worker CPU
-is a fraction of it. The 10,001 case short-circuits: the outer `SELECT … WHERE scheduled_total
-<= 10000` yields no rows and only the `density` sentinel is returned, so statement 2 never
-runs and no row is serialized.
+Wall time is `performance.now()` around `SELF.fetch` on the dev machine — it includes the D1
+round trips, router, auth-cookie verification, JSON serialization, and Zod strict-parse. It is
+**not** isolated Worker CPU; the Workers test pool does not expose a CPU-time meter, so CPU
+headroom against the 30 s limit is not directly measured here. The 10,001 case short-circuits:
+the outer `SELECT … WHERE scheduled_total <= 10000` yields no rows and only the `density`
+sentinel is returned, so statement 2 never runs and no row is serialized.
+
+Since B1, the guarded count is the **whole** statement-1 candidate load (project events +
+project unscheduled + every visible checklist row), not just the in-range scheduled subset —
+so the ceiling also bounds the number of rows the handler deserializes and runs
+`serializeChecklistSchedule` over, which is the real CPU driver.
 
 ## Ceiling decision
 
-**The 10,000 ceiling is retained.** Evidence: the refusal path is cheap and constant
-(~16 ms / 213 B), and even a near-ceiling success (7,701 events → ~5.9 MiB / ~260 ms wall)
-still completes and deserializes. The ceiling exists precisely to force the user to narrow a
-range/Stage/Editor/layer/search filter before payloads reach that size; the measurements show
-it triggers well before anything approaching a Worker resource limit, and lowering it further
-was already considered and rejected at Opus plan-tier review. No plan delta.
+**The 10,000 ceiling is retained.** What the measurements establish: (a) the refusal path is
+cheap and constant (~16 ms wall / 213 B) and correctly skips statement 2; (b) response payload
+at the ceiling is bounded — a near-ceiling success (7,701 events) is ~5.9 MiB, and the JSON
+body was produced and re-parsed without error. What they do **not** establish: a precise
+Worker-CPU margin. The ceiling is a coarse guard whose job is to force the user to narrow a
+range/Stage/Editor/layer/search filter before the view gets pathological; 10,000 was ratified
+at Opus plan-tier review and nothing measured here contradicts it. If a production incident
+ever shows CPU pressure below this count, lower the constant — it is a single
+`PRODUCTION_CALENDAR_MAX_SCHEDULED_EVENTS` value in `@quincy/shared` with no schema impact. No
+plan delta.
