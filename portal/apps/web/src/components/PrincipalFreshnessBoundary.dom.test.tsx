@@ -68,6 +68,16 @@ describe("PrincipalFreshnessBoundary Calendar purge", () => {
     await Promise.resolve();
   }
 
+  // The boundary purge is an async useQuery-observer -> re-render -> effect chain.
+  // A fixed tick count is flaky under parallel-worker load, so poll the outcome.
+  async function waitFor(assertion: () => void) {
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      try { assertion(); return; } catch { /* not settled yet */ }
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 5)); });
+    }
+    assertion();
+  }
+
   function renderBoundary() {
     act(() => {
       root.render(
@@ -83,6 +93,9 @@ describe("PrincipalFreshnessBoundary Calendar purge", () => {
   it("removes every cached Calendar range for the principal before project tombstones, preserving another principal", async () => {
     apiGetMock.mockResolvedValueOnce(snapshot([{ projectId: project, membershipCycleIds: [cycleOne] }]));
     renderBoundary();
+    // Wait until the boundary has actually accepted the first snapshot (its effect
+    // captured previous.current) before staging the membership change.
+    await waitFor(() => expect(client.getQueryData(["authorization-scope", principal, "editor", 0])).toBeDefined());
     await act(async () => { await flush(); });
 
     seedCalendar(client, principal, 1);
@@ -94,8 +107,10 @@ describe("PrincipalFreshnessBoundary Calendar purge", () => {
       await flush();
     });
 
-    expect(client.getQueryCache().findAll({ queryKey: ["production-calendar", principal] })).toHaveLength(0);
-    expect(client.getQueryCache().findAll({ queryKey: ["production-calendar", otherPrincipal] })).toHaveLength(1);
+    await waitFor(() => {
+      expect(client.getQueryCache().findAll({ queryKey: ["production-calendar", principal] })).toHaveLength(0);
+      expect(client.getQueryCache().findAll({ queryKey: ["production-calendar", otherPrincipal] })).toHaveLength(1);
+    });
   });
 
   it("purges the Calendar family when the authorization scope refresh returns a different principal", async () => {
@@ -105,6 +120,8 @@ describe("PrincipalFreshnessBoundary Calendar purge", () => {
     renderBoundary();
 
     await act(async () => { await flush(); });
-    expect(client.getQueryCache().findAll({ queryKey: ["production-calendar", principal] })).toHaveLength(0);
+    await waitFor(() => {
+      expect(client.getQueryCache().findAll({ queryKey: ["production-calendar", principal] })).toHaveLength(0);
+    });
   });
 });

@@ -80,7 +80,7 @@ describe("ProductionCalendar container", () => {
     expect(host.textContent).not.toContain("Hidden");
   });
 
-  it("maps Month, Week, and Agenda as read-only FullCalendar compositions", async () => {
+  it("maps Month, Week, and Agenda with deadline-only direct manipulation", async () => {
     const parsed = adminProductionCalendarRangeResponseSchema.parse(rawResponse("editing_autohdr"));
     await renderCalendar(calendar("month"), parsed);
     expect(host.textContent).toContain("12 Harbour Street");
@@ -89,11 +89,11 @@ describe("ProductionCalendar container", () => {
     expect(host.textContent).toContain("Overdue");
     expect(host.textContent).toContain("✓ Completed");
     const surface = host.querySelector<HTMLElement>('[data-testid="calendar-surface"]')!;
-    expect(surface.dataset.editable).toBe("false");
-    expect(surface.dataset.eventStartEditable).toBe("false");
+    expect(surface.dataset.editable).toBe("true");
+    expect(surface.dataset.eventStartEditable).toBe("true");
     expect(surface.dataset.eventDurationEditable).toBe("false");
     expect(surface.dataset.droppable).toBe("false");
-    expect(surface.dataset.hasEventDrop).toBe("false");
+    expect(surface.dataset.hasEventDrop).toBe("true");
     expect(surface.dataset.hasEventResize).toBe("false");
     expect(surface.dataset.hasDrop).toBe("false");
     expect(surface.dataset.hasEventReceive).toBe("false");
@@ -113,7 +113,7 @@ describe("ProductionCalendar container", () => {
     const disclosure = host.querySelector('[aria-label="Selected day"]');
     expect(disclosure?.textContent).toContain("Project handoff");
     expect(disclosure?.textContent).toContain("Select hero images");
-    expect(disclosure?.querySelectorAll("button")).toHaveLength(0);
+    expect(disclosure?.querySelectorAll("button")).toHaveLength(1);
   });
 
   it("uses the strict External fixture and remains read-only", async () => {

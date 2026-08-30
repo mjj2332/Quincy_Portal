@@ -41,7 +41,7 @@ const checklist: CalendarEventDto = {
 describe("production calendar FullCalendar event mapping", () => {
   it("keeps timed instants verbatim and omits milestone ends", () => {
     const mapped = mapCalendarEventToFullCalendar(deadline());
-    expect(mapped).toMatchObject({ id: deadline().id, title: "Deadline", start: "2026-08-11T23:00:00.000Z", allDay: false, editable: false, startEditable: false, durationEditable: false });
+    expect(mapped).toMatchObject({ id: deadline().id, title: "Deadline", start: "2026-08-11T23:00:00.000Z", allDay: false, editable: true, startEditable: true, durationEditable: false });
     expect(mapped).not.toHaveProperty("end");
     expect(mapped.extendedProps).toEqual({ dto: deadline() });
   });

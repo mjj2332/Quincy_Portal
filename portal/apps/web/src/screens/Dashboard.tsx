@@ -39,6 +39,7 @@ import { ProjectKanbanBoard, type BoardInteractionState } from "../components/Pr
 // Photographer dashboard.
 const ProductionCalendar = lazy(() => import("../components/ProductionCalendar").then((module) => ({ default: module.ProductionCalendar })));
 import { locationStore, parseStaffLocation, safeStaffDestination, staffPathFor } from "../lib/router";
+import type { CalendarSettleState } from "../lib/production-calendar-interaction";
 
 export { adjacentBoardGap, adjacentBoardPlacement, cardDropPlacement, sortKanbanProjects } from "../lib/kanban-interaction";
 export type { ProjectSummary } from "../lib/kanban-interaction";
@@ -146,6 +147,8 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   const [pendingOrdering, setPendingOrdering] = useState<Set<string>>(new Set());
   const [boardOverlay, setBoardOverlay] = useState<BoardOverlay | null>(null);
   const [movementSettlePending, setMovementSettlePending] = useState(false);
+  const [calendarInteractionBlocked, setCalendarInteractionBlocked] = useState(false);
+  const [calendarSettle, setCalendarSettle] = useState<CalendarSettleState>({ pending: false, recoveryReason: null });
   const [recoveryReason, setRecoveryReason] = useState<string | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [announcement, setAnnouncement] = useState("");
@@ -161,10 +164,9 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   const queryRuntime = queryClient ? getProjectQueryRuntime(queryClient) : undefined;
   const runtimeVersion = useSyncExternalStore(queryRuntime?.subscribe ?? noRuntimeSubscribe, queryRuntime?.getSnapshot ?? zeroRuntimeSnapshot, queryRuntime?.getSnapshot ?? zeroRuntimeSnapshot);
   const activeConfirm = useSyncExternalStore(confirmStore.subscribe, confirmStore.getSnapshot, () => null);
+  // Calendar owns its accept/settle barriers separately. Board interactionBlocked
+  // remains the TB5B state machine and never incorporates either Calendar gate.
   const interactionBlocked = Boolean(boardInteraction.activeId || boardInteraction.proposal || pendingMoves.size > 0 || pendingOrdering.size > 0 || activeConfirm);
-  // Slice 5 owns a permanently open accept gate. Mutation slices will make this
-  // stateful without joining it to the Board interaction state machine.
-  const calendarInteractionBlocked = false;
   const interactionBlockedRef = useRef(interactionBlocked);
   interactionBlockedRef.current = interactionBlocked;
   const lastNonCalendarViewRef = useRef<"list" | "kanban">("list");
@@ -273,7 +275,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   }, [calendarState, canViewProductionCalendar, history, locationHasCalendar, routeCalendar, view, viewingArchived]);
 
   const navigateCalendar = useCallback((next: DashboardCalendarState, replace = false) => {
-    if (!canViewProductionCalendar || viewingArchived) return;
+    if (!canViewProductionCalendar || viewingArchived || calendarInteractionBlocked) return;
     const built = staffPathFor({ kind: "dashboard", calendar: next });
     if (safeStaffDestination(built) !== built) {
       console.error("Production Calendar route invariant failed; navigation was not performed.");
@@ -285,7 +287,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       calendarStorage.write(DASHBOARD_CALENDAR_LAST_DATE_KEY, next.date);
     } catch { /* Calendar fallback storage is best effort. */ }
     if (replace) history.replace(built); else history.push(built);
-  }, [canViewProductionCalendar, history, viewingArchived]);
+  }, [calendarInteractionBlocked, canViewProductionCalendar, history, viewingArchived]);
 
   useEffect(() => {
     if (calendarSearchTimerRef.current !== null) {
@@ -312,7 +314,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   }, [calendarState, navigateCalendar, query, view]);
 
   const reconcileAppliedCalendarFilters = useCallback((filters: ProductionCalendarFilters) => {
-    if (!calendarState || !canViewProductionCalendar || viewingArchived) return;
+    if (!calendarState || !canViewProductionCalendar || viewingArchived || calendarInteractionBlocked) return;
     const next: DashboardCalendarState = { ...calendarState, ...filters, view: "calendar" };
     if (JSON.stringify(next) === JSON.stringify(calendarState)) return;
     const built = staffPathFor({ kind: "dashboard", calendar: next });
@@ -322,7 +324,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     }
     setCalendarState(next);
     history.replace(built);
-  }, [calendarState, canViewProductionCalendar, history, viewingArchived]);
+  }, [calendarInteractionBlocked, calendarState, canViewProductionCalendar, history, viewingArchived]);
 
   const acceptDashboardProjects = useCallback((next: ProjectSummary[], dataUpdatedAt?: number) => {
     if (queryRuntime?.principalTerminal) return;
@@ -483,6 +485,17 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   const deliveredCount = projects.filter((project) => project.stageKey === "delivered").length;
   const activeStages = stages.filter((stage) => stage.active);
 
+  const handleCalendarAccessLoss = useCallback(() => {
+    setCalendarInteractionBlocked(false);
+    setCalendarSettle({ pending: false, recoveryReason: null });
+    calendarFallbackLocationRef.current = false;
+    setView("list");
+    lastNonCalendarViewRef.current = "list";
+    try { window.localStorage.setItem("quincy:dashboard:view", "list"); } catch { /* Storage can be disabled by the browser. */ }
+    if (view === "calendar" || routeCalendar !== null || locationHasCalendar) history.push("/");
+    window.setTimeout(() => document.querySelector<HTMLElement>('[data-focus-key="dashboard-view-list"]')?.focus(), 0);
+  }, [history, locationHasCalendar, routeCalendar, view]);
+
   function selectView(next: DashboardView) {
     if (interactionBlockedRef.current || calendarInteractionBlocked) return;
     if (next === "calendar") {
@@ -501,14 +514,17 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     lastNonCalendarViewRef.current = next;
     try { window.localStorage.setItem("quincy:dashboard:view", next); } catch { /* Storage can be disabled by the browser. */ }
     if (view === "calendar" || routeCalendar !== null || locationHasCalendar) {
+      setCalendarSettle({ pending: false, recoveryReason: null });
       calendarFallbackLocationRef.current = false;
       history.push("/");
     }
   }
 
   function selectProjectScope(next: ProjectScope) {
+    if (interactionBlockedRef.current || calendarInteractionBlocked) return;
     setProjectScope(next);
     if (next === "archived" && view === "calendar") {
+      setCalendarSettle({ pending: false, recoveryReason: null });
       setView("list");
       lastNonCalendarViewRef.current = "list";
       try { window.localStorage.setItem("quincy:dashboard:view", "list"); } catch { /* Storage can be disabled by the browser. */ }
@@ -818,7 +834,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         {!viewingArchived && <>
         <span className="ey">View</span>
         <div className="segment" aria-label="Dashboard view">
-          <button className={view === "list" ? "is-active" : ""} type="button" disabled={interactionBlocked || calendarInteractionBlocked} onClick={() => selectView("list")}>List</button>
+          <button className={view === "list" ? "is-active" : ""} type="button" data-focus-key="dashboard-view-list" disabled={interactionBlocked || calendarInteractionBlocked} onClick={() => selectView("list")}>List</button>
           <button className={view === "kanban" ? "is-active" : ""} type="button" disabled={interactionBlocked || calendarInteractionBlocked} onClick={() => selectView("kanban")}>Kanban</button>
           {canViewProductionCalendar && <button className={view === "calendar" ? "is-active" : ""} type="button" disabled={interactionBlocked || calendarInteractionBlocked} onClick={() => selectView("calendar")}>Calendar</button>}
         </div>
@@ -840,7 +856,15 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
 
       {isCalendarView && (
         <Suspense fallback={<div className="empty qc-calendar-state" role="status">Loading calendar…</div>}>
-          <ProductionCalendar identity={identity} calendar={calendarState} onNavigate={(next) => navigateCalendar(next)} onAppliedFilters={reconcileAppliedCalendarFilters} />
+          <ProductionCalendar
+            identity={identity}
+            calendar={calendarState}
+            onNavigate={(next) => navigateCalendar(next)}
+            onAppliedFilters={reconcileAppliedCalendarFilters}
+            onAcceptGateChange={setCalendarInteractionBlocked}
+            onSettleStateChange={setCalendarSettle}
+            onAccessLoss={handleCalendarAccessLoss}
+          />
         </Suspense>
       )}
 

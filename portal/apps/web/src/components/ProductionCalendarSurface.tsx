@@ -17,8 +17,8 @@ export type ProductionCalendarSurfaceProps = Omit<CalendarOptions, "plugins" | "
 
 /**
  * The FullCalendar boundary. It owns the plugin set, Sydney display zone, and
- * Quincy stylesheet; the screen container owns route/query state and the
- * read-only event callbacks.
+ * Quincy stylesheet; the screen container owns route/query state and mutation
+ * callbacks while this boundary remains a thin FullCalendar adapter.
  */
 export function ProductionCalendarSurface(props: ProductionCalendarSurfaceProps) {
   return (

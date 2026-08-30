@@ -12,13 +12,14 @@ export type ProductionCalendarEventProps = {
   event: CalendarEventDto;
   subview: ProductionCalendarSubview;
   compact?: boolean;
+  onMoveReschedule?: (event: Extract<CalendarEventDto, { kind: "project_deadline" }>) => void;
 };
 
-export function ProductionCalendarEvent({ event, subview, compact = false }: ProductionCalendarEventProps) {
+export function ProductionCalendarEvent({ event, subview, compact = false, onMoveReschedule }: ProductionCalendarEventProps) {
   const className = `qc-cal-event-card qc-cal-event-card--${event.kind}${compact ? " is-compact" : ""}`;
   if (event.kind === "project_deadline") {
     return (
-      <article className={className} data-subview={subview} aria-readonly="true">
+      <article className={className} data-event-id={event.id} data-subview={subview} aria-readonly="true" tabIndex={-1}>
         <div className="qc-cal-event-card__meta"><span>Deadline</span><StageBadge stageKey={event.project.stageKey} /></div>
         <h4 title={event.project.street}>{event.project.street}</h4>
         <p className="qc-cal-event-card__title" title={event.title}>{event.title}</p>
@@ -27,12 +28,13 @@ export function ProductionCalendarEvent({ event, subview, compact = false }: Pro
           {event.status.overdue && <Pill tone="overdue">Overdue</Pill>}
           {event.status.delivered && <Pill tone="delivered">Delivered</Pill>}
         </div>
+        {event.permissions.canDrag && onMoveReschedule && <button className="button button--text qc-cal-event-card__move" type="button" data-focus-key={`calendar-move:${event.id}`} onClick={() => onMoveReschedule(event)}>Move / Reschedule</button>}
       </article>
     );
   }
 
   return (
-    <article className={className} data-subview={subview} aria-readonly="true">
+    <article className={className} data-event-id={event.id} data-subview={subview} aria-readonly="true" tabIndex={-1}>
       <div className="qc-cal-event-card__meta"><span>Checklist</span><StageBadge stageKey={event.project.stageKey} /></div>
       <h4 title={event.title}>{event.title}</h4>
       <p className="qc-cal-event-card__title" title={event.project.street}>{event.project.street}</p>

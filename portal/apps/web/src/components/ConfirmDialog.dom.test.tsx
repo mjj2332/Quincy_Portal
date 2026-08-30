@@ -50,6 +50,18 @@ describe("ConfirmModalHost", () => {
     expect(document.querySelector('[data-testid="confirm-modal-confirm"]')?.textContent).toBe("Delete file");
     expect(document.querySelector('[data-testid="confirm-modal-confirm"]')?.classList.contains("button--danger")).toBe(true);
     expect(document.querySelector("[data-confirm-modal-root]")).not.toBeNull();
+    expect(dialog?.querySelector(".modal__body")?.innerHTML).toBe("<p>This cannot be undone.</p>");
+    confirmStore.resolve(false);
+    expect(await pending).toBe(false);
+  });
+
+  it("renders additive rich content while keeping the required message", async () => {
+    await mount();
+    const pending = confirm({ title: "Move Deadline", message: "Review this move.", content: <div data-testid="rich-confirmation">Old → New</div> });
+    await flush();
+    const body = document.querySelector<HTMLElement>(".modal__body")!;
+    expect(body.querySelector("p")?.textContent).toBe("Review this move.");
+    expect(body.querySelector('[data-testid="rich-confirmation"]')?.textContent).toBe("Old → New");
     confirmStore.resolve(false);
     expect(await pending).toBe(false);
   });

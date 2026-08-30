@@ -80,7 +80,7 @@ export function ProductionCalendarToolbar({ calendar, range, onNavigate, now = D
   const setSubview = (subview: ProductionCalendarSubview) => onNavigate({ ...calendar, subview });
 
   return (
-    <div className="qc-cal-toolbar" role="toolbar" aria-label={`Production Calendar navigation · ${zoneLabel}`}>
+    <div className="qc-cal-toolbar" role="toolbar" tabIndex={-1} data-focus-key="calendar-recovery" aria-label={`Production Calendar navigation · ${zoneLabel}`}>
       <div className="qc-cal-toolbar__controls">
         <button className="button button--secondary" type="button" aria-label="Previous period" onClick={() => move(-1)}>Prev</button>
         <button className="button button--secondary" type="button" onClick={() => onNavigate({ ...calendar, date: todayFor(now) })}>Today</button>
