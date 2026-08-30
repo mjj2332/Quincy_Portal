@@ -878,11 +878,22 @@ export function previewProjectDeadlineReminderConsequences(input: ProjectDeadlin
     const newFireAt = new Date(newFireEpoch).toISOString();
     const oldLocalCivil = formatSydneyCivilMinute(oldFireAt);
     const newLocalCivil = formatSydneyCivilMinute(newFireAt);
-    const oldHour = /T(\d{2}):/.exec(oldLocalCivil)?.[1];
-    const newHour = /T(\d{2}):/.exec(newLocalCivil)?.[1];
+    // `shifted_wall_clock_hour` means DST moved this reminder relative to the
+    // Deadline — NOT that the user changed the Deadline's time (which shifts
+    // every reminder by the same amount and is not a surprise). Detect it by
+    // comparing the civil-minute gap between Deadline and reminder: a fixed
+    // offset spans a constant number of civil minutes unless a transition falls
+    // inside that window for exactly one of the old/new positions.
+    const oldDeadlineParts = parseCivilMinute(oldDeadline.localCivil);
+    const newDeadlineParts = parseCivilMinute(newDeadline.localCivil);
+    const oldFireParts = parseCivilMinute(oldLocalCivil);
+    const newFireParts = parseCivilMinute(newLocalCivil);
+    const dstShift = oldDeadlineParts && newDeadlineParts && oldFireParts && newFireParts
+      && (civilMinuteIndex(oldDeadlineParts) - civilMinuteIndex(oldFireParts))
+        !== (civilMinuteIndex(newDeadlineParts) - civilMinuteIndex(newFireParts));
     const label: ProjectDeadlineReminderConsequenceLabel = newFireEpoch <= now
       ? "elapsed_at_save"
-      : oldHour !== newHour
+      : dstShift
         ? "shifted_wall_clock_hour"
         : "future";
     return { offsetMinutes, label, oldFireAt, newFireAt, oldLocalCivil, newLocalCivil };

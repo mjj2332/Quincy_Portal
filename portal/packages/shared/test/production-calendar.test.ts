@@ -256,4 +256,13 @@ describe("TB5C reminder preview", () => {
     expect(preview[1]).toMatchObject({ label: "future" });
     expect(previewProjectDeadlineReminderConsequences({ oldDeadline, newDeadline, reminderOffsetsMinutes: [1440], now: Date.parse("2026-10-05T00:00:00.000Z") })[0]).toMatchObject({ label: "elapsed_at_save" });
   });
+
+  it("does not label a plain time change (no DST crossing) as a wall-clock shift", () => {
+    // 14:00 -> 16:00 same day, both AEST. Every reminder shifts by exactly the
+    // 2 hours the Deadline moved — that is expected, not a daylight-saving surprise.
+    const oldDeadline = { localCivil: "2026-09-03T14:00", instant: "2026-09-03T04:00:00.000Z" };
+    const newDeadline = { localCivil: "2026-09-03T16:00", instant: "2026-09-03T06:00:00.000Z" };
+    const preview = previewProjectDeadlineReminderConsequences({ oldDeadline, newDeadline, reminderOffsetsMinutes: [1440, 120], now: Date.parse("2026-09-01T00:00:00.000Z") });
+    expect(preview.map((item) => item.label)).toEqual(["future", "future"]);
+  });
 });
