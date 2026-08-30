@@ -17,6 +17,7 @@ export * from "./notification-outbox";
 export * from "./notification-types";
 export * from "./project-members";
 export * from "./project-deadline";
+export * from "./production-calendar";
 export {
   SYDNEY_TIME_ZONE,
   resolveSydneyCivilMinute,
