@@ -1,6 +1,16 @@
 # Revamp TB5C — Production Calendar
 
-**Status:** BUILT — ready for deploy prep (2026-08-31). All 12 slices implemented on branch
+**Status:** DEPLOYED TO PRODUCTION 2026-08-31. Merge `a7684d8` (`Merge TB5C: Production Calendar`)
+on `main`; app Worker version **`2ba08078-3db8-4a4c-b787-c41484da224e`** (deployed 2026-08-30
+23:12 UTC, app Worker only — `background`/`webhook-ingress` not redeployed). Rollback target: app
+Worker version `2b515484-44c6-4550-a1e2-62f88c6a8b73` (the TB5B deploy). No D1 migration (0038
+still free). Post-deploy passive checks passed: homepage 200; `/api/production-calendar` and its
+trailing-slash form both return 401 unauthenticated (route + capability gate live, not 404); the
+lazy `ProductionCalendar-*.js` chunk (340 kB) serves and is dynamic-imported from the main
+bundle. Real-hardware (physical phone, VoiceOver/NVDA) checks waived by owner. This file moved to
+`docs/plans/implemented/` at deploy. Full build/review history below.
+
+**Prior status:** BUILT — ready for deploy prep (2026-08-31). All 12 slices implemented on branch
 `tb5c-production-calendar` (off `main` `f6af664`), HEAD `8853fb2`. Review pipeline complete:
 per-slice fresh-Sol + mid-slice Sol + confirm passes; fresh-Sol whole-branch review (2 passes,
 APPROVE after fixes); Opus final-draft review → **APPROVE WITH FOLLOW-UPS** (all resolved: S3

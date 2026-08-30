@@ -69,9 +69,27 @@ writes against unchanged commands — valid source data, no repair needed. No DB
 - Do **not** perform a real drag-save on a live project as a smoke test unless intended — the
   first real save is a genuine TB4B/TB4D mutation.
 
-## Closeout (after deploy verified)
+## Deployed 2026-08-31
 
-- Append the new app Worker version id + deploy timestamp to the plan status line and this file.
-- `git mv docs/plans/Revamp-TB5C-Production-Calendar-Plan.md docs/plans/implemented/` and commit.
-- Optional follow-ups recorded for later (not blocking): Opus N1 (drop the write-only
-  `calendarSettle` prop from `Dashboard`), the two waived real-hardware checks if desired.
+- Merge commit on `main`: **`a7684d8`** ("Merge TB5C: Production Calendar"), pushed
+  `6fad404..a7684d8` (also carried the previously-unpushed `f6af664` circular-import fix +
+  `a7317c3` lessons doc).
+- Post-merge 6-workspace gate green on `main`.
+- App Worker deployed: **version `2ba08078-3db8-4a4c-b787-c41484da224e`** (2026-08-30 23:12 UTC),
+  `cd portal/workers/app && npx wrangler deploy` — 5 static assets uploaded, Worker startup 74 ms.
+  `background` / `webhook-ingress` **not** redeployed.
+- Post-deploy passive checks (all PASS): `https://quincy.flamingfire.my/` → 200;
+  `GET /api/production-calendar?...` → 401 "Authentication required" (route + auth/capability gate
+  live); trailing-slash `/api/production-calendar/?...` → 401 (both route forms registered);
+  `/assets/ProductionCalendar-CPONk_wj.js` → 200 / 340,735 B and referenced by a dynamic import in
+  `index-*.js`; `wrangler deployments status` shows `2ba08078` at 100%.
+- Plan moved to `docs/plans/implemented/`.
+
+## Optional follow-ups (not blocking, recorded for later)
+
+- Opus N1 — drop the write-only `calendarSettle` prop from `Dashboard` (a settle transition in the
+  child re-renders Dashboard for no consumer).
+- The two waived real-hardware checks (physical phone Week, real VoiceOver/NVDA) if a later
+  a11y pass wants them; append results to `slice-10-11-acceptance.md`.
+- If `calendar_range_too_dense` ever appears in prod logs (or active projects approach ~400),
+  revisit the range-scoped density fix per `slice-4-query-review.md`.
