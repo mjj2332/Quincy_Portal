@@ -1,6 +1,8 @@
 # Revamp TB5C — Production Calendar
 
-**Status:** APPROVED FOR BUILD (Opus plan-tier review, 2026-08-30) — revision 4 applied (Opus APPROVE: 0 Blocking; its 8 Should-fix + 5 Nit folded into the plan by the orchestrating session); revision 3 retained (Opus plan-tier revert #1: 4 Blocking + 12 Should-fix + 8 Nit); revision 2 retained (fresh-Sol review round 2: 2 Blocking + 3 Should-fix); revision 1 retained (6 Blocking + 9 Should-fix + 3 Nit). Review pipeline: Sol draft → fresh-Sol review ×2 → 3 fresh-Sol revisions → Opus plan-tier REVERT #1 → fresh-Sol revision → Opus plan-tier APPROVE. `@ilamy/calendar` was evaluated on a throwaway branch 2026-08-30 and rejected (no public external-drop API); FullCalendar v7 retained. Planning only; no implementation, migration, package install, test run, or deploy has occurred. Planning baseline: `main` at `6fad4046d4dddf402540510d027b6a53e691fa9e` on 2026-08-30. **Build in slices per §"Numbered implementation slices"; each slice ends with the four-command §5 gate run by the orchestrating session.**
+**Status:** APPROVED FOR BUILD (Opus plan-tier review, 2026-08-30) — revision 4 applied (Opus APPROVE: 0 Blocking; its 8 Should-fix + 5 Nit folded into the plan by the orchestrating session); revision 3 retained (Opus plan-tier revert #1: 4 Blocking + 12 Should-fix + 8 Nit); revision 2 retained (fresh-Sol review round 2: 2 Blocking + 3 Should-fix); revision 1 retained (6 Blocking + 9 Should-fix + 3 Nit). Review pipeline: Sol draft → fresh-Sol review ×2 → 3 fresh-Sol revisions → Opus plan-tier REVERT #1 → fresh-Sol revision → Opus plan-tier APPROVE. `@ilamy/calendar` was evaluated on a throwaway branch 2026-08-30 and rejected (no public external-drop API); FullCalendar v7 retained. **Build in progress on branch `tb5c-production-calendar`** (off `main` `6fad404`): Slice 0 `6ed2487`, Slice 1 `0470733`, Slice 2 `ced5d37`. Each slice ends with the four-command §5 gate run by the orchestrating session per §"Numbered implementation slices".
+
+**Slice-3 factual delta (2026-08-30, design unchanged):** FullCalendar v7 restructured its packages — the separate view/interaction packages stopped at v6; v7 ships plugins as `@fullcalendar/react` subpaths. §"FullCalendar v7 dependency and visual boundary" corrected: pin `@fullcalendar/{core,react}@7.0.2` + `temporal-polyfill@1.0.4` only (`@full-ui/headless-calendar@7.0.2` transitive); import plugins from `@fullcalendar/react/{daygrid,timegrid,list,interaction}` and CSS from `@fullcalendar/react/skeleton.css` + `@fullcalendar/react/themes/pulse/theme.css`. No Radix in the FullCalendar packages themselves.
 
 ## Recommendation: one tracer bullet, one deploy
 
@@ -210,7 +212,7 @@ FullCalendar v7 callback payloads return these exact forms:
 - external `drop`: `info.date` is a `Date`, `info.dateStr` is `YYYY-MM-DD` when `info.allDay` and an offset-bearing timed string otherwise; `eventReceive` exposes the received event in the same event form above. All timed paths use the `Date` instant through the adapter.
 - `dateClick`: `info.date` is a `Date`, with `info.dateStr`/`info.allDay` in the same all-day-versus-timed forms. It may drive disclosure/focus but never creation.
 
-Those `Date` objects represent instants but their native getters/formatters are local/UTC-flavored, not a trustworthy expression of the configured Calendar zone. Add a web-only adapter in `apps/web/src/lib/production-calendar-fullcalendar.ts`, centered on `fullCalendarCallbackToSydneyCivil(value: { allDay: boolean; date: Date; dateStr: string }): { allDay: true; date: string } | { allDay: false; date: string; localCivil: string; utcOffsetMinutes: number }`. The adapter **reuses the existing Temporal-free `@quincy/shared` primitives**: for an instant-bearing (timed) callback it calls `formatSydneyCivilMinute(value.date.toISOString())` (`packages/shared/src/sydney-civil-time.ts:140`, already exported) to obtain the `YYYY-MM-DDTHH:mm` Sydney civil minute, then `resolveSydneyCivilMinute` for its `utcOffsetMinutes`; for an all-day callback it validates and preserves FullCalendar's `YYYY-MM-DD` string with `isSydneyCalendarDate`, never `Date` conversion, and returns no `localCivil`/`utcOffsetMinutes`. The adapter — not a native `Date#get*`, an `Intl` call using the browser zone, or FullCalendar's offset-free callback text — supplies the Sydney date/civil minute passed to shared mappers. **No new DST engine and no `Temporal` usage is introduced in our code:** `@fullcalendar/core@7.0.2` carries `temporal-polyfill` transitively for FullCalendar's own internal use (that is why it is a pinned dependency), but Quincy's adapter and mappers stay on the shared civil-time helpers, so there is exactly one Sydney-time authority. A shared-suite equivalence test asserts the adapter's output and `resolveSydneyCivilMinute` agree across the April 2026 fold and the October 2026 gap.
+Those `Date` objects represent instants but their native getters/formatters are local/UTC-flavored, not a trustworthy expression of the configured Calendar zone. Add a web-only adapter in `apps/web/src/lib/production-calendar-fullcalendar.ts`, centered on `fullCalendarCallbackToSydneyCivil(value: { allDay: boolean; date: Date; dateStr: string }): { allDay: true; date: string } | { allDay: false; date: string; localCivil: string; utcOffsetMinutes: number }`. The adapter **reuses the existing Temporal-free `@quincy/shared` primitives**: for an instant-bearing (timed) callback it calls `formatSydneyCivilMinute(value.date.toISOString())` (`packages/shared/src/sydney-civil-time.ts:140`, already exported) to obtain the `YYYY-MM-DDTHH:mm` Sydney civil minute, then `resolveSydneyCivilMinute` for its `utcOffsetMinutes`; for an all-day callback it validates and preserves FullCalendar's `YYYY-MM-DD` string with `isSydneyCalendarDate`, never `Date` conversion, and returns no `localCivil`/`utcOffsetMinutes`. The adapter — not a native `Date#get*`, an `Intl` call using the browser zone, or FullCalendar's offset-free callback text — supplies the Sydney date/civil minute passed to shared mappers. **No new DST engine and no `Temporal` usage is introduced in our code:** `temporal-polyfill` is a declared **peer dependency** of `@fullcalendar/react@7.0.2` / `@full-ui/headless-calendar@7.0.2` for FullCalendar's own internal Temporal use (that is why it is a direct pin), but Quincy's adapter and mappers stay on the shared civil-time helpers, so there is exactly one Sydney-time authority. A shared-suite equivalence test asserts the adapter's output and `resolveSydneyCivilMinute` agree across the April 2026 fold and the October 2026 gap.
 
 ### DTOs
 
@@ -543,29 +545,42 @@ Phone behavior:
 
 ### Exact pins and registry review
 
-Use a dedicated dependency slice. Pin **exactly** the versions below. At build time, npm metadata checks may verify availability, integrity, provenance, peer ranges, and that these exact artifacts remain the intended stable releases; they may not substitute a newer patch. Discovering any newer patch/minor/major or unavailable artifact is a plan-review delta, not an in-slice version change.
+**Corrected 2026-08-30 (Slice 3 discovery — factual delta, design unchanged).** FullCalendar v7 **restructured the package layout**: the old separate view/interaction packages (`@fullcalendar/daygrid`, `@fullcalendar/timegrid`, `@fullcalendar/list`, `@fullcalendar/interaction`, `@fullcalendar/scrollgrid`) were **not published at v7** — their npm `latest` is still `6.1.21`, with only a `7.0.0-rc.0` tag. In v7 the plugins are **subpath exports of `@fullcalendar/react`**. The npm registry state (verified via `npm view` on 2026-08-30): `@fullcalendar/core` and `@fullcalendar/react` have a real stable line `7.0.0` (2026-06-19) → `7.0.1` → `7.0.2` (2026-07-24, `latest`); `@fullcalendar/react@7.0.2` depends on `@fullcalendar/core@7.0.2` (exact) and the new **`@full-ui/headless-calendar@7.0.2`** (MIT; its only peer is `temporal-polyfill@^1.0.1` — no Radix, no other runtime deps); `temporal-polyfill@^1.0.1` is a declared **peer** of both, so it is installed directly.
+
+Pin **exactly**:
 
 ```json
 "@fullcalendar/core": "7.0.2",
-"@fullcalendar/daygrid": "7.0.2",
-"@fullcalendar/interaction": "7.0.2",
-"@fullcalendar/list": "7.0.2",
 "@fullcalendar/react": "7.0.2",
-"@fullcalendar/timegrid": "7.0.2",
 "temporal-polyfill": "1.0.4"
 ```
 
-`lucide-react` remains the existing `1.34.0`. Use Standard packages only.
+`@full-ui/headless-calendar@7.0.2` arrives transitively, pinned by the lockfile (`@fullcalendar/react@7.0.2` requires it exactly). `lucide-react` remains the existing `1.34.0`.
+
+**Import model (v7):**
+
+```ts
+import FullCalendar from "@fullcalendar/react";
+import { dayGridPlugin } from "@fullcalendar/react/daygrid";
+import { timeGridPlugin } from "@fullcalendar/react/timegrid";
+import { listPlugin } from "@fullcalendar/react/list";
+import { interactionPlugin } from "@fullcalendar/react/interaction";
+import "@fullcalendar/react/skeleton.css";
+import "@fullcalendar/react/themes/pulse/theme.css";
+// optional palette: "@fullcalendar/react/themes/pulse/palettes/<name>.css"
+```
+
+Standard views only. **No premium / resource / Scheduler**: do not import `@fullcalendar/react/premium` or any resource/timeline subpath, and no `@fullcalendar/premium`-style package (they no longer exist under that name). At build time, npm metadata checks may verify availability, integrity, provenance, and peer ranges of exactly `@fullcalendar/{core,react}@7.0.2` + `temporal-polyfill@1.0.4`; they may not substitute a newer version. A newer stable `7.0.x` or the plugin packages reaching real v7 stable is a plan-review delta, not an in-slice change.
 
 `@ilamy/calendar` was evaluated on a throwaway branch on 2026-08-30 and rejected because its public TypeScript definitions and compiled JavaScript expose no external-drop/`eventReceive` API; FullCalendar Interaction's public `Draggable` plus `drop`/`eventReceive` is therefore the canonical path for the required Unscheduled-panel drop.
 
 Before adoption:
 
 1. Add/verify the `@fullcalendar` registry mapping `https://shadcn-registry.fullcalendar.io/{name}.json` in `apps/web/components.json`. The baseline has `style: "base-sera"` and no `registries` key, so this is an explicit additive key at that exact path.
-2. Fetch the registry JSON and run `npx shadcn@latest add @fullcalendar/pulse-event-calendar` in a clean implementation branch.
-3. Inspect every generated/modified file and the full direct/transitive dependency tree (`npm ls --all` plus lockfile diff). Classify Button/Tabs/Lucide references against existing source-owned Quincy primitives. Retain only the Calendar-specific source needed for Standard views; remove the demo and do not accept a duplicate general Button/Tabs system.
+2. Fetch and record the registry JSON for **all five** flavor items (`<flavor>-event-calendar.json`) as the documented "reviewed specialist source" comparison. Each declares `dependencies: @fullcalendar/react@^7.0.1, lucide-react, temporal-polyfill@^1.0.1` and `registryDependencies: [button, tabs]` and writes a demo + calendar wrapper + toolbar + icons + views. Then either run `npx shadcn@latest add @fullcalendar/pulse-event-calendar` and prune, **or** — if inspection shows the generated toolbar/demo only couples to shadcn `button`/`tabs` (the second-primitive-system the plan forbids; Quincy is Base UI) — skip `add`, import the theme CSS directly from `@fullcalendar/react/themes/pulse/theme.css`, and write the thin wrapper against Quincy primitives. Document which path was taken and why. D-16's "reviewed specialist source" obligation is met by the JSON inspection either way.
+3. Inspect every generated/modified file and the full direct/transitive dependency tree (`npm ls --all` plus lockfile diff). The only expected new runtime packages are `@fullcalendar/core@7.0.2`, `@fullcalendar/react@7.0.2`, `@full-ui/headless-calendar@7.0.2`, `temporal-polyfill@1.0.4`. Any `@radix-ui/*` addition is a red flag — resolve it (the FullCalendar packages themselves pull no Radix; only a taken shadcn `button`/`tabs` would). Retain only the Calendar-specific source needed for Standard views; remove any demo; do not accept a duplicate general Button/Tabs system.
 4. Verify package peer ranges against pinned React/React DOM `19.2.8`; fail the slice on peer warnings, duplicate React, premium/resource packages, unpinned versions, postinstall scripts, or an unexplained primitive package.
-5. Verify `@fullcalendar/core@7.0.2` and its transitive `temporal-polyfill@1.0.4` resolve and build cleanly under Vite 8 production build, happy-dom, and both Node configs (FullCalendar uses Temporal internally; Quincy code does not). Assert that `packages/shared`, `workers/app`, and the Quincy Calendar adapter/mappers import no `Temporal` and no `temporal-polyfill` — the callback adapter is built on the existing `@quincy/shared` civil-time helpers per §"Display-zone binding".
+5. Verify `@fullcalendar/react@7.0.2` + `@fullcalendar/core@7.0.2` + `@full-ui/headless-calendar@7.0.2` and the peer `temporal-polyfill@1.0.4` resolve and build cleanly under Vite 8 production build, happy-dom, and both Node configs (FullCalendar uses Temporal internally; Quincy code does not). Confirm the subpath exports (`@fullcalendar/react/{daygrid,timegrid,list,interaction,skeleton.css}`, `@fullcalendar/react/themes/pulse/theme.css`) resolve under the repo's module resolution. Assert that `packages/shared`, `workers/app`, and the Quincy Calendar adapter/mappers import no `Temporal` and no `temporal-polyfill` — the callback adapter is built on the existing `@quincy/shared` civil-time helpers per §"Display-zone binding".
 
 ### Flavor and CSS decision
 
@@ -758,7 +773,7 @@ Acceptance: every valid Calendar location round-trips canonically; every unknown
 
 ### Slice 3 — dependency and registry adoption
 
-- Verify availability/provenance of exactly FullCalendar `7.0.2` and `temporal-polyfill` `1.0.4`, add those exact package pins, update lockfile, and record `portal/package.json` diff; any newer version discovery returns to plan review without substitution.
+- Verify availability/provenance of exactly `@fullcalendar/core@7.0.2`, `@fullcalendar/react@7.0.2`, `temporal-polyfill@1.0.4` (v7 uses `@fullcalendar/react` subpath plugins, not separate view packages — those stopped at v6); add those exact pins, update lockfile, record `portal/package.json` diff; `@full-ui/headless-calendar@7.0.2` is the expected transitive; any other version discovery returns to plan review without substitution.
 - Fetch/inspect the official registry through the additive `registries` key in `apps/web/components.json`, compare all five flavors in the throwaway Vite dev-only harness route, provisionally run the Pulse Standard event-calendar add, inspect generated source and full transitive tree, then retain only the reviewed Calendar-specific source and delete the harness before commit/build.
 - Verify React 19.2.8 peers, single React resolution, Standard-only packages, no premium/resource packages, and no second Button/Tabs/general primitive system.
 - Add the Calendar-only CSS import boundary and Quincy wrapper token mapping; no product route renders it yet.
@@ -1022,7 +1037,8 @@ rg -n "production-calendar" portal/apps/web/src portal/workers/app/src portal/wo
 rg -n "Temporal|temporal-polyfill" portal/packages/shared portal/workers/app portal/apps/web/src/lib/production-calendar-fullcalendar.ts
 rg -n "STAGE_TRANSPORT_KEYS" portal/packages/shared/src portal/apps/web/src portal/workers/app/src
 rg -n "boardPosition|boardRevision|board_revision|tb5a_board_contract_enabled" portal/packages/shared/src/production-calendar.ts portal/workers/app/src/routes/production-calendar.ts portal/apps/web/src/components/ProductionCalendar* portal/apps/web/src/lib/production-calendar*
-rg -n "@fullcalendar/premium|scheduler|resourceTimeline|resourceTimeGrid" portal/package.json portal/package-lock.json portal/apps/web/src
+rg -n "@fullcalendar/premium|@fullcalendar/react/premium|scheduler|resourceTimeline|resourceTimeGrid|@fullcalendar/(daygrid|timegrid|list|interaction)\"" portal/package.json portal/package-lock.json portal/apps/web/src
+rg -n "@radix-ui/" portal/apps/web/src/components/ProductionCalendar* portal/apps/web/src/lib/production-calendar* portal/apps/web/src/styles/production-calendar.css
 rg -n "Date\([^)]*YYYY|new Date\([^)]*localCivil|new Date\([^)]*due" portal/packages/shared/src/production-calendar.ts portal/workers/app/src/routes/production-calendar.ts
 git diff --name-only -- portal/packages/db portal/workers/background portal/workers/webhook-ingress prototype
 git diff -- portal/packages/db/src/schema.ts portal/packages/db/migrations
