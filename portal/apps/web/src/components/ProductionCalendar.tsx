@@ -497,8 +497,14 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
   }, []);
 
   const setSettle = useCallback((event: CalendarSettleEvent) => {
-    const next = transitionCalendarSettle(settleRef.current, event);
+    const prev = settleRef.current;
+    const next = transitionCalendarSettle(prev, event);
     settleRef.current = next;
+    // transitionCalendarSettle mirrors the Board's table and always returns a
+    // fresh object; skip the state update (and the redundant onSettleStateChange)
+    // when the settle state is unchanged — e.g. acceptRange already cleared a
+    // pending settle before the mutation flow's explicit refetch-succeeded.
+    if (next.pending === prev.pending && next.recoveryReason === prev.recoveryReason) return;
     setCalendarSettle(next);
   }, []);
 
@@ -513,6 +519,7 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
     // project un-archived. Healing them off a local adoption would clear a marker
     // for an unrelated item still present in the stale baseline.
     if (!authoritative) return;
+    if (settleRef.current.pending) setSettle({ type: "refetch-succeeded" });
     setChecklistNeedsAttention((current) => {
       const invalidIds = new Set(copy.unscheduled.filter((entry) => entry.kind === "checklist" && entry.reason === "schedule_needs_attention" && entry.attentionReason === "invalid").map((entry) => entry.id));
       const presentIds = new Set([
@@ -531,10 +538,12 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
     });
     setDeadlineMovementDisabled(false);
     setChecklistRangeSchedulingDisabled(false);
-  }, []);
+  }, [setSettle]);
 
   useEffect(() => { onAcceptGateChange?.(calendarInteractionBlocked); }, [calendarInteractionBlocked, onAcceptGateChange]);
   useEffect(() => { onSettleStateChange?.(calendarSettle); }, [calendarSettle, onSettleStateChange]);
+
+  const calendarResetKey = `${calendar.date}|${calendar.subview}|${calendar.layers.join(",")}|${calendar.editorIds.join(",")}|${calendar.includeUnassigned}|${calendar.stageKeys.join(",")}|${calendar.showCompletedChecklist}|${calendar.showDeliveredProjects}|${calendar.overdueOnly}|${calendar.search}|${calendar.myTasks}`;
 
   useEffect(() => {
     operationTokenRef.current += 1;
@@ -558,7 +567,7 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
     accessLostRef.current = false;
     setCalendarAccessLost(false);
     if (confirmStore.getSnapshot()) confirmStore.resolve(false);
-  }, [calendar.date, calendar.subview, calendar.layers, calendar.editorIds, calendar.includeUnassigned, calendar.stageKeys, calendar.showCompletedChecklist, calendar.showDeliveredProjects, calendar.overdueOnly, calendar.search, calendar.myTasks, identity.principalId, identity.role, identity.authorizationEpoch, setAcceptGate, setOverlay, setSettle]);
+  }, [calendarResetKey, identity.principalId, identity.role, identity.authorizationEpoch, setAcceptGate, setOverlay, setSettle]);
 
   useEffect(() => { if (!query.data) setSelectedDay(null); }, [query.data]);
 
@@ -684,6 +693,12 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
     setAnnouncement("");
     onAccessLoss?.();
   }, [identity.principalId, onAccessLoss, queryClient, setAcceptGate, setOverlay, setSettle]);
+
+  useEffect(() => {
+    if (accessLostRef.current) return;
+    const err = query.error;
+    if (err instanceof ApiError && (err.status === 401 || err.status === 403)) handleAccessLoss();
+  }, [query.error, handleAccessLoss]);
 
   const acceptForInteraction = useCallback(function <TEvent extends CalendarInteractionSource>(event: TEvent, focus: CalendarFocusDescriptor): CalendarAcceptedSnapshot<TEvent> | null {
     if (accessLostRef.current) return null;
@@ -1211,7 +1226,7 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
         focusDescriptor({ eventId: proposal.source.id, control: action.focus });
       }
       setAnnouncement(action.announce);
-      if (!action.refetch && action.code !== "subtask_schedule_storage_invalid") flushQueuedRefetch();
+      if (!action.refetch) flushQueuedRefetch();
     }
   }, [acceptRange, announceChecklistLifecycle, flushQueuedRefetch, focusDescriptor, handleAccessLoss, identity.role, queryClient, refetchAuthoritative, setAcceptGate, setOverlay, setSettle]);
 

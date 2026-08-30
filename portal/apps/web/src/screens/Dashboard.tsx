@@ -133,7 +133,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       write: (next) => window.localStorage.setItem("quincy:dashboard:view", next),
     });
     if (routeCalendar && canViewProductionCalendar) return "calendar";
-    return !canViewProductionCalendar && stored === "calendar" ? "list" : stored;
+    return !canViewProductionCalendar && stored === "calendar" ? "kanban" : stored;
   });
   const [calendarState, setCalendarState] = useState<DashboardCalendarState | null>(() => routeCalendar && canViewProductionCalendar
     ? routeCalendar
@@ -153,6 +153,14 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [announcement, setAnnouncement] = useState("");
   const [boardUnavailableReason, setBoardUnavailableReason] = useState<string | null>(null);
+  useEffect(() => {
+    if (canViewProductionCalendar) return;
+    try {
+      if (window.localStorage.getItem("quincy:dashboard:view") === "calendar") {
+        window.localStorage.setItem("quincy:dashboard:view", "kanban");
+      }
+    } catch { /* Storage can be disabled. */ }
+  }, [canViewProductionCalendar]);
   const viewingArchived = projectScope === "archived";
   const identity = { principalId: currentUserId, role, authorizationEpoch } as const;
   const projectsQuery = useDashboardProjects(viewingArchived, identity);
@@ -523,13 +531,14 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   function selectProjectScope(next: ProjectScope) {
     if (interactionBlockedRef.current || calendarInteractionBlocked) return;
     setProjectScope(next);
-    if (next === "archived" && view === "calendar") {
-      setCalendarSettle({ pending: false, recoveryReason: null });
+    if (next === "archived" && view !== "list") {
+      const leavingCalendar = view === "calendar";
+      if (leavingCalendar) setCalendarSettle({ pending: false, recoveryReason: null });
       setView("list");
       lastNonCalendarViewRef.current = "list";
       try { window.localStorage.setItem("quincy:dashboard:view", "list"); } catch { /* Storage can be disabled by the browser. */ }
       calendarFallbackLocationRef.current = false;
-      history.push("/");
+      if (leavingCalendar || routeCalendar !== null || locationHasCalendar) history.push("/");
     }
   }
 

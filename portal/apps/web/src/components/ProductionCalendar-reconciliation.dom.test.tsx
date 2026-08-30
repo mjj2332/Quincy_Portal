@@ -68,10 +68,14 @@ describe("ProductionCalendar reconciliation", () => {
     host.remove();
   });
 
-  async function render(props: Partial<ProductionCalendarProps> = {}, runtime?: ProjectQueryRuntime) {
-    const page = <QueryClientProvider client={client}><ProductionCalendar identity={{ principalId: projectId, role: "admin", authorizationEpoch: 0 }} calendar={calendar} onNavigate={() => undefined} {...props as any} /></QueryClientProvider>;
+  async function renderPage(nextCalendar: DashboardCalendarState, props: Partial<ProductionCalendarProps> = {}, runtime?: ProjectQueryRuntime) {
+    const page = <QueryClientProvider client={client}><ProductionCalendar identity={{ principalId: projectId, role: "admin", authorizationEpoch: 0 }} calendar={nextCalendar} onNavigate={() => undefined} {...props as any} /></QueryClientProvider>;
     await act(async () => { root.render(runtime ? <ProjectQueryRuntimeProvider runtime={runtime}>{page}</ProjectQueryRuntimeProvider> : page); await Promise.resolve(); });
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); await Promise.resolve(); });
+  }
+
+  async function render(props: Partial<ProductionCalendarProps> = {}, runtime?: ProjectQueryRuntime) {
+    await renderPage(calendar, props, runtime);
   }
 
   it("defers accepted data during confirmation and coalesces invalidations into one post-gate refetch", async () => {
@@ -116,23 +120,58 @@ describe("ProductionCalendar reconciliation", () => {
     release(response("2026-08-20T09:00"));
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); await Promise.resolve(); });
     expect(settleStates.at(-1)).toEqual({ pending: false, recoveryReason: null });
+    // acceptRange clears the pending settle, and the mutation flow's explicit
+    // refetch-succeeded is then a no-op — exactly one settle→clear transition, no churn.
+    const afterWinner = settleStates.slice(settleStates.findIndex((state) => state.pending));
+    expect(afterWinner.filter((state) => !state.pending && state.recoveryReason === null)).toHaveLength(1);
   });
 
-  it("shows recovery after a failed settle and accepts a later Refresh", async () => {
+  it("clears recovery after a later automatic authoritative acceptance without Refresh", async () => {
     apiGetMock.mockReset()
       .mockResolvedValueOnce(response())
       .mockRejectedValueOnce(new ApiError("Calendar unavailable", 400, {}))
       .mockResolvedValue(response());
     const settleStates: Array<{ pending: boolean; recoveryReason: string | null }> = [];
-    await render({ onSettleStateChange: (state: { pending: boolean; recoveryReason: string | null }) => settleStates.push(state) });
+    const acceptGateStates: boolean[] = [];
+    await render({ onAcceptGateChange: (blocked: boolean) => acceptGateStates.push(blocked), onSettleStateChange: (state: { pending: boolean; recoveryReason: string | null }) => settleStates.push(state) });
     await act(async () => { (host.querySelector("[data-testid=reconciliation-drop]") as HTMLButtonElement).click(); await Promise.resolve(); await Promise.resolve(); });
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 100)); await Promise.resolve(); await Promise.resolve(); });
     expect(settleStates.some((state) => state.pending && state.recoveryReason === "The latest Calendar could not be loaded.")).toBe(true);
     expect(host.querySelector('button[data-focus-key="calendar-recovery"]')).not.toBeNull();
+    expect(host.querySelector('button[data-focus-key="calendar-move:project-deadline:project"]')).toBeNull();
 
-    await act(async () => { (host.querySelector('button[data-focus-key="calendar-recovery"]') as HTMLButtonElement).click(); await new Promise((resolve) => setTimeout(resolve, 100)); await Promise.resolve(); await Promise.resolve(); });
+    const query = client.getQueryCache().findAll({ queryKey: ["production-calendar", projectId] })[0];
+    if (!query) throw new Error("Calendar query was not created");
+    apiGetMock.mockResolvedValueOnce(response("2026-08-20T09:00"));
+    await act(async () => { await client.refetchQueries({ queryKey: query.queryKey }); await new Promise((resolve) => setTimeout(resolve, 20)); await Promise.resolve(); await Promise.resolve(); });
+    expect(apiGetMock).toHaveBeenCalledTimes(3);
     expect(host.querySelector('button[data-focus-key="calendar-recovery"]')).toBeNull();
     expect(settleStates.at(-1)).toEqual({ pending: false, recoveryReason: null });
+    expect(host.querySelector('button[data-focus-key="calendar-move:project-deadline:project"]')).not.toBeNull();
+  });
+
+  it("preserves an active confirmation across a semantically equal Calendar rerender but resets on a real route change", async () => {
+    let resolveConfirm!: (value: boolean) => void;
+    confirmMock.mockReturnValue(new Promise<boolean>((resolve) => { resolveConfirm = resolve; }));
+    await render();
+    await act(async () => { (host.querySelector("[data-testid=reconciliation-drop]") as HTMLButtonElement).click(); await Promise.resolve(); });
+    expect(confirmMock).toHaveBeenCalledOnce();
+    expect(apiPutMock).not.toHaveBeenCalled();
+
+    await renderPage({ ...calendar, layers: [...calendar.layers], editorIds: [...calendar.editorIds], stageKeys: [...calendar.stageKeys] });
+    expect(apiPutMock).not.toHaveBeenCalled();
+    resolveConfirm(true);
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 50)); await Promise.resolve(); });
+    expect(apiPutMock).toHaveBeenCalledOnce();
+
+    confirmMock.mockReset();
+    confirmMock.mockReturnValue(new Promise<boolean>((resolve) => { resolveConfirm = resolve; }));
+    await act(async () => { (host.querySelector("[data-testid=reconciliation-drop]") as HTMLButtonElement).click(); await Promise.resolve(); });
+    expect(confirmMock).toHaveBeenCalledOnce();
+    await renderPage({ ...calendar, date: "2026-08-13", layers: [...calendar.layers], editorIds: [...calendar.editorIds], stageKeys: [...calendar.stageKeys] });
+    resolveConfirm(true);
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 50)); await Promise.resolve(); });
+    expect(apiPutMock).toHaveBeenCalledOnce();
   });
 
   it("wins with access loss mid-mutation, clears the overlay/gate, and suppresses private late copy", async () => {
@@ -143,6 +182,19 @@ describe("ProductionCalendar reconciliation", () => {
     expect(onAccessLoss).toHaveBeenCalledOnce();
     expect(document.querySelector('[aria-live]')?.textContent ?? "").not.toContain("12 Harbour Street");
     expect(host.querySelector("[data-testid=reconciliation-surface]")).toBeNull();
+  });
+
+  it("purges accepted private data after an observer-originated authorization error", async () => {
+    const onAccessLoss = vi.fn();
+    apiGetMock.mockReset().mockResolvedValueOnce(response());
+    await render({ onAccessLoss });
+    const query = client.getQueryCache().findAll({ queryKey: ["production-calendar", projectId] })[0];
+    if (!query) throw new Error("Calendar query was not created");
+    apiGetMock.mockRejectedValueOnce(new ApiError("Forbidden", 403, { code: "forbidden" }));
+    await act(async () => { await client.refetchQueries({ queryKey: query.queryKey }); await Promise.resolve(); await new Promise((resolve) => setTimeout(resolve, 10)); });
+    expect(onAccessLoss).toHaveBeenCalledOnce();
+    expect(host.querySelector("[data-testid=reconciliation-surface]")).toBeNull();
+    expect(host.querySelector('[aria-live]')?.textContent ?? "").not.toContain("12 Harbour Street");
   });
 
   it("publishes an ID-free invalidation after a real deadline winner and refetches once when received", async () => {

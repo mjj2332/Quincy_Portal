@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Topbar, type AppView } from "./components/Topbar";
 import { consumeSignInDestination, useSession } from "./lib/auth";
 import { useCapabilities } from "./lib/capabilities";
@@ -36,7 +36,7 @@ function Shell({ user, impersonating }: { user: SessionUser; impersonating: bool
   const history = locationStore();
   const completeLocation = useSyncExternalStore(history.subscribe, history.getLocation, () => "/");
   const pathname = completeLocation.split("?", 1)[0]!;
-  const route = parseStaffLocation(completeLocation);
+  const route = useMemo(() => parseStaffLocation(completeLocation), [completeLocation]);
   const [notice, setNotice] = useState<Notice>(null);
   const restored = useRef(false);
   const lastObservedIntentLocationRef = useRef<string | null>(null);

@@ -112,10 +112,12 @@ describe("Dashboard Calendar routing", () => {
     expect(apiGetMock.mock.calls.filter(([path]) => path.startsWith("/api/production-calendar"))).toHaveLength(1);
   });
 
-  it("coerces a stored Calendar preference for a Photographer and never fetches the range", async () => {
+  it("coerces and repairs a stored Calendar preference for a Photographer", async () => {
     window.localStorage.setItem("quincy:dashboard:view", "calendar");
     await render({ role: "photographer" });
     expect([...host.querySelectorAll("button")].some((button) => button.textContent === "Calendar")).toBe(false);
+    expect([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Kanban")?.className).toBe("is-active");
+    expect(window.localStorage.getItem("quincy:dashboard:view")).toBe("kanban");
     expect(host.querySelector('[data-testid="dashboard-calendar-surface"]')).toBeNull();
     expect(apiGetMock.mock.calls.some(([path]) => path.startsWith("/api/production-calendar"))).toBe(false);
   });
@@ -203,6 +205,15 @@ describe("Dashboard Calendar routing", () => {
     await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Archived")?.click(); await Promise.resolve(); });
     expect(`${window.location.pathname}${window.location.search}`).toBe("/");
     expect(host.querySelector('[data-testid="dashboard-calendar-surface"]')).toBeNull();
+    expect(host.textContent).toContain("Archived projects");
+  });
+
+  it("enters Archived from Kanban by selecting and recording List", async () => {
+    await render();
+    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Kanban")?.click(); await Promise.resolve(); });
+    expect(window.localStorage.getItem("quincy:dashboard:view")).toBe("kanban");
+    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Archived")?.click(); await Promise.resolve(); });
+    expect(window.localStorage.getItem("quincy:dashboard:view")).toBe("list");
     expect(host.textContent).toContain("Archived projects");
   });
 

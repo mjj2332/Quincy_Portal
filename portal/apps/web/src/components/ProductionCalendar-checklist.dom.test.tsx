@@ -10,6 +10,7 @@ import {
   shiftSydneyCalendarDate,
   type CalendarEventDto,
   type ChecklistCalendarEventDto,
+  type ChecklistCalendarUnscheduledEntryDto,
   type ChecklistScheduleDto,
   type DashboardCalendarState,
   type ProjectDeadlineCalendarEventDto,
@@ -506,6 +507,49 @@ describe("ProductionCalendar checklist manipulation", () => {
     expect(host.textContent).toContain("Repair is unavailable");
     expect(host.querySelector(`[data-focus-key="calendar-move:${event.id}"]`)).toBeNull();
     expect(patchBodies).toHaveLength(1);
+  });
+
+  it("flushes a queued invalidation after storage-invalid failure and keeps the item marked", async () => {
+    const event = dueEvent("checklist:invalid-coalesced", "2026-08-12");
+    const validRange = response([event], "month");
+    const invalidEntry: ChecklistCalendarUnscheduledEntryDto = {
+      id: event.id,
+      kind: "checklist",
+      reason: "schedule_needs_attention",
+      attentionReason: "invalid",
+      title: event.title,
+      project: event.project,
+      assignee: event.assignee,
+      schedule: { state: "invalid", version: event.schedule.version, zone: null, start: null, end: null, due: event.schedule.due, error: { code: "subtask_schedule_storage_invalid", reason: "shape_mismatch" } },
+      permissions: { canDrag: false, canResize: false, canOpenScheduleEditor: false, canScheduleRange: false },
+    };
+    const invalidRange = { ...validRange, events: [], unscheduled: [invalidEntry] };
+    let getCount = 0;
+    let resolvePatch!: (value: Response) => void;
+    vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "PATCH") {
+        patchBodies.push(JSON.parse(String(init.body)));
+        return new Promise<Response>((resolve) => { resolvePatch = resolve; });
+      }
+      getCount += 1;
+      const body = getCount === 1 ? validRange : invalidRange;
+      return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+    }));
+    await act(async () => { root.render(<QueryClientProvider client={client}><ProductionCalendar identity={{ principalId: projectId, role: "admin", authorizationEpoch: 0 }} calendar={calendar("month")} onNavigate={() => undefined} /></QueryClientProvider>); await Promise.resolve(); });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 5)); await Promise.resolve(); await Promise.resolve(); });
+
+    surfaceAction = { event: { allDay: true, start: new Date("2026-08-13T00:00:00Z"), startStr: "2026-08-13" } };
+    await click(`drop-${event.id}`);
+    const query = client.getQueryCache().findAll({ queryKey: ["production-calendar", projectId] })[0];
+    if (!query) throw new Error("Calendar query was not created");
+    client.setQueryData(query.queryKey, response([{ ...event, title: "Queued update" }], "month"));
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); await Promise.resolve(); await Promise.resolve(); });
+    resolvePatch(new Response(JSON.stringify({ error: "invalid", code: "subtask_schedule_storage_invalid", current: invalidEntry.schedule }), { status: 422, headers: { "content-type": "application/json" } }));
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 50)); await Promise.resolve(); await Promise.resolve(); });
+    expect(getCount).toBe(2);
+    expect(host.querySelector(".qc-calendar-unscheduled__row.is-attention")).not.toBeNull();
+    expect(host.textContent).toContain("Repair is unavailable in Calendar");
+    expect(host.querySelector('[aria-live]')?.textContent).toContain("This checklist schedule needs attention. Repair is unavailable in Calendar.");
   });
 
   it("heals a storage-invalid marker when a later authoritative refetch returns a valid event", async () => {
