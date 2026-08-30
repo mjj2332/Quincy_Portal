@@ -104,3 +104,38 @@ at Opus plan-tier review and nothing measured here contradicts it. If a producti
 ever shows CPU pressure below this count, lower the constant — it is a single
 `PRODUCTION_CALENDAR_MAX_SCHEDULED_EVENTS` value in `@quincy/shared` with no schema impact. No
 plan delta.
+
+## Known limitation: the density guard is corpus-proportional, not range-proportional (Opus final-draft review S1, 2026-08-31)
+
+`checklist_filtered_candidates` (and therefore statement 1 and `density.scheduled_total`)
+reads from `candidate_subtasks_unfiltered`, which applies the visible-project scope, Stage,
+delivered, completion, overdue and search predicates but **no range predicate** — the range
+predicate lives only in `range_candidate_subtasks`, used for the people/facet universe. This is
+deliberate (the Slice-4 B1 fix moved authoritative 5-state classification into the handler, so
+statement 1 must carry every visible checklist row, including out-of-range and repair rows, for
+`serializeChecklistSchedule` to classify).
+
+Consequences, accepted as a known operational limit rather than fixed (owner decision
+2026-08-31, "option C"):
+
+- **`density.scheduled_total` counts the whole active-corpus candidate set**, not the in-range
+  subset. Once a studio's active unarchived corpus exceeds ~10,000 visible incomplete checklist
+  rows (≈500 active projects at ~20 subtasks each), **every** Calendar request returns
+  `422 calendar_range_too_dense` for **every** date range until the corpus shrinks or a
+  Stage/Editor/search filter narrows it. Narrowing the *date range* alone does not help at that
+  point; the refusal copy leads with "narrow the filters" and names Stage/Editor/layer/search,
+  which do help.
+- **Per-request D1→Worker row load is corpus-proportional**: at the current corpus (~76
+  projects / ~1,500 rows) every request — including the 30 s poll — ships and classifies
+  ~1,500 candidate rows regardless of whether one week or six is in view. Measured cost at
+  1,596 rows is ~85 ms wall / 1.28 MB (see above); acceptable at this scale.
+
+The range-scoped fix (`checklist_filtered_candidates` FROM `range_candidate_subtasks`) was
+prototyped and reverted: a right-*length* but corrupt schedule value (`"not-a-date"`,
+`"2026-13-45"`) has `coarse_shape = 1` and would then be filtered by a meaningless lexical
+range comparison instead of reaching the handler for real classification — reintroducing
+exactly the B1 hazard. A safe range-scoping would need `NOT GLOB`/structural-char guards so any
+non-parseable value always reaches the handler; deferred until the studio approaches the
+~500-project threshold. **Monitoring trigger:** if `calendar_range_too_dense` starts appearing
+in production logs, or active-project count approaches 400, revisit with the range-scoped +
+garbage-guard approach.
