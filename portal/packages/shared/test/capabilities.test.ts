@@ -3,19 +3,20 @@ import { CAPABILITIES, EXTERNAL_EDITOR_CAPABILITIES, ROLE_CAPABILITIES, ROLE_LAB
 import { PHOTOGRAPHER_VISIBLE_STAGES, STAGE_KEYS, STAGE_TRANSITIONS } from "../src/stages";
 
 describe("PRD §4 capability matrix", () => {
-  it("keeps the External Editor role and exact ten-capability allow-list closed", () => {
+  it("keeps the External Editor role and exact eleven-capability allow-list closed", () => {
     expect(ROLES).toEqual(["admin", "photographer", "editor", "external_editor"]);
     expect(ROLE_LABELS.external_editor).toBe("External editor");
     expect(EXTERNAL_EDITOR_CAPABILITIES).toEqual([
       "uploadEdited", "viewRaw", "annotateRaw", "recommendRaw", "compareFrames",
       "viewEdited", "reviewEdited", "annotateEdited", "collaborateOnProject",
       "moveProjectStage",
+      "viewProductionCalendar",
     ]);
     expect(ROLE_CAPABILITIES.external_editor).toEqual(EXTERNAL_EDITOR_CAPABILITIES);
-    expect(EXTERNAL_EDITOR_CAPABILITIES).toHaveLength(10);
+    expect(EXTERNAL_EDITOR_CAPABILITIES).toHaveLength(11);
     expect(ROLE_CAPABILITIES.external_editor.every((capability) => CAPABILITIES.includes(capability))).toBe(true);
     expect(roleHasCapability("external_editor", "moveProjectStage")).toBe(true);
-    expect(roleHasCapability("external_editor", "viewProductionCalendar" as never)).toBe(false);
+    expect(roleHasCapability("external_editor", "viewProductionCalendar")).toBe(true);
   });
 
   it("keeps the full role/capability boundary explicit", () => {
