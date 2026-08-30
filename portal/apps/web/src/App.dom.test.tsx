@@ -9,7 +9,7 @@ const stopImpersonatingMock = vi.hoisted(() => vi.fn<() => Promise<void>>());
 vi.mock("./lib/auth", () => ({ useSession: () => sessionState.value, stopImpersonating: stopImpersonatingMock, consumeSignInDestination: () => null }));
 vi.mock("./lib/stages", () => ({ StagesProvider: ({ children }: { children: unknown }) => children }));
 vi.mock("./components/Topbar", () => ({ Topbar: () => <header /> }));
-vi.mock("./screens/Dashboard", () => ({ Dashboard: () => <main>Dashboard</main> }));
+vi.mock("./screens/Dashboard", () => ({ Dashboard: ({ calendar }: { calendar?: unknown }) => <main>Dashboard<span data-calendar-route={calendar ? "present" : "absent"} /></main> }));
 vi.mock("./screens/ProjectWorkspace", () => ({ ProjectWorkspace: ({ projectId, collaborationOpenSignal, onCollaborationOpenSignalConsumed }: { projectId: string; collaborationOpenSignal?: number; onCollaborationOpenSignalConsumed?: (signal: number) => void }) => { seenSignals.push(collaborationOpenSignal); return <main><button type="button" onClick={() => collaborationOpenSignal !== undefined && onCollaborationOpenSignalConsumed?.(collaborationOpenSignal)}>consume {projectId}</button><span data-signal={String(collaborationOpenSignal)} /></main>; } }));
 vi.mock("./screens/SignIn", () => ({ SignIn: () => <main>Sign in</main> }));
 vi.mock("./screens/Admin", () => ({ Admin: () => <main>Admin</main> }));
@@ -36,6 +36,14 @@ describe("App collaboration arrival transport", () => {
   it("renders the Dashboard for a valid Calendar root location", async () => {
     const host = await renderAt("/?view=calendar&date=2026-08-30&sub=agenda&layers=project%2Cchecklist");
     expect(host.textContent).toContain("Dashboard");
+    expect(host.querySelector("[data-calendar-route]")?.getAttribute("data-calendar-route")).toBe("present");
+  });
+
+  it("replaces a withheld Photographer Calendar location without mounting Calendar state", async () => {
+    sessionState.value = { data: { user: { id: "photographer", name: "Photographer", role: "photographer" } }, isPending: false, refetch: vi.fn<() => Promise<void>>().mockResolvedValue(undefined) };
+    const host = await renderAt("/?view=calendar&date=2026-08-30&sub=agenda&layers=project%2Cchecklist");
+    expect(`${window.location.pathname}${window.location.search}`).toBe("/");
+    expect(host.querySelector("[data-calendar-route]")?.getAttribute("data-calendar-route")).toBe("absent");
   });
 
   it("cleans each acknowledged intent and observes a later identical history arrival as a fresh signal", async () => {

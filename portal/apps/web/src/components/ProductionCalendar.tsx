@@ -1,33 +1,134 @@
-import FullCalendar, { type CalendarOptions, type PluginInput } from "@fullcalendar/react";
-import dayGridPlugin from "@fullcalendar/react/daygrid";
-import interactionPlugin from "@fullcalendar/react/interaction";
-import listPlugin from "@fullcalendar/react/list";
-import timeGridPlugin from "@fullcalendar/react/timegrid";
-import { PRODUCTION_CALENDAR_ZONE } from "@quincy/shared";
-import "../styles/production-calendar.css";
+import { useEffect, useMemo, useState } from "react";
+import {
+  deriveProductionCalendarWindow,
+  formatSydneyCivilMinute,
+  type CalendarEventDto,
+  type DashboardCalendarState,
+  type ProductionCalendarFilters,
+  type ProductionCalendarSubview,
+} from "@quincy/shared";
+import type { DashboardIdentity } from "../lib/dashboard-projects";
+import { productionCalendarFiltersFor, useProductionCalendarRange } from "../lib/production-calendar-query";
+import { mapCalendarEventsToFullCalendar } from "../lib/production-calendar-event-input";
+import { ProductionCalendarSurface } from "./ProductionCalendarSurface";
+import { ProductionCalendarToolbar } from "./ProductionCalendarToolbar";
+import { ProductionCalendarEvent } from "./ProductionCalendarEvent";
 
-export const PRODUCTION_CALENDAR_PLUGINS: PluginInput[] = [
-  dayGridPlugin,
-  timeGridPlugin,
-  listPlugin,
-  interactionPlugin,
-];
+export type ProductionCalendarProps = {
+  identity: DashboardIdentity;
+  calendar: DashboardCalendarState;
+  onNavigate: (next: DashboardCalendarState) => void;
+  onAppliedFilters?: (filters: ProductionCalendarFilters) => void;
+};
 
-export type ProductionCalendarProps = Omit<CalendarOptions, "plugins" | "timeZone">;
+function errorCode(error: unknown): string | undefined {
+  if (!error || typeof error !== "object") return undefined;
+  const details = "details" in error ? (error as { details?: unknown }).details : undefined;
+  if (!details || typeof details !== "object") return undefined;
+  const code = "code" in details ? (details as { code?: unknown }).code : undefined;
+  return typeof code === "string" ? code : undefined;
+}
+
+function errorRefinement(error: unknown): string | undefined {
+  if (!error || typeof error !== "object") return undefined;
+  const details = "details" in error ? (error as { details?: unknown }).details : undefined;
+  if (!details || typeof details !== "object") return undefined;
+  const refinement = "refinement" in details ? (details as { refinement?: unknown }).refinement : undefined;
+  return typeof refinement === "string" ? refinement : undefined;
+}
+
+function sameFilters(left: ProductionCalendarFilters, right: ProductionCalendarFilters): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function eventCivilDate(event: CalendarEventDto): string {
+  return event.timing.allDay ? event.timing.start : formatSydneyCivilMinute(event.timing.start).slice(0, 10);
+}
+
+function viewForSubview(subview: ProductionCalendarSubview): "dayGridMonth" | "timeGridWeek" | "list" {
+  if (subview === "month") return "dayGridMonth";
+  if (subview === "week") return "timeGridWeek";
+  return "list";
+}
 
 /**
- * The production seam for Standard FullCalendar views. Product UI owns the toolbar and
- * event presentation in later slices; this wrapper owns only the plugin, zone, and CSS
- * boundary so no route accidentally adopts a different calendar configuration.
+ * The read-only Calendar screen. FullCalendar receives already-mapped events;
+ * all range identity comes from the shared civil window, never datesSet.
  */
-export function ProductionCalendar(props: ProductionCalendarProps) {
+export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFilters }: ProductionCalendarProps) {
+  const range = useMemo(() => deriveProductionCalendarWindow(calendar.date, calendar.subview), [calendar.date, calendar.subview]);
+  const query = useProductionCalendarRange({ identity, calendar, enabled: true });
+  const [selectedDay, setSelectedDay] = useState<string | null>(null);
+  const mappedEvents = useMemo(() => mapCalendarEventsToFullCalendar(query.data?.events ?? []), [query.data?.events]);
+
+  useEffect(() => {
+    setSelectedDay(null);
+  }, [calendar.date, calendar.subview]);
+
+  useEffect(() => {
+    const applied = query.data?.range.appliedFilters;
+    if (!applied || sameFilters(applied, productionCalendarFiltersFor(calendar))) return;
+    onAppliedFilters?.(applied);
+  }, [calendar, onAppliedFilters, query.data?.range.appliedFilters]);
+
+  const selectedEvents = selectedDay === null
+    ? []
+    : (query.data?.events ?? []).filter((event) => eventCivilDate(event) === selectedDay);
+  const dense = errorCode(query.error) === "calendar_range_too_dense";
+  const refinement = errorRefinement(query.error) ?? "Refine the date range, Stage, Editor, layer, or search filters.";
+
   return (
-    <div className="production-calendar">
-      <FullCalendar
-        {...props}
-        plugins={PRODUCTION_CALENDAR_PLUGINS}
-        timeZone={PRODUCTION_CALENDAR_ZONE}
-      />
-    </div>
+    <section className="qc-calendar-screen" aria-label="Production Calendar">
+      <ProductionCalendarToolbar calendar={calendar} range={range} onNavigate={onNavigate} />
+
+      {query.isPending && !query.data && <div className="empty qc-calendar-state" role="status">Loading calendar…</div>}
+
+      {!query.isPending && query.error && !query.data && (
+        <div className="empty qc-calendar-state" role="alert">
+          <span className="serif">Calendar unavailable.</span>
+          {dense ? <><p>That range is too dense — narrow the filters.</p><p>{refinement}</p></> : <p>Calendar could not be loaded. Try again.</p>}
+          {!dense && <div style={{ marginTop: 16 }}><button className="button button--secondary" type="button" onClick={() => void query.refetch()}>Try again</button></div>}
+        </div>
+      )}
+
+      {query.data && query.data.events.length === 0 && <div className="empty qc-calendar-state" role="status">No scheduled work in this range.</div>}
+
+      {query.data && query.data.events.length > 0 && (
+        <>
+          <ProductionCalendarSurface
+            key={`${calendar.subview}:${calendar.date}`}
+            initialView={viewForSubview(calendar.subview)}
+            initialDate={calendar.date}
+            visibleRange={range}
+            headerToolbar={false}
+            events={mappedEvents}
+            editable={false}
+            eventStartEditable={false}
+            eventDurationEditable={false}
+            droppable={false}
+            selectable={false}
+            weekends
+            firstDay={1}
+            slotMinTime="00:00:00"
+            slotMaxTime="24:00:00"
+            expandRows={calendar.subview === "week"}
+            // Agenda uses FullCalendar's list view with an explicit fourteen-day
+            // duration, while visibleRange remains the shared Quincy window.
+            views={{ list: { type: "list", duration: { days: 14 } } }}
+            dateClick={(info) => {
+              if (calendar.subview === "month" && info.allDay) setSelectedDay(info.dateStr);
+            }}
+            eventContent={(info) => <ProductionCalendarEvent event={info.event.extendedProps.dto} subview={calendar.subview} />}
+          />
+
+          {calendar.subview === "month" && selectedDay !== null && (
+            <section className="qc-calendar-disclosure" aria-label="Selected day">
+              <div className="ey">Selected day · {selectedDay}</div>
+              {selectedEvents.length === 0 ? <p className="muted">No scheduled work on this day.</p> : <div className="qc-calendar-disclosure__events">{selectedEvents.map((event) => <ProductionCalendarEvent key={event.id} event={event} subview={calendar.subview} compact />)}</div>}
+            </section>
+          )}
+        </>
+      )}
+    </section>
   );
 }

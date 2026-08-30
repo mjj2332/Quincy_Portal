@@ -216,6 +216,62 @@ function dayDelta(from: string, to: string): number | null {
   return fromParts && toParts ? daysFromCivil(toParts) - daysFromCivil(fromParts) : null;
 }
 
+/**
+ * Return the proleptic-Gregorian weekday without routing a civil date through
+ * Date. Monday is 0 and Sunday is 6, matching FullCalendar's firstDay value.
+ */
+function sydneyCalendarWeekday(year: number, month: number, day: number): number {
+  if (!Number.isInteger(year) || year < 0 || year > 9999 || !Number.isInteger(month) || month < 1 || month > 12 || !Number.isInteger(day) || !isSydneyCalendarDate(`${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`)) {
+    throw new RangeError("Expected a valid Gregorian calendar date.");
+  }
+  const monthOffsets = [0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4];
+  const adjustedYear = year - (month < 3 ? 1 : 0);
+  const sundayBased = (adjustedYear + Math.floor(adjustedYear / 4) - Math.floor(adjustedYear / 100) + Math.floor(adjustedYear / 400) + monthOffsets[month - 1]! + day) % 7;
+  return (sundayBased + 6) % 7;
+}
+
+function checkedWindow(start: string, end: string): { start: string; end: string } {
+  const difference = dayDelta(start, end);
+  if (difference === null || difference <= 0 || difference > PRODUCTION_CALENDAR_MAX_RANGE_DAYS) {
+    throw new RangeError("The production Calendar window is outside its bounded range.");
+  }
+  return { start, end };
+}
+
+/**
+ * Derive the civil-date query window for a Calendar view. Date-only values are
+ * component data, never instants; every shift therefore stays in the shared
+ * civil calendar arithmetic above.
+ */
+export function deriveProductionCalendarWindow(
+  date: string,
+  subview: ProductionCalendarSubview,
+): { start: string; end: string } {
+  const parsed = parseCalendarDate(date);
+  if (!parsed) throw new RangeError("Expected a canonical Sydney calendar date.");
+  if (!PRODUCTION_CALENDAR_SUBVIEWS.includes(subview)) throw new RangeError("Expected a supported production Calendar subview.");
+
+  const weekday = sydneyCalendarWeekday(parsed.year, parsed.month, parsed.day);
+  const firstOfMonth = `${String(parsed.year).padStart(4, "0")}-${String(parsed.month).padStart(2, "0")}-01`;
+  let start = date;
+  let duration = 14;
+  if (subview === "month") {
+    const shifted = shiftDateValue(firstOfMonth, -sydneyCalendarWeekday(parsed.year, parsed.month, 1));
+    if (!shifted.ok) throw new RangeError("Could not derive the production Calendar month start.");
+    start = shifted.value;
+    duration = 42;
+  } else if (subview === "week") {
+    const shifted = shiftDateValue(date, -weekday);
+    if (!shifted.ok) throw new RangeError("Could not derive the production Calendar week start.");
+    start = shifted.value;
+    duration = 7;
+  }
+
+  const shiftedEnd = shiftDateValue(start, duration);
+  if (!shiftedEnd.ok) throw new RangeError("Could not derive the production Calendar window end.");
+  return checkedWindow(start, shiftedEnd.value);
+}
+
 function civilMinuteIndex(parts: CivilMinuteParts): number {
   return daysFromCivil(parts) * 1440 + parts.hour * 60 + parts.minute;
 }

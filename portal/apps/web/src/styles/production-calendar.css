@@ -85,3 +85,40 @@
 .production-calendar :where(.fc-event) {
   border-color: var(--fc-event-color);
 }
+
+.qc-calendar-screen { min-width: 0; }
+.qc-cal-toolbar { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 18px; margin: 0 0 18px; padding: 12px 0 16px; border-bottom: 1px solid var(--border-hairline, #d4cec1); }
+.qc-cal-toolbar__controls, .qc-cal-toolbar__views { display: flex; align-items: center; gap: 6px; }
+.qc-cal-toolbar__period { min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 3px; text-align: center; }
+.qc-cal-toolbar__period strong { font: var(--type-h3, 600 20px/1.2 Apfel Grotezk, sans-serif); letter-spacing: -.02em; }
+.qc-cal-zone { color: var(--text-muted, #746f64); font: var(--type-eyebrow, 600 10px/1.2 Apfel Grotezk, sans-serif); letter-spacing: .1em; text-transform: uppercase; }
+.qc-cal-toolbar__views button { min-width: 72px; }
+.qc-calendar-state { min-height: 180px; display: grid; place-content: center; gap: 4px; }
+.qc-calendar-state p { margin: 0; }
+.qc-calendar-disclosure { margin-top: 18px; padding: 16px; border: 1px solid var(--border-hairline, #d4cec1); background: var(--paper-000, #faf8f2); }
+.qc-calendar-disclosure__events { display: grid; gap: 8px; margin-top: 12px; }
+.qc-cal-event-card { min-width: 0; padding: 7px 8px; border-left: 3px solid var(--signal-info, #2f3b4d); color: var(--text-primary, #0a0a0a); overflow: hidden; }
+.qc-cal-event-card--project { border-left-color: var(--signal-positive, #3f5b3a); }
+.qc-cal-event-card--checklist { border-left-color: var(--signal-info, #2f3b4d); }
+.qc-cal-event-card.is-compact { padding: 6px 8px; border: 1px solid var(--border-hairline, #d4cec1); border-left-width: 3px; background: var(--paper-050, #fffdf8); }
+.qc-cal-event-card__meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; color: var(--text-muted, #746f64); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
+.qc-cal-stage { max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary, #4d493f); }
+.qc-cal-event-card h4, .qc-cal-event-card__title { margin: 3px 0 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qc-cal-event-card h4 { font: 600 13px/1.25 var(--font-body, Apfel Grotezk, sans-serif); }
+.qc-cal-event-card__title { color: var(--text-secondary, #4d493f); font-size: 11px; }
+.qc-cal-event-card__details { display: grid; gap: 2px; margin: 5px 0 0; font-size: 11px; }
+.qc-cal-event-card__details div { display: flex; gap: 4px; }
+.qc-cal-event-card__details dt { color: var(--text-muted, #746f64); }
+.qc-cal-event-card__details dd { margin: 0; }
+.qc-cal-event-card__pills { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.qc-cal-pill { display: inline-flex; align-items: center; max-width: 100%; padding: 2px 6px; border-radius: 999px; font: 600 9px/1.2 var(--font-body, Apfel Grotezk, sans-serif); letter-spacing: .05em; text-transform: uppercase; }
+.qc-cal-pill--overdue { background: color-mix(in srgb, var(--signal-critical, #7a2420) 12%, transparent); color: var(--signal-critical, #7a2420); }
+.qc-cal-pill--delivered, .qc-cal-pill--completed { background: color-mix(in srgb, var(--signal-positive, #3f5b3a) 14%, transparent); color: var(--signal-positive, #3f5b3a); }
+.qc-cal-event-card.is-compact .qc-cal-event-card__details { margin-top: 3px; }
+
+@media (max-width: 720px) {
+  .qc-cal-toolbar { grid-template-columns: 1fr; gap: 10px; }
+  .qc-cal-toolbar__controls, .qc-cal-toolbar__views { justify-content: center; }
+  .qc-cal-toolbar__period { order: -1; }
+  .qc-cal-toolbar__views button { flex: 1; }
+}

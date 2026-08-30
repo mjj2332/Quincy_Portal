@@ -1,5 +1,5 @@
-import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { formatSydneyCivil, type MoveProjectStageRequest, type MoveProjectStageResponse, type StageKey } from "@quincy/shared";
+import { lazy, Suspense, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { formatSydneyCivil, roleHasCapability, type DashboardCalendarState, type MoveProjectStageRequest, type MoveProjectStageResponse, type ProductionCalendarFilters, type StageKey } from "@quincy/shared";
 import { QueryClient, QueryClientContext, QueryClientProvider } from "@tanstack/react-query";
 import { StatusBadge } from "../components/atoms";
 import { LazyImage } from "../components/LazyImage";
@@ -7,7 +7,7 @@ import { ApiError, apiPost } from "../lib/api";
 import { confirmStore } from "../lib/confirm";
 import { useCapabilities } from "../lib/capabilities";
 import { useStages } from "../lib/stages";
-import { formatDashboardDate, initializeDashboardView, initializeKanbanSortMode, type DashboardView, type KanbanSortMode } from "./dashboard-helpers";
+import { DASHBOARD_CALENDAR_LAST_DATE_KEY, DASHBOARD_CALENDAR_SUBVIEW_KEY, formatDashboardDate, initializeDashboardCalendarState, initializeDashboardView, initializeKanbanSortMode, type DashboardView, type KanbanSortMode } from "./dashboard-helpers";
 import { InternalLink } from "../components/InternalLink";
 import { NoticeBoard } from "../components/NoticeBoard";
 import { invalidateProjectResources, useOptionalProjectQueryClient } from "../lib/project-data";
@@ -34,6 +34,11 @@ import {
   type SemanticGap,
 } from "../lib/kanban-interaction";
 import { ProjectKanbanBoard, type BoardInteractionState } from "../components/ProjectKanbanBoard";
+// Code-split: FullCalendar + its deps (~84 kB gzip) load only when a capable
+// principal opens the Calendar view, never on the sign-in screen or a
+// Photographer dashboard.
+const ProductionCalendar = lazy(() => import("../components/ProductionCalendar").then((module) => ({ default: module.ProductionCalendar })));
+import { locationStore, parseStaffLocation, safeStaffDestination, staffPathFor } from "../lib/router";
 
 export { adjacentBoardGap, adjacentBoardPlacement, cardDropPlacement, sortKanbanProjects } from "../lib/kanban-interaction";
 export type { ProjectSummary } from "../lib/kanban-interaction";
@@ -101,9 +106,9 @@ function ProjectListRow({ project }: { project: ProjectSummary }) {
   </div>;
 }
 
-type DashboardProps = { currentUserId: string; role?: Parameters<typeof dashboardProjectsKey>[1]; authorizationEpoch?: number };
+type DashboardProps = { currentUserId: string; role?: Parameters<typeof dashboardProjectsKey>[1]; authorizationEpoch?: number; calendar?: DashboardCalendarState | null };
 
-function DashboardContent({ currentUserId, role = "photographer", authorizationEpoch = 0 }: DashboardProps) {
+function DashboardContent({ currentUserId, role = "photographer", authorizationEpoch = 0, calendar: routeCalendar = null }: DashboardProps) {
   const queryClient = useOptionalProjectQueryClient();
   const { can } = useCapabilities();
   const { stages } = useStages();
@@ -112,12 +117,26 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   const canPrioritize = can("prioritizeProjects");
   const canViewArchived = can("adminBackend");
   const canViewNoticeBoard = can("viewNoticeBoard");
+  const canViewProductionCalendar = roleHasCapability(role, "viewProductionCalendar");
+  const history = locationStore();
+  const locationHasCalendar = (() => { const current = parseStaffLocation(history.getLocation()); return current.kind === "dashboard" && current.calendar !== undefined; })();
+  const calendarStorage = {
+    read: (key: string) => window.localStorage.getItem(key),
+    write: (key: string, value: string) => window.localStorage.setItem(key, value),
+  };
   const [projectScope, setProjectScope] = useState<ProjectScope>("active");
   const [query, setQuery] = useState("");
-  const [view, setView] = useState<DashboardView>(() => initializeDashboardView({
-    read: () => window.localStorage.getItem("quincy:dashboard:view"),
-    write: (next) => window.localStorage.setItem("quincy:dashboard:view", next),
-  }));
+  const [view, setView] = useState<DashboardView>(() => {
+    const stored = initializeDashboardView({
+      read: () => window.localStorage.getItem("quincy:dashboard:view"),
+      write: (next) => window.localStorage.setItem("quincy:dashboard:view", next),
+    });
+    if (routeCalendar && canViewProductionCalendar) return "calendar";
+    return !canViewProductionCalendar && stored === "calendar" ? "list" : stored;
+  });
+  const [calendarState, setCalendarState] = useState<DashboardCalendarState | null>(() => routeCalendar && canViewProductionCalendar
+    ? routeCalendar
+    : canViewProductionCalendar ? initializeDashboardCalendarState({ kind: "dashboard" }, calendarStorage, { now: Date.now(), isPhone: window.matchMedia?.("(max-width: 720px)").matches ?? false }) : null);
   const [kanbanSort, setKanbanSort] = useState<KanbanSortMode>(() => initializeKanbanSortMode({
     read: () => window.localStorage.getItem("quincy:dashboard:kanbanSort"),
     write: (next) => window.localStorage.setItem("quincy:dashboard:kanbanSort", next),
@@ -143,8 +162,13 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   const runtimeVersion = useSyncExternalStore(queryRuntime?.subscribe ?? noRuntimeSubscribe, queryRuntime?.getSnapshot ?? zeroRuntimeSnapshot, queryRuntime?.getSnapshot ?? zeroRuntimeSnapshot);
   const activeConfirm = useSyncExternalStore(confirmStore.subscribe, confirmStore.getSnapshot, () => null);
   const interactionBlocked = Boolean(boardInteraction.activeId || boardInteraction.proposal || pendingMoves.size > 0 || pendingOrdering.size > 0 || activeConfirm);
+  // Slice 5 owns a permanently open accept gate. Mutation slices will make this
+  // stateful without joining it to the Board interaction state machine.
+  const calendarInteractionBlocked = false;
   const interactionBlockedRef = useRef(interactionBlocked);
   interactionBlockedRef.current = interactionBlocked;
+  const lastNonCalendarViewRef = useRef<"list" | "kanban">("list");
+  const calendarFallbackLocationRef = useRef(!routeCalendar && view === "calendar" && canViewProductionCalendar);
   const movementSettlePendingRef = useRef(false);
   movementSettlePendingRef.current = movementSettlePending;
   const movementBusyRef = useRef(false);
@@ -169,6 +193,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   const error = !hasAcceptedDashboard && !queryProjects
     ? projectsQuery.error instanceof Error ? projectsQuery.error.message : projectsQuery.error ? "Projects could not be loaded." : undefined
     : undefined;
+  const isCalendarView = view === "calendar" && !viewingArchived && calendarState !== null;
   // Priority is deliberately the only Dashboard path that still writes this query cache.
   const updateProjects = useCallback((update: (current: ProjectSummary[]) => ProjectSummary[]) => {
     queryClient?.setQueryData<ProjectSummary[]>(dashboardKey, (current) => update(current ?? []));
@@ -199,6 +224,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     const fallbackStageKey = outcome !== "stale-move-to"
       ? settledStageKey ?? descriptor.sourceStageKey
       : undefined;
+
     const next: FocusRestore = {
       key: "control" in target ? focusKeyForControl(target.control, target.projectId) : null,
       x: window.scrollX,
@@ -212,6 +238,63 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       focusRestoreRef.current = next;
     }
   }, []);
+
+  useEffect(() => {
+    if ((view === "list" || view === "kanban") && !viewingArchived) lastNonCalendarViewRef.current = view;
+  }, [view, viewingArchived]);
+
+  useEffect(() => {
+    if (!canViewProductionCalendar) {
+      calendarFallbackLocationRef.current = false;
+      if (view === "calendar") setView("list");
+      return;
+    }
+    if (routeCalendar) {
+      calendarFallbackLocationRef.current = false;
+      setCalendarState(routeCalendar);
+      if (!viewingArchived) setView("calendar");
+      return;
+    }
+    if (locationHasCalendar) return;
+    if (calendarFallbackLocationRef.current) {
+      if (calendarState) {
+        const built = staffPathFor({ kind: "dashboard", calendar: calendarState });
+        if (safeStaffDestination(built) === built) history.replace(built);
+        else console.error("Production Calendar route invariant failed while restoring the saved view.");
+      }
+      calendarFallbackLocationRef.current = false;
+      return;
+    }
+    if (view === "calendar") setView(lastNonCalendarViewRef.current);
+  }, [calendarState, canViewProductionCalendar, history, locationHasCalendar, routeCalendar, view, viewingArchived]);
+
+  const navigateCalendar = useCallback((next: DashboardCalendarState, replace = false) => {
+    if (!canViewProductionCalendar || viewingArchived) return;
+    const built = staffPathFor({ kind: "dashboard", calendar: next });
+    if (safeStaffDestination(built) !== built) {
+      console.error("Production Calendar route invariant failed; navigation was not performed.");
+      return;
+    }
+    setCalendarState(next);
+    try {
+      calendarStorage.write(DASHBOARD_CALENDAR_SUBVIEW_KEY, next.subview);
+      calendarStorage.write(DASHBOARD_CALENDAR_LAST_DATE_KEY, next.date);
+    } catch { /* Calendar fallback storage is best effort. */ }
+    if (replace) history.replace(built); else history.push(built);
+  }, [canViewProductionCalendar, history, viewingArchived]);
+
+  const reconcileAppliedCalendarFilters = useCallback((filters: ProductionCalendarFilters) => {
+    if (!calendarState || !canViewProductionCalendar || viewingArchived) return;
+    const next: DashboardCalendarState = { ...calendarState, ...filters, view: "calendar" };
+    if (JSON.stringify(next) === JSON.stringify(calendarState)) return;
+    const built = staffPathFor({ kind: "dashboard", calendar: next });
+    if (safeStaffDestination(built) !== built) {
+      console.error("Production Calendar applied-filter route invariant failed; URL was not changed.");
+      return;
+    }
+    setCalendarState(next);
+    history.replace(built);
+  }, [calendarState, canViewProductionCalendar, history, viewingArchived]);
 
   const acceptDashboardProjects = useCallback((next: ProjectSummary[], dataUpdatedAt?: number) => {
     if (queryRuntime?.principalTerminal) return;
@@ -373,9 +456,34 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   const activeStages = stages.filter((stage) => stage.active);
 
   function selectView(next: DashboardView) {
-    if (interactionBlockedRef.current) return;
+    if (interactionBlockedRef.current || calendarInteractionBlocked) return;
+    if (next === "calendar") {
+      if (!canViewProductionCalendar || viewingArchived) return;
+      const nextCalendar = calendarState ?? initializeDashboardCalendarState({ kind: "dashboard" }, calendarStorage, { now: Date.now(), isPhone: window.matchMedia?.("(max-width: 720px)").matches ?? false });
+      calendarFallbackLocationRef.current = false;
+      setView("calendar");
+      try { window.localStorage.setItem("quincy:dashboard:view", "calendar"); } catch { /* Storage can be disabled by the browser. */ }
+      navigateCalendar(nextCalendar);
+      return;
+    }
     setView(next);
+    lastNonCalendarViewRef.current = next;
     try { window.localStorage.setItem("quincy:dashboard:view", next); } catch { /* Storage can be disabled by the browser. */ }
+    if (view === "calendar" || routeCalendar !== null || locationHasCalendar) {
+      calendarFallbackLocationRef.current = false;
+      history.push("/");
+    }
+  }
+
+  function selectProjectScope(next: ProjectScope) {
+    setProjectScope(next);
+    if (next === "archived" && view === "calendar") {
+      setView("list");
+      lastNonCalendarViewRef.current = "list";
+      try { window.localStorage.setItem("quincy:dashboard:view", "list"); } catch { /* Storage can be disabled by the browser. */ }
+      calendarFallbackLocationRef.current = false;
+      history.push("/");
+    }
   }
 
   function selectKanbanSort(next: KanbanSortMode) {
@@ -671,16 +779,17 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         {canViewArchived && <>
           <span className="ey">Projects</span>
           <div className="segment" aria-label="Project status">
-            <button className={!viewingArchived ? "is-active" : ""} type="button" onClick={() => setProjectScope("active")}>Active</button>
-            <button className={viewingArchived ? "is-active" : ""} type="button" onClick={() => setProjectScope("archived")}>Archived</button>
+            <button className={!viewingArchived ? "is-active" : ""} type="button" onClick={() => selectProjectScope("active")}>Active</button>
+            <button className={viewingArchived ? "is-active" : ""} type="button" onClick={() => selectProjectScope("archived")}>Archived</button>
           </div>
         </>}
         {viewingArchived && <span className="ey" role="status">Archived projects</span>}
         {!viewingArchived && <>
         <span className="ey">View</span>
         <div className="segment" aria-label="Dashboard view">
-          <button className={view === "list" ? "is-active" : ""} type="button" disabled={interactionBlocked} onClick={() => selectView("list")}>List</button>
-          <button className={view === "kanban" ? "is-active" : ""} type="button" disabled={interactionBlocked} onClick={() => selectView("kanban")}>Kanban</button>
+          <button className={view === "list" ? "is-active" : ""} type="button" disabled={interactionBlocked || calendarInteractionBlocked} onClick={() => selectView("list")}>List</button>
+          <button className={view === "kanban" ? "is-active" : ""} type="button" disabled={interactionBlocked || calendarInteractionBlocked} onClick={() => selectView("kanban")}>Kanban</button>
+          {canViewProductionCalendar && <button className={view === "calendar" ? "is-active" : ""} type="button" disabled={interactionBlocked || calendarInteractionBlocked} onClick={() => selectView("calendar")}>Calendar</button>}
         </div>
         {!viewingArchived && view === "kanban" && (
           <label className="dashboard-sort">
@@ -696,11 +805,17 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         </>}
       </div>
 
-      {boardUnavailableMessage && !viewingArchived && <div className="muted" role="status" style={{ marginBottom: 16 }}>{boardUnavailableMessage}</div>}
+      {boardUnavailableMessage && !viewingArchived && !isCalendarView && <div className="muted" role="status" style={{ marginBottom: 16 }}>{boardUnavailableMessage}</div>}
 
-      {isLoading && <div className="empty" role="status"><span className="serif">Loading {viewingArchived ? "archived " : ""}projects.</span>Preparing the production desk.</div>}
+      {isCalendarView && (
+        <Suspense fallback={<div className="empty qc-calendar-state" role="status">Loading calendar…</div>}>
+          <ProductionCalendar identity={identity} calendar={calendarState} onNavigate={(next) => navigateCalendar(next)} onAppliedFilters={reconcileAppliedCalendarFilters} />
+        </Suspense>
+      )}
 
-      {!isLoading && error && (
+      {!isCalendarView && isLoading && <div className="empty" role="status"><span className="serif">Loading {viewingArchived ? "archived " : ""}projects.</span>Preparing the production desk.</div>}
+
+      {!isCalendarView && !isLoading && error && (
         <div className="empty" role="alert">
           <span className="serif">{viewingArchived ? "Archived projects" : "Projects"} are unavailable.</span>
           {error}
@@ -708,7 +823,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         </div>
       )}
 
-      {!isLoading && !error && filteredProjects.length === 0 && (
+      {!isCalendarView && !isLoading && !error && filteredProjects.length === 0 && (
         <div className="empty">
           <span className="serif">{query ? "Nothing here yet." : viewingArchived ? "No archived projects." : "No shoots yet — create the first one."}</span>
           {query ? "No projects match this search." : viewingArchived ? "Archived projects remain here until they are restored or permanently deleted." : "Start the production desk with the property, client, and team details."}
@@ -716,14 +831,14 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         </div>
       )}
 
-      {!isLoading && !error && filteredProjects.length > 0 && (viewingArchived || view === "list") && (
+      {!isCalendarView && !isLoading && !error && filteredProjects.length > 0 && (viewingArchived || view === "list") && (
         <div className="plist" aria-label="Projects list">
           <div className="prow head"><div /><div>Address</div><div className="prow__c-agency">Client</div><div className="prow__c-date">Shoot date</div><div className="prow__c-status">Status</div><div className="prow__raw">RAW received</div></div>
           {filteredProjects.map((project) => <ProjectListRow key={project.id} project={project} />)}
         </div>
       )}
 
-      {!isLoading && !error && !viewingArchived && filteredProjects.length > 0 && view === "kanban" && (
+      {!isCalendarView && !isLoading && !error && !viewingArchived && filteredProjects.length > 0 && view === "kanban" && (
         <ProjectKanbanBoard
           projects={filteredProjects}
           activeStages={activeStages}

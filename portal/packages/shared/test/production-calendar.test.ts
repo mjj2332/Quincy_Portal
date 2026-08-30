@@ -4,6 +4,7 @@ import {
   adminProductionCalendarRangeResponseSchema,
   calendarEventSchemaFor,
   calendarUnscheduledEntrySchemaFor,
+  deriveProductionCalendarWindow,
   editorProductionCalendarRangeResponseSchema,
   externalCalendarRangeSchema,
   mapChecklistEndResizeToCommand,
@@ -13,6 +14,7 @@ import {
   mapUnscheduledProjectDropToCommand,
   previewProjectDeadlineReminderConsequences,
   productionCalendarFiltersSchema,
+  PRODUCTION_CALENDAR_MAX_RANGE_DAYS,
   productionCalendarRangeQuerySchema,
   PRODUCTION_CALENDAR_ZONE,
   shiftSydneyCalendarDate,
@@ -117,6 +119,52 @@ describe("TB5C shared query/filter contract", () => {
   });
 });
 
+describe("production Calendar civil windows", () => {
+  it("renders a six-week month window with leading and trailing days", () => {
+    expect(deriveProductionCalendarWindow("2026-08-12", "month")).toEqual({ start: "2026-07-27", end: "2026-09-07" });
+  });
+
+  it("does not add a leading day when the first is Monday and adds six for Sunday", () => {
+    expect(deriveProductionCalendarWindow("2026-06-01", "month")).toEqual({ start: "2026-06-01", end: "2026-07-13" });
+    expect(deriveProductionCalendarWindow("2026-02-01", "month")).toEqual({ start: "2026-01-26", end: "2026-03-09" });
+  });
+
+  it("anchors every weekday input to its Monday and following Monday", () => {
+    const expected = { start: "2026-08-10", end: "2026-08-17" };
+    for (const date of ["2026-08-10", "2026-08-11", "2026-08-12", "2026-08-13", "2026-08-14", "2026-08-15", "2026-08-16"]) {
+      expect(deriveProductionCalendarWindow(date, "week")).toEqual(expected);
+    }
+  });
+
+  it("uses a bounded fourteen-day agenda window", () => {
+    expect(deriveProductionCalendarWindow("2026-08-12", "agenda")).toEqual({ start: "2026-08-12", end: "2026-08-26" });
+  });
+
+  it("keeps the April fold and October gap in civil-date space", () => {
+    expect(deriveProductionCalendarWindow("2026-04-05", "month")).toEqual({ start: "2026-03-30", end: "2026-05-11" });
+    expect(deriveProductionCalendarWindow("2026-10-04", "month")).toEqual({ start: "2026-09-28", end: "2026-11-09" });
+    for (const input of [["2026-04-05", "month"], ["2026-10-04", "month"], ["2026-04-05", "week"], ["2026-10-04", "agenda"]] as const) {
+      const window = deriveProductionCalendarWindow(input[0], input[1]);
+      let cursor = window.start;
+      let difference = 0;
+      while (cursor !== window.end && difference <= PRODUCTION_CALENDAR_MAX_RANGE_DAYS) {
+        const next = shiftSydneyCalendarDate(cursor, 1);
+        if (!next.ok) throw new Error("Test date shift failed.");
+        cursor = next.value;
+        difference += 1;
+      }
+      expect(cursor).toBe(window.end);
+      expect(difference).toBeGreaterThan(0);
+      expect(difference).toBeLessThanOrEqual(PRODUCTION_CALENDAR_MAX_RANGE_DAYS);
+    }
+  });
+
+  it("rejects non-canonical focused dates", () => {
+    expect(() => deriveProductionCalendarWindow("2026-2-01", "month")).toThrow(RangeError);
+    expect(() => deriveProductionCalendarWindow("2026-02-29", "month")).toThrow(RangeError);
+  });
+});
+
 describe("TB5C strict role-safe DTOs", () => {
   it("constructs concrete Admin, Editor, and External response schemas", () => {
     expect(adminProductionCalendarRangeResponseSchema.safeParse(response(ADMIN_STAGE)).success).toBe(true);
@@ -209,4 +257,3 @@ describe("TB5C reminder preview", () => {
     expect(previewProjectDeadlineReminderConsequences({ oldDeadline, newDeadline, reminderOffsetsMinutes: [1440], now: Date.parse("2026-10-05T00:00:00.000Z") })[0]).toMatchObject({ label: "elapsed_at_save" });
   });
 });
-

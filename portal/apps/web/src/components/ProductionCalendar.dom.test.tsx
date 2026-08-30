@@ -1,7 +1,7 @@
 import { createRoot, type Root } from "react-dom/client";
 import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { ProductionCalendar, PRODUCTION_CALENDAR_PLUGINS } from "./ProductionCalendar";
+import { PRODUCTION_CALENDAR_PLUGINS, ProductionCalendarSurface } from "./ProductionCalendarSurface";
 import "../styles/production-calendar.css";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -12,7 +12,7 @@ class TestResizeObserver {
   disconnect() {}
 }
 
-describe("ProductionCalendar", () => {
+describe("ProductionCalendarSurface", () => {
   let host: HTMLDivElement;
   let root: Root;
 
@@ -31,7 +31,7 @@ describe("ProductionCalendar", () => {
   it("mounts the Standard wrapper with the scoped stylesheet and four plugins", async () => {
     await act(async () => {
       root.render(
-        <ProductionCalendar
+        <ProductionCalendarSurface
           initialDate="2026-04-05"
           initialView="dayGridMonth"
           headerToolbar={false}
