@@ -486,6 +486,14 @@ describe("TB5C production Calendar range endpoint", () => {
     const overdue = await adminCalendar(`/api/production-calendar?${rangeNoLayers}&layers=checklist&q=Date%20milestone&overdue=1`);
     expect(overdue.events.find((event) => event.kind === "checklist")?.status.overdue).toBe(true);
 
+    // overdue_only constrains scheduled events, not the Unscheduled panel: an
+    // unscheduled checklist entry has no due date to be "overdue" and must stay
+    // visible (matching the project branch, which lets a null-deadline project through).
+    const overdueDefault = await adminCalendar(`/api/production-calendar?${rangeNoLayers}&layers=checklist&q=Unassigned%20checklist`);
+    expect(overdueDefault.unscheduled.some((entry) => entry.kind === "checklist" && entry.title === "Unassigned checklist")).toBe(true);
+    const overdueUnscheduled = await adminCalendar(`/api/production-calendar?${rangeNoLayers}&layers=checklist&q=Unassigned%20checklist&overdue=1`);
+    expect(overdueUnscheduled.unscheduled.some((entry) => entry.kind === "checklist" && entry.title === "Unassigned checklist" && entry.reason === "unscheduled")).toBe(true);
+
     const projectOnly = await adminCalendar(`/api/production-calendar?${rangeNoLayers}&layers=project&q=Calendar`);
     expect(projectOnly.events.every((event) => event.kind === "project_deadline")).toBe(true);
     const checklistOnly = await adminCalendar(`/api/production-calendar?${rangeNoLayers}&layers=checklist&q=Calendar`);

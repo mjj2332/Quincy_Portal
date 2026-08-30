@@ -338,13 +338,20 @@ candidate_subtasks_raw AS (
   CROSS JOIN request r
   WHERE r.checklist_layer = 1
     AND (r.show_completed = 1 OR s.done = 0)
-    AND (r.overdue_only = 0 OR (s.done = 0 AND (
-      (s.schedule_end_kind = 'timed' AND s.schedule_end_at < r.now)
-      OR (s.schedule_end_kind = 'date' AND s.due_date < r.today_date)
-      OR (s.schedule_start_kind = 'date' AND s.due_date < r.today_date)
-      OR (s.schedule_start_kind = 'timed' AND s.schedule_end_at < r.now)
-      OR (s.schedule_version = 0 AND s.schedule_start_kind IS NULL AND s.schedule_end_kind IS NULL AND instr(COALESCE(s.due_date, ''), 'T') > 0)
-    )))
+    -- overdue_only constrains scheduled checklist EVENTS only (matching the project
+    -- branch, which lets a null-deadline project through). A checklist row with no
+    -- schedule data at all is a plain unscheduled entry — it has no due date to be
+    -- "overdue" against and must stay visible in the Unscheduled panel regardless.
+    AND (r.overdue_only = 0
+      OR (s.schedule_start_kind IS NULL AND s.schedule_start_civil IS NULL AND s.schedule_start_at IS NULL
+        AND s.schedule_end_kind IS NULL AND s.schedule_end_at IS NULL AND s.due_date IS NULL)
+      OR (s.done = 0 AND (
+        (s.schedule_end_kind = 'timed' AND s.schedule_end_at < r.now)
+        OR (s.schedule_end_kind = 'date' AND s.due_date < r.today_date)
+        OR (s.schedule_start_kind = 'date' AND s.due_date < r.today_date)
+        OR (s.schedule_start_kind = 'timed' AND s.schedule_end_at < r.now)
+        OR (s.schedule_version = 0 AND s.schedule_start_kind IS NULL AND s.schedule_end_kind IS NULL AND instr(COALESCE(s.due_date, ''), 'T') > 0)
+      )))
     AND (r.search = '' OR instr(lower(s.title), lower(r.search)) > 0
       OR instr(lower(vp.street), lower(r.search)) > 0
       OR instr(lower(vp.suburb), lower(r.search)) > 0
