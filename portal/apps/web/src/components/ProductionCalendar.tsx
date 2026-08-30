@@ -4,8 +4,10 @@ import {
   formatSydneyCivilMinute,
   mapChecklistEndResizeToCommand,
   mapChecklistMoveToCommand,
+  mapUnscheduledChecklistDropToCommand,
   normalizeChecklistSchedule,
   mapProjectDeadlineMoveToCommand,
+  mapUnscheduledProjectDropToCommand,
   previewProjectDeadlineReminderConsequences,
   resolveSydneyCivilMinute,
   shiftSydneyCalendarDate,
@@ -28,6 +30,7 @@ import {
   type InitialChecklistScheduleInput,
   type ProjectDeadlineCalendarEventDto,
   type ProjectDeadlineDisambiguation,
+  type ProjectCalendarUnscheduledEntryDto,
   type ProductionCalendarFilters,
   type ProductionCalendarRangeResponse,
   type ProductionCalendarSubview,
@@ -67,6 +70,7 @@ import { ProductionCalendarMoveConfirmation } from "./ProductionCalendarMoveConf
 import { ProductionCalendarMoveDialog } from "./ProductionCalendarMoveDialog";
 import { ProductionCalendarFoldChoice } from "./ProductionCalendarFoldChoice";
 import { ProductionCalendarScheduleEditor, type ProductionCalendarScheduleEditorError } from "./ProductionCalendarScheduleEditor";
+import { ProductionCalendarUnscheduledPanel } from "./ProductionCalendarUnscheduledPanel";
 import { presentationStages, useStages } from "../lib/stages";
 import { useCapabilities } from "../lib/capabilities";
 
@@ -85,6 +89,21 @@ type CalendarDropInfo = {
   revert: () => void;
 };
 
+type CalendarRevertable = { revert: () => void };
+
+type CalendarExternalDropInfo = {
+  date: Date;
+  dateStr: string;
+  allDay: boolean;
+  draggedEl: HTMLElement;
+  revert: () => void;
+};
+
+type CalendarExternalReceiveInfo = {
+  event: { extendedProps?: { unscheduledId?: unknown; unscheduledKind?: unknown } };
+  revert: () => void;
+};
+
 type CalendarResizeInfo = CalendarDropInfo & {
   startDelta?: { milliseconds?: number; days?: number; months?: number } | null;
   endDelta?: { milliseconds?: number; days?: number; months?: number } | null;
@@ -95,8 +114,9 @@ type MoveDialogState = {
   snapshot: CalendarAcceptedSnapshot<ProjectDeadlineCalendarEventDto>;
   initialCivil: string;
   foldChoices?: Array<{ disambiguation: ProjectDeadlineDisambiguation; utcOffsetMinutes: number }>;
-  drop?: CalendarDropInfo;
+  drop?: CalendarRevertable;
   subview?: "month" | "week";
+  unscheduledEntry?: ProjectCalendarUnscheduledEntryDto;
 };
 
 type SaveResponse = {
@@ -117,7 +137,8 @@ type DeadlineProposal = {
   disambiguation?: ProjectDeadlineDisambiguation;
   request: SaveProjectDeadlineRequest;
   timing: CalendarEventTiming;
-  drop?: CalendarDropInfo;
+  drop?: CalendarRevertable;
+  unscheduledEntry?: ProjectCalendarUnscheduledEntryDto;
 };
 
 type DeadlineFoldChoice = { disambiguation: ProjectDeadlineDisambiguation; utcOffsetMinutes: number };
@@ -131,9 +152,10 @@ type DeadlineProposalResult =
 type ChecklistSource = ChecklistCalendarEventDto | ChecklistCalendarUnscheduledEntryDto;
 type ChecklistSnapshot = CalendarAcceptedSnapshot<ChecklistSource>;
 type ChecklistOperationInfo = {
-  drop?: CalendarDropInfo;
+  drop?: CalendarRevertable;
   resize?: CalendarResizeInfo;
   editor?: boolean;
+  external?: boolean;
 };
 type ChecklistProposal = {
     snapshot: ChecklistSnapshot;
@@ -204,6 +226,26 @@ function cloneResponse(response: ProductionCalendarRangeResponse): ProductionCal
 function responseEvent(response: ProductionCalendarRangeResponse | null, eventId: string): ProjectDeadlineCalendarEventDto | undefined {
   const event = response?.events.find((candidate) => candidate.id === eventId);
   return event?.kind === "project_deadline" ? event : undefined;
+}
+
+function projectDeadlinePlaceholder(entry: ProjectCalendarUnscheduledEntryDto): ProjectDeadlineCalendarEventDto {
+  return {
+    id: entry.id,
+    kind: "project_deadline",
+    title: entry.title,
+    project: cloneSource(entry).project,
+    timing: { allDay: false, start: "1970-01-01T00:00:00.000Z", end: null },
+    status: { overdue: false, delivered: entry.project.delivered, completed: false, sameAssigneeOverlap: false },
+    permissions: { canDrag: entry.permissions.canDrag, canResize: false },
+    deadlineLocalCivil: "Not scheduled",
+    deadlineVersion: entry.deadlineVersion,
+    reminderOffsetsMinutes: [],
+  };
+}
+
+function canDragUnscheduledEntry(entry: CalendarUnscheduledEntryDto, rangesEnabled: boolean): boolean {
+  if (entry.kind === "project_deadline") return !entry.project.delivered && entry.permissions.canDrag;
+  return rangesEnabled && entry.reason === "unscheduled" && entry.permissions.canDrag && entry.permissions.canScheduleRange;
 }
 
 function currentMatchesSource(event: ProjectDeadlineCalendarEventDto, current: SaveResponse["current"]): boolean {
@@ -353,6 +395,18 @@ function canonicalChecklistEvent(source: ChecklistSource, result: ChecklistMutat
     schedule: schedule as RangeChecklistScheduleDto,
     permissions: { canDrag: permissions.canDrag, canResize: permissions.canResize, canOpenScheduleEditor: permissions.canOpenScheduleEditor, canScheduleRange: permissions.canScheduleRange },
   };
+}
+
+function optimisticChecklistEvent(source: ChecklistSource, schedule: ChecklistScheduleDto): ChecklistCalendarEventDto | null {
+  return canonicalChecklistEvent(source, {
+    id: source.id,
+    title: source.title,
+    done: "status" in source ? source.status.completed : false,
+    assignee: source.assignee,
+    position: 0,
+    schedule,
+    scheduleVersion: schedule.version,
+  });
 }
 
 function adoptChecklistResult(response: ProductionCalendarRangeResponse, source: ChecklistSource, result: ChecklistMutationResult): ProductionCalendarRangeResponse {
@@ -533,8 +587,16 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
       && !calendarSettle.pending;
     return canDrag === event.permissions.canDrag ? event : { ...event, permissions: { ...event.permissions, canDrag } } as CalendarEventDto;
   }), [calendar.subview, calendarInteractionBlocked, calendarSettle.pending, checklistNeedsAttention, deadlineMovementDisabled, identity.role, rangesEnabled, sourceEvents]);
-  const mappedEvents = useMemo(() => mapCalendarEventsToFullCalendar(applyOptimisticOverlay(renderEvents, optimisticOverlay)), [optimisticOverlay, renderEvents]);
-  const selectedEvents = selectedDay === null ? [] : renderEvents.filter((event) => eventCivilDate(event) === selectedDay);
+  const displayEvents = useMemo(() => applyOptimisticOverlay(renderEvents, optimisticOverlay), [optimisticOverlay, renderEvents]);
+  const mappedEvents = useMemo(() => mapCalendarEventsToFullCalendar(displayEvents), [displayEvents]);
+  const sourceUnscheduled = acceptedResponse?.unscheduled ?? (!calendarInteractionBlocked ? query.data?.unscheduled ?? [] : []);
+  const renderUnscheduled = useMemo(() => optimisticOverlay && "kind" in optimisticOverlay && optimisticOverlay.kind === "reschedule-unscheduled"
+    ? sourceUnscheduled.filter((entry) => entry.id !== optimisticOverlay.entryId)
+    : sourceUnscheduled, [optimisticOverlay, sourceUnscheduled]);
+  const projectUnscheduledEntries = useMemo(() => renderUnscheduled.filter((entry): entry is ProjectCalendarUnscheduledEntryDto => entry.kind === "project_deadline"), [renderUnscheduled]);
+  const checklistUnscheduledEntries = useMemo(() => renderUnscheduled.filter((entry): entry is ChecklistCalendarUnscheduledEntryDto => entry.kind === "checklist"), [renderUnscheduled]);
+  const panelHasDraggableEntry = renderUnscheduled.some((entry) => canDragUnscheduledEntry(entry, rangesEnabled));
+  const selectedEvents = selectedDay === null ? [] : displayEvents.filter((event) => eventCivilDate(event) === selectedDay);
   const dense = errorCode(query.error) === "calendar_range_too_dense";
   const refinement = errorRefinement(query.error) ?? "Refine the date range, Stage, Editor, layer, or search filters.";
 
@@ -634,7 +696,7 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
     void refetchAuthoritative();
   }, [refetchAuthoritative]);
 
-  const finishInteraction = useCallback((drop: CalendarDropInfo | undefined, oldCivil: string, flush = true) => {
+  const finishInteraction = useCallback((drop: CalendarRevertable | undefined, oldCivil: string, flush = true) => {
     const snapshot = snapshotRef.current;
     drop?.revert();
     setOverlay(null);
@@ -647,7 +709,7 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
     if (flush) flushQueuedRefetch();
   }, [announceLifecycle, flushQueuedRefetch, focusDescriptor, setAcceptGate, setOverlay]);
 
-  const proposalFromRequest = useCallback((snapshot: CalendarAcceptedSnapshot<ProjectDeadlineCalendarEventDto>, event: ProjectDeadlineCalendarEventDto, localCivil: string, disambiguation: ProjectDeadlineDisambiguation | undefined, request: SaveProjectDeadlineRequest, drop?: CalendarDropInfo): DeadlineProposalResult => {
+  const proposalFromRequest = useCallback((snapshot: CalendarAcceptedSnapshot<ProjectDeadlineCalendarEventDto>, event: ProjectDeadlineCalendarEventDto, localCivil: string, disambiguation: ProjectDeadlineDisambiguation | undefined, request: SaveProjectDeadlineRequest, drop?: CalendarRevertable): DeadlineProposalResult => {
     if (request.deadline === null) return { ok: false, reason: "invalid" };
     const resolved = resolveSydneyCivilMinute(localCivil, disambiguation);
     if (!resolved.ok) {
@@ -679,10 +741,13 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
       reminderOffsetsMinutes: proposal.event.reminderOffsetsMinutes,
       now: proposal.snapshot.capturedNow,
     });
+    const scheduling = Boolean(proposal.unscheduledEntry);
     const ok = await confirm({
-      title: "Move Deadline",
-      message: `Move the Deadline for ${proposal.event.project.street}?`,
-      confirmLabel: "Move Deadline",
+      title: scheduling ? "Schedule Deadline" : "Move Deadline",
+      message: scheduling
+        ? `Schedule the Deadline for ${proposal.event.project.street}?`
+        : `Move the Deadline for ${proposal.event.project.street}?`,
+      confirmLabel: scheduling ? "Schedule Deadline" : "Move Deadline",
       content: <ProductionCalendarMoveConfirmation street={proposal.event.project.street} oldCivil={proposal.event.deadlineLocalCivil} newCivil={proposal.localCivil} consequences={consequences} />,
     });
     if (accessLostRef.current || token !== operationTokenRef.current) return;
@@ -691,7 +756,9 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
       return;
     }
 
-    setOverlay({ eventId: proposal.event.id, timing: proposal.timing });
+    setOverlay(proposal.unscheduledEntry
+      ? { kind: "reschedule-unscheduled", entryId: proposal.unscheduledEntry.id, timing: proposal.timing, asEvent: { ...proposal.event, timing: proposal.timing, deadlineLocalCivil: proposal.localCivil } }
+      : { eventId: proposal.event.id, timing: proposal.timing });
     announceLifecycle("saving", { street: proposal.event.project.street, newCivil: proposal.localCivil });
     try {
       const response = await apiPut<SaveResponse, SaveProjectDeadlineRequest>(`/api/projects/${encodeURIComponent(proposal.event.project.id)}/deadline`, proposal.request);
@@ -819,6 +886,48 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
     void runConfirmedProposal(proposal);
   }, [finishInteraction, flushQueuedRefetch, focusDescriptor, isUnchangedDeadlineProposal, proposalFromRequest, runConfirmedProposal, setAcceptGate]);
 
+  const mapAndRunUnscheduledProjectProposal = useCallback((snapshot: CalendarAcceptedSnapshot<ProjectDeadlineCalendarEventDto>, entry: ProjectCalendarUnscheduledEntryDto, event: ProjectDeadlineCalendarEventDto, localCivil: string, target: CalendarManipulationTarget, disambiguation: ProjectDeadlineDisambiguation | undefined, drop?: CalendarRevertable) => {
+    const mapped = mapUnscheduledProjectDropToCommand({ event: entry, target, ...(disambiguation ? { disambiguation } : {}) });
+    if (!mapped.ok) {
+      if (mapped.error.code === "repeated_local_time" && mapped.error.choices) {
+        drop?.revert();
+        setMoveDialog({ event, snapshot, initialCivil: localCivil, foldChoices: mapped.error.choices, drop, unscheduledEntry: entry });
+        return;
+      }
+      if (mapped.error.code === "nonexistent_local_time") {
+        drop?.revert();
+        setMoveDialog({ event, snapshot, initialCivil: localCivil, drop, unscheduledEntry: entry });
+        setAnnouncement("That time does not exist in Sydney on that date (daylight-saving gap). Pick another time.");
+        return;
+      }
+      drop?.revert();
+      setOverlay(null);
+      setAcceptGate(false);
+      commandLockRef.current.active = false;
+      snapshotRef.current = null;
+      setAnnouncement("That is not a valid Sydney time. Adjust the value and try again.");
+      focusDescriptor({ eventId: entry.id, control: "event" });
+      flushQueuedRefetch();
+      return;
+    }
+    if (mapped.value.deadline === null) {
+      drop?.revert();
+      setAcceptGate(false);
+      commandLockRef.current.active = false;
+      snapshotRef.current = null;
+      return;
+    }
+    const proposalResult = proposalFromRequest(snapshot, event, mapped.value.deadline.localCivil, disambiguation, mapped.value, drop);
+    if (!proposalResult.ok) {
+      drop?.revert();
+      setAcceptGate(false);
+      commandLockRef.current.active = false;
+      snapshotRef.current = null;
+      return;
+    }
+    void runConfirmedProposal({ ...proposalResult.proposal, unscheduledEntry: entry });
+  }, [flushQueuedRefetch, focusDescriptor, proposalFromRequest, runConfirmedProposal, setAcceptGate, setOverlay]);
+
   const handleDeadlineDrop = useCallback((info: CalendarDropInfo) => {
     if (calendar.subview === "agenda") { info.revert(); return; }
     const dto = info.event.extendedProps.dto;
@@ -851,12 +960,36 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
     setMoveDialog({ event, snapshot, initialCivil: event.deadlineLocalCivil });
   }, [acceptForInteraction, announceLifecycle, deadlineMovementDisabled, identity.role]);
 
+  const openUnscheduledProjectDialog = useCallback((entry: ProjectCalendarUnscheduledEntryDto) => {
+    if (calendarInteractionBlocked || settleRef.current.pending || !canDragUnscheduledEntry(entry, rangesEnabled) || !canStartCalendarCommand(commandLockRef.current)) return;
+    const sourceSnapshot = acceptForInteraction(entry, { eventId: entry.id, control: "move-reschedule" });
+    if (!sourceSnapshot) return;
+    const event = projectDeadlinePlaceholder(entry);
+    const snapshot = { ...sourceSnapshot, event } as CalendarAcceptedSnapshot<ProjectDeadlineCalendarEventDto>;
+    const initialCivil = `${calendar.date}T17:00`;
+    commandLockRef.current.active = true;
+    announceLifecycle("picked-up", { street: entry.project.street, oldCivil: "Not scheduled" });
+    setMoveDialog({ event, snapshot, initialCivil, unscheduledEntry: entry });
+  }, [acceptForInteraction, announceLifecycle, calendar.date, calendarInteractionBlocked, rangesEnabled]);
+
   const handleMoveDialogSubmit = useCallback((localCivil: string, disambiguation?: ProjectDeadlineDisambiguation) => {
     const state = moveDialog;
     if (!state || accessLostRef.current) return;
     setMoveDialog(null);
+    if (state.unscheduledEntry) {
+      mapAndRunUnscheduledProjectProposal(
+        state.snapshot,
+        state.unscheduledEntry,
+        state.event,
+        localCivil,
+        { subview: "week", targetDate: localCivil.slice(0, 10), targetCivilMinute: localCivil },
+        disambiguation,
+        state.drop,
+      );
+      return;
+    }
     if (state.subview && state.drop) {
-      mapAndRunDropProposal(state.snapshot, state.event, localCivil, state.subview, disambiguation, state.drop);
+      mapAndRunDropProposal(state.snapshot, state.event, localCivil, state.subview, disambiguation, state.drop as CalendarDropInfo);
       return;
     }
     const request: SaveProjectDeadlineRequest = {
@@ -885,7 +1018,7 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
       return;
     }
     void runConfirmedProposal(proposal);
-  }, [finishInteraction, isUnchangedDeadlineProposal, mapAndRunDropProposal, moveDialog, proposalFromRequest, runConfirmedProposal, setAcceptGate]);
+  }, [finishInteraction, isUnchangedDeadlineProposal, mapAndRunDropProposal, mapAndRunUnscheduledProjectProposal, moveDialog, proposalFromRequest, runConfirmedProposal, setAcceptGate]);
 
   const handleMoveDialogCancel = useCallback(() => {
     const state = moveDialog;
@@ -910,7 +1043,15 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
   const runChecklistMutation = useCallback(async (proposal: ChecklistProposal) => {
     const token = operationTokenRef.current;
     if (accessLostRef.current || token !== operationTokenRef.current) return;
-    setOverlay(proposal.timing ? { eventId: proposal.source.id, timing: proposal.timing } : null);
+    const normalizedSchedule = normalizeChecklistSchedule(proposal.schedule, proposal.source.schedule.version);
+    const optimisticEvent = !(("timing" in proposal.source)) && normalizedSchedule.ok
+      ? optimisticChecklistEvent(proposal.source, checklistScheduleToDto(normalizedSchedule.value))
+      : null;
+    setOverlay(proposal.timing
+      ? optimisticEvent
+        ? { kind: "reschedule-unscheduled", entryId: proposal.source.id, timing: proposal.timing, asEvent: optimisticEvent }
+        : { eventId: proposal.source.id, timing: proposal.timing }
+      : null);
     setAnnouncement(`Saving checklist item for ${proposal.source.project.street}.`);
     try {
       // The captured role chooses the response arm before this request. The
@@ -1024,16 +1165,19 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
     }
   }, [acceptRange, flushQueuedRefetch, focusDescriptor, handleAccessLoss, identity.role, queryClient, refetchAuthoritative, setAcceptGate, setOverlay, setSettle]);
 
-  const mapChecklistCommand = useCallback((snapshot: ChecklistSnapshot, event: ChecklistCalendarEventDto, target: CalendarManipulationTarget, operation: ChecklistOperationInfo, disambiguation?: ChecklistDisambiguation, edge?: "end") => {
+  const mapChecklistCommand = useCallback((snapshot: ChecklistSnapshot, event: ChecklistSource, target: CalendarManipulationTarget, operation: ChecklistOperationInfo, disambiguation?: ChecklistDisambiguation, edge?: "end") => {
     const mapped = edge
       ? mapChecklistEndResizeToCommand({ event: snapshot.event as ChecklistCalendarEventDto, target: { ...target, edge: "end" }, edge: "end", ...(disambiguation ? { disambiguation } : {}) })
-      : mapChecklistMoveToCommand({ event: snapshot.event as ChecklistCalendarEventDto, target, ...(disambiguation ? { disambiguation } : {}) });
+      : "reason" in event && event.reason === "unscheduled"
+        ? mapUnscheduledChecklistDropToCommand({ event: snapshot.event as ChecklistCalendarUnscheduledEntryDto, target, ...(disambiguation ? { disambiguation } : {}) })
+        : mapChecklistMoveToCommand({ event: snapshot.event as ChecklistCalendarEventDto, target, ...(disambiguation ? { disambiguation } : {}) });
     if (!mapped.ok) {
       const repeated = mapped.error.code === "repeated_local_time" || mapped.error.code === "subtask_schedule_repeated_local_time";
       const nonexistent = mapped.error.code === "nonexistent_local_time" || mapped.error.code === "subtask_schedule_nonexistent_local_time";
       if (repeated && mapped.error.choices && mapped.error.endpoint) {
+        if (operation.external) operation.drop?.revert();
         const sourceSchedule = checklistInputFromSchedule(event.schedule);
-        const proposal: ChecklistProposal = { snapshot, source: event, request: { expectedVersion: event.schedule.version, schedule: sourceSchedule }, schedule: sourceSchedule, timing: event.timing, operation, target, ...(edge ? { edge } : {}) };
+        const proposal: ChecklistProposal = { snapshot, source: event, request: { expectedVersion: event.schedule.version, schedule: sourceSchedule }, schedule: sourceSchedule, timing: "timing" in event ? event.timing : null, operation, target, ...(edge ? { edge } : {}) };
         setChecklistFold({ proposal, disambiguation: typeof disambiguation === "object" ? disambiguation : {}, endpoint: mapped.error.endpoint, choices: mapped.error.choices });
         setAnnouncement("That time occurs twice in Sydney that day. Choose the earlier or later occurrence for each endpoint.");
         return;
@@ -1071,7 +1215,7 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
     if (!state || state.proposal.source.kind !== "checklist" || !state.proposal.target) return;
     const next = { ...state.disambiguation, [state.endpoint]: choice } as { start?: "earlier" | "later"; end?: "earlier" | "later" };
     setChecklistFold(null);
-    mapChecklistCommand(state.proposal.snapshot, state.proposal.source as ChecklistCalendarEventDto, state.proposal.target, state.proposal.operation, next, state.proposal.edge);
+    mapChecklistCommand(state.proposal.snapshot, state.proposal.source, state.proposal.target, state.proposal.operation, next, state.proposal.edge);
   }, [checklistFold, mapChecklistCommand]);
 
   const handleChecklistFoldCancel = useCallback(() => {
@@ -1142,13 +1286,79 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
     mapChecklistCommand(snapshot, event, target, { resize: info }, undefined, "end");
   }, [acceptForInteraction, calendar.subview, focusDescriptor, mapChecklistCommand, rangesEnabled]);
 
-  const openChecklistScheduleEditor = useCallback((source: ChecklistSource) => {
+  const handleUnscheduledDrop = useCallback((info: CalendarExternalDropInfo) => {
+    if (calendar.subview === "agenda" || calendarInteractionBlocked || settleRef.current.pending || !canStartCalendarCommand(commandLockRef.current)) {
+      info.revert();
+      return;
+    }
+    const unscheduledId = info.draggedEl.dataset.unscheduledId;
+    const unscheduledKind = info.draggedEl.dataset.unscheduledKind;
+    const accepted = acceptedResponseRef.current;
+    const entry = accepted?.unscheduled.find((candidate) => candidate.id === unscheduledId && (
+      unscheduledKind === "project" ? candidate.kind === "project_deadline" : unscheduledKind === "checklist" && candidate.kind === "checklist"
+    ));
+    if (!entry || !canDragUnscheduledEntry(entry, rangesEnabled)) {
+      info.revert();
+      return;
+    }
+
+    let civil;
+    try {
+      civil = fullCalendarCallbackToSydneyCivil({ allDay: info.allDay, date: info.date, dateStr: info.dateStr });
+    } catch {
+      info.revert();
+      setAnnouncement("That is not a valid Sydney time. Adjust the value and try again.");
+      return;
+    }
+    const subview = calendar.subview === "month" ? "month" : "week";
+    const targetDate = civil.allDay ? civil.date : civil.localCivil.slice(0, 10);
+    let target: CalendarManipulationTarget;
+    if (subview === "month") {
+      target = { subview, targetDate };
+    } else {
+      if (civil.allDay) {
+        info.revert();
+        setAnnouncement("That schedule change isn't valid.");
+        return;
+      }
+      target = { subview, targetDate, targetCivilMinute: civil.localCivil };
+    }
+
+    const snapshot = acceptForInteraction(entry, { eventId: entry.id, control: "event" });
+    if (!snapshot) {
+      info.revert();
+      return;
+    }
+    commandLockRef.current.active = true;
+    if (entry.kind === "project_deadline") {
+      const event = projectDeadlinePlaceholder(entry);
+      const deadlineSnapshot = { ...snapshot, event } as CalendarAcceptedSnapshot<ProjectDeadlineCalendarEventDto>;
+      const localCivil = subview === "month" ? `${targetDate}T17:00` : target.targetCivilMinute!;
+      announceLifecycle("picked-up", { street: entry.project.street, oldCivil: "Not scheduled" });
+      mapAndRunUnscheduledProjectProposal(deadlineSnapshot, entry, event, localCivil, target, undefined, info);
+      return;
+    }
+    mapChecklistCommand(snapshot as ChecklistSnapshot, entry, target, { drop: info, external: true });
+  }, [acceptForInteraction, announceLifecycle, calendar.subview, calendarInteractionBlocked, mapAndRunUnscheduledProjectProposal, mapChecklistCommand, rangesEnabled, setAcceptGate]);
+
+  const handleUnscheduledReceive = useCallback((info: CalendarExternalReceiveInfo) => {
+    info.revert();
+  }, []);
+
+  const openChecklistScheduleEditor = useCallback((source: ChecklistSource, initialSchedule?: InitialChecklistScheduleInput) => {
     if (source.schedule.state === "invalid" || !source.permissions.canOpenScheduleEditor || settleRef.current.pending || !canStartCalendarCommand(commandLockRef.current)) return;
     const snapshot = acceptForInteraction(source, { eventId: source.id, control: "move-reschedule" });
     if (!snapshot) return;
     commandLockRef.current.active = true;
-    setScheduleEditor({ source, snapshot });
+    setScheduleEditor({ source, snapshot, ...(initialSchedule ? { initialSchedule } : {}) });
   }, [acceptForInteraction]);
+
+  const openUnscheduledChecklistScheduleEditor = useCallback((entry: ChecklistCalendarUnscheduledEntryDto) => {
+    const initialSchedule: InitialChecklistScheduleInput | undefined = entry.reason === "unscheduled"
+      ? { state: "due_only", end: { kind: "date", localCivil: calendar.date } }
+      : undefined;
+    openChecklistScheduleEditor(entry, initialSchedule);
+  }, [calendar.date, openChecklistScheduleEditor]);
 
   const handleScheduleEditorSubmit = useCallback((schedule: InitialChecklistScheduleInput) => {
     const state = scheduleEditor;
@@ -1237,10 +1447,9 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
         </div>
       )}
 
-      {acceptedResponse && acceptedResponse.events.length === 0 && <div className="empty qc-calendar-state" role="status">No scheduled work in this range.</div>}
-
-      {acceptedResponse && acceptedResponse.events.length > 0 && (
-        <>
+      {acceptedResponse && <div className="qc-calendar-layout">
+        <div className="qc-calendar-grid">
+          {acceptedResponse.events.length === 0 && <div className="empty qc-calendar-state" role="status">No scheduled work in this range.</div>}
           <ProductionCalendarSurface
             key={`${calendar.subview}:${calendar.date}`}
             initialView={viewForSubview(calendar.subview)}
@@ -1252,7 +1461,7 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
             eventStartEditable
             eventDurationEditable
             eventResizableFromStart={false}
-            droppable={false}
+            droppable={panelHasDraggableEntry && calendar.subview !== "agenda" && !calendarInteractionBlocked && !calendarSettle.pending}
             selectable={false}
             weekends
             firstDay={1}
@@ -1262,10 +1471,15 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
             views={{ list: { type: "list", duration: { days: 14 } } }}
             eventDrop={(info) => handleCalendarDrop(info as unknown as CalendarDropInfo)}
             eventResize={(info) => handleChecklistResize(info as unknown as CalendarResizeInfo)}
+            drop={(info) => handleUnscheduledDrop(info as unknown as CalendarExternalDropInfo)}
+            eventReceive={(info) => handleUnscheduledReceive(info as unknown as CalendarExternalReceiveInfo)}
             dateClick={(info) => {
               if (calendar.subview === "month" && info.allDay) setSelectedDay(info.dateStr);
             }}
-            eventContent={(info) => <ProductionCalendarEvent event={info.event.extendedProps.dto} subview={calendar.subview} needsAttention={checklistNeedsAttention.has(info.event.extendedProps.dto?.id)} onMoveReschedule={calendarSettle.pending || calendarInteractionBlocked ? undefined : openMoveDialog} onChecklistSchedule={calendarSettle.pending || calendarInteractionBlocked ? undefined : openChecklistScheduleEditor} />}
+            eventContent={(info) => {
+              const dto = info.event.extendedProps.dto;
+              return dto ? <ProductionCalendarEvent event={dto} subview={calendar.subview} needsAttention={checklistNeedsAttention.has(dto.id)} onMoveReschedule={calendarSettle.pending || calendarInteractionBlocked ? undefined : openMoveDialog} onChecklistSchedule={calendarSettle.pending || calendarInteractionBlocked ? undefined : openChecklistScheduleEditor} /> : null;
+            }}
           />
 
           {calendar.subview === "month" && selectedDay !== null && (
@@ -1274,8 +1488,18 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
               {selectedEvents.length === 0 ? <p className="muted">No scheduled work on this day.</p> : <div className="qc-calendar-disclosure__events">{selectedEvents.map((event) => <ProductionCalendarEvent key={event.id} event={event} subview={calendar.subview} compact needsAttention={checklistNeedsAttention.has(event.id)} onMoveReschedule={calendarSettle.pending || calendarInteractionBlocked ? undefined : openMoveDialog} />)}</div>}
             </section>
           )}
-        </>
-      )}
+        </div>
+        <ProductionCalendarUnscheduledPanel
+          projectEntries={projectUnscheduledEntries}
+          checklistEntries={checklistUnscheduledEntries}
+          facets={acceptedResponse.filterFacets.unscheduled}
+          subview={calendar.subview}
+          rangesEnabled={rangesEnabled}
+          onScheduleProject={openUnscheduledProjectDialog}
+          onScheduleChecklist={openUnscheduledChecklistScheduleEditor}
+          disabled={calendarInteractionBlocked || calendarSettle.pending}
+        />
+      </div>}
       <div className="dashboard-live-region sr-only" aria-live="polite" aria-atomic="true">{announcement}</div>
       {moveDialog && <ProductionCalendarMoveDialog event={moveDialog.event} initialCivil={moveDialog.initialCivil} foldChoices={moveDialog.foldChoices} onSubmit={handleMoveDialogSubmit} onCancel={handleMoveDialogCancel} />}
       {scheduleEditor && <ProductionCalendarScheduleEditor key={`${scheduleEditor.source.id}:${JSON.stringify(scheduleEditor.initialSchedule ?? null)}`} event={scheduleEditor.source} rangesEnabled={rangesEnabled && scheduleEditor.source.permissions.canScheduleRange} initialSchedule={scheduleEditor.initialSchedule} validationError={scheduleEditor.validationError} onSubmit={handleScheduleEditorSubmit} onCancel={handleScheduleEditorCancel} />}

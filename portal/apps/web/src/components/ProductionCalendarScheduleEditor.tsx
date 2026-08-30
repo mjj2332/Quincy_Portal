@@ -111,8 +111,8 @@ export function ProductionCalendarScheduleEditor({ event, rangesEnabled, onSubmi
 
   const endpointFields = (which: "start" | "end", value: EndpointDraft): JSX.Element => <fieldset className="qc-calendar-schedule-editor__endpoint">
     <legend>{endpointLabel(which)}</legend>
-    <label>{draft.kind === "timed" ? "Date" : "Date"}<input aria-label={`Checklist ${which} date`} type="date" value={value.date} onChange={(input) => setEndpoint(which, { date: input.target.value })} /></label>
-    {draft.kind === "timed" && <label>Time<input aria-label={`Checklist ${which} time`} type="time" step={60} value={value.time} onChange={(input) => setEndpoint(which, { time: input.target.value })} /></label>}
+    <label htmlFor={`${groupId}-${which}-date`}>Date<input id={`${groupId}-${which}-date`} aria-label={`Checklist ${which} date`} type="date" value={value.date} onChange={(input) => setEndpoint(which, { date: input.target.value })} /></label>
+    {draft.kind === "timed" && <label htmlFor={`${groupId}-${which}-time`}>Time<input id={`${groupId}-${which}-time`} aria-label={`Checklist ${which} time`} type="time" step={60} value={value.time} onChange={(input) => setEndpoint(which, { time: input.target.value })} /></label>}
     {(() => {
       const localCivil = `${value.date}T${value.time}`;
       const resolved = draft.kind === "timed" && value.date && value.time ? resolveSydneyCivilMinute(localCivil) : null;
@@ -148,16 +148,16 @@ export function ProductionCalendarScheduleEditor({ event, rangesEnabled, onSubmi
   </>}>
     <div className="qc-calendar-schedule-editor">
       <p className="qc-calendar-schedule-editor__intro">Sydney civil time is saved exactly as entered. Both endpoints use the same mode.</p>
-      <label className="qc-calendar-schedule-editor__state">State
-        <select aria-label="Checklist schedule state" value={draft.state} onChange={(input) => setDraft((current) => ({ ...current, state: input.target.value as ScheduleDraft["state"] }))}>
+      <label className="qc-calendar-schedule-editor__state" htmlFor={`${groupId}-state`}>State
+        <select id={`${groupId}-state`} aria-label="Checklist schedule state" value={draft.state} onChange={(input) => setDraft((current) => ({ ...current, state: input.target.value as ScheduleDraft["state"] }))}>
           <option value="unscheduled">Unscheduled</option>
           <option value="due_only">Due date only</option>
           <option value="range" disabled={!rangesEnabled}>Range{!rangesEnabled ? " · unavailable" : ""}</option>
         </select>
       </label>
       {draft.state !== "unscheduled" && <>
-        <label className="qc-calendar-schedule-editor__state">Endpoint mode
-          <select aria-label="Checklist endpoint mode" value={draft.kind} onChange={(input) => setDraft((current) => ({ ...current, kind: input.target.value as EndpointKind }))}>
+        <label className="qc-calendar-schedule-editor__state" htmlFor={`${groupId}-mode`}>Endpoint mode
+          <select id={`${groupId}-mode`} aria-label="Checklist endpoint mode" value={draft.kind} onChange={(input) => setDraft((current) => ({ ...current, kind: input.target.value as EndpointKind }))}>
             <option value="date">Date</option>
             <option value="timed">Timed · Australia/Sydney</option>
           </select>

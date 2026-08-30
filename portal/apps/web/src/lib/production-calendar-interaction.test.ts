@@ -179,6 +179,12 @@ describe("Production Calendar interaction model", () => {
     expect(applyOptimisticOverlay(events as never, { eventId, timing })).toEqual([{ ...events[0], timing }]);
     expect(rollbackToBaseline(events as never)).toEqual(events);
   });
+
+  it("adds an unscheduled synthetic event until the authoritative settle", () => {
+    const baseline = [{ id: "checklist:scheduled", kind: "checklist" as const, timing: { allDay: true as const, start: "2026-08-12", end: null }, title: "Existing" }];
+    const synthetic = { id: "checklist:unscheduled", kind: "checklist" as const, timing: { allDay: true as const, start: "2026-08-20", end: null }, title: "Moved" };
+    expect(applyOptimisticOverlay(baseline as never, { kind: "reschedule-unscheduled", entryId: synthetic.id, timing: synthetic.timing, asEvent: synthetic as never })).toEqual([...baseline, synthetic]);
+  });
 });
 
 describe("checklist calendar failure classification", () => {

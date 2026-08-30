@@ -72,12 +72,13 @@ describe("ProductionCalendar container", () => {
     expect(host.querySelector('[role="alert"]')?.textContent).toContain("Narrow Stage filters.");
   });
 
-  it("renders the empty state without reading unscheduled entries", async () => {
+  it("renders the empty state and the bounded unscheduled panel", async () => {
     const empty = rawResponse("editing_autohdr", false);
     (empty as { unscheduled: unknown[] }).unscheduled = [{ id: "unscheduled", kind: "project_deadline", reason: "unscheduled", title: "Hidden", project: { id: principal, street: "Hidden Street", stageKey: "editing_autohdr", checklist: { completed: 0, total: 0 }, delivered: false }, permissions: { canDrag: true, canResize: false }, deadlineVersion: 1, reminderOffsetsMinutes: [] }];
     await renderCalendar(calendar(), adminProductionCalendarRangeResponseSchema.parse(empty));
     expect(host.querySelector('[role="status"]')?.textContent).toContain("No scheduled work in this range.");
-    expect(host.textContent).not.toContain("Hidden");
+    expect(host.textContent).toContain("Hidden Street");
+    expect(host.textContent).toContain("Unscheduled projects");
   });
 
   it("maps Month, Week, and Agenda with deadline-only direct manipulation", async () => {
@@ -95,8 +96,8 @@ describe("ProductionCalendar container", () => {
     expect(surface.dataset.droppable).toBe("false");
     expect(surface.dataset.hasEventDrop).toBe("true");
     expect(surface.dataset.hasEventResize).toBe("true");
-    expect(surface.dataset.hasDrop).toBe("false");
-    expect(surface.dataset.hasEventReceive).toBe("false");
+    expect(surface.dataset.hasDrop).toBe("true");
+    expect(surface.dataset.hasEventReceive).toBe("true");
     expect(surface.dataset.hasEventChange).toBe("false");
 
     await act(async () => { root.unmount(); root = createRoot(host); });

@@ -77,6 +77,11 @@ export function beginCalendarInteraction<TEvent extends CalendarInteractionSourc
 export type CalendarOptimisticOverlay = {
   eventId: string;
   timing: CalendarEventTiming;
+} | {
+  kind: "reschedule-unscheduled";
+  entryId: string;
+  timing: CalendarEventTiming;
+  asEvent: CalendarEventDto;
 } | null;
 
 export type CalendarSettleState = {
@@ -261,6 +266,10 @@ export function canStartCalendarCommand(lock: CalendarCommandLock): boolean {
 /** Apply the component-owned proposal without mutating the accepted response. */
 export function applyOptimisticOverlay(events: readonly CalendarEventDto[], overlay: CalendarOptimisticOverlay): CalendarEventDto[] {
   if (!overlay) return events.slice();
+  if ("kind" in overlay) {
+    if (overlay.kind === "reschedule-unscheduled") return [...events.filter((event) => event.id !== overlay.asEvent.id), overlay.asEvent];
+    return events.slice();
+  }
   return events.map((event) => event.id === overlay.eventId ? { ...event, timing: overlay.timing } : event);
 }
 

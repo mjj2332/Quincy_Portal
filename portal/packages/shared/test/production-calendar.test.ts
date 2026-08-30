@@ -218,9 +218,9 @@ describe("TB5C Sydney mapping contract", () => {
     const month = mapProjectDeadlineMoveToCommand({ event: projectEvent(ADMIN_STAGE, "2026-08-27T09:00"), target: { subview: "month", targetDate: "2026-08-29" } });
     expect(month).toEqual({ ok: true, value: { expectedVersion: 8, deadline: { localCivil: "2026-08-29T09:00" }, reminderOffsetsMinutes: [1440, 60] } });
     const unscheduledMonth = mapUnscheduledProjectDropToCommand({ event: { id: "project-deadline:unscheduled", kind: "project_deadline", reason: "unscheduled", title: "Deadline", project: project(ADMIN_STAGE), permissions: { canDrag: true, canResize: false }, deadlineVersion: 3, reminderOffsetsMinutes: [] }, target: { subview: "month", targetDate: "2026-08-29" } });
-    expect(unscheduledMonth).toMatchObject({ ok: true, value: { expectedVersion: 3, deadline: { localCivil: "2026-08-29T17:00" }, reminderOffsetsMinutes: [] } });
+    expect(unscheduledMonth).toEqual({ ok: true, value: { expectedVersion: 3, deadline: { localCivil: "2026-08-29T17:00" }, reminderOffsetsMinutes: [] } });
     const snapped = mapUnscheduledProjectDropToCommand({ event: { id: "project-deadline:unscheduled", kind: "project_deadline", reason: "unscheduled", title: "Deadline", project: project(ADMIN_STAGE), permissions: { canDrag: true, canResize: false }, deadlineVersion: 3, reminderOffsetsMinutes: [] }, target: { subview: "week", targetDate: "2026-08-29", targetCivilMinute: "2026-08-29T10:07" } });
-    expect(snapped).toMatchObject({ ok: true, value: { deadline: { localCivil: "2026-08-29T10:00" } } });
+    expect(snapped).toEqual({ ok: true, value: { expectedVersion: 3, deadline: { localCivil: "2026-08-29T10:00" }, reminderOffsetsMinutes: [] } });
   });
 
   it("moves checklist ranges by civil components, resolves endpoints independently, and subtracts exclusive all-day ends", () => {
