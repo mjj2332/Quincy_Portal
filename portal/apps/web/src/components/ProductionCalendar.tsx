@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   deriveProductionCalendarWindow,
   formatSydneyCivilMinute,
+  STAGE_PRESENTATION_KEYS,
   type CalendarEventDto,
   type DashboardCalendarState,
   type ProductionCalendarFilters,
@@ -13,6 +14,9 @@ import { mapCalendarEventsToFullCalendar } from "../lib/production-calendar-even
 import { ProductionCalendarSurface } from "./ProductionCalendarSurface";
 import { ProductionCalendarToolbar } from "./ProductionCalendarToolbar";
 import { ProductionCalendarEvent } from "./ProductionCalendarEvent";
+import { ProductionCalendarFilters as ProductionCalendarFiltersPanel } from "./ProductionCalendarFilters";
+import { presentationStages, useStages } from "../lib/stages";
+import { useCapabilities } from "../lib/capabilities";
 
 export type ProductionCalendarProps = {
   identity: DashboardIdentity;
@@ -58,12 +62,27 @@ function viewForSubview(subview: ProductionCalendarSubview): "dayGridMonth" | "t
 export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFilters }: ProductionCalendarProps) {
   const range = useMemo(() => deriveProductionCalendarWindow(calendar.date, calendar.subview), [calendar.date, calendar.subview]);
   const query = useProductionCalendarRange({ identity, calendar, enabled: true });
+  const { stages } = useStages();
+  const { can } = useCapabilities();
+  const canAdminBackend = can("adminBackend");
+  const stageOptions = useMemo(() => {
+    const presented = presentationStages(stages, canAdminBackend);
+    return STAGE_PRESENTATION_KEYS.flatMap((key) => {
+      const stage = presented.find((candidate) => candidate.key === key)
+        ?? (key === "editing" && canAdminBackend ? presented.find((candidate) => candidate.key === "editing_autohdr") : undefined);
+      return stage && stage.active ? [{ key, label: stage.label }] : [];
+    });
+  }, [canAdminBackend, stages]);
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
   const mappedEvents = useMemo(() => mapCalendarEventsToFullCalendar(query.data?.events ?? []), [query.data?.events]);
 
   useEffect(() => {
     setSelectedDay(null);
   }, [calendar.date, calendar.subview]);
+
+  useEffect(() => {
+    if (!query.data) setSelectedDay(null);
+  }, [query.data]);
 
   useEffect(() => {
     const applied = query.data?.range.appliedFilters;
@@ -80,6 +99,13 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
   return (
     <section className="qc-calendar-screen" aria-label="Production Calendar">
       <ProductionCalendarToolbar calendar={calendar} range={range} onNavigate={onNavigate} />
+      <ProductionCalendarFiltersPanel
+        filters={productionCalendarFiltersFor(calendar)}
+        facetPeople={query.data?.filterFacets.people ?? []}
+        stages={stageOptions}
+        disabled={query.isPending && !query.data}
+        onChange={(next) => onNavigate({ ...calendar, ...next, view: "calendar" })}
+      />
 
       {query.isPending && !query.data && <div className="empty qc-calendar-state" role="status">Loading calendar…</div>}
 

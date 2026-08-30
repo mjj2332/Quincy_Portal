@@ -7,7 +7,7 @@ import { ApiError, apiPost } from "../lib/api";
 import { confirmStore } from "../lib/confirm";
 import { useCapabilities } from "../lib/capabilities";
 import { useStages } from "../lib/stages";
-import { DASHBOARD_CALENDAR_LAST_DATE_KEY, DASHBOARD_CALENDAR_SUBVIEW_KEY, formatDashboardDate, initializeDashboardCalendarState, initializeDashboardView, initializeKanbanSortMode, type DashboardView, type KanbanSortMode } from "./dashboard-helpers";
+import { DASHBOARD_CALENDAR_LAST_DATE_KEY, DASHBOARD_CALENDAR_SUBVIEW_KEY, formatDashboardDate, initializeDashboardCalendarState, initializeDashboardView, initializeKanbanSortMode, normalizeDashboardCalendarSearch, sanitizeDashboardCalendarSearch, type DashboardView, type KanbanSortMode } from "./dashboard-helpers";
 import { InternalLink } from "../components/InternalLink";
 import { NoticeBoard } from "../components/NoticeBoard";
 import { invalidateProjectResources, useOptionalProjectQueryClient } from "../lib/project-data";
@@ -169,6 +169,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   interactionBlockedRef.current = interactionBlocked;
   const lastNonCalendarViewRef = useRef<"list" | "kanban">("list");
   const calendarFallbackLocationRef = useRef(!routeCalendar && view === "calendar" && canViewProductionCalendar);
+  const calendarSearchTimerRef = useRef<number | null>(null);
   const movementSettlePendingRef = useRef(false);
   movementSettlePendingRef.current = movementSettlePending;
   const movementBusyRef = useRef(false);
@@ -252,6 +253,9 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     if (routeCalendar) {
       calendarFallbackLocationRef.current = false;
       setCalendarState(routeCalendar);
+      // Keep live input whitespace while avoiding a redundant state update when
+      // this is the route produced by our own debounced search replacement.
+      setQuery((current) => normalizeDashboardCalendarSearch(current) === routeCalendar.search ? current : routeCalendar.search);
       if (!viewingArchived) setView("calendar");
       return;
     }
@@ -282,6 +286,30 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     } catch { /* Calendar fallback storage is best effort. */ }
     if (replace) history.replace(built); else history.push(built);
   }, [canViewProductionCalendar, history, viewingArchived]);
+
+  useEffect(() => {
+    if (calendarSearchTimerRef.current !== null) {
+      window.clearTimeout(calendarSearchTimerRef.current);
+      calendarSearchTimerRef.current = null;
+    }
+    if (view !== "calendar" || !calendarState) return;
+
+    const next = normalizeDashboardCalendarSearch(query);
+    if (next === calendarState.search) return;
+
+    calendarSearchTimerRef.current = window.setTimeout(() => {
+      calendarSearchTimerRef.current = null;
+      const committed = normalizeDashboardCalendarSearch(query);
+      if (committed !== calendarState.search) navigateCalendar({ ...calendarState, search: committed, view: "calendar" }, true);
+    }, 300);
+
+    return () => {
+      if (calendarSearchTimerRef.current !== null) {
+        window.clearTimeout(calendarSearchTimerRef.current);
+        calendarSearchTimerRef.current = null;
+      }
+    };
+  }, [calendarState, navigateCalendar, query, view]);
 
   const reconcileAppliedCalendarFilters = useCallback((filters: ProductionCalendarFilters) => {
     if (!calendarState || !canViewProductionCalendar || viewingArchived) return;
@@ -460,10 +488,13 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     if (next === "calendar") {
       if (!canViewProductionCalendar || viewingArchived) return;
       const nextCalendar = calendarState ?? initializeDashboardCalendarState({ kind: "dashboard" }, calendarStorage, { now: Date.now(), isPhone: window.matchMedia?.("(max-width: 720px)").matches ?? false });
+      const enteringSearch = routeCalendar?.search ?? (view === "calendar" ? calendarState?.search ?? "" : query);
+      const sanitizedSearch = sanitizeDashboardCalendarSearch(enteringSearch);
       calendarFallbackLocationRef.current = false;
+      setQuery(sanitizedSearch);
       setView("calendar");
       try { window.localStorage.setItem("quincy:dashboard:view", "calendar"); } catch { /* Storage can be disabled by the browser. */ }
-      navigateCalendar(nextCalendar);
+      navigateCalendar({ ...nextCalendar, search: normalizeDashboardCalendarSearch(sanitizedSearch), view: "calendar" });
       return;
     }
     setView(next);
@@ -760,7 +791,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
           <label className="dashboard-search">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><circle cx="11" cy="11" r="6" /><path d="m16 16 4 4" /></svg>
             <span className="sr-only">Search projects</span>
-            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search address, suburb, client…" />
+            <input value={query} onChange={(event) => setQuery(sanitizeDashboardCalendarSearch(event.target.value))} placeholder="Search address, suburb, client…" />
           </label>
           {canCreateProject && <InternalLink className="button" to="/projects/new">New shoot</InternalLink>}
         </div>

@@ -76,7 +76,7 @@ describe("Calendar initial state", () => {
   it("keeps live search spaces while stripping unsafe text and normalizes only the debounced value", () => {
     const input = `a b ${String.fromCharCode(1)} `;
     expect(sanitizeDashboardCalendarSearch(input)).toBe("a b  ");
-    expect(normalizeDashboardCalendarSearch(input)).toBe("a b");
+    expect(normalizeDashboardCalendarSearch("a b  ")).toBe("a b");
   });
 });
 

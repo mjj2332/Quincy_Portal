@@ -105,7 +105,7 @@ export function sanitizeDashboardCalendarSearch(value: string): string {
 
 /** Normalize only the debounced/API query value; live input keeps its spaces. */
 export function normalizeDashboardCalendarSearch(value: string): string {
-  return normalizeProductionCalendarSearch(sanitizeDashboardCalendarSearch(value));
+  return normalizeProductionCalendarSearch(value);
 }
 
 function readCalendarPreference(storage: DashboardCalendarPreferenceStorage, key: string): string | null {
