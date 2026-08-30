@@ -138,6 +138,10 @@ describe("terminal route manifest", () => {
         path: "/api/stages",
         parse: (body: unknown) => EXTERNAL_API_RESPONSE_SCHEMAS.stages.parse(body),
       },
+      calendar: {
+        path: "/api/production-calendar?start=2026-08-24&end=2026-09-05&date=2026-08-27&sub=month&scope=active&layers=project,checklist",
+        parse: (body: unknown) => EXTERNAL_API_RESPONSE_SCHEMAS.calendar.parse(body),
+      },
       stage: {
         path: `/api/projects/${manifestProjectId}/stage`,
         method: "POST" as const,
@@ -156,6 +160,7 @@ describe("terminal route manifest", () => {
       "ingest-status": "assigned-project",
       "collection-links": "assigned-project",
       stages: "global-self",
+      calendar: "assigned-project",
       stage: "assigned-project",
     };
     const declared = PROJECT_SECURITY_ROUTE_CLASSIFICATION.filter((route) => route.externalSurface);

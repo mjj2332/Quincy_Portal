@@ -1,6 +1,9 @@
+import type { ReactNode } from "react";
+
 export type ConfirmOptions = {
   title: string;
   message: string;
+  content?: ReactNode;
   confirmLabel?: string;
   cancelLabel?: string;
   danger?: boolean;

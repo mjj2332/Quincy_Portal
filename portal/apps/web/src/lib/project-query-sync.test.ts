@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryObserver } from "@tanstack/react-query";
 import {
   PROJECT_DATA_CHANNEL, ProjectQueryRuntime, createActiveProjectDetailsInvalidatedMessage,
-  createDashboardBoardInvalidatedMessage, createProjectDataInvalidationMessage, createProjectDataRemovedMessage,
+  createDashboardBoardInvalidatedMessage, createProductionCalendarInvalidatedMessage, createProjectDataInvalidationMessage, createProjectDataRemovedMessage,
   parseProjectDataSyncMessage, projectResourceKey,
 } from "./project-query-sync";
 import { beginAssetOptimisticMutation, beginProjectMembershipMutation, projectDataKeys } from "./project-data";
@@ -58,6 +58,14 @@ describe("project-data BroadcastChannel contract", () => {
     expect(parseProjectDataSyncMessage({ ...valid, committedAt: "" })).toBeNull();
     expect(parseProjectDataSyncMessage({ ...valid, committedAt: undefined })).toBeNull();
     expect(parseProjectDataSyncMessage({ version: 1, type: "dashboard-board-invalidated", committedAt: valid.committedAt })).toBeNull();
+  });
+
+  it("accepts the ID-free Calendar invalidation shape", () => {
+    const message = createProductionCalendarInvalidatedMessage();
+    const valid = { ...message, sourceTabId: "sender" };
+    expect(Object.keys(valid).sort()).toEqual(["committedAt", "sourceTabId", "type", "version"]);
+    expect(parseProjectDataSyncMessage(valid)).toEqual(valid);
+    expect(parseProjectDataSyncMessage({ ...valid, projectId: "private" })).toBeNull();
   });
 
   it("uses exact receiver invalidation and ignores the sender", async () => {
@@ -271,6 +279,21 @@ describe("project-data BroadcastChannel contract", () => {
     expect(impersonated.getQueryCache().find({ queryKey: keyImpersonated, exact: true })?.state.isInvalidated).toBe(true);
     for (const releaseQuery of release) releaseQuery();
     runtimeA.dispose(); runtimeB.dispose(); runtimeImpersonated.dispose(); principalA.clear(); principalB.clear(); impersonated.clear();
+  });
+
+  it("invalidates only observed Calendar queries for the receiving principal", () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const runtime = new ProjectQueryRuntime(queryClient, "calendar-receiver");
+    const calendarKey = ["production-calendar", "principal-a", "admin", 0, "active", "2026-08-01", "2026-09-01", "month", {}] as const;
+    const otherKey = ["production-calendar", "principal-b", "admin", 0, "active", "2026-08-01", "2026-09-01", "month", {}] as const;
+    queryClient.setQueryData(calendarKey, []);
+    queryClient.setQueryData(otherKey, []);
+    const observer = new QueryObserver(queryClient, { queryKey: calendarKey, queryFn: () => new Promise<never>(() => undefined), staleTime: Infinity });
+    const release = observer.subscribe(() => undefined);
+    (runtime as unknown as { receive: (value: unknown) => void }).receive({ ...createProductionCalendarInvalidatedMessage(), sourceTabId: "other-tab" });
+    expect(queryClient.getQueryCache().find({ queryKey: calendarKey, exact: true })?.state.isInvalidated).toBe(true);
+    expect(queryClient.getQueryCache().find({ queryKey: otherKey, exact: true })?.state.isInvalidated).toBe(false);
+    release(); runtime.dispose(); queryClient.clear();
   });
 
   it("makes publish a no-op when BroadcastChannel is unavailable or cannot be constructed", () => {

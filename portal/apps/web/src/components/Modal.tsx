@@ -9,10 +9,11 @@ export type ModalProps = {
   onClose: () => void;
   wide?: boolean;
   testId?: string;
+  variant?: string;
   initialFocus?: MutableRefObject<HTMLElement | null> | number;
 };
 
-export function Modal({ title, eyebrow, children, footer, onClose, wide = false, testId, initialFocus }: ModalProps): JSX.Element {
+export function Modal({ title, eyebrow, children, footer, onClose, wide = false, testId, variant, initialFocus }: ModalProps): JSX.Element {
   const titleId = `modal-title-${useId()}`;
   const { context, refs } = useFloating({ open: true });
 
@@ -27,7 +28,7 @@ export function Modal({ title, eyebrow, children, footer, onClose, wide = false,
     <div data-confirm-modal-root={testId === "confirm-modal" ? "" : undefined}>
       <FloatingFocusManager context={context} modal returnFocus initialFocus={initialFocus}>
       <div className="scrim" onClick={onClose}>
-        <div ref={refs.setFloating} className={`modal${wide ? " modal--wide" : ""}`} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1} data-testid={testId} onClick={(event) => event.stopPropagation()} onKeyDown={handleKeyDown}>
+        <div ref={refs.setFloating} className={`modal${wide ? " modal--wide" : ""}`} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1} data-testid={testId} data-modal-variant={variant} onClick={(event) => event.stopPropagation()} onKeyDown={handleKeyDown}>
           {(eyebrow || title) && <div className="modal__head">
             {eyebrow && <div className="ey" style={{ marginBottom: 10 }}>{eyebrow}</div>}
             {title && <h3 className="serif" id={titleId}>{title}</h3>}

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createHistoryAdapter, parseStaffLocation, parseStaffPathname, projectNotificationRoute, safeStaffDestination, staffPathFor, shouldInterceptInternalLink } from "./router";
 import { beginSignIn, consumeSignInDestinationFrom } from "./auth";
 
@@ -56,6 +56,28 @@ describe("staff route contract", () => {
     for (const location of [`/projects/${projectId}?collaboration=close`, `/projects/${projectId}?collaboration=open&x=1`, `/projects/${projectId}?collaboration=open&collaboration=open`, `/admin?tab=users`, `/projects/${projectId}?x=collaboration%3Dopen`, `/projects/${projectId}?collaboration=open#x`]) expect(parseStaffLocation(location)).toEqual({ kind: "not-found" });
   });
 
+  it("accepts a canonical Calendar destination and preserves it through OAuth return", async () => {
+    const calendar = `/?view=calendar&date=2026-08-30&sub=week&layers=project%2Cchecklist&mine=1&q=smith+street`;
+    expect(parseStaffLocation(calendar)).toMatchObject({ kind: "dashboard", calendar: { subview: "week", myTasks: true, search: "smith street" } });
+    expect(safeStaffDestination(calendar)).toBe(calendar);
+
+    const saved = (() => {
+      let current: string | null = calendar;
+      return {
+        getItem: () => current,
+        setItem: (_key: string, value: string) => { current = value; },
+        removeItem: () => { current = null; },
+      };
+    })();
+    expect(consumeSignInDestinationFrom(saved)).toBe(calendar);
+
+    const social = vi.fn(async ({ callbackURL }: { callbackURL: string }) => {
+      expect(callbackURL).toBe(calendar);
+      return {};
+    });
+    await beginSignIn(calendar, { signIn: { social } }, saved);
+  });
+
   it("projects notification destinations consistently", () => {
     for (const type of ["mentioned", "subtask_assigned", "subtask_due_today"]) {
       expect(projectNotificationRoute(projectId, type)).toEqual({ kind: "project", projectId, collaboration: "open" });
@@ -106,6 +128,11 @@ describe("internal-link interception", () => {
     expect(shouldInterceptInternalLink(click({ currentTarget: { href: `https://portal.test/projects/${projectId}`, target: "_blank", download: "" } }), "https://portal.test")).toBe(false);
     expect(shouldInterceptInternalLink(click({ currentTarget: { href: "https://portal.test/d/token", target: "", download: "" } }), "https://portal.test")).toBe(false);
     expect(shouldInterceptInternalLink(click({ currentTarget: { href: "https://example.test/", target: "", download: "" } }), "https://portal.test")).toBe(false);
+  });
+
+  it("intercepts a same-origin canonical Calendar link", () => {
+    const calendar = "https://portal.test/?view=calendar&date=2026-08-30&sub=agenda&layers=project%2Cchecklist";
+    expect(shouldInterceptInternalLink(click({ currentTarget: { href: calendar, target: "", download: "" } }), "https://portal.test")).toBe(true);
   });
 });
 

@@ -1,5 +1,31 @@
-export type DashboardView = "kanban" | "list";
+import {
+  formatSydneyCivilMinute,
+  isSydneyCalendarDate,
+  normalizeProductionCalendarSearch,
+  productionCalendarFiltersSchema,
+  PRODUCTION_CALENDAR_SUBVIEWS,
+  type DashboardCalendarRoute,
+  type DashboardCalendarState,
+  type StaffRoute,
+} from "@quincy/shared";
+
+export type DashboardView = "kanban" | "list" | "calendar";
 export type KanbanSortMode = "board" | "priority" | "shootDate-asc" | "shootDate-desc";
+
+export const DASHBOARD_CALENDAR_SUBVIEW_KEY = "quincy:dashboard:calendar:subview";
+export const DASHBOARD_CALENDAR_LAST_DATE_KEY = "quincy:dashboard:calendar:last-date";
+
+export type DashboardCalendarPreferenceStorage = {
+  read: (key: string) => string | null;
+  write?: (key: string, value: string) => void;
+};
+
+export type DashboardCalendarInitialState = DashboardCalendarState;
+
+export type DashboardCalendarInitializationOptions = {
+  now: Date | number | string;
+  isPhone: boolean;
+};
 
 export type DashboardPreferenceStorage = {
   read: () => string | null;
@@ -12,6 +38,7 @@ export type KanbanSortPreferenceStorage = {
 };
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const dashboardCalendarFilterDefaults = productionCalendarFiltersSchema.parse({});
 
 function daysInMonth(year: number, month: number): number {
   if (month === 2) return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0) ? 29 : 28;
@@ -19,7 +46,7 @@ function daysInMonth(year: number, month: number): number {
 }
 
 export function normalizeDashboardView(value: string | null): DashboardView {
-  return value === "list" || value === "kanban" ? value : "kanban";
+  return value === "list" || value === "kanban" || value === "calendar" ? value : "kanban";
 }
 
 /**
@@ -59,6 +86,70 @@ export function initializeKanbanSortMode(storage: KanbanSortPreferenceStorage): 
     // Storage quotas/privacy settings can reject writes after a successful read.
   }
   return mode;
+}
+
+export function normalizeDashboardCalendarSubview(value: string | null): DashboardCalendarState["subview"] | null {
+  return value !== null && PRODUCTION_CALENDAR_SUBVIEWS.includes(value as DashboardCalendarState["subview"])
+    ? value as DashboardCalendarState["subview"]
+    : null;
+}
+
+export function isCanonicalCalendarDate(value: string | null): value is string {
+  return value !== null && isSydneyCalendarDate(value);
+}
+
+/** Strip only the route contract's unsafe characters from live input state. */
+export function sanitizeDashboardCalendarSearch(value: string): string {
+  return value.replace(/[\\\u0000-\u001f\u007f]/gu, "");
+}
+
+/** Normalize only the debounced/API query value; live input keeps its spaces. */
+export function normalizeDashboardCalendarSearch(value: string): string {
+  return normalizeProductionCalendarSearch(value);
+}
+
+function readCalendarPreference(storage: DashboardCalendarPreferenceStorage, key: string): string | null {
+  try {
+    return storage.read(key);
+  } catch {
+    return null;
+  }
+}
+
+function writeCalendarPreference(storage: DashboardCalendarPreferenceStorage, key: string, value: string): void {
+  try {
+    storage.write?.(key, value);
+  } catch {
+    // A valid read must survive a quota/privacy failure during migration.
+  }
+}
+
+function sydneyToday(now: Date | number | string): string {
+  const value = formatSydneyCivilMinute(now instanceof Date ? now.getTime() : now).slice(0, 10);
+  return isSydneyCalendarDate(value) ? value : "1970-01-01";
+}
+
+/**
+ * Resolve the first Calendar date/subview without touching browser globals.
+ * A parsed URL owns both values. Without one, remembered client preferences win
+ * over the phone/desktop defaults and Sydney today. The optional writes mirror
+ * the existing dashboard preference migration and are deliberately best-effort.
+ */
+export function initializeDashboardCalendarState(
+  route: StaffRoute | DashboardCalendarRoute,
+  storage: DashboardCalendarPreferenceStorage,
+  { now, isPhone }: DashboardCalendarInitializationOptions,
+): DashboardCalendarInitialState {
+  const calendar = route.kind === "dashboard" ? route.calendar : undefined;
+  if (calendar) return calendar;
+
+  const savedSubview = normalizeDashboardCalendarSubview(readCalendarPreference(storage, DASHBOARD_CALENDAR_SUBVIEW_KEY));
+  const savedDate = readCalendarPreference(storage, DASHBOARD_CALENDAR_LAST_DATE_KEY);
+  const subview = savedSubview ?? (isPhone ? "agenda" : "month");
+  const date = isCanonicalCalendarDate(savedDate) ? savedDate : sydneyToday(now);
+  writeCalendarPreference(storage, DASHBOARD_CALENDAR_SUBVIEW_KEY, subview);
+  writeCalendarPreference(storage, DASHBOARD_CALENDAR_LAST_DATE_KEY, date);
+  return { view: "calendar", date, subview, ...dashboardCalendarFilterDefaults };
 }
 
 function parseCanonicalShootDate(value: string): { year: number; month: number; day: number } | null {

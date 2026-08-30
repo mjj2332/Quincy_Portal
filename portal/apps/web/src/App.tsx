@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Topbar, type AppView } from "./components/Topbar";
 import { consumeSignInDestination, useSession } from "./lib/auth";
 import { useCapabilities } from "./lib/capabilities";
@@ -15,7 +15,7 @@ import { ImpersonationBanner } from "./components/ImpersonationBanner";
 import { PrincipalFreshnessBoundary } from "./components/PrincipalFreshnessBoundary";
 import { StagesProvider } from "./lib/stages";
 import { QuincyQueryProvider } from "./lib/query-client";
-import type { Role } from "@quincy/shared";
+import { roleHasCapability, type Role } from "@quincy/shared";
 
 type SessionUser = { id: string; name?: string | null; email?: string | null; role: Role; authorizationEpoch: number };
 type Notice = { path: string; message: string } | null;
@@ -36,7 +36,7 @@ function Shell({ user, impersonating }: { user: SessionUser; impersonating: bool
   const history = locationStore();
   const completeLocation = useSyncExternalStore(history.subscribe, history.getLocation, () => "/");
   const pathname = completeLocation.split("?", 1)[0]!;
-  const route = parseStaffLocation(completeLocation);
+  const route = useMemo(() => parseStaffLocation(completeLocation), [completeLocation]);
   const [notice, setNotice] = useState<Notice>(null);
   const restored = useRef(false);
   const lastObservedIntentLocationRef = useRef<string | null>(null);
@@ -49,6 +49,7 @@ function Shell({ user, impersonating }: { user: SessionUser; impersonating: bool
   const blocked = (route.kind === "admin" && !canAccessAdmin)
     || (route.kind === "create-project" && !canCreateProject)
     || (route.kind === "edit-project" && !canEditProject);
+  const calendarBlocked = route.kind === "dashboard" && route.calendar !== undefined && !roleHasCapability(user.role, "viewProductionCalendar");
 
   useEffect(() => {
     if (restored.current) return;
@@ -80,6 +81,10 @@ function Shell({ user, impersonating }: { user: SessionUser; impersonating: bool
     if (blocked) history.replace("/");
   }, [blocked, history]);
 
+  useEffect(() => {
+    if (calendarBlocked) history.replace("/");
+  }, [calendarBlocked, history]);
+
   function navigate(path: string, message?: string, replace = false) {
     if (message) setNotice({ path, message });
     else setNotice(null);
@@ -91,7 +96,7 @@ function Shell({ user, impersonating }: { user: SessionUser; impersonating: bool
     <div className={impersonating ? "app app--impersonating" : "app"}>
       <Topbar activeView={activeView} canAccessAdmin={canAccessAdmin} user={user} />
       {blocked && <main className="page"><div className="empty" role="status"><span className="serif">Returning to dashboard.</span></div></main>}
-      {!blocked && route.kind === "dashboard" && <Dashboard currentUserId={user.id} role={user.role} authorizationEpoch={user.authorizationEpoch} />}
+      {!blocked && route.kind === "dashboard" && <Dashboard currentUserId={user.id} role={user.role} authorizationEpoch={user.authorizationEpoch} calendar={calendarBlocked ? null : route.calendar ?? null} />}
       {!blocked && route.kind === "project" && <ProjectWorkspace key={route.projectId} projectId={route.projectId} notice={notice?.path === pathname ? notice.message : null} onNoticeShown={() => setNotice(null)} collaborationOpenSignal={collaborationIntent?.projectId === route.projectId ? collaborationIntent.signal : undefined} onCollaborationOpenSignalConsumed={(signal) => acknowledgeCollaborationSignal(route.projectId, signal)} />}
       {!blocked && route.kind === "create-project" && <CreateProject onNavigate={navigate} />}
       {!blocked && route.kind === "edit-project" && <EditProject key={route.projectId} projectId={route.projectId} onNavigate={navigate} />}

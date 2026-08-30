@@ -13,7 +13,7 @@ export type StagePresentationKey = (typeof STAGE_PRESENTATION_KEYS)[number];
 
 export type StageTransportKey = StageKey | "editing";
 
-const STAGE_TRANSPORT_KEYS = [...STAGE_KEYS, "editing"] as const;
+export const STAGE_TRANSPORT_KEYS = [...STAGE_KEYS, "editing"] as const;
 const stageTransportKeySchema = z.enum(STAGE_TRANSPORT_KEYS);
 
 /** A pipeline stage as stored/configured by the internal Stage administration surface. */

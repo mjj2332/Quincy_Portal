@@ -3,6 +3,8 @@ import { EXTERNAL_EDITOR_CAPABILITIES, ROLE_LABELS } from "./capabilities";
 import { externalAssetSchema } from "./external-asset-dto";
 import { externalEditedCompleteResponseSchema, externalEditedUploadCreateResponseSchema } from "./external-upload";
 import { STAGE_PRESENTATION_KEYS } from "./stage-move";
+import { externalCalendarRangeSchema } from "./production-calendar";
+export { externalCalendarRangeSchema } from "./production-calendar";
 
 const iso = z.string().min(1);
 const uuid = z.string().uuid();
@@ -168,18 +170,6 @@ export const externalCommentReadStateSchema = z.object({
 }).strict();
 export const externalMentionableUserSchema = externalPersonSchema;
 export const externalNotificationListItemSchema = z.object({ id: uuid, projectId: uuid, type: z.string(), title: z.string(), body: z.string().nullable(), readAt: iso.nullable(), createdAt: iso }).strict();
-
-export const externalCalendarRangeSchema = z.object({
-  range: z.object({ start: iso, end: iso, zone: z.literal("Australia/Sydney") }).strict(),
-  events: z.array(z.object({
-    id: uuid, projectId: uuid, kind: z.enum(["project_deadline", "checklist"]), title: z.string(), start: iso, end: iso,
-    allDay: z.boolean(), project: z.object({ id: uuid, street: z.string(), stageKey: z.string() }).strict(),
-    assignee: externalPersonSchema.nullable(), version: z.number().int(),
-    // Reserved for TB5C. This field list is intentionally non-normative until that tracer bullet owns Calendar.
-    permissions: z.object({ canDrag: z.boolean(), canResize: z.boolean() }).strict(),
-  }).strict()),
-  filters: z.object({ projects: z.array(z.object({ id: uuid, street: z.string() }).strict()), people: z.array(externalPersonSchema), myTasksUserId: uuid }).strict(),
-}).strict();
 
 export const externalProjectExportSchema = z.object({
   schemaVersion: z.literal(1), generatedAt: iso,

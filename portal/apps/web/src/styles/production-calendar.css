@@ -1,0 +1,277 @@
+@import "@fullcalendar/react/skeleton.css";
+@import "@fullcalendar/react/themes/pulse/theme.css";
+
+/*
+ * Pulse's supported variables are mapped here, at the Calendar boundary. The upstream
+ * theme remains intact; these values keep its geometry while making its surfaces and
+ * signals belong to Quincy. The dark selector in the upstream stylesheet cannot win over
+ * these later, wrapper-scoped values, so this surface has no dark-mode variant.
+ */
+.production-calendar {
+  --quincy-calendar-ink: #0a0a0a;
+  --quincy-calendar-paper: #faf8f2;
+  --quincy-calendar-positive: #3f5b3a;
+  --quincy-calendar-caution: #9a6a1f;
+  --quincy-calendar-critical: #7a2420;
+  --quincy-calendar-info: #2f3b4d;
+  --quincy-calendar-focus: #0a0a0a;
+  --focus-ring: var(--signal-info, #2f3b4d);
+
+  /* Pulse supported variables: controls, event content, neutral surfaces, and borders. */
+  --fc-pulse-primary: var(--quincy-calendar-positive);
+  --fc-pulse-primary-over: #52734e;
+  --fc-pulse-primary-down: #30472e;
+  --fc-pulse-primary-foreground: var(--quincy-calendar-paper);
+  --fc-pulse-secondary: var(--quincy-calendar-paper);
+  --fc-pulse-secondary-over: #f4f0e7;
+  --fc-pulse-secondary-down: #ece6d8;
+  --fc-pulse-secondary-foreground: var(--quincy-calendar-ink);
+  --fc-pulse-secondary-icon: #8f8775;
+  --fc-pulse-secondary-icon-over: #4d473c;
+  --fc-pulse-tertiary: var(--quincy-calendar-info);
+  --fc-pulse-tertiary-over: #46566d;
+  --fc-pulse-tertiary-down: #25303f;
+  --fc-pulse-tertiary-foreground: var(--quincy-calendar-paper);
+  --fc-pulse-background: var(--quincy-calendar-paper);
+  --fc-pulse-faint: #f4f0e7;
+  --fc-pulse-highlight: #3f5b3a1a;
+  --fc-pulse-muted: #ece6d8;
+  --fc-pulse-strong: #e4ded0;
+  --fc-pulse-stronger: #cfc7b6;
+  --fc-pulse-strongest: #b3aa97;
+  --fc-pulse-foreground: var(--quincy-calendar-ink);
+  --fc-pulse-faint-foreground: #8f8775;
+  --fc-pulse-muted-foreground: #4d473c;
+  --fc-pulse-selected: var(--quincy-calendar-info);
+  --fc-pulse-selected-foreground: var(--quincy-calendar-paper);
+  --fc-pulse-unselected: #ece6d8;
+  --fc-pulse-unselected-foreground: var(--quincy-calendar-ink);
+  --fc-pulse-border: #cfc7b6;
+  --fc-pulse-strong-border: #b3aa97;
+  --fc-pulse-now: var(--quincy-calendar-critical);
+  --fc-pulse-event: var(--quincy-calendar-info);
+  --fc-pulse-event-contrast: var(--quincy-calendar-paper);
+  --fc-pulse-background-event: var(--quincy-calendar-caution);
+  --fc-pulse-ring-color: var(--quincy-calendar-focus);
+  --fc-event-color: var(--quincy-calendar-info);
+  --fc-event-contrast-color: var(--quincy-calendar-paper);
+  --fc-pulse-border-style: solid;
+
+  color: var(--quincy-calendar-ink);
+  background: var(--quincy-calendar-paper);
+  font-family: var(--font-body, Apfel Grotezk, system-ui, sans-serif);
+}
+
+.production-calendar :where(.fc) {
+  min-width: 0;
+  color: inherit;
+  background: var(--quincy-calendar-paper);
+}
+
+.production-calendar :where(.fc a) {
+  color: inherit;
+}
+
+.production-calendar :where(.fc [tabindex]:focus-visible) {
+  outline: 2px solid var(--quincy-calendar-focus);
+  outline-offset: 2px;
+}
+
+.production-calendar :where(.fc-button):focus-visible,
+.production-calendar :where(button):focus-visible {
+  outline: 2px solid var(--quincy-calendar-focus);
+  outline-offset: 2px;
+}
+
+.production-calendar :where(.fc-event) {
+  border-color: var(--fc-event-color);
+}
+
+/* FullCalendar v7 exposes the drag clone as a mirror. Its accessible state is
+ * set in the Surface eventDidMount seam; CSS only prevents pointer interaction. */
+.fc-event-mirror, .production-calendar .fc-event-mirror {
+  pointer-events: none;
+}
+
+/* FullCalendar 7's rendered mirror may use an internal class rather than the
+ * documented name; the Surface seam marks it aria-hidden in either case. */
+.production-calendar :where(.fc-event)[aria-hidden="true"] {
+  pointer-events: none;
+}
+
+.production-calendar[data-suppress-fullcalendar-drop-announcement="true"] :where(.fc-liveregion) {
+  /* Disabled by default; held for the Slice 11 real VoiceOver/NVDA cadence test. */
+  display: none !important;
+}
+
+.qc-calendar-screen { min-width: 0; }
+.qc-calendar-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(250px, 320px); align-items: start; gap: 20px; }
+.qc-calendar-grid { min-width: 0; }
+.qc-cal-toolbar { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 18px; margin: 0 0 18px; padding: 12px 0 16px; border-bottom: 1px solid var(--border-hairline, #d4cec1); }
+.qc-cal-toolbar__controls, .qc-cal-toolbar__views { display: flex; align-items: center; gap: 6px; }
+.qc-cal-toolbar__period { min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 3px; text-align: center; }
+.qc-cal-toolbar__period strong { font: var(--type-h3, 600 20px/1.2 Apfel Grotezk, sans-serif); letter-spacing: -.02em; }
+.qc-cal-zone { color: var(--text-muted, #746f64); font: var(--type-eyebrow, 600 10px/1.2 Apfel Grotezk, sans-serif); letter-spacing: .1em; text-transform: uppercase; }
+.qc-cal-toolbar__views button { min-width: 72px; }
+.qc-cal-filters { margin: 0 0 20px; padding: 16px; border: 1px solid var(--border-hairline, #d4cec1); background: var(--paper-000, #faf8f2); }
+.qc-cal-filters.is-disabled { opacity: .58; }
+.qc-cal-filters__head { display: flex; align-items: start; justify-content: space-between; gap: 16px; margin-bottom: 15px; }
+.qc-cal-filters__head h2 { margin: 4px 0 0; font: var(--type-h3, 600 20px/1.2 Apfel Grotezk, sans-serif); letter-spacing: -.02em; }
+.qc-cal-filters__groups { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 18px; }
+.qc-cal-filters fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
+.qc-cal-filters legend { margin-bottom: 8px; color: var(--text-muted, #746f64); font: var(--type-eyebrow, 600 10px/1.2 Apfel Grotezk, sans-serif); letter-spacing: .1em; text-transform: uppercase; }
+.qc-cal-filter-options { display: grid; gap: 7px; }
+.qc-cal-filter-option { display: flex; align-items: flex-start; gap: 8px; min-width: 0; color: var(--text-secondary, #4d493f); font-size: 12px; line-height: 1.35; cursor: pointer; }
+.qc-cal-filter-option input { width: 15px; height: 15px; flex: none; margin: 1px 0 0; accent-color: var(--ink-900, #0a0a0a); }
+.qc-cal-filter-option span { min-width: 0; }
+.qc-cal-filter-option strong, .qc-cal-filter-option small { display: block; overflow-wrap: anywhere; }
+.qc-cal-filter-option strong { color: var(--text-primary, #0a0a0a); font-weight: 500; }
+.qc-cal-filter-option small { margin-top: 2px; color: var(--text-muted, #746f64); font-size: 10px; }
+.qc-cal-filters__empty { margin: 8px 0 0; color: var(--text-muted, #746f64); font-size: 11px; }
+.qc-calendar-state { min-height: 180px; display: grid; place-content: center; gap: 4px; }
+.qc-calendar-state p { margin: 0; }
+.qc-calendar-disclosure { margin-top: 18px; padding: 16px; border: 1px solid var(--border-hairline, #d4cec1); background: var(--paper-000, #faf8f2); }
+.qc-calendar-disclosure__events { display: grid; gap: 8px; margin-top: 12px; }
+.qc-cal-event-card { min-width: 0; padding: 7px 8px; border-left: 3px solid var(--signal-info, #2f3b4d); color: var(--text-primary, #0a0a0a); overflow: hidden; }
+.qc-cal-event-card--project { border-left-color: var(--signal-positive, #3f5b3a); }
+.qc-cal-event-card--checklist { border-left-color: var(--signal-info, #2f3b4d); }
+.qc-cal-event-card.is-compact { padding: 6px 8px; border: 1px solid var(--border-hairline, #d4cec1); border-left-width: 3px; background: var(--paper-050, #fffdf8); }
+.qc-cal-event-card__meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; color: var(--text-muted, #746f64); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
+.qc-cal-stage { max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary, #4d493f); }
+.qc-cal-event-card h4, .qc-cal-event-card__title { margin: 3px 0 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qc-cal-event-card h4 { font: 600 13px/1.25 var(--font-body, Apfel Grotezk, sans-serif); }
+.qc-cal-event-card__title { color: var(--text-secondary, #4d493f); font-size: 11px; }
+.qc-cal-event-card__details { display: grid; gap: 2px; margin: 5px 0 0; font-size: 11px; }
+.qc-cal-event-card__details div { display: flex; gap: 4px; }
+.qc-cal-event-card__details dt { color: var(--text-muted, #746f64); }
+.qc-cal-event-card__details dd { margin: 0; }
+.qc-cal-event-card__pills { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.qc-cal-pill { display: inline-flex; align-items: center; max-width: 100%; padding: 2px 6px; border-radius: 999px; font: 600 9px/1.2 var(--font-body, Apfel Grotezk, sans-serif); letter-spacing: .05em; text-transform: uppercase; }
+.qc-cal-pill--overdue { background: color-mix(in srgb, var(--signal-critical, #7a2420) 12%, transparent); color: var(--signal-critical, #7a2420); }
+.qc-cal-pill--delivered, .qc-cal-pill--completed { background: color-mix(in srgb, var(--signal-positive, #3f5b3a) 14%, transparent); color: var(--signal-positive, #3f5b3a); }
+.qc-cal-pill--overlap { background: color-mix(in srgb, var(--signal-caution, #9a6a1f) 14%, transparent); color: var(--signal-caution, #9a6a1f); }
+.qc-cal-event-card.is-compact .qc-cal-event-card__details { margin-top: 3px; }
+.qc-cal-event-card__move { margin-top: 8px; padding: 0; font-size: 11px; }
+.qc-cal-event-card__attention { margin: 8px 0 0; color: var(--signal-critical, #7a2420); font-size: 11px; line-height: 1.35; }
+.qc-calendar-confirmation { display: grid; gap: 12px; }
+.qc-calendar-confirmation__summary { margin: 0; line-height: 1.45; }
+.qc-calendar-confirmation__list { display: grid; gap: 9px; margin: 0; padding-left: 18px; }
+.qc-calendar-confirmation__list li { display: grid; gap: 2px; color: var(--text-secondary, #4d493f); font-size: 12px; }
+.qc-calendar-confirmation__offset { color: var(--text-primary, #0a0a0a); font-weight: 600; }
+.qc-calendar-pill { width: fit-content; padding: 2px 6px; border: 1px solid var(--border-hairline, #d4cec1); border-radius: 999px; font-size: 10px; }
+.qc-calendar-pill--future { color: var(--signal-positive, #3f5b3a); }
+.qc-calendar-pill--elapsed_at_save { color: var(--signal-caution, #9a6a1f); }
+.qc-calendar-pill--shifted_wall_clock_hour { color: var(--signal-info, #2f3b4d); }
+.qc-calendar-move-dialog__inputs { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.qc-calendar-move-dialog__inputs label { display: grid; gap: 5px; color: var(--text-muted, #746f64); font-size: 11px; }
+.qc-calendar-move-dialog__inputs input { min-width: 0; }
+.qc-calendar-move-dialog__fold { display: grid; gap: 8px; margin: 0; padding: 0; border: 0; }
+.qc-calendar-move-dialog__fold legend { margin-bottom: 2px; color: var(--text-muted, #746f64); font-size: 11px; }
+.qc-calendar-move-dialog__fold label { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.qc-calendar-schedule-editor { display: grid; gap: 16px; }
+.qc-calendar-schedule-editor__intro { margin: 0; color: var(--text-secondary, #4d493f); font: 14px/1.5 var(--font-serif, Athelas, Georgia, serif); }
+.qc-calendar-schedule-editor__state { display: grid; gap: 6px; color: var(--text-muted, #746f64); font-size: 11px; letter-spacing: .04em; }
+.qc-calendar-schedule-editor__state select { max-width: 360px; }
+.qc-calendar-schedule-editor__endpoints { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.qc-calendar-schedule-editor__endpoint { display: grid; gap: 10px; min-width: 0; margin: 0; padding: 14px; border: 1px solid var(--border-hairline, #d4cec1); }
+.qc-calendar-schedule-editor__endpoint legend { padding: 0 4px; color: var(--text-primary, #0a0a0a); font-size: 12px; font-weight: 600; }
+.qc-calendar-schedule-editor__endpoint label { display: grid; gap: 5px; color: var(--text-muted, #746f64); font-size: 11px; }
+.qc-calendar-schedule-editor__endpoint input { min-width: 0; }
+.qc-calendar-schedule-editor__fold { display: grid; gap: 8px; margin: 2px 0 0; padding: 10px 0 0; border: 0; border-top: 1px solid var(--border-hairline, #d4cec1); }
+.qc-calendar-schedule-editor__fold legend { margin-bottom: 1px; color: var(--text-muted, #746f64); font-size: 11px; }
+.qc-calendar-schedule-editor__fold label { display: flex; align-items: center; gap: 8px; color: var(--text-primary, #0a0a0a); font-size: 12px; }
+.qc-calendar-schedule-editor__error { padding: 10px 12px; border-left: 3px solid var(--signal-critical, #7a2420); background: color-mix(in srgb, var(--signal-critical, #7a2420) 8%, transparent); color: var(--signal-critical, #7a2420); font-size: 12px; line-height: 1.4; }
+.qc-calendar-recovery { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
+.qc-calendar-unscheduled { display: grid; gap: 16px; min-width: 0; }
+.qc-calendar-unscheduled.is-disabled { opacity: .62; }
+.qc-calendar-unscheduled__section { min-width: 0; padding: 14px; border: 1px solid var(--border-hairline, #d4cec1); background: var(--paper-000, #faf8f2); }
+.qc-calendar-unscheduled__section-head { display: grid; gap: 6px; margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid var(--border-hairline, #d4cec1); }
+.qc-calendar-unscheduled__section-head h2 { margin: 0; font: var(--type-h3, 600 17px/1.2 Apfel Grotezk, sans-serif); letter-spacing: -.02em; }
+.qc-calendar-unscheduled__count { display: flex; flex-wrap: wrap; gap: 4px 10px; color: var(--text-muted, #746f64); font-size: 10px; line-height: 1.35; }
+.qc-calendar-unscheduled__count span + span { color: var(--signal-caution, #9a6a1f); }
+.qc-calendar-unscheduled__rows { display: grid; gap: 8px; }
+.qc-calendar-unscheduled__row { min-width: 0; padding: 10px; border: 1px solid var(--border-hairline, #d4cec1); border-left: 3px solid var(--signal-info, #2f3b4d); background: var(--paper-050, #fffdf8); color: var(--text-primary, #0a0a0a); text-align: left; }
+.qc-calendar-unscheduled__row--project { border-left-color: var(--signal-positive, #3f5b3a); }
+.qc-calendar-unscheduled__row--checklist { border-left-color: var(--signal-info, #2f3b4d); }
+.qc-calendar-unscheduled__row.is-draggable { cursor: grab; }
+.qc-calendar-unscheduled__row.is-draggable:active { cursor: grabbing; }
+.qc-calendar-unscheduled__row.is-disabled { cursor: default; }
+.qc-calendar-unscheduled__row.is-attention { border-left-color: var(--signal-critical, #7a2420); background: color-mix(in srgb, var(--signal-critical, #7a2420) 5%, var(--paper-050, #fffdf8)); }
+.qc-calendar-unscheduled__row h3, .qc-calendar-unscheduled__row p { margin: 3px 0 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qc-calendar-unscheduled__row h3 { font: 600 13px/1.25 var(--font-body, Apfel Grotezk, sans-serif); }
+.qc-calendar-unscheduled__row > p { color: var(--text-secondary, #4d493f); font-size: 11px; }
+.qc-calendar-unscheduled__meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; color: var(--text-muted, #746f64); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
+.qc-calendar-unscheduled__facts { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 9px; margin-top: 7px; color: var(--text-secondary, #4d493f); font-size: 10px; line-height: 1.35; }
+.qc-calendar-unscheduled__action { margin-top: 9px; padding: 0; font-size: 11px; }
+.qc-calendar-unscheduled__readonly { display: block; margin-top: 9px; color: var(--text-muted, #746f64); font-size: 10px; }
+.qc-calendar-unscheduled__attention { color: var(--signal-critical, #7a2420) !important; font-size: 11px !important; line-height: 1.35; white-space: normal !important; }
+.qc-calendar-unscheduled__empty { margin: 0; color: var(--text-muted, #746f64); font-size: 12px; }
+
+@media (max-width: 720px) {
+  .qc-calendar-layout { grid-template-columns: 1fr; }
+  .qc-cal-toolbar { grid-template-columns: 1fr; gap: 10px; }
+  .qc-cal-toolbar__controls, .qc-cal-toolbar__views { justify-content: center; }
+  .qc-cal-toolbar__period { order: -1; }
+  .qc-cal-toolbar__views button { flex: 1; }
+  .qc-cal-filters__groups { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 12px; }
+  .qc-calendar-schedule-editor__endpoints { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 420px) {
+  .qc-cal-filters__head { align-items: stretch; flex-direction: column; gap: 8px; }
+  .qc-cal-filters__head .button { align-self: start; }
+  .qc-cal-filters__groups { grid-template-columns: 1fr; }
+}
+
+/* A Calendar action remains visually compact on desktop, but coarse and
+ * phone controls get a real 44px hit area rather than relying on a sensor. */
+@media (pointer: coarse), (max-width: 720px) {
+  .qc-cal-event-card__move,
+  .qc-calendar-unscheduled__action,
+  .qc-cal-toolbar button,
+  .qc-cal-filters button,
+  .qc-calendar-recovery button,
+  [data-modal-variant="calendar"] button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .qc-cal-event-card__move,
+  .qc-calendar-unscheduled__action { padding: 8px 4px; }
+  .qc-cal-filter-option { min-height: 44px; align-items: center; }
+  .qc-cal-filter-option input { width: 24px; height: 24px; }
+  [data-modal-variant="calendar"] :where(input, select) { min-height: 44px; }
+}
+
+/* This selector covers controls rendered in the FullCalendar tree and the
+ * Calendar dialogs rendered through FloatingPortal outside that tree. */
+.production-calendar :where(.fc-event, button, [role="button"], input, select, textarea, [tabindex]):focus-visible,
+.qc-calendar-screen :where(button, [role="button"], input, select, textarea, [tabindex]):focus-visible,
+[data-modal-variant="calendar"] :where(button, input, select, textarea, [tabindex]):focus-visible,
+.qc-cal-event-card:focus-visible {
+  /* Fallback literal: --focus-ring is scoped to .production-calendar, but the
+   * portaled Calendar dialogs render outside that subtree. */
+  outline: 2px solid var(--focus-ring, #2f3b4d);
+  outline-offset: 2px;
+}
+
+/* App-wide reduced-motion rules do not see JS-mocked media queries. The data
+ * attribute mirrors that preference for Calendar-only transitions while
+ * retaining the state changes themselves. */
+@media (prefers-reduced-motion: reduce) {
+  .production-calendar :where(.fc, .fc *),
+  .qc-calendar-screen,
+  .qc-calendar-screen *,
+  [data-modal-variant="calendar"] * {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+.production-calendar[data-reduced-motion="true"] :where(.fc, .fc *),
+.qc-calendar-screen[data-reduced-motion="true"],
+.qc-calendar-screen[data-reduced-motion="true"] *,
+:root:has(.qc-calendar-screen[data-reduced-motion="true"]) [data-modal-variant="calendar"] * {
+  transition: none !important;
+  animation: none !important;
+}

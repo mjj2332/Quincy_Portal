@@ -7,12 +7,13 @@ export type ConfirmDialogProps = ConfirmOptions & {
   onCancel: () => void;
 };
 
-export function ConfirmDialog({ title, message, confirmLabel = "Confirm", cancelLabel = "Cancel", danger = false, onConfirm, onCancel }: ConfirmDialogProps): JSX.Element {
+export function ConfirmDialog({ title, message, content, confirmLabel = "Confirm", cancelLabel = "Cancel", danger = false, onConfirm, onCancel }: ConfirmDialogProps): JSX.Element {
   return <Modal title={title} onClose={onCancel} initialFocus={0} testId="confirm-modal" footer={<>
     <button className="button button--secondary" type="button" data-testid="confirm-modal-cancel" onClick={onCancel}>{cancelLabel}</button>
     <button className={`button${danger ? " button--danger" : ""}`} type="button" data-testid="confirm-modal-confirm" onClick={onConfirm}>{confirmLabel}</button>
   </>}>
     <p>{message}</p>
+    {content}
   </Modal>;
 }
 

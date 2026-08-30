@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import { formatDashboardDate, initializeDashboardView, initializeKanbanSortMode, isCanonicalShootDate, normalizeDashboardView, normalizeKanbanSortMode } from "./dashboard-helpers";
+import { formatDashboardDate, initializeDashboardCalendarState, initializeDashboardView, initializeKanbanSortMode, isCanonicalCalendarDate, isCanonicalShootDate, normalizeDashboardCalendarSearch, normalizeDashboardCalendarSubview, normalizeDashboardView, normalizeKanbanSortMode, sanitizeDashboardCalendarSearch, DASHBOARD_CALENDAR_LAST_DATE_KEY, DASHBOARD_CALENDAR_SUBVIEW_KEY } from "./dashboard-helpers";
 
 describe("dashboard view preferences", () => {
   it("keeps supported views and migrates grid, missing, and invalid values to kanban", () => {
     expect(normalizeDashboardView("list")).toBe("list");
     expect(normalizeDashboardView("kanban")).toBe("kanban");
+    expect(normalizeDashboardView("calendar")).toBe("calendar");
     expect(normalizeDashboardView("grid")).toBe("kanban");
     expect(normalizeDashboardView(null)).toBe("kanban");
     expect(normalizeDashboardView("other")).toBe("kanban");
@@ -14,6 +15,68 @@ describe("dashboard view preferences", () => {
     const write = vi.fn(() => { throw new Error("storage is read-only"); });
     expect(initializeDashboardView({ read: () => "list", write })).toBe("list");
     expect(write).toHaveBeenCalledWith("list");
+  });
+});
+
+describe("Calendar initial state", () => {
+  const route = { kind: "dashboard" as const };
+  const calendarRoute = {
+    kind: "dashboard" as const,
+    calendar: {
+      view: "calendar" as const,
+      date: "2026-08-31",
+      subview: "week" as const,
+      layers: ["project" as const],
+      editorIds: [],
+      includeUnassigned: false,
+      stageKeys: [],
+      showCompletedChecklist: false,
+      showDeliveredProjects: false,
+      overdueOnly: false,
+      search: "",
+      myTasks: false,
+    },
+  };
+
+  it("uses URL Calendar state before storage and does not read or write storage", () => {
+    const read = vi.fn(() => "agenda");
+    const write = vi.fn();
+    expect(initializeDashboardCalendarState(calendarRoute, { read, write }, { now: "2026-08-30T12:00:00.000Z", isPhone: true })).toMatchObject({ view: "calendar", subview: "week", date: "2026-08-31", layers: ["project"], myTasks: false });
+    expect(read).not.toHaveBeenCalled();
+    expect(write).not.toHaveBeenCalled();
+  });
+
+  it("uses valid remembered values and otherwise chooses the device/date fallback", () => {
+    const values = new Map([[DASHBOARD_CALENDAR_SUBVIEW_KEY, "agenda"], [DASHBOARD_CALENDAR_LAST_DATE_KEY, "2026-09-03"]]);
+    const writes: Array<[string, string]> = [];
+    const storage = { read: (key: string) => values.get(key) ?? null, write: (key: string, value: string) => writes.push([key, value]) };
+    expect(initializeDashboardCalendarState(route, storage, { now: "2026-08-30T12:00:00.000Z", isPhone: false })).toMatchObject({ view: "calendar", subview: "agenda", date: "2026-09-03", layers: ["project", "checklist"], editorIds: [], search: "" });
+    expect(writes).toEqual([[DASHBOARD_CALENDAR_SUBVIEW_KEY, "agenda"], [DASHBOARD_CALENDAR_LAST_DATE_KEY, "2026-09-03"]]);
+
+    expect(initializeDashboardCalendarState(route, { read: () => null }, { now: "2026-08-30T12:00:00.000Z", isPhone: true })).toMatchObject({ subview: "agenda", date: "2026-08-30" });
+    expect(initializeDashboardCalendarState(route, { read: () => null }, { now: "2026-08-30T12:00:00.000Z", isPhone: false })).toMatchObject({ subview: "month", date: "2026-08-30" });
+  });
+
+  it("tolerates storage read/write exceptions without losing valid fallback state", () => {
+    const write = vi.fn(() => { throw new Error("read-only"); });
+    expect(initializeDashboardCalendarState(route, { read: (key) => key === DASHBOARD_CALENDAR_SUBVIEW_KEY ? "week" : "2026-09-03", write }, { now: "2026-08-30T12:00:00.000Z", isPhone: false })).toMatchObject({ subview: "week", date: "2026-09-03" });
+    expect(write).toHaveBeenCalledTimes(2);
+
+    const read = vi.fn(() => { throw new Error("disabled"); });
+    expect(initializeDashboardCalendarState(route, { read }, { now: "2026-08-30T12:00:00.000Z", isPhone: false })).toMatchObject({ subview: "month", date: "2026-08-30" });
+  });
+
+  it("normalizes only supported subviews and validates component dates", () => {
+    expect(normalizeDashboardCalendarSubview("month")).toBe("month");
+    expect(normalizeDashboardCalendarSubview("day")).toBeNull();
+    expect(isCanonicalCalendarDate("2026-02-29")).toBe(false);
+    expect(isCanonicalCalendarDate("2026-02-28")).toBe(true);
+  });
+
+  it("keeps live search spaces while stripping unsafe text and normalizes only the debounced value", () => {
+    const input = `a b ${String.fromCharCode(1)} `;
+    expect(sanitizeDashboardCalendarSearch(input)).toBe("a b  ");
+    expect(normalizeDashboardCalendarSearch("a b  ")).toBe("a b");
   });
 });
 
