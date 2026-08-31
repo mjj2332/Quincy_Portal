@@ -1,10 +1,23 @@
-> **Status:** APPROVED FOR BUILD. Branch off `main` @ 6b8a5e0. Sol draft → fresh-Sol review round 1
-> (5B+5SF, REVISE) → revision 1 → round-2 confirmation folded by the orchestrating session (Codex
-> credits exhausted mid-round) → Opus plan-tier REVERT #1 (7B+8SF+3N) → Sol revision 2 → **Opus
-> re-review APPROVE WITH FOLLOW-UPS** (S1 security-manifest class = `scoped-child-resource`; S2
-> ledger deferred-publish preserved; S3 post-settle refetch stays with the shipped queued-refresh
-> path — all three folded into D4/D6/Slice 0/Slice 3 by the orchestrating session). Build in 6
-> slices per `docs/Subagent-Orchestration.md`.
+> **Status:** DEPLOYED TO PRODUCTION 2026-08-31. Branch `tb6-project-card-detail` off `main` @
+> `6b8a5e0`, merged to `main`. Migration `0038` (additive index on `project_activity_events`)
+> applied to prod D1; pre-migration recovery export
+> `../db-recovery/quincy-portal-pre-0038-20260831T135320Z.sql`. App Worker version
+> **`6f7a22b2-4c0a-40a3-b765-2bdb209762eb`** deployed from `portal/workers/app`; background/
+> webhook-ingress NOT redeployed (bundle comparison: webhook byte-identical, background's diff
+> traced to inert shared-barrel additions + one provably-no-op UUID-validation tightening — see
+> `docs/plans/tb6/build-handoff.md` §2 item 9 area). Rollback target: app Worker version
+> `10778f00-2884-48b9-b7ae-997343fed60a` (the prior live version, TB5C + Kanban divider fix).
+> Built in 6 slices (0-5) per `docs/Subagent-Orchestration.md`: each slice individually Sol-reviewed
+> and §5-gated; 2 scoped whole-branch Sol passes (Pass A 1 Blocking fixed, Pass B 3 Blocking + 6
+> Should-fix fixed — the highest defect count of any TB6 review round, all real cross-slice issues);
+> Opus final-draft review APPROVE (1 non-blocking follow-up, documented in build-handoff.md);
+> Agy 7-item local-dev QA matrix PASS; post-deploy passive production verification PASS (0 console
+> errors, 0 failed network requests across Overview/Activity/Discussion on real project data).
+> Plan history: Sol draft → fresh-Sol review round 1 (5B+5SF, REVISE) → revision 1 → round-2
+> confirmation folded by the orchestrating session (Codex credits exhausted mid-round) → Opus
+> plan-tier REVERT #1 (7B+8SF+3N) → Sol revision 2 → Opus re-review APPROVE WITH FOLLOW-UPS (S1
+> security-manifest class = `scoped-child-resource`; S2 ledger deferred-publish preserved; S3
+> post-settle refetch stays with the shipped queued-refresh path).
 
 # Revamp TB6 — Project-Card Detail and Shared Discussion
 
