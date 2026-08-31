@@ -267,6 +267,13 @@
       "when": 1787918437292,
       "tag": "0037_project_board_order_contract",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "6",
+      "when": 1788149143517,
+      "tag": "0038_project_activity_feed_index",
+      "breakpoints": true
     }
   ]
 }

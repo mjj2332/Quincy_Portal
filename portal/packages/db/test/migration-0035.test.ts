@@ -62,7 +62,7 @@ describe("migration 0035 checklist scheduling ranges", () => {
     expect(journal.entries.find((entry) => entry.idx === 35)).toMatchObject({ idx: 35, tag: "0035_project_subtask_scheduling_ranges" });
     expect(snapshot.tables).toHaveProperty("project_subtasks");
     expect(journal.entries.find((entry) => entry.idx === 36)).toMatchObject({ idx: 36, tag: "0036_external_editor_assigned_scope" });
-    expect(journal.entries.at(-1)).toMatchObject({ idx: 37, tag: "0037_project_board_order_contract" });
-    expect(readdirSync(directory).filter((value) => /^\d{4}_.*\.sql$/.test(value)).at(-1)).toBe("0037_project_board_order_contract.sql");
+    expect(journal.entries.find((entry) => entry.idx === 37)).toMatchObject({ idx: 37, tag: "0037_project_board_order_contract" });
+    expect(readdirSync(directory).filter((value) => /^\d{4}_.*\.sql$/.test(value))).toContain("0037_project_board_order_contract.sql");
   });
 });

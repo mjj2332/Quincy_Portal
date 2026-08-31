@@ -194,7 +194,7 @@ function withTemporaryDatabase(callback: (filename: string) => void): void {
 
 describe("migration 0037 project board order contract", () => {
   it("applies the complete 0000..0037 chain and leaves a healthy scratch database", () => {
-    const names = migrationNames();
+    const names = migrationNames().filter((name) => Number(name.slice(0, 4)) <= 37);
     expect(names.map((name) => Number(name.slice(0, 4)))).toEqual(Array.from({ length: 38 }, (_, index) => index));
 
     const db = localSqlite();

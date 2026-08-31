@@ -4,7 +4,7 @@
  * All media rows use immutable, versioned R2 keys.
  */
 import { sqliteTable, text, integer, real, index, unique, uniqueIndex, check, primaryKey } from "drizzle-orm/sqlite-core";
-import { sql } from "drizzle-orm";
+import { desc, sql } from "drizzle-orm";
 
 const id = () => text("id").primaryKey();
 const createdAt = () =>
@@ -289,6 +289,7 @@ export const projectActivityEvents = sqliteTable(
     createdAt: integer("created_at").notNull(),
   },
   (t) => [
+    index("project_activity_events_project_occurred_idx").on(t.projectId, desc(t.occurredAt), desc(t.id)),
     unique("project_activity_events_event_source_unique").on(t.eventType, t.sourceKey),
     check("project_activity_events_schema_version_check", sql`${t.schemaVersion} = 1`),
     check("project_activity_events_actor_kind_check", sql`${t.actorKind} IN ('user', 'system')`),

@@ -133,6 +133,29 @@ describe("Dashboard Calendar routing", () => {
     expect(window.localStorage.getItem("quincy:dashboard:view")).toBe("list");
   });
 
+  it("keeps List and Kanban as local-storage views with a focusable List project anchor", async () => {
+    await render();
+    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "List")?.click(); await Promise.resolve(); });
+    expect(window.location.search).toBe("");
+    expect(window.localStorage.getItem("quincy:dashboard:view")).toBe("list");
+    const row = host.querySelector<HTMLAnchorElement>("a.prow");
+    expect(row?.getAttribute("href")).toBe("/projects/33333333-3333-4333-8333-333333333333");
+    expect(row?.tabIndex).toBe(0);
+    expect(row?.querySelector("button, select")).toBeNull();
+
+    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Kanban")?.click(); await Promise.resolve(); });
+    expect(window.location.search).toBe("");
+    expect(window.localStorage.getItem("quincy:dashboard:view")).toBe("kanban");
+  });
+
+  it("restores a remembered Calendar view by replacing the bare root with its canonical URL", async () => {
+    window.localStorage.setItem("quincy:dashboard:view", "calendar");
+    await render();
+    expect(window.location.pathname).toBe("/");
+    expect(window.location.search).toContain("view=calendar");
+    expect(window.localStorage.getItem("quincy:dashboard:view")).toBe("calendar");
+  });
+
   it("sanitizes shared search input in List and carries it into a canonical Calendar URL", async () => {
     await render();
     await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "List")?.click(); await Promise.resolve(); });

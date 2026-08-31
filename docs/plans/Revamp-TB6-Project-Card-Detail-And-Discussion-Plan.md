@@ -437,8 +437,11 @@ Add only `activity(projectId)` to `projectDataKeys`, plus `activity` to `Project
 `CollectionPanel`'s video-link fetch into `projectDataKeys` — that exceeds the non-goal "no source
 mutation redesign beyond the narrow invalidation calls" and risks regressing the shipped
 optimistic reorder/drag/409 handling. `CollectionPanel` keeps its existing `loadLinks`/`useState`
-load path untouched; the four `project.collection.video_link_*` producers invalidate only
-`activity` (video links are not in the project-detail DTO or the TB6 Overview). Continue using the
+load path untouched. TB6's only *addition* for the four `project.collection.video_link_*` producers
+is an `activity` invalidation (video links are not in the project-detail DTO or the TB6 Overview);
+it does **not** remove the existing detail invalidation that `addLink`/`removeLink` already do via
+`ProjectWorkspace#onLinksChanged` (`saveEdit`/`reorderLinks` do no project-data invalidation on
+`main` today — see `docs/plans/tb6/slice-0-inventory.md`). Continue using the
 existing `project-data-invalidated` message for `activity`; do not add a new BroadcastChannel
 message type.
 

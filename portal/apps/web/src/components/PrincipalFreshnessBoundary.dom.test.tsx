@@ -3,6 +3,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { productionCalendarKey } from "../lib/production-calendar-query";
+import { projectDataKeys } from "../lib/project-data";
+import { ProjectQueryRuntime } from "../lib/project-query-sync";
 import { PrincipalFreshnessBoundary } from "./PrincipalFreshnessBoundary";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -45,6 +47,7 @@ describe("PrincipalFreshnessBoundary Calendar purge", () => {
   let host: HTMLDivElement;
   let root: Root;
   let client: QueryClient;
+  let runtime: ProjectQueryRuntime | undefined;
 
   beforeEach(() => {
     apiGetMock.mockReset();
@@ -57,6 +60,8 @@ describe("PrincipalFreshnessBoundary Calendar purge", () => {
 
   afterEach(() => {
     act(() => root.unmount());
+    runtime?.dispose();
+    runtime = undefined;
     client.clear();
     host.remove();
   });
@@ -123,5 +128,23 @@ describe("PrincipalFreshnessBoundary Calendar purge", () => {
     await waitFor(() => {
       expect(client.getQueryCache().findAll({ queryKey: ["production-calendar", principal] })).toHaveLength(0);
     });
+  });
+
+  it("keeps a query-string quick-detail location but still removes project data on access loss", async () => {
+    runtime = new ProjectQueryRuntime(client, "boundary-test");
+    client.setQueryData(projectDataKeys.detail(project), { id: project, street: "Stale detail" });
+    window.history.replaceState(null, "", `/?view=calendar&detail=${project}`);
+    apiGetMock.mockResolvedValueOnce(snapshot([{ projectId: project, membershipCycleIds: [cycleOne] }]));
+    renderBoundary();
+    await waitFor(() => expect(client.getQueryData(["authorization-scope", principal, "editor", 0])).toBeDefined());
+
+    await act(async () => {
+      client.setQueryData(["authorization-scope", principal, "editor", 0], snapshot([]));
+      await flush();
+    });
+
+    await waitFor(() => expect(runtime?.removedProjectIds.has(project)).toBe(true));
+    expect(`${window.location.pathname}${window.location.search}`).toBe(`/?view=calendar&detail=${project}`);
+    await waitFor(() => expect(client.getQueryData(projectDataKeys.detail(project))).toBeUndefined());
   });
 });

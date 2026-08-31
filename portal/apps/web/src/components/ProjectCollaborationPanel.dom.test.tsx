@@ -249,6 +249,19 @@ describe("ProjectCollaborationPanel", () => {
     expect(panel.classList.contains("project-collaboration--overlay")).toBe(false); expect(panel.querySelector(".project-collaboration__scroll")).toBeNull(); expect(panel.querySelector(".subtask-checklist")).not.toBeNull();
   });
 
+  it("keeps the standalone composer draft across an active comments refetch", async () => {
+    let queryClient!: QueryClient;
+    apiGetMock.mockImplementation((path) => path.includes("comment-read-marker") ? Promise.resolve(readState()) : path.includes("subtasks") ? Promise.resolve({ subtasks: [] }) : Promise.resolve(comments()));
+    const host = mount();
+    await render(<><PresentationSeed pages={{ pages: [comments()], pageParams: [null] }} onClient={(client) => { queryClient = client; }} /><ProjectCollaborationPanel projectId={projectId} mode="standalone" /></>);
+    const composer = host.querySelector<HTMLElement>('[contenteditable="true"]')!;
+    await typeIntoEditor(composer, "Draft survives poll");
+
+    await queryClient.invalidateQueries({ queryKey: projectDataKeys.comments(projectId), exact: true, refetchType: "active" });
+    await flush(10);
+    expect(host.querySelector<HTMLElement>('[contenteditable="true"]')?.textContent).toContain("Draft survives poll");
+  });
+
   it("keeps the overlay open when checklist title, all popovers, and composer Escape consume the event", async () => {
     const subtask = { id: "task-1", title: "Call client", done: false, position: 1024, assignee: null, assignmentVersion: 0, dueDate: null, createdBy: "user", createdAt: "2026-08-17T00:00:00.000Z", updatedAt: "2026-08-17T00:00:00.000Z" };
     apiGetMock.mockImplementation((path) => path.includes("subtasks") ? Promise.resolve({ subtasks: [subtask] }) : path.includes("mentionable-users") ? Promise.resolve({ users: [] }) : Promise.resolve(comments()));
