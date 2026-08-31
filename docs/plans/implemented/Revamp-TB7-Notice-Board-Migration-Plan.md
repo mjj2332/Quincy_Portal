@@ -1,12 +1,21 @@
 # Revamp TB7 — Notice-Board Migration Plan
 
-> **Status: Both slices built, committed, and diff-reviewed (Slice 1: 1 fresh-Sol diff review
-> round, clean; Slice 2: 5 rounds, the last two closing two real concurrency bugs — see the Slice 2
-> build correction below and `docs/plans/tb7-sol-diff-review-2.md` through `-5.md`) plus a
-> whole-branch review (APPROVE WITH FOLLOWUPS, no blocking issues — `docs/plans/
-> tb7-whole-branch-review.md`). Full automated gate (typecheck, web build, `test --workspaces`,
-> shared package vitest config) green throughout. Pending: Opus final-draft review, Agy QA, and
-> production deploy. Not yet implemented in production — stays in `docs/plans/` until deployed.**
+> **Status: DEPLOYED TO PRODUCTION 2026-09-01.** Merged to `main` (`c8fc4c7`), migration `0039`
+> applied to prod D1 (additive `notice_board_read_markers` table only — applied via the Cloudflare
+> dashboard SQL console after wrangler's D1 API endpoints returned persistent `cf-d1: err=7500`
+> errors; Time Travel bookmark `00000641-00000098-000050d8-491caf5f14620d252ca9d66e017d0912` taken
+> immediately before as the recovery point), app Worker `682ed4a0` only (background/webhook-ingress
+> unchanged — TB7 touched neither), rollback target app `6f7a22b2`. Passive production verification
+> passed (health check, unauth 401 on both bare and trailing-slash read-marker routes, login page
+> 200). Agy local-dev QA: READY FOR DEPLOY, all 6 test areas passed, independently spot-checked
+> against local D1 state. Both slices built, committed, and diff-reviewed (Slice 1: 1 fresh-Sol
+> diff review round, clean; Slice 2: 5 rounds, the last two closing two real concurrency bugs — see
+> the Slice 2 build correction below and `docs/plans/implemented/tb7/sol-diff-review-2.md` through
+> `sol-diff-review-5.md`)
+> plus a whole-branch review (APPROVE WITH FOLLOWUPS, no blocking issues — see the whole-branch
+> review doc alongside this plan) and an Opus final-draft review (APPROVE WITH FOLLOWUPS). Full
+> automated gate (typecheck, web build, `test --workspaces`,
+> shared package vitest config) green throughout.**
 
 > **Slice 2 build correction (2026-09-01):** Rule 3 was corrected during the Slice 2 build in
 > response to Sol diff-review-2: equal-marker `latest` changes are now uniformly sequence-gated,

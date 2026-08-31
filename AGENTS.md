@@ -150,8 +150,15 @@ plus nullable `autohdr_handoffs.editing_entry_board_revision` and `jobs.stage_en
 seeded the `tb5a_board_contract_enabled` flag OFF, normalized every unarchived project's
 `board_position` to per-Stage gap-1024 ranks with `board_revision = 1` (preflight + postflight
 CHECKs, 76-row `project_board_order_0037_rollback` capture table), and added a
-`projects(stage_key, archived_at, board_position, id)` index, applied 2026-08-29 (TB5A) — next
-available number is **0038**. Branch off `main`.
+`projects(stage_key, archived_at, board_position, id)` index, applied 2026-08-29 (TB5A); 0038
+added a `project_activity_events(project_id, occurred_at DESC, id DESC)` covering index (no schema
+change), applied 2026-08-31 13:54:53 UTC (TB6 Slice 0); 0039 added the additive
+`notice_board_read_markers` table (`user_id` primary key, no FK to `notice_board_posts` so a
+deleted post never regresses another user's high-water mark), applied 2026-09-01 to prod D1 via
+the Cloudflare dashboard SQL console (wrangler's D1 API endpoints were returning consistent
+server-side errors — `cf-d1: err=7500` — at deploy time; a Time Travel bookmark was taken
+immediately before as the recovery point in place of a `wrangler d1 export`) (TB7) — next
+available number is **0040**. Branch off `main`.
 **Prefer a bare `ALTER TABLE ADD COLUMN col TYPE CHECK(...)` over `drizzle-kit generate`'s
 table-rebuild form when the check is single-column and NULL-satisfiable** — the rebuild form's
 `PRAGMA foreign_keys=OFF` doesn't reliably persist across D1's remote migration execution even
