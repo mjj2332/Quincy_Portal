@@ -2,8 +2,11 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ApiError } from "../lib/api";
 import { reorderNeighbors } from "../lib/reorder-neighbors";
+import { projectDataKeys } from "../lib/project-data";
+import { ProjectQueryRuntime, ProjectQueryRuntimeProvider } from "../lib/project-query-sync";
 import { CollectionPanel } from "./CollectionPanel";
 import type { WorkspaceAsset } from "./PhotoGrid";
 
@@ -37,10 +40,11 @@ vi.mock("@dnd-kit/core", async (importOriginal) => {
 const apiGetMock = vi.fn<(path: string) => Promise<unknown>>();
 const apiPatchMock = vi.fn<(path: string, body: unknown) => Promise<unknown>>();
 const apiPostMock = vi.fn<(path: string, body: unknown) => Promise<unknown>>();
+const apiDeleteMock = vi.fn<(path: string) => Promise<unknown>>();
 const apiPostWithStatusMock = vi.fn<(path: string, body: unknown) => Promise<{ data: unknown; status: number }>>();
 vi.mock("../lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/api")>();
-  return { ...actual, apiGet: (path: string) => apiGetMock(path), apiPatch: (path: string, body: unknown) => apiPatchMock(path, body), apiPost: (path: string, body: unknown) => apiPostMock(path, body), apiPostWithStatus: (path: string, body: unknown) => apiPostWithStatusMock(path, body) };
+  return { ...actual, apiGet: (path: string) => apiGetMock(path), apiPatch: (path: string, body: unknown) => apiPatchMock(path, body), apiPost: (path: string, body: unknown) => apiPostMock(path, body), apiDelete: (path: string) => apiDeleteMock(path), apiPostWithStatus: (path: string, body: unknown) => apiPostWithStatusMock(path, body) };
 });
 
 function asset(id: string, version: number): WorkspaceAsset {
@@ -86,6 +90,7 @@ describe("CollectionPanel version history deletion markup", () => {
 
 describe("CollectionPanel version history deletion wiring", () => {
   let root: Root | null = null; let host: HTMLDivElement;
+  let queryClient: QueryClient | null = null; let runtime: ProjectQueryRuntime | null = null;
   (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
   beforeEach(() => {
@@ -96,12 +101,18 @@ describe("CollectionPanel version history deletion wiring", () => {
     apiGetMock.mockReset().mockImplementation((path) => Promise.resolve(path.includes("collection=video") ? { links: videoLinks() } : { links: [] }));
     apiPatchMock.mockReset();
     apiPostMock.mockReset();
+    apiDeleteMock.mockReset();
     apiPostWithStatusMock.mockReset();
   });
-  afterEach(async () => { await act(async () => { root!.unmount(); await Promise.resolve(); }); root = null; host.remove(); });
+  afterEach(async () => { await act(async () => { root!.unmount(); await Promise.resolve(); }); runtime?.dispose(); queryClient?.clear(); runtime = null; queryClient = null; root = null; host.remove(); });
 
   async function renderVideoPanel(overrides: Partial<typeof videoProps> = {}) {
     await act(async () => { root!.render(createElement(CollectionPanel, { ...videoProps, ...overrides })); await Promise.resolve(); await Promise.resolve(); await new Promise((resolve) => window.setTimeout(resolve, 0)); });
+  }
+  async function renderVideoPanelWithRuntime(overrides: Partial<typeof videoProps> = {}) {
+    queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    runtime = new ProjectQueryRuntime(queryClient);
+    await act(async () => { root!.render(<ProjectQueryRuntimeProvider runtime={runtime!}><QueryClientProvider client={queryClient!}>{createElement(CollectionPanel, { ...videoProps, ...overrides })}</QueryClientProvider></ProjectQueryRuntimeProvider>); await Promise.resolve(); await Promise.resolve(); await new Promise((resolve) => window.setTimeout(resolve, 0)); });
   }
   async function click(element: Element) {
     await act(async () => { element.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); await new Promise((resolve) => window.setTimeout(resolve, 0)); });
@@ -245,6 +256,32 @@ describe("CollectionPanel version history deletion wiring", () => {
     expect(inputs[0]!.value).toBe(""); expect(inputs[1]!.value).toBe("");
     expect(onChanged).toHaveBeenCalledTimes(1);
     expect(onToast).toHaveBeenCalledWith("Link added.");
+  });
+
+  it("invalidates only Activity after each successful video-link mutation", async () => {
+    const created = { id: "new-video-link", url: "https://vimeo.com/new", label: "New cut", source: "manual" as const, position: 3072, createdAt: "2026-08-04T00:00:00.000Z" };
+    apiPostWithStatusMock.mockResolvedValueOnce({ data: created, status: 201 });
+    await renderVideoPanelWithRuntime();
+    const queryInvalidate = vi.spyOn(queryClient!, "invalidateQueries");
+    const form = host.querySelector<HTMLFormElement>(".collection-link-form:not(.collection-link-editor)")!;
+    const inputs = form.querySelectorAll<HTMLInputElement>("input");
+    await typeInto(inputs[0]!, created.url); await click(form.querySelector("button")!);
+    expect(queryInvalidate).toHaveBeenCalledWith({ queryKey: projectDataKeys.activity("project"), exact: true, refetchType: "active" });
+
+    const responseLink = { ...created, id: "manual-video-link", label: "Final cut" };
+    apiPatchMock.mockResolvedValueOnce(responseLink);
+    const walkthrough = tile(host, "Walkthrough");
+    await click([...walkthrough.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Edit")!);
+    const editor = host.querySelector<HTMLFormElement>(".collection-link-editor")!;
+    const editInputs = editor.querySelectorAll<HTMLInputElement>("input");
+    await typeInto(editInputs[0]!, "Final cut"); await click([...editor.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Save")!);
+
+    apiGetMock.mockImplementation((path) => Promise.resolve(path.includes("collection=video") ? { links: [responseLink, videoLinks()[1]] } : { links: [] }));
+    apiPostMock.mockResolvedValueOnce({ position: 1024 });
+    await dragEnd("tonomo-video-link", "manual-video-link");
+    apiDeleteMock.mockResolvedValueOnce(undefined);
+    await click([...tile(host, "Final cut").querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Remove")!);
+    expect(queryInvalidate.mock.calls.filter(([options]) => JSON.stringify(options?.queryKey) === JSON.stringify(projectDataKeys.activity("project")))).toHaveLength(4);
   });
 
   it("on a 200 for a link already shown locally, keeps its tile position, shows the duplicate error, keeps the typed values, and does not call onChanged", async () => {

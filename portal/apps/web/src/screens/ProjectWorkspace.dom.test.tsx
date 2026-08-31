@@ -566,6 +566,38 @@ afterEach(async () => {
     vi.unstubAllGlobals();
   });
 
+  it("keeps document assets/detail invalidation and adds Activity after copy completion", async () => {
+    authState.role = "admin";
+    let queryClient: ReturnType<typeof import("../lib/query-client").createQuincyQueryClient> | undefined;
+    apiGetMock.mockImplementation((path: string) => {
+      if (path === "/api/projects/p1") return Promise.resolve(projectFixture());
+      if (path.includes("/assets?collection=")) return Promise.resolve({ assets: [] });
+      if (path.includes("/ingest-status")) return Promise.resolve({ expectedCount: null, receivedCount: 2, mismatch: false });
+      if (path.includes("/links")) return Promise.resolve({ links: [] });
+      if (path.includes("/annotations")) return Promise.resolve({ annotations: [] });
+      if (path.includes("/comments?")) return Promise.resolve({ project: { id: "p1", street: "12 Example St" }, comments: [] });
+      if (path.includes("comment-read-marker")) return Promise.resolve({ projectId: "p1", marker: null, latest: null, unreadCount: 0 });
+      if (path.includes("/subtasks")) return Promise.resolve({ subtasks: [] });
+      if (path.includes("/mentionable-users")) return Promise.resolve({ users: [] });
+      return Promise.resolve({});
+    });
+    apiPostMock.mockImplementation((path: string) => path.endsWith("/documents/presign")
+      ? Promise.resolve({ sessionId: "session-1", version: 1, files: { pdf: { key: "copy.pdf", devDirect: true } } })
+      : Promise.resolve({}));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 200 })));
+    await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>); await flush(20);
+    await click([...host.querySelectorAll<HTMLButtonElement>(".frow")].find((button) => button.textContent?.includes("Copy"))!); await flush(20);
+    const runtime = getProjectQueryRuntime(queryClient!); const publish = vi.spyOn(runtime!, "publish"); const invalidate = vi.spyOn(queryClient!, "invalidateQueries");
+    const input = host.querySelector<HTMLInputElement>('input[type="file"][accept="application/pdf"]')!;
+    Object.defineProperty(input, "files", { configurable: true, value: [new File(["copy"], "copy.pdf", { type: "application/pdf" })] });
+    await act(async () => { input.dispatchEvent(new Event("change", { bubbles: true })); await Promise.resolve(); }); await flush(20);
+    expect(invalidate).toHaveBeenCalledWith(expect.objectContaining({ queryKey: projectDataKeys.assets("p1", "copy"), exact: true, refetchType: "active" }));
+    expect(invalidate).toHaveBeenCalledWith(expect.objectContaining({ queryKey: projectDataKeys.detail("p1"), exact: true, refetchType: "active" }));
+    expect(invalidate).toHaveBeenCalledWith(expect.objectContaining({ queryKey: projectDataKeys.activity("p1"), exact: true, refetchType: "active" }));
+    expect(publish).toHaveBeenCalledWith(expect.objectContaining({ type: "project-data-invalidated", projectId: "p1", resources: [{ kind: "assets", collectionKind: "copy" }, { kind: "detail" }, { kind: "activity" }] }));
+    vi.unstubAllGlobals();
+  });
+
   it("closes an open lightbox on tab switch instead of crashing or showing the wrong asset", async () => {
     await render(<ProjectWorkspace projectId="p1" />);
     await flush();

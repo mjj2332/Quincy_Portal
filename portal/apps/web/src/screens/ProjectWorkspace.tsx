@@ -221,7 +221,7 @@ export function ProjectWorkspace(props: ProjectWorkspaceProps) {
   }, [accessFailure, canAdminBackend, isCurrent, projectId]);
   const invalidate = useCallback((resources: ProjectDataResource[]) => invalidateProjectResources(queryClient, { projectId, resources }), [projectId, queryClient]);
   const onUploadComplete = useCallback(async (kind: "raw" | "edited") => { if (!isCurrent()) return; await invalidate([{ kind: "assets", collectionKind: kind }, { kind: "detail" }]); if (kind === "raw" && isCurrent()) await Promise.all([refreshIngest(), ...(canAdminBackend ? [refreshJobs()] : [])]); }, [canAdminBackend, invalidate, isCurrent, refreshIngest, refreshJobs]);
-  const onDocumentsChanged = useCallback(async (kind: "floorplan" | "copy") => { await invalidate([{ kind: "assets", collectionKind: kind }, { kind: "detail" }]); }, [invalidate]);
+  const onDocumentsChanged = useCallback(async (kind: "floorplan" | "copy") => { await invalidate([{ kind: "assets", collectionKind: kind }, { kind: "detail" }, { kind: "activity" }]); }, [invalidate]);
   const onLinksChanged = useCallback(async () => { await invalidate([{ kind: "detail" }]); }, [invalidate]);
 
   useEffect(() => {

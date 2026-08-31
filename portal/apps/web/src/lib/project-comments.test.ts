@@ -3,6 +3,7 @@ import { QueryClient } from "@tanstack/react-query";
 import { ApiError } from "./api";
 import {
   advanceProjectCommentReadMarker,
+  invalidateProjectCommentResources,
   prependProjectComment,
   projectCommentReadStateQueryOptions,
   projectCommentsInfiniteQueryOptions,
@@ -34,6 +35,15 @@ function deferredPromise<T>() {
 afterEach(() => { apiGetMock.mockReset(); apiPatchMock.mockReset(); });
 
 describe("project comment Query adapter", () => {
+  it("invalidates Activity alongside requested comment resources", async () => {
+    const queryClient = client(); const runtime = new ProjectQueryRuntime(queryClient);
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    await invalidateProjectCommentResources(queryClient, projectId, ["comments", "activity"]);
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: projectDataKeys.comments(projectId), exact: true, refetchType: "active" });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: projectDataKeys.activity(projectId), exact: true, refetchType: "active" });
+    runtime.dispose(); queryClient.clear();
+  });
+
   it("uses exact project keys, URL encoding, cursor page params, and the transport signal", async () => {
     const queryClient = client(); const signal = new AbortController().signal;
     const started: string[] = []; const settled: string[] = [];

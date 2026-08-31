@@ -1,6 +1,8 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { ProjectQueryRuntime, ProjectQueryRuntimeProvider } from "../lib/project-query-sync";
 
 const apiGetMock = vi.hoisted(() => vi.fn<(path: string) => Promise<unknown>>());
 const apiPostMock = vi.hoisted(() => vi.fn<(path: string, body: unknown) => Promise<unknown>>());
@@ -105,5 +107,21 @@ describe("CreateProject Client payload", () => {
       agentEmail: null,
       agentPhone: null,
     }));
+  });
+
+  it("broadcasts Board and Calendar after creating the initial roster", async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const runtime = new ProjectQueryRuntime(queryClient);
+    const publish = vi.spyOn(runtime, "publish");
+    const onNavigate = vi.fn();
+    await act(async () => { root!.render(<ProjectQueryRuntimeProvider runtime={runtime}><QueryClientProvider client={queryClient}><CreateProject onNavigate={onNavigate} /></QueryClientProvider></ProjectQueryRuntimeProvider>); await Promise.resolve(); });
+    await typeInto(host.querySelector<HTMLInputElement>('input[placeholder="12 Kings Road, Vaucluse"]')!, "12 Broadcast Street");
+    await act(async () => { host.querySelector<HTMLButtonElement>(".create-project__hero-action button")!.click(); await Promise.resolve(); });
+    await flush();
+    expect(publish.mock.calls.some(([message]) => message.type === "dashboard-board-invalidated")).toBe(true);
+    expect(publish.mock.calls.some(([message]) => message.type === "production-calendar-invalidated")).toBe(true);
+    expect(publish.mock.calls.some(([message]) => message.type === "project-data-invalidated")).toBe(false);
+    expect(onNavigate).toHaveBeenCalledWith("/projects/project-created", "Shoot created.");
+    runtime.dispose(); queryClient.clear();
   });
 });

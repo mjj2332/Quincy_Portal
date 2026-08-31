@@ -224,7 +224,7 @@ export function removeProjectComment(queryClient: QueryClient, projectId: string
 export async function invalidateProjectCommentResources(
   queryClient: QueryClient,
   projectId: string,
-  resources: Array<"comments" | "comment-read-marker">,
+  resources: Array<"comments" | "comment-read-marker" | "activity">,
   publish = true,
 ) {
   await invalidateProjectResources(queryClient, {

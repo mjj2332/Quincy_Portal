@@ -8,6 +8,7 @@ import { EditProject } from "../screens/EditProject";
 import { Topbar } from "./Topbar";
 import { QuincyQueryProvider } from "../lib/query-client";
 import { ApiError } from "../lib/api";
+import { getProjectQueryRuntime } from "../lib/project-query-sync";
 import { projectDataKeys } from "../lib/project-data";
 import { purgeProjectCollaborationData, useProjectCommentPresentation, useProjectCommentReadStateQuery, useProjectCommentsCacheQuery, useProjectCommentsQuery } from "../lib/project-comments";
 
@@ -382,6 +383,29 @@ describe("ProjectCollaborationPanel", () => {
     expect(apiPatchMock).not.toHaveBeenCalled();
     await typeIntoEditor(composer, "@Nor"); await keydown(composer, "Enter");
     expect(apiGetMock).toHaveBeenCalledWith(`/api/mentionable-users?projectId=${projectId}&q=Nor`);
+  });
+
+  it("keeps Activity invalidation in create, edit, and delete comment success paths", async () => {
+    let client!: QueryClient;
+    const host = mount();
+    await render(<><PresentationSeed pages={{ pages: [comments()], pageParams: [null] }} onClient={(next) => { client = next; }} /><ProjectCollaborationPanel projectId={projectId} mode="standalone" /></>);
+    const runtime = getProjectQueryRuntime(client)!;
+    const publish = vi.spyOn(runtime, "publish");
+    await typeIntoEditor(host.querySelector<HTMLElement>('[contenteditable="true"]')!, "New Activity comment");
+    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Post comment")!); await flush();
+    expect(publish.mock.calls.some(([message]) => message.type === "project-data-invalidated" && JSON.stringify(message.resources) === JSON.stringify([{ kind: "comments" }, { kind: "comment-read-marker" }, { kind: "activity" }]))).toBe(true);
+
+    publish.mockClear();
+    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Edit")!);
+    await appendToEditor(host.querySelector<HTMLElement>('[contenteditable="true"]')!, " edited");
+    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Save")!); await flush();
+    expect(publish.mock.calls.some(([message]) => message.type === "project-data-invalidated" && JSON.stringify(message.resources) === JSON.stringify([{ kind: "comments" }, { kind: "activity" }]))).toBe(true);
+
+    publish.mockClear();
+    const deleteButton = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Delete");
+    expect(deleteButton).toBeDefined();
+    await click(deleteButton!); await flush();
+    expect(publish.mock.calls.some(([message]) => message.type === "project-data-invalidated" && JSON.stringify(message.resources) === JSON.stringify([{ kind: "comments" }, { kind: "comment-read-marker" }, { kind: "activity" }]))).toBe(true);
   });
 
   it("ignores a late POST continuation after the collaboration panel unmounts", async () => {

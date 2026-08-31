@@ -54,6 +54,7 @@ export function ProjectCollaborationPanel({ projectId, openSignal, onOpenSignalC
   const [editing, setEditing] = useState<{ id: string; content: RichTextDoc }>();
   const [mutationError, setMutationError] = useState<string>();
   const presentation = useProjectCommentPresentation({ projectId, open, onAccessError: (error) => onAccessFailure?.(error, "comments") });
+  // TB6 Slice 4: preserve these Activity invalidations when the discussion core is extracted.
   // Keep one enabled comments observer mounted while the panel is closed. The presentation
   // coordinator owns whether a closed→open transition needs its scoped head refresh; letting the
   // observer toggle enabled would make TanStack refetch every stale infinite page first.
@@ -135,7 +136,7 @@ export function ProjectCollaborationPanel({ projectId, openSignal, onOpenSignalC
       if (!presentation.isCurrent(mutationProjectId)) return;
       prependProjectComment(queryClient, projectId, comment);
       setContent(emptyDoc());
-      void invalidateProjectCommentResources(queryClient, projectId, ["comments", "comment-read-marker"]);
+      void invalidateProjectCommentResources(queryClient, projectId, ["comments", "comment-read-marker", "activity"]);
     } catch (reason) { if (presentation.isCurrent(mutationProjectId)) { accessFailure(reason, "comments"); setMutationError(errorMessage(reason, "Comment could not be posted.")); } }
     finally { if (presentation.isCurrent(mutationProjectId)) setSaving(false); }
   }
@@ -149,7 +150,7 @@ export function ProjectCollaborationPanel({ projectId, openSignal, onOpenSignalC
       if (!presentation.isCurrent(mutationProjectId)) return;
       replaceProjectComment(queryClient, projectId, comment);
       setEditing(undefined);
-      void invalidateProjectCommentResources(queryClient, projectId, ["comments"]);
+      void invalidateProjectCommentResources(queryClient, projectId, ["comments", "activity"]);
     } catch (reason) { if (presentation.isCurrent(mutationProjectId)) { accessFailure(reason, "nested-comment"); setMutationError(errorMessage(reason, "Comment could not be updated.")); } }
     finally { if (presentation.isCurrent(mutationProjectId)) setSaving(false); }
   }
@@ -163,7 +164,7 @@ export function ProjectCollaborationPanel({ projectId, openSignal, onOpenSignalC
       if (!presentation.isCurrent(mutationProjectId)) return;
       removeProjectComment(queryClient, projectId, comment.id);
       if (editing?.id === comment.id) setEditing(undefined);
-      void invalidateProjectCommentResources(queryClient, projectId, ["comments", "comment-read-marker"]);
+      void invalidateProjectCommentResources(queryClient, projectId, ["comments", "comment-read-marker", "activity"]);
     } catch (reason) { if (presentation.isCurrent(mutationProjectId)) { accessFailure(reason, "nested-comment"); setMutationError(errorMessage(reason, "Comment could not be deleted.")); } }
     finally { if (presentation.isCurrent(mutationProjectId)) setSaving(false); }
   }
