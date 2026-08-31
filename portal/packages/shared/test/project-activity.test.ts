@@ -17,6 +17,7 @@ import { EXTERNAL_PROJECT_ACTIVITY_POLICY, projectExternalActivityPayload } from
 
 const projectId = "project-activity-test";
 const userId = "11111111-1111-4111-8111-111111111111";
+const activityId = "22222222-2222-4222-8222-222222222222";
 
 function sourceFor(type: ProjectActivityType, sourceId: string): { kind: string; id: string; key: string } {
   const keys: Record<ProjectActivityType, string> = {
@@ -93,8 +94,8 @@ function intentFor(type: ProjectActivityType, options: { actorKind?: "user" | "s
   const coalesce = projectActivityCoalesce(type, projectId, actorId, payload);
   return {
     schemaVersion: 1,
-    activity: { id: `${type}-activity`, type, projectId, actorId, actorKind, occurredAt: "2026-08-27T00:00:00.000Z", source: sourceFor(type, sourceId), safePayload: payload, deepLink },
-    broadDelivery: { registryKey: type, sourceActivityId: `${type}-activity`, coalesce },
+    activity: { id: activityId, type, projectId, actorId, actorKind, occurredAt: "2026-08-27T00:00:00.000Z", source: sourceFor(type, sourceId), safePayload: payload, deepLink },
+    broadDelivery: { registryKey: type, sourceActivityId: activityId, coalesce },
   };
 }
 
@@ -158,6 +159,13 @@ describe("TB4C project activity registry", () => {
     const valid = parseProjectActivityIntent({ ...intentFor("project.checklist.item_created"), activity: { ...intentFor("project.checklist.item_created").activity, safePayload: { itemId: "item", checklistTitle: "A bounded title" } } });
     expect(valid).not.toBeNull();
     expect(parseProjectActivityIntent({ ...intentFor("project.priority.changed"), activity: { ...intentFor("project.priority.changed").activity, safePayload: { priority: 1, checklistTitle: "not allowed" } } })).toBeNull();
+  });
+
+  it("requires a canonical lowercase UUID for the top-level activity id", () => {
+    const intent = intentFor("project.comment.created");
+    expect(parseProjectActivityIntent({ ...intent, activity: { ...intent.activity, id: "not-a-canonical-uuid" } })).toBeNull();
+    expect(parseProjectActivityIntent({ ...intent, activity: { ...intent.activity, id: "22222222-2222-4222-8222-22222222222A" } })).toBeNull();
+    expect(parseProjectActivityIntent({ ...intent, activity: { ...intent.activity, source: { kind: "project_comment", id: "source-may-remain-arbitrary", key: "project-comment:source-may-remain-arbitrary:created" } } })).not.toBeNull();
   });
 
   it("preserves the comment leading-edge key, exact boundary, and system sentinel contract", () => {

@@ -994,6 +994,7 @@ After a human signs into `http://localhost:8787` as Admin:
 - Exact release commit passed both scoped Sol reviews, confirmation reviews, Opus review, Agy QA,
   the full §5 gate, and External projection regression gate.
 - Confirm production still ends at migration 0037 and take/verify the normal D1 recovery export.
+- Audit `project_activity_events.id` — every row is a canonical lowercase UUID.
 - Record app Worker rollback version `10778f00` unless production changed before release; if it did,
   stop and record the actual current version.
 - Build and compare the produced background and webhook Worker artifacts plus resolved shared

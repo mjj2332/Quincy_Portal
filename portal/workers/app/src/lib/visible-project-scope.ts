@@ -5,6 +5,7 @@ import type { Env, SessionUser } from "../env";
 
 export type VisibleProjectContext = {
   projectId: string;
+  projectLabel: string | null;
   membershipCycleIds: string[];
   role: Role;
   isExternal: boolean;
@@ -42,7 +43,7 @@ export function visibleProjectWhere(user: VisibleProjectWhereInput, projectId?: 
 export async function resolveVisibleProject(env: Env["DB"] | Env, user: VisibleProjectWhereInput, projectId: string): Promise<VisibleProjectContext | null> {
   const d1 = "DB" in env ? env.DB : env;
   const db = createDb(d1);
-  const rows = await db.select({ projectId: schema.projects.id, membershipCycleId: schema.projectMembers.id })
+  const rows = await db.select({ projectId: schema.projects.id, projectLabel: schema.projects.street, membershipCycleId: schema.projectMembers.id })
     .from(schema.projects)
     .leftJoin(schema.projectMembers, eq(schema.projectMembers.projectId, schema.projects.id))
     .where(visibleProjectWhere(user, projectId))
@@ -50,6 +51,7 @@ export async function resolveVisibleProject(env: Env["DB"] | Env, user: VisibleP
   if (!rows.length) return null;
   return {
     projectId,
+    projectLabel: rows[0]?.projectLabel ?? null,
     membershipCycleIds: rows.map((row) => row.membershipCycleId).filter((id): id is string => Boolean(id)),
     role: user.role,
     isExternal: user.role === "external_editor",

@@ -31,6 +31,7 @@ describe("project data key and request seam", () => {
     expect(projectDataKeys.commentsRoot("a")).toEqual(["project-data", "a", "comments"]);
     expect(projectDataKeys.commentsRoot("b")).not.toEqual(projectDataKeys.commentsRoot("a"));
     expect(projectDataKeys.comments("a")).toEqual(["project-data", "a", "comments", "pages", { limit: 50 }]);
+    expect(projectDataKeys.activity("a")).toEqual(["project-data", "a", "activity", "pages", { limit: 30 }]);
     expect(projectDataKeys.commentReadMarker("b")).toEqual(["project-data", "b", "comments", "read-marker"]);
     expect(projectDataKeys.comments("a").slice(0, 2)).toEqual(projectDataKeys.project("a"));
     expect(["raw", "edited", "video", "floorplan", "copy"].map((kind) => projectDataKeys.assets("a", kind as never))).toHaveLength(5);

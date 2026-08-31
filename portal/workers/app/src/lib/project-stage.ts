@@ -100,6 +100,7 @@ async function resolveStageVisibleProject(input: MoveProjectStageInput) {
   `).bind(input.principal.id, input.projectId).first<{ id: string }>();
   return assignedArchived ? {
     projectId: input.projectId,
+    projectLabel: null,
     membershipCycleIds: [],
     role: input.principal.role,
     isExternal: false,

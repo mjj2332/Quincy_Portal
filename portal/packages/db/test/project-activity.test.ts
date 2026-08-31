@@ -88,7 +88,7 @@ describe("TB4C activity marker and exact-cycle fan-out", () => {
     db.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES ('tb4c-project', 'TB4C Street', 'edited_review', 0, ?, ?)").run(now, now);
     db.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES ('tb4d-cycle', 'tb4c-project', 'tb4c-editor', 'editor', ?)").run(now - 1000);
     addAudit(db, "tb4d-audit", now);
-    const bundle = buildProjectActivityStatements({ db: localD1(db), intent: intent("project.priority.changed", "tb4d-activity", now, "tb4d-audit"), winnerAuditId: "tb4d-audit", createdAt: now, broadMode: "activity_only" });
+    const bundle = buildProjectActivityStatements({ db: localD1(db), intent: intent("project.priority.changed", "a0000000-0000-4000-8000-000000000001", now, "tb4d-audit"), winnerAuditId: "tb4d-audit", createdAt: now, broadMode: "activity_only" });
     await runBundle(bundle);
     expect(db.prepare("SELECT count(*) AS count FROM project_activity_events").get()).toEqual({ count: 1 });
     expect(db.prepare("SELECT count(*) AS count FROM notification_outbox").get()).toEqual({ count: 0 });
@@ -109,7 +109,7 @@ describe("TB4C activity marker and exact-cycle fan-out", () => {
       db.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, 'tb4c-project', ?, 'editor', ?)").run(id, userId, createdAt);
     }
     const d1 = localD1(db);
-    const first = buildProjectActivityStatements({ db: d1, intent: intent("project.priority.changed", "priority-activity", now, "winning-audit") , winnerAuditId: "winning-audit", createdAt: now });
+    const first = buildProjectActivityStatements({ db: d1, intent: intent("project.priority.changed", "a0000000-0000-4000-8000-000000000002", now, "winning-audit") , winnerAuditId: "winning-audit", createdAt: now });
     await runBundle(first);
     expect(db.prepare("SELECT count(*) AS count FROM project_activity_events").get()).toEqual({ count: 0 });
     expect(db.prepare("SELECT count(*) AS count FROM notification_outbox").get()).toEqual({ count: 0 });
@@ -143,7 +143,7 @@ describe("TB4C activity marker and exact-cycle fan-out", () => {
     const d1 = localD1(db);
 
     addAudit(db, "comment-audit-1", start);
-    await runBundle(buildProjectActivityStatements({ db: d1, intent: intent("project.comment.edited", "comment-activity-1", start, "comment-audit-1"), winnerAuditId: "comment-audit-1", createdAt: start }));
+    await runBundle(buildProjectActivityStatements({ db: d1, intent: intent("project.comment.edited", "a0000000-0000-4000-8000-000000000011", start, "comment-audit-1"), winnerAuditId: "comment-audit-1", createdAt: start }));
     expect(db.prepare("SELECT recipient_id AS recipientId, recipient_membership_cycle_id AS cycle FROM notification_outbox WHERE event_type = 'project.activity.broad' AND coalesce_key IS NOT NULL ORDER BY recipient_id").all()).toEqual([
       { recipientId: "tb4c-admin", cycle: "admin-cycle" },
       { recipientId: "tb4c-editor", cycle: "old-cycle" },
@@ -152,7 +152,7 @@ describe("TB4C activity marker and exact-cycle fan-out", () => {
     db.prepare("DELETE FROM project_members WHERE id = 'old-cycle'").run();
     db.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES ('new-cycle', 'tb4c-project', 'tb4c-editor', 'editor', ?)").run(start + 1000);
     addAudit(db, "comment-audit-2", start + 2000);
-    await runBundle(buildProjectActivityStatements({ db: d1, intent: intent("project.comment.edited", "comment-activity-2", start + 2000, "comment-audit-2"), winnerAuditId: "comment-audit-2", createdAt: start + 2000 }));
+    await runBundle(buildProjectActivityStatements({ db: d1, intent: intent("project.comment.edited", "a0000000-0000-4000-8000-000000000012", start + 2000, "comment-audit-2"), winnerAuditId: "comment-audit-2", createdAt: start + 2000 }));
 
     expect(db.prepare("SELECT recipient_id AS recipientId, recipient_membership_cycle_id AS cycle FROM notification_outbox WHERE event_type = 'project.activity.broad' AND coalesce_key IS NOT NULL ORDER BY recipient_id, cycle").all()).toEqual([
       { recipientId: "tb4c-admin", cycle: "admin-cycle" },
@@ -175,13 +175,13 @@ describe("TB4C activity marker and exact-cycle fan-out", () => {
     const d1 = localD1(db);
 
     addAudit(db, "comment-audit-first", start);
-    await runBundle(buildProjectActivityStatements({ db: d1, intent: intent("project.comment.edited", "comment-activity-first", start, "comment-audit-first"), winnerAuditId: "comment-audit-first", createdAt: start }));
+    await runBundle(buildProjectActivityStatements({ db: d1, intent: intent("project.comment.edited", "a0000000-0000-4000-8000-000000000021", start, "comment-audit-first"), winnerAuditId: "comment-audit-first", createdAt: start }));
     addAudit(db, "comment-audit-before-boundary", start + 299_999);
-    await runBundle(buildProjectActivityStatements({ db: d1, intent: intent("project.comment.edited", "comment-activity-before-boundary", start + 299_999, "comment-audit-before-boundary"), winnerAuditId: "comment-audit-before-boundary", createdAt: start + 299_999 }));
+    await runBundle(buildProjectActivityStatements({ db: d1, intent: intent("project.comment.edited", "a0000000-0000-4000-8000-000000000022", start + 299_999, "comment-audit-before-boundary"), winnerAuditId: "comment-audit-before-boundary", createdAt: start + 299_999 }));
     expect(db.prepare("SELECT count(*) AS count FROM notification_outbox WHERE event_type = 'project.activity.broad'").get()).toEqual({ count: 1 });
 
     addAudit(db, "comment-audit-at-boundary", start + 300_000);
-    await runBundle(buildProjectActivityStatements({ db: d1, intent: intent("project.comment.edited", "comment-activity-at-boundary", start + 300_000, "comment-audit-at-boundary"), winnerAuditId: "comment-audit-at-boundary", createdAt: start + 300_000 }));
+    await runBundle(buildProjectActivityStatements({ db: d1, intent: intent("project.comment.edited", "a0000000-0000-4000-8000-000000000023", start + 300_000, "comment-audit-at-boundary"), winnerAuditId: "comment-audit-at-boundary", createdAt: start + 300_000 }));
     expect(db.prepare("SELECT count(*) AS count FROM notification_outbox WHERE event_type = 'project.activity.broad'").get()).toEqual({ count: 2 });
     db.close();
   });

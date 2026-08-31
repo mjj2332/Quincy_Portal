@@ -878,7 +878,7 @@ describe("staff app API", () => {
     expect(collaborationBody.members.flatMap((member) => Object.keys(member))).not.toContain("userId");
     const me = await SELF.fetch("https://portal.test/api/me", { headers: { cookie: externalCookie } });
     expect(me.status).toBe(200);
-    await expect(me.json()).resolves.toMatchObject({ user: { role: "external_editor", authorizationEpoch: 0 }, capabilities: ["uploadEdited", "viewRaw", "annotateRaw", "recommendRaw", "compareFrames", "viewEdited", "reviewEdited", "annotateEdited", "collaborateOnProject", "moveProjectStage", "viewProductionCalendar"] });
+    await expect(me.json()).resolves.toMatchObject({ user: { role: "external_editor", authorizationEpoch: 0 }, capabilities: ["uploadEdited", "viewRaw", "annotateRaw", "recommendRaw", "compareFrames", "viewEdited", "reviewEdited", "annotateEdited", "collaborateOnProject", "moveProjectStage", "viewProductionCalendar", "viewQuickDetail"] });
 
     const nonexistent = crypto.randomUUID();
     const projectMisses = await Promise.all([assigned, unassigned, archived, nonexistent].map((id) => SELF.fetch(`https://portal.test/api/projects/${id}`, { headers: { cookie: externalCookie } })));
@@ -888,11 +888,12 @@ describe("staff app API", () => {
         SELF.fetch(`https://portal.test/api/projects/${id}/assets?collection=raw`, { headers: { cookie: externalCookie } }),
         SELF.fetch(`https://portal.test/api/projects/${id}/links?collection=video`, { headers: { cookie: externalCookie } }),
         SELF.fetch(`https://portal.test/api/projects/${id}/comments`, { headers: { cookie: externalCookie } }),
+        SELF.fetch(`https://portal.test/api/projects/${id}/activity`, { headers: { cookie: externalCookie } }),
         SELF.fetch(`https://portal.test/api/projects/${id}/subtasks`, { headers: { cookie: externalCookie } }),
         SELF.fetch(`https://portal.test/api/projects/${id}/collaboration-summary`, { headers: { cookie: externalCookie } }),
         SELF.fetch(`https://portal.test/api/mentionable-users?projectId=${id}`, { headers: { cookie: externalCookie } }),
       ]);
-      expect(childMisses.map((response) => response.status)).toEqual([404, 404, 404, 404, 404, 404]);
+      expect(childMisses.map((response) => response.status)).toEqual([404, 404, 404, 404, 404, 404, 404]);
     }
 
     const rawCollection = await database.DB.prepare("SELECT id FROM collections WHERE project_id = ? AND kind = 'raw'").bind(assigned).first<{ id: string }>();

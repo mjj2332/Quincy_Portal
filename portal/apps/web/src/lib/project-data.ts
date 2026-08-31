@@ -31,6 +31,7 @@ export const projectDataKeys = {
   subtasks: (projectId: string) => ["project-data", projectId, "subtasks"] as const,
   commentsRoot: (projectId: string) => ["project-data", projectId, "comments"] as const,
   comments: (projectId: string) => ["project-data", projectId, "comments", "pages", { limit: 50 }] as const,
+  activity: (projectId: string) => ["project-data", projectId, "activity", "pages", { limit: 30 }] as const,
   commentReadMarker: (projectId: string) => ["project-data", projectId, "comments", "read-marker"] as const,
   collaborationSummary: (projectId: string) => ["project-data", projectId, "collaboration-summary"] as const,
 };

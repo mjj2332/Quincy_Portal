@@ -44,7 +44,7 @@ export type SecurityRouteRegistration = {
   scope: SecurityRouteScope;
   projection: SecurityRouteProjection;
   response: SecurityRouteResponse;
-  externalSurface?: "ingest-status" | "collection-links" | "stage" | "stages" | "calendar";
+  externalSurface?: "ingest-status" | "collection-links" | "stage" | "stages" | "activity" | "calendar";
 };
 type LegacySecurityRouteClass = "scoped" | "constant-capability-denial" | "global-self" | "withheld" | "terminal-fallback";
 type LegacySecurityRouteRegistrationSeed = { method: string; path: string; class: LegacySecurityRouteClass; externalSurface?: SecurityRouteRegistration["externalSurface"] };
@@ -181,6 +181,8 @@ const PROJECT_SECURITY_ROUTE_CLASSIFICATION_SEED = [
   { method: "PATCH", path: "/api/projects/:projectId/comments/:commentId", class: "scoped" },
   { method: "GET", path: "/api/projects/:projectId/comments", class: "scoped" },
   { method: "POST", path: "/api/projects/:projectId/comments", class: "scoped" },
+  { method: "GET", path: "/api/projects/:projectId/activity", class: "scoped", externalSurface: "activity" },
+  { method: "GET", path: "/api/projects/:projectId/activity/", class: "scoped", externalSurface: "activity" },
   { method: "POST", path: "/api/projects/:projectId/subtasks/:subtaskId/reorder", class: "scoped" },
   { method: "DELETE", path: "/api/projects/:projectId/subtasks/:subtaskId", class: "scoped" },
   { method: "PATCH", path: "/api/projects/:projectId/subtasks/:subtaskId", class: "scoped" },

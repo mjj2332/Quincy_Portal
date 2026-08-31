@@ -63,7 +63,8 @@ export type StaffRoute =
   | { kind: "not-found" }
   | { kind: "reserved" };
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+export const CANONICAL_LOWERCASE_UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const UUID = CANONICAL_LOWERCASE_UUID_REGEX;
 const reservedRoots = new Set(["api", "media", "__transform-source", "d"]);
 const COLLABORATION_NOTIFICATION_TYPES = new Set(["mentioned", "subtask_assigned", "subtask_due_today", "project_collaboration_activity"]);
 const calendarParameterNames = new Set([
