@@ -120,7 +120,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   const canViewNoticeBoard = can("viewNoticeBoard");
   const canViewProductionCalendar = roleHasCapability(role, "viewProductionCalendar");
   const history = locationStore();
-  const locationHasCalendar = (() => { const current = parseStaffLocation(history.getLocation()); return current.kind === "dashboard" && current.calendar !== undefined; })();
+  const locationHasCalendar = (() => { const current = parseStaffLocation(history.getLocation()); return current.kind === "dashboard" && "calendar" in current; })();
   const calendarStorage = {
     read: (key: string) => window.localStorage.getItem(key),
     write: (key: string, value: string) => window.localStorage.setItem(key, value),

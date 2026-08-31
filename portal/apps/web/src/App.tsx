@@ -49,7 +49,7 @@ function Shell({ user, impersonating }: { user: SessionUser; impersonating: bool
   const blocked = (route.kind === "admin" && !canAccessAdmin)
     || (route.kind === "create-project" && !canCreateProject)
     || (route.kind === "edit-project" && !canEditProject);
-  const calendarBlocked = route.kind === "dashboard" && route.calendar !== undefined && !roleHasCapability(user.role, "viewProductionCalendar");
+  const calendarBlocked = route.kind === "dashboard" && "calendar" in route && !roleHasCapability(user.role, "viewProductionCalendar");
 
   useEffect(() => {
     if (restored.current) return;
@@ -85,6 +85,18 @@ function Shell({ user, impersonating }: { user: SessionUser; impersonating: bool
     if (calendarBlocked) history.replace("/");
   }, [calendarBlocked, history]);
 
+  // TB6 Slice 1 temporary: Dashboard consumes dashboardView in Slice 4; until then explicit List/Kanban + any quick-detail facet is neutralised here.
+  useEffect(() => {
+    if (calendarBlocked || route.kind !== "dashboard") return;
+    if ("dashboardView" in route) {
+      history.replace("/");
+      return;
+    }
+    if ("calendar" in route && "detail" in route) {
+      history.replace(staffPathFor({ kind: "dashboard", calendar: route.calendar }));
+    }
+  }, [calendarBlocked, history, route]);
+
   function navigate(path: string, message?: string, replace = false) {
     if (message) setNotice({ path, message });
     else setNotice(null);
@@ -92,11 +104,12 @@ function Shell({ user, impersonating }: { user: SessionUser; impersonating: bool
   }
 
   const activeView = viewFor(route);
+  const dashboardCalendar = route.kind === "dashboard" && "calendar" in route && !calendarBlocked ? route.calendar : null;
   return (
     <div className={impersonating ? "app app--impersonating" : "app"}>
       <Topbar activeView={activeView} canAccessAdmin={canAccessAdmin} user={user} />
       {blocked && <main className="page"><div className="empty" role="status"><span className="serif">Returning to dashboard.</span></div></main>}
-      {!blocked && route.kind === "dashboard" && <Dashboard currentUserId={user.id} role={user.role} authorizationEpoch={user.authorizationEpoch} calendar={calendarBlocked ? null : route.calendar ?? null} />}
+      {!blocked && route.kind === "dashboard" && <Dashboard currentUserId={user.id} role={user.role} authorizationEpoch={user.authorizationEpoch} calendar={dashboardCalendar} />}
       {!blocked && route.kind === "project" && <ProjectWorkspace key={route.projectId} projectId={route.projectId} notice={notice?.path === pathname ? notice.message : null} onNoticeShown={() => setNotice(null)} collaborationOpenSignal={collaborationIntent?.projectId === route.projectId ? collaborationIntent.signal : undefined} onCollaborationOpenSignalConsumed={(signal) => acknowledgeCollaborationSignal(route.projectId, signal)} />}
       {!blocked && route.kind === "create-project" && <CreateProject onNavigate={navigate} />}
       {!blocked && route.kind === "edit-project" && <EditProject key={route.projectId} projectId={route.projectId} onNavigate={navigate} />}

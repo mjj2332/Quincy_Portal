@@ -33,6 +33,23 @@ async function click(element: Element) { await act(async () => { element.dispatc
 afterEach(async () => { if (root) await act(async () => root!.unmount()); root = null; document.body.replaceChildren(); seenSignals.splice(0); window.history.replaceState(null, "", "/"); });
 
 describe("App collaboration arrival transport", () => {
+  it.each([
+    "/?view=list",
+    "/?view=kanban",
+    "/?view=list&detail=123e4567-e89b-42d3-a456-426614174000&detailView=activity",
+  ])("temporarily replaces explicit List/Kanban Dashboard routes with the local-storage backing root (%s)", async (location) => {
+    const host = await renderAt(location);
+    expect(`${window.location.pathname}${window.location.search}`).toBe("/");
+    expect(host.textContent).toContain("Dashboard");
+  });
+
+  it("temporarily removes only the quick-detail facet from a Calendar route", async () => {
+    const calendar = "/?view=calendar&date=2026-08-30&sub=agenda&layers=project%2Cchecklist&mine=1&q=smith+street";
+    const host = await renderAt(`${calendar}&detail=123e4567-e89b-42d3-a456-426614174000&detailView=discussion`);
+    expect(`${window.location.pathname}${window.location.search}`).toBe(calendar);
+    expect(host.querySelector("[data-calendar-route]")?.getAttribute("data-calendar-route")).toBe("present");
+  });
+
   it("renders the Dashboard for a valid Calendar root location", async () => {
     const host = await renderAt("/?view=calendar&date=2026-08-30&sub=agenda&layers=project%2Cchecklist");
     expect(host.textContent).toContain("Dashboard");

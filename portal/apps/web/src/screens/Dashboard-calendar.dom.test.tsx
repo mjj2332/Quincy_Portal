@@ -49,7 +49,7 @@ function DashboardRouteHarness() {
   const history = locationStore();
   const location = useSyncExternalStore(history.subscribe, history.getLocation, () => "/");
   const route = parseStaffLocation(location);
-  return <Dashboard currentUserId="user-1" role={authRole.value} authorizationEpoch={0} calendar={route.kind === "dashboard" ? route.calendar ?? null : null} />;
+  return <Dashboard currentUserId="user-1" role={authRole.value} authorizationEpoch={0} calendar={route.kind === "dashboard" && "calendar" in route ? route.calendar : null} />;
 }
 
 describe("Dashboard Calendar routing", () => {

@@ -10,7 +10,7 @@ import {
   type CalendarPerson,
   type ChecklistScheduleDto,
   type DashboardCalendarState,
-  type DashboardCalendarRoute,
+  type DashboardCalendarFacetRoute,
   type ProductionCalendarFilters,
   type ProductionCalendarRangeResponse,
   type Role,
@@ -63,7 +63,7 @@ export function buildProductionCalendarQuery(calendar: DashboardCalendarState, w
   const normalizedSearch = stripUnsafeText(filters.search);
   assertCanonicalFilters(calendar, filters);
 
-  const route = staffPathFor({ kind: "dashboard", calendar } satisfies DashboardCalendarRoute);
+  const route = staffPathFor({ kind: "dashboard", calendar } satisfies DashboardCalendarFacetRoute);
   const question = route.indexOf("?");
   if (question < 0) throw new RangeError("Calendar route did not contain its query contract.");
   const params = new URLSearchParams(route.slice(question + 1));
