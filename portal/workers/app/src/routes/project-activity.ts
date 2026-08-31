@@ -137,6 +137,13 @@ async function handler(c: Context<AppEnv>) {
     } else {
       console.error("Project activity feed cursor boundary rejected", { event: "project_activity_feed_cursor_rejected", rowId: boundary?.id });
     }
+    if (nextCursor === null) {
+      // Every fetched row on this page failed to encode as a cursor, yet a further page exists.
+      // Returning 200 with nextCursor:null here would be indistinguishable from genuine
+      // end-of-feed and silently truncate older activity — fail loudly instead.
+      console.error("Project activity feed pagination could not advance", { event: "project_activity_feed_cursor_exhausted", projectId: visible.projectId });
+      return c.json({ error: "Activity feed pagination is temporarily unavailable" }, 500);
+    }
   }
 
   const items = [];

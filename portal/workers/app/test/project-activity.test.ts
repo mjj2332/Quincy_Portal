@@ -29,6 +29,7 @@ const eventProjectId = "20000000-0000-4000-8000-000000000005";
 const boundaryProjectId = "20000000-0000-4000-8000-000000000006";
 const externalSuppressedOnlyProjectId = "20000000-0000-4000-8000-000000000007";
 const corruptBoundaryProjectId = "20000000-0000-4000-8000-000000000008";
+const allCorruptPageProjectId = "20000000-0000-4000-8000-000000000009";
 const tokens = {
   admin: "project-activity-admin-token",
   editor: "project-activity-editor-token",
@@ -111,6 +112,7 @@ beforeAll(async () => {
   await insertProject(boundaryProjectId, "Activity Boundary Street");
   await insertProject(externalSuppressedOnlyProjectId, "Activity Suppressed Street");
   await insertProject(corruptBoundaryProjectId, "Activity Corrupt Boundary Street");
+  await insertProject(allCorruptPageProjectId, "Activity All Corrupt Page Street");
   await insertMember(projectId, externalId);
   await insertMember(externalArchivedProjectId, externalId);
   await insertMember(externalSuppressedOnlyProjectId, externalId);
@@ -273,6 +275,30 @@ describe("project activity feed API", () => {
     const next = await request(`/api/projects/${corruptBoundaryProjectId}/activity?limit=2&before=${encodeURIComponent(firstBody.nextCursor!)}`, tokens.editor);
     const nextBody = await next.json() as ProjectActivityFeedResponse;
     expect(nextBody.items.map((item) => item.id)).toEqual([olderId]);
+  });
+
+  it("fails loudly instead of silently truncating when every row on a page is unencodable", async () => {
+    const boundaryTime = 1_960_000_000_000;
+    const olderId = "52000000-0000-4000-8000-000000000001";
+    for (const [rawId, offset] of [["not-a-canonical-activity-id-a", 1], ["not-a-canonical-activity-id-b", 0]] as const) {
+      await database.DB.prepare(`
+        INSERT INTO project_activity_events (
+          id, schema_version, event_type, category, project_id, actor_kind, actor_id,
+          occurred_at, source_kind, source_id, source_key, safe_payload_json,
+          deep_link_kind, deep_link_path, created_at
+        ) VALUES (?, 1, 'project.comment.created', 'comment', ?, 'user', ?, ?, 'project_comment', ?, ?, ?, 'project_collaboration', ?, ?)
+      `).bind(
+        rawId, allCorruptPageProjectId, editorId, boundaryTime + offset,
+        `corrupt-comment-${offset}`, `project-comment:corrupt-comment-${offset}:created`, JSON.stringify({ commentId: `corrupt-comment-${offset}` }),
+        `/projects/${allCorruptPageProjectId}?collaboration=open`, boundaryTime + offset,
+      ).run();
+    }
+    await insertActivity({ id: olderId, projectId: allCorruptPageProjectId, type: "project.comment.created", category: "comment", occurredAt: boundaryTime - 1, payload: { commentId: olderId } });
+
+    const response = await request(`/api/projects/${allCorruptPageProjectId}/activity?limit=2`, tokens.editor);
+    expect(response.status).toBe(500);
+    const body = await response.json() as { error: string };
+    expect(body.error).toBeTruthy();
   });
 
   it("projects internal actors and External safe copy without raw payload or suppressed events", async () => {
