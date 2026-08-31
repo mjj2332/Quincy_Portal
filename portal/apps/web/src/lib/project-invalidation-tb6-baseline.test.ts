@@ -15,8 +15,8 @@ function receive(runtime: ProjectQueryRuntime, resources: Parameters<typeof crea
 }
 
 describe("TB6 Slice 0 project invalidation characterization", () => {
-  it("applies a local subtasks invalidation immediately while SubtaskChecklist owns the key", async () => {
-    // Before Slice 3: local invalidateProjectResources ignores runtime.isOwned for subtasks.
+  it("defers a local subtasks invalidation while SubtaskChecklist owns the key, then flushes once on release", async () => {
+    // Slice 3a: local senders are now owner-deferred.
     const client = queryClient();
     const runtime = new ProjectQueryRuntime(client, "local-subtasks");
     const key = projectDataKeys.subtasks("project-1");
@@ -26,12 +26,16 @@ describe("TB6 Slice 0 project invalidation characterization", () => {
 
     await invalidateProjectResources(client, { projectId: "project-1", resources: [{ kind: "subtasks" }] });
 
+    expect(invalidate).not.toHaveBeenCalled();
+    release();
+    await Promise.resolve();
+    expect(invalidate).toHaveBeenCalledTimes(1);
     expect(invalidate).toHaveBeenCalledWith({ queryKey: key, exact: true, refetchType: "active" });
-    release(); runtime.dispose(); client.clear();
+    runtime.dispose(); client.clear();
   });
 
-  it("applies a local detail invalidation immediately while ProjectDeadlineControl owns the key", async () => {
-    // Before Slice 3: local detail invalidation also applies immediately apart from the ledger rule.
+  it("defers a local detail invalidation while ProjectDeadlineControl owns the key, then flushes once on release", async () => {
+    // Slice 3a: local senders are now owner-deferred.
     const client = queryClient();
     const runtime = new ProjectQueryRuntime(client, "local-detail");
     const key = projectDataKeys.detail("project-1");
@@ -41,8 +45,12 @@ describe("TB6 Slice 0 project invalidation characterization", () => {
 
     await invalidateProjectResources(client, { projectId: "project-1", resources: [{ kind: "detail" }] });
 
+    expect(invalidate).not.toHaveBeenCalled();
+    release();
+    await Promise.resolve();
+    expect(invalidate).toHaveBeenCalledTimes(1);
     expect(invalidate).toHaveBeenCalledWith({ queryKey: key, exact: true, refetchType: "active" });
-    release(); runtime.dispose(); client.clear();
+    runtime.dispose(); client.clear();
   });
 
   it.each([

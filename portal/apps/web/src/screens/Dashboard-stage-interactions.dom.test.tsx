@@ -753,6 +753,8 @@ describe("Dashboard Stage interactions", () => {
     });
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const runtime = new ProjectQueryRuntime(queryClient, "dashboard-settle-test");
+    const publish = vi.spyOn(runtime, "publish");
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
     await act(async () => {
       root.render(<ProjectQueryRuntimeProvider runtime={runtime}><QueryClientProvider client={queryClient}><Dashboard currentUserId="admin-1" /></QueryClientProvider></ProjectQueryRuntimeProvider>);
       await Promise.resolve();
@@ -763,6 +765,10 @@ describe("Dashboard Stage interactions", () => {
     await dndEnd("source", "awaiting_raw", { id: "target", data: cardData("raw_review", "target") });
     await flush();
 
+    expect(publish).toHaveBeenCalledWith(expect.objectContaining({ type: "dashboard-board-invalidated" }));
+    expect(publish).toHaveBeenCalledWith(expect.objectContaining({ type: "project-data-invalidated", projectId: "source", resources: [{ kind: "detail" }, { kind: "activity" }] }));
+    expect(publish).toHaveBeenCalledWith(expect.objectContaining({ type: "production-calendar-invalidated" }));
+    expect(invalidate.mock.calls.some(([options]) => options?.queryKey?.[0] === "dashboard-projects")).toBe(false);
     expect(projectFetches).toBe(2);
     const movedCard = card(host, "Source Street");
     expect(movedCard.querySelector<HTMLButtonElement>('[aria-label="Move Source Street"]')?.disabled).toBe(true);

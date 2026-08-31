@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { QueryClient } from "@tanstack/react-query";
+import { QueryClient, QueryObserver } from "@tanstack/react-query";
 import { ApiError } from "./api";
 import {
-  applyProjectMembershipOverlay, beginAssetOptimisticMutation, beginProjectMembershipMutation, classifyProjectAccessError, emptyReview, invalidateProjectResources,
+  applyProjectMembershipOverlay, beginAssetOptimisticMutation, beginProjectMembershipMutation, classifyProjectAccessError, emptyReview, invalidateProjectResources, invalidateProjectSurfaces,
   projectAssetsQueryOptions, projectCollaborationDataGeneration, projectCollaborationSummaryQueryOptions, projectDataKeys, projectDetailQueryOptions, projectQueryRetry,
   clearPrincipalProjectData, purgeProjectCollaborationData, removeProjectData, type ProjectDetail, type ProjectMember,
 } from "./project-data";
@@ -87,6 +87,10 @@ describe("project data key and request seam", () => {
     expect(classifyProjectAccessError(new ApiError("missing", 404), "comment-read-marker")).toEqual({ scope: "project" });
     expect(classifyProjectAccessError(new ApiError("forbidden", 403), "collaboration-summary")).toEqual({ scope: "collaboration" });
     expect(classifyProjectAccessError(new ApiError("missing", 404), "collaboration-summary")).toEqual({ scope: "project" });
+    expect(classifyProjectAccessError(new ApiError("unauthenticated", 401), "activity")).toEqual({ scope: "principal" });
+    expect(classifyProjectAccessError(new ApiError("forbidden", 403), "activity")).toEqual({ scope: "project" });
+    expect(classifyProjectAccessError(new ApiError("missing", 404), "activity")).toEqual({ scope: "project" });
+    expect(classifyProjectAccessError(new ApiError("offline", 500), "activity")).toBeNull();
   });
 
   it("reads the safe collaboration summary and rejects a response after its generation tombstone", async () => {
@@ -149,6 +153,122 @@ describe("project data key and request seam", () => {
     await invalidateProjectResources(queryClient, { projectId: "p", resources: [{ kind: "assets", collectionKind: "raw" }, { kind: "assets", collectionKind: "edited" }, { kind: "detail" }] });
     expect(queryClient.getQueryCache().find({ queryKey: rawKey, exact: true })?.state.isInvalidated).toBe(true);
     expect(queryClient.getQueryCache().find({ queryKey: editedKey, exact: true })?.state.isInvalidated).toBe(true);
+    runtime.dispose(); queryClient.clear();
+  });
+
+  it("coordinates deduped project resources with in-tab surface invalidation and scoped broadcasts", async () => {
+    const queryClient = client();
+    const runtime = new ProjectQueryRuntime(queryClient, "surface-coordinator");
+    const detailKey = projectDataKeys.detail("p");
+    const activityKey = projectDataKeys.activity("p");
+    const dashboardKey = ["dashboard-projects", "principal", "admin", 0, { archived: false }] as const;
+    const calendarKey = ["production-calendar", "principal", "admin", 0, "active", "2026-08-01", "2026-09-01", "month", {}] as const;
+    queryClient.setQueryData(detailKey, detail("p"));
+    queryClient.setQueryData(activityKey, { pages: [], pageParams: [] });
+    queryClient.setQueryData(dashboardKey, []);
+    queryClient.setQueryData(calendarKey, []);
+    const dashboardObserver = new QueryObserver(queryClient, { queryKey: dashboardKey, queryFn: () => Promise.resolve([]), staleTime: Infinity });
+    const calendarObserver = new QueryObserver(queryClient, { queryKey: calendarKey, queryFn: () => Promise.resolve([]), staleTime: Infinity });
+    const stopDashboard = dashboardObserver.subscribe(() => undefined);
+    const stopCalendar = calendarObserver.subscribe(() => undefined);
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    const publish = vi.spyOn(runtime, "publish");
+
+    await invalidateProjectSurfaces(queryClient, {
+      projectId: "p",
+      resources: [{ kind: "detail" }, { kind: "activity" }, { kind: "detail" }],
+      dashboard: true,
+      calendar: true,
+    });
+
+    expect(invalidate).toHaveBeenCalledTimes(4);
+    expect(invalidate.mock.calls.map(([options]) => options)).toEqual(expect.arrayContaining([
+      { queryKey: detailKey, exact: true, refetchType: "active" },
+      { queryKey: activityKey, exact: true, refetchType: "active" },
+      { queryKey: dashboardKey, exact: true, refetchType: "active" },
+      { queryKey: calendarKey, exact: true, refetchType: "active" },
+    ]));
+    expect(publish).toHaveBeenCalledTimes(3);
+    expect(publish.mock.calls.filter(([message]) => message.type === "project-data-invalidated")).toHaveLength(1);
+    expect(publish.mock.calls.filter(([message]) => message.type === "dashboard-board-invalidated")).toHaveLength(1);
+    expect(publish.mock.calls.filter(([message]) => message.type === "production-calendar-invalidated")).toHaveLength(1);
+    expect(publish.mock.calls.find(([message]) => message.type === "project-data-invalidated")?.[0]).toMatchObject({ resources: [{ kind: "detail" }, { kind: "activity" }] });
+    invalidate.mockClear(); publish.mockClear();
+    await invalidateProjectSurfaces(queryClient, {
+      projectId: "p",
+      resources: [{ kind: "detail" }],
+      dashboard: false,
+      calendar: false,
+    });
+    expect(invalidate.mock.calls).toEqual([[{ queryKey: detailKey, exact: true, refetchType: "active" }]]);
+    expect(publish).toHaveBeenCalledTimes(1);
+    expect(publish.mock.calls[0]?.[0].type).toBe("project-data-invalidated");
+    expect(publish.mock.calls.some(([message]) => message.type === "dashboard-board-invalidated")).toBe(false);
+    expect(publish.mock.calls.some(([message]) => message.type === "production-calendar-invalidated")).toBe(false);
+    stopDashboard(); stopCalendar(); runtime.dispose(); queryClient.clear();
+  });
+
+  it("suppresses only the producer surface's in-tab invalidation while still broadcasting it", async () => {
+    const queryClient = client();
+    const runtime = new ProjectQueryRuntime(queryClient, "producer-coordinator");
+    const dashboardKey = ["dashboard-projects", "principal", "admin", 0, { archived: false }] as const;
+    const calendarKey = ["production-calendar", "principal", "admin", 0, "active", "2026-08-01", "2026-09-01", "month", {}] as const;
+    queryClient.setQueryData(projectDataKeys.detail("p"), detail("p"));
+    queryClient.setQueryData(dashboardKey, []);
+    queryClient.setQueryData(calendarKey, []);
+    const dashboardObserver = new QueryObserver(queryClient, { queryKey: dashboardKey, queryFn: () => Promise.resolve([]), staleTime: Infinity });
+    const calendarObserver = new QueryObserver(queryClient, { queryKey: calendarKey, queryFn: () => Promise.resolve([]), staleTime: Infinity });
+    const stopDashboard = dashboardObserver.subscribe(() => undefined);
+    const stopCalendar = calendarObserver.subscribe(() => undefined);
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    const publish = vi.spyOn(runtime, "publish");
+
+    // producer: "calendar" — Calendar self-refreshes; Dashboard must converge in-tab.
+    await invalidateProjectSurfaces(queryClient, { projectId: "p", resources: [{ kind: "detail" }], dashboard: true, calendar: true, producer: "calendar" });
+    const keysHit = invalidate.mock.calls.map(([options]) => JSON.stringify((options as { queryKey: unknown }).queryKey));
+    expect(keysHit).toContain(JSON.stringify(dashboardKey));
+    expect(keysHit).not.toContain(JSON.stringify(calendarKey));
+    expect(publish.mock.calls.filter(([m]) => m.type === "dashboard-board-invalidated")).toHaveLength(1);
+    expect(publish.mock.calls.filter(([m]) => m.type === "production-calendar-invalidated")).toHaveLength(1);
+
+    invalidate.mockClear(); publish.mockClear();
+    // producer: "dashboard" — mirror.
+    await invalidateProjectSurfaces(queryClient, { projectId: "p", resources: [{ kind: "detail" }], dashboard: true, calendar: true, producer: "dashboard" });
+    const keysHit2 = invalidate.mock.calls.map(([options]) => JSON.stringify((options as { queryKey: unknown }).queryKey));
+    expect(keysHit2).toContain(JSON.stringify(calendarKey));
+    expect(keysHit2).not.toContain(JSON.stringify(dashboardKey));
+    expect(publish.mock.calls.filter(([m]) => m.type === "dashboard-board-invalidated")).toHaveLength(1);
+    expect(publish.mock.calls.filter(([m]) => m.type === "production-calendar-invalidated")).toHaveLength(1);
+
+    // A non-producing surface key that is owned defers, then flushes exactly once on release.
+    invalidate.mockClear();
+    const release = runtime.acquireOwner(dashboardKey);
+    await invalidateProjectSurfaces(queryClient, { projectId: "p", resources: [{ kind: "detail" }], dashboard: true, calendar: false, producer: "calendar" });
+    expect(invalidate.mock.calls.some(([o]) => JSON.stringify((o as { queryKey: unknown }).queryKey) === JSON.stringify(dashboardKey))).toBe(false);
+    release();
+    expect(invalidate.mock.calls.filter(([o]) => JSON.stringify((o as { queryKey: unknown }).queryKey) === JSON.stringify(dashboardKey))).toHaveLength(1);
+
+    stopDashboard(); stopCalendar(); runtime.dispose(); queryClient.clear();
+  });
+
+  it("awaits unowned runtime invalidation but defers an owned key until release", async () => {
+    const queryClient = client();
+    const runtime = new ProjectQueryRuntime(queryClient, "awaitable-invalidation");
+    const key = projectDataKeys.detail("p");
+    queryClient.setQueryData(key, detail("p"));
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+
+    await invalidateProjectResources(queryClient, { projectId: "p", resources: [{ kind: "detail" }] });
+    expect(invalidate).toHaveBeenCalledTimes(1);
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: key, exact: true, refetchType: "active" });
+
+    invalidate.mockClear();
+    const release = runtime.acquireOwner(key);
+    await invalidateProjectResources(queryClient, { projectId: "p", resources: [{ kind: "detail" }] });
+    expect(invalidate).not.toHaveBeenCalled();
+    release();
+    expect(invalidate).toHaveBeenCalledTimes(1);
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: key, exact: true, refetchType: "active" });
     runtime.dispose(); queryClient.clear();
   });
 });

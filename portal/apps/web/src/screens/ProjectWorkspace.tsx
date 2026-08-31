@@ -13,7 +13,7 @@ import { InternalLink } from "../components/InternalLink";
 import { ProjectCollaborationPanel } from "../components/ProjectCollaborationPanel";
 import { ProjectOverviewRail } from "../components/ProjectOverviewRail";
 import {
-  beginAssetOptimisticMutation, classifyProjectAccessError, discardAssetLedgerForResource, invalidateProjectResources,
+  beginAssetOptimisticMutation, classifyProjectAccessError, discardAssetLedgerForResource, invalidateProjectResources, invalidateProjectSurfaces,
   projectAssetsQueryOptions, projectCollaborationSummaryQueryOptions, projectDataKeys, projectDetailQueryOptions, purgeProjectCollaborationData, purgeProjectData,
   clearPrincipalProjectData, usePassiveRawAssetsQuery, useProjectAssetsQuery, useProjectDetailQuery,
   useProjectCollaborationSummaryQuery,
@@ -21,7 +21,7 @@ import {
   type ProjectDetail,
 } from "../lib/project-data";
 import { projectCommentsInfiniteQueryOptions, useProjectCommentsCacheQuery } from "../lib/project-comments";
-import { createDashboardBoardInvalidatedMessage, createProjectDataInvalidationMessage, getProjectQueryRuntime, useProjectQueryRuntime } from "../lib/project-query-sync";
+import { createProjectDataInvalidationMessage, getProjectQueryRuntime, useProjectQueryRuntime } from "../lib/project-query-sync";
 import type { ProjectDataResource } from "../lib/project-query-sync";
 import { submitStageMoveWithConfirmation } from "../lib/stage-move";
 
@@ -431,9 +431,12 @@ function WorkspaceBody(props: WorkspaceBodyProps) {
         return;
       }
       if (response.changed) {
-        await queryClient.invalidateQueries({ queryKey: ["dashboard-projects"], refetchType: "active" });
-        runtime?.publish(createDashboardBoardInvalidatedMessage());
-        runtime?.publish(createProjectDataInvalidationMessage(project.id, [{ kind: "detail" }]));
+        await invalidateProjectSurfaces(queryClient, {
+          projectId: project.id,
+          resources: [{ kind: "detail" }, { kind: "activity" }],
+          dashboard: true,
+          calendar: true,
+        });
       }
       try {
         await props.onRefreshDetail();

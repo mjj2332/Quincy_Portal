@@ -10,8 +10,8 @@ import { useStages } from "../lib/stages";
 import { DASHBOARD_CALENDAR_LAST_DATE_KEY, DASHBOARD_CALENDAR_SUBVIEW_KEY, formatDashboardDate, initializeDashboardCalendarState, initializeDashboardView, initializeKanbanSortMode, normalizeDashboardCalendarSearch, sanitizeDashboardCalendarSearch, type DashboardView, type KanbanSortMode } from "./dashboard-helpers";
 import { InternalLink } from "../components/InternalLink";
 import { NoticeBoard } from "../components/NoticeBoard";
-import { invalidateProjectResources, useOptionalProjectQueryClient } from "../lib/project-data";
-import { createDashboardBoardInvalidatedMessage, createProjectDataInvalidationMessage, getProjectQueryRuntime } from "../lib/project-query-sync";
+import { invalidateProjectSurfaces, useOptionalProjectQueryClient } from "../lib/project-data";
+import { createDashboardBoardInvalidatedMessage, getProjectQueryRuntime } from "../lib/project-query-sync";
 import { dashboardProjectsKey, useDashboardProjects } from "../lib/dashboard-projects";
 import { submitStageMoveWithConfirmation } from "../lib/stage-move";
 
@@ -702,12 +702,18 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         : null;
       if (response.changed) {
         // Board invalidation is deliberately ID-free; each receiving tab invalidates only its
-        // own authorization-scoped dashboard query. The detail message is the separate,
-        // project-scoped freshness channel for an open Workspace.
-        queryRuntime?.publish(createDashboardBoardInvalidatedMessage());
+        // own authorization-scoped dashboard query. This tab is the producer: its own Board
+        // query converges through queuedRefreshRef, not the coordinator.
         if (queryClient) {
-          await invalidateProjectResources(queryClient, { projectId: intent.projectId, resources: [{ kind: "detail" }] }, false);
-          queryRuntime?.publish(createProjectDataInvalidationMessage(intent.projectId, [{ kind: "detail" }]));
+          await invalidateProjectSurfaces(queryClient, {
+            projectId: intent.projectId,
+            resources: [{ kind: "detail" }, { kind: "activity" }],
+            dashboard: true,
+            calendar: true,
+            producer: "dashboard",
+          });
+        } else {
+          queryRuntime?.publish(createDashboardBoardInvalidatedMessage());
         }
       }
       movementAnnouncement(

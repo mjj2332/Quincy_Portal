@@ -7,6 +7,7 @@ export const PROJECT_DATA_CHANNEL = "quincy:project-data:v1";
 
 export type ProjectDataResource =
   | { kind: "detail" }
+  | { kind: "activity" }
   | { kind: "assets"; collectionKind: CollectionKind }
   | { kind: "subtasks" }
   | { kind: "comments" }
@@ -67,7 +68,7 @@ function nonEmptyString(value: unknown): value is string {
 function isResource(value: unknown): value is ProjectDataResource {
   if (!value || typeof value !== "object") return false;
   const resource = value as Record<string, unknown>;
-  if (resource.kind === "detail" || resource.kind === "subtasks" || resource.kind === "comments" || resource.kind === "comment-read-marker" || resource.kind === "collaboration-summary") return Object.keys(resource).length === 1;
+  if (resource.kind === "detail" || resource.kind === "activity" || resource.kind === "subtasks" || resource.kind === "comments" || resource.kind === "comment-read-marker" || resource.kind === "collaboration-summary") return Object.keys(resource).length === 1;
   return resource.kind === "assets" && validCollections.has(resource.collectionKind as CollectionKind) && Object.keys(resource).length === 2;
 }
 
@@ -111,6 +112,7 @@ function keyString(queryKey: QueryKey): string {
 export function projectResourceKey(projectId: string, resource: ProjectDataResource): QueryKey {
   switch (resource.kind) {
     case "detail": return projectDataKeys.detail(projectId);
+    case "activity": return projectDataKeys.activity(projectId);
     case "assets": return projectDataKeys.assets(projectId, resource.collectionKind);
     case "subtasks": return projectDataKeys.subtasks(projectId);
     case "comments": return projectDataKeys.comments(projectId);
@@ -220,12 +222,12 @@ export class ProjectQueryRuntime {
     return this.deferredInvalidations.delete(key);
   }
 
-  private invalidateOrDefer(queryKey: QueryKey) {
+  requestInvalidation(queryKey: QueryKey): Promise<void> {
     if (this.isOwned(queryKey) || isProjectQueryLedgerPending(this.queryClient, queryKey)) {
       this.deferredInvalidations.set(keyString(queryKey), queryKey);
-      return;
+      return Promise.resolve();
     }
-    void this.queryClient.invalidateQueries({ queryKey, exact: true, refetchType: "active" });
+    return this.queryClient.invalidateQueries({ queryKey, exact: true, refetchType: "active" });
   }
 
   publish(message: ProjectDataOutgoingMessage) {
@@ -251,7 +253,7 @@ export class ProjectQueryRuntime {
       for (const query of this.queryClient.getQueryCache().getAll()) {
         const key = query.queryKey;
         if (key.length !== 3 || key[0] !== "project-data" || key[2] !== "detail" || query.getObserversCount() === 0) continue;
-        this.invalidateOrDefer(key);
+        this.requestInvalidation(key);
       }
       return;
     }
@@ -259,20 +261,20 @@ export class ProjectQueryRuntime {
       for (const query of this.queryClient.getQueryCache().getAll()) {
         const key = query.queryKey;
         if (key[0] !== "dashboard-projects" || query.getObserversCount() === 0) continue;
-        this.invalidateOrDefer(key);
+        this.requestInvalidation(key);
       }
       return;
     }
     if (message.type === "production-calendar-invalidated") {
       for (const query of this.queryClient.getQueryCache().getAll()) {
         if (query.queryKey[0] !== "production-calendar" || query.getObserversCount() === 0) continue;
-        this.invalidateOrDefer(query.queryKey);
+        this.requestInvalidation(query.queryKey);
       }
       return;
     }
     for (const resource of message.resources) {
       const key = projectResourceKey(message.projectId, resource);
-      this.invalidateOrDefer(key);
+      this.requestInvalidation(key);
     }
   }
 }

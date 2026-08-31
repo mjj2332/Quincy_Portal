@@ -2,13 +2,14 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { focusManager, useQueryClient } from "@tanstack/react-query";
+import { focusManager, QueryObserver, useQueryClient } from "@tanstack/react-query";
 import { ProjectWorkspace } from "./ProjectWorkspace";
 import type { WorkspaceAsset } from "../components/PhotoGrid";
 import { ApiError } from "../lib/api";
 import { QuincyQueryProvider } from "../lib/query-client";
 import { createProjectDataInvalidationMessage, getProjectQueryRuntime } from "../lib/project-query-sync";
 import { projectAssetsQueryOptions, projectDataKeys } from "../lib/project-data";
+import { dashboardProjectsKey } from "../lib/dashboard-projects";
 import type { Role } from "@quincy/shared";
 
 const authState = vi.hoisted(() => ({ role: "editor" }));
@@ -451,6 +452,10 @@ afterEach(async () => {
     const runtime = getProjectQueryRuntime(queryClient!);
     const publish = vi.spyOn(runtime!, "publish");
     const invalidate = vi.spyOn(queryClient!, "invalidateQueries");
+    const dashboardKey = dashboardProjectsKey("test-user", "admin", 0, false);
+    queryClient!.setQueryData(dashboardKey, []);
+    const dashboardObserver = new QueryObserver(queryClient!, { queryKey: dashboardKey, queryFn: () => Promise.resolve([]), staleTime: Infinity });
+    const stopDashboardObserver = dashboardObserver.subscribe(() => undefined);
     const select = host.querySelector<HTMLSelectElement>('[aria-label="Move project Stage"]');
     expect(select).not.toBeNull();
     select!.value = "awaiting_raw";
@@ -463,8 +468,10 @@ afterEach(async () => {
     const boardMessage = publish.mock.calls.map(([message]) => message).find((message) => message.type === "dashboard-board-invalidated");
     expect(boardMessage).toEqual(expect.objectContaining({ version: 1, type: "dashboard-board-invalidated" }));
     expect(boardMessage).not.toHaveProperty("projectId");
-    expect(publish).toHaveBeenCalledWith(expect.objectContaining({ type: "project-data-invalidated", projectId: "p1", resources: [{ kind: "detail" }] }));
-    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["dashboard-projects"], refetchType: "active" });
+    expect(publish).toHaveBeenCalledWith(expect.objectContaining({ type: "project-data-invalidated", projectId: "p1", resources: [{ kind: "detail" }, { kind: "activity" }] }));
+    expect(publish).toHaveBeenCalledWith(expect.objectContaining({ version: 1, type: "production-calendar-invalidated" }));
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: dashboardKey, exact: true, refetchType: "active" });
+    stopDashboardObserver();
   });
 
   it("uses the idempotent already-in message and restores rail focus after a 503", async () => {

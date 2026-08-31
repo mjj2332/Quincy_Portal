@@ -7,7 +7,7 @@ import { decodeExternalResponse } from "../lib/external-api-response";
 import { clearPrincipalProjectData, removeProjectData } from "../lib/project-data";
 import { removeProjectFromDashboardQueries } from "../lib/dashboard-projects";
 import { removeProductionCalendarQueries } from "../lib/production-calendar-query";
-import { locationStore } from "../lib/router";
+import { locationStore, parseStaffLocation, staffPathFor } from "../lib/router";
 
 type Snapshot = { principal: { id: string; role: Role; authorizationEpoch: number }; authorizationFingerprint: string; projects: Array<{ projectId: string; membershipCycleIds: string[] }> };
 
@@ -63,6 +63,17 @@ function PrincipalFreshnessBoundaryInner({ principalId, role, authorizationEpoch
     for (const projectId of lost) {
       // Filter the principal dashboard cache before the asynchronous tombstone work.
       removeProjectFromDashboardQueries(queryClient, principalId, projectId);
+      // Close a TB6 quick-detail facet before the asynchronous tombstone work. Rebuild the
+      // exact backing Dashboard route so its calendar/list/kanban state remains intact.
+      const route = parseStaffLocation(history.getLocation());
+      if (route.kind === "dashboard" && "detail" in route && route.detail?.projectId === projectId) {
+        const backingRoute = "calendar" in route
+          ? { kind: "dashboard" as const, calendar: route.calendar }
+          : "dashboardView" in route
+            ? { kind: "dashboard" as const, dashboardView: route.dashboardView }
+            : { kind: "dashboard" as const };
+        history.replace(staffPathFor(backingRoute));
+      }
       void removeProjectData(queryClient, projectId);
       if (window.location.pathname === `/projects/${encodeURIComponent(projectId)}` || window.location.pathname.startsWith(`/projects/${encodeURIComponent(projectId)}/`)) history.replace("/");
     }

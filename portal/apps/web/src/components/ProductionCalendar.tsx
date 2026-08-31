@@ -40,8 +40,7 @@ import {
 import type { DashboardIdentity } from "../lib/dashboard-projects";
 import { ApiError, apiPatch, apiPut } from "../lib/api";
 import { confirm, confirmStore } from "../lib/confirm";
-import { invalidateProjectResources, useOptionalProjectQueryClient } from "../lib/project-data";
-import { createProductionCalendarInvalidatedMessage, getProjectQueryRuntime } from "../lib/project-query-sync";
+import { invalidateProjectSurfaces, useOptionalProjectQueryClient } from "../lib/project-data";
 import { decodeChecklistMutationResponse, productionCalendarFiltersFor, removeProductionCalendarQueries, useProductionCalendarRange, type ChecklistMutationResult } from "../lib/production-calendar-query";
 import { fullCalendarCallbackToSydneyCivil } from "../lib/production-calendar-fullcalendar";
 import {
@@ -833,8 +832,11 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
       setSettle({ type: "winner" });
       commandLockRef.current.active = false;
       snapshotRef.current = null;
-      if (queryClient) getProjectQueryRuntime(queryClient)?.publish(createProductionCalendarInvalidatedMessage());
-      if (queryClient) await invalidateProjectResources(queryClient, { projectId: proposal.event.project.id, resources: [{ kind: "detail" }, { kind: "subtasks" }] }, false);
+      // invalidateProjectSurfaces owns the production-calendar broadcast (producer: "calendar"
+      // suppresses this tab's own refetch; refetchAuthoritative below is the single settle refetch).
+      if (queryClient) {
+        await invalidateProjectSurfaces(queryClient, { projectId: proposal.event.project.id, resources: [{ kind: "detail" }, { kind: "subtasks" }, { kind: "activity" }], dashboard: true, calendar: true, producer: "calendar" });
+      }
       if (accessLostRef.current || token !== operationTokenRef.current) return;
       settleRefetchInFlightRef.current = true;
       const settled = await refetchAuthoritative();
@@ -1150,8 +1152,10 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
       setSettle({ type: "winner" });
       commandLockRef.current.active = false;
       snapshotRef.current = null;
-      if (queryClient) getProjectQueryRuntime(queryClient)?.publish(createProductionCalendarInvalidatedMessage());
-      if (queryClient) await invalidateProjectResources(queryClient, { projectId: proposal.source.project.id, resources: [{ kind: "detail" }, { kind: "subtasks" }] }, false);
+      // invalidateProjectSurfaces owns the production-calendar broadcast (producer: "calendar").
+      if (queryClient) {
+        await invalidateProjectSurfaces(queryClient, { projectId: proposal.source.project.id, resources: [{ kind: "detail" }, { kind: "subtasks" }, { kind: "activity" }], dashboard: false, calendar: true, producer: "calendar" });
+      }
       if (accessLostRef.current || token !== operationTokenRef.current) return;
       settleRefetchInFlightRef.current = true;
       const settled = await refetchAuthoritative();

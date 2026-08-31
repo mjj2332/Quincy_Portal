@@ -52,6 +52,7 @@ describe("PrincipalFreshnessBoundary Calendar purge", () => {
   beforeEach(() => {
     apiGetMock.mockReset();
     sessionRefetchMock.mockReset();
+    window.history.replaceState(null, "", "/");
     client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     host = document.createElement("div");
     document.body.append(host);
@@ -133,7 +134,7 @@ describe("PrincipalFreshnessBoundary Calendar purge", () => {
   it("keeps a query-string quick-detail location but still removes project data on access loss", async () => {
     runtime = new ProjectQueryRuntime(client, "boundary-test");
     client.setQueryData(projectDataKeys.detail(project), { id: project, street: "Stale detail" });
-    window.history.replaceState(null, "", `/?view=calendar&detail=${project}`);
+    window.history.replaceState(null, "", `/?view=calendar&date=2026-08-31&sub=month&layers=project%2Cchecklist&detail=${project}`);
     apiGetMock.mockResolvedValueOnce(snapshot([{ projectId: project, membershipCycleIds: [cycleOne] }]));
     renderBoundary();
     await waitFor(() => expect(client.getQueryData(["authorization-scope", principal, "editor", 0])).toBeDefined());
@@ -144,7 +145,57 @@ describe("PrincipalFreshnessBoundary Calendar purge", () => {
     });
 
     await waitFor(() => expect(runtime?.removedProjectIds.has(project)).toBe(true));
-    expect(`${window.location.pathname}${window.location.search}`).toBe(`/?view=calendar&detail=${project}`);
+    expect(`${window.location.pathname}${window.location.search}`).toBe("/?view=calendar&date=2026-08-31&sub=month&layers=project%2Cchecklist");
     await waitFor(() => expect(client.getQueryData(projectDataKeys.detail(project))).toBeUndefined());
+  });
+
+  it("strips only the lost project quick-detail facet from a Kanban route", async () => {
+    runtime = new ProjectQueryRuntime(client, "boundary-kanban-test");
+    client.setQueryData(projectDataKeys.detail(project), { id: project, street: "Stale detail" });
+    window.history.replaceState(null, "", `/?view=kanban&detail=${project}&detailView=activity`);
+    apiGetMock.mockResolvedValueOnce(snapshot([{ projectId: project, membershipCycleIds: [cycleOne] }]));
+    renderBoundary();
+    await waitFor(() => expect(client.getQueryData(["authorization-scope", principal, "editor", 0])).toBeDefined());
+
+    await act(async () => {
+      client.setQueryData(["authorization-scope", principal, "editor", 0], snapshot([]));
+      await flush();
+    });
+
+    await waitFor(() => expect(`${window.location.pathname}${window.location.search}`).toBe("/?view=kanban"));
+    expect(runtime?.removedProjectIds.has(project)).toBe(true);
+  });
+
+  it("redirects a lost Workspace project to the Dashboard", async () => {
+    runtime = new ProjectQueryRuntime(client, "boundary-workspace-test");
+    window.history.replaceState(null, "", `/projects/${project}`);
+    apiGetMock.mockResolvedValueOnce(snapshot([{ projectId: project, membershipCycleIds: [cycleOne] }]));
+    renderBoundary();
+    await waitFor(() => expect(client.getQueryData(["authorization-scope", principal, "editor", 0])).toBeDefined());
+
+    await act(async () => {
+      client.setQueryData(["authorization-scope", principal, "editor", 0], snapshot([]));
+      await flush();
+    });
+
+    await waitFor(() => expect(`${window.location.pathname}${window.location.search}`).toBe("/"));
+  });
+
+  it("leaves a different project's quick-detail route untouched", async () => {
+    runtime = new ProjectQueryRuntime(client, "boundary-different-detail-test");
+    const otherProject = "55555555-5555-4555-8555-555555555555";
+    const location = `/?view=kanban&detail=${otherProject}&detailView=discussion`;
+    window.history.replaceState(null, "", location);
+    apiGetMock.mockResolvedValueOnce(snapshot([{ projectId: project, membershipCycleIds: [cycleOne] }]));
+    renderBoundary();
+    await waitFor(() => expect(client.getQueryData(["authorization-scope", principal, "editor", 0])).toBeDefined());
+
+    await act(async () => {
+      client.setQueryData(["authorization-scope", principal, "editor", 0], snapshot([]));
+      await flush();
+    });
+
+    await waitFor(() => expect(runtime?.removedProjectIds.has(project)).toBe(true));
+    expect(`${window.location.pathname}${window.location.search}`).toBe(location);
   });
 });

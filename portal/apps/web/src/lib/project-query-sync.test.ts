@@ -12,19 +12,20 @@ afterEach(() => { /* each test creates and disposes its own client/runtime */ })
 
 describe("project-data BroadcastChannel contract", () => {
   it("accepts valid discriminants, deduplicates resources, and rejects extra/private fields", () => {
-    const message = createProjectDataInvalidationMessage("p", [{ kind: "detail" }, { kind: "detail" }, { kind: "assets", collectionKind: "raw" }, { kind: "comments" }, { kind: "comment-read-marker" }, { kind: "collaboration-summary" }]);
+    const message = createProjectDataInvalidationMessage("p", [{ kind: "detail" }, { kind: "detail" }, { kind: "activity" }, { kind: "assets", collectionKind: "raw" }, { kind: "comments" }, { kind: "comment-read-marker" }, { kind: "collaboration-summary" }]);
     expect(message.type).toBe("project-data-invalidated");
     const parsed = parseProjectDataSyncMessage({ ...message, sourceTabId: "a" });
     expect(parsed?.type).toBe("project-data-invalidated");
-    expect(parsed && parsed.type === "project-data-invalidated" ? parsed.resources : []).toHaveLength(5);
+    expect(parsed && parsed.type === "project-data-invalidated" ? parsed.resources : []).toHaveLength(6);
     expect(parseProjectDataSyncMessage({ ...message, sourceTabId: "a", data: "private" })).toBeNull();
     expect(parseProjectDataSyncMessage({ ...message, sourceTabId: "a", resources: [{ kind: "assets", collectionKind: "nope" }] })).toBeNull();
     expect(parseProjectDataSyncMessage({ version: 2, type: "project-data-removed", sourceTabId: "a", projectId: "p", committedAt: new Date().toISOString() })).toBeNull();
     expect(parseProjectDataSyncMessage(createProjectDataRemovedMessage("p"))).toBeNull();
   });
 
-  it("resolves all five resources to exact keys and rejects private fields on the new variants", () => {
+  it("resolves all six resources to exact keys and rejects private fields on the new variants", () => {
     expect(projectResourceKey("a", { kind: "detail" })).toEqual(projectDataKeys.detail("a"));
+    expect(projectResourceKey("a", { kind: "activity" })).toEqual(projectDataKeys.activity("a"));
     expect(projectResourceKey("a", { kind: "assets", collectionKind: "raw" })).toEqual(projectDataKeys.assets("a", "raw"));
     expect(projectResourceKey("a", { kind: "comments" })).toEqual(projectDataKeys.comments("a"));
     expect(projectResourceKey("a", { kind: "comment-read-marker" })).toEqual(projectDataKeys.commentReadMarker("a"));
@@ -38,6 +39,12 @@ describe("project-data BroadcastChannel contract", () => {
     const parsed = parseProjectDataSyncMessage({ ...message, sourceTabId: "sender" });
     expect(parsed).toMatchObject({ resources: [{ kind: "detail" }, { kind: "collaboration-summary" }] });
     expect(parseProjectDataSyncMessage({ ...message, sourceTabId: "sender", resources: [{ kind: "detail" }, { kind: "collaboration-summary", private: true }] })).toBeNull();
+  });
+
+  it("accepts only the exact Activity resource shape and round-trips it", () => {
+    const message = createProjectDataInvalidationMessage("a", [{ kind: "activity" }]);
+    expect(parseProjectDataSyncMessage({ ...message, sourceTabId: "sender" })).toMatchObject({ resources: [{ kind: "activity" }] });
+    expect(parseProjectDataSyncMessage({ ...message, sourceTabId: "sender", resources: [{ kind: "activity", x: 1 }] })).toBeNull();
   });
 
   it("keeps removal and active-detail messages data-free and validates their shapes", () => {
@@ -294,6 +301,72 @@ describe("project-data BroadcastChannel contract", () => {
     expect(queryClient.getQueryCache().find({ queryKey: calendarKey, exact: true })?.state.isInvalidated).toBe(true);
     expect(queryClient.getQueryCache().find({ queryKey: otherKey, exact: true })?.state.isInvalidated).toBe(false);
     release(); runtime.dispose(); queryClient.clear();
+  });
+
+  it("uses one owner-aware requestInvalidation for owned, ledger-held, and free keys", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const runtime = new ProjectQueryRuntime(client, "request-invalidation");
+    const ownedKey = projectDataKeys.detail("owned");
+    client.setQueryData(ownedKey, { id: "owned" });
+    const invalidate = vi.spyOn(client, "invalidateQueries");
+    const release = runtime.acquireOwner(ownedKey);
+    runtime.requestInvalidation(ownedKey);
+    expect(invalidate).not.toHaveBeenCalled();
+    release();
+    expect(invalidate).toHaveBeenCalledTimes(1);
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ownedKey, exact: true, refetchType: "active" });
+
+    invalidate.mockClear();
+    const ledgerKey = projectDataKeys.assets("ledger", "raw");
+    client.setQueryData(ledgerKey, [{ id: "asset", selected: false }]);
+    const mutation = await beginAssetOptimisticMutation(client, "ledger", "raw", "asset", { selected: true });
+    runtime.requestInvalidation(ledgerKey);
+    expect(invalidate).not.toHaveBeenCalled();
+    await mutation.commit();
+    expect(invalidate).toHaveBeenCalledTimes(1);
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ledgerKey, exact: true, refetchType: "active" });
+
+    invalidate.mockClear();
+    const freeKey = projectDataKeys.subtasks("free");
+    runtime.requestInvalidation(freeKey);
+    expect(invalidate).toHaveBeenCalledTimes(1);
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: freeKey, exact: true, refetchType: "active" });
+    runtime.dispose(); client.clear();
+  });
+
+  it("defers received Board and Calendar messages for owned keys and flushes each once", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const runtime = new ProjectQueryRuntime(client, "surface-receiver");
+    const boardKey = dashboardProjectsKey("principal", "admin", 0, false);
+    const calendarKey = ["production-calendar", "principal", "admin", 0, "active", "2026-08-01", "2026-09-01", "month", {}] as const;
+    const activityKey = projectDataKeys.activity("p");
+    client.setQueryData(boardKey, []); client.setQueryData(calendarKey, []); client.setQueryData(activityKey, { pages: [], pageParams: [] });
+    const boardObserver = new QueryObserver(client, { queryKey: boardKey, queryFn: () => new Promise<never>(() => undefined), staleTime: Infinity });
+    const calendarObserver = new QueryObserver(client, { queryKey: calendarKey, queryFn: () => new Promise<never>(() => undefined), staleTime: Infinity });
+    const activityObserver = new QueryObserver(client, { queryKey: activityKey, queryFn: () => new Promise<never>(() => undefined), staleTime: Infinity });
+    const stopBoard = boardObserver.subscribe(() => undefined);
+    const stopCalendar = calendarObserver.subscribe(() => undefined);
+    const stopActivity = activityObserver.subscribe(() => undefined);
+    const invalidate = vi.spyOn(client, "invalidateQueries");
+    const publish = vi.spyOn(runtime, "publish");
+    const releaseBoard = runtime.acquireOwner(boardKey);
+    const releaseCalendar = runtime.acquireOwner(calendarKey);
+    const releaseActivity = runtime.acquireOwner(activityKey);
+
+    (runtime as unknown as { receive: (value: unknown) => void }).receive({ ...createDashboardBoardInvalidatedMessage(), sourceTabId: "other-tab" });
+    (runtime as unknown as { receive: (value: unknown) => void }).receive({ ...createProductionCalendarInvalidatedMessage(), sourceTabId: "other-tab" });
+    (runtime as unknown as { receive: (value: unknown) => void }).receive({ ...createProjectDataInvalidationMessage("p", [{ kind: "activity" }]), sourceTabId: "other-tab" });
+    expect(invalidate).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+    releaseBoard(); releaseCalendar(); releaseActivity();
+    expect(invalidate).toHaveBeenCalledTimes(3);
+    expect(invalidate.mock.calls.map(([options]) => options)).toEqual(expect.arrayContaining([
+      { queryKey: boardKey, exact: true, refetchType: "active" },
+      { queryKey: calendarKey, exact: true, refetchType: "active" },
+      { queryKey: activityKey, exact: true, refetchType: "active" },
+    ]));
+
+    stopBoard(); stopCalendar(); stopActivity(); runtime.dispose(); client.clear();
   });
 
   it("makes publish a no-op when BroadcastChannel is unavailable or cannot be constructed", () => {
