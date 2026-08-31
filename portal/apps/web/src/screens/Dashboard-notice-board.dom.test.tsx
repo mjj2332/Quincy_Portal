@@ -25,7 +25,7 @@ describe("Dashboard notice-board capability gate", () => {
     apiGetMock.mockReset();
     apiGetMock.mockImplementation((path) => {
       if (path === "/api/projects") return Promise.resolve({ projects: [] });
-      if (path.startsWith("/api/notice-board/posts/latest")) return Promise.resolve({ id: null, createdAt: null });
+      if (path.startsWith("/api/notice-board/read-marker")) return Promise.resolve({ marker: null, latest: null, unreadCount: 0 });
       if (path.startsWith("/api/notice-board/posts")) return Promise.resolve({ posts: [] });
       return Promise.resolve({ stages: [] });
     });

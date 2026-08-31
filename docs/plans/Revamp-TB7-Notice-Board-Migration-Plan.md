@@ -1,9 +1,12 @@
 # Revamp TB7 — Notice-Board Migration Plan
 
-> **Status: Approved by Opus plan-tier review 2026-08-31, ready for build. Revision 3 — revisions
-> 1–2 addressed the two fresh-Sol review rounds; the Opus pass rewrote the §3 client response-order
-> ordering contract to admit deletion-driven `latest` regression and added its §6 tests. Not
-> implemented or deployed.**
+> **Status: Both slices built, committed, and diff-reviewed (Slice 1: 1 fresh-Sol diff review
+> round, clean; Slice 2: 5 rounds, the last two closing two real concurrency bugs — see the Slice 2
+> build correction below and `docs/plans/tb7-sol-diff-review-2.md` through `-5.md`) plus a
+> whole-branch review (APPROVE WITH FOLLOWUPS, no blocking issues — `docs/plans/
+> tb7-whole-branch-review.md`). Full automated gate (typecheck, web build, `test --workspaces`,
+> shared package vitest config) green throughout. Pending: Opus final-draft review, Agy QA, and
+> production deploy. Not yet implemented in production — stays in `docs/plans/` until deployed.**
 
 > **Slice 2 build correction (2026-09-01):** Rule 3 was corrected during the Slice 2 build in
 > response to Sol diff-review-2: equal-marker `latest` changes are now uniformly sequence-gated,
@@ -205,7 +208,8 @@ the frontend polling path; deletion can be considered only after a later caller 
 Both routes inherit `requireCapability("viewNoticeBoard")`. Add route tests showing Admin,
 internal Editor, and Photographer access where their current capabilities allow it; unauthenticated,
 inactive, and `external_editor` principals remain denied by the existing middleware. Register no
-new broad middleware and preserve current author-only post mutation tests verbatim.
+new broad middleware and keep current author-only post mutation tests behaviorally unchanged,
+adapted only for the new `{ post, readState }` response envelope.
 
 The PATCH executes a D1 batch in project-comment style: target existence read, guarded upsert,
 then authoritative marker/latest/unread reads. An equal/older target is a successful idempotent
@@ -361,8 +365,9 @@ R2, Calendar, project discussion storage, or Notice Board product features outsi
   author-only edit/delete assertions. Prove bare and trailing-slash GET/PATCH forms are
   byte-equivalent and pass through the same capability boundary.
 - Preserve existing rich-text normalization, mention eligibility, audit, direct create/edit mention
-  source-key, and delivery tests unchanged. Prove no marker action creates a notification or outbox
-  row, and add no global-outbox/Queue tests to TB7.
+  source-key, and delivery tests behaviorally unchanged (adapted only for the response envelope
+  where a test unwraps a mutation response). Prove no marker action creates a notification or
+  outbox row, and add no global-outbox/Queue tests to TB7.
 
 ### Client
 

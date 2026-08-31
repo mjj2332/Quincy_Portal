@@ -78,7 +78,7 @@ describe("migration 0038 project activity feed index", () => {
   it("applies 0000 through 0038 from empty and creates the ordered feed index", () => {
     const db = localSqlite();
     db.exec("PRAGMA foreign_keys = ON");
-    expect(migrationNames().map((name) => Number(name.slice(0, 4)))).toEqual(Array.from({ length: 40 }, (_, index) => index));
+    expect(migrationNames().slice(0, 39).map((name) => Number(name.slice(0, 4)))).toEqual(Array.from({ length: 39 }, (_, index) => index));
     applyThrough(db, 38);
 
     expect(db.prepare("SELECT type, name FROM sqlite_master WHERE type = 'index' AND name = ?").all(INDEX_NAME)).toEqual([{ type: "index", name: INDEX_NAME }]);
