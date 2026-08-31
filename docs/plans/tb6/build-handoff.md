@@ -85,6 +85,22 @@ them forward.
    (`%20` for space, literal `,` in `layers`) now 404. Serializer-canonical Calendar URLs are
    unaffected (verified: `calendarPathFor` emits `+`/`%2C`). Recorded in the Slice 1 commit body.
 
+9. **D6's planned new `acquireOwner` seams on `Dashboard.tsx`/`ProductionCalendar.tsx` were never
+   built** (flagged by the Opus final-draft review, 2026-08-31). The plan's D6 section calls for
+   Dashboard/Calendar to acquire ownership of their own `dashboardProjectsKey`/range keys during
+   `interactionBlocked`/drag-settle, deferring any invalidation that arrives mid-interaction from a
+   cross-tab broadcast or a different local producer. What shipped instead is only the `producer`
+   param (item 2 above), which suppresses the *producing* call's own in-tab invalidation but does
+   nothing for an invalidation arriving from elsewhere mid-drag. **Accepted as-is, not a bug**:
+   `Dashboard.tsx` already refuses to adopt query data while `interactionBlocked` (queues a refresh
+   instead) — the same guard `main` already has — so no drag reset or mid-interaction data adoption
+   is possible either way; this matches pre-TB6 behavior exactly. The only cost is that in the rare
+   concurrent case (another producer commits while a drag is in flight) the Board/Calendar key can
+   refetch once mid-drag (result discarded by the interaction guard) and again at settle, instead of
+   exactly once — a minor efficiency gap, not a correctness one. Not worth adding two new ownership
+   seams to live drag surfaces the day before deploy for a discarded-refetch savings; revisit only if
+   a future slice needs true single-refetch guarantees under real concurrency.
+
 ---
 
 ## 3. Pipeline mechanics
