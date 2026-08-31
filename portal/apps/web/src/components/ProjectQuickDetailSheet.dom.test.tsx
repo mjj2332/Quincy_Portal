@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ProjectQuickDetailSheet, type ProjectQuickDetailView } from "./ProjectQuickDetailSheet";
 
 const queryMock = vi.hoisted(() => vi.fn());
+const discussionPresented = vi.hoisted(() => ({ value: undefined as boolean | undefined }));
 vi.mock("../lib/project-data", () => ({ useProjectDetailQuery: queryMock }));
 vi.mock("./ProjectOverviewView", () => ({
   ProjectOverviewView: () => {
@@ -18,7 +19,8 @@ vi.mock("./ProjectActivityView", () => ({
   },
 }));
 vi.mock("./ProjectDiscussionThread", () => ({
-  ProjectDiscussionThread: ({ children, onUnreadCountChange }: { children: (value: { content: ReactNode; project: undefined; scrollRootRef: () => void }) => ReactNode; onUnreadCountChange?: (count: number) => void }) => {
+  ProjectDiscussionThread: ({ children, presented, onUnreadCountChange }: { children: (value: { content: ReactNode; project: undefined; scrollRootRef: () => void }) => ReactNode; presented?: boolean; onUnreadCountChange?: (count: number) => void }) => {
+    discussionPresented.value = presented;
     useEffect(() => { onUnreadCountChange?.(3); }, [onUnreadCountChange]);
     return children({ content: <section aria-label="Project discussion">Discussion draft</section>, project: undefined, scrollRootRef: () => undefined });
   },
@@ -40,6 +42,7 @@ function sheetProps(overrides: Partial<React.ComponentProps<typeof ProjectQuickD
 
 beforeEach(() => {
   queryMock.mockReset().mockReturnValue({ data: undefined, isPending: true, error: null, refetch: vi.fn(() => Promise.resolve()) });
+  discussionPresented.value = undefined;
   host = document.createElement("div"); document.body.append(host); root = createRoot(host);
 });
 
@@ -141,5 +144,14 @@ describe("ProjectQuickDetailSheet", () => {
     expect(discussionTab.textContent).toContain("Discussion");
     expect(discussionTab.textContent).toContain("3");
     expect(discussionTab.querySelector(".project-quick-detail-sheet__unread")?.getAttribute("aria-label")).toBe("3 unread comments");
+  });
+
+  it("only presents Discussion while its tab and sheet are actually visible", () => {
+    render(<ProjectQuickDetailSheet {...sheetProps({ activeView: "overview", sheetVisible: true })} />);
+    expect(discussionPresented.value).toBe(false);
+    render(<ProjectQuickDetailSheet {...sheetProps({ activeView: "discussion", sheetVisible: true })} />);
+    expect(discussionPresented.value).toBe(true);
+    render(<ProjectQuickDetailSheet {...sheetProps({ activeView: "discussion", sheetVisible: false })} />);
+    expect(discussionPresented.value).toBe(false);
   });
 });

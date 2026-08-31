@@ -18,8 +18,10 @@ export type ProjectQuickDetailSheetProps = {
   onRequestClose: () => void;
   role: Role;
   workspaceHref: string;
+  /** True only while this sheet is the presented, topmost modal. */
+  sheetVisible?: boolean;
   escapeDisabled?: boolean;
-  onAccessFailure?: (error: unknown, resource: "comments" | "comment-read-marker" | "nested-comment") => void;
+  onAccessFailure?: (error: unknown, resource: "detail" | "activity" | "comments" | "comment-read-marker" | "nested-comment") => void;
 };
 
 type SheetDocument = { visibilityState: DocumentVisibilityState; hasFocus: () => boolean };
@@ -64,6 +66,7 @@ export function ProjectQuickDetailSheet({
   onRequestClose,
   role,
   workspaceHref,
+  sheetVisible = true,
   escapeDisabled = false,
   onAccessFailure,
 }: ProjectQuickDetailSheetProps) {
@@ -74,6 +77,10 @@ export function ProjectQuickDetailSheet({
   const [unreadCount, setUnreadCount] = useState(0);
   const { context, refs } = useFloating({ open: true });
   const detail = useProjectDetailQuery(projectId, true, false, role);
+
+  useEffect(() => {
+    if (detail.error) onAccessFailure?.(detail.error, "detail");
+  }, [detail.error, onAccessFailure]);
 
   const setDialogRef = useCallback((node: HTMLDivElement | null) => {
     dialogRef.current = node;
@@ -137,10 +144,10 @@ export function ProjectQuickDetailSheet({
               return <button key={view} ref={(node) => { tabRefs.current[index] = node; }} className={`project-quick-detail-sheet__tab${selected ? " is-active" : ""}`} type="button" role="tab" id={`project-quick-detail-tab-${view}-${projectId}`} aria-selected={selected} aria-controls={panelId} tabIndex={selected ? 0 : -1} onClick={() => selectView(view)} onKeyDown={handleTabKeyDown}>{viewLabel(view)}{view === "discussion" && unreadCount > 0 && <span className="project-quick-detail-sheet__unread" aria-label={`${unreadCount} unread comments`}>{unreadCount > 99 ? "99+" : unreadCount}</span>}</button>;
             })}
           </nav>
-          <ProjectDiscussionThread key={`discussion-${projectId}`} projectId={projectId} presented={false} onAccessFailure={onAccessFailure} onUnreadCountChange={setUnreadCount}>
+          <ProjectDiscussionThread key={`discussion-${projectId}`} projectId={projectId} presented={activeView === "discussion" && sheetVisible} onAccessFailure={onAccessFailure} onUnreadCountChange={setUnreadCount}>
             {({ content, scrollRootRef }) => <div ref={scrollRootRef} className="project-quick-detail-sheet__body">
               <div key={`overview-${projectId}`} id={overviewId} className="project-quick-detail-sheet__panel" role="tabpanel" aria-labelledby={`project-quick-detail-tab-overview-${projectId}`} hidden={activeView !== "overview"}>{<ProjectOverviewView detail={detail.data} role={role} loading={detail.isPending} error={detail.error} onRetry={() => void detail.refetch()} />}</div>
-              <div key={`activity-${projectId}`} id={activityId} className="project-quick-detail-sheet__panel" role="tabpanel" aria-labelledby={`project-quick-detail-tab-activity-${projectId}`} hidden={activeView !== "activity"}><ProjectActivityView projectId={projectId} enabled={activeView === "activity"} /></div>
+              <div key={`activity-${projectId}`} id={activityId} className="project-quick-detail-sheet__panel" role="tabpanel" aria-labelledby={`project-quick-detail-tab-activity-${projectId}`} hidden={activeView !== "activity"}><ProjectActivityView projectId={projectId} enabled={activeView === "activity"} onAccessFailure={onAccessFailure} /></div>
               <div key={`discussion-${projectId}`} id={discussionId} className="project-quick-detail-sheet__panel" role="tabpanel" aria-labelledby={`project-quick-detail-tab-discussion-${projectId}`} hidden={activeView !== "discussion"}><section className="project-quick-detail-sheet__discussion" aria-label="Project discussion">{content}</section></div>
               <InternalLink className="button button--secondary project-quick-detail-sheet__workspace-link" to={workspaceHref}>Open full Workspace</InternalLink>
             </div>}

@@ -1,7 +1,12 @@
+import { useEffect } from "react";
 import { useSession } from "../lib/auth";
 import { useProjectActivityQuery, type ProjectActivityResponse } from "../lib/project-activity";
 
-type ProjectActivityViewProps = { projectId: string; enabled?: boolean };
+type ProjectActivityViewProps = {
+  projectId: string;
+  enabled?: boolean;
+  onAccessFailure?: (error: unknown, resource: "activity") => void;
+};
 type ActivityItem = ProjectActivityResponse["items"][number];
 
 function errorMessage(error: unknown) {
@@ -13,11 +18,15 @@ function actorName(item: ActivityItem) {
   return item.actor?.name ?? "System";
 }
 
-export function ProjectActivityView({ projectId, enabled = true }: ProjectActivityViewProps) {
+export function ProjectActivityView({ projectId, enabled = true, onAccessFailure }: ProjectActivityViewProps) {
   const session = useSession();
   const external = session.data?.user.role === "external_editor";
   const query = useProjectActivityQuery(projectId, enabled);
   const items = query.data?.pages.flatMap((page) => page.items) ?? [];
+
+  useEffect(() => {
+    if (query.error) onAccessFailure?.(query.error, "activity");
+  }, [onAccessFailure, query.error]);
 
   if (query.isPending && !query.data) {
     if (!enabled && query.fetchStatus === "idle") {

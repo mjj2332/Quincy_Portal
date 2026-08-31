@@ -126,9 +126,9 @@ function PresentationSeed({ pages, onClient }: { pages: unknown; onClient: (clie
   return null;
 }
 
-function PresentationHarness({ onPresentation, onClient, onOpen }: { onPresentation?: (presentation: ReturnType<typeof useProjectCommentPresentation>) => void; onClient?: (client: QueryClient) => void; onOpen?: (setOpen: (open: boolean) => void) => void } = {}) {
+function PresentationHarness({ onPresentation, onClient, onOpen, initialOpen = true }: { onPresentation?: (presentation: ReturnType<typeof useProjectCommentPresentation>) => void; onClient?: (client: QueryClient) => void; onOpen?: (setOpen: (open: boolean) => void) => void; initialOpen?: boolean } = {}) {
   const queryClient = useQueryClient();
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(initialOpen);
   const presentation = useProjectCommentPresentation({ projectId, open });
   const commentsQuery = useProjectCommentsQuery(projectId, true, presentation.readAttemptRegistrar, open);
   const readStateQuery = useProjectCommentReadStateQuery(projectId, true);
@@ -156,6 +156,30 @@ afterEach(async () => {
 });
 
 describe("ProjectCollaborationPanel", () => {
+  it("does not advance a hidden discussion and advances only after it is presented", async () => {
+    const globals = globalThis as unknown as Record<string, unknown>;
+    const previousObserver = globals.IntersectionObserver;
+    const previousFocused = focusManager.isFocused();
+    Reflect.deleteProperty(globals, "IntersectionObserver");
+    focusManager.setFocused(true);
+    apiGetMock.mockImplementation((path) => path.includes("comment-read-marker") ? Promise.resolve(readState()) : Promise.resolve(page(["head"])));
+    apiPatchMock.mockResolvedValue({ ...readState(), marker: { throughCommentId: "head", throughCreatedAt: "2026-08-25T00:00:00.000Z", updatedAt: "2026-08-25T00:00:01.000Z" }, latest: { commentId: "head", createdAt: "2026-08-25T00:00:00.000Z" } });
+    let setOpen!: (open: boolean) => void;
+    const host = mount();
+    await render(<PresentationHarness initialOpen={false} onOpen={(setter) => { setOpen = setter; }} />);
+    await flush(10);
+    expect(apiPatchMock).not.toHaveBeenCalled();
+    const anchor = host.querySelector<HTMLElement>("[data-testid=\"presentation-anchor\"]")!;
+    Object.defineProperty(anchor, "getBoundingClientRect", { configurable: true, value: () => ({ left: 0, top: 0, right: 100, bottom: 20, width: 100, height: 20 }) });
+    await act(async () => { setOpen(true); await Promise.resolve(); });
+    window.dispatchEvent(new Event("scroll"));
+    await flush(20);
+    expect(apiPatchMock).toHaveBeenCalledWith("/api/projects/" + projectId + "/comment-read-marker", { throughCommentId: "head" });
+    focusManager.setFocused(previousFocused);
+    if (previousObserver === undefined) Reflect.deleteProperty(globals, "IntersectionObserver");
+    else globals.IntersectionObserver = previousObserver;
+  });
+
   it("posts a task list and renders its posted indicator without a checkbox control", async () => {
     const content = { type: "doc" as const, content: [{ type: "taskList" as const, content: [{ type: "taskItem" as const, attrs: { checked: false }, content: [{ type: "paragraph" as const, content: [{ type: "text" as const, text: "Comment task" }] }] }] }] };
     const posted = { ...otherComment, id: "comment-task", body: "Comment task", content };
