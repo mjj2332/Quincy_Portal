@@ -69,7 +69,7 @@ Use a URL-addressable desktop side sheet / phone full-screen presentation with s
 
 ## 9. TB7 Notice Board
 
-Preserve top-level posts, rich text/mentions and author-only rules. Add server-owned read state, route/query freshness and durable mention delivery. External Editors remain excluded by capability. Replies/pinning/priority/expiry/acknowledgement are separate later work.
+Preserve top-level posts, rich text/mentions, author-only rules, and the current direct mention-delivery path. Add server-owned read state and route/query freshness. Durable global/non-project mention delivery is separate, not-yet-scheduled future work and is not part of TB7. External Editors remain excluded by capability. Replies/pinning/priority/expiry/acknowledgement are separate later work.
 
 ## 10. Tests
 

@@ -941,6 +941,17 @@ export const noticeBoardPostMentions = sqliteTable(
   (t) => [uniqueIndex("notice_board_post_mentions_unique").on(t.postId, t.mentionedUserId)],
 );
 
+export const noticeBoardReadMarkers = sqliteTable(
+  "notice_board_read_markers",
+  {
+    userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+    lastReadPostId: text("last_read_post_id").notNull(),
+    lastReadPostCreatedAt: integer("last_read_post_created_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.userId] })],
+);
+
 /* ------------------------------------------------------ publish & links */
 
 export const publishes = sqliteTable(

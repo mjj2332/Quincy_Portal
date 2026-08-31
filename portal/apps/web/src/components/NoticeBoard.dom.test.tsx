@@ -2,7 +2,9 @@ import { act, StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { QueryClientProvider, focusManager } from "@tanstack/react-query";
 import { NoticeBoard, type NoticeBoardPost } from "./NoticeBoard";
+import { createQuincyQueryClient } from "../lib/query-client";
 
 const apiGetMock = vi.fn<(path: string) => Promise<unknown>>();
 const apiPostMock = vi.fn<(path: string, body: unknown) => Promise<unknown>>();
@@ -17,6 +19,7 @@ const doc = (text: string) => ({ type: "doc" as const, content: [{ type: "paragr
 const oldPost: NoticeBoardPost = { id: "post-old", authorId: "user-a", authorName: "A", body: "Old notice", content: doc("Old notice"), createdAt: "2026-07-28T00:00:00.000Z", editedAt: null };
 const newPost: NoticeBoardPost = { id: "post-new", authorId: "user-b", authorName: "B", body: "New notice", content: doc("New notice"), createdAt: "2026-07-28T00:00:01.000Z", editedAt: null };
 let root: Root | null = null;
+let queryClient: ReturnType<typeof createQuincyQueryClient> | null = null;
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 function mount() {
@@ -27,11 +30,12 @@ function mount() {
 }
 
 async function render(value: ReactNode) {
-  await act(async () => { root!.render(value); await Promise.resolve(); await Promise.resolve(); });
+  await act(async () => { root!.render(<QueryClientProvider client={queryClient!}>{value}</QueryClientProvider>); for (let index = 0; index < 12; index += 1) await Promise.resolve(); });
+  await flush();
 }
 
 async function flush() {
-  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); await vi.advanceTimersByTimeAsync(1); await Promise.resolve(); await Promise.resolve(); });
 }
 
 async function click(element: Element) {
@@ -94,18 +98,22 @@ beforeEach(() => {
     clear: () => { values.clear(); },
   } });
   window.localStorage.clear();
+  Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+  focusManager.setFocused(true);
   apiGetMock.mockReset();
   apiPostMock.mockReset();
   apiDeleteMock.mockReset();
   apiPatchMock.mockReset();
-  apiPostMock.mockResolvedValue(newPost);
+  queryClient = createQuincyQueryClient();
+  apiPostMock.mockResolvedValue({ post: newPost, readState: { marker: null, latest: { postId: newPost.id, createdAt: newPost.createdAt }, unreadCount: 0 } });
   apiDeleteMock.mockResolvedValue({ ok: true });
-  apiPatchMock.mockResolvedValue({ ...oldPost, body: "Edited", content: doc("Edited"), editedAt: "2026-07-28T00:01:00.000Z" });
+  apiPatchMock.mockResolvedValue({ post: { ...oldPost, body: "Edited", content: doc("Edited"), editedAt: "2026-07-28T00:01:00.000Z" }, readState: { marker: null, latest: { postId: newPost.id, createdAt: newPost.createdAt }, unreadCount: 0 } });
 });
 
 afterEach(async () => {
   if (root) await act(async () => { root!.unmount(); await Promise.resolve(); });
   root = null;
+  queryClient?.clear(); queryClient = null;
   document.body.replaceChildren();
   vi.useRealTimers();
 });
@@ -113,7 +121,7 @@ afterEach(async () => {
 describe("NoticeBoard disclosure and polling", () => {
   it("posts a task list and renders its posted indicator without a checkbox control", async () => {
     const content = { type: "doc" as const, content: [{ type: "taskList" as const, content: [{ type: "taskItem" as const, attrs: { checked: false }, content: [{ type: "paragraph" as const, content: [{ type: "text" as const, text: "Notice task" }] }] }] }] };
-    apiGetMock.mockResolvedValue({ posts: [] }); apiPostMock.mockResolvedValue({ ...newPost, body: "Notice task", content });
+    apiGetMock.mockResolvedValue({ posts: [] }); apiPostMock.mockResolvedValue({ post: { ...newPost, body: "Notice task", content }, readState: { marker: null, latest: { postId: newPost.id, createdAt: newPost.createdAt }, unreadCount: 0 } });
     const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
     await typeIntoEditor(host.querySelector<HTMLElement>('[contenteditable="true"]')!, "Notice task");
     await click(host.querySelector<HTMLButtonElement>('[aria-label="Checklist"]')!);
@@ -129,7 +137,7 @@ describe("NoticeBoard disclosure and polling", () => {
 
   it("posts and renders a Section heading through the shared composer", async () => {
     const content = { type: "doc" as const, content: [{ type: "heading" as const, attrs: { level: 2 as const }, content: [{ type: "text" as const, text: "Notice section" }] }] };
-    apiGetMock.mockResolvedValue({ posts: [] }); apiPostMock.mockResolvedValue({ ...newPost, body: "Notice section", content });
+    apiGetMock.mockResolvedValue({ posts: [] }); apiPostMock.mockResolvedValue({ post: { ...newPost, body: "Notice section", content }, readState: { marker: null, latest: { postId: newPost.id, createdAt: newPost.createdAt }, unreadCount: 0 } });
     const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
     const editor = host.querySelector<HTMLElement>('[contenteditable="true"]')!;
     await typeIntoEditor(editor, "Notice section");
@@ -142,7 +150,7 @@ describe("NoticeBoard disclosure and polling", () => {
 
   it("posts newly underlined and struck-through notice content through the composer", async () => {
     const content = { type: "doc" as const, content: [{ type: "paragraph" as const, content: [{ type: "text" as const, text: "Marked notice", marks: [{ type: "strike" as const }, { type: "underline" as const }] }] }] };
-    apiGetMock.mockResolvedValue({ posts: [] }); apiPostMock.mockResolvedValue({ ...newPost, body: "Marked notice", content });
+    apiGetMock.mockResolvedValue({ posts: [] }); apiPostMock.mockResolvedValue({ post: { ...newPost, body: "Marked notice", content }, readState: { marker: null, latest: { postId: newPost.id, createdAt: newPost.createdAt }, unreadCount: 0 } });
     const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
     const editor = host.querySelector<HTMLElement>('[contenteditable="true"]')!;
     await typeIntoEditor(editor, "Marked notice");
@@ -162,7 +170,8 @@ describe("NoticeBoard disclosure and polling", () => {
     ] }] } };
     apiGetMock.mockResolvedValue({ posts: [marked] });
     const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
-    expect(host.querySelector("u")?.textContent).toBe("Under"); expect(host.querySelector("s")?.textContent).toBe(" strike");
+    await flush();
+    expect(host.querySelector(".notice-board__post u")?.textContent).toBe("Under"); expect(host.querySelector(".notice-board__post s")?.textContent).toBe(" strike");
     await click(host.querySelector<HTMLButtonElement>(".notice-board__edit")!);
     await appendToEditor(host.querySelector<HTMLElement>('[contenteditable="true"]')!, "!");
     await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Save")!);
@@ -173,9 +182,9 @@ describe("NoticeBoard disclosure and polling", () => {
   });
 
   it("starts expanded, persists the toggle, and switches polling modes without overlap", async () => {
-    let listCalls = 0;
+    let listCalls = 0; let readStateCalls = 0;
     apiGetMock.mockImplementation((path) => {
-      if (path.includes("latest")) return Promise.resolve({ id: newPost.id, createdAt: newPost.createdAt });
+      if (path.includes("read-marker")) { readStateCalls += 1; return Promise.resolve({ marker: null, latest: { postId: oldPost.id, createdAt: oldPost.createdAt }, unreadCount: 0 }); }
       listCalls += 1;
       return Promise.resolve({ posts: [oldPost] });
     });
@@ -185,17 +194,18 @@ describe("NoticeBoard disclosure and polling", () => {
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
     expect(apiGetMock).toHaveBeenCalledWith("/api/notice-board/posts?limit=50");
     expect(apiGetMock.mock.calls.some(([path]) => path.includes("latest"))).toBe(false);
-    await advance(25_000);
-    expect(listCalls).toBe(2);
+    await advance(30_000);
+    expect(listCalls).toBeGreaterThanOrEqual(2);
+    expect(readStateCalls).toBeGreaterThanOrEqual(1);
     expect(apiGetMock.mock.calls.some(([path]) => path.includes("latest"))).toBe(false);
+    const listCallsBeforeCollapse = listCalls; const readStateCallsBeforeCollapse = readStateCalls;
     await click(toggle);
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
-    expect(apiGetMock).toHaveBeenCalledWith("/api/notice-board/posts/latest");
     expect(window.localStorage.getItem("quincy:dashboard:noticeboard:v2")).toBe("false");
-    const latestCalls = apiGetMock.mock.calls.filter(([path]) => path.includes("latest")).length;
     await advance(60_000);
-    expect(apiGetMock.mock.calls.filter(([path]) => path.includes("latest"))).toHaveLength(latestCalls + 1);
-    expect(listCalls).toBe(2);
+    expect(apiGetMock.mock.calls.some(([path]) => path.includes("latest"))).toBe(false);
+    expect(listCalls).toBe(listCallsBeforeCollapse);
+    expect(readStateCalls).toBeGreaterThan(readStateCallsBeforeCollapse);
 
     await act(async () => { root!.unmount(); await Promise.resolve(); });
     root = null;
@@ -246,37 +256,37 @@ describe("NoticeBoard disclosure and polling", () => {
     expect(values.has("quincy:dashboard:noticeboard:v2")).toBe(false);
   });
 
-  it("shows unread activity from the collapsed latest cursor", async () => {
+  it("shows unread activity from the authoritative collapsed read state", async () => {
     window.localStorage.setItem("quincy:dashboard:noticeboard:v2", "false");
-    window.localStorage.setItem("quincy:dashboard:noticeboard:seen:user-a", oldPost.id);
-    apiGetMock.mockResolvedValue({ id: newPost.id, createdAt: newPost.createdAt });
+    apiGetMock.mockImplementation((path) => path.includes("read-marker")
+      ? Promise.resolve({ marker: null, latest: { postId: newPost.id, createdAt: newPost.createdAt }, unreadCount: 1 })
+      : Promise.resolve({ posts: [] }));
     const host = mount();
     await render(<NoticeBoard currentUserId="user-a" />);
     expect(host.querySelector('[aria-label="New notice"]')).not.toBeNull();
   });
 
-  it("marks messages seen on a successful expanded list tick before collapsing", async () => {
+  it("does not write a seen cursor when an expanded list tick succeeds", async () => {
     window.localStorage.setItem("quincy:dashboard:noticeboard:v2", "true");
     window.localStorage.setItem("quincy:dashboard:noticeboard:seen:user-a", oldPost.id);
     let listCalls = 0;
     apiGetMock.mockImplementation((path) => {
-      if (path.includes("latest")) return Promise.resolve({ id: newPost.id, createdAt: newPost.createdAt });
+      if (path.includes("read-marker")) return Promise.resolve({ marker: null, latest: { postId: newPost.id, createdAt: newPost.createdAt }, unreadCount: 1 });
       listCalls += 1;
       return Promise.resolve({ posts: listCalls === 1 ? [oldPost] : [newPost, oldPost] });
     });
     const host = mount();
     await render(<NoticeBoard currentUserId="user-a" />);
-    await advance(25_000);
-    expect(window.localStorage.getItem("quincy:dashboard:noticeboard:seen:user-a")).toBe(newPost.id);
-    await click(host.querySelector(".notice-board__toggle")!);
-    expect(host.querySelector('[aria-label="New notice"]')).toBeNull();
+    await advance(30_000);
+    expect(window.localStorage.getItem("quincy:dashboard:noticeboard:seen:user-a")).toBe(oldPost.id);
+    expect(host.querySelector('[aria-label="New notice"]')).not.toBeNull();
   });
 
   it("keeps a stale unread badge when the fresh expand fetch fails", async () => {
     window.localStorage.setItem("quincy:dashboard:noticeboard:v2", "false");
     window.localStorage.setItem("quincy:dashboard:noticeboard:seen:user-a", oldPost.id);
-    apiGetMock.mockImplementation((path) => path.includes("latest")
-      ? Promise.resolve({ id: newPost.id, createdAt: newPost.createdAt })
+    apiGetMock.mockImplementation((path) => path.includes("read-marker")
+      ? Promise.resolve({ marker: null, latest: { postId: newPost.id, createdAt: newPost.createdAt }, unreadCount: 1 })
       : Promise.reject(new Error("offline")));
     const host = mount();
     await render(<NoticeBoard currentUserId="user-a" />);
@@ -285,13 +295,13 @@ describe("NoticeBoard disclosure and polling", () => {
     expect(host.querySelector('[aria-label="New notice"]')).not.toBeNull();
   });
 
-  it("scopes the seen cursor per account and only offers author controls", async () => {
+  it("leaves legacy seen keys untouched and only offers author controls", async () => {
     window.localStorage.setItem("quincy:dashboard:noticeboard:seen:user-a", newPost.id);
     window.localStorage.setItem("quincy:dashboard:noticeboard:v2", "true");
     apiGetMock.mockResolvedValue({ posts: [newPost, { ...oldPost, authorId: "user-a" }] });
     const host = mount();
     await render(<NoticeBoard currentUserId="user-b" />);
-    expect(window.localStorage.getItem("quincy:dashboard:noticeboard:seen:user-b")).toBe(newPost.id);
+    expect(window.localStorage.getItem("quincy:dashboard:noticeboard:seen:user-b")).toBeNull();
     expect(host.querySelectorAll(".notice-board__delete")).toHaveLength(1);
     expect(host.querySelectorAll(".notice-board__edit")).toHaveLength(1);
     await click(host.querySelector(".notice-board__delete")!);

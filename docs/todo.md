@@ -1043,6 +1043,16 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
   photoshoot. It intentionally supplies no callbacks and contains no status/processed-photo
   retrieval call. Duplicate clicks reuse the active identical job; a changed selection is blocked
   until that send terminates. No migration.
+- [ ] **P2** Port TB7's uniform response-order fence back to `project-comments.ts` (required
+  follow-up recorded by `docs/plans/Revamp-TB7-Notice-Board-Migration-Plan.md` §3). Its
+  `freshestReadState()` still gates an equal-marker snapshot on `latestTupleCompare()` *before*
+  the request-start sequence, so once a deletion legitimately regresses the authoritative
+  `latest` under an unchanged marker, every later poll carrying the regressed head is rejected
+  as "older" — and because a qualifying PATCH through the surviving head is an idempotent no-op
+  returning the same regressed snapshot, a stale unread badge can persist until an unrelated new
+  comment arrives or the cache is dropped. TB7 replaced that with a uniform sequence gate on
+  equal marker tuples (`notice-board-data.ts` `freshestNoticeBoardReadState()`); apply the same
+  rule to project comments. Deliberately out of TB7's scope to keep that tracer bullet narrow.
 - [ ] **P1** Comment/annotation *creation* fails silently — `postComment()`/`saveAnnotation()`
   in `Lightbox.tsx` have no `catch` (unlike their edit-handler siblings). Annotation create
   schema is `z.unknown()` for strokes while edit validates properly
@@ -1444,6 +1454,15 @@ allowlist are silent no-ops otherwise). Full mechanics in `docs/subagents/agy-cl
      dedicated "deployed" entries above. Their stale "not yet deployed" bullets were removed here
      2026-08-29; both plan files are in docs/plans/implemented/ and React is pinned at 19.2.8. -->
 
+- **`Revamp-TB7-Notice-Board-Migration-Plan.md`** — staff Notice Board read/unread state moved
+  from per-browser `localStorage` to D1 per user, and onto the TB2/TB3 "mark read only on a fresh
+  fetch that starts *and* completes while the newest-post surface is visibly presented" rule.
+  **Built on `tb7-notice-board-migration`, not yet deployed** — 2 slices, 6 fresh-Sol diff-review
+  rounds, a whole-branch review (APPROVE WITH FOLLOWUPS, all applied), and an Opus final-draft
+  review. Full gate green (typecheck, `build -w @quincy/web`, `test --workspaces`, shared vitest).
+  Adds migration **0039** `notice_board_read_markers` (additive `CREATE TABLE` only; deploy order
+  is migration first, then the app Worker — background/webhook-ingress unchanged). Rollback leaves
+  the table in place; old code ignores it. Agy QA per plan §6 and production deploy still pending.
 - **`ProjectWorkspace-Asset-Tab-Sync-Plan.md`** — stub only, not yet drafted as a full plan.
   `ProjectWorkspace.tsx`'s `assets` state is shared across every collection tab and only updates
   once the new tab's fetch resolves, so a render can show one collection's assets under another

@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import type { Context } from "hono";
 import { terminalRoute } from "../lib/terminal-route";
 import { createDb, schema } from "@quincy/db";
 import { legacyBodyToRichTextDoc, normalizeRichTextMentionLabels, parseRichTextDoc, richTextMentionIds, richTextPlainText, type RichTextDoc } from "@quincy/shared";
@@ -9,6 +10,8 @@ import { requireCapability } from "../middleware/capability";
 import { audit } from "../lib/audit";
 import { newId } from "../lib/ids";
 import { notifyNoticeBoardMentions } from "../lib/notifications";
+import { createNoticeBoardPost } from "../lib/notice-board-service";
+import { advanceNoticeBoardReadMarker, getNoticeBoardReadState, type NoticeBoardReadState } from "../lib/notice-board-read-state";
 import { jsonInput } from "./helpers";
 
 const optionalQuery = <T extends z.ZodTypeAny>(schema: T) => z.preprocess((value) => value === "" ? undefined : value, schema.optional());
@@ -18,6 +21,7 @@ const postId = z.string().uuid();
 const NOTICE_BODY_MAX_LENGTH = 2_000;
 
 export type NoticePost = { id: string; authorId: string; authorName: string; body: string; content: RichTextDoc; createdAt: string; editedAt: string | null };
+type NoticeBoardMutationResponse = { post: NoticePost; readState: NoticeBoardReadState };
 
 function storedContent(contentJson: string | null, body: string): RichTextDoc {
   if (!contentJson) return legacyBodyToRichTextDoc(body);
@@ -64,6 +68,24 @@ export const noticeBoardRoutes = new Hono<AppEnv>();
 noticeBoardRoutes.use("/notice-board", requireCapability("viewNoticeBoard"));
 noticeBoardRoutes.use("/notice-board/*", requireCapability("viewNoticeBoard"));
 
+const readMarkerInput = z.object({ throughPostId: z.string().uuid() }).strict();
+
+async function getReadMarker(c: Context<AppEnv>) {
+  return c.json(await getNoticeBoardReadState(c.env.DB, c.get("user").id));
+}
+
+async function patchReadMarker(c: Context<AppEnv>) {
+  const data = await jsonInput(c, readMarkerInput); if (data instanceof Response) return data;
+  const result = await advanceNoticeBoardReadMarker(c.env.DB, c.get("user").id, data.throughPostId);
+  if (!result.targetExists) return c.json({ error: "Notice board read target changed.", code: "notice_board_read_target_changed" }, 409);
+  return c.json(result.state);
+}
+
+noticeBoardRoutes.get("/notice-board/read-marker", terminalRoute("/notice-board/read-marker", getReadMarker));
+noticeBoardRoutes.get("/notice-board/read-marker/", terminalRoute("/notice-board/read-marker/", getReadMarker));
+noticeBoardRoutes.patch("/notice-board/read-marker", terminalRoute("/notice-board/read-marker", patchReadMarker));
+noticeBoardRoutes.patch("/notice-board/read-marker/", terminalRoute("/notice-board/read-marker/", patchReadMarker));
+
 noticeBoardRoutes.get("/notice-board/posts", terminalRoute("/notice-board/posts", async (c) => {
   const parsed = postsQuery.safeParse(c.req.query());
   if (!parsed.success) return c.json({ error: "Invalid query", details: parsed.error.flatten() }, 400);
@@ -83,17 +105,15 @@ noticeBoardRoutes.post("/notice-board/posts", terminalRoute("/notice-board/posts
   const data = await jsonInput(c, postInput); if (data instanceof Response) return data;
   const db = createDb(c.env.DB); const prepared = await normalizedContent(db, data.content);
   if (!prepared) return c.json({ error: "Invalid notice content or mention target" }, 400);
-  const id = newId(); const createdAt = new Date(); const user = c.get("user");
+  const id = newId(); const wallClockMs = Date.now(); const createdAt = new Date(wallClockMs); const user = c.get("user");
   const mentions = prepared.mentionIds.map((mentionedUserId) => ({ id: newId(), postId: id, mentionedUserId, createdAt }));
-  await db.batch([
-    db.insert(schema.noticeBoardPosts).values({ id, authorId: user.id, body: prepared.body, contentJson: JSON.stringify(prepared.content), createdAt }),
-    ...mentions.map((mention) => db.insert(schema.noticeBoardPostMentions).values(mention)),
-  ]);
+  await createNoticeBoardPost(c.env.DB, { id, authorId: user.id, body: prepared.body, contentJson: JSON.stringify(prepared.content), mentions, wallClockMs });
   await audit(c.env, user, "notice_board.post", "notice_board_post", id);
   await notifyNoticeBoardMentions(c.env, { actorId: user.id, authorName: user.name, body: prepared.body, mentions });
   const post = await findPost(db, id);
   if (!post) return c.json({ error: "Post could not be created" }, 500);
-  return c.json(serializePost(post), 201);
+  const readState = await getNoticeBoardReadState(c.env.DB, user.id);
+  return c.json({ post: serializePost(post), readState } satisfies NoticeBoardMutationResponse, 201);
 }));
 
 noticeBoardRoutes.patch("/notice-board/posts/:id", terminalRoute("/notice-board/posts/:id", async (c) => {
@@ -124,7 +144,8 @@ noticeBoardRoutes.patch("/notice-board/posts/:id", terminalRoute("/notice-board/
   await notifyNoticeBoardMentions(c.env, { actorId: user.id, authorName: user.name, body: prepared.body, mentions: added });
   const post = await findPost(db, id);
   if (!post) return c.json({ error: "Post could not be updated" }, 500);
-  return c.json(serializePost(post));
+  const readState = await getNoticeBoardReadState(c.env.DB, user.id);
+  return c.json({ post: serializePost(post), readState } satisfies NoticeBoardMutationResponse);
 }));
 
 noticeBoardRoutes.delete("/notice-board/posts/:id", terminalRoute("/notice-board/posts/:id", async (c) => {

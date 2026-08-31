@@ -248,7 +248,7 @@ TB8   Evidence-driven surface-by-surface convergence
 
 **TB6 — Project-card detail and shared discussion.** Authorized users can inspect a project's summary, structured activity, and existing discussion from URL-addressable production views without duplicating project data, comments, activity, or Calendar state; External Editors receive only the TB4E external-safe projection for assigned non-archived projects. See the [TB6 roadmap](./revamp_2026_portal/roadmap/TB6-Project-Card-Detail-And-Discussion.md).
 
-**TB7 — Notice Board per-user read-state migration.** Notice Board read/unread state moves from localStorage to a per-user D1 record so it follows that user across their own devices, while mentions reuse the proven refresh and durable-delivery foundations. The Notice Board remains asynchronous: this adds neither realtime delivery nor an external platform. See the [TB7 roadmap](./revamp_2026_portal/roadmap/TB7-Notice-Board-Migration.md).
+**TB7 — Notice Board per-user read-state migration.** Notice Board read/unread state moves from localStorage to a per-user D1 record so it follows that user across their own devices, while the current direct mention-delivery path remains unchanged. Durable global/non-project mention delivery is separate, not-yet-scheduled future work. The Notice Board remains asynchronous: this adds neither realtime delivery nor an external platform. See the [TB7 roadmap](./revamp_2026_portal/roadmap/TB7-Notice-Board-Migration.md).
 
 ## Authority proposal
 
