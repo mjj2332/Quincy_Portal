@@ -78,7 +78,7 @@ describe("migration 0038 project activity feed index", () => {
   it("applies 0000 through 0038 from empty and creates the ordered feed index", () => {
     const db = localSqlite();
     db.exec("PRAGMA foreign_keys = ON");
-    expect(migrationNames().map((name) => Number(name.slice(0, 4)))).toEqual(Array.from({ length: 39 }, (_, index) => index));
+    expect(migrationNames().map((name) => Number(name.slice(0, 4)))).toEqual(Array.from({ length: 40 }, (_, index) => index));
     applyThrough(db, 38);
 
     expect(db.prepare("SELECT type, name FROM sqlite_master WHERE type = 'index' AND name = ?").all(INDEX_NAME)).toEqual([{ type: "index", name: INDEX_NAME }]);
@@ -177,7 +177,7 @@ describe("migration 0038 project activity feed index", () => {
 
     const journal = JSON.parse(readFileSync(new URL("../migrations/meta/_journal.json", import.meta.url), "utf8")) as { entries: Array<{ idx: number; version: string; tag: string; breakpoints: boolean }> };
     const snapshot = JSON.parse(readFileSync(new URL("../migrations/meta/0038_snapshot.json", import.meta.url), "utf8")) as { version: string; dialect: string; prevId: string; tables: Record<string, { indexes?: Record<string, unknown> }> };
-    expect(journal.entries.at(-1)).toEqual(expect.objectContaining({ idx: 38, version: "6", tag: "0038_project_activity_feed_index", breakpoints: true }));
+    expect(journal.entries.find((entry) => entry.tag === "0038_project_activity_feed_index")).toEqual(expect.objectContaining({ idx: 38, version: "6", tag: "0038_project_activity_feed_index", breakpoints: true }));
     expect(snapshot).toMatchObject({ version: "6", dialect: "sqlite", prevId: "d695c6f4-eb5e-41c2-b9b0-9e9338307729" });
     expect(snapshot.tables.project_activity_events.indexes).toHaveProperty(INDEX_NAME);
   });
