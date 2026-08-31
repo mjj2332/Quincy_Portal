@@ -51,6 +51,15 @@ type PostsMutationFence = {
   settled: Promise<void>;
   resolve: () => void;
 };
+/**
+ * INVARIANT: at most one create/edit may be in flight per QueryClient. `NoticeBoard.tsx` enforces
+ * it synchronously with a single shared mutation ref before either helper below is called. Only
+ * one fence is stored per client, and `settlePostsMutation()` deliberately does not resolve a
+ * fence that a later mutation has already replaced — so a second overlapping mutation would strand
+ * any posts fetch already waiting on the superseded fence, wedging the posts query permanently.
+ * Any new caller of `createNoticeBoardPost()` / `editNoticeBoardPost()` must take that same lock,
+ * or this store must first be reworked to track fences per mutation.
+ */
 const postsMutationFences = new WeakMap<QueryClient, PostsMutationFence>();
 
 type NoticeBoardPostFetchAttempt = {
