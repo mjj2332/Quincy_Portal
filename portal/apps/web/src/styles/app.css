@@ -458,7 +458,7 @@ button { font-family: var(--font-sans); }
 /* ---------------------------------------------------------------------
    Kanban board (dashboard view)
    --------------------------------------------------------------------- */
-.kanban { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(244px, 1fr); gap: 1px; background: var(--border-hairline); border: 1px solid var(--border-hairline); overflow-x: auto; }
+.kanban { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(244px, 1fr); gap: 1px; background: var(--greige-300); border: 1px solid var(--greige-300); overflow-x: auto; }
 .dashboard-viewbar { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin: calc(var(--space-7) * -1) 0 var(--space-4); }
 .dashboard-sort select { min-width: 128px; }
 
@@ -557,7 +557,8 @@ button { font-family: var(--font-sans); }
 .kcol.is-over .kcol__head { background: var(--paper-100); }
 .kcol__head .ey { line-height: 1.25; }
 .kcol__head .cnt { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--text-muted); }
-.kcol__body { display: flex; flex-direction: column; gap: 10px; padding: 12px; min-height: 120px; }
+/* flex:1 so the drop target fills the whole column, not just the area behind the cards. */
+.kcol__body { display: flex; flex-direction: column; gap: 10px; padding: 12px; min-height: 120px; flex: 1; }
 .kcol__empty { text-align: center; color: var(--greige-300); padding: 18px 0; font-size: 20px; }
 .kcard-wrap { position: relative; background: var(--paper-000); border: 1px solid var(--border-hairline); transition: background var(--dur-fast), border-color var(--dur-fast); }
 .kcard-wrap:hover { background: var(--paper-100); border-color: var(--greige-300); }
