@@ -278,7 +278,7 @@ describe("ProjectKanbanBoard", () => {
     const props = dnd.handlers[0]?.props;
     expect(typeof props?.autoScroll).toBe("object");
     expect(props?.autoScroll).toEqual(expect.objectContaining({ activator: AutoScrollActivator.Pointer, layoutShiftCompensation: true, threshold: { x: 0.2, y: 0.2 } }));
-    expect(props?.measuring?.droppable?.strategy).toBe(MeasuringStrategy.Always);
+    expect(props?.measuring?.droppable?.strategy).toBe(MeasuringStrategy.BeforeDragging);
   });
 
   it("disables the DragOverlay drop animation when reduced motion is preferred", async () => {
