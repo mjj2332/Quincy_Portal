@@ -146,6 +146,15 @@ function MoveToControl({ project, model, activeStages, role, sort, canMoveStages
     triggerRef.current?.focus();
   }, [onMoveToProposalChange]);
   const floating = useAnchoredPopover({ open, onClose: close, placement: "bottom-end" });
+  // Stable ref callback: an inline `(node) => floating.refs.setReference(node)` re-runs on every
+  // render (new identity), and floating-ui's setReference calls setState with no equality guard —
+  // under the rapid re-renders of an active Board drag that detach/attach storm blows React's
+  // update-depth limit (#185) and unmounts the app. Keep identity stable so React only invokes it
+  // when the node actually changes.
+  const setTrigger = useCallback((node: HTMLButtonElement | null) => {
+    triggerRef.current = node;
+    floating.refs.setReference(node);
+  }, [floating.refs.setReference]);
   const stageLabels = useMemo(() => Object.fromEntries(activeStages.map((stage) => [moveToStageKey(stage.key), stage.label])), [activeStages]);
   const caps = useMemo(() => ({
     canMoveProjectStage: canMoveStages,
@@ -186,7 +195,7 @@ function MoveToControl({ project, model, activeStages, role, sort, canMoveStages
 
   return <>
     <button
-      ref={(node) => { floating.refs.setReference(node); triggerRef.current = node; }}
+      ref={setTrigger}
       type="button"
       className="kcard-move-to"
       data-focus-key={`move-to:${project.id}`}
@@ -645,7 +654,19 @@ export function ProjectKanbanBoard({
   // scoped, while display arrays and every dnd consumer rebuild for the effective sort.
   const baseOrders = useMemo(() => visualOrders(projects, activeStages, effectiveKanbanSort), [activeStages, effectiveKanbanSort, projects]);
   const boardModel = useMemo(() => canonicalBoardModel(projects), [projects]);
-  const displayOrders = proposal?.orders ?? baseOrders;
+  // The rendered card lists stay fixed to the pre-drag order for the whole drag. dnd-kit's
+  // sortable strategy opens the insertion gap with CSS transforms and the DragOverlay carries the
+  // moving card; `proposal.gap` drives the drop indicator, the Stage highlight and announcements.
+  //
+  // The previous code rewrote this order from `proposal.orders` on every `onDragOver`, physically
+  // reflowing the columns. That reflow moved SortableContext `items`, which forced dnd-kit to
+  // re-measure droppables, which re-ran collision detection against the new geometry, which
+  // produced a new `over`/proposal — a feedback loop. Near a card boundary it flip-flopped every
+  // frame and blew React's synchronous update-depth limit (#185), unmounting the whole app; it
+  // also unmounted the dragged card's sortable node whenever the proposal crossed columns, which
+  // made dnd-kit abort the drag. `proposal.orders` is still computed and used by the drop/settle
+  // path; it just no longer decides what is on screen.
+  const displayOrders = baseOrders;
   const collisionDetection = useMemo(() => BoardCollisionDetection({
     activeStages,
     displayOrders,
@@ -732,10 +753,12 @@ export function ProjectKanbanBoard({
     const snapshot = snapshotRef.current;
     const hovered = dataForOver(event.over, event.collisions);
     if (!snapshot || !hovered) {
-      proposalRef.current = null;
-      setProposal(null);
       dndOverGapRef.current = null;
-      onInteractionStateChange?.({ activeId: activeProjectId, proposal: null });
+      if (proposalRef.current !== null) {
+        proposalRef.current = null;
+        setProposal(null);
+        onInteractionStateChange?.({ activeId: activeProjectId, proposal: null });
+      }
       return;
     }
     const mover = snapshot.model.projects.find((project) => project.id === snapshot.movingProjectId);
@@ -748,12 +771,22 @@ export function ProjectKanbanBoard({
         sort: effectiveKanbanSort,
         activeStageKeys: [...new Set(activeStages.map((stage) => semanticStageKey(stage.key)))],
       });
-    const next = eligible ? proposeMultiContainerDrop(snapshot, hovered) : null;
-    const previousGap = proposalRef.current?.gap;
+    const previous = proposalRef.current;
+    const computed = eligible ? proposeMultiContainerDrop(snapshot, hovered) : null;
+    // `proposeMultiContainerDrop` returns a fresh `orders` object every call. Feeding a new
+    // proposal identity into state on every `onDragOver` — even when the semantic gap is
+    // unchanged — rebuilds `displayOrders`, which rebuilds the memoized `collisionDetection`,
+    // which makes dnd-kit re-run collision detection and fire `onDragOver` again: a render
+    // feedback loop that tips dnd-kit's sortable layout-effect FLIP past React's update-depth
+    // limit (#185) and unmounts the app mid-drag. Keep the prior object when the gap holds.
+    const next = computed && previous && computed.gap && !semanticGapChanged(previous.gap, computed.gap)
+      ? previous
+      : computed;
+    if (next === previous) return;
     proposalRef.current = next;
     setProposal(next);
     onInteractionStateChange?.({ activeId: snapshot.movingProjectId, proposal: next?.gap ?? null });
-    if (!next || !semanticGapChanged(previousGap, next.gap)) return;
+    if (!next || !semanticGapChanged(previous?.gap, next.gap)) return;
     const message = announceFor(hovered.kind === "column" ? "over-end" : "over-card", next.gap);
     dndAnnouncementRef.current = message;
   };
@@ -838,7 +871,13 @@ export function ProjectKanbanBoard({
     collisionDetection,
     accessibility,
     autoScroll: { activator: AutoScrollActivator.Pointer, layoutShiftCompensation: true, threshold: { x: 0.2, y: 0.2 } },
-    measuring: { droppable: { strategy: MeasuringStrategy.Always } },
+    // Measure droppables up to drag start, then hold them frozen. Drag motion reflows the board
+    // to preview the proposed drop (`displayOrders`); continuous re-measurement (`Always`) fed
+    // that reflow back into collision detection, so a stationary pointer near a card boundary
+    // flip-flopped the proposal every frame — a render loop that blew React's update-depth limit
+    // (#185) and unmounted the app. Frozen rects keep collisions stable against the pre-drag
+    // geometry while the visual preview still moves.
+    measuring: { droppable: { strategy: MeasuringStrategy.BeforeDragging } },
     onDragStart: dndHandlers.handleDndStart,
     onDragOver: dndHandlers.handleDndOver,
     onDragEnd: dndHandlers.handleDndEnd,

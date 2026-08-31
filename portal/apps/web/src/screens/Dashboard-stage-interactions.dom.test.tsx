@@ -557,7 +557,35 @@ describe("Dashboard Stage interactions", () => {
     sort.value = "shootDate-asc";
     await act(async () => { sort.dispatchEvent(new Event("change", { bubbles: true })); await Promise.resolve(); });
     expect(sort.value).toBe("board");
-    expect([...card(host, "Source Street").closest<HTMLElement>(".kcol")!.querySelectorAll<HTMLElement>(".kcard__addr")].map((element) => element.textContent)).toEqual(["before Street", "Source Street", "target Street"]);
+    // The accepted card order stays fixed during a drag; the live proposal shows as a drop
+    // indicator (dnd-kit transforms open the gap in the browser). The moving card ghosts in its
+    // source column, and the blocked sort change leaves the proposal intact.
+    const rawColumn = [...host.querySelectorAll<HTMLElement>(".kcol")].find((column) => column.querySelector('[href="/projects/target"]'))!;
+    expect(rawColumn.querySelector(".kcard-wrap--drop-indicator")).not.toBeNull();
+    expect([...rawColumn.querySelectorAll<HTMLElement>(".kcard__addr")].map((element) => element.textContent)).toEqual(["before Street", "target Street"]);
+    expect([...card(host, "Source Street").closest<HTMLElement>(".kcol")!.querySelectorAll<HTMLElement>(".kcard__addr")].map((element) => element.textContent)).toEqual(["Source Street"]);
+    await dndCancel("source", "awaiting_raw");
+  });
+
+  it("never rewrites SortableContext order from the drag proposal, even as targets change", async () => {
+    // Regression: reflowing the card lists on every onDragOver re-measured droppables, re-ran
+    // collision detection against the moved geometry, and fed a new proposal back in — an
+    // infinite render loop that unmounted the app (React #185). The rendered order must stay
+    // pinned to the accepted order for the whole drag; dnd-kit transforms + a drop indicator
+    // carry the proposal.
+    await act(async () => { root.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); }); await flush();
+    await dndStart("source", "awaiting_raw");
+    sortable.contexts.length = 0;
+    await dndOver("source", "awaiting_raw", "target", cardData("raw_review", "target"));
+    await dndOver("source", "awaiting_raw", "before", cardData("raw_review", "before"));
+    await dndOver("source", "awaiting_raw", "column:raw_review", columnData("raw_review"));
+    expect(sortable.contexts.length).toBeGreaterThan(0);
+    // "source" only ever appears alone in its own (awaiting_raw) context — the proposal never
+    // inserts it into raw_review's list.
+    for (const items of sortable.contexts) {
+      if (items.includes("source")) expect([...items]).toEqual(["source"]);
+      else expect(items.includes("before") || items.includes("target") || items.length === 0).toBe(true);
+    }
     await dndCancel("source", "awaiting_raw");
   });
 
@@ -637,7 +665,9 @@ describe("Dashboard Stage interactions", () => {
     await dndStart("sort-source", "awaiting_raw");
     await dndOver("sort-source", "awaiting_raw", "priority-first", cardData("raw_review", "priority-first"));
     const proposedRawColumn = [...host.querySelectorAll<HTMLElement>(".kcol")].find((column) => column.querySelector('[href="/projects/priority-first"]'))!;
-    expect([...proposedRawColumn.querySelectorAll<HTMLElement>(".kcard__addr")].map((element) => element.textContent)).toEqual(["Sort Source", "Priority First", "Date First", "Board First"]);
+    // The drag proposal is a drop indicator over the frozen sorted order, not a live list rewrite.
+    expect(proposedRawColumn.querySelector(".kcard-wrap--drop-indicator")).not.toBeNull();
+    expect([...proposedRawColumn.querySelectorAll<HTMLElement>(".kcard__addr")].map((element) => element.textContent)).toEqual(["Priority First", "Date First", "Board First"]);
     await dndCancel("sort-source", "awaiting_raw");
 
     const moveTo = card(host, "Sort Source").querySelector<HTMLButtonElement>('[data-focus-key="move-to:sort-source"]')!;

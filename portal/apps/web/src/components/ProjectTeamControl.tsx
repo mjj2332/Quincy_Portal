@@ -1,5 +1,5 @@
 import { autoUpdate, flip, FloatingFocusManager, FloatingPortal, offset, shift, size, useFloating } from "@floating-ui/react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ProjectMemberRole } from "@quincy/shared";
 import { ApiError, apiDeleteWithBody, apiPutWithStatus } from "../lib/api";
 import { confirm } from "../lib/confirm";
@@ -62,6 +62,13 @@ function TeamPicker({ roleOnProject, candidates, selectedIds, pending, onSelect 
     window.addEventListener("pointerdown", closeOutside);
     return () => window.removeEventListener("pointerdown", closeOutside);
   }, [floating.refs.floating, open]);
+  // Stable identity: an inline `(node) => floating.refs.setReference(node)` re-runs every render
+  // and floating-ui's setReference setStates with no equality guard — a detach/attach storm under
+  // rapid re-renders can exceed React's update-depth limit (#185). Keep it stable.
+  const setTrigger = useCallback((node: HTMLButtonElement | null) => {
+    triggerRef.current = node;
+    floating.refs.setReference(node);
+  }, [floating.refs.setReference]);
   function onKeyDown(event: React.KeyboardEvent) {
     if (event.key === "Escape") { event.preventDefault(); setOpen(false); triggerRef.current?.focus(); }
     if (event.key === "ArrowDown") { event.preventDefault(); setActiveIndex((index) => Math.min(index + 1, Math.max(0, matches.length - 1))); }
@@ -69,7 +76,7 @@ function TeamPicker({ roleOnProject, candidates, selectedIds, pending, onSelect 
     if (event.key === "Enter" && matches[activeIndex]) { event.preventDefault(); onSelect(matches[activeIndex]!); }
   }
   return <>
-    <button ref={(node) => { triggerRef.current = node; floating.refs.setReference(node); }} type="button" className="project-team__add" aria-label={`Add ${roleLabel(roleOnProject)}`} aria-expanded={open} aria-controls={open ? listId : undefined} onClick={() => setOpen((value) => !value)}>+ Add</button>
+    <button ref={setTrigger} type="button" className="project-team__add" aria-label={`Add ${roleLabel(roleOnProject)}`} aria-expanded={open} aria-controls={open ? listId : undefined} onClick={() => setOpen((value) => !value)}>+ Add</button>
     {open && <FloatingPortal><FloatingFocusManager context={floating.context} modal={false} initialFocus={searchRef} returnFocus={triggerRef}>
       <div ref={floating.refs.setFloating} className="project-team-picker" style={floating.floatingStyles} role="dialog" aria-label={`Add ${roleLabel(roleOnProject)}`} onKeyDown={onKeyDown}>
         <label className="sr-only" htmlFor={`${listId}-search`}>Search {roleLabel(roleOnProject).toLocaleLowerCase()}s</label>

@@ -860,3 +860,43 @@ can pass happy-dom while failing Chrome.
   clean console. And in `@quincy/shared`, never let two modules import each other when either uses
   the imported value at module-init (zod schema composition counts); factor the shared value into a
   leaf module instead.
+
+## Kanban cross-column drag white-screened the app — reflow / measurement feedback loop (2026-08-31)
+
+- **Symptom (shipped in TB5B):** on a board with two or more cards in a column, a pointer or
+  keyboard drag toward another card white-screened the whole SPA. Console: `Minified React error
+  #185` ("Maximum update depth exceeded"). Reload recovered. Cross-column drags also frequently
+  just cancelled ("Cancelled moving X. It remains in …") without moving.
+- **Root cause:** `ProjectKanbanBoard` rebuilt the rendered card lists (`displayOrders =
+  proposal?.orders`) on **every** `onDragOver`, physically reflowing the columns to preview the
+  drop. With `measuring: { strategy: MeasuringStrategy.Always }`, dnd-kit re-measured every
+  droppable on that reflow, re-ran collision detection against the moved geometry, and produced a
+  new `over` → new proposal → new reflow. Near a card boundary a *stationary* pointer flip-flopped
+  the target every frame; the synchronous state updates from dnd-kit's sortable layout-effect FLIP
+  (`useDerivedTransform`) blew React's update-depth limit and unmounted the tree (no error
+  boundary exists, so → blank page). Relocating the moving card's `<SortableKanbanCard>` between
+  two different `<KanbanColumn>` subtrees also unmounted its live sortable/activator node, so
+  dnd-kit aborted the drag (and the keyboard sensor's blur-cancel fired on the lost focus). A
+  secondary trigger sat in `MoveToControl` / `ProjectTeamControl`: an **inline** `ref={(node) =>
+  floating.refs.setReference(node)}` — `@floating-ui/react`'s `setReference` calls `setState` with
+  no equality guard, so a new ref identity every render (the inline arrow) storms detach/attach.
+- **Fix:** freeze the rendered order to the pre-drag snapshot for the whole drag (`displayOrders
+  = baseOrders`); the DragOverlay carries the moving card, dnd-kit's sortable transforms open the
+  gap, and `proposal.gap` drives only the drop indicator / Stage highlight / announcements.
+  `proposal.orders` is still computed for the commit/settle path. Also: `measuring` →
+  `BeforeDragging` (freeze rects at drag start), `handleDndOver` reuses the prior proposal object
+  when the semantic gap is unchanged (idempotent `setProposal`), and both `setReference` call
+  sites use a stable `useCallback` ref (matching the correct `ref={floating.refs.setReference}`
+  pattern already in `SubtaskChecklist`).
+- **Why QA missed it:** every Kanban DnD test mocks `@dnd-kit/core`'s `DndContext`, so real
+  collision geometry / measurement / the layout-effect FLIP never run — the file itself says
+  "active-drag rendering is QA-phase real-browser only." The functional QA matrix was run on
+  sparse boards (≤1 card per column) where no card-vs-column collision partner exists to
+  oscillate against.
+- **Rule:** never rewrite a dnd-kit `SortableContext`'s `items` (or the DOM order it renders)
+  from inside `onDragOver`. Let the sortable strategy's transforms show the gap and commit the
+  reorder in `onDragEnd`. Pair any live-reordering board with `MeasuringStrategy.BeforeDragging`,
+  not `Always`. And never pass an inline ref callback that calls `@floating-ui/react`'s
+  `setReference` — use the stable `refs.setReference` directly or wrap it in `useCallback`.
+  Real-browser drag verification on a **multi-card** column is mandatory for any change under
+  `ProjectKanbanBoard` / dnd-kit config.
