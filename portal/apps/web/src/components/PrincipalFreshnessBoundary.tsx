@@ -1,6 +1,6 @@
 import { useContext, useEffect, useRef, type ReactNode } from "react";
 import { QueryClientContext, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { Role } from "@quincy/shared";
+import { roleHasCapability, type Role } from "@quincy/shared";
 import { useSession } from "../lib/auth";
 import { apiGet } from "../lib/api";
 import { decodeExternalResponse } from "../lib/external-api-response";
@@ -8,6 +8,7 @@ import { clearPrincipalProjectData, removeProjectData } from "../lib/project-dat
 import { removeProjectFromDashboardQueries } from "../lib/dashboard-projects";
 import { removeProductionCalendarQueries } from "../lib/production-calendar-query";
 import { locationStore, parseStaffLocation, staffPathFor } from "../lib/router";
+import { initializeDashboardView } from "../screens/dashboard-helpers";
 
 type Snapshot = { principal: { id: string; role: Role; authorizationEpoch: number }; authorizationFingerprint: string; projects: Array<{ projectId: string; membershipCycleIds: string[] }> };
 
@@ -73,6 +74,23 @@ function PrincipalFreshnessBoundaryInner({ principalId, role, authorizationEpoch
             ? { kind: "dashboard" as const, dashboardView: route.dashboardView }
             : { kind: "dashboard" as const };
         history.replace(staffPathFor(backingRoute));
+        // The sheet's own close (Dashboard.tsx#closeQuickDetail) restores focus to its opener
+        // or the active view toggle; this access-loss path has neither an opener element nor
+        // Dashboard's own `view` state, so move focus to the toggle for whatever view the
+        // backing route resolves to (falling back to the same localStorage default Dashboard
+        // itself uses for a bare route) rather than leaving it on a now-detached project anchor.
+        const focusTarget = "calendar" in backingRoute
+          ? "calendar"
+          : "dashboardView" in backingRoute
+            ? backingRoute.dashboardView
+            : (() => {
+                const stored = initializeDashboardView({
+                  read: () => window.localStorage.getItem("quincy:dashboard:view"),
+                  write: (next) => window.localStorage.setItem("quincy:dashboard:view", next),
+                });
+                return !roleHasCapability(role, "viewProductionCalendar") && stored === "calendar" ? "kanban" : stored;
+              })();
+        window.setTimeout(() => document.querySelector<HTMLElement>(`[data-focus-key="dashboard-view-${focusTarget}"]`)?.focus(), 0);
       }
       void removeProjectData(queryClient, projectId);
       if (window.location.pathname === `/projects/${encodeURIComponent(projectId)}` || window.location.pathname.startsWith(`/projects/${encodeURIComponent(projectId)}/`)) history.replace("/");

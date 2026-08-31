@@ -15,7 +15,17 @@ const calendarRefetchFails = vi.hoisted(() => ({ value: false }));
 const boardPropsState = vi.hoisted(() => ({ value: null as Record<string, unknown> | null }));
 const quickDetailPropsState = vi.hoisted(() => ({ value: null as Record<string, any> | null }));
 const authRole = vi.hoisted(() => ({ value: "admin" as "admin" | "editor" | "photographer" | "external_editor" }));
+const removeProjectDataMock = vi.hoisted(() => vi.fn());
+const terminatePrincipalMock = vi.hoisted(() => vi.fn());
 vi.mock("../lib/api", async (importOriginal) => ({ ...await importOriginal<typeof import("../lib/api")>(), apiGet: (path: string) => apiGetMock(path), apiPut: (path: string, body: unknown) => apiPutMock(path, body) }));
+vi.mock("../lib/project-data", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/project-data")>();
+  return {
+    ...actual,
+    removeProjectData: (...args: Parameters<typeof actual.removeProjectData>) => { removeProjectDataMock(...args); return actual.removeProjectData(...args); },
+    terminatePrincipalOnUnauthorized: (...args: Parameters<typeof actual.terminatePrincipalOnUnauthorized>) => { terminatePrincipalMock(...args); return actual.terminatePrincipalOnUnauthorized(...args); },
+  };
+});
 vi.mock("../lib/auth", () => ({ useSession: () => ({ data: { user: { id: "user-1", role: authRole.value } } }) }));
 vi.mock("../lib/capabilities", () => ({ useCapabilities: () => ({ role: authRole.value, capabilities: [], can: (capability: string) => authRole.value === "admin" && ["adminBackend", "createProject", "viewNoticeBoard"].includes(capability) }) }));
 vi.mock("../lib/stages", () => ({ presentationStages: (stages: unknown[]) => stages, useStages: () => ({ stages: [], presentationStageKey: (key: string) => key }) }));
@@ -71,6 +81,8 @@ describe("Dashboard Calendar routing", () => {
     calendarRefetchFails.value = false;
     boardPropsState.value = null;
     quickDetailPropsState.value = null;
+    removeProjectDataMock.mockClear();
+    terminatePrincipalMock.mockClear();
     apiGetMock.mockReset();
     apiGetMock.mockImplementation((path) => {
       if (!path.startsWith("/api/production-calendar")) return Promise.resolve(projectResponse());
@@ -220,6 +232,24 @@ describe("Dashboard Calendar routing", () => {
     expect([...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] button')].find((button) => button.textContent === "Kanban")?.className).toBe("is-active");
   });
 
+  it("restores the bare-route remembered view on a real Back navigation past an explicit switch", async () => {
+    window.localStorage.setItem("quincy:dashboard:view", "list");
+    // Establish a known bare "/" history entry to return to — afterEach's replaceState from a
+    // prior test only overwrites the current entry, it doesn't guarantee a clean stack, so a
+    // genuine back() needs its own pushed anchor point.
+    window.history.pushState(null, "", "/");
+    await render();
+    expect([...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] button')].find((button) => button.textContent === "List")?.className).toBe("is-active");
+    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Kanban")?.click(); await Promise.resolve(); });
+    expect(window.location.search).toBe("?view=kanban");
+    expect([...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] button')].find((button) => button.textContent === "Kanban")?.className).toBe("is-active");
+    // A REAL Back pops the history entry selectView just pushed, landing back on bare "/" — the
+    // view must revert to what that bare route originally showed, not stay on Kanban.
+    await act(async () => { window.history.back(); await new Promise((resolve) => setTimeout(resolve, 0)); });
+    expect(window.location.search).toBe("");
+    expect([...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] button')].find((button) => button.textContent === "List")?.className).toBe("is-active");
+  });
+
   it("uses the separate Calendar facet writer to open a project sheet", async () => {
     await render({ calendar: routeCalendar });
     const anchor = host.querySelector<HTMLAnchorElement>("a.qc-cal-event-card__project-link")!;
@@ -242,6 +272,51 @@ describe("Dashboard Calendar routing", () => {
     expect(focusSpy).toHaveBeenCalled();
     back.mockRestore(); focusSpy.mockRestore();
   });
+
+  async function openQuickDetailSheet() {
+    await render();
+    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "List")?.click(); await Promise.resolve(); });
+    const row = host.querySelector<HTMLAnchorElement>("a.prow")!;
+    await act(async () => { row.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, detail: 1 })); await Promise.resolve(); });
+    expect(window.location.search).toContain("detail=");
+  }
+
+  it.each([
+    ["detail", 403] as const,
+    ["detail", 404] as const,
+    ["activity", 403] as const,
+    ["activity", 404] as const,
+    ["comments", 404] as const,
+    ["comment-read-marker", 404] as const,
+  ])("closes the sheet and purges the project cache on a %s %i access failure", async (resource, status) => {
+    await openQuickDetailSheet();
+    await act(async () => { quickDetailPropsState.value?.onAccessFailure(new ApiError("Project not found", status), resource); await Promise.resolve(); });
+    expect(window.location.search).not.toContain("detail=");
+    expect(removeProjectDataMock).toHaveBeenCalledTimes(1);
+    expect(removeProjectDataMock.mock.calls[0]?.[1]).toBe("33333333-3333-4333-8333-333333333333");
+    expect(terminatePrincipalMock).not.toHaveBeenCalled();
+  });
+
+  it("terminates the principal (not a per-project purge) on a 401, for any resource", async () => {
+    await openQuickDetailSheet();
+    await act(async () => { quickDetailPropsState.value?.onAccessFailure(new ApiError("Unauthorized", 401), "detail"); await Promise.resolve(); });
+    expect(window.location.search).not.toContain("detail=");
+    expect(terminatePrincipalMock).toHaveBeenCalledTimes(1);
+    expect(removeProjectDataMock).not.toHaveBeenCalled();
+  });
+
+  it.each([401, 403, 404] as const)("never closes the sheet or purges anything for a nested-comment %i (author-only mismatch is not project loss)", async (status) => {
+    await openQuickDetailSheet();
+    await act(async () => { quickDetailPropsState.value?.onAccessFailure(new ApiError("Forbidden: only the author can edit this comment.", status), "nested-comment"); await Promise.resolve(); });
+    expect(window.location.search).toContain("detail=");
+    expect(removeProjectDataMock).not.toHaveBeenCalled();
+    expect(terminatePrincipalMock).not.toHaveBeenCalled();
+  });
+
+  // A comments-family 403 never actually reaches Dashboard's onAccessFailure — it's consumed
+  // locally by ProjectDiscussionThread's own consumeOrForward first (verified by
+  // ProjectDiscussionThread.dom.test.tsx: "consumes a discussion-only 403 locally with no
+  // composer or close/purge callback"), so it's not a scenario worth simulating in isolation here.
 
   it("uses Back and restores focus for a keyboard-activated (Enter) Calendar anchor", async () => {
     window.history.replaceState(null, "", "/?view=calendar&date=" + routeCalendar.date + "&sub=month&layers=project%2Cchecklist&editors=" + editorId);

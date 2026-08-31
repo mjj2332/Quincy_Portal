@@ -50,10 +50,9 @@ export function ProjectCalendarAnchor({ href, onOpenProject, onProjectAnchorClic
     onTouchEnd={endPointer}
     onDragStart={(event) => event.preventDefault()}
     onKeyDown={(event) => {
-      if ((event.key !== " " && event.key !== "Enter") || event.repeat) return;
-      // Space is not an anchor activation key in every browser. Treat it as
-      // an explicit keyboard activation; treating Enter the same way makes
-      // the contract deterministic across FullCalendar/browser combinations.
+      // Space deliberately keeps native anchor behavior (page scroll, no
+      // activation) per the approved plan — only Enter is synthesized here.
+      if (event.key !== "Enter" || event.repeat) return;
       event.preventDefault();
       event.currentTarget.click();
     }}

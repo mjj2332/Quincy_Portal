@@ -180,28 +180,30 @@ describe("ProjectDiscussionThread", () => {
     expect(terminateMock).not.toHaveBeenCalled();
   });
 
-  it("consumes a discussion-only 403 from editing a comment without forwarding or terminating", async () => {
+  it("never collapses the whole view for an edit rejection — forwards as nested-comment instead", async () => {
     const onAccessFailure = vi.fn();
-    apiPatchMock.mockRejectedValueOnce(new ApiError("Discussion denied", 403));
+    apiPatchMock.mockRejectedValueOnce(new ApiError("Forbidden: only the author can edit this comment.", 403));
     render({ onAccessFailure }); await flush();
     const editButton = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Edit");
     await act(async () => { editButton!.click(); await Promise.resolve(); });
     const editSubmit = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Submit");
     await act(async () => { editSubmit!.click(); await Promise.resolve(); });
-    expect(host.textContent).toContain("No discussion access");
-    expect(onAccessFailure).not.toHaveBeenCalled();
-    expect(terminateMock).not.toHaveBeenCalled();
+    expect(host.textContent).not.toContain("No discussion access");
+    expect(host.querySelector(".project-collaboration__comments")).not.toBeNull();
+    expect(onAccessFailure).toHaveBeenCalledWith(expect.any(ApiError), "nested-comment");
+    expect(terminateMock).toHaveBeenCalledTimes(1);
   });
 
-  it("consumes a discussion-only 403 from deleting a comment without forwarding or terminating", async () => {
+  it("never collapses the whole view for a delete rejection — forwards as nested-comment instead", async () => {
     const onAccessFailure = vi.fn();
-    apiDeleteMock.mockRejectedValueOnce(new ApiError("Discussion denied", 403));
+    apiDeleteMock.mockRejectedValueOnce(new ApiError("Forbidden: only the author can delete this comment.", 403));
     render({ onAccessFailure }); await flush();
     const deleteButton = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Delete");
     await act(async () => { deleteButton!.click(); await Promise.resolve(); await Promise.resolve(); });
-    expect(host.textContent).toContain("No discussion access");
-    expect(onAccessFailure).not.toHaveBeenCalled();
-    expect(terminateMock).not.toHaveBeenCalled();
+    expect(host.textContent).not.toContain("No discussion access");
+    expect(host.querySelector(".project-collaboration__comments")).not.toBeNull();
+    expect(onAccessFailure).toHaveBeenCalledWith(expect.any(ApiError), "nested-comment");
+    expect(terminateMock).toHaveBeenCalledTimes(1);
   });
 
   it("still forwards and terminates on a non-discussion 401 during a mutation", async () => {

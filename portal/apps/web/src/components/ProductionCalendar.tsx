@@ -838,7 +838,7 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
       // invalidateProjectSurfaces owns the production-calendar broadcast (producer: "calendar"
       // suppresses this tab's own refetch; refetchAuthoritative below is the single settle refetch).
       if (queryClient) {
-        await invalidateProjectSurfaces(queryClient, { projectId: proposal.event.project.id, resources: [{ kind: "detail" }, { kind: "subtasks" }, { kind: "activity" }], dashboard: true, calendar: true, producer: "calendar" });
+        await invalidateProjectSurfaces(queryClient, { projectId: proposal.event.project.id, resources: [{ kind: "detail" }, { kind: "activity" }], dashboard: true, calendar: true, producer: "calendar" });
       }
       if (accessLostRef.current || token !== operationTokenRef.current) return;
       settleRefetchInFlightRef.current = true;
@@ -1157,7 +1157,7 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
       snapshotRef.current = null;
       // invalidateProjectSurfaces owns the production-calendar broadcast (producer: "calendar").
       if (queryClient) {
-        await invalidateProjectSurfaces(queryClient, { projectId: proposal.source.project.id, resources: [{ kind: "detail" }, { kind: "subtasks" }, { kind: "activity" }], dashboard: false, calendar: true, producer: "calendar" });
+        await invalidateProjectSurfaces(queryClient, { projectId: proposal.source.project.id, resources: [{ kind: "subtasks" }, { kind: "activity" }], dashboard: false, calendar: true, producer: "calendar" });
       }
       if (accessLostRef.current || token !== operationTokenRef.current) return;
       settleRefetchInFlightRef.current = true;

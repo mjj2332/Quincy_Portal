@@ -10,7 +10,7 @@ import { useStages } from "../lib/stages";
 import { DASHBOARD_CALENDAR_LAST_DATE_KEY, DASHBOARD_CALENDAR_SUBVIEW_KEY, formatDashboardDate, initializeDashboardCalendarState, initializeDashboardView, initializeKanbanSortMode, normalizeDashboardCalendarSearch, sanitizeDashboardCalendarSearch, type DashboardView, type KanbanSortMode } from "./dashboard-helpers";
 import { InternalLink } from "../components/InternalLink";
 import { NoticeBoard } from "../components/NoticeBoard";
-import { invalidateProjectSurfaces, useOptionalProjectQueryClient } from "../lib/project-data";
+import { invalidateProjectSurfaces, removeProjectData, terminatePrincipalOnUnauthorized, useOptionalProjectQueryClient } from "../lib/project-data";
 import { createDashboardBoardInvalidatedMessage, getProjectQueryRuntime } from "../lib/project-query-sync";
 import { dashboardProjectsKey, useDashboardProjects } from "../lib/dashboard-projects";
 import { submitStageMoveWithConfirmation } from "../lib/stage-move";
@@ -173,6 +173,12 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     });
     return !canViewProductionCalendar && stored === "calendar" ? "kanban" : stored;
   });
+  // Captured once at mount, before any explicit List/Kanban selection can overwrite
+  // localStorage — the value a fresh bare-route "/" load would show. Restoring TO this fixed
+  // snapshot (not live localStorage) on a Back/Forward arrival back at bare "/" is what makes
+  // the browser's native Back button actually undo an explicit view switch, since D2 made
+  // List/Kanban selection push its own history entry.
+  const bareRouteFallbackViewRef = useRef(view);
   const [calendarState, setCalendarState] = useState<DashboardCalendarState | null>(() => effectiveRouteCalendar && canViewProductionCalendar
     ? effectiveRouteCalendar
     : canViewProductionCalendar ? initializeDashboardCalendarState({ kind: "dashboard" }, calendarStorage, { now: Date.now(), isPhone: window.matchMedia?.("(max-width: 720px)").matches ?? false }) : null);
@@ -335,7 +341,11 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       calendarFallbackLocationRef.current = false;
       return;
     }
-    if (view === "calendar") setView(lastNonCalendarViewRef.current);
+    // Genuinely bare "/" with no calendar involvement: restore the fixed per-document snapshot
+    // rather than leaving `view` at whatever an earlier explicit push left it — this is what
+    // makes Back actually undo an explicit List/Kanban switch (D2 gave each one its own history
+    // entry), not just the pre-existing "leaving Calendar via a stale bare arrival" case.
+    if (view !== bareRouteFallbackViewRef.current) setView(bareRouteFallbackViewRef.current);
   }, [calendarState, canViewProductionCalendar, effectiveRouteCalendar, history, locationHasCalendar, routeDashboardView, routeDetail, view, viewingArchived]);
 
   const navigateCalendar = useCallback((next: DashboardCalendarState, replace = false) => {
@@ -613,8 +623,18 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   }, [currentDashboardRoute, history, routeDetail, view]);
 
   const handleSheetAccessFailure = useCallback((error: unknown, resource: "detail" | "activity" | "comments" | "comment-read-marker" | "nested-comment") => {
-    if ((resource === "detail" || resource === "activity") && error instanceof ApiError && (error.status === 401 || error.status === 403 || error.status === 404)) closeQuickDetail();
-  }, [closeQuickDetail]);
+    // "nested-comment" (an edit/delete rejection) is deliberately excluded: the server checks
+    // membership before authorship, but both failures surface as the same 403 status, so a
+    // rejection here can't be trusted to mean collaboration access was lost (it's just as likely
+    // an author-only mismatch) — it stays a local, inline mutation error, never a sheet-wide close.
+    if (resource === "nested-comment" || !(error instanceof ApiError)) return;
+    if (error.status !== 401 && error.status !== 403 && error.status !== 404) return;
+    if (queryClient) {
+      if (error.status === 401) terminatePrincipalOnUnauthorized(queryClient, error);
+      else if (routeDetail) void removeProjectData(queryClient, routeDetail.projectId);
+    }
+    closeQuickDetail();
+  }, [closeQuickDetail, queryClient, routeDetail]);
 
   const changeQuickDetailView = useCallback((next: ProjectQuickDetailView) => {
     if (!currentDashboardRoute || !routeDetail) return;

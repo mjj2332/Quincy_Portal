@@ -73,7 +73,11 @@ export function ProjectDiscussionThread({
   const [mutationError, setMutationError] = useState<string>();
   const [discussionDeniedFor, setDiscussionDeniedFor] = useState<string>();
   const consumeOrForward = useCallback((reason: unknown, resource: ProjectDiscussionAccessFailureResource) => {
-    if (consumeDiscussion403 && isDiscussionOnlyForbidden(reason)) {
+    // "nested-comment" (an edit/delete rejection) is deliberately excluded from local
+    // consumption: the server checks membership before authorship, and both failures surface as
+    // the same 403, so it can't be trusted to mean collaboration access was lost — it's just as
+    // likely an author-only mismatch, which must not collapse the whole Discussion view.
+    if (resource !== "nested-comment" && consumeDiscussion403 && isDiscussionOnlyForbidden(reason)) {
       setDiscussionDeniedFor(projectId);
       return;
     }

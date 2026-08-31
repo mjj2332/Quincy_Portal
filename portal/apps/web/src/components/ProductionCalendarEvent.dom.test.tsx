@@ -83,7 +83,7 @@ describe("ProductionCalendarEvent overlap state", () => {
     expect(event.querySelector("button")?.textContent).toBe("Reschedule");
   });
 
-  it("opens the project sheet for click, Enter, and Space while suppressing a drag-ending click", () => {
+  it("opens the project sheet for click and Enter, leaves Space native, and suppresses a drag-ending click", () => {
     const onOpenProject = vi.fn();
     const deadline = {
       id: "project-deadline:project",
@@ -102,14 +102,19 @@ describe("ProductionCalendarEvent overlap state", () => {
     anchor.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, detail: 1 }));
     expect(onOpenProject).toHaveBeenCalledTimes(1);
     anchor.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
-    anchor.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true }));
-    expect(onOpenProject).toHaveBeenCalledTimes(3);
+    expect(onOpenProject).toHaveBeenCalledTimes(2);
+    // Space deliberately keeps native anchor behavior per the approved plan — it must never
+    // synthesize an activation the way Enter does.
+    const spaceEvent = new KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true });
+    anchor.dispatchEvent(spaceEvent);
+    expect(spaceEvent.defaultPrevented).toBe(false);
+    expect(onOpenProject).toHaveBeenCalledTimes(2);
 
     anchor.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, clientX: 10, clientY: 10 }));
     anchor.dispatchEvent(new MouseEvent("mousemove", { bubbles: true, clientX: 30, clientY: 10 }));
     anchor.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, clientX: 30, clientY: 10 }));
     anchor.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, detail: 1 }));
-    expect(onOpenProject).toHaveBeenCalledTimes(3);
+    expect(onOpenProject).toHaveBeenCalledTimes(2);
 
     // FullCalendar's own default eventDragMinDistance is 5px — this anchor
     // must suppress its click strictly below that so a gesture FullCalendar
@@ -118,13 +123,13 @@ describe("ProductionCalendarEvent overlap state", () => {
     anchor.dispatchEvent(new MouseEvent("mousemove", { bubbles: true, clientX: 14, clientY: 10 }));
     anchor.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, clientX: 14, clientY: 10 }));
     anchor.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, detail: 1 }));
-    expect(onOpenProject).toHaveBeenCalledTimes(3);
+    expect(onOpenProject).toHaveBeenCalledTimes(2);
 
     anchor.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, clientX: 10, clientY: 10 }));
     anchor.dispatchEvent(new MouseEvent("mousemove", { bubbles: true, clientX: 12, clientY: 10 }));
     anchor.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, clientX: 12, clientY: 10 }));
     anchor.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, detail: 1 }));
-    expect(onOpenProject).toHaveBeenCalledTimes(4);
+    expect(onOpenProject).toHaveBeenCalledTimes(3);
 
     const onMove = vi.fn();
     act(() => root.render(<ProductionCalendarEvent event={checklist(false)} subview="week" projectHref="/?view=calendar&detail=11111111-1111-4111-8111-111111111111" onOpenProject={onOpenProject} onChecklistSchedule={onMove} />));

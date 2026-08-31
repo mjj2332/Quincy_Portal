@@ -166,6 +166,26 @@ describe("PrincipalFreshnessBoundary Calendar purge", () => {
     expect(runtime?.removedProjectIds.has(project)).toBe(true);
   });
 
+  it("moves focus to the backing view's toggle after stripping a lost project's quick-detail facet", async () => {
+    runtime = new ProjectQueryRuntime(client, "boundary-focus-test");
+    window.history.replaceState(null, "", `/?view=kanban&detail=${project}&detailView=activity`);
+    const kanbanToggle = document.createElement("button");
+    kanbanToggle.setAttribute("data-focus-key", "dashboard-view-kanban");
+    document.body.append(kanbanToggle);
+    apiGetMock.mockResolvedValueOnce(snapshot([{ projectId: project, membershipCycleIds: [cycleOne] }]));
+    renderBoundary();
+    await waitFor(() => expect(client.getQueryData(["authorization-scope", principal, "editor", 0])).toBeDefined());
+
+    await act(async () => {
+      client.setQueryData(["authorization-scope", principal, "editor", 0], snapshot([]));
+      await flush();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    await waitFor(() => expect(document.activeElement).toBe(kanbanToggle));
+    kanbanToggle.remove();
+  });
+
   it("redirects a lost Workspace project to the Dashboard", async () => {
     runtime = new ProjectQueryRuntime(client, "boundary-workspace-test");
     window.history.replaceState(null, "", `/projects/${project}`);
