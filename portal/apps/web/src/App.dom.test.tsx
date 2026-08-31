@@ -36,18 +36,64 @@ describe("App collaboration arrival transport", () => {
   it.each([
     "/?view=list",
     "/?view=kanban",
+    "/?view=list&detail=123e4567-e89b-42d3-a456-426614174000",
     "/?view=list&detail=123e4567-e89b-42d3-a456-426614174000&detailView=activity",
-  ])("temporarily replaces explicit List/Kanban Dashboard routes with the local-storage backing root (%s)", async (location) => {
+    "/?view=kanban&detail=123e4567-e89b-42d3-a456-426614174000&detailView=discussion",
+  ])("temporarily REPLACES (never pushes) explicit List/Kanban Dashboard routes with the local-storage backing root (%s)", async (location) => {
+    const push = vi.spyOn(window.history, "pushState");
+    const replace = vi.spyOn(window.history, "replaceState");
+    const lengthBefore = window.history.length;
     const host = await renderAt(location);
     expect(`${window.location.pathname}${window.location.search}`).toBe("/");
     expect(host.textContent).toContain("Dashboard");
+    expect(push).not.toHaveBeenCalled();
+    expect(replace).toHaveBeenCalled();
+    expect(window.history.length).toBe(lengthBefore);
+    push.mockRestore(); replace.mockRestore();
   });
 
-  it("temporarily removes only the quick-detail facet from a Calendar route", async () => {
+  it("temporarily REPLACES (never pushes) only the quick-detail facet from a Calendar route", async () => {
     const calendar = "/?view=calendar&date=2026-08-30&sub=agenda&layers=project%2Cchecklist&mine=1&q=smith+street";
+    const push = vi.spyOn(window.history, "pushState");
+    const replace = vi.spyOn(window.history, "replaceState");
+    const lengthBefore = window.history.length;
     const host = await renderAt(`${calendar}&detail=123e4567-e89b-42d3-a456-426614174000&detailView=discussion`);
     expect(`${window.location.pathname}${window.location.search}`).toBe(calendar);
     expect(host.querySelector("[data-calendar-route]")?.getAttribute("data-calendar-route")).toBe("present");
+    expect(push).not.toHaveBeenCalled();
+    expect(replace).toHaveBeenCalled();
+    expect(window.history.length).toBe(lengthBefore);
+    push.mockRestore(); replace.mockRestore();
+  });
+
+  it("does not navigate away from a plain Calendar route (no detail facet)", async () => {
+    const plain = "/?view=calendar&date=2026-08-30&sub=agenda&layers=project%2Cchecklist";
+    const push = vi.spyOn(window.history, "pushState");
+    const replace = vi.spyOn(window.history, "replaceState");
+    await renderAt(plain);
+    expect(`${window.location.pathname}${window.location.search}`).toBe(plain);
+    expect(push).not.toHaveBeenCalled();
+    // A same-URL canonical replace is a harmless no-op; the handoff must never replace to a DIFFERENT URL here.
+    for (const call of replace.mock.calls) expect(call[2]).toBe(plain);
+    push.mockRestore(); replace.mockRestore();
+  });
+
+  it("re-applies the handoff on every history arrival at an explicit facet URL (popstate convergence)", async () => {
+    const host = await renderAt("/");
+    expect(`${window.location.pathname}${window.location.search}`).toBe("/");
+    for (const facet of [
+      "/?view=kanban&detail=123e4567-e89b-42d3-a456-426614174000&detailView=activity",
+      "/?view=list",
+      "/?view=calendar&date=2026-08-30&sub=agenda&layers=project%2Cchecklist&detail=123e4567-e89b-42d3-a456-426614174000",
+    ]) {
+      const push = vi.spyOn(window.history, "pushState");
+      await act(async () => { window.history.replaceState(null, "", facet); window.dispatchEvent(new PopStateEvent("popstate")); await Promise.resolve(); await Promise.resolve(); });
+      const settled = `${window.location.pathname}${window.location.search}`;
+      expect(settled === "/" || settled === "/?view=calendar&date=2026-08-30&sub=agenda&layers=project%2Cchecklist").toBe(true);
+      expect(push).not.toHaveBeenCalled();
+      push.mockRestore();
+    }
+    expect(host.textContent).toContain("Dashboard");
   });
 
   it("renders the Dashboard for a valid Calendar root location", async () => {

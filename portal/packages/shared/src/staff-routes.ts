@@ -195,7 +195,9 @@ function parseCalendarFlag(params: URLSearchParams, name: string): boolean | nul
 }
 
 function parseCalendarLocation(params: URLSearchParams): DashboardCalendarState | null {
-  for (const [name, value] of params) {
+  // Decoded-value safety and duplicate rejection are handled by parseDashboardQuery; this
+  // arm only enforces its own closed parameter allow-list.
+  for (const name of params.keys()) {
     if (!calendarParameterNames.has(name)) return null;
   }
   if (params.get("view") !== "calendar") return null;
