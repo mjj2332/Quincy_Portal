@@ -28,6 +28,7 @@ export type { SydneyCivilDisambiguation, SydneyCivilResolution } from "./sydney-
 export * from "./checklist-schedule";
 export * from "./checklist-schedule-config";
 export * from "./project-activity";
+export * from "./project-activity-feed";
 export * from "./external-project-dto";
 export * from "./external-upload";
 export * from "./external-notification";

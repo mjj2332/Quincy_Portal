@@ -4,7 +4,7 @@ import { useCallback, useContext, useEffect, useState, useSyncExternalStore } fr
 import { ApiError, apiGet } from "./api";
 import { externalApiGet, externalProjectDetailToWorkspace } from "./external-api-response";
 import type { ExternalProjectDetailDto } from "@quincy/shared";
-import { createActiveProjectDetailsInvalidatedMessage, getProjectQueryRuntime, projectResourceKey, useProjectQueryRuntime, type ProjectDataResource } from "./project-query-sync";
+import { createActiveProjectDetailsInvalidatedMessage, createDashboardBoardInvalidatedMessage, createProductionCalendarInvalidatedMessage, getProjectQueryRuntime, projectResourceKey, useProjectQueryRuntime, type ProjectDataResource, type ProjectQueryRuntime } from "./project-query-sync";
 import type { ReviewPatch, WorkspaceAsset, Review } from "../components/PhotoGrid";
 import type { ProjectStageKey } from "./stages";
 
@@ -12,7 +12,7 @@ export type ProjectCollection = { id: string; kind: CollectionKind; status: stri
 export type ProjectMember = ProjectMembershipDto;
 export type ProjectDetail = {
   id: string; street: string; suburb: string | null; postcode: string | null; agencyName: string | null; agentName: string | null;
-  shootDate: string | null; stageKey: ProjectStageKey; rawFolderPath: string | null; rawFolderLink: string | null; productionNotes?: string | null; editedUploadAvailable?: boolean; archivedAt?: string | number | null; boardRevision: number; contractEnabled: boolean;
+  shootDate: string | null; timeWindow?: string | null; priority?: number | null; stageKey: ProjectStageKey; rawFolderPath: string | null; rawFolderLink: string | null; productionNotes?: string | null; editedUploadAvailable?: boolean; archivedAt?: string | number | null; boardRevision: number; contractEnabled: boolean;
   coverAssetId: string | null; effectiveCoverAssetId: string | null; collections: ProjectCollection[]; members: ProjectMember[]; deadlineSchedule: ProjectDeadlineSchedule;
 };
 export type ProjectSubtask = {
@@ -31,6 +31,7 @@ export const projectDataKeys = {
   subtasks: (projectId: string) => ["project-data", projectId, "subtasks"] as const,
   commentsRoot: (projectId: string) => ["project-data", projectId, "comments"] as const,
   comments: (projectId: string) => ["project-data", projectId, "comments", "pages", { limit: 50 }] as const,
+  activity: (projectId: string) => ["project-data", projectId, "activity", "pages", { limit: 30 }] as const,
   commentReadMarker: (projectId: string) => ["project-data", projectId, "comments", "read-marker"] as const,
   collaborationSummary: (projectId: string) => ["project-data", projectId, "collaboration-summary"] as const,
 };
@@ -45,11 +46,11 @@ const assetCapabilities: Record<CollectionKind, "viewRaw" | "viewEdited"> = {
 export function isApiError(error: unknown): error is ApiError { return error instanceof ApiError; }
 export function isPermanentProjectAccessError(error: unknown): error is ApiError { return isApiError(error) && (error.status === 401 || error.status === 403 || error.status === 404); }
 
-export function classifyProjectAccessError(error: unknown, resource: "detail" | "assets" | "subtasks" | "comments" | "comment-read-marker" | "collaboration-summary", collectionKind?: CollectionKind): ProjectAccessClassification | null {
+export function classifyProjectAccessError(error: unknown, resource: "detail" | "activity" | "assets" | "subtasks" | "comments" | "comment-read-marker" | "collaboration-summary", collectionKind?: CollectionKind): ProjectAccessClassification | null {
   if (!isPermanentProjectAccessError(error)) return null;
   if (error.status === 401) return { scope: "principal" };
   if (resource === "comments" || resource === "comment-read-marker" || resource === "collaboration-summary" || resource === "subtasks") return error.status === 403 ? { scope: "collaboration" } : { scope: "project" };
-  if (resource === "detail" || error.status === 404 || collectionKind === undefined) return { scope: "project" };
+  if (resource === "detail" || resource === "activity" || error.status === 404 || collectionKind === undefined) return { scope: "project" };
   const details = error.details;
   const capability = details && typeof details === "object" ? (details as Record<string, unknown>).capability : undefined;
   return error.status === 403 && capability === assetCapabilities[collectionKind] ? { scope: "collection", collectionKind } : { scope: "project" };
@@ -325,13 +326,54 @@ export async function invalidateProjectResources(queryClient: QueryClient, inval
   if (queuedResources.length) queueLedgerInvalidation(queryClient, { ...invalidation, resources: queuedResources }, publish);
   if (!immediateResources.length) return;
   const immediateKeys = immediateResources.map((resource) => projectResourceKey(invalidation.projectId, resource));
-  await Promise.all(immediateKeys.map((queryKey) => queryClient.invalidateQueries({ queryKey, exact: true, refetchType: "active" })));
+  const directInvalidations: Promise<unknown>[] = [];
+  for (const queryKey of immediateKeys) {
+    if (runtime) directInvalidations.push(runtime.requestInvalidation(queryKey));
+    else directInvalidations.push(queryClient.invalidateQueries({ queryKey, exact: true, refetchType: "active" }));
+  }
+  await Promise.all(directInvalidations);
   // A sibling tab may have deferred the same exact key while this tab owned a
   // membership/asset ledger. The local commit has now performed the authoritative
   // invalidation, so consume that remote marker instead of leaving it stranded until
   // an unrelated owner release.
   for (const queryKey of immediateKeys) runtime?.takeDeferred(queryKey);
   if (publish) runtime?.publish({ version: 1, type: "project-data-invalidated", projectId: invalidation.projectId, committedAt: new Date().toISOString(), resources: immediateResources });
+}
+
+export async function invalidateProjectSurfaces(queryClient: QueryClient, input: {
+  projectId: string;
+  resources: ProjectDataResource[];
+  /** Whether the Dashboard Board projection can change for this committed op. */
+  dashboard: boolean;
+  /** Whether the Production Calendar projection can change for this committed op. */
+  calendar: boolean;
+  /**
+   * The surface (if any) that performed the mutation and already owns its single
+   * post-settle refetch (`Dashboard.tsx` queuedRefreshRef / `ProductionCalendar.tsx`
+   * refetchAuthoritative). Its in-tab query is NOT invalidated here (that would
+   * double-refetch a drag), but its cross-tab broadcast still fires so other tabs converge.
+   */
+  producer?: "dashboard" | "calendar";
+}): Promise<void> {
+  const resources = [...new Map(input.resources.map((resource) => [JSON.stringify(resource), resource])).values()];
+  await invalidateProjectResources(queryClient, { projectId: input.projectId, resources }, true);
+
+  const runtime = getProjectQueryRuntime(queryClient);
+  if (!runtime) return;
+  const pending: Promise<unknown>[] = [];
+  const converge = (surface: "dashboard" | "calendar", prefix: string, message: Parameters<ProjectQueryRuntime["publish"]>[0]) => {
+    if (input.producer !== surface) {
+      const active = queryClient.getQueryCache().getAll().filter((query) => query.queryKey[0] === prefix && query.getObserversCount() > 0);
+      for (const query of active) pending.push(runtime.requestInvalidation(query.queryKey));
+    }
+    runtime.publish(message);
+  };
+  if (input.dashboard) converge("dashboard", "dashboard-projects", createDashboardBoardInvalidatedMessage());
+  if (input.calendar) converge("calendar", "production-calendar", createProductionCalendarInvalidatedMessage());
+  // Await the non-producing surface refetches so a caller that navigates immediately
+  // (e.g. ProjectWorkspace #moveStage) lands on fresh data, matching the awaited
+  // invalidateQueries this replaced. Owned/ledger-deferred keys resolve immediately.
+  await Promise.all(pending);
 }
 
 export async function invalidateActiveProjectDetails(queryClient: QueryClient, publish = true): Promise<void> {

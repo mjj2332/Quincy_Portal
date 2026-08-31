@@ -3,6 +3,7 @@ import type { CollectionKind } from "@quincy/shared";
 import { ProjectFields, emptyProjectForm, type ProjectFieldError, type ProjectForm, type ProjectSelectionField, type ProjectTextField, validateProjectFields } from "../components/ProjectFields";
 import { apiPost } from "../lib/api";
 import { InternalLink } from "../components/InternalLink";
+import { invalidateProjectSurfaces, useOptionalProjectQueryClient } from "../lib/project-data";
 
 type ProjectDetail = { id: string; collections: Array<{ id: string; kind: CollectionKind }>; members: Array<{ id: string }> };
 type FormErrors = Partial<Record<"street" | ProjectFieldError, string>>;
@@ -10,6 +11,7 @@ type FormErrors = Partial<Record<"street" | ProjectFieldError, string>>;
 function optionalValue(value: string): string | null { return value.trim() || null; }
 
 export function CreateProject({ onNavigate }: { onNavigate: (path: string, notice?: string) => void }) {
+  const queryClient = useOptionalProjectQueryClient();
   const [form, setForm] = useState<ProjectForm>(emptyProjectForm);
   const [showDetails, setShowDetails] = useState(false);
   const [errors, setErrors] = useState<FormErrors>({});
@@ -37,6 +39,7 @@ export function CreateProject({ onNavigate }: { onNavigate: (path: string, notic
       const project = await apiPost<ProjectDetail, Record<string, unknown>>("/api/projects", {
         street: form.street.trim(), suburb: optionalValue(form.suburb), postcode: optionalValue(form.postcode), agencyName: optionalValue(form.agencyName), agentName: optionalValue(form.agentName), agentEmail: optionalValue(form.agentEmail), agentPhone: optionalValue(form.agentPhone), shootDate: optionalValue(form.shootDate), timeWindow: optionalValue(form.timeWindow), orderNo: optionalValue(form.orderNo), orderId: optionalValue(form.orderId), invoiceAmount: invoiceAmount ? Number(invoiceAmount) : null, paymentStatus: optionalValue(form.paymentStatus), productionNotes: optionalValue(form.productionNotes), rawFolderLink: optionalValue(form.rawFolderLink), rawFolderPath: optionalValue(form.rawFolderPath), orderedServices: form.orderedServices, photographerUserIds: form.photographerUserIds, editorUserIds: form.editorUserIds,
       });
+      if (queryClient) await invalidateProjectSurfaces(queryClient, { projectId: project.id, resources: [], dashboard: true, calendar: true });
       onNavigate(`/projects/${encodeURIComponent(project.id)}`, "Shoot created.");
     } catch (reason) { setSubmitError(reason instanceof Error ? reason.message : "The shoot could not be created."); }
     finally { setIsSubmitting(false); }

@@ -216,8 +216,8 @@ describe("ProductionCalendar reconciliation", () => {
     await render({}, runtime);
     await act(async () => { (host.querySelector("[data-testid=reconciliation-drop]") as HTMLButtonElement).click(); await new Promise((resolve) => setTimeout(resolve, 100)); await Promise.resolve(); });
     expect(apiPutMock).toHaveBeenCalledOnce();
-    expect(publish).toHaveBeenCalledOnce();
-    const message = publish.mock.calls[0]?.[0];
+    expect(publish).toHaveBeenCalledTimes(3);
+    const message = publish.mock.calls.find(([candidate]) => candidate.type === "production-calendar-invalidated")?.[0];
     if (!message) throw new Error("Calendar invalidation was not published");
     expect(Object.keys(message).sort()).toEqual(["committedAt", "type", "version"]);
     expect(message).toMatchObject({ version: expect.any(Number), type: "production-calendar-invalidated", committedAt: expect.any(String) });
@@ -227,7 +227,7 @@ describe("ProductionCalendar reconciliation", () => {
     const invalidateCount = invalidate.mock.calls.length;
     sender.publish(createProductionCalendarInvalidatedMessage());
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 25)); await Promise.resolve(); });
-    expect(publish).toHaveBeenCalledTimes(1);
+    expect(publish).toHaveBeenCalledTimes(3);
     expect(apiGetMock).toHaveBeenCalledTimes(1);
     const receiveInvalidations = invalidate.mock.calls.slice(invalidateCount);
     expect(receiveInvalidations).toHaveLength(1);

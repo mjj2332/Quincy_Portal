@@ -21,9 +21,6 @@ import { ConfirmModalHost } from "./ConfirmDialog";
 import { confirmStore } from "../lib/confirm";
 import { ProjectQueryRuntime } from "../lib/project-query-sync";
 
-const invalidateProjectResourcesMock = vi.hoisted(() => vi.fn(async () => undefined));
-vi.mock("../lib/project-data", async (importOriginal) => ({ ...(await importOriginal<typeof import("../lib/project-data")>()), invalidateProjectResources: invalidateProjectResourcesMock }));
-
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 type SurfaceAction = {
@@ -146,7 +143,6 @@ describe("ProductionCalendar checklist manipulation", () => {
     host = document.createElement("div"); document.body.append(host); root = createRoot(host);
     client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     patchBodies = []; putBodies = []; patchStatus = 200; patchPayload = undefined; surfaceAction = null; lastSurfaceProps = null; revertCalls = 0;
-    invalidateProjectResourcesMock.mockClear();
   });
 
   afterEach(() => { act(() => root.unmount()); host.remove(); vi.unstubAllGlobals(); });
@@ -385,7 +381,6 @@ describe("ProductionCalendar checklist manipulation", () => {
     expect(getCount).toBe(2);
     expect(settleStates).not.toContain(true);
     expect(publish).not.toHaveBeenCalled();
-    expect(invalidateProjectResourcesMock).not.toHaveBeenCalled();
     expect(host.textContent).toContain("No change.");
     runtime.dispose();
   });
@@ -596,7 +591,7 @@ describe("ProductionCalendar checklist manipulation", () => {
     let releaseRefetch!: () => void;
     const runtime = new ProjectQueryRuntime(client, "checklist-changed-tab");
     const publish = vi.spyOn(runtime, "publish");
-    invalidateProjectResourcesMock.mockClear();
+    const invalidate = vi.spyOn(client, "invalidateQueries");
     patchPayload = mutationBody(event, { ...event.schedule, version: 5, due: "2026-08-13", end: dateEndpoint("2026-08-13") });
     const range = response([event], "month");
     vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
@@ -614,8 +609,11 @@ describe("ProductionCalendar checklist manipulation", () => {
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
     expect(states.at(-1)).toBe(false);
     expect(getCount).toBe(2);
-    expect(publish).toHaveBeenCalledOnce();
-    expect(invalidateProjectResourcesMock).toHaveBeenCalledOnce();
+    expect(publish).toHaveBeenCalledTimes(2);
+    expect(publish.mock.calls.map(([message]) => message.type)).toEqual(expect.arrayContaining(["project-data-invalidated", "production-calendar-invalidated"]));
+    expect(publish.mock.calls.find(([message]) => message.type === "project-data-invalidated")?.[0]).toMatchObject({ projectId, resources: [{ kind: "subtasks" }, { kind: "activity" }] });
+    expect(publish.mock.calls.some(([message]) => message.type === "dashboard-board-invalidated")).toBe(false);
+    expect(invalidate.mock.calls.some(([options]) => options?.queryKey?.[0] === "production-calendar")).toBe(false);
     runtime.dispose();
   });
 

@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState, type ChangeEvent, type FormEv
 import type { WorkspaceAsset } from "./PhotoGrid";
 import { ApiError, apiDelete, apiGet, apiPatch, apiPost, apiPostWithStatus } from "../lib/api";
 import { uploadMultipartFile, type MultipartPresign } from "../lib/multipart-upload";
-import { useProjectAccessTermination } from "../lib/project-data";
+import { invalidateProjectSurfaces, useOptionalProjectQueryClient, useProjectAccessTermination } from "../lib/project-data";
 import { LazyImage } from "./LazyImage";
 import { reorderNeighbors } from "../lib/reorder-neighbors";
 import { confirm } from "../lib/confirm";
@@ -57,6 +57,7 @@ export function CollectionPanel({ projectId, collection, assets, canManage, canD
   projectId: string; collection: CollectionKind; assets: WorkspaceAsset[]; canManage: boolean; canDelete?: boolean; canApprove: boolean;
   onReview: (assetId: string, patch: { decision: "approved" | null }) => Promise<void>; onDelete?: (assetId: string) => Promise<void>; onChanged?: () => Promise<void>; onLinksChanged?: () => Promise<void>; onDocumentsChanged?: (kind: "floorplan" | "copy") => Promise<void>; onToast: (message: string, tone?: "success" | "error") => void;
 }) {
+  const queryClient = useOptionalProjectQueryClient();
   const terminateOnUnauthorized = useProjectAccessTermination();
   const reportLinksChanged = onLinksChanged ?? onChanged ?? (async () => undefined);
   const reportDocumentsChanged = onDocumentsChanged ?? (async () => onChanged?.());
@@ -71,6 +72,9 @@ export function CollectionPanel({ projectId, collection, assets, canManage, canD
     // must not clobber a newer load's result.
     if (loadToken.current === token) setLinks(response.links);
   }, [collection, projectId]);
+  async function invalidateActivity() {
+    if (queryClient) await invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "activity" }], dashboard: false, calendar: false });
+  }
   useEffect(() => { let active = true; void loadLinks().catch((error: unknown) => { terminateOnUnauthorized(error); if (active) onToast(error instanceof Error ? error.message : "Delivered links could not be loaded.", "error"); }); return () => { active = false; }; }, [loadLinks, onToast, terminateOnUnauthorized]);
   async function addLink(event: FormEvent) {
     event.preventDefault(); setSavingLink(true);
@@ -78,7 +82,7 @@ export function CollectionPanel({ projectId, collection, assets, canManage, canD
       const { data: link, status } = await apiPostWithStatus<Link, { collection: CollectionKind; url: string; label?: string }>(`/api/projects/${projectId}/links`, { collection, url, label: label.trim() || undefined });
       if (status === 201) {
         setLinks((current) => [...current.filter((item) => item.id !== link.id), link]);
-        setUrl(""); setLabel(""); await reportLinksChanged(); onToast("Link added.");
+        setUrl(""); setLabel(""); await invalidateActivity(); await reportLinksChanged(); onToast("Link added.");
       } else {
         // Nothing was written server-side, so don't move the existing tile to the end of the
         // list the way a real append would — only fill it in if this client didn't have it yet.
@@ -88,7 +92,7 @@ export function CollectionPanel({ projectId, collection, assets, canManage, canD
     } catch (error) { terminateOnUnauthorized(error); onToast(error instanceof Error ? error.message : "The link could not be added.", "error"); }
     finally { setSavingLink(false); }
   }
-  async function removeLink(link: Link) { try { await apiDelete<void>(`/api/projects/${projectId}/links/${link.id}`); setLinks((current) => current.filter((item) => item.id !== link.id)); onToast("Manual link removed."); await reportLinksChanged(); } catch (error) { terminateOnUnauthorized(error); onToast(error instanceof Error ? error.message : "The link could not be removed.", "error"); } }
+  async function removeLink(link: Link) { try { await apiDelete<void>(`/api/projects/${projectId}/links/${link.id}`); setLinks((current) => current.filter((item) => item.id !== link.id)); await invalidateActivity(); onToast("Manual link removed."); await reportLinksChanged(); } catch (error) { terminateOnUnauthorized(error); onToast(error instanceof Error ? error.message : "The link could not be removed.", "error"); } }
   function startEdit(link: Link) { setEditingLinkId(link.id); setEditDraft({ url: link.url, label: link.label ?? "" }); setEditError(""); }
   function cancelEdit() { setEditingLinkId(null); setEditDraft({ url: "", label: "" }); setEditError(""); }
   async function saveEdit(event: FormEvent) {
@@ -97,7 +101,7 @@ export function CollectionPanel({ projectId, collection, assets, canManage, canD
     setSavingEdit(true); setEditError("");
     try {
       const link = await apiPatch<Link, { url: string; label?: string }>(`/api/projects/${projectId}/links/${editingLinkId}`, { url: editDraft.url, label: editDraft.label.trim() || undefined });
-      setLinks((current) => current.map((item) => item.id === link.id ? link : item)); cancelEdit(); onToast("Link updated.");
+      setLinks((current) => current.map((item) => item.id === link.id ? link : item)); cancelEdit(); await invalidateActivity(); onToast("Link updated.");
     } catch (error) { terminateOnUnauthorized(error); setEditError(error instanceof Error ? error.message : "The link could not be updated."); }
     finally { setSavingEdit(false); }
   }
@@ -107,7 +111,7 @@ export function CollectionPanel({ projectId, collection, assets, canManage, canD
     setReorderingLinkId(activeId);
     try {
       await apiPost<{ position: number }, { beforeId: string | null; afterId: string | null }>(`/api/projects/${projectId}/links/${activeId}/reorder`, { beforeId: neighbors.beforeId, afterId: neighbors.afterId });
-      await loadLinks();
+      await invalidateActivity(); await loadLinks();
     } catch (error) {
       if (error instanceof ApiError && error.status === 409) {
         try { await loadLinks(); } catch (reloadError) { terminateOnUnauthorized(reloadError); onToast(reloadError instanceof Error ? reloadError.message : "Delivered links could not be loaded.", "error"); }

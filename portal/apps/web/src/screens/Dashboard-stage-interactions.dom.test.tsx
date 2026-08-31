@@ -753,6 +753,8 @@ describe("Dashboard Stage interactions", () => {
     });
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const runtime = new ProjectQueryRuntime(queryClient, "dashboard-settle-test");
+    const publish = vi.spyOn(runtime, "publish");
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
     await act(async () => {
       root.render(<ProjectQueryRuntimeProvider runtime={runtime}><QueryClientProvider client={queryClient}><Dashboard currentUserId="admin-1" /></QueryClientProvider></ProjectQueryRuntimeProvider>);
       await Promise.resolve();
@@ -763,6 +765,10 @@ describe("Dashboard Stage interactions", () => {
     await dndEnd("source", "awaiting_raw", { id: "target", data: cardData("raw_review", "target") });
     await flush();
 
+    expect(publish).toHaveBeenCalledWith(expect.objectContaining({ type: "dashboard-board-invalidated" }));
+    expect(publish).toHaveBeenCalledWith(expect.objectContaining({ type: "project-data-invalidated", projectId: "source", resources: [{ kind: "detail" }, { kind: "activity" }] }));
+    expect(publish).toHaveBeenCalledWith(expect.objectContaining({ type: "production-calendar-invalidated" }));
+    expect(invalidate.mock.calls.some(([options]) => options?.queryKey?.[0] === "dashboard-projects")).toBe(false);
     expect(projectFetches).toBe(2);
     const movedCard = card(host, "Source Street");
     expect(movedCard.querySelector<HTMLButtonElement>('[aria-label="Move Source Street"]')?.disabled).toBe(true);
@@ -1112,7 +1118,7 @@ describe("Dashboard Stage interactions", () => {
     apiGetMock.mockImplementation((path) => path === "/api/projects" ? Promise.resolve(externalResponse()) : Promise.resolve({}));
     await act(async () => { root.render(<Dashboard currentUserId="external-1" role="external_editor" />); await Promise.resolve(); });
     await flush();
-    const editingColumn = [...host.querySelectorAll<HTMLElement>(".kcol")].find((column) => column.querySelector('[href="/projects/123e4567-e89b-42d3-a456-426614174001"]'));
+    const editingColumn = [...host.querySelectorAll<HTMLElement>(".kcol")].find((column) => column.querySelector('[href="/?view=kanban&detail=123e4567-e89b-42d3-a456-426614174001"]'));
     expect(editingColumn).not.toBeUndefined();
     expect([...editingColumn!.querySelectorAll<HTMLElement>(".kcard__addr")].map((element) => element.textContent)).toEqual(["External Second Street", "External First Street"]);
     expect(editingColumn!.textContent).toContain("Editing");

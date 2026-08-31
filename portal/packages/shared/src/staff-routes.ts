@@ -29,10 +29,32 @@ export type DashboardCalendarState = {
   myTasks: boolean;
 };
 
-export type DashboardCalendarRoute = { kind: "dashboard"; calendar?: DashboardCalendarState };
+export const DASHBOARD_QUICK_DETAIL_VIEWS = ["overview", "activity", "discussion"] as const;
+
+export type DashboardQuickDetail = {
+  projectId: string;
+  view: (typeof DASHBOARD_QUICK_DETAIL_VIEWS)[number];
+};
+
+export type DashboardListKanbanRoute = {
+  kind: "dashboard";
+  dashboardView: "list" | "kanban";
+  detail?: DashboardQuickDetail;
+};
+
+export type DashboardCalendarFacetRoute = {
+  kind: "dashboard";
+  calendar: DashboardCalendarState;
+  detail?: DashboardQuickDetail;
+};
+
+export type DashboardRoute =
+  | { kind: "dashboard" }
+  | DashboardListKanbanRoute
+  | DashboardCalendarFacetRoute;
 
 export type StaffRoute =
-  | DashboardCalendarRoute
+  | DashboardRoute
   | { kind: "create-project" }
   | { kind: "project"; projectId: string; collaboration?: "open" }
   | { kind: "edit-project"; projectId: string }
@@ -41,12 +63,15 @@ export type StaffRoute =
   | { kind: "not-found" }
   | { kind: "reserved" };
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+export const CANONICAL_LOWERCASE_UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const UUID = CANONICAL_LOWERCASE_UUID_REGEX;
 const reservedRoots = new Set(["api", "media", "__transform-source", "d"]);
 const COLLABORATION_NOTIFICATION_TYPES = new Set(["mentioned", "subtask_assigned", "subtask_due_today", "project_collaboration_activity"]);
 const calendarParameterNames = new Set([
-  "view", "date", "sub", "layers", "editors", "unassigned", "stages", "completed", "delivered", "overdue", "mine", "q",
+  "view", "date", "sub", "layers", "editors", "unassigned", "stages", "completed", "delivered", "overdue", "mine", "q", "detail", "detailView",
 ]);
+const dashboardListKanbanParameterNames = new Set(["view", "detail", "detailView"]);
+const dashboardQuickDetailViewNames = new Set<DashboardQuickDetail["view"]>(["activity", "discussion"]);
 const calendarFilterDefaults = productionCalendarFiltersSchema.parse({});
 
 function unsafeText(value: string): boolean {
@@ -114,6 +139,45 @@ function hasMalformedQueryEncoding(query: string): boolean {
   return false;
 }
 
+function decodeQueryComponent(value: string): string {
+  return decodeURIComponent(value.replace(/\+/gu, " "));
+}
+
+/**
+ * Parse the common Dashboard query boundary before dispatching to a route arm.
+ * URLSearchParams accepts several equivalent spellings, but staff locations only
+ * accept the spelling emitted by URLSearchParams itself. Ordering remains a
+ * serializer concern, so callers may still supply parameters in any order.
+ */
+function parseDashboardQuery(query: string): URLSearchParams | null {
+  if (new TextEncoder().encode(query).byteLength > PRODUCTION_CALENDAR_MAX_ENCODED_QUERY_BYTES || hasMalformedQueryEncoding(query)) return null;
+
+  let params: URLSearchParams;
+  try {
+    params = new URLSearchParams(query);
+  } catch {
+    return null;
+  }
+
+  const seen = new Set<string>();
+  for (const part of query.split("&")) {
+    const equals = part.indexOf("=");
+    const rawName = equals === -1 ? part : part.slice(0, equals);
+    const rawValue = equals === -1 ? "" : part.slice(equals + 1);
+    try {
+      const name = decodeQueryComponent(rawName);
+      const value = decodeQueryComponent(rawValue);
+      if (unsafeText(name) || unsafeText(value) || seen.has(name)) return null;
+      seen.add(name);
+      const canonicalPart = new URLSearchParams([[name, value]]).toString();
+      if (canonicalPart !== `${rawName}=${rawValue}`) return null;
+    } catch {
+      return null;
+    }
+  }
+  return params;
+}
+
 function canonicalKnownList<T extends string>(values: readonly T[], order: readonly T[]): T[] {
   const unique = new Set(values);
   return order.filter((value) => unique.has(value));
@@ -131,20 +195,11 @@ function parseCalendarFlag(params: URLSearchParams, name: string): boolean | nul
   return params.get(name) === "1" ? true : null;
 }
 
-function parseCalendarLocation(query: string): DashboardCalendarState | null {
-  if (new TextEncoder().encode(query).byteLength > PRODUCTION_CALENDAR_MAX_ENCODED_QUERY_BYTES || hasMalformedQueryEncoding(query)) return null;
-
-  let params: URLSearchParams;
-  try {
-    params = new URLSearchParams(query);
-  } catch {
-    return null;
-  }
-
-  const seen = new Set<string>();
-  for (const [name, value] of params) {
-    if (unsafeText(name) || unsafeText(value) || !calendarParameterNames.has(name) || seen.has(name)) return null;
-    seen.add(name);
+function parseCalendarLocation(params: URLSearchParams): DashboardCalendarState | null {
+  // Decoded-value safety and duplicate rejection are handled by parseDashboardQuery; this
+  // arm only enforces its own closed parameter allow-list.
+  for (const name of params.keys()) {
+    if (!calendarParameterNames.has(name)) return null;
   }
   if (params.get("view") !== "calendar") return null;
 
@@ -191,6 +246,31 @@ function parseCalendarLocation(query: string): DashboardCalendarState | null {
   };
 }
 
+function parseDashboardListKanbanLocation(params: URLSearchParams): DashboardListKanbanRoute | null {
+  for (const name of params.keys()) {
+    if (!dashboardListKanbanParameterNames.has(name)) return null;
+  }
+  const dashboardView = params.get("view");
+  if (dashboardView !== "list" && dashboardView !== "kanban") return null;
+
+  const projectId = params.get("detail");
+  const detailView = params.get("detailView");
+  if (projectId === null && detailView !== null) return null;
+  if (projectId !== null && !UUID.test(projectId)) return null;
+  if (detailView !== null && !dashboardQuickDetailViewNames.has(detailView as DashboardQuickDetail["view"])) return null;
+
+  return {
+    kind: "dashboard",
+    dashboardView,
+    ...(projectId === null ? {} : {
+      detail: {
+        projectId,
+        view: (detailView ?? "overview") as DashboardQuickDetail["view"],
+      },
+    }),
+  };
+}
+
 /** Parse the complete, canonical relative staff location. Queries stay closed except for
  * the one-shot collaboration arrival intent on an otherwise canonical project route. */
 export function parseStaffLocation(location: string): StaffRoute {
@@ -202,8 +282,30 @@ export function parseStaffLocation(location: string): StaffRoute {
   const route = parseStaffPathname(pathname);
   if (route.kind === "project" && query === "collaboration=open") return { ...route, collaboration: "open" };
   if (route.kind !== "dashboard" || pathname !== "/") return { kind: "not-found" };
-  const calendar = parseCalendarLocation(query);
-  return calendar === null ? { kind: "not-found" } : { kind: "dashboard", calendar };
+  const params = parseDashboardQuery(query);
+  if (params === null) return { kind: "not-found" };
+  const view = params.get("view");
+  if (view === "list" || view === "kanban") return parseDashboardListKanbanLocation(params) ?? { kind: "not-found" };
+  if (view === "calendar") {
+    const calendar = parseCalendarLocation(params);
+    if (calendar === null) return { kind: "not-found" };
+    const projectId = params.get("detail");
+    const detailView = params.get("detailView");
+    if (projectId === null && detailView !== null) return { kind: "not-found" };
+    if (projectId !== null && !UUID.test(projectId)) return { kind: "not-found" };
+    if (detailView !== null && !dashboardQuickDetailViewNames.has(detailView as DashboardQuickDetail["view"])) return { kind: "not-found" };
+    return {
+      kind: "dashboard",
+      calendar,
+      ...(projectId === null ? {} : {
+        detail: {
+          projectId,
+          view: (detailView ?? "overview") as DashboardQuickDetail["view"],
+        },
+      }),
+    };
+  }
+  return { kind: "not-found" };
 }
 
 function serializedList(values: readonly string[], order: readonly string[]): string {
@@ -238,9 +340,21 @@ function calendarPathFor(calendar: DashboardCalendarState): string {
   return `/?${params.toString()}`;
 }
 
+function appendDashboardQuickDetail(path: string, detail: DashboardQuickDetail | undefined): string {
+  if (!detail) return path;
+  const params = new URLSearchParams();
+  params.set("detail", stripUnsafeText(detail.projectId));
+  if (detail.view !== "overview") params.set("detailView", stripUnsafeText(detail.view));
+  return `${path}&${params.toString()}`;
+}
+
 export function staffPathFor(route: Exclude<StaffRoute, { kind: "not-found" } | { kind: "reserved" }>): string {
   switch (route.kind) {
-    case "dashboard": return route.calendar === undefined ? "/" : calendarPathFor(route.calendar);
+    case "dashboard": {
+      if ("calendar" in route) return appendDashboardQuickDetail(calendarPathFor(route.calendar), route.detail);
+      if ("dashboardView" in route) return appendDashboardQuickDetail(`/?view=${route.dashboardView}`, route.detail);
+      return "/";
+    }
     case "create-project": return "/projects/new";
     case "project": return `/projects/${encodeURIComponent(route.projectId)}${route.collaboration === "open" ? "?collaboration=open" : ""}`;
     case "edit-project": return `/projects/${encodeURIComponent(route.projectId)}/edit`;

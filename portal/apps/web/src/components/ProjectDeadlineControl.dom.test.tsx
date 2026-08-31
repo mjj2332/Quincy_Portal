@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ApiError } from "../lib/api";
 import { ProjectQueryRuntime, ProjectQueryRuntimeProvider } from "../lib/project-query-sync";
+import { projectDataKeys } from "../lib/project-data";
 import type { ProjectDeadlineSchedule } from "@quincy/shared";
 
 const apiPutMock = vi.hoisted(() => vi.fn<(path: string, body: unknown) => Promise<unknown>>());
@@ -66,6 +67,9 @@ describe("ProjectDeadlineControl", () => {
 
   it("keeps the combined editor draft and sends the dedicated versioned route", async () => {
     const host = await mount(emptySchedule);
+    queryClient.setQueryData(projectDataKeys.detail(projectId), { id: projectId });
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    const publish = vi.spyOn(runtime, "publish");
     const set = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Set Deadline")!;
     await act(async () => { set.click(); await Promise.resolve(); });
     await setInput(host.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')!, "2027-01-15");
@@ -75,6 +79,11 @@ describe("ProjectDeadlineControl", () => {
     await act(async () => { host.querySelector<HTMLButtonElement>('button[type="submit"]')!.click(); await Promise.resolve(); });
     await flush();
     expect(apiPutMock).toHaveBeenCalledWith(`/api/projects/${projectId}/deadline`, { expectedVersion: 0, deadline: { localCivil: "2027-01-15T09:00" }, reminderOffsetsMinutes: [1440] });
+    expect(invalidate.mock.calls.filter(([options]) => JSON.stringify(options?.queryKey) === JSON.stringify(projectDataKeys.detail(projectId)))).toHaveLength(1);
+    expect(invalidate.mock.calls.some(([options]) => options?.queryKey?.[0] === "dashboard-projects")).toBe(false);
+    expect(invalidate.mock.calls.some(([options]) => options?.queryKey?.[0] === "production-calendar")).toBe(false);
+    expect(publish.mock.calls.map(([message]) => message.type)).toEqual(expect.arrayContaining(["project-data-invalidated", "dashboard-board-invalidated", "production-calendar-invalidated"]));
+    expect(publish.mock.calls.find(([message]) => message.type === "project-data-invalidated")?.[0]).toMatchObject({ projectId, resources: [{ kind: "detail" }, { kind: "activity" }] });
     expect(host.textContent).toContain("2027-01-15 09:00");
   });
 

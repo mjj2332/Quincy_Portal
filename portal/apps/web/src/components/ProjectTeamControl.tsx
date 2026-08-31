@@ -5,6 +5,7 @@ import { ApiError, apiDeleteWithBody, apiPutWithStatus } from "../lib/api";
 import { confirm } from "../lib/confirm";
 import {
   beginProjectMembershipMutation,
+  invalidateProjectSurfaces,
   useProjectAssignmentCandidatesQuery,
   useProjectAccessTermination,
   useOptionalProjectQueryClient,
@@ -123,6 +124,7 @@ export function ProjectTeamControl({ projectId, members, canEdit }: { projectId:
       mutation = await beginProjectMembershipMutation(queryClient, projectId, roleOnProject, candidate.id, "add", optimistic);
       const response = await apiPutWithStatus<MembershipResponse>(`/api/projects/${encodeURIComponent(projectId)}/${roleOnProject === "photographer" ? "photographers" : "editors"}/${encodeURIComponent(candidate.id)}`);
       await mutation.commit(response.data.membership);
+      await invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "activity" }], dashboard: true, calendar: true });
       setState(key, null);
     } catch (error) {
       await mutation?.fail(); terminateOnUnauthorized(error); setState(key, { kind: "error", message: error instanceof Error ? error.message : "Assignment could not be added." });
@@ -144,6 +146,7 @@ export function ProjectTeamControl({ projectId, members, canEdit }: { projectId:
           : { membershipCycle: member.id, clearSubtaskAssignments: clearAssignments, confirmedAssignmentCount: confirmedCount ?? 0 } as const;
         const response = await apiDeleteWithBody<RemoveResponse, typeof body>(`/api/projects/${encodeURIComponent(projectId)}/${member.roleOnProject === "photographer" ? "photographers" : "editors"}/${encodeURIComponent(member.userId)}`, body);
         await mutation.commit(undefined, response.subtaskAssignmentsCleared);
+        await invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "activity" }, ...(response.subtaskAssignmentsCleared > 0 ? [{ kind: "subtasks" as const }] : [])], dashboard: true, calendar: true });
         setState(key, null);
         return;
       } catch (error) {

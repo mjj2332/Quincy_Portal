@@ -359,15 +359,18 @@ describe("ProductionCalendar Project Deadline mutation", () => {
     const settleStates: Array<{ pending: boolean; recoveryReason: string | null }> = [];
     const runtime = new ProjectQueryRuntime(client, "calendar-mutation-tab");
     const publish = vi.spyOn(runtime, "publish");
+    const invalidate = vi.spyOn(client, "invalidateQueries");
     await render(calendar, { onSettleStateChange: (state: { pending: boolean; recoveryReason: string | null }) => settleStates.push(state) });
     await click("month-drop");
     await waitForMutation();
     expect(apiGetMock).toHaveBeenCalledTimes(2);
     expect(settleStates.some((state) => state.pending && state.recoveryReason === null)).toBe(true);
     expect(settleStates.at(-1)).toEqual({ pending: false, recoveryReason: null });
-    expect(publish).toHaveBeenCalledOnce();
-    expect(publish.mock.calls[0]?.[0]).toMatchObject({ version: 1, type: "production-calendar-invalidated" });
-    expect(publish.mock.calls[0]?.[0]).not.toHaveProperty("projectId");
+    expect(publish).toHaveBeenCalledTimes(3);
+    expect(publish.mock.calls.map(([message]) => message.type)).toEqual(expect.arrayContaining(["project-data-invalidated", "dashboard-board-invalidated", "production-calendar-invalidated"]));
+    expect(publish.mock.calls.find(([message]) => message.type === "production-calendar-invalidated")?.[0]).toMatchObject({ version: 1, type: "production-calendar-invalidated" });
+    expect(publish.mock.calls.find(([message]) => message.type === "production-calendar-invalidated")?.[0]).not.toHaveProperty("projectId");
+    expect(invalidate.mock.calls.some(([options]) => options?.queryKey?.[0] === "production-calendar")).toBe(false);
     runtime.dispose();
   });
 

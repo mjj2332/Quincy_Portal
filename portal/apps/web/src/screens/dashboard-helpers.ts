@@ -4,7 +4,7 @@ import {
   normalizeProductionCalendarSearch,
   productionCalendarFiltersSchema,
   PRODUCTION_CALENDAR_SUBVIEWS,
-  type DashboardCalendarRoute,
+  type DashboardCalendarFacetRoute,
   type DashboardCalendarState,
   type StaffRoute,
 } from "@quincy/shared";
@@ -136,11 +136,11 @@ function sydneyToday(now: Date | number | string): string {
  * the existing dashboard preference migration and are deliberately best-effort.
  */
 export function initializeDashboardCalendarState(
-  route: StaffRoute | DashboardCalendarRoute,
+  route: StaffRoute | DashboardCalendarFacetRoute,
   storage: DashboardCalendarPreferenceStorage,
   { now, isPhone }: DashboardCalendarInitializationOptions,
 ): DashboardCalendarInitialState {
-  const calendar = route.kind === "dashboard" ? route.calendar : undefined;
+  const calendar = route.kind === "dashboard" && "calendar" in route ? route.calendar : undefined;
   if (calendar) return calendar;
 
   const savedSubview = normalizeDashboardCalendarSubview(readCalendarPreference(storage, DASHBOARD_CALENDAR_SUBVIEW_KEY));

@@ -629,7 +629,7 @@ describe("TB5A Slice 3 stage-board bundles", () => {
           terminal = { statements: [d1.prepare(source.source).bind(...values)], indexes: { terminalAssertion: 0 } };
         }
         if (stale.aba) db.prepare("UPDATE projects SET board_revision = 7 WHERE id = 'target'").run();
-        const activity = buildStageActivityBundle({ db: d1, projectId: "target", activityId: "activity", actorId: "actor", winnerAuditId: "audit-stage", occurredAt: 1_787_000_000_101, createdAt: 1_787_000_000_101 });
+        const activity = buildStageActivityBundle({ db: d1, projectId: "target", activityId: "a0000000-0000-4000-8000-0000000000ff", actorId: "actor", winnerAuditId: "audit-stage", occurredAt: 1_787_000_000_101, createdAt: 1_787_000_000_101 });
         const bundle = composeStageBundle({ preWinner, stage, state, workflow, token, activity, terminal });
 
         await expect(executeBundle(d1, bundle), `${placement}: ${stale.name}`).rejects.toThrow(/audit_log\.id|bundle_assertion/i);
@@ -743,7 +743,7 @@ describe("TB5A Slice 3 stage-board bundles", () => {
       },
     } as unknown as D1Database;
     const stage = buildNonCompactingStageWinner({ ...baseStageInput(db), placement: "append", expectedTarget: [] });
-    const activity = buildStageActivityBundle({ db, projectId: "target", activityId: "activity", actorId: "actor", winnerAuditId: "audit-stage" });
+    const activity = buildStageActivityBundle({ db, projectId: "target", activityId: "a0000000-0000-4000-8000-0000000000ff", actorId: "actor", winnerAuditId: "audit-stage" });
     const deadline = buildDeadlineSuppressionBundle({ db, projectId: "target", reason: "project_delivered", auditId: "audit-stage" });
     const workflowKinds = [
       "none",

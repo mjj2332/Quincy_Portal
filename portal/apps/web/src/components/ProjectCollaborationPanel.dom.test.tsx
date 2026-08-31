@@ -8,6 +8,7 @@ import { EditProject } from "../screens/EditProject";
 import { Topbar } from "./Topbar";
 import { QuincyQueryProvider } from "../lib/query-client";
 import { ApiError } from "../lib/api";
+import { getProjectQueryRuntime } from "../lib/project-query-sync";
 import { projectDataKeys } from "../lib/project-data";
 import { purgeProjectCollaborationData, useProjectCommentPresentation, useProjectCommentReadStateQuery, useProjectCommentsCacheQuery, useProjectCommentsQuery } from "../lib/project-comments";
 
@@ -125,9 +126,9 @@ function PresentationSeed({ pages, onClient }: { pages: unknown; onClient: (clie
   return null;
 }
 
-function PresentationHarness({ onPresentation, onClient, onOpen }: { onPresentation?: (presentation: ReturnType<typeof useProjectCommentPresentation>) => void; onClient?: (client: QueryClient) => void; onOpen?: (setOpen: (open: boolean) => void) => void } = {}) {
+function PresentationHarness({ onPresentation, onClient, onOpen, initialOpen = true }: { onPresentation?: (presentation: ReturnType<typeof useProjectCommentPresentation>) => void; onClient?: (client: QueryClient) => void; onOpen?: (setOpen: (open: boolean) => void) => void; initialOpen?: boolean } = {}) {
   const queryClient = useQueryClient();
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(initialOpen);
   const presentation = useProjectCommentPresentation({ projectId, open });
   const commentsQuery = useProjectCommentsQuery(projectId, true, presentation.readAttemptRegistrar, open);
   const readStateQuery = useProjectCommentReadStateQuery(projectId, true);
@@ -155,6 +156,30 @@ afterEach(async () => {
 });
 
 describe("ProjectCollaborationPanel", () => {
+  it("does not advance a hidden discussion and advances only after it is presented", async () => {
+    const globals = globalThis as unknown as Record<string, unknown>;
+    const previousObserver = globals.IntersectionObserver;
+    const previousFocused = focusManager.isFocused();
+    Reflect.deleteProperty(globals, "IntersectionObserver");
+    focusManager.setFocused(true);
+    apiGetMock.mockImplementation((path) => path.includes("comment-read-marker") ? Promise.resolve(readState()) : Promise.resolve(page(["head"])));
+    apiPatchMock.mockResolvedValue({ ...readState(), marker: { throughCommentId: "head", throughCreatedAt: "2026-08-25T00:00:00.000Z", updatedAt: "2026-08-25T00:00:01.000Z" }, latest: { commentId: "head", createdAt: "2026-08-25T00:00:00.000Z" } });
+    let setOpen!: (open: boolean) => void;
+    const host = mount();
+    await render(<PresentationHarness initialOpen={false} onOpen={(setter) => { setOpen = setter; }} />);
+    await flush(10);
+    expect(apiPatchMock).not.toHaveBeenCalled();
+    const anchor = host.querySelector<HTMLElement>("[data-testid=\"presentation-anchor\"]")!;
+    Object.defineProperty(anchor, "getBoundingClientRect", { configurable: true, value: () => ({ left: 0, top: 0, right: 100, bottom: 20, width: 100, height: 20 }) });
+    await act(async () => { setOpen(true); await Promise.resolve(); });
+    window.dispatchEvent(new Event("scroll"));
+    await flush(20);
+    expect(apiPatchMock).toHaveBeenCalledWith("/api/projects/" + projectId + "/comment-read-marker", { throughCommentId: "head" });
+    focusManager.setFocused(previousFocused);
+    if (previousObserver === undefined) Reflect.deleteProperty(globals, "IntersectionObserver");
+    else globals.IntersectionObserver = previousObserver;
+  });
+
   it("posts a task list and renders its posted indicator without a checkbox control", async () => {
     const content = { type: "doc" as const, content: [{ type: "taskList" as const, content: [{ type: "taskItem" as const, attrs: { checked: false }, content: [{ type: "paragraph" as const, content: [{ type: "text" as const, text: "Comment task" }] }] }] }] };
     const posted = { ...otherComment, id: "comment-task", body: "Comment task", content };
@@ -247,6 +272,19 @@ describe("ProjectCollaborationPanel", () => {
     await unmount(); host.remove(); const standalone = mount(); await render(<ProjectCollaborationPanel projectId={projectId} mode="standalone" />);
     const panel = standalone.querySelector<HTMLElement>(".project-collaboration")!;
     expect(panel.classList.contains("project-collaboration--overlay")).toBe(false); expect(panel.querySelector(".project-collaboration__scroll")).toBeNull(); expect(panel.querySelector(".subtask-checklist")).not.toBeNull();
+  });
+
+  it("keeps the standalone composer draft across an active comments refetch", async () => {
+    let queryClient!: QueryClient;
+    apiGetMock.mockImplementation((path) => path.includes("comment-read-marker") ? Promise.resolve(readState()) : path.includes("subtasks") ? Promise.resolve({ subtasks: [] }) : Promise.resolve(comments()));
+    const host = mount();
+    await render(<><PresentationSeed pages={{ pages: [comments()], pageParams: [null] }} onClient={(client) => { queryClient = client; }} /><ProjectCollaborationPanel projectId={projectId} mode="standalone" /></>);
+    const composer = host.querySelector<HTMLElement>('[contenteditable="true"]')!;
+    await typeIntoEditor(composer, "Draft survives poll");
+
+    await queryClient.invalidateQueries({ queryKey: projectDataKeys.comments(projectId), exact: true, refetchType: "active" });
+    await flush(10);
+    expect(host.querySelector<HTMLElement>('[contenteditable="true"]')?.textContent).toContain("Draft survives poll");
   });
 
   it("keeps the overlay open when checklist title, all popovers, and composer Escape consume the event", async () => {
@@ -369,6 +407,29 @@ describe("ProjectCollaborationPanel", () => {
     expect(apiPatchMock).not.toHaveBeenCalled();
     await typeIntoEditor(composer, "@Nor"); await keydown(composer, "Enter");
     expect(apiGetMock).toHaveBeenCalledWith(`/api/mentionable-users?projectId=${projectId}&q=Nor`);
+  });
+
+  it("keeps Activity invalidation in create, edit, and delete comment success paths", async () => {
+    let client!: QueryClient;
+    const host = mount();
+    await render(<><PresentationSeed pages={{ pages: [comments()], pageParams: [null] }} onClient={(next) => { client = next; }} /><ProjectCollaborationPanel projectId={projectId} mode="standalone" /></>);
+    const runtime = getProjectQueryRuntime(client)!;
+    const publish = vi.spyOn(runtime, "publish");
+    await typeIntoEditor(host.querySelector<HTMLElement>('[contenteditable="true"]')!, "New Activity comment");
+    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Post comment")!); await flush();
+    expect(publish.mock.calls.some(([message]) => message.type === "project-data-invalidated" && JSON.stringify(message.resources) === JSON.stringify([{ kind: "comments" }, { kind: "comment-read-marker" }, { kind: "activity" }]))).toBe(true);
+
+    publish.mockClear();
+    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Edit")!);
+    await appendToEditor(host.querySelector<HTMLElement>('[contenteditable="true"]')!, " edited");
+    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Save")!); await flush();
+    expect(publish.mock.calls.some(([message]) => message.type === "project-data-invalidated" && JSON.stringify(message.resources) === JSON.stringify([{ kind: "comments" }, { kind: "activity" }]))).toBe(true);
+
+    publish.mockClear();
+    const deleteButton = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Delete");
+    expect(deleteButton).toBeDefined();
+    await click(deleteButton!); await flush();
+    expect(publish.mock.calls.some(([message]) => message.type === "project-data-invalidated" && JSON.stringify(message.resources) === JSON.stringify([{ kind: "comments" }, { kind: "comment-read-marker" }, { kind: "activity" }]))).toBe(true);
   });
 
   it("ignores a late POST continuation after the collaboration panel unmounts", async () => {

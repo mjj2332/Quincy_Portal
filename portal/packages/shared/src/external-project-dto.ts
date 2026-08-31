@@ -4,7 +4,9 @@ import { externalAssetSchema } from "./external-asset-dto";
 import { externalEditedCompleteResponseSchema, externalEditedUploadCreateResponseSchema } from "./external-upload";
 import { STAGE_PRESENTATION_KEYS } from "./stage-move";
 import { externalCalendarRangeSchema } from "./production-calendar";
+import { externalProjectActivityFeedResponseSchema } from "./project-activity-feed";
 export { externalCalendarRangeSchema } from "./production-calendar";
+export { externalProjectActivityFeedResponseSchema } from "./project-activity-feed";
 
 const iso = z.string().min(1);
 const uuid = z.string().uuid();
@@ -223,7 +225,7 @@ export type ExternalApiSurface =
   | "me" | "notification-preferences" | "project-list" | "project-detail" | "asset-list" | "annotation-list"
   | "annotation-mutation" | "collection-links" | "ingest-status" | "stages" | "collaboration" | "checklist" | "comment-list"
   | "comment-mutation" | "comment-read-state" | "mentionable" | "notifications" | "notification-mutation"
-  | "review-mutation" | "external-upload" | "external-upload-complete" | "access-snapshot" | "calendar" | "export";
+  | "review-mutation" | "external-upload" | "external-upload-complete" | "access-snapshot" | "activity" | "calendar" | "export";
 
 export const EXTERNAL_API_RESPONSE_SCHEMAS: Readonly<Record<ExternalApiSurface, z.ZodTypeAny>> = {
   me: externalMeResponseSchema,
@@ -248,6 +250,7 @@ export const EXTERNAL_API_RESPONSE_SCHEMAS: Readonly<Record<ExternalApiSurface, 
   "external-upload": externalEditedUploadCreateResponseSchema,
   "external-upload-complete": externalEditedCompleteResponseSchema,
   "access-snapshot": externalProjectAccessSnapshotSchema,
+  activity: externalProjectActivityFeedResponseSchema,
   calendar: externalCalendarRangeSchema,
   export: externalProjectExportSchema,
 };

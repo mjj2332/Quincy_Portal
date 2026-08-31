@@ -2,13 +2,14 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { focusManager, useQueryClient } from "@tanstack/react-query";
+import { focusManager, QueryObserver, useQueryClient } from "@tanstack/react-query";
 import { ProjectWorkspace } from "./ProjectWorkspace";
 import type { WorkspaceAsset } from "../components/PhotoGrid";
 import { ApiError } from "../lib/api";
 import { QuincyQueryProvider } from "../lib/query-client";
 import { createProjectDataInvalidationMessage, getProjectQueryRuntime } from "../lib/project-query-sync";
 import { projectAssetsQueryOptions, projectDataKeys } from "../lib/project-data";
+import { dashboardProjectsKey } from "../lib/dashboard-projects";
 import type { Role } from "@quincy/shared";
 
 const authState = vi.hoisted(() => ({ role: "editor" }));
@@ -451,6 +452,10 @@ afterEach(async () => {
     const runtime = getProjectQueryRuntime(queryClient!);
     const publish = vi.spyOn(runtime!, "publish");
     const invalidate = vi.spyOn(queryClient!, "invalidateQueries");
+    const dashboardKey = dashboardProjectsKey("test-user", "admin", 0, false);
+    queryClient!.setQueryData(dashboardKey, []);
+    const dashboardObserver = new QueryObserver(queryClient!, { queryKey: dashboardKey, queryFn: () => Promise.resolve([]), staleTime: Infinity });
+    const stopDashboardObserver = dashboardObserver.subscribe(() => undefined);
     const select = host.querySelector<HTMLSelectElement>('[aria-label="Move project Stage"]');
     expect(select).not.toBeNull();
     select!.value = "awaiting_raw";
@@ -463,8 +468,10 @@ afterEach(async () => {
     const boardMessage = publish.mock.calls.map(([message]) => message).find((message) => message.type === "dashboard-board-invalidated");
     expect(boardMessage).toEqual(expect.objectContaining({ version: 1, type: "dashboard-board-invalidated" }));
     expect(boardMessage).not.toHaveProperty("projectId");
-    expect(publish).toHaveBeenCalledWith(expect.objectContaining({ type: "project-data-invalidated", projectId: "p1", resources: [{ kind: "detail" }] }));
-    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["dashboard-projects"], refetchType: "active" });
+    expect(publish).toHaveBeenCalledWith(expect.objectContaining({ type: "project-data-invalidated", projectId: "p1", resources: [{ kind: "detail" }, { kind: "activity" }] }));
+    expect(publish).toHaveBeenCalledWith(expect.objectContaining({ version: 1, type: "production-calendar-invalidated" }));
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: dashboardKey, exact: true, refetchType: "active" });
+    stopDashboardObserver();
   });
 
   it("uses the idempotent already-in message and restores rail focus after a 503", async () => {
@@ -556,6 +563,38 @@ afterEach(async () => {
     expect(invalidate).toHaveBeenCalledWith(expect.objectContaining({ queryKey: projectDataKeys.detail("p1"), exact: true, refetchType: "active" }));
     expect(invalidate).toHaveBeenCalledWith(expect.objectContaining({ queryKey: projectDataKeys.assets("p1", "edited"), exact: true, refetchType: "active" }));
     expect(publish).toHaveBeenCalledWith(expect.objectContaining({ type: "project-data-invalidated", projectId: "p1", resources: [{ kind: "assets", collectionKind: "raw" }, { kind: "detail" }, { kind: "assets", collectionKind: "edited" }] }));
+    vi.unstubAllGlobals();
+  });
+
+  it("keeps document assets/detail invalidation and adds Activity after copy completion", async () => {
+    authState.role = "admin";
+    let queryClient: ReturnType<typeof import("../lib/query-client").createQuincyQueryClient> | undefined;
+    apiGetMock.mockImplementation((path: string) => {
+      if (path === "/api/projects/p1") return Promise.resolve(projectFixture());
+      if (path.includes("/assets?collection=")) return Promise.resolve({ assets: [] });
+      if (path.includes("/ingest-status")) return Promise.resolve({ expectedCount: null, receivedCount: 2, mismatch: false });
+      if (path.includes("/links")) return Promise.resolve({ links: [] });
+      if (path.includes("/annotations")) return Promise.resolve({ annotations: [] });
+      if (path.includes("/comments?")) return Promise.resolve({ project: { id: "p1", street: "12 Example St" }, comments: [] });
+      if (path.includes("comment-read-marker")) return Promise.resolve({ projectId: "p1", marker: null, latest: null, unreadCount: 0 });
+      if (path.includes("/subtasks")) return Promise.resolve({ subtasks: [] });
+      if (path.includes("/mentionable-users")) return Promise.resolve({ users: [] });
+      return Promise.resolve({});
+    });
+    apiPostMock.mockImplementation((path: string) => path.endsWith("/documents/presign")
+      ? Promise.resolve({ sessionId: "session-1", version: 1, files: { pdf: { key: "copy.pdf", devDirect: true } } })
+      : Promise.resolve({}));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 200 })));
+    await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>); await flush(20);
+    await click([...host.querySelectorAll<HTMLButtonElement>(".frow")].find((button) => button.textContent?.includes("Copy"))!); await flush(20);
+    const runtime = getProjectQueryRuntime(queryClient!); const publish = vi.spyOn(runtime!, "publish"); const invalidate = vi.spyOn(queryClient!, "invalidateQueries");
+    const input = host.querySelector<HTMLInputElement>('input[type="file"][accept="application/pdf"]')!;
+    Object.defineProperty(input, "files", { configurable: true, value: [new File(["copy"], "copy.pdf", { type: "application/pdf" })] });
+    await act(async () => { input.dispatchEvent(new Event("change", { bubbles: true })); await Promise.resolve(); }); await flush(20);
+    expect(invalidate).toHaveBeenCalledWith(expect.objectContaining({ queryKey: projectDataKeys.assets("p1", "copy"), exact: true, refetchType: "active" }));
+    expect(invalidate).toHaveBeenCalledWith(expect.objectContaining({ queryKey: projectDataKeys.detail("p1"), exact: true, refetchType: "active" }));
+    expect(invalidate).toHaveBeenCalledWith(expect.objectContaining({ queryKey: projectDataKeys.activity("p1"), exact: true, refetchType: "active" }));
+    expect(publish).toHaveBeenCalledWith(expect.objectContaining({ type: "project-data-invalidated", projectId: "p1", resources: [{ kind: "assets", collectionKind: "copy" }, { kind: "detail" }, { kind: "activity" }] }));
     vi.unstubAllGlobals();
   });
 

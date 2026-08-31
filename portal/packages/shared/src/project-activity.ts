@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { staffPathFor } from "./staff-routes";
+import { CANONICAL_LOWERCASE_UUID_REGEX, staffPathFor } from "./staff-routes";
 import { TB4D_SCHEDULE_ACTIVITY_CUTOVER_DATE } from "./checklist-schedule-config";
 
 export const PROJECT_ACTIVITY_SCHEMA_VERSION = 1 as const;
@@ -11,7 +11,7 @@ export const PROJECT_ACTIVITY_CATEGORIES = [
 ] as const;
 export type ProjectActivityCategory = (typeof PROJECT_ACTIVITY_CATEGORIES)[number];
 
-const LIVE_TYPES = [
+export const LIVE_TYPES = [
   "project.team.member_added",
   "project.team.member_removed",
   "project.deadline.schedule_changed",
@@ -35,7 +35,7 @@ const LIVE_TYPES = [
   "project.stage.changed",
   "project.checklist.schedule_changed",
 ] as const;
-const RESERVED_TYPES = [
+export const RESERVED_TYPES = [
   "project.workflow.raw_ready",
   "project.workflow.sent_to_editing",
   "project.workflow.edited_ready",
@@ -44,6 +44,10 @@ const RESERVED_TYPES = [
 export const PROJECT_ACTIVITY_TYPES = [...LIVE_TYPES, ...RESERVED_TYPES] as const;
 export type ProjectActivityType = (typeof PROJECT_ACTIVITY_TYPES)[number];
 export type ProjectActivityLiveType = (typeof LIVE_TYPES)[number];
+
+export function isProjectActivityLiveType(value: unknown): value is ProjectActivityLiveType {
+  return typeof value === "string" && (LIVE_TYPES as readonly string[]).includes(value);
+}
 
 export type ProjectActivityCoalescing = null | {
   strategy: "leading_edge";
@@ -63,7 +67,7 @@ type SourceKind =
   | "project_stage" | "project_workflow";
 
 const identifier = z.string().min(1).max(512);
-const activityId = identifier;
+const activityId = z.string().regex(CANONICAL_LOWERCASE_UUID_REGEX, "Activity id must be a canonical lowercase UUID");
 const checklistTitle = z.string().min(1).max(500).refine((value) => value.trim() === value, "Checklist title must be trimmed");
 const emptyPayload = z.object({}).strict();
 const roleOnProject = z.enum(["photographer", "editor"]);
@@ -323,7 +327,8 @@ export function parseProjectActivityIntent(value: unknown): ParsedProjectActivit
   const typed = type as ProjectActivityType;
   const entry = PROJECT_ACTIVITY_REGISTRY[typed];
   if (entry.cutover !== "live") return null;
-  if (typeof activity.id !== "string" || !activity.id || typeof activity.projectId !== "string" || !activity.projectId || typeof activity.actorId !== "string" && activity.actorId !== null) return null;
+  if (typeof activity.id !== "string" || !activityId.safeParse(activity.id).success || typeof activity.projectId !== "string" || !activity.projectId || typeof activity.actorId !== "string" && activity.actorId !== null) return null;
+  const parsedActivityId = activity.id;
   const actorKind: ActorKind = activity.actorKind === undefined ? (activity.actorId === null ? "system" : "user") : activity.actorKind as ActorKind;
   if ((actorKind === "user" && (!activity.actorId || activity.actorId === PROJECT_ACTIVITY_SYSTEM_OUTBOX_ACTOR_ID)) || (actorKind === "system" && activity.actorId !== null) || (actorKind !== "user" && actorKind !== "system")) return null;
   if (entry.actorRule !== actorKind) return null;
@@ -351,7 +356,7 @@ export function parseProjectActivityIntent(value: unknown): ParsedProjectActivit
   return {
     schemaVersion: 1,
     activity: {
-      id: activity.id,
+      id: parsedActivityId,
       type: typed,
       projectId: activity.projectId,
       actorId: activity.actorId,
@@ -363,7 +368,7 @@ export function parseProjectActivityIntent(value: unknown): ParsedProjectActivit
     },
     broadDelivery: {
       registryKey: typed,
-      sourceActivityId: activity.id,
+      sourceActivityId: parsedActivityId,
       coalesce: expectedCoalesce ? { key: expectedCoalesce.key, windowSeconds: expectedCoalesce.windowSeconds } : null,
     },
   };
@@ -371,8 +376,42 @@ export function parseProjectActivityIntent(value: unknown): ParsedProjectActivit
 
 export type ProjectActivityRow = ParsedProjectActivityIntent["activity"] & { category: ProjectActivityCategory; createdAt: number };
 
+export type ProjectActivityFeedRow = {
+  id: string;
+  type: ProjectActivityLiveType;
+  category: ProjectActivityCategory;
+  occurredAt: number;
+  actorId: string | null;
+  actorKind: ActorKind;
+  safePayload: ProjectActivityPayload;
+};
+
+function parseProjectActivityFeedRow(value: unknown): ProjectActivityFeedRow | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const row = value as Record<string, unknown>;
+  const id = row.id;
+  const type = row.event_type ?? row.eventType;
+  const category = row.category;
+  const occurredAt = row.occurred_at ?? row.occurredAt;
+  const actorId = row.actor_id ?? row.actorId ?? null;
+  if (typeof id !== "string" || id.length === 0 || !CANONICAL_LOWERCASE_UUID_REGEX.test(id) || !isProjectActivityLiveType(type)) return null;
+  if (category !== PROJECT_ACTIVITY_REGISTRY[type].category) return null;
+  if (typeof occurredAt !== "number" || !Number.isSafeInteger(occurredAt) || occurredAt < 0) return null;
+  if (actorId !== null && (typeof actorId !== "string" || actorId.length === 0)) return null;
+  let payload: unknown;
+  try { payload = JSON.parse(String(row.safe_payload_json ?? row.safePayloadJson)); } catch { return null; }
+  const parsedPayload = PROJECT_ACTIVITY_REGISTRY[type].payloadSchema.safeParse(payload);
+  if (!parsedPayload.success) return null;
+  const actorKind: ActorKind = actorId === null ? "system" : "user";
+  if (PROJECT_ACTIVITY_REGISTRY[type].actorRule !== actorKind) return null;
+  return { id, type, category: category as ProjectActivityCategory, occurredAt, actorId, actorKind, safePayload: parsedPayload.data as ProjectActivityPayload };
+}
+
 /** Parses only the immutable DB projection; no outbox or actor profile is dereferenced here. */
-export function parseProjectActivityRow(value: unknown): ProjectActivityRow | null {
+export function parseProjectActivityRow(value: unknown, projection: "feed"): ProjectActivityFeedRow | null;
+export function parseProjectActivityRow(value: unknown): ProjectActivityRow | null;
+export function parseProjectActivityRow(value: unknown, projection?: "feed"): ProjectActivityRow | ProjectActivityFeedRow | null {
+  if (projection === "feed") return parseProjectActivityFeedRow(value);
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const row = value as Record<string, unknown>;
   const get = (camel: string, snake: string) => row[camel] ?? row[snake];

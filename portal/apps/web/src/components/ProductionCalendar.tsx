@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import {
   deriveProductionCalendarWindow,
   formatSydneyCivilMinute,
@@ -40,8 +40,7 @@ import {
 import type { DashboardIdentity } from "../lib/dashboard-projects";
 import { ApiError, apiPatch, apiPut } from "../lib/api";
 import { confirm, confirmStore } from "../lib/confirm";
-import { invalidateProjectResources, useOptionalProjectQueryClient } from "../lib/project-data";
-import { createProductionCalendarInvalidatedMessage, getProjectQueryRuntime } from "../lib/project-query-sync";
+import { invalidateProjectSurfaces, useOptionalProjectQueryClient } from "../lib/project-data";
 import { decodeChecklistMutationResponse, productionCalendarFiltersFor, removeProductionCalendarQueries, useProductionCalendarRange, type ChecklistMutationResult } from "../lib/production-calendar-query";
 import { fullCalendarCallbackToSydneyCivil } from "../lib/production-calendar-fullcalendar";
 import {
@@ -83,6 +82,9 @@ export type ProductionCalendarProps = {
   onAcceptGateChange?: (blocked: boolean) => void;
   onSettleStateChange?: (state: CalendarSettleState) => void;
   onAccessLoss?: () => void;
+  projectHrefFor?: (projectId: string) => string | undefined;
+  onOpenProject?: (projectId: string) => void;
+  onProjectAnchorClick?: (event: ReactMouseEvent<HTMLAnchorElement>) => void;
 };
 
 type CalendarDropInfo = {
@@ -444,7 +446,7 @@ function adoptChecklistResult(response: ProductionCalendarRangeResponse, source:
   return { ...response, events: sourceWasEvent || nextEvent ? events : response.events, unscheduled };
 }
 
-export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFilters, onAcceptGateChange, onSettleStateChange, onAccessLoss }: ProductionCalendarProps) {
+export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFilters, onAcceptGateChange, onSettleStateChange, onAccessLoss, projectHrefFor, onOpenProject, onProjectAnchorClick }: ProductionCalendarProps) {
   const range = useMemo(() => deriveProductionCalendarWindow(calendar.date, calendar.subview), [calendar.date, calendar.subview]);
   const query = useProductionCalendarRange({ identity, calendar, enabled: true });
   const queryClient = useOptionalProjectQueryClient();
@@ -833,8 +835,11 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
       setSettle({ type: "winner" });
       commandLockRef.current.active = false;
       snapshotRef.current = null;
-      if (queryClient) getProjectQueryRuntime(queryClient)?.publish(createProductionCalendarInvalidatedMessage());
-      if (queryClient) await invalidateProjectResources(queryClient, { projectId: proposal.event.project.id, resources: [{ kind: "detail" }, { kind: "subtasks" }] }, false);
+      // invalidateProjectSurfaces owns the production-calendar broadcast (producer: "calendar"
+      // suppresses this tab's own refetch; refetchAuthoritative below is the single settle refetch).
+      if (queryClient) {
+        await invalidateProjectSurfaces(queryClient, { projectId: proposal.event.project.id, resources: [{ kind: "detail" }, { kind: "activity" }], dashboard: true, calendar: true, producer: "calendar" });
+      }
       if (accessLostRef.current || token !== operationTokenRef.current) return;
       settleRefetchInFlightRef.current = true;
       const settled = await refetchAuthoritative();
@@ -1150,8 +1155,10 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
       setSettle({ type: "winner" });
       commandLockRef.current.active = false;
       snapshotRef.current = null;
-      if (queryClient) getProjectQueryRuntime(queryClient)?.publish(createProductionCalendarInvalidatedMessage());
-      if (queryClient) await invalidateProjectResources(queryClient, { projectId: proposal.source.project.id, resources: [{ kind: "detail" }, { kind: "subtasks" }] }, false);
+      // invalidateProjectSurfaces owns the production-calendar broadcast (producer: "calendar").
+      if (queryClient) {
+        await invalidateProjectSurfaces(queryClient, { projectId: proposal.source.project.id, resources: [{ kind: "subtasks" }, { kind: "activity" }], dashboard: false, calendar: true, producer: "calendar" });
+      }
       if (accessLostRef.current || token !== operationTokenRef.current) return;
       settleRefetchInFlightRef.current = true;
       const settled = await refetchAuthoritative();
@@ -1546,14 +1553,14 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
             }}
             eventContent={(info) => {
               const dto = info.event.extendedProps.dto;
-              return dto ? <ProductionCalendarEvent event={dto} subview={calendar.subview} needsAttention={checklistNeedsAttention.has(dto.id)} onMoveReschedule={calendarSettle.pending || calendarInteractionBlocked ? undefined : openMoveDialog} onChecklistSchedule={calendarSettle.pending || calendarInteractionBlocked ? undefined : openChecklistScheduleEditor} /> : null;
+              return dto ? <ProductionCalendarEvent event={dto} subview={calendar.subview} needsAttention={checklistNeedsAttention.has(dto.id)} projectHref={projectHrefFor?.(dto.project.id)} onOpenProject={() => onOpenProject?.(dto.project.id)} onProjectAnchorClick={onProjectAnchorClick} onMoveReschedule={calendarSettle.pending || calendarInteractionBlocked ? undefined : openMoveDialog} onChecklistSchedule={calendarSettle.pending || calendarInteractionBlocked ? undefined : openChecklistScheduleEditor} /> : null;
             }}
           />
 
           {calendar.subview === "month" && selectedDay !== null && (
             <section className="qc-calendar-disclosure" aria-label="Selected day">
               <div className="ey">Selected day · {selectedDay}</div>
-              {selectedEvents.length === 0 ? <p className="muted">No scheduled work on this day.</p> : <div className="qc-calendar-disclosure__events">{selectedEvents.map((event) => <ProductionCalendarEvent key={event.id} event={event} subview={calendar.subview} compact needsAttention={checklistNeedsAttention.has(event.id)} onMoveReschedule={calendarSettle.pending || calendarInteractionBlocked ? undefined : openMoveDialog} />)}</div>}
+              {selectedEvents.length === 0 ? <p className="muted">No scheduled work on this day.</p> : <div className="qc-calendar-disclosure__events">{selectedEvents.map((event) => <ProductionCalendarEvent key={event.id} event={event} subview={calendar.subview} compact needsAttention={checklistNeedsAttention.has(event.id)} projectHref={projectHrefFor?.(event.project.id)} onOpenProject={() => onOpenProject?.(event.project.id)} onProjectAnchorClick={onProjectAnchorClick} onMoveReschedule={calendarSettle.pending || calendarInteractionBlocked ? undefined : openMoveDialog} />)}</div>}
             </section>
           )}
         </div>
@@ -1567,6 +1574,9 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
           onScheduleChecklist={openUnscheduledChecklistScheduleEditor}
           disabled={calendarInteractionBlocked || calendarSettle.pending}
           dragSuppressed={actionOnlyWeek}
+          projectHrefFor={projectHrefFor}
+          onOpenProject={onOpenProject}
+          onProjectAnchorClick={onProjectAnchorClick}
         />
       </div>}
       <div className="dashboard-live-region sr-only" aria-live="polite" aria-atomic="true">{announcement}</div>

@@ -1,5 +1,5 @@
-import { lazy, Suspense, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { formatSydneyCivil, roleHasCapability, type DashboardCalendarState, type MoveProjectStageRequest, type MoveProjectStageResponse, type ProductionCalendarFilters, type StageKey } from "@quincy/shared";
+import { lazy, Suspense, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent } from "react";
+import { formatSydneyCivil, roleHasCapability, type DashboardCalendarState, type DashboardQuickDetail, type DashboardRoute, type MoveProjectStageRequest, type MoveProjectStageResponse, type ProductionCalendarFilters, type StageKey } from "@quincy/shared";
 import { QueryClient, QueryClientContext, QueryClientProvider } from "@tanstack/react-query";
 import { StatusBadge } from "../components/atoms";
 import { LazyImage } from "../components/LazyImage";
@@ -10,8 +10,8 @@ import { useStages } from "../lib/stages";
 import { DASHBOARD_CALENDAR_LAST_DATE_KEY, DASHBOARD_CALENDAR_SUBVIEW_KEY, formatDashboardDate, initializeDashboardCalendarState, initializeDashboardView, initializeKanbanSortMode, normalizeDashboardCalendarSearch, sanitizeDashboardCalendarSearch, type DashboardView, type KanbanSortMode } from "./dashboard-helpers";
 import { InternalLink } from "../components/InternalLink";
 import { NoticeBoard } from "../components/NoticeBoard";
-import { invalidateProjectResources, useOptionalProjectQueryClient } from "../lib/project-data";
-import { createDashboardBoardInvalidatedMessage, createProjectDataInvalidationMessage, getProjectQueryRuntime } from "../lib/project-query-sync";
+import { invalidateProjectSurfaces, removeProjectData, terminatePrincipalOnUnauthorized, useOptionalProjectQueryClient } from "../lib/project-data";
+import { createDashboardBoardInvalidatedMessage, getProjectQueryRuntime } from "../lib/project-query-sync";
 import { dashboardProjectsKey, useDashboardProjects } from "../lib/dashboard-projects";
 import { submitStageMoveWithConfirmation } from "../lib/stage-move";
 
@@ -34,6 +34,7 @@ import {
   type SemanticGap,
 } from "../lib/kanban-interaction";
 import { ProjectKanbanBoard, type BoardInteractionState } from "../components/ProjectKanbanBoard";
+import { ProjectQuickDetailSheet, computeSheetVisible, type ProjectQuickDetailView } from "../components/ProjectQuickDetailSheet";
 // Code-split: FullCalendar + its deps (~84 kB gzip) load only when a capable
 // principal opens the Calendar view, never on the sign-in screen or a
 // Photographer dashboard.
@@ -50,6 +51,7 @@ type Toast = { id: number; message: string; tone: "success" | "error" };
 type BoardOverlay = { key: string; baseline: ProjectSummary[]; model: ProjectSummary[]; movingProjectId: string };
 type FocusRestore = { key: string | null; x: number; y: number; fallbackStageKey?: StageKey };
 type MovementRecovery = { model: BoardModel; projectId: string; project: ProjectSummary; settledStageKey: StageKey };
+type QuickDetailOrigin = { element: HTMLElement; location: string };
 const noRuntimeSubscribe = () => () => undefined;
 const zeroRuntimeSnapshot = () => 0;
 
@@ -92,10 +94,10 @@ function boardModelFromProjects(projects: ProjectSummary[]): BoardModel {
   return authorizedBoardOrder ? { projects: [...projects], authorizedBoardOrder } : { projects: [...projects] };
 }
 
-function ProjectListRow({ project }: { project: ProjectSummary }) {
+function ProjectListRow({ project, projectHref, onProjectAnchorClick }: { project: ProjectSummary; projectHref: string; onProjectAnchorClick?: (event: ReactMouseEvent<HTMLAnchorElement>) => void }) {
   const [coverFailed, setCoverFailed] = useState(false); const [coverRetry, setCoverRetry] = useState(0);
   return <div className="prow-wrap">
-    <InternalLink className="prow" to={`/projects/${encodeURIComponent(project.id)}`}>
+    <InternalLink className="prow" to={projectHref} onClick={onProjectAnchorClick}>
       <CoverMedia project={project} className="prow__thumb" inlinePlaceholder retryToken={coverRetry} onFailedChange={setCoverFailed} />
       <span><span className="serif prow__addr">{project.street}</span><span className="ey prow__location">{location(project)}</span></span>
       <span className="prow__c-agency">{project.agencyName || "Agency pending"}<span className="muted">{project.agentName || "Agent pending"}</span></span>
@@ -107,9 +109,38 @@ function ProjectListRow({ project }: { project: ProjectSummary }) {
   </div>;
 }
 
-type DashboardProps = { currentUserId: string; role?: Parameters<typeof dashboardProjectsKey>[1]; authorizationEpoch?: number; calendar?: DashboardCalendarState | null };
+type DashboardProps = { currentUserId: string; role?: Parameters<typeof dashboardProjectsKey>[1]; authorizationEpoch?: number; calendar?: DashboardCalendarState | null; suppressQuickDetail?: boolean };
 
-function DashboardContent({ currentUserId, role = "photographer", authorizationEpoch = 0, calendar: routeCalendar = null }: DashboardProps) {
+type DashboardRouteArm = Extract<DashboardRoute, { kind: "dashboard" }>;
+
+type DashboardViewRoute = Extract<DashboardRouteArm, { dashboardView: "list" | "kanban" }>;
+type DashboardCalendarRoute = Extract<DashboardRouteArm, { calendar: DashboardCalendarState }>;
+
+function isDashboardViewRoute(route: DashboardRouteArm): route is DashboardViewRoute {
+  return "dashboardView" in route;
+}
+
+function isDashboardCalendarRoute(route: DashboardRouteArm): route is DashboardCalendarRoute {
+  return "calendar" in route;
+}
+
+function dashboardDetail(route: DashboardRouteArm): DashboardQuickDetail | undefined {
+  return "detail" in route ? route.detail : undefined;
+}
+
+function dashboardBackingRoute(route: DashboardRouteArm): DashboardRouteArm {
+  if ("calendar" in route) return { kind: "dashboard", calendar: route.calendar };
+  if ("dashboardView" in route) return { kind: "dashboard", dashboardView: route.dashboardView };
+  return { kind: "dashboard" };
+}
+
+function dashboardRouteWithDetail(route: DashboardRouteArm, detail: DashboardQuickDetail | undefined): DashboardRouteArm {
+  if ("calendar" in route) return { kind: "dashboard", calendar: route.calendar, ...(detail ? { detail } : {}) };
+  if ("dashboardView" in route) return { kind: "dashboard", dashboardView: route.dashboardView, ...(detail ? { detail } : {}) };
+  return { kind: "dashboard" };
+}
+
+function DashboardContent({ currentUserId, role = "photographer", authorizationEpoch = 0, calendar: routeCalendar = null, suppressQuickDetail = false }: DashboardProps) {
   const queryClient = useOptionalProjectQueryClient();
   const { can } = useCapabilities();
   const { stages } = useStages();
@@ -120,7 +151,13 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   const canViewNoticeBoard = can("viewNoticeBoard");
   const canViewProductionCalendar = roleHasCapability(role, "viewProductionCalendar");
   const history = locationStore();
-  const locationHasCalendar = (() => { const current = parseStaffLocation(history.getLocation()); return current.kind === "dashboard" && current.calendar !== undefined; })();
+  const currentLocation = useSyncExternalStore(history.subscribe, history.getLocation, () => "/");
+  const parsedRoute = useMemo(() => parseStaffLocation(currentLocation), [currentLocation]);
+  const currentDashboardRoute = parsedRoute.kind === "dashboard" ? parsedRoute : null;
+  const locationHasCalendar = Boolean(currentDashboardRoute && isDashboardCalendarRoute(currentDashboardRoute));
+  const routeDashboardView = currentDashboardRoute && isDashboardViewRoute(currentDashboardRoute) ? currentDashboardRoute.dashboardView : null;
+  const routeDetail = currentDashboardRoute ? dashboardDetail(currentDashboardRoute) : undefined;
+  const effectiveRouteCalendar = currentDashboardRoute && isDashboardCalendarRoute(currentDashboardRoute) ? currentDashboardRoute.calendar : routeCalendar;
   const calendarStorage = {
     read: (key: string) => window.localStorage.getItem(key),
     write: (key: string, value: string) => window.localStorage.setItem(key, value),
@@ -128,15 +165,22 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   const [projectScope, setProjectScope] = useState<ProjectScope>("active");
   const [query, setQuery] = useState("");
   const [view, setView] = useState<DashboardView>(() => {
+    if (routeDashboardView) return routeDashboardView;
+    if (effectiveRouteCalendar && canViewProductionCalendar) return "calendar";
     const stored = initializeDashboardView({
       read: () => window.localStorage.getItem("quincy:dashboard:view"),
       write: (next) => window.localStorage.setItem("quincy:dashboard:view", next),
     });
-    if (routeCalendar && canViewProductionCalendar) return "calendar";
     return !canViewProductionCalendar && stored === "calendar" ? "kanban" : stored;
   });
-  const [calendarState, setCalendarState] = useState<DashboardCalendarState | null>(() => routeCalendar && canViewProductionCalendar
-    ? routeCalendar
+  // Captured once at mount, before any explicit List/Kanban selection can overwrite
+  // localStorage — the value a fresh bare-route "/" load would show. Restoring TO this fixed
+  // snapshot (not live localStorage) on a Back/Forward arrival back at bare "/" is what makes
+  // the browser's native Back button actually undo an explicit view switch, since D2 made
+  // List/Kanban selection push its own history entry.
+  const bareRouteFallbackViewRef = useRef(view);
+  const [calendarState, setCalendarState] = useState<DashboardCalendarState | null>(() => effectiveRouteCalendar && canViewProductionCalendar
+    ? effectiveRouteCalendar
     : canViewProductionCalendar ? initializeDashboardCalendarState({ kind: "dashboard" }, calendarStorage, { now: Date.now(), isPhone: window.matchMedia?.("(max-width: 720px)").matches ?? false }) : null);
   const [kanbanSort, setKanbanSort] = useState<KanbanSortMode>(() => initializeKanbanSortMode({
     read: () => window.localStorage.getItem("quincy:dashboard:kanbanSort"),
@@ -153,6 +197,19 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [announcement, setAnnouncement] = useState("");
   const [boardUnavailableReason, setBoardUnavailableReason] = useState<string | null>(null);
+  const [, setDocumentActivityVersion] = useState(0);
+  const quickDetailOriginRef = useRef<QuickDetailOrigin | null>(null);
+  useEffect(() => {
+    const notify = () => setDocumentActivityVersion((version) => version + 1);
+    document.addEventListener("visibilitychange", notify);
+    window.addEventListener("focus", notify);
+    window.addEventListener("blur", notify);
+    return () => {
+      document.removeEventListener("visibilitychange", notify);
+      window.removeEventListener("focus", notify);
+      window.removeEventListener("blur", notify);
+    };
+  }, []);
   useEffect(() => {
     if (canViewProductionCalendar) return;
     try {
@@ -178,7 +235,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   const interactionBlockedRef = useRef(interactionBlocked);
   interactionBlockedRef.current = interactionBlocked;
   const lastNonCalendarViewRef = useRef<"list" | "kanban">("list");
-  const calendarFallbackLocationRef = useRef(!routeCalendar && view === "calendar" && canViewProductionCalendar);
+  const calendarFallbackLocationRef = useRef(!effectiveRouteCalendar && !routeDashboardView && view === "calendar" && canViewProductionCalendar);
   const calendarSearchTimerRef = useRef<number | null>(null);
   const movementSettlePendingRef = useRef(false);
   movementSettlePendingRef.current = movementSettlePending;
@@ -260,31 +317,40 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       if (view === "calendar") setView("list");
       return;
     }
-    if (routeCalendar) {
+    if (routeDashboardView) {
       calendarFallbackLocationRef.current = false;
-      setCalendarState(routeCalendar);
+      if (view !== routeDashboardView) setView(routeDashboardView);
+      return;
+    }
+    if (effectiveRouteCalendar) {
+      calendarFallbackLocationRef.current = false;
+      setCalendarState(effectiveRouteCalendar);
       // Keep live input whitespace while avoiding a redundant state update when
       // this is the route produced by our own debounced search replacement.
-      setQuery((current) => normalizeDashboardCalendarSearch(current) === routeCalendar.search ? current : routeCalendar.search);
+      setQuery((current) => normalizeDashboardCalendarSearch(current) === effectiveRouteCalendar.search ? current : effectiveRouteCalendar.search);
       if (!viewingArchived) setView("calendar");
       return;
     }
     if (locationHasCalendar) return;
     if (calendarFallbackLocationRef.current) {
       if (calendarState) {
-        const built = staffPathFor({ kind: "dashboard", calendar: calendarState });
+        const built = staffPathFor(dashboardRouteWithDetail({ kind: "dashboard", calendar: calendarState }, routeDetail));
         if (safeStaffDestination(built) === built) history.replace(built);
         else console.error("Production Calendar route invariant failed while restoring the saved view.");
       }
       calendarFallbackLocationRef.current = false;
       return;
     }
-    if (view === "calendar") setView(lastNonCalendarViewRef.current);
-  }, [calendarState, canViewProductionCalendar, history, locationHasCalendar, routeCalendar, view, viewingArchived]);
+    // Genuinely bare "/" with no calendar involvement: restore the fixed per-document snapshot
+    // rather than leaving `view` at whatever an earlier explicit push left it — this is what
+    // makes Back actually undo an explicit List/Kanban switch (D2 gave each one its own history
+    // entry), not just the pre-existing "leaving Calendar via a stale bare arrival" case.
+    if (view !== bareRouteFallbackViewRef.current) setView(bareRouteFallbackViewRef.current);
+  }, [calendarState, canViewProductionCalendar, effectiveRouteCalendar, history, locationHasCalendar, routeDashboardView, routeDetail, view, viewingArchived]);
 
   const navigateCalendar = useCallback((next: DashboardCalendarState, replace = false) => {
     if (!canViewProductionCalendar || viewingArchived || calendarInteractionBlocked) return;
-    const built = staffPathFor({ kind: "dashboard", calendar: next });
+    const built = staffPathFor(dashboardRouteWithDetail({ kind: "dashboard", calendar: next }, routeDetail));
     if (safeStaffDestination(built) !== built) {
       console.error("Production Calendar route invariant failed; navigation was not performed.");
       return;
@@ -295,7 +361,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       calendarStorage.write(DASHBOARD_CALENDAR_LAST_DATE_KEY, next.date);
     } catch { /* Calendar fallback storage is best effort. */ }
     if (replace) history.replace(built); else history.push(built);
-  }, [calendarInteractionBlocked, canViewProductionCalendar, history, viewingArchived]);
+  }, [calendarInteractionBlocked, canViewProductionCalendar, history, routeDetail, viewingArchived]);
 
   useEffect(() => {
     if (calendarSearchTimerRef.current !== null) {
@@ -325,14 +391,14 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     if (!calendarState || !canViewProductionCalendar || viewingArchived || calendarInteractionBlocked) return;
     const next: DashboardCalendarState = { ...calendarState, ...filters, view: "calendar" };
     if (JSON.stringify(next) === JSON.stringify(calendarState)) return;
-    const built = staffPathFor({ kind: "dashboard", calendar: next });
+    const built = staffPathFor(dashboardRouteWithDetail({ kind: "dashboard", calendar: next }, routeDetail));
     if (safeStaffDestination(built) !== built) {
       console.error("Production Calendar applied-filter route invariant failed; URL was not changed.");
       return;
     }
     setCalendarState(next);
     history.replace(built);
-  }, [calendarInteractionBlocked, calendarState, canViewProductionCalendar, history, viewingArchived]);
+  }, [calendarInteractionBlocked, calendarState, canViewProductionCalendar, history, routeDetail, viewingArchived]);
 
   const acceptDashboardProjects = useCallback((next: ProjectSummary[], dataUpdatedAt?: number) => {
     if (queryRuntime?.principalTerminal) return;
@@ -504,12 +570,89 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     window.setTimeout(() => document.querySelector<HTMLElement>('[data-focus-key="dashboard-view-list"]')?.focus(), 0);
   }, [history, locationHasCalendar, routeCalendar, view]);
 
+  const projectHrefFor = useCallback((projectId: string) => {
+    if (!roleHasCapability(role, "viewQuickDetail")) return `/projects/${encodeURIComponent(projectId)}`;
+    const baseRoute: DashboardRouteArm = currentDashboardRoute && (isDashboardCalendarRoute(currentDashboardRoute) || isDashboardViewRoute(currentDashboardRoute))
+      ? currentDashboardRoute
+      : view === "calendar" && calendarState
+        ? { kind: "dashboard", calendar: calendarState }
+        : { kind: "dashboard", dashboardView: view === "kanban" ? "kanban" : "list" };
+    const built = staffPathFor(dashboardRouteWithDetail(baseRoute, { projectId, view: "overview" }));
+    return safeStaffDestination(built) === built ? built : `/projects/${encodeURIComponent(projectId)}`;
+  }, [calendarState, currentDashboardRoute, role, view]);
+
+  const rememberQuickDetailOrigin = useCallback((event: ReactMouseEvent<HTMLAnchorElement>) => {
+    // Deliberately narrower than shouldInterceptInternalLink: that predicate's
+    // detail===0 rejection exists to let InternalLink's native Enter-key
+    // activation fall through to a full page navigation, which doesn't apply
+    // to ProjectCalendarAnchor's own synthesized Enter/Space .click() (also
+    // detail===0) — that gesture legitimately opens the sheet in-document and
+    // must still be recorded as a same-document opener.
+    if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    quickDetailOriginRef.current = { element: event.currentTarget, location: history.getLocation() };
+  }, [history]);
+
+  const openCalendarProject = useCallback((projectId: string) => {
+    if (calendarInteractionBlocked || calendarSettle.pending || !canViewProductionCalendar || viewingArchived) return;
+    const current = parseStaffLocation(history.getLocation());
+    const calendar = current.kind === "dashboard" && "calendar" in current ? current.calendar : calendarState;
+    if (!calendar) return;
+    // This is intentionally a facet-only writer. navigateCalendar is gated by
+    // Calendar's interaction barrier and is therefore not safe for a click
+    // that terminates a FullCalendar drag gesture.
+    const built = staffPathFor({ kind: "dashboard", calendar, detail: { projectId, view: "overview" } });
+    if (safeStaffDestination(built) !== built) {
+      console.error("Project quick-detail route invariant failed; navigation was not performed.");
+      return;
+    }
+    history.push(built);
+  }, [calendarInteractionBlocked, calendarSettle.pending, calendarState, canViewProductionCalendar, history, viewingArchived]);
+
+  const closeQuickDetail = useCallback(() => {
+    if (!currentDashboardRoute || !routeDetail) return;
+    const built = staffPathFor(dashboardBackingRoute(currentDashboardRoute));
+    if (safeStaffDestination(built) !== built) return;
+    const origin = quickDetailOriginRef.current;
+    quickDetailOriginRef.current = null;
+    if (origin?.location === built) window.history.back();
+    else history.replace(built);
+    window.setTimeout(() => {
+      if (origin?.element.isConnected) { origin.element.focus(); return; }
+      document.querySelector<HTMLElement>(`[data-focus-key="dashboard-view-${view}"]`)?.focus();
+    }, 0);
+  }, [currentDashboardRoute, history, routeDetail, view]);
+
+  const handleSheetAccessFailure = useCallback((error: unknown, resource: "detail" | "activity" | "comments" | "comment-read-marker" | "nested-comment") => {
+    // "nested-comment" (an edit/delete rejection) is deliberately excluded: the server checks
+    // membership before authorship, but both failures surface as the same 403 status, so a
+    // rejection here can't be trusted to mean collaboration access was lost (it's just as likely
+    // an author-only mismatch) — it stays a local, inline mutation error, never a sheet-wide close.
+    if (resource === "nested-comment" || !(error instanceof ApiError)) return;
+    if (error.status !== 401 && error.status !== 403 && error.status !== 404) return;
+    if (queryClient) {
+      if (error.status === 401) terminatePrincipalOnUnauthorized(queryClient, error);
+      else if (routeDetail) void removeProjectData(queryClient, routeDetail.projectId);
+    }
+    closeQuickDetail();
+  }, [closeQuickDetail, queryClient, routeDetail]);
+
+  const changeQuickDetailView = useCallback((next: ProjectQuickDetailView) => {
+    if (!currentDashboardRoute || !routeDetail) return;
+    const built = staffPathFor(dashboardRouteWithDetail(currentDashboardRoute, { ...routeDetail, view: next }));
+    if (safeStaffDestination(built) !== built) return;
+    history.replace(built);
+  }, [currentDashboardRoute, history, routeDetail]);
+
+  const sheetVisible = typeof document !== "undefined"
+    ? computeSheetVisible(document, activeConfirm === null)
+    : false;
+
   function selectView(next: DashboardView) {
     if (interactionBlockedRef.current || calendarInteractionBlocked) return;
     if (next === "calendar") {
       if (!canViewProductionCalendar || viewingArchived) return;
       const nextCalendar = calendarState ?? initializeDashboardCalendarState({ kind: "dashboard" }, calendarStorage, { now: Date.now(), isPhone: window.matchMedia?.("(max-width: 720px)").matches ?? false });
-      const enteringSearch = routeCalendar?.search ?? (view === "calendar" ? calendarState?.search ?? "" : query);
+      const enteringSearch = effectiveRouteCalendar?.search ?? (view === "calendar" ? calendarState?.search ?? "" : query);
       const sanitizedSearch = sanitizeDashboardCalendarSearch(enteringSearch);
       calendarFallbackLocationRef.current = false;
       setQuery(sanitizedSearch);
@@ -518,13 +661,15 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       navigateCalendar({ ...nextCalendar, search: normalizeDashboardCalendarSearch(sanitizedSearch), view: "calendar" });
       return;
     }
+    const alreadyAtView = routeDashboardView === next;
+    const shouldPushViewRoute = !alreadyAtView || currentDashboardRoute?.kind === "dashboard" && !routeDashboardView;
     setView(next);
     lastNonCalendarViewRef.current = next;
     try { window.localStorage.setItem("quincy:dashboard:view", next); } catch { /* Storage can be disabled by the browser. */ }
-    if (view === "calendar" || routeCalendar !== null || locationHasCalendar) {
+    if (shouldPushViewRoute) {
       setCalendarSettle({ pending: false, recoveryReason: null });
       calendarFallbackLocationRef.current = false;
-      history.push("/");
+      history.push(staffPathFor({ kind: "dashboard", dashboardView: next }));
     }
   }
 
@@ -538,7 +683,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       lastNonCalendarViewRef.current = "list";
       try { window.localStorage.setItem("quincy:dashboard:view", "list"); } catch { /* Storage can be disabled by the browser. */ }
       calendarFallbackLocationRef.current = false;
-      if (leavingCalendar || routeCalendar !== null || locationHasCalendar) history.push("/");
+      if (leavingCalendar || routeCalendar !== null || locationHasCalendar || routeDashboardView !== "list") history.push(staffPathFor({ kind: "dashboard", dashboardView: "list" }));
     }
   }
 
@@ -702,12 +847,18 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         : null;
       if (response.changed) {
         // Board invalidation is deliberately ID-free; each receiving tab invalidates only its
-        // own authorization-scoped dashboard query. The detail message is the separate,
-        // project-scoped freshness channel for an open Workspace.
-        queryRuntime?.publish(createDashboardBoardInvalidatedMessage());
+        // own authorization-scoped dashboard query. This tab is the producer: its own Board
+        // query converges through queuedRefreshRef, not the coordinator.
         if (queryClient) {
-          await invalidateProjectResources(queryClient, { projectId: intent.projectId, resources: [{ kind: "detail" }] }, false);
-          queryRuntime?.publish(createProjectDataInvalidationMessage(intent.projectId, [{ kind: "detail" }]));
+          await invalidateProjectSurfaces(queryClient, {
+            projectId: intent.projectId,
+            resources: [{ kind: "detail" }, { kind: "activity" }],
+            dashboard: true,
+            calendar: true,
+            producer: "dashboard",
+          });
+        } else {
+          queryRuntime?.publish(createDashboardBoardInvalidatedMessage());
         }
       }
       movementAnnouncement(
@@ -783,6 +934,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       const response = await apiPost<{ priority: number | null; boardRevision: number }, { priority: number | null }>(`/api/projects/${project.id}/priority`, { priority });
       updateProjects((current) => current.map((item) => item.id === project.id ? { ...item, priority: response.priority, boardRevision: response.boardRevision } : item));
       queueDashboardRefresh();
+      if (queryClient) await invalidateProjectSurfaces(queryClient, { projectId: project.id, resources: [{ kind: "detail" }, { kind: "activity" }], dashboard: true, calendar: false, producer: "dashboard" });
     } catch (reason) {
       if (reason instanceof ApiError && reason.status === 503 && reason.details && typeof reason.details === "object" && ((reason.details as { code?: unknown }).code === "board_contract_disabled" || (reason.details as { code?: unknown }).code === "board_schema_maintenance")) setBoardUnavailableReason("Board interactions are temporarily unavailable while the Board is being updated.");
       updateProjects((current) => current.map((item) => item.id === project.id && item.priority === priority ? { ...item, priority: project.priority } : item));
@@ -844,8 +996,8 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         <span className="ey">View</span>
         <div className="segment" aria-label="Dashboard view">
           <button className={view === "list" ? "is-active" : ""} type="button" data-focus-key="dashboard-view-list" disabled={interactionBlocked || calendarInteractionBlocked} onClick={() => selectView("list")}>List</button>
-          <button className={view === "kanban" ? "is-active" : ""} type="button" disabled={interactionBlocked || calendarInteractionBlocked} onClick={() => selectView("kanban")}>Kanban</button>
-          {canViewProductionCalendar && <button className={view === "calendar" ? "is-active" : ""} type="button" disabled={interactionBlocked || calendarInteractionBlocked} onClick={() => selectView("calendar")}>Calendar</button>}
+          <button className={view === "kanban" ? "is-active" : ""} type="button" data-focus-key="dashboard-view-kanban" disabled={interactionBlocked || calendarInteractionBlocked} onClick={() => selectView("kanban")}>Kanban</button>
+          {canViewProductionCalendar && <button className={view === "calendar" ? "is-active" : ""} type="button" data-focus-key="dashboard-view-calendar" disabled={interactionBlocked || calendarInteractionBlocked} onClick={() => selectView("calendar")}>Calendar</button>}
         </div>
         {!viewingArchived && view === "kanban" && (
           <label className="dashboard-sort">
@@ -873,6 +1025,9 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
             onAcceptGateChange={setCalendarInteractionBlocked}
             onSettleStateChange={setCalendarSettle}
             onAccessLoss={handleCalendarAccessLoss}
+            projectHrefFor={projectHrefFor}
+            onOpenProject={openCalendarProject}
+            onProjectAnchorClick={rememberQuickDetailOrigin}
           />
         </Suspense>
       )}
@@ -898,7 +1053,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       {!isCalendarView && !isLoading && !error && filteredProjects.length > 0 && (viewingArchived || view === "list") && (
         <div className="plist" aria-label="Projects list">
           <div className="prow head"><div /><div>Address</div><div className="prow__c-agency">Client</div><div className="prow__c-date">Shoot date</div><div className="prow__c-status">Status</div><div className="prow__raw">RAW received</div></div>
-          {filteredProjects.map((project) => <ProjectListRow key={project.id} project={project} />)}
+          {filteredProjects.map((project) => <ProjectListRow key={project.id} project={project} projectHref={projectHrefFor(project.id)} onProjectAnchorClick={rememberQuickDetailOrigin} />)}
         </div>
       )}
 
@@ -923,10 +1078,24 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
           onMoveToProposalChange={(proposal) => setBoardInteraction((current) => ({ activeId: current.activeId, proposal }))}
           onInteractionStateChange={setBoardInteraction}
           onAnnounce={(message) => { if (message !== undefined) setAnnouncement(message); }}
+          projectHrefFor={(project) => projectHrefFor(project.id)}
+          onProjectAnchorClick={rememberQuickDetailOrigin}
         />
       )}
       <div className="dashboard-live-region sr-only" aria-live="polite" aria-atomic="true">{announcement}</div>
       <div className="toasts" aria-live="polite">{toasts.map((item) => <div className={`toast ${item.tone === "error" ? "toast--error" : ""}`} key={item.id}>{item.tone === "error" ? "!" : "✓"}<span>{item.message}</span></div>)}</div>
+      {routeDetail && !suppressQuickDetail && <ProjectQuickDetailSheet
+        projectId={routeDetail.projectId}
+        title={projects.find((project) => project.id === routeDetail.projectId)?.street ?? "Project detail"}
+        activeView={routeDetail.view}
+        onViewChange={changeQuickDetailView}
+        onRequestClose={closeQuickDetail}
+        role={role}
+        workspaceHref={`/projects/${encodeURIComponent(routeDetail.projectId)}`}
+        sheetVisible={sheetVisible}
+        escapeDisabled={Boolean(activeConfirm)}
+        onAccessFailure={handleSheetAccessFailure}
+      />}
     </main>
   );
 }

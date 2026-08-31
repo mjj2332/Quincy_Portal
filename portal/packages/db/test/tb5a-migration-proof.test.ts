@@ -95,7 +95,7 @@ async function executeBundle(db: D1Database, statements: D1PreparedStatement[]):
 
 describe("TB5A Slice 8 consolidated migration and SQL proof", () => {
   it("runs the complete 0000..0037 chain and proves normalized seed order, health, and inert state", () => {
-    const names = migrationNames();
+    const names = migrationNames().filter((name) => Number(name.slice(0, 4)) <= 37);
     expect(names.map((name) => Number(name.slice(0, 4)))).toEqual(Array.from({ length: 38 }, (_, index) => index));
 
     const db = localSqlite();

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ApiError } from "../lib/api";
 import { projectDataKeys, type ProjectMember } from "../lib/project-data";
+import { ProjectQueryRuntime, ProjectQueryRuntimeProvider } from "../lib/project-query-sync";
 import "../styles/index.css";
 import { ProjectTeamControl } from "./ProjectTeamControl";
 
@@ -25,6 +26,7 @@ const members = [{ id: "44444444-4444-4444-8444-444444444444", userId: "55555555
 
 let root: Root | null = null;
 let queryClient: QueryClient;
+let runtime: ProjectQueryRuntime;
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 async function flush(rounds = 1) {
@@ -34,8 +36,9 @@ async function flush(rounds = 1) {
 async function mount(currentMembers: ProjectMember[] = members) {
   const host = document.createElement("div"); document.body.appendChild(host);
   queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  runtime = new ProjectQueryRuntime(queryClient);
   root = createRoot(host);
-  await act(async () => { root!.render(<QueryClientProvider client={queryClient}><ProjectTeamControl projectId={projectId} members={currentMembers} canEdit /></QueryClientProvider>); await Promise.resolve(); });
+  await act(async () => { root!.render(<ProjectQueryRuntimeProvider runtime={runtime}><QueryClientProvider client={queryClient}><ProjectTeamControl projectId={projectId} members={currentMembers} canEdit /></QueryClientProvider></ProjectQueryRuntimeProvider>); await Promise.resolve(); });
   await flush();
   return host;
 }
@@ -49,12 +52,13 @@ beforeEach(() => {
 
 afterEach(async () => {
   if (root) await act(async () => { root!.unmount(); await Promise.resolve(); });
-  root = null; queryClient.clear(); document.body.replaceChildren(); vi.restoreAllMocks();
+  root = null; runtime.dispose(); queryClient.clear(); document.body.replaceChildren(); vi.restoreAllMocks();
 });
 
 describe("ProjectTeamControl", () => {
   it("keeps the role picker and search draft open after selecting a candidate", async () => {
     const host = await mount([]);
+    const publish = vi.spyOn(runtime, "publish");
     const trigger = host.querySelector<HTMLButtonElement>('[aria-label="Add Photographer"]')!;
     await act(async () => { trigger.click(); await Promise.resolve(); });
     const search = document.querySelector<HTMLInputElement>('input[type="search"]')!;
@@ -67,6 +71,9 @@ describe("ProjectTeamControl", () => {
     expect(document.querySelector(".project-team-picker")).not.toBeNull();
     expect(document.querySelector<HTMLInputElement>('input[type="search"]')?.value).toBe("ari");
     expect(apiPutMock).toHaveBeenCalledWith(`/api/projects/${projectId}/photographers/${photographer.id}`);
+    expect(publish.mock.calls.some(([message]) => message.type === "project-data-invalidated" && JSON.stringify(message.resources) === JSON.stringify([{ kind: "activity" }]))).toBe(true);
+    expect(publish.mock.calls.some(([message]) => message.type === "dashboard-board-invalidated")).toBe(true);
+    expect(publish.mock.calls.some(([message]) => message.type === "production-calendar-invalidated")).toBe(true);
   });
 
   // The responsive fixed bottom-sheet treatment is covered by the plan's manual QA matrix (items 1–2, picker-phone-bottom-sheet.png).
@@ -112,11 +119,13 @@ describe("ProjectTeamControl", () => {
     const unknown = { ...members[0]! } as unknown as ProjectMember;
     delete (unknown as Partial<ProjectMember>).assignedSubtaskCount;
     const host = await mount([unknown]);
+    const publish = vi.spyOn(runtime, "publish");
     await act(async () => { host.querySelector<HTMLButtonElement>('.project-team__remove')!.click(); await Promise.resolve(); });
     await flush(4);
     expect(confirmMock).toHaveBeenCalledWith(expect.objectContaining({ confirmLabel: "Remove and unassign", message: expect.stringContaining("2 checklist items") }));
     expect(apiDeleteMock.mock.calls[0]?.[1]).toEqual({ membershipCycle: members[0]!.id, clearSubtaskAssignments: false, confirmedAssignmentCount: 0 });
     expect(apiDeleteMock.mock.calls[1]?.[1]).toEqual({ membershipCycle: members[0]!.id, clearSubtaskAssignments: true, confirmedAssignmentCount: 2 });
+    expect(publish.mock.calls.some(([message]) => message.type === "project-data-invalidated" && JSON.stringify(message.resources) === JSON.stringify([{ kind: "activity" }, { kind: "subtasks" }]))).toBe(true);
   });
 
   it("shows a generic error and stops when the confirmation response omits its assignment count", async () => {

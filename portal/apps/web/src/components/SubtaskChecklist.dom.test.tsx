@@ -61,6 +61,56 @@ describe("SubtaskChecklist", () => {
     expect(floating.modalValues.at(-1)).toBe(false);
   });
 
+  it("patches a saved schedule locally and flushes its deferred invalidation once", async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const runtime = new ProjectQueryRuntime(queryClient, "subtask-schedule-owner-test");
+    const subtasksKey = projectDataKeys.subtasks(projectId);
+    const updated = {
+      ...task,
+      schedule: { state: "due_only" as const, version: 1, zone: "Australia/Sydney" as const, start: null, end: { kind: "date" as const, localCivil: `${year}-06-15`, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const }, due: `${year}-06-15` },
+    };
+    queryClient.setQueryData(subtasksKey, [task, second]);
+    let patchSettled = false;
+    apiGetMock.mockImplementation((path) => {
+      if (path.includes("mentionable-users")) return Promise.resolve({ users: [] });
+      return Promise.resolve({ subtasks: patchSettled ? [updated, second] : [task, second] });
+    });
+    let resolvePatch!: (value: unknown) => void;
+    apiPatchMock.mockReturnValueOnce(new Promise((resolve) => { resolvePatch = resolve; }));
+    const publish = vi.spyOn(runtime, "publish");
+    const originalRequestInvalidation = runtime.requestInvalidation.bind(runtime);
+    const requestInvalidation = vi.spyOn(runtime, "requestInvalidation");
+    const requestOwnership: boolean[] = [];
+    requestInvalidation.mockImplementation((queryKey) => {
+      if (JSON.stringify(queryKey) === JSON.stringify(subtasksKey)) requestOwnership.push(runtime.isOwned(subtasksKey));
+      return originalRequestInvalidation(queryKey);
+    });
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    const host = mount();
+    await act(async () => { root!.render(<ProjectQueryRuntimeProvider runtime={runtime}><QueryClientProvider client={queryClient}><SubtaskChecklist projectId={projectId} /></QueryClientProvider></ProjectQueryRuntimeProvider>); await Promise.resolve(); await Promise.resolve(); });
+
+    const schedule = item(host, "Call client").querySelector<HTMLButtonElement>('[aria-label="Schedule for Call client"]')!;
+    await click(schedule);
+    expect(runtime.isOwned(subtasksKey)).toBe(true);
+    await click(portal("subtask-popover-task-1-schedule").querySelector<HTMLButtonElement>(".button")!);
+    await flush();
+
+    expect(runtime.isOwned(subtasksKey)).toBe(true);
+    expect(requestOwnership).toEqual([]);
+    expect(invalidate.mock.calls.filter(([options]) => JSON.stringify(options?.queryKey) === JSON.stringify(subtasksKey))).toHaveLength(0);
+    patchSettled = true;
+    resolvePatch(updated);
+    await flush();
+    expect(apiPatchMock).toHaveBeenCalled();
+    expect(queryClient.getQueryData<typeof updated[]>(subtasksKey)?.find((entry) => entry.id === task.id)).toMatchObject({ schedule: { due: `${year}-06-15` } });
+    expect(requestOwnership).toEqual([true]);
+    expect(invalidate.mock.calls.filter(([options]) => JSON.stringify(options?.queryKey) === JSON.stringify(subtasksKey))).toHaveLength(1);
+    expect(publish.mock.calls.some(([message]) => message.type === "dashboard-board-invalidated")).toBe(false);
+    expect(publish.mock.calls.some(([message]) => message.type === "production-calendar-invalidated")).toBe(true);
+    expect(runtime.isOwned(subtasksKey)).toBe(false);
+    runtime.dispose(); queryClient.clear();
+  });
+
   it("edits exact-minute schedule state and clears explicitly, while retaining the assignee popover", async () => {
     const host = mount(); await render(); const first = item(host, "Call client"); const schedule = first.querySelector<HTMLButtonElement>('[aria-label="Schedule for Call client"]')!; const assignee = first.querySelector<HTMLButtonElement>('[aria-label="Assignee for Call client"]')!;
     await click(schedule); const group = portal("subtask-popover-task-1-schedule"); expect(group).not.toBeNull(); const state = group.querySelector<HTMLSelectElement>("select")!; expect(group.querySelectorAll("select")).toHaveLength(2); state.value = "due_only"; state.dispatchEvent(new Event("change", { bubbles: true })); await click(group.querySelector<HTMLButtonElement>(".button")!);
@@ -83,11 +133,15 @@ describe("SubtaskChecklist", () => {
     queryClient.setQueryData(projectDataKeys.subtasks(projectId), [task, second]);
     const host = mount();
     await act(async () => { root!.render(<ProjectQueryRuntimeProvider runtime={runtime}><QueryClientProvider client={queryClient}><SubtaskChecklist projectId={projectId} /></QueryClientProvider></ProjectQueryRuntimeProvider>); await Promise.resolve(); await Promise.resolve(); });
+    let deleted = false;
+    apiGetMock.mockImplementation((path) => path.includes("mentionable-users") ? Promise.resolve({ users: [] }) : Promise.resolve({ subtasks: deleted ? [second] : [task, second] }));
+    apiDeleteMock.mockImplementation(async () => { deleted = true; return { ok: true }; });
     await click(host.querySelector<HTMLButtonElement>('[aria-label="Actions for Call client"]')!);
     await click(portal("subtask-popover-task-1-actions").querySelector("button")!);
     await flush();
     expect(queryClient.getQueryData<typeof task[]>(projectDataKeys.subtasks(projectId))?.map((entry) => entry.id)).toEqual(["task-2"]);
-    expect(publish).toHaveBeenCalledWith(expect.objectContaining({ type: "project-data-invalidated", projectId, resources: [{ kind: "subtasks" }] }));
+    expect(publish).toHaveBeenCalledWith(expect.objectContaining({ type: "project-data-invalidated", projectId, resources: [{ kind: "subtasks" }, { kind: "activity" }] }));
+    expect(publish).toHaveBeenCalledWith(expect.objectContaining({ type: "production-calendar-invalidated" }));
     runtime.dispose(); queryClient.clear();
   });
 

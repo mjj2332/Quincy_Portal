@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { PROJECT_DEADLINE_PRESETS, deadlineOffsetLabel, formatSydneyInstant, type ProjectDeadlineSchedule, type SaveProjectDeadlineRequest } from "@quincy/shared";
 import { ApiError, apiPut } from "../lib/api";
 import { confirm } from "../lib/confirm";
-import { invalidateProjectResources, projectDataKeys, type ProjectDetail } from "../lib/project-data";
+import { invalidateProjectSurfaces, projectDataKeys, type ProjectDetail } from "../lib/project-data";
 import { useOptionalProjectQueryClient } from "../lib/project-data";
 import { useProjectQueryRuntime } from "../lib/project-query-sync";
 
@@ -89,7 +89,7 @@ export function ProjectDeadlineControl({ projectId, schedule, canEdit }: Project
       const response = await apiPut<SaveResponse, SaveProjectDeadlineRequest>(`/api/projects/${encodeURIComponent(projectId)}/deadline`, body);
       setVisibleSchedule(response.current);
       queryClient?.setQueryData<ProjectDetail>(projectDataKeys.detail(projectId), (current) => current ? { ...current, deadlineSchedule: response.current } : current);
-      if (queryClient) await invalidateProjectResources(queryClient, { projectId, resources: [{ kind: "detail" }] });
+      if (queryClient) await invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "detail" }, { kind: "activity" }], dashboard: true, calendar: true });
       setBaseVersion(response.current.version); setReapplyBuffer(null); closeEditing();
     } catch (reason) {
       const details = reason instanceof ApiError && reason.details && typeof reason.details === "object" ? reason.details as Record<string, unknown> : null;
@@ -122,7 +122,7 @@ export function ProjectDeadlineControl({ projectId, schedule, canEdit }: Project
       });
       setVisibleSchedule(response.current);
       queryClient?.setQueryData<ProjectDetail>(projectDataKeys.detail(projectId), (current) => current ? { ...current, deadlineSchedule: response.current } : current);
-      if (queryClient) await invalidateProjectResources(queryClient, { projectId, resources: [{ kind: "detail" }] });
+      if (queryClient) await invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "detail" }, { kind: "activity" }], dashboard: true, calendar: true });
       closeEditing();
     } catch (reason) {
       if (reason instanceof ApiError && reason.status === 409 && reason.details && typeof reason.details === "object" && "current" in reason.details) {

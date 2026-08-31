@@ -27,6 +27,7 @@ const testNow = new Date("2026-08-27T00:00:00.000Z");
 describe("Dashboard Kanban sort control", () => {
   beforeEach(() => {
     vi.useFakeTimers({ now: testNow });
+    window.history.replaceState(null, "", "/");
     apiGetMock.mockReset();
     apiGetMock.mockImplementation((path) => path === "/api/projects" ? Promise.resolve({ projects: [{
       id: "project-1", street: "1 Test Street", suburb: null, postcode: null, agencyName: null, agentName: null,
