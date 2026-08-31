@@ -490,6 +490,8 @@ button { font-family: var(--font-sans); }
 .notice-board__composer { display: grid; gap: 10px; padding: var(--space-4) var(--space-5); }
 .notice-board__composer-foot { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); color: var(--text-muted); font-size: 12px; }
 .notice-board__edit-composer { padding: var(--space-4) 0 0; }
+.notice-board__post--changed { background: var(--paper-100); }
+.notice-board__edit-target-changed { color: var(--signal-caution); font-size: 13px; }
 
 /* Shared collaboration rich-text surface. */
 .rich-text { font-size: 14px; line-height: 1.55; overflow-wrap: anywhere; }

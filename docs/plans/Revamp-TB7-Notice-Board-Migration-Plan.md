@@ -5,6 +5,10 @@
 > ordering contract to admit deletion-driven `latest` regression and added its §6 tests. Not
 > implemented or deployed.**
 
+> **Slice 2 build correction (2026-09-01):** Rule 3 was corrected during the Slice 2 build in
+> response to Sol diff-review-2: equal-marker `latest` changes are now uniformly sequence-gated,
+> including tuple-newer heads, because deletions make tuple order insufficient to prove freshness.
+
 ## Outcome and authority
 
 TB7 moves the staff Notice Board's read/unread high-water mark from per-browser
@@ -249,17 +253,16 @@ therefore specifies this ordering contract explicitly:
    when its response settles. Store the accepted sequence alongside the cached snapshot.
 2. The marker tuple `(throughCreatedAt, throughPostId)` is server-monotonic and never regresses;
    reject any incoming snapshot whose marker tuple is older, whatever its sequence.
-3. When marker tuples are equal, accept the incoming snapshot if its `latest` tuple is newer
-   (server state demonstrably advanced, whatever the sequence). Otherwise — equal or **older**
-   `latest`, which is exactly the legitimate deletion-driven regression — accept it only if its
-   request-start sequence is greater than or equal to the accepted sequence of the cached snapshot.
+3. When marker tuples are equal, accept the incoming snapshot only if its request-start sequence
+   is greater than or equal to the accepted sequence of the cached snapshot. Apply this uniformly
+   whether `latest` is newer, equal, or older.
 
-Rule 3 preserves the property the shipped rule was protecting — a slow GET started before a newer
-PATCH, or before another device's newer marker was observed, cannot resurrect stale unread UI,
-because its request-start sequence is older — while allowing the newest-started response to carry
-`latest` and `unreadCount` backwards. Its worst case is a bounded staleness that self-heals on the
-next visible poll, not the permanent stuck badge above. `updatedAt` is never the client ordering
-key, and `unreadCount` is never compared directly.
+Rule 3 is uniform because, once deletions can regress `latest`, tuple order alone cannot distinguish
+a genuinely advanced server head from a stale pre-deletion response. A slow GET started before a
+newer PATCH or poll therefore cannot resurrect stale unread UI, while a legitimate newer post from
+that older-started response may wait for the next qualifying visible poll. The worst case is bounded
+staleness that self-heals on that poll, not a permanently stuck badge. `updatedAt` is never the client
+ordering key, and `unreadCount` is never compared directly.
 
 The same latent hazard exists in the shipped project-comment implementation. TB7 does not modify
 `project-comments.ts`; record the equivalent project-comment fix as separate follow-up work in
