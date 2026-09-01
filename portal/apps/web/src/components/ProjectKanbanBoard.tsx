@@ -519,6 +519,7 @@ type KanbanColumnProps = {
   onMoveStage: BoardMoveHandler;
   onMoveToProposalChange: (proposal: SemanticGap | null) => void;
   semanticStageKey: StageKey;
+  stageIndex: number;
   projectHrefFor?: (project: ProjectSummary) => string | undefined;
 };
 
@@ -544,6 +545,7 @@ function KanbanColumn({
   onMoveStage,
   onMoveToProposalChange,
   semanticStageKey: semanticKey,
+  stageIndex,
   projectHrefFor,
 }: KanbanColumnProps) {
   const displayedIds = displayOrders[semanticKey] ?? [];
@@ -554,7 +556,7 @@ function KanbanColumn({
   const stageIsOver = activeProjectId !== undefined && (isOver || proposal?.gap.targetStageKey === semanticKey);
 
   return <section className={`kcol ${stageIsOver ? "is-over" : ""}`}>
-    <div className="kcol__head" data-focus-key={`stage-heading:${semanticKey}`} tabIndex={-1}><span className="row gap2"><StatusBadge stageKey={stage.key} /></span><span className="cnt">{displayedProjects.length}</span></div>
+    <div className="kcol__head" data-focus-key={`stage-heading:${semanticKey}`} tabIndex={-1}><span className="kcol__ordinal" aria-hidden="true">{String(stageIndex + 1).padStart(2, "0")}</span><StatusBadge stageKey={stage.key} /><span className="cnt">{displayedProjects.length}</span></div>
     <SortableContext items={displayedIds} strategy={verticalListSortingStrategy}>
       <div ref={setColumnBodyRef} className="kcol__body" data-droppable-id={`column:${stage.key}`}>
         {displayedProjects.length === 0 && <div className="kcol__empty">—</div>}
@@ -893,10 +895,11 @@ export function ProjectKanbanBoard({
 
   return <DndContext {...dndContextProps}>
     <div className="kanban" data-focus-key="board" tabIndex={-1} aria-label="Project pipeline board">
-      {activeStages.map((stage) => {
+      {activeStages.map((stage, stageIndex) => {
         return <KanbanColumn
           key={stage.key}
           stage={stage}
+          stageIndex={stageIndex}
           activeStages={activeStages}
           displayOrders={displayOrders}
           projects={projects}

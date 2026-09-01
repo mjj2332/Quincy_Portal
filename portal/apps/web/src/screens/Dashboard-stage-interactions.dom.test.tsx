@@ -197,6 +197,20 @@ async function moveToEnd(host: HTMLElement, street: string, targetLabel: string)
   await act(async () => { submit.click(); await Promise.resolve(); });
 }
 
+function sortTrigger(host: HTMLElement) {
+  return host.querySelector<HTMLButtonElement>('[aria-label="Sort Kanban board"][role="combobox"]');
+}
+
+async function chooseSort(host: HTMLElement, label: string) {
+  const trigger = sortTrigger(host);
+  if (!trigger) throw new Error("Missing Sort Kanban board trigger");
+  await act(async () => { trigger.click(); await Promise.resolve(); });
+  const option = [...document.querySelectorAll<HTMLElement>('[aria-label="Sort Kanban board"][role="listbox"] [role="option"]')]
+    .find((element) => element.textContent === label);
+  if (!option) throw new Error(`Missing Sort option ${label}`);
+  await act(async () => { option.click(); await Promise.resolve(); });
+}
+
 async function flush() {
   await act(async () => { await Promise.resolve(); await Promise.resolve(); await new Promise<void>((resolve) => setTimeout(resolve, 0)); });
 }
@@ -550,13 +564,13 @@ describe("Dashboard Stage interactions", () => {
 
   it("locks Kanban sorting and preserves the drag proposal while an interaction is active", async () => {
     await act(async () => { root.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); }); await flush();
-    const sort = host.querySelector<HTMLSelectElement>(".dashboard-sort select")!;
+    const sort = sortTrigger(host)!;
     await dndStart("source", "awaiting_raw");
     await dndOver("source", "awaiting_raw", "target", cardData("raw_review", "target"));
     expect(sort.disabled).toBe(true);
-    sort.value = "shootDate-asc";
-    await act(async () => { sort.dispatchEvent(new Event("change", { bubbles: true })); await Promise.resolve(); });
-    expect(sort.value).toBe("board");
+    await act(async () => { sort.click(); await Promise.resolve(); });
+    expect(host.querySelector('[aria-label="Sort Kanban board"][role="listbox"]')).toBeNull();
+    expect(sort.textContent).toContain("Board order");
     // The accepted card order stays fixed during a drag; the live proposal shows as a drop
     // indicator (dnd-kit transforms open the gap in the browser). The moving card ghosts in its
     // source column, and the blocked sort change leaves the proposal intact.
@@ -654,9 +668,7 @@ describe("Dashboard Stage interactions", () => {
     expect(order()).toEqual(["Board First", "Priority First", "Date First"]);
     expect(dashboardProjectsKey("admin-1", "photographer", 0, false)).toHaveLength(5);
 
-    const sort = host.querySelector<HTMLSelectElement>(".dashboard-sort select")!;
-    sort.value = "priority";
-    await act(async () => { sort.dispatchEvent(new Event("change", { bubbles: true })); await Promise.resolve(); });
+    await chooseSort(host, "Priority");
     await flush();
     expect(projectFetches).toBe(1);
     expect(order()).toEqual(["Priority First", "Date First", "Board First"]);
@@ -673,7 +685,7 @@ describe("Dashboard Stage interactions", () => {
     const moveTo = card(host, "Sort Source").querySelector<HTMLButtonElement>('[data-focus-key="move-to:sort-source"]')!;
     await act(async () => { moveTo.click(); await Promise.resolve(); });
     await act(async () => { [...document.querySelectorAll<HTMLButtonElement>('[role="radio"]')].find((button) => button.textContent === "RAW review")!.click(); await Promise.resolve(); });
-    expect([...document.querySelectorAll<HTMLButtonElement>('[role="option"]')].map((button) => button.textContent)).toEqual([
+    expect([...document.querySelectorAll<HTMLButtonElement>('.kanban-move-popover [role="option"]')].map((button) => button.textContent)).toEqual([
       "End of RAW review",
       "Before Priority First — position 1",
       "Before Date First — position 2",
@@ -683,8 +695,7 @@ describe("Dashboard Stage interactions", () => {
     // The drag-cancel above legitimately queues exactly one post-interaction reconcile refetch
     // (scenario 2). The sort change itself must add none: capture the count first, then switch.
     const fetchesBeforeSecondSort = projectFetches;
-    sort.value = "shootDate-asc";
-    await act(async () => { sort.dispatchEvent(new Event("change", { bubbles: true })); await Promise.resolve(); });
+    await chooseSort(host, "Shoot date ↑");
     await flush();
     expect(projectFetches).toBe(fetchesBeforeSecondSort);
     expect(order()).toEqual(["Date First", "Board First", "Priority First"]);
@@ -714,9 +725,7 @@ describe("Dashboard Stage interactions", () => {
     await act(async () => { root.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); });
     await flush();
     if (sortMode !== "board") {
-      const sort = host.querySelector<HTMLSelectElement>(".dashboard-sort select")!;
-      sort.value = sortMode;
-      await act(async () => { sort.dispatchEvent(new Event("change", { bubbles: true })); await Promise.resolve(); });
+      await chooseSort(host, sortMode === "priority" ? "Priority" : "Shoot date ↑");
       await flush();
     }
     await dndStart("source", "awaiting_raw");

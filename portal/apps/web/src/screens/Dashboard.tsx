@@ -10,6 +10,10 @@ import { useStages } from "../lib/stages";
 import { DASHBOARD_CALENDAR_LAST_DATE_KEY, DASHBOARD_CALENDAR_SUBVIEW_KEY, formatDashboardDate, initializeDashboardCalendarState, initializeDashboardView, initializeKanbanSortMode, normalizeDashboardCalendarSearch, sanitizeDashboardCalendarSearch, type DashboardView, type KanbanSortMode } from "./dashboard-helpers";
 import { InternalLink } from "../components/InternalLink";
 import { NoticeBoard } from "../components/NoticeBoard";
+import { Button, buttonClasses } from "../components/ui/button";
+import { Eyebrow } from "../components/ui/eyebrow";
+import { Select, type SelectOption } from "../components/ui/select";
+import { cn } from "../lib/utils";
 import { invalidateProjectSurfaces, useOptionalProjectQueryClient } from "../lib/project-data";
 import { createDashboardBoardInvalidatedMessage, getProjectQueryRuntime } from "../lib/project-query-sync";
 import { dashboardProjectsKey, useDashboardProjects } from "../lib/dashboard-projects";
@@ -92,18 +96,55 @@ function boardModelFromProjects(projects: ProjectSummary[]): BoardModel {
   return authorizedBoardOrder ? { projects: [...projects], authorizedBoardOrder } : { projects: [...projects] };
 }
 
+// TB8-01 §8.1 — shared List grid; header and body rows share the same column template so cells
+// line up. `minmax(0, …)` on every fractional track lets long addresses shrink instead of forcing
+// the grid wider than its container at 1024.
+const PROW_GRID = "[display:grid] grid-cols-[72px_minmax(0,1.6fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.1fr)_96px] " +
+  "items-center gap-[var(--space-4)] px-[var(--space-5)] py-[var(--space-3)] " +
+  "max-[720px]:grid-cols-[56px_1fr_84px] max-[720px]:py-[var(--space-4)]";
+const PROW_ROW = PROW_GRID + " w-full border-0 [border-top-style:solid] border-t-[length:var(--border-width-hair)] " +
+  "border-t-border first:border-t-0 text-inherit text-left font-inherit bg-transparent cursor-pointer " +
+  "no-underline transition-colors duration-[var(--dur-fast)] ease-[var(--ease-standard)] hover:bg-secondary " +
+  "active:bg-surface-sunken focus-visible:outline-[length:var(--border-width-bold)] focus-visible:outline-solid " +
+  "focus-visible:outline-ring focus-visible:-outline-offset-2";
+
+// TB8-01 §7.4 — the segment control that motivated this candidate: legacy `.segment button` had
+// no disabled styling at all, even though the Dashboard disables it while interaction is blocked.
+const SEGMENT_GROUP = "inline-flex border-solid border-[length:var(--border-width-hair)] border-border " +
+  "rounded-[var(--radius-sm)] overflow-hidden bg-card has-[button:focus-visible]:overflow-visible " +
+  "max-[720px]:flex-auto";
+// Merged font shorthand, not `[font:var(--type-label)]` + a separate `text-[length:var(--text-xs)]`
+// override — the two-utility split doesn't reliably resolve to text-xs (Tailwind's generated
+// order between them isn't guaranteed); see button.tsx's BASE for the same fix.
+const SEGMENT_BUTTON = "[font:var(--weight-regular)_var(--text-xs)/1.2_var(--font-sans)] uppercase " +
+  "tracking-[var(--tracking-wide)] min-h-[38px] px-[var(--space-4)] py-[var(--space-2)] bg-transparent " +
+  "border-0 [border-left-style:solid] border-l-[length:var(--border-width-hair)] border-l-border " +
+  "text-foreground-secondary cursor-pointer transition-[background-color,color] duration-[var(--dur-fast)] " +
+  "ease-[var(--ease-standard)] first:border-l-0 " +
+  "not-[.is-active]:not-disabled:hover:bg-secondary not-[.is-active]:not-disabled:hover:text-foreground " +
+  "[&.is-active]:bg-primary [&.is-active]:text-primary-foreground not-disabled:active:translate-y-px " +
+  "focus-visible:outline-[length:var(--border-width-bold)] focus-visible:outline-solid " +
+  "focus-visible:outline-ring focus-visible:outline-offset-2 focus-visible:relative focus-visible:z-10 " +
+  "disabled:text-foreground-secondary disabled:bg-surface-sunken disabled:cursor-not-allowed " +
+  "disabled:translate-y-0 [&.is-active]:disabled:bg-surface-sunken [&.is-active]:disabled:text-foreground-secondary " +
+  "[&.is-active]:disabled:border-border-hover max-[720px]:flex-auto " +
+  "max-[720px]:min-h-[44px]"; /* WCAG 2.5.8 minimum target, not a spacing token */
+
 function ProjectListRow({ project, projectHref }: { project: ProjectSummary; projectHref: string }) {
   const [coverFailed, setCoverFailed] = useState(false); const [coverRetry, setCoverRetry] = useState(0);
   return <div className="prow-wrap">
-    <InternalLink className="prow" to={projectHref}>
+    <InternalLink className={cn("prow", PROW_ROW)} to={projectHref}>
       <CoverMedia project={project} className="prow__thumb" inlinePlaceholder retryToken={coverRetry} onFailedChange={setCoverFailed} />
-      <span><span className="serif prow__addr">{project.street}</span><span className="ey prow__location">{location(project)}</span></span>
-      <span className="prow__c-agency">{project.agencyName || "Agency pending"}<span className="muted">{project.agentName || "Agent pending"}</span></span>
-      <span className="prow__c-date">{formatDashboardDate(project.shootDate)}</span>
-      <span className="prow__c-status"><StatusBadge stageKey={project.stageKey} /></span>
-      <span className="prow__raw">{project.receivedCount}</span>
+      <span>
+        <span className="prow__addr block font-[family-name:var(--font-display)] text-[length:var(--text-md)] tracking-[var(--tracking-tight)]">{project.street}</span>
+        <Eyebrow className="prow__location block mt-[var(--space-1)]">{location(project)}</Eyebrow>
+      </span>
+      <span className="prow__c-agency text-[length:var(--text-sm)] max-[720px]:hidden">{project.agencyName || "Agency pending"}<span className="block mt-[var(--space-1)] text-[length:var(--text-xs)] text-muted-foreground">{project.agentName || "Agent pending"}</span></span>
+      <span className="prow__c-date text-[length:var(--text-sm)] max-[720px]:hidden">{formatDashboardDate(project.shootDate)}</span>
+      <span className="prow__c-status max-[720px]:hidden"><StatusBadge stageKey={project.stageKey} /></span>
+      <span className="prow__raw text-right tabular-nums text-[length:var(--text-sm)]">{project.receivedCount}</span>
     </InternalLink>
-    {coverFailed && <button className="prow__retry button button--secondary" type="button" onClick={() => { setCoverFailed(false); setCoverRetry((current) => current + 1); }}>Retry cover image</button>}
+    {coverFailed && <Button type="button" variant="secondary" className="prow__retry mt-[var(--space-2)]" onClick={() => { setCoverFailed(false); setCoverRetry((current) => current + 1); }}>Retry cover image</Button>}
   </div>;
 }
 
@@ -528,6 +569,12 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   const needsReviewCount = projects.filter((project) => project.stageKey === "raw_review" || project.stageKey === "edited_review").length;
   const deliveredCount = projects.filter((project) => project.stageKey === "delivered").length;
   const activeStages = stages.filter((stage) => stage.active);
+  const kanbanSortOptions: SelectOption<KanbanSortMode>[] = useMemo(() => {
+    const options: SelectOption<KanbanSortMode>[] = [{ value: "board", label: "Board order" }];
+    if (canPrioritize && hasAuthorizedBoardMap) options.push({ value: "priority", label: "Priority" });
+    options.push({ value: "shootDate-asc", label: "Shoot date ↑" }, { value: "shootDate-desc", label: "Shoot date ↓" });
+    return options;
+  }, [canPrioritize, hasAuthorizedBoardMap]);
 
   const handleCalendarAccessLoss = useCallback(() => {
     setCalendarInteractionBlocked(false);
@@ -858,62 +905,82 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   }
 
   return (
-    <main className="page">
-      <div className="pagehead">
+    <main className="page [overflow-x:clip]">
+      <div className="flex flex-wrap items-end justify-between gap-x-[var(--space-6)] gap-y-[var(--space-5)] pb-[var(--space-4)]">
         <div>
-          <div className="ey" style={{ marginBottom: 14 }}>Quincy Portal · production desk</div>
-          <h1 className="serif">Projects</h1>
+          <Eyebrow className="mb-[var(--space-3)]">Quincy Portal · production desk</Eyebrow>
+          <h1 className="[font:var(--type-h1)] tracking-[var(--tracking-tight)] max-[720px]:[font:var(--type-h2)]">Projects</h1>
         </div>
-        <div className="toolbar">
-          <label className="dashboard-search">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><circle cx="11" cy="11" r="6" /><path d="m16 16 4 4" /></svg>
+        <div className="flex items-center gap-[var(--space-3)] flex-wrap">
+          <label className={cn("dashboard-search", "group flex items-center min-w-[min(100%,300px)] px-[var(--space-3)] bg-card border-solid border-[length:var(--border-width-hair)] border-border rounded-[var(--radius-sm)] transition-[border-color] duration-[var(--dur-fast)] ease-[var(--ease-standard)] hover:border-border-hover focus-within:border-primary focus-within:outline-[length:var(--border-width-bold)] focus-within:outline-solid focus-within:outline-ring focus-within:outline-offset-2 max-[720px]:basis-full max-[720px]:min-w-0")}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true" className="size-[15px] shrink-0 text-muted-foreground transition-colors duration-[var(--dur-fast)] ease-[var(--ease-standard)] group-focus-within:text-foreground-secondary"><circle cx="11" cy="11" r="6" /><path d="m16 16 4 4" /></svg>
             <span className="sr-only">Search projects</span>
-            <input value={query} onChange={(event) => setQuery(sanitizeDashboardCalendarSearch(event.target.value))} placeholder="Search address, suburb, client…" />
+            <input className="min-w-0 w-full py-[var(--space-2)] px-[var(--space-3)] border-0 outline-0 bg-transparent text-foreground [font:var(--type-body)] text-[length:var(--text-sm)] placeholder:text-muted-foreground max-[720px]:py-[var(--space-3)]" value={query} onChange={(event) => setQuery(sanitizeDashboardCalendarSearch(event.target.value))} placeholder="Search address, suburb, client…" />
           </label>
-          {canCreateProject && <InternalLink className="button" to="/projects/new">New shoot</InternalLink>}
+          {canCreateProject && <InternalLink className={buttonClasses()} to="/projects/new">New shoot</InternalLink>}
         </div>
+        <hr className="basis-full m-0 mb-[var(--space-6)] border-0 [border-top-style:solid] border-t-[length:var(--border-width-rule)] border-t-primary max-[720px]:mb-[var(--space-5)]" />
       </div>
 
       {canViewNoticeBoard && <NoticeBoard currentUserId={currentUserId} />}
 
-      {!viewingArchived && <div className="stats" aria-label="Project summary">
-        <div className="stat"><div className="v">{activeCount}</div><div className="l">Active shoots</div></div>
-        <div className="stat"><div className="v"><span className="sdot" style={{ background: "var(--signal-caution)" }} />{needsReviewCount}</div><div className="l">Needs review</div></div>
-        <div className="stat"><div className="v"><span className="sdot" style={{ background: "var(--signal-positive)" }} />{deliveredCount}</div><div className="l">Delivered</div></div>
-        <div className="stat"><div className="v">{projects.length}</div><div className="l">All projects</div></div>
-      </div>}
+      {!viewingArchived && <section aria-label="Project summary" className="[display:grid] grid-cols-4 [border-block-style:solid] border-y-[length:var(--border-width-hair)] border-y-border bg-transparent mb-[var(--space-6)] max-[1080px]:grid-cols-2">
+        <div className="py-[var(--space-5)] pr-[var(--space-5)]">
+          <div className="[font:var(--type-h2)] tracking-[var(--tracking-tight)] flex items-baseline gap-[var(--space-2)] tabular-nums max-[390px]:[font:var(--type-h3)]">{activeCount}</div>
+          <div className="[font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-widest)] text-foreground-secondary mt-[var(--space-2)]">Active shoots</div>
+        </div>
+        <div className="py-[var(--space-5)] pr-[var(--space-5)] pl-[var(--space-5)] [border-left-style:solid] border-l-[length:var(--border-width-hair)] border-l-border">
+          <div className="[font:var(--type-h2)] tracking-[var(--tracking-tight)] flex items-baseline gap-[var(--space-2)] tabular-nums max-[390px]:[font:var(--type-h3)]"><span className="size-[7px] rounded-[var(--radius-pill)] shrink-0 self-center bg-signal-caution" />{needsReviewCount}</div>
+          <div className="[font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-widest)] text-foreground-secondary mt-[var(--space-2)]">Needs review</div>
+        </div>
+        <div className="py-[var(--space-5)] pr-[var(--space-5)] pl-[var(--space-5)] [border-left-style:solid] border-l-[length:var(--border-width-hair)] border-l-border max-[1080px]:pl-0 max-[1080px]:border-l-0 max-[1080px]:[border-top-style:solid] max-[1080px]:border-t-[length:var(--border-width-hair)] max-[1080px]:border-t-border">
+          <div className="[font:var(--type-h2)] tracking-[var(--tracking-tight)] flex items-baseline gap-[var(--space-2)] tabular-nums max-[390px]:[font:var(--type-h3)]"><span className="size-[7px] rounded-[var(--radius-pill)] shrink-0 self-center bg-signal-positive" />{deliveredCount}</div>
+          <div className="[font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-widest)] text-foreground-secondary mt-[var(--space-2)]">Delivered</div>
+        </div>
+        <div className="py-[var(--space-5)] pr-[var(--space-5)] pl-[var(--space-5)] [border-left-style:solid] border-l-[length:var(--border-width-hair)] border-l-border max-[1080px]:[border-top-style:solid] max-[1080px]:border-t-[length:var(--border-width-hair)] max-[1080px]:border-t-border">
+          <div className="[font:var(--type-h2)] tracking-[var(--tracking-tight)] flex items-baseline gap-[var(--space-2)] tabular-nums max-[390px]:[font:var(--type-h3)]">{projects.length}</div>
+          <div className="[font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-widest)] text-foreground-secondary mt-[var(--space-2)]">All projects</div>
+        </div>
+      </section>}
 
-      <div className="dashboard-viewbar">
+      <div className={cn("dashboard-viewbar", "flex flex-wrap items-center justify-end gap-x-[var(--space-3)] gap-y-[var(--space-2)] mb-[var(--space-4)] pt-[var(--space-4)] [border-top-style:solid] border-t-[length:var(--border-width-hair)] border-t-border max-[720px]:justify-start")}>
         {canViewArchived && <>
-          <span className="ey">Projects</span>
-          <div className="segment" aria-label="Project status">
-            <button className={!viewingArchived ? "is-active" : ""} type="button" onClick={() => selectProjectScope("active")}>Active</button>
-            <button className={viewingArchived ? "is-active" : ""} type="button" onClick={() => selectProjectScope("archived")}>Archived</button>
+          <Eyebrow className="max-[720px]:basis-full max-[720px]:-mb-[var(--space-1)]">Projects</Eyebrow>
+          <div className={SEGMENT_GROUP} aria-label="Project status">
+            <button className={cn(SEGMENT_BUTTON, !viewingArchived && "is-active")} type="button" onClick={() => selectProjectScope("active")}>Active</button>
+            <button className={cn(SEGMENT_BUTTON, viewingArchived && "is-active")} type="button" onClick={() => selectProjectScope("archived")}>Archived</button>
           </div>
         </>}
-        {viewingArchived && <span className="ey" role="status">Archived projects</span>}
+        {viewingArchived && <Eyebrow role="status">Archived projects</Eyebrow>}
         {!viewingArchived && <>
-        <span className="ey">View</span>
-        <div className="segment" aria-label="Dashboard view">
-          <button className={view === "list" ? "is-active" : ""} type="button" data-focus-key="dashboard-view-list" disabled={interactionBlocked || calendarInteractionBlocked} onClick={() => selectView("list")}>List</button>
-          <button className={view === "kanban" ? "is-active" : ""} type="button" data-focus-key="dashboard-view-kanban" disabled={interactionBlocked || calendarInteractionBlocked} onClick={() => selectView("kanban")}>Kanban</button>
-          {canViewProductionCalendar && <button className={view === "calendar" ? "is-active" : ""} type="button" data-focus-key="dashboard-view-calendar" disabled={interactionBlocked || calendarInteractionBlocked} onClick={() => selectView("calendar")}>Calendar</button>}
+        <Eyebrow className="max-[720px]:basis-full max-[720px]:-mb-[var(--space-1)]">View</Eyebrow>
+        <div className={SEGMENT_GROUP} aria-label="Dashboard view">
+          <button className={cn(SEGMENT_BUTTON, view === "list" && "is-active")} type="button" data-focus-key="dashboard-view-list" disabled={interactionBlocked || calendarInteractionBlocked} onClick={() => selectView("list")}>List</button>
+          <button className={cn(SEGMENT_BUTTON, view === "kanban" && "is-active")} type="button" data-focus-key="dashboard-view-kanban" disabled={interactionBlocked || calendarInteractionBlocked} onClick={() => selectView("kanban")}>Kanban</button>
+          {canViewProductionCalendar && <button className={cn(SEGMENT_BUTTON, view === "calendar" && "is-active")} type="button" data-focus-key="dashboard-view-calendar" disabled={interactionBlocked || calendarInteractionBlocked} onClick={() => selectView("calendar")}>Calendar</button>}
         </div>
         {!viewingArchived && view === "kanban" && (
-          <label className="dashboard-sort">
-            <span className="sr-only">Sort Kanban board</span>
-            <select value={effectiveKanbanSort} disabled={interactionBlocked} onChange={(event) => selectKanbanSort(event.target.value as KanbanSortMode)}>
-              <option value="board">Board order</option>
-              {canPrioritize && hasAuthorizedBoardMap && <option value="priority">Priority</option>}
-              <option value="shootDate-asc">Shoot date ↑</option>
-              <option value="shootDate-desc">Shoot date ↓</option>
-            </select>
-          </label>
+          <div className="dashboard-sort max-[720px]:basis-full">
+            <Select
+              value={effectiveKanbanSort}
+              onValueChange={(next) => selectKanbanSort(next)}
+              options={kanbanSortOptions}
+              disabled={interactionBlocked}
+              ariaLabel="Sort Kanban board"
+              className="max-[720px]:w-full"
+              triggerClassName={cn(
+                "min-w-[var(--space-10)] max-[720px]:w-full max-[720px]:min-w-0",
+                "max-[720px]:min-h-[44px]" /* WCAG 2.5.8 minimum target, not a spacing token */,
+              )}
+            />
+          </div>
         )}
         </>}
       </div>
 
-      {boardUnavailableMessage && !viewingArchived && !isCalendarView && <div className="muted" role="status" style={{ marginBottom: 16 }}>{boardUnavailableMessage}</div>}
+      {boardUnavailableMessage && !viewingArchived && !isCalendarView && (
+        <div role="status" className="flex items-baseline gap-[var(--space-3)] mb-[var(--space-4)] px-[var(--space-4)] py-[var(--space-3)] [border-left-style:solid] border-l-[length:var(--border-width-rule)] border-l-signal-caution bg-[color-mix(in_srgb,var(--signal-caution)_7%,var(--bg-surface))] text-foreground text-[length:var(--text-sm)] leading-[var(--leading-normal)] before:content-['Board'] before:shrink-0 before:[font:var(--type-eyebrow)] before:uppercase before:tracking-[var(--tracking-widest)] before:text-signal-caution">{boardUnavailableMessage}</div>
+      )}
 
       {isCalendarView && (
         <Suspense fallback={<div className="empty qc-calendar-state" role="status">Loading calendar…</div>}>
@@ -931,27 +998,45 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         </Suspense>
       )}
 
-      {!isCalendarView && isLoading && <div className="empty" role="status"><span className="serif">Loading {viewingArchived ? "archived " : ""}projects.</span>Preparing the production desk.</div>}
+      {!isCalendarView && isLoading && (
+        <div role="status" className="relative border-solid border-[length:var(--border-width-hair)] border-border bg-card motion-safe:animate-[fade_var(--dur-slow)_var(--ease-entrance)]">
+          <span className="absolute size-px overflow-hidden [clip-path:inset(50%)] whitespace-nowrap">{`Loading ${viewingArchived ? "archived " : ""}projects. Preparing the production desk.`}</span>
+          {[0, 1, 2, 3, 4].map((row) => (
+            <div key={row} className="[display:grid] grid-cols-[72px_minmax(0,1fr)_96px] gap-[var(--space-4)] items-center px-[var(--space-5)] py-[var(--space-3)] [border-top-style:solid] border-t-[length:var(--border-width-hair)] border-t-border first:border-t-0" aria-hidden="true">
+              <div className="h-[var(--space-7)] bg-surface-sunken" />
+              <div className="h-[10px] w-2/5 bg-surface-sunken" />
+              <div className="h-[10px] bg-surface-sunken" />
+            </div>
+          ))}
+        </div>
+      )}
 
       {!isCalendarView && !isLoading && error && (
-        <div className="empty" role="alert">
-          <span className="serif">{viewingArchived ? "Archived projects" : "Projects"} are unavailable.</span>
+        <div role="alert" className="border-solid border-[length:var(--border-width-hair)] border-border [border-left-style:solid] border-l-[length:var(--border-width-rule)] border-l-destructive bg-card px-[var(--space-6)] py-[var(--space-7)] text-left">
+          <span className="[font:var(--type-h2)] text-foreground block mb-[var(--space-3)]">{viewingArchived ? "Archived projects" : "Projects"} are unavailable.</span>
           {error}
-          <div style={{ marginTop: 16 }}><button className="button button--secondary" type="button" onClick={() => void projectsQuery.refetch()}>Try again</button></div>
+          <div><Button type="button" variant="secondary" className="mt-[var(--space-4)]" onClick={() => void projectsQuery.refetch()}>Try again</Button></div>
         </div>
       )}
 
       {!isCalendarView && !isLoading && !error && filteredProjects.length === 0 && (
-        <div className="empty">
-          <span className="serif">{query ? "Nothing here yet." : viewingArchived ? "No archived projects." : "No shoots yet — create the first one."}</span>
+        <div className="px-[var(--space-6)] py-[var(--space-8)] text-center text-muted-foreground max-[720px]:px-[var(--space-4)] max-[720px]:py-[var(--space-7)]">
+          <span className="[font:var(--type-h2)] text-foreground-secondary block mb-[var(--space-3)] max-w-[34ch] mx-auto max-[720px]:[font:var(--type-h3)]">{query ? "Nothing here yet." : viewingArchived ? "No archived projects." : "No shoots yet — create the first one."}</span>
           {query ? "No projects match this search." : viewingArchived ? "Archived projects remain here until they are restored or permanently deleted." : "Start the production desk with the property, client, and team details."}
-          {!query && !viewingArchived && canCreateProject && <div style={{ marginTop: 16 }}><InternalLink className="button" to="/projects/new">New shoot</InternalLink></div>}
+          {!query && !viewingArchived && canCreateProject && <div><InternalLink className={buttonClasses("primary", { className: "mt-[var(--space-4)]" })} to="/projects/new">New shoot</InternalLink></div>}
         </div>
       )}
 
       {!isCalendarView && !isLoading && !error && filteredProjects.length > 0 && (viewingArchived || view === "list") && (
-        <div className="plist" aria-label="Projects list">
-          <div className="prow head"><div /><div>Address</div><div className="prow__c-agency">Client</div><div className="prow__c-date">Shoot date</div><div className="prow__c-status">Status</div><div className="prow__raw">RAW received</div></div>
+        <div className="plist border-solid border-[length:var(--border-width-hair)] border-border bg-card" aria-label="Projects list">
+          <div className={cn("prow head", PROW_GRID, "bg-secondary cursor-default")}>
+            <div />
+            <div className="[font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-widest)] text-foreground-secondary">Address</div>
+            <div className="prow__c-agency [font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-widest)] text-foreground-secondary max-[720px]:hidden">Client</div>
+            <div className="prow__c-date [font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-widest)] text-foreground-secondary max-[720px]:hidden">Shoot date</div>
+            <div className="prow__c-status [font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-widest)] text-foreground-secondary max-[720px]:hidden">Status</div>
+            <div className="prow__raw [font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-widest)] text-foreground-secondary text-right">RAW received</div>
+          </div>
           {filteredProjects.map((project) => <ProjectListRow key={project.id} project={project} projectHref={projectHrefFor(project.id)} />)}
         </div>
       )}
@@ -981,7 +1066,23 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         />
       )}
       <div className="dashboard-live-region sr-only" aria-live="polite" aria-atomic="true">{announcement}</div>
-      <div className="toasts" aria-live="polite">{toasts.map((item) => <div className={`toast ${item.tone === "error" ? "toast--error" : ""}`} key={item.id}>{item.tone === "error" ? "!" : "✓"}<span>{item.message}</span></div>)}</div>
+      <div
+        aria-live="polite"
+        className="fixed z-[95] flex flex-col items-end gap-[var(--space-3)] pointer-events-none right-[max(var(--space-5),env(safe-area-inset-right))] bottom-[max(var(--space-5),env(safe-area-inset-bottom))] left-[max(var(--space-5),env(safe-area-inset-left))]"
+      >
+        {toasts.map((item) => (
+          <div
+            key={item.id}
+            className={cn(
+              "flex items-center gap-[var(--space-3)] bg-surface-inverse text-on-inverse px-[var(--space-5)] py-[var(--space-3)] rounded-[var(--radius-sm)] shadow-[var(--shadow-md)] text-[length:var(--text-sm)] leading-[var(--leading-normal)] motion-safe:animate-[slidein_var(--dur-base)_var(--ease-entrance)] pointer-events-auto max-w-[min(380px,100%)]",
+              item.tone === "error" && "bg-destructive",
+            )}
+          >
+            <span aria-hidden="true" className="shrink-0 inline-grid place-items-center size-[var(--space-4)] [font:var(--weight-regular)_var(--text-xs)/1.4_var(--font-mono)]">{item.tone === "error" ? "!" : "✓"}</span>
+            <span>{item.message}</span>
+          </div>
+        ))}
+      </div>
     </main>
   );
 }

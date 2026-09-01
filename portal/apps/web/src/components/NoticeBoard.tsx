@@ -128,7 +128,7 @@ export function NoticeBoard({ currentUserId }: { currentUserId: string }) {
   const hasUnread = (readState?.unreadCount ?? 0) > 0;
   const editingPostStillExists = editingId !== null && posts.some((post) => post.id === editingId);
   return <section className="notice-board" aria-label="Notice board">
-    <button className="notice-board__toggle" type="button" aria-expanded={open} aria-controls={panelId} onClick={() => setOpen((value) => !value)}><span><span className="ey">Staff notice board</span><span className="notice-board__summary">Messages for the production desk</span></span>{hasUnread && <span className="notice-board__badge" aria-label="New notice" />}<span className="notice-board__chevron" aria-hidden="true">{open ? "−" : "+"}</span></button>
+    <button className={`notice-board__toggle${hasUnread ? " is-unread" : ""}`} type="button" aria-expanded={open} aria-controls={panelId} onClick={() => setOpen((value) => !value)}><span><span className="ey">Staff notice board</span><span className="notice-board__summary">Messages for the production desk</span></span>{hasUnread && <span className="notice-board__badge" aria-label="New notice" />}<span className="notice-board__chevron" aria-hidden="true">{open ? "−" : "+"}</span></button>
     <div id={panelId} className={`notice-board__panel${open ? "" : " is-collapsed"}`} aria-hidden={!open}>
       {visibleError && <div className="notice-board__error" role="alert">{visibleError}</div>}
       <div className="notice-board__posts" aria-live="polite" ref={posts.length === 0 ? presentation.anchorRef : undefined}>

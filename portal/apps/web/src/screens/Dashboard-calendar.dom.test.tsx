@@ -117,7 +117,7 @@ describe("Dashboard Calendar routing", () => {
     window.localStorage.setItem("quincy:dashboard:view", "calendar");
     await render({ role: "photographer" });
     expect([...host.querySelectorAll("button")].some((button) => button.textContent === "Calendar")).toBe(false);
-    expect([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Kanban")?.className).toBe("is-active");
+    expect([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Kanban")?.classList.contains("is-active")).toBe(true);
     expect(window.localStorage.getItem("quincy:dashboard:view")).toBe("kanban");
     expect(host.querySelector('[data-testid="dashboard-calendar-surface"]')).toBeNull();
     expect(apiGetMock.mock.calls.some(([path]) => path.startsWith("/api/production-calendar"))).toBe(false);
@@ -165,10 +165,10 @@ describe("Dashboard Calendar routing", () => {
   it("takes List/Kanban view state from the URL across history arrivals", async () => {
     window.history.replaceState(null, "", "/?view=list");
     await act(async () => { root.render(<DashboardRouteHarness />); await Promise.resolve(); await Promise.resolve(); });
-    expect([...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] button')].find((button) => button.textContent === "List")?.className).toBe("is-active");
+    expect([...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] button')].find((button) => button.textContent === "List")?.classList.contains("is-active")).toBe(true);
     window.history.replaceState(null, "", "/?view=kanban");
     await act(async () => { window.dispatchEvent(new PopStateEvent("popstate")); await Promise.resolve(); await Promise.resolve(); });
-    expect([...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] button')].find((button) => button.textContent === "Kanban")?.className).toBe("is-active");
+    expect([...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] button')].find((button) => button.textContent === "Kanban")?.classList.contains("is-active")).toBe(true);
   });
 
   it("restores the bare-route remembered view on a real Back navigation past an explicit switch", async () => {
@@ -178,15 +178,15 @@ describe("Dashboard Calendar routing", () => {
     // genuine back() needs its own pushed anchor point.
     window.history.pushState(null, "", "/");
     await render();
-    expect([...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] button')].find((button) => button.textContent === "List")?.className).toBe("is-active");
+    expect([...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] button')].find((button) => button.textContent === "List")?.classList.contains("is-active")).toBe(true);
     await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Kanban")?.click(); await Promise.resolve(); });
     expect(window.location.search).toBe("?view=kanban");
-    expect([...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] button')].find((button) => button.textContent === "Kanban")?.className).toBe("is-active");
+    expect([...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] button')].find((button) => button.textContent === "Kanban")?.classList.contains("is-active")).toBe(true);
     // A REAL Back pops the history entry selectView just pushed, landing back on bare "/" — the
     // view must revert to what that bare route originally showed, not stay on Kanban.
     await act(async () => { window.history.back(); await new Promise((resolve) => setTimeout(resolve, 0)); });
     expect(window.location.search).toBe("");
-    expect([...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] button')].find((button) => button.textContent === "List")?.className).toBe("is-active");
+    expect([...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] button')].find((button) => button.textContent === "List")?.classList.contains("is-active")).toBe(true);
   });
 
   it("opens scheduled Calendar project anchors on the Full Workspace", async () => {

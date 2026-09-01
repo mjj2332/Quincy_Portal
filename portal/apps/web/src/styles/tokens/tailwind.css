@@ -43,4 +43,18 @@
   --color-signal-caution: var(--signal-caution);
   --color-signal-critical: var(--signal-critical);
   --color-signal-info: var(--signal-info);
+
+  /* ---- TB8-01 narrow semantic roles — never the raw ramp (colors.css:33) ---- */
+  /* Mid-tone body text: darker than muted-foreground, lighter than foreground. */
+  --color-foreground-secondary: var(--text-secondary);
+  /* Recessed surface for disabled controls and skeleton fills. */
+  --color-surface-sunken: var(--bg-sunken);
+  /* Ink surface for inverse elements (toasts). */
+  --color-surface-inverse: var(--bg-inverse);
+  --color-on-inverse: var(--text-on-inverse);
+  --color-on-inverse-muted: var(--text-on-inverse-muted);
+  /* The border a control takes on hover — one step up from the hairline. */
+  --color-border-hover: var(--greige-300);
+  /* The ink surface a primary control takes on hover. */
+  --color-primary-hover: var(--ink-700);
 }
