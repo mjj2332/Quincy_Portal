@@ -1,7 +1,25 @@
 # Project Navigation and External Editor Collections — Plan
-**Status: APPROVED FOR BUILD — 2 Sol review rounds, 2 fresh-Opus revert rounds (the §2.1 cap),
-then an Opus editor pass that resolved the outstanding blockers directly in this document and a
-fresh Opus self-review of that pass. No further review round is required before implementation.**
+**Status: IMPLEMENTED — built by Luna, independently re-verified (typecheck, web build, full
+`test --workspaces`, and the shared package's dedicated vitest suite all green outside any
+sandbox; one test-fixture gap found and fixed directly — see below), committed to `main` at
+`c302172`, and deployed to production 2026-09-01. App Worker version
+`8fd42378-4e77-41b3-b816-c5f78851b42a` (rollback target: TB7's `682ed4a0`). No D1 migration;
+background/webhook-ingress not redeployed (untouched by this change). Passive production smoke
+test via Agy (chrome-devtools MCP, Option A, signed-in Admin session): all Dashboard→Full
+Workspace navigation paths (Kanban/List/Calendar) and the new Discussion/Activity Collaboration
+tabs verified working with zero console errors and zero non-2xx responses — SHIP-CLEAN verdict,
+independently spot-checked (bundle hash + a cited workspace route both confirmed live). Change 2's
+`external_editor` collection widening was **not** exercised in this smoke test — no
+`external_editor` account is provisioned in production (see `docs/todo.md`); provisioning one is a
+standalone Admin decision, unchanged by this plan.**
+
+Build-verification note: Luna's own sandbox could not run the `workers/app` vitest suite (loopback
+`EPERM`), so its self-report of "all green" was unverified for that suite specifically. Re-running
+it independently outside any sandbox found 3 real failures — three pagination/cursor-integrity
+tests in `project-activity.test.ts` used an Editor token against projects with no membership row,
+which now correctly 403s under this plan's own new narrower Activity authorization (§3's intended
+behavior; the test fixtures simply hadn't been updated for it). Fixed directly by adding the
+missing `insertMember` rows; all 21 files / 296 tests pass on re-run.
 
 Review history and what changed in the final editor pass:
 
