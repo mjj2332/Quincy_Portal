@@ -1,11 +1,17 @@
 # TB8-01 — Dashboard Shell: Visual Plan
 
-**Status: APPROVED 2026-09-01 — ready for build.** Not built. Candidate release #1
-of [TB8 — Surface-by-Surface Design Convergence and Cleanup](TB8-Wider-UI-Migration-And-Cleanup.md).
-Pipeline per [Revamp-TB8-Wider-UI-Migration-And-Cleanup-Plan.md](../../Revamp-TB8-Wider-UI-Migration-And-Cleanup-Plan.md).
+**Status: DEPLOYED TO PRODUCTION 2026-09-01** (commit `af4d833`,
+`feat(tb8): TB8-01 Dashboard shell design convergence on Tailwind/shadcn`; app Worker
+`0b31144d-7617-4010-85ef-13baa0fd4a46`; rollback target app `8fd42378-4e77-41b3-b816-c5f78851b42a`,
+the prior deploy, Project-Navigation-And-External-Editor-Collections). Candidate release #1
+of [TB8 — Surface-by-Surface Design Convergence and Cleanup](../revamp_2026_portal/roadmap/TB8-Wider-UI-Migration-And-Cleanup.md).
+Pipeline per [Revamp-TB8-Wider-UI-Migration-And-Cleanup-Plan.md](../Revamp-TB8-Wider-UI-Migration-And-Cleanup-Plan.md).
 History: drafted 2026-09-01; revised onto the Tailwind v4 + shadcn foundation; revised for two
 fresh-Sol review rounds (the pipeline's ≤2-round cap) and three owner decisions; self-edited past
-the cap per the standing §2.1 rule. **Next: Sonnet build (pipeline step 4).**
+the cap per the standing §2.1 rule; built, verified, committed, and deployed. Its own commit
+predates TB8-02's branch/merge workflow — it landed on `main` directly and reached production via
+a separate `wrangler deploy` (app Worker `0b31144d`) the same day, not recorded in `docs/todo.md`'s
+running deploy list at the time; that gap was closed 2026-09-02 alongside the TB8-02 deploy.
 
 > **Final Opus self-review — APPROVED, 2026-09-01.** Independent terminal-gate review with no
 > drafting context, per the standing "past the ≤2-round cap Opus edits the plan itself and a fresh
@@ -50,7 +56,7 @@ the cap per the standing §2.1 rule. **Next: Sonnet build (pipeline step 4).**
 
 **Styling-owner authority.** See
 [Revamp-TB8-Wider-UI-Migration-And-Cleanup-Plan.md § "Decision: Tailwind adoption scope for TB8
-(2026-09-01)"](../../Revamp-TB8-Wider-UI-Migration-And-Cleanup-Plan.md#decision-tailwind-adoption-scope-for-tb8-2026-09-01).
+(2026-09-01)"](../Revamp-TB8-Wider-UI-Migration-And-Cleanup-Plan.md#decision-tailwind-adoption-scope-for-tb8-2026-09-01).
 **TB8 extends Tailwind v4 + shadcn to the Dashboard shell as its second bounded consumer**, on the
 foundation TB1 deployed 2026-08-25 (`components.json`: style `base-sera`, `cssVariables: true`,
 baseColor `neutral`, Lucide, no prefix; `src/styles/index.css` importing `tailwindcss/theme.css` +

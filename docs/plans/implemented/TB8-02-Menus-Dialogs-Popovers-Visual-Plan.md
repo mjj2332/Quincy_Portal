@@ -1,7 +1,11 @@
 # TB8-02 — Ordinary Menus, Dialogs, Popovers and Sheets: Visual Plan
 
-**Status: APPROVED 2026-09-01 by a second, independent fresh-Opus gate — ready to build (pipeline
-step 4).** Drafted 2026-09-01, all four open questions resolved by owner the same day, two Sol rounds
+**Status: DEPLOYED TO PRODUCTION 2026-09-02** (merge `eefa1c9`, commit `c5e246f`
+`feat(tb8): TB8-02 Menus, Dialogs and Popovers convergence on Tailwind/shadcn`; app Worker
+`7248b49a-dbd4-4316-b433-af82e8ed7792`; background `2757c363-4eb5-4b08-baf0-6ebe1067f79a` and
+webhook-ingress `889f8d9e-7778-486f-9e12-3a81e776d9b7` also redeployed, bundle-unchanged — this
+release is frontend/CSS only; no migration; rollback target app `0b31144d-7617-4010-85ef-13baa0fd4a46`,
+TB8-01's deploy). Drafted 2026-09-01, all four open questions resolved by owner the same day, two Sol rounds
 complete, then **blocked at the first final-Opus gate** on a mechanism defect in §4.2a plus eight
 must-fix items. **All nine were fixed** — §4.2a's nested-overlay mechanism is redesigned from
 scratch (container inside the panel, `.modal__scroll` split, `positionMethod="fixed"`, with the
@@ -36,19 +40,39 @@ scope, behavior and paint — the `Menu` primitive ships (§8); **Q2** the ≤72
 approved as written (§6.5); **Q3** the `--z-*` token family is approved (§4.2); **Q4** `Modal`
 absorbs both the Admin payload and RTE link dialogs (§6.6, §6.7), with acceptance criterion 15 as
 the explicit gate on §6.7's selection-restoration risk. Candidate release #2 of
-[TB8 — Surface-by-Surface Design Convergence and Cleanup](TB8-Wider-UI-Migration-And-Cleanup.md),
+[TB8 — Surface-by-Surface Design Convergence and Cleanup](../revamp_2026_portal/roadmap/TB8-Wider-UI-Migration-And-Cleanup.md),
 ranked second in the kickoff doc's
-[Ranking (2026-09-01)](../../Revamp-TB8-Wider-UI-Migration-And-Cleanup-Plan.md#ranking-2026-09-01)
+[Ranking (2026-09-01)](../Revamp-TB8-Wider-UI-Migration-And-Cleanup-Plan.md#ranking-2026-09-01)
 on the rationale that this is *the* cross-cutting primitive: nearly every later candidate
 (Workspace rail, project/admin forms, notification UI, board card controls, Collaboration, notice
 board) opens an overlay, so converging it here means those releases inherit the fix instead of each
 reinventing it. Pipeline per
-[Revamp-TB8-Wider-UI-Migration-And-Cleanup-Plan.md](../../Revamp-TB8-Wider-UI-Migration-And-Cleanup-Plan.md)
+[Revamp-TB8-Wider-UI-Migration-And-Cleanup-Plan.md](../Revamp-TB8-Wider-UI-Migration-And-Cleanup-Plan.md)
 § "Pipeline for TB8". History: drafted 2026-09-01; four owner decisions resolved; two fresh-Sol
 review rounds (the pipeline's ≤2-round cap); self-edited past the cap per the standing §2.1 rule;
 first fresh-Opus gate blocked it; author redesigned §4.2a and fixed all eight must-fix items; second
-fresh-Opus gate approved it with the corrections listed above.
-**Next: pipeline step 4 — Sonnet subagent builds.**
+fresh-Opus gate approved it with the corrections listed above; Sonnet-subagent build followed by
+four rounds of independent fresh-Sol diff review (see `docs/todo.md` for the full per-round finding
+list); `npm run typecheck`, `npm run build -w @quincy/web`, `npm run test --workspaces`, and
+`packages/shared`'s standalone vitest config all green each round; committed, branched
+(`tb8-02-menus-dialogs-popovers`), merged to `main` (`eefa1c9`), and deployed to production
+2026-09-02. A same-session real-browser pass (signed in as Admin against local dev, Browser pane)
+additionally confirmed live: the confirm()-over-checklist-popover opposite-nesting case (§4.2a,
+defect H-iii, criterion 23e), popover survival across a cancelled nested confirm() (criterion 6),
+synchronous Escape focus-return on both `AnchoredPopover` (criterion 7) and the new `Menu`
+(criterion 18.6), RTE link-dialog selection survival across open/cancel (criterion 15), `Modal`
+scroll lock (criterion 4), press-contained scrim dismissal (criterion 5, defect F), and `Menu`
+outside-click dismissal. **Still not exercised anywhere** (real-browser-only, per the drift
+register): the §5 sixteen-row visual matrix; a `Select` opened from inside an open `Modal`
+(criterion 23a/b/d/f — no live UI consumer nests one today, so §4.2a's mechanism there is
+implemented but unproven by an actual user flow); real-browser Kanban drag (criterion 17,
+`docs/lessons.md:901`) — blocked in both the build sandbox and this session's local-dev browser by
+the `tb5a_board_contract_enabled` feature flag being off, unrelated to this plan; and
+`prefers-reduced-motion` (criterion 5's cross-cutting row) — no media-query emulation available in
+either environment. See `docs/plans/revamp_2026_portal/evidence/TB8-02/drift-register.md` for the
+full disposition.
+**Next: none — this candidate is deployed. TB8's next candidate per the roadmap ranking picks up
+from here.**
 
 > ## Final Opus self-review — **NOT APPROVED (blocked)**, 2026-09-01
 >
@@ -223,7 +247,7 @@ and the unlayered-`app.css`-outranks-Tailwind cascade fact (§1.5). Those are tr
 authority here. Where this plan needs the same thing, it cites TB8-01 and stops.
 
 **Styling-owner authority.** Per the kickoff doc's
-[Tailwind adoption scope decision](../../Revamp-TB8-Wider-UI-Migration-And-Cleanup-Plan.md#decision-tailwind-adoption-scope-for-tb8-2026-09-01),
+[Tailwind adoption scope decision](../Revamp-TB8-Wider-UI-Migration-And-Cleanup-Plan.md#decision-tailwind-adoption-scope-for-tb8-2026-09-01),
 TB8 extends the TB1 Tailwind v4 + shadcn foundation surface by surface. **TB8-02 extends it to the
 shared overlay primitives as its third bounded consumer.** Extension of TB1's setup, never a
 parallel one. Every value still traces to `portal/apps/web/src/styles/tokens/`.

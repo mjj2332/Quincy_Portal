@@ -7,18 +7,23 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
 > counts, full diagnostic transcripts) has been cut in favor of what/when/deploy-state. See
 > `docs/lessons.md` for incident mechanics, and `docs/reviews/` for full QA-sweep detail.
 
-## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29, seed-admin UUID migration 2026-07-29, notification dismiss + stalled-guard 2026-07-30, download selection 2026-08-04, notice-board rich text + mentions 2026-08-17, project comments + collaboration panel 2026-08-17, project subtasks/checklist 2026-08-17, collaboration panel relocated to Project page 2026-08-17, collaboration panel UI fixes + due-time reminder 2026-08-17, notification click navigation 2026-08-17, comment ordering + Shift+Enter soft breaks 2026-08-17, mention-email content 2026-08-20, TB0 authority promotion 2026-08-24, TB0A React 19.2 deployed + accepted 2026-08-25, TB0B pipeline configuration boundary deployed 2026-08-24, TB1 Tailwind v4/shadcn foundation deployed 2026-08-25, TB2 route-safe project data freshness deployed 2026-08-25, TB3 project discussion v2 deployed 2026-08-25, TB4 notification outbox deployed 2026-08-26, confirmation modal + admin user impersonation deployed 2026-08-26, TB4A project workspace assignment rail deployed 2026-08-27, TB4B project deadline and reminders deployed 2026-08-27, TB4C editor-wide project-change notifications deployed 2026-08-27, TB4D checklist scheduling & ranges deployed 2026-08-28, TB4E external editor assigned-scope access deployed 2026-08-28, TB4E QA + cache-purge secrets done / phase fully closed 2026-08-28, TB5A Stage & Kanban Ordering Contract deployed to production 2026-08-29 — migration 0037 applied, tb5a_board_contract_enabled flipped ON, app 4ba551a3 / bg fa876454, TB5B Kanban Interaction Modernization (dnd-kit) deployed to production 2026-08-30 — UI-only, merge 578d2a1, app Worker 2b515484 only, no migration, rollback target app 4ba551a3, TB5C Production Calendar deployed to production 2026-08-31 — merge a7684d8, app Worker 2ba08078 only, no migration, rollback target app 2b515484, Kanban cross-column drag white-screen hotfix deployed to production 2026-08-31 — UI-only, app Worker only, no migration, rollback target app 2ba08078; Kanban column-divider visibility + full-height drop zones deployed 2026-08-31 — CSS-only, app Worker 10778f00, TB6 Project-Card Detail & Shared Discussion deployed to production 2026-08-31 — migration 0038 applied (additive index only), merge to main, app Worker 6f7a22b2 only, background/webhook-ingress not redeployed (bundle-compared behavior-neutral), rollback target app 10778f00, TB7 Notice-Board Migration deployed to production 2026-09-01 — migration 0039 applied (additive `notice_board_read_markers` table only, applied via the Cloudflare dashboard SQL console after wrangler's D1 API endpoints returned persistent `cf-d1: err=7500` errors; Time Travel bookmark `00000641-00000098-000050d8-491caf5f14620d252ca9d66e017d0912` taken immediately before as the recovery point), merge to main (`c8fc4c7`), app Worker `682ed4a0` only, background/webhook-ingress not redeployed (no change), rollback target app `6f7a22b2`), Project-Navigation-And-External-Editor-Collections deployed to production 2026-09-01 — no migration, merge to main (`c302172`), app Worker `8fd42378` only, background/webhook-ingress not redeployed (no change), rollback target app `682ed4a0`)
+## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29, seed-admin UUID migration 2026-07-29, notification dismiss + stalled-guard 2026-07-30, download selection 2026-08-04, notice-board rich text + mentions 2026-08-17, project comments + collaboration panel 2026-08-17, project subtasks/checklist 2026-08-17, collaboration panel relocated to Project page 2026-08-17, collaboration panel UI fixes + due-time reminder 2026-08-17, notification click navigation 2026-08-17, comment ordering + Shift+Enter soft breaks 2026-08-17, mention-email content 2026-08-20, TB0 authority promotion 2026-08-24, TB0A React 19.2 deployed + accepted 2026-08-25, TB0B pipeline configuration boundary deployed 2026-08-24, TB1 Tailwind v4/shadcn foundation deployed 2026-08-25, TB2 route-safe project data freshness deployed 2026-08-25, TB3 project discussion v2 deployed 2026-08-25, TB4 notification outbox deployed 2026-08-26, confirmation modal + admin user impersonation deployed 2026-08-26, TB4A project workspace assignment rail deployed 2026-08-27, TB4B project deadline and reminders deployed 2026-08-27, TB4C editor-wide project-change notifications deployed 2026-08-27, TB4D checklist scheduling & ranges deployed 2026-08-28, TB4E external editor assigned-scope access deployed 2026-08-28, TB4E QA + cache-purge secrets done / phase fully closed 2026-08-28, TB5A Stage & Kanban Ordering Contract deployed to production 2026-08-29 — migration 0037 applied, tb5a_board_contract_enabled flipped ON, app 4ba551a3 / bg fa876454, TB5B Kanban Interaction Modernization (dnd-kit) deployed to production 2026-08-30 — UI-only, merge 578d2a1, app Worker 2b515484 only, no migration, rollback target app 4ba551a3, TB5C Production Calendar deployed to production 2026-08-31 — merge a7684d8, app Worker 2ba08078 only, no migration, rollback target app 2b515484, Kanban cross-column drag white-screen hotfix deployed to production 2026-08-31 — UI-only, app Worker only, no migration, rollback target app 2ba08078; Kanban column-divider visibility + full-height drop zones deployed 2026-08-31 — CSS-only, app Worker 10778f00, TB6 Project-Card Detail & Shared Discussion deployed to production 2026-08-31 — migration 0038 applied (additive index only), merge to main, app Worker 6f7a22b2 only, background/webhook-ingress not redeployed (bundle-compared behavior-neutral), rollback target app 10778f00, TB7 Notice-Board Migration deployed to production 2026-09-01 — migration 0039 applied (additive `notice_board_read_markers` table only, applied via the Cloudflare dashboard SQL console after wrangler's D1 API endpoints returned persistent `cf-d1: err=7500` errors; Time Travel bookmark `00000641-00000098-000050d8-491caf5f14620d252ca9d66e017d0912` taken immediately before as the recovery point), merge to main (`c8fc4c7`), app Worker `682ed4a0` only, background/webhook-ingress not redeployed (no change), rollback target app `6f7a22b2`), Project-Navigation-And-External-Editor-Collections deployed to production 2026-09-01 — no migration, merge to main (`c302172`), app Worker `8fd42378` only, background/webhook-ingress not redeployed (no change), rollback target app `682ed4a0`, TB8-01 Dashboard Shell design convergence on Tailwind/shadcn deployed to production 2026-09-01 — no migration, commit `af4d833` direct to main, app Worker `0b31144d` only, background/webhook-ingress not redeployed (no change), rollback target app `8fd42378`, TB8-02 Menus/Dialogs/Popovers convergence deployed to production 2026-09-02 — no migration, merge to main (`eefa1c9`), app Worker `7248b49a`, background `2757c363` and webhook-ingress `889f8d9e` also redeployed (bundle-unchanged), rollback target app `0b31144d`)
 
 - **TB8-01 (Dashboard shell design convergence on Tailwind/shadcn) is deployed to production**
-  (commit `af4d833`, `feat(tb8): TB8-01 Dashboard shell design convergence on Tailwind/shadcn`) —
-  noted here because this file had no TB8-01 entry at all before this one; that appears to be an
-  oversight from that session, not a sign the work is missing. TB8-02 (below) is the second
-  candidate in the same pipeline, ranked to converge the overlay primitives TB8-01's own consumers
-  (and every later TB8 candidate) reuse.
+  (commit `af4d833`, `feat(tb8): TB8-01 Dashboard shell design convergence on Tailwind/shadcn`; app
+  Worker `0b31144d`, deployed 2026-09-01, no migration) — its plan doc is moved to
+  `docs/plans/implemented/TB8-01-Dashboard-Shell-Visual-Plan.md` (2026-09-02, alongside the TB8-02
+  move below; this file had no TB8-01 entry at all before that session, an oversight from the
+  deploying session, not a sign the work was missing — closed here). TB8-02 (below) is the second
+  candidate in the same pipeline, converging the overlay primitives TB8-01's own consumers (and
+  every later TB8 candidate) reuse.
 - **TB8-02 (Menus, Dialogs, Popovers and Sheets — converges the app's eleven overlay
   implementations onto three shared primitives: `Modal`, `AnchoredPopover`, and a new `Menu` on
-  `@base-ui/react/menu`) is built and in diff-review, NOT yet deployed, NOT yet merged to `main`.**
-  Plan: `docs/plans/revamp_2026_portal/roadmap/TB8-02-Menus-Dialogs-Popovers-Visual-Plan.md`
+  `@base-ui/react/menu`) is deployed to production, 2026-09-02** (branch
+  `tb8-02-menus-dialogs-popovers`, commit `c5e246f`, merged to `main` `eefa1c9`, pushed; app Worker
+  `7248b49a`, background `2757c363` and webhook-ingress `889f8d9e` also redeployed
+  bundle-unchanged, rollback target app `0b31144d`, no migration). Plan doc moved to
+  `docs/plans/implemented/TB8-02-Menus-Dialogs-Popovers-Visual-Plan.md`
   (approved by a second independent fresh-Opus gate 2026-09-01, after the first gate blocked it on
   a real §4.2a nested-overlay stacking bug that was found, fixed, and re-verified). Build: one
   Sonnet-subagent pass implementing the full plan, followed by **four rounds of independent
@@ -50,16 +55,26 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
   silently outranked the new Tailwind panel utilities, superficial tests that asserted proxies for
   behavior rather than the behavior itself (now real keyboard/touch/modifier-click interactions),
   and disabled/invalid states that existed in CSS but were never wired to real DOM attributes.
-  **Explicitly still open, real-browser-only** (documented in
+  Verification green each round: `npm run typecheck`, `npm run build -w @quincy/web`,
+  `npm run test --workspaces`, and `packages/shared`'s standalone vitest config. **A same-session
+  real-browser pass** (2026-09-02, Browser pane, signed in as Admin against local dev) additionally
+  confirmed live: the confirm()-over-checklist-popover opposite-nesting case (§4.2a, defect H-iii,
+  criterion 23e), popover survival across a cancelled nested confirm() (criterion 6), synchronous
+  Escape focus-return on both `AnchoredPopover` (criterion 7) and the new `Menu` (criterion
+  18.6 — an apparent stuck-open/no-focus-return bug was chased and root-caused to the test's own
+  use of `.click()` instead of `.focus()` before dispatching keys, not a product defect),
+  RTE link-dialog selection survival across open/cancel (criterion 15), `Modal` scroll lock
+  (criterion 4), press-contained scrim dismissal (criterion 5, defect F), and `Menu` outside-click
+  dismissal. **Still genuinely open, real-browser-only** (documented in
   `docs/plans/revamp_2026_portal/evidence/TB8-02/drift-register.md`, not silently gapped): the §5
-  sixteen-row visual matrix, §4.2a's full nested-overlay stacking/clipping/trap proof (criterion
-  23), real-browser Kanban drag verification (`docs/lessons.md:901`, unconditional whenever
-  `ProjectKanbanBoard.tsx` is touched at all), scroll-lock restoration, press-contained pointer
-  drag, RTE link-dialog selection preservation across the open→cancel round trip
-  (`docs/lessons.md:833`), and native menu/touch/modifier-click chrome. Verification actually run
-  and green each round: `npm run typecheck`, `npm run build -w @quincy/web`,
-  `npm run test --workspaces`, and `packages/shared`'s standalone vitest config. Not committed, not
-  pushed, not deployed.
+  sixteen-row visual matrix; a `Select` opened from inside an open `Modal` (criterion 23a/b/d/f —
+  no live UI consumer nests one today, so §4.2a's mechanism is implemented but unproven by an
+  actual user flow); real-browser Kanban drag verification (`docs/lessons.md:901`, unconditional
+  whenever `ProjectKanbanBoard.tsx` is touched at all) — blocked in both the build sandbox and this
+  session's local-dev browser by the `tb5a_board_contract_enabled` feature flag being off, unrelated
+  to this plan; and `prefers-reduced-motion` — no media-query emulation available in either
+  environment. Committed, pushed, merged to `main`, and deployed to production 2026-09-02 (see the
+  header line above); the feature branch was deleted post-merge (local and remote).
 - **TB4E (External Editor Assigned-Scope Access — a global `external_editor` role that does normal
   editing work only on explicitly assigned projects, sees external-safe data, discovers no
   unrelated projects) is deployed to production, 2026-08-28**
