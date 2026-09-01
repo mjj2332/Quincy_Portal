@@ -33,6 +33,13 @@ async function flush(rounds = 1) {
   await act(async () => { for (let index = 0; index < rounds; index += 1) { await Promise.resolve(); await new Promise<void>((resolve) => setTimeout(resolve, 0)); } });
 }
 
+// `AnchoredPopover` delays its own unmount by 120ms (`--dur-fast`) after `open` goes false, so
+// it can animate closed (§7.2) — a closed popover is still in the DOM until that transition
+// completes.
+async function waitForClose() {
+  await act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 150)); });
+}
+
 async function mount(currentMembers: ProjectMember[] = members) {
   const host = document.createElement("div"); document.body.appendChild(host);
   queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -95,7 +102,7 @@ describe("ProjectTeamControl", () => {
     await act(async () => { search.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })); await Promise.resolve(); });
     expect(dialog.querySelectorAll<HTMLElement>('[role="option"]')[1]?.getAttribute("aria-current")).toBe("true");
     await act(async () => { dialog.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); await Promise.resolve(); });
-    await flush();
+    await waitForClose();
     expect(document.querySelector('[role="dialog"]')).toBeNull();
     expect(document.activeElement).toBe(trigger);
   });
@@ -219,7 +226,20 @@ describe("ProjectTeamControl", () => {
     const search = document.querySelector<HTMLInputElement>('.project-team-picker input[type="search"]')!;
     expect(document.activeElement).toBe(search);
     await act(async () => { document.querySelector<HTMLElement>('.project-team-picker')!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await Promise.resolve(); });
+    await waitForClose();
     expect(document.querySelector('.project-team-picker')).toBeNull();
     expect(document.activeElement).toBe(trigger);
+  });
+
+  it("disables and marks the search field invalid when the candidates query errors", async () => {
+    // A plain `Error` retries twice with exponential backoff (`projectQueryRetry`) before
+    // `isError` settles — a 4xx `ApiError` (not 408/429) fails fast with no retry.
+    apiGetMock.mockReset().mockRejectedValue(new ApiError("Candidates unavailable", 400));
+    const host = await mount([]);
+    await flush(4);
+    await act(async () => { host.querySelector<HTMLButtonElement>('[aria-label="Add Photographer"]')!.click(); await Promise.resolve(); });
+    const search = document.querySelector<HTMLInputElement>('.project-team-picker input[type="search"]')!;
+    expect(search.disabled).toBe(true);
+    expect(search.getAttribute("aria-invalid")).toBe("true");
   });
 });

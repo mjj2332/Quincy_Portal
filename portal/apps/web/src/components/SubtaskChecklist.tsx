@@ -100,7 +100,7 @@ function ScheduleControl({ owner, label, value, open, setOpen, onSave, onUseLate
     <button ref={floating.refs.setReference} type="button" className={`subtask-checklist__metadata-trigger${value.state !== "unscheduled" ? " subtask-checklist__metadata-trigger--filled" : ""}${compact ? " subtask-checklist__composer-trigger" : ""}`} aria-label={label} aria-expanded={open && !readOnly} aria-controls={open && !readOnly ? id : undefined} disabled={readOnly || busy} title={readOnly && value.state === "invalid" ? "Schedule data needs repair" : undefined} onKeyDown={floating.onKeyDown} onClick={() => { if (!readOnly) setOpen(!open); }}>
       {value.state !== "unscheduled" ? <span className="subtask-checklist__due"><span className="sr-only">Schedule </span>{formatSchedule(value)}</span> : <span aria-hidden="true">◷</span>}
     </button>
-    {open && !readOnly && <AnchoredPopover context={floating.context} floatingStyles={floating.floatingStyles} initialFocus={0} onKeyDown={floating.onKeyDown}><div id={id} className="subtask-popover__content" role="group" aria-label={label}>
+    {floating.mounted && !readOnly && <AnchoredPopover context={floating.context} floatingStyles={floating.floatingStyles} initialFocus={0} onKeyDown={floating.onKeyDown} status={floating.status}><div id={id} className="subtask-popover__content" role="group" aria-label={label}>
       <label>State <select value={draft.state} onChange={(event) => setDraft((current) => ({ ...current, state: event.target.value as ScheduleDraft["state"] }))}><option value="unscheduled">Unscheduled</option><option value="due_only">Due only</option>{CHECKLIST_SCHEDULE_RANGES_ENABLED && <option value="range">Range</option>}</select></label>
       {draft.state !== "unscheduled" && <><label>Endpoint kind <select value={draft.kind} onChange={(event) => setDraft((current) => ({ ...current, kind: event.target.value as "date" | "timed" }))}><option value="date">Date</option><option value="timed">Timed · Australia/Sydney</option></select></label>{draft.state === "range" ? <>{endpointFields("start", draft.start)}{endpointFields("end", draft.end)}</> : endpointFields("end", draft.end)}</>}
       {error && !error.choices && !error.current && <div className="subtask-schedule__error" role="alert">The schedule could not be saved. Review the highlighted fields.</div>}
@@ -112,16 +112,26 @@ function ScheduleControl({ owner, label, value, open, setOpen, onSave, onUseLate
 
 function AssigneeControl({ owner, label, assignee, users, open, setOpen, onSelect, busy, compact = false }: { owner: string; label: string; assignee: { id: string; name: string } | null; users: MentionableUser[]; open: boolean; setOpen: (open: boolean) => void; onSelect: (id: string | null) => void; busy: boolean; compact?: boolean }) {
   const [query, setQuery] = useState(""); const searchRef = useRef<HTMLInputElement>(null);
+  // Keyboard highlight (§10.3) — mirrors `ProjectTeamControl`'s `TeamPicker` (`activeIndex`,
+  // Arrow navigation, `aria-current`), not previously wired up for this list.
+  const [activeIndex, setActiveIndex] = useState(0);
   const close = useCallback(() => setOpen(false), [setOpen]); const floating = useAnchoredPopover({ open, onClose: close, placement: "bottom-end" });
-  useEffect(() => { if (!open) setQuery(""); }, [open]);
+  useEffect(() => { if (!open) setQuery(""); else setActiveIndex(0); }, [open]);
   const id = popoverId(owner, "assignee"); const matches = users.filter((user) => `${user.name} ${user.role}`.toLowerCase().includes(query.toLowerCase()));
+  useEffect(() => { if (activeIndex >= matches.length) setActiveIndex(Math.max(0, matches.length - 1)); }, [activeIndex, matches.length]);
+  function onListKeyDown(event: React.KeyboardEvent) {
+    if (event.key === "ArrowDown") { event.preventDefault(); setActiveIndex((index) => Math.min(index + 1, Math.max(0, matches.length - 1))); }
+    if (event.key === "ArrowUp") { event.preventDefault(); setActiveIndex((index) => Math.max(index - 1, 0)); }
+    if (event.key === "Enter" && matches[activeIndex] && !busy) { event.preventDefault(); const user = matches[activeIndex]!; onSelect(user.id === assignee?.id ? null : user.id); close(); }
+    floating.onKeyDown(event);
+  }
   return <>
     <button ref={floating.refs.setReference} type="button" className={`subtask-checklist__metadata-trigger${assignee ? " subtask-checklist__metadata-trigger--filled" : ""}${compact ? " subtask-checklist__composer-trigger" : ""}`} aria-label={label} aria-expanded={open} aria-controls={open ? id : undefined} onKeyDown={floating.onKeyDown} onClick={() => setOpen(!open)} title={assignee?.name}>
       {assignee ? <span className="subtask-checklist__assignee avatar"><span aria-hidden="true">{initials(assignee.name)}</span><span className="sr-only">Assigned to {assignee.name}</span></span> : <span aria-hidden="true">♙</span>}
     </button>
-    {open && <AnchoredPopover context={floating.context} floatingStyles={floating.floatingStyles} initialFocus={searchRef} onKeyDown={floating.onKeyDown}><div id={id} className="subtask-popover__content" role="group" aria-label={label}>
-      <label className="sr-only" htmlFor={`${id}-search`}>Search assignees</label><input ref={searchRef} id={`${id}-search`} type="search" value={query} placeholder="Search members…" onChange={(event) => setQuery(event.target.value)} />
-      <div className="subtask-popover__members">{matches.map((user) => <button key={user.id} type="button" className="subtask-popover__member" disabled={busy} onClick={() => { onSelect(user.id === assignee?.id ? null : user.id); close(); }}>{user.name}<small>{user.role}</small></button>)}</div>
+    {floating.mounted && <AnchoredPopover context={floating.context} floatingStyles={floating.floatingStyles} initialFocus={searchRef} onKeyDown={onListKeyDown} status={floating.status}><div id={id} className="subtask-popover__content" role="group" aria-label={label}>
+      <label className="sr-only" htmlFor={`${id}-search`}>Search assignees</label><input ref={searchRef} id={`${id}-search`} type="search" value={query} placeholder="Search members…" onChange={(event) => { setQuery(event.target.value); setActiveIndex(0); }} />
+      <div className="subtask-popover__members" role="listbox" aria-label={label}>{matches.map((user, index) => <button key={user.id} type="button" role="option" aria-selected={user.id === assignee?.id} aria-current={index === activeIndex ? "true" : undefined} className="subtask-popover__member" disabled={busy} onMouseEnter={() => setActiveIndex(index)} onClick={() => { onSelect(user.id === assignee?.id ? null : user.id); close(); }}>{user.name}<small>{user.role}</small></button>)}</div>
     </div></AnchoredPopover>}
   </>;
 }
@@ -130,7 +140,7 @@ function ActionsControl({ owner, title, open, setOpen, busy, onDelete }: { owner
   const close = useCallback(() => setOpen(false), [setOpen]); const floating = useAnchoredPopover({ open, onClose: close }); const id = popoverId(owner, "actions");
   return <>
     <button ref={floating.refs.setReference} type="button" className="subtask-checklist__overflow" aria-label={`Actions for ${title}`} aria-expanded={open} aria-controls={open ? id : undefined} onKeyDown={floating.onKeyDown} onClick={() => setOpen(!open)}>⋯</button>
-    {open && <AnchoredPopover context={floating.context} floatingStyles={floating.floatingStyles} initialFocus={0} onKeyDown={floating.onKeyDown}><div id={id} className="subtask-popover__content" role="group" aria-label={`Actions for ${title}`}><button type="button" className="button button--secondary" disabled={busy} onClick={() => { void (async () => { if (!await confirm({ title: "Delete subtask?", message: "Delete this subtask?", confirmLabel: "Delete", danger: true })) return; close(); onDelete(); })(); }}>Delete</button></div></AnchoredPopover>}
+    {floating.mounted && <AnchoredPopover context={floating.context} floatingStyles={floating.floatingStyles} initialFocus={0} onKeyDown={floating.onKeyDown} status={floating.status}><div id={id} className="subtask-popover__content" role="group" aria-label={`Actions for ${title}`}><button type="button" className="button button--secondary" disabled={busy} onClick={() => { void (async () => { if (!await confirm({ title: "Delete subtask?", message: "Delete this subtask?", confirmLabel: "Delete", danger: true })) return; close(); onDelete(); })(); }}>Delete</button></div></AnchoredPopover>}
   </>;
 }
 

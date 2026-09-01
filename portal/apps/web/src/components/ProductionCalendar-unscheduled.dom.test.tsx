@@ -349,6 +349,49 @@ describe("ProductionCalendar unscheduled external drops", () => {
     expect(lastSurfaceProps?.selectable).toBe(false);
   });
 
+  it("reopens the Schedule editor fresh after Cancel, not with the prior session's dirtied draft (§6.0 retention regression)", async () => {
+    // Round-2 finding: `ScheduleEditor` is retained permanently after first use like the other
+    // two Calendar dialogs, but had no open-token — the composite key alone (source id +
+    // `initialSchedule`) is IDENTICAL between a close and a plain reopen of the same item, so no
+    // remount happened and the prior instance's `draft`/`error` state leaked into the "reopened"
+    // dialog. `useOpenToken` now composes into this key, forcing a fresh remount on the
+    // null→non-null (reopen) transition while the composite JSON half still remounts on a
+    // same-session validation retry (a different, unrelated trigger — see
+    // ProductionCalendarScheduleEditor.dom.test.tsx for the latter, already covered elsewhere).
+    // "agenda" (not "month"): the unscheduled panel's action button only renders in `actionMode`
+    // (`subview === "agenda" || dragSuppressed`) for an otherwise-draggable, range-capable
+    // checklist entry like this fixture — matching the existing "executes the Agenda Schedule
+    // Deadline action" / "keeps Agenda external drag off…" tests' own subview choice.
+    await render("agenda", [unscheduledChecklist]);
+    const action = () => host.querySelector<HTMLButtonElement>(`[data-unscheduled-id="${unscheduledChecklist.id}"] .qc-calendar-unscheduled__action`)!;
+    await act(async () => { action().click(); await Promise.resolve(); });
+    const stateSelect = () => document.querySelector<HTMLSelectElement>('[aria-label="Checklist schedule state"]')!;
+    const endDate = () => document.querySelector<HTMLInputElement>('[aria-label="Checklist end date"]')!;
+    // `openUnscheduledChecklistScheduleEditor` deliberately seeds a fresh open of a truly
+    // unscheduled entry with `{ state: "due_only", end: { date: calendar.date } }` (today, not
+    // blank) — that seed, not "unscheduled", is the fresh-open baseline this test proves survives
+    // a close→reopen round trip unchanged.
+    expect(stateSelect().value).toBe("due_only");
+    expect(endDate().value).toBe("2026-08-12");
+
+    // Dirty the draft away from its fresh-open state.
+    await change(endDate(), "2026-09-30");
+    expect(endDate().value).toBe("2026-09-30");
+
+    await act(async () => { document.querySelector<HTMLButtonElement>('[data-testid="calendar-schedule-cancel"]')!.click(); await Promise.resolve(); });
+    // `Modal` retains the closing instance mounted for its 120ms exit transition (§6.0) — wait
+    // for it before asserting the reopen, so this exercises a genuine unmount-and-remount, not a
+    // false pass from the dialog never having actually closed.
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 150)); });
+    expect(document.querySelector('[data-testid="calendar-schedule-editor"]')).toBeNull();
+
+    await act(async () => { action().click(); await Promise.resolve(); });
+    expect(document.querySelector('[data-testid="calendar-schedule-editor"]')).not.toBeNull();
+    // Fresh, not the dirtied "2026-09-30" draft from the cancelled session.
+    expect(stateSelect().value).toBe("due_only");
+    expect(endDate().value).toBe("2026-08-12");
+  });
+
   it("keeps checklist external drop inert when the server withholds range scheduling, while the editor still saves due-only", async () => {
     const inertChecklist = { ...unscheduledChecklist, permissions: { ...unscheduledChecklist.permissions, canScheduleRange: false } };
     await render("week", [inertChecklist]);

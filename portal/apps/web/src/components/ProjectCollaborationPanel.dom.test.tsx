@@ -115,6 +115,12 @@ async function keydown(editor: HTMLElement, key: string) {
 async function waitForTimer() {
   await act(async () => { await new Promise<void>((resolve) => window.setTimeout(resolve, 0)); });
 }
+// `AnchoredPopover`/`Menu` delay their own unmount by 120ms (`--dur-fast`) after closing, so
+// they can animate out (§7.2/§8) — a closed popover or menu is still in the DOM until that
+// transition completes.
+async function waitForClose() {
+  await act(async () => { await new Promise<void>((resolve) => window.setTimeout(resolve, 150)); });
+}
 
 function PresentationSeed({ pages, onClient }: { pages: unknown; onClient: (client: QueryClient) => void }) {
   const queryClient = useQueryClient();
@@ -380,7 +386,7 @@ describe("ProjectCollaborationPanel", () => {
     const title = host.querySelector<HTMLButtonElement>(".subtask-checklist__title-trigger")!; await click(title);
     const input = host.querySelector<HTMLInputElement>(".subtask-checklist__title")!; input.focus(); await act(async () => { input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await Promise.resolve(); });
     expect(host.querySelector(".project-collaboration")).toBe(panel); expect(host.querySelector(".subtask-checklist__title-trigger")).not.toBeNull();
-    const dispatchEscape = async (element: Element) => { const event = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }); await act(async () => { element.dispatchEvent(event); await Promise.resolve(); }); expect(event.defaultPrevented).toBe(true); expect(host.querySelector(".project-collaboration")).toBe(panel); };
+    const dispatchEscape = async (element: Element) => { const event = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }); await act(async () => { element.dispatchEvent(event); await Promise.resolve(); }); await waitForClose(); expect(event.defaultPrevented).toBe(true); expect(host.querySelector(".project-collaboration")).toBe(panel); };
     for (const label of ["Schedule for Call client", "Assignee for Call client", "Actions for Call client"] as const) {
       const trigger = host.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`); expect(trigger, host.innerHTML).not.toBeNull(); await click(trigger!);
       const focused = label.startsWith("Assignee") ? document.querySelector<HTMLInputElement>('input[type="search"]')! : trigger;
@@ -459,17 +465,21 @@ describe("ProjectCollaborationPanel", () => {
       : path.includes("subtasks") ? Promise.resolve({ subtasks: [] }) : Promise.resolve(comments()));
     const host = mount();
     await render(<><Topbar activeView="project" canAccessAdmin={false} user={{ name: "Ada" }} notificationPollMs={60_000} /><ProjectCollaborationPanel projectId={projectId} openSignal={1} /></>);
+    // Both menus are portaled to `document.body` (a sibling of `host`), not `host`'s own
+    // subtree — Base UI's `Menu.Portal` portals by default, like `FloatingPortal`. And Base
+    // UI's Escape dismissal listens on `document` (@floating-ui/react's `useDismiss`), not
+    // `window` — an event dispatched directly on `window` never reaches it.
     const menuTrigger = host.querySelector<HTMLButtonElement>(".topbar__menu-trigger")!;
     await click(menuTrigger); await waitForTimer();
-    expect(host.querySelector(".topbar__mobile-menu")).not.toBeNull();
-    await act(async () => { window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await Promise.resolve(); }); await waitForTimer();
-    expect(host.querySelector(".topbar__mobile-menu")).toBeNull(); expect(host.querySelector(".project-collaboration")).not.toBeNull();
+    expect(document.querySelector(".topbar__mobile-menu")).not.toBeNull();
+    await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await Promise.resolve(); }); await waitForClose();
+    expect(document.querySelector(".topbar__mobile-menu")).toBeNull(); expect(host.querySelector(".project-collaboration")).not.toBeNull();
 
     const notifications = host.querySelector<HTMLButtonElement>(".topbar__notification-trigger")!;
     await click(notifications); await waitForTimer();
-    expect(host.querySelector(".topbar__notification-menu")).not.toBeNull();
-    await act(async () => { window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await Promise.resolve(); }); await waitForTimer();
-    expect(host.querySelector(".topbar__notification-menu")).toBeNull(); expect(host.querySelector(".project-collaboration")).not.toBeNull();
+    expect(document.querySelector(".topbar__notification-menu")).not.toBeNull();
+    await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await Promise.resolve(); }); await waitForClose();
+    expect(document.querySelector(".topbar__notification-menu")).toBeNull(); expect(host.querySelector(".project-collaboration")).not.toBeNull();
   });
 
   it("posts comments, exposes edit/delete only to the author, cancels edits, and scopes mention lookup to the project", async () => {

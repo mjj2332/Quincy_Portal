@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ChangeEvent, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import { ROLES, type Role } from "@quincy/shared";
 import { ApiError, apiGet, apiPatch, apiPost } from "../lib/api";
 import { useCapabilities } from "../lib/capabilities";
@@ -7,6 +7,8 @@ import { invalidateActiveProjectDetails, useOptionalProjectQueryClient } from ".
 import { confirm } from "../lib/confirm";
 import { impersonateUser } from "../lib/auth";
 import { locationStore } from "../lib/router";
+import { Modal } from "../components/Modal";
+import { Button } from "../components/ui/button";
 
 type AdminTab = "users" | "directory" | "pipeline" | "integrations";
 type Toast = { id: number; message: string; tone: "success" | "error" };
@@ -126,6 +128,10 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
   const [userNameDraft, setUserNameDraft] = useState("");
   const [stageError, setStageError] = useState<string>();
   const [payload, setPayload] = useState<{ id: string; json: string }>();
+  // Retain the last payload so the dialog still has content during its 120ms close (§6.0).
+  const lastPayload = useRef<{ id: string; json: string } | undefined>(undefined);
+  if (payload) lastPayload.current = payload;
+  const shownPayload = payload ?? lastPayload.current;
   const [directoryError, setDirectoryError] = useState<string>();
   const [pipelineError, setPipelineError] = useState<string>();
   const [usersError, setUsersError] = useState<string>();
@@ -462,7 +468,19 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
         {!isLoadingIntegrations && !integrationsError && canAdminBackend && <div className="admin-poison"><div className="admin-section__head"><div><div className="ey">Operator queue</div><h2 className="serif">Rendition delivery failures</h2></div><span className={`admin-status admin-status--${renditionDlqOpenCount > 0 ? "error" : "active"}`}>{renditionDlqOpenCount > 0 ? `${renditionDlqOpenCount} stuck` : "No backlog"}</span></div>{renditionDlq.length === 0 ? <div className="empty"><span className="serif">No stuck renditions.</span>Preview generation is processing normally.</div> : <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>First failed</th><th>Project</th><th>Asset</th><th><span className="sr-only">Actions</span></th></tr></thead><tbody>{renditionDlq.map((event) => { const isOperating = operatingRenditionDlqIds.has(event.id); return <tr key={event.id}><td data-label="First failed">{formatDate(event.receivedAt)}</td><td data-label="Project">{event.street || "—"}</td><td data-label="Asset"><code>{event.assetId}</code></td><td className="admin-table__action"><button className="button button--secondary" type="button" disabled={isOperating} onClick={() => void operateRenditionDlqEvent(event.id, "replay")}>Replay</button><button className="button button--text" type="button" disabled={isOperating} onClick={() => void operateRenditionDlqEvent(event.id, "discard")}>Discard</button></td></tr>; })}</tbody></table></div>}</div>}
         {!isLoadingIntegrations && !integrationsError && canAdminBackend && <div className="admin-poison" aria-label="Notification delivery operations"><div className="admin-section__head"><div><div className="ey">Operator queue</div><h2 className="serif">Notification delivery</h2></div><button className="button button--secondary" type="button" onClick={() => void loadNotificationDeliveries(notificationDeliveryView)} disabled={isLoadingNotificationDeliveries}>Refresh</button></div><div className="admin-tabs" role="tablist" aria-label="Notification delivery filters">{(["pending_stuck", "dlq", "failed", "unknown", "preference_suppressed"] as const).map((view) => <button key={view} className={`ctab ${notificationDeliveryView === view ? "is-active" : ""}`} type="button" role="tab" aria-selected={notificationDeliveryView === view} onClick={() => selectNotificationDeliveryView(view)}>{view === "pending_stuck" ? "Pending / stuck" : view === "preference_suppressed" ? "Preference suppressed" : view.toUpperCase()} ({notificationDeliveryCounts[view]})</button>)}</div>{notificationDeliveriesError && <div className="notice" role="alert">{notificationDeliveriesError}</div>}{isLoadingNotificationDeliveries && <div className="empty" role="status"><span className="serif">Loading delivery status.</span>Reading the durable notification ledger.</div>}{!isLoadingNotificationDeliveries && !notificationDeliveriesError && notificationDeliveries.length === 0 && <div className="empty"><span className="serif">No matching deliveries.</span>This queue is clear.</div>}{!isLoadingNotificationDeliveries && notificationDeliveries.length > 0 && <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Updated</th><th>Event</th><th>Project</th><th>Recipient</th><th>Channels</th><th>State</th><th><span className="sr-only">Actions</span></th></tr></thead><tbody>{notificationDeliveries.map((item) => { const isOperating = operatingNotificationIds.has(item.outboxId); return <tr key={item.outboxId}><td data-label="Updated">{formatDate(new Date(item.updatedAt).toISOString())}</td><td data-label="Event">{eventTypeLabel(item.eventType)}</td><td data-label="Project">{item.projectStreet || item.projectId || "—"}</td><td data-label="Recipient">{item.recipientName || "Unavailable"}</td><td data-label="Channels">{item.channels.map((channel) => `${channel.channel}: ${channel.status}`).join(" · ")}{item.unknownEmailPossible && <><br /><strong className="admin-warning">Duplicate email possible</strong></>}</td><td data-label="State">{item.status}{item.safeErrorCode && <><br /><small>{item.safeErrorCode}</small></>}</td><td className="admin-table__action">{notificationDeliveryView !== "preference_suppressed" && <><button className="button button--secondary" type="button" disabled={isOperating} onClick={() => void operateNotificationDelivery(item, "replay")}>Replay</button><button className="button button--text" type="button" disabled={isOperating} onClick={() => void operateNotificationDelivery(item, "discard")}>Discard</button></>}</td></tr>; })}</tbody></table></div>}{notificationDeliveryCursor && <div style={{ marginTop: 16 }}><button className="button button--secondary" type="button" disabled={isLoadingNotificationDeliveries} onClick={() => void loadNotificationDeliveries(notificationDeliveryView, notificationDeliveryCursor, true)}>Load more</button></div>}</div>}
       </section>}
-      {payload && <div className="admin-modal" role="dialog" aria-modal="true" aria-label="Tonomo event payload"><div className="admin-modal__panel"><div className="admin-section__head"><div><div className="ey">Webhook payload</div><h2 className="serif">Event details</h2></div><button className="button button--secondary" type="button" onClick={() => setPayload(undefined)}>Close</button></div><pre>{payload.json}</pre></div></div>}
+      <Modal
+        open={!!payload}
+        title="Event details"
+        eyebrow="Webhook payload"
+        size="prose"
+        testId="admin-payload-modal"
+        onClose={() => setPayload(undefined)}
+        footer={<Button variant="secondary" onClick={() => setPayload(undefined)}>Close</Button>}
+      >
+        <pre className="max-h-[55vh] overflow-auto m-0 p-[var(--space-4)] bg-background text-foreground-secondary [font:var(--type-mono)] text-[length:var(--text-xs)] leading-[var(--leading-normal)]">
+          {shownPayload?.json}
+        </pre>
+      </Modal>
       <div className="toasts" aria-live="polite">{toasts.map((item) => <div className={`toast ${item.tone === "error" ? "toast--error" : ""}`} key={item.id}>{item.tone === "error" ? "!" : "✓"}<span>{item.message}</span></div>)}</div>
     </main>
   );

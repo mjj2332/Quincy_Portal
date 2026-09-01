@@ -20,7 +20,7 @@ describe("ProductionCalendarScheduleEditor", () => {
   afterEach(() => { act(() => root.unmount()); document.body.replaceChildren(); });
 
   async function render(event: ChecklistCalendarEventDto | ChecklistCalendarUnscheduledEntryDto = dueEvent, rangesEnabled = true, onSubmit = vi.fn()) {
-    await act(async () => { root.render(<ProductionCalendarScheduleEditor event={event} rangesEnabled={rangesEnabled} onSubmit={onSubmit} onCancel={vi.fn()} />); await Promise.resolve(); });
+    await act(async () => { root.render(<ProductionCalendarScheduleEditor open event={event} rangesEnabled={rangesEnabled} onSubmit={onSubmit} onCancel={vi.fn()} />); await Promise.resolve(); });
     return onSubmit;
   }
 

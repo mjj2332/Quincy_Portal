@@ -445,6 +445,33 @@ function adoptChecklistResult(response: ProductionCalendarRangeResponse, source:
   return { ...response, events: sourceWasEvent || nextEvent ? events : response.events, unscheduled };
 }
 
+/**
+ * An identity token for a retained dialog's re-mount `key` (§6.0 retention). Bumps once per
+ * null→non-null (`isOpen`) transition, using React's own documented "adjust state while
+ * rendering" pattern — conditional `setState` calls made during render, not a ref mutated during
+ * render (react.dev/reference/react/useState#storing-information-from-previous-renders).
+ *
+ * This matters specifically under React 19's concurrent rendering: React may start a render,
+ * abandon it before it commits (an interruption, a discarded speculative render), and retry.
+ * A ref mutated unconditionally during render carries that abandoned attempt's write forward —
+ * the retry then sees an "already open" ref that was never actually committed, and can skip a
+ * token bump it should make. `setState` calls made *during* render are a first-class operation
+ * React itself owns: calling it re-runs the component synchronously with the updated state
+ * *before* anything commits, so an abandoned render's state update can never leak into a later,
+ * genuinely different render's decision the way a raw ref write can. It still updates the
+ * SAME render's `key=` read (the whole reason the original `useEffect`-based version was wrong,
+ * per round 1) — React re-invokes the function body immediately, not on a later tick.
+ */
+function useOpenToken(isOpen: boolean): number {
+  const [token, setToken] = useState(0);
+  const [wasOpen, setWasOpen] = useState(false);
+  if (isOpen !== wasOpen) {
+    setWasOpen(isOpen);
+    if (isOpen) setToken((current) => current + 1);
+  }
+  return token;
+}
+
 export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFilters, onAcceptGateChange, onSettleStateChange, onAccessLoss, projectHrefFor, onOpenProject }: ProductionCalendarProps) {
   const range = useMemo(() => deriveProductionCalendarWindow(calendar.date, calendar.subview), [calendar.date, calendar.subview]);
   const query = useProductionCalendarRange({ identity, calendar, enabled: true });
@@ -473,6 +500,26 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
   const [moveDialog, setMoveDialog] = useState<MoveDialogState | null>(null);
   const [scheduleEditor, setScheduleEditor] = useState<ScheduleEditorState | null>(null);
   const [checklistFold, setChecklistFold] = useState<ChecklistFoldState | null>(null);
+  // §6.0 retention: each of `Modal`'s three Calendar consumers now renders unconditionally (its
+  // own `open` prop, not a mount guard) so it can animate closed. The parent must therefore keep
+  // supplying the dialog's props for the 120ms the exit transition holds it mounted — retain the
+  // whole state object (not just one field of it), and read the retained value in both the props
+  // and the `key`, never the live (possibly-null) state.
+  const moveDialogRetained = useRef<MoveDialogState | null>(null);
+  if (moveDialog) moveDialogRetained.current = moveDialog;
+  // Re-mount key: an open-token (`useOpenToken`, above), not a data value. Bumped once per
+  // null→non-null transition only, so a fold retry on the *same* open dialog (which sets a new
+  // `initialCivil`/`foldChoices` without closing) does not remount and re-seed it — matching
+  // today's no-remount behavior — while a fresh open (or a reopen after close) does.
+  const moveDialogToken = useOpenToken(moveDialog !== null);
+  const scheduleEditorRetained = useRef<ScheduleEditorState | null>(null);
+  if (scheduleEditor) scheduleEditorRetained.current = scheduleEditor;
+  // Same open-token as `moveDialogToken` — this one composes with the retained composite key
+  // below rather than standing alone as the whole `key`; see that call site's comment.
+  const scheduleEditorToken = useOpenToken(scheduleEditor !== null);
+  const checklistFoldRetained = useRef<ChecklistFoldState | null>(null);
+  if (checklistFold) checklistFoldRetained.current = checklistFold;
+  const checklistFoldToken = useOpenToken(checklistFold !== null);
   const [deadlineMovementDisabled, setDeadlineMovementDisabled] = useState(false);
   const [checklistRangeSchedulingDisabled, setChecklistRangeSchedulingDisabled] = useState(false);
   const [checklistNeedsAttention, setChecklistNeedsAttention] = useState<Set<string>>(() => new Set());
@@ -1578,9 +1625,19 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
         />
       </div>}
       <div className="dashboard-live-region sr-only" aria-live="polite" aria-atomic="true">{announcement}</div>
-      {moveDialog && <ProductionCalendarMoveDialog event={moveDialog.event} initialCivil={moveDialog.initialCivil} foldChoices={moveDialog.foldChoices} onSubmit={handleMoveDialogSubmit} onCancel={handleMoveDialogCancel} />}
-      {scheduleEditor && <ProductionCalendarScheduleEditor key={`${scheduleEditor.source.id}:${JSON.stringify(scheduleEditor.initialSchedule ?? null)}`} event={scheduleEditor.source} rangesEnabled={rangesEnabled && scheduleEditor.source.permissions.canScheduleRange} initialSchedule={scheduleEditor.initialSchedule} validationError={scheduleEditor.validationError} onSubmit={handleScheduleEditorSubmit} onCancel={handleScheduleEditorCancel} />}
-      {checklistFold && <ProductionCalendarFoldChoice endpoint={checklistFold.endpoint} choices={checklistFold.choices} eyebrow={checklistFold.proposal.source.project.street} onSubmit={handleChecklistFoldSubmit} onCancel={handleChecklistFoldCancel} />}
+      {moveDialogRetained.current && <ProductionCalendarMoveDialog key={moveDialogToken} open={!!moveDialog} event={moveDialogRetained.current.event} initialCivil={moveDialogRetained.current.initialCivil} foldChoices={moveDialogRetained.current.foldChoices} onSubmit={handleMoveDialogSubmit} onCancel={handleMoveDialogCancel} />}
+      {/* The key composes the open-token with the composite (source id + initialSchedule) parts
+          the original design required verbatim — the two parts cover two different remount
+          triggers that must both work: the token changes on a null→non-null transition (reopen
+          after close, which must reseed the form fresh — round-2's bug: this dialog had no token
+          at all, so reopening the same item preserved the prior instance's stale draft/error
+          state); the composite JSON changes when a validation retry sets a new `initialSchedule`
+          on the *same still-open* session (`scheduleEditor` never passes through null, so the
+          token does not bump — matching the original no-close-looking-remount requirement — but
+          the JSON half still changes and forces the remount that re-seeds from the new
+          `initialSchedule`, which is the whole point of that key surviving unchanged). */}
+      {scheduleEditorRetained.current && <ProductionCalendarScheduleEditor key={`${scheduleEditorToken}:${scheduleEditorRetained.current.source.id}:${JSON.stringify(scheduleEditorRetained.current.initialSchedule ?? null)}`} open={!!scheduleEditor} event={scheduleEditorRetained.current.source} rangesEnabled={rangesEnabled && scheduleEditorRetained.current.source.permissions.canScheduleRange} initialSchedule={scheduleEditorRetained.current.initialSchedule} validationError={scheduleEditorRetained.current.validationError} onSubmit={handleScheduleEditorSubmit} onCancel={handleScheduleEditorCancel} />}
+      {checklistFoldRetained.current && <ProductionCalendarFoldChoice key={checklistFoldToken} open={!!checklistFold} endpoint={checklistFoldRetained.current.endpoint} choices={checklistFoldRetained.current.choices} eyebrow={checklistFoldRetained.current.proposal.source.project.street} onSubmit={handleChecklistFoldSubmit} onCancel={handleChecklistFoldCancel} />}
     </section>
   );
 }

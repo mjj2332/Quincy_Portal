@@ -207,7 +207,7 @@ function MoveToControl({ project, model, activeStages, role, sort, canMoveStages
       onKeyDown={floating.onKeyDown}
       onClick={openMoveTo}
     >Move to…</button>
-    {open && <AnchoredPopover className="kanban-move-popover" context={floating.context} floatingStyles={floating.floatingStyles} initialFocus={0} modal onKeyDown={floating.onKeyDown}>
+    {floating.mounted && <AnchoredPopover className="kanban-move-popover" context={floating.context} floatingStyles={floating.floatingStyles} initialFocus={0} modal onKeyDown={floating.onKeyDown} status={floating.status}>
       <div id={dialogId} className="kanban-move-popover__content" role="dialog" aria-label={`Move ${project.street} to…`} data-step={targetStageKey === null ? "stage" : "position"}>
         <div className="ey">{targetStageKey === null ? "Choose a Stage" : `Choose a position in ${targetLabel}`}</div>
         {targetStageKey === null ? <div className="kanban-move-popover__stages" role="radiogroup" aria-label={`Target Stage for ${project.street}`}>

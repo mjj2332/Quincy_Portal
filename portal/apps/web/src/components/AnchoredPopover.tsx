@@ -1,5 +1,23 @@
-import { autoUpdate, flip, FloatingFocusManager, FloatingPortal, offset, shift, useFloating } from "@floating-ui/react";
-import { useEffect } from "react";
+import {
+  autoUpdate,
+  flip,
+  FloatingFocusManager,
+  FloatingPortal,
+  offset,
+  shift,
+  useFloating,
+  useTransitionStatus,
+} from "@floating-ui/react";
+import { useContext, useEffect } from "react";
+
+import { cn } from "../lib/utils";
+import { OverlayContainerContext } from "./OverlayContainerContext";
+
+// Duplicated from `--dur-base`/`--dur-fast` (tokens/spacing.css) — `useTransitionStatus` cannot
+// read a CSS custom property. Exported so a plain unit test can assert the two stay in sync
+// (Modal.motion.test.ts) rather than trusting the comment; criterion 21.
+export const POPOVER_DURATION_OPEN_MS = 220; // === --dur-base
+export const POPOVER_DURATION_CLOSE_MS = 120; // === --dur-fast
 
 type AnchoredPopoverOptions = {
   open: boolean;
@@ -7,14 +25,45 @@ type AnchoredPopoverOptions = {
   placement?: "top" | "top-start" | "top-end" | "bottom" | "bottom-start" | "bottom-end";
 };
 
+// §7.3 shared popover paint, applied by `AnchoredPopover` itself, replacing the four
+// hand-written CSS panels (`.project-team-picker`, `.kanban-move-popover`, `.subtask-popover`
+// panel-level properties). Consumers' own scoped class (e.g. "kanban-move-popover") stays as a
+// content-selector/test hook; it no longer carries panel-level CSS.
+const PANEL = cn(
+  "z-[var(--z-popover)] w-max",
+  "max-w-[min(320px,calc(100vw-var(--space-4)))]",
+  "max-h-[min(420px,calc(100dvh-var(--space-5)))] overflow-auto",
+  "bg-popover border-solid border-[length:var(--border-width-hair)] border-border",
+  "rounded-none shadow-[var(--shadow-md)]",
+  // `--overlay-enter`/`--overlay-exit` (§4.3) — the arbitrary-property form consumes the named
+  // composite token directly, rather than splitting it back into separate duration/ease utilities.
+  "motion-safe:[transition:opacity_var(--overlay-exit),translate_var(--overlay-exit)]",
+  "data-open:motion-safe:[transition:opacity_var(--overlay-enter),translate_var(--overlay-enter)]",
+  "opacity-0 translate-y-[var(--space-1)] data-open:opacity-100 data-open:translate-y-0",
+);
+
 /** Small checklist-facing positioning and close-boundary helper, not an app-wide menu system. */
 export function useAnchoredPopover({ open, onClose, placement = "bottom-end" }: AnchoredPopoverOptions) {
+  // §4.2a: the other half of the nested-overlay mechanism (`Select`/`Menu` both set this). A
+  // popover opened from inside a dialog must resolve its position against the viewport, not
+  // against `.modal__scroll`'s scroll box, which `strategy: "absolute"` (the default) would clip
+  // it against. Normalised to `undefined` at page level for the same reason `root` is below —
+  // `undefined` means "no explicit strategy", not "force absolute".
+  const container = useContext(OverlayContainerContext) ?? undefined;
   const floating = useFloating({
     open,
     onOpenChange(nextOpen) { if (!nextOpen) onClose(); },
     placement,
+    strategy: container ? "fixed" : "absolute",
     whileElementsMounted: autoUpdate,
     middleware: [offset(6), flip({ padding: 8 }), shift({ padding: 8 })],
+  });
+
+  // Exit motion (defect D). The consumer's JSX gate must switch from `open &&` to `mounted &&` —
+  // `mounted` stays true through the close transition so the popover can animate out instead of
+  // vanishing on the boolean, exactly the reason `Modal` needed the same split (§6.0).
+  const { isMounted: mounted, status } = useTransitionStatus(floating.context, {
+    duration: { open: POPOVER_DURATION_OPEN_MS, close: POPOVER_DURATION_CLOSE_MS },
   });
 
   useEffect(() => {
@@ -40,12 +89,25 @@ export function useAnchoredPopover({ open, onClose, placement = "bottom-end" }: 
     if (event.key !== "Escape" || !open) return;
     event.preventDefault();
     onClose();
+    // TB0 fix (08f4653): synchronous, no setTimeout/queueMicrotask/requestAnimationFrame/effect —
+    // see docs/lessons.md. A deferred call here can steal focus from a popover opened afterwards.
     (floating.refs.reference.current as HTMLElement | null)?.focus();
   };
-  return { ...floating, onKeyDown };
+  return { ...floating, onKeyDown, mounted, status };
 }
 
-export function AnchoredPopover({ children, context, floatingStyles, initialFocus = 0, onKeyDown, className = "subtask-popover", modal = false }: {
+export function AnchoredPopover({
+  children,
+  context,
+  floatingStyles,
+  initialFocus = 0,
+  onKeyDown,
+  className = "subtask-popover",
+  modal = false,
+  label,
+  status,
+  role,
+}: {
   children: React.ReactNode;
   context: ReturnType<typeof useFloating>["context"];
   floatingStyles: React.CSSProperties;
@@ -53,8 +115,33 @@ export function AnchoredPopover({ children, context, floatingStyles, initialFocu
   onKeyDown: (event: React.KeyboardEvent) => void;
   className?: string;
   modal?: boolean;
+  /** Renders `aria-label` on the floating div — for a consumer (e.g. the absorbed team picker)
+   *  that labels the floating div itself rather than wrapping an inner `role="group"`. */
+  label?: string;
+  /** `useAnchoredPopover`'s `status`, so entrance/exit motion (`data-open`) can render. */
+  status?: "unmounted" | "initial" | "open" | "close";
+  /** The absorbed team picker labels its floating div `role="dialog"` (it composes a search
+   *  input with a listbox, which is not a plain listbox). Other consumers leave this unset. */
+  role?: string;
 }) {
-  return <FloatingPortal><FloatingFocusManager context={context} modal={modal} returnFocus={false} order={["reference", "floating", "content"]} initialFocus={initialFocus}>
-    <div ref={context.refs.setFloating} className={className} style={floatingStyles} onKeyDown={onKeyDown}>{children}</div>
-  </FloatingFocusManager></FloatingPortal>;
+  // §4.2a: a popover opened from inside a dialog portals into the dialog's nested-overlay slot
+  // instead of `document.body`. `null` at every call site in this release (none sit inside a
+  // dialog today), so this compiles to today's behavior exactly. NOTE: `FloatingPortal`'s `root`
+  // treats an explicit `null` as "wait for a container to resolve" and never falls back to
+  // `document.body` (floating-ui.react.mjs's `useFloatingPortalNode`) — only `undefined` does
+  // that — so the page-level `null` from the context must be normalised to `undefined` here.
+  const container = useContext(OverlayContainerContext) ?? undefined;
+  return <FloatingPortal root={container}>
+    <FloatingFocusManager context={context} modal={modal} returnFocus={false} order={["reference", "floating", "content"]} initialFocus={initialFocus}>
+      <div
+        ref={context.refs.setFloating}
+        className={cn(className, PANEL)}
+        style={floatingStyles}
+        role={role}
+        aria-label={label}
+        data-open={status === "open" ? "" : undefined}
+        onKeyDown={onKeyDown}
+      >{children}</div>
+    </FloatingFocusManager>
+  </FloatingPortal>;
 }

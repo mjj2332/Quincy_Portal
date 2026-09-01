@@ -1,7 +1,7 @@
-import { autoUpdate, flip, FloatingFocusManager, FloatingPortal, offset, shift, size, useFloating } from "@floating-ui/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ProjectMemberRole } from "@quincy/shared";
 import { ApiError, apiDeleteWithBody, apiPutWithStatus } from "../lib/api";
+import { AnchoredPopover, useAnchoredPopover } from "./AnchoredPopover";
 import { confirm } from "../lib/confirm";
 import {
   beginProjectMembershipMutation,
@@ -26,12 +26,15 @@ function roleLabel(roleOnProject: ProjectMemberRole) { return roleOnProject === 
 function globalRoleLabel(role: string) { return role === "admin" ? "Admin" : role === "photographer" ? "Photographer" : role === "external_editor" ? "External editor" : "Editor"; }
 function details(error: unknown): Record<string, unknown> | null { return error instanceof ApiError && error.details && typeof error.details === "object" ? error.details as Record<string, unknown> : null; }
 
-function TeamPicker({ roleOnProject, candidates, selectedIds, pending, onSelect }: {
+function TeamPicker({ roleOnProject, candidates, selectedIds, pending, onSelect, candidatesUnavailable }: {
   roleOnProject: ProjectMemberRole;
   candidates: ProjectAssignmentCandidate[];
   selectedIds: Set<string>;
   pending: Set<string>;
   onSelect: (candidate: ProjectAssignmentCandidate) => void;
+  /** The candidates query errored — the search field's `disabled`/`aria-invalid` states (§6.8)
+   *  represent this: an empty, unreachable candidate list is not a useful thing to search. */
+  candidatesUnavailable: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -39,30 +42,14 @@ function TeamPicker({ roleOnProject, candidates, selectedIds, pending, onSelect 
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
   const listId = `project-team-${roleOnProject}-listbox`;
-  const floating = useFloating({
-    open,
-    onOpenChange: setOpen,
-    placement: "bottom-start",
-    whileElementsMounted: autoUpdate,
-    middleware: [offset(8), flip({ padding: 8 }), shift({ padding: 8 }), size({ padding: 8, apply({ availableWidth, availableHeight, elements }) { Object.assign(elements.floating.style, { maxWidth: `${availableWidth}px`, maxHeight: `${availableHeight}px` }); } })],
-  });
+  const close = useCallback(() => setOpen(false), []);
+  const floating = useAnchoredPopover({ open, onClose: close, placement: "bottom-start" });
   const matches = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase();
     return candidates.filter((candidate) => !needle || `${candidate.name} ${candidate.email} ${globalRoleLabel(candidate.globalRole)}`.toLocaleLowerCase().includes(needle));
   }, [candidates, query]);
   useEffect(() => { if (open) { setActiveIndex(0); window.setTimeout(() => searchRef.current?.focus(), 0); } else setQuery(""); }, [open]);
   useEffect(() => { if (activeIndex >= matches.length) setActiveIndex(Math.max(0, matches.length - 1)); }, [activeIndex, matches.length]);
-  useEffect(() => {
-    if (!open) return;
-    const closeOutside = (event: PointerEvent) => {
-      const node = event.target as Node | null;
-      if (node && (triggerRef.current?.contains(node) || floating.refs.floating.current?.contains(node))) return;
-      setOpen(false);
-      triggerRef.current?.focus();
-    };
-    window.addEventListener("pointerdown", closeOutside);
-    return () => window.removeEventListener("pointerdown", closeOutside);
-  }, [floating.refs.floating, open]);
   // Stable identity: an inline `(node) => floating.refs.setReference(node)` re-runs every render
   // and floating-ui's setReference setStates with no equality guard — a detach/attach storm under
   // rapid re-renders can exceed React's update-depth limit (#185). Keep it stable.
@@ -71,29 +58,46 @@ function TeamPicker({ roleOnProject, candidates, selectedIds, pending, onSelect 
     floating.refs.setReference(node);
   }, [floating.refs.setReference]);
   function onKeyDown(event: React.KeyboardEvent) {
-    if (event.key === "Escape") { event.preventDefault(); setOpen(false); triggerRef.current?.focus(); }
     if (event.key === "ArrowDown") { event.preventDefault(); setActiveIndex((index) => Math.min(index + 1, Math.max(0, matches.length - 1))); }
     if (event.key === "ArrowUp") { event.preventDefault(); setActiveIndex((index) => Math.max(index - 1, 0)); }
     if (event.key === "Enter" && matches[activeIndex]) { event.preventDefault(); onSelect(matches[activeIndex]!); }
+    // Escape is the hook's own — synchronous close + focus restore to the reference (§7.1's TB0 fix).
+    floating.onKeyDown(event);
   }
   return <>
     <button ref={setTrigger} type="button" className="project-team__add" aria-label={`Add ${roleLabel(roleOnProject)}`} aria-expanded={open} aria-controls={open ? listId : undefined} onClick={() => setOpen((value) => !value)}>+ Add</button>
-    {open && <FloatingPortal><FloatingFocusManager context={floating.context} modal={false} initialFocus={searchRef} returnFocus={triggerRef}>
-      <div ref={floating.refs.setFloating} className="project-team-picker" style={floating.floatingStyles} role="dialog" aria-label={`Add ${roleLabel(roleOnProject)}`} onKeyDown={onKeyDown}>
-        <label className="sr-only" htmlFor={`${listId}-search`}>Search {roleLabel(roleOnProject).toLocaleLowerCase()}s</label>
-        <input ref={searchRef} id={`${listId}-search`} type="search" value={query} placeholder="Search name, email or role…" onChange={(event) => setQuery(event.target.value)} />
-        <div id={listId} className="project-team-picker__results" role="listbox" aria-label={`${roleLabel(roleOnProject)} candidates`}>
-          {matches.length ? matches.map((candidate, index) => {
-            const key = cellKey(roleOnProject, candidate.id);
-            const isSelected = selectedIds.has(candidate.id);
-            const isPending = pending.has(key);
-            return <button key={candidate.id} type="button" role="option" aria-selected={isSelected} aria-current={index === activeIndex ? "true" : undefined} className={`project-team-picker__option${isSelected ? " is-selected" : ""}`} disabled={isPending} onMouseEnter={() => setActiveIndex(index)} onClick={() => onSelect(candidate)}>
-              <span><strong>{candidate.name || candidate.email}</strong><small>{candidate.email} · {globalRoleLabel(candidate.globalRole)}</small></span><span aria-hidden="true">{isSelected ? "✓" : ""}</span>
-            </button>;
-          }) : <p className="project-team-picker__empty">No eligible people match.</p>}
-        </div>
+    {floating.mounted && <AnchoredPopover
+      context={floating.context}
+      floatingStyles={floating.floatingStyles}
+      initialFocus={searchRef}
+      onKeyDown={onKeyDown}
+      status={floating.status}
+      className="project-team-picker"
+      role="dialog"
+      label={`Add ${roleLabel(roleOnProject)}`}
+    >
+      <label className="sr-only" htmlFor={`${listId}-search`}>Search {roleLabel(roleOnProject).toLocaleLowerCase()}s</label>
+      <input
+        ref={searchRef}
+        id={`${listId}-search`}
+        type="search"
+        value={query}
+        placeholder="Search name, email or role…"
+        onChange={(event) => setQuery(event.target.value)}
+        disabled={candidatesUnavailable}
+        aria-invalid={candidatesUnavailable ? true : undefined}
+      />
+      <div id={listId} className="project-team-picker__results" role="listbox" aria-label={`${roleLabel(roleOnProject)} candidates`}>
+        {matches.length ? matches.map((candidate, index) => {
+          const key = cellKey(roleOnProject, candidate.id);
+          const isSelected = selectedIds.has(candidate.id);
+          const isPending = pending.has(key);
+          return <button key={candidate.id} type="button" role="option" aria-selected={isSelected} aria-current={index === activeIndex ? "true" : undefined} className={`project-team-picker__option${isSelected ? " is-selected" : ""}`} disabled={isPending} onMouseEnter={() => setActiveIndex(index)} onClick={() => onSelect(candidate)}>
+            <span><strong>{candidate.name || candidate.email}</strong><small>{candidate.email} · {globalRoleLabel(candidate.globalRole)}</small></span><span aria-hidden="true">{isSelected ? "✓" : ""}</span>
+          </button>;
+        }) : <p className="project-team-picker__empty">No eligible people match.</p>}
       </div>
-    </FloatingFocusManager></FloatingPortal>}
+    </AnchoredPopover>}
   </>;
 }
 
@@ -181,7 +185,7 @@ export function ProjectTeamControl({ projectId, members, canEdit }: { projectId:
     const roleSelected = selected(roleOnProject);
     const roleErrors = Object.entries(mutationStates).filter(([key, state]) => key.startsWith(`${roleOnProject}:`) && state.kind === "error");
     return <section className="project-team__role" aria-labelledby={`project-team-${roleOnProject}-heading`}>
-      <div className="project-team__role-head"><h3 id={`project-team-${roleOnProject}-heading`}>{roleLabel(roleOnProject)}s</h3>{canEdit && <TeamPicker roleOnProject={roleOnProject} candidates={roleCandidates} selectedIds={roleSelected} pending={pending} onSelect={(candidate) => void add(roleOnProject, candidate)} />}</div>
+      <div className="project-team__role-head"><h3 id={`project-team-${roleOnProject}-heading`}>{roleLabel(roleOnProject)}s</h3>{canEdit && <TeamPicker roleOnProject={roleOnProject} candidates={roleCandidates} selectedIds={roleSelected} pending={pending} onSelect={(candidate) => void add(roleOnProject, candidate)} candidatesUnavailable={candidatesQuery.isError} />}</div>
       {roleErrors.map(([key, state]) => {
         const candidate = roleCandidates.find((item) => key === cellKey(roleOnProject, item.id));
         return <div className="project-team__message project-team__message--error" role="alert" key={key}>{state.kind === "error" ? state.message : "Assignment could not be added."}{candidate && <button type="button" onClick={() => void add(roleOnProject, candidate)}>Retry</button>}</div>;

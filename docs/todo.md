@@ -9,6 +9,57 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
 
 ## Current state (2026-07-24, batch status updated 2026-07-28, notification fix 2026-07-29, seed-admin UUID migration 2026-07-29, notification dismiss + stalled-guard 2026-07-30, download selection 2026-08-04, notice-board rich text + mentions 2026-08-17, project comments + collaboration panel 2026-08-17, project subtasks/checklist 2026-08-17, collaboration panel relocated to Project page 2026-08-17, collaboration panel UI fixes + due-time reminder 2026-08-17, notification click navigation 2026-08-17, comment ordering + Shift+Enter soft breaks 2026-08-17, mention-email content 2026-08-20, TB0 authority promotion 2026-08-24, TB0A React 19.2 deployed + accepted 2026-08-25, TB0B pipeline configuration boundary deployed 2026-08-24, TB1 Tailwind v4/shadcn foundation deployed 2026-08-25, TB2 route-safe project data freshness deployed 2026-08-25, TB3 project discussion v2 deployed 2026-08-25, TB4 notification outbox deployed 2026-08-26, confirmation modal + admin user impersonation deployed 2026-08-26, TB4A project workspace assignment rail deployed 2026-08-27, TB4B project deadline and reminders deployed 2026-08-27, TB4C editor-wide project-change notifications deployed 2026-08-27, TB4D checklist scheduling & ranges deployed 2026-08-28, TB4E external editor assigned-scope access deployed 2026-08-28, TB4E QA + cache-purge secrets done / phase fully closed 2026-08-28, TB5A Stage & Kanban Ordering Contract deployed to production 2026-08-29 — migration 0037 applied, tb5a_board_contract_enabled flipped ON, app 4ba551a3 / bg fa876454, TB5B Kanban Interaction Modernization (dnd-kit) deployed to production 2026-08-30 — UI-only, merge 578d2a1, app Worker 2b515484 only, no migration, rollback target app 4ba551a3, TB5C Production Calendar deployed to production 2026-08-31 — merge a7684d8, app Worker 2ba08078 only, no migration, rollback target app 2b515484, Kanban cross-column drag white-screen hotfix deployed to production 2026-08-31 — UI-only, app Worker only, no migration, rollback target app 2ba08078; Kanban column-divider visibility + full-height drop zones deployed 2026-08-31 — CSS-only, app Worker 10778f00, TB6 Project-Card Detail & Shared Discussion deployed to production 2026-08-31 — migration 0038 applied (additive index only), merge to main, app Worker 6f7a22b2 only, background/webhook-ingress not redeployed (bundle-compared behavior-neutral), rollback target app 10778f00, TB7 Notice-Board Migration deployed to production 2026-09-01 — migration 0039 applied (additive `notice_board_read_markers` table only, applied via the Cloudflare dashboard SQL console after wrangler's D1 API endpoints returned persistent `cf-d1: err=7500` errors; Time Travel bookmark `00000641-00000098-000050d8-491caf5f14620d252ca9d66e017d0912` taken immediately before as the recovery point), merge to main (`c8fc4c7`), app Worker `682ed4a0` only, background/webhook-ingress not redeployed (no change), rollback target app `6f7a22b2`), Project-Navigation-And-External-Editor-Collections deployed to production 2026-09-01 — no migration, merge to main (`c302172`), app Worker `8fd42378` only, background/webhook-ingress not redeployed (no change), rollback target app `682ed4a0`)
 
+- **TB8-01 (Dashboard shell design convergence on Tailwind/shadcn) is deployed to production**
+  (commit `af4d833`, `feat(tb8): TB8-01 Dashboard shell design convergence on Tailwind/shadcn`) —
+  noted here because this file had no TB8-01 entry at all before this one; that appears to be an
+  oversight from that session, not a sign the work is missing. TB8-02 (below) is the second
+  candidate in the same pipeline, ranked to converge the overlay primitives TB8-01's own consumers
+  (and every later TB8 candidate) reuse.
+- **TB8-02 (Menus, Dialogs, Popovers and Sheets — converges the app's eleven overlay
+  implementations onto three shared primitives: `Modal`, `AnchoredPopover`, and a new `Menu` on
+  `@base-ui/react/menu`) is built and in diff-review, NOT yet deployed, NOT yet merged to `main`.**
+  Plan: `docs/plans/revamp_2026_portal/roadmap/TB8-02-Menus-Dialogs-Popovers-Visual-Plan.md`
+  (approved by a second independent fresh-Opus gate 2026-09-01, after the first gate blocked it on
+  a real §4.2a nested-overlay stacking bug that was found, fixed, and re-verified). Build: one
+  Sonnet-subagent pass implementing the full plan, followed by **four rounds of independent
+  fresh-Sol diff review**, each round finding real, fixed issues — this was not a rubber-stamp
+  pipeline. Round 1: a `null`-vs-`undefined` portal-container bug that silently broke every
+  popover/menu/select at page level (`FloatingPortal`/Base UI `Portal`'s `container`/`root` prop
+  treats an explicit `null` as "wait forever", not "fall back to `document.body`" — only
+  `undefined` does), plus incomplete §10.3 option-state coverage and several other findings.
+  Round 2: a **genuine regression** in the Calendar-dialog retention design — the open-remount
+  token was bumped inside a `useEffect` (runs one render late), so closing a dialog triggered an
+  unwanted immediate unmount instead of its exit animation; fixed by moving the bump to run
+  synchronously during render. Round 3: that same render-phase fix was itself flagged as not
+  concurrency-safe under React 19's interrupted-render semantics (a raw ref mutated during render
+  can carry an abandoned, uncommitted render's write forward) — fixed by switching to React's own
+  documented "adjust state while rendering" pattern (conditional `setState` calls during render,
+  which React handles safely across an abandoned/retried render, unlike a ref write); round 3 also
+  found `ScheduleEditor` had no open-token at all (only Move/Fold did), so reopening the same
+  checklist item after Cancel showed the previous session's stale unsaved draft instead of a fresh
+  form — fixed with the same token, composed with the existing composite key so the *other*
+  legitimate remount trigger (a validation retry within the same open session, which must reseed
+  from a new `initialSchedule` without looking like a close) still works; round 2 also found four
+  still-incomplete 44px touch targets. Round 3: the round-2 fix for one of those four
+  (`.subtask-popover__actions .button`) was itself silently defeated by a CSS cascade-order bug —
+  the new ≤720px override and the file's pre-existing unconditional 38px rule had equal
+  specificity, and the 38px rule sat *later* in the file, so it won regardless of the media query;
+  fixed by moving the override to sit after its base rule, and verified directly in the built CSS
+  output. Round 4 confirmed that fix with no further defect. Also fixed across the four rounds: `AnchoredPopover` missing the `strategy: "fixed"`
+  half of the §4.2a nested-overlay mechanism, several unlayered `app.css` rules that would have
+  silently outranked the new Tailwind panel utilities, superficial tests that asserted proxies for
+  behavior rather than the behavior itself (now real keyboard/touch/modifier-click interactions),
+  and disabled/invalid states that existed in CSS but were never wired to real DOM attributes.
+  **Explicitly still open, real-browser-only** (documented in
+  `docs/plans/revamp_2026_portal/evidence/TB8-02/drift-register.md`, not silently gapped): the §5
+  sixteen-row visual matrix, §4.2a's full nested-overlay stacking/clipping/trap proof (criterion
+  23), real-browser Kanban drag verification (`docs/lessons.md:901`, unconditional whenever
+  `ProjectKanbanBoard.tsx` is touched at all), scroll-lock restoration, press-contained pointer
+  drag, RTE link-dialog selection preservation across the open→cancel round trip
+  (`docs/lessons.md:833`), and native menu/touch/modifier-click chrome. Verification actually run
+  and green each round: `npm run typecheck`, `npm run build -w @quincy/web`,
+  `npm run test --workspaces`, and `packages/shared`'s standalone vitest config. Not committed, not
+  pushed, not deployed.
 - **TB4E (External Editor Assigned-Scope Access — a global `external_editor` role that does normal
   editing work only on explicitly assigned projects, sees external-safe data, discovers no
   unrelated projects) is deployed to production, 2026-08-28**

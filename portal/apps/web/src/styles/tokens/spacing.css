@@ -54,4 +54,18 @@
   --container-lg: 1100px;
   --container-xl: 1320px;
   --gutter:       var(--space-6);
+
+  /* ---- Overlay stacking — see TB8-02 §4.2 for which of these are traced and which are new ---- */
+  --z-popover:  90;   /* TRACED: already live on .subtask-popover / .kanban-move-popover /
+                         .project-team-picker (app.css:1232, :583, :266) */
+  --z-dialog:   95;   /* NEW: dialogs move up from 90 so they deterministically clear a popover */
+  --z-toast:    98;   /* NEW: derived — the next step above --z-dialog, so a toast still shows
+                         over an open dialog (.toasts moves 95 → 98, app.css:781) */
+
+  /* ---- Overlay motion presets ----------------------------------------
+     No new duration or easing values; the two overlay motions get named so all eight sites
+     cite one thing. Fades and small translates only, per the design-system readme;
+     --dur-base in, --dur-fast out (an exit must never outlast the intent). */
+  --overlay-enter: var(--dur-base) var(--ease-entrance);
+  --overlay-exit:  var(--dur-fast) var(--ease-exit);
 }

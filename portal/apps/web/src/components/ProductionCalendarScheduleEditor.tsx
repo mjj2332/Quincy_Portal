@@ -19,6 +19,7 @@ type ScheduleDraft = { state: "unscheduled" | "due_only" | "range"; kind: Endpoi
 export type ProductionCalendarScheduleEditorError = { code: string; message: string; endpoint?: ChecklistScheduleValidationError["endpoint"]; choices?: ChecklistScheduleValidationError["choices"] };
 
 export type ProductionCalendarScheduleEditorProps = {
+  open: boolean;
   event: ScheduleEvent;
   rangesEnabled: boolean;
   onSubmit: (schedule: InitialChecklistScheduleInput) => void;
@@ -96,7 +97,7 @@ function errorText(error: ProductionCalendarScheduleEditorError): string {
 
 function endpointLabel(which: "start" | "end"): string { return which === "start" ? "Start" : "End"; }
 
-export function ProductionCalendarScheduleEditor({ event, rangesEnabled, onSubmit, onCancel, initialSchedule, validationError }: ProductionCalendarScheduleEditorProps): JSX.Element | null {
+export function ProductionCalendarScheduleEditor({ open, event, rangesEnabled, onSubmit, onCancel, initialSchedule, validationError }: ProductionCalendarScheduleEditorProps): JSX.Element | null {
   const initial = initialSchedule ? draftFromInput(initialSchedule) : scheduleDraft(event.schedule);
   const [draft, setDraft] = useState<ScheduleDraft>(initial);
   const [error, setError] = useState<ProductionCalendarScheduleEditorError | undefined>(validationError);
@@ -142,7 +143,7 @@ export function ProductionCalendarScheduleEditor({ event, rangesEnabled, onSubmi
     onSubmit(input);
   };
 
-  return <Modal title="Schedule checklist item" eyebrow={event.project.street} onClose={onCancel} wide initialFocus={0} testId="calendar-schedule-editor" variant="calendar" footer={<>
+  return <Modal open={open} title="Schedule checklist item" eyebrow={event.project.street} onClose={onCancel} wide initialFocus={0} testId="calendar-schedule-editor" variant="calendar" footer={<>
     <button className="button button--secondary" type="button" data-testid="calendar-schedule-cancel" onClick={onCancel}>Cancel</button>
     <button className="button" type="button" data-testid="calendar-schedule-submit" onClick={submit}>Save schedule</button>
   </>}>

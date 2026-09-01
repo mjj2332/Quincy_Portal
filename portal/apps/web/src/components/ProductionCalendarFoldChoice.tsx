@@ -2,6 +2,7 @@ import { useId, useState, type JSX } from "react";
 import { Modal } from "./Modal";
 
 export type ProductionCalendarFoldChoiceProps = {
+  open: boolean;
   title?: string;
   eyebrow?: string;
   endpoint: "start" | "end";
@@ -16,10 +17,10 @@ function offsetLabel(minutes: number): string {
   return `UTC${sign}${String(Math.floor(absolute / 60)).padStart(2, "0")}:${String(absolute % 60).padStart(2, "0")}`;
 }
 
-export function ProductionCalendarFoldChoice({ title = "Choose Sydney time", eyebrow, endpoint, choices, onSubmit, onCancel }: ProductionCalendarFoldChoiceProps): JSX.Element {
+export function ProductionCalendarFoldChoice({ open, title = "Choose Sydney time", eyebrow, endpoint, choices, onSubmit, onCancel }: ProductionCalendarFoldChoiceProps): JSX.Element {
   const [choice, setChoice] = useState<"earlier" | "later" | undefined>();
   const name = useId();
-  return <Modal title={title} eyebrow={eyebrow} onClose={onCancel} initialFocus={0} testId="calendar-fold-choice" variant="calendar" footer={<>
+  return <Modal open={open} title={title} eyebrow={eyebrow} onClose={onCancel} initialFocus={0} testId="calendar-fold-choice" variant="calendar" footer={<>
     <button className="button button--secondary" type="button" data-testid="calendar-fold-cancel" onClick={onCancel}>Cancel</button>
     <button className="button" type="button" data-testid="calendar-fold-submit" disabled={!choice} onClick={() => { if (choice) onSubmit(choice); }}>Use this time</button>
   </>}>

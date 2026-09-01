@@ -231,6 +231,37 @@ describe("SubtaskChecklist", () => {
     const nearest = document.createElement("button"); const last = document.createElement("button"); document.body.append(nearest, last); scheduleReorderFocus(new Map([["next", nearest], ["last", last]]), "missing", 0, false, null, projectId); await act(async () => { await new Promise((resolve) => window.setTimeout(resolve, 0)); }); expect(document.activeElement).toBe(nearest); scheduleReorderFocus(new Map([["next", nearest], ["last", last]]), "missing", 99, false, null, projectId); await act(async () => { await new Promise((resolve) => window.setTimeout(resolve, 0)); }); expect(document.activeElement).toBe(last);
   });
 
+  it("moves the Assignee popover's keyboard highlight with Arrow keys and selects with Enter (§10.3)", async () => {
+    // Regression coverage for the keyboard-highlight tracking added to `AssigneeControl` (round
+    // 3) — it previously had no `activeIndex`/Arrow-key wiring at all, unlike `TeamPicker`.
+    const host = mount(); await render();
+    const trigger = item(host, "Call client").querySelector<HTMLButtonElement>('[aria-label="Assignee for Call client"]')!;
+    await click(trigger);
+    const popover = portal("subtask-popover-task-1-assignee");
+    const members = () => [...popover.querySelectorAll<HTMLButtonElement>(".subtask-popover__member")];
+
+    expect(members().map((member) => member.textContent)).toEqual(["Nora Joneseditor", "Ada Smithphotographer"]);
+    expect(members()[0]?.getAttribute("aria-current")).toBe("true");
+    expect(members()[1]?.getAttribute("aria-current")).toBeNull();
+    // The current assignee (Nora Jones, `task.assignee.id === "user-2"`) is marked selected.
+    expect(members()[0]?.getAttribute("aria-selected")).toBe("true");
+    expect(members()[1]?.getAttribute("aria-selected")).toBe("false");
+
+    await keydown(popover, "ArrowDown");
+    expect(members()[0]?.getAttribute("aria-current")).toBeNull();
+    expect(members()[1]?.getAttribute("aria-current")).toBe("true");
+
+    await keydown(popover, "ArrowUp");
+    expect(members()[0]?.getAttribute("aria-current")).toBe("true");
+    expect(members()[1]?.getAttribute("aria-current")).toBeNull();
+
+    // Enter activates the highlighted (first) member — toggling the current assignee off, since
+    // `AssigneeControl`'s `onSelect` treats re-selecting the current assignee as unassignment.
+    await keydown(popover, "Enter");
+    await act(async () => { await new Promise((resolve) => window.setTimeout(resolve, 0)); });
+    expect(apiPatchMock).toHaveBeenCalledWith(`/api/projects/${projectId}/subtasks/task-1`, { assigneeId: null });
+  });
+
   it("does not reload the checklist when a parent re-render passes a new onAccessFailure identity", async () => {
     const host = document.createElement("div"); document.body.appendChild(host); const localRoot = createRoot(host);
     try {

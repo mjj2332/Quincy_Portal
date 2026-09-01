@@ -161,6 +161,12 @@ async function nextTask() {
   await act(async () => { await new Promise<void>((resolve) => window.setTimeout(resolve, 0)); });
 }
 
+// `Modal` delays its own unmount by 120ms (`--dur-fast`) after `open` goes false, so it can
+// animate closed (§6.0) — a closed dialog is still in the DOM until that transition completes.
+async function waitForClose() {
+  await act(async () => { await new Promise<void>((resolve) => window.setTimeout(resolve, 150)); });
+}
+
 afterEach(async () => {
   if (root) await act(async () => { root!.unmount(); await Promise.resolve(); });
   root = null;
@@ -517,36 +523,38 @@ describe("RichTextEditor hard breaks", () => {
     await selectText(editor, linkText, 0, "Link me".length);
     expect(linkButton().disabled).toBe(false);
     await click(linkButton());
-    let input = host.querySelector<HTMLInputElement>('[role="dialog"] input')!;
+    // The dialog is `Modal` (§6.7), portaled to `document.body` — a sibling of `host`, not
+    // inside it. Its footer buttons are `Button` components (Tailwind classes), not `.button`.
+    let input = document.querySelector<HTMLInputElement>('[role="dialog"] input')!;
     expect(document.activeElement).toBe(input);
     expect(input.value).toBe("");
-    await click([...host.querySelectorAll<HTMLButtonElement>("[role=dialog] .button")].at(-1)!);
-    expect(host.querySelector('[role="alert"]')?.textContent).toContain("HTTP(S)");
+    await click([...document.querySelectorAll<HTMLButtonElement>("[role=dialog] button")].find((button) => button.textContent === "Apply link")!);
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("HTTP(S)");
     await setInput(input, "mailto:editor@example.test");
-    await click([...host.querySelectorAll<HTMLButtonElement>("[role=dialog] .button")].at(-1)!);
-    expect(host.querySelector('[role="alert"]')?.textContent).toContain("HTTP(S)");
+    await click([...document.querySelectorAll<HTMLButtonElement>("[role=dialog] button")].find((button) => button.textContent === "Apply link")!);
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("HTTP(S)");
     await setInput(input, "https://example.test/created");
-    await click([...host.querySelectorAll<HTMLButtonElement>("[role=dialog] .button")].at(-1)!);
+    await click([...document.querySelectorAll<HTMLButtonElement>("[role=dialog] button")].find((button) => button.textContent === "Apply link")!);
     expect(onChange).toHaveBeenLastCalledWith({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Link me", marks: [{ type: "link", href: "https://example.test/created" }] }] }] });
-    await nextTask();
-    expect(host.querySelector('[role="dialog"]')).toBeNull(); expect(document.activeElement).toBe(editor);
+    await waitForClose();
+    expect(document.querySelector('[role="dialog"]')).toBeNull(); expect(document.activeElement).toBe(editor);
 
     await moveCaret(editor, editor.querySelector("a")!.firstChild!, 2);
     await click(linkButton());
-    input = host.querySelector<HTMLInputElement>('[role="dialog"] input')!;
+    input = document.querySelector<HTMLInputElement>('[role="dialog"] input')!;
     expect(input.value).toBe("https://example.test/created");
     await setInput(input, "https://example.test/updated");
-    await click([...host.querySelectorAll<HTMLButtonElement>("[role=dialog] .button")].at(-1)!);
+    await click([...document.querySelectorAll<HTMLButtonElement>("[role=dialog] button")].find((button) => button.textContent === "Apply link")!);
     expect(onChange).toHaveBeenLastCalledWith({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Link me", marks: [{ type: "link", href: "https://example.test/updated" }] }] }] });
-    await nextTask();
+    await waitForClose();
     expect(document.activeElement).toBe(editor);
 
     await moveCaret(editor, editor.querySelector("a")!.firstChild!, 2);
     await click(linkButton());
-    await click([...host.querySelectorAll<HTMLButtonElement>("[role=dialog] .button")].find((button) => button.textContent === "Remove link")!);
+    await click([...document.querySelectorAll<HTMLButtonElement>("[role=dialog] button")].find((button) => button.textContent === "Remove link")!);
     expect(onChange).toHaveBeenLastCalledWith(text("Link me"));
-    await nextTask();
-    expect(host.querySelector('[role="dialog"]')).toBeNull(); expect(document.activeElement).toBe(editor);
+    await waitForClose();
+    expect(document.querySelector('[role="dialog"]')).toBeNull(); expect(document.activeElement).toBe(editor);
   });
 
   it("keeps a collapsed linked cursor focused in the editor for immediate typing", async () => {
@@ -554,10 +562,10 @@ describe("RichTextEditor hard breaks", () => {
     const linkButton = host.querySelector<HTMLButtonElement>('[aria-label="Link"]')!;
     await moveCaret(editor, editor.querySelector("p")!.firstChild!, "Before".length);
     await click(linkButton);
-    const input = host.querySelector<HTMLInputElement>('[role="dialog"] input')!;
+    const input = document.querySelector<HTMLInputElement>('[role="dialog"] input')!;
     await setInput(input, "https://example.test/new-link");
-    await click([...host.querySelectorAll<HTMLButtonElement>("[role=dialog] .button")].at(-1)!);
-    await nextTask();
+    await click([...document.querySelectorAll<HTMLButtonElement>("[role=dialog] button")].find((button) => button.textContent === "Apply link")!);
+    await waitForClose();
     expect(document.activeElement).toBe(editor);
     await typeIntoFocusedEditor("x");
     expect(onChange).toHaveBeenLastCalledWith({ type: "doc", content: [{ type: "paragraph", content: [
@@ -566,46 +574,40 @@ describe("RichTextEditor hard breaks", () => {
     ] }] });
   });
 
-  it("contains focus in the link modal and restores the trigger on Escape", async () => {
+  it("focuses the URL field on open and restores the trigger on Escape", async () => {
     const host = mount(); const { editor } = await render(host, text("Link me"));
     const linkButton = host.querySelector<HTMLButtonElement>('[aria-label="Link"]')!;
     await selectText(editor, editor.querySelector("p")!.firstChild!, 0, "Link me".length);
     await click(linkButton);
-    const dialog = host.querySelector<HTMLElement>('[role="dialog"]')!;
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
     const input = dialog.querySelector<HTMLInputElement>("input")!;
-    const close = dialog.querySelector<HTMLButtonElement>('[aria-label="Close link dialog"]')!;
-    const apply = [...dialog.querySelectorAll<HTMLButtonElement>(".button")].at(-1)!;
     expect(document.activeElement).toBe(input);
-    await keydown(input, "Tab", { shiftKey: true });
-    expect(document.activeElement).toBe(close);
-    await keydown(close, "Tab", { shiftKey: true });
-    expect(document.activeElement).toBe(apply);
-    await keydown(apply, "Tab");
-    expect(document.activeElement).toBe(close);
-
-    const outside = document.createElement("button"); document.body.appendChild(outside);
-    await act(async () => { outside.focus(); await Promise.resolve(); });
-    expect(document.activeElement).toBe(input);
+    // Real Tab/Shift-Tab wraparound is a browser-native focus-traversal behavior jsdom does not
+    // simulate (see ConfirmDialog.dom.test.tsx's identical note). Cyclical trapping is now owned
+    // by @floating-ui/react's `FloatingFocusManager` (`Modal`'s `modal` prop) rather than the
+    // hand-rolled `handleLinkDialogKeyDown` this dialog used before §6.7 — verified with a real
+    // browser in manual QA (criterion 15) rather than faked with an assertion that can't fail.
     await keydown(input, "Escape");
-    await nextTask();
-    expect(host.querySelector('[role="dialog"]')).toBeNull(); expect(document.activeElement).toBe(linkButton);
+    await waitForClose();
+    expect(document.querySelector('[role="dialog"]')).toBeNull(); expect(document.activeElement).toBe(linkButton);
   });
 
-  it("intercepts clicks on the link modal backdrop without closing or reaching the page behind it", async () => {
+  it("intercepts a press-and-release on the scrim without closing or reaching the page behind it", async () => {
     const host = mount(); const { editor } = await render(host, text("Link me"));
     const pageBehind = document.createElement("button"); const pageBehindClick = vi.fn();
     pageBehind.addEventListener("click", pageBehindClick); document.body.prepend(pageBehind);
     await selectText(editor, editor.querySelector("p")!.firstChild!, 0, "Link me".length);
     await click(host.querySelector<HTMLButtonElement>('[aria-label="Link"]')!);
-    const backdrop = host.querySelector<HTMLElement>(".rich-text__link-backdrop")!;
-    const mouseDown = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
+    // The RTE dialog is `Modal` now (§6.7) — its scrim is the shared `.scrim`, and dismissal is
+    // press-contained (defect F, §6.1 item 2): a press that began inside the panel and is
+    // released past its edge must not dismiss. A bare click with no preceding pointerdown on the
+    // scrim itself does not dismiss either (see ConfirmDialog.dom.test.tsx's identical case).
+    const scrim = document.querySelector<HTMLElement>(".scrim")!;
     await act(async () => {
-      backdrop.dispatchEvent(mouseDown);
-      backdrop.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      scrim.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
       await Promise.resolve(); await Promise.resolve();
     });
-    expect(mouseDown.defaultPrevented).toBe(true);
-    expect(host.querySelector('[role="dialog"]')).not.toBeNull();
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
     expect(pageBehindClick).not.toHaveBeenCalled();
   });
 
@@ -614,9 +616,9 @@ describe("RichTextEditor hard breaks", () => {
     const linkButton = host.querySelector<HTMLButtonElement>('[aria-label="Link"]')!;
     await selectText(editor, editor.querySelector("p")!.firstChild!, 0, "Link me".length);
     await click(linkButton);
-    await click([...host.querySelectorAll<HTMLButtonElement>('[role="dialog"] .button')].find((button) => button.textContent === "Cancel")!);
-    await nextTask();
-    expect(host.querySelector('[role="dialog"]')).toBeNull();
+    await click([...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find((button) => button.textContent === "Cancel")!);
+    await waitForClose();
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
     expect(document.activeElement).toBe(linkButton);
   });
 
