@@ -4,6 +4,7 @@ import { ChevronDown } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { buttonClasses } from "@/components/ui/button";
+import { OverlayContainerContext } from "@/components/OverlayContainerContext";
 
 // Built on @base-ui/react's Select primitives — already a dependency (portal/package.json) and
 // the foundation this repo's `base-sera` shadcn config is configured against (see input.tsx for
@@ -33,6 +34,10 @@ export function Select<T extends string>({
   className,
   triggerClassName,
 }: SelectProps<T>) {
+  // §4.2a nested-overlay container: null at page level (today's behavior, byte-identical),
+  // the dialog's slot when this Select is opened from inside a Modal. Normalised to `undefined`
+  // — the portal treats an explicit `null` as "wait forever", never falling back to `body`.
+  const container = React.useContext(OverlayContainerContext) ?? undefined;
   return (
     <SelectPrimitive.Root
       items={options}
@@ -56,9 +61,11 @@ export function Select<T extends string>({
           <ChevronDown aria-hidden="true" className="stroke-[1.5] size-[var(--space-3)]" />
         </SelectPrimitive.Icon>
       </SelectPrimitive.Trigger>
-      <SelectPrimitive.Portal>
+      <SelectPrimitive.Portal container={container}>
         <SelectPrimitive.Positioner
-          className="z-20 outline-none"
+          className="z-[var(--z-popover)] outline-none"
+          positionMethod={container ? "fixed" : "absolute"}
+          alignItemWithTrigger={container ? false : undefined}
           sideOffset={4}
           collisionPadding={8}
         >

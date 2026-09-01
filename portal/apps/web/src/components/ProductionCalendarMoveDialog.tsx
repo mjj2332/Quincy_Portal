@@ -3,6 +3,7 @@ import type { ProjectDeadlineCalendarEventDto, ProjectDeadlineDisambiguation } f
 import { Modal } from "./Modal";
 
 export type ProductionCalendarMoveDialogProps = {
+  open: boolean;
   event: ProjectDeadlineCalendarEventDto;
   initialCivil?: string;
   foldChoices?: Array<{ disambiguation: ProjectDeadlineDisambiguation; utcOffsetMinutes: number }>;
@@ -35,7 +36,7 @@ function utcOffsetLabel(minutes: number): string {
   return `UTC${sign}${String(Math.floor(absolute / 60)).padStart(2, "0")}:${String(absolute % 60).padStart(2, "0")}`;
 }
 
-export function ProductionCalendarMoveDialog({ event, initialCivil, foldChoices, onSubmit, onCancel }: ProductionCalendarMoveDialogProps): JSX.Element {
+export function ProductionCalendarMoveDialog({ open, event, initialCivil, foldChoices, onSubmit, onCancel }: ProductionCalendarMoveDialogProps): JSX.Element {
   const initial = civilParts(initialCivil ?? event.deadlineLocalCivil);
   const [date, setDate] = useState(initial.date);
   const [time, setTime] = useState(initial.time);
@@ -44,7 +45,7 @@ export function ProductionCalendarMoveDialog({ event, initialCivil, foldChoices,
   const localCivil = `${date}T${time}`;
   const valid = validCivil(localCivil) && (!foldChoices || foldChoices.length === 0 || disambiguation !== undefined);
 
-  return <Modal title="Move / Reschedule Deadline" eyebrow={event.project.street} onClose={onCancel} initialFocus={0} testId="calendar-move-dialog" variant="calendar" footer={<>
+  return <Modal open={open} title="Move / Reschedule Deadline" eyebrow={event.project.street} onClose={onCancel} initialFocus={0} testId="calendar-move-dialog" variant="calendar" footer={<>
     <button className="button button--secondary" type="button" data-testid="calendar-move-cancel" onClick={onCancel}>Cancel</button>
     <button className="button" type="button" data-testid="calendar-move-submit" disabled={!valid} onClick={() => onSubmit(localCivil, disambiguation)}>Save Deadline</button>
   </>}>

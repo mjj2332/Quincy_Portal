@@ -24,6 +24,11 @@ async function flush() {
   await act(async () => { await Promise.resolve(); await Promise.resolve(); });
 }
 
+// `Modal` delays its own unmount by 120ms (`--dur-fast`) after `open` goes false (§6.0).
+async function waitForClose() {
+  await act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 150)); });
+}
+
 beforeEach(() => {
   apiGetMock.mockReset().mockResolvedValue({ photographers: [], editors: [] });
   apiDeleteMock.mockReset().mockRejectedValue(new ApiError("confirm", 422, { code: "subtask_assignment_confirmation_required", assignmentCount: 2 }));
@@ -50,7 +55,7 @@ describe("ProjectTeamControl real confirmation boundary", () => {
     expect(apiDeleteMock).toHaveBeenCalledOnce();
     expect(apiDeleteMock.mock.calls[0]?.[1]).toEqual({ membershipCycle: member.id, clearSubtaskAssignments: false, confirmedAssignmentCount: 0 });
     document.querySelector<HTMLButtonElement>('[data-testid="confirm-modal-cancel"]')!.click();
-    await flush();
+    await waitForClose();
     expect(apiDeleteMock).toHaveBeenCalledOnce();
     expect(document.querySelector('[data-testid="confirm-modal"]')).toBeNull();
   });

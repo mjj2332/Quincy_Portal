@@ -11,6 +11,12 @@ async function flush() {
   await act(async () => { await Promise.resolve(); await Promise.resolve(); });
 }
 
+// `Modal` delays its own unmount by 120ms (`--dur-fast`) after `open` goes false, so it can
+// animate closed (§6.0) — a closed dialog is still in the DOM until that transition completes.
+async function waitForClose() {
+  await act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 150)); });
+}
+
 async function mount() {
   const host = document.createElement("div");
   document.body.appendChild(host);
@@ -50,7 +56,11 @@ describe("ConfirmModalHost", () => {
     expect(document.querySelector('[data-testid="confirm-modal-confirm"]')?.textContent).toBe("Delete file");
     expect(document.querySelector('[data-testid="confirm-modal-confirm"]')?.classList.contains("button--danger")).toBe(true);
     expect(document.querySelector("[data-confirm-modal-root]")).not.toBeNull();
-    expect(dialog?.querySelector(".modal__body")?.innerHTML).toBe("<p>This cannot be undone.</p>");
+    // §6.1 item 4 — aria-describedby now resolves to the message <p>'s id (a useId() value, not
+    // a stable literal, so this asserts the property rather than an exact innerHTML string).
+    const message = dialog?.querySelector(".modal__body p");
+    expect(message?.textContent).toBe("This cannot be undone.");
+    expect(dialog?.getAttribute("aria-describedby")).toBe(message?.id);
     confirmStore.resolve(false);
     expect(await pending).toBe(false);
   });
@@ -91,7 +101,7 @@ describe("ConfirmModalHost", () => {
 
     confirmButton.click();
     expect(await pending).toBe(true);
-    await flush();
+    await waitForClose();
     expect(document.activeElement).toBe(trigger);
   });
 
@@ -108,7 +118,7 @@ describe("ConfirmModalHost", () => {
     cancel.click();
     cancel.click();
     expect(await panelPromise).toBe(false);
-    await flush();
+    await waitForClose();
     expect(document.querySelector('[data-testid="confirm-modal"]')).toBeNull();
 
     const escapePromise = confirm({ title: "Escape", message: "Escape cancels." });
@@ -123,7 +133,13 @@ describe("ConfirmModalHost", () => {
 
     const scrimPromise = confirm({ title: "Backdrop", message: "Backdrop cancels." });
     await flush();
-    document.querySelector<HTMLElement>(".scrim")!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    // Press-contained dismissal (defect F, §6.1 item 2): a pointerdown that started on the scrim
+    // itself, then a click also on the scrim — a bare click with no preceding pointerdown does
+    // not close it (that is exactly the fix: a press that began inside the panel and is released
+    // past its edge must not dismiss).
+    const scrim = document.querySelector<HTMLElement>(".scrim")!;
+    scrim.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true }));
+    scrim.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     expect(await scrimPromise).toBe(false);
   });
 
@@ -140,7 +156,7 @@ describe("ConfirmModalHost", () => {
     expect(document.activeElement).toBe(document.querySelector('[data-testid="confirm-modal-cancel"]'));
     confirmStore.resolve(false);
     expect(await second).toBe(false);
-    await flush();
+    await waitForClose();
     expect(document.querySelector('[data-testid="confirm-modal"]')).toBeNull();
   });
 });

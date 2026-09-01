@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { Extension } from "@tiptap/core";
 import { setBlockType } from "@tiptap/pm/commands";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
@@ -10,6 +10,18 @@ import Mention from "@tiptap/extension-mention";
 import { ListItem, TaskItem, TaskList } from "@tiptap/extension-list";
 import { isHttpUrl, RICH_TEXT_JSON_MAX_BYTES, RICH_TEXT_MAX_NESTING, richTextDocByteLength, richTextPlainText, type RichTextDoc } from "@quincy/shared";
 import { MentionAutocomplete, type MentionAutocompleteHandle, type MentionableUser } from "./MentionAutocomplete";
+import { Modal } from "./Modal";
+import { Button } from "./ui/button";
+
+// §6.8 body-input state set, shared by the link dialog's URL field.
+const FIELD_LABEL = "grid gap-[var(--space-1)] [font:var(--type-label)] text-[length:var(--text-xs)] text-foreground-secondary";
+const FIELD_INPUT = "bg-card border-solid border-[length:var(--border-width-hair)] border-border " +
+  "rounded-[var(--radius-sm)] [font:var(--type-body)] text-[length:var(--text-sm)] " +
+  "px-[var(--space-3)] py-[var(--space-2)] text-foreground hover:border-border-hover " +
+  "focus-visible:outline-[length:var(--border-width-bold)] focus-visible:outline-solid " +
+  "focus-visible:outline-ring focus-visible:outline-offset-2 aria-invalid:border-destructive " +
+  "max-[720px]:min-h-[44px]";
+const FIELD_ERROR = "m-0 text-destructive text-[length:var(--text-xs)]";
 
 function toTiptap(doc: RichTextDoc): Record<string, unknown> {
   const copy = (node: unknown): unknown => {
@@ -197,7 +209,7 @@ export function RichTextEditor({ value, onChange, limit, disabled = false, loadM
   const menu = useRef<MentionAutocompleteHandle>(null);
   const linkTrigger = useRef<HTMLButtonElement>(null);
   const linkInput = useRef<HTMLInputElement>(null);
-  const linkDialog = useRef<HTMLDivElement>(null);
+  const linkErrorId = `rich-text-link-error-${useId()}`;
   const linkSelection = useRef<{ from: number; to: number } | undefined>(undefined);
   const linkWasActive = useRef(false);
   const returnFocusToLinkTrigger = useRef(false);
@@ -272,21 +284,17 @@ export function RichTextEditor({ value, onChange, limit, disabled = false, loadM
     if (mentionA11y.activeId) dom.setAttribute("aria-activedescendant", mentionA11y.activeId);
     else dom.removeAttribute("aria-activedescendant");
   }, [editor, mentionA11y]);
+  // §6.7 — this is the one owner that stays. Initial focus becomes `Modal`'s
+  // `initialFocus={linkInput}`; containment becomes `FloatingFocusManager modal`'s real trap.
+  // This half is not `FloatingFocusManager`'s to take over: after Apply/Remove, focus must land
+  // in the editor at the restored selection, not back on the trigger — see `Modal`'s
+  // `returnFocus={false}` below and `applyLink`/`removeLink`'s `closeLinkDialog({returnFocus: false})`.
   useEffect(() => {
-    if (!linkOpen) {
-      if (returnFocusToLinkTrigger.current) {
-        returnFocusToLinkTrigger.current = false;
-        linkTrigger.current?.focus();
-      }
-      return;
+    if (linkOpen) return;
+    if (returnFocusToLinkTrigger.current) {
+      returnFocusToLinkTrigger.current = false;
+      linkTrigger.current?.focus();
     }
-    linkInput.current?.focus();
-    const containFocus = (event: FocusEvent) => {
-      const dialog = linkDialog.current;
-      if (dialog && event.target instanceof Node && !dialog.contains(event.target)) linkInput.current?.focus();
-    };
-    document.addEventListener("focusin", containFocus);
-    return () => document.removeEventListener("focusin", containFocus);
   }, [linkOpen]);
   if (!editor) return null;
   const plainText = richTextPlainText(value);
@@ -327,15 +335,6 @@ export function RichTextEditor({ value, onChange, limit, disabled = false, loadM
     closeLinkDialog({ returnFocus: false });
   };
   const canUseHeading = !disabled && (editor.can().toggleHeading({ level: 2 }) || editor.can().toggleHeading({ level: 3 }));
-  const handleLinkDialogKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (event.key === "Escape") { event.preventDefault(); closeLinkDialog(); return; }
-    if (event.key !== "Tab") return;
-    const focusable = Array.from(linkDialog.current?.querySelectorAll<HTMLElement>('input:not([disabled]), button:not([disabled])') ?? []);
-    if (!focusable.length) return;
-    const index = focusable.indexOf(document.activeElement as HTMLElement);
-    const next = event.shiftKey ? (index <= 0 ? focusable.length - 1 : index - 1) : (index === focusable.length - 1 ? 0 : index + 1);
-    event.preventDefault(); focusable[next]?.focus();
-  };
   return <div className={`rich-text-editor${disabled ? " is-disabled" : ""}`}>
     <div className="rich-text__toolbar" role="toolbar" aria-label="Formatting">
       <ToolbarGroup>
@@ -367,15 +366,36 @@ export function RichTextEditor({ value, onChange, limit, disabled = false, loadM
         <ToolbarButton label="Redo" disabled={disabled || !editor.can().redo()} onClick={() => editor.chain().focus().redo().run()}>Redo</ToolbarButton>
       </ToolbarGroup>
     </div>
-    {linkOpen && <div className="rich-text__link-modal">
-      <div className="rich-text__link-backdrop" aria-hidden="true" onMouseDown={(event) => event.preventDefault()} />
-      <div ref={linkDialog} className="rich-text__link-dialog" role="dialog" aria-modal="true" aria-labelledby="rich-text-link-title" onKeyDown={handleLinkDialogKeyDown}>
-        <div className="rich-text__link-dialog-head"><strong id="rich-text-link-title">{linkWasActive.current ? "Edit link" : "Add link"}</strong><button type="button" aria-label="Close link dialog" onClick={() => closeLinkDialog()}>×</button></div>
-        <label>URL<input ref={linkInput} type="url" value={linkHref} onInput={(event) => { setLinkHref(event.currentTarget.value); setLinkError(null); }} onChange={(event) => { setLinkHref(event.target.value); setLinkError(null); }} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); applyLink(); } }} placeholder="https://example.com" /></label>
-        {linkError && <p className="rich-text__link-error" role="alert">{linkError}</p>}
-        <div className="rich-text__link-dialog-actions">{linkWasActive.current && <button type="button" className="button button--secondary" onClick={removeLink}>Remove link</button>}<span /><button type="button" className="button button--secondary" onClick={() => closeLinkDialog()}>Cancel</button><button type="button" className="button" onClick={applyLink}>Apply link</button></div>
-      </div>
-    </div>}
+    <Modal
+      open={linkOpen}
+      onClose={() => closeLinkDialog()}
+      returnFocus={false}
+      title={linkWasActive.current ? "Edit link" : "Add link"}
+      initialFocus={linkInput}
+      testId="rich-text-link-modal"
+      describedBy={linkError ? linkErrorId : undefined}
+      footer={<>
+        {linkWasActive.current && <Button variant="secondary" onClick={removeLink}>Remove link</Button>}
+        <span className="flex-1" />
+        <Button variant="secondary" onClick={() => closeLinkDialog()}>Cancel</Button>
+        <Button onClick={applyLink}>Apply link</Button>
+      </>}
+    >
+      <label className={FIELD_LABEL}>URL
+        <input
+          ref={linkInput}
+          className={FIELD_INPUT}
+          type="url"
+          value={linkHref}
+          onInput={(event) => { setLinkHref(event.currentTarget.value); setLinkError(null); }}
+          onChange={(event) => { setLinkHref(event.target.value); setLinkError(null); }}
+          onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); applyLink(); } }}
+          aria-invalid={linkError ? true : undefined}
+          placeholder="https://example.com"
+        />
+      </label>
+      {linkError && <p id={linkErrorId} className={FIELD_ERROR} role="alert">{linkError}</p>}
+    </Modal>
     <EditorContent editor={editor} />
     <MentionAutocomplete ref={menu} query={query} loadMentionables={loadMentionables} onSelect={selectMention} onAccessibilityChange={setMentionA11y} />
     <div className={`rich-text__counter${plainText.length > limit ? " is-over" : ""}`}>{plainText.length}/{limit}</div>

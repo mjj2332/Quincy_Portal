@@ -20,7 +20,7 @@ describe("ProductionCalendarMoveDialog", () => {
   afterEach(() => { act(() => root.unmount()); document.body.replaceChildren(); });
 
   async function render(props: Partial<React.ComponentProps<typeof ProductionCalendarMoveDialog>> = {}) {
-    await act(async () => { root.render(<ProductionCalendarMoveDialog event={event} onSubmit={vi.fn()} onCancel={vi.fn()} {...props} />); await Promise.resolve(); });
+    await act(async () => { root.render(<ProductionCalendarMoveDialog open event={event} onSubmit={vi.fn()} onCancel={vi.fn()} {...props} />); await Promise.resolve(); });
   }
 
   it("seeds inputs from Sydney civil components", async () => {

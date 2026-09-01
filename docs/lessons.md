@@ -900,3 +900,30 @@ can pass happy-dom while failing Chrome.
   `setReference` — use the stable `refs.setReference` directly or wrap it in `useCallback`.
   Real-browser drag verification on a **multi-card** column is mandatory for any change under
   `ProjectKanbanBoard` / dnd-kit config.
+
+## Floating-UI focus restoration on Escape must be synchronous — a primitive-level invariant, not a one-off fix (TB8-02)
+
+- **Rule:** any popover/menu built on `@floating-ui/react` that owns its own Escape handling
+  must call `.focus()` on the reference/trigger element **synchronously**, in the same handler —
+  never via `setTimeout`, `queueMicrotask`, `requestAnimationFrame`, or a `useEffect` reacting to
+  the close. `AnchoredPopover.tsx`'s `useAnchoredPopover().onKeyDown` does this
+  (`(floating.refs.reference.current as HTMLElement | null)?.focus()` runs directly inside the
+  Escape branch, no deferral of any kind).
+- **Why it matters, concretely:** a deferred focus call sits in a queue. If a *second* popover
+  opens before that queued call fires, the stale timer still fires afterward and steals focus
+  from — and can close — the popover that opened after it. This is not hypothetical: it shipped
+  once as a live bug (`window.setTimeout(() => …focus(), 0)`, fixed by commit `08f4653`) and
+  surfaced as a `ProjectCollaborationPanel` Escape test that failed only in the full suite, never
+  in isolation — the exact signature of a cross-instance timer race.
+- **Re-derived twice now:** first by `08f4653`'s own fix, second by this plan's §7.1 audit, which
+  found the rule already correctly followed and made it an explicit, tested acceptance criterion
+  (asserted by grepping `AnchoredPopover.tsx` for `setTimeout`/`queueMicrotask`/
+  `requestAnimationFrame`, plus a same-task `document.activeElement` assertion with no timer
+  flush). Two independent rediscoveries of the same invariant is the signal to write it down here
+  rather than leave it findable only in a commit message or a future PR review.
+- **Where this generalises:** the app's other overlay primitives (`Modal`, the shared `Menu`)
+  either delegate Escape-focus-restore entirely to their library (`FloatingFocusManager`'s
+  `returnFocus`, Base UI's `Menu.Root`) or, like `AnchoredPopover`, restore it by hand — in every
+  case, the next person adding an Escape handler to a floating/portaled surface should default to
+  "restore focus in the same synchronous call that closes it," not "restore it after the DOM
+  settles."

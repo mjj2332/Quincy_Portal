@@ -153,7 +153,38 @@ describe("ProductionCalendar Project Deadline mutation", () => {
     expect(confirmMock).not.toHaveBeenCalled();
     expect(apiGetMock).not.toHaveBeenCalled();
     expect(gateStates.at(-1)).toBe(false);
+    // `Modal` retains the dialog mounted for its 120ms exit transition after `open` goes false
+    // (§6.0) — wait for that transition before asserting it is gone.
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 150)); });
     expect(document.querySelector('[data-testid="calendar-move-submit"]')).toBeNull();
+  });
+
+  it("retains the Move dialog through its exit animation on close, then reopens cleanly (§6.0 retention)", async () => {
+    // Regression guard: the open-token that forces a fresh `key` on a genuine re-open must be
+    // bumped synchronously during the render that opens the dialog — not in a `useEffect` after
+    // it. A `useEffect`-based bump lands one render late, so the render that *closes* the dialog
+    // (not the one that opened it) is the one that sees the bumped token, changing `key` on the
+    // close instead of a future open. React then unmounts the closing instance immediately
+    // (`Modal` mounts fresh with `open=false`, renders nothing) instead of keeping the same
+    // instance mounted for `Modal`'s 120ms exit transition — defeating the whole retention
+    // design. This test fails on that bug: the dialog would already be gone from the very next
+    // synchronous check, with no exit-transition window to observe.
+    await render({ ...calendar, subview: "agenda" });
+    await openMoveDialog();
+    expect(document.querySelector('[data-testid="calendar-move-dialog"]')).not.toBeNull();
+
+    await act(async () => { document.querySelector<HTMLButtonElement>('[data-testid="calendar-move-cancel"]')!.click(); await Promise.resolve(); });
+    // Still mounted immediately after `open` flips false — the retained instance is animating
+    // out, not already gone.
+    expect(document.querySelector('[data-testid="calendar-move-dialog"]')).not.toBeNull();
+
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 150)); });
+    expect(document.querySelector('[data-testid="calendar-move-dialog"]')).toBeNull();
+
+    // Reopening afterwards still works cleanly — a fresh instance, correctly seeded.
+    await openMoveDialog();
+    expect(document.querySelector('[data-testid="calendar-move-dialog"]')).not.toBeNull();
+    expect(document.querySelector<HTMLInputElement>('[aria-label="Deadline date"]')?.value).toBe("2026-08-12");
   });
 
   it("does not apply the optimistic overlay before confirmation resolves", async () => {

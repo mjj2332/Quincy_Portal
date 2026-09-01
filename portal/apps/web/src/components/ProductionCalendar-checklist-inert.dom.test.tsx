@@ -123,7 +123,7 @@ describe("ProductionCalendar checklist inert mode", () => {
 
   it("renders the editor Range option disabled even when it is mounted directly", async () => {
     const event = due("checklist:inert-direct-editor");
-    await act(async () => { root.unmount(); root = createRoot(host); root.render(<ProductionCalendarScheduleEditor event={event} rangesEnabled={false} onSubmit={vi.fn()} onCancel={vi.fn()} />); await Promise.resolve(); });
+    await act(async () => { root.unmount(); root = createRoot(host); root.render(<ProductionCalendarScheduleEditor open event={event} rangesEnabled={false} onSubmit={vi.fn()} onCancel={vi.fn()} />); await Promise.resolve(); });
     const option = document.querySelector<HTMLSelectElement>('[aria-label="Checklist schedule state"]')?.querySelector('option[value="range"]');
     expect(option).not.toBeNull();
     expect((option as HTMLOptionElement).disabled).toBe(true);
