@@ -1118,7 +1118,7 @@ describe("Dashboard Stage interactions", () => {
     apiGetMock.mockImplementation((path) => path === "/api/projects" ? Promise.resolve(externalResponse()) : Promise.resolve({}));
     await act(async () => { root.render(<Dashboard currentUserId="external-1" role="external_editor" />); await Promise.resolve(); });
     await flush();
-    const editingColumn = [...host.querySelectorAll<HTMLElement>(".kcol")].find((column) => column.querySelector('[href="/?view=kanban&detail=123e4567-e89b-42d3-a456-426614174001"]'));
+    const editingColumn = [...host.querySelectorAll<HTMLElement>(".kcol")].find((column) => column.querySelector('[href="/projects/123e4567-e89b-42d3-a456-426614174001"]'));
     expect(editingColumn).not.toBeUndefined();
     expect([...editingColumn!.querySelectorAll<HTMLElement>(".kcard__addr")].map((element) => element.textContent)).toEqual(["External Second Street", "External First Street"]);
     expect(editingColumn!.textContent).toContain("Editing");

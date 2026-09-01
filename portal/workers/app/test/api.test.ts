@@ -823,16 +823,16 @@ describe("staff app API", () => {
   it("enforces External Editor assigned-scope projection, media, review, and upload boundaries", async () => {
     const adminCookie = await sessionCookie(adminToken);
     const externalCookie = await sessionCookie(externalEditorToken);
-    const createProject = async (street: string, assigned: boolean) => {
+    const createProject = async (street: string, assigned: boolean, orderedServices = ["edited"]) => {
       const response = await SELF.fetch("https://portal.test/api/projects", {
         method: "POST",
         headers: { cookie: adminCookie, "content-type": "application/json" },
-        body: JSON.stringify({ street, orderedServices: ["edited"], ...(assigned ? { editorUserIds: [externalEditorId] } : {}) }),
+        body: JSON.stringify({ street, orderedServices, ...(assigned ? { editorUserIds: [externalEditorId] } : {}) }),
       });
       expect(response.status).toBe(201);
       return (await response.json() as { id: string }).id;
     };
-    const assigned = await createProject(`External assigned ${crypto.randomUUID()}`, true);
+    const assigned = await createProject(`External assigned ${crypto.randomUUID()}`, true, ["edited", "video", "floorplan", "copy"]);
     const delivered = await createProject(`External delivered ${crypto.randomUUID()}`, true);
     const unassigned = await createProject(`External unassigned ${crypto.randomUUID()}`, false);
     const archived = await createProject(`External archived ${crypto.randomUUID()}`, true);
@@ -878,7 +878,7 @@ describe("staff app API", () => {
     expect(collaborationBody.members.flatMap((member) => Object.keys(member))).not.toContain("userId");
     const me = await SELF.fetch("https://portal.test/api/me", { headers: { cookie: externalCookie } });
     expect(me.status).toBe(200);
-    await expect(me.json()).resolves.toMatchObject({ user: { role: "external_editor", authorizationEpoch: 0 }, capabilities: ["uploadEdited", "viewRaw", "annotateRaw", "recommendRaw", "compareFrames", "viewEdited", "reviewEdited", "annotateEdited", "collaborateOnProject", "moveProjectStage", "viewProductionCalendar", "viewQuickDetail"] });
+    await expect(me.json()).resolves.toMatchObject({ user: { role: "external_editor", authorizationEpoch: 0 }, capabilities: ["uploadEdited", "viewRaw", "annotateRaw", "recommendRaw", "compareFrames", "viewEdited", "reviewEdited", "annotateEdited", "collaborateOnProject", "moveProjectStage", "viewProductionCalendar", "uploadExtras"] });
 
     const nonexistent = crypto.randomUUID();
     const projectMisses = await Promise.all([assigned, unassigned, archived, nonexistent].map((id) => SELF.fetch(`https://portal.test/api/projects/${id}`, { headers: { cookie: externalCookie } })));
@@ -914,6 +914,36 @@ describe("staff app API", () => {
     expect(original.headers.get("x-content-type-options")).toBe("nosniff");
     expect((await SELF.fetch(`https://portal.test/media/asset/${assetId}/thumb`, { headers: { cookie: externalCookie } })).status).toBe(409);
     expect((await SELF.fetch(`https://portal.test/media/asset/${crypto.randomUUID()}/original`, { headers: { cookie: externalCookie } })).status).toBe(403);
+
+    const extraAssetIds: Record<"video" | "floorplan" | "copy", string> = {} as Record<"video" | "floorplan" | "copy", string>;
+    for (const [collectionKind, assetKind, filename] of [["video", "video", "external-video.mp4"], ["floorplan", "floorplan_pdf", "external-floorplan.pdf"], ["copy", "copy_pdf", "external-copy.pdf"]] as const) {
+      const collection = await database.DB.prepare("SELECT id FROM collections WHERE project_id = ? AND kind = ?").bind(assigned, collectionKind).first<{ id: string }>();
+      expect(collection).toBeDefined();
+      const extraAssetId = crypto.randomUUID(); extraAssetIds[collectionKind] = extraAssetId;
+      const extraKey = `projects/${assigned}/${collectionKind}/${extraAssetId}/${filename}`;
+      const contentType = collectionKind === "video" ? "image/jpeg" : "application/pdf";
+      await authEnv.MEDIA.put(extraKey, `external-${collectionKind}`, { httpMetadata: { contentType } });
+      await database.DB.prepare("INSERT INTO assets (id, collection_id, kind, r2_key, original_filename, bytes, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'upload', ?, ?)")
+        .bind(extraAssetId, collection!.id, assetKind, extraKey, filename, collectionKind.length, now, now).run();
+      const extraList = await SELF.fetch(`https://portal.test/api/projects/${assigned}/assets?collection=${collectionKind}`, { headers: { cookie: externalCookie } });
+      expect(extraList.status).toBe(200);
+      await expect(extraList.json()).resolves.toMatchObject({ assets: expect.arrayContaining([expect.objectContaining({ id: extraAssetId, kind: assetKind, originalFilename: filename })]) });
+      const extraOriginal = await SELF.fetch(`https://portal.test/media/asset/${extraAssetId}/original`, { headers: { cookie: externalCookie } });
+      expect(extraOriginal.status).toBe(200);
+      expect(extraOriginal.headers.get("content-type")).toContain(contentType);
+      expect((await SELF.fetch(`https://portal.test/api/projects/${unassigned}/assets?collection=${collectionKind}`, { headers: { cookie: externalCookie } })).status).toBe(404);
+      const extraReview = await SELF.fetch(`https://portal.test/api/assets/${extraAssetId}/review`, { method: "POST", headers: { cookie: externalCookie, "content-type": "application/json" }, body: JSON.stringify({ recommended: true }) });
+      expect(extraReview.status).toBe(404);
+    }
+    const extraAnnotationId = crypto.randomUUID();
+    const extraMarkupKey = `projects/${assigned}/video/${extraAssetIds.video}/annotations/${extraAnnotationId}.json`;
+    await authEnv.MEDIA.put(extraMarkupKey, "{\"strokes\":[]}", { httpMetadata: { contentType: "application/json" } });
+    await database.DB.prepare("INSERT INTO annotations (id, asset_id, author_id, author_role, scope, stroke_r2_key, note_text, created_at) VALUES (?, ?, ?, 'external_editor', 'raw', ?, 'legacy extra annotation', ?)")
+      .bind(extraAnnotationId, extraAssetIds.video, externalEditorId, extraMarkupKey, now).run();
+    expect((await SELF.fetch(`https://portal.test/media/annotation/${extraAnnotationId}`, { headers: { cookie: externalCookie } })).status).toBe(403);
+    expect((await SELF.fetch(`https://portal.test/api/assets/${extraAssetIds.video}/annotations`, { method: "POST", headers: { cookie: externalCookie, "content-type": "application/json" }, body: JSON.stringify({ noteText: "denied" }) })).status).toBe(404);
+    expect((await SELF.fetch(`https://portal.test/api/annotations/${extraAnnotationId}`, { method: "PATCH", headers: { cookie: externalCookie, "content-type": "application/json" }, body: JSON.stringify({ noteText: "denied" }) })).status).toBe(404);
+    expect((await SELF.fetch(`https://portal.test/api/annotations/${extraAnnotationId}`, { method: "DELETE", headers: { cookie: externalCookie } })).status).toBe(404);
 
     const review = await SELF.fetch(`https://portal.test/api/assets/${assetId}/review`, { method: "POST", headers: { cookie: externalCookie, "content-type": "application/json" }, body: JSON.stringify({ recommended: true }) });
     expect(review.status).toBe(200);
@@ -3539,6 +3569,116 @@ describe("staff app API", () => {
     const sanitized = await SELF.fetch(`https://portal.test/media/asset/${v2.id}/original`, { headers: { cookie: adminCookie } });
     expect(sanitized.headers.get("content-disposition")).toBe('inline; filename="floorplan-two.pdfInjected: no"');
     expect((await SELF.fetch(`https://portal.test/api/projects/${project.id}/documents`, { method: "POST", headers: { cookie: adminCookie } })).status).toBe(410);
+
+    const externalProjectResponse = await SELF.fetch("https://portal.test/api/projects", {
+      method: "POST", headers: { cookie: adminCookie, "content-type": "application/json" },
+      body: JSON.stringify({ street: "External collection controls", orderedServices: ["video", "floorplan", "copy"], photographerUserIds: [firstPhotographerId], editorUserIds: [externalEditorId] }),
+    });
+    expect(externalProjectResponse.status).toBe(201);
+    const externalProject = await externalProjectResponse.json() as { id: string };
+    const externalCookie = await sessionCookie(externalEditorToken);
+    const externalHeaders = { cookie: externalCookie, "content-type": "application/json" };
+    const externalJson = (path: string, method: "POST" | "PATCH" | "DELETE", body?: unknown) => SELF.fetch(`https://portal.test${path}`, {
+      method, headers: externalHeaders, ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+    const externalVideoLinkResponse = await externalJson(`/api/projects/${externalProject.id}/links`, "POST", { collection: "video", url: "https://vimeo.com/external-manual", label: "External manual" });
+    expect(externalVideoLinkResponse.status).toBe(201);
+    const externalVideoLink = await externalVideoLinkResponse.json() as { id: string; source: string; position: number };
+    expect(externalVideoLink.source).toBe("manual");
+    const videoCollection = await database.DB.prepare("SELECT id FROM collections WHERE project_id = ? AND kind = 'video'").bind(externalProject.id).first<{ id: string }>();
+    const tonomoLinkId = crypto.randomUUID();
+    await database.DB.prepare("INSERT INTO collection_links (id, collection_id, url, label, source, position, created_at, updated_at) VALUES (?, ?, ?, ?, 'tonomo', ?, ?, ?)")
+      .bind(tonomoLinkId, videoCollection!.id, "https://dropbox.com/external-tonomo", "External Tonomo", 2048, Date.now(), Date.now()).run();
+    const externalLinks = await SELF.fetch(`https://portal.test/api/projects/${externalProject.id}/links?collection=video`, { headers: { cookie: externalCookie } });
+    expect(externalLinks.status).toBe(200);
+    const externalLinkBody = EXTERNAL_API_RESPONSE_SCHEMAS["collection-links"].parse(await externalLinks.json()) as { links: Array<{ id: string; source: "manual" | "tonomo" }> };
+    expect(externalLinkBody.links).toEqual(expect.arrayContaining([expect.objectContaining({ id: externalVideoLink.id, source: "manual" }), expect.objectContaining({ id: tonomoLinkId, source: "tonomo" })]));
+    const updatedExternalLink = await externalJson(`/api/projects/${externalProject.id}/links/${externalVideoLink.id}`, "PATCH", { url: "https://vimeo.com/external-manual", label: "External updated" });
+    expect(updatedExternalLink.status).toBe(200);
+    expect((await externalJson(`/api/projects/${externalProject.id}/links/${externalVideoLink.id}/reorder`, "POST", { beforeId: tonomoLinkId, afterId: null })).status).toBe(200);
+    expect((await externalJson(`/api/projects/${externalProject.id}/links/${externalVideoLink.id}`, "DELETE")).status).toBe(204);
+
+    const floorplanCollection = await database.DB.prepare("SELECT id FROM collections WHERE project_id = ? AND kind = 'floorplan'").bind(externalProject.id).first<{ id: string }>();
+    const extraLinkId = crypto.randomUUID();
+    await database.DB.prepare("INSERT INTO collection_links (id, collection_id, url, label, source, position, created_at, updated_at) VALUES (?, ?, ?, ?, 'manual', 1024, ?, ?)")
+      .bind(extraLinkId, floorplanCollection!.id, "https://example.com/external-floorplan", "External floorplan", Date.now(), Date.now()).run();
+    const wrongKindStatuses = await Promise.all([
+      externalJson(`/api/projects/${externalProject.id}/links`, "POST", { collection: "floorplan", url: "https://example.com/denied-floorplan" }).then((response) => response.status),
+      externalJson(`/api/projects/${externalProject.id}/links/${extraLinkId}`, "PATCH", { url: "https://example.com/denied-update" }).then((response) => response.status),
+      externalJson(`/api/projects/${externalProject.id}/links/${extraLinkId}/reorder`, "POST", { beforeId: null, afterId: null }).then((response) => response.status),
+      externalJson(`/api/projects/${externalProject.id}/links/${extraLinkId}`, "DELETE").then(async (response) => ({ status: response.status, body: await response.json() })),
+      externalJson(`/api/projects/${externalProject.id}/links/${crypto.randomUUID()}`, "DELETE").then(async (response) => ({ status: response.status, body: await response.json() })),
+    ]);
+    expect(wrongKindStatuses.slice(0, 3)).toEqual([403, 404, 404]);
+    expect(wrongKindStatuses[3]).toEqual(wrongKindStatuses[4]);
+    const unassignedProjectResponse = await SELF.fetch("https://portal.test/api/projects", { method: "POST", headers: { cookie: adminCookie, "content-type": "application/json" }, body: JSON.stringify({ street: "External collection unassigned", orderedServices: ["video"] }) });
+    expect(unassignedProjectResponse.status).toBe(201);
+    const unassignedProject = await unassignedProjectResponse.json() as { id: string };
+    expect((await externalJson(`/api/projects/${unassignedProject.id}/links`, "POST", { collection: "video", url: "https://vimeo.com/unassigned" })).status).toBe(403);
+    expect((await externalJson(`/api/projects/${externalProject.id}/links`, "POST", { collection: "copy", url: "https://example.com/denied-copy" })).status).toBe(403);
+    expect((await SELF.fetch(`https://portal.test/api/projects/${externalProject.id}/links?collection=copy`, { headers: { cookie: await sessionCookie(firstPhotographerToken) } })).status).toBe(403);
+
+    const externalReserve = (body: Record<string, unknown>) => SELF.fetch(`https://portal.test/api/projects/${externalProject.id}/documents/presign`, { method: "POST", headers: externalHeaders, body: JSON.stringify(body) });
+    const externalPut = (sessionId: string, slot: "pdf" | "preview", body: string) => SELF.fetch(`https://portal.test/api/projects/${externalProject.id}/documents/direct/${sessionId}/${slot}`, { method: "PUT", headers: { cookie: externalCookie, "content-type": slot === "pdf" ? "application/pdf" : "image/jpeg" }, body });
+    const externalComplete = (sessionId: string, preview = false) => SELF.fetch(`https://portal.test/api/projects/${externalProject.id}/documents/complete`, { method: "POST", headers: externalHeaders, body: JSON.stringify({ sessionId, pdf: {}, ...(preview ? { preview: {} } : {}) }) });
+    const externalCopyInput = (name: string) => ({ kind: "copy_pdf", pdf: { filename: `${name}.pdf`, bytes: name.length, contentType: "application/pdf" } });
+    const adminReserveExternal = (body: Record<string, unknown>) => SELF.fetch(`https://portal.test/api/projects/${externalProject.id}/documents/presign`, { method: "POST", headers: { cookie: adminCookie, "content-type": "application/json" }, body: JSON.stringify(body) });
+    const adminShapeResponse = await adminReserveExternal(copyInput("admin-shape"));
+    expect(adminShapeResponse.status).toBe(201);
+    const adminShape = await adminShapeResponse.json() as { sessionId: string; kind: string; versionGroupId: string; version: number; files: { pdf: Record<string, unknown> } };
+    const externalShapeResponse = await externalReserve(externalCopyInput("external-shape"));
+    expect(externalShapeResponse.status).toBe(201);
+    const externalShape = await externalShapeResponse.json() as typeof adminShape;
+    // §5's approved document-upload response decision intentionally exposes the same internal
+    // presign shape, including the raw object key, to the scoped uploadExtras principal.
+    expect(Object.keys(externalShape)).toEqual(Object.keys(adminShape));
+    expect(Object.keys(externalShape.files.pdf)).toEqual(Object.keys(adminShape.files.pdf));
+    expect(externalShape.files.pdf).toEqual(expect.objectContaining({ assetId: expect.any(String), key: expect.any(String), devDirect: true }));
+    expect((await SELF.fetch(`https://portal.test/api/projects/${externalProject.id}/documents/${adminShape.sessionId}/abort`, { method: "POST", headers: adminCookie })).status).toBe(204);
+    expect((await SELF.fetch(`https://portal.test/api/projects/${externalProject.id}/documents/${externalShape.sessionId}/abort`, { method: "POST", headers: externalCookie })).status).toBe(204);
+
+    const adminCompleteResponse = await adminReserveExternal(copyInput("admin-complete"));
+    expect(adminCompleteResponse.status).toBe(201);
+    const adminComplete = await adminCompleteResponse.json() as typeof adminShape;
+    await authEnv.MEDIA.put(adminComplete.files.pdf.key as string, "admin-complete", { httpMetadata: { contentType: "application/pdf" } });
+    const externalCompleteResponse = await externalReserve(externalCopyInput("external-complete"));
+    expect(externalCompleteResponse.status).toBe(201);
+    const externalPending = await externalCompleteResponse.json() as typeof adminShape;
+    expect((await externalPut(externalPending.sessionId, "pdf", "external-complete")).status).toBe(204);
+    const adminCompleted = await SELF.fetch(`https://portal.test/api/projects/${externalProject.id}/documents/complete`, { method: "POST", headers: { cookie: adminCookie, "content-type": "application/json" }, body: JSON.stringify({ sessionId: adminComplete.sessionId, pdf: {} }) });
+    const externalCompleted = await externalComplete(externalPending.sessionId);
+    expect(adminCompleted.status).toBe(201); expect(externalCompleted.status).toBe(201);
+    const adminCompletedBody = await adminCompleted.json() as Record<string, unknown>;
+    const externalCompletedBody = await externalCompleted.json() as Record<string, unknown>;
+    // Completion uses responseFor for both principals; only the presign contract contains R2 keys.
+    expect(Object.keys(externalCompletedBody)).toEqual(Object.keys(adminCompletedBody));
+    expect(externalCompletedBody.assets).toHaveLength((adminCompletedBody.assets as unknown[]).length);
+
+    const floorplanInputExternal = { kind: "floorplan", pdf: { filename: "external-plan.pdf", bytes: 4, contentType: "application/pdf" }, preview: { filename: "external-plan.jpg", bytes: 4, contentType: "image/jpeg" } };
+    const externalFloorplanResponse = await externalReserve(floorplanInputExternal);
+    expect(externalFloorplanResponse.status).toBe(201);
+    const externalFloorplan = await externalFloorplanResponse.json() as typeof adminShape & { files: { preview: Record<string, unknown> } };
+    expect((await externalPut(externalFloorplan.sessionId, "pdf", "plan")).status).toBe(204);
+    expect((await externalPut(externalFloorplan.sessionId, "preview", "plan")).status).toBe(204);
+    expect((await externalComplete(externalFloorplan.sessionId, true)).status).toBe(201);
+    const abortResponse = await externalReserve(externalCopyInput("external-abort"));
+    expect(abortResponse.status).toBe(201);
+    const externalAbort = await abortResponse.json() as typeof adminShape;
+    expect((await SELF.fetch(`https://portal.test/api/projects/${externalProject.id}/documents/${externalAbort.sessionId}/abort`, { method: "POST", headers: externalCookie })).status).toBe(204);
+    expect((await SELF.fetch(`https://portal.test/api/projects/${externalProject.id}/documents/presign`, { method: "POST", headers: { cookie: await sessionCookie(firstPhotographerToken), "content-type": "application/json" }, body: JSON.stringify(externalCopyInput("photographer-denied")) })).status).toBe(403);
+
+    const activityResponse = await SELF.fetch(`https://portal.test/api/projects/${externalProject.id}/activity?limit=30`, { headers: { cookie: await sessionCookie(firstPhotographerToken) } });
+    expect(activityResponse.status).toBe(200);
+    const activityBody = await activityResponse.json() as { items: Array<{ type: string; presentation: { title: string; body: string } }> };
+    expect(activityBody.items.map((item) => item.presentation.title)).toEqual(expect.arrayContaining(["Video links updated", "Document upload completed"]));
+    const activityRows = await database.DB.prepare("SELECT event_type AS eventType, safe_payload_json AS safePayloadJson FROM project_activity_events WHERE project_id = ? ORDER BY occurred_at, id").bind(externalProject.id).all<{ eventType: string; safePayloadJson: string }>();
+    const externalCollectionEvents = activityRows.results.filter((row) => row.eventType.startsWith("project.collection."));
+    expect(externalCollectionEvents.length).toBeGreaterThanOrEqual(5);
+    for (const row of externalCollectionEvents) {
+      const payload = JSON.parse(row.safePayloadJson) as Record<string, unknown>;
+      expect(JSON.stringify(payload)).not.toMatch(/key|r2Key|pdfKey|url|filename/i);
+      expect(Object.keys(payload)).not.toEqual(expect.arrayContaining(["key", "r2Key", "pdfKey", "url", "filename"]));
+    }
   });
 
   it("denies same-Stage placement changes to internal and External Editors without mutation", async () => {

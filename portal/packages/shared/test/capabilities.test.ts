@@ -11,14 +11,14 @@ describe("PRD §4 capability matrix", () => {
       "viewEdited", "reviewEdited", "annotateEdited", "collaborateOnProject",
       "moveProjectStage",
       "viewProductionCalendar",
-      "viewQuickDetail",
+      "uploadExtras",
     ]);
     expect(ROLE_CAPABILITIES.external_editor).toEqual(EXTERNAL_EDITOR_CAPABILITIES);
     expect(EXTERNAL_EDITOR_CAPABILITIES).toHaveLength(12);
     expect(ROLE_CAPABILITIES.external_editor.every((capability) => CAPABILITIES.includes(capability))).toBe(true);
     expect(roleHasCapability("external_editor", "moveProjectStage")).toBe(true);
     expect(roleHasCapability("external_editor", "viewProductionCalendar")).toBe(true);
-    expect(roleHasCapability("external_editor", "viewQuickDetail")).toBe(true);
+    expect(roleHasCapability("external_editor", "uploadExtras")).toBe(true);
   });
 
   it("keeps the full role/capability boundary explicit", () => {
@@ -87,11 +87,13 @@ describe("PRD §4 capability matrix", () => {
     expect(roleHasCapability("photographer", "moveProjectStage")).toBe(false);
   });
 
-  it("allows quick detail for Admin, Editor, and External Editor, but not Photographer", () => {
-    expect(roleHasCapability("admin", "viewQuickDetail")).toBe(true);
-    expect(roleHasCapability("editor", "viewQuickDetail")).toBe(true);
-    expect(roleHasCapability("external_editor", "viewQuickDetail")).toBe(true);
-    expect(roleHasCapability("photographer", "viewQuickDetail")).toBe(false);
+  it("keeps external collection management separate from project editing", () => {
+    expect(CAPABILITIES).toContain("uploadExtras");
+    expect(roleHasCapability("external_editor", "editProject")).toBe(false);
+    expect(roleHasCapability("external_editor", "manageExtras")).toBe(false);
+    expect(roleHasCapability("admin", "uploadExtras")).toBe(false);
+    expect(roleHasCapability("editor", "uploadExtras")).toBe(false);
+    expect(roleHasCapability("photographer", "uploadExtras")).toBe(false);
   });
 
   it("leaves the existing selection and prioritization capability boundaries unchanged", () => {

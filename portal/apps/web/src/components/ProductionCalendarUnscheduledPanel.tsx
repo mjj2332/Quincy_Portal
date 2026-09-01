@@ -21,7 +21,6 @@ export type ProductionCalendarUnscheduledPanelProps = {
   dragSuppressed?: boolean;
   projectHrefFor?: (projectId: string) => string | undefined;
   onOpenProject?: (projectId: string) => void;
-  onProjectAnchorClick?: (event: React.MouseEvent<HTMLAnchorElement>) => void;
 };
 
 const STAGE_LABELS: Record<string, string> = {
@@ -48,16 +47,15 @@ function CountLine({ facet }: { facet: UnscheduledFacet }) {
   </div>;
 }
 
-function ProjectContent({ entry, projectHrefFor, onOpenProject, onProjectAnchorClick }: {
+function ProjectContent({ entry, projectHrefFor, onOpenProject }: {
   entry: ProjectCalendarUnscheduledEntryDto;
   projectHrefFor?: (projectId: string) => string | undefined;
   onOpenProject?: (projectId: string) => void;
-  onProjectAnchorClick?: (event: React.MouseEvent<HTMLAnchorElement>) => void;
 }) {
   const href = projectHrefFor?.(entry.project.id);
   return <>
     <div className="qc-calendar-unscheduled__meta"><span>Deadline</span><span>Unscheduled</span></div>
-    <h3 title={entry.project.street}>{href ? <ProjectCalendarAnchor href={href} onOpenProject={() => onOpenProject?.(entry.project.id)} onProjectAnchorClick={onProjectAnchorClick}>{entry.project.street}</ProjectCalendarAnchor> : entry.project.street}</h3>
+    <h3 title={entry.project.street}>{href ? <ProjectCalendarAnchor href={href} onOpenProject={() => onOpenProject?.(entry.project.id)}>{entry.project.street}</ProjectCalendarAnchor> : entry.project.street}</h3>
     <p title={entry.title}>{entry.title}</p>
     <div className="qc-calendar-unscheduled__facts">
       <span>Stage: {stageLabel(entry.project.stageKey)}</span>
@@ -66,17 +64,16 @@ function ProjectContent({ entry, projectHrefFor, onOpenProject, onProjectAnchorC
   </>;
 }
 
-function ChecklistContent({ entry, projectHrefFor, onOpenProject, onProjectAnchorClick }: {
+function ChecklistContent({ entry, projectHrefFor, onOpenProject }: {
   entry: ChecklistCalendarUnscheduledEntryDto;
   projectHrefFor?: (projectId: string) => string | undefined;
   onOpenProject?: (projectId: string) => void;
-  onProjectAnchorClick?: (event: React.MouseEvent<HTMLAnchorElement>) => void;
 }) {
   const href = projectHrefFor?.(entry.project.id);
   return <>
     <div className="qc-calendar-unscheduled__meta"><span>Checklist</span><span>{entry.reason === "schedule_needs_attention" ? "Needs attention" : "Unscheduled"}</span></div>
     <h3 title={entry.title}>{entry.title}</h3>
-    <p title={entry.project.street}>{href ? <ProjectCalendarAnchor href={href} onOpenProject={() => onOpenProject?.(entry.project.id)} onProjectAnchorClick={onProjectAnchorClick}>{entry.project.street}</ProjectCalendarAnchor> : entry.project.street}</p>
+    <p title={entry.project.street}>{href ? <ProjectCalendarAnchor href={href} onOpenProject={() => onOpenProject?.(entry.project.id)}>{entry.project.street}</ProjectCalendarAnchor> : entry.project.street}</p>
     <div className="qc-calendar-unscheduled__facts">
       <span>Assignee: {entry.assignee?.name ?? "Unassigned"}</span>
       <span>Stage: {stageLabel(entry.project.stageKey)}</span>
@@ -104,7 +101,7 @@ function checklistCanDrag(entry: ChecklistCalendarUnscheduledEntryDto, rangesEna
   return !disabled && unscheduledChecklistDraggable(entry, rangesEnabled);
 }
 
-function ProjectRow({ entry, subview, onSchedule, disabled, dragSuppressed, projectHrefFor, onOpenProject, onProjectAnchorClick }: {
+function ProjectRow({ entry, subview, onSchedule, disabled, dragSuppressed, projectHrefFor, onOpenProject }: {
   entry: ProjectCalendarUnscheduledEntryDto;
   subview: ProductionCalendarSubview;
   onSchedule: (entry: ProjectCalendarUnscheduledEntryDto) => void;
@@ -112,7 +109,6 @@ function ProjectRow({ entry, subview, onSchedule, disabled, dragSuppressed, proj
   dragSuppressed: boolean;
   projectHrefFor?: (projectId: string) => string | undefined;
   onOpenProject?: (projectId: string) => void;
-  onProjectAnchorClick?: (event: React.MouseEvent<HTMLAnchorElement>) => void;
 }) {
   // Eligibility is a permanent property of the entry (not delivered, has the
   // capability). Transient `disabled` (interaction blocked / settling) only
@@ -120,7 +116,7 @@ function ProjectRow({ entry, subview, onSchedule, disabled, dragSuppressed, proj
   // "Deadline is read-only" row, which is reserved for genuine ineligibility.
   const eligible = unscheduledProjectDraggable(entry);
   const actionMode = subview === "agenda" || dragSuppressed || disabled;
-  const content = <ProjectContent entry={entry} projectHrefFor={eligible ? projectHrefFor : undefined} onOpenProject={onOpenProject} onProjectAnchorClick={onProjectAnchorClick} />;
+  const content = <ProjectContent entry={entry} projectHrefFor={eligible ? projectHrefFor : undefined} onOpenProject={onOpenProject} />;
 
   if (!eligible) {
     return <button type="button" className="qc-calendar-unscheduled__row qc-calendar-unscheduled__row--project is-disabled" disabled aria-label={`${entry.project.street}: Deadline is read-only`} data-unscheduled-id={entry.id}>
@@ -147,7 +143,7 @@ function ProjectRow({ entry, subview, onSchedule, disabled, dragSuppressed, proj
   >{content}</article>;
 }
 
-function ChecklistRow({ entry, subview, rangesEnabled, onSchedule, disabled, dragSuppressed, projectHrefFor, onOpenProject, onProjectAnchorClick }: {
+function ChecklistRow({ entry, subview, rangesEnabled, onSchedule, disabled, dragSuppressed, projectHrefFor, onOpenProject }: {
   entry: ChecklistCalendarUnscheduledEntryDto;
   subview: ProductionCalendarSubview;
   rangesEnabled: boolean;
@@ -156,7 +152,6 @@ function ChecklistRow({ entry, subview, rangesEnabled, onSchedule, disabled, dra
   dragSuppressed: boolean;
   projectHrefFor?: (projectId: string) => string | undefined;
   onOpenProject?: (projectId: string) => void;
-  onProjectAnchorClick?: (event: React.MouseEvent<HTMLAnchorElement>) => void;
 }) {
   const attention = entry.reason === "schedule_needs_attention";
   const legacy = attention && entry.attentionReason === "legacy_unresolved";
@@ -164,7 +159,7 @@ function ChecklistRow({ entry, subview, rangesEnabled, onSchedule, disabled, dra
   const actionMode = subview === "agenda" || dragSuppressed;
   const canDrag = !actionMode && checklistCanDrag(entry, rangesEnabled, disabled);
   const showAction = entry.permissions.canOpenScheduleEditor && (actionMode || !canDrag);
-  const content = <ChecklistContent entry={entry} projectHrefFor={projectHrefFor} onOpenProject={onOpenProject} onProjectAnchorClick={onProjectAnchorClick} />;
+  const content = <ChecklistContent entry={entry} projectHrefFor={projectHrefFor} onOpenProject={onOpenProject} />;
 
   if (canDrag) {
     return <article
@@ -190,7 +185,7 @@ function Section<T>({ label, facet, entries, children }: { label: string; facet:
   </section>;
 }
 
-export function ProductionCalendarUnscheduledPanel({ projectEntries, checklistEntries, facets, subview, rangesEnabled, onScheduleProject, onScheduleChecklist, disabled = false, dragSuppressed = false, projectHrefFor, onOpenProject, onProjectAnchorClick }: ProductionCalendarUnscheduledPanelProps) {
+export function ProductionCalendarUnscheduledPanel({ projectEntries, checklistEntries, facets, subview, rangesEnabled, onScheduleProject, onScheduleChecklist, disabled = false, dragSuppressed = false, projectHrefFor, onOpenProject }: ProductionCalendarUnscheduledPanelProps) {
   const panelRef = useRef<HTMLElement | null>(null);
   const hasExternalDraggable = !disabled && !dragSuppressed && subview !== "agenda" && (
     projectEntries.some((entry) => projectCanDrag(entry, disabled))
@@ -205,10 +200,10 @@ export function ProductionCalendarUnscheduledPanel({ projectEntries, checklistEn
 
   return <aside ref={panelRef} className={`qc-calendar-unscheduled${disabled ? " is-disabled" : ""}`} aria-label="Unscheduled work">
     <Section label="Unscheduled projects" facet={facets.project} entries={projectEntries}>
-      {projectEntries.map((entry) => <ProjectRow key={entry.id} entry={entry} subview={subview} onSchedule={onScheduleProject} disabled={disabled} dragSuppressed={dragSuppressed} projectHrefFor={projectHrefFor} onOpenProject={onOpenProject} onProjectAnchorClick={onProjectAnchorClick} />)}
+      {projectEntries.map((entry) => <ProjectRow key={entry.id} entry={entry} subview={subview} onSchedule={onScheduleProject} disabled={disabled} dragSuppressed={dragSuppressed} projectHrefFor={projectHrefFor} onOpenProject={onOpenProject} />)}
     </Section>
     <Section label="Unscheduled checklist items" facet={facets.checklist} entries={checklistEntries}>
-      {checklistEntries.map((entry) => <ChecklistRow key={entry.id} entry={entry} subview={subview} rangesEnabled={rangesEnabled} onSchedule={onScheduleChecklist} disabled={disabled} dragSuppressed={dragSuppressed} projectHrefFor={projectHrefFor} onOpenProject={onOpenProject} onProjectAnchorClick={onProjectAnchorClick} />)}
+      {checklistEntries.map((entry) => <ChecklistRow key={entry.id} entry={entry} subview={subview} rangesEnabled={rangesEnabled} onSchedule={onScheduleChecklist} disabled={disabled} dragSuppressed={dragSuppressed} projectHrefFor={projectHrefFor} onOpenProject={onOpenProject} />)}
     </Section>
   </aside>;
 }

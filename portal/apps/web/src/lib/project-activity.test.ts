@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { externalProjectActivityFeedResponseSchema, projectActivityFeedResponseSchema } from "@quincy/shared";
+import { ApiError } from "./api";
 import { projectDataKeys } from "./project-data";
 
 const apiGetMock = vi.hoisted(() => vi.fn());
@@ -59,13 +60,18 @@ describe("project activity query family", () => {
     expect(() => projectActivityFeedResponseSchema.parse({ items: [internalItem], nextCursor: null, unexpected: true })).toThrow();
   });
 
-  it("configures the hook for 30-second freshness, polling, focus/reconnect refresh, and role branching", async () => {
+  it("configures the hook for 30-second freshness and suppresses polling after permanent denial", async () => {
     const { useProjectActivityQuery } = await import("./project-activity");
     sessionState.role = "external_editor";
     useProjectActivityQuery(projectId, true);
     expect(useInfiniteQueryMock).toHaveBeenCalledWith(expect.objectContaining({
-      queryKey: projectDataKeys.activity(projectId), staleTime: 30_000, refetchInterval: 30_000,
+      queryKey: projectDataKeys.activity(projectId), staleTime: 30_000, refetchInterval: expect.any(Function),
       refetchIntervalInBackground: false, refetchOnWindowFocus: true, refetchOnReconnect: true,
     }));
+    const options = (useInfiniteQueryMock.mock.calls as unknown as Array<[{ refetchInterval: (query: unknown) => number | false }]>)[0]?.[0];
+    if (!options) throw new Error("activity query options were not captured");
+    expect(options.refetchInterval({ state: { error: new ApiError("Forbidden", 403) } })).toBe(false);
+    expect(options.refetchInterval({ state: { error: new ApiError("Missing", 404) } })).toBe(false);
+    expect(options.refetchInterval({ state: { error: new ApiError("Unavailable", 500) } })).toBe(30_000);
   });
 });

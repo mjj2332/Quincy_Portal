@@ -8,7 +8,7 @@ import { useInfiniteQuery, type InfiniteData, type QueryFunctionContext, type Us
 import { apiGet } from "./api";
 import { useSession } from "./auth";
 import { externalApiGet } from "./external-api-response";
-import { projectDataKeys, projectQueryRetry } from "./project-data";
+import { isPermanentProjectAccessError, projectDataKeys, projectQueryRetry } from "./project-data";
 
 export type ProjectActivityResponse = ProjectActivityFeedResponse | ExternalProjectActivityFeedResponse;
 export type ProjectActivityInfiniteData = InfiniteData<ProjectActivityResponse, string | null>;
@@ -53,7 +53,7 @@ export function useProjectActivityQuery(projectId: string, enabled = true): UseI
     enabled,
     staleTime: 30_000,
     retry: projectQueryRetry,
-    refetchInterval: enabled ? 30_000 : false,
+    refetchInterval: (query) => enabled && !(isPermanentProjectAccessError(query.state.error) && (query.state.error.status === 403 || query.state.error.status === 404)) ? 30_000 : false,
     refetchIntervalInBackground: false,
     refetchOnWindowFocus: true,
     refetchOnReconnect: true,

@@ -88,8 +88,8 @@ describe("project data key and request seam", () => {
     expect(classifyProjectAccessError(new ApiError("forbidden", 403), "collaboration-summary")).toEqual({ scope: "collaboration" });
     expect(classifyProjectAccessError(new ApiError("missing", 404), "collaboration-summary")).toEqual({ scope: "project" });
     expect(classifyProjectAccessError(new ApiError("unauthenticated", 401), "activity")).toEqual({ scope: "principal" });
-    expect(classifyProjectAccessError(new ApiError("forbidden", 403), "activity")).toEqual({ scope: "project" });
-    expect(classifyProjectAccessError(new ApiError("missing", 404), "activity")).toEqual({ scope: "project" });
+    expect(classifyProjectAccessError(new ApiError("forbidden", 403), "activity")).toBeNull();
+    expect(classifyProjectAccessError(new ApiError("missing", 404), "activity")).toBeNull();
     expect(classifyProjectAccessError(new ApiError("offline", 500), "activity")).toBeNull();
   });
 

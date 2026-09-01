@@ -4,6 +4,8 @@ import { CSS } from "@dnd-kit/utilities";
 import { useCallback, useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import type { WorkspaceAsset } from "./PhotoGrid";
 import { ApiError, apiDelete, apiGet, apiPatch, apiPost, apiPostWithStatus } from "../lib/api";
+import { useSession } from "../lib/auth";
+import { externalApiGet } from "../lib/external-api-response";
 import { uploadMultipartFile, type MultipartPresign } from "../lib/multipart-upload";
 import { invalidateProjectSurfaces, useOptionalProjectQueryClient, useProjectAccessTermination } from "../lib/project-data";
 import { LazyImage } from "./LazyImage";
@@ -58,6 +60,8 @@ export function CollectionPanel({ projectId, collection, assets, canManage, canD
   onReview: (assetId: string, patch: { decision: "approved" | null }) => Promise<void>; onDelete?: (assetId: string) => Promise<void>; onChanged?: () => Promise<void>; onLinksChanged?: () => Promise<void>; onDocumentsChanged?: (kind: "floorplan" | "copy") => Promise<void>; onToast: (message: string, tone?: "success" | "error") => void;
 }) {
   const queryClient = useOptionalProjectQueryClient();
+  const session = useSession();
+  const external = session.data?.user.role === "external_editor";
   const terminateOnUnauthorized = useProjectAccessTermination();
   const reportLinksChanged = onLinksChanged ?? onChanged ?? (async () => undefined);
   const reportDocumentsChanged = onDocumentsChanged ?? (async () => onChanged?.());
@@ -67,11 +71,14 @@ export function CollectionPanel({ projectId, collection, assets, canManage, canD
   const loadToken = useRef(0);
   const loadLinks = useCallback(async () => {
     const token = ++loadToken.current;
-    const response = await apiGet<{ links: Link[] }>(`/api/projects/${projectId}/links?collection=${collection}`);
+    const path = `/api/projects/${projectId}/links?collection=${collection}`;
+    const response = external
+      ? await externalApiGet("collection-links", path) as { links: Link[] }
+      : await apiGet<{ links: Link[] }>(path);
     // A stale response (e.g. the collection tab changed, or an overlapping reorder reload)
     // must not clobber a newer load's result.
     if (loadToken.current === token) setLinks(response.links);
-  }, [collection, projectId]);
+  }, [collection, external, projectId]);
   async function invalidateActivity() {
     if (queryClient) await invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "activity" }], dashboard: false, calendar: false });
   }

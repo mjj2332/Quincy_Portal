@@ -194,6 +194,60 @@ describe("terminal route manifest", () => {
     }
   });
 
+  it("reaches every newly scoped collection mutation with valid input", async () => {
+    const cookie = await externalCookie();
+    const jsonHeaders = { cookie, "content-type": "application/json", origin: baseEnv.APP_ORIGIN };
+    const linkResponse = await SELF.fetch(`https://portal.test/api/projects/${manifestProjectId}/links`, {
+      method: "POST", headers: jsonHeaders,
+      body: JSON.stringify({ collection: "video", url: `https://vimeo.com/${crypto.randomUUID()}`, label: "Manifest video" }),
+    });
+    expect([200, 201]).toContain(linkResponse.status);
+    const link = await linkResponse.json() as { id: string; source: string; position: number };
+    expect(link.source).toBe("manual");
+
+    const patchResponse = await SELF.fetch(`https://portal.test/api/projects/${manifestProjectId}/links/${link.id}`, {
+      method: "PATCH", headers: jsonHeaders,
+      body: JSON.stringify({ url: `https://vimeo.com/${crypto.randomUUID()}`, label: "Manifest video updated" }),
+    });
+    expect(patchResponse.status).toBe(200);
+    await expect(patchResponse.json()).resolves.toMatchObject({ id: link.id, source: "manual", label: "Manifest video updated" });
+
+    const reorderResponse = await SELF.fetch(`https://portal.test/api/projects/${manifestProjectId}/links/${link.id}/reorder`, {
+      method: "POST", headers: jsonHeaders, body: JSON.stringify({ beforeId: null, afterId: null }),
+    });
+    expect(reorderResponse.status).toBe(200);
+    await expect(reorderResponse.json()).resolves.toEqual({ position: expect.any(Number) });
+
+    const deleteResponse = await SELF.fetch(`https://portal.test/api/projects/${manifestProjectId}/links/${link.id}`, { method: "DELETE", headers: jsonHeaders });
+    expect(deleteResponse.status).toBe(204);
+
+    const copyPresign = await SELF.fetch(`https://portal.test/api/projects/${manifestProjectId}/documents/presign`, {
+      method: "POST", headers: jsonHeaders,
+      body: JSON.stringify({ kind: "copy_pdf", pdf: { filename: "manifest-copy.pdf", bytes: 10, contentType: "application/pdf" } }),
+    });
+    // The production-shaped manifest worker has no R2 S3 credentials, so a valid authorized
+    // request reaches the domain's 503 operational response; the dev-shaped suite returns 201.
+    expect(copyPresign.status).toBe(baseEnv.APP_ENV === "dev" ? 201 : 503);
+    const copyPresignBody = await copyPresign.json() as { sessionId?: string; files?: { pdf?: { assetId?: string; key?: string } }; error?: string };
+    if (copyPresign.status === 201) expect(copyPresignBody).toMatchObject({ sessionId: expect.any(String), files: { pdf: { assetId: expect.any(String), key: expect.any(String) } } });
+    else expect(copyPresignBody.error).toBe("R2 S3 upload credentials are not configured");
+
+    const floorplanPresign = await SELF.fetch(`https://portal.test/api/projects/${manifestProjectId}/documents/presign`, {
+      method: "POST", headers: jsonHeaders,
+      body: JSON.stringify({ kind: "floorplan", pdf: { filename: "manifest-plan.pdf", bytes: 10, contentType: "application/pdf" }, preview: { filename: "manifest-plan.jpg", bytes: 10, contentType: "image/jpeg" } }),
+    });
+    expect(floorplanPresign.status).toBe(baseEnv.APP_ENV === "dev" ? 201 : 503);
+
+    const upload = copyPresignBody.sessionId ?? (await database.DB.prepare("SELECT id FROM document_uploads WHERE project_id = ? ORDER BY created_at DESC LIMIT 1").bind(manifestProjectId).first<{ id: string }>())?.id;
+    expect(upload).toBeDefined();
+    const completeResponse = await SELF.fetch(`https://portal.test/api/projects/${manifestProjectId}/documents/complete`, {
+      method: "POST", headers: jsonHeaders, body: JSON.stringify({ sessionId: upload, pdf: {} }),
+    });
+    expect(completeResponse.status).toBe(409);
+    const abortResponse = await SELF.fetch(`https://portal.test/api/projects/${manifestProjectId}/documents/${upload}/abort`, { method: "POST", headers: jsonHeaders });
+    expect(abortResponse.status).toBe(204);
+  });
+
   it("keeps assigned-project Stage misses generic for External Editors", async () => {
     const cookie = await externalCookie();
     const body = JSON.stringify({
@@ -250,6 +304,15 @@ describe("terminal route manifest", () => {
       // would be a successful disclosure that a `>= 300` check would wave through.
       expect(response.status, `${route.method} ${route.path}`).toBeGreaterThanOrEqual(400);
     }
+  });
+
+  it("keeps the dev-only direct document route withheld in production", async () => {
+    const direct = PROJECT_SECURITY_ROUTE_CLASSIFICATION.find((route) => route.method === "PUT" && route.path === "/api/projects/:id/documents/direct/:sessionId/:slot");
+    expect(direct?.class).toBe("withheld");
+    const response = await SELF.fetch(`https://portal.test${concreteManifestPath(direct!.path)}`, { method: "PUT", headers: { cookie: await externalCookie() } });
+    expect(response.status).toBe(404);
+    const tombstone = PROJECT_SECURITY_ROUTE_CLASSIFICATION.find((route) => route.method === "POST" && route.path === "/api/projects/:id/documents");
+    expect(tombstone?.class).toBe("withheld");
   });
 
   it("rejects a structurally custom Hono error handler", () => {

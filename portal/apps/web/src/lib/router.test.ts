@@ -155,29 +155,6 @@ describe("one-time OAuth return fallback", () => {
     expect(consumeSignInDestinationFrom(memoryStorage("/api/projects"))).toBe("/");
   });
 
-  it("round-trips every canonical Dashboard quick-detail destination through OAuth", async () => {
-    const calendar = { view: "calendar" as const, date: "2026-08-30", subview: "week" as const, layers: ["project", "checklist"] as ["project", "checklist"], editorIds: [], includeUnassigned: false, stageKeys: [], showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false };
-    const detail = (view: "overview" | "activity" | "discussion") => ({ projectId, view });
-    const destinations = [
-      ...(["list", "kanban"] as const).flatMap((dashboardView) => [
-        staffPathFor({ kind: "dashboard", dashboardView }),
-        ...(["overview", "activity", "discussion"] as const).map((view) => staffPathFor({ kind: "dashboard", dashboardView, detail: detail(view) })),
-      ]),
-      ...(["overview", "activity", "discussion"] as const).map((view) => staffPathFor({ kind: "dashboard", calendar, detail: detail(view) })),
-    ];
-
-    for (const destination of destinations) {
-      expect(safeStaffDestination(destination)).toBe(destination);
-      expect(consumeSignInDestinationFrom(memoryStorage(destination))).toBe(destination);
-      const social = vi.fn(async ({ callbackURL }: { callbackURL: string }) => {
-        expect(callbackURL).toBe(destination);
-        return {};
-      });
-      await beginSignIn(destination, { signIn: { social } }, memoryStorage());
-      expect(social).toHaveBeenCalledOnce();
-    }
-  });
-
   it("returns null (does not redirect) when nothing was ever stored", () => {
     // The real-world case: a fresh tab, refresh, bookmark, or shared link where no sign-in
     // flow just happened. Must not be treated the same as an invalid stored candidate.

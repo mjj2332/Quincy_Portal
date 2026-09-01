@@ -1223,4 +1223,94 @@ describe("ProjectWorkspace collaboration relocation", () => {
     expect(host.textContent).toContain("RAW frames");
     expect(apiGetMock.mock.calls.filter(([path]) => path.includes("/assets?collection=raw"))).toHaveLength(1);
   });
+
+  it("lets uploadExtras manage Video and document collections without granting project controls", async () => {
+    authState.role = "external_editor";
+    const externalProjectId = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+    const collectionIds = { raw: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", edited: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", video: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", floorplan: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", copy: "ffffffff-ffff-4fff-8fff-ffffffffffff" };
+    const service = (kind: keyof typeof collectionIds, receivedCount: number) => ({ id: collectionIds[kind], kind, status: receivedCount ? "received" : "empty", expectedCount: null, receivedCount });
+    const externalAsset = (id: string, collectionId: string, kind: WorkspaceAsset["kind"], filename: string, versionGroupId: string | null = null) => workspaceAsset(id, { collectionId, kind, originalFilename: filename, versionGroupId });
+    const raw = externalAsset("11111111-1111-4111-8111-111111111111", collectionIds.raw, "photo", "raw.jpg");
+    const floorplan = externalAsset("22222222-2222-4222-8222-222222222222", collectionIds.floorplan, "floorplan_pdf", "plan.pdf", "33333333-3333-4333-8333-333333333333");
+    const copy = externalAsset("44444444-4444-4444-8444-444444444444", collectionIds.copy, "copy_pdf", "copy.pdf", "55555555-5555-4555-8555-555555555555");
+    const detail = {
+      id: externalProjectId,
+      address: { street: "External Collections", suburb: null, postcode: null },
+      agencyDisplayName: null, agentDisplayName: null, shootDate: null, timeWindow: null, stageKey: "editing", boardRevision: 0, deadline: null, productionNotes: null,
+      services: [service("raw", 1), service("edited", 0), service("video", 1), service("floorplan", 1), service("copy", 1)], cover: null, contractEnabled: false, editedUploadAvailable: false,
+      collections: [service("raw", 1), service("edited", 0), service("video", 1), service("floorplan", 1), service("copy", 1)], members: [],
+    };
+    apiGetMock.mockImplementation((path: string) => {
+      if (path === `/api/projects/${externalProjectId}`) return Promise.resolve(detail);
+      if (path.includes("/assets?collection=raw")) return Promise.resolve({ assets: [raw] });
+      if (path.includes("/assets?collection=edited") || path.includes("/assets?collection=video")) return Promise.resolve({ assets: [] });
+      if (path.includes("/assets?collection=floorplan")) return Promise.resolve({ assets: [floorplan] });
+      if (path.includes("/assets?collection=copy")) return Promise.resolve({ assets: [copy] });
+      if (path.includes("/assets?collection=video")) return Promise.resolve({ assets: [] });
+      if (path.includes("/links")) return Promise.resolve({ links: [{ id: "66666666-6666-4666-8666-666666666666", url: "https://example.com/delivered-copy", label: "Delivered copy", source: "manual", position: 1024, createdAt: "2026-08-01T00:00:00.000Z" }] });
+      if (path.includes("/ingest-status")) return Promise.resolve({ expectedCount: null, receivedCount: 1, mismatch: false });
+      if (path.includes("/collaboration-summary")) return Promise.resolve({ project: { id: externalProjectId, street: "External Collections", stageKey: "editing" }, members: [] });
+      if (path.includes("/comments?")) return Promise.resolve({ project: { id: externalProjectId, street: "External Collections" }, comments: [] });
+      if (path.includes("comment-read-marker")) return Promise.resolve({ projectId: externalProjectId, marker: null, latest: null, unreadCount: 0 });
+      if (path.includes("/subtasks")) return Promise.resolve({ subtasks: [] });
+      if (path.includes("/mentionable-users")) return Promise.resolve({ users: [] });
+      if (path === "/api/stages") return Promise.resolve({ stages: [] });
+      return Promise.resolve({});
+    });
+    await render(<ProjectWorkspace projectId={externalProjectId} />); await flush(20);
+
+    expect(host.querySelector(".rail__edit")).toBeNull();
+    expect(host.querySelector(".dropcard")).toBeNull();
+    expect(host.querySelector('input[type="file"]')).toBeNull();
+    expect(host.querySelector('[title="Use as project cover"]')).toBeNull();
+
+    await click([...host.querySelectorAll<HTMLButtonElement>(".frow")].find((button) => button.textContent?.startsWith("Video"))!); await flush(20);
+    expect(host.textContent).toContain("Add link");
+    expect(host.querySelector(".collection-link-form")).not.toBeNull();
+
+    await click([...host.querySelectorAll<HTMLButtonElement>(".frow")].find((button) => button.textContent?.startsWith("Floorplan"))!); await flush(20);
+    expect(host.textContent).toContain("Upload floorplan");
+    expect(host.querySelector(".document-group")).not.toBeNull();
+    expect(host.querySelector('button[title="Approve"]')).toBeNull();
+    expect(host.querySelectorAll(".document-actions .chip").length).toBeGreaterThan(0);
+    expect(host.textContent).not.toContain("Edit details");
+
+    await click([...host.querySelectorAll<HTMLButtonElement>(".frow")].find((button) => button.textContent?.startsWith("Copy"))!); await flush(20);
+    expect(host.textContent).toContain("Upload copy");
+    expect(host.querySelector(".document-group")).not.toBeNull();
+    expect(host.querySelector('button[title="Approve"]')).toBeNull();
+    expect(host.textContent).toContain("Delivered copy");
+    expect(host.querySelector(".collection-link-editor")).toBeNull();
+  });
+
+  it("keeps Activity 403 and 404 inside the selected tab while forwarding only 401", async () => {
+    const statuses = [403, 404, 401] as const;
+    for (const status of statuses) {
+      await unmount(); host.remove(); host = mount(); authState.role = "editor";
+      apiGetMock.mockReset().mockImplementation((path: string) => {
+        if (path === "/api/projects/p1") return Promise.resolve(projectFixture());
+        if (path.includes("/assets?collection=raw")) return Promise.resolve({ assets: [workspaceAsset("raw-1")] });
+        if (path.includes("/ingest-status")) return Promise.resolve({ expectedCount: null, receivedCount: 1, mismatch: false });
+        if (path.includes("/activity?")) return Promise.reject(new ApiError(`Activity ${status}`, status));
+        if (path.includes("/comments?")) return Promise.resolve({ project: { id: "p1", street: "12 Example St" }, comments: [] });
+        if (path.includes("comment-read-marker")) return Promise.resolve({ projectId: "p1", marker: null, latest: null, unreadCount: 0 });
+        if (path.includes("/subtasks")) return Promise.resolve({ subtasks: [] });
+        if (path.includes("/mentionable-users")) return Promise.resolve({ users: [] });
+        return Promise.resolve({});
+      });
+      let queryClient: ReturnType<typeof import("../lib/query-client").createQuincyQueryClient> | undefined;
+      // The real workspace callback is exercised for 401; 403/404 stay local to Activity.
+      await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>); await flush(20);
+      await click(host.querySelector<HTMLButtonElement>('[role="tab"][aria-controls$="-activity-panel"]')!); await flush(20);
+      if (status === 401) {
+        expect(host.textContent).toContain("Project unavailable.");
+        expect(queryClient!.getQueryData(projectDataKeys.detail("p1"))).toBeUndefined();
+      } else {
+        expect(host.querySelector(".work")).not.toBeNull();
+        expect(host.querySelector(".project-collaboration--unavailable")).toBeNull();
+        expect(host.querySelector('[role="tabpanel"][id$="-activity-panel"] [role="alert"]')?.textContent).toContain("isn't available");
+        expect(host.querySelector('[role="tabpanel"][id$="-activity-panel"] button')?.textContent).not.toBe("Retry");
+      }
+    }
+  });
 });

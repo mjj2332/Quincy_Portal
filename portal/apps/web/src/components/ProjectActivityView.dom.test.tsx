@@ -2,6 +2,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ProjectActivityView } from "./ProjectActivityView";
+import { ApiError } from "../lib/api";
 
 const queryState = vi.hoisted(() => ({ role: "editor" as string, value: undefined as unknown }));
 const useProjectActivityQueryMock = vi.hoisted(() => vi.fn());
@@ -68,6 +69,15 @@ describe("ProjectActivityView", () => {
     expect(host.querySelector('[role="alert"]')?.textContent).toContain("Offline");
     expect(host.querySelector("button")?.textContent).toBe("Retry");
     expect(host.textContent).not.toContain("No activity yet.");
+  });
+
+  it.each([403, 404] as const)("renders a permanent %i denial without Retry or the raw server message", (status) => {
+    const error = new ApiError("Sensitive project access detail", status);
+    useProjectActivityQueryMock.mockReturnValue(state({ isError: true, error }));
+    render();
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain("Project activity isn't available for this project at its current stage.");
+    expect(host.querySelector('[role="alert"]')?.textContent).not.toContain("Sensitive project access detail");
+    expect(host.querySelector("button")).toBeNull();
   });
 
   it("renders a non-loading disabled state when activity is gated off", () => {

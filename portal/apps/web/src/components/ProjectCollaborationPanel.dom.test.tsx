@@ -19,6 +19,7 @@ const apiGetMock = vi.fn<(path: string) => Promise<unknown>>();
 const apiPostMock = vi.fn<(path: string, body: unknown) => Promise<unknown>>();
 const apiPatchMock = vi.fn<(path: string, body: unknown) => Promise<unknown>>();
 const apiDeleteMock = vi.fn<(path: string) => Promise<unknown>>();
+const activityQueryMock = vi.hoisted(() => vi.fn());
 let capabilities = new Set<string>(["collaborateOnProject"]);
 
 vi.mock("../lib/api", async (importOriginal) => {
@@ -27,6 +28,7 @@ vi.mock("../lib/api", async (importOriginal) => {
 });
 vi.mock("../lib/auth", () => ({ useSession: () => ({ data: { user: { id: "user-me", role: "photographer" } }, isPending: false }) }));
 vi.mock("../lib/capabilities", () => ({ useCapabilities: () => ({ role: "photographer", capabilities: [...capabilities], can: (capability: string) => capabilities.has(capability) }) }));
+vi.mock("../lib/project-activity", () => ({ useProjectActivityQuery: activityQueryMock }));
 
 const projectId = "11111111-1111-4111-8111-111111111111";
 const doc = (text: string) => ({ type: "doc" as const, content: [{ type: "paragraph" as const, content: [{ type: "text" as const, text }] }] });
@@ -150,6 +152,7 @@ beforeEach(() => {
   apiPostMock.mockReset().mockResolvedValue({ ...ownComment, id: "comment-new", body: "Posted comment", content: doc("Posted comment") });
   apiPatchMock.mockReset().mockResolvedValue({ ...ownComment, body: "Saved comment", content: doc("Saved comment"), editedAt: "2026-08-17T00:02:00.000Z" });
   apiDeleteMock.mockReset().mockResolvedValue({ ok: true });
+  activityQueryMock.mockReset().mockReturnValue({ data: { pages: [{ items: [], nextCursor: null }], pageParams: [null] }, isPending: false, isError: false, error: null, fetchStatus: "idle", isFetching: false, isFetchingNextPage: false, hasNextPage: false, refetch: vi.fn(), fetchNextPage: vi.fn() });
 });
 afterEach(async () => {
   await unmount(); document.body.replaceChildren(); vi.restoreAllMocks();
@@ -268,10 +271,92 @@ describe("ProjectCollaborationPanel", () => {
     expect(overlay.classList.contains("project-collaboration--overlay")).toBe(true);
     expect(overlay.firstElementChild).toBe(overlay.querySelector(".project-collaboration__head"));
     const scroll = overlay.querySelector<HTMLElement>(".project-collaboration__scroll")!;
-    expect(overlay.children[1]).toBe(scroll); expect(scroll.querySelector(".subtask-checklist")).not.toBeNull(); expect(scroll.querySelector(".project-collaboration__comment-compose")).not.toBeNull();
+    expect(overlay.children[2]).toBe(scroll); expect(scroll.querySelector(".subtask-checklist")).not.toBeNull(); expect(scroll.querySelector(".project-collaboration__comment-compose")).not.toBeNull();
     await unmount(); host.remove(); const standalone = mount(); await render(<ProjectCollaborationPanel projectId={projectId} mode="standalone" />);
     const panel = standalone.querySelector<HTMLElement>(".project-collaboration")!;
     expect(panel.classList.contains("project-collaboration--overlay")).toBe(false); expect(panel.querySelector(".project-collaboration__scroll")).toBeNull(); expect(panel.querySelector(".subtask-checklist")).not.toBeNull();
+  });
+
+  it("renders Discussion and Activity as persistent semantic tabs with roving keyboard focus", async () => {
+    const host = mount();
+    await render(<ProjectCollaborationPanel projectId={projectId} />);
+    const tabs = () => [...host.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
+    expect(tabs().map((tab) => tab.textContent?.trim())).toEqual(["Discussion", "Activity"]);
+    expect(tabs()[0]?.getAttribute("aria-selected")).toBe("true");
+    expect(tabs()[1]?.getAttribute("aria-selected")).toBe("false");
+    const panels = [...host.querySelectorAll<HTMLElement>('[role="tabpanel"]')];
+    expect(panels).toHaveLength(2);
+    for (const panel of panels) {
+      const tab = host.querySelector<HTMLElement>(`[aria-controls="${panel.id}"]`);
+      expect(tab?.id).toBe(panel.getAttribute("aria-labelledby"));
+    }
+    expect(panels[0]?.hidden).toBe(false); expect(panels[1]?.hidden).toBe(true);
+    expect(activityQueryMock.mock.calls.at(-1)).toEqual([projectId, false]);
+
+    tabs()[0]!.focus();
+    await keydown(tabs()[0]!, "ArrowRight"); await waitForTimer();
+    expect(tabs()[1]?.getAttribute("aria-selected")).toBe("true");
+    expect(document.activeElement).toBe(tabs()[1]);
+    expect(panels[0]?.hidden).toBe(true); expect(panels[1]?.hidden).toBe(false);
+    expect(activityQueryMock.mock.calls.at(-1)).toEqual([projectId, true]);
+    await keydown(tabs()[1]!, "Home"); await waitForTimer();
+    expect(tabs()[0]?.getAttribute("aria-selected")).toBe("true");
+    expect(document.activeElement).toBe(tabs()[0]);
+    await keydown(tabs()[0]!, "End"); await waitForTimer();
+    expect(tabs()[1]?.getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("re-arms Discussion read-marker presentation after an Activity round trip", async () => {
+    const globals = globalThis as unknown as Record<string, unknown>;
+    const previousObserver = globals.IntersectionObserver;
+    const previousFocused = focusManager.isFocused();
+    Reflect.deleteProperty(globals, "IntersectionObserver");
+    focusManager.setFocused(true);
+    let headId = "head";
+    const markedReadState = { projectId, marker: { throughCommentId: "head", throughCreatedAt: "2026-08-25T00:00:00.000Z", updatedAt: "2026-08-25T00:00:01.000Z" }, latest: { commentId: "head", createdAt: "2026-08-25T00:00:00.000Z" }, unreadCount: 0 };
+    apiGetMock.mockImplementation((path) => {
+      if (path.includes("comment-read-marker")) return Promise.resolve(markedReadState);
+      if (path.includes("subtasks")) return Promise.resolve({ subtasks: [] });
+      if (path.includes("/comments?")) return Promise.resolve(page([headId]));
+      return Promise.resolve({});
+    });
+    apiPatchMock.mockResolvedValue(markedReadState);
+    const host = mount();
+    try {
+      await render(<ProjectCollaborationPanel projectId={projectId} />);
+      await flush(20);
+      expect(apiPatchMock).not.toHaveBeenCalled();
+      await click(host.querySelector<HTMLButtonElement>('[role="tab"][aria-controls$="-activity-panel"]')!);
+      headId = "new-head";
+      await click(host.querySelector<HTMLButtonElement>('[role="tab"][aria-controls$="-discussion-panel"]')!);
+      const anchor = host.querySelector<HTMLElement>(".project-collaboration__read-anchor")!;
+      const visibleRect = () => ({ left: 0, top: 0, right: 100, bottom: 100, width: 100, height: 100 });
+      Object.defineProperty(anchor, "getBoundingClientRect", { configurable: true, value: visibleRect });
+      Object.defineProperty(host.querySelector<HTMLElement>(".project-collaboration__scroll")!, "getBoundingClientRect", { configurable: true, value: visibleRect });
+      window.dispatchEvent(new Event("scroll"));
+      await flush(20);
+      expect(apiPatchMock).toHaveBeenCalledWith("/api/projects/" + projectId + "/comment-read-marker", { throughCommentId: "new-head" });
+    } finally {
+      focusManager.setFocused(previousFocused);
+      if (previousObserver === undefined) Reflect.deleteProperty(globals, "IntersectionObserver");
+      else globals.IntersectionObserver = previousObserver;
+    }
+  });
+
+  it("retains the selected view across hide/reopen, but a new collaboration signal resets Discussion", async () => {
+    const consumed: number[] = [];
+    const host = mount();
+    await render(<ProjectCollaborationPanel projectId={projectId} openSignal={1} onOpenSignalConsumed={(signal) => consumed.push(signal)} />);
+    const activity = () => host.querySelector<HTMLButtonElement>('[role="tab"][aria-controls$="-activity-panel"]')!;
+    await click(activity());
+    expect(activity().getAttribute("aria-selected")).toBe("true");
+    const hide = host.querySelector<HTMLButtonElement>(".project-collaboration__head button")!;
+    await click(hide); await click(host.querySelector<HTMLButtonElement>(".project-collaboration__toggle")!);
+    expect(host.querySelector<HTMLButtonElement>('[role="tab"][aria-controls$="-activity-panel"]')?.getAttribute("aria-selected")).toBe("true");
+    await render(<ProjectCollaborationPanel projectId={projectId} openSignal={2} onOpenSignalConsumed={(signal) => consumed.push(signal)} />);
+    expect(consumed).toEqual([1, 2]);
+    expect(host.querySelector<HTMLButtonElement>('[role="tab"][aria-controls$="-discussion-panel"]')?.getAttribute("aria-selected")).toBe("true");
+    expect(host.querySelector(".subtask-checklist")).not.toBeNull();
   });
 
   it("keeps the standalone composer draft across an active comments refetch", async () => {

@@ -49,8 +49,9 @@ export function isPermanentProjectAccessError(error: unknown): error is ApiError
 export function classifyProjectAccessError(error: unknown, resource: "detail" | "activity" | "assets" | "subtasks" | "comments" | "comment-read-marker" | "collaboration-summary", collectionKind?: CollectionKind): ProjectAccessClassification | null {
   if (!isPermanentProjectAccessError(error)) return null;
   if (error.status === 401) return { scope: "principal" };
+  if (resource === "activity") return null;
   if (resource === "comments" || resource === "comment-read-marker" || resource === "collaboration-summary" || resource === "subtasks") return error.status === 403 ? { scope: "collaboration" } : { scope: "project" };
-  if (resource === "detail" || resource === "activity" || error.status === 404 || collectionKind === undefined) return { scope: "project" };
+  if (resource === "detail" || error.status === 404 || collectionKind === undefined) return { scope: "project" };
   const details = error.details;
   const capability = details && typeof details === "object" ? (details as Record<string, unknown>).capability : undefined;
   return error.status === 403 && capability === assetCapabilities[collectionKind] ? { scope: "collection", collectionKind } : { scope: "project" };

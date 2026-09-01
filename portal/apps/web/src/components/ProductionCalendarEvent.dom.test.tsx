@@ -97,7 +97,7 @@ describe("ProductionCalendarEvent overlap state", () => {
       deadlineVersion: 1,
       reminderOffsetsMinutes: [],
     } as unknown as CalendarEventDto;
-    act(() => root.render(<ProductionCalendarEvent event={deadline} subview="week" projectHref="/?view=calendar&detail=11111111-1111-4111-8111-111111111111" onOpenProject={onOpenProject} onMoveReschedule={() => undefined} />));
+    act(() => root.render(<ProductionCalendarEvent event={deadline} subview="week" projectHref="/projects/11111111-1111-4111-8111-111111111111" onOpenProject={onOpenProject} onMoveReschedule={() => undefined} />));
     const anchor = host.querySelector<HTMLAnchorElement>("a.qc-cal-event-card__project-link")!;
     anchor.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, detail: 1 }));
     expect(onOpenProject).toHaveBeenCalledTimes(1);
@@ -132,7 +132,7 @@ describe("ProductionCalendarEvent overlap state", () => {
     expect(onOpenProject).toHaveBeenCalledTimes(3);
 
     const onMove = vi.fn();
-    act(() => root.render(<ProductionCalendarEvent event={checklist(false)} subview="week" projectHref="/?view=calendar&detail=11111111-1111-4111-8111-111111111111" onOpenProject={onOpenProject} onChecklistSchedule={onMove} />));
+    act(() => root.render(<ProductionCalendarEvent event={checklist(false)} subview="week" projectHref="/projects/11111111-1111-4111-8111-111111111111" onOpenProject={onOpenProject} onChecklistSchedule={onMove} />));
     host.querySelector<HTMLButtonElement>("button")!.click();
     expect(onMove).toHaveBeenCalledOnce();
   });

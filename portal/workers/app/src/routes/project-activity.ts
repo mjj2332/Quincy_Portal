@@ -10,10 +10,10 @@ import {
   parseProjectActivityRow,
   projectActivityFeedItemFromRow,
   projectActivityFeedResponseSchema,
-  roleHasCapability,
   type ProjectActivityCursor,
 } from "@quincy/shared";
 import type { AppEnv } from "../env";
+import { hasProjectCollaborationAccess } from "../middleware/capability";
 import { terminalRoute } from "../lib/terminal-route";
 import { resolveVisibleProject } from "../lib/visible-project-scope";
 
@@ -83,12 +83,15 @@ function rejectedRow(row: ActivityDbRow, reason: string): void {
 
 async function handler(c: Context<AppEnv>) {
   const user = c.get("user");
-  if (!roleHasCapability(user.role, "viewQuickDetail")) return c.json({ error: "Forbidden", capability: "viewQuickDetail" }, 403);
-
   const rawProjectId = c.req.param("projectId");
   const parsedProjectId = projectIdSchema.safeParse(rawProjectId);
   if (!parsedProjectId.success) return c.json({ error: "Project not found" }, 404);
   const projectId = parsedProjectId.data;
+  if (!await hasProjectCollaborationAccess(c, projectId)) {
+    return user.role === "external_editor"
+      ? c.json({ error: "Project not found" }, 404)
+      : c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
+  }
   const visible = await resolveVisibleProject(c.env, user, projectId);
   if (!visible) return c.json({ error: "Project not found" }, 404);
 

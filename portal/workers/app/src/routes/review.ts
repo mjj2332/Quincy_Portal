@@ -34,7 +34,6 @@ reviewRoutes.get("/projects/:id/assets", terminalRoute("/projects/:id/assets", a
   const kind = collection as CollectionKind;
   if (c.get("user").role === "external_editor") {
     if (!await resolveVisibleProject(c.env, c.get("user"), projectId)) return c.json({ error: "Project not found" }, 404);
-    if (kind !== "raw" && kind !== "edited") return c.json({ error: "Forbidden" }, 403);
     const rows = await createDb(c.env.DB).select({
       id: schema.assets.id, collectionId: schema.assets.collectionId, kind: schema.assets.kind, originalFilename: schema.assets.originalFilename,
       bytes: schema.assets.bytes, width: schema.assets.width, height: schema.assets.height, ratingFromMetadata: schema.assets.ratingFromMetadata,

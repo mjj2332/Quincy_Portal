@@ -29,23 +29,14 @@ export type DashboardCalendarState = {
   myTasks: boolean;
 };
 
-export const DASHBOARD_QUICK_DETAIL_VIEWS = ["overview", "activity", "discussion"] as const;
-
-export type DashboardQuickDetail = {
-  projectId: string;
-  view: (typeof DASHBOARD_QUICK_DETAIL_VIEWS)[number];
-};
-
 export type DashboardListKanbanRoute = {
   kind: "dashboard";
   dashboardView: "list" | "kanban";
-  detail?: DashboardQuickDetail;
 };
 
 export type DashboardCalendarFacetRoute = {
   kind: "dashboard";
   calendar: DashboardCalendarState;
-  detail?: DashboardQuickDetail;
 };
 
 export type DashboardRoute =
@@ -68,10 +59,9 @@ const UUID = CANONICAL_LOWERCASE_UUID_REGEX;
 const reservedRoots = new Set(["api", "media", "__transform-source", "d"]);
 const COLLABORATION_NOTIFICATION_TYPES = new Set(["mentioned", "subtask_assigned", "subtask_due_today", "project_collaboration_activity"]);
 const calendarParameterNames = new Set([
-  "view", "date", "sub", "layers", "editors", "unassigned", "stages", "completed", "delivered", "overdue", "mine", "q", "detail", "detailView",
+  "view", "date", "sub", "layers", "editors", "unassigned", "stages", "completed", "delivered", "overdue", "mine", "q",
 ]);
-const dashboardListKanbanParameterNames = new Set(["view", "detail", "detailView"]);
-const dashboardQuickDetailViewNames = new Set<DashboardQuickDetail["view"]>(["activity", "discussion"]);
+const dashboardListKanbanParameterNames = new Set(["view"]);
 const calendarFilterDefaults = productionCalendarFiltersSchema.parse({});
 
 function unsafeText(value: string): boolean {
@@ -253,22 +243,7 @@ function parseDashboardListKanbanLocation(params: URLSearchParams): DashboardLis
   const dashboardView = params.get("view");
   if (dashboardView !== "list" && dashboardView !== "kanban") return null;
 
-  const projectId = params.get("detail");
-  const detailView = params.get("detailView");
-  if (projectId === null && detailView !== null) return null;
-  if (projectId !== null && !UUID.test(projectId)) return null;
-  if (detailView !== null && !dashboardQuickDetailViewNames.has(detailView as DashboardQuickDetail["view"])) return null;
-
-  return {
-    kind: "dashboard",
-    dashboardView,
-    ...(projectId === null ? {} : {
-      detail: {
-        projectId,
-        view: (detailView ?? "overview") as DashboardQuickDetail["view"],
-      },
-    }),
-  };
+  return { kind: "dashboard", dashboardView };
 }
 
 /** Parse the complete, canonical relative staff location. Queries stay closed except for
@@ -289,21 +264,7 @@ export function parseStaffLocation(location: string): StaffRoute {
   if (view === "calendar") {
     const calendar = parseCalendarLocation(params);
     if (calendar === null) return { kind: "not-found" };
-    const projectId = params.get("detail");
-    const detailView = params.get("detailView");
-    if (projectId === null && detailView !== null) return { kind: "not-found" };
-    if (projectId !== null && !UUID.test(projectId)) return { kind: "not-found" };
-    if (detailView !== null && !dashboardQuickDetailViewNames.has(detailView as DashboardQuickDetail["view"])) return { kind: "not-found" };
-    return {
-      kind: "dashboard",
-      calendar,
-      ...(projectId === null ? {} : {
-        detail: {
-          projectId,
-          view: (detailView ?? "overview") as DashboardQuickDetail["view"],
-        },
-      }),
-    };
+    return { kind: "dashboard", calendar };
   }
   return { kind: "not-found" };
 }
@@ -340,19 +301,11 @@ function calendarPathFor(calendar: DashboardCalendarState): string {
   return `/?${params.toString()}`;
 }
 
-function appendDashboardQuickDetail(path: string, detail: DashboardQuickDetail | undefined): string {
-  if (!detail) return path;
-  const params = new URLSearchParams();
-  params.set("detail", stripUnsafeText(detail.projectId));
-  if (detail.view !== "overview") params.set("detailView", stripUnsafeText(detail.view));
-  return `${path}&${params.toString()}`;
-}
-
 export function staffPathFor(route: Exclude<StaffRoute, { kind: "not-found" } | { kind: "reserved" }>): string {
   switch (route.kind) {
     case "dashboard": {
-      if ("calendar" in route) return appendDashboardQuickDetail(calendarPathFor(route.calendar), route.detail);
-      if ("dashboardView" in route) return appendDashboardQuickDetail(`/?view=${route.dashboardView}`, route.detail);
+      if ("calendar" in route) return calendarPathFor(route.calendar);
+      if ("dashboardView" in route) return `/?view=${route.dashboardView}`;
       return "/";
     }
     case "create-project": return "/projects/new";

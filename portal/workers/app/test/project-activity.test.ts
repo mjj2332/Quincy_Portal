@@ -22,6 +22,7 @@ const outsiderEditorId = "10000000-0000-4000-8000-000000000003";
 const photographerId = "10000000-0000-4000-8000-000000000004";
 const externalId = "10000000-0000-4000-8000-000000000005";
 const projectId = "20000000-0000-4000-8000-000000000001";
+const photographerProjectId = "20000000-0000-4000-8000-00000000000a";
 const externalUnassignedProjectId = "20000000-0000-4000-8000-000000000002";
 const externalArchivedProjectId = "20000000-0000-4000-8000-000000000003";
 const externalRemovedProjectId = "20000000-0000-4000-8000-000000000004";
@@ -80,10 +81,10 @@ async function insertActivity(input: {
   ).run();
 }
 
-async function insertProject(id: string, street: string, archived = false): Promise<void> {
+async function insertProject(id: string, street: string, archived = false, stageKey = "editing_autohdr"): Promise<void> {
   const now = Date.now();
-  await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, archived_at, created_at, updated_at) VALUES (?, ?, 'editing_autohdr', 0, ?, ?, ?)")
-    .bind(id, street, archived ? now : null, now, now).run();
+  await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, archived_at, created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?, ?)")
+    .bind(id, street, stageKey, archived ? now : null, now, now).run();
 }
 
 async function insertMember(project: string, user: string, roleOnProject = "editor"): Promise<string> {
@@ -105,6 +106,7 @@ beforeAll(async () => {
       .bind(crypto.randomUUID(), now + 3_600_000, tokens[token], id, now, now).run();
   }
   await insertProject(projectId, "Activity Main Street");
+  await insertProject(photographerProjectId, "Activity Photographer Street", false, "awaiting_raw");
   await insertProject(externalUnassignedProjectId, "Activity Unassigned Street");
   await insertProject(externalArchivedProjectId, "Activity Archived Street", true);
   await insertProject(externalRemovedProjectId, "Activity Removed Street");
@@ -114,8 +116,19 @@ beforeAll(async () => {
   await insertProject(corruptBoundaryProjectId, "Activity Corrupt Boundary Street");
   await insertProject(allCorruptPageProjectId, "Activity All Corrupt Page Street");
   await insertMember(projectId, externalId);
+  await insertMember(projectId, editorId);
+  await insertMember(projectId, photographerId, "photographer");
+  await insertMember(photographerProjectId, photographerId, "photographer");
   await insertMember(externalArchivedProjectId, externalId);
   await insertMember(externalSuppressedOnlyProjectId, externalId);
+  // These four projects back the pagination/cursor/data-integrity tests below, which use
+  // tokens.editor purely to exercise ordering/cursor logic, not authorization. Under the old
+  // viewQuickDetail-based gate Editor had global Activity access so no membership row was
+  // needed; the new hasProjectCollaborationAccess gate requires one.
+  await insertMember(eventProjectId, editorId);
+  await insertMember(boundaryProjectId, editorId);
+  await insertMember(corruptBoundaryProjectId, editorId);
+  await insertMember(allCorruptPageProjectId, editorId);
   const removedCycle = await insertMember(externalRemovedProjectId, externalId);
   await database.DB.prepare("DELETE FROM project_members WHERE id = ?").bind(removedCycle).run();
 
@@ -133,19 +146,19 @@ beforeAll(async () => {
 });
 
 describe("project activity feed API", () => {
-  it("checks viewQuickDetail before UUID validation or project resolution", async () => {
-    const response = await request("/api/projects/not-a-uuid/activity?unknown=1", tokens.photographer);
-    expect(response.status).toBe(403);
-    await expect(response.json()).resolves.toEqual({ error: "Forbidden", capability: "viewQuickDetail" });
-  });
-
-  it("allows Admin and internal Editors regardless of membership, with byte-identical 404 misses", async () => {
-    for (const token of [tokens.admin, tokens.editor, tokens.outsider]) {
+  it("uses collaboration access for the widened internal audience", async () => {
+    for (const token of [tokens.admin, tokens.editor, tokens.external]) {
       const response = await request(`/api/projects/${projectId}/activity`, token);
       expect(response.status).toBe(200);
       const body = await response.json() as ProjectActivityFeedResponse;
       expect(Object.keys(body).sort()).toEqual(["items", "nextCursor"]);
     }
+    expect((await request(`/api/projects/${photographerProjectId}/activity`, tokens.photographer)).status).toBe(200);
+    expect((await request(`/api/projects/${projectId}/activity`, tokens.photographer)).status).toBe(404);
+    expect((await request(`/api/projects/${externalRemovedProjectId}/activity`, tokens.outsider)).status).toBe(403);
+    expect((await request(`/api/projects/${externalArchivedProjectId}/activity`, tokens.outsider)).status).toBe(403);
+    expect((await request(`/api/projects/${projectId}/activity`, tokens.outsider)).status).toBe(403);
+    expect((await request(`/api/projects/${photographerProjectId}/activity`, tokens.outsider)).status).toBe(403);
     const misses = await Promise.all([
       request("/api/projects/not-a-uuid/activity", tokens.external),
       request(`/api/projects/${externalUnassignedProjectId}/activity`, tokens.external),
@@ -157,7 +170,7 @@ describe("project activity feed API", () => {
     expect(bodies).toEqual(bodies.map(() => ({ status: 404, body: '{"error":"Project not found"}' })));
   });
 
-  it("keeps bare and trailing-slash forms byte-identical and rejects anonymous/Photographer access", async () => {
+  it("keeps bare and trailing-slash forms byte-identical and preserves visibility denial", async () => {
     const [bare, trailing] = await Promise.all([
       request(`/api/projects/${projectId}/activity`, tokens.editor),
       request(`/api/projects/${projectId}/activity/`, tokens.editor),
@@ -165,7 +178,7 @@ describe("project activity feed API", () => {
     expect(bare.status).toBe(200);
     expect(trailing.status).toBe(200);
     expect(await bare.text()).toBe(await trailing.text());
-    expect((await request(`/api/projects/${projectId}/activity`, tokens.photographer)).status).toBe(403);
+    expect((await request(`/api/projects/${projectId}/activity`, tokens.photographer)).status).toBe(404);
     expect((await request(`/api/projects/${projectId}/activity`)).status).toBe(401);
   });
 

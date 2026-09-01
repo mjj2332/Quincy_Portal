@@ -146,7 +146,7 @@ export const externalAnnotationSchema = z.object({
 }).strict();
 export type ExternalAnnotationDto = z.infer<typeof externalAnnotationSchema>;
 
-export const externalCollectionLinkSchema = z.object({ id: uuid, url: z.string().url(), label: z.string().nullable(), position: z.number().int(), createdAt: iso }).strict();
+export const externalCollectionLinkSchema = z.object({ id: uuid, url: z.string().url(), label: z.string().nullable(), source: z.enum(["tonomo", "manual"]), position: z.number().int(), createdAt: iso }).strict();
 export type ExternalCollectionLinkDto = z.infer<typeof externalCollectionLinkSchema>;
 
 export const externalIngestStatusSchema = z.object({ expectedCount: z.number().int().nullable(), receivedCount: z.number().int(), mismatch: z.boolean() }).strict();

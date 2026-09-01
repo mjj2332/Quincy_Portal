@@ -65,7 +65,6 @@ type BoardMoveHandler = (project: ProjectSummary, gap: SemanticGap, kind: "cross
 export type KanbanCardProps = {
   project: ProjectSummary;
   projectHref?: string;
-  onProjectAnchorClick?: (event: React.MouseEvent<HTMLAnchorElement>) => void;
   canMove: boolean;
   canMoveStages?: boolean;
   canDragThisCard?: boolean;
@@ -238,7 +237,6 @@ function MoveToControl({ project, model, activeStages, role, sort, canMoveStages
 export function KanbanCard({
   project,
   projectHref,
-  onProjectAnchorClick,
   canMove,
   canMoveStages = canMove,
   canDragThisCard = false,
@@ -269,7 +267,7 @@ export function KanbanCard({
   const moveModel = boardModel ?? { projects: [project], ...(project.authorizedBoardOrder ? { authorizedBoardOrder: project.authorizedBoardOrder } : {}) };
 
   return <div ref={setCardRef} style={cardStyle} className={`kcard-wrap ${isDragging ? "is-dragging" : ""}`}>
-    <InternalLink className="kcard" to={projectHref ?? `/projects/${encodeURIComponent(project.id)}`} onClick={onProjectAnchorClick}>
+    <InternalLink className="kcard" to={projectHref ?? `/projects/${encodeURIComponent(project.id)}`}>
       <div className="kcard__media"><CoverMedia project={project} retryToken={coverRetry} onFailedChange={setCoverFailed} /></div>
       <div className="kcard__b">
         <div className="kcard__addr serif">{project.street}</div>
@@ -522,7 +520,6 @@ type KanbanColumnProps = {
   onMoveToProposalChange: (proposal: SemanticGap | null) => void;
   semanticStageKey: StageKey;
   projectHrefFor?: (project: ProjectSummary) => string | undefined;
-  onProjectAnchorClick?: (event: React.MouseEvent<HTMLAnchorElement>) => void;
 };
 
 function KanbanColumn({
@@ -548,7 +545,6 @@ function KanbanColumn({
   onMoveToProposalChange,
   semanticStageKey: semanticKey,
   projectHrefFor,
-  onProjectAnchorClick,
 }: KanbanColumnProps) {
   const displayedIds = displayOrders[semanticKey] ?? [];
   const displayedProjects = displayedIds.map((id) => projects.find((project) => project.id === id)).filter((project): project is ProjectSummary => project !== undefined);
@@ -584,7 +580,6 @@ function KanbanColumn({
                 onPriorityChange,
                 onBoardPosition,
                 projectHref: projectHrefFor?.(project),
-                onProjectAnchorClick,
               }}
               project={displayProject}
               semanticStageKey={semanticKey}
@@ -622,7 +617,6 @@ export type ProjectKanbanBoardProps = {
   onInteractionStateChange?: (state: BoardInteractionState) => void;
   onAnnounce?: (message: string | undefined) => void;
   projectHrefFor?: (project: ProjectSummary) => string | undefined;
-  onProjectAnchorClick?: (event: React.MouseEvent<HTMLAnchorElement>) => void;
 };
 
 export function ProjectKanbanBoard({
@@ -647,7 +641,6 @@ export function ProjectKanbanBoard({
   onInteractionStateChange,
   onAnnounce,
   projectHrefFor,
-  onProjectAnchorClick,
 }: ProjectKanbanBoardProps) {
   const reducedMotion = usePrefersReducedMotion();
   const sensors = useSensors(
@@ -925,7 +918,6 @@ export function ProjectKanbanBoard({
           onMoveToProposalChange={onMoveToProposalChange ?? (() => undefined)}
           semanticStageKey={semanticStageKey(stage.key)}
           projectHrefFor={projectHrefFor}
-          onProjectAnchorClick={onProjectAnchorClick}
         />;
       })}
     </div>

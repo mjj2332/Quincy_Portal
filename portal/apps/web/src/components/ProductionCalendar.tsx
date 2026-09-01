@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   deriveProductionCalendarWindow,
   formatSydneyCivilMinute,
@@ -84,7 +84,6 @@ export type ProductionCalendarProps = {
   onAccessLoss?: () => void;
   projectHrefFor?: (projectId: string) => string | undefined;
   onOpenProject?: (projectId: string) => void;
-  onProjectAnchorClick?: (event: ReactMouseEvent<HTMLAnchorElement>) => void;
 };
 
 type CalendarDropInfo = {
@@ -446,7 +445,7 @@ function adoptChecklistResult(response: ProductionCalendarRangeResponse, source:
   return { ...response, events: sourceWasEvent || nextEvent ? events : response.events, unscheduled };
 }
 
-export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFilters, onAcceptGateChange, onSettleStateChange, onAccessLoss, projectHrefFor, onOpenProject, onProjectAnchorClick }: ProductionCalendarProps) {
+export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFilters, onAcceptGateChange, onSettleStateChange, onAccessLoss, projectHrefFor, onOpenProject }: ProductionCalendarProps) {
   const range = useMemo(() => deriveProductionCalendarWindow(calendar.date, calendar.subview), [calendar.date, calendar.subview]);
   const query = useProductionCalendarRange({ identity, calendar, enabled: true });
   const queryClient = useOptionalProjectQueryClient();
@@ -1553,14 +1552,14 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
             }}
             eventContent={(info) => {
               const dto = info.event.extendedProps.dto;
-              return dto ? <ProductionCalendarEvent event={dto} subview={calendar.subview} needsAttention={checklistNeedsAttention.has(dto.id)} projectHref={projectHrefFor?.(dto.project.id)} onOpenProject={() => onOpenProject?.(dto.project.id)} onProjectAnchorClick={onProjectAnchorClick} onMoveReschedule={calendarSettle.pending || calendarInteractionBlocked ? undefined : openMoveDialog} onChecklistSchedule={calendarSettle.pending || calendarInteractionBlocked ? undefined : openChecklistScheduleEditor} /> : null;
+              return dto ? <ProductionCalendarEvent event={dto} subview={calendar.subview} needsAttention={checklistNeedsAttention.has(dto.id)} projectHref={projectHrefFor?.(dto.project.id)} onOpenProject={() => onOpenProject?.(dto.project.id)} onMoveReschedule={calendarSettle.pending || calendarInteractionBlocked ? undefined : openMoveDialog} onChecklistSchedule={calendarSettle.pending || calendarInteractionBlocked ? undefined : openChecklistScheduleEditor} /> : null;
             }}
           />
 
           {calendar.subview === "month" && selectedDay !== null && (
             <section className="qc-calendar-disclosure" aria-label="Selected day">
               <div className="ey">Selected day · {selectedDay}</div>
-              {selectedEvents.length === 0 ? <p className="muted">No scheduled work on this day.</p> : <div className="qc-calendar-disclosure__events">{selectedEvents.map((event) => <ProductionCalendarEvent key={event.id} event={event} subview={calendar.subview} compact needsAttention={checklistNeedsAttention.has(event.id)} projectHref={projectHrefFor?.(event.project.id)} onOpenProject={() => onOpenProject?.(event.project.id)} onProjectAnchorClick={onProjectAnchorClick} onMoveReschedule={calendarSettle.pending || calendarInteractionBlocked ? undefined : openMoveDialog} />)}</div>}
+              {selectedEvents.length === 0 ? <p className="muted">No scheduled work on this day.</p> : <div className="qc-calendar-disclosure__events">{selectedEvents.map((event) => <ProductionCalendarEvent key={event.id} event={event} subview={calendar.subview} compact needsAttention={checklistNeedsAttention.has(event.id)} projectHref={projectHrefFor?.(event.project.id)} onOpenProject={() => onOpenProject?.(event.project.id)} onMoveReschedule={calendarSettle.pending || calendarInteractionBlocked ? undefined : openMoveDialog} />)}</div>}
             </section>
           )}
         </div>
@@ -1576,7 +1575,6 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
           dragSuppressed={actionOnlyWeek}
           projectHrefFor={projectHrefFor}
           onOpenProject={onOpenProject}
-          onProjectAnchorClick={onProjectAnchorClick}
         />
       </div>}
       <div className="dashboard-live-region sr-only" aria-live="polite" aria-atomic="true">{announcement}</div>

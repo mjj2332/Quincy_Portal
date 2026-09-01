@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ApiError } from "../lib/api";
+import { decodeExternalResponse } from "../lib/external-api-response";
 import { reorderNeighbors } from "../lib/reorder-neighbors";
 import { projectDataKeys } from "../lib/project-data";
 import { ProjectQueryRuntime, ProjectQueryRuntimeProvider } from "../lib/project-query-sync";
@@ -12,6 +13,8 @@ import type { WorkspaceAsset } from "./PhotoGrid";
 
 const confirmMock = vi.hoisted(() => vi.fn(() => Promise.resolve(true)));
 vi.mock("../lib/confirm", () => ({ confirm: confirmMock }));
+const authState = vi.hoisted(() => ({ role: "editor" }));
+vi.mock("../lib/auth", () => ({ useSession: () => ({ data: { user: { id: "user-1", role: authState.role } }, isPending: false }) }));
 
 type DndTestEvent = { active: { id: string }; over: { id: string } | null };
 const dnd = vi.hoisted(() => ({
@@ -42,9 +45,14 @@ const apiPatchMock = vi.fn<(path: string, body: unknown) => Promise<unknown>>();
 const apiPostMock = vi.fn<(path: string, body: unknown) => Promise<unknown>>();
 const apiDeleteMock = vi.fn<(path: string) => Promise<unknown>>();
 const apiPostWithStatusMock = vi.fn<(path: string, body: unknown) => Promise<{ data: unknown; status: number }>>();
+const externalApiGetMock = vi.hoisted(() => vi.fn<(surface: string, path: string, signal?: AbortSignal) => Promise<unknown>>());
 vi.mock("../lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/api")>();
   return { ...actual, apiGet: (path: string) => apiGetMock(path), apiPatch: (path: string, body: unknown) => apiPatchMock(path, body), apiPost: (path: string, body: unknown) => apiPostMock(path, body), apiDelete: (path: string) => apiDeleteMock(path), apiPostWithStatus: (path: string, body: unknown) => apiPostWithStatusMock(path, body) };
+});
+vi.mock("../lib/external-api-response", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/external-api-response")>();
+  return { ...actual, externalApiGet: (surface: string, path: string, signal?: AbortSignal) => externalApiGetMock(surface, path, signal) };
 });
 
 function asset(id: string, version: number): WorkspaceAsset {
@@ -103,6 +111,8 @@ describe("CollectionPanel version history deletion wiring", () => {
     apiPostMock.mockReset();
     apiDeleteMock.mockReset();
     apiPostWithStatusMock.mockReset();
+    authState.role = "editor";
+    externalApiGetMock.mockReset().mockImplementation(async (surface, path) => decodeExternalResponse(surface as "collection-links", await apiGetMock(path)));
   });
   afterEach(async () => { await act(async () => { root!.unmount(); await Promise.resolve(); }); runtime?.dispose(); queryClient?.clear(); runtime = null; queryClient = null; root = null; host.remove(); });
 
@@ -144,6 +154,46 @@ describe("CollectionPanel version history deletion wiring", () => {
 
     await renderVideoPanel({ canManage: false });
     expect(host.textContent).not.toContain("Edit");
+  });
+
+  it("uses the strict external link response and keeps provenance controls after a reload", async () => {
+    authState.role = "external_editor";
+    const initial = videoLinks();
+    externalApiGetMock.mockResolvedValue({ links: initial });
+    await renderVideoPanel();
+    expect(externalApiGetMock).toHaveBeenCalledWith("collection-links", "/api/projects/project/links?collection=video", undefined);
+    expect(tile(host, "Walkthrough").textContent).toContain("Edit");
+    expect(tile(host, "Walkthrough").textContent).toContain("Remove");
+    expect(tile(host, "Tonomo delivery").textContent).not.toContain("Edit");
+    expect(tile(host, "Tonomo delivery").textContent).not.toContain("Remove");
+
+    const created = { id: "new-manual-link", url: "https://vimeo.com/new", label: "New cut", source: "manual" as const, position: 3072, createdAt: "2026-08-03T00:00:00.000Z" };
+    apiPostWithStatusMock.mockResolvedValue({ data: created, status: 201 });
+    await typeInto(host.querySelector<HTMLInputElement>("input[placeholder='https://vimeo.com/…']")!, created.url);
+    await typeInto(host.querySelector<HTMLInputElement>("input[placeholder='Final walkthrough']")!, created.label!);
+    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Add link")!);
+    expect(tile(host, "New cut").textContent).toContain("Edit");
+
+    externalApiGetMock.mockResolvedValue({ links: [] });
+    await act(async () => { root!.render(createElement(CollectionPanel, { ...props, collection: "copy", canManage: true })); await Promise.resolve(); await Promise.resolve(); await new Promise((resolve) => window.setTimeout(resolve, 0)); });
+    externalApiGetMock.mockResolvedValue({ links: [created, initial[1]!] });
+    await act(async () => { root!.render(createElement(CollectionPanel, { ...videoProps, canManage: true })); await Promise.resolve(); await Promise.resolve(); await new Promise((resolve) => window.setTimeout(resolve, 0)); });
+    expect(tile(host, "New cut").textContent).toContain("Edit");
+    expect(tile(host, "Tonomo delivery").textContent).not.toContain("Remove");
+  });
+
+  it("fails loudly when an external link response omits its source discriminator", async () => {
+    authState.role = "external_editor";
+    apiGetMock.mockResolvedValue({ links: [{ id: "missing-source", url: "https://vimeo.com/missing", label: null, position: 1024, createdAt: "2026-08-01T00:00:00.000Z" }] });
+    await renderVideoPanel();
+    expect(host.querySelector(".collection-link")).toBeNull();
+    expect(videoProps.onToast).toHaveBeenCalledWith(expect.stringContaining("Required"), "error");
+  });
+
+  it("keeps internal link loads on apiGet rather than the external response boundary", async () => {
+    await renderVideoPanel();
+    expect(apiGetMock).toHaveBeenCalledWith("/api/projects/project/links?collection=video");
+    expect(externalApiGetMock).not.toHaveBeenCalled();
   });
 
   it("exposes Video-only labelled grips without changing anchors or manual controls", async () => {

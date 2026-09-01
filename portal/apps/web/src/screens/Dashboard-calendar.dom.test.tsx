@@ -13,31 +13,13 @@ const apiGetMock = vi.hoisted(() => vi.fn<(path: string) => Promise<unknown>>())
 const apiPutMock = vi.hoisted(() => vi.fn<(path: string, body: unknown) => Promise<unknown>>());
 const calendarRefetchFails = vi.hoisted(() => ({ value: false }));
 const boardPropsState = vi.hoisted(() => ({ value: null as Record<string, unknown> | null }));
-const quickDetailPropsState = vi.hoisted(() => ({ value: null as Record<string, any> | null }));
 const authRole = vi.hoisted(() => ({ value: "admin" as "admin" | "editor" | "photographer" | "external_editor" }));
-const removeProjectDataMock = vi.hoisted(() => vi.fn());
-const terminatePrincipalMock = vi.hoisted(() => vi.fn());
 vi.mock("../lib/api", async (importOriginal) => ({ ...await importOriginal<typeof import("../lib/api")>(), apiGet: (path: string) => apiGetMock(path), apiPut: (path: string, body: unknown) => apiPutMock(path, body) }));
-vi.mock("../lib/project-data", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../lib/project-data")>();
-  return {
-    ...actual,
-    removeProjectData: (...args: Parameters<typeof actual.removeProjectData>) => { removeProjectDataMock(...args); return actual.removeProjectData(...args); },
-    terminatePrincipalOnUnauthorized: (...args: Parameters<typeof actual.terminatePrincipalOnUnauthorized>) => { terminatePrincipalMock(...args); return actual.terminatePrincipalOnUnauthorized(...args); },
-  };
-});
 vi.mock("../lib/auth", () => ({ useSession: () => ({ data: { user: { id: "user-1", role: authRole.value } } }) }));
 vi.mock("../lib/capabilities", () => ({ useCapabilities: () => ({ role: authRole.value, capabilities: [], can: (capability: string) => authRole.value === "admin" && ["adminBackend", "createProject", "viewNoticeBoard"].includes(capability) }) }));
 vi.mock("../lib/stages", () => ({ presentationStages: (stages: unknown[]) => stages, useStages: () => ({ stages: [], presentationStageKey: (key: string) => key }) }));
 vi.mock("../components/NoticeBoard", () => ({ NoticeBoard: () => null }));
-vi.mock("../components/ProjectKanbanBoard", () => ({ ProjectKanbanBoard: (props: Record<string, any>) => { boardPropsState.value = props; const project = Array.isArray(props.projects) ? props.projects.find((candidate: any) => typeof candidate?.id === "string") : undefined; return <div data-testid="dashboard-board">{project && props.projectHrefFor && <a className="mock-kanban-project-link" href={props.projectHrefFor(project)} onClick={props.onProjectAnchorClick}>{project.street}</a>}</div>; } }));
-vi.mock("../components/ProjectQuickDetailSheet", () => ({
-  computeSheetVisible: () => true,
-  ProjectQuickDetailSheet: (props: Record<string, any>) => {
-    quickDetailPropsState.value = props;
-    return <div data-testid="mock-quick-detail-sheet"><button type="button" data-testid="mock-detail-discussion" onClick={() => props.onViewChange("discussion")}>Discussion</button><button type="button" data-testid="mock-detail-close" onClick={props.onRequestClose}>Close</button></div>;
-  },
-}));
+vi.mock("../components/ProjectKanbanBoard", () => ({ ProjectKanbanBoard: (props: Record<string, any>) => { boardPropsState.value = props; const project = Array.isArray(props.projects) ? props.projects.find((candidate: any) => typeof candidate?.id === "string") : undefined; return <div data-testid="dashboard-board">{project && props.projectHrefFor && <a className="mock-kanban-project-link" href={props.projectHrefFor(project)}>{project.street}</a>}</div>; } }));
 vi.mock("../components/ProductionCalendarSurface", () => ({ ProductionCalendarSurface: (props: any) => <div data-testid="dashboard-calendar-surface" data-initial-view={props.initialView}>
   {props.eventContent?.({ event: { extendedProps: props.events?.[0]?.extendedProps } })}
   <button type="button" data-testid="dashboard-calendar-drop" onClick={() => props.eventDrop?.({ event: { allDay: true, start: new Date("2026-08-20T00:00:00.000Z"), startStr: "2026-08-20", extendedProps: props.events?.[0]?.extendedProps }, revert: vi.fn() })}>Drop Deadline</button>
@@ -80,9 +62,6 @@ describe("Dashboard Calendar routing", () => {
     apiPutMock.mockReset();
     calendarRefetchFails.value = false;
     boardPropsState.value = null;
-    quickDetailPropsState.value = null;
-    removeProjectDataMock.mockClear();
-    terminatePrincipalMock.mockClear();
     apiGetMock.mockReset();
     apiGetMock.mockImplementation((path) => {
       if (!path.startsWith("/api/production-calendar")) return Promise.resolve(projectResponse());
@@ -161,7 +140,7 @@ describe("Dashboard Calendar routing", () => {
     expect(window.location.search).toBe("?view=list");
     expect(window.localStorage.getItem("quincy:dashboard:view")).toBe("list");
     const row = host.querySelector<HTMLAnchorElement>("a.prow");
-    expect(row?.getAttribute("href")).toBe("/?view=list&detail=33333333-3333-4333-8333-333333333333");
+    expect(row?.getAttribute("href")).toBe("/projects/33333333-3333-4333-8333-333333333333");
     expect(row?.tabIndex).toBe(0);
     expect(row?.querySelector("button, select")).toBeNull();
 
@@ -170,57 +149,17 @@ describe("Dashboard Calendar routing", () => {
     expect(window.localStorage.getItem("quincy:dashboard:view")).toBe("kanban");
   });
 
-  it("opens List and Kanban project anchors on the canonical quick-detail facet", async () => {
+  it("opens List and Kanban project anchors on the Full Workspace", async () => {
     await render();
     await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "List")?.click(); await Promise.resolve(); });
     const row = host.querySelector<HTMLAnchorElement>("a.prow")!;
-    expect(row.href).toContain("/?view=list&detail=33333333-3333-4333-8333-333333333333");
+    expect(row.href).toContain("/projects/33333333-3333-4333-8333-333333333333");
     await act(async () => { row.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, detail: 1 })); await Promise.resolve(); });
-    expect(window.location.search).toContain("detail=33333333-3333-4333-8333-333333333333");
-    expect(quickDetailPropsState.value?.activeView).toBe("overview");
-    await act(async () => { host.querySelector<HTMLButtonElement>("[data-testid=\"mock-detail-discussion\"]")!.click(); await Promise.resolve(); });
-    expect(window.location.search).toContain("detailView=discussion");
-    await act(async () => { host.querySelector<HTMLButtonElement>("[data-testid=\"mock-detail-close\"]")!.click(); await Promise.resolve(); });
-    expect(window.location.search).toBe("?view=list");
+    expect(window.location.pathname).toBe("/projects/33333333-3333-4333-8333-333333333333");
+    expect(window.location.search).toBe("");
 
     await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Kanban")?.click(); await Promise.resolve(); });
-    expect(host.querySelector<HTMLAnchorElement>("a.mock-kanban-project-link")?.getAttribute("href")).toBe("/?view=kanban&detail=33333333-3333-4333-8333-333333333333");
-  });
-
-  it("uses Back for a same-document opener and replace for a direct quick-detail route", async () => {
-    await render();
-    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "List")?.click(); await Promise.resolve(); });
-    const row = host.querySelector<HTMLAnchorElement>("a.prow")!;
-    await act(async () => { row.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, detail: 1 })); await Promise.resolve(); });
-    const back = vi.spyOn(window.history, "back");
-    await act(async () => { host.querySelector<HTMLButtonElement>("[data-testid=\"mock-detail-close\"]")!.click(); await new Promise((resolve) => setTimeout(resolve, 0)); });
-    expect(back).toHaveBeenCalledTimes(1);
-    expect(window.location.search).toBe("?view=list");
-
-    window.history.replaceState(null, "", "/?view=list&detail=33333333-3333-4333-8333-333333333333");
-    await act(async () => { window.dispatchEvent(new PopStateEvent("popstate")); await Promise.resolve(); });
-    back.mockClear();
-    await act(async () => { host.querySelector<HTMLButtonElement>("[data-testid=\"mock-detail-close\"]")!.click(); await Promise.resolve(); });
-    expect(back).not.toHaveBeenCalled();
-    expect(window.location.search).toBe("?view=list");
-    back.mockRestore();
-  });
-
-  it("does not record a same-document opener for a modified-click", async () => {
-    await render();
-    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "List")?.click(); await Promise.resolve(); });
-    const row = host.querySelector<HTMLAnchorElement>("a.prow")!;
-    // A Ctrl/Cmd-click is left to native new-tab behavior; the callback must
-    // not treat it as a same-tab opener even though InternalLink invokes it
-    // before deciding whether to intercept the click.
-    await act(async () => { row.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, detail: 1, metaKey: true })); await Promise.resolve(); });
-    window.history.replaceState(null, "", "/?view=list&detail=33333333-3333-4333-8333-333333333333");
-    await act(async () => { window.dispatchEvent(new PopStateEvent("popstate")); await Promise.resolve(); });
-    const back = vi.spyOn(window.history, "back");
-    await act(async () => { host.querySelector<HTMLButtonElement>("[data-testid=\"mock-detail-close\"]")!.click(); await Promise.resolve(); });
-    expect(back).not.toHaveBeenCalled();
-    expect(window.location.search).toBe("?view=list");
-    back.mockRestore();
+    expect(host.querySelector<HTMLAnchorElement>("a.mock-kanban-project-link")?.getAttribute("href")).toBe("/projects/33333333-3333-4333-8333-333333333333");
   });
 
   it("takes List/Kanban view state from the URL across history arrivals", async () => {
@@ -250,103 +189,27 @@ describe("Dashboard Calendar routing", () => {
     expect([...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] button')].find((button) => button.textContent === "List")?.className).toBe("is-active");
   });
 
-  it("uses the separate Calendar facet writer to open a project sheet", async () => {
+  it("opens scheduled Calendar project anchors on the Full Workspace", async () => {
     await render({ calendar: routeCalendar });
     const anchor = host.querySelector<HTMLAnchorElement>("a.qc-cal-event-card__project-link")!;
-    expect(anchor.getAttribute("href")).toBe("/?view=calendar&date=" + routeCalendar.date + "&sub=month&layers=project%2Cchecklist&editors=" + editorId + "&detail=" + projectId);
+    expect(anchor.getAttribute("href")).toBe("/projects/" + projectId);
     await act(async () => { anchor.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, detail: 1 })); await Promise.resolve(); });
-    expect(window.location.search).toContain("detail=" + projectId);
-    expect(safeStaffDestination(window.location.pathname + window.location.search)).toBe(window.location.pathname + window.location.search);
-    expect(quickDetailPropsState.value?.activeView).toBe("overview");
+    expect(`${window.location.pathname}${window.location.search}`).toBe("/projects/" + projectId);
   });
 
-  it("uses Back and restores focus to the originating Calendar anchor on close", async () => {
-    window.history.replaceState(null, "", "/?view=calendar&date=" + routeCalendar.date + "&sub=month&layers=project%2Cchecklist&editors=" + editorId);
+  it("leaves a modified Calendar project click to native navigation", async () => {
     await render({ calendar: routeCalendar });
     const anchor = host.querySelector<HTMLAnchorElement>("a.qc-cal-event-card__project-link")!;
-    await act(async () => { anchor.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, detail: 1 })); await Promise.resolve(); });
-    const back = vi.spyOn(window.history, "back");
-    const focusSpy = vi.spyOn(anchor, "focus");
-    await act(async () => { host.querySelector<HTMLButtonElement>("[data-testid=\"mock-detail-close\"]")!.click(); await new Promise((resolve) => setTimeout(resolve, 0)); });
-    expect(back).toHaveBeenCalledTimes(1);
-    expect(focusSpy).toHaveBeenCalled();
-    back.mockRestore(); focusSpy.mockRestore();
+    await act(async () => { anchor.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, detail: 1, metaKey: true })); await Promise.resolve(); });
+    expect(`${window.location.pathname}${window.location.search}`).toBe("/projects/" + projectId);
   });
 
-  async function openQuickDetailSheet() {
-    await render();
-    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "List")?.click(); await Promise.resolve(); });
-    const row = host.querySelector<HTMLAnchorElement>("a.prow")!;
-    await act(async () => { row.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, detail: 1 })); await Promise.resolve(); });
-    expect(window.location.search).toContain("detail=");
-  }
-
-  it.each([
-    ["detail", 403] as const,
-    ["detail", 404] as const,
-    ["activity", 403] as const,
-    ["activity", 404] as const,
-    ["comments", 404] as const,
-    ["comment-read-marker", 404] as const,
-  ])("closes the sheet and purges the project cache on a %s %i access failure", async (resource, status) => {
-    await openQuickDetailSheet();
-    await act(async () => { quickDetailPropsState.value?.onAccessFailure(new ApiError("Project not found", status), resource); await Promise.resolve(); });
-    expect(window.location.search).not.toContain("detail=");
-    expect(removeProjectDataMock).toHaveBeenCalledTimes(1);
-    expect(removeProjectDataMock.mock.calls[0]?.[1]).toBe("33333333-3333-4333-8333-333333333333");
-    expect(terminatePrincipalMock).not.toHaveBeenCalled();
-  });
-
-  it("terminates the principal (not a per-project purge) on a 401, for any resource", async () => {
-    await openQuickDetailSheet();
-    await act(async () => { quickDetailPropsState.value?.onAccessFailure(new ApiError("Unauthorized", 401), "detail"); await Promise.resolve(); });
-    expect(window.location.search).not.toContain("detail=");
-    expect(terminatePrincipalMock).toHaveBeenCalledTimes(1);
-    expect(removeProjectDataMock).not.toHaveBeenCalled();
-  });
-
-  it.each([401, 403, 404] as const)("never closes the sheet or purges anything for a nested-comment %i (author-only mismatch is not project loss)", async (status) => {
-    await openQuickDetailSheet();
-    await act(async () => { quickDetailPropsState.value?.onAccessFailure(new ApiError("Forbidden: only the author can edit this comment.", status), "nested-comment"); await Promise.resolve(); });
-    expect(window.location.search).toContain("detail=");
-    expect(removeProjectDataMock).not.toHaveBeenCalled();
-    expect(terminatePrincipalMock).not.toHaveBeenCalled();
-  });
-
-  // A comments-family 403 never actually reaches Dashboard's onAccessFailure — it's consumed
-  // locally by ProjectDiscussionThread's own consumeOrForward first (verified by
-  // ProjectDiscussionThread.dom.test.tsx: "consumes a discussion-only 403 locally with no
-  // composer or close/purge callback"), so it's not a scenario worth simulating in isolation here.
-
-  it("uses Back and restores focus for a keyboard-activated (Enter) Calendar anchor", async () => {
+  it("opens a keyboard-activated (Enter) Calendar anchor on the Full Workspace", async () => {
     window.history.replaceState(null, "", "/?view=calendar&date=" + routeCalendar.date + "&sub=month&layers=project%2Cchecklist&editors=" + editorId);
     await render({ calendar: routeCalendar });
     const anchor = host.querySelector<HTMLAnchorElement>("a.qc-cal-event-card__project-link")!;
     await act(async () => { anchor.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })); await Promise.resolve(); });
-    expect(window.location.search).toContain("detail=" + projectId);
-    const back = vi.spyOn(window.history, "back");
-    const focusSpy = vi.spyOn(anchor, "focus");
-    await act(async () => { host.querySelector<HTMLButtonElement>("[data-testid=\"mock-detail-close\"]")!.click(); await new Promise((resolve) => setTimeout(resolve, 0)); });
-    expect(back).toHaveBeenCalledTimes(1);
-    expect(focusSpy).toHaveBeenCalled();
-    back.mockRestore(); focusSpy.mockRestore();
-  });
-
-  it("preserves the detail facet through Calendar navigation, debounced search, and applied filters", async () => {
-    window.history.replaceState(null, "", "/?view=calendar&date=" + routeCalendar.date + "&sub=month&layers=project%2Cchecklist&editors=" + editorId + "&detail=" + projectId + "&detailView=activity");
-    await render({ calendar: routeCalendar });
-    await act(async () => { host.querySelector<HTMLButtonElement>('[aria-label="Previous period"]')!.click(); await Promise.resolve(); });
-    expect(window.location.search).toContain("detail=" + projectId);
-    expect(window.location.search).toContain("detailView=activity");
-    expect(safeStaffDestination(window.location.pathname + window.location.search)).toBe(window.location.pathname + window.location.search);
-    await typeSearch("harbour");
-    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 350)); });
-    expect(window.location.search).toContain("q=harbour");
-    expect(window.location.search).toContain("detail=" + projectId);
-    await act(async () => { [...host.querySelectorAll("label")].find((label) => label.textContent?.includes("Unassigned"))?.querySelector<HTMLInputElement>("input")?.click(); await Promise.resolve(); });
-    expect(window.location.search).toContain("unassigned=1");
-    expect(window.location.search).toContain("detail=" + projectId);
-    expect(safeStaffDestination(window.location.pathname + window.location.search)).toBe(window.location.pathname + window.location.search);
+    expect(`${window.location.pathname}${window.location.search}`).toBe("/projects/" + projectId);
   });
 
   it("restores a remembered Calendar view by replacing the bare root with its canonical URL", async () => {

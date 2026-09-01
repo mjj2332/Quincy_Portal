@@ -1,6 +1,6 @@
-import { parseStaffLocation, parseStaffPathname, projectNotificationRoute, safeStaffDestination, staffPathFor, type DashboardCalendarFacetRoute, type DashboardListKanbanRoute, type DashboardQuickDetail, type DashboardRoute, type StaffRoute } from "@quincy/shared";
+import { parseStaffLocation, parseStaffPathname, projectNotificationRoute, safeStaffDestination, staffPathFor, type DashboardCalendarFacetRoute, type DashboardListKanbanRoute, type DashboardRoute, type StaffRoute } from "@quincy/shared";
 
-export { parseStaffLocation, parseStaffPathname, projectNotificationRoute, safeStaffDestination, staffPathFor, type DashboardCalendarFacetRoute, type DashboardListKanbanRoute, type DashboardQuickDetail, type DashboardRoute, type StaffRoute };
+export { parseStaffLocation, parseStaffPathname, projectNotificationRoute, safeStaffDestination, staffPathFor, type DashboardCalendarFacetRoute, type DashboardListKanbanRoute, type DashboardRoute, type StaffRoute };
 
 export type HistorySource = {
   location: Pick<Location, "pathname" | "search">;

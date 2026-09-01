@@ -58,7 +58,7 @@ mediaRoutes.get("/asset/:assetId/:variant", terminalRoute("/asset/:assetId/:vari
   const assetId = c.req.param("assetId"), variant = c.req.param("variant"); if (!z.string().uuid().safeParse(assetId).success || !["web", "thumb", "original"].includes(variant)) return c.json({ error: "Invalid media request" }, 400);
   if (c.get("user").role === "external_editor") {
     const row = await externalAsset(c, assetId);
-    if (!row || !isUserVisibleAsset(row.collectionKind, row.publishStatus) || !["raw", "edited"].includes(row.collectionKind)) return c.json({ error: "Media access denied" }, 403);
+    if (!row || !isUserVisibleAsset(row.collectionKind, row.publishStatus)) return c.json({ error: "Media access denied" }, 403);
     if (!roleHasCapability(c.get("user").role, row.collectionKind === "raw" ? "viewRaw" : "viewEdited")) return c.json({ error: "Media access denied" }, 403);
     if (variant === "original") {
       const object = await c.env.MEDIA.get(row.r2Key);
