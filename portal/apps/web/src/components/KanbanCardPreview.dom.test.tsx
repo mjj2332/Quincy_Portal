@@ -1,9 +1,14 @@
 // happy-dom does not prove PointerSensor / TouchSensor / KeyboardSensor activation, real collision geometry, autoscroll, scroll containers, link-click suppression, screen-reader delivery, browser focus timing, or active-drag DragOverlay rendering; those are QA-phase real-browser acceptance items.
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { KanbanCardPreview } from "./ProjectKanbanBoard";
 import type { ProjectSummary } from "../lib/kanban-interaction";
+
+// The card renders "Due" or "Overdue" by comparing the deadline against `Date.now()`, so wall-clock
+// time decides which word appears. Freeze it before the fixture deadline; otherwise this test passes
+// until that date and then fails forever.
+const testNow = new Date("2026-08-27T00:00:00.000Z");
 
 const project: ProjectSummary = {
   id: "preview-project",
@@ -25,6 +30,14 @@ const project: ProjectSummary = {
 };
 
 describe("KanbanCardPreview", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ now: testNow });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("is a non-interactive copy with the card's street and deadline", () => {
     const host = document.createElement("div");
     host.innerHTML = renderToStaticMarkup(createElement(KanbanCardPreview, { project }));
