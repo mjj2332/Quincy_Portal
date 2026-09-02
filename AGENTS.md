@@ -36,7 +36,12 @@ Cloudflare Access, and renditions use the **remote Image Transformation** path, 
 Container.
 
 To-do and lessons live in **`docs/`**, not a top-level `tasks/`. Before delegating work to
-Codex or Agy subagents, read `docs/Subagent-Orchestration.md`.
+Codex or Agy subagents, read `docs/Subagent-Orchestration.md`. Before any frontend/UI
+implementation task — a new screen, a component redesign, a visual convergence release, design-
+system adoption — also read `docs/Subagent-Frontend-Orchestration.md`: it supersedes the standard
+Sol-drafts/Luna-builds routing for that work (Opus plans and reviews taste, a Sonnet subagent
+builds, Sol reviews scope only), while `Subagent-Orchestration.md`'s CLI mechanics, spawn
+procedure, Agy's testing role, and the §5 gate still apply unchanged.
 
 ## Approved revamp targets — not live until their tracer bullet deploys
 

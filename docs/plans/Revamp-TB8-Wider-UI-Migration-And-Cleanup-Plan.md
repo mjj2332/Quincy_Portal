@@ -4,63 +4,16 @@
 
 ## Why this deviates from the standing pipeline
 
-Codex-family builds (Luna) on prior surfaces produced UI with poor design skill and taste. Sol
-reviews and Luna builds are the same base model (`gpt-5.6`) under different personas — thinner
-separation than a genuinely different model's eyes, and neither carries design judgment. For TB8
-specifically, this session substitutes a Claude-only design lane for the plan+build stages, while
-keeping Sol for mechanical diff-correctness review. This is a scoped, deliberate exception per
+TB8 is the tracer-bullet series that originated a Claude-only design lane for frontend
+plan-and-build work, now generalized and recorded at
+[Subagent-Frontend-Orchestration.md](../Subagent-Frontend-Orchestration.md) — read that doc for
+the full pipeline, rationale, scope-extension rule, design-system source, and the unlayered-CSS
+gotcha. It is a scoped, deliberate exception per
 [Subagent-Orchestration.md](../Subagent-Orchestration.md) §1's own footnote that Sonnet-tool builds
-are valid at this session's discretion — recorded here rather than silently deviating.
+are valid at this session's discretion, and every TB8 candidate release runs through it.
 
-## Pipeline for TB8 (replaces the standard routing table for this tracer bullet only)
-
-1. **Opus subagent drafts the visual plan**, `/frontend-design` skill loaded, at
-   implementation-detail resolution — exact Tailwind classes/tokens, spacing scale, component
-   states (default/hover/focus/disabled/error), not directional prose ("make it feel more
-   premium"). Ambiguity left in the plan is what caused the prior taste failures; the plan must
-   close it, not defer it to the builder's judgment. The plan must derive every token/class
-   from the repo's own design system — `prototype/_ds/quincy-productions-design-system-*/`
-   (readme + `tokens/*.css` — authoritative source: ink/paper duotone, greige ramp, Mazius
-   Review/Apfel Grotezk/Messapia/Athelas type roles, hairline rules, square corners, no-shadow
-   elevation) as already ported into `portal/apps/web/src/styles/tokens`. New values are not
-   invented; the plan cites the existing token.
-2. **Sol reviews the plan** for scope/correctness (≤2 rounds, per standing §2.1) — not for
-   aesthetics, which Sol cannot judge any better than Luna can.
-3. **Opus plan-approves** (or self-edits past the ≤2-round cap, per standing §2.1).
-4. **Sonnet subagent (`Agent` tool, `model: sonnet`) builds** — not Luna. Rationale: a genuinely
-   different model family carries real design judgment and can catch/fix plan ambiguity in place
-   instead of defaulting toward generic-shadcn output.
-5. Builder self-checks the diff against every plan item.
-6. **Fresh Sol diff review** — mechanical correctness/regressions, same as standard pipeline.
-7. Builder applies fixes.
-8. **Opus visual/taste review** — this is the step that replaces Luna's build-taste gap. Opus
-   compares the deployed/local-dev rendering against the plan's intent, not just the diff.
-9. **§5 gate** (this session, per standing doc) — typecheck/build/tests, security/correctness
-   diff read, and now also a visual pass in the Browser pane against the plan before sign-off.
-10. Deploy and commit, per standing order.
-
-Agy retains its normal QA/testing role (§2.8–§2.10) unchanged — this substitution only touches the
-plan-and-build stages, not testing.
-
-## Scope extension: UI rescue and revamp, not just the roadmap candidate list
-
-In addition to the roadmap's [candidate releases](revamp_2026_portal/roadmap/TB8-Wider-UI-Migration-And-Cleanup.md#candidate-releases),
-Opus's visual plan(s) for TB8 should cover **every UI surface each planned task touches**, treated
-as a UI rescue-and-revamp pass on that surface — not limited to the specific
-control/pattern the roadmap candidate names. If a candidate release is "Dashboard shell/filters/
-cards/navigation," Opus's plan for that release should assess and (where warranted) redesign the
-full visual surface of the dashboard shell as touched, not just the specific filter/card control
-that motivated the candidate's inclusion.
-
-This still runs through the roadmap's existing rules unchanged: matched evidence at relevant fixed
-viewports/states, preserve approved evolution/accessibility/security behavior, owner approval for
-intentional evolution/deferral, one styling/data owner, no whole-app rewrite or stock shadcn
-appearance, no raw framework palette contract, full product/accessibility/tests/QA. The extension
-widens *what counts as in scope for a visual pass* on each candidate's surface — it does not waive
-any roadmap rule or the selection-order process.
-
-Each candidate release remains its own reviewed plan/release per the roadmap; the widened scope
-applies within each release's plan, not as one combined mega-plan across all candidates.
+Agy retains its normal QA/testing role (§2.8–§2.10 of the standing doc) unchanged — the frontend
+lane only touches the plan-and-build stages, not testing.
 
 ## Next step
 

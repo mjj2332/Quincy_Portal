@@ -4,8 +4,13 @@
    - Mazius Review  : editorial display serif (headlines, the brand voice)
    - Apfel Grotezk  : neo-grotesque sans (UI, body, labels, "PRODUCTIONS")
    - Messapia       : reverse-contrast display (rare, big statement moments)
-   Athelas (long-form body serif) was named in the kit but not supplied;
-   it falls back to a Charter/Georgia stack -- replace when the file arrives.
+   Athelas (long-form body serif) is self-hosted and live; the four faces at
+   styles/fonts.css:33-63 back the --font-body-serif / --type-body-serif tokens
+   below, which are themselves live (the Charter/Georgia stack after Athelas is
+   a fallback only, for environments without the font file). One consumer
+   (production-calendar.css:175) still reaches the face through an undefined
+   --font-serif's fallback instead of the role token -- normalising it onto
+   --type-body-serif belongs to that surface's own candidate, not here.
    ========================================================================== */
 :root {
   /* ---- Families ------------------------------------------------------ */

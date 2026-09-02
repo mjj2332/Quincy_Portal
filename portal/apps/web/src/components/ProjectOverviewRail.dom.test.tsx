@@ -77,12 +77,106 @@ describe("Project Overview rail Stage control", () => {
   });
 
   it("disables quietly when the contract is off and hides for archive or missing capability", () => {
-    render(<ProjectOverviewRail {...baseProps(project({ contractEnabled: false }))} />);
-    expect(host.querySelector('[aria-label="Move project Stage"]')).toHaveProperty("disabled", true);
+    const onStageMove = vi.fn();
+    render(<ProjectOverviewRail {...baseProps(project({ contractEnabled: false }), onStageMove)} />);
+    const select = host.querySelector<HTMLSelectElement>('[aria-label="Move project Stage"]')!;
+    expect(select).toHaveProperty("disabled", true);
     expect(host.textContent).toContain("temporarily unavailable");
+    // A disabled select must remain non-activatable: a change event must not move Stage.
+    select.value = "raw_review";
+    act(() => select.dispatchEvent(new Event("change", { bubbles: true })));
+    expect(onStageMove).not.toHaveBeenCalled();
     act(() => { root.render(<ProjectOverviewRail {...baseProps(project({ archivedAt: Date.now() }))} />); });
     expect(host.querySelector('[aria-label="Move project Stage"]')).toBeNull();
     act(() => { roleState.role = "photographer"; root.render(<ProjectOverviewRail {...baseProps(project())} />); });
     expect(host.querySelector('[aria-label="Move project Stage"]')).toBeNull();
+  });
+
+  it("keeps the Dropbox sync button non-activatable while syncing is in progress", () => {
+    const onSyncDropbox = vi.fn();
+    render(<ProjectOverviewRail {...baseProps(project())} canUpload hasRawFolder isSyncing onSyncDropbox={onSyncDropbox} />);
+    const syncButton = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("Syncing Dropbox"))!;
+    expect(syncButton.disabled).toBe(true);
+    act(() => syncButton.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })));
+    expect(onSyncDropbox).not.toHaveBeenCalled();
+  });
+
+  it("labels the rail landmark and marks the active collection switcher tab pressed", () => {
+    const onActiveTabChange = vi.fn();
+    render(<ProjectOverviewRail {...baseProps(project())} availableTabs={["raw", "edited"] as CollectionKind[]} activeTab={"raw" as CollectionKind} onActiveTabChange={onActiveTabChange} />);
+    expect(host.querySelector('aside[aria-label="Project Overview"]')).not.toBeNull();
+    const tabs = [...host.querySelectorAll<HTMLButtonElement>(".filterlist button")];
+    expect(tabs).toHaveLength(2);
+    const rawTab = tabs.find((button) => button.textContent?.includes("RAW"))!;
+    const editedTab = tabs.find((button) => button.textContent?.includes("Edited"))!;
+    expect(rawTab.getAttribute("aria-pressed")).toBe("true");
+    expect(editedTab.getAttribute("aria-pressed")).toBe("false");
+    act(() => editedTab.click());
+    expect(onActiveTabChange).toHaveBeenCalledWith("edited");
+  });
+
+  it("renders only the passed-in available tabs, with exactly one pressed and every other unpressed", () => {
+    render(<ProjectOverviewRail {...baseProps(project())} availableTabs={["raw", "video", "copy"] as CollectionKind[]} activeTab={"video" as CollectionKind} />);
+    const tabs = [...host.querySelectorAll<HTMLButtonElement>(".filterlist button")];
+    expect(tabs).toHaveLength(3);
+    expect(tabs.some((button) => button.textContent?.includes("Edited"))).toBe(false);
+    expect(tabs.some((button) => button.textContent?.includes("Floorplan"))).toBe(false);
+    const pressed = tabs.filter((button) => button.getAttribute("aria-pressed") === "true");
+    expect(pressed).toHaveLength(1);
+    expect(pressed[0]!.textContent).toContain("Video");
+    for (const button of tabs) {
+      if (button !== pressed[0]) expect(button.getAttribute("aria-pressed")).toBe("false");
+    }
+  });
+
+  it("renders a single available tab as the only switcher entry, pressed", () => {
+    render(<ProjectOverviewRail {...baseProps(project())} availableTabs={["raw"] as CollectionKind[]} activeTab={"raw" as CollectionKind} />);
+    const tabs = [...host.querySelectorAll<HTMLButtonElement>(".filterlist button")];
+    expect(tabs).toHaveLength(1);
+    expect(tabs[0]!.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("drops a switcher tab from the list the instant it is no longer in availableTabs, without renaming or reordering the rest", () => {
+    const onActiveTabChange = vi.fn();
+    render(<ProjectOverviewRail {...baseProps(project())} availableTabs={["raw", "edited", "video"] as CollectionKind[]} activeTab={"raw" as CollectionKind} onActiveTabChange={onActiveTabChange} />);
+    expect([...host.querySelectorAll<HTMLButtonElement>(".filterlist button")]).toHaveLength(3);
+    act(() => {
+      root.render(<ProjectOverviewRail {...baseProps(project())} availableTabs={["raw", "video"] as CollectionKind[]} activeTab={"raw" as CollectionKind} onActiveTabChange={onActiveTabChange} />);
+    });
+    const tabs = [...host.querySelectorAll<HTMLButtonElement>(".filterlist button")];
+    expect(tabs).toHaveLength(2);
+    expect(tabs.some((button) => button.textContent?.includes("Edited"))).toBe(false);
+    expect(tabs.some((button) => button.textContent?.includes("Video"))).toBe(true);
+    const raw = tabs.find((button) => button.textContent?.includes("RAW"))!;
+    expect(raw.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("hides the Stage chevron and Dropbox sync icons from assistive tech, gives the sync button its exact accessible name, keeps the Blocked status readable, and nests no interactive element inside another", () => {
+    render(<ProjectOverviewRail {...baseProps(project())} availableTabs={["raw", "edited"] as CollectionKind[]} canUpload hasRawFolder autohdrBlocked isSyncing={false} />);
+
+    const chevron = host.querySelector('[aria-label="Move project Stage"]')!.parentElement!.querySelector("svg")!;
+    expect(chevron.getAttribute("aria-hidden")).toBe("true");
+
+    const syncButton = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("Sync from Dropbox"))!;
+    const syncIcon = syncButton.querySelector("svg")!;
+    expect(syncIcon.getAttribute("aria-hidden")).toBe("true");
+    // This project has no @testing-library/dom (which would give an accessible-name-aware
+    // getByRole query), so prove the accessible name the hard way: neither aria-label nor
+    // aria-labelledby is present to override the button's own text content — meaning the
+    // accessible name computation falls through to that text content, which must read exactly
+    // "Sync from Dropbox" (the aria-hidden icon contributes nothing).
+    expect(syncButton.hasAttribute("aria-label")).toBe(false);
+    expect(syncButton.hasAttribute("aria-labelledby")).toBe(false);
+    expect(syncButton.textContent?.trim()).toBe("Sync from Dropbox");
+
+    const status = host.querySelector('[role="status"]')!;
+    expect(status.textContent).toBe("Blocked");
+    // The status paragraph is a sibling of the sync button, not nested inside it.
+    expect(syncButton.contains(status)).toBe(false);
+
+    const interactive = [...host.querySelectorAll<HTMLElement>("button, a, input, select, textarea")];
+    for (const element of interactive) {
+      expect(element.querySelector("button, a, input, select, textarea")).toBeNull();
+    }
   });
 });

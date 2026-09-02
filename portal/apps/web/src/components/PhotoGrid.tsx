@@ -155,7 +155,7 @@ export function PhotoGrid({ assets, showSections, canReview, canRecommend, canSe
     finally { setIsPreparingDownload(false); }
   }
   function renderGrid(gridAssets: WorkspaceAsset[]) {
-    return <div className="grid workspace-photo-grid">{gridAssets.map((asset) => {
+    return <div className="legacy-grid workspace-photo-grid">{gridAssets.map((asset) => {
       const review = asset.review;
       const marked = multi.has(asset.id);
       const state = review?.decision;

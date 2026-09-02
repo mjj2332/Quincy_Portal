@@ -94,6 +94,14 @@ describe("CollectionPanel version history deletion markup", () => {
     expect(markup).not.toContain("Delete</button>");
     expect(markup).toContain("Upload new version");
   });
+
+  it("keeps role=\"status\" on the legacy-incomplete floorplan preview placeholder", () => {
+    const floorplanAsset = { ...asset("fp1", 1), kind: "floorplan_pdf" as const };
+    const markup = renderToStaticMarkup(createElement(CollectionPanel, { ...props, collection: "floorplan", assets: [floorplanAsset] }));
+    expect(markup).toContain('role="status"');
+    expect(markup).toContain("document-preview--incomplete");
+    expect(markup).toContain("Preview unavailable for this legacy version.");
+  });
 });
 
 describe("CollectionPanel version history deletion wiring", () => {
@@ -209,6 +217,21 @@ describe("CollectionPanel version history deletion wiring", () => {
     expect(host.querySelector(".collection-link__grip")).toBeNull();
   });
 
+  it("hides the reorder grip icon from assistive tech and nests no interactive element inside another", async () => {
+    await renderVideoPanel();
+    const grip = host.querySelector<HTMLButtonElement>("button[aria-label='Reorder Walkthrough']")!;
+    expect(grip.getAttribute("aria-label")).toBe("Reorder Walkthrough");
+    const icon = grip.querySelector("svg")!;
+    expect(icon.getAttribute("aria-hidden")).toBe("true");
+    // No interactive element (button/a/input/select/textarea) may contain another one anywhere
+    // in the panel — dnd-kit drag handles and video-link anchors are the highest-risk spots.
+    const interactive = [...host.querySelectorAll<HTMLElement>("button, a, input, select, textarea")];
+    for (const element of interactive) {
+      const nested = element.querySelector("button, a, input, select, textarea");
+      expect(nested).toBeNull();
+    }
+  });
+
   it("scopes stacked title/source tile structure to video anchors and plain links only", async () => {
     const plain = { id: "plain-video-link", url: "http://example.test/not-safe", label: "Client portal", source: "manual" as const, position: 3072, createdAt: "2026-08-03T00:00:00.000Z" };
     apiGetMock.mockImplementation((path) => Promise.resolve(path.includes("collection=video") ? { links: [...videoLinks(), plain] } : { links: videoLinks() }));
@@ -216,7 +239,10 @@ describe("CollectionPanel version history deletion wiring", () => {
     const videoLinksParent = host.querySelector<HTMLElement>(".collection-links")!;
     expect(videoLinksParent.classList.contains("collection-links--video")).toBe(true);
     for (const contentParent of host.querySelectorAll<HTMLElement>(".collection-links--video .collection-link > a, .collection-links--video .collection-link__plain")) {
-      expect([...contentParent.children].map((child) => child.className)).toEqual(["collection-link__name", "chip"]);
+      const [name, chip] = [...contentParent.children];
+      expect(contentParent.children).toHaveLength(2);
+      expect(name!.classList.contains("collection-link__name")).toBe(true);
+      expect(chip!.classList.contains("chip")).toBe(true);
       expect(contentParent.parentElement?.querySelector(".collection-link__meta")).not.toBeNull();
     }
     expect(host.querySelector(".collection-link__plain")?.textContent).toContain("Client portal");
@@ -287,6 +313,44 @@ describe("CollectionPanel version history deletion wiring", () => {
     expect(editor.querySelector('[role="alert"]')?.textContent).toBe("Enter an HTTPS URL.");
     expect(editor.querySelectorAll<HTMLInputElement>("input")[0]!.value).toBe("Collision draft");
     expect(editor.querySelectorAll<HTMLInputElement>("input")[1]!.value).toBe("http://vimeo.com/not-https");
+  });
+
+  it("keeps a dirty Add-link form draft and an in-progress inline-edit draft across a background assets refresh", async () => {
+    await renderVideoPanel();
+    const form = host.querySelector<HTMLFormElement>(".collection-link-form:not(.collection-link-editor)")!;
+    const inputs = form.querySelectorAll<HTMLInputElement>("input");
+    await typeInto(inputs[0]!, "https://vimeo.com/dirty-draft");
+    await typeInto(inputs[1]!, "Dirty draft label");
+
+    await click([...linkTile(host, 0).querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Edit")!);
+    const editor = linkTile(host, 0).querySelector<HTMLFormElement>(".collection-link-editor")!;
+    await typeInto(editor.querySelectorAll<HTMLInputElement>("input")[0]!, "Dirty edit label");
+
+    // Simulate an ordinary background assets refetch: the parent re-renders with a fresh
+    // `assets` array reference and unchanged projectId/collection — link state (which loads
+    // independently of `assets`) must not be touched by it.
+    await act(async () => { root!.render(createElement(CollectionPanel, { ...videoProps, assets: [...videoProps.assets] })); await Promise.resolve(); });
+
+    expect(host.querySelector<HTMLInputElement>(".collection-link-form:not(.collection-link-editor) input")?.value).toBe("https://vimeo.com/dirty-draft");
+    const editorAfter = host.querySelector<HTMLFormElement>(".collection-link-editor");
+    expect(editorAfter).not.toBeNull();
+    expect(editorAfter!.querySelectorAll<HTMLInputElement>("input")[0]!.value).toBe("Dirty edit label");
+  });
+
+  it("disables the Add link submit button while the request is in flight, so a repeat click cannot double-submit", async () => {
+    let resolvePost!: (value: { data: unknown; status: number }) => void;
+    apiPostWithStatusMock.mockReturnValueOnce(new Promise((resolve) => { resolvePost = resolve; }));
+    await renderVideoPanel();
+    const form = host.querySelector<HTMLFormElement>(".collection-link-form:not(.collection-link-editor)")!;
+    const inputs = form.querySelectorAll<HTMLInputElement>("input");
+    await typeInto(inputs[0]!, "https://vimeo.com/pending");
+    const submit = form.querySelector<HTMLButtonElement>("button")!;
+    await click(submit);
+    expect(submit.disabled).toBe(true);
+    expect(submit.textContent).toBe("Adding…");
+    await click(submit);
+    expect(apiPostWithStatusMock).toHaveBeenCalledTimes(1);
+    await act(async () => { resolvePost({ data: { id: "x", url: "https://vimeo.com/pending", label: null, source: "manual", position: 4096, createdAt: "2026-08-06T00:00:00.000Z" }, status: 201 }); await Promise.resolve(); await new Promise((resolve) => window.setTimeout(resolve, 0)); });
   });
 
   it("adds a new link on a 201, clearing the form and toasting success", async () => {

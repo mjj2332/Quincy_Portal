@@ -212,6 +212,129 @@ afterEach(async () => {
     expect([...host.querySelectorAll<HTMLButtonElement>(".frow")].some((item) => item.textContent?.includes("Video"))).toBe(false);
   });
 
+  it("falls back the active collection switcher tab to RAW when the current non-raw tab becomes denied", async () => {
+    apiGetMock.mockImplementation((path: string) => {
+      if (path === "/api/projects/p1") return Promise.resolve(projectFixture());
+      if (path.includes("/assets?collection=raw")) return Promise.resolve({ assets: rawAssets });
+      if (path.includes("/assets?collection=edited")) return Promise.reject(new ApiError("Edited collection forbidden", 403, { capability: "viewEdited" }));
+      if (path.includes("/ingest-status")) return Promise.resolve({ expectedCount: null, receivedCount: 2, mismatch: false });
+      if (path.includes("/links")) return Promise.resolve({ links: [] });
+      return Promise.resolve({});
+    });
+    await render(<ProjectWorkspace projectId="p1" />); await flush(20);
+    await click(editedTabButton(host)); await flush(20);
+    const tabsAfter = [...host.querySelectorAll<HTMLButtonElement>(".frow")];
+    const rawTab = tabsAfter.find((item) => item.textContent?.includes("RAW"))!;
+    expect(rawTab.getAttribute("aria-pressed")).toBe("true");
+    expect(tabsAfter.some((item) => item.textContent?.includes("Edited"))).toBe(false);
+    expect(tabsAfter.filter((item) => item.getAttribute("aria-pressed") === "true")).toHaveLength(1);
+    expect(host.textContent).toContain("raw-1.jpg");
+  });
+
+  it("falls back the active collection switcher tab to Edited when RAW becomes denied and Edited stays viewable", async () => {
+    apiGetMock.mockImplementation((path: string) => {
+      if (path === "/api/projects/p1") return Promise.resolve(projectFixture());
+      if (path.includes("/assets?collection=raw")) return Promise.reject(new ApiError("RAW collection forbidden", 403, { capability: "viewRaw" }));
+      if (path.includes("/assets?collection=edited")) return Promise.resolve({ assets: [workspaceAsset("edited-1")] });
+      if (path.includes("/ingest-status")) return Promise.resolve({ expectedCount: null, receivedCount: 2, mismatch: false });
+      if (path.includes("/links")) return Promise.resolve({ links: [] });
+      return Promise.resolve({});
+    });
+    await render(<ProjectWorkspace projectId="p1" />); await flush(20);
+    const editedTab = [...host.querySelectorAll<HTMLButtonElement>(".frow")].find((item) => item.textContent?.includes("Edited"))!;
+    expect(editedTab.getAttribute("aria-pressed")).toBe("true");
+    expect([...host.querySelectorAll<HTMLButtonElement>(".frow")].some((item) => item.textContent?.includes("RAW"))).toBe(false);
+    expect(host.textContent).toContain("edited-1.jpg");
+  });
+
+  it("resets the collection switcher to RAW without leaking the prior project's tab or selection on a project change", async () => {
+    await render(<ProjectWorkspace projectId="p1" />); await flush(20);
+    await click(editedTabButton(host));
+    await act(async () => { editedFetch.resolve({ assets: [workspaceAsset("edited-1")] }); await Promise.resolve(); });
+    await flush();
+    expect(host.textContent).toContain("edited-1.jpg");
+    const editedTab = [...host.querySelectorAll<HTMLButtonElement>(".frow")].find((item) => item.textContent?.includes("Edited"))!;
+    expect(editedTab.getAttribute("aria-pressed")).toBe("true");
+
+    apiGetMock.mockImplementation((path: string) => {
+      if (path === "/api/projects/p2") return Promise.resolve(projectFixture("p2"));
+      if (path.includes("/ingest-status")) return Promise.resolve({ expectedCount: null, receivedCount: 2, mismatch: false });
+      if (path.includes("/assets?collection=raw")) return Promise.resolve({ assets: [workspaceAsset("p2-raw-1")] });
+      if (path.includes("/assets?collection=edited")) return Promise.resolve({ assets: [] });
+      if (path.includes("/annotations")) return Promise.resolve({ annotations: [] });
+      if (path.includes("/comments?")) return Promise.resolve({ project: { id: "p2", street: "34 Second Street" }, comments: [] });
+      if (path.includes("comment-read-marker")) return Promise.resolve({ projectId: "p2", marker: null, latest: null, unreadCount: 0 });
+      if (path.includes("/subtasks")) return Promise.resolve({ subtasks: [] });
+      if (path.includes("/mentionable-users")) return Promise.resolve({ users: [] });
+      if (path.includes("/links")) return Promise.resolve({ links: [] });
+      return Promise.resolve({});
+    });
+    await render(<ProjectWorkspace projectId="p2" />);
+    await flush(20);
+
+    const rawTabAfter = [...host.querySelectorAll<HTMLButtonElement>(".frow")].find((item) => item.textContent?.includes("RAW"))!;
+    expect(rawTabAfter.getAttribute("aria-pressed")).toBe("true");
+    expect(host.textContent).not.toContain("edited-1.jpg");
+    expect(host.textContent).toContain("p2-raw-1.jpg");
+  });
+
+  it("cannot leak a dirty, open Deadline draft across projects, because the router remounts ProjectWorkspace by key={projectId} on every project switch (App.tsx:101), not by relying on this component's own projectId-change reset", async () => {
+    // App.tsx's only render site for this screen is
+    // `<ProjectWorkspace key={route.projectId} projectId={route.projectId} .../>` — the key
+    // literally IS the projectId, so a projectId change can never happen without also being a
+    // key change. React unmounts the whole old-project fiber tree (discarding every local
+    // useState in it, including ProjectDeadlineControl's `open`/`date`/`time`/`offsets` draft)
+    // before mounting the new-project tree, in the same commit — there is no frame where a
+    // dirty draft from project A could still be attached to project B's projectId. This test
+    // exercises that real mechanism (a key swap on ProjectWorkspace itself), not just the
+    // internal `useEffect([projectId])` reset covered by the "resets the collection switcher…"
+    // test above, which changes the projectId prop without changing the key and so cannot by
+    // itself prove what actually prevents cross-project draft leakage in production.
+    // canEdit (and so ProjectDeadlineControl's canWrite) requires the editProject capability,
+    // which only the admin role carries (portal/packages/shared/src/capabilities.ts) — the
+    // file's default authState.role = "editor" would hide the "Set Deadline" button entirely.
+    authState.role = "admin";
+    await render(<ProjectWorkspace key="p1" projectId="p1" />); await flush(20);
+    const setDeadline = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Set Deadline")!;
+    await click(setDeadline);
+    const dateInput = host.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')!;
+    expect(dateInput).not.toBeNull();
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
+    await act(async () => { setter.call(dateInput, "2027-01-15"); dateInput.dispatchEvent(new Event("input", { bubbles: true })); await Promise.resolve(); });
+    expect(host.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')?.value).toBe("2027-01-15");
+
+    apiGetMock.mockImplementation((path: string) => {
+      if (path === "/api/projects/p2") return Promise.resolve({
+        ...projectFixture("p2"),
+        deadlineSchedule: {
+          version: 1,
+          deadline: { localCivil: "2028-06-01T10:00", zone: "Australia/Sydney", utcOffsetMinutes: 600, fold: 0, instant: "2028-06-01T00:00:00.000Z" },
+          reminderOffsetsMinutes: [1440], state: "scheduled",
+          nextOccurrence: { kind: "advance", offsetMinutes: 1440, firesAt: "2028-05-31T00:00:00.000Z" }, canResume: false,
+        },
+      });
+      if (path.includes("/ingest-status")) return Promise.resolve({ expectedCount: null, receivedCount: 2, mismatch: false });
+      if (path.includes("/assets?collection=raw")) return Promise.resolve({ assets: [workspaceAsset("p2-raw-1")] });
+      if (path.includes("/assets?collection=edited")) return Promise.resolve({ assets: [] });
+      if (path.includes("/annotations")) return Promise.resolve({ annotations: [] });
+      if (path.includes("/comments?")) return Promise.resolve({ project: { id: "p2", street: "34 Second Street" }, comments: [] });
+      if (path.includes("comment-read-marker")) return Promise.resolve({ projectId: "p2", marker: null, latest: null, unreadCount: 0 });
+      if (path.includes("/subtasks")) return Promise.resolve({ subtasks: [] });
+      if (path.includes("/mentionable-users")) return Promise.resolve({ users: [] });
+      if (path.includes("/links")) return Promise.resolve({ links: [] });
+      return Promise.resolve({});
+    });
+
+    // The real routing swap: a different key, forcing React to unmount the p1 tree and mount a
+    // fresh p2 tree, exactly like App.tsx's key={route.projectId}.
+    await render(<ProjectWorkspace key="p2" projectId="p2" />); await flush(20);
+
+    expect(host.querySelector('input[aria-label="Deadline date"]')).toBeNull();
+    expect(host.textContent).not.toContain("2027-01-15");
+    expect([...host.querySelectorAll("button")].some((button) => button.textContent === "Edit Deadline")).toBe(true);
+    expect(host.textContent).toContain("2028-06-01 10:00");
+  });
+
   it("hides passive-RAW private data in the same render as a membership 403", async () => {
     let queryClient: ReturnType<typeof import("../lib/query-client").createQuincyQueryClient> | undefined;
     await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>); await flush();
