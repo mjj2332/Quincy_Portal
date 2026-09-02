@@ -1,10 +1,17 @@
 # TB8-03 — Project Workspace Rail and Reached Collection Controls: Visual Plan
 
-**Status: APPROVED FOR BUILD 2026-09-02** — drafted by the Opus design lane, two Sol
+**Status: DEPLOYED TO PRODUCTION 2026-09-02** (commit `77187a5`
+`feat(tb8): TB8-03 Project Workspace rail and reached-collection controls on Tailwind/shadcn`;
+app Worker `9a021a5e-956b-43b4-a17c-ed05dc7be1af`; frontend/CSS only — no worker source changes,
+background and webhook-ingress not redeployed; no migration; rollback target app
+`7248b49a-dbd4-4316-b433-af82e8ed7792`, TB8-02's deploy). Drafted by the Opus design lane, two Sol
 scope/correctness rounds complete, round-2's nine findings fixed by the Opus design lane past the
 ≤2-round Sol cap (`docs/Subagent-Frontend-Orchestration.md` pipeline step 3), then approved by an
-independent fresh-Opus self-review, exactly as TB8-01 and TB8-02 both closed out. Not yet built, not
-yet deployed.
+independent fresh-Opus self-review, exactly as TB8-01 and TB8-02 both closed out. Built by a Sonnet
+subagent, taken through 11 rounds of fresh Sol diff review — round 11 fixed a genuine production CSS
+defect (a pre-existing unlayered `.grid` legacy selector silently overriding Tailwind's `grid`/
+`grid-cols-*` utilities) found only during Opus's live-browser visual review, not by code reading —
+then Opus visual/taste-approved and the orchestrating session's own §5 gate passed clean.
 
 > **Fresh-Opus terminal gate — APPROVED with three corrections applied in place, 2026-09-02.**
 > Independent re-review with no drafting context. All nine round-2 fixes were re-derived against the
