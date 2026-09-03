@@ -200,7 +200,7 @@ function MoveToControl({ project, model, activeStages, role, sort, canMoveStages
     <button
       ref={setTrigger}
       type="button"
-      className="kcard-move-to w-full min-h-[30px] max-[641px]:min-h-11 pointer-coarse:min-h-11 px-[9px] py-[7px] border border-border bg-card text-foreground-secondary [font:inherit] text-[length:var(--text-2xs)] text-left cursor-pointer focus-visible:!outline-2 focus-visible:!outline-[var(--ink-900)] focus-visible:!outline-offset-2 hover:not-disabled:bg-[var(--paper-100)] hover:not-disabled:text-foreground disabled:text-muted-foreground disabled:cursor-not-allowed"
+      className="kcard-move-to w-full min-h-[30px] max-[641px]:min-h-11 pointer-coarse:min-h-11 px-[9px] py-[7px] border border-border bg-card text-foreground-secondary [font:inherit] !text-[length:var(--text-2xs)] text-left cursor-pointer focus-visible:!outline-2 focus-visible:!outline-[var(--ink-900)] focus-visible:!outline-offset-2 hover:not-disabled:bg-[var(--paper-100)] hover:not-disabled:text-foreground disabled:text-muted-foreground disabled:cursor-not-allowed"
       data-focus-key={`move-to:${project.id}`}
       aria-label={`Move ${project.street} to…`}
       aria-expanded={open}
@@ -209,22 +209,25 @@ function MoveToControl({ project, model, activeStages, role, sort, canMoveStages
       onKeyDown={floating.onKeyDown}
       onClick={openMoveTo}
     >Move to…</button>
+    {/* §10.3: options sit flush inside a bordered, overflow-auto panel — an outward ring clips. */}
     {floating.mounted && <AnchoredPopover className="kanban-move-popover" context={floating.context} floatingStyles={floating.floatingStyles} initialFocus={0} modal onKeyDown={floating.onKeyDown} status={floating.status}>
-      <div id={dialogId} className="kanban-move-popover__content" role="dialog" aria-label={`Move ${project.street} to…`} data-step={targetStageKey === null ? "stage" : "position"}>
+      <div id={dialogId} className="kanban-move-popover__content grid gap-[var(--space-3)] p-[var(--space-3)]" role="dialog" aria-label={`Move ${project.street} to…`} data-step={targetStageKey === null ? "stage" : "position"}>
         <div className="ey">{targetStageKey === null ? "Choose a Stage" : `Choose a position in ${targetLabel}`}</div>
-        {targetStageKey === null ? <div className="kanban-move-popover__stages" role="radiogroup" aria-label={`Target Stage for ${project.street}`}>
+        {targetStageKey === null ? <div className="kanban-move-popover__stages grid gap-[2px]" role="radiogroup" aria-label={`Target Stage for ${project.street}`}>
           {boardStageOptions.map((stage) => {
             const key = moveToStageKey(stage.key);
-            return <button key={key} type="button" role="radio" aria-checked={false} className="kanban-move-popover__option" onClick={() => { setTargetStageKey(key); setSuccessor(null); }}>{stage.label}</button>;
+            // 44px touch target — WCAG 2.5.5 Enhanced / HIG, not a spacing token
+            return <button key={key} type="button" role="radio" aria-checked={false} className="kanban-move-popover__option w-full min-h-11 px-[var(--space-3)] py-[var(--space-2)] border-0 border-l-[length:var(--border-width-bold)] border-l-transparent bg-transparent text-foreground [font:inherit] !text-xs text-left cursor-pointer active:bg-[var(--bg-sunken)] hover:bg-[var(--paper-100)] focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--ink-900)] focus-visible:!outline-offset-[-2px]" onClick={() => { setTargetStageKey(key); setSuccessor(null); }}>{stage.label}</button>;
           })}
         </div> : <>
-          <div className="kanban-move-popover__positions" role="listbox" aria-label={`Position in ${targetLabel}`}>
-            {positions.map((option) => <button key={option.successor} type="button" role="option" aria-selected={successor === option.successor} className="kanban-move-popover__option" onClick={() => { setSuccessor(option.successor); onMoveToProposalChange?.({ targetStageKey, successor: option.successor }); }}>{option.label}</button>)}
+          <div className="kanban-move-popover__positions grid gap-[2px]" role="listbox" aria-label={`Position in ${targetLabel}`}>
+            {/* 44px touch target — WCAG 2.5.5 Enhanced / HIG, not a spacing token */}
+            {positions.map((option) => <button key={option.successor} type="button" role="option" aria-selected={successor === option.successor} className="kanban-move-popover__option w-full min-h-11 px-[var(--space-3)] py-[var(--space-2)] border-0 border-l-[length:var(--border-width-bold)] border-l-transparent bg-transparent text-foreground [font:inherit] !text-xs text-left cursor-pointer active:bg-[var(--bg-sunken)] hover:bg-[var(--paper-100)] aria-selected:border-l-[var(--border-strong)] focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--ink-900)] focus-visible:!outline-offset-[-2px]" onClick={() => { setSuccessor(option.successor); onMoveToProposalChange?.({ targetStageKey, successor: option.successor }); }}>{option.label}</button>)}
           </div>
-          <div className="kanban-move-popover__actions">
-            <button type="button" className="button button--secondary" onClick={() => { setTargetStageKey(null); setSuccessor(null); onMoveToProposalChange?.(null); }}>Back</button>
-            <button type="button" className="button button--secondary" onClick={close}>Cancel</button>
-            <button type="button" className="button" disabled={successor === null} onClick={confirmMoveTo}>Move project</button>
+          <div className="kanban-move-popover__actions flex justify-end gap-[var(--space-2)]">
+            <button type="button" className={buttonClasses("secondary", { className: "min-h-[38px] px-[14px] py-[9px] text-xs focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--ink-900)] focus-visible:!outline-offset-[-2px]" })} onClick={() => { setTargetStageKey(null); setSuccessor(null); onMoveToProposalChange?.(null); }}>Back</button>
+            <button type="button" className={buttonClasses("secondary", { className: "min-h-[38px] px-[14px] py-[9px] text-xs focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--ink-900)] focus-visible:!outline-offset-[-2px]" })} onClick={close}>Cancel</button>
+            <button type="button" className={buttonClasses("primary", { className: "min-h-[38px] px-[14px] py-[9px] text-xs focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--ink-900)] focus-visible:!outline-offset-[-2px]" })} disabled={successor === null} onClick={confirmMoveTo}>Move project</button>
           </div>
         </>}
       </div>
@@ -314,8 +317,8 @@ export function KanbanCard({
 export function KanbanCardPreview({ project }: { project: ProjectSummary }) {
   const overdue = isDeadlineOverdue(project.deadlineAt);
   const projectDeadlineLabel = deadlineLabel(project);
-  return <div className="kanban-card-preview kcard-wrap relative bg-card border border-border transition-[background-color,border-color] duration-[var(--dur-fast)]" aria-hidden="true">
-    <div className="kcard__media aspect-[16/9] overflow-hidden bg-[var(--ink-800)]"><CoverMedia project={project} className="size-full object-cover" /></div>
+  return <div className="kanban-card-preview w-[min(320px,calc(100vw-var(--space-5)))] max-w-[calc(100vw-var(--space-5))] box-border shadow-[0_18px_36px_color-mix(in_srgb,var(--ink-900)_22%,transparent)] pointer-events-none kcard-wrap relative bg-card border border-border transition-[background-color,border-color] duration-[var(--dur-fast)]" aria-hidden="true">
+    <div className="kcard__media aspect-[16/9] overflow-hidden bg-[var(--ink-800)] pointer-events-none"><CoverMedia project={project} className="size-full object-cover" /></div>
     <div className="kcard__b p-[var(--space-3)]">
       <div className="kcard__addr serif text-base tracking-tight leading-snug [text-wrap:pretty]">{project.street}</div>
       <div className="kcard__meta text-xs text-foreground-secondary mt-[var(--space-1)]">{location(project)}</div>
@@ -927,7 +930,7 @@ export function ProjectKanbanBoard({
         />;
       })}
     </div>
-    <DragOverlay className="kanban-overlay" dropAnimation={reducedMotion ? null : { duration: 180, easing: "ease-out" }}>
+    <DragOverlay className="kanban-overlay pointer-events-none z-10" dropAnimation={reducedMotion ? null : { duration: 180, easing: "ease-out" }}>
       {movingProject ? <KanbanCardPreview project={movingProject} /> : null}
     </DragOverlay>
   </DndContext>;

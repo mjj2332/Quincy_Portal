@@ -245,7 +245,18 @@ Tailwind utility regardless of specificity.
 3. **Row 11 (`.kcol__head .ey`) also needs `!`.** `.ey` at `app.css:20` sets `font:` — a shorthand
    that resets `line-height` — and `.ey` is out of this release's scope, so it survives. A layered
    `leading-[1.25]` loses to it.
-4. Do **not** add `!` anywhere else. TB8-05's gate caught prophylactic `!` as drift of its own.
+4. **A `[font:inherit]` beside a font-size utility needs `!` on the size** (found at slice 7).
+   `font:` is a shorthand that resets `font-size`, and Tailwind emits `.text-xs` *before*
+   `[font:inherit]`, so the size silently loses. This bit rows 34 and 52, whose retired CSS set
+   `font-size` **after** `font: inherit` precisely because of this. Affected: `!text-xs` on the
+   popover options, `!text-[length:var(--text-2xs)]` on move-to. Row 39 (`.kcard`) is exempt — it
+   never had a font-size.
+
+   **This is the third shorthand-resets-longhand trap in one release**, after `tokens/base.css`'s
+   `outline:` (§3.2) and `.ey`'s `font:` (§3.3). The generalisation for slice 8's `lessons.md`
+   entry: when a rule you are retiring sets a shorthand *and* a longhand of the same family, the
+   longhand always needs `!`, because Tailwind's emission order is by property, not by class order.
+5. Do **not** add `!` anywhere else. TB8-05's gate caught prophylactic `!` as drift of its own.
 
 ---
 
