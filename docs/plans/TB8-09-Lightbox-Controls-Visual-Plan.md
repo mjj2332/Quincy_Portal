@@ -1006,7 +1006,7 @@ slice must satisfy §7 in full.
 | # | Scope | Reads in full |
 |---|---|---|
 | **1** | The role-layer indirection (§2.2) and `tokens/inverse.css` (§2.3, §2.3a). Touches no component. **Visually inert by construction** — every value is identical at `:root`, and nothing yet carries `data-surface`. Prove it: build before and after, diff the emitted CSS, and state what changed. | §2, §3 |
-| **2** | Stage: root, `__stage`, `__imgwrap`, the five `IconButton` controls + Reset, `__meta` (+`.a`/`.b`), `__shortcuts` (+`span`/`i`), `.kbd`, `__panel-trigger`, `__panel-scrim`. **Deletes `255–275`, plus its responsive rules `626–628` and `660–668`.** | §2, §3, §5.1, §5.2, §5.9b |
+| **2** | Stage: root, `__stage`, `__imgwrap`, the five `IconButton` controls + Reset, `__meta` (+`.a`/`.b`), `__shortcuts` (+`span`/`i`), `.kbd`, `__panel-trigger`, `__panel-scrim`. **Deletes `255–275`, plus its responsive rules `626–628` and `660–668`.** **Also puts `data-surface="default"` on `.vpanel`** — see the rule below. | §2, §3, §5.1, §5.2, §5.9b |
 | **3** | Markup toolbar — the nine unnamed buttons, both toggle groups, `PEN_COLOUR_NAMES`, `.drawbar__grp`/`__lbl`, the four text buttons. **Deletes `290–298` plus its responsive rule `689–690`.** The highest-value slice; do not merge it with another. | §2, §3, §5.3, §0c |
 | **4** | Side panel: decision, rating, label, thread, `.cmt__b`, textarea, "Save annotation", the seven section heads, `review-labels.ts`, and the two peek-bar edits. **Deletes `454–476` and `477–491`**, keeping the ≤720 sheet block (`669–688`). | §2, §3, §5.4–§5.7, §5.9b, §0b, §0c |
 | **5** | Filmstrip, the three band layouts, and **the whole dead compare implementation**: `.strip*`, the tablet drawer, the live `.viewer--compare` grid. **Deletes `492–507`, `645`, `749–757`**, and rewrites the tablet band block `629–631`. **Plus §9.3 (approved): `.actionbar` takes the inverse scope, `.barbtn`/`.barbtn--solid`/`.actionbar` retire (`245–253`), and `PhotoGrid.tsx`'s action bar plus its nine `PhotoGrid.dom.test.tsx` queries migrate.** | §2, §3, §3.0, §5.8, §5.9, §5.9a, §0e, §9.3 |
@@ -1022,6 +1022,16 @@ and it is deliberate: the ≤720 sheet block is **K**, so slice 4 leaves it stan
 Slice 1 is the one to get exactly right — every later slice assumes the inverse scope resolves.
 If slice 1's before/after CSS diff shows any changed *value* outside the new `[data-surface]`
 blocks, stop and report rather than continuing.
+
+**`data-surface="default"` lands in the same slice that activates the inverse scope — slice 2, not
+slice 4.** The draft assigned the two attributes to different slices, which is the B9 failure in
+miniature and was caught during slice 2's verification rather than by either review round: the
+moment `.viewer` becomes `data-surface="inverse"`, **every descendant** inherits the dark roles,
+and `.vpanel` is a descendant. Between slice 2 and slice 4 the side panel's controls would have
+rendered `text-foreground` = `--paper-050` on a `--paper-050` panel — invisible, and the panel's
+own zoom `IconButton`s are converted in slice 2, so the breakage would have been immediate and
+visible. **General rule: an inverse scope and the `default` scopes nested inside it are one
+atomic change. Never split them across slices.**
 
 **Each of slices 2–5 must end with its own two-owner check**: for every selector it deleted,
 `grep` `app.css` and confirm zero rules remain, and confirm the element renders with the intended
