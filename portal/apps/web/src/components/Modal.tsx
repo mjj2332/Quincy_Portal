@@ -46,7 +46,7 @@ export type ModalProps = {
 const SCRIM = cn(
   "scrim",
   "fixed inset-0 z-[var(--z-dialog)] grid place-items-center",
-  "p-[var(--space-6)] max-[720px]:p-0 max-[720px]:items-end",
+  "p-[var(--space-6)] max-[721px]:p-0 max-[721px]:items-end",
   "bg-[var(--scrim-overlay)] backdrop-blur-[3px]",
   "motion-safe:[transition:opacity_var(--overlay-exit)]",
   "data-open:motion-safe:[transition:opacity_var(--overlay-enter)]",
@@ -73,7 +73,7 @@ function panelClasses(size: ModalSize | undefined, wide: boolean): string {
     "motion-safe:[transition:opacity_var(--overlay-exit),translate_var(--overlay-exit)]",
     "data-open:motion-safe:[transition:opacity_var(--overlay-enter),translate_var(--overlay-enter)]",
     "opacity-0 translate-y-[var(--space-3)] data-open:opacity-100 data-open:translate-y-0",
-    "max-[720px]:max-w-none max-[720px]:max-h-[85dvh]",
+    "max-[721px]:max-w-none max-[721px]:max-h-[85dvh]",
   );
 }
 
@@ -90,7 +90,7 @@ const BODY = cn("modal__body", "flex flex-col gap-[var(--space-4)] px-[var(--spa
 const FOOT = cn(
   "flex flex-wrap justify-end gap-[var(--space-3)] px-[var(--space-6)] py-[var(--space-5)]",
   "[border-top-style:solid] border-t-[length:var(--border-width-hair)] border-t-border",
-  "max-[720px]:flex-col-reverse max-[720px]:[&>*]:w-full max-[720px]:[&>*]:min-h-[44px]",
+  "max-[721px]:flex-col-reverse max-[721px]:[&>*]:w-full max-[721px]:[&>*]:min-h-[44px]",
 );
 
 /**

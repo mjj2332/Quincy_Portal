@@ -1,8 +1,15 @@
 import { useCallback, useEffect, useState } from "react";
 import type { CollectionKind, Role } from "@quincy/shared";
 import { apiGet } from "../lib/api";
+import { cn } from "@/lib/utils";
 import { FieldGroup } from "@/components/ui/field";
 import { QuincyField } from "@/components/quincy/QuincyField";
+import { QuincyTextareaField } from "@/components/quincy/QuincyTextareaField";
+import { SectionHead } from "@/components/quincy/SectionHead";
+import { Eyebrow } from "@/components/ui/eyebrow";
+import { Notice } from "@/components/quincy/Notice";
+import { buttonClasses } from "@/components/ui/button";
+import { CHECKBOX_INPUT, CHECK_TILE } from "@/components/ui/checkbox";
 
 export type User = { id: string; name: string; email: string; role: Role; active: boolean };
 export type ProjectForm = {
@@ -30,6 +37,28 @@ export const emptyProjectForm: ProjectForm = {
   shootDate: "", timeWindow: "", orderNo: "", orderId: "", invoiceAmount: "", paymentStatus: "", notes: "", productionNotes: "",
   rawFolderLink: "", rawFolderPath: "", orderedServices: [], photographerUserIds: [], editorUserIds: [],
 };
+
+// The three field-grid shapes, named once and used throughout (§5.14).
+export const FIELD_GRID_4 = "grid gap-[var(--space-4)] grid-cols-1 min-[721px]:grid-cols-2 min-[1081px]:grid-cols-4";
+export const FIELD_GRID_2 = "grid gap-[var(--space-4)] max-w-[620px] grid-cols-1 min-[721px]:grid-cols-2";
+export const FIELD_GRID_PROPERTY = "grid gap-[var(--space-4)] grid-cols-1 min-[721px]:grid-cols-2 min-[1081px]:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(110px,0.55fr)]";
+
+// Section body copy, shared by the read-only notes across §5.14. `SectionHead`'s own
+// `mb-[var(--space-5)]` collapses with the `mt` here, so the note sits 24px under the rule; the
+// `mb` is what keeps it off the field grid that follows it.
+// Both margins are `!` for the same cascade reason `button.tsx`'s colours are: `tokens/base.css`
+// is imported outside any `@layer`, and its unlayered `p { margin: 0 }` beats any margin utility
+// Tailwind emits into `@layer utilities`. Without the `!` these two collapse to zero. (§7 case O)
+const SECTION_NOTE = "!mt-[var(--space-2)] !mb-[var(--space-4)] [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary";
+// The team checklist's own empty message. It sits inside `TEAM_CHECKLIST`'s `bg-border` ground, so
+// it needs a tile's own paper behind it or it renders on the rule colour.
+const CHECKLIST_EMPTY = "m-0 p-[12px] bg-card [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary";
+const TILE_LABEL = "text-foreground [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)]";
+const TILE_HINT = "[font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary";
+const TILE_SPAN = "flex min-w-0 flex-col gap-[var(--space-1)]";
+// Reproduces what the now-deleted `.create-project__checklist` rule did: a 1px-gap hairline grid,
+// same technique as the services grid, plus its own `margin-top: var(--space-3)`.
+const TEAM_CHECKLIST = "grid gap-[1px] mt-[var(--space-3)] bg-border border-solid border-[length:var(--border-width-hair)] border-border";
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -88,8 +117,8 @@ export function ProjectFields({ form, errors, existingCollections = [], mode = "
 
   return <>
     <section className="create-project__section" aria-labelledby="client-heading">
-      <div className="create-project__section-head"><div className="ey">Client</div><h2 className="serif" id="client-heading">Who is it for?</h2></div>
-      <FieldGroup className="[&]:grid grid-cols-1 min-[721px]:grid-cols-2 min-[1081px]:grid-cols-4 gap-[var(--space-4)]">
+      <SectionHead eyebrow="Client" id="client-heading">Who is it for?</SectionHead>
+      <FieldGroup className="grid grid-cols-1 min-[721px]:grid-cols-2 min-[1081px]:grid-cols-4 gap-[var(--space-4)]">
         <QuincyField id="project-agency-name" label="Agency" value={form.agencyName} onChange={(event) => onChange("agencyName", event.target.value)} />
         <QuincyField id="project-agent-name" label="Agent" value={form.agentName} onChange={(event) => onChange("agentName", event.target.value)} />
         <QuincyField id="project-agent-email" label="Agent email" type="email" value={form.agentEmail} onChange={(event) => onChange("agentEmail", event.target.value)} aria-invalid={Boolean(errors.agentEmail)} error={errors.agentEmail} />
@@ -97,33 +126,62 @@ export function ProjectFields({ form, errors, existingCollections = [], mode = "
       </FieldGroup>
     </section>
     <section className="create-project__section" aria-labelledby="shoot-heading">
-      <div className="create-project__section-head"><div className="ey">Shoot</div><h2 className="serif" id="shoot-heading">When is it happening?</h2></div>
-      <div className="create-project__fields create-project__fields--two"><label className="admin-field"><span>Shoot date</span><input type="date" value={form.shootDate} onChange={(event) => onChange("shootDate", event.target.value)} /></label><label className="admin-field"><span>Time window</span><input placeholder="e.g. 9:00–11:00 am" value={form.timeWindow} onChange={(event) => onChange("timeWindow", event.target.value)} /></label></div>
+      <SectionHead eyebrow="Shoot" id="shoot-heading">When is it happening?</SectionHead>
+      <div className={FIELD_GRID_2}>
+        <QuincyField id="project-shoot-date" label="Shoot date" type="date" value={form.shootDate} onChange={(event) => onChange("shootDate", event.target.value)} />
+        <QuincyField id="project-time-window" label="Time window" placeholder="e.g. 9:00–11:00 am" value={form.timeWindow} onChange={(event) => onChange("timeWindow", event.target.value)} />
+      </div>
     </section>
-    <section className={`create-project__section ${policy.orderReadOnly ? "project-fields__section--readonly" : ""}`} aria-labelledby="order-heading">
-      <div className="create-project__section-head"><div className="ey">Order</div><h2 className="serif" id="order-heading">How is it tracked?</h2>{policy.orderReadOnly && <p className="project-fields__readonly-note">Order details are managed by the order system and are available here to copy.</p>}</div>
-      <div className="create-project__fields"><label className="admin-field"><span>Order number</span><input value={form.orderNo} readOnly={policy.orderReadOnly} onChange={policy.orderReadOnly ? undefined : (event) => onChange("orderNo", event.target.value)} /></label><label className="admin-field"><span>Order ID</span><input value={form.orderId} readOnly={policy.orderReadOnly} onChange={policy.orderReadOnly ? undefined : (event) => onChange("orderId", event.target.value)} /></label>{policy.showInvoiceAndPayment && <><label className="admin-field"><span>Invoice amount</span><input type="number" step="any" inputMode="decimal" value={form.invoiceAmount} onChange={(event) => onChange("invoiceAmount", event.target.value)} aria-invalid={Boolean(errors.invoiceAmount)} />{errors.invoiceAmount && <small>{errors.invoiceAmount}</small>}</label><label className="admin-field"><span>Payment status</span><input value={form.paymentStatus} onChange={(event) => onChange("paymentStatus", event.target.value)} /></label></>}</div>
+    <section className="create-project__section" aria-labelledby="order-heading">
+      <SectionHead eyebrow="Order" id="order-heading">How is it tracked?</SectionHead>
+      {policy.orderReadOnly && <p className={SECTION_NOTE}>Order details are managed by the order system and are available here to copy.</p>}
+      <div className={FIELD_GRID_4}>
+        <QuincyField id="project-order-number" label="Order number" value={form.orderNo} readOnly={policy.orderReadOnly} onChange={policy.orderReadOnly ? undefined : (event) => onChange("orderNo", event.target.value)} />
+        <QuincyField id="project-order-id" label="Order ID" value={form.orderId} readOnly={policy.orderReadOnly} onChange={policy.orderReadOnly ? undefined : (event) => onChange("orderId", event.target.value)} />
+        {policy.showInvoiceAndPayment && <>
+          <QuincyField id="project-invoice-amount" label="Invoice amount" type="number" step="any" inputMode="decimal" value={form.invoiceAmount} onChange={(event) => onChange("invoiceAmount", event.target.value)} aria-invalid={Boolean(errors.invoiceAmount)} error={errors.invoiceAmount} />
+          <QuincyField id="project-payment-status" label="Payment status" value={form.paymentStatus} onChange={(event) => onChange("paymentStatus", event.target.value)} />
+        </>}
+      </div>
     </section>
-    <section className={`create-project__section ${policy.servicesReadOnly ? "project-fields__section--readonly" : ""}`} aria-labelledby="services-heading">
-      <div className="create-project__section-head"><div className="ey">Services</div><h2 className="serif" id="services-heading">What is being delivered?</h2>{policy.servicesReadOnly && <p className="project-fields__readonly-note">Services are fixed after a project is created.</p>}</div>
-      <div className="create-project__checks" role="group" aria-labelledby="services-heading">
-        <label className="create-project__check"><input type="checkbox" checked disabled /><span><strong>RAW</strong><small>{collectionExists("raw") ? "Already created" : "Always included"}</small></span></label>
-        {SERVICES.map((service) => <label className="create-project__check" key={service.kind}><input type="checkbox" checked={form.orderedServices.includes(service.kind)} disabled={policy.servicesReadOnly} onChange={policy.servicesReadOnly ? undefined : () => onToggle("orderedServices", service.kind)} /><span>{service.label}</span></label>)}
+    <section className="create-project__section" aria-labelledby="services-heading">
+      <SectionHead eyebrow="Services" id="services-heading">What is being delivered?</SectionHead>
+      {policy.servicesReadOnly && <p className={SECTION_NOTE}>Services are fixed after a project is created.</p>}
+      <div role="group" aria-labelledby="services-heading"
+           className="grid gap-[1px] bg-border border-solid border-[length:var(--border-width-hair)] border-border grid-cols-1 min-[721px]:grid-cols-3 min-[1081px]:grid-cols-5">
+        <label className={cn(CHECK_TILE, "create-project__check")}>
+          <input type="checkbox" checked disabled className={CHECKBOX_INPUT} />
+          <span className={TILE_SPAN}><strong className={TILE_LABEL}>RAW</strong><small className={TILE_HINT}>{collectionExists("raw") ? "Already created" : "Always included"}</small></span>
+        </label>
+        {SERVICES.map((service) => <label className={cn(CHECK_TILE, "create-project__check")} key={service.kind}><input type="checkbox" checked={form.orderedServices.includes(service.kind)} disabled={policy.servicesReadOnly} onChange={policy.servicesReadOnly ? undefined : () => onToggle("orderedServices", service.kind)} className={CHECKBOX_INPUT} /><span className={TILE_SPAN}>{service.label}</span></label>)}
       </div>
     </section>
     <section className="create-project__section" aria-labelledby="dropbox-heading">
-      <div className="create-project__section-head"><div className="ey">Dropbox</div><h2 className="serif" id="dropbox-heading">Where will the RAW files land?</h2></div>
-      <div className="create-project__fields create-project__fields--two"><label className="admin-field"><span>RAW folder link</span><input type="url" placeholder="https://www.dropbox.com/..." value={form.rawFolderLink} onChange={(event) => onChange("rawFolderLink", event.target.value)} aria-invalid={Boolean(errors.rawFolderLink)} />{errors.rawFolderLink && <small>{errors.rawFolderLink}</small>}</label><label className="admin-field"><span>RAW folder path</span><input placeholder="/Shoots/Property name" value={form.rawFolderPath} onChange={(event) => onChange("rawFolderPath", event.target.value)} /></label></div>
+      <SectionHead eyebrow="Dropbox" id="dropbox-heading">Where will the RAW files land?</SectionHead>
+      <div className={FIELD_GRID_2}>
+        <QuincyField id="project-raw-folder-link" label="RAW folder link" type="url" placeholder="https://www.dropbox.com/..." value={form.rawFolderLink} onChange={(event) => onChange("rawFolderLink", event.target.value)} aria-invalid={Boolean(errors.rawFolderLink)} error={errors.rawFolderLink} />
+        <QuincyField id="project-raw-folder-path" label="RAW folder path" placeholder="/Shoots/Property name" value={form.rawFolderPath} onChange={(event) => onChange("rawFolderPath", event.target.value)} />
+      </div>
     </section>
     {mode === "create" && <section className="create-project__section" aria-labelledby="team-heading">
-      <div className="create-project__section-head"><div className="ey">Team</div><h2 className="serif" id="team-heading">Who is assigned?</h2></div>
-      {isLoadingUsers && <div className="create-project__team-state" role="status">Loading available team members…</div>}
-      {!isLoadingUsers && usersError && <div className="notice" role="alert">{usersError}<div style={{ marginTop: 12 }}><button className="button button--secondary" type="button" onClick={() => void loadUsers()}>Try again</button></div></div>}
-      {!isLoadingUsers && !usersError && <div className="create-project__team"><div><div className="ey">Photographers</div><div className="create-project__checklist">{photographers.length ? photographers.map((user) => <label className="create-project__check" key={user.id}><input type="checkbox" checked={form.photographerUserIds.includes(user.id)} onChange={() => onToggle("photographerUserIds", user.id)} /><span><strong>{userName(user)}</strong><small>{user.email}{roleLabel(user.role) && ` · ${roleLabel(user.role)}`}</small></span></label>) : <p>No active photographers are provisioned.</p>}</div></div><div><div className="ey">Editors</div><div className="create-project__checklist">{editors.length ? editors.map((user) => <label className="create-project__check" key={user.id}><input type="checkbox" checked={form.editorUserIds.includes(user.id)} onChange={() => onToggle("editorUserIds", user.id)} /><span><strong>{userName(user)}</strong><small>{user.email}{user.role === "admin" && " · admin"}{user.role === "external_editor" && " · External editor"}</small></span></label>) : <p>No active editors are provisioned.</p>}</div></div></div>}
+      <SectionHead eyebrow="Team" id="team-heading">Who is assigned?</SectionHead>
+      {isLoadingUsers && <div role="status" className={SECTION_NOTE}>Loading available team members…</div>}
+      {!isLoadingUsers && usersError && <Notice role="alert">{usersError}<div className="mt-[var(--space-3)]"><button className={buttonClasses("secondary")} type="button" onClick={() => void loadUsers()}>Try again</button></div></Notice>}
+      {!isLoadingUsers && !usersError && <div className={FIELD_GRID_2}>
+        <div>
+          <Eyebrow className="block mb-[var(--space-2)]">Photographers</Eyebrow>
+          <div className={cn(TEAM_CHECKLIST, "create-project__checklist")}>{photographers.length ? photographers.map((user) => <label className={cn(CHECK_TILE, "create-project__check")} key={user.id}><input type="checkbox" checked={form.photographerUserIds.includes(user.id)} onChange={() => onToggle("photographerUserIds", user.id)} className={CHECKBOX_INPUT} /><span className={TILE_SPAN}><strong className={TILE_LABEL}>{userName(user)}</strong><small className={TILE_HINT}>{user.email}{roleLabel(user.role) && ` · ${roleLabel(user.role)}`}</small></span></label>) : <p className={CHECKLIST_EMPTY}>No active photographers are provisioned.</p>}</div>
+        </div>
+        <div>
+          <Eyebrow className="block mb-[var(--space-2)]">Editors</Eyebrow>
+          <div className={cn(TEAM_CHECKLIST, "create-project__checklist")}>{editors.length ? editors.map((user) => <label className={cn(CHECK_TILE, "create-project__check")} key={user.id}><input type="checkbox" checked={form.editorUserIds.includes(user.id)} onChange={() => onToggle("editorUserIds", user.id)} className={CHECKBOX_INPUT} /><span className={TILE_SPAN}><strong className={TILE_LABEL}>{userName(user)}</strong><small className={TILE_HINT}>{user.email}{user.role === "admin" && " · admin"}{user.role === "external_editor" && " · External editor"}</small></span></label>) : <p className={CHECKLIST_EMPTY}>No active editors are provisioned.</p>}</div>
+        </div>
+      </div>}
     </section>}
-    <section className={`create-project__section ${policy.notesReadOnly ? "project-fields__section--readonly" : ""}`} aria-labelledby="notes-heading">
-      <div className="create-project__section-head"><div className="ey">Notes</div><h2 className="serif" id="notes-heading">Anything the team should know?</h2>{policy.notesReadOnly && <p className="project-fields__readonly-note">Notes are retained from the original order.</p>}</div>
-      <label className="admin-field"><span>Production notes</span><textarea rows={5} value={form.productionNotes} readOnly={policy.notesReadOnly} onChange={policy.notesReadOnly ? undefined : (event) => onChange("productionNotes", event.target.value)} /></label>
+    <section className="create-project__section" aria-labelledby="notes-heading">
+      <SectionHead eyebrow="Notes" id="notes-heading">Anything the team should know?</SectionHead>
+      {policy.notesReadOnly && <p className={SECTION_NOTE}>Notes are retained from the original order.</p>}
+      <QuincyTextareaField id="project-order-notes" label="Production notes" rows={5} value={form.productionNotes} readOnly={policy.notesReadOnly} onChange={policy.notesReadOnly ? undefined : (event) => onChange("productionNotes", event.target.value)} />
     </section>
   </>;
 }

@@ -4,9 +4,17 @@ import { ProjectFields, emptyProjectForm, type ProjectFieldError, type ProjectFo
 import { apiPost } from "../lib/api";
 import { InternalLink } from "../components/InternalLink";
 import { invalidateProjectSurfaces, useOptionalProjectQueryClient } from "../lib/project-data";
+import { cn } from "@/lib/utils";
+import { Eyebrow } from "@/components/ui/eyebrow";
+import { FIELD_BOX } from "@/components/ui/input";
+import { QuincyField } from "@/components/quincy/QuincyField";
+import { Notice } from "@/components/quincy/Notice";
+import { buttonClasses } from "@/components/ui/button";
 
 type ProjectDetail = { id: string; collections: Array<{ id: string; kind: CollectionKind }>; members: Array<{ id: string }> };
 type FormErrors = Partial<Record<"street" | ProjectFieldError, string>>;
+
+const OPTIONAL_MARKER = "not-italic ms-[var(--space-2)] [font:var(--type-eyebrow)] normal-case tracking-[var(--tracking-normal)] text-foreground-secondary";
 
 function optionalValue(value: string): string | null { return value.trim() || null; }
 
@@ -45,18 +53,77 @@ export function CreateProject({ onNavigate }: { onNavigate: (path: string, notic
     finally { setIsSubmitting(false); }
   }
 
-  return <main className="page create-project">
-    <div className="pagehead"><div><div className="ey" style={{ marginBottom: 14 }}>Production desk</div><h1 className="serif">New shoot</h1></div><InternalLink className="button button--secondary" to="/">Cancel</InternalLink></div>
-    <form className="create-project__form" onSubmit={(event) => void submit(event)} noValidate>
-      {submitError && <div className="notice" role="alert">{submitError}</div>}
-      <section className="create-project__hero" aria-labelledby="property-heading">
-        <div className="ey">Start with the address</div><h2 className="serif" id="property-heading">Where is the shoot?</h2>
-        <div className="create-project__hero-action"><label className="create-project__address"><span className="sr-only">Street address</span><input autoFocus required placeholder="12 Kings Road, Vaucluse" value={form.street} onChange={(event) => updateField("street", event.target.value)} aria-invalid={Boolean(errors.street)} /></label><button className="button" type="submit" disabled={isSubmitting || !form.street.trim()}>{isSubmitting ? "Creating shoot…" : "Create shoot"}</button></div>
-        {errors.street && <small className="create-project__hero-error">{errors.street}</small>}
-        <div className="create-project__refinements"><label className="admin-field"><span>Suburb <em>optional</em></span><input value={form.suburb} onChange={(event) => updateField("suburb", event.target.value)} /></label><label className="admin-field"><span>Postcode <em>optional</em></span><input inputMode="numeric" value={form.postcode} onChange={(event) => updateField("postcode", event.target.value)} /></label></div>
-        <p>You can fill in everything else later from the shoot&apos;s workspace.</p>
+  return <main className="page !max-w-[1080px]">
+    <header className="flex flex-wrap items-end justify-between gap-[var(--space-6)] mb-[var(--space-6)]">
+      <div>
+        <Eyebrow className="block mb-[var(--space-3)]">Production desk</Eyebrow>
+        <h1 className="[font:var(--type-h1)] tracking-[var(--tracking-tight)]">New shoot</h1>
+      </div>
+      <InternalLink className={buttonClasses("secondary")} to="/">Cancel</InternalLink>
+    </header>
+    <form onSubmit={(event) => void submit(event)} noValidate className="create-project__form flex flex-col gap-[var(--space-8)]">
+      {submitError && <Notice role="alert">{submitError}</Notice>}
+      <section
+        aria-labelledby="property-heading"
+        className="p-[clamp(var(--space-5),6vw,var(--space-8))] bg-card border-solid border-[length:var(--border-width-hair)] border-border"
+      >
+        <Eyebrow className="block mb-[var(--space-3)]">Start with the address</Eyebrow>
+        <h2 id="property-heading" className="m-0 [font:var(--type-h1)] max-[721px]:[font:var(--type-h2)] tracking-[var(--tracking-tight)] text-foreground text-balance">
+          Where is the shoot?
+        </h2>
+        {/* `!` on both margins: `tokens/base.css` is imported outside any `@layer`, so its
+            `p { margin: 0 }` beats a plain margin utility from `@layer utilities`. (§7 case O) */}
+        <p className="!mt-[var(--space-4)] !mb-[var(--space-5)] [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary">
+          You can fill in everything else later from the shoot&apos;s workspace.
+        </p>
+
+        <div className="create-project__hero-action grid gap-[var(--space-3)] grid-cols-1 min-[721px]:grid-cols-[minmax(0,1fr)_auto]">
+          <label className="flex flex-col gap-[6px]">
+            <span className="sr-only">Street address</span>
+            <input
+              autoFocus
+              required
+              id="project-street"
+              placeholder="12 Kings Road, Vaucluse"
+              value={form.street}
+              onChange={(event) => updateField("street", event.target.value)}
+              aria-invalid={Boolean(errors.street)}
+              aria-describedby={errors.street ? "project-street-error" : undefined}
+              aria-errormessage={errors.street ? "project-street-error" : undefined}
+              className={cn(FIELD_BOX,
+                "min-h-[var(--space-7)] rounded-none px-[16px] py-[12px]",
+                "border-[var(--field-border)]",
+                "[font:var(--weight-regular)_var(--text-lg)/var(--leading-snug)_var(--font-display)]")}
+            />
+          </label>
+          <button type="submit" className={buttonClasses("primary", { busy: isSubmitting, className: "min-h-[var(--space-7)] max-[721px]:w-full" })} disabled={isSubmitting || !form.street.trim()}>
+            {isSubmitting ? "Creating shoot…" : "Create shoot"}
+          </button>
+        </div>
+
+        {errors.street ? (
+          <p id="project-street-error" role="alert" className="!mt-[var(--space-2)] mb-0 [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-destructive">
+            {errors.street}
+          </p>
+        ) : null}
+
+        <div className="grid gap-[var(--space-4)] max-w-[580px] grid-cols-1 min-[721px]:grid-cols-[minmax(0,1fr)_150px] mt-[var(--space-4)]">
+          <QuincyField id="project-suburb" label={<>Suburb <em className={OPTIONAL_MARKER}>optional</em></>} value={form.suburb} onChange={(event) => updateField("suburb", event.target.value)} />
+          <QuincyField id="project-postcode" label={<>Postcode <em className={OPTIONAL_MARKER}>optional</em></>} inputMode="numeric" value={form.postcode} onChange={(event) => updateField("postcode", event.target.value)} />
+        </div>
       </section>
-      <details className="create-project__details" open={showDetails} onToggle={(event) => setShowDetails(event.currentTarget.open)}><summary>Add details now <span>(optional)</span></summary><div className="create-project__detail-content"><ProjectFields form={form} errors={errors} onChange={updateField} onToggle={toggleValue} /><div className="create-project__actions"><InternalLink className="button button--secondary" to="/" aria-disabled={isSubmitting}>Cancel</InternalLink><button className="button" type="submit" disabled={isSubmitting || !form.street.trim()}>{isSubmitting ? "Creating shoot…" : "Create shoot"}</button></div></div></details>
+      <details open={showDetails} onToggle={(event) => setShowDetails(event.currentTarget.open)} className="bg-card border-solid border-[length:var(--border-width-hair)] border-border">
+        <summary className="p-[var(--space-5)] cursor-pointer [font:var(--type-label)] uppercase tracking-[var(--tracking-wide)] text-foreground marker:text-foreground-secondary open:[border-bottom-style:solid] open:border-b-[length:var(--border-width-hair)] open:border-b-border">
+          Add details now <span className="normal-case tracking-[var(--tracking-normal)] text-foreground-secondary">(optional)</span>
+        </summary>
+        <div className="p-[var(--space-5)] max-[721px]:p-[var(--space-4)] flex flex-col gap-[var(--space-8)]">
+          <ProjectFields form={form} errors={errors} onChange={updateField} onToggle={toggleValue} />
+          <div className="create-project__actions flex flex-wrap justify-end gap-[var(--space-3)] max-[721px]:flex-col-reverse max-[721px]:[&>*]:w-full">
+            <InternalLink className={buttonClasses("secondary")} to="/" aria-disabled={isSubmitting}>Cancel</InternalLink>
+            <button className={buttonClasses("primary", { busy: isSubmitting })} type="submit" disabled={isSubmitting || !form.street.trim()}>{isSubmitting ? "Creating shoot…" : "Create shoot"}</button>
+          </div>
+        </div>
+      </details>
     </form>
   </main>;
 }

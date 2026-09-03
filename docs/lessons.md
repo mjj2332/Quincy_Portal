@@ -928,6 +928,38 @@ can pass happy-dom while failing Chrome.
   "restore focus in the same synchronous call that closes it," not "restore it after the DOM
   settles."
 
+## Two ways a green test quietly stops proving anything (TB8-04, 2026-09-02)
+
+Both were found while building TB8-04. Neither is about the feature under test; both are about
+assertions that *looked* precise and weren't.
+
+**1. A hardcoded future date is a time bomb.** `KanbanCardPreview.dom.test.tsx` pinned a fixture
+deadline at `2026-09-01T22:00:00.000Z` and asserted the card reads `Due 2026-09-02 08:00 Sydney`.
+The card picks "Due" vs "Overdue" from `isDeadlineOverdue(project.deadlineAt)`
+(`ProjectKanbanBoard.tsx:262`), whose `now` defaults to `Date.now()`
+(`packages/shared/src/project-deadline.ts:140`) — so the test passed for as long as that instant
+stayed in the future and has failed unconditionally since 2026-09-02, with
+`expected 'Overdue …' to contain 'Due …'`. Fixed by freezing the clock
+(`vi.useFakeTimers({ now: testNow })` / `vi.useRealTimers()`), the idiom
+`Dashboard-kanban-sort.dom.test.tsx` already used — *not* by relaxing the assertion, which would
+have thrown away the only thing the test proves. **Rule:** any test whose expected output depends
+on the current time must freeze the clock. A date literal in a fixture is a countdown, and the
+failure lands on whoever is mid-branch when it expires — far from the change that "caused" it.
+
+**2. `expect(markup).not.toContain("disabled")` is unsafe on any Tailwind-painted surface.**
+`ProjectFields.test.ts` asserted an input was not disabled by searching the rendered tag for the
+bare substring `disabled`. That held only while the element carried no utility classes. The moment
+`FIELD_BOX` landed on it — carrying `disabled:bg-surface-sunken`, `hover:not-disabled:…`,
+`read-only:…`, and (on the tiles) `has-[:disabled]:…` — the assertion started matching a *class
+token* and failed on a perfectly enabled input. Three instances in one file had the same shape.
+Fixed by keying off the attribute rather than the word: `/\s(?:readonly|readOnly|disabled)=""/`
+and `/\sdisabled=""/`. That is strictly *stricter*, not looser — a real `disabled` attribute is
+still caught, a class token no longer produces a false positive. **Rule:** every Tailwind state
+variant puts its own name into the class attribute, so a bare-word search over markup tests the
+stylesheet as much as the DOM. Assert on the attribute (or query the DOM node's `.disabled`),
+never on a substring of the tag. The same trap applies to `readonly`, `checked`, `required`,
+`hidden`, `open`, `invalid`, and `selected`.
+
 ## `@cloudflare/vitest-pool-workers` leaked `SELF.fetch` dispatch — the `workers/app` timing flake (2026-09-03)
 
 **Symptom.** One test in `workers/app/test/api.test.ts` — "manages and edits manual collection
@@ -1037,3 +1069,69 @@ exits 1 in this repo, because `packages/shared` has a vitest config but no `test
 reports `Missing script: "test"`. It still runs every other workspace. Judge that command by the
 per-workspace summaries, never by its exit code — and keep running
 `npx vitest run --config packages/shared/vitest.config.ts` separately, as `CLAUDE.md` says.
+
+## Three CSS traps a Tailwind convergence walks straight into (TB8-04, 2026-09-03)
+
+All three shipped into a branch that passed typecheck, build, every unit test and a DOM test
+suite. All three were caught only by measuring computed style in a real browser. The common
+shape: **a utility string is applied to a component that is more general than the one it was
+written for**, and CSS's own defaults do the rest silently.
+
+**1. `:read-only` matches every `<select>`, unconditionally.** Only `<input>`, `<textarea>` and
+contenteditable elements are ever `:read-write`; a `<select>` is `:read-only` always, whether or
+not it is disabled and regardless of any attribute. So a bare `read-only:` variant on the shared
+field-box string (`FIELD_BOX` in `components/ui/input.tsx`, which `Input`, `Textarea` **and**
+`NativeSelect` all render) painted every native select `--bg-sunken` + `--text-secondary` — the
+exact treatment reserved for disabled and read-only fields. Enabled role selects on the Admin
+screen became visually indistinguishable from the one genuinely disabled control next to them,
+so the disabled signal stopped meaning anything. The regression is invisible to the DOM tests:
+the markup is correct, only the painted colour is wrong. Detected with
+`[...document.querySelectorAll('select')].map(s => s.matches(':read-only'))` → all `true`, then
+confirmed against `HEAD`, where `app.css`'s `.admin-field select` rule gave selects
+`--paper-050` + `--text-primary` like the inputs. Fixed with an arbitrary variant carrying an
+explicit guard — `[&:read-only:not(select)]:bg-surface-sunken` — with a comment saying the
+`:not(select)` is load-bearing, because it reads like a redundancy and will otherwise be
+"cleaned up." **Rule:** a shared field-box string is applied to three different elements; every
+state variant in it must be checked against all three, and pseudo-classes that look universal
+(`:read-only`, `:required`, `:invalid`, `:in-range`) have element-specific defaults.
+
+**2. Tailwind v4's `max-[Npx]` is exclusive, so `max-[N]` + `min-[N]` leaves N uncovered.**
+`max-[720px]:` compiles to `@media not all and (width >= 720px)`, i.e. `width < 720` — *not* the
+`@media (max-width: 720px)` (inclusive of 720) that the hand-written CSS it replaced used. Pair
+that with `min-[720px]:` and the viewport at exactly 720px matches neither branch: the table is
+not stacked and not laid out as a table, controls get neither the 38px nor the 44px height. The
+repo's convention is now **`max-[721px]:` paired with `min-[721px]:`** — `max-[721px]` means
+`≤ 720`, `min-[721px]` means `≥ 721`, and the two are exactly complementary with no gap and no
+overlap. Verified by driving the layout across 722 / 721 / 720 / 719 and reading
+`getComputedStyle(table).display` and the tab strip's `min-height`: 721 → `table` + 38px, 720 →
+`block` + 44px. Do not "simplify" `721` to `720`; the off-by-one is the fix. **Rule:** when
+porting a hand-written `max-width` media query to a Tailwind arbitrary variant, add 1 — and
+prove the boundary by measuring at N-1, N and N+1, never by reading the class name.
+
+**3. A responsive table that goes `display: block` silently loses its entire accessibility
+tree.** Stacking a table for narrow viewports (`max-[721px]:block` on `table`, `tbody`, `tr`,
+`td`) replaces the implicit `table` / `rowgroup` / `row` / `cell` / `columnheader` roles with
+generic ones — the markup still says `<table>`, but a screen reader no longer announces a table,
+row or column count, and header association is gone. This is invisible in every check that reads
+markup rather than the computed accessibility tree. The fix that must accompany any such stacking
+is to reapply the roles explicitly (`role="table"`, `role="rowgroup"` on both `thead` and
+`tbody`, `role="row"`, `role="cell"`, `role="columnheader"`), keep `scope="col"` on every header,
+hide the header row with `sr-only` rather than `display: none` (so it stays in the tree), and
+carry a `data-label` on each body cell for sighted mobile users. Verify by reading
+`getComputedStyle(el).display` **and** `el.getAttribute("role")` together at the narrow width —
+a `display: block` with no explicit `role` is the defect. **Rule:** any `display` change on a
+table element is an accessibility change; the role must be restored in the same commit.
+
+### The method, which generalises
+
+The emulated viewport in the browser tooling here is pinned (2560 CSS px, dpr 2) and window
+resizing does not move it, so breakpoint work cannot be checked by resizing. The way through is
+a **same-origin iframe**: `<iframe src="/" style="width:390px;height:844px">` evaluates media
+queries against its own viewport, and being same-origin its `contentDocument` is fully
+scriptable. Every measurement above — the 722/721/720/719 boundary sweep, the 44px touch-target
+audit, the stacked-table role check, per-breakpoint overflow — was taken through one iframe,
+resized between runs, with no dependence on the host viewport at all. Contrast measurement has a
+matching trap: Tailwind opacity modifiers (`bg-signal-positive/8`) compute to `color-mix()` /
+`oklab()`, which a naive `rgba()` regex cannot parse. Composite through a canvas instead —
+`fillStyle = base; fillRect; fillStyle = colour; fillRect; getImageData` — which resolves any
+colour space and alpha to the actual painted sRGB pixel.

@@ -101,7 +101,7 @@ function boardModelFromProjects(projects: ProjectSummary[]): BoardModel {
 // the grid wider than its container at 1024.
 const PROW_GRID = "[display:grid] grid-cols-[72px_minmax(0,1.6fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.1fr)_96px] " +
   "items-center gap-[var(--space-4)] px-[var(--space-5)] py-[var(--space-3)] " +
-  "max-[720px]:grid-cols-[56px_1fr_84px] max-[720px]:py-[var(--space-4)]";
+  "max-[721px]:grid-cols-[56px_1fr_84px] max-[721px]:py-[var(--space-4)]";
 const PROW_ROW = PROW_GRID + " w-full border-0 [border-top-style:solid] border-t-[length:var(--border-width-hair)] " +
   "border-t-border first:border-t-0 text-inherit text-left font-inherit bg-transparent cursor-pointer " +
   "no-underline transition-colors duration-[var(--dur-fast)] ease-[var(--ease-standard)] hover:bg-secondary " +
@@ -112,7 +112,7 @@ const PROW_ROW = PROW_GRID + " w-full border-0 [border-top-style:solid] border-t
 // no disabled styling at all, even though the Dashboard disables it while interaction is blocked.
 const SEGMENT_GROUP = "inline-flex border-solid border-[length:var(--border-width-hair)] border-border " +
   "rounded-[var(--radius-sm)] overflow-hidden bg-card has-[button:focus-visible]:overflow-visible " +
-  "max-[720px]:flex-auto";
+  "max-[721px]:flex-auto";
 // Merged font shorthand, not `[font:var(--type-label)]` + a separate `text-[length:var(--text-xs)]`
 // override — the two-utility split doesn't reliably resolve to text-xs (Tailwind's generated
 // order between them isn't guaranteed); see button.tsx's BASE for the same fix.
@@ -127,8 +127,8 @@ const SEGMENT_BUTTON = "[font:var(--weight-regular)_var(--text-xs)/1.2_var(--fon
   "focus-visible:outline-ring focus-visible:outline-offset-2 focus-visible:relative focus-visible:z-10 " +
   "disabled:text-foreground-secondary disabled:bg-surface-sunken disabled:cursor-not-allowed " +
   "disabled:translate-y-0 [&.is-active]:disabled:bg-surface-sunken [&.is-active]:disabled:text-foreground-secondary " +
-  "[&.is-active]:disabled:border-border-hover max-[720px]:flex-auto " +
-  "max-[720px]:min-h-[44px]"; /* WCAG 2.5.8 minimum target, not a spacing token */
+  "[&.is-active]:disabled:border-border-hover max-[721px]:flex-auto " +
+  "max-[721px]:min-h-[44px]"; /* WCAG 2.5.8 minimum target, not a spacing token */
 
 function ProjectListRow({ project, projectHref }: { project: ProjectSummary; projectHref: string }) {
   const [coverFailed, setCoverFailed] = useState(false); const [coverRetry, setCoverRetry] = useState(0);
@@ -139,9 +139,9 @@ function ProjectListRow({ project, projectHref }: { project: ProjectSummary; pro
         <span className="prow__addr block font-[family-name:var(--font-display)] text-[length:var(--text-md)] tracking-[var(--tracking-tight)]">{project.street}</span>
         <Eyebrow className="prow__location block mt-[var(--space-1)]">{location(project)}</Eyebrow>
       </span>
-      <span className="prow__c-agency text-[length:var(--text-sm)] max-[720px]:hidden">{project.agencyName || "Agency pending"}<span className="block mt-[var(--space-1)] text-[length:var(--text-xs)] text-muted-foreground">{project.agentName || "Agent pending"}</span></span>
-      <span className="prow__c-date text-[length:var(--text-sm)] max-[720px]:hidden">{formatDashboardDate(project.shootDate)}</span>
-      <span className="prow__c-status max-[720px]:hidden"><StatusBadge stageKey={project.stageKey} /></span>
+      <span className="prow__c-agency text-[length:var(--text-sm)] max-[721px]:hidden">{project.agencyName || "Agency pending"}<span className="block mt-[var(--space-1)] text-[length:var(--text-xs)] text-muted-foreground">{project.agentName || "Agent pending"}</span></span>
+      <span className="prow__c-date text-[length:var(--text-sm)] max-[721px]:hidden">{formatDashboardDate(project.shootDate)}</span>
+      <span className="prow__c-status max-[721px]:hidden"><StatusBadge stageKey={project.stageKey} /></span>
       <span className="prow__raw text-right tabular-nums text-[length:var(--text-sm)]">{project.receivedCount}</span>
     </InternalLink>
     {coverFailed && <Button type="button" variant="secondary" className="prow__retry mt-[var(--space-2)]" onClick={() => { setCoverFailed(false); setCoverRetry((current) => current + 1); }}>Retry cover image</Button>}
@@ -909,17 +909,17 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       <div className="flex flex-wrap items-end justify-between gap-x-[var(--space-6)] gap-y-[var(--space-5)] pb-[var(--space-4)]">
         <div>
           <Eyebrow className="mb-[var(--space-3)]">Quincy Portal · production desk</Eyebrow>
-          <h1 className="[font:var(--type-h1)] tracking-[var(--tracking-tight)] max-[720px]:[font:var(--type-h2)]">Projects</h1>
+          <h1 className="[font:var(--type-h1)] tracking-[var(--tracking-tight)] max-[721px]:[font:var(--type-h2)]">Projects</h1>
         </div>
         <div className="flex items-center gap-[var(--space-3)] flex-wrap">
-          <label className={cn("dashboard-search", "group flex items-center min-w-[min(100%,300px)] px-[var(--space-3)] bg-card border-solid border-[length:var(--border-width-hair)] border-border rounded-[var(--radius-sm)] transition-[border-color] duration-[var(--dur-fast)] ease-[var(--ease-standard)] hover:border-border-hover focus-within:border-primary focus-within:outline-[length:var(--border-width-bold)] focus-within:outline-solid focus-within:outline-ring focus-within:outline-offset-2 max-[720px]:basis-full max-[720px]:min-w-0")}>
+          <label className={cn("dashboard-search", "group flex items-center min-w-[min(100%,300px)] px-[var(--space-3)] bg-card border-solid border-[length:var(--border-width-hair)] border-border rounded-[var(--radius-sm)] transition-[border-color] duration-[var(--dur-fast)] ease-[var(--ease-standard)] hover:border-border-hover focus-within:border-primary focus-within:outline-[length:var(--border-width-bold)] focus-within:outline-solid focus-within:outline-ring focus-within:outline-offset-2 max-[721px]:basis-full max-[721px]:min-w-0")}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true" className="size-[15px] shrink-0 text-muted-foreground transition-colors duration-[var(--dur-fast)] ease-[var(--ease-standard)] group-focus-within:text-foreground-secondary"><circle cx="11" cy="11" r="6" /><path d="m16 16 4 4" /></svg>
             <span className="sr-only">Search projects</span>
-            <input className="min-w-0 w-full py-[var(--space-2)] px-[var(--space-3)] border-0 outline-0 bg-transparent text-foreground [font:var(--type-body)] text-[length:var(--text-sm)] placeholder:text-muted-foreground max-[720px]:py-[var(--space-3)]" value={query} onChange={(event) => setQuery(sanitizeDashboardCalendarSearch(event.target.value))} placeholder="Search address, suburb, client…" />
+            <input className="min-w-0 w-full py-[var(--space-2)] px-[var(--space-3)] border-0 outline-0 bg-transparent text-foreground [font:var(--type-body)] text-[length:var(--text-sm)] placeholder:text-muted-foreground max-[721px]:py-[var(--space-3)]" value={query} onChange={(event) => setQuery(sanitizeDashboardCalendarSearch(event.target.value))} placeholder="Search address, suburb, client…" />
           </label>
           {canCreateProject && <InternalLink className={buttonClasses()} to="/projects/new">New shoot</InternalLink>}
         </div>
-        <hr className="basis-full m-0 mb-[var(--space-6)] border-0 [border-top-style:solid] border-t-[length:var(--border-width-rule)] border-t-primary max-[720px]:mb-[var(--space-5)]" />
+        <hr className="basis-full m-0 mb-[var(--space-6)] border-0 [border-top-style:solid] border-t-[length:var(--border-width-rule)] border-t-primary max-[721px]:mb-[var(--space-5)]" />
       </div>
 
       {canViewNoticeBoard && <NoticeBoard currentUserId={currentUserId} />}
@@ -943,9 +943,9 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         </div>
       </section>}
 
-      <div className={cn("dashboard-viewbar", "flex flex-wrap items-center justify-end gap-x-[var(--space-3)] gap-y-[var(--space-2)] mb-[var(--space-4)] pt-[var(--space-4)] [border-top-style:solid] border-t-[length:var(--border-width-hair)] border-t-border max-[720px]:justify-start")}>
+      <div className={cn("dashboard-viewbar", "flex flex-wrap items-center justify-end gap-x-[var(--space-3)] gap-y-[var(--space-2)] mb-[var(--space-4)] pt-[var(--space-4)] [border-top-style:solid] border-t-[length:var(--border-width-hair)] border-t-border max-[721px]:justify-start")}>
         {canViewArchived && <>
-          <Eyebrow className="max-[720px]:basis-full max-[720px]:-mb-[var(--space-1)]">Projects</Eyebrow>
+          <Eyebrow className="max-[721px]:basis-full max-[721px]:-mb-[var(--space-1)]">Projects</Eyebrow>
           <div className={SEGMENT_GROUP} aria-label="Project status">
             <button className={cn(SEGMENT_BUTTON, !viewingArchived && "is-active")} type="button" onClick={() => selectProjectScope("active")}>Active</button>
             <button className={cn(SEGMENT_BUTTON, viewingArchived && "is-active")} type="button" onClick={() => selectProjectScope("archived")}>Archived</button>
@@ -953,24 +953,24 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         </>}
         {viewingArchived && <Eyebrow role="status">Archived projects</Eyebrow>}
         {!viewingArchived && <>
-        <Eyebrow className="max-[720px]:basis-full max-[720px]:-mb-[var(--space-1)]">View</Eyebrow>
+        <Eyebrow className="max-[721px]:basis-full max-[721px]:-mb-[var(--space-1)]">View</Eyebrow>
         <div className={SEGMENT_GROUP} aria-label="Dashboard view">
           <button className={cn(SEGMENT_BUTTON, view === "list" && "is-active")} type="button" data-focus-key="dashboard-view-list" disabled={interactionBlocked || calendarInteractionBlocked} onClick={() => selectView("list")}>List</button>
           <button className={cn(SEGMENT_BUTTON, view === "kanban" && "is-active")} type="button" data-focus-key="dashboard-view-kanban" disabled={interactionBlocked || calendarInteractionBlocked} onClick={() => selectView("kanban")}>Kanban</button>
           {canViewProductionCalendar && <button className={cn(SEGMENT_BUTTON, view === "calendar" && "is-active")} type="button" data-focus-key="dashboard-view-calendar" disabled={interactionBlocked || calendarInteractionBlocked} onClick={() => selectView("calendar")}>Calendar</button>}
         </div>
         {!viewingArchived && view === "kanban" && (
-          <div className="dashboard-sort max-[720px]:basis-full">
+          <div className="dashboard-sort max-[721px]:basis-full">
             <Select
               value={effectiveKanbanSort}
               onValueChange={(next) => selectKanbanSort(next)}
               options={kanbanSortOptions}
               disabled={interactionBlocked}
               ariaLabel="Sort Kanban board"
-              className="max-[720px]:w-full"
+              className="max-[721px]:w-full"
               triggerClassName={cn(
-                "min-w-[var(--space-10)] max-[720px]:w-full max-[720px]:min-w-0",
-                "max-[720px]:min-h-[44px]" /* WCAG 2.5.8 minimum target, not a spacing token */,
+                "min-w-[var(--space-10)] max-[721px]:w-full max-[721px]:min-w-0",
+                "max-[721px]:min-h-[44px]" /* WCAG 2.5.8 minimum target, not a spacing token */,
               )}
             />
           </div>
@@ -979,7 +979,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       </div>
 
       {boardUnavailableMessage && !viewingArchived && !isCalendarView && (
-        <div role="status" className="flex items-baseline gap-[var(--space-3)] mb-[var(--space-4)] px-[var(--space-4)] py-[var(--space-3)] [border-left-style:solid] border-l-[length:var(--border-width-rule)] border-l-signal-caution bg-[color-mix(in_srgb,var(--signal-caution)_7%,var(--bg-surface))] text-foreground text-[length:var(--text-sm)] leading-[var(--leading-normal)] before:content-['Board'] before:shrink-0 before:[font:var(--type-eyebrow)] before:uppercase before:tracking-[var(--tracking-widest)] before:text-signal-caution">{boardUnavailableMessage}</div>
+        <div role="status" className="flex items-baseline gap-[var(--space-3)] mb-[var(--space-4)] px-[var(--space-4)] py-[var(--space-3)] [border-left-style:solid] border-l-[length:var(--border-width-rule)] border-l-signal-caution bg-[color-mix(in_srgb,var(--signal-caution)_7%,var(--bg-surface))] text-foreground text-[length:var(--text-sm)] leading-[var(--leading-normal)] before:content-['Board'] before:shrink-0 before:[font:var(--type-eyebrow)] before:uppercase before:tracking-[var(--tracking-widest)] before:text-signal-caution-text">{boardUnavailableMessage}</div>
       )}
 
       {isCalendarView && (
@@ -1020,8 +1020,8 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       )}
 
       {!isCalendarView && !isLoading && !error && filteredProjects.length === 0 && (
-        <div className="px-[var(--space-6)] py-[var(--space-8)] text-center text-muted-foreground max-[720px]:px-[var(--space-4)] max-[720px]:py-[var(--space-7)]">
-          <span className="[font:var(--type-h2)] text-foreground-secondary block mb-[var(--space-3)] max-w-[34ch] mx-auto max-[720px]:[font:var(--type-h3)]">{query ? "Nothing here yet." : viewingArchived ? "No archived projects." : "No shoots yet — create the first one."}</span>
+        <div className="px-[var(--space-6)] py-[var(--space-8)] text-center text-muted-foreground max-[721px]:px-[var(--space-4)] max-[721px]:py-[var(--space-7)]">
+          <span className="[font:var(--type-h2)] text-foreground-secondary block mb-[var(--space-3)] max-w-[34ch] mx-auto max-[721px]:[font:var(--type-h3)]">{query ? "Nothing here yet." : viewingArchived ? "No archived projects." : "No shoots yet — create the first one."}</span>
           {query ? "No projects match this search." : viewingArchived ? "Archived projects remain here until they are restored or permanently deleted." : "Start the production desk with the property, client, and team details."}
           {!query && !viewingArchived && canCreateProject && <div><InternalLink className={buttonClasses("primary", { className: "mt-[var(--space-4)]" })} to="/projects/new">New shoot</InternalLink></div>}
         </div>
@@ -1032,9 +1032,9 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
           <div className={cn("prow head", PROW_GRID, "bg-secondary cursor-default")}>
             <div />
             <div className="[font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-widest)] text-foreground-secondary">Address</div>
-            <div className="prow__c-agency [font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-widest)] text-foreground-secondary max-[720px]:hidden">Client</div>
-            <div className="prow__c-date [font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-widest)] text-foreground-secondary max-[720px]:hidden">Shoot date</div>
-            <div className="prow__c-status [font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-widest)] text-foreground-secondary max-[720px]:hidden">Status</div>
+            <div className="prow__c-agency [font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-widest)] text-foreground-secondary max-[721px]:hidden">Client</div>
+            <div className="prow__c-date [font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-widest)] text-foreground-secondary max-[721px]:hidden">Shoot date</div>
+            <div className="prow__c-status [font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-widest)] text-foreground-secondary max-[721px]:hidden">Status</div>
             <div className="prow__raw [font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-widest)] text-foreground-secondary text-right">RAW received</div>
           </div>
           {filteredProjects.map((project) => <ProjectListRow key={project.id} project={project} projectHref={projectHrefFor(project.id)} />)}

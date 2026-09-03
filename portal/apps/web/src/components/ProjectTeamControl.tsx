@@ -210,7 +210,7 @@ export function ProjectTeamControl({ projectId, members, canEdit }: { projectId:
             <strong className="[font:var(--weight-regular)_var(--text-sm)/1.2_var(--font-sans)]
                                text-foreground [overflow-wrap:anywhere]">{member.name || member.email}</strong>
             <small className="[font:var(--weight-regular)_var(--text-2xs)/var(--leading-normal)_var(--font-sans)]
-                              text-foreground-secondary [overflow-wrap:anywhere]">{member.email} · {globalRoleLabel(member.globalRole)}{!member.active && <em className="ml-[var(--space-2)] not-italic uppercase tracking-[var(--tracking-wide)] text-[color:var(--signal-caution)]">Inactive</em>}</small>
+                              text-foreground-secondary [overflow-wrap:anywhere]">{member.email} · {globalRoleLabel(member.globalRole)}{!member.active && <em className="ml-[var(--space-2)] not-italic uppercase tracking-[var(--tracking-wide)] text-[color:var(--signal-caution-text)]">Inactive</em>}</small>
           </div>
           {canEdit && <button type="button" className={buttonClasses("text", { className: "project-team__remove min-h-[44px] shrink-0" })} disabled={state?.kind === "pending"} onClick={() => void remove(member)}>{state?.kind === "pending" ? "Working…" : "Remove"}</button>}
           {state && state.kind !== "pending" && <div className={cn(`project-team__message project-team__message--${state.kind}`, PROJECT_TEAM_MESSAGE)} role="alert">{state.message}{state.kind === "error" && <button type="button" className={buttonClasses("text", { className: "ml-[var(--space-2)] min-h-[44px]" })} onClick={() => void remove(member)}>Retry</button>}</div>}

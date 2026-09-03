@@ -26,16 +26,42 @@ mechanical review. This lane keeps Sol for what it's actually good at — scope 
 3. **Opus plan-approves**, or — past the 2-round cap — edits the plan itself and self-approves.
 4. **A Sonnet subagent builds** (`Agent` tool, `model: sonnet`) — never Luna. A different model
    family catches and fixes plan ambiguity in place instead of defaulting to generic-shadcn output.
+   **Slice a large plan** (see "Slicing a large plan" below) rather than handing one agent the
+   whole thing.
 5. **Builder self-checks the diff against every plan item** before reporting done.
 6. **A fresh Sol diff review** — mechanical correctness and regressions only, same as the standard
    pipeline.
 7. **Builder applies Sol's fixes.**
-8. **Opus visual/taste review.** Compare the actual rendering — local dev or deployed, in the
-   Browser pane — against the plan's intent, not just the diff. This step exists specifically to
-   catch what Luna's pipeline missed.
-9. **The §5 gate** (this session — `Subagent-Orchestration.md` §5 for the general content), plus a
-   visual pass in the Browser pane against the plan before sign-off.
-10. **Deploy and commit**, per standing order.
+8. **Luna runs the browser smoke test and the first visual pass** (`codex exec`,
+   `-m gpt-5.6-luna -c model_reasoning_effort=xhigh`, browser/Chrome-use enabled). Owner decision,
+   2026-09-02: for this lane Luna-with-Chrome replaces Agy as the browser tester, because Codex
+   drives Chrome directly and reaches the human-authenticated sessions the owner keeps signed in on
+   **both** local dev and `quincy.flamingfire.my`. Luna's job here is *reporting*, not taste: walk
+   the plan's real-browser acceptance criteria at the three fixed viewports, capture the evidence
+   images, and report what it observes — console errors, failed requests, broken layout, missing
+   focus rings, anything that does not match the plan's stated intent. Luna does **not** judge
+   whether a design is good; it has no more taste than Sol. Prod stays passive-only; mutations go
+   to local dev. Luna never runs Google OAuth itself — if a session is missing it stops and says so.
+9. **Opus visual/taste review — the last gate, and this session's own.** Open the rendering in the
+   Browser pane and compare it against the plan's *intent*, not just the diff and not just Luna's
+   report. Luna's findings are input, not a verdict: verify them, and look for what it could not
+   see. This step exists specifically to catch what a mechanical pipeline misses, and it does not
+   delegate.
+10. **The §5 gate** (this session — `Subagent-Orchestration.md` §5 for the general content).
+11. **Deploy and commit**, per standing order.
+
+## Slicing a large plan
+
+A plan past roughly 1,500 lines should not go to a single builder: the agent spends its whole
+allowance reading before it writes anything, and a mid-run rate-limit death then costs the entire
+run. TB8-04's first builder attempt died exactly this way at 3,623 lines, having written zero code.
+
+Slice by the plan's own section boundaries, bottom-up so nothing is ever half-wired — primitives,
+then new components, then screens, then the legacy-CSS retirement ledger, then tests and docs. Give
+each slice agent the *exact line ranges* of the sections it must read in full, plus the shared
+constraint sections (scope, cascade rule, behavioural invariants) every slice needs. Each slice ends
+green on typecheck and build; only the final slice must satisfy the full gate. A slice that dies is
+then cheap to re-run.
 
 ## Scope: full UI rescue, not just the named control
 

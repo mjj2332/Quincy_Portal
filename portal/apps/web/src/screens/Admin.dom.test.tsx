@@ -136,11 +136,11 @@ describe("Admin Pipeline configuration boundary", () => {
 
     expect(host.querySelectorAll(".admin-stage")).toHaveLength(5);
     expect([...host.querySelectorAll<HTMLElement>(".admin-stage__order")].map((element) => element.textContent)).toEqual(["1", "2", "3", "4", "5"]);
-    expect(host.querySelector(".admin-stage-list + .button")).toBeNull();
+    expect(host.querySelector(".admin-stage-list + button")).toBeNull();
     expect(host.querySelectorAll(".admin-stage button")).toHaveLength(0);
     expect(host.textContent).not.toContain("Up");
     expect(host.textContent).not.toContain("Down");
-    expect(host.querySelector(".admin-section .admin-section__head .button")?.textContent).toBe("Refresh");
+    expect(host.querySelector(".admin-section .admin-section__head button")?.textContent).toBe("Refresh");
     expect(apiGetMock.mock.calls.map(([path]) => path)).not.toEqual(expect.arrayContaining([expect.stringContaining("/move")]));
     expect(apiPostMock).not.toHaveBeenCalled();
   });

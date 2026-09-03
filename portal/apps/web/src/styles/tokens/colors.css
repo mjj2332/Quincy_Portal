@@ -30,6 +30,22 @@
   --signal-critical: #7a2420;  /* oxblood */
   --signal-info:     #2f3b4d;  /* slate ink */
 
+  /* Burnt ochre is the one signal too light to carry small text. As a label on its own
+     8%-alpha wash it reaches only 3.46:1 (sunken) to 4.27:1 (white) — under the 4.5:1 AA
+     floor on every surface, where the other three tones clear 5.4:1 to 9.9:1. This is the
+     darkest on-hue ochre that clears 4.5:1 against all four grounds (worst case 4.90:1 on
+     sunken). Text only: --signal-caution stays the brand value for borders, washes and
+     every other consumer.
+
+     The rule, applied uniformly rather than site-by-site: caution *text* uses
+     --signal-caution-text; caution borders, washes and icons keep --signal-caution.
+     Some caution text passes today only because it happens to sit on white
+     (.member em measures 4.71:1 there, 4.14:1 on --paper-100), so darkening only the
+     sites that currently measure badly would leave the rest to break silently the next
+     time a background changes. Icons are excluded deliberately: they are non-text
+     graphical objects at a 3:1 bar, which the brand ochre clears (.tbanner svg, 3.83:1). */
+  --signal-caution-text: #7b5519;
+
   /* ====================================================================
      SEMANTIC ALIASES — reference these in components, not the raw scale
      ==================================================================== */
