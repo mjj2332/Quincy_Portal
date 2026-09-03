@@ -387,10 +387,13 @@ const ICON_BUTTON = ICON_BUTTON_BASE + " w-[28px] max-[721px]:w-[44px]";
  * date range from overflowing a 390px row.
  */
 const META_TRIGGER = ICON_BUTTON_BASE +
-  " w-auto max-w-full px-[var(--space-1)] " +
-  "[&>[data-slot=status-pill]]:max-w-full " +
-  "[&>[data-slot=status-pill]]:overflow-hidden " +
-  "[&>[data-slot=status-pill]]:text-ellipsis";
+  " w-auto max-w-full min-w-0 overflow-hidden px-[var(--space-1)] " +
+  // The pill is `inline-flex` (`ui/status-pill.tsx`), and `text-overflow` does not
+  // apply to a flex container's own overflow — it truncates a flex *item*. So the
+  // pill gets `min-w-0` and the value text inside it is wrapped in a `truncate`
+  // span at the call site. Do not put `text-ellipsis` on the pill itself; it is
+  // silently inert there.
+  "[&>[data-slot=status-pill]]:min-w-0 [&>[data-slot=status-pill]]:max-w-full";
 
 function IconButton({ className, ...props }: React.ComponentProps<"button">) {
   return <button type="button" data-slot="icon-button" className={cn(ICON_BUTTON, className)} {...props} />;
@@ -408,6 +411,12 @@ Notes the builder must not "clean up":
   inherited unchanged, which is what produces §2.1's 7.40:1.
 - `min-h/min-w` on the base and `w-` on the two variants, rather than `size-`, is what lets
   `META_TRIGGER` grow while `ICON_BUTTON` stays square. Do not collapse them back to `size-`.
+- **The truncation is a three-part contract and all three parts are required**: `overflow-hidden`
+  + `min-w-0` on the trigger, `min-w-0` on the pill, and `truncate` (`overflow-hidden`
+  `text-ellipsis` `whitespace-nowrap`) on a `<span>` **inside** the pill wrapping the schedule
+  text. `text-ellipsis` on the pill alone does nothing — the pill is an `inline-flex` container,
+  and `text-overflow` truncates flex *items*, not a flex container's own overflow. §5.2's due-pill
+  row spells out the call-site markup.
 - 28px (not 24px) is the smallest square that clears the 3:1 target-size guidance with the
   existing 18px glyphs and still fits four controls beside a title on a 1440px row.
 
@@ -671,7 +680,7 @@ Note the breakpoints are `max-[720px]` / `min-[721px]`, not the `max-[721px]` th
 | title (read) | **keeps `subtask-checklist__title-trigger` as a non-painting hook** (see below), plus `flex-1 min-w-0 p-0 border-0 bg-transparent text-left cursor-pointer [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground [overflow-wrap:anywhere] min-h-[28px] max-[721px]:min-h-[44px]` + `RING_OUT`; done → `text-foreground-secondary line-through` (**8.66:1**, was 3.57) |
 | title (editing) | `<Input className="flex-1 min-w-0">` — retires the hand-rolled box at `:908` |
 | schedule / assignee triggers | `<button className={cn(META_TRIGGER, …)}>` — **`META_TRIGGER`, not `ICON_BUTTON`** (§4.1): each holds a value chip when set, and a fixed square would overflow at 390px. **Always visible.** |
-| due pill | `<StatusPill tone="neutral">` — retires `.subtask-checklist__due` (:909) |
+| due pill | `<StatusPill tone="neutral" className="min-w-0"><span className="sr-only">Schedule </span><span className="block truncate min-w-0">{formatSchedule(value)}</span></StatusPill>` — retires `.subtask-checklist__due` (`:909`). The inner `truncate` span is the third part of §4.1's truncation contract, not optional. The existing `sr-only` "Schedule " prefix is kept verbatim and stays **outside** the truncating span so it is never clipped from the accessible name. |
 | assignee chip | `grid place-items-center size-[var(--space-5)] shrink-0 rounded-[var(--radius-pill)] bg-primary text-[var(--accent-on)] [font:var(--weight-regular)_var(--text-2xs)/1_var(--font-sans)] tracking-[0.02em]` (**18.64:1**) |
 | overflow `⋯` | `<IconButton>` (square — it only ever holds a glyph). **`opacity: .72` and the hover-reveal deleted.** |
 
