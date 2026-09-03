@@ -131,23 +131,22 @@ Keep the native element. A `<select>` is the correct control for a 1–10 ordina
 and `ui/select.tsx` (the Base UI listbox) would trade the OS picker for a custom popover inside a
 draggable card — a behaviour change this release is not making.
 
-### 2.4 One question this plan does not decide alone
+### 2.4 The drag preview's shadow — RESOLVED, sanctioned exception
 
 `.kanban-card-preview` carries `box-shadow: 0 18px 36px color-mix(in srgb, var(--ink-900) 22%, transparent)`.
 The design system is explicitly **no-shadow elevation** (`prototype/_ds/…/readme.md`, restated in
 `Subagent-Frontend-Orchestration.md`). But this is the *drag preview*: the shadow is the only cue
 that the card has left the plane of the board, and TB5B shipped it deliberately.
 
-**Owner decision needed.** Three options, in the order this session recommends them:
+**Owner decision, 2026-09-03: keep the shadow — it is a sanctioned exception to the no-shadow
+rule.** Elevation here carries real state rather than decoration: it is the only cue that a dragged
+card has left the plane of the board, and the flat rule would cost information at the one moment the
+user needs it. The exception is **scoped to `.kanban-card-preview`** — the drag preview only. It
+does not licence shadow anywhere else on this surface or any other, and a future plan citing it for
+a resting element is misreading it.
 
-1. **Keep it, and record it as a sanctioned exception** — elevation carries real state here, and
-   the drag preview is the one surface where the flat rule costs information. *(Recommended.)*
-2. Replace it with a non-shadow cue — a `--border-width-bold` `--ink-900` outline plus a slight
-   scale — keeping the system literally flat.
-3. Delete it, accepting that a dragged card reads as flat against the column beneath it.
-
-The build does **not** proceed on this row until it is answered; nothing else in the plan depends
-on it.
+The shadow's *value* still converges: it keeps its `color-mix` on `--ink-900` rather than a raw
+rgba, so it tracks the brand ink like every other colour on the board. Row 57 is unblocked.
 
 ---
 
@@ -242,7 +241,7 @@ Every selector in the five `app.css` ranges, with its disposition. `T` = test-qu
 | 54 | `.kanban-move-popover__actions` | | **R** — `flex justify-end gap-[var(--space-2)]` |
 | 55 | `.kanban-move-popover__actions .button` | | **R** — to `buttonClasses()`; retires `38px`/`9px 14px` |
 | 56 | `.kanban-overlay` | ✓ | **R** — `pointer-events-none z-10` |
-| 57 | `.kanban-card-preview` | | **BLOCKED on §2.4** — everything but the shadow is **R** |
+| 57 | `.kanban-card-preview` | | **R**, shadow retained per §2.4 — `w-[min(320px,calc(100vw-24px))] max-w-[calc(100vw-24px)] box-border shadow-[0_18px_36px_color-mix(in_srgb,var(--ink-900)_22%,transparent)] pointer-events-none` |
 | 58 | `.kanban-card-preview .kcard__media` | | **R** — `pointer-events-none` |
 
 ---
@@ -281,7 +280,7 @@ Bottom-up, per the lane. Each slice ends green on `npm run typecheck` and `npm r
 | 3 | Column — `.kcol*`, incl. the three contrast fixes | 7, 9–17 |
 | 4 | Card body — `.kcard`, `.kcard__*` | 38–45 |
 | 5 | Card controls — drag handle, arrows, Priority select, move-to; the three target fixes and §2.5 | 18–19, 21–37 |
-| 6 | Popover + overlay + preview | 46–58 (57 pending §2.4) |
+| 6 | Popover + overlay + preview | 46–58 |
 | 7 | Delete the retired `app.css` ranges; tests; docs; drift-register rows | — |
 
 Slice 7 carries the full §5 gate.
