@@ -6,7 +6,8 @@ import { apiGet } from "../lib/api";
 import { cn } from "@/lib/utils";
 import { RichTextContent } from "./RichTextContent";
 import { RichTextEditor } from "./RichTextEditor";
-import { Eyebrow } from "./ui/eyebrow";
+import { Eyebrow, META_TEXT } from "./ui/eyebrow";
+import { buttonClasses } from "./ui/button";
 import { EmptyState } from "./quincy/EmptyState";
 import type { MentionableUser } from "./MentionAutocomplete";
 import type { NoticeBoardPost } from "../lib/notice-board-data";
@@ -16,6 +17,19 @@ import type { NoticeBoardPost } from "../lib/notice-board-data";
 const RING =
   "focus-visible:!outline-solid focus-visible:!outline-[length:var(--border-width-bold)] " +
   "focus-visible:!outline-[var(--focus-ring)] focus-visible:!outline-offset-2";
+
+// `min-w` is prescribed because `buttonClasses` contains NO min-width at all (§2.1); height
+// alone is not a touch target. `min-h-[38px]` is prescribed because the `text` variant's own
+// `min-h-[32px]` beats BASE's 38px under twMerge, and this release converges on 38/44, not 32/44.
+const ACTION_SIZING = "min-h-[38px] max-[721px]:min-w-[44px] max-[721px]:min-h-[44px] px-[var(--space-2)]";
+
+const EDIT_ACTION = buttonClasses("text", { className: ACTION_SIZING });
+
+// `!` is load-bearing: the `text` variant sets `!text-foreground-secondary`, which a plain
+// `text-destructive` cannot outrank even though twMerge keeps both (Sol #4, verified).
+const DELETE_ACTION = buttonClasses("text", {
+  className: ACTION_SIZING + " !text-destructive hover:not-disabled:!text-destructive",
+});
 
 const COLLAPSE_KEY = "quincy:dashboard:noticeboard:v2";
 const EMPTY_DOC: RichTextDoc = { type: "doc", content: [{ type: "paragraph" }] };
@@ -166,11 +180,29 @@ export function NoticeBoard({ currentUserId }: { currentUserId: string }) {
       {visibleError && <div className="notice-board__error" role="alert">{visibleError}</div>}
       <div className="notice-board__posts grid" aria-live="polite" ref={posts.length === 0 ? presentation.anchorRef : undefined}>
         {posts.length === 0 && <EmptyState title="No notices yet." className="px-[var(--space-5)] py-[var(--space-5)] text-left" />}
-        {posts.map((post) => <article className="notice-board__post" key={post.id} ref={post.id === posts[0]?.id ? presentation.anchorRef : undefined}>
-          <div className="notice-board__post-head"><span className="notice-board__author">{post.authorName}</span><time dateTime={post.createdAt}>{relativeTime(post.createdAt)}</time>{post.editedAt && <span className="notice-board__edited" title={post.editedAt}>edited</span>}{post.authorId === currentUserId && <><button className="notice-board__edit" type="button" onClick={() => { setEditingId(post.id); setEditingContent(post.content); }}>Edit</button><button className="notice-board__delete" type="button" onClick={() => void deletePost(post.id)}>Delete</button></>}</div>
-          {editingId === post.id ? renderEditComposer(post.id) : <RichTextContent content={post.content} />}
+        {posts.map((post) => <article className="notice-board__post" data-slot="notice-board-post" key={post.id} ref={post.id === posts[0]?.id ? presentation.anchorRef : undefined}>
+          <header className="flex flex-wrap items-baseline gap-x-[var(--space-3)] gap-y-[var(--space-1)] min-w-0">
+            <span className="[font:var(--type-eyebrow)] text-foreground min-w-0 [overflow-wrap:anywhere]">{post.authorName}</span>
+            <time dateTime={post.createdAt} className={META_TEXT}>{relativeTime(post.createdAt)}</time>
+            {post.editedAt && <span title={post.editedAt} className={META_TEXT}>edited</span>}
+          </header>
+          {editingId === post.id
+            ? renderEditComposer(post.id)
+            /* `mt-[var(--space-2)]` replaces the retired `.notice-board__post > .rich-text { margin-top: 8px }`
+               (app.css:391). The article is not a grid, and the first rich-text child has no margin of its
+               own, so without this the content renders flush against the header (Sol r2 #2).
+               `RichTextContent` takes `className` and appends it to `rich-text` by plain string
+               concatenation — no `cn()`, so no twMerge — which is fine here: `mt-` conflicts with nothing
+               in `.rich-text`. */
+            : <RichTextContent content={post.content} className="mt-[var(--space-2)]" />}
+          {post.authorId === currentUserId && (
+            <div className="flex justify-end gap-[var(--space-3)] mt-[var(--space-2)]">
+              <button type="button" className={EDIT_ACTION} data-slot="notice-board-edit" onClick={() => { setEditingId(post.id); setEditingContent(post.content); }}>Edit</button>
+              <button type="button" className={DELETE_ACTION} data-slot="notice-board-delete" onClick={() => void deletePost(post.id)}>Delete</button>
+            </div>
+          )}
         </article>)}
-        {editingId && !editingPostStillExists && <article className="notice-board__post notice-board__post--changed">
+        {editingId && !editingPostStillExists && <article className="notice-board__post notice-board__post--changed" data-slot="notice-board-post">
           <div className="notice-board__edit-target-changed" role="status">This notice was changed or deleted elsewhere. Your draft is still here.</div>
           {renderEditComposer(editingId)}
         </article>}
