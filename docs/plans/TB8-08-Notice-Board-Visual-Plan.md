@@ -479,6 +479,22 @@ enforce.
 The probe module was deleted and the build re-run; `dist` returns to the byte-identical
 `index-DhbZB4Gh.css` currently in production, confirming it left nothing behind.
 
+### 5.8 §5.3 eliminates the §2.1b orphaning — simulated at 28 combinations
+
+Before building, I injected the §5.3 structure (meta row with no strut and no actions; a separate
+`justify-end` action row) into a live page and measured it at **7 widths × 4 author/timestamp
+combinations**, including a 55-character name paired with an 11-character relative time.
+
+**All 28: `Edit` and `Delete` on the same row, flush right (0px gap to the container edge), zero
+horizontal overflow.** `Edit` resolves to 44px wide via `min-w`; `Delete` to 56.6px on its natural
+width. The orphaning cannot recur because there is no longer anything in the wrapping row to
+orphan — the actions are not in it.
+
+*Honest limit:* this is a structural simulation with inline styles approximating the prescribed
+classes on a system font, not the built component in Apfel Grotezk. It confirms the **structure**
+resolves the defect; it does not pre-empt the visual gate's own measurement (criterion 6), which
+still runs against the real build at 480×900 with a long name.
+
 ### 5.6 The freshness contract — must survive byte-for-byte
 
 `presentation.anchorRef` attaches to the **posts container when `posts.length === 0`** and to the
