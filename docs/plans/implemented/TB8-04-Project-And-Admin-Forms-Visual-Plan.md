@@ -1,7 +1,31 @@
 # TB8-04 — Project and Admin Forms: Visual Plan
 
-**Status: APPROVED FOR BUILD — 2026-09-02, Opus, pipeline step 3.** Not yet built, not deployed;
-this file stays in `docs/plans/` until it is.
+**Status: DEPLOYED TO PRODUCTION — 2026-09-03.** Built, verified, merged to `main` as `a371671`
+(implementation commit `9f1a5e3`), and deployed to <https://quincy.flamingfire.my> as app Worker
+version `c620c514-fc3c-4c44-a463-214a734cb15e`. **App Worker only — no migration, no
+background/webhook-ingress change.** Rollback target: app Worker
+`9a021a5e-956b-43b4-a17c-ed05dc7be1af`.
+
+Release gate: `npm run typecheck` green, `npm run build -w @quincy/web` green, 1569 tests passing
+across the workspaces plus 144 in `packages/shared`, 0 failures. §10.2's sixteen real-browser
+acceptance items were checked at 1440×900, 1024×768 and 390×844 — items 1, 2, 4, 6, 7, 8, 9, 13,
+14, 15 and 16 PASS outright; **items 3 and 5 are verified structurally but not audibly** (the
+stacked table reapplies every role it loses to `display: block`, and `FieldError` renders
+`role="alert"` with `aria-invalid`/`aria-describedby` correctly wired, but confirming what a screen
+reader actually announces needs assistive technology this session cannot drive — recorded as a
+known limit on the TB5C precedent, not as a pass). Post-deploy passive verification on production:
+38 requests, all 200/304, zero failures, zero app console errors.
+
+Two defects were found and fixed during the gate rather than shipped: `FIELD_BOX`'s bare
+`read-only:` variants painted **every** `<select>` as a read-only field (a `<select>` matches
+`:read-only` unconditionally), and the `max-[720px]`/`min-[720px]` pairing left exactly 720px
+matching neither branch. Both are written up in `docs/lessons.md`.
+
+Out of scope and **not** fixed here — three pre-existing app-shell (TB8-01) defects confirmed
+byte-identical at `HEAD`: the impersonation banner's Exit button goes Ink-on-Ink (1:1 contrast,
+invisible) on hover, because `.button--text:hover:not(:disabled)` at specificity (0,3,0) beats the
+scoped `.impersonation-banner .button--text` at (0,2,0); `.topbar__user` overflows horizontally in
+the 721–747px band; and `.topbar__brand` is a 32px touch target below 721px.
 
 Review history: **Sol round 1** (22 findings) and **Sol round 2** (8 build-blocking, 7 consistency)
 are both closed — every finding was verified against source by this session rather than accepted on
