@@ -1,12 +1,39 @@
 # TB8-08 — Staff Notice Board: Visual Plan
 
-**Status: DRAFTED, not yet reviewed or built.** Ranking candidate **#8** in
+**Status: REVISED after Sol round 1, not yet built.** Sol returned 10 findings (7 blocking); all
+10 were independently verified against the repo and **all 10 were upheld** — see §0. Round 2 of 2
+remains available. Ranking candidate **#8** in
 `Revamp-TB8-Wider-UI-Migration-And-Cleanup-Plan.md` ("Notice board"). Branch
 `tb8-08-notice-board`, to be cut from `main` at `c025fbb` (TB8-07 shipped).
 
 Pipeline: `docs/Subagent-Frontend-Orchestration.md` — this session drafts the plan, Sol reviews
 scope and correctness (≤2 rounds), a Sonnet subagent builds it in slices, this session holds the
 final visual gate. Matched-evidence viewports stay TB1's: `1440×900`, `1024×768`, `390×844`.
+
+---
+
+## 0. What Sol round 1 changed, and what I got wrong
+
+Ten findings, seven blocking. I verified each against the repo before acting. **All ten held.**
+Four of them were the draft being outright wrong, not merely thin:
+
+| # | Finding | Verified how | Outcome |
+|---|---|---|---|
+| 1 | `buttonClasses("text")` **cannot** reach 44×44 — no `min-width` exists in it at all, and its `min-h-[32px]` beats BASE's `min-h-[38px]` | Ran the real `cn()` (`twMerge(clsx(…))`) and printed the resolved string | **Upheld.** §2.1's fix and criterion 1 were unachievable as written. Rewritten. |
+| 4 | A plain `text-destructive` on the text variant does nothing — the variant's `!text-foreground-secondary` outranks it | Same probe: both classes survive twMerge; the `!` one wins in CSS | **Upheld.** Now prescribes `!text-destructive`. |
+| 5 | Bare `META_TEXT` would uppercase the composer hint; the precedent uses `cn(META_TEXT, "!normal-case")` | `ProjectDiscussionThread.tsx` — exactly one such call site | **Upheld.** This is TB8-07's gate defect #3 and I was about to re-ship it. |
+| 3 | The plan is not at implementation-detail resolution, which the pipeline requires | `Subagent-Frontend-Orchestration.md:17-22`: "exact Tailwind classes/tokens, spacing scale, every component state … **Done when:** the plan closes every design decision itself rather than deferring it to the builder's judgment" | **Upheld, and it is the main revision.** §5 is new: an exact class specification for every element and state. |
+| 7 | The per-file test split in my §6 table was fabricated; and `querySelector` cannot select by accessible name, so my advice was not actionable | Recounted per class per file | **Upheld.** Table corrected, `data-slot` hooks prescribed. Also: the true occurrence count is **49**, not 48 — my 48 came from `grep -c`, which counts lines, and one line carries two. |
+| 8 | `gap: var(--space-1) var(--space-3)` is row-then-column, so the inline gap is **12px**, not the 8px I wrote; and a 20.5px-wide target with 12px spacing likely **passes** WCAG 2.5.8's spacing exception | Read the shorthand; computed the 24px-circle test — centres are 39.35px apart, well clear | **Upheld.** The 2.5.8 failure claim is withdrawn. The 2.5.5 / repo-contract rationale stands on its own. |
+| 9 | §2.6 claimed `Notice` has "the same wash and border maths" as the rule it replaces. It does not — 6% vs 7% wash, no border vs a 35% hairline, 12×24 vs 12 all-round, 13px vs 14px | Read both | **Upheld.** Reframed as a deliberate convergence change, not an equivalence. |
+| 10 | Inventory stale: `.button` and `.ey` counts | Recounted | **Upheld.** See §2.7. |
+| 6 | Removing the strut is safe, but my replacement layout was internally unresolved — `justify-end` on a natural-width group does not position anything | Read | **Upheld.** §5.3 now fixes DOM order and width explicitly. |
+| 2 | `role="status"` inside the toggle `<button>` is flattened (ARIA button is *Children Presentational*), and a conditionally-created live region is not a dependable announcement | I had **already withdrawn this myself** before Sol reported, having measured Chrome's AX tree | **Upheld, and Sol's replacement is better than my withdrawal** — see §2.3. |
+
+**The one thing I found that Sol did not:** a wrap defect at 480px with a long author name, where
+`Delete` orphans onto a second line at the far left. Measured after the draft, recorded as §2.1b.
+
+---
 
 ---
 
@@ -51,47 +78,97 @@ rules is the by-product rather than the point.
 ## 2. Measured defects
 
 Measured on **production** (`quincy.flamingfire.my`, app Worker `3be901b7`) over CDP, signed in as
-Admin, against a real notice with a real author. Contrast computed from resolved `getComputedStyle`
-colours against the nearest painted ancestor background, WCAG 2.x relative luminance.
+Admin, against a real notice with a real author. Contrast computed from resolved
+`getComputedStyle` colours against the nearest painted ancestor background, WCAG 2.x relative
+luminance. Where a claim is *not* a live measurement, it says so.
 
-### 2.1 Owner actions are below the minimum touch target — the headline
+### 2.1 Owner actions are far below the touch-target contract — the headline
 
 At **390×844**, on your own notice:
 
-| Control | Measured | Contract |
+| Control | Measured | Repo contract |
 |---|---|---|
 | `Edit` | **20.5 × 24** | 44 × 44 |
 | `Delete` | **34.2 × 24** | 44 × 44 |
 
 `.notice-board__edit, .notice-board__delete { padding: 3px 0 }` on 12px text is the whole box.
-Both fail WCAG **2.5.5 Enhanced (44×44)**, which this codebase adopted as its own contract — it is
-what `buttonClasses` BASE, `ICON_BUTTON`, and `Modal`'s footer all enforce at `max-[721px]`. `Edit`
-at **20.5px wide** additionally fails **2.5.8 Minimum (24×24)**, which is a Level AA criterion.
 
-They sit **8px apart** (`gap: var(--space-1) var(--space-3)` gives 4px inline… see §2.4), and the
-right-hand one **destroys a post with no confirmation**. A 34×24 destructive target adjacent to a
-20×24 non-destructive one, on a phone, is the defect this release exists to fix.
+**The contract being missed is this repo's own**, adopted in `buttonClasses` BASE, `ICON_BUTTON`
+and `Modal`'s footer, all of which raise to 44px at `max-[721px]`. It corresponds to WCAG **2.5.5
+Enhanced**.
 
-**Fix:** `buttonClasses("text")`. Verified empirically at three widths — 38px at 1440, **44px at
-720 and at 390** — because `BASE`'s `max-[721px]:min-h-[44px]` correctly overrides the `text`
-variant's `min-h-[32px]`. It is exactly what TB8-07 gave the discussion thread's own Edit/Delete.
+> **Withdrawn from the first draft:** I also claimed a WCAG **2.5.8 Minimum (24×24, Level AA)**
+> failure on `Edit`'s 20.5px width. Sol was right that this does not follow. 2.5.8 has a spacing
+> exception, and the inline gap here is 12px — not the 8px I wrote (`gap: var(--space-1)
+> var(--space-3)` is *row then column*, so 4px row / **12px column**). Centre-to-centre for
+> Edit→Delete is `10.25 + 12 + 17.1 = 39.35px`, comfortably clearing the 24px undisturbed-circle
+> test. **The 2.5.8 claim is dropped.** The 2.5.5 / repo-contract rationale stands by itself.
 
-> **Note for the builder, and a correction to a probe I ran first.** I initially measured this by
-> concatenating `BASE + VARIANT.text` into one raw class string and reading the result: padding
-> came back `9px 14px`, not the `px-0 py-[6px]` the variant asks for, which looked like a live
-> defect in `buttonClasses("text")`. **It is not.** `cn()` is `twMerge(clsx(...))`, so
-> tailwind-merge resolves `px-[14px]` vs `px-0` by source order and `px-0` wins — confirmed by
-> finding **zero** elements in the live DOM carrying both classes. Never probe a `cn()`-composed
-> class list by hand-concatenating it; go through `cn` or read the real element.
+The right-hand control **deletes a post with no confirmation** (§2.1c).
 
-### 2.1a The delete confirmation is a product question, flagged not taken
+**The fix is not simply `buttonClasses("text")`.** Sol's blocking finding #1, verified by running
+the real `cn()` and printing the resolved class string:
 
-`deletePost` fires immediately from a 34×24 target. This repo already has a confirmation modal
-(`docs/plans/implemented/Confirmation-Modal-And-Admin-Impersonation-Plan.md`). Adding one here is
-defensible, but it changes a flow rather than a treatment and belongs to the owner, not to a visual
-release. **This plan raises the target to 44×44 and stops there.** Recorded for the owner in §0.
+```
+buttonClasses("text")
+  → … max-[721px]:min-h-[44px] … min-h-[32px] px-0 py-[6px] !text-foreground-secondary …
+```
 
-### 2.2 Three sites at 3.57:1 — the same token, the same ratio, the same fix TB8-07 already shipped
+Two things follow, both fatal to the draft's version of this fix:
+
+1. **There is no `min-width` anywhere in `buttonClasses`.** The variant would stay ~20px and ~34px
+   wide. Height alone is not a touch target.
+2. **`min-h-[32px]` beats BASE's `min-h-[38px]`** under twMerge, so the desktop height would
+   *drop* from the current 24px… to 32px (an improvement, but not the 38px the plan implied).
+
+The prescription is therefore explicit, and lives in §5.3.
+
+### 2.1a Correction: how I measured this wrong the first time
+
+My first probe hand-concatenated `BASE + VARIANT.text` into a raw class string and read the
+computed style off an injected node. It returned `padding: 9px 14px`, which looked like a live
+defect in every `buttonClasses("text")` in the app. **It is not.** `cn()` is `twMerge(clsx(…))`, so
+`px-0` correctly wins — confirmed by finding **zero** elements in the live DOM carrying both
+classes.
+
+**Never probe a `cn()`-composed class list by hand-concatenating it.** Go through `cn` itself (a
+four-line Node script inside `apps/web` is enough) or read the real element. That same discipline
+is what turned Sol's finding #1 from an assertion into a verified fact.
+
+### 2.1b A destructive control orphans onto its own line at 480px
+
+Found after the draft, not in it, and not in Sol's report. Measured by substituting a
+40-character author name (`.notice-board__author` already sets `overflow-wrap: anywhere`, so long
+names are anticipated) and reading every child's box at nine widths.
+
+At **480px**, the head becomes 52px tall and the children land like this, relative to the head:
+
+| Child | x | y | w × h |
+|---|---|---|---|
+| author | 0 | 5 | 245 × 14.4 |
+| `<time>` | 257 | 3 | 62.6 × 18 |
+| "edited" | 331.5 | 3 | 34 × 18 |
+| **`Edit`** | **377.5** | **0** | 20.5 × 24 |
+| **`Delete`** | **0** | **28** | 34.2 × 24 |
+
+**`Delete` wraps to a second line and sits alone at the far left**, under the author's name and
+detached from the `Edit` it belongs beside. A destructive control, isolated, in the position the
+eye reads first. It is the only width in the nine tested (320/390/480/600/768/900/1024/1280/1440)
+where this happens, and only with a long author name — which is exactly why the flat "the strut is
+harmless" reading in the first draft was too generous.
+
+*Method note:* my first pass at this used a "distinct `y` values" count as a proxy for row count.
+That is worthless here — `align-items: baseline` gives every differently-sized child its own `y` on
+the same visual line. The table above uses real boxes instead.
+
+### 2.1c The delete confirmation is a product question, flagged not taken
+
+`deletePost` fires immediately. This repo already has a confirmation modal
+(`docs/plans/implemented/Confirmation-Modal-And-Admin-Impersonation-Plan.md`). Adding one changes a
+flow rather than a treatment and belongs to the owner. **This plan raises the target and fixes the
+orphaning, and stops there.**
+
+### 2.2 Three sites at 3.57:1 — the same token, ratio and fix TB8-07 already shipped
 
 | Site | Size | Colour | Measured |
 |---|---|---|---|
@@ -101,225 +178,385 @@ release. **This plan raises the target to 44×44 and stops there.** Recorded for
 
 12px is not large text, so the threshold is **4.5:1**. All three fail.
 
-This is not a new finding — it is *numerically identical* to the discussion-thread timestamp
-TB8-07 fixed (3.57:1 → 8.66:1), because it is the same `--greige-400` on the same paper. The fix is
-already written and already shipped: **`META_TEXT`** from `components/ui/eyebrow.tsx`, which
-resolves to `--text-secondary` (`--greige-600`) at **9.2:1** — the value the eyebrow, summary,
-chevron, Edit and Delete on this very surface already measure at.
+Numerically identical to the discussion-thread timestamp TB8-07 fixed (3.57:1 → 8.66:1) — same
+`--greige-400`, same paper. The fix is already written: **`META_TEXT`**, resolving to
+`--text-secondary` at **9.2:1**, which is what the eyebrow, summary, chevron and Edit on this very
+surface already measure.
 
-Use `META_TEXT` and not `<Eyebrow>` for the `<time>`: `Eyebrow` is hard-coded to a `<span>` and
-would drop `dateTime`. That constraint is recorded in `eyebrow.tsx`'s own doc comment and guarded
-by a TB8-07 regression test.
+**But the hint is a sentence, not a label.** Sol's blocking finding #5: `META_TEXT` includes
+`uppercase`, and the precedent this plan claims to copy writes `cn(META_TEXT, "!normal-case")` —
+the `!` load-bearing, because TB8-07's visual gate found that a plain `normal-case` loses to
+`META_TEXT`'s `uppercase` on Tailwind emission order. Exact calls in §5.3 and §5.4.
 
-### 2.3 The unread badge announces itself through a role-less `<span>`
+### 2.3 The unread badge: my finding was wrong, and Sol's replacement beats my withdrawal
 
-```tsx
-{hasUnread && <span className="notice-board__badge" aria-label="New notice" />}
-```
+The draft claimed the badge — `<span className="notice-board__badge" aria-label="New notice" />`,
+a role-less generic — might never be announced. I measured that myself before Sol reported, by
+injecting three variants into the live page and reading Chrome's AX tree via
+`Accessibility.getPartialAXTree`:
 
-A 7×7 empty `<span>` with `aria-label` and **no role**. `aria-label` on a generic element with no
-role is not reliably exposed — the ARIA spec permits a user agent to ignore it, and browser/AT
-behaviour varies. So the one signal that says "there is something new" may be silent.
+| Variant | Toggle button's accessible name |
+|---|---|
+| **Current markup** | `"Staff notice board Messages for the production desk New notice"` ✅ |
+| My proposed `role="status"` + `sr-only` | `"Staff notice board Messages for the production desk"` ❌ **signal lost** |
+| `aria-describedby` | `"…production deskNew notice"` (no separator) |
 
-It could not be measured live (production currently has no unread state for this account), so this
-is a **static reading of the markup**, stated as such.
+So the signal *is* announced today, because the button's name is computed from its contents and
+name-from-content uses a descendant's `aria-label`. My proposed fix **removed** it. I withdrew the
+finding and specified "no change".
 
-**Fix:** `role="status"` on the badge with the label as its text content in an `sr-only` span, so
-the announcement rides a real live region instead of an unlabelled generic. The visual dot stays a
-decorative `aria-hidden` sibling.
+**Sol's finding #2 then gave the reason my measurement came out that way, and a better end state:**
+the ARIA `button` role is *Children Presentational*, so semantic descendants are flattened — which
+is why `role="status"` contributed nothing — and a conditionally-created live region is not a
+dependable announcement anyway, since AT announces *changes*, not initial content.
 
-### 2.4 The timestamp is a 1,138px spacer on desktop
+**Resolution — Sol's, not mine:** fold an `sr-only` "New notice" string into the toggle's
+accessible name and make the visual dot `aria-hidden="true"`. Same measured name as today, but it
+no longer depends on a descendant `aria-label` on a role-less element to get there. Exact markup in
+§5.2.
 
-`.notice-board__post-head time { flex: 1 1 auto }`. Measured at 1440: the `<time>` element is
-**1,138.8px wide** inside a 1,344px board. It is not a timestamp; it is a strut that exiles Edit
-and Delete to the far right rim of the screen, roughly a metre of pixels from the author name they
-belong to.
+*Honest limit:* one browser's AX tree, no real screen reader. Descendant `aria-label` feeding
+name-from-content is what the accname spec says, so this is not a Chrome quirk — but it was not
+checked against a second engine.
 
-At 390 it measures 152.8px and the row is fine, so this is a desktop-only layout defect.
+### 2.4 The timestamp is a 1,138px strut
 
-**Fix:** the discussion thread's shape — author, timestamp and "edited" grouped at natural width on
-a `flex-wrap` baseline row, with the owner actions in their own `justify-end` group. No strut.
+`.notice-board__post-head time { flex: 1 1 auto }`. Measured at 1440: the `<time>` is **1,138.8px**
+wide inside a 1,344px board.
+
+Sol's finding #6 sharpened what this means, and corrected how the draft framed it. Checked across
+all nine widths, with both a short and a 40-character author name: there is **no later media query
+overriding it** (`app.css:388-390` is the whole story), and at every width it does exactly one
+thing — absorb slack so the actions sit hard right. It is right-alignment machinery, nothing more,
+and removing it is safe.
+
+But the draft's framing — "the strut exiles Edit and Delete to the far rim, so remove it" — was
+muddled, because a `justify-end` group *also* puts them at the rim. The honest statement is:
+
+> **The defect is a semantically false element width, not the position of the actions.** A
+> `<time>` reporting 1,138.8px is lying about what it contains, and it is what produces the 480px
+> orphaning in §2.1b.
+
+§5.3 fixes the DOM order and the width explicitly, rather than leaving "where do the actions go" to
+the builder.
 
 ### 2.5 Token drift
 
-Hard-coded values in the block, none of which trace to the design system: `13px` (summary),
-`12px` (×3), `14px` (empty state), `24px` (chevron), `7px` (badge), `4px`, `8px`, `10px`,
-`3px 0`, and `1px` borders where the system has `--border-width-hair`.
+Hard-coded and not traceable to the design system: `13px` (summary), `12px` (×3), `14px` (empty),
+`24px` (chevron), `7px` (badge), `4px`, `8px`, `10px`, `3px 0`, and `1px` borders where
+`--border-width-hair` exists.
 
-`.notice-board__author` is its own small bug: it sets `font: var(--type-label)` and then
-immediately overrides `font-size: 12px` on the next declaration — the shorthand is doing nothing
-but supply a family and weight it could state directly.
+`.notice-board__author` sets `font: var(--type-label)` then overrides `font-size: 12px` on the next
+declaration. Per Sol's finding #10 the shorthand is **not** redundant — it still supplies family,
+weight **and line-height**; only its size is overridden. §5.3 restates it as one explicit shorthand.
 
-### 2.6 Two primitives already exist and are not being used
+### 2.6 Two primitives exist and are not used — a convergence change, not an equivalence
 
-| Hand-rolled | Existing primitive | Note |
+| Hand-rolled | Primitive | Sol's #9: they are **not** the same |
 |---|---|---|
-| `.notice-board__error` (`role="alert"`, critical wash) | `<Notice tone="critical">` (`quincy/Notice.tsx`) | TB8-07 built it. Same wash, same border maths. |
-| `.notice-board__empty` ("No notices yet.") | `<EmptyState title=… />` (`quincy/EmptyState.tsx`) | The discussion thread's "No comments yet." is already this. |
+| `.notice-board__error` | `<Notice tone="critical">` | no border → 35% hairline; 6% → 7% wash; 12×24 asymmetric → 12px all-round; 13px → 14px |
+| `.notice-board__empty` | `<EmptyState>` | 24px/14px left-aligned → 32×64 padding, centred 28px display type |
 
-### 2.7 Three `.button` occurrences
+Both differences are **intended**: the point is that a notice-board error should look like every
+other error in the app, and its empty state like every other empty state. But the draft asserted
+equivalence, which was false, and `EmptyState`'s defaults are far heavier than the current message —
+so §5.2 pins the exact override classes rather than accepting the primitive's defaults.
 
-`button`, `button--secondary`, `button` at lines 125 and 145. Migrating them to `buttonClasses`
-retires **3 of TB8-10's 51** `.button` occurrences. Not the point of the release, but free.
+### 2.7 Legacy-class inventory (corrected)
+
+| Class | Draft said | Actual | Note |
+|---|---|---|---|
+| `.button` sites (`className="button…"`) | 51 (from TB8-10's D-06) | **27 across 15 files** | The 51 figure is stale. This release retires 3, leaving 24. |
+| `.ey` sites | 17 | **21** | Shared; deferred to TB8-10. |
+| `.notice` live consumers | 1 | 1 (`ProjectDeadlineControl.tsx:279`) | Deferred to TB8-10. |
+
+Also spotted while verifying, and **not** fixed here: `.sr-only` is declared **twice** in
+`app.css` (lines 794 and 806), identically. A shared class with a duplicate declaration — TB8-10's
+territory, recorded so it is not lost.
+
+TB8-10's own D-06 line should be re-measured when that release is drafted; **this plan does not
+edit TB8-10.**
 
 ---
 
 ## 3. Design direction — "the same voice at two scopes"
 
-No new visual language. The direction is **the discussion thread's ledger, applied at board
-scope**, because the two surfaces are the same object and the studio reads them the same way.
+No new visual language. The direction is **the discussion thread's ledger applied at board scope**,
+because the two surfaces are the same object and the studio reads them the same way.
 
-Concretely, three things carry over unchanged:
-
-1. **The meta line is uppercase eyebrow type at `--text-secondary`.** Author in ink at `--text-sm`,
-   then timestamp and "edited" in `META_TEXT`. This is what the discussion thread does and it is
-   the treatment that took its own timestamp from 3.57:1 to 8.66:1.
-2. **Owner actions are `buttonClasses("text")` in a `justify-end` group**, separated from the meta
-   line rather than trailing it as inline links. This is what buys the 44px target.
-3. **The composer foot is `flex-wrap` with the hint on the left and the primary on the right** —
-   already the current shape; it only needs the hint's contrast fixed and the button migrated.
+1. **The meta line is uppercase eyebrow type at `--text-secondary`.** Author in ink at `--text-sm`;
+   timestamp and "edited" in `META_TEXT`.
+2. **Owner actions are a `justify-end` row of their own, after the content** — the discussion
+   thread's shape exactly. This is what buys both the 44px target and the fix for §2.1b.
+3. **The composer foot is a `flex-wrap` row**, hint left, primary right.
 
 **What stays distinct, deliberately:** the board is a *disclosure* and the discussion is not. The
-collapsible toggle, the unread left-rule (`border-left-color: var(--border-strong)` on
-`.is-unread`), and the ± chevron are the notice board's own affordances and this release keeps all
-three. The unread left-rule in particular is a good, quiet signal and measures fine; it is being
-kept because it works, not by omission.
+collapsible toggle, the unread left-rule, and the ± chevron are the notice board's own affordances
+and all three are kept — the unread rule in particular measures fine and is a good quiet signal.
 
 ---
 
 ## 4. Retirement ledger
 
-All 29 rules at `app.css:374-404` are retired. There is **no kept block** on this surface — every
-rule maps to a utility or a primitive.
+All 29 rules at `app.css:374-404` retire. **No kept block** — every rule maps to a utility or a
+primitive, and §5 gives the exact classes.
 
-| Rule | Disposition |
+**Load-bearing check — done, not delegated.** `grep -rn "querySelector.*notice-board"` across all
+non-test `.ts`/`.tsx` returns **zero** hits. No application JS depends on any `.notice-board__*`
+class. The only non-CSS consumers are the test files (§6).
+
+---
+
+## 5. The exact specification
+
+Per `Subagent-Frontend-Orchestration.md:17-22`, the plan closes every design decision. Classes below
+are literal. Where a class carries `!`, the `!` is load-bearing and stated why.
+
+**Two cascade facts that govern everything here** (both cost TB8-07 a review round):
+
+- `styles/index.css` imports `app.css` **outside every `@layer`**, so any surviving legacy rule
+  beats a Tailwind utility regardless of specificity. This release retires the whole block, so the
+  only risk is a *shared* class — hence `.ey` and `.notice` staying out of scope.
+- `tokens/base.css:25-28`'s unlayered `:focus-visible { outline: …; outline-offset: 2px }` uses the
+  `outline` **shorthand**, which resets `outline-offset`. **Every focus-ring utility in this
+  release must be `!`-prefixed**, exactly as `ICON_BUTTON_BASE` does.
+
+Shared constant, defined once at the top of `NoticeBoard.tsx`:
+
+```tsx
+const RING =
+  "focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] " +
+  "focus-visible:!outline-[var(--focus-ring)] focus-visible:!outline-offset-2";
+```
+
+### 5.1 Shell and toggle
+
+| Element | Classes |
 |---|---|
-| `.notice-board` | Utilities on `<section>` |
-| `.notice-board__toggle` (+ `:hover`, `.is-unread`, `> span:first-child`) | Utilities; the unread left-rule becomes a conditional border utility |
-| `.notice-board__summary` | Utilities, `--text-sm` (was 13px) |
-| `.notice-board__chevron` | Utilities, `--text-lg`-class token (was 24px) |
-| `.notice-board__badge` | Utilities + the §2.3 markup change |
-| `.notice-board__panel` (+ `.is-collapsed`) | Utilities; keep `display:none` semantics via `hidden` |
-| `.notice-board__posts` | Utilities |
-| `.notice-board__post` | Utilities |
-| `.notice-board__post-head` (+ `time`, per §2.4) | Utilities, strut removed |
-| `.notice-board__author` | Utilities, single `[font:…]` shorthand (§2.5) |
-| `.notice-board__post > .rich-text` | Utility on the content wrapper |
-| `.notice-board__edit` / `__delete` (+ `:hover`) | `buttonClasses("text")` / `buttonClasses("text")` with destructive colour |
-| `.notice-board__edited` | `META_TEXT` |
-| `.notice-board__empty` | `<EmptyState>` |
-| `.notice-board__error` | `<Notice tone="critical">` |
-| `.notice-board__composer` (+ `-foot`, `-foot > span`) | Utilities |
-| `.notice-board__edit-composer` | Utilities |
-| `.notice-board__post--changed` | Utility background |
-| `.notice-board__edit-target-changed` | `<Notice tone="caution">` |
+| `<section>` | `mb-[var(--space-6)] border-[length:var(--border-width-hair)] border-solid border-border bg-card` |
+| toggle `<button>` | `cn("w-full flex items-center gap-[var(--space-4)] px-[var(--space-5)] py-[var(--space-4)] min-h-[44px] bg-transparent border-0 [border-left-style:solid] border-l-[length:var(--border-width-rule)] text-left text-foreground cursor-pointer transition-[background-color,border-color] duration-[var(--dur-fast)] ease-[var(--ease-standard)] hover:bg-secondary", hasUnread ? "border-l-border-strong" : "border-l-transparent", RING)` |
+| label stack (`> span:first-child`) | `flex flex-col gap-[var(--space-1)] flex-1 min-w-0` |
+| eyebrow | `<Eyebrow>Staff notice board</Eyebrow>` — replaces `className="ey"`, so this call site leaves the shared class behind without touching the other 20 |
+| summary | `[font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary` — `--text-sm` (14px) replaces the hard-coded 13px |
+| chevron | `[font:var(--weight-regular)_var(--text-xl)/1_var(--font-sans)] text-foreground-secondary` + keeps `aria-hidden="true"` — `--text-xl` (28px) replaces 24px |
 
-**Load-bearing check — done, not delegated.** Unlike TB8-07 (where
-`.subtask-checklist__title-trigger` was a live `querySelector` focus hook and
-`.rich-text__editor-content` scoped nine retained prose selectors), **no `.notice-board__*` class is
-queried from application JS.** Verified: `grep -rn "querySelector.*notice-board"` across all
-non-test `.ts`/`.tsx` returns **zero** hits. The only consumers outside `app.css` are the test
-files, which is §6.
+`bg-card` = `--bg-surface` = `--paper-000`; `hover:bg-secondary` = `--bg-raised` = `--paper-100`;
+`border-l-border-strong` = `--border-strong` = `--ink-900`. All three preserve the current paint.
+
+### 5.2 Unread badge, panel, posts, empty state
+
+**Badge (§2.3, Sol's resolution).** Replaces the role-less `aria-label` span:
+
+```tsx
+{hasUnread && (
+  <>
+    <span className="sr-only">New notice</span>
+    <span aria-hidden="true" className="w-[7px] h-[7px] flex-none rounded-[var(--radius-pill)] bg-primary" />
+  </>
+)}
+```
+
+`bg-primary` = `--accent` = `--ink-900`, the current dot colour. **Acceptance:** the toggle's
+computed accessible name still ends in "New notice" (criterion 8).
+
+| Element | Classes |
+|---|---|
+| panel `<div>` | `border-t-[length:var(--border-width-hair)] [border-top-style:solid] border-t-border` + **`hidden={!open}`** in place of `.is-collapsed`. Keeps `id={panelId}` and `aria-hidden={!open}`. `hidden` is safe here: the artifact skeleton's reset carries `[hidden]{display:none!important}` and this is the same `display:none` semantics the retired class had. |
+| posts `<div>` | `grid` — keeps `aria-live="polite"` **and** the `presentation.anchorRef` placement byte-for-byte (§5.6) |
+| post `<article>` | `px-[var(--space-5)] py-[var(--space-4)] border-b-[length:var(--border-width-hair)] [border-bottom-style:solid] border-b-border` |
+| changed-target `<article>` | same + `bg-secondary` (was `--paper-100`) |
+| empty state | `<EmptyState title="No notices yet." className="px-[var(--space-5)] py-[var(--space-5)] text-left" />` — the overrides are required: the primitive defaults to `px-[var(--space-6)] py-[var(--space-8)]` centred, which is far heavier than the current 24px left-aligned line (§2.6) |
+
+### 5.3 The post head, meta line and owner actions
+
+**DOM order changes** (§2.4, §2.1b). The single wrapping row becomes a meta row plus a separate
+action row placed **after the rendered content**, matching `ProjectDiscussionThread.tsx`:
+
+```tsx
+<article className={POST}>
+  <header className="flex flex-wrap items-baseline gap-x-[var(--space-3)] gap-y-[var(--space-1)] min-w-0">
+    <span className="[font:var(--type-eyebrow)] text-foreground min-w-0 [overflow-wrap:anywhere]">{post.authorName}</span>
+    <time dateTime={post.createdAt} className={META_TEXT}>{relativeTime(post.createdAt)}</time>
+    {post.editedAt && <span title={post.editedAt} className={META_TEXT}>edited</span>}
+  </header>
+  {editingId === post.id ? renderEditComposer(post.id) : <RichTextContent content={post.content} />}
+  {post.authorId === currentUserId && (
+    <div className="flex justify-end gap-[var(--space-3)] mt-[var(--space-2)]">
+      <button type="button" className={EDIT_ACTION} onClick={…}>Edit</button>
+      <button type="button" className={DELETE_ACTION} onClick={…}>Delete</button>
+    </div>
+  )}
+</article>
+```
+
+The `<time>` has **no** `flex` utility — that is the strut removal. The author keeps
+`overflow-wrap: anywhere`; with the actions no longer in this row, the 480px orphaning in §2.1b
+cannot recur, because there is nothing left in the row to orphan.
+
+> **Author `font` shorthand — resolved, no invented token.** Per §2.5 the retired rule supplied
+> family, weight *and* line-height from `--type-label`, with only size overridden. Reading the
+> tokens closes this exactly:
+>
+> ```
+> --type-label:   var(--weight-regular) var(--text-sm)/1.2 var(--font-sans)   /* 14px */
+> --type-eyebrow: var(--weight-regular) var(--text-xs)/1.2 var(--font-sans)   /* 12px */
+> ```
+>
+> The two differ *only* in size, and the retired rule overrode size to 12px. So
+> `font: var(--type-label); font-size: 12px` **is** `--type-eyebrow`, computed identically —
+> `[font:var(--type-eyebrow)]` with `text-foreground` for the ink, and none of `Eyebrow`'s
+> `uppercase`/`tracking`. Nothing is inlined and no token is invented.
+
+**The two action constants** — this is Sol's #1 and #4, in full:
+
+```tsx
+// `min-w` is prescribed because `buttonClasses` contains NO min-width at all (§2.1); height
+// alone is not a touch target. `min-h-[38px]` is prescribed because the `text` variant's own
+// `min-h-[32px]` beats BASE's 38px under twMerge, and this release converges on 38/44, not 32/44.
+const ACTION_SIZING = "min-h-[38px] max-[721px]:min-w-[44px] max-[721px]:min-h-[44px] px-[var(--space-2)]";
+
+const EDIT_ACTION = buttonClasses("text", { className: ACTION_SIZING });
+
+// `!` is load-bearing: the `text` variant sets `!text-foreground-secondary`, which a plain
+// `text-destructive` cannot outrank even though twMerge keeps both (Sol #4, verified).
+const DELETE_ACTION = buttonClasses("text", {
+  className: ACTION_SIZING + " !text-destructive hover:not-disabled:!text-destructive",
+});
+```
+
+`buttonClasses` already carries its own focus ring, so `RING` is **not** added here.
+
+`px-[var(--space-2)]` is deliberate: it gives the 44px min-width something to be wider than on a
+short label like "Edit", instead of relying on `min-w` alone to stretch an unpadded box.
+
+### 5.4 Both composers and the notices
+
+| Element | Classes |
+|---|---|
+| composer `<form>` / edit composer `<div>` | `grid gap-[var(--space-3)] px-[var(--space-5)] py-[var(--space-4)]`; the **edit** variant instead `pt-[var(--space-4)] px-0 pb-0` (mirrors the retired `padding: var(--space-4) 0 0`) |
+| composer foot | `flex flex-wrap items-center justify-between gap-[var(--space-3)]` |
+| mention hint | `<span className={cn(META_TEXT, "!normal-case")}>` + `flex-[1_1_12rem] min-w-0` — **`!normal-case` is mandatory** (§2.2, Sol #5) |
+| error | `<Notice tone="critical" role="alert">` — `Notice` does **not** inject a role, so `role="alert"` must be passed explicitly or the announcement is lost |
+| changed-target message | `<Notice tone="caution" role="status">` — same reasoning |
+| Post notice / Save | `buttonClasses("primary")` |
+| Cancel | `buttonClasses("secondary")` |
+
+### 5.5 States, in full
+
+| State | Treatment |
+|---|---|
+| default | as above |
+| hover | toggle `hover:bg-secondary`; actions inherit `buttonClasses`' own hover |
+| focus-visible | `RING` on the toggle; `buttonClasses`' built-in ring elsewhere. **Every ring `!`-prefixed** |
+| disabled | `buttonClasses`' `disabled:` states only. **No opacity multiplier anywhere** — that is what took TB8-06's handle to 1.72:1 and TB8-07's grip to 2.51:1 |
+| collapsed | `hidden` + `aria-hidden={!open}` |
+| unread | `border-l-border-strong` on the toggle, `sr-only` text + `aria-hidden` dot |
+| error | `<Notice tone="critical" role="alert">` |
+| empty | `<EmptyState>` with the §5.2 overrides |
+
+### 5.6 The freshness contract — must survive byte-for-byte
+
+`presentation.anchorRef` attaches to the **posts container when `posts.length === 0`** and to the
+**first `<article>` otherwise**. `useNoticeBoardPresentation` drives read-marker behaviour this
+release does not touch. Sol's verdict confirms nothing in §5 disturbs it *provided the ref stays
+exactly there*. Also unchanged: `aria-live="polite"` on the posts container, `aria-expanded` /
+`aria-controls` on the toggle, `aria-hidden` on the collapsed panel, the `sr-only` composer label
+with its `htmlFor`, and `<time dateTime>` as a real `<time>`.
 
 ---
 
-## 5. Structural changes requiring authorization
-
-Everything below changes DOM shape or ARIA, not just classes. Each is authorized by this plan;
-nothing else is.
-
-1. **§2.3** — the unread badge gains `role="status"` and an `sr-only` text label; the dot becomes
-   `aria-hidden`.
-2. **§2.4** — the post head splits into a meta group and an owner-actions group. The `<time>` loses
-   `flex: 1 1 auto`.
-3. **§2.1** — Edit/Delete become `buttonClasses("text")` buttons in a `justify-end` group.
-4. **§2.6** — `.notice-board__error` becomes `<Notice tone="critical">`; it **keeps `role="alert"`**,
-   which `Notice` does not inject, so it must be passed explicitly.
-5. **§2.6** — `.notice-board__empty` becomes `<EmptyState>`.
-6. **§2.4/§3** — `.notice-board__edit-target-changed` becomes `<Notice tone="caution">`; it
-   **keeps `role="status"`**, passed explicitly.
-7. **§2.7** — three `.button` sites become `buttonClasses`.
-
-**ARIA that must NOT change:** `aria-expanded` / `aria-controls` on the toggle, `aria-hidden` on
-the collapsed panel, `aria-live="polite"` on `.notice-board__posts`, `htmlFor`/`sr-only` on the
-composer label, and `<time dateTime>` as a real `<time>`. The `presentation.anchorRef` placement
-(on the posts container when empty, on the first post otherwise) is freshness logic and must
-survive the refactor byte-for-byte.
-
----
-
-## 6. The four test files are the real risk
+## 6. The tests are the real risk — corrected
 
 `NoticeBoard.dom.test.tsx` (470), `NoticeBoard.freshness.dom.test.tsx` (702),
-`Dashboard-notice-board.dom.test.tsx` (46) and `RichTextByteGuard.dom.test.tsx` (57) —
-**1,275 lines of tests against 148 lines of component.**
+`Dashboard-notice-board.dom.test.tsx` (46), `RichTextByteGuard.dom.test.tsx` (57).
 
-They do select by class, and I counted rather than guessing: **48 `.notice-board__*` selector sites
-across 6 distinct classes.**
+**49 `.notice-board__*` occurrences across 6 classes.** (The draft said 48; that came from `grep
+-c`, which counts *lines*, and one line carries two.) Per-file, verified:
 
-| Class | Sites | File split |
-|---|---|---|
-| `.notice-board__post` | 14 | dom 21 / freshness 26 / byte-guard 1 total |
-| `.notice-board__toggle` | 12 | " |
-| `.notice-board__edit` | 12 | " |
-| `.notice-board__edit-composer` | 4 | " |
-| `.notice-board__delete` | 4 | " |
-| `.notice-board__composer` | 3 | " |
+| Class | dom | freshness | byte-guard | total |
+|---|---|---|---|---|
+| `__post` | 10 | 4 | 0 | 14 |
+| `__toggle` | 5 | 7 | 0 | 12 |
+| `__edit` | 5 | 7 | 0 | 12 |
+| `__edit-composer` | 0 | 3 | 1 | 4 |
+| `__delete` | 2 | 2 | 0 | 4 |
+| `__composer` | 0 | 3 | 0 | 3 |
 
-`Dashboard-notice-board.dom.test.tsx` has **zero** — it is safe.
+`Dashboard-notice-board.dom.test.tsx` has **zero** and is safe.
 
-So retiring the block turns a green suite red by construction, and the builder must update these 48
-sites as part of the slice that retires each class, not as a cleanup pass afterwards. Prefer
-`data-slot` / role / accessible-name selectors over re-introducing a class purely to be selected.
+**Sol's #7, upheld and adopted: delete none of these.** None of the four files contains
+`getComputedStyle`, `classList`, `toHaveClass`, or a class-attribute assertion — every occurrence is
+purely a *locator* for behaviour: concurrency, polling, mutation, draft preservation, payload
+shape, rich-text rendering. The 1,275:148 ratio is not over-testing; it is that ratio because
+`notice-board-data.ts` is 679 lines of freshness logic exercised through this component.
 
-The rule: **a test that asserts behaviour gets its selector updated; a test that asserts a
-retired class is deleted only if the class was purely presentational.** Nothing may be deleted to
-get to green — if a test fails for a real reason, that is a defect in the build, not in the test.
+My draft's "prefer accessible-name selectors" was **not actionable** — these are plain
+`querySelector` tests and `querySelector` cannot select by accessible name.
+
+**The prescription:** add stable hooks and migrate each site in the slice that retires its class.
+
+| Retired class | Replacement selector |
+|---|---|
+| `.notice-board__toggle` | `[data-slot="notice-board-toggle"]` |
+| `.notice-board__post` | `[data-slot="notice-board-post"]` |
+| `.notice-board__composer` | `[data-slot="notice-board-composer"]` |
+| `.notice-board__edit-composer` | `[data-slot="notice-board-edit-composer"]` |
+| `.notice-board__edit` / `__delete` | scoped button-text lookup within a post |
 
 ---
 
 ## 7. Acceptance criteria
 
-Measured at 1440×900, 1024×768 and 390×844, on a board with at least one own-authored notice.
+Measured at 1440×900, 1024×768 and 390×844, on a board with at least one own-authored notice, **and
+once more at 480×900 with a ≥40-character author name** (§2.1b).
 
-1. `Edit` and `Delete` each measure **≥44×44 at 390 and 720**, and ≥38px tall at 1440.
-2. Timestamp, "edited", and the mention hint each measure **≥4.5:1** (expected 9.2:1).
-3. Every other text site holds its current ratio or better — the eyebrow, summary, chevron, author,
-   Edit and Delete already measure 9.2 / 9.2 / 9.2 / 19.8 / 9.2 / 10.0 and must not regress.
-4. The `<time>` is **not** a full-width strut at 1440.
-5. Zero horizontal overflow at all three widths; nothing inside the board overflows its own box.
-6. Every focus ring visible and unclipped, including on the toggle, both owner actions, and both
-   composer buttons.
-7. `app.css:374-404` contains **zero** `.notice-board` selectors.
-8. Unread state: the badge is exposed to AT via a real role. (Verified in local dev, where an unread
-   state can be produced without writing to production.)
-9. `npm run typecheck` 6/6, `npm run build -w @quincy/web`, and the full suite green — including
-   `npx vitest run --config packages/shared/vitest.config.ts`.
+1. `Edit` and `Delete` each measure **≥44 × 44 at 390 and 720**, and **≥38px tall at 1440**.
+2. Timestamp, "edited" and the mention hint each measure **≥4.5:1** (expected 9.2:1).
+3. No regression: eyebrow, summary, chevron, author, Edit and Delete currently measure
+   9.2 / 9.2 / 9.2 / 19.8 / 9.2 / 10.0 and must hold or improve.
+4. The mention hint renders in **sentence case**, not uppercase (`!normal-case` held).
+5. The `<time>` is **not** a full-width strut at 1440.
+6. **At 480 with a long author name, no control is orphaned onto its own line** — the §2.1b table
+   is the before; the after must show the actions in one right-aligned group.
+7. Zero horizontal overflow at all four widths; nothing inside the board overflows its own box.
+8. The toggle's **computed accessible name ends in "New notice"** when `hasUnread` is true.
+   Verified in local dev, where an unread state can be produced without writing to production.
+9. Every focus ring visible and unclipped — toggle, both owner actions, both composer buttons.
+10. `app.css:374-404` contains **zero** `.notice-board` selectors.
+11. `npm run typecheck` 6/6, `npm run build -w @quincy/web`, the full suite green **including**
+    `npx vitest run --config packages/shared/vitest.config.ts`, with **all 49 test sites migrated
+    and none deleted**.
 
 ---
 
 ## 8. Slicing
 
-Three slices. This surface does not warrant more.
-
-| Slice | Scope | Commit shape |
+| Slice | Scope | Commit |
 |---|---|---|
-| **1** | Toggle (12 test sites), badge (§2.3), panel, posts container, empty state (§2.6). | `feat(tb8-08): slice 1 — the board shell, the unread badge and the empty state` |
-| **2** | The post: head split (§2.4), meta on `META_TEXT` (§2.2), owner actions on `buttonClasses("text")` (§2.1), the changed-target notice (§5.6). | `feat(tb8-08): slice 2 — the post, its meta line and its owner actions` |
-| **3** | Both composers, the error notice (§5.4), the three `.button` migrations (§2.7), and the full `app.css:374-404` retirement. | `feat(tb8-08): slice 3 — the composers, the error notice and the app.css retirement` |
+| **1** | §5.1 shell + toggle, §5.2 badge/panel/posts/empty. Migrates `__toggle` (12 sites). | `feat(tb8-08): slice 1 — the board shell, the unread badge and the empty state` |
+| **2** | §5.3 in full — head split, meta on `META_TEXT`, the two action constants. Migrates `__post` (14), `__edit` (12), `__delete` (4). | `feat(tb8-08): slice 2 — the post, its meta line and its owner actions` |
+| **3** | §5.4 composers + notices, the 3 `.button` migrations, and the whole `app.css:374-404` retirement. Migrates `__composer` (3), `__edit-composer` (4). | `feat(tb8-08): slice 3 — the composers, the notices and the app.css retirement` |
 
-Then: this session's visual gate, the §5 orchestration gate, merge, deploy on the owner's word.
+Then: this session's visual gate (including the 480px long-name case), the §5 orchestration gate,
+merge, deploy on the owner's word.
 
 ---
 
-## 9. Open questions for Sol
+## 9. For Sol round 2
 
-1. Is §2.3's `role="status"` + `sr-only` label the right call, or should the badge be folded into
-   the toggle's own accessible name so it is announced when the control is reached rather than when
-   it appears?
-2. §2.4 removes the `flex: 1 1 auto` strut. Is there a reading in which that strut was load-bearing
-   at some width I did not measure — the TB8-06 lesson was that a media query outside the range you
-   read inverts your finding.
-3. §6: is "update the selector, never delete the assertion" the right rule for 1,275 lines of test
-   against a 148-line component, or does the ratio itself argue that some of those tests are
-   asserting presentation and should go?
+Round 1's ten findings are all adopted. What I most want checked now:
+
+1. **§5 as a whole** — it is new, and it is the finding-#3 fix. Is it actually at implementation
+   resolution, or have I left a decision to the builder that I think I have closed?
+2. **§5.3's `ACTION_SIZING`.** I prescribe `min-h-[38px]` to override the `text` variant's 32px, so
+   this surface reads 38/44 like every other control. Is overriding the variant the right call, or
+   does it argue the `text` variant itself is wrong and should be fixed in `button.tsx` — which
+   would be a shared change and therefore out of this release's scope?
+3. ~~**§5.3's author `font` shorthand.**~~ **Closed myself after round 1:** `--type-label` and
+   `--type-eyebrow` differ only in size, so the retired `font: var(--type-label); font-size: 12px`
+   *is* `--type-eyebrow`. No token invented, nothing inlined. Flag if that reading is wrong.
+4. **§5.2's `hidden`** replacing `.is-collapsed`'s `display: none`, alongside the existing
+   `aria-hidden={!open}`. Any interaction with the freshness/anchorRef behaviour when the panel is
+   closed and posts are not rendered?
+5. **§2.1b.** Does moving the actions out of the wrapping row actually eliminate the orphaning at
+   every width, or have I traded it for a different break I have not measured?
