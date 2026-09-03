@@ -16,8 +16,10 @@ import { cn } from "../lib/utils";
 import { Eyebrow } from "./ui/eyebrow";
 import { EmptyState } from "./quincy/EmptyState";
 import { Input } from "./ui/input";
+import { Checkbox } from "./ui/checkbox";
+import { StatusPill } from "./ui/status-pill";
 import { buttonClasses } from "./ui/button";
-import { META_TRIGGER } from "./ui/icon-button";
+import { IconButton, META_TRIGGER } from "./ui/icon-button";
 import type { MentionableUser } from "./MentionAutocomplete";
 
 // TB8-07 §5.1 — the toggle's outward focus ring. Not exported: `RING_OUT` is deliberately
@@ -133,8 +135,8 @@ function ScheduleControl({ owner, label, value, open, setOpen, onSave, onUseLate
   const setEndpoint = (which: "start" | "end", next: Partial<EndpointDraft>) => setDraft((current) => ({ ...current, [which]: { ...current[which], ...next } }));
   const endpointFields = (which: "start" | "end", endpoint: EndpointDraft) => <fieldset className="subtask-schedule__endpoint"><legend>{which === "start" ? "Start" : "End"}</legend><label>Date <input type="date" value={endpoint.date} onChange={(event) => setEndpoint(which, { date: event.target.value })} /></label>{draft.kind === "timed" && <label>Time <input type="time" step={60} value={endpoint.time} disabled={!endpoint.date} onChange={(event) => setEndpoint(which, { time: event.target.value })} /></label>}{error?.endpoint === which && error.choices && <fieldset className="subtask-schedule__fold"><legend>Choose the Sydney occurrence</legend>{error.choices.map((choice) => <label key={choice.disambiguation}><input type="radio" name={`${id}-${which}-fold`} checked={endpoint.disambiguation === choice.disambiguation} onChange={() => setEndpoint(which, { disambiguation: choice.disambiguation })} />{choice.disambiguation === "earlier" ? "Earlier" : "Later"} ({choice.utcOffsetMinutes >= 0 ? "+" : ""}{choice.utcOffsetMinutes} min)</label>)}</fieldset>}</fieldset>;
   return <>
-    <button ref={floating.refs.setReference} type="button" className={compact ? COMPOSER_TRIGGER_CLASSES : `subtask-checklist__metadata-trigger${value.state !== "unscheduled" ? " subtask-checklist__metadata-trigger--filled" : ""}`} aria-label={label} aria-expanded={open && !readOnly} aria-controls={open && !readOnly ? id : undefined} disabled={readOnly || busy} title={readOnly && value.state === "invalid" ? "Schedule data needs repair" : undefined} onKeyDown={floating.onKeyDown} onClick={() => { if (!readOnly) setOpen(!open); }}>
-      {value.state !== "unscheduled" ? <span className="subtask-checklist__due"><span className="sr-only">Schedule </span>{formatSchedule(value)}</span> : <span aria-hidden="true">◷</span>}
+    <button ref={floating.refs.setReference} type="button" className={compact ? COMPOSER_TRIGGER_CLASSES : META_TRIGGER} aria-label={label} aria-expanded={open && !readOnly} aria-controls={open && !readOnly ? id : undefined} disabled={readOnly || busy} title={readOnly && value.state === "invalid" ? "Schedule data needs repair" : undefined} onKeyDown={floating.onKeyDown} onClick={() => { if (!readOnly) setOpen(!open); }}>
+      {value.state !== "unscheduled" ? <StatusPill tone="neutral" className="min-w-0"><span className="sr-only">Schedule </span><span className="block truncate min-w-0">{formatSchedule(value)}</span></StatusPill> : <span aria-hidden="true">◷</span>}
     </button>
     {floating.mounted && !readOnly && <AnchoredPopover context={floating.context} floatingStyles={floating.floatingStyles} initialFocus={0} onKeyDown={floating.onKeyDown} status={floating.status}><div id={id} className="subtask-popover__content" role="group" aria-label={label}>
       <label>State <select value={draft.state} onChange={(event) => setDraft((current) => ({ ...current, state: event.target.value as ScheduleDraft["state"] }))}><option value="unscheduled">Unscheduled</option><option value="due_only">Due only</option>{CHECKLIST_SCHEDULE_RANGES_ENABLED && <option value="range">Range</option>}</select></label>
@@ -162,8 +164,8 @@ function AssigneeControl({ owner, label, assignee, users, open, setOpen, onSelec
     floating.onKeyDown(event);
   }
   return <>
-    <button ref={floating.refs.setReference} type="button" className={compact ? COMPOSER_TRIGGER_CLASSES : `subtask-checklist__metadata-trigger${assignee ? " subtask-checklist__metadata-trigger--filled" : ""}`} aria-label={label} aria-expanded={open} aria-controls={open ? id : undefined} onKeyDown={floating.onKeyDown} onClick={() => setOpen(!open)} title={assignee?.name}>
-      {assignee ? <span className="subtask-checklist__assignee"><span aria-hidden="true">{initials(assignee.name)}</span><span className="sr-only">Assigned to {assignee.name}</span></span> : <span aria-hidden="true">♙</span>}
+    <button ref={floating.refs.setReference} type="button" className={compact ? COMPOSER_TRIGGER_CLASSES : META_TRIGGER} aria-label={label} aria-expanded={open} aria-controls={open ? id : undefined} onKeyDown={floating.onKeyDown} onClick={() => setOpen(!open)} title={assignee?.name}>
+      {assignee ? <span className="grid place-items-center size-[var(--space-5)] shrink-0 rounded-[var(--radius-pill)] bg-primary text-[var(--accent-on)] [font:var(--weight-regular)_var(--text-2xs)/1_var(--font-sans)] tracking-[0.02em]"><span aria-hidden="true">{initials(assignee.name)}</span><span className="sr-only">Assigned to {assignee.name}</span></span> : <span aria-hidden="true">♙</span>}
     </button>
     {floating.mounted && <AnchoredPopover context={floating.context} floatingStyles={floating.floatingStyles} initialFocus={searchRef} onKeyDown={onListKeyDown} status={floating.status}><div id={id} className="subtask-popover__content" role="group" aria-label={label}>
       <label className="sr-only" htmlFor={`${id}-search`}>Search assignees</label><input ref={searchRef} id={`${id}-search`} type="search" value={query} placeholder="Search members…" onChange={(event) => { setQuery(event.target.value); setActiveIndex(0); }} />
@@ -175,7 +177,7 @@ function AssigneeControl({ owner, label, assignee, users, open, setOpen, onSelec
 function ActionsControl({ owner, title, open, setOpen, busy, onDelete }: { owner: string; title: string; open: boolean; setOpen: (open: boolean) => void; busy: boolean; onDelete: () => void }) {
   const close = useCallback(() => setOpen(false), [setOpen]); const floating = useAnchoredPopover({ open, onClose: close }); const id = popoverId(owner, "actions");
   return <>
-    <button ref={floating.refs.setReference} type="button" className="subtask-checklist__overflow" aria-label={`Actions for ${title}`} aria-expanded={open} aria-controls={open ? id : undefined} onKeyDown={floating.onKeyDown} onClick={() => setOpen(!open)}>⋯</button>
+    <IconButton ref={floating.refs.setReference} aria-label={`Actions for ${title}`} aria-expanded={open} aria-controls={open ? id : undefined} onKeyDown={floating.onKeyDown} onClick={() => setOpen(!open)}>⋯</IconButton>
     {floating.mounted && <AnchoredPopover context={floating.context} floatingStyles={floating.floatingStyles} initialFocus={0} onKeyDown={floating.onKeyDown} status={floating.status}><div id={id} className="subtask-popover__content" role="group" aria-label={`Actions for ${title}`}><button type="button" className="button button--secondary" disabled={busy} onClick={() => { void (async () => { if (!await confirm({ title: "Delete subtask?", message: "Delete this subtask?", confirmLabel: "Delete", danger: true })) return; close(); onDelete(); })(); }}>Delete</button></div></AnchoredPopover>}
   </>;
 }
@@ -188,18 +190,61 @@ function SortableSubtaskRow({ item, users, busy, editing, draftTitle, popover, s
   const combinedNodeRef = (element: HTMLElement | null) => { setNodeRef(element); itemRef(element); };
   const combinedGripRef = (element: HTMLButtonElement | null) => { setActivatorNodeRef(element); gripRef(element); };
   const dragProps = { ...attributes, ...listeners, ...(busy ? { "aria-disabled": true } : {}) };
-  return <article ref={combinedNodeRef} style={style} className={`subtask-checklist__item${item.done ? " subtask-checklist__item--done" : ""}${activeKind ? " subtask-checklist__item--popover-open" : ""}${isDragging ? " subtask-checklist__item--dragging" : ""}`} onBlur={(event) => {
-    const next = event.relatedTarget as Node | null;
-    if (event.currentTarget.contains(next) || (activeKind && document.getElementById(popoverId(item.id, activeKind))?.contains(next))) return;
-    if (editing) onEndEditing();
-  }}>
-    <div className="subtask-checklist__summary">
-      <button ref={combinedGripRef} type="button" className="subtask-checklist__grip" aria-label={`Reorder ${item.title}`} {...dragProps}>⠿</button>
-      <label className="subtask-checklist__done"><input type="checkbox" checked={item.done} disabled={busy} onChange={(event) => onUpdate({ done: event.target.checked }, "done")} /><span className="sr-only">Mark {item.title} complete</span></label>
-      {editing ? <input ref={titleInputRef} className="subtask-checklist__title" aria-label="Subtask title" value={draftTitle} disabled={busy} onChange={(event) => onUpdate({ __draft: event.target.value }, "draft")} onBlur={() => onUpdate({ __saveTitle: true }, "title")} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); if (event.key === "Escape") { event.preventDefault(); onUpdate({ __cancelTitle: true }, "title"); event.currentTarget.blur(); } }} /> : <button type="button" className="subtask-checklist__title-trigger" disabled={busy} onClick={onBeginEditing} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onBeginEditing(); } }}>{item.title}</button>}
-      <ScheduleControl owner={item.id} label={`Schedule for ${item.title}`} value={item.schedule} error={scheduleError} open={activeKind === "schedule"} setOpen={(open) => setKind("schedule", open)} onSave={(schedule) => onUpdate({ schedule }, "schedule")} onUseLatest={onUseLatest} onUseLatestItem={onUseLatestItem} busy={busy} />
-      <AssigneeControl owner={item.id} label={`Assignee for ${item.title}`} assignee={item.assignee} users={users} open={activeKind === "assignee"} setOpen={(open) => setKind("assignee", open)} onSelect={(assigneeId) => onUpdate({ assigneeId }, "assignee")} busy={busy} />
-      <ActionsControl owner={item.id} title={item.title} open={activeKind === "actions"} setOpen={(open) => setKind("actions", open)} busy={busy} onDelete={onRemove} />
+  return <article
+    ref={combinedNodeRef}
+    style={style}
+    data-done={item.done ? "true" : undefined}
+    data-dragging={isDragging ? "true" : undefined}
+    data-popover-open={activeKind ? "true" : undefined}
+    className={cn(
+      "grid gap-[var(--space-2)] py-[var(--space-2)] -mx-[var(--space-2)] px-[var(--space-2)]",
+      "[border-bottom-style:solid] border-b-[length:var(--border-width-hair)] border-b-border",
+      "last:border-b-0",
+      "transition-[background-color] duration-[var(--dur-fast)] ease-[var(--ease-standard)]",
+      "hover:bg-secondary focus-within:bg-secondary",
+      "data-[dragging=true]:opacity-45 data-[dragging=true]:shadow-[var(--shadow-sm)]",
+    )}
+    onBlur={(event) => {
+      const next = event.relatedTarget as Node | null;
+      if (event.currentTarget.contains(next) || (activeKind && document.getElementById(popoverId(item.id, activeKind))?.contains(next))) return;
+      if (editing) onEndEditing();
+    }}>
+    <div className={cn(
+      "min-w-0",
+      "max-[721px]:grid max-[721px]:grid-cols-[auto_auto_minmax(0,1fr)]",
+      "max-[721px]:items-center max-[721px]:gap-[var(--space-2)]",
+      "min-[721px]:flex min-[721px]:items-center min-[721px]:gap-[var(--space-2)]",
+    )}>
+      <IconButton ref={combinedGripRef} aria-label={`Reorder ${item.title}`} className="cursor-grab active:cursor-grabbing" {...dragProps}>⠿</IconButton>
+      <label className="grid place-items-center min-h-[28px] max-[721px]:min-h-[44px] max-[721px]:min-w-[44px] cursor-pointer"><Checkbox checked={item.done} disabled={busy} onChange={(event) => onUpdate({ done: event.target.checked }, "done")} /><span className="sr-only">Mark {item.title} complete</span></label>
+      {editing ? <Input ref={titleInputRef} className="flex-1 min-w-0" aria-label="Subtask title" value={draftTitle} disabled={busy} onChange={(event) => onUpdate({ __draft: event.target.value }, "draft")} onBlur={() => onUpdate({ __saveTitle: true }, "title")} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); if (event.key === "Escape") { event.preventDefault(); onUpdate({ __cancelTitle: true }, "title"); event.currentTarget.blur(); } }} /> : <button
+        type="button"
+        // `.subtask-checklist__title-trigger` no longer carries any CSS (its app.css rule is
+        // retired) — it stays on this element only as a runtime hook: `remove()` below queries
+        // for it (`.querySelector(".subtask-checklist__title-trigger")`) to restore focus to the
+        // next row's title after a delete. Do not delete the class as dead.
+        className={cn(
+          "subtask-checklist__title-trigger",
+          "flex-1 min-w-0 p-0 border-0 bg-transparent text-left cursor-pointer",
+          "[font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)]",
+          "[overflow-wrap:anywhere] min-h-[28px] max-[721px]:min-h-[44px]",
+          item.done ? "text-foreground-secondary line-through" : "text-foreground",
+          RING_OUT,
+        )}
+        disabled={busy}
+        onClick={onBeginEditing}
+        onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onBeginEditing(); } }}
+      >{item.title}</button>}
+      <div className={cn(
+        "min-w-0",
+        "max-[721px]:col-span-full max-[721px]:flex max-[721px]:items-center",
+        "max-[721px]:gap-[var(--space-1)] max-[721px]:pt-[var(--space-1)]",
+        "min-[721px]:contents",
+      )}>
+        <ScheduleControl owner={item.id} label={`Schedule for ${item.title}`} value={item.schedule} error={scheduleError} open={activeKind === "schedule"} setOpen={(open) => setKind("schedule", open)} onSave={(schedule) => onUpdate({ schedule }, "schedule")} onUseLatest={onUseLatest} onUseLatestItem={onUseLatestItem} busy={busy} />
+        <AssigneeControl owner={item.id} label={`Assignee for ${item.title}`} assignee={item.assignee} users={users} open={activeKind === "assignee"} setOpen={(open) => setKind("assignee", open)} onSelect={(assigneeId) => onUpdate({ assigneeId }, "assignee")} busy={busy} />
+        <ActionsControl owner={item.id} title={item.title} open={activeKind === "actions"} setOpen={(open) => setKind("actions", open)} busy={busy} onDelete={onRemove} />
+      </div>
     </div>
   </article>;
 }

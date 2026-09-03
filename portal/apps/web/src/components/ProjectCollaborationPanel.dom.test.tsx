@@ -384,7 +384,7 @@ describe("ProjectCollaborationPanel", () => {
     const host = mount(); await render(<ProjectCollaborationPanel projectId={projectId} />);
     const panel = host.querySelector(".project-collaboration")!;
     const title = host.querySelector<HTMLButtonElement>(".subtask-checklist__title-trigger")!; await click(title);
-    const input = host.querySelector<HTMLInputElement>(".subtask-checklist__title")!; input.focus(); await act(async () => { input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await Promise.resolve(); });
+    const input = host.querySelector<HTMLInputElement>('[aria-label="Subtask title"]')!; input.focus(); await act(async () => { input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await Promise.resolve(); });
     expect(host.querySelector(".project-collaboration")).toBe(panel); expect(host.querySelector(".subtask-checklist__title-trigger")).not.toBeNull();
     const dispatchEscape = async (element: Element) => { const event = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }); await act(async () => { element.dispatchEvent(event); await Promise.resolve(); }); await waitForClose(); expect(event.defaultPrevented).toBe(true); expect(host.querySelector(".project-collaboration")).toBe(panel); };
     for (const label of ["Schedule for Call client", "Assignee for Call client", "Actions for Call client"] as const) {

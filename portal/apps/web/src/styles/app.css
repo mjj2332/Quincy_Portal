@@ -862,26 +862,6 @@ button { font-family: var(--font-sans); }
 }
 /* §10.3: popover contents sit flush inside a bordered, overflow-auto panel — an outward ring clips. */
 .subtask-popover button:focus-visible, .subtask-popover input:focus-visible { outline: var(--border-width-bold) solid var(--ink-900); outline-offset: -2px; }
-.subtask-checklist__item { display: grid; gap: var(--space-2); padding: var(--space-2); border: 1px solid var(--border-hairline); background: var(--paper-000); transition: background var(--dur-fast); }
-.subtask-checklist__item:hover, .subtask-checklist__item:focus-within { background: var(--paper-100); }
-.subtask-checklist__summary { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
-.subtask-checklist__title-trigger { flex: 1 1 auto; min-width: 0; padding: 0; border: 0; background: transparent; color: var(--text-primary); font: inherit; font-size: 12px; text-align: left; overflow-wrap: anywhere; cursor: pointer; }
-.subtask-checklist__title { flex: 1 1 auto; }
-.subtask-checklist__item--done .subtask-checklist__title, .subtask-checklist__item--done .subtask-checklist__title-trigger { color: var(--text-muted); text-decoration: line-through; }
-.subtask-checklist__done { display: grid; place-items: center; }
-.subtask-checklist__title, .subtask-checklist__composer input, .subtask-popover input { min-width: 0; width: 100%; padding: 7px 8px; border: 1px solid var(--border-hairline); background: var(--paper-000); color: var(--text-primary); font: inherit; font-size: 12px; }
-.subtask-checklist__due { flex: none; padding: 3px 6px; border: 1px solid var(--border-hairline); border-radius: var(--radius-pill); color: var(--text-secondary); font-size: 10px; white-space: nowrap; }
-.subtask-checklist__assignee { display: grid; place-items: center; width: 24px; height: 24px; border-radius: var(--radius-pill); background: var(--ink-900); color: var(--paper-050); font: var(--type-label); font-size: 9px; letter-spacing: .02em; flex: none; }
-.subtask-checklist__grip { flex: none; padding: 2px 3px; border: 0; background: transparent; color: var(--text-secondary); font: 18px/1 sans-serif; cursor: grab; }
-.subtask-checklist__grip:active { cursor: grabbing; }
-.subtask-checklist__grip[aria-disabled="true"] { cursor: default; opacity: .5; }
-.subtask-checklist__metadata-trigger { display: grid; flex: none; place-items: center; min-width: 24px; min-height: 24px; padding: 0; border: 0; border-radius: var(--radius-pill); background: transparent; color: var(--text-secondary); cursor: pointer; opacity: .06; transition: opacity var(--dur-fast), background var(--dur-fast); }
-.subtask-checklist__metadata-trigger--filled { opacity: 1; }
-.subtask-checklist__metadata-trigger:hover, .subtask-checklist__metadata-trigger:focus-visible, .subtask-checklist__item:hover .subtask-checklist__metadata-trigger, .subtask-checklist__item:focus-within .subtask-checklist__metadata-trigger, .subtask-checklist__item--popover-open .subtask-checklist__metadata-trigger { opacity: 1; background: var(--paper-100); }
-.subtask-checklist__metadata-trigger .subtask-checklist__due { display: block; }
-.subtask-checklist__overflow { flex: none; padding: 2px 6px; border: 0; background: transparent; color: var(--text-secondary); font: 20px/1 sans-serif; opacity: .72; cursor: pointer; transition: opacity var(--dur-fast), background var(--dur-fast); }
-.subtask-checklist__item:hover .subtask-checklist__overflow, .subtask-checklist__item:focus-within .subtask-checklist__overflow, .subtask-checklist__overflow:focus-visible, .subtask-checklist__item--popover-open .subtask-checklist__overflow { opacity: 1; }
-.subtask-checklist__item--dragging { opacity: .45; box-shadow: var(--shadow-sm); }
 /* Panel-level properties (z-index, width, border, background, shadow) now owned by
    `AnchoredPopover` (§7.3) — this class stays only as the content wrapper / test hook. */
 .subtask-popover__content { display: grid; gap: var(--space-2); padding: var(--space-3); }

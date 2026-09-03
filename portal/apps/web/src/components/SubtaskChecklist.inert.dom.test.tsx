@@ -23,7 +23,7 @@ const dueTask = { id: "inert-due", title: "Due item", done: false, position: 204
 let root: Root | null = null;
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-function item(host: HTMLElement, title: string) { const result = [...host.querySelectorAll<HTMLElement>(".subtask-checklist__item")].find((element) => element.textContent?.includes(title)); if (!result) throw new Error(`No item ${title}`); return result; }
+function item(host: HTMLElement, title: string) { const result = [...host.querySelectorAll<HTMLElement>("article")].find((element) => element.textContent?.includes(title)); if (!result) throw new Error(`No item ${title}`); return result; }
 function portal(id: string) { return document.getElementById(id)!; }
 async function click(element: Element) { await act(async () => { element.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); await new Promise((resolve) => window.setTimeout(resolve, 0)); }); }
 

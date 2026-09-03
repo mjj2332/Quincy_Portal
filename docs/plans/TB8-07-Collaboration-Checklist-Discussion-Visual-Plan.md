@@ -1485,6 +1485,20 @@ the slice, not deferred to slice 8; §8a is the authority on which.
 
 ### 11a. The slice 3 / slice 4 boundary — the one real hazard
 
+**Slice 4 is split into 4a and 4b** (decided during the build, 2026-09-03). The combined slice was
+handed to one builder and the run **stalled during exploration having written nothing** — the exact
+failure `Subagent-Frontend-Orchestration.md`'s "Slicing a large plan" section records from TB8-04.
+Slice 4 is the largest in this release (44 CSS rules, the whole row, and three popover bodies), so
+it splits at the natural seam:
+
+- **4a — `SortableSubtaskRow`** and the row's CSS (`901-903`, `904`, `905-920`).
+- **4b — the three popover bodies** (`ScheduleControl`, `AssigneeControl`, `ActionsControl`) and
+  their CSS (`891-892`, `921-932`, `933-934`, `935-943`, `944-952`, and the `@600` remainder).
+
+The two are disjoint in both files. The re-run prompts also give **exact line ranges to read** and
+say to stop there, rather than naming sections — a cold agent handed "read §1, §3, §4 in full"
+spends its whole allowance before writing, which is what killed the first attempt.
+
 Slices 3 and 4 both edit `SubtaskChecklist.tsx` and run **in sequence**, never in parallel. They
 also *share two components*, and the previous revision did not say how, which would have left the
 boundary to the builder's judgment. It is fixed here:
