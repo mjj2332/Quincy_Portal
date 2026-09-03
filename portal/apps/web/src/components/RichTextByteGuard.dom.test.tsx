@@ -38,7 +38,7 @@ describe("rich-text serialized-width submit guards", () => {
     mocks.apiGet.mockResolvedValue({ posts: [ownPost] }); const host = mount(); await render(<NoticeBoard currentUserId="user-me" />);
     await click(button(host, "Use oversized formatting")); expect(button(host, "Post notice").disabled).toBe(true);
     await click(button(host, "Use accepted formatting")); expect(button(host, "Post notice").disabled).toBe(false); await click(button(host, "Post notice")); expect(mocks.apiPost).toHaveBeenCalledWith("/api/notice-board/posts", { content: accepted });
-    await click(button(host, "Edit")); const edit = host.querySelector(".notice-board__edit-composer")!;
+    await click(button(host, "Edit")); const edit = host.querySelector('[data-slot="notice-board-edit-composer"]')!;
     await click(button(edit as HTMLElement, "Use oversized formatting")); expect(button(edit as HTMLElement, "Save").disabled).toBe(true);
     await click(button(edit as HTMLElement, "Use accepted formatting")); expect(button(edit as HTMLElement, "Save").disabled).toBe(false); await click(button(edit as HTMLElement, "Save"));
     expect(mocks.apiPatch).toHaveBeenCalledWith(`/api/notice-board/posts/${ownPost.id}`, { content: accepted });

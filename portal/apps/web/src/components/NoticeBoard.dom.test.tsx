@@ -127,11 +127,11 @@ describe("NoticeBoard disclosure and polling", () => {
     await click(host.querySelector<HTMLButtonElement>('[aria-label="Checklist"]')!);
     await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Post notice")!); await flush();
     expect(apiPostMock).toHaveBeenCalledWith("/api/notice-board/posts", { content });
-    expect(host.querySelector(".notice-board__post input")).toBeNull();
+    expect(host.querySelector('[data-slot="notice-board-post"] input')).toBeNull();
     apiPostMock.mockClear(); apiPatchMock.mockClear();
-    await click(host.querySelector(".notice-board__post .rich-text__task-indicator")!);
+    await click(host.querySelector('[data-slot="notice-board-post"] .rich-text__task-indicator')!);
     expect(apiPostMock).not.toHaveBeenCalled(); expect(apiPatchMock).not.toHaveBeenCalled();
-    expect(host.querySelector(".notice-board__post .rich-text__task-content .sr-only")?.textContent).toBe("Not completed");
+    expect(host.querySelector('[data-slot="notice-board-post"] .rich-text__task-content .sr-only')?.textContent).toBe("Not completed");
     expect([...host.querySelectorAll<HTMLButtonElement>("button")].some((button) => button.textContent === "Edit")).toBe(false);
   });
 
@@ -145,7 +145,7 @@ describe("NoticeBoard disclosure and polling", () => {
     await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Post notice")!);
     await flush();
     expect(apiPostMock).toHaveBeenCalledWith("/api/notice-board/posts", { content });
-    expect(host.querySelector(".notice-board__post h2")?.textContent).toBe("Notice section");
+    expect(host.querySelector('[data-slot="notice-board-post"] h2')?.textContent).toBe("Notice section");
   });
 
   it("posts newly underlined and struck-through notice content through the composer", async () => {
@@ -171,8 +171,8 @@ describe("NoticeBoard disclosure and polling", () => {
     apiGetMock.mockResolvedValue({ posts: [marked] });
     const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
     await flush();
-    expect(host.querySelector(".notice-board__post u")?.textContent).toBe("Under"); expect(host.querySelector(".notice-board__post s")?.textContent).toBe(" strike");
-    await click(host.querySelector<HTMLButtonElement>(".notice-board__edit")!);
+    expect(host.querySelector('[data-slot="notice-board-post"] u')?.textContent).toBe("Under"); expect(host.querySelector('[data-slot="notice-board-post"] s')?.textContent).toBe(" strike");
+    await click(host.querySelector<HTMLButtonElement>('[data-slot="notice-board-edit"]')!);
     await appendToEditor(host.querySelector<HTMLElement>('[contenteditable="true"]')!, "!");
     await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Save")!);
     expect(apiPatchMock).toHaveBeenCalledWith(`/api/notice-board/posts/${marked.id}`, { content: { type: "doc", content: [{ type: "paragraph", content: [
@@ -190,7 +190,7 @@ describe("NoticeBoard disclosure and polling", () => {
     });
     const host = mount();
     await render(<NoticeBoard currentUserId="user-a" />);
-    const toggle = host.querySelector<HTMLButtonElement>(".notice-board__toggle")!;
+    const toggle = host.querySelector<HTMLButtonElement>('[data-slot="notice-board-toggle"]')!;
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
     expect(apiGetMock).toHaveBeenCalledWith("/api/notice-board/posts?limit=50");
     expect(apiGetMock.mock.calls.some(([path]) => path.includes("latest"))).toBe(false);
@@ -211,7 +211,7 @@ describe("NoticeBoard disclosure and polling", () => {
     root = null;
     const remounted = mount();
     await render(<NoticeBoard currentUserId="user-a" />);
-    expect(remounted.querySelector<HTMLButtonElement>(".notice-board__toggle")?.getAttribute("aria-expanded")).toBe("false");
+    expect(remounted.querySelector<HTMLButtonElement>('[data-slot="notice-board-toggle"]')?.getAttribute("aria-expanded")).toBe("false");
   });
 
   it("does not write the collapse key on mount when no preference is stored, even under StrictMode", async () => {
@@ -226,7 +226,7 @@ describe("NoticeBoard disclosure and polling", () => {
     } });
     const host = mount();
     await render(<StrictMode><NoticeBoard currentUserId="user-a" /></StrictMode>);
-    const toggle = host.querySelector<HTMLButtonElement>(".notice-board__toggle")!;
+    const toggle = host.querySelector<HTMLButtonElement>('[data-slot="notice-board-toggle"]')!;
     expect(toggle).not.toBeNull();
     expect(setItemSpy.mock.calls.some(([key]) => key === "quincy:dashboard:noticeboard:v2")).toBe(false);
 
@@ -248,7 +248,7 @@ describe("NoticeBoard disclosure and polling", () => {
     apiGetMock.mockResolvedValue({ posts: [oldPost] });
     const host = mount();
     await render(<NoticeBoard currentUserId="user-a" />);
-    expect(host.querySelector<HTMLButtonElement>(".notice-board__toggle")?.getAttribute("aria-expanded")).toBe("true");
+    expect(host.querySelector<HTMLButtonElement>('[data-slot="notice-board-toggle"]')?.getAttribute("aria-expanded")).toBe("true");
     expect(getItemSpy.mock.calls.some(([key]) => key === OLD_KEY)).toBe(false);
     expect(setItemSpy.mock.calls.some(([key]) => key === OLD_KEY)).toBe(false);
     expect(removeItemSpy.mock.calls.some(([key]) => key === OLD_KEY)).toBe(false);
@@ -263,7 +263,7 @@ describe("NoticeBoard disclosure and polling", () => {
       : Promise.resolve({ posts: [] }));
     const host = mount();
     await render(<NoticeBoard currentUserId="user-a" />);
-    expect(host.querySelector('[aria-label="New notice"]')).not.toBeNull();
+    expect(host.querySelector('[data-slot="notice-board-unread-indicator"]')).not.toBeNull();
   });
 
   it("does not write a seen cursor when an expanded list tick succeeds", async () => {
@@ -279,7 +279,7 @@ describe("NoticeBoard disclosure and polling", () => {
     await render(<NoticeBoard currentUserId="user-a" />);
     await advance(30_000);
     expect(window.localStorage.getItem("quincy:dashboard:noticeboard:seen:user-a")).toBe(oldPost.id);
-    expect(host.querySelector('[aria-label="New notice"]')).not.toBeNull();
+    expect(host.querySelector('[data-slot="notice-board-unread-indicator"]')).not.toBeNull();
   });
 
   it("keeps a stale unread badge when the fresh expand fetch fails", async () => {
@@ -290,9 +290,9 @@ describe("NoticeBoard disclosure and polling", () => {
       : Promise.reject(new Error("offline")));
     const host = mount();
     await render(<NoticeBoard currentUserId="user-a" />);
-    expect(host.querySelector('[aria-label="New notice"]')).not.toBeNull();
-    await click(host.querySelector(".notice-board__toggle")!);
-    expect(host.querySelector('[aria-label="New notice"]')).not.toBeNull();
+    expect(host.querySelector('[data-slot="notice-board-unread-indicator"]')).not.toBeNull();
+    await click(host.querySelector('[data-slot="notice-board-toggle"]')!);
+    expect(host.querySelector('[data-slot="notice-board-unread-indicator"]')).not.toBeNull();
   });
 
   it("leaves legacy seen keys untouched and only offers author controls", async () => {
@@ -302,9 +302,9 @@ describe("NoticeBoard disclosure and polling", () => {
     const host = mount();
     await render(<NoticeBoard currentUserId="user-b" />);
     expect(window.localStorage.getItem("quincy:dashboard:noticeboard:seen:user-b")).toBeNull();
-    expect(host.querySelectorAll(".notice-board__delete")).toHaveLength(1);
-    expect(host.querySelectorAll(".notice-board__edit")).toHaveLength(1);
-    await click(host.querySelector(".notice-board__delete")!);
+    expect(host.querySelectorAll('[data-slot="notice-board-delete"]')).toHaveLength(1);
+    expect(host.querySelectorAll('[data-slot="notice-board-edit"]')).toHaveLength(1);
+    await click(host.querySelector('[data-slot="notice-board-delete"]')!);
     expect(apiDeleteMock).toHaveBeenCalledWith("/api/notice-board/posts/post-new");
   });
 
@@ -312,7 +312,7 @@ describe("NoticeBoard disclosure and polling", () => {
     apiGetMock.mockResolvedValue({ posts: [oldPost] });
     const host = mount();
     await render(<NoticeBoard currentUserId="user-a" />);
-    await click(host.querySelector(".notice-board__edit")!);
+    await click(host.querySelector('[data-slot="notice-board-edit"]')!);
     expect(host.textContent).toContain("Save");
     await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Cancel")!);
     expect(apiPatchMock).not.toHaveBeenCalled();
@@ -333,10 +333,10 @@ describe("NoticeBoard disclosure and polling", () => {
     apiGetMock.mockResolvedValue({ posts: [formatted] });
     const host = mount();
     await render(<NoticeBoard currentUserId="user-b" />);
-    expect(host.querySelector(".notice-board__post ul")?.textContent).toContain("Bullet");
-    expect(host.querySelector(".notice-board__post ul br")).not.toBeNull();
-    expect(host.querySelector(".notice-board__post ol")?.textContent).toContain("First");
-    const link = host.querySelector<HTMLAnchorElement>('.notice-board__post a[href="https://example.test/guide"]')!;
+    expect(host.querySelector('[data-slot="notice-board-post"] ul')?.textContent).toContain("Bullet");
+    expect(host.querySelector('[data-slot="notice-board-post"] ul br')).not.toBeNull();
+    expect(host.querySelector('[data-slot="notice-board-post"] ol')?.textContent).toContain("First");
+    const link = host.querySelector<HTMLAnchorElement>('[data-slot="notice-board-post"] a[href="https://example.test/guide"]')!;
     expect(link).not.toBeNull();
     expect(link.target).toBe("_blank");
     expect(link.rel).toBe("noopener noreferrer");
@@ -356,7 +356,7 @@ describe("NoticeBoard disclosure and polling", () => {
     apiGetMock.mockResolvedValue({ posts: [oldPost] });
     const host = mount();
     await render(<NoticeBoard currentUserId="user-a" />);
-    await click(host.querySelector(".notice-board__edit")!);
+    await click(host.querySelector('[data-slot="notice-board-edit"]')!);
     const editor = host.querySelector<HTMLElement>('[contenteditable="true"]')!;
     await typeIntoEditor(editor, "Saved edit");
     await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Save")!);
@@ -372,7 +372,7 @@ describe("NoticeBoard disclosure and polling", () => {
     apiGetMock.mockResolvedValue({ posts: [{ ...oldPost, content }] });
     const host = mount();
     await render(<NoticeBoard currentUserId="user-a" />);
-    await click(host.querySelector(".notice-board__edit")!);
+    await click(host.querySelector('[data-slot="notice-board-edit"]')!);
     await appendToEditor(host.querySelector<HTMLElement>('[contenteditable="true"]')!, "!");
     await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Save")!);
     expect(apiPatchMock).toHaveBeenCalledWith("/api/notice-board/posts/post-old", { content: {

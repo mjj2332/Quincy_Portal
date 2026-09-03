@@ -370,38 +370,6 @@ button { font-family: var(--font-sans); }
 /* ---------------------------------------------------------------------
    Kanban board (dashboard view)
    --------------------------------------------------------------------- */
-/* ---------------------------------------------------------------------
-   Staff notice board
-   --------------------------------------------------------------------- */
-.notice-board { margin: 0 0 var(--space-6); border: 1px solid var(--border-hairline); background: var(--paper-000); }
-.notice-board__toggle { width: 100%; display: flex; align-items: center; gap: var(--space-4); padding: var(--space-4) var(--space-5); border: 0; border-left: var(--border-width-rule) solid transparent; background: transparent; color: var(--text-primary); text-align: left; cursor: pointer; transition: background var(--dur-fast) var(--ease-standard), border-color var(--dur-fast) var(--ease-standard); }
-.notice-board__toggle:hover { background: var(--paper-100); }
-.notice-board__toggle.is-unread { border-left-color: var(--border-strong); }
-.notice-board__toggle > span:first-child { display: flex; flex-direction: column; gap: 4px; flex: 1; }
-.notice-board__summary { color: var(--text-secondary); font-size: 13px; }
-.notice-board__chevron { font-size: 24px; line-height: 1; color: var(--text-secondary); }
-.notice-board__badge { width: 7px; height: 7px; flex: none; border-radius: var(--radius-pill); background: var(--accent); box-shadow: none; }
-.notice-board__panel { border-top: 1px solid var(--border-hairline); }
-.notice-board__panel.is-collapsed { display: none; }
-.notice-board__posts { display: grid; gap: 0; }
-.notice-board__post { padding: var(--space-4) var(--space-5); border-bottom: 1px solid var(--border-hairline); }
-.notice-board__post-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-1) var(--space-3); color: var(--text-muted); font-size: 12px; }
-.notice-board__author { color: var(--text-primary); font: var(--type-label); font-size: 12px; min-width: 0; overflow-wrap: anywhere; }
-.notice-board__post-head time { flex: 1 1 auto; min-width: 0; }
-.notice-board__post > .rich-text { margin-top: 8px; }
-.notice-board__delete, .notice-board__edit { border: 0; padding: 3px 0; background: transparent; cursor: pointer; font: inherit; }
-.notice-board__delete { color: var(--signal-critical); }
-.notice-board__edit { color: var(--text-secondary); }
-.notice-board__delete:hover, .notice-board__edit:hover { text-decoration: underline; }
-.notice-board__edited { color: var(--text-muted); }
-.notice-board__empty { margin: 0; padding: var(--space-5); color: var(--text-muted); font-size: 14px; }
-.notice-board__error { padding: var(--space-3) var(--space-5); color: var(--signal-critical); background: color-mix(in srgb, var(--signal-critical) 6%, var(--paper-000)); font-size: 13px; }
-.notice-board__composer { display: grid; gap: 10px; padding: var(--space-4) var(--space-5); }
-.notice-board__composer-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); color: var(--text-muted); font-size: 12px; }
-.notice-board__composer-foot > span { flex: 1 1 12rem; min-width: 0; }
-.notice-board__edit-composer { padding: var(--space-4) 0 0; }
-.notice-board__post--changed { background: var(--paper-100); }
-.notice-board__edit-target-changed { color: var(--signal-caution-text); font-size: 13px; }
 
 /* Shared collaboration rich-text surface — kept as CSS deliberately (TB8-07 §1.3/§4.6): one
    stored document is rendered by two different renderers that must produce identical output
