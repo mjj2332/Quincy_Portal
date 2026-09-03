@@ -20,7 +20,7 @@ const FIELD_INPUT = "bg-card border-solid border-[length:var(--border-width-hair
   "px-[var(--space-3)] py-[var(--space-2)] text-foreground hover:border-border-hover " +
   "focus-visible:outline-[length:var(--border-width-bold)] focus-visible:outline-solid " +
   "focus-visible:outline-ring focus-visible:outline-offset-2 aria-invalid:border-destructive " +
-  "max-[720px]:min-h-[44px]";
+  "max-[721px]:min-h-[44px]";
 const FIELD_ERROR = "m-0 text-destructive text-[length:var(--text-xs)]";
 
 function toTiptap(doc: RichTextDoc): Record<string, unknown> {

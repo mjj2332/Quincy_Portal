@@ -927,3 +927,211 @@ can pass happy-dom while failing Chrome.
   case, the next person adding an Escape handler to a floating/portaled surface should default to
   "restore focus in the same synchronous call that closes it," not "restore it after the DOM
   settles."
+
+## Two ways a green test quietly stops proving anything (TB8-04, 2026-09-02)
+
+Both were found while building TB8-04. Neither is about the feature under test; both are about
+assertions that *looked* precise and weren't.
+
+**1. A hardcoded future date is a time bomb.** `KanbanCardPreview.dom.test.tsx` pinned a fixture
+deadline at `2026-09-01T22:00:00.000Z` and asserted the card reads `Due 2026-09-02 08:00 Sydney`.
+The card picks "Due" vs "Overdue" from `isDeadlineOverdue(project.deadlineAt)`
+(`ProjectKanbanBoard.tsx:262`), whose `now` defaults to `Date.now()`
+(`packages/shared/src/project-deadline.ts:140`) — so the test passed for as long as that instant
+stayed in the future and has failed unconditionally since 2026-09-02, with
+`expected 'Overdue …' to contain 'Due …'`. Fixed by freezing the clock
+(`vi.useFakeTimers({ now: testNow })` / `vi.useRealTimers()`), the idiom
+`Dashboard-kanban-sort.dom.test.tsx` already used — *not* by relaxing the assertion, which would
+have thrown away the only thing the test proves. **Rule:** any test whose expected output depends
+on the current time must freeze the clock. A date literal in a fixture is a countdown, and the
+failure lands on whoever is mid-branch when it expires — far from the change that "caused" it.
+
+**2. `expect(markup).not.toContain("disabled")` is unsafe on any Tailwind-painted surface.**
+`ProjectFields.test.ts` asserted an input was not disabled by searching the rendered tag for the
+bare substring `disabled`. That held only while the element carried no utility classes. The moment
+`FIELD_BOX` landed on it — carrying `disabled:bg-surface-sunken`, `hover:not-disabled:…`,
+`read-only:…`, and (on the tiles) `has-[:disabled]:…` — the assertion started matching a *class
+token* and failed on a perfectly enabled input. Three instances in one file had the same shape.
+Fixed by keying off the attribute rather than the word: `/\s(?:readonly|readOnly|disabled)=""/`
+and `/\sdisabled=""/`. That is strictly *stricter*, not looser — a real `disabled` attribute is
+still caught, a class token no longer produces a false positive. **Rule:** every Tailwind state
+variant puts its own name into the class attribute, so a bare-word search over markup tests the
+stylesheet as much as the DOM. Assert on the attribute (or query the DOM node's `.disabled`),
+never on a substring of the tag. The same trap applies to `readonly`, `checked`, `required`,
+`hidden`, `open`, `invalid`, and `selected`.
+
+## `@cloudflare/vitest-pool-workers` leaked `SELF.fetch` dispatch — the `workers/app` timing flake (2026-09-03)
+
+**Symptom.** One test in `workers/app/test/api.test.ts` — "manages and edits manual collection
+links while preserving immutable Tonomo links" (`:3160`) — intermittently failed
+`Test timed out in 5000ms`. It ran ~0.6s alone and **3.88s ± 0.07s** in-suite: not a stall, a
+stable cost that happened to sit 22% under the budget, so any load tipped it over.
+
+**Root cause.** `@cloudflare/vitest-pool-workers` 0.18.6 (and 0.22.0) leaks on its `SELF.fetch`
+service-binding round trip: *every* `SELF.fetch` permanently raises the cost of every later
+`SELF.fetch` **in the same test file**. Per-request cost is linear in prior request count, so
+cumulative cost is quadratic. A ~20-line standalone probe, 8 rounds × 50 identical 404 requests,
+no migrations and no seed:
+
+```
+CURVE appFetch  perRound=[12,6,5,5,5,6,5,5]                 <- app.fetch(req, env, ctx), FLAT
+CURVE selfFetch perRound=[36,74,151,273,444,665,925,1265]   <- SELF.fetch(), 35x growth
+```
+
+`api.test.ts` is one 3,700-line file with **354** `SELF.fetch` calls across 121 `it` blocks, so its
+late tests inherited the whole accumulated penalty — ~137ms for *any* request, including a 404 that
+touches no route and no database.
+
+**Fix: migrate to `@cloudflare/vitest-plugin` 1.1.3**, the supported replacement (pool-workers is
+superseded, not merely behind). `cloudflareTest` is exported under the same name, so the change is
+an import swap in `workers/app/vitest.config.ts`, `workers/app/vitest.dev.config.ts` and
+`workers/background/vitest.config.ts` plus the dependency. Measured on `workers/app`, same 296
+passed | 1 skipped, identical collected test-name set both ways:
+
+| | pool-workers 0.18.6 | vitest-plugin 1.1.3 |
+|---|---|---|
+| suite wall time | 68.45s | 23.26s |
+| slowest test in suite | **5668ms** | 2468ms |
+| the reported test | 3975ms | 115ms |
+| `selfFetch` curve | 35× growth | flat |
+
+Note the baseline's *slowest* test was already **over** the 5000ms default — it only passed under a
+raised measurement timeout. The flake surface was larger than the one test that got reported.
+
+**Four wrong diagnoses died on the way here, all for the same reason — arithmetic instead of
+measurement.** (1) "Intermittent 6–9× stall" — 8 timed runs showed 3850–3975ms, a 3.6% spread.
+(2) "`--workspaces` runs suites concurrently and steals CPU" — npm 11.12.1 runs workspaces
+*sequentially*, in `package.json` order. (3) "Unindexed `audit_log` scans": the shape was real
+(`EXPLAIN` gives `SCAN audit_log`, no index leads on `action`) but the table holds **302 rows** —
+30 unscoped queries cost 5ms vs 3ms scoped, i.e. 2ms of a 3300ms delta. No index and no migration
+0040 was warranted. (4) "Leaked response bodies" — consuming every body changed nothing. What
+actually localised it was a control: a 404 with no auth and no DB cost the same ~137ms as a route
+reading 225 rows, while direct D1 `SELECT 1` stayed flat at 7–9ms. **When a cost is flat across
+probes that do wildly different amounts of work, it is not in the work — it is in the transport.**
+
+**Also worth keeping:** cost resets per test file (each file gets a fresh worker), so splitting a
+huge test file is a real mitigation for this class of problem; and `isolatedStorage` does *not*
+exist in this config — it belonged to the older `poolOptions.workers` API, not the `cloudflareTest()`
+Vite plugin — which is why writes accumulate across tests in one file.
+
+## Asserting a transient loading state is a race unless the test holds the window open (2026-09-03)
+
+Found while verifying the fix above: a *second*, unrelated flake in
+`apps/web/src/screens/ProjectWorkspace.dom.test.tsx` ("uses the comments probe for a 403
+collaborator"), failing about 1 run in 12 under the full `npm run test --workspaces`.
+
+```
+AssertionError: expected 'Collaboration12 Example StBack to das…' to contain 'Loading project.'
+```
+
+The test asserted `host.textContent` contains `"Loading project."` immediately after `render()`.
+Every mocked response resolved immediately, so the whole `403 on /api/projects/p1` -> collaboration
+probe -> `collaboration-only` chain was pure microtask work and could complete *inside* `render`'s
+own `await act(...)`. Whether it did depended on how many ticks act happened to drain — which is
+exactly what machine load perturbs. The assertion was then looking at the final view, not the
+loading view.
+
+**Reproduce a load-only flake deterministically by injecting the thing load supplies.** Inserting
+`await flush(3)` before the assertion failed it 100% of the time, with a byte-identical message to
+the one observed under load. That converts "I saw it once in twelve runs" into a controlled
+experiment, and it is the same trick for any assertion suspected of depending on elapsed ticks.
+
+**Fix: gate the responses the transient state is waiting on**, using the `deferredPromise` helper
+the file already had (the neighbouring "reuses a cached collaboration probe" test was already
+written this way):
+
+```ts
+const probeGate = deferredPromise<void>();
+// /api/projects/p1 still rejects 403 immediately — that is the input under test
+if (path.includes("/collaboration-summary")) return probeGate.promise.then(() => collaborationSummaryFixture());
+...
+await render(<ProjectWorkspace … />);
+await flush(3);                       // gate closed: any tick count gives the same answer
+expect(host.textContent).toContain("Loading project.");
+expect(host.textContent).not.toContain("Project unavailable.");
+probeGate.resolve();                  // now let the probe land
+await flushUntil(…);
+```
+
+This is *stronger* than what it replaced, not looser: it proves the screen holds the loading state
+for as long as the probe is in flight and never flashes the terminal error, rather than proving
+something was true at one arbitrary instant. Verified both directions — `flush(30)` instead of
+`flush(3)` still passes (the tick dependence is gone), and changing the detail rejection from 403
+to a terminal 401 still fails loudly with `expected 'Project workspaceBack to dashboard…'`.
+
+**Rule:** never assert a state the component will leave on its own. Either hold it open with a
+deferred you control, or don't assert it. And note `flush(n)`'s companion limitation: `setTimeout(…, 0)`
+advances ~1ms, so no realistic `n` can outwait the query client's real 1–4s `retryDelay`
+(`lib/query-client.tsx:21`) — wait on a condition with a real deadline (`flushUntil`) instead.
+
+**Unrelated pre-existing quirk confirmed while measuring:** `npm run test --workspaces` **always**
+exits 1 in this repo, because `packages/shared` has a vitest config but no `test` script and npm
+reports `Missing script: "test"`. It still runs every other workspace. Judge that command by the
+per-workspace summaries, never by its exit code — and keep running
+`npx vitest run --config packages/shared/vitest.config.ts` separately, as `CLAUDE.md` says.
+
+## Three CSS traps a Tailwind convergence walks straight into (TB8-04, 2026-09-03)
+
+All three shipped into a branch that passed typecheck, build, every unit test and a DOM test
+suite. All three were caught only by measuring computed style in a real browser. The common
+shape: **a utility string is applied to a component that is more general than the one it was
+written for**, and CSS's own defaults do the rest silently.
+
+**1. `:read-only` matches every `<select>`, unconditionally.** Only `<input>`, `<textarea>` and
+contenteditable elements are ever `:read-write`; a `<select>` is `:read-only` always, whether or
+not it is disabled and regardless of any attribute. So a bare `read-only:` variant on the shared
+field-box string (`FIELD_BOX` in `components/ui/input.tsx`, which `Input`, `Textarea` **and**
+`NativeSelect` all render) painted every native select `--bg-sunken` + `--text-secondary` — the
+exact treatment reserved for disabled and read-only fields. Enabled role selects on the Admin
+screen became visually indistinguishable from the one genuinely disabled control next to them,
+so the disabled signal stopped meaning anything. The regression is invisible to the DOM tests:
+the markup is correct, only the painted colour is wrong. Detected with
+`[...document.querySelectorAll('select')].map(s => s.matches(':read-only'))` → all `true`, then
+confirmed against `HEAD`, where `app.css`'s `.admin-field select` rule gave selects
+`--paper-050` + `--text-primary` like the inputs. Fixed with an arbitrary variant carrying an
+explicit guard — `[&:read-only:not(select)]:bg-surface-sunken` — with a comment saying the
+`:not(select)` is load-bearing, because it reads like a redundancy and will otherwise be
+"cleaned up." **Rule:** a shared field-box string is applied to three different elements; every
+state variant in it must be checked against all three, and pseudo-classes that look universal
+(`:read-only`, `:required`, `:invalid`, `:in-range`) have element-specific defaults.
+
+**2. Tailwind v4's `max-[Npx]` is exclusive, so `max-[N]` + `min-[N]` leaves N uncovered.**
+`max-[720px]:` compiles to `@media not all and (width >= 720px)`, i.e. `width < 720` — *not* the
+`@media (max-width: 720px)` (inclusive of 720) that the hand-written CSS it replaced used. Pair
+that with `min-[720px]:` and the viewport at exactly 720px matches neither branch: the table is
+not stacked and not laid out as a table, controls get neither the 38px nor the 44px height. The
+repo's convention is now **`max-[721px]:` paired with `min-[721px]:`** — `max-[721px]` means
+`≤ 720`, `min-[721px]` means `≥ 721`, and the two are exactly complementary with no gap and no
+overlap. Verified by driving the layout across 722 / 721 / 720 / 719 and reading
+`getComputedStyle(table).display` and the tab strip's `min-height`: 721 → `table` + 38px, 720 →
+`block` + 44px. Do not "simplify" `721` to `720`; the off-by-one is the fix. **Rule:** when
+porting a hand-written `max-width` media query to a Tailwind arbitrary variant, add 1 — and
+prove the boundary by measuring at N-1, N and N+1, never by reading the class name.
+
+**3. A responsive table that goes `display: block` silently loses its entire accessibility
+tree.** Stacking a table for narrow viewports (`max-[721px]:block` on `table`, `tbody`, `tr`,
+`td`) replaces the implicit `table` / `rowgroup` / `row` / `cell` / `columnheader` roles with
+generic ones — the markup still says `<table>`, but a screen reader no longer announces a table,
+row or column count, and header association is gone. This is invisible in every check that reads
+markup rather than the computed accessibility tree. The fix that must accompany any such stacking
+is to reapply the roles explicitly (`role="table"`, `role="rowgroup"` on both `thead` and
+`tbody`, `role="row"`, `role="cell"`, `role="columnheader"`), keep `scope="col"` on every header,
+hide the header row with `sr-only` rather than `display: none` (so it stays in the tree), and
+carry a `data-label` on each body cell for sighted mobile users. Verify by reading
+`getComputedStyle(el).display` **and** `el.getAttribute("role")` together at the narrow width —
+a `display: block` with no explicit `role` is the defect. **Rule:** any `display` change on a
+table element is an accessibility change; the role must be restored in the same commit.
+
+### The method, which generalises
+
+The emulated viewport in the browser tooling here is pinned (2560 CSS px, dpr 2) and window
+resizing does not move it, so breakpoint work cannot be checked by resizing. The way through is
+a **same-origin iframe**: `<iframe src="/" style="width:390px;height:844px">` evaluates media
+queries against its own viewport, and being same-origin its `contentDocument` is fully
+scriptable. Every measurement above — the 722/721/720/719 boundary sweep, the 44px touch-target
+audit, the stacked-table role check, per-breakpoint overflow — was taken through one iframe,
+resized between runs, with no dependence on the host viewport at all. Contrast measurement has a
+matching trap: Tailwind opacity modifiers (`bg-signal-positive/8`) compute to `color-mix()` /
+`oklab()`, which a naive `rgba()` regex cannot parse. Composite through a canvas instead —
+`fillStyle = base; fillRect; fillStyle = colour; fillRect; getImageData` — which resolves any
+colour space and alpha to the actual painted sRGB pixel.

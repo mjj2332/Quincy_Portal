@@ -88,6 +88,36 @@ async function flush(times = 10) {
   }
 }
 
+/**
+ * Pump until `predicate` holds, bounded by real elapsed time rather than by a tick count.
+ *
+ * `flush(n)` waits for a fixed number of macrotasks, which is fragile for two independent reasons:
+ * a chain of dependent queries can need more ticks than the caller guessed, and — the one no tick
+ * count can fix — `createQuincyQueryClient` sets a *real* `retryDelay` of 1s-4s
+ * (`lib/query-client.tsx:21`). `setTimeout(resolve, 0)` advances ~1ms of wall clock, so even
+ * `flush(20)` waits ~20ms and can never sit out a real backoff; raising the count buys nothing.
+ * Waiting on the condition with a real deadline covers both.
+ *
+ * After the predicate holds we keep pumping for a short settle margin, so that anything a test
+ * asserts must *not* happen still gets the chance to happen and be caught. That keeps negative
+ * assertions ("no workspace reads were started") at least as strong as under the old fixed wait,
+ * which is the property that makes this a safe substitution rather than a loosened one.
+ *
+ * The 3s default is deliberately *below* vitest's 5s `testTimeout` (`vitest.dom.config.ts` sets no
+ * override, so the default applies). At 5s the two race and vitest wins, so the failure surfaces as
+ * a bare "Test timed out in 5000ms" and this helper's `label` — the whole diagnostic value — is
+ * never printed. Verified by probe. Keep this margin if either number changes.
+ */
+async function flushUntil(predicate: () => boolean, label: string, timeoutMs = 3_000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    await act(async () => { await Promise.resolve(); await new Promise<void>((resolve) => setTimeout(resolve, 0)); });
+    if (predicate()) break;
+    if (Date.now() > deadline) throw new Error(`flushUntil timed out after ${timeoutMs}ms waiting for: ${label}`);
+  }
+  await flush(5);
+}
+
 function click(el: Element) {
   return act(async () => {
     el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
@@ -886,18 +916,43 @@ describe("ProjectWorkspace collaboration relocation", () => {
   });
 
   it("uses the comments probe for a 403 collaborator without starting workspace reads", async () => {
+    // The probe responses are deferred so the in-flight window is held open by the test rather
+    // than by luck. Previously they resolved immediately, which made the "Loading project."
+    // assertion below a race against however many ticks `render`'s `act` happened to drain: on a
+    // loaded machine the whole 403 -> probe -> collaboration-only chain could settle inside
+    // `render`, and the assertion then saw the *final* view ("Collaboration / 12 Example St") and
+    // failed. Reproduced deterministically by inserting `await flush(3)` before the assertion.
+    // Same deferred idiom as "reuses a cached collaboration probe ..." below.
+    const probeGate = deferredPromise<void>();
     apiGetMock.mockImplementation((path: string) => {
       if (path === "/api/projects/p1") return Promise.reject(new ApiError("Forbidden", 403));
-      if (path.includes("/collaboration-summary")) return Promise.resolve(collaborationSummaryFixture());
-      if (path.includes("/comments?limit=50")) return Promise.resolve({ project: { id: "p1", street: "Hidden Street" }, comments: [] });
+      if (path.includes("/collaboration-summary")) return probeGate.promise.then(() => collaborationSummaryFixture());
+      if (path.includes("/comments?limit=50")) return probeGate.promise.then(() => ({ project: { id: "p1", street: "Hidden Street" }, comments: [] }));
       if (path.includes("subtasks")) return Promise.resolve({ subtasks: [] });
       if (path.includes("mentionable-users")) return Promise.resolve({ users: [] });
       return Promise.resolve({});
     });
     const consumed: number[] = [];
     await render(<ProjectWorkspace projectId="p1" collaborationOpenSignal={7} onCollaborationOpenSignalConsumed={(signal) => consumed.push(signal)} />);
+    // Deliberately over-pump first: with the gate closed the detail 403 has certainly settled, so
+    // this asserts the stronger property — while the probe is in flight the screen holds the
+    // loading state and never flashes the terminal error — instead of whatever was on screen at
+    // an arbitrary moment. Any number of ticks here must give the same answer.
+    await flush(3);
     expect(host.textContent).toContain("Loading project."); expect(host.textContent).not.toContain("Project unavailable.");
-    await flush();
+    probeGate.resolve();
+    // Condition-based, not `flush()`'s fixed 10 ticks: the 403 on `/api/projects/p1` has to settle
+    // before the probe queries are even issued, so this test waits on a *sequential* chain whose
+    // tick cost the caller cannot know. It is the one site in this file that used the bare default
+    // while its siblings used `flush(20)`, and the one observed to fail (~1 run in 12) under the
+    // full `npm run test --workspaces`.
+    await flushUntil(
+      () => host.querySelector(".project-collaboration-only") !== null
+        && host.textContent!.includes("Hidden Street")
+        && host.querySelector(".project-collaboration--standalone") !== null
+        && consumed.length > 0,
+      "the collaboration-only probe to render and consume the open signal",
+    );
     expect(host.querySelector(".project-collaboration-only")).not.toBeNull(); expect(host.textContent).toContain("Hidden Street"); expect(host.querySelector(".work, .rail, .workmain")).toBeNull();
     expect(apiGetMock.mock.calls.map(([path]) => path)).not.toEqual(expect.arrayContaining([expect.stringContaining("/assets?collection=raw"), expect.stringContaining("/ingest-status")]));
     expect(consumed).toEqual([7]); expect(host.querySelector(".project-collaboration--standalone")).not.toBeNull();

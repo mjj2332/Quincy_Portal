@@ -89,7 +89,7 @@ export function Select<T extends string>({
                     // the original native <option> labels — not uppercase, which read as a
                     // mismatched second casing convention inside one control.
                     "data-[highlighted]:bg-secondary data-[selected]:bg-primary data-[selected]:text-primary-foreground",
-                    "min-h-[44px]" /* WCAG 2.5.8 minimum target, not a spacing token */,
+                    "min-h-[44px]" /* 44px touch target — WCAG 2.5.5 Enhanced / HIG, not a spacing token */,
                   )}
                 >
                   <SelectPrimitive.ItemText>{option.label}</SelectPrimitive.ItemText>

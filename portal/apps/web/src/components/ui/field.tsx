@@ -39,7 +39,7 @@ function FieldError({ className, children, ...props }: React.ComponentProps<"div
       role="alert"
       data-slot="field-error"
       className={cn(
-        "[font:var(--weight-regular)_12px/1.5_var(--font-sans)] text-[var(--signal-critical)]",
+        "[font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-[var(--signal-critical)]",
         className,
       )}
       {...props}

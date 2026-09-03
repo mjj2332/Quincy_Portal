@@ -8,7 +8,20 @@ import { confirm } from "../lib/confirm";
 import { impersonateUser } from "../lib/auth";
 import { locationStore } from "../lib/router";
 import { Modal } from "../components/Modal";
-import { Button } from "../components/ui/button";
+import { Button, buttonClasses } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+import { Eyebrow } from "@/components/ui/eyebrow";
+import { Input } from "@/components/ui/input";
+import { NativeSelect } from "@/components/ui/native-select";
+import { TOGGLE_ROW, CHECKBOX_INPUT } from "@/components/ui/checkbox";
+import { StatusPill, type StatusTone } from "@/components/ui/status-pill";
+import { TabStrip } from "@/components/ui/tabs";
+import { TableWrap, Table, TableHead, TableBody, TableRow, TableHeader, TableCell } from "@/components/ui/table";
+import { SectionHead } from "@/components/quincy/SectionHead";
+import { Notice } from "@/components/quincy/Notice";
+import { EmptyState } from "@/components/quincy/EmptyState";
+import { QuincyField } from "@/components/quincy/QuincyField";
+import { QuincySelectField } from "@/components/quincy/QuincySelectField";
 
 type AdminTab = "users" | "directory" | "pipeline" | "integrations";
 type Toast = { id: number; message: string; tone: "success" | "error" };
@@ -47,6 +60,22 @@ type NotificationDeliveryResponse = { view: NotificationDeliveryView; items: Not
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PROVIDERS = ["dropbox", "tonomo", "vimeo"] as const;
+const TAB_LABELS: Record<AdminTab, string> = { users: "Users", directory: "Directory", pipeline: "Pipeline", integrations: "Integrations" };
+const DELIVERY_VIEWS: NotificationDeliveryView[] = ["pending_stuck", "dlq", "failed", "unknown", "preference_suppressed"];
+const DELIVERY_LABELS: Record<NotificationDeliveryView, string> = {
+  pending_stuck: "Pending / stuck",
+  dlq: "DLQ",
+  failed: "FAILED",
+  unknown: "UNKNOWN",
+  preference_suppressed: "Preference suppressed",
+};
+const TONE_FOR_STATUS: Record<IntegrationStatus | "not-configured", StatusTone> = {
+  connected: "positive",
+  disconnected: "neutral",
+  expired: "caution",
+  error: "critical",
+  "not-configured": "neutral",
+};
 
 function formatDate(value: string | null): string {
   if (!value) return "—";
@@ -399,74 +428,286 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
   if (availableTabs.length === 0) return null;
 
   return (
-    <main className="page admin-page">
-      <div className="pagehead">
+    <main className="page !max-w-[1280px]">
+      <header className="flex flex-wrap items-end justify-between gap-[var(--space-6)] mb-[var(--space-6)]">
         <div>
-          <div className="ey" style={{ marginBottom: 14 }}>Administration</div>
-          <h1 className="serif">Studio controls</h1>
+          <Eyebrow className="block mb-[var(--space-3)]">Administration</Eyebrow>
+          <h1 className="[font:var(--type-h1)] tracking-[var(--tracking-tight)]">Studio controls</h1>
         </div>
-      </div>
+      </header>
 
-      <div className="admin-tabs" role="tablist" aria-label="Administration sections">
-        {availableTabs.map((tab) => <button key={tab} className={`ctab ${activeTab === tab ? "is-active" : ""}`} type="button" role="tab" aria-selected={activeTab === tab} onClick={() => setActiveTab(tab)}>{tab === "users" ? "Users" : tab === "directory" ? "Directory" : tab === "pipeline" ? "Pipeline" : "Integrations"}</button>)}
-      </div>
+      <TabStrip
+        idPrefix="admin"
+        label="Administration sections"
+        value={activeTab}
+        onValueChange={(next) => setActiveTab(next as AdminTab)}
+        className="admin-tabs mb-[var(--space-6)]"
+        items={availableTabs.map((tab) => ({ value: tab, label: TAB_LABELS[tab] }))}
+      />
 
-      {activeTab === "users" && canManageUsers && <section className="admin-section" role="tabpanel">
-        <div className="admin-section__head">
-          <div><div className="ey">Access roster</div><h2 className="serif">Users</h2></div>
-          <button className="button button--secondary" type="button" onClick={() => void loadUsers()} disabled={isLoadingUsers}>Refresh</button>
-        </div>
+      {activeTab === "users" && canManageUsers && <section className="admin-section" role="tabpanel" id="admin-panel-users" aria-labelledby="admin-tab-users" tabIndex={0}>
+        <SectionHead
+          eyebrow="Access roster"
+          className="admin-section__head"
+          actions={<button type="button" className={buttonClasses("secondary")} onClick={() => void loadUsers()} disabled={isLoadingUsers}>Refresh</button>}
+        >
+          Users
+        </SectionHead>
 
-        <form className="admin-provision" onSubmit={provisionUser} noValidate>
-          <div className="admin-provision__copy"><div className="ey">Provision user</div><p>Creating a user allows that Google account to sign in — access is closed otherwise.</p></div>
-          <label className="admin-field"><span>Name</span><input value={form.name} onChange={(event) => { setForm((value) => ({ ...value, name: event.target.value })); setFormErrors((value) => ({ ...value, name: undefined })); }} aria-invalid={Boolean(formErrors.name)} />{formErrors.name && <small>{formErrors.name}</small>}</label>
-          <label className="admin-field"><span>Email</span><input type="email" value={form.email} onChange={(event) => { setForm((value) => ({ ...value, email: event.target.value })); setFormErrors((value) => ({ ...value, email: undefined })); }} aria-invalid={Boolean(formErrors.email)} />{formErrors.email && <small>{formErrors.email}</small>}</label>
-          <label className="admin-field"><span>Role</span><select value={form.role} onChange={(event) => setForm((value) => ({ ...value, role: event.target.value as Role }))}>{ROLES.map((role) => <option key={role} value={role}>{roleLabel(role)}</option>)}</select></label>
-          <button className="button" type="submit" disabled={isProvisioning}>{isProvisioning ? "Provisioning…" : "Provision user"}</button>
+        <form
+          className="grid gap-[var(--space-4)] items-end mb-[var(--space-6)] grid-cols-1 min-[721px]:grid-cols-2 min-[1081px]:grid-cols-[minmax(210px,1.25fr)_minmax(150px,0.85fr)_minmax(220px,1.1fr)_minmax(130px,0.7fr)_auto]"
+          onSubmit={provisionUser}
+          noValidate
+        >
+          <div className="self-center min-[721px]:col-span-full min-[1081px]:col-span-1">
+            <Eyebrow className="block mb-[var(--space-2)]">Provision user</Eyebrow>
+            <p className="m-0 max-w-[38ch] [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary">Creating a user allows that Google account to sign in — access is closed otherwise.</p>
+          </div>
+          <QuincyField
+            id="admin-provision-name"
+            label="Name"
+            value={form.name}
+            onChange={(event) => { setForm((value) => ({ ...value, name: event.target.value })); setFormErrors((value) => ({ ...value, name: undefined })); }}
+            aria-invalid={Boolean(formErrors.name)}
+            error={formErrors.name}
+          />
+          <QuincyField
+            id="admin-provision-email"
+            label="Email"
+            type="email"
+            value={form.email}
+            onChange={(event) => { setForm((value) => ({ ...value, email: event.target.value })); setFormErrors((value) => ({ ...value, email: undefined })); }}
+            aria-invalid={Boolean(formErrors.email)}
+            error={formErrors.email}
+          />
+          <QuincySelectField
+            id="admin-provision-role"
+            label="Role"
+            value={form.role}
+            onChange={(event) => setForm((value) => ({ ...value, role: event.target.value as Role }))}
+          >
+            {ROLES.map((role) => <option key={role} value={role}>{roleLabel(role)}</option>)}
+          </QuincySelectField>
+          <button type="submit" className={buttonClasses("primary", { busy: isProvisioning, className: "max-[721px]:w-full" })} disabled={isProvisioning}>{isProvisioning ? "Provisioning…" : "Provision user"}</button>
         </form>
 
-        {isLoadingUsers && <div className="empty" role="status"><span className="serif">Loading users.</span>Reading the studio access roster.</div>}
-        {!isLoadingUsers && usersError && <div className="empty" role="alert"><span className="serif">Users are unavailable.</span>{usersError}<div style={{ marginTop: 16 }}><button className="button button--secondary" type="button" onClick={() => void loadUsers()}>Try again</button></div></div>}
-        {!isLoadingUsers && !usersError && <label className="admin-toggle admin-impersonation-toggle"><input type="checkbox" checked={impersonationEnabled} disabled={isUpdatingImpersonation} onChange={toggleImpersonation} aria-label="Enable user impersonation (testing)" /><span>Enable user impersonation (testing)</span></label>}
-        {!isLoadingUsers && !usersError && users.length === 0 && <div className="empty"><span className="serif">No users provisioned.</span>Provision a team member to give them closed-access Google sign-in.</div>}
-        {!isLoadingUsers && !usersError && users.length > 0 && <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Access</th><th>Created</th><th><span className="sr-only">Actions</span></th></tr></thead><tbody>{users.map((user) => {
+        {isLoadingUsers && <EmptyState role="status" title="Loading users.">Reading the studio access roster.</EmptyState>}
+        {!isLoadingUsers && usersError && <EmptyState role="alert" tone="error" title="Users are unavailable.">{usersError}<div className="mt-[var(--space-4)]"><button type="button" className={buttonClasses("secondary")} onClick={() => void loadUsers()}>Try again</button></div></EmptyState>}
+        {!isLoadingUsers && !usersError && <label className={cn(TOGGLE_ROW, "mb-[var(--space-4)]")}><input type="checkbox" className={CHECKBOX_INPUT} checked={impersonationEnabled} disabled={isUpdatingImpersonation} onChange={toggleImpersonation} aria-label="Enable user impersonation (testing)" /><span>Enable user impersonation (testing)</span></label>}
+        {!isLoadingUsers && !usersError && users.length === 0 && <EmptyState title="No users provisioned.">Provision a team member to give them closed-access Google sign-in.</EmptyState>}
+        {!isLoadingUsers && !usersError && users.length > 0 && <TableWrap><Table className="admin-table">
+          <TableHead><TableRow><TableHeader>Name</TableHeader><TableHeader>Email</TableHeader><TableHeader>Role</TableHeader><TableHeader>Access</TableHeader><TableHeader>Created</TableHeader><TableHeader><span className="sr-only">Actions</span></TableHeader></TableRow></TableHead>
+          <TableBody>{users.map((user) => {
           const isSelf = user.id === currentUserId;
           const isUpdating = updatingUserId === user.id;
           const isEditingName = editingUserId === user.id;
           const canImpersonate = impersonationEnabled && user.active && user.role !== "admin" && !isSelf;
-          return <tr key={user.id}><td data-label="Name">{isEditingName ? <input className="admin-inline-input" value={userNameDraft} onChange={(event) => setUserNameDraft(event.target.value)} aria-label={`Name for ${user.name}`} /> : <strong>{user.name}</strong>}</td><td data-label="Email">{user.email}</td><td data-label="Role"><label className="sr-only" htmlFor={`role-${user.id}`}>Role for {user.name}</label><select id={`role-${user.id}`} className="admin-role-select" value={user.role} disabled={isUpdating} onChange={(event) => void updateUser(user, { role: event.target.value as Role })}>{ROLES.map((role) => <option key={role} value={role}>{roleLabel(role)}</option>)}</select></td><td data-label="Access"><span className={`admin-status admin-status--${user.active ? "active" : "inactive"}`}>{user.active ? "Active" : "Inactive"}</span></td><td data-label="Created">{formatDate(user.createdAt)}</td><td className="admin-table__action">{isEditingName ? <><button className="button button--secondary" type="button" disabled={isUpdating} onClick={() => void saveUserName(user)}>Save</button><button className="button button--text" type="button" onClick={() => setEditingUserId(undefined)}>Cancel</button></> : <><button className="button button--text" type="button" disabled={isUpdating} onClick={() => startEditingUserName(user)}>Edit</button><button className="button button--secondary" type="button" disabled={isUpdating || isSelf} title={isSelf ? "You cannot deactivate your own account." : undefined} onClick={() => void toggleActive(user)}>{user.active ? "Deactivate" : "Reactivate"}</button>{canImpersonate && <button className="button button--text" type="button" disabled={isUpdating} onClick={() => void actAs(user)}>Act as</button>}</>}</td></tr>;
-        })}</tbody></table></div>}
+          return <TableRow key={user.id}>
+            <TableCell data-label="Name">{isEditingName ? <Input className="min-w-[130px] border-[var(--field-border)]" value={userNameDraft} onChange={(event) => setUserNameDraft(event.target.value)} aria-label={`Name for ${user.name}`} /> : <strong>{user.name}</strong>}</TableCell>
+            <TableCell data-label="Email">{user.email}</TableCell>
+            <TableCell data-label="Role"><label className="sr-only" htmlFor={`role-${user.id}`}>Role for {user.name}</label><NativeSelect id={`role-${user.id}`} className="min-w-[128px]" value={user.role} disabled={isUpdating} onChange={(event) => void updateUser(user, { role: event.target.value as Role })}>{ROLES.map((role) => <option key={role} value={role}>{roleLabel(role)}</option>)}</NativeSelect></TableCell>
+            <TableCell data-label="Access"><StatusPill tone={user.active ? "positive" : "neutral"}>{user.active ? "Active" : "Inactive"}</StatusPill></TableCell>
+            <TableCell data-label="Created">{formatDate(user.createdAt)}</TableCell>
+            <TableCell className="admin-table__action min-[721px]:text-right min-[721px]:[&>button+button]:ml-[var(--space-3)] max-[721px]:flex max-[721px]:flex-wrap max-[721px]:gap-[var(--space-3)] max-[721px]:pt-[var(--space-3)]">{isEditingName ? <><button type="button" className={buttonClasses("secondary")} disabled={isUpdating} onClick={() => void saveUserName(user)}>Save</button><button type="button" className={buttonClasses("text")} onClick={() => setEditingUserId(undefined)}>Cancel</button></> : <><button type="button" className={buttonClasses("text")} disabled={isUpdating} onClick={() => startEditingUserName(user)}>Edit</button><button type="button" className={buttonClasses("secondary")} disabled={isUpdating || isSelf} title={isSelf ? "You cannot deactivate your own account." : undefined} onClick={() => void toggleActive(user)}>{user.active ? "Deactivate" : "Reactivate"}</button>{canImpersonate && <button type="button" className={buttonClasses("text")} disabled={isUpdating} onClick={() => void actAs(user)}>Act as</button>}</>}</TableCell>
+          </TableRow>;
+        })}</TableBody>
+        </Table></TableWrap>}
       </section>}
 
-      {activeTab === "directory" && canAdminBackend && <section className="admin-section" role="tabpanel">
-        <div className="admin-section__head"><div><div className="ey">Client directory</div><h2 className="serif">Agencies & agents</h2></div><button className="button button--secondary" type="button" onClick={() => void loadDirectory()}>Refresh</button></div>
-        {directoryError && <div className="notice" role="alert">{directoryError}</div>}
-        <form className="admin-provision admin-directory-form" onSubmit={saveAgency}><div className="admin-provision__copy"><div className="ey">Add agency</div><p>Directory records remain available to projects once linked.</p></div><label className="admin-field"><span>Name</span><input value={agencyForm.name} onChange={(event) => setAgencyForm((value) => ({ ...value, name: event.target.value }))} /></label><label className="admin-field"><span>Notes</span><input value={agencyForm.notes} onChange={(event) => setAgencyForm((value) => ({ ...value, notes: event.target.value }))} /></label><button className="button" type="submit">Add agency</button></form>
-        <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Agency</th><th>Notes</th><th>Agents</th><th>Created</th><th><span className="sr-only">Actions</span></th></tr></thead><tbody>{agencies.length === 0 ? <tr><td colSpan={5} className="admin-table__empty">No agencies yet.</td></tr> : agencies.map((agency) => <tr key={agency.id} className={selectedAgencyId === agency.id ? "is-selected" : ""}><td data-label="Agency">{editingAgency === agency.id ? <input className="admin-inline-input" value={agency.name} onChange={(event) => setAgencies((current) => current.map((item) => item.id === agency.id ? { ...item, name: event.target.value } : item))} /> : <strong>{agency.name}</strong>}</td><td data-label="Notes">{editingAgency === agency.id ? <input className="admin-inline-input" value={agency.notes ?? ""} onChange={(event) => setAgencies((current) => current.map((item) => item.id === agency.id ? { ...item, notes: event.target.value || null } : item))} /> : agency.notes || "—"}</td><td data-label="Agents">{agency.agentCount}</td><td data-label="Created">{formatDate(agency.createdAt)}</td><td className="admin-table__action">{editingAgency === agency.id ? <><button className="button button--secondary" type="button" onClick={() => void saveAgencyEdit(agency)}>Save</button><button className="button button--text" type="button" onClick={() => setEditingAgency(undefined)}>Cancel</button></> : <><button className="button button--text" type="button" onClick={() => { setSelectedAgencyId(agency.id); void loadDirectory(agency.id); }}>Agents</button><button className="button button--text" type="button" onClick={() => setEditingAgency(agency.id)}>Edit</button></>}</td></tr>)}</tbody></table></div>
-        <div className="admin-section__head admin-subsection"><div><div className="ey">{selectedAgencyId ? agencies.find((agency) => agency.id === selectedAgencyId)?.name ?? "Selected agency" : "All agencies"}</div><h2 className="serif">Agents</h2></div>{selectedAgencyId && <button className="button button--secondary" type="button" onClick={() => { setSelectedAgencyId(undefined); void loadDirectory(undefined); }}>Show all</button>}</div>
-        <form className="admin-provision admin-directory-form admin-agent-form" onSubmit={saveAgent}><div className="admin-provision__copy"><div className="ey">Add agent</div><p>{selectedAgencyId ? "The agent will be assigned to this agency." : "Choose an agency above to assign this agent."}</p></div><label className="admin-field"><span>Name</span><input value={agentForm.name} onChange={(event) => setAgentForm((value) => ({ ...value, name: event.target.value }))} /></label><label className="admin-field"><span>Email</span><input type="email" value={agentForm.email} onChange={(event) => setAgentForm((value) => ({ ...value, email: event.target.value }))} /></label><label className="admin-field"><span>Phone</span><input value={agentForm.phone} onChange={(event) => setAgentForm((value) => ({ ...value, phone: event.target.value }))} /></label><button className="button" type="submit">Add agent</button></form>
-        <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Agency</th><th><span className="sr-only">Actions</span></th></tr></thead><tbody>{agents.length === 0 ? <tr><td colSpan={5} className="admin-table__empty">No agents found.</td></tr> : agents.map((agent) => <tr key={agent.id}><td data-label="Name">{editingAgent === agent.id ? <input className="admin-inline-input" value={agent.name} onChange={(event) => setAgents((current) => current.map((item) => item.id === agent.id ? { ...item, name: event.target.value } : item))} /> : <strong>{agent.name}</strong>}</td><td data-label="Email">{editingAgent === agent.id ? <input className="admin-inline-input" value={agent.email ?? ""} onChange={(event) => setAgents((current) => current.map((item) => item.id === agent.id ? { ...item, email: event.target.value || null } : item))} /> : agent.email || "—"}</td><td data-label="Phone">{editingAgent === agent.id ? <input className="admin-inline-input" value={agent.phone ?? ""} onChange={(event) => setAgents((current) => current.map((item) => item.id === agent.id ? { ...item, phone: event.target.value || null } : item))} /> : agent.phone || "—"}</td><td data-label="Agency">{agent.agencyName || "—"}</td><td className="admin-table__action">{editingAgent === agent.id ? <><button className="button button--secondary" type="button" onClick={() => void saveAgentEdit(agent)}>Save</button><button className="button button--text" type="button" onClick={() => setEditingAgent(undefined)}>Cancel</button></> : <button className="button button--text" type="button" onClick={() => setEditingAgent(agent.id)}>Edit</button>}</td></tr>)}</tbody></table></div>
+      {activeTab === "directory" && canAdminBackend && <section className="admin-section" role="tabpanel" id="admin-panel-directory" aria-labelledby="admin-tab-directory" tabIndex={0}>
+        <SectionHead eyebrow="Client directory" className="admin-section__head" actions={<button type="button" className={buttonClasses("secondary")} onClick={() => void loadDirectory()}>Refresh</button>}>Agencies & agents</SectionHead>
+        {directoryError && <Notice role="alert" className="mb-[var(--space-4)]">{directoryError}</Notice>}
+        <form
+          className="grid gap-[var(--space-4)] items-end mb-[var(--space-6)] grid-cols-1 min-[721px]:grid-cols-2 min-[1081px]:grid-cols-[minmax(200px,1.2fr)_minmax(180px,1fr)_minmax(180px,1fr)_auto]"
+          onSubmit={saveAgency}
+        >
+          <div className="self-center min-[721px]:col-span-full min-[1081px]:col-span-1">
+            <Eyebrow className="block mb-[var(--space-2)]">Add agency</Eyebrow>
+            <p className="m-0 max-w-[38ch] [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary">Directory records remain available to projects once linked.</p>
+          </div>
+          <QuincyField id="admin-agency-name" label="Name" value={agencyForm.name} onChange={(event) => setAgencyForm((value) => ({ ...value, name: event.target.value }))} />
+          <QuincyField id="admin-agency-notes" label="Notes" value={agencyForm.notes} onChange={(event) => setAgencyForm((value) => ({ ...value, notes: event.target.value }))} />
+          <button type="submit" className={buttonClasses("primary", { className: "max-[721px]:w-full" })}>Add agency</button>
+        </form>
+        <TableWrap><Table className="admin-table">
+          <TableHead><TableRow><TableHeader>Agency</TableHeader><TableHeader>Notes</TableHeader><TableHeader>Agents</TableHeader><TableHeader>Created</TableHeader><TableHeader><span className="sr-only">Actions</span></TableHeader></TableRow></TableHead>
+          <TableBody>{agencies.length === 0 ? <TableRow><TableCell colSpan={5} className="text-center text-foreground-secondary">No agencies yet.</TableCell></TableRow> : agencies.map((agency) => {
+            const isSelected = selectedAgencyId === agency.id;
+            return <TableRow
+              key={agency.id}
+              data-selected={isSelected ? "true" : undefined}
+              className="data-[selected]:bg-signal-positive/6 min-[721px]:data-[selected]:[border-left-style:solid] min-[721px]:data-[selected]:border-l-[length:var(--border-width-rule)] min-[721px]:data-[selected]:border-l-signal-positive max-[721px]:data-[selected]:border-signal-positive"
+            >
+              <TableCell data-label="Agency">{isSelected && <span className="sr-only">Selected</span>}{editingAgency === agency.id ? <Input className="min-w-[130px] border-[var(--field-border)]" aria-label={`Name for ${agency.name}`} value={agency.name} onChange={(event) => setAgencies((current) => current.map((item) => item.id === agency.id ? { ...item, name: event.target.value } : item))} /> : <strong>{agency.name}</strong>}</TableCell>
+              <TableCell data-label="Notes">{editingAgency === agency.id ? <Input className="min-w-[130px] border-[var(--field-border)]" aria-label={`Notes for ${agency.name}`} value={agency.notes ?? ""} onChange={(event) => setAgencies((current) => current.map((item) => item.id === agency.id ? { ...item, notes: event.target.value || null } : item))} /> : agency.notes || "—"}</TableCell>
+              <TableCell data-label="Agents">{agency.agentCount}</TableCell>
+              <TableCell data-label="Created">{formatDate(agency.createdAt)}</TableCell>
+              <TableCell className="admin-table__action min-[721px]:text-right min-[721px]:[&>button+button]:ml-[var(--space-3)] max-[721px]:flex max-[721px]:flex-wrap max-[721px]:gap-[var(--space-3)] max-[721px]:pt-[var(--space-3)]">{editingAgency === agency.id ? <><button type="button" className={buttonClasses("secondary")} onClick={() => void saveAgencyEdit(agency)}>Save</button><button type="button" className={buttonClasses("text")} onClick={() => setEditingAgency(undefined)}>Cancel</button></> : <><button type="button" className={buttonClasses("text")} onClick={() => { setSelectedAgencyId(agency.id); void loadDirectory(agency.id); }}>Agents</button><button type="button" className={buttonClasses("text")} onClick={() => setEditingAgency(agency.id)}>Edit</button></>}</TableCell>
+            </TableRow>;
+          })}</TableBody>
+        </Table></TableWrap>
+        <SectionHead eyebrow={selectedAgencyId ? agencies.find((agency) => agency.id === selectedAgencyId)?.name ?? "Selected agency" : "All agencies"} className={cn("admin-section__head", "mt-[var(--space-8)]")} actions={selectedAgencyId ? <button type="button" className={buttonClasses("secondary")} onClick={() => { setSelectedAgencyId(undefined); void loadDirectory(undefined); }}>Show all</button> : undefined}>Agents</SectionHead>
+        <form
+          className="grid gap-[var(--space-4)] items-end mb-[var(--space-6)] grid-cols-1 min-[721px]:grid-cols-2 min-[1081px]:grid-cols-[minmax(190px,1fr)_minmax(150px,0.8fr)_minmax(180px,1fr)_minmax(160px,0.8fr)_auto]"
+          onSubmit={saveAgent}
+        >
+          <div className="self-center min-[721px]:col-span-full min-[1081px]:col-span-1">
+            <Eyebrow className="block mb-[var(--space-2)]">Add agent</Eyebrow>
+            <p className="m-0 max-w-[38ch] [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary">{selectedAgencyId ? "The agent will be assigned to this agency." : "Choose an agency above to assign this agent."}</p>
+          </div>
+          <QuincyField id="admin-agent-name" label="Name" value={agentForm.name} onChange={(event) => setAgentForm((value) => ({ ...value, name: event.target.value }))} />
+          <QuincyField id="admin-agent-email" label="Email" type="email" value={agentForm.email} onChange={(event) => setAgentForm((value) => ({ ...value, email: event.target.value }))} />
+          <QuincyField id="admin-agent-phone" label="Phone" value={agentForm.phone} onChange={(event) => setAgentForm((value) => ({ ...value, phone: event.target.value }))} />
+          <button type="submit" className={buttonClasses("primary", { className: "max-[721px]:w-full" })}>Add agent</button>
+        </form>
+        <TableWrap><Table className="admin-table">
+          <TableHead><TableRow><TableHeader>Name</TableHeader><TableHeader>Email</TableHeader><TableHeader>Phone</TableHeader><TableHeader>Agency</TableHeader><TableHeader><span className="sr-only">Actions</span></TableHeader></TableRow></TableHead>
+          <TableBody>{agents.length === 0 ? <TableRow><TableCell colSpan={5} className="text-center text-foreground-secondary">No agents found.</TableCell></TableRow> : agents.map((agent) => <TableRow key={agent.id}>
+            <TableCell data-label="Name">{editingAgent === agent.id ? <Input className="min-w-[130px] border-[var(--field-border)]" aria-label={`Name for ${agent.name}`} value={agent.name} onChange={(event) => setAgents((current) => current.map((item) => item.id === agent.id ? { ...item, name: event.target.value } : item))} /> : <strong>{agent.name}</strong>}</TableCell>
+            <TableCell data-label="Email">{editingAgent === agent.id ? <Input className="min-w-[130px] border-[var(--field-border)]" aria-label={`Email for ${agent.name}`} value={agent.email ?? ""} onChange={(event) => setAgents((current) => current.map((item) => item.id === agent.id ? { ...item, email: event.target.value || null } : item))} /> : agent.email || "—"}</TableCell>
+            <TableCell data-label="Phone">{editingAgent === agent.id ? <Input className="min-w-[130px] border-[var(--field-border)]" aria-label={`Phone for ${agent.name}`} value={agent.phone ?? ""} onChange={(event) => setAgents((current) => current.map((item) => item.id === agent.id ? { ...item, phone: event.target.value || null } : item))} /> : agent.phone || "—"}</TableCell>
+            <TableCell data-label="Agency">{agent.agencyName || "—"}</TableCell>
+            <TableCell className="admin-table__action min-[721px]:text-right min-[721px]:[&>button+button]:ml-[var(--space-3)] max-[721px]:flex max-[721px]:flex-wrap max-[721px]:gap-[var(--space-3)] max-[721px]:pt-[var(--space-3)]">{editingAgent === agent.id ? <><button type="button" className={buttonClasses("secondary")} onClick={() => void saveAgentEdit(agent)}>Save</button><button type="button" className={buttonClasses("text")} onClick={() => setEditingAgent(undefined)}>Cancel</button></> : <button type="button" className={buttonClasses("text")} onClick={() => setEditingAgent(agent.id)}>Edit</button>}</TableCell>
+          </TableRow>)}</TableBody>
+        </Table></TableWrap>
       </section>}
 
-      {activeTab === "pipeline" && canAdminBackend && <section className="admin-section" role="tabpanel">
-        <div className="admin-section__head"><div><div className="ey">Project flow</div><h2 className="serif">Pipeline stages</h2></div><button className="button button--secondary" type="button" onClick={() => void loadPipeline()}>Refresh</button></div>
-        {pipelineError && <div className="notice" role="alert">{pipelineError}</div>}{stageError && <div className="notice" role="alert">{stageError}</div>}
-        <div className="admin-stage-list">{stages.map((stage) => <div className="admin-stage" key={stage.key}><div className="admin-stage__order">{stage.displayOrder}</div><div><strong>{stage.key.replace(/_/g, " ")}</strong><small>Stable stage key</small></div><label className="admin-field"><span>Label</span><input value={stage.label} onChange={(event) => setStages((current) => current.map((item) => item.key === stage.key ? { ...item, label: event.target.value } : item))} onBlur={() => void updateStage(stage.key, { label: stage.label })} /></label><label className="admin-toggle"><input type="checkbox" checked={stage.active} onChange={(event) => void updateStage(stage.key, { active: event.target.checked })} /><span>{stage.active ? "Active" : "Inactive"}</span></label></div>)}</div>
+      {activeTab === "pipeline" && canAdminBackend && <section className="admin-section" role="tabpanel" id="admin-panel-pipeline" aria-labelledby="admin-tab-pipeline" tabIndex={0}>
+        <SectionHead eyebrow="Project flow" className="admin-section__head" actions={<button type="button" className={buttonClasses("secondary")} onClick={() => void loadPipeline()}>Refresh</button>}>Pipeline stages</SectionHead>
+        {pipelineError && <Notice role="alert" className="mb-[var(--space-4)]">{pipelineError}</Notice>}
+        {stageError && <Notice role="alert" className="mb-[var(--space-4)]">{stageError}</Notice>}
+        <div className="admin-stage-list flex flex-col [border-top-style:solid] border-t-[length:var(--border-width-hair)] border-t-border">{stages.map((stage) => <div className="admin-stage grid gap-[var(--space-4)] items-end p-[var(--space-4)] border-solid border-[length:var(--border-width-hair)] border-border border-t-0 bg-card grid-cols-[28px_minmax(0,1fr)] min-[721px]:grid-cols-[34px_minmax(150px,0.8fr)_minmax(180px,1fr)_90px]" key={stage.key}>
+          <div className="admin-stage__order self-center [font:var(--type-h3)] tracking-[var(--tracking-tight)] text-foreground-secondary [font-variant-numeric:tabular-nums]">{stage.displayOrder}</div>
+          <div className="min-w-0"><strong className="block capitalize text-foreground [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)]">{stage.key.replace(/_/g, " ")}</strong><small className="block mt-[var(--space-1)] [font:var(--weight-regular)_var(--text-2xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary">Stable stage key</small></div>
+          <QuincyField
+            id={`stage-label-${stage.key}`}
+            label="Label"
+            className="max-[721px]:col-span-full"
+            value={stage.label}
+            onChange={(event) => setStages((current) => current.map((item) => item.key === stage.key ? { ...item, label: event.target.value } : item))}
+            onBlur={() => void updateStage(stage.key, { label: stage.label })}
+          />
+          <label className={cn(TOGGLE_ROW, "max-[721px]:col-span-full")}><input type="checkbox" className={CHECKBOX_INPUT} checked={stage.active} onChange={(event) => void updateStage(stage.key, { active: event.target.checked })} /><span>{stage.active ? "Active" : "Inactive"}</span></label>
+        </div>)}</div>
       </section>}
 
-      {activeTab === "integrations" && canManageIntegrations && <section className="admin-section" role="tabpanel">
-        <div className="admin-section__head"><div><div className="ey">Studio connections</div><h2 className="serif">Integrations</h2></div><button className="button button--secondary" type="button" onClick={() => void loadIntegrationsTab()} disabled={isLoadingIntegrations}>Refresh</button></div>
-        {isLoadingIntegrations && <div className="empty" role="status"><span className="serif">Loading integrations.</span>Checking studio connections.</div>}
-        {!isLoadingIntegrations && integrationsError && <div className="empty" role="alert"><span className="serif">Integrations are unavailable.</span>{integrationsError}<div style={{ marginTop: 16 }}><button className="button button--secondary" type="button" onClick={() => void loadIntegrationsTab()}>Try again</button></div></div>}
-        {!isLoadingIntegrations && !integrationsError && <div className="integration-grid">{PROVIDERS.map((provider) => {
+      {activeTab === "integrations" && canManageIntegrations && <section className="admin-section" role="tabpanel" id="admin-panel-integrations" aria-labelledby="admin-tab-integrations" tabIndex={0}>
+        <SectionHead eyebrow="Studio connections" className="admin-section__head" actions={<button type="button" className={buttonClasses("secondary")} onClick={() => void loadIntegrationsTab()} disabled={isLoadingIntegrations}>Refresh</button>}>Integrations</SectionHead>
+        {isLoadingIntegrations && <EmptyState role="status" title="Loading integrations.">Checking studio connections.</EmptyState>}
+        {!isLoadingIntegrations && integrationsError && <EmptyState role="alert" tone="error" title="Integrations are unavailable.">{integrationsError}<div className="mt-[var(--space-4)]"><button type="button" className={buttonClasses("secondary")} onClick={() => void loadIntegrationsTab()}>Try again</button></div></EmptyState>}
+        {!isLoadingIntegrations && !integrationsError && <div className="grid gap-[var(--space-4)] grid-cols-1 min-[1081px]:grid-cols-3">{PROVIDERS.map((provider) => {
           const integration = integrations.find((item) => item.provider === provider);
           const status = provider === "tonomo" ? (tonomoHealth?.lastEventAt ? "connected" : "disconnected") : integration?.status ?? "not-configured";
           const title = provider === "dropbox" ? "Dropbox" : provider === "tonomo" ? "Tonomo" : "Vimeo";
-          return <article className="integration-card" key={provider}><div className="integration-card__top"><div><div className="ey">{title}</div><h3 className="serif">{title}</h3></div><span className={`admin-status admin-status--${status}`}>{provider === "tonomo" ? tonomoHealth?.lastEventAt ? "Receiving" : "Awaiting first event" : statusLabel(status)}</span></div>{provider === "dropbox" ? <><p>{integration ? "Connect the studio Dropbox to sync RAW capture folders." : "No Dropbox connection has been configured for this studio."}</p>{integration?.lastError && <div className="notice admin-notice" role="alert">{integration.lastError}</div>}<dl className="integration-meta"><div><dt>Last event</dt><dd>{relativeTime(integration?.lastEventAt ?? null)}</dd></div>{integration?.expiresAt && <div><dt>Expires</dt><dd>{formatDate(integration.expiresAt)}</dd></div>}</dl>{dropboxNotice && <div className="notice admin-notice" role="alert">{dropboxNotice}</div>}<button className="button" type="button" onClick={() => void connectDropbox()} disabled={isConnectingDropbox}>{isConnectingDropbox ? "Opening Dropbox…" : integration?.status === "connected" ? "Reconnect Dropbox" : "Connect Dropbox"}</button></> : provider === "tonomo" ? <><p>Order deliveries are recorded and reconciled automatically.</p><dl className="integration-meta"><div><dt>Last event</dt><dd>{relativeTime(tonomoHealth?.lastEventAt ?? null)}</dd></div><div><dt>Processed</dt><dd>{tonomoHealth?.counts.processed ?? 0}</dd></div><div><dt>Received</dt><dd>{tonomoHealth?.counts.received ?? 0}</dd></div><div><dt>Poison</dt><dd>{tonomoHealth?.counts.poison ?? 0}</dd></div></dl></> : <><p>Configured in a later phase.</p><dl className="integration-meta"><div><dt>Last event</dt><dd>{relativeTime(integration?.lastEventAt ?? null)}</dd></div></dl></>}</article>;
+          return <article className="flex flex-col p-[var(--space-5)] border-solid border-[length:var(--border-width-hair)] border-border bg-card" key={provider}>
+            <div className="flex items-start justify-between gap-[var(--space-3)]">
+              <h3 className="m-0 [font:var(--type-h3)] tracking-[var(--tracking-tight)] text-foreground">{title}</h3>
+              <StatusPill tone={TONE_FOR_STATUS[status]}>{provider === "tonomo" ? tonomoHealth?.lastEventAt ? "Receiving" : "Awaiting first event" : statusLabel(status)}</StatusPill>
+            </div>
+            {/* `!mt` on each blurb below: `tokens/base.css` is imported outside any `@layer`, so its
+                `p { margin: 0 }` beats a plain margin utility from `@layer utilities`. (§7 case O) */}
+            {provider === "dropbox" ? <>
+              <p className="!mt-[var(--space-5)] mb-0 [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary">{integration ? "Connect the studio Dropbox to sync RAW capture folders." : "No Dropbox connection has been configured for this studio."}</p>
+              {integration?.lastError && <Notice role="alert" className="mb-[var(--space-3)]">{integration.lastError}</Notice>}
+              <dl className="flex flex-wrap gap-x-[var(--space-5)] gap-y-[var(--space-3)] my-[var(--space-5)] [&>div]:flex [&>div]:flex-col [&>div]:gap-[var(--space-1)] [&_dt]:[font:var(--type-eyebrow)] [&_dt]:uppercase [&_dt]:tracking-[var(--tracking-wide)] [&_dt]:text-foreground-secondary [&_dd]:m-0 [&_dd]:[font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] [&_dd]:text-foreground-secondary">
+                <div><dt>Last event</dt><dd>{relativeTime(integration?.lastEventAt ?? null)}</dd></div>
+                {integration?.expiresAt && <div><dt>Expires</dt><dd>{formatDate(integration.expiresAt)}</dd></div>}
+              </dl>
+              {dropboxNotice && <Notice role="alert" className="mb-[var(--space-3)]">{dropboxNotice}</Notice>}
+              <button type="button" className={buttonClasses("primary", { className: "self-start mt-auto" })} onClick={() => void connectDropbox()} disabled={isConnectingDropbox}>{isConnectingDropbox ? "Opening Dropbox…" : integration?.status === "connected" ? "Reconnect Dropbox" : "Connect Dropbox"}</button>
+            </> : provider === "tonomo" ? <>
+              <p className="!mt-[var(--space-5)] mb-0 [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary">Order deliveries are recorded and reconciled automatically.</p>
+              <dl className="flex flex-wrap gap-x-[var(--space-5)] gap-y-[var(--space-3)] my-[var(--space-5)] [&>div]:flex [&>div]:flex-col [&>div]:gap-[var(--space-1)] [&_dt]:[font:var(--type-eyebrow)] [&_dt]:uppercase [&_dt]:tracking-[var(--tracking-wide)] [&_dt]:text-foreground-secondary [&_dd]:m-0 [&_dd]:[font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] [&_dd]:text-foreground-secondary">
+                <div><dt>Last event</dt><dd>{relativeTime(tonomoHealth?.lastEventAt ?? null)}</dd></div>
+                <div><dt>Processed</dt><dd>{tonomoHealth?.counts.processed ?? 0}</dd></div>
+                <div><dt>Received</dt><dd>{tonomoHealth?.counts.received ?? 0}</dd></div>
+                <div><dt>Poison</dt><dd>{tonomoHealth?.counts.poison ?? 0}</dd></div>
+              </dl>
+            </> : <>
+              <p className="!mt-[var(--space-5)] mb-0 [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary">Configured in a later phase.</p>
+              <dl className="flex flex-wrap gap-x-[var(--space-5)] gap-y-[var(--space-3)] my-[var(--space-5)] [&>div]:flex [&>div]:flex-col [&>div]:gap-[var(--space-1)] [&_dt]:[font:var(--type-eyebrow)] [&_dt]:uppercase [&_dt]:tracking-[var(--tracking-wide)] [&_dt]:text-foreground-secondary [&_dd]:m-0 [&_dd]:[font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] [&_dd]:text-foreground-secondary">
+                <div><dt>Last event</dt><dd>{relativeTime(integration?.lastEventAt ?? null)}</dd></div>
+              </dl>
+            </>}
+          </article>;
         })}</div>}
-        {!isLoadingIntegrations && !integrationsError && canAdminBackend && <div className="admin-poison"><div className="admin-section__head"><div><div className="ey">Operator queue</div><h2 className="serif">Failed Tonomo events</h2></div></div>{poisonEvents.length === 0 ? <div className="empty"><span className="serif">No failed events.</span>Tonomo orders are processing normally.</div> : <><div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Received</th><th>Order</th><th>Error reason</th><th><span className="sr-only">Actions</span></th></tr></thead><tbody>{poisonEvents.map((event) => { const isOperating = operatingEventIds.has(event.id); return <tr key={event.id}><td data-label="Received">{formatDate(event.receivedAt)}</td><td data-label="Order">{event.summary ? <>{event.summary.street}<br /><small>{event.summary.orderId}</small></> : "Unparseable"}</td><td data-label="Error reason">{event.error || "—"}</td><td className="admin-table__action"><button className="button button--text" type="button" onClick={() => void viewPayload(event.id)}>View payload</button><button className="button button--secondary" type="button" disabled={isOperating} onClick={() => void operateEvent(event.id, "retry")}>Retry</button><button className="button button--text" type="button" disabled={isOperating} onClick={() => void operateEvent(event.id, "discard")}>Discard</button></td></tr>; })}</tbody></table></div>{poisonTotal > poisonEvents.length && <div style={{ marginTop: 16 }}><button className="button button--secondary" type="button" onClick={() => void loadTonomo(poisonEvents.length, true)}>Load more</button></div>}</>}</div>}
-        {!isLoadingIntegrations && !integrationsError && canAdminBackend && <div className="admin-poison"><div className="admin-section__head"><div><div className="ey">Operator queue</div><h2 className="serif">Rendition delivery failures</h2></div><span className={`admin-status admin-status--${renditionDlqOpenCount > 0 ? "error" : "active"}`}>{renditionDlqOpenCount > 0 ? `${renditionDlqOpenCount} stuck` : "No backlog"}</span></div>{renditionDlq.length === 0 ? <div className="empty"><span className="serif">No stuck renditions.</span>Preview generation is processing normally.</div> : <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>First failed</th><th>Project</th><th>Asset</th><th><span className="sr-only">Actions</span></th></tr></thead><tbody>{renditionDlq.map((event) => { const isOperating = operatingRenditionDlqIds.has(event.id); return <tr key={event.id}><td data-label="First failed">{formatDate(event.receivedAt)}</td><td data-label="Project">{event.street || "—"}</td><td data-label="Asset"><code>{event.assetId}</code></td><td className="admin-table__action"><button className="button button--secondary" type="button" disabled={isOperating} onClick={() => void operateRenditionDlqEvent(event.id, "replay")}>Replay</button><button className="button button--text" type="button" disabled={isOperating} onClick={() => void operateRenditionDlqEvent(event.id, "discard")}>Discard</button></td></tr>; })}</tbody></table></div>}</div>}
-        {!isLoadingIntegrations && !integrationsError && canAdminBackend && <div className="admin-poison" aria-label="Notification delivery operations"><div className="admin-section__head"><div><div className="ey">Operator queue</div><h2 className="serif">Notification delivery</h2></div><button className="button button--secondary" type="button" onClick={() => void loadNotificationDeliveries(notificationDeliveryView)} disabled={isLoadingNotificationDeliveries}>Refresh</button></div><div className="admin-tabs" role="tablist" aria-label="Notification delivery filters">{(["pending_stuck", "dlq", "failed", "unknown", "preference_suppressed"] as const).map((view) => <button key={view} className={`ctab ${notificationDeliveryView === view ? "is-active" : ""}`} type="button" role="tab" aria-selected={notificationDeliveryView === view} onClick={() => selectNotificationDeliveryView(view)}>{view === "pending_stuck" ? "Pending / stuck" : view === "preference_suppressed" ? "Preference suppressed" : view.toUpperCase()} ({notificationDeliveryCounts[view]})</button>)}</div>{notificationDeliveriesError && <div className="notice" role="alert">{notificationDeliveriesError}</div>}{isLoadingNotificationDeliveries && <div className="empty" role="status"><span className="serif">Loading delivery status.</span>Reading the durable notification ledger.</div>}{!isLoadingNotificationDeliveries && !notificationDeliveriesError && notificationDeliveries.length === 0 && <div className="empty"><span className="serif">No matching deliveries.</span>This queue is clear.</div>}{!isLoadingNotificationDeliveries && notificationDeliveries.length > 0 && <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Updated</th><th>Event</th><th>Project</th><th>Recipient</th><th>Channels</th><th>State</th><th><span className="sr-only">Actions</span></th></tr></thead><tbody>{notificationDeliveries.map((item) => { const isOperating = operatingNotificationIds.has(item.outboxId); return <tr key={item.outboxId}><td data-label="Updated">{formatDate(new Date(item.updatedAt).toISOString())}</td><td data-label="Event">{eventTypeLabel(item.eventType)}</td><td data-label="Project">{item.projectStreet || item.projectId || "—"}</td><td data-label="Recipient">{item.recipientName || "Unavailable"}</td><td data-label="Channels">{item.channels.map((channel) => `${channel.channel}: ${channel.status}`).join(" · ")}{item.unknownEmailPossible && <><br /><strong className="admin-warning">Duplicate email possible</strong></>}</td><td data-label="State">{item.status}{item.safeErrorCode && <><br /><small>{item.safeErrorCode}</small></>}</td><td className="admin-table__action">{notificationDeliveryView !== "preference_suppressed" && <><button className="button button--secondary" type="button" disabled={isOperating} onClick={() => void operateNotificationDelivery(item, "replay")}>Replay</button><button className="button button--text" type="button" disabled={isOperating} onClick={() => void operateNotificationDelivery(item, "discard")}>Discard</button></>}</td></tr>; })}</tbody></table></div>}{notificationDeliveryCursor && <div style={{ marginTop: 16 }}><button className="button button--secondary" type="button" disabled={isLoadingNotificationDeliveries} onClick={() => void loadNotificationDeliveries(notificationDeliveryView, notificationDeliveryCursor, true)}>Load more</button></div>}</div>}
+        {!isLoadingIntegrations && !integrationsError && canAdminBackend && <div className="admin-poison mt-[var(--space-8)]">
+          <SectionHead
+            eyebrow="Operator queue"
+            className="admin-section__head"
+            actions={<StatusPill tone={poisonTotal > 0 ? "critical" : "neutral"}>{poisonTotal > 0 ? `${poisonTotal} events` : "No events"}</StatusPill>}
+          >
+            Failed Tonomo events
+          </SectionHead>
+          {poisonEvents.length === 0 ? <EmptyState title="No failed events.">Tonomo orders are processing normally.</EmptyState> : <>
+            <TableWrap><Table className="admin-table">
+              <TableHead><TableRow><TableHeader>Received</TableHeader><TableHeader>Order</TableHeader><TableHeader>Error reason</TableHeader><TableHeader><span className="sr-only">Actions</span></TableHeader></TableRow></TableHead>
+              <TableBody>{poisonEvents.map((event) => { const isOperating = operatingEventIds.has(event.id); return <TableRow key={event.id}>
+                <TableCell data-label="Received">{formatDate(event.receivedAt)}</TableCell>
+                <TableCell data-label="Order">{event.summary ? <>{event.summary.street}<br /><small>{event.summary.orderId}</small></> : "Unparseable"}</TableCell>
+                <TableCell data-label="Error reason">{event.error || "—"}</TableCell>
+                <TableCell className="admin-table__action min-[721px]:text-right min-[721px]:[&>button+button]:ml-[var(--space-3)] max-[721px]:flex max-[721px]:flex-wrap max-[721px]:gap-[var(--space-3)] max-[721px]:pt-[var(--space-3)]"><button type="button" className={buttonClasses("text")} onClick={() => void viewPayload(event.id)}>View payload</button><button type="button" className={buttonClasses("secondary")} disabled={isOperating} onClick={() => void operateEvent(event.id, "retry")}>Retry</button><button type="button" className={buttonClasses("text")} disabled={isOperating} onClick={() => void operateEvent(event.id, "discard")}>Discard</button></TableCell>
+              </TableRow>; })}</TableBody>
+            </Table></TableWrap>
+            {poisonTotal > poisonEvents.length && <div className="mt-[var(--space-4)]"><button type="button" className={buttonClasses("secondary")} onClick={() => void loadTonomo(poisonEvents.length, true)}>Load more</button></div>}
+          </>}
+        </div>}
+        {!isLoadingIntegrations && !integrationsError && canAdminBackend && <div className="admin-poison mt-[var(--space-8)]">
+          <SectionHead
+            eyebrow="Operator queue"
+            className="admin-section__head"
+            actions={<StatusPill tone={renditionDlqOpenCount > 0 ? "critical" : "neutral"}>{renditionDlqOpenCount > 0 ? `${renditionDlqOpenCount} stuck` : "No backlog"}</StatusPill>}
+          >
+            Rendition delivery failures
+          </SectionHead>
+          {renditionDlq.length === 0 ? <EmptyState title="No stuck renditions.">Preview generation is processing normally.</EmptyState> : <TableWrap><Table className="admin-table">
+            <TableHead><TableRow><TableHeader>First failed</TableHeader><TableHeader>Project</TableHeader><TableHeader>Asset</TableHeader><TableHeader><span className="sr-only">Actions</span></TableHeader></TableRow></TableHead>
+            <TableBody>{renditionDlq.map((event) => { const isOperating = operatingRenditionDlqIds.has(event.id); return <TableRow key={event.id}>
+              <TableCell data-label="First failed">{formatDate(event.receivedAt)}</TableCell>
+              <TableCell data-label="Project">{event.street || "—"}</TableCell>
+              <TableCell data-label="Asset"><code className="[font:var(--weight-regular)_var(--text-xs)/1.4_var(--font-mono)]">{event.assetId}</code></TableCell>
+              <TableCell className="admin-table__action min-[721px]:text-right min-[721px]:[&>button+button]:ml-[var(--space-3)] max-[721px]:flex max-[721px]:flex-wrap max-[721px]:gap-[var(--space-3)] max-[721px]:pt-[var(--space-3)]"><button type="button" className={buttonClasses("secondary")} disabled={isOperating} onClick={() => void operateRenditionDlqEvent(event.id, "replay")}>Replay</button><button type="button" className={buttonClasses("text")} disabled={isOperating} onClick={() => void operateRenditionDlqEvent(event.id, "discard")}>Discard</button></TableCell>
+            </TableRow>; })}</TableBody>
+          </Table></TableWrap>}
+        </div>}
+        {!isLoadingIntegrations && !integrationsError && canAdminBackend && <div className="admin-poison mt-[var(--space-8)]" aria-label="Notification delivery operations">
+          <SectionHead
+            eyebrow="Operator queue"
+            className="admin-section__head"
+            actions={<>
+              <StatusPill tone={notificationDeliveryCounts[notificationDeliveryView] > 0 ? "critical" : "neutral"}>{notificationDeliveryCounts[notificationDeliveryView] > 0 ? `${notificationDeliveryCounts[notificationDeliveryView]} deliveries` : "No deliveries"}</StatusPill>
+              <button type="button" className={buttonClasses("secondary", { busy: isLoadingNotificationDeliveries })} disabled={isLoadingNotificationDeliveries} onClick={() => void loadNotificationDeliveries(notificationDeliveryView)}>Refresh</button>
+            </>}
+          >
+            Notification delivery
+          </SectionHead>
+          <TabStrip
+            idPrefix="admin-delivery"
+            label="Notification delivery filters"
+            value={notificationDeliveryView}
+            onValueChange={(next) => selectNotificationDeliveryView(next as NotificationDeliveryView)}
+            className="admin-tabs mb-[var(--space-5)]"
+            items={DELIVERY_VIEWS.map((view) => ({ value: view, label: DELIVERY_LABELS[view], count: notificationDeliveryCounts[view] }))}
+          />
+          <div role="tabpanel" id={`admin-delivery-panel-${notificationDeliveryView}`} aria-labelledby={`admin-delivery-tab-${notificationDeliveryView}`} tabIndex={0}>
+            {notificationDeliveriesError && <Notice role="alert" className="mb-[var(--space-4)]">{notificationDeliveriesError}</Notice>}
+            {isLoadingNotificationDeliveries && <EmptyState role="status" title="Loading delivery status.">Reading the durable notification ledger.</EmptyState>}
+            {!isLoadingNotificationDeliveries && !notificationDeliveriesError && notificationDeliveries.length === 0 && <EmptyState title="No matching deliveries.">This queue is clear.</EmptyState>}
+            {!isLoadingNotificationDeliveries && notificationDeliveries.length > 0 && <TableWrap><Table className="admin-table">
+              <TableHead><TableRow><TableHeader>Updated</TableHeader><TableHeader>Event</TableHeader><TableHeader>Project</TableHeader><TableHeader>Recipient</TableHeader><TableHeader>Channels</TableHeader><TableHeader>State</TableHeader><TableHeader><span className="sr-only">Actions</span></TableHeader></TableRow></TableHead>
+              <TableBody>{notificationDeliveries.map((item) => { const isOperating = operatingNotificationIds.has(item.outboxId); return <TableRow key={item.outboxId}>
+                <TableCell data-label="Updated">{formatDate(new Date(item.updatedAt).toISOString())}</TableCell>
+                <TableCell data-label="Event">{eventTypeLabel(item.eventType)}</TableCell>
+                <TableCell data-label="Project">{item.projectStreet || item.projectId || "—"}</TableCell>
+                <TableCell data-label="Recipient">{item.recipientName || "Unavailable"}</TableCell>
+                <TableCell data-label="Channels">{item.channels.map((channel) => `${channel.channel}: ${channel.status}`).join(" · ")}{item.unknownEmailPossible && <><br /><strong className="text-destructive [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)]">Duplicate email possible</strong></>}</TableCell>
+                <TableCell data-label="State">{item.status}{item.safeErrorCode && <><br /><small>{item.safeErrorCode}</small></>}</TableCell>
+                <TableCell className="admin-table__action min-[721px]:text-right min-[721px]:[&>button+button]:ml-[var(--space-3)] max-[721px]:flex max-[721px]:flex-wrap max-[721px]:gap-[var(--space-3)] max-[721px]:pt-[var(--space-3)]">{notificationDeliveryView !== "preference_suppressed" && <><button type="button" className={buttonClasses("secondary")} disabled={isOperating} onClick={() => void operateNotificationDelivery(item, "replay")}>Replay</button><button type="button" className={buttonClasses("text")} disabled={isOperating} onClick={() => void operateNotificationDelivery(item, "discard")}>Discard</button></>}</TableCell>
+              </TableRow>; })}</TableBody>
+            </Table></TableWrap>}
+            {notificationDeliveryCursor && <div className="mt-[var(--space-4)]"><button type="button" className={buttonClasses("secondary")} disabled={isLoadingNotificationDeliveries} onClick={() => void loadNotificationDeliveries(notificationDeliveryView, notificationDeliveryCursor, true)}>Load more</button></div>}
+          </div>
+        </div>}
       </section>}
       <Modal
         open={!!payload}
@@ -477,7 +718,7 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
         onClose={() => setPayload(undefined)}
         footer={<Button variant="secondary" onClick={() => setPayload(undefined)}>Close</Button>}
       >
-        <pre className="max-h-[55vh] overflow-auto m-0 p-[var(--space-4)] bg-background text-foreground-secondary [font:var(--type-mono)] text-[length:var(--text-xs)] leading-[var(--leading-normal)]">
+        <pre className="max-h-[55vh] overflow-auto m-0 p-[var(--space-4)] bg-background text-foreground-secondary [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-mono)]">
           {shownPayload?.json}
         </pre>
       </Modal>

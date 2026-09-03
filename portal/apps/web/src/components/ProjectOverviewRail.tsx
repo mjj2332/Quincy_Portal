@@ -122,11 +122,11 @@ export function ProjectOverviewRail({
   const currentStageKey = presentationStageKey(project.stageKey);
   const canMoveStage = can("moveProjectStage") && !project.archivedAt;
 
-  return <aside className="rail p-[var(--space-6)] max-[720px]:p-[var(--space-4)]" aria-label="Project Overview">
-    <div className={cn("project-overview__heading hidden max-[720px]:block", RAIL_SECTION_LABEL)}>Project Overview</div>
+  return <aside className="rail p-[var(--space-6)] max-[721px]:p-[var(--space-4)]" aria-label="Project Overview">
+    <div className={cn("project-overview__heading hidden max-[721px]:block", RAIL_SECTION_LABEL)}>Project Overview</div>
     <section
       className="rail__sec project-overview__header
-                 pt-0 pb-[var(--space-5)] max-[720px]:pb-[var(--space-4)]
+                 pt-0 pb-[var(--space-5)] max-[721px]:pb-[var(--space-4)]
                  [border-bottom-style:solid] border-b-[length:var(--border-width-rule)] border-b-primary"
       aria-labelledby="project-overview-property"
     >
@@ -141,7 +141,7 @@ export function ProjectOverviewRail({
       </div>
     </section>
 
-    <section className="rail__sec py-[var(--space-5)] max-[720px]:py-[var(--space-4)]
+    <section className="rail__sec py-[var(--space-5)] max-[721px]:py-[var(--space-4)]
                         [border-bottom-style:solid] border-b-[length:var(--border-width-hair)] border-b-border
                         last:border-b-0" aria-labelledby="project-overview-production">
       <div className={RAIL_SECTION_LABEL} id="project-overview-production">Production</div>
@@ -151,14 +151,14 @@ export function ProjectOverviewRail({
       {canEdit && <InternalLink className={buttonClasses("secondary", { className: "rail__edit w-full mt-[var(--space-4)] min-h-[44px]" })} to={`/projects/${encodeURIComponent(project.id)}/edit`}>Edit details</InternalLink>}
     </section>
 
-    <section className="rail__sec py-[var(--space-5)] max-[720px]:py-[var(--space-4)]
+    <section className="rail__sec py-[var(--space-5)] max-[721px]:py-[var(--space-4)]
                         [border-bottom-style:solid] border-b-[length:var(--border-width-hair)] border-b-border
                         last:border-b-0" aria-labelledby="project-overview-team">
       <div className={RAIL_SECTION_LABEL} id="project-overview-team">Team</div>
       <ProjectTeamControl projectId={project.id} members={project.members} canEdit={canEdit} />
     </section>
 
-    <section className="rail__sec py-[var(--space-5)] max-[720px]:py-[var(--space-4)]
+    <section className="rail__sec py-[var(--space-5)] max-[721px]:py-[var(--space-4)]
                         [border-bottom-style:solid] border-b-[length:var(--border-width-hair)] border-b-border
                         last:border-b-0" aria-labelledby="project-overview-client">
       <div className={RAIL_SECTION_LABEL} id="project-overview-client">Client</div>
@@ -166,7 +166,7 @@ export function ProjectOverviewRail({
       <div className="rail-kv grid gap-[var(--space-1)] py-[var(--space-2)]"><span className={RAIL_KV_KEY}>Agent</span><span className={RAIL_KV_VALUE}>{project.agentName ?? "—"}</span></div>
     </section>
 
-    {project.productionNotes && <section className="rail__sec py-[var(--space-5)] max-[720px]:py-[var(--space-4)]
+    {project.productionNotes && <section className="rail__sec py-[var(--space-5)] max-[721px]:py-[var(--space-4)]
                         [border-bottom-style:solid] border-b-[length:var(--border-width-hair)] border-b-border
                         last:border-b-0" aria-labelledby="project-overview-notes">
       <div className={RAIL_SECTION_LABEL} id="project-overview-notes">Production notes</div>
@@ -175,7 +175,7 @@ export function ProjectOverviewRail({
                     text-foreground-secondary">{project.productionNotes}</p>
     </section>}
 
-    <section className="rail__sec py-[var(--space-5)] max-[720px]:py-[var(--space-4)]
+    <section className="rail__sec py-[var(--space-5)] max-[721px]:py-[var(--space-4)]
                         [border-bottom-style:solid] border-b-[length:var(--border-width-hair)] border-b-border
                         last:border-b-0" aria-labelledby="project-overview-collections">
       <div className={RAIL_SECTION_LABEL} id="project-overview-collections">Collections</div>
@@ -207,7 +207,7 @@ export function ProjectOverviewRail({
       })}</div>
     </section>
 
-    {canUpload && (hasRawFolder || canAdminBackend) && <section className="rail__sec py-[var(--space-5)] max-[720px]:py-[var(--space-4)]
+    {canUpload && (hasRawFolder || canAdminBackend) && <section className="rail__sec py-[var(--space-5)] max-[721px]:py-[var(--space-4)]
                         [border-bottom-style:solid] border-b-[length:var(--border-width-hair)] border-b-border
                         last:border-b-0" aria-labelledby="project-overview-dropbox">
       <div className={RAIL_SECTION_LABEL} id="project-overview-dropbox">Dropbox</div>
@@ -222,7 +222,7 @@ export function ProjectOverviewRail({
       {autohdrBlocked && (
         <p role="status" className="mt-[var(--space-2)] m-0
              [font:var(--weight-regular)_var(--text-2xs)/var(--leading-normal)_var(--font-sans)]
-             uppercase tracking-[var(--tracking-wide)] text-[color:var(--signal-caution)]">Blocked</p>
+             uppercase tracking-[var(--tracking-wide)] text-[color:var(--signal-caution-text)]">Blocked</p>
       )}
     </section>}
   </aside>;

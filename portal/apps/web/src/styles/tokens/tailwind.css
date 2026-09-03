@@ -41,6 +41,7 @@
   --color-ring: var(--ring);
   --color-signal-positive: var(--signal-positive);
   --color-signal-caution: var(--signal-caution);
+  --color-signal-caution-text: var(--signal-caution-text);
   --color-signal-critical: var(--signal-critical);
   --color-signal-info: var(--signal-info);
 

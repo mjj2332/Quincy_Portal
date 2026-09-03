@@ -1,4 +1,4 @@
-import { cloudflareTest } from "@cloudflare/vitest-pool-workers";
+import { cloudflareTest } from "@cloudflare/vitest-plugin";
 import { readFile, readdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
@@ -13,8 +13,12 @@ const migrationSql = (await Promise.all((await readdir(migrationDirectory))
   .join("\n--> statement-breakpoint\n");
 const seedSql = await readFile(new URL("../../packages/db/seed/0001_seed.sql", import.meta.url), "utf8");
 
-// v0.18 configures the Workers pool with this Vitest 4 plugin. It loads every
-// binding (DB, MEDIA, SESSIONS, and services) from wrangler.jsonc via Miniflare.
+// `@cloudflare/vitest-plugin` configures the Workers pool for Vitest 4. It loads
+// every binding (DB, MEDIA, SESSIONS, and services) from wrangler.jsonc via Miniflare.
+// Migrated off the superseded `@cloudflare/vitest-pool-workers` (0.18.6/0.22.0), whose
+// `SELF.fetch` dispatch leaked: each request permanently raised the cost of every later
+// request in the same file, so `api.test.ts` (350+ requests) ran quadratically and its
+// late tests crept toward the 5s default timeout. See docs/lessons.md.
 export default defineConfig({
   root: fileURLToPath(new URL(".", import.meta.url)),
   define: {

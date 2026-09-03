@@ -1,11 +1,18 @@
 import { useEffect, useState, type FormEvent } from "react";
 import type { CollectionKind } from "@quincy/shared";
-import { ProjectFields, emptyProjectForm, type ProjectFieldError, type ProjectForm, type ProjectTextField, validateProjectFields } from "../components/ProjectFields";
+import { FIELD_GRID_PROPERTY, ProjectFields, emptyProjectForm, type ProjectFieldError, type ProjectForm, type ProjectTextField, validateProjectFields } from "../components/ProjectFields";
 import { apiGet, apiPatch, apiPost } from "../lib/api";
 import { useCapabilities } from "../lib/capabilities";
 import { InternalLink } from "../components/InternalLink";
 import { invalidateProjectSurfaces, projectDataKeys, removeProjectData, useOptionalProjectQueryClient } from "../lib/project-data";
 import { confirm } from "../lib/confirm";
+import { Eyebrow } from "@/components/ui/eyebrow";
+import { SectionHead } from "@/components/quincy/SectionHead";
+import { StatusPill } from "@/components/ui/status-pill";
+import { EmptyState } from "@/components/quincy/EmptyState";
+import { Notice } from "@/components/quincy/Notice";
+import { QuincyField } from "@/components/quincy/QuincyField";
+import { buttonClasses } from "@/components/ui/button";
 
 type ProjectResponse = {
   id: string; street: string; suburb: string | null; postcode: string | null; agencyName: string | null; agentName: string | null; agentEmail: string | null; agentPhone: string | null;
@@ -14,6 +21,12 @@ type ProjectResponse = {
   collections: Array<{ id: string; kind: CollectionKind }>;
 };
 type FormErrors = Partial<Record<"street" | ProjectFieldError, string>>;
+
+const DANGER_ROW = "pt-[var(--space-5)] [border-top-style:solid] border-t-[length:var(--border-width-hair)] border-t-signal-critical/28 grid gap-[var(--space-5)] items-end grid-cols-1 max-[721px]:items-stretch";
+const DANGER_LABEL = "block [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground";
+// `!mt`: `tokens/base.css` is imported outside any `@layer`, so its `p { margin: 0 }` beats a
+// plain margin utility from `@layer utilities`. Without the `!` this gap collapses to zero. (§7 case O)
+const DANGER_COPY = "!mt-[var(--space-1)] max-w-[52ch] [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary";
 
 function fieldValue(value: string | number | null): string { return value === null ? "" : String(value); }
 function optionalValue(value: string): string | null { return value.trim() || null; }
@@ -111,14 +124,61 @@ export function EditProject({ projectId, onNavigate }: { projectId: string; onNa
   const archived = Boolean(project?.archivedAt);
   const deleteMatchesStreet = deleteConfirmation.trim().toLocaleLowerCase() === project?.street.trim().toLocaleLowerCase();
 
-  return <main className="page create-project edit-project">
-    <div className="pagehead"><div><div className="ey" style={{ marginBottom: 14 }}>Production desk</div><h1 className="serif">Edit shoot</h1>{archived && <div className="edit-project__archived" role="status">Archived — hidden from the dashboard</div>}</div><InternalLink className="button button--secondary" to={`/projects/${encodeURIComponent(projectId)}`}>Cancel</InternalLink></div>
-    {canEditProject && (project ? <form className="create-project__form" onSubmit={(event) => void submit(event)} noValidate>
-      {submitError && <div className="notice" role="alert">{submitError}</div>}
-      <section className="create-project__section" aria-labelledby="property-heading"><div className="create-project__section-head"><div className="ey">Property</div><h2 className="serif" id="property-heading">Where is the shoot?</h2></div><div className="create-project__fields create-project__fields--property"><label className="admin-field create-project__field--wide"><span>Street *</span><input required value={form.street} onChange={(event) => updateField("street", event.target.value)} aria-invalid={Boolean(errors.street)} />{errors.street && <small>{errors.street}</small>}</label><label className="admin-field"><span>Suburb</span><input value={form.suburb} onChange={(event) => updateField("suburb", event.target.value)} /></label><label className="admin-field"><span>Postcode</span><input inputMode="numeric" value={form.postcode} onChange={(event) => updateField("postcode", event.target.value)} /></label></div></section>
+  return <main className="page !max-w-[1080px]">
+    <header className="flex flex-wrap items-end justify-between gap-[var(--space-6)] mb-[var(--space-6)]">
+      <div>
+        <Eyebrow className="block mb-[var(--space-3)]">Production desk</Eyebrow>
+        <h1 className="[font:var(--type-h1)] tracking-[var(--tracking-tight)]">Edit shoot</h1>
+        {archived && <StatusPill tone="caution" role="status" className="mt-[var(--space-3)]">Archived — hidden from the dashboard</StatusPill>}
+      </div>
+      <InternalLink className={buttonClasses("secondary")} to={`/projects/${encodeURIComponent(projectId)}`}>Cancel</InternalLink>
+    </header>
+    {canEditProject && (project ? <form className="create-project__form flex flex-col gap-[var(--space-8)]" onSubmit={(event) => void submit(event)} noValidate>
+      {submitError && <Notice role="alert">{submitError}</Notice>}
+      <section className="create-project__section" aria-labelledby="property-heading">
+        <SectionHead eyebrow="Property" id="property-heading">Where is the shoot?</SectionHead>
+        <div className={FIELD_GRID_PROPERTY}>
+          <QuincyField id="project-street" label="Street *" required value={form.street} onChange={(event) => updateField("street", event.target.value)} aria-invalid={Boolean(errors.street)} error={errors.street} />
+          <QuincyField id="project-suburb" label="Suburb" value={form.suburb} onChange={(event) => updateField("suburb", event.target.value)} />
+          <QuincyField id="project-postcode" label="Postcode" inputMode="numeric" value={form.postcode} onChange={(event) => updateField("postcode", event.target.value)} />
+        </div>
+      </section>
       <ProjectFields form={form} errors={errors} existingCollections={project.collections.map((collection) => collection.kind)} mode="edit" onChange={updateField} onToggle={() => {}} />
-      <div className="create-project__actions"><InternalLink className="button button--secondary" to={`/projects/${encodeURIComponent(projectId)}`} aria-disabled={isSubmitting}>Cancel</InternalLink><button className="button" type="submit" disabled={isSubmitting}>{isSubmitting ? "Saving details…" : "Save changes"}</button></div>
-    </form> : <div className="empty" role={loadError ? "alert" : "status"}><span className="serif">{loadError ? "Project details unavailable." : "Loading shoot details."}</span>{loadError ?? "Preparing the form."}</div>)}
-    {canEditProject && project && can("adminBackend") && <section className="danger-zone" aria-labelledby="danger-zone-heading"><div><div className="ey">Danger zone</div><h2 className="serif" id="danger-zone-heading">Project lifecycle</h2></div>{dangerError && <div className="notice" role="alert">{dangerError}</div>}{dangerNotice && <div className="danger-zone__notice" role="status">{dangerNotice}</div>}{!archived ? <div className="danger-zone__action"><div><strong>Archive project</strong><p>Archived projects are hidden from the dashboard but remain recoverable.</p></div><button className="button button--secondary" type="button" disabled={isDangerAction} onClick={() => void archiveProject()}>{isDangerAction ? "Archiving…" : "Archive project"}</button></div> : <><div className="danger-zone__action"><div><strong>Restore project</strong><p>Return this project to the dashboard and active production work.</p></div><button className="button button--secondary" type="button" disabled={isDangerAction} onClick={() => void restoreProject()}>{isDangerAction ? "Restoring…" : "Restore project"}</button></div><div className="danger-zone__delete"><div><strong>Delete project permanently</strong><p>All media in cloud storage will be erased. This cannot be undone.</p></div><label className="admin-field"><span>Type “{project.street}” to confirm</span><input value={deleteConfirmation} onChange={(event) => setDeleteConfirmation(event.target.value)} autoComplete="off" /></label><button className="button danger-zone__button" type="button" disabled={isDangerAction || !deleteMatchesStreet} onClick={() => void deleteProject()}>{isDangerAction ? "Deleting…" : "Delete project permanently"}</button></div></>}</section>}
+      <div className="create-project__actions flex flex-wrap justify-end gap-[var(--space-3)] max-[721px]:flex-col-reverse max-[721px]:[&>*]:w-full">
+        <InternalLink className={buttonClasses("secondary")} to={`/projects/${encodeURIComponent(projectId)}`} aria-disabled={isSubmitting}>Cancel</InternalLink>
+        <button className={buttonClasses("primary", { busy: isSubmitting })} type="submit" disabled={isSubmitting}>{isSubmitting ? "Saving details…" : "Save changes"}</button>
+      </div>
+    </form> : <EmptyState role={loadError ? "alert" : "status"} tone={loadError ? "error" : "empty"} title={loadError ? "Project details unavailable." : "Loading shoot details."}>{loadError ?? "Preparing the form."}</EmptyState>)}
+    {canEditProject && project && can("adminBackend") && <section
+      aria-labelledby="danger-zone-heading"
+      className="flex flex-col gap-[var(--space-5)] mt-[var(--space-8)] p-[var(--space-5)] border-solid border-[length:var(--border-width-hair)] border-signal-critical/48 bg-signal-critical/4"
+    >
+      <SectionHead eyebrow="Irreversible" id="danger-zone-heading" className="border-t-destructive">Danger zone</SectionHead>
+      {dangerError && <Notice role="alert">{dangerError}</Notice>}
+      {dangerNotice && <Notice tone="positive" role="status">{dangerNotice}</Notice>}
+      {!archived ? <div className={`${DANGER_ROW} min-[721px]:grid-cols-[minmax(0,1fr)_auto]`}>
+        <div>
+          <strong className={DANGER_LABEL}>Archive project</strong>
+          <p className={DANGER_COPY}>Archived projects are hidden from the dashboard but remain recoverable.</p>
+        </div>
+        <button className={buttonClasses("secondary", { className: "max-[721px]:w-full" })} type="button" disabled={isDangerAction} onClick={() => void archiveProject()}>{isDangerAction ? "Archiving…" : "Archive project"}</button>
+      </div> : <>
+        <div className={`${DANGER_ROW} min-[721px]:grid-cols-[minmax(0,1fr)_auto]`}>
+          <div>
+            <strong className={DANGER_LABEL}>Restore project</strong>
+            <p className={DANGER_COPY}>Return this project to the dashboard and active production work.</p>
+          </div>
+          <button className={buttonClasses("secondary", { className: "max-[721px]:w-full" })} type="button" disabled={isDangerAction} onClick={() => void restoreProject()}>{isDangerAction ? "Restoring…" : "Restore project"}</button>
+        </div>
+        <div className={`${DANGER_ROW} min-[721px]:grid-cols-[minmax(0,1fr)_minmax(220px,0.7fr)_auto]`}>
+          <div>
+            <strong className={DANGER_LABEL}>Delete project permanently</strong>
+            <p className={DANGER_COPY}>All media in cloud storage will be erased. This cannot be undone.</p>
+          </div>
+          <QuincyField id="project-delete-confirmation" label={<>Type “{project.street}” to confirm</>} value={deleteConfirmation} onChange={(event) => setDeleteConfirmation(event.target.value)} autoComplete="off" />
+          <button className={buttonClasses("danger", { className: "max-[721px]:w-full" })} type="button" disabled={isDangerAction || !deleteMatchesStreet} onClick={() => void deleteProject()}>{isDangerAction ? "Deleting…" : "Delete project permanently"}</button>
+        </div>
+      </>}
+    </section>}
   </main>;
 }

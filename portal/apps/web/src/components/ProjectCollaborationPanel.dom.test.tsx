@@ -1017,6 +1017,6 @@ describe("ProjectCollaborationPanel", () => {
     await render(<EditProject projectId={projectId} onNavigate={() => undefined} />);
     expect(apiGetMock).toHaveBeenCalledWith(`/api/projects/${projectId}`); expect(editor.querySelector(".create-project__form")).not.toBeNull();
     expect(editor.querySelector<HTMLInputElement>('input[value="72 Collaboration Lane"]')).not.toBeNull();
-    expect(editor.querySelector(".project-collaboration")).toBeNull(); expect(editor.querySelector(".project-team")).toBeNull(); expect(editor.querySelector(".pagehead + .create-project__form")).not.toBeNull();
+    expect(editor.querySelector(".project-collaboration")).toBeNull(); expect(editor.querySelector(".project-team")).toBeNull(); expect(editor.querySelector("header + .create-project__form")).not.toBeNull();
   });
 });

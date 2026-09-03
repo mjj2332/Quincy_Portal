@@ -60,10 +60,10 @@ describe("project field policies", () => {
       onToggle: () => undefined,
     }));
 
-    expect(markup).toMatch(/<span>Order number<\/span><input[^>]*(?:readOnly|readonly)=""/);
-    expect(markup).toMatch(/<span>Order ID<\/span><input[^>]*(?:readOnly|readonly)=""/);
+    expect(markup).toMatch(/for="project-order-number"[^>]*>Order number<\/label><input[^>]*id="project-order-number"[^>]*(?:readOnly|readonly)=""/);
+    expect(markup).toMatch(/for="project-order-id"[^>]*>Order ID<\/label><input[^>]*id="project-order-id"[^>]*(?:readOnly|readonly)=""/);
     expect(markup).toMatch(/<textarea[^>]*(?:readOnly|readonly)=""/);
-    const serviceInputs = [...markup.matchAll(/<input type="checkbox"[^>]*><span>(?:<strong>RAW<\/strong><small>Always included<\/small>|Edited photography|Video|Floorplan|Copywriting)<\/span>/g)];
+    const serviceInputs = [...markup.matchAll(/<input type="checkbox"[^>]*><span[^>]*>(?:<strong[^>]*>RAW<\/strong><small[^>]*>Always included<\/small>|Edited photography|Video|Floorplan|Copywriting)<\/span>/g)];
     expect(serviceInputs).toHaveLength(5);
     expect(serviceInputs.every(([input]) => input.includes("disabled=\"\""))).toBe(true);
     expect(markup).not.toContain("Invoice amount");
@@ -87,10 +87,10 @@ describe("project field policies", () => {
       expect(inputs[1]).not.toContain("type=");
       expect(inputs[2]).toContain('type="email"');
       expect(inputs[3]).toContain('type="tel"');
-      expect(inputs.every((input) => !input.includes("readonly") && !input.includes("disabled"))).toBe(true);
+      expect(inputs.every((input) => !/\s(?:readonly|readOnly|disabled)=""/.test(input))).toBe(true);
       const classTokens = [...markup.matchAll(/class="([^"]*)"/g)].flatMap((match) => (match[1] ?? "").split(/\s+/));
-      expect(classTokens).toContain("[&amp;]:grid");
-      expect(classTokens).not.toContain("grid");
+      expect(classTokens).toContain("grid");
+      expect(classTokens).not.toContain("[&amp;]:grid");
       for (const id of ["project-agency-name", "project-agent-name", "project-agent-email", "project-agent-phone"]) {
         expect(markup).toContain(`for="${id}"`);
       }
@@ -126,11 +126,11 @@ describe("project field policies", () => {
 
     expect(markup).toContain("Invoice amount");
     expect(markup).toContain("Payment status");
-    expect(markup).not.toMatch(/<span>Order number<\/span><input[^>]*(?:readOnly|readonly)=""/);
-    expect(markup).not.toMatch(/<span>Order ID<\/span><input[^>]*(?:readOnly|readonly)=""/);
+    expect(markup).not.toMatch(/for="project-order-number"[^>]*>Order number<\/label><input[^>]*id="project-order-number"[^>]*(?:readOnly|readonly)=""/);
+    expect(markup).not.toMatch(/for="project-order-id"[^>]*>Order ID<\/label><input[^>]*id="project-order-id"[^>]*(?:readOnly|readonly)=""/);
     expect(markup).not.toMatch(/<textarea[^>]*(?:readOnly|readonly)=""/);
-    const editedService = markup.match(/<input type="checkbox"([^>]*)><span>Edited photography<\/span>/)?.[1];
+    const editedService = markup.match(/<input type="checkbox"([^>]*)><span[^>]*>Edited photography<\/span>/)?.[1];
     expect(editedService).toBeDefined();
-    expect(editedService).not.toContain("disabled");
+    expect(editedService).not.toMatch(/\sdisabled=""/);
   });
 });

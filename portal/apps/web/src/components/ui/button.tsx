@@ -16,7 +16,9 @@ export type ButtonVariant = "primary" | "secondary" | "danger" | "text";
 // depends on Tailwind's generated rule order for who wins — it was resolving to --type-label's
 // own 14px, not the intended 12px. Merged into one explicit shorthand instead (§1.2's arbitrary
 // property convention, applied to the whole shorthand rather than split across two utilities).
-const BASE = "inline-flex items-center justify-center gap-[var(--space-2)] min-h-[38px] " +
+// 44px touch target — WCAG 2.5.5 Enhanced / HIG, not a spacing token. §2.1a: the 38px desktop
+// contract stays; only <=720px rises to the touch minimum, matching Modal.tsx's shipped footer.
+const BASE = "inline-flex items-center justify-center gap-[var(--space-2)] min-h-[38px] max-[721px]:min-h-[44px] " +
   "px-[14px] py-[9px] rounded-[var(--radius-sm)] border-solid " +
   "border-[length:var(--border-width-hair)] " +
   "[font:var(--weight-regular)_var(--text-xs)/1.2_var(--font-sans)] " +

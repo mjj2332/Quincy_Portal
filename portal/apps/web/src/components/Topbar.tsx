@@ -59,7 +59,7 @@ const HEAD = "flex items-center justify-between gap-[var(--space-3)] px-[var(--s
 // own hover/disabled/press states and only adds the highlight ring `Button` doesn't know about.
 const HEAD_BUTTON = HIGHLIGHT_STATE;
 const EMPTY = "topbar__notification-empty px-[var(--space-4)] py-[var(--space-5)] text-[length:var(--text-sm)] text-muted-foreground";
-const TRIGGER = "relative inline-grid place-items-center size-[34px] max-[720px]:size-[44px] " +
+const TRIGGER = "relative inline-grid place-items-center size-[34px] max-[721px]:size-[44px] " +
   "text-foreground hover:bg-secondary";
 const MOBILE_ITEM = cn(
   "min-h-[44px] flex items-center px-[var(--space-3)] text-foreground text-left",
