@@ -127,7 +127,13 @@ Computed by compositing each declared `rgba()` over its real ancestor stack. Sta
 **Note on `.starpick button` (off state):** `--text-muted` on `--paper-050` measures **3.36:1**.
 Whether that fails depends on whether a `★` glyph is text (4.5:1) or a non-text graphical object
 (3:1) — it is a rating indicator drawn with a text character. The token file already draws this
-distinction explicitly for icons. **Owner decision required**; recorded, not assumed.
+distinction explicitly for icons.
+
+**RESOLVED 2026-09-04 — the owner ruled the glyph is text.** So this **is** a failure, and so is
+`.starpick button.on` at 4.44:1 (C-3). Both move to the darkened token family: off →
+`--foreground-secondary` (**8.66:1**), on → `--signal-caution-text` (**6.27:1**). The same ruling
+settles `--signal-warm`'s replacement at the peek bar (K-1), which becomes
+`--signal-caution-text` rather than the `--signal-caution` this register originally proposed.
 
 ## 4. Touch targets
 

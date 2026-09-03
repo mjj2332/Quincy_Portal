@@ -178,14 +178,10 @@ scope would let both `.barbtn` and `.icbtn--ondark` retire. It will not:
 - **`.barbtn` really is shared with `.actionbar`** (`PhotoGrid.tsx`), and that *is* ink chrome on a
   known ground, so the scope does reach it.
 
-**Proposal, narrowed to what is actually true: apply the §2 inverse scope to `.actionbar`** and
-retire `.barbtn` alone. This reaches a surface outside the candidate's name, which is why it is an
-owner decision (§9.3) rather than an assumption.
-
-**If approved**, the release also owns: replacement classes for each action-bar button, and the
-**nine `.actionbar .barbtn` queries in `PhotoGrid.dom.test.tsx`** — migrated, not deleted.
-**If declined**, `.barbtn` becomes **K** alongside `.icbtn--ondark`, only the lightbox's own call
-sites move, and both go to TB8-10.
+**Applying the §2 inverse scope to `.actionbar`, and retiring `.barbtn` alone — APPROVED by the
+owner 2026-09-04 (§9.3).** The release therefore also owns replacement classes for each
+action-bar button and the **nine `.actionbar .barbtn` queries in `PhotoGrid.dom.test.tsx`**,
+migrated rather than deleted. This is slice 5's work.
 
 ### 1.5 Explicitly not in scope
 
@@ -481,7 +477,9 @@ required to survive as names, and a test asserts they do:
 | `.compare`, `__pair`, `__cell`, `__tag`, `__pickbtn` | **D — dead CSS** | **Zero consumers anywhere in the app.** A repo-wide grep for these class names in any `.tsx` returns nothing; compare mode is `.viewer.viewer--compare` (`Lightbox.tsx:484`). Delete outright; there is nothing to convert. |
 | `.viewer--compare`, `.viewer--compare .vpanel`, `.viewer--compare .strip` | **R** | **Live** — this is the real compare layout. Replacement in §5.9a. |
 | `.viewer__panel-scrim` | **D** | Adopts `--scrim-overlay`, closing TB8-02-E-1. |
-| `.barbtn`, `.barbtn--solid`, `.icbtn--ondark` | **R if §1.4 approved, else K** | Shared with `PhotoGrid.tsx`. Under the extension they retire entirely; without it they keep their rules and only the lightbox's call sites move. |
+| `.barbtn`, `.barbtn--solid` | **R** | §9.3 **approved** 2026-09-04 — `.actionbar` takes the inverse scope and both retire. Slice 5. |
+| `.actionbar`, `.actionbar .n/.lbl/.vline` | **R** | Same decision. `background: var(--ink-900)` / `color: var(--paper-050)` → `bg-background text-foreground` in scope; `.vline`'s `rgba(246,244,239,.2)` → `bg-border`. |
+| `.icbtn--ondark` | **K** | **Not** retirable by this release: its five consumers (`PhotoGrid.tsx:170–174`) sit on the per-tile hover tools, over photographs, where no surface scope reaches. TB8-10. |
 | `.icbtn`, `.icbtn--lg`, `.icbtn--ghost`, `.icbtn.is-on` | **K** | Light-surface variants with consumers outside this candidate. TB8-10's D-06 territory. |
 
 **Ledger requirement:** the final slice reports retired-vs-kept counts and `grep -c` for each
@@ -893,7 +891,7 @@ slice must satisfy §7 in full.
 | **2** | Stage: root, `__stage`, `__imgwrap`, the five `IconButton` controls, `__meta` (+`.a`/`.b`), `__shortcuts` (+`span`/`i`), `.kbd`, `__panel-trigger`, `__panel-scrim`. **Deletes `app.css:255–275` in the same commit.** | §2, §3, §5.1, §5.2, §5.9b |
 | **3** | Markup toolbar — the nine unnamed buttons, both toggle groups, `PEN_COLOUR_NAMES`, the four text buttons. **Deletes `app.css:290–298`.** The highest-value slice; do not merge it with another. | §2, §3, §5.3, §0c |
 | **4** | Side panel: decision, rating, label, thread, textarea, "Save annotation", `review-labels.ts`, and the two peek-bar edits. **Deletes `app.css:454–476` and `477–491`**, keeping the ≤720 sheet block. | §2, §3, §5.4–§5.7, §0b, §0c |
-| **5** | Filmstrip and the three band layouts: `.strip*`, the tablet drawer, the compare grid, and the **deletion of the five dead `.compare*` rules**. **Deletes `app.css:492–507` and `753–755`**, and rewrites the two band blocks. | §2, §3, §3.0, §5.8, §5.9, §5.9a |
+| **5** | Filmstrip and the three band layouts: `.strip*`, the tablet drawer, the compare grid, and the **deletion of the five dead `.compare*` rules**. **Deletes `app.css:492–507` and `753–755`**, and rewrites the two band blocks. **Plus §9.3 (approved): `.actionbar` takes the inverse scope, `.barbtn`/`.barbtn--solid`/`.actionbar` retire (`app.css:245–253`), and `PhotoGrid.tsx`'s action bar plus its nine `PhotoGrid.dom.test.tsx` queries migrate.** | §2, §3, §3.0, §5.8, §5.9, §5.9a, §9.3 |
 | **6** | The §4 ledger reconciliation (counts + the four surviving names), all tests, the register correction, and the docs. **Adds no new styling.** | all |
 
 Slice 1 is the one to get exactly right — every later slice assumes the inverse scope resolves.
@@ -907,28 +905,41 @@ rules has not finished, however green the build is.
 
 ---
 
-## 9. Owner decisions this plan does not make
+## 9. Owner decisions — **1 and 3 answered 2026-09-04; 2, 4 and 5 recorded**
 
-1. **`.starpick` off-state at 3.36:1.** `--text-muted` on `--paper-050`. A `★` drawn with a text
-   character is either text (4.5:1, fails) or a non-text graphical indicator (3:1, passes). The
-   token file already draws exactly this distinction for icons. §5.4 keeps `text-muted-foreground`
-   and makes state non-colour-dependent via `aria-pressed`, so nothing is *blocked* either way —
-   but if the owner wants the stricter reading, the fix is `text-foreground-secondary` (8.66:1)
-   and it is a one-word change.
+1. **`.starpick` off-state at 3.36:1 — ANSWERED 2026-09-04: treat the `★` as text.**
+   Owner's decision, taking the stricter of the two readings. Binding consequences, which override
+   the values written elsewhere in this plan:
+
+   | Site | Was | **Now** | Measured |
+   |---|---|---|---|
+   | `.starpick button.on` | `#9a6a1f` literal | `text-signal-caution-text` | 4.44 → **6.27:1** |
+   | `.starpick button` (off) | `--text-muted` | **`text-foreground-secondary`** | 3.36 → **8.66:1** |
+   | `.vpanel__peek-rating` | `var(--signal-warm, #9a6a1f)` | `text-signal-caution-text` | 4.71 → **6.27:1** on `--paper-000` |
+
+   Every rating site now clears 4.5:1 with no judgment call left in the code, and item 5 below is
+   settled by the same decision. §5.4's "off → `text-muted-foreground`" is **superseded**; use
+   `text-foreground-secondary`.
 2. **The six pen colours stay literals** (§1.5). Recorded as a decision, not an accident.
-3. **§1.4's scope extension to `.actionbar`** — narrowed after Sol B3. Approve it and **`.barbtn`
-   alone** retires, and this release also owns the action bar's replacement classes and the nine
-   `.actionbar .barbtn` queries in `PhotoGrid.dom.test.tsx`. Decline it and `.barbtn` stays **K**
-   and goes to TB8-10. Either way **`.icbtn--ondark` stays** — its five consumers sit on
-   photographs, not on the action bar, and no scope reaches them.
+3. **§1.4's scope extension to `.actionbar` — ANSWERED 2026-09-04: APPROVED.**
+   `.actionbar` carries `data-surface="inverse"` and **`.barbtn` / `.barbtn--solid` retire
+   completely**. This release therefore also owns:
+   - replacement classes for every action-bar button — `buttonClasses("secondary")`, and
+     `buttonClasses("primary")` where `.barbtn--solid` was, exactly as §5.3's four text buttons;
+   - the **nine `.actionbar .barbtn` queries in `PhotoGrid.dom.test.tsx`** — migrated, not deleted;
+   - `.actionbar`'s own rule (`app.css:245–248`), whose `background: var(--ink-900)` and
+     `color: var(--paper-050)` become `bg-background text-foreground` inside the scope, and whose
+     `.vline` literal `rgba(246,244,239,.2)` becomes `bg-border`.
+
+   This is **slice 5's** work (it already owns the band/layout tier); §8's slice 5 row is extended
+   accordingly. **`.icbtn--ondark` still stays K** — its five consumers sit on photographs, not on
+   the action bar, and no scope reaches them.
 4. **Close/nav shrink from 48px to 44px on phone** (§5.2) — convergence onto the repo's stated
    contract, and a deliberate reduction. Flagged because it is one of two places this plan makes a
    target smaller; the other, `.vpanel__collapse` at 36→28, is **rejected** and floored at 36
    (§0b).
-5. **`--signal-warm` becomes `--signal-caution-text`, not `--signal-caution`** (NB3). The register
-   proposed `--signal-caution`, and `colors.css:40–46` does say icons keep the brand tone. The
-   plan chooses the darkened text token because the peek-bar rating is a `★` **text glyph** on
-   `--paper-000`, where the brand ochre measures 4.71:1 — passing, but only just, and by the same
-   reasoning §5.4 applies to the desktop stars. Recorded because it diverges from this release's
-   own evidence base, which should never happen silently. Reverting to `--signal-caution` is a
-   one-word change if the owner reads the icon exemption as covering it.
+5. **`--signal-warm` becomes `--signal-caution-text` — SETTLED by decision 1.** The register had
+   proposed `--signal-caution`, and `colors.css:40–46`'s icon exemption would have allowed it. The
+   owner's "treat the glyph as text" ruling covers this site too, so the divergence from the
+   evidence base is now a decision rather than an unexplained change. The register is annotated to
+   match.
