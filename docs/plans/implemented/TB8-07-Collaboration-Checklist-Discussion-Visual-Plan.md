@@ -1,6 +1,8 @@
 # TB8-07 — Collaboration, Checklist and Discussion: Visual Plan
 
-**Status: BUILT, VISUAL GATE PASSED, NOT YET MERGED OR DEPLOYED.** Ranking candidate **#7** in
+**Status: DEPLOYED TO PRODUCTION 2026-09-04.** Merged to `main` as `ce43917`; app Worker
+version `3be901b7-3b75-45d0-8188-dcfc1fd3fb59`. Frontend/CSS only — no D1 migration, and only the
+app Worker was redeployed. Rollback target: app Worker `18356d70` (TB8-06's). Ranking candidate **#7** in
 `Revamp-TB8-Wider-UI-Migration-And-Cleanup-Plan.md` ("Collaboration/checklist/comments"). Branch
 `tb8-07-collaboration-checklist`, cut from `main` at `e4f7ffc` (TB8-06 shipped).
 

@@ -96,11 +96,17 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
   recovered from git and closed here.)
 - **TB8-07 (Collaboration, checklist and discussion — the panel shell, tab strip, subtask
   checklist and its three popovers, the comment thread, the activity ledger, the mention
-  autocomplete and the rich-text editor chrome) is BUILT AND VERIFIED, NOT YET DEPLOYED**, branch
-  `tb8-07-collaboration-checklist`, 2026-09-04. Ranking candidate #7.
-  (`docs/plans/TB8-07-Collaboration-Checklist-Discussion-Visual-Plan.md`.) Slices: `e255d3e`
-  `fa6c66e` `5b248a6` `175bb00` `09e055d` `25af0a6` `5aad9cc` `f88e506`. **The visual gate has NOT
-  run** — it is this session's own and is the remaining step before merge.
+  autocomplete and the rich-text editor chrome) is **DEPLOYED TO PRODUCTION 2026-09-04** — merge
+  `ce43917`, app Worker version `3be901b7-3b75-45d0-8188-dcfc1fd3fb59`, no migration, rollback
+  target app Worker `18356d70`. Ranking candidate #7.
+  (`docs/plans/implemented/TB8-07-Collaboration-Checklist-Discussion-Visual-Plan.md`.) Slices:
+  `e255d3e` `fa6c66e` `5b248a6` `175bb00` `09e055d` `25af0a6` `5aad9cc` `f88e506` `55d10b8`
+  `7431130`. The visual gate PASSED at 1440/1024/390 and **found three defects nothing else
+  caught** — a checklist head collision at 390px (a single uppercase word cannot wrap, so the
+  planned "wraps before it collides" was wrong), a 28px readout that does not fit the 460px panel,
+  and `[text-transform:none]` losing to `META_TEXT`'s `uppercase` at three sites (this release's
+  fourth run-in with the rule that Tailwind's emission order, not class order, decides between two
+  same-layer utilities).
   **This release fixed four defects that were invisible rather than ugly**, which is why it is
   worth more than a repaint:
   - The subtask schedule and assignee triggers were `opacity: .06` (**1.10:1**) revealed only on
