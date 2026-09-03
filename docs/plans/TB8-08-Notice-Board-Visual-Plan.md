@@ -454,6 +454,31 @@ short label like "Edit", instead of relying on `min-w` alone to stretch an unpad
 | error | `<Notice tone="critical" role="alert">` |
 | empty | `<EmptyState>` with the §5.2 overrides |
 
+### 5.7 Every class in §5 compiles — verified, not assumed
+
+Dropped all 23 literal class strings above into a temporary module in `apps/web/src`, ran
+`npm run build`, and grepped the emitted CSS for each resulting declaration. **All compile against
+the installed Tailwind 4.3.3.** Spot-checks:
+
+| Class | Emitted |
+|---|---|
+| `w-[7px]` | `width:7px` |
+| `rounded-[var(--radius-pill)]` | `border-radius:var(--radius-pill)` |
+| `max-[721px]:min-w-[44px]` | `.max-\[721px\]\:min-w-\[44px\]{min-width:44px}` |
+| `min-h-[38px]` | `min-height:38px` |
+| `border-l-border-strong` | present (the TB8-07 theme alias resolves) |
+| `gap-x-[var(--space-3)]` | `column-gap:var(--space-3)` |
+| `!normal-case` | `text-transform:none` |
+
+**One near-miss worth recording.** `flex-[1_1_12rem]` emits `flex:12rem`, **not** `flex:1 1 12rem`,
+so a grep for the three-value form returns zero and looks like a compile failure. It is not: CSS's
+one-value `flex: <width>` syntax *is* `1 1 <width>`, so the behaviour is identical. I checked what
+was actually emitted instead of concluding from the absence — the same discipline §2.1a exists to
+enforce.
+
+The probe module was deleted and the build re-run; `dist` returns to the byte-identical
+`index-DhbZB4Gh.css` currently in production, confirming it left nothing behind.
+
 ### 5.6 The freshness contract — must survive byte-for-byte
 
 `presentation.anchorRef` attaches to the **posts container when `posts.length === 0`** and to the
