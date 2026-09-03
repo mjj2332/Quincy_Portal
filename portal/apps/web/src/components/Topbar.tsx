@@ -6,7 +6,7 @@ import { InternalLink } from "./InternalLink";
 import { projectNotificationRoute, staffPathFor } from "@quincy/shared";
 import { initials } from "../lib/initials";
 import { Menu } from "./ui/menu";
-import { Button } from "./ui/button";
+import { Button, buttonClasses } from "./ui/button";
 import { cn } from "../lib/utils";
 
 export type AppView = "dashboard" | "project" | "create-project" | "edit-project" | "admin" | "notifications" | "not-found";
@@ -67,6 +67,38 @@ const MOBILE_ITEM = cn(
   "border-0 bg-transparent hover:bg-secondary data-[active]:bg-secondary",
   HIGHLIGHT_STATE,
 );
+
+// The brand is a wordmark, not a button — it never wore `.button--text` for its paint, only for
+// its (32px) height, which is below the touch minimum on a phone where it is one of two visible
+// controls (E-14). `buttonClasses("text")` would be correct too, but a link wearing a button's
+// uppercase label type for an image it does not have is noise. 44px touch target — WCAG 2.5.5
+// Enhanced / HIG, not a spacing token.
+const BRAND = "topbar__brand flex items-center gap-[var(--space-4)] cursor-pointer no-underline " +
+  "min-h-[32px] max-[721px]:min-h-[44px] [&_img]:h-[18px]";
+
+// Migrated verbatim from app.css:75 (pre-retirement). No `avatar` class: the rule is gone and
+// nothing queried it. The div carries `data-slot="avatar"` for §9.3's query. No `uppercase`
+// either — `.avatar` never set `text-transform`; `initials()` already returns capitals.
+const AVATAR = "max-[1007px]:hidden w-[32px] h-[32px] rounded-[var(--radius-pill)] " +
+  "grid place-items-center bg-[var(--ink-900)] text-[var(--paper-050)] " +
+  "[font:var(--weight-regular)_12px/1.2_var(--font-sans)] " +
+  "tracking-[0.02em] flex-none";
+
+const IDENTITY = "topbar__identity max-[1007px]:hidden";
+
+// Migrated verbatim from app.css:796 (pre-retirement), which was the trigger's ONLY source of
+// style. `hidden` and `max-[771px]:inline-flex` are different variant keys, so twMerge keeps
+// both; `hidden` also beats menu.tsx's TRIGGER `inline-flex` in the shared base key. 44px touch
+// target — WCAG 2.5.5 Enhanced / HIG, not a spacing token.
+const MENU_TRIGGER = "topbar__menu-trigger hidden max-[771px]:inline-flex items-center " +
+  "justify-center min-h-[44px] ml-auto pt-[6px] pr-0 pb-[6px] pl-[10px] border-0 " +
+  "bg-transparent text-[var(--text-primary)] " +
+  "[font:var(--weight-regular)_11px/1.2_var(--font-sans)] " +
+  "tracking-[var(--tracking-wide)] uppercase cursor-pointer";
+
+// The two topbar controls leave `.button button--text` for the shared primitive (§5.4.2b (2)),
+// which is what lets `max-[771px]:hidden` work without `!`.
+const TOPBAR_CONTROL = buttonClasses("text", { className: "max-[771px]:hidden" });
 
 export function Topbar({ activeView, canAccessAdmin, user, notificationPollMs = NOTIFICATION_POLL_MS }: TopbarProps) {
   const displayName = user.name || user.email || "Quincy user";
@@ -142,7 +174,7 @@ export function Topbar({ activeView, canAccessAdmin, user, notificationPollMs = 
 
   return (
     <header className="topbar">
-      <InternalLink className="topbar__brand button--text" to="/" aria-label="Quincy Portal home">
+      <InternalLink className={BRAND} to="/" aria-label="Quincy Portal home">
         <img src="/brand/quincy-wordmark-black.png" alt="Quincy Productions" />
       </InternalLink>
       <div className="topbar__divider" />
@@ -158,13 +190,13 @@ export function Topbar({ activeView, canAccessAdmin, user, notificationPollMs = 
       </nav>
       <div className="grow" />
       <div className="topbar__user">
-        <div className="topbar__notifications">
+        <div className="topbar__notifications relative">
           <Menu
             open={notificationsOpen}
             onOpenChange={setNotificationsOpen}
             triggerLabel={unreadCount ? `${unreadCount} unread notifications` : "Notifications"}
             label="Notifications"
-            triggerClassName={cn("topbar__notification-trigger", TRIGGER)}
+            triggerClassName={cn("topbar__notification-trigger", TRIGGER, "[&_svg]:size-[19px]")}
             panelClassName={cn(
               "topbar__notification-menu",
               "max-w-[min(360px,calc(100vw-var(--space-5)))] max-h-[min(520px,calc(100dvh-var(--space-9)))]",
@@ -210,13 +242,13 @@ export function Topbar({ activeView, canAccessAdmin, user, notificationPollMs = 
             })}
           </Menu>
         </div>
-        <div className="topbar__identity">
+        <div className={IDENTITY}>
           <strong>{displayName}</strong>
           {user.email && user.name && <span className="ey">{user.email}</span>}
         </div>
-        <InternalLink className={activeView === "notifications" ? "is-active button button--text" : "button button--text"} to="/settings/notifications">Notification preferences</InternalLink>
-        <div className="avatar" aria-hidden="true">{initials(displayName)}</div>
-        <button className="button button--text" type="button" onClick={handleSignOut}>
+        <InternalLink className={cn(TOPBAR_CONTROL, activeView === "notifications" && "is-active")} to="/settings/notifications">Notification preferences</InternalLink>
+        <div className={AVATAR} data-slot="avatar" aria-hidden="true">{initials(displayName)}</div>
+        <button className={TOPBAR_CONTROL} type="button" onClick={handleSignOut}>
           Sign out
         </button>
       </div>
@@ -226,7 +258,7 @@ export function Topbar({ activeView, canAccessAdmin, user, notificationPollMs = 
         onOpenChange={setMenuOpen}
         triggerLabel="Open account and navigation menu"
         label="Account and navigation menu"
-        triggerClassName="topbar__menu-trigger"
+        triggerClassName={MENU_TRIGGER}
         panelClassName="topbar__mobile-menu"
         trigger={<span aria-hidden="true">Menu</span>}
       >

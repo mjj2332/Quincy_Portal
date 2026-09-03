@@ -57,4 +57,13 @@ describe("ImpersonationBanner", () => {
     expect(button.disabled).toBe(false);
     expect(refetchMock).not.toHaveBeenCalled();
   });
+
+  it("keeps Exit off the legacy scoped-override class and on the inverted hover colour utility", async () => {
+    await act(async () => { root!.render(<ImpersonationBanner user={{ name: "Editor Example", role: "editor" }} invalidated={false} />); });
+    const button = host.querySelector<HTMLButtonElement>("button")!;
+    // Guards against a future "cleanup" reintroducing `.button--text`, whose
+    // `:hover:not(:disabled)` (0,3,0) outranked the old scoped override (0,2,0) — see E-11/E-12.
+    expect(button.classList.contains("button--text")).toBe(false);
+    expect(button.classList.contains("hover:not-disabled:!text-on-inverse")).toBe(true);
+  });
 });
