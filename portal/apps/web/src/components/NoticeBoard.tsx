@@ -3,10 +3,19 @@ import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from 
 import { RICH_TEXT_JSON_MAX_BYTES, richTextDocByteLength, type RichTextDoc } from "@quincy/shared";
 import { createNoticeBoardPost, deleteNoticeBoardPost, editNoticeBoardPost, useNoticeBoardPostsQuery, useNoticeBoardPresentation, useNoticeBoardReadStateQuery } from "../lib/notice-board-data";
 import { apiGet } from "../lib/api";
+import { cn } from "@/lib/utils";
 import { RichTextContent } from "./RichTextContent";
 import { RichTextEditor } from "./RichTextEditor";
+import { Eyebrow } from "./ui/eyebrow";
+import { EmptyState } from "./quincy/EmptyState";
 import type { MentionableUser } from "./MentionAutocomplete";
 import type { NoticeBoardPost } from "../lib/notice-board-data";
+
+// `!outline-solid`, not `!outline`: `cn()` is twMerge, and it discards a bare
+// `focus-visible:!outline` as conflicting with the `-[length:…]` utility (Sol r2 #4, verified).
+const RING =
+  "focus-visible:!outline-solid focus-visible:!outline-[length:var(--border-width-bold)] " +
+  "focus-visible:!outline-[var(--focus-ring)] focus-visible:!outline-offset-2";
 
 const COLLAPSE_KEY = "quincy:dashboard:noticeboard:v2";
 const EMPTY_DOC: RichTextDoc = { type: "doc", content: [{ type: "paragraph" }] };
@@ -127,12 +136,36 @@ export function NoticeBoard({ currentUserId }: { currentUserId: string }) {
 
   const hasUnread = (readState?.unreadCount ?? 0) > 0;
   const editingPostStillExists = editingId !== null && posts.some((post) => post.id === editingId);
-  return <section className="notice-board" aria-label="Notice board">
-    <button className={`notice-board__toggle${hasUnread ? " is-unread" : ""}`} type="button" aria-expanded={open} aria-controls={panelId} onClick={() => setOpen((value) => !value)}><span><span className="ey">Staff notice board</span><span className="notice-board__summary">Messages for the production desk</span></span>{hasUnread && <span className="notice-board__badge" aria-label="New notice" />}<span className="notice-board__chevron" aria-hidden="true">{open ? "−" : "+"}</span></button>
-    <div id={panelId} className={`notice-board__panel${open ? "" : " is-collapsed"}`} aria-hidden={!open}>
+  return <section className="notice-board mb-[var(--space-6)] border-[length:var(--border-width-hair)] border-solid border-border bg-card" aria-label="Notice board">
+    <button
+      data-slot="notice-board-toggle"
+      className={cn(
+        `notice-board__toggle${hasUnread ? " is-unread" : ""}`,
+        "w-full flex items-center gap-[var(--space-4)] px-[var(--space-5)] py-[var(--space-4)] min-h-[44px] bg-transparent border-0 [border-left-style:solid] border-l-[length:var(--border-width-rule)] text-left text-foreground cursor-pointer transition-[background-color,border-color] duration-[var(--dur-fast)] ease-[var(--ease-standard)] hover:bg-secondary",
+        hasUnread ? "border-l-border-strong" : "border-l-transparent",
+        RING,
+      )}
+      type="button"
+      aria-expanded={open}
+      aria-controls={panelId}
+      onClick={() => setOpen((value) => !value)}
+    >
+      <span className="flex flex-col gap-[var(--space-1)] flex-1 min-w-0">
+        <Eyebrow>Staff notice board</Eyebrow>
+        <span className="notice-board__summary [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary">Messages for the production desk</span>
+      </span>
+      {hasUnread && (
+        <>
+          <span className="sr-only" data-slot="notice-board-unread-indicator">New notice</span>
+          <span aria-hidden="true" className="w-[7px] h-[7px] flex-none rounded-[var(--radius-pill)] bg-primary" />
+        </>
+      )}
+      <span className="notice-board__chevron [font:var(--weight-regular)_var(--text-xl)/1_var(--font-sans)] text-foreground-secondary" aria-hidden="true">{open ? "−" : "+"}</span>
+    </button>
+    <div id={panelId} className="notice-board__panel border-t-[length:var(--border-width-hair)] [border-top-style:solid] border-t-border" aria-hidden={!open} hidden={!open}>
       {visibleError && <div className="notice-board__error" role="alert">{visibleError}</div>}
-      <div className="notice-board__posts" aria-live="polite" ref={posts.length === 0 ? presentation.anchorRef : undefined}>
-        {posts.length === 0 && <p className="notice-board__empty">No notices yet.</p>}
+      <div className="notice-board__posts grid" aria-live="polite" ref={posts.length === 0 ? presentation.anchorRef : undefined}>
+        {posts.length === 0 && <EmptyState title="No notices yet." className="px-[var(--space-5)] py-[var(--space-5)] text-left" />}
         {posts.map((post) => <article className="notice-board__post" key={post.id} ref={post.id === posts[0]?.id ? presentation.anchorRef : undefined}>
           <div className="notice-board__post-head"><span className="notice-board__author">{post.authorName}</span><time dateTime={post.createdAt}>{relativeTime(post.createdAt)}</time>{post.editedAt && <span className="notice-board__edited" title={post.editedAt}>edited</span>}{post.authorId === currentUserId && <><button className="notice-board__edit" type="button" onClick={() => { setEditingId(post.id); setEditingContent(post.content); }}>Edit</button><button className="notice-board__delete" type="button" onClick={() => void deletePost(post.id)}>Delete</button></>}</div>
           {editingId === post.id ? renderEditComposer(post.id) : <RichTextContent content={post.content} />}

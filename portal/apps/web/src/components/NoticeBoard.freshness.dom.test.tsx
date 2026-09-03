@@ -142,7 +142,7 @@ describe("Notice Board presentation freshness", () => {
     emit(true); await flush();
     expect(listCalls).toBeGreaterThanOrEqual(2);
     expect(apiPatchMock).toHaveBeenCalledWith("/api/notice-board/read-marker", { throughPostId: newPost.id });
-    expect(host.querySelector('[aria-label="New notice"]')).toBeNull();
+    expect(host.querySelector('[data-slot="notice-board-unread-indicator"]')).toBeNull();
   });
 
   it("does not treat cached posts as presentation proof", async () => {
@@ -178,7 +178,7 @@ describe("Notice Board presentation freshness", () => {
       return Promise.resolve({ posts: [] });
     });
     const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
-    expect(host.querySelector('[aria-label="New notice"]')).not.toBeNull();
+    expect(host.querySelector('[data-slot="notice-board-unread-indicator"]')).not.toBeNull();
     const before = readStateCalls; await advance(30_000);
     expect(readStateCalls).toBeGreaterThan(before);
     expect(apiPatchMock).not.toHaveBeenCalled();
@@ -199,12 +199,12 @@ describe("Notice Board presentation freshness", () => {
       return Promise.resolve({ posts: listCalls === 1 ? [newPost, oldPost] : [oldPost] });
     });
     const host = mount(); await render(<NoticeBoard currentUserId="user-b" />);
-    expect(host.querySelector('[aria-label="New notice"]')).not.toBeNull();
+    expect(host.querySelector('[data-slot="notice-board-unread-indicator"]')).not.toBeNull();
     deletionObserved = true;
     await click(host.querySelector(".notice-board__delete")!);
     expect(apiDeleteMock).toHaveBeenCalledWith(`/api/notice-board/posts/${newPost.id}`);
     expect(queryClient!.getQueryData<NoticeBoardReadState>(noticeBoardDataKeys.readState)).toEqual(afterDelete);
-    expect(host.querySelector('[aria-label="New notice"]')).toBeNull();
+    expect(host.querySelector('[data-slot="notice-board-unread-indicator"]')).toBeNull();
     expect(host.querySelector(".notice-board__post")?.textContent).toContain("Old notice");
   });
 
@@ -222,13 +222,13 @@ describe("Notice Board presentation freshness", () => {
       return Promise.resolve({ posts: [] });
     });
     const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
-    expect(host.querySelector('[aria-label="New notice"]')).not.toBeNull();
+    expect(host.querySelector('[data-slot="notice-board-unread-indicator"]')).not.toBeNull();
     deletionObserved = true;
     await advance(30_000);
     expect(readStateCalls).toBeGreaterThan(1);
     expect(queryClient!.getQueryData<NoticeBoardReadState>(noticeBoardDataKeys.readState)).toEqual(afterDelete);
     await act(async () => { await vi.runOnlyPendingTimersAsync(); await Promise.resolve(); });
-    expect(host.querySelector('[aria-label="New notice"]')).toBeNull();
+    expect(host.querySelector('[data-slot="notice-board-unread-indicator"]')).toBeNull();
     expect(apiPatchMock).not.toHaveBeenCalled();
   });
 
@@ -242,7 +242,7 @@ describe("Notice Board presentation freshness", () => {
     emit(true); await flush();
     expect(apiPatchMock).toHaveBeenCalledWith("/api/notice-board/read-marker", { throughPostId: oldPost.id });
     expect(queryClient!.getQueryData<NoticeBoardReadState>(noticeBoardDataKeys.readState)).toEqual(afterDelete);
-    expect(host.querySelector('[aria-label="New notice"]')).toBeNull();
+    expect(host.querySelector('[data-slot="notice-board-unread-indicator"]')).toBeNull();
   });
 
   it("keeps an edit draft visible when its saved post disappears remotely", async () => {
@@ -271,7 +271,7 @@ describe("Notice Board presentation freshness", () => {
       return Promise.resolve({ posts: [remoteEdit ? remotelyEdited : oldPost] });
     });
     const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
-    expect(host.querySelector<HTMLButtonElement>(".notice-board__toggle")?.getAttribute("aria-expanded")).toBe("true");
+    expect(host.querySelector<HTMLButtonElement>('[data-slot="notice-board-toggle"]')?.getAttribute("aria-expanded")).toBe("true");
     await click(host.querySelector(".notice-board__edit")!);
     await typeIntoEditor(host.querySelector<HTMLElement>('[contenteditable="true"]')!, "Keep this edit draft");
     const editorsAfterEdit = host.querySelectorAll<HTMLElement>('[contenteditable="true"]');
@@ -306,11 +306,11 @@ describe("Notice Board presentation freshness", () => {
     focusManager.setFocused(true); await flush();
     assertActiveDraftsPreserved();
 
-    await click(host.querySelector<HTMLButtonElement>(".notice-board__toggle")!);
-    expect(host.querySelector<HTMLButtonElement>(".notice-board__toggle")?.getAttribute("aria-expanded")).toBe("false");
+    await click(host.querySelector<HTMLButtonElement>('[data-slot="notice-board-toggle"]')!);
+    expect(host.querySelector<HTMLButtonElement>('[data-slot="notice-board-toggle"]')?.getAttribute("aria-expanded")).toBe("false");
     assertActiveDraftsPreserved();
-    await click(host.querySelector<HTMLButtonElement>(".notice-board__toggle")!);
-    expect(host.querySelector<HTMLButtonElement>(".notice-board__toggle")?.getAttribute("aria-expanded")).toBe("true");
+    await click(host.querySelector<HTMLButtonElement>('[data-slot="notice-board-toggle"]')!);
+    expect(host.querySelector<HTMLButtonElement>('[data-slot="notice-board-toggle"]')?.getAttribute("aria-expanded")).toBe("true");
     assertActiveDraftsPreserved();
 
     apiPatchMock.mockResolvedValue({ post: remotelyEdited, readState: state(0, marker(oldPost.id, oldPost.createdAt), remotelyEdited) });
@@ -320,7 +320,7 @@ describe("Notice Board presentation freshness", () => {
     failPresentation = true;
     emit(false); await flush(); emit(true); await flush();
     expect(host.querySelector('[role="alert"]')?.textContent).toContain("temporary list failure");
-    expect(host.querySelector<HTMLButtonElement>(".notice-board__toggle")?.getAttribute("aria-expanded")).toBe("true");
+    expect(host.querySelector<HTMLButtonElement>('[data-slot="notice-board-toggle"]')?.getAttribute("aria-expanded")).toBe("true");
     assertCreateComposerPreserved();
     failPresentation = false;
     emit(false); await flush(); emit(true); await flush();
@@ -627,9 +627,9 @@ describe("Notice Board presentation freshness", () => {
     await advance(30_000);
     await flush();
     expect(queryClient!.getQueryData<NoticeBoardPost[]>(noticeBoardDataKeys.posts)?.[0]?.id).toBe(newPost.id);
-    await click(host.querySelector(".notice-board__toggle")!);
+    await click(host.querySelector('[data-slot="notice-board-toggle"]')!);
     await advance(30_000);
-    expect(host.querySelector('[aria-label="New notice"]')).toBeNull();
+    expect(host.querySelector('[data-slot="notice-board-unread-indicator"]')).toBeNull();
   });
 
   it("settles create and edit envelopes into both caches without a read-state follow-up", async () => {

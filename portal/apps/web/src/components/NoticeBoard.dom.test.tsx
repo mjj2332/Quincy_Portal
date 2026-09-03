@@ -190,7 +190,7 @@ describe("NoticeBoard disclosure and polling", () => {
     });
     const host = mount();
     await render(<NoticeBoard currentUserId="user-a" />);
-    const toggle = host.querySelector<HTMLButtonElement>(".notice-board__toggle")!;
+    const toggle = host.querySelector<HTMLButtonElement>('[data-slot="notice-board-toggle"]')!;
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
     expect(apiGetMock).toHaveBeenCalledWith("/api/notice-board/posts?limit=50");
     expect(apiGetMock.mock.calls.some(([path]) => path.includes("latest"))).toBe(false);
@@ -211,7 +211,7 @@ describe("NoticeBoard disclosure and polling", () => {
     root = null;
     const remounted = mount();
     await render(<NoticeBoard currentUserId="user-a" />);
-    expect(remounted.querySelector<HTMLButtonElement>(".notice-board__toggle")?.getAttribute("aria-expanded")).toBe("false");
+    expect(remounted.querySelector<HTMLButtonElement>('[data-slot="notice-board-toggle"]')?.getAttribute("aria-expanded")).toBe("false");
   });
 
   it("does not write the collapse key on mount when no preference is stored, even under StrictMode", async () => {
@@ -226,7 +226,7 @@ describe("NoticeBoard disclosure and polling", () => {
     } });
     const host = mount();
     await render(<StrictMode><NoticeBoard currentUserId="user-a" /></StrictMode>);
-    const toggle = host.querySelector<HTMLButtonElement>(".notice-board__toggle")!;
+    const toggle = host.querySelector<HTMLButtonElement>('[data-slot="notice-board-toggle"]')!;
     expect(toggle).not.toBeNull();
     expect(setItemSpy.mock.calls.some(([key]) => key === "quincy:dashboard:noticeboard:v2")).toBe(false);
 
@@ -248,7 +248,7 @@ describe("NoticeBoard disclosure and polling", () => {
     apiGetMock.mockResolvedValue({ posts: [oldPost] });
     const host = mount();
     await render(<NoticeBoard currentUserId="user-a" />);
-    expect(host.querySelector<HTMLButtonElement>(".notice-board__toggle")?.getAttribute("aria-expanded")).toBe("true");
+    expect(host.querySelector<HTMLButtonElement>('[data-slot="notice-board-toggle"]')?.getAttribute("aria-expanded")).toBe("true");
     expect(getItemSpy.mock.calls.some(([key]) => key === OLD_KEY)).toBe(false);
     expect(setItemSpy.mock.calls.some(([key]) => key === OLD_KEY)).toBe(false);
     expect(removeItemSpy.mock.calls.some(([key]) => key === OLD_KEY)).toBe(false);
@@ -263,7 +263,7 @@ describe("NoticeBoard disclosure and polling", () => {
       : Promise.resolve({ posts: [] }));
     const host = mount();
     await render(<NoticeBoard currentUserId="user-a" />);
-    expect(host.querySelector('[aria-label="New notice"]')).not.toBeNull();
+    expect(host.querySelector('[data-slot="notice-board-unread-indicator"]')).not.toBeNull();
   });
 
   it("does not write a seen cursor when an expanded list tick succeeds", async () => {
@@ -279,7 +279,7 @@ describe("NoticeBoard disclosure and polling", () => {
     await render(<NoticeBoard currentUserId="user-a" />);
     await advance(30_000);
     expect(window.localStorage.getItem("quincy:dashboard:noticeboard:seen:user-a")).toBe(oldPost.id);
-    expect(host.querySelector('[aria-label="New notice"]')).not.toBeNull();
+    expect(host.querySelector('[data-slot="notice-board-unread-indicator"]')).not.toBeNull();
   });
 
   it("keeps a stale unread badge when the fresh expand fetch fails", async () => {
@@ -290,9 +290,9 @@ describe("NoticeBoard disclosure and polling", () => {
       : Promise.reject(new Error("offline")));
     const host = mount();
     await render(<NoticeBoard currentUserId="user-a" />);
-    expect(host.querySelector('[aria-label="New notice"]')).not.toBeNull();
-    await click(host.querySelector(".notice-board__toggle")!);
-    expect(host.querySelector('[aria-label="New notice"]')).not.toBeNull();
+    expect(host.querySelector('[data-slot="notice-board-unread-indicator"]')).not.toBeNull();
+    await click(host.querySelector('[data-slot="notice-board-toggle"]')!);
+    expect(host.querySelector('[data-slot="notice-board-unread-indicator"]')).not.toBeNull();
   });
 
   it("leaves legacy seen keys untouched and only offers author controls", async () => {
