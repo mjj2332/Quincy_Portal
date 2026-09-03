@@ -210,7 +210,6 @@ button { font-family: var(--font-sans); }
    --------------------------------------------------------------------- */
 .work { display: grid; grid-template-columns: 288px 1fr; flex: 1; min-height: 0; }
 .rail { border-right: 1px solid var(--border-hairline); background: var(--paper-000); position: sticky; top: 64px; align-self: start; max-height: calc(100vh - 64px); overflow: auto; }
-.project-collaboration-summary .member em { margin-left: 6px; color: var(--signal-caution-text); font-style: normal; }
 /* Panel-level properties (z-index, width, border, background, shadow) now owned by
    `AnchoredPopover` (§7.3/§7.4) — this class stays only as the content wrapper / test hook. */
 .project-team-picker > input { display: block; width: calc(100% - var(--space-4)); margin: var(--space-2); padding: var(--space-2) var(--space-3); border: var(--border-width-hair) solid var(--border-hairline); border-radius: var(--radius-sm); background: var(--paper-000); color: var(--text-primary); font: var(--type-body); font-size: var(--text-sm); }
@@ -689,7 +688,6 @@ button { font-family: var(--font-sans); }
      subtask popover's own equivalent override is `buttonClasses`' `max-[721px]:min-h-[44px]`
      now — TB8-07 slice 4b — not a hand-written rule here.) Not repeated here. */
   .project-team-picker > input { min-height: 44px; } /* 44px touch target — WCAG 2.5.5 Enhanced / HIG, not a spacing token */
-  .project-collaboration-summary__team { grid-template-columns: 1fr; }
   .app--impersonating .worktools { top: 100px; }
   .viewer__shortcuts { display: none; }
   .viewer__panel-trigger { display: none; }
@@ -815,38 +813,12 @@ button { font-family: var(--font-sans); }
 
 /* Project collaboration and deletion -------------------------------- */
 .project-collaboration__wrap { display: contents; --project-collaboration-top: calc(64px + env(safe-area-inset-top) + 22px); --project-collaboration-bottom: calc(env(safe-area-inset-bottom) + 12px); --project-collaboration-max-height: calc(100dvh - 64px - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 34px); }
-.project-collaboration__toggle { position: fixed; top: var(--project-collaboration-top); right: calc(env(safe-area-inset-right) + 12px); z-index: 70; max-height: var(--project-collaboration-max-height); writing-mode: vertical-rl; padding: 14px 9px; border: 1px solid var(--border-hairline); background: var(--paper-050); box-shadow: var(--shadow-sm); color: var(--text-primary); font: var(--type-label); font-size: 10px; letter-spacing: var(--tracking-wide); text-transform: uppercase; cursor: pointer; }
-.project-collaboration__unread { display: inline-grid; place-items: center; min-width: 18px; min-height: 18px; margin-top: 7px; border-radius: 999px; background: var(--signal-red, #7a2420); color: var(--paper-000); font-size: 9px; line-height: 1; }
+.project-collaboration__toggle { position: fixed; top: var(--project-collaboration-top); right: calc(env(safe-area-inset-right) + 12px); z-index: 70; max-height: var(--project-collaboration-max-height); writing-mode: vertical-rl; padding: 14px 9px; border: 1px solid var(--border-hairline); background: var(--paper-050); box-shadow: var(--shadow-sm); color: var(--text-primary); font: var(--type-label); font-size: var(--text-2xs); letter-spacing: var(--tracking-wide); text-transform: uppercase; cursor: pointer; }
 .project-collaboration { position: fixed; top: var(--project-collaboration-top); right: calc(env(safe-area-inset-right) + 12px); bottom: var(--project-collaboration-bottom); z-index: 70; width: min(460px, calc(100vw - env(safe-area-inset-right) - 24px)); max-height: var(--project-collaboration-max-height); border: 1px solid var(--border-hairline); background: var(--paper-050); box-shadow: var(--shadow-lg); }
 .project-collaboration--overlay { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
-.project-collaboration__head { display: flex; align-items: start; justify-content: space-between; gap: var(--space-3); }
-.project-collaboration--overlay .project-collaboration__head { flex: none; padding: var(--space-5); border-bottom: 1px solid var(--border-hairline); background: var(--paper-050); }
-.project-collaboration__head h2 { margin: 5px 0 0; font: var(--type-h3); font-size: 25px; }
-.project-collaboration__scroll { display: grid; align-content: start; gap: var(--space-4); min-height: 0; flex: 1; overflow: auto; padding: var(--space-5); }
-.project-collaboration-only { display: grid; gap: var(--space-5); }
-.project-collaboration-summary { display: grid; gap: var(--space-3); padding: var(--space-5); border: 1px solid var(--border-hairline); background: var(--paper-000); }
-.project-collaboration-summary h2 { margin: 3px 0 0; font: var(--type-h3); font-size: 24px; }
-.project-collaboration-summary__facts, .project-collaboration-summary__team { display: grid; gap: var(--space-3); }
-.project-collaboration-summary__team { grid-template-columns: repeat(2, minmax(0, 1fr)); padding-top: var(--space-3); border-top: 1px solid var(--border-hairline); }
-.project-collaboration-summary .member { padding: 5px 0; font-size: 13px; }
 .project-collaboration--standalone { position: static; display: grid; align-content: start; gap: var(--space-4); width: auto; max-height: none; min-height: 0; overflow: auto; padding: var(--space-5); box-shadow: var(--shadow-sm); }
 @media (min-width: 1080px) { .project-collaboration:not(.project-collaboration--standalone) { width: min(560px, calc(100vw - env(safe-area-inset-right) - 24px)); } }
-
-/* Project collaboration views ---------------------------------------- */
-.project-collaboration__tabs { display: flex; flex: none; gap: 2px; border-bottom: 1px solid var(--border-hairline); background: var(--paper-050); }
-.project-collaboration__tab { position: relative; display: inline-flex; align-items: center; gap: var(--space-2); min-height: 48px; padding: 8px 12px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--text-muted); font: var(--type-label); font-size: 11px; letter-spacing: var(--tracking-wide); text-transform: uppercase; cursor: pointer; }
-.project-collaboration__tab:hover { color: var(--text-primary); background: var(--paper-100); }
-.project-collaboration__tab.is-active { border-bottom-color: var(--ink-900); color: var(--text-primary); }
-.project-collaboration__tab:focus-visible { outline: 2px solid var(--ink-900); outline-offset: 2px; }
-.project-collaboration__panel { min-width: 0; }
-.project-collaboration__panel[hidden] { display: none; }
-.project-collaboration--standalone .project-collaboration__tabs { margin: 0 calc(var(--space-5) * -1); padding: 0 var(--space-5); }
-.project-collaboration--standalone .project-collaboration__panel { min-width: 0; }
-@media (max-width: 720px) {
-  .project-collaboration--standalone .project-collaboration__tabs { margin: 0 calc(var(--space-4) * -1); padding: 0 var(--space-4); }
-  .project-collaboration__tab { min-height: 48px; flex: 1 0 auto; justify-content: center; }
-}
-@media (max-width: 720px) { .project-collaboration__wrap { --project-collaboration-top: calc(58px + env(safe-area-inset-top) + 12px); --project-collaboration-bottom: calc(env(safe-area-inset-bottom) + 10px); --project-collaboration-max-height: calc(100dvh - 58px - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 22px); } }
+@media (max-width: 720px) { .project-collaboration__wrap { --project-collaboration-top: calc(58px + env(safe-area-inset-top) + 12px); --project-collaboration-bottom: calc(env(safe-area-inset-bottom) + 10px); --project-collaboration-max-height: calc(100dvh - 58px - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 22px); } .project-collaboration__toggle { min-width: 44px; } }
 .app--impersonating .project-collaboration__wrap { --project-collaboration-top: calc(64px + env(safe-area-inset-top) + 22px + 42px); --project-collaboration-max-height: calc(100dvh - 64px - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 34px - 42px); }
 @media (max-width: 720px) { .app--impersonating .project-collaboration__wrap { --project-collaboration-top: calc(58px + env(safe-area-inset-top) + 12px + 42px); --project-collaboration-max-height: calc(100dvh - 58px - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 22px - 42px); } }
 .impersonation-invalidated { min-height: 100vh; padding: 42px var(--space-6) var(--space-6); display: grid; place-items: center; color: var(--signal-critical); font: var(--type-body-lg); text-align: center; }

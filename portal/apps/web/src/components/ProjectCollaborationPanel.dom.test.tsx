@@ -275,12 +275,12 @@ describe("ProjectCollaborationPanel", () => {
     const host = mount(); await render(<ProjectCollaborationPanel projectId={projectId} />);
     const overlay = host.querySelector<HTMLElement>(".project-collaboration")!;
     expect(overlay.classList.contains("project-collaboration--overlay")).toBe(true);
-    expect(overlay.firstElementChild).toBe(overlay.querySelector(".project-collaboration__head"));
-    const scroll = overlay.querySelector<HTMLElement>(".project-collaboration__scroll")!;
+    expect(overlay.firstElementChild).toBe(overlay.querySelector('[data-testid="project-collaboration-head"]'));
+    const scroll = overlay.querySelector<HTMLElement>('[data-testid="project-collaboration-scroll"]')!;
     expect(overlay.children[2]).toBe(scroll); expect(scroll.querySelector('[aria-label="Project checklist"]')).not.toBeNull(); expect(scroll.querySelector("[data-testid=discussion-composer]")).not.toBeNull();
     await unmount(); host.remove(); const standalone = mount(); await render(<ProjectCollaborationPanel projectId={projectId} mode="standalone" />);
     const panel = standalone.querySelector<HTMLElement>(".project-collaboration")!;
-    expect(panel.classList.contains("project-collaboration--overlay")).toBe(false); expect(panel.querySelector(".project-collaboration__scroll")).toBeNull(); expect(panel.querySelector('[aria-label="Project checklist"]')).not.toBeNull();
+    expect(panel.classList.contains("project-collaboration--overlay")).toBe(false); expect(panel.querySelector('[data-testid="project-collaboration-scroll"]')).toBeNull(); expect(panel.querySelector('[aria-label="Project checklist"]')).not.toBeNull();
   });
 
   it("renders Discussion and Activity as persistent semantic tabs with roving keyboard focus", async () => {
@@ -338,7 +338,7 @@ describe("ProjectCollaborationPanel", () => {
       const anchor = host.querySelector<HTMLElement>("[data-testid=discussion-read-anchor]")!;
       const visibleRect = () => ({ left: 0, top: 0, right: 100, bottom: 100, width: 100, height: 100 });
       Object.defineProperty(anchor, "getBoundingClientRect", { configurable: true, value: visibleRect });
-      Object.defineProperty(host.querySelector<HTMLElement>(".project-collaboration__scroll")!, "getBoundingClientRect", { configurable: true, value: visibleRect });
+      Object.defineProperty(host.querySelector<HTMLElement>('[data-testid="project-collaboration-scroll"]')!, "getBoundingClientRect", { configurable: true, value: visibleRect });
       window.dispatchEvent(new Event("scroll"));
       await flush(20);
       expect(apiPatchMock).toHaveBeenCalledWith("/api/projects/" + projectId + "/comment-read-marker", { throughCommentId: "new-head" });
@@ -356,7 +356,7 @@ describe("ProjectCollaborationPanel", () => {
     const activity = () => host.querySelector<HTMLButtonElement>('[role="tab"][aria-controls$="-activity-panel"]')!;
     await click(activity());
     expect(activity().getAttribute("aria-selected")).toBe("true");
-    const hide = host.querySelector<HTMLButtonElement>(".project-collaboration__head button")!;
+    const hide = host.querySelector<HTMLButtonElement>('[data-testid="project-collaboration-head"] button')!;
     await click(hide); await click(host.querySelector<HTMLButtonElement>(".project-collaboration__toggle")!);
     expect(host.querySelector<HTMLButtonElement>('[role="tab"][aria-controls$="-activity-panel"]')?.getAttribute("aria-selected")).toBe("true");
     await render(<ProjectCollaborationPanel projectId={projectId} openSignal={2} onOpenSignalConsumed={(signal) => consumed.push(signal)} />);
@@ -423,14 +423,14 @@ describe("ProjectCollaborationPanel", () => {
     const consumed: number[] = [];
     const host = mount();
     await render(<ProjectCollaborationPanel projectId={projectId} openSignal={1} onOpenSignalConsumed={(signal) => consumed.push(signal)} />);
-    expect(consumed).toEqual([1]); expect(document.activeElement).toBe(host.querySelector(".project-collaboration__head button"));
+    expect(consumed).toEqual([1]); expect(document.activeElement).toBe(host.querySelector('[data-testid="project-collaboration-head"] button'));
     await render(<ProjectCollaborationPanel projectId={projectId} openSignal={2} onOpenSignalConsumed={(signal) => consumed.push(signal)} />);
-    expect(consumed).toEqual([1, 2]); expect(document.activeElement).toBe(host.querySelector(".project-collaboration__head button"));
-    await click(host.querySelector<HTMLButtonElement>(".project-collaboration__head button")!);
+    expect(consumed).toEqual([1, 2]); expect(document.activeElement).toBe(host.querySelector('[data-testid="project-collaboration-head"] button'));
+    await click(host.querySelector<HTMLButtonElement>('[data-testid="project-collaboration-head"] button')!);
     expect(host.querySelector(".project-collaboration")).toBeNull();
     await waitForTimer();
     await render(<ProjectCollaborationPanel projectId={projectId} openSignal={3} onOpenSignalConsumed={(signal) => consumed.push(signal)} />);
-    expect(host.querySelector(".project-collaboration")).not.toBeNull(); expect(consumed).toEqual([1, 2, 3]); expect(document.activeElement).toBe(host.querySelector(".project-collaboration__head button"));
+    expect(host.querySelector(".project-collaboration")).not.toBeNull(); expect(consumed).toEqual([1, 2, 3]); expect(document.activeElement).toBe(host.querySelector('[data-testid="project-collaboration-head"] button'));
   });
 
   it("only closes on Escape while panel focus owns an unprevented event", async () => {
@@ -446,7 +446,7 @@ describe("ProjectCollaborationPanel", () => {
     editor.addEventListener("keydown", (event) => event.preventDefault(), { once: true });
     await act(async () => { editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await Promise.resolve(); });
     expect(host.querySelector(".project-collaboration")).toBe(panel);
-    host.querySelector<HTMLButtonElement>(".project-collaboration__head button")!.focus(); await escape();
+    host.querySelector<HTMLButtonElement>('[data-testid="project-collaboration-head"] button')!.focus(); await escape();
     await waitForTimer();
     expect(host.querySelector(".project-collaboration")).toBeNull();
   });
@@ -454,9 +454,9 @@ describe("ProjectCollaborationPanel", () => {
   it("shows the compact capped unread count on the closed collaboration toggle", async () => {
     apiGetMock.mockImplementation((path) => path.includes("comment-read-marker") ? Promise.resolve({ ...readState(), unreadCount: 123 }) : path.includes("subtasks") ? Promise.resolve({ subtasks: [] }) : Promise.resolve(comments()));
     const host = mount(); await render(<ProjectCollaborationPanel projectId={projectId} />);
-    await click(host.querySelector<HTMLButtonElement>(".project-collaboration__head button")!); await flush();
+    await click(host.querySelector<HTMLButtonElement>('[data-testid="project-collaboration-head"] button')!); await flush();
     const toggle = host.querySelector<HTMLButtonElement>(".project-collaboration__toggle")!;
-    expect(toggle.querySelector(".project-collaboration__unread")?.textContent).toBe("99+"); expect(toggle.getAttribute("aria-label")).toContain("123 unread comments");
+    expect(toggle.querySelector('[data-testid="project-collaboration-unread"]')?.textContent).toBe("99+"); expect(toggle.getAttribute("aria-label")).toContain("123 unread comments");
   });
 
   it("keeps the panel open when Topbar user and notification menus consume Escape", async () => {
@@ -657,7 +657,7 @@ describe("ProjectCollaborationPanel", () => {
     await render(<RerenderingPanel />);
     const initialCommentGets = pendingComments.length;
     const anchor = host.querySelector<HTMLElement>("[data-testid=discussion-read-anchor]")!;
-    const scroll = host.querySelector<HTMLElement>(".project-collaboration__scroll")!;
+    const scroll = host.querySelector<HTMLElement>('[data-testid="project-collaboration-scroll"]')!;
     Object.defineProperty(anchor, "getBoundingClientRect", { configurable: true, value: () => ({ left: 0, top: 0, right: 100, bottom: 20, width: 100, height: 20 }) });
     Object.defineProperty(scroll, "getBoundingClientRect", { configurable: true, value: () => ({ left: 0, top: 0, right: 100, bottom: 900, width: 100, height: 900 }) });
     callback?.([{ isIntersecting: true, intersectionRatio: 1, boundingClientRect: anchor.getBoundingClientRect() } as IntersectionObserverEntry] as IntersectionObserverEntry[], {} as IntersectionObserver);
@@ -699,7 +699,7 @@ describe("ProjectCollaborationPanel", () => {
     const host = mount();
     await render(<StrictMode><ProjectCollaborationPanel projectId={projectId} /></StrictMode>);
     const anchor = host.querySelector<HTMLElement>("[data-testid=discussion-read-anchor]")!;
-    const scroll = host.querySelector<HTMLElement>(".project-collaboration__scroll")!;
+    const scroll = host.querySelector<HTMLElement>('[data-testid="project-collaboration-scroll"]')!;
     Object.defineProperty(anchor, "getBoundingClientRect", { configurable: true, value: () => ({ left: 0, top: 0, right: 100, bottom: 20, width: 100, height: 20 }) });
     Object.defineProperty(scroll, "getBoundingClientRect", { configurable: true, value: () => ({ left: 0, top: 0, right: 100, bottom: 900, width: 100, height: 900 }) });
     callback?.([{ isIntersecting: true, intersectionRatio: 1, boundingClientRect: anchor.getBoundingClientRect() } as IntersectionObserverEntry] as IntersectionObserverEntry[], {} as IntersectionObserver);

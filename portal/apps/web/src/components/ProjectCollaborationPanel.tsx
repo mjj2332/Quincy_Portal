@@ -1,8 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSession } from "../lib/auth";
+import { cn } from "../lib/utils";
 import { ProjectDiscussionThread, type ProjectDiscussionAccessFailureResource } from "./ProjectDiscussionThread";
 import { ProjectActivityView } from "./ProjectActivityView";
 import { SubtaskChecklist } from "./SubtaskChecklist";
+import { buttonClasses } from "./ui/button";
+import { Eyebrow } from "./ui/eyebrow";
+import { TAB_BASE, TAB_IDLE, TAB_SELECTED } from "./ui/tabs";
+
+const UNREAD_BADGE =
+  "inline-grid place-items-center min-w-[20px] min-h-[20px] mt-[7px] rounded-[var(--radius-pill)] " +
+  "bg-destructive text-[var(--paper-000)] [font:var(--weight-regular)_var(--text-2xs)/1_var(--font-sans)]";
 
 type AccessFailureResource = ProjectDiscussionAccessFailureResource | "activity";
 type CollaborationView = "discussion" | "activity";
@@ -61,7 +69,11 @@ export function ProjectCollaborationPanel({ projectId, openSignal, onOpenSignalC
   const renderDiscussion = ({ content, project, scrollRootRef }: Parameters<NonNullable<React.ComponentProps<typeof ProjectDiscussionThread>["children"]>>[0]) => {
     const unreadLabel = unreadCount > 99 ? "99+" : String(unreadCount);
     const toggleLabel = open ? "Hide collaboration" : unreadCount > 0 ? `Show collaboration (${unreadCount} unread comment${unreadCount === 1 ? "" : "s"})` : "Show collaboration";
-    const headerMarkup = <div className="project-collaboration__head"><div><div className="ey">Collaboration</div><h2 className="serif">{project?.street ?? "Project comments"}</h2></div>{overlay && <button ref={closeRef} type="button" className="button button--secondary" onClick={close}>Hide ›</button>}</div>;
+    const headClass = cn(
+      "flex items-start justify-between gap-[var(--space-3)]",
+      overlay && "flex-none p-[var(--space-5)] [border-bottom-style:solid] border-b-[length:var(--border-width-hair)] border-b-border bg-[var(--paper-050)]",
+    );
+    const headerMarkup = <div data-testid="project-collaboration-head" className={headClass}><div><Eyebrow>Collaboration</Eyebrow><h2 className="serif [font:var(--type-h3)]">{project?.street ?? "Project comments"}</h2></div>{overlay && <button ref={closeRef} type="button" className={buttonClasses("secondary")} onClick={close}>Hide ›</button>}</div>;
     const tabId = (view: CollaborationView) => `project-collaboration-${projectId}-${view}-tab`;
     const panelId = (view: CollaborationView) => `project-collaboration-${projectId}-${view}-panel`;
     const tabIndex = (view: CollaborationView) => activeView === view ? 0 : -1;
@@ -81,16 +93,21 @@ export function ProjectCollaborationPanel({ projectId, openSignal, onOpenSignalC
       event.preventDefault();
       selectTab(views[nextIndex]!, true);
     };
-    const tabs = <div className="project-collaboration__tabs" role="tablist" aria-label="Project collaboration views">
-      <button ref={(element) => { tabRefs.current[0] = element; }} className={`project-collaboration__tab${activeView === "discussion" ? " is-active" : ""}`} type="button" role="tab" aria-selected={activeView === "discussion"} aria-controls={panelId("discussion")} id={tabId("discussion")} tabIndex={tabIndex("discussion")} onClick={() => selectTab("discussion")} onKeyDown={(event) => onTabKeyDown(event, "discussion")}>Discussion{unreadCount > 0 && <span className="project-collaboration__unread" aria-hidden="true">{unreadLabel}</span>}</button>
-      <button ref={(element) => { tabRefs.current[1] = element; }} className={`project-collaboration__tab${activeView === "activity" ? " is-active" : ""}`} type="button" role="tab" aria-selected={activeView === "activity"} aria-controls={panelId("activity")} id={tabId("activity")} tabIndex={tabIndex("activity")} onClick={() => selectTab("activity")} onKeyDown={(event) => onTabKeyDown(event, "activity")}>Activity</button>
+    const tabsStripClass = cn(
+      "flex flex-none gap-[var(--space-5)] bg-[var(--paper-050)] [border-bottom-style:solid] border-b-[length:var(--border-width-hair)] border-b-border",
+      "max-[721px]:*:flex-1 max-[721px]:*:justify-center",
+      !overlay && "-mx-[var(--space-5)] px-[var(--space-5)] max-[721px]:-mx-[var(--space-4)] max-[721px]:px-[var(--space-4)]",
+    );
+    const tabs = <div className={tabsStripClass} role="tablist" aria-label="Project collaboration views">
+      <button ref={(element) => { tabRefs.current[0] = element; }} className={cn(TAB_BASE, activeView === "discussion" ? TAB_SELECTED : TAB_IDLE)} type="button" role="tab" aria-selected={activeView === "discussion"} aria-controls={panelId("discussion")} id={tabId("discussion")} tabIndex={tabIndex("discussion")} onClick={() => selectTab("discussion")} onKeyDown={(event) => onTabKeyDown(event, "discussion")}>Discussion{unreadCount > 0 && <span data-testid="project-collaboration-unread" className={UNREAD_BADGE} aria-hidden="true">{unreadLabel}</span>}</button>
+      <button ref={(element) => { tabRefs.current[1] = element; }} className={cn(TAB_BASE, activeView === "activity" ? TAB_SELECTED : TAB_IDLE)} type="button" role="tab" aria-selected={activeView === "activity"} aria-controls={panelId("activity")} id={tabId("activity")} tabIndex={tabIndex("activity")} onClick={() => selectTab("activity")} onKeyDown={(event) => onTabKeyDown(event, "activity")}>Activity</button>
     </div>;
     const panels = <>
-      <div className="project-collaboration__panel" role="tabpanel" id={panelId("discussion")} aria-labelledby={tabId("discussion")} hidden={activeView !== "discussion"}>{content}</div>
-      <div className="project-collaboration__panel" role="tabpanel" id={panelId("activity")} aria-labelledby={tabId("activity")} hidden={activeView !== "activity"}><ProjectActivityView projectId={projectId} enabled={open && activeView === "activity"} onAccessFailure={onAccessFailure} /></div>
+      <div className="min-w-0" role="tabpanel" id={panelId("discussion")} aria-labelledby={tabId("discussion")} hidden={activeView !== "discussion"}>{content}</div>
+      <div className="min-w-0" role="tabpanel" id={panelId("activity")} aria-labelledby={tabId("activity")} hidden={activeView !== "activity"}><ProjectActivityView projectId={projectId} enabled={open && activeView === "activity"} onAccessFailure={onAccessFailure} /></div>
     </>;
     if (!overlay) return <section className="project-collaboration project-collaboration--standalone" aria-label="Project collaboration">{headerMarkup}{tabs}{panels}</section>;
-    return <section className="project-collaboration__wrap"><button ref={triggerRef} type="button" className="project-collaboration__toggle" aria-label={toggleLabel} aria-expanded={open} aria-controls={`project-collaboration-${projectId}`} onClick={() => setOverlayOpen((value) => !value)}><span aria-hidden="true">Collaboration</span>{unreadCount > 0 && <span className="project-collaboration__unread" aria-hidden="true">{unreadLabel}</span>}</button>{open && <aside ref={panelRootRef} id={`project-collaboration-${projectId}`} className="project-collaboration project-collaboration--overlay" aria-label="Project collaboration">{headerMarkup}{tabs}<div ref={scrollRootRef} className="project-collaboration__scroll">{panels}</div></aside>}</section>;
+    return <section className="project-collaboration__wrap"><button ref={triggerRef} type="button" className="project-collaboration__toggle" aria-label={toggleLabel} aria-expanded={open} aria-controls={`project-collaboration-${projectId}`} onClick={() => setOverlayOpen((value) => !value)}><span aria-hidden="true">Collaboration</span>{unreadCount > 0 && <span data-testid="project-collaboration-unread" className={UNREAD_BADGE} aria-hidden="true">{unreadLabel}</span>}</button>{open && <aside ref={panelRootRef} id={`project-collaboration-${projectId}`} className="project-collaboration project-collaboration--overlay" aria-label="Project collaboration">{headerMarkup}{tabs}<div ref={scrollRootRef} data-testid="project-collaboration-scroll" className="grid content-start gap-[var(--space-4)] min-h-0 flex-1 overflow-auto p-[var(--space-5)]">{panels}</div></aside>}</section>;
   };
 
   return <ProjectDiscussionThread
