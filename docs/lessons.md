@@ -1135,3 +1135,66 @@ matching trap: Tailwind opacity modifiers (`bg-signal-positive/8`) compute to `c
 `oklab()`, which a naive `rgba()` regex cannot parse. Composite through a canvas instead —
 `fillStyle = base; fillRect; fillStyle = colour; fillRect; getImageData` — which resolves any
 colour space and alpha to the actual painted sRGB pixel.
+
+## The unlayered-cascade trap has a second door: `tokens/base.css`, via shorthand (TB8-05, 2026-09-03)
+
+`docs/Subagent-Frontend-Orchestration.md` states the cascade rule in terms of `app.css` — legacy
+rules there beat Tailwind utilities because `index.css` imports it outside any layer. TB8-05 hit
+the same trap through a **different file**, and the mechanism has a second half worth naming.
+
+`index.css` imports *five token files plus `fonts.css`* unlayered, not just `app.css`:
+
+```css
+@layer theme, base, components, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+@import "./tokens/colors.css";      /* ← all of these are unlayered */
+@import "./tokens/spacing.css";
+@import "./tokens/typography.css";
+@import "./tokens/tailwind.css";
+@import "./tokens/base.css";
+@import "./fonts.css";
+@import "./app.css";
+```
+
+`tokens/base.css:25` declares a global `:focus-visible { outline: var(--border-width-bold) solid
+var(--focus-ring); outline-offset: 2px; }`. Being unlayered, it beats every layered utility.
+
+The second half is the part that bites: **it is a shorthand.** `outline` sets `outline-color`,
+so it does not merely lose a specificity contest with `focus-visible:outline-on-inverse` — it
+*resets the longhand the utility sets*. On the ink impersonation banner the focus ring therefore
+stayed `--focus-ring` (ink-on-ink, invisible) — the exact defect the release was fixing, in its
+own fix. The working form is the important modifier:
+
+```
+focus-visible:!outline-on-inverse
+```
+
+**Rules.** (1) The unlayered set is every non-`layer()` `@import` in `index.css`, not `app.css`
+alone — grep the whole list before assuming a utility will win. (2) A shorthand in an unlayered
+rule silently resets longhands that layered utilities set, so an overriding utility for any
+component of that shorthand needs `!`. Verify by reading the *computed* value at the live element
+in the state that matters (`:focus-visible` can be forced), never by reading the class list.
+
+## A grep gate that cannot fail is not a gate — twice in two releases (TB8-05, 2026-09-03)
+
+TB8-04 shipped a verification gate that passed vacuously; TB8-05 authored **two more** and a test
+that did the same, so this is a pattern, not an accident:
+
+- Two of the plan's seven `grep` gates matched their own **explanatory comments** rather than the
+  selectors they were meant to prove gone. Retiring the CSS while keeping a comment that names it
+  left the gate green either way. Fix: strip comments before grepping CSS
+  (`perl -0pe 's{/\*.*?\*/}{}gs'`), and require the quoted-string context for a class gate
+  (`grep -rnE '"[^"]*button--text'`) so a prose mention cannot satisfy it.
+- A test asserting an unmount guard checked `let active = true;` and the cleanup `return`, both of
+  which survive deleting **every** `if (active)` guard in the effect. Fix: assert each guarded
+  continuation by name plus `toHaveLength(3)` on `/if \(active\)/g`.
+
+React 19 makes the runtime version of this worse: it **silently ignores** post-unmount state
+updates instead of warning, so a runtime unmount-safety test observes nothing whether the guard is
+present or not. (Note `portal/package.json` pins React **19.2.8**; `CLAUDE.md`'s "18.3.1 baseline"
+is stale.)
+
+**Rule: prove every gate can fail before trusting it.** Plant the thing it looks for, confirm
+non-zero exit, remove it, confirm zero — for greps and assertions alike. A gate authored and never
+falsified is decoration. Budget this as part of writing the gate, not as a later audit.
