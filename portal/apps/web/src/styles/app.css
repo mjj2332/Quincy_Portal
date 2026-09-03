@@ -461,8 +461,6 @@ button { font-family: var(--font-sans); }
 .mention-autocomplete__option:focus-visible { outline: var(--border-width-bold) solid var(--ink-900); outline-offset: -2px; }
 .mention-autocomplete__option small { color: var(--text-muted); text-transform: capitalize; }
 .mention-autocomplete__status { padding: var(--space-2); color: var(--text-muted); font-size: var(--text-xs); }
-.kcol.is-over { background: var(--paper-100); }
-.kcol.is-over .kcol__head { background: var(--paper-100); }
 .kcol__head > .row { flex: 1 1 auto; min-width: 0; }
 .kcard-wrap { position: relative; background: var(--paper-000); border: 1px solid var(--border-hairline); transition: background var(--dur-fast), border-color var(--dur-fast); }
 .kcard-wrap:hover { background: var(--paper-100); border-color: var(--greige-300); }
