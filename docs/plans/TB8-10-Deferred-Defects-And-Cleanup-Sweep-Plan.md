@@ -97,6 +97,7 @@ explicitly *not* claimed as passes. They are recorded here so the gap has an own
 |---|---|---|---|
 | TB8-04 | §10.2 items 3 and 5 | The stacked table reapplies every ARIA role it loses to `display: block`; `FieldError` wires `role="alert"` + `aria-invalid`/`aria-describedby` | What a screen reader actually announces |
 | TB8-05 | §10.2 items 1–17 (accessible name) | The computed `aria-label`, and the accname precedence rule that `aria-label` outranks a wrapping `<label>` | Whether the checkbox is announced as "Project deadline reminder emails" |
+| TB8-06 | §7 item 9 (popover step change) | `data-step`, the `radiogroup`/`listbox` roles and `aria-checked`/`aria-selected` are wired and asserted in DOM tests | Whether a screen reader announces the stage→position step transition |
 
 Both were recorded on the **TB5C precedent**, where the owner waived physical-phone and real-AT
 checks. Closing this debt needs assistive technology no agent in this pipeline can drive, so it is

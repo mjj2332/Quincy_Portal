@@ -1198,3 +1198,49 @@ is stale.)
 **Rule: prove every gate can fail before trusting it.** Plant the thing it looks for, confirm
 non-zero exit, remove it, confirm zero — for greps and assertions alike. A gate authored and never
 falsified is decoration. Budget this as part of writing the gate, not as a later audit.
+
+## A media query outside the range you read will invert your finding (TB8-06, 2026-09-03)
+
+TB8-06's draft plan led with a touch-target defect: the Kanban board's drag handle (36px), reorder
+arrows (28×26) and move-to button (30px) were "the board's primary reorder affordances and its
+smallest targets, and they are the ones used on a phone." The plan built a whole evidence section
+on it, and Sol's round-1 review demolished it in one line.
+
+`app.css` had a `@media (pointer: coarse), (max-width: 640px)` block **six lines past the end of the
+range the plan had read**, setting every one of those controls to 44px. The small geometry applies
+only to fine-pointer desktop, where WCAG 2.5.5 Enhanced is not the operative bar and 2.5.8 AA
+(24px) is comfortably met. There was no defect. The finding was not merely wrong, it was backwards:
+the build's job became to **preserve** that block, not to fix it.
+
+**The rule:** before asserting that a CSS value is what ships, grep the whole file for every rule
+matching that selector — not the block you are editing. `grep -n '\.selector' file.css` costs one
+command; a responsive override you never saw costs a plan section and a review round.
+
+The same read also missed that `app.css:306` (`.wsbar`, a *different screen's* rule) sat inside a
+range the plan had marked deletable. Both errors came from reading a contiguous line range instead
+of querying by selector. Later slices located every target by selector grep, and after six slices of
+deletions the plan's own line numbers were stale by 60-70 lines anyway — so selector-first is the
+only durable habit.
+
+## A shorthand always resets its longhands, and Tailwind's emission order is not your class order (TB8-06, 2026-09-03)
+
+Three separate defects in one release, all the same shape:
+
+1. **`tokens/base.css`'s `:focus-visible { outline: … }`** — unlayered, and `outline:` resets
+   `outline-offset`. Every one of the board's six focus rings needed `!`, including the two whose
+   offset is *inward* (`-2px`); without it they silently became the base rule's outward `2px`, and
+   an outward ring **clips** inside the move-to popover's `overflow: auto` panel.
+2. **`.ey { font: … }`** (`app.css:20`) — the plan told the builder to apply a bare
+   `!leading-[1.25]`, but `.ey` is rendered inside `StatusBadge`, which takes no `className`. The
+   fix was an arbitrary-descendant variant on the parent, `[&_.ey]:!leading-[1.25]` — the repo's
+   first use of `[&_…]:`, and the right move when the target lives inside a shared component you
+   should not widen scope to touch.
+3. **`[font:inherit]` beside `text-xs`** — Tailwind emits `.text-xs` *before* `[font:inherit]`, so
+   the shorthand reset the size and the popover options rendered at inherited size rather than 12px.
+   The retired CSS had deliberately set `font-size` **after** `font: inherit`. Sol caught one of the
+   two sites; the second (`--text-2xs` on move-to) was found by checking the built stylesheet.
+
+**The rule:** when a rule you are retiring sets both a shorthand and a longhand of the same family,
+the longhand needs `!` in its replacement. Class order in JSX does not decide this — Tailwind emits
+utilities in *its* property order, so a utility can lose to a shorthand it appears after in your
+markup. Confirm in the built stylesheet, comparing byte offsets, rather than reasoning about it.

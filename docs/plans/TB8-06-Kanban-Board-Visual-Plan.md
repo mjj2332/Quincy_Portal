@@ -1,6 +1,13 @@
 # TB8-06 — The Kanban Board: Visual Plan
 
-**Status: APPROVED FOR BUILD by the orchestrating session, 2026-09-03.** Ranking candidate #6.
+**Status: BUILT — all 8 slices complete, awaiting the visual gate.** Ranking candidate #6.
+Branch `tb8-06-kanban-board`, slices `d186b3d` · `be051d1` · `a8a9822` · `07a04a5` · `8126867` ·
+`6d62fcd` · `4e6f54e` · docs. Not yet merged or deployed.
+
+`app.css` now holds exactly **one** board selector — `.kcol__head > .row`, the deliberate **K** from
+row 13. All six §8 gates pass; 682/682 tests across 63 files; typecheck and build green at every
+slice. Every Sol diff review was run fresh: slices 1-4 and 6-7 APPROVE or APPROVE-WITH-FINDINGS,
+slice 5 REVISE (resolved), slice 7 REVISE (resolved).
 
 Sol reviewed twice and returned REVISE both times (round 1: 10 blocking; round 2: 13 blocking, of
 which 3 were round-1 findings still not properly fixed). That exhausts the 2-round cap, so
