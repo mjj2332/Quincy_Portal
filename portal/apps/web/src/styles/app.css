@@ -461,18 +461,9 @@ button { font-family: var(--font-sans); }
 .mention-autocomplete__option:focus-visible { outline: var(--border-width-bold) solid var(--ink-900); outline-offset: -2px; }
 .mention-autocomplete__option small { color: var(--text-muted); text-transform: capitalize; }
 .mention-autocomplete__status { padding: var(--space-2); color: var(--text-muted); font-size: var(--text-xs); }
-.kcol { background: var(--paper-050); display: flex; flex-direction: column; min-width: 0; transition: background var(--dur-fast); }
 .kcol.is-over { background: var(--paper-100); }
-.kcol__head { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-4); border-bottom: var(--border-width-hair) solid var(--border-hairline); background: var(--bg-canvas); }
 .kcol.is-over .kcol__head { background: var(--paper-100); }
-.kcol__head .ey { line-height: 1.25; }
-.kcol__ordinal { flex: none; font: var(--type-eyebrow); text-transform: uppercase; letter-spacing: var(--tracking-wide); color: var(--text-muted); font-variant-numeric: tabular-nums; }
 .kcol__head > .row { flex: 1 1 auto; min-width: 0; }
-.kcol__head .cnt { flex: none; font-variant-numeric: tabular-nums; font-size: var(--text-sm); color: var(--text-muted); }
-.kcol__head:focus-visible { outline: var(--border-width-bold) solid var(--focus-ring); outline-offset: -2px; }
-/* flex:1 so the drop target fills the whole column, not just the area behind the cards. */
-.kcol__body { display: flex; flex-direction: column; gap: 10px; padding: 12px; min-height: 120px; flex: 1; }
-.kcol__empty { padding: var(--space-5) 0; font-family: var(--font-display); font-size: var(--text-lg); text-align: center; color: var(--greige-300); }
 .kcard-wrap { position: relative; background: var(--paper-000); border: 1px solid var(--border-hairline); transition: background var(--dur-fast), border-color var(--dur-fast); }
 .kcard-wrap:hover { background: var(--paper-100); border-color: var(--greige-300); }
 .kcard-wrap.is-dragging { opacity: .4; }

@@ -555,11 +555,12 @@ function KanbanColumn({
   const indicatorAfter = proposal?.gap.targetStageKey === semanticKey && proposal.gap.successor === "end";
   const stageIsOver = activeProjectId !== undefined && (isOver || proposal?.gap.targetStageKey === semanticKey);
 
-  return <section className={`kcol ${stageIsOver ? "is-over" : ""}`}>
-    <div className="kcol__head" data-focus-key={`stage-heading:${semanticKey}`} tabIndex={-1}><span className="kcol__ordinal" aria-hidden="true">{String(stageIndex + 1).padStart(2, "0")}</span><StatusBadge stageKey={stage.key} /><span className="cnt">{displayedProjects.length}</span></div>
+  return <section className={`kcol bg-[var(--paper-050)] flex flex-col min-w-0 transition-[background-color] duration-[var(--dur-fast)] ${stageIsOver ? "is-over" : ""}`}>
+    <div className="kcol__head flex items-center gap-[var(--space-3)] p-[var(--space-4)] border-b border-b-border bg-[var(--bg-canvas)] [&_.ey]:!leading-[1.25] focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--focus-ring)] focus-visible:!outline-offset-[-2px]" data-focus-key={`stage-heading:${semanticKey}`} tabIndex={-1}><span className="kcol__ordinal flex-none [font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-wide)] tabular-nums text-foreground-secondary" aria-hidden="true">{String(stageIndex + 1).padStart(2, "0")}</span><StatusBadge stageKey={stage.key} /><span className="cnt flex-none tabular-nums text-sm text-foreground-secondary">{displayedProjects.length}</span></div>
     <SortableContext items={displayedIds} strategy={verticalListSortingStrategy}>
-      <div ref={setColumnBodyRef} className="kcol__body" data-droppable-id={`column:${stage.key}`}>
-        {displayedProjects.length === 0 && <div className="kcol__empty">—</div>}
+      {/* flex-1 so the drop target fills the whole column, not just the area behind the cards. */}
+      <div ref={setColumnBodyRef} className="kcol__body flex flex-col gap-[var(--space-3)] p-[var(--space-3)] min-h-[120px] flex-1" data-droppable-id={`column:${stage.key}`}>
+        {displayedProjects.length === 0 && <div className="kcol__empty py-[var(--space-5)] [font-family:var(--font-display)] text-lg text-center text-foreground-secondary">—</div>}
         {displayedProjects.map((project) => {
           const isDropBefore = proposal?.gap.targetStageKey === semanticKey && proposal.gap.successor === project.id;
           const displayProject = proposal?.gap.targetStageKey === semanticKey && project.id === activeProjectId ? { ...project, stageKey: stage.key } : project;
