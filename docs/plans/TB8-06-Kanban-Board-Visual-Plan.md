@@ -293,19 +293,19 @@ it replaces — round-1 finding 7 flagged seven rows that dropped some.
 | 22 | `.kcard-drag-handle:focus-visible` | **R** — `!outline-2 !outline-[var(--ink-900)] !outline-offset-2` |
 | 23 | `.kcard-drag-handle:hover:not(:disabled)` | **R** — `hover:not-disabled:bg-[var(--paper-100)] hover:not-disabled:text-foreground` |
 | 24 | `.kcard-drag-handle:active:not(:disabled)` | **R** — `active:not-disabled:cursor-grabbing` |
-| 25 | `.kcard-drag-handle:disabled` | **R** — `disabled:text-foreground-secondary disabled:cursor-not-allowed` (§2.1: drop `opacity-[.48]`) |
+| 25 | `.kcard-drag-handle:disabled` | **R** — `disabled:text-muted-foreground disabled:cursor-not-allowed`. *Corrected at slice 5's diff review:* the plan first said `text-foreground-secondary`, which is **the handle's own base colour** — disabled would have been indistinguishable from enabled. Dropping `opacity: .48` was right (§2.1), but the colour must still change. `--text-muted` at 3.57:1 is permissible here: WCAG 1.4.3 exempts inactive components, and 3.57 against the base's 9.20 reads clearly as disabled |
 | 26 | `.kcard-controls` | **R** — `flex items-center gap-[var(--space-1)] px-[var(--space-3)] pb-[var(--space-3)] max-[641px]:flex-wrap pointer-coarse:flex-wrap` — folds in `:538` |
-| 27 | `.kcard-controls select` | **R** + **adopt `NativeSelect`** (§2.5) — `min-w-12`, plus the 44 px coarse min-height from `:539` |
+| 27 | `.kcard-controls select` | **R** + **adopt `NativeSelect`** (§2.5) — `w-auto min-w-12 pointer-coarse:min-h-11`. Two build-time corrections: `w-auto` is **required**, because the shared `FIELD_BOX` bakes in `w-full` and this select sits in a flex row with two arrow buttons that it would otherwise squeeze; and the `max-[641px]:min-h-11` the plan implied is **redundant**, since `FIELD_BOX` already carries `max-[721px]:min-h-[44px]`, covering the whole range. Only the coarse-pointer variant adds real coverage |
 | 28 | `.kcard-controls__arrow` | **R** — full coverage: `w-7 h-[26px] max-[641px]:size-11 max-[641px]:min-w-11 pointer-coarse:size-11 pointer-coarse:min-w-11 p-0 border border-[length:var(--border-width-hair)] border-border rounded-[var(--radius-sm)] bg-[var(--bg-surface)] text-foreground-secondary [font:var(--type-label)] text-sm leading-none cursor-pointer transition-[background-color,color] duration-[var(--dur-fast)] ease-[var(--ease-standard)]` — folds in `:540` |
 | 29 | `.kcard-controls__arrow:focus-visible` | **R** — `focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--focus-ring)] focus-visible:!outline-offset-2` |
 | 30 | `.kcard-controls__arrow:hover:not(:disabled)` | **R** — `hover:not-disabled:bg-[var(--bg-raised)] hover:not-disabled:text-foreground` |
 | 31 | `.kcard-controls__arrow:active:not(:disabled)` | **R** — `active:not-disabled:translate-y-px` |
-| 32 | `.kcard-controls__arrow:disabled` | **R** — `disabled:text-foreground-secondary disabled:bg-[var(--bg-sunken)] disabled:cursor-not-allowed` |
+| 32 | `.kcard-controls__arrow:disabled` | **R** — `disabled:text-foreground-secondary disabled:bg-[var(--bg-sunken)] disabled:cursor-not-allowed`. **Correctly keeps `text-foreground-secondary`**, unlike rows 25/37: the original rule differentiated this control by *background* (`--bg-sunken`), not colour, so its disabled state stays distinguishable |
 | 33 | `.kcard-stage-control` | **R** — `px-[var(--space-3)] pb-[var(--space-3)]` |
 | 34 | `.kcard-move-to` | **R** — full coverage: `w-full min-h-[30px] max-[641px]:min-h-11 pointer-coarse:min-h-11 px-[9px] py-[7px] border border-border bg-card text-foreground-secondary [font:inherit] text-[length:var(--text-2xs)] text-left cursor-pointer` — folds in `:541` |
 | 35 | `.kcard-move-to:focus-visible` | **R** — `!outline-2 !outline-[var(--ink-900)] !outline-offset-2` |
 | 36 | `.kcard-move-to:hover:not(:disabled)` | **R** — `hover:not-disabled:bg-[var(--paper-100)] hover:not-disabled:text-foreground` |
-| 37 | `.kcard-move-to:disabled` | **R** — `disabled:text-foreground-secondary disabled:cursor-not-allowed`; drop `opacity-[.48]` (§2.1) |
+| 37 | `.kcard-move-to:disabled` | **R** — `disabled:text-muted-foreground disabled:cursor-not-allowed`; drop `opacity-[.48]` (§2.1). Same correction as row 25 |
 | 38 | `.kcard-wrap--drop-indicator` | **R** — `min-h-[3px] rounded-[2px] bg-[var(--signal-positive)] shadow-[0_0_0_1px_color-mix(in_srgb,var(--signal-positive)_20%,transparent)]` |
 | 39 | `.kcard` | **R** — `w-full block p-0 text-inherit text-left [font:inherit] no-underline bg-none border-0 cursor-pointer`. **Exact-equality test — see §1.2a** |
 | 40 | `.kcard__media` | **R** — `aspect-[16/9] overflow-hidden bg-[var(--ink-800)]` |

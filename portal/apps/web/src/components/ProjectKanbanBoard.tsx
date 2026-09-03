@@ -35,6 +35,7 @@ import { StatusBadge } from "./atoms";
 import { InternalLink } from "./InternalLink";
 import { LazyImage } from "./LazyImage";
 import { buttonClasses } from "./ui/button";
+import { NativeSelect } from "./ui/native-select";
 import {
   announce,
   eligibleTarget,
@@ -199,7 +200,7 @@ function MoveToControl({ project, model, activeStages, role, sort, canMoveStages
     <button
       ref={setTrigger}
       type="button"
-      className="kcard-move-to"
+      className="kcard-move-to w-full min-h-[30px] max-[641px]:min-h-11 pointer-coarse:min-h-11 px-[9px] py-[7px] border border-border bg-card text-foreground-secondary [font:inherit] text-[length:var(--text-2xs)] text-left cursor-pointer focus-visible:!outline-2 focus-visible:!outline-[var(--ink-900)] focus-visible:!outline-offset-2 hover:not-disabled:bg-[var(--paper-100)] hover:not-disabled:text-foreground disabled:text-muted-foreground disabled:cursor-not-allowed"
       data-focus-key={`move-to:${project.id}`}
       aria-label={`Move ${project.street} to…`}
       aria-expanded={open}
@@ -267,7 +268,7 @@ export function KanbanCard({
   const activeStageOptions = (stageOptions ?? []).filter((stage) => stage.active);
   const moveModel = boardModel ?? { projects: [project], ...(project.authorizedBoardOrder ? { authorizedBoardOrder: project.authorizedBoardOrder } : {}) };
 
-  return <div ref={setCardRef} style={cardStyle} className={`kcard-wrap ${isDragging ? "is-dragging" : ""}`}>
+  return <div ref={setCardRef} style={cardStyle} className={`kcard-wrap relative bg-card border border-border transition-[background-color,border-color] duration-[var(--dur-fast)] hover:bg-[var(--paper-100)] hover:border-[var(--greige-300)] ${isDragging ? "is-dragging" : ""}`}>
     <InternalLink className="kcard w-full block p-0 text-inherit text-left [font:inherit] no-underline bg-none border-0 cursor-pointer" to={projectHref ?? `/projects/${encodeURIComponent(project.id)}`}>
       <div className="kcard__media aspect-[16/9] overflow-hidden bg-[var(--ink-800)]"><CoverMedia project={project} className="size-full object-cover" retryToken={coverRetry} onFailedChange={setCoverFailed} /></div>
       <div className="kcard__b p-[var(--space-3)]">
@@ -283,7 +284,7 @@ export function KanbanCard({
     <button
       ref={setDragHandleRef}
       type="button"
-      className="kcard-drag-handle"
+      className="kcard-drag-handle absolute top-[var(--space-2)] right-[var(--space-2)] z-[2] size-9 max-[641px]:size-11 pointer-coarse:size-11 inline-grid place-items-center border border-[color-mix(in_srgb,var(--ink-900)_18%,transparent)] rounded-[var(--radius-sm)] bg-[color-mix(in_srgb,var(--paper-000)_88%,transparent)] text-foreground-secondary cursor-grab text-[20px] leading-none [touch-action:none] focus-visible:!outline-2 focus-visible:!outline-[var(--ink-900)] focus-visible:!outline-offset-2 hover:not-disabled:bg-[var(--paper-100)] hover:not-disabled:text-foreground active:not-disabled:cursor-grabbing disabled:text-muted-foreground disabled:cursor-not-allowed"
       data-focus-key={`move-handle:${project.id}`}
       aria-label={`Move ${project.street}`}
       disabled={!canDragThisCard}
@@ -292,18 +293,18 @@ export function KanbanCard({
     >
       <span aria-hidden="true">⠿</span>
     </button>
-    {canPrioritize && <div className="kcard-controls" aria-label={`Order controls for ${project.street}`}>
+    {canPrioritize && <div className="kcard-controls flex items-center gap-[var(--space-1)] px-[var(--space-3)] pb-[var(--space-3)] max-[641px]:flex-wrap pointer-coarse:flex-wrap" aria-label={`Order controls for ${project.street}`}>
       <label className="sr-only" htmlFor={`priority-${project.id}`}>Priority</label>
-      <select id={`priority-${project.id}`} value={project.priority ?? ""} aria-label="Priority" onChange={(event) => onPriorityChange?.(project, event.target.value === "" ? null : Number(event.target.value))}>
+      <NativeSelect id={`priority-${project.id}`} className="w-auto min-w-12 pointer-coarse:min-h-11" value={project.priority ?? ""} aria-label="Priority" onChange={(event) => onPriorityChange?.(project, event.target.value === "" ? null : Number(event.target.value))}>
         <option value="">—</option>
         {Array.from({ length: 10 }, (_, index) => index + 1).map((value) => <option value={value} key={value}>{value}</option>)}
-      </select>
+      </NativeSelect>
       {canReorder && <>
-        <button type="button" className="kcard-controls__arrow" data-focus-key={`arrow-up:${project.id}`} aria-label="Move project up" disabled={movementDisabled} onClick={() => onBoardPosition?.(project, "up")}>↑</button>
-        <button type="button" className="kcard-controls__arrow" data-focus-key={`arrow-down:${project.id}`} aria-label="Move project down" disabled={movementDisabled} onClick={() => onBoardPosition?.(project, "down")}>↓</button>
+        <button type="button" className="kcard-controls__arrow w-7 h-[26px] max-[641px]:size-11 max-[641px]:min-w-11 pointer-coarse:size-11 pointer-coarse:min-w-11 p-0 border border-[length:var(--border-width-hair)] border-border rounded-[var(--radius-sm)] bg-[var(--bg-surface)] text-foreground-secondary [font:var(--type-label)] text-sm leading-none cursor-pointer transition-[background-color,color] duration-[var(--dur-fast)] ease-[var(--ease-standard)] focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--focus-ring)] focus-visible:!outline-offset-2 hover:not-disabled:bg-[var(--bg-raised)] hover:not-disabled:text-foreground active:not-disabled:translate-y-px disabled:text-foreground-secondary disabled:bg-[var(--bg-sunken)] disabled:cursor-not-allowed" data-focus-key={`arrow-up:${project.id}`} aria-label="Move project up" disabled={movementDisabled} onClick={() => onBoardPosition?.(project, "up")}>↑</button>
+        <button type="button" className="kcard-controls__arrow w-7 h-[26px] max-[641px]:size-11 max-[641px]:min-w-11 pointer-coarse:size-11 pointer-coarse:min-w-11 p-0 border border-[length:var(--border-width-hair)] border-border rounded-[var(--radius-sm)] bg-[var(--bg-surface)] text-foreground-secondary [font:var(--type-label)] text-sm leading-none cursor-pointer transition-[background-color,color] duration-[var(--dur-fast)] ease-[var(--ease-standard)] focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--focus-ring)] focus-visible:!outline-offset-2 hover:not-disabled:bg-[var(--bg-raised)] hover:not-disabled:text-foreground active:not-disabled:translate-y-px disabled:text-foreground-secondary disabled:bg-[var(--bg-sunken)] disabled:cursor-not-allowed" data-focus-key={`arrow-down:${project.id}`} aria-label="Move project down" disabled={movementDisabled} onClick={() => onBoardPosition?.(project, "down")}>↓</button>
       </>}
     </div>}
-    {canMove && <div className="kcard-stage-control">
+    {canMove && <div className="kcard-stage-control px-[var(--space-3)] pb-[var(--space-3)]">
       <MoveToControl project={project} model={moveModel} activeStages={activeStageOptions} role={role} sort={effectiveKanbanSort} canMoveStages={canMoveStages} canPrioritize={canPrioritize} movementDisabled={movementDisabled} onMoveStage={onMoveStage} onMoveToProposalChange={onMoveToProposalChange} />
     </div>}
     {coverFailed && <button className={buttonClasses("secondary", { className: "kcard__retry mt-[var(--space-2)] mx-[var(--space-3)] mb-[var(--space-3)]" })} type="button" onClick={() => { setCoverFailed(false); setCoverRetry((current) => current + 1); }}>Retry cover image</button>}
@@ -313,7 +314,7 @@ export function KanbanCard({
 export function KanbanCardPreview({ project }: { project: ProjectSummary }) {
   const overdue = isDeadlineOverdue(project.deadlineAt);
   const projectDeadlineLabel = deadlineLabel(project);
-  return <div className="kanban-card-preview kcard-wrap" aria-hidden="true">
+  return <div className="kanban-card-preview kcard-wrap relative bg-card border border-border transition-[background-color,border-color] duration-[var(--dur-fast)]" aria-hidden="true">
     <div className="kcard__media aspect-[16/9] overflow-hidden bg-[var(--ink-800)]"><CoverMedia project={project} className="size-full object-cover" /></div>
     <div className="kcard__b p-[var(--space-3)]">
       <div className="kcard__addr serif text-base tracking-tight leading-snug [text-wrap:pretty]">{project.street}</div>
@@ -567,7 +568,7 @@ function KanbanColumn({
           const displayProject = proposal?.gap.targetStageKey === semanticKey && project.id === activeProjectId ? { ...project, stageKey: stage.key } : project;
           const movementPending = pendingMoves.has(project.id) || pendingOrdering.has(project.id);
           return <div key={project.id}>
-            {isDropBefore && <div className="kcard-wrap--drop-indicator" aria-hidden="true" />}
+            {isDropBefore && <div className="kcard-wrap--drop-indicator min-h-[3px] rounded-[2px] bg-[var(--signal-positive)] shadow-[0_0_0_1px_color-mix(in_srgb,var(--signal-positive)_20%,transparent)]" aria-hidden="true" />}
             <SortableKanbanCard
               {...{
                 canMove: (canMoveStages || sameStageReorderEnabled) && !pendingMoves.has(project.id),
@@ -592,7 +593,7 @@ function KanbanColumn({
             />
           </div>;
         })}
-        {indicatorAfter && <div className="kcard-wrap--drop-indicator" aria-hidden="true" />}
+        {indicatorAfter && <div className="kcard-wrap--drop-indicator min-h-[3px] rounded-[2px] bg-[var(--signal-positive)] shadow-[0_0_0_1px_color-mix(in_srgb,var(--signal-positive)_20%,transparent)]" aria-hidden="true" />}
       </div>
     </SortableContext>
   </section>;
