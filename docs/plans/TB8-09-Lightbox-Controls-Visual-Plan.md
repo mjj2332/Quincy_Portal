@@ -1,6 +1,7 @@
 # TB8-09 — Review Lightbox: Visual Plan
 
-**Status: DRAFTED, not yet reviewed.** Ranking candidate **#9** in
+**Status: DRAFTED, Sol round 1 resolved.** All 13 findings verified against the repo before
+acting; 12 upheld, 1 stale. See §0a. One round of the ≤2 cap is spent. Ranking candidate **#9** in
 `Revamp-TB8-Wider-UI-Migration-And-Cleanup-Plan.md` ("Lightbox controls, only if evidence
 warrants") — the warrant is established in
 `docs/plans/revamp_2026_portal/evidence/TB8-09/drift-register.md` and summarised in §1.2. Branch
@@ -31,14 +32,107 @@ plan's claims are verified rather than reasoned. Each says how it was checked.
 | 0.8 | The four brand signal tones fail on ink | Composited each over `--ink-900` and `--ink-800` | **Confirmed**, 1.75:1–4.20:1. See §2.4 — the scope must not redefine them. |
 | 0.9 | `box-sizing: border-box` is global | `tokens/base.css:6` and `app.css:10` | **Holds**, so §4's stated pixel sizes are whole targets, not content boxes. |
 
+## 0a. Sol round 1 — 13 findings, 12 upheld
+
+I verified every finding against the repo before acting. **Twelve held. One was stale** — Sol read
+the draft as of `f8e7ee4`, before `c5dbc59` landed. Four of the twelve were the draft being
+outright wrong rather than merely thin.
+
+| # | Finding | Verified how | Outcome |
+|---|---|---|---|
+| **B1** | `buttonClasses`' layered `focus-visible:outline-ring` loses to the unlayered global rule, so the panel trigger and the four text buttons keep an ink ring | Read `button.tsx:29`, `base.css:25`, `index.css` import order | **Stale — already fixed.** `c5dbc59` scopes `--focus-ring` as well as `--ring` (§2.3a), so the unlayered rule that *wins* now paints paper. Sol's cascade analysis is correct and is exactly why that fix was needed; it just landed first. The finding is what §2.3a already says. |
+| **B2** | `data-surface="default"` has no implementation — a data attribute resets nothing by itself, so `.vpanel` would inherit the dark roles | Read §2.3 | **Upheld.** A real gap: I wrote that the pair is "read in one place" and then supplied only one half. §2.3 now carries both blocks. |
+| **B3** | Retiring `.icbtn--ondark` breaks a real out-of-scope consumer | `grep -n "icbtn--ondark" PhotoGrid.tsx` → **lines 170–174, five buttons in `.tile__tools`, over photographs** — not in `.actionbar` | **Upheld, and §1.4 was wrong.** Scoping `.actionbar` cannot reach a tile overlay. `.icbtn--ondark` is now **K** unconditionally; only `.barbtn` is in play. |
+| **B4** | Multiple retired load-bearing rules have no replacement | Compared §4 against §5 and the live DOM | **Upheld, and one part is worse than reported** — see below. §5 gains the missing specifications. |
+| **B5** | Both named breakpoint edges are wrong for Tailwind's emitted media queries | Grepped the built CSS: `max-[1080px]` emits `@media not all and (width>=1080px)` = `width < 1080`, but the legacy `@media (max-width:1080px)` emits `@media (width<=1080px)` | **Upheld for 1080, and it is an off-by-one that changes behaviour at exactly 1080px.** Fixed to `max-[1081px]`; the repo already uses `(width>=1081px)`, so the `+1` convention was established and I ignored it. `max-[721px]` is **correct** as written (`width < 721` = `≤720`, matching the legacy `max-width:720px`). |
+| **B6** | The touch-target and contrast arithmetic does not support the claimed fixes | Read `icon-button.tsx:19`; recomputed the contrast | **Upheld on all three counts, and the register overstated its own case.** See §0b. |
+| **B7** | The ARIA radio groups omit the required radio keyboard model | Read §5.3–§5.5 and the handlers at `Lightbox.tsx:481,500–501` | **Upheld — and the fix is to drop the radio semantics, not to add roving focus.** See §0c. |
+| **B8** | The R/D ledger contradicts its own acceptance test: **R** keeps the class, criterion 8 demands `grep` zero | Read §4 vs §7 | **Upheld.** Self-contradictory as written. Criterion 8 now counts **CSS rules**, not class names, and names the four classes that must survive. |
+| **B9** | Slices 2–4 depend on slice 5's CSS retirement, so they ship visibly half-wired | Unlayered `app.css` beats the new utilities until its rules are deleted | **Upheld, and it is the most structural finding.** §8 is rebuilt: each slice retires its own CSS in the same commit that converts its markup. |
+| **B10** | The accessible-name tests are not implementable with this test stack | `ls node_modules` — no `dom-accessibility-api`, no `@testing-library`; `ProjectOverviewRail.dom.test.tsx:163–170` documents the absence and works around it | **Upheld.** §6 now specifies the manual algorithm rather than assuming a library. |
+| **NB1** | "No other primitive names `--focus-ring`" is false | Nine live call sites | **Upheld** — this plan already recorded them at §0.6, but §2.3a's wording overclaimed. Softened. |
+| **NB2** | "One 255–507 CSS block" is false; 300–453 is unrelated | Read `app.css` | **Upheld.** The §1 inventory table always had the correct sub-ranges; the prose around it did not. Corrected. |
+| **NB3** | The pen-swatch ring sits on `--ink-800`, so it is 17.35:1, not 18.64:1; and the plan diverges from its own register on `--signal-warm`'s replacement | Recomputed | **Upheld on both.** Corrected, and the divergence is now recorded as a decision (§9.5) rather than an unexplained change. |
+
+**What Sol got wrong:** nothing material. B1 is stale rather than incorrect, and its reasoning is
+sound. Every contrast figure it independently recomputed matched mine to rounding except the one
+it correctly caught (B6).
+
+**What I found that Sol did not, while verifying B4:** `.compare`, `.compare__pair`,
+`.compare__cell`, `.compare__tag` and `.compare__pickbtn` are **dead CSS with zero consumers
+anywhere in the app**. Sol observed that no `.compare` element exists in `Lightbox.tsx`; a
+repo-wide grep for those class names in any `.tsx` returns nothing at all. Compare mode is
+`.viewer.viewer--compare` (`Lightbox.tsx:484`), a modifier on the same root. So those five rules
+are **D — delete as dead**, not R, and §2.3's instruction to put the inverse scope on `.compare`
+was targeting a selector that never renders. The scope goes on `.viewer` alone, which already
+covers compare mode.
+
+## 0b. What B6 forces: the touch-target bar was overstated
+
+The drift register listed nine sub-44px targets and treated 44px as the bar at every width. That
+is not this repo's contract, and the plan inherited the error.
+
+**The repo's contract is `ICON_BUTTON`'s: 28px desktop, 44px at ≤720px** — stated in
+`icon-button.tsx:19` and applied by every converged surface since TB8-06. Against WCAG, 44px is
+2.5.5 (**AAA**); the AA bar is 2.5.8's **24px**.
+
+Re-stated honestly:
+
+| Control | Today | Real verdict | After |
+|---|---|---|---|
+| `.swatch` | **19 × 19** | **Fails WCAG 2.5.8 (24px AA) at every width** — the only true failure in the group | 28 / 44 |
+| `.wbtn` | 28 × 28 | Passes AA; below the AAA 44 | 28 / 44 |
+| `.labelpick` | 26 × 26 | Passes AA | 28 / 44 |
+| `.starpick button` | ≈26 × 26 | Passes AA | 28 / 44 |
+| `.vpanel__collapse` | 36 × 36 desktop, 44 ≤720 | Passes AA | **must not regress** — see below |
+| `.strip__button` | 84×56, but **48 × 32** at ≤720 | **Fails the repo's own 44px phone contract** | 60 × 44 |
+| `.comment-reply` | inline text | Fails the phone contract | see §5.7 |
+
+Two consequences the plan now carries:
+
+1. **`.vpanel__collapse` must not become a bare `IconButton`.** That would take it from 36px to
+   28px in the 721–1080 band — a regression, in the band where it is the drawer's only dismiss
+   control. It keeps an explicit `min-h-[36px] min-w-[36px]` above the phone breakpoint.
+2. **`buttonClasses("text")` cannot reach 44px.** It carries `px-0` and no `min-width`
+   (`button.tsx:41`). **This is TB8-08's own §0 finding #1, and I re-shipped it in this draft** —
+   the second time this exact trap has been walked into. `.comment-reply` gets an explicit
+   `min-w`/`min-h`, specified in §5.7.
+
+The register is corrected in place alongside this plan, so the two do not disagree.
+
+## 0c. What B7 forces: `aria-pressed`, not `role="radiogroup"`
+
+Sol is right that declaring `role="radiogroup"` obliges a roving `tabIndex`, Arrow/Home/End
+handling and a single tab stop, none of which the plan specified.
+
+**The resolution is to drop the radio semantics entirely, because they were the wrong semantics.**
+Every one of these controls is a *toggle*, not a radio — read the handlers:
+
+```
+stars:      { stars:      number === stars ? null : number }        // Lightbox.tsx:500
+colorLabel: { colorLabel: …=== label.value ? null : label.value }   // Lightbox.tsx:501
+```
+
+Clicking the set value **clears** it. A radio group cannot be deselected, so `role="radio"` would
+have described behaviour the component does not have. `aria-pressed` describes it exactly, needs
+no roving focus, keeps every control independently tabbable, and is what the phone peek bar
+already uses (`Lightbox.tsx:491`).
+
+**All four groups therefore use `aria-pressed` toggle buttons.** `role="radiogroup"` and
+`role="radio"` appear nowhere in this release. The groups keep a `role="group"` with an
+`aria-label` for structure.
+
 ## 1. What this release is
 
 ### 1.1 The surface
 
 The review Lightbox: the stage, the image and its zoom frame, the markup layer and toolbar, the
 filmstrip, compare mode, and the review side panel (decision, rating, label, annotations). One
-component, `components/Lightbox.tsx` (506 lines). One CSS block, `styles/app.css` **255–507**,
-plus the band overrides at **622–631** / **659–690** and the compare grid at **753–755**.
+component, `components/Lightbox.tsx` (506 lines). Its CSS is **not** one contiguous block —
+`app.css` **255–299** (viewer, markup layer, toolbar) and **454–507** (panel, thread, filmstrip,
+dead compare rules), with **300–453** belonging to unrelated surfaces in between — plus the band
+overrides at **622–631** / **659–690** and the compare grid at **753–755**. The §1.1 inventory
+table below is the authority on the exact ranges; nothing outside them is touched.
 
 ### 1.2 Why it earns a release
 
@@ -73,17 +167,25 @@ in §5 depends on it.
 
 ### 1.4 Scope extension the owner should see
 
-`.barbtn` and `.icbtn--ondark` are **shared with `PhotoGrid.tsx`** — they style the selection
-action bar (`.actionbar`), which is not this candidate's surface. They are the same problem in a
-different place: ink chrome floating on the light app. Retiring them only inside the lightbox
-would leave two orphaned legacy rules alive for one consumer.
+**Corrected after Sol B3 — the first draft of this section was wrong.** It claimed the inverse
+scope would let both `.barbtn` and `.icbtn--ondark` retire. It will not:
 
-**Proposal: apply the §2 inverse scope to `.actionbar` as well**, and retire `.barbtn` /
-`.icbtn--ondark` completely. It is three added lines and it is the difference between retiring the
-selectors and merely half-retiring them. The orchestration doc's "full UI rescue, not just the
-named control" rule supports this; it is called out here because it reaches a surface outside the
-candidate's name. **If the owner declines, the fallback is stated in §4** — keep both selectors,
-scope the retirement to the lightbox's own call sites, and hand the remainder to TB8-10.
+- **`.icbtn--ondark` is used five times in `PhotoGrid.tsx:170–174`**, on the per-tile hover tools
+  that float **over photographs** — not inside `.actionbar`. No scope applied to the action bar can
+  reach a tile overlay, and a control sitting on arbitrary photographic content is a genuinely
+  different problem from one sitting on a known ink ground. **`.icbtn--ondark` is therefore K,
+  unconditionally**, and goes to TB8-10 with the rest of the tile surface.
+- **`.barbtn` really is shared with `.actionbar`** (`PhotoGrid.tsx`), and that *is* ink chrome on a
+  known ground, so the scope does reach it.
+
+**Proposal, narrowed to what is actually true: apply the §2 inverse scope to `.actionbar`** and
+retire `.barbtn` alone. This reaches a surface outside the candidate's name, which is why it is an
+owner decision (§9.3) rather than an assumption.
+
+**If approved**, the release also owns: replacement classes for each action-bar button, and the
+**nine `.actionbar .barbtn` queries in `PhotoGrid.dom.test.tsx`** — migrated, not deleted.
+**If declined**, `.barbtn` becomes **K** alongside `.icbtn--ondark`, only the lightbox's own call
+sites move, and both go to TB8-10.
 
 ### 1.5 Explicitly not in scope
 
@@ -199,10 +301,43 @@ A new file, `styles/tokens/inverse.css`, imported from `index.css` immediately a
 }
 ```
 
-Applied as `data-surface="inverse"` on `.viewer`, on `.compare`, and (per §1.4) on `.actionbar`.
-`.vpanel` is a **light** panel inside a dark stage, so it carries `data-surface="default"`, which
-resets the same properties to their `:root` values — declared in the same file so the pair is
-read in one place.
+Applied as `data-surface="inverse"` on **`.viewer` only** — plus `.actionbar` if §9.3 is approved.
+It is *not* applied to `.compare`: that selector never renders (§0a), and compare mode is
+`.viewer.viewer--compare`, already inside the scope.
+
+`.vpanel` is a **light** panel inside a dark stage, so it carries `data-surface="default"`. **A
+data attribute resets nothing on its own** (Sol B2), so the reset block is written out explicitly
+in the same file, and it must list every property the inverse block sets — a role set in one and
+missing from the other inherits the dark value into the light panel:
+
+```css
+/* The light panel inside the dark stage. Must mirror the inverse block property-for-property;
+   anything omitted here inherits the ink value from .viewer. */
+[data-surface="default"] {
+  --background:            var(--bg-canvas);
+  --foreground:            var(--text-primary);
+  --foreground-secondary:  var(--text-secondary);
+  --muted-foreground:      var(--text-muted);
+  --card:                  var(--bg-surface);
+  --card-foreground:       var(--text-primary);
+  --popover:               var(--bg-surface);
+  --popover-foreground:    var(--text-primary);
+  --secondary:             var(--bg-raised);
+  --secondary-foreground:  var(--text-primary);
+  --border:                var(--border-hairline);
+  --border-hover:          var(--greige-300);
+  --input:                 var(--border-hairline);
+  --surface-sunken:        var(--bg-sunken);
+  --primary:               var(--accent);
+  --primary-foreground:    var(--accent-on);
+  --primary-hover:         var(--ink-700);
+  --ring:                  var(--focus-ring);
+  --focus-ring:            var(--ink-900);
+}
+```
+
+Every value is its `:root` value, so this block is a restore, not a redefinition. **A test must
+assert the two blocks declare the same property set** — §6 item 6.
 
 ### 2.3a Why the scope sets **both** `--ring` and `--focus-ring`
 
@@ -239,6 +374,11 @@ strictly better than touching it and re-verifying nine surfaces.
 `--focus-ring` is deliberately *not* given a `@theme inline` role in §2.2: it is consumed by a
 plain CSS rule, not by a utility, so it is already scopeable as-is.
 
+**Scoped, not universally fixed.** Nine live call sites name `--focus-ring` directly (§0.6), and
+`AnchoredPopover.tsx:84` is a *primitive* among them. This release makes them all correct **inside
+the lightbox subtree** and changes nothing outside it — which is the intent. It does not make the
+app's focus-ring handling uniformly scopeable, and this plan should not be cited as if it had.
+
 ### 2.4 What this does not solve, and must not be asked to
 
 **The four brand signal tones do not survive on ink**, measured:
@@ -259,7 +399,30 @@ next person does not discover it by shipping it.
 
 ---
 
-## 3. Cascade discipline
+## 3. Cascade discipline and the breakpoint rule
+
+### 3.0 `max-[Npx]` is exclusive — always write N+1 (Sol B5)
+
+Tailwind emits `max-[1080px]` as `@media not all and (width>=1080px)`, i.e. **`width < 1080`**.
+The legacy rule it replaces, `@media (max-width: 1080px)`, emits `@media (width<=1080px)` and
+**includes** 1080. They disagree at exactly 1080px, where `Lightbox.tsx:37`'s `viewerBand()`
+(`innerWidth <= 1080`) says *tablet* while the utility says *desktop* — the JS and the CSS would
+render two different layouts at one real, common viewport width.
+
+**Rule for this release, no exceptions:**
+
+| Legacy | Correct utility | Emits |
+|---|---|---|
+| `@media (max-width: 720px)` | `max-[721px]` | `width < 721` = `≤ 720` ✓ |
+| `@media (max-width: 1080px)` | **`max-[1081px]`** | `width < 1081` = `≤ 1080` ✓ |
+
+`max-[721px]` — the form already used throughout `buttonClasses` and `ICON_BUTTON_BASE` — is
+**correct** and stays. Only the 1080 edge was wrong in the draft. The repo already emits
+`@media (width>=1081px)` elsewhere, so the `+1` convention was established and this plan simply
+failed to follow it. Every `max-[…]`/`min-[…]` this release writes must be checked against
+`viewerBand()`'s two comparisons.
+
+### 3.1 The two cascade facts
 
 `index.css` imports `app.css` **outside any layer**, so every legacy rule there beats an ordinary
 Tailwind utility regardless of specificity. Two further facts this surface has already been bitten
@@ -278,8 +441,20 @@ by, both of which the builder must treat as invariants rather than rediscover:
 ## 4. Per-selector disposition
 
 Required by the orchestration doc: every touched legacy selector gets an explicit disposition.
-**R** = retire the rule, keep the class only as a non-styling test/query hook. **D** = delete the
-rule and the class. **K** = keep, with a comment saying why.
+**R** = delete the CSS rule, keep the class name as a non-styling hook. **D** = delete the rule
+**and** the class name. **K** = keep the rule, with a comment saying why.
+
+**What "retired" is measured as (Sol B8).** The draft's acceptance criterion demanded `grep` zero
+across `src/` for every R selector, which contradicts R's own definition — R keeps the class.
+Criterion 8 now counts **CSS rules in `app.css`**, not class names anywhere. Four R classes are
+required to survive as names, and a test asserts they do:
+
+| Class | Why the name must survive |
+|---|---|
+| `.viewer` | The **K** rule `.app--impersonating .viewer` (`app.css:39`) still selects it. |
+| `.viewer__img` | The **K** rule `.canvasframe .viewer__img` still selects it. |
+| `.vpanel` | The **K** ≤720px bottom-sheet block still selects it. |
+| `.viewer__panel-trigger` | A **live runtime selector** at `Lightbox.tsx:236`, not merely a test hook. |
 
 | Selector | Disposition | Note |
 |---|---|---|
@@ -303,8 +478,8 @@ rule and the class. **K** = keep, with a comment saying why.
 | `.annotation-note`, `:focus` | **R** | → `Textarea` (`ui/textarea.tsx`). |
 | `.comment-reply` | **R** | → `buttonClasses("text")`, which carries `max-[721px]:min-h-[44px]`; fixes T-7. |
 | `.strip`, `.strip.full`, `.strip__button`, `.strip__t` | **R** | **`.strip__button`'s `outline: 2px solid transparent` must be deleted, not overridden** (§3.1). Fixes T-5 (48×32 on phone) and C-8. |
-| `.compare`, `__pair`, `__cell`, `__tag`, `__pickbtn` | **R** | Takes `data-surface="inverse"`. |
-| `.viewer--compare` and its two children | **R** | Grid geometry. |
+| `.compare`, `__pair`, `__cell`, `__tag`, `__pickbtn` | **D — dead CSS** | **Zero consumers anywhere in the app.** A repo-wide grep for these class names in any `.tsx` returns nothing; compare mode is `.viewer.viewer--compare` (`Lightbox.tsx:484`). Delete outright; there is nothing to convert. |
+| `.viewer--compare`, `.viewer--compare .vpanel`, `.viewer--compare .strip` | **R** | **Live** — this is the real compare layout. Replacement in §5.9a. |
 | `.viewer__panel-scrim` | **D** | Adopts `--scrim-overlay`, closing TB8-02-E-1. |
 | `.barbtn`, `.barbtn--solid`, `.icbtn--ondark` | **R if §1.4 approved, else K** | Shared with `PhotoGrid.tsx`. Under the extension they retire entirely; without it they keep their rules and only the lightbox's call sites move. |
 | `.icbtn`, `.icbtn--lg`, `.icbtn--ghost`, `.icbtn.is-on` | **K** | Light-surface variants with consumers outside this candidate. TB8-10's D-06 territory. |
@@ -335,7 +510,7 @@ class list with `--tracking-widest`, so use `<Eyebrow>` itself wherever the elem
 
 | Element | Classes |
 |---|---|
-| `.viewer` root | `data-surface="inverse"` · `fixed inset-0 z-[80] bg-background grid grid-rows-[1fr_auto] grid-cols-[1fr_380px] max-[1080px]:grid-cols-[1fr]` |
+| `.viewer` root | `data-surface="inverse"` · `fixed inset-0 z-[80] bg-background grid grid-rows-[1fr_auto] grid-cols-[1fr_380px] max-[1081px]:grid-cols-[1fr]` — **`1081`, not `1080`; see §3.0** |
 | — no panel | add `grid-cols-[1fr]` conditionally; do not keep a `.no-panel` class |
 | — impersonating | `.app--impersonating .viewer { inset: 42px 0 0 }` is a **K** — it is the impersonation banner's offset, owned by that feature, and reaching into it from here would split its ownership |
 | `.viewer__stage` | `row-start-1 row-end-2 relative grid place-items-center overflow-hidden min-w-0` |
@@ -346,7 +521,10 @@ now named.
 
 ### 5.2 Stage controls
 
-All four are `IconButton`, used **unmodified**. Its `focus-visible:!outline-[var(--focus-ring)]`
+**Five** stage buttons are `IconButton`, used **unmodified** — close, previous, next, zoom-in,
+zoom-out (the draft said "four", which did not match the DOM; Sol B4). Reset zoom makes six if
+present in the current build; the builder counts them from the file rather than from this
+sentence, and reports the count. Its `focus-visible:!outline-[var(--focus-ring)]`
 resolves to `--paper-050` inside the scope because §2.3 sets `--focus-ring` there — see §2.3a.
 No primitive is edited by this release.
 
@@ -355,7 +533,9 @@ No primitive is edited by this release.
 | Close | `IconButton` + `absolute top-[16px] left-[16px] z-[5] max-[721px]:top-[calc(16px+env(safe-area-inset-top))] max-[721px]:left-[max(16px,env(safe-area-inset-left))]` | keeps `aria-label="Close"` |
 | Prev / Next | `IconButton` + `absolute top-1/2 -translate-y-1/2 z-[3]` + `left-[18px]` / `right-[18px]`, `max-[721px]:left-[10px]` / `max-[721px]:right-[10px]` | keeps its `aria-label` |
 | Zoom in / out | `IconButton` | keeps its `aria-label` |
-| Panel trigger | `buttonClasses("secondary", { className: "absolute top-[16px] right-[16px] z-[5] hidden max-[1080px]:inline-flex max-[721px]:!hidden" })` | `aria-expanded` + `aria-controls`, already present |
+| Reset zoom | `IconButton` | **was unspecified (Sol B4)** — same treatment; keep its existing name |
+| Show / Hide markup | `buttonClasses("secondary")` | **was unspecified** — it is a text control, not a glyph, and it lives in the panel (`Lightbox.tsx:502`), so it is a `Button`, not an `IconButton`. `aria-pressed={markupVisible}` |
+| Panel trigger | `buttonClasses("secondary", { className: "absolute top-[16px] right-[16px] z-[5] hidden max-[1081px]:inline-flex max-[721px]:!hidden" })` | `aria-expanded` + `aria-controls`, already present |
 
 The phone sizes (48px) that `app.css` currently sets for close/nav are **dropped**: `IconButton`
 gives 44px at ≤721px, which is the repo's stated contract. Going from 48 to 44 is a deliberate
@@ -372,9 +552,9 @@ max-[721px]:gap-[var(--space-2)]`
 
 `border-border` in scope = `--greige-500` = 3.24:1 on `--ink-800`, clearing C-9's 1.67:1.
 
-**Colour swatches** — the group is a radio group, not six toggles. `role="radiogroup"` with
-`aria-label="Pen colour"`; each button `role="radio"` with `aria-checked`, and a **real accessible
-name**: `aria-label={PEN_COLOUR_NAMES[color]}`, a new exported map —
+**Colour swatches** — six **toggle buttons** in a `role="group" aria-label="Pen colour"`
+container (§0c: not a radio group). Each carries `aria-pressed={tool.color === color}` and a
+**real accessible name**, `aria-label={PEN_COLOUR_NAMES[color]}`, from a new exported map —
 
 ```ts
 export const PEN_COLOUR_NAMES = {
@@ -383,21 +563,33 @@ export const PEN_COLOUR_NAMES = {
 } as const;
 ```
 
-Classes: `ICON_BUTTON_BASE` + `w-[28px] max-[721px]:w-[44px] rounded-full border
-border-[length:var(--border-width-hair)] border-solid border-border` with the colour as an inline
-`background`. Selected: `outline outline-[length:var(--border-width-bold)] outline-solid
-outline-[var(--ring)] outline-offset-2` — the ring shape the surface already uses for selection,
-now at 18.64:1 rather than a hand-rolled double `box-shadow`.
+**Structure — one shape, stated once, because the draft contradicted itself here (Sol B4).**
+The button is the hit target and carries **no colour of its own**; an inner `<span aria-hidden>`
+carries the paint. The earlier draft said both "the colour as an inline `background`" on the
+button *and* that only the inner span is painted. **Only the inner span is painted.**
 
-`ICON_BUTTON_BASE` gives 28px desktop and 44px at ≤721px, so **T-1 is fixed in the 721–1080 band
-too** — which the old rule never covered. The visible swatch stays 19px by insetting the colour:
-the button is the target, a `::before`-free inner `<span aria-hidden>` of `w-[19px] h-[19px]
-rounded-full` carries the paint. **Do not shrink the button to fit the dot.**
+```
+<button type="button" aria-pressed={…} aria-label={PEN_COLOUR_NAMES[color]}
+        class={ICON_BUTTON_BASE + " w-[28px] max-[721px]:w-[44px] rounded-full"}>
+  <span aria-hidden="true" style={{ background: color }}
+        class="w-[19px] h-[19px] rounded-full border border-[length:var(--border-width-hair)]
+               border-solid border-border" />
+</button>
+```
 
-**Stroke widths** — same treatment: `role="radiogroup"` `aria-label="Stroke width"`, each
-`role="radio"` `aria-checked`, `aria-label={`${width} pixels`}`. Classes `ICON_BUTTON` + selection
-`bg-secondary` (the `--ink-700` lift) — which also replaces the current `rgba(246,244,239,.16)`.
-The inner dot span keeps its inline `width`/`height`.
+The visible dot stays 19px — its *appearance* is unchanged — while the target becomes 28px
+desktop / 44px at ≤720px. **Do not shrink the button to fit the dot**; that is the 19px target the
+register flagged as the group's one real WCAG 2.5.8 failure (§0b).
+
+Selected: `outline outline-[length:var(--border-width-bold)] outline-solid outline-[var(--ring)]
+outline-offset-2` on the **button**, replacing the hand-rolled double `box-shadow`. It sits on
+`--ink-800`, so paper-050 measures **17.35:1** (NB3 — the draft said 18.64, which is the value
+against the stage, not the toolbar).
+
+**Stroke widths** — three toggle buttons, `role="group" aria-label="Stroke width"`, each
+`aria-pressed={tool.width === width}` and `aria-label={`${width} pixels`}`. Classes `ICON_BUTTON`;
+selected `bg-secondary` (the `--ink-700` lift), replacing `rgba(246,244,239,.16)`. The inner dot
+span keeps its inline `width`/`height` and gains `aria-hidden`.
 
 **Undo / Clear / Cancel / Save** — `buttonClasses("secondary")`, and Save `buttonClasses("primary")`.
 In the inverse scope `primary` is paper-on-ink, which is exactly what `.barbtn--solid` painted.
@@ -405,33 +597,38 @@ In the inverse scope `primary` is paper-on-ink, which is exactly what `.barbtn--
 
 ### 5.4 Rating
 
-A radio group, replacing five identically-named buttons:
+Five **toggle buttons**, replacing five identically-named ones. Not a radio group: clicking the
+set value clears it (`Lightbox.tsx:500`), which radio semantics cannot express (§0c).
 
 ```
-<div role="radiogroup" aria-label="Rating" class="flex gap-[var(--space-1)]">
-  <button role="radio" aria-checked={n === stars} aria-label={`${n} star${n === 1 ? "" : "s"}`} …>
+<div role="group" aria-label="Rating" class="flex gap-[var(--space-1)]">
+  <button type="button" aria-pressed={n === stars}
+          aria-label={`${n} star${n === 1 ? "" : "s"}`} …>
 ```
 
 Button classes: `ICON_BUTTON_BASE + " w-[28px] max-[721px]:w-[44px] text-[length:var(--text-lg)]
 leading-none"` — `--text-lg` is 22px, the size the rule already used, now on the scale. This fixes
-**T-4 at every width**, which no override ever covered.
+**T-4 at every width**, which no override ever covered — to 28px desktop / 44px phone, the repo
+contract, not to 44px everywhere (§0b).
 
 Colour: **on** → `text-signal-caution-text` (**6.27:1**, up from the hardcoded `#9a6a1f`'s
 4.44:1). This is the token file's own stated rule for caution *text*, and it kills K-2's literal.
 **off** → `text-muted-foreground`. On the light panel that is `--text-muted` at 3.36:1 — see §9.1,
 this is an owner decision, and the star is only the *indicator*; the accessible name and
-`aria-checked` now carry the state independent of colour, so §9.1 is a polish question rather than
+`aria-pressed` now carry the state independent of colour, so §9.1 is a polish question rather than
 a blocker.
 
 ### 5.5 Colour label
 
-Also a radio group — `role="radiogroup"` `aria-label="Colour label"`, each `role="radio"`
-`aria-checked` with `aria-label={label.name}` (a real name, not the `title` fallback; keep `title`
-as well for the pointer tooltip).
+Four **toggle buttons** in a `role="group" aria-label="Colour label"` container — same reasoning
+as §5.4, and the same handler shape (`Lightbox.tsx:501` clears on re-click). Each carries
+`aria-pressed={asset.review?.colorLabel === label.value}` and `aria-label={label.name}` — a real
+name, not the `title` fallback; keep `title` too for the pointer tooltip.
 
-Classes: `ICON_BUTTON_BASE + " w-[28px] max-[721px]:w-[44px] rounded-full border
-border-[length:var(--border-width-hair)] border-solid border-border"`, inner painted span
-`w-[26px] h-[26px] rounded-full`, selected ring as §5.3. Fixes **T-3 at every width**.
+Structure is §5.3's exactly: an unpainted `ICON_BUTTON_BASE + " w-[28px] max-[721px]:w-[44px]
+rounded-full"` button wrapping an `aria-hidden` painted span of `w-[26px] h-[26px] rounded-full
+border border-[length:var(--border-width-hair)] border-solid border-border`. Selected ring as
+§5.3, on the button. Fixes **T-3** to 28/44 (§0b).
 
 **K-3 — the duplicated palette.** `labels` is declared identically in `Lightbox.tsx:12` and
 `PhotoGrid.tsx:12`. Move it to `@quincy/shared`? **No** — it is presentation, and `shared` is the
@@ -464,12 +661,12 @@ Recommend and Compare-with-RAW: `buttonClasses(active ? "primary" : "secondary",
 | `.cmt` | `flex gap-[var(--space-3)] rounded-[var(--radius-sm)] transition-[background-color] duration-[1600ms] ease-[var(--ease-standard)]` |
 | `.cmt--highlighted` | `bg-surface-sunken` |
 | `.cmt__pin` | `flex-none w-[22px] h-[22px] rounded-full bg-primary text-primary-foreground grid place-items-center [font:var(--type-mono)] text-[length:var(--text-2xs)] mt-[2px]` + **`aria-hidden="true"`** (A-6: the `✎` is decoration) |
-| `.cmt__pin.unpinned` | `bg-surface-sunken text-foreground-secondary` — **C-2 fixed**, 2.87:1 → 8.66:1 |
+| `.cmt__pin.unpinned` | `bg-surface-sunken text-foreground-secondary` — **C-2 fixed**, 2.87:1 → **7.40:1**. (Sol B6: the draft said 8.66:1, which is this text colour against `--paper-050`; the real ground here is `--bg-sunken` = `--paper-200`. 7.40 clears the 4.5:1 bar comfortably — the fix stands, the number was wrong.) |
 | `.cmt__who` | `[font:var(--type-label)]` |
 | `.cmt__who span` | `META_TEXT ml-[var(--space-2)]` — **C-1 fixed**, 3.36:1 → 8.66:1, and 11.5px → 12px onto the scale |
 | `.cmt__txt` | `text-[length:var(--text-sm)] leading-[var(--leading-normal)] mt-[3px] text-foreground-secondary` — 14.5px → 14px |
 | `.annotation-note` | `<Textarea>` from `ui/textarea.tsx`, `className="mt-[var(--space-3)]"` — **keep its default `min-h-[96px]`**, do not restore the legacy 56px. 96px is the system's textarea contract and the panel scrolls, so there is no reason to invent a second height. The legacy `:focus` rule (a bare `border-color` swap with `outline: none`) dies with it; `FIELD_BOX` carries the real focus treatment. |
-| `.comment-reply` | `buttonClasses("text", { className: "underline" })` — **T-7 fixed**: `text` carries `max-[721px]:min-h-[44px]` |
+| `.comment-reply` | `buttonClasses("text", { className: "underline min-w-[44px] max-[721px]:min-h-[44px] px-[var(--space-1)]" })` — **T-7**. The `min-w` and `px` are **required and must not be dropped**: the `text` variant sets `px-0` and supplies no `min-width` at all (`button.tsx:41`), so `buttonClasses("text")` alone cannot reach a 44px target. **This is TB8-08's §0 finding #1 and this draft re-shipped it** (Sol B6) — the second walk into the same trap, which is why it is spelled out here rather than left to the variant. |
 
 Note the `.comment-reply` group is `Edit note · Edit drawing · Delete`, separated by literal `·`
 text nodes. Those separators are `aria-hidden` decoration between three buttons; wrap them.
@@ -502,9 +699,67 @@ row of thumbnails is not a visual regression; it is the point of having one toke
 | `.vpanel__head` | `relative p-[var(--space-6)] pb-[var(--space-5)] border-b border-solid border-[length:var(--border-width-hair)] border-border` |
 | `.vpanel__addr` | `[font:var(--type-h3)] tracking-[var(--tracking-tight)] leading-[1.15]` — drops the 20px override onto `--type-h3` |
 | `.vpanel__scroll` | `overflow-auto flex-1 px-[var(--space-6)] py-[var(--space-5)] flex flex-col gap-[var(--space-5)]` |
-| `.vpanel__collapse` | `IconButton` + `absolute top-[var(--space-4)] right-[var(--space-4)]` — T-6 fixed by `IconButton`'s own 44px rule |
-| `.compare` | `data-surface="inverse"` · `fixed inset-0 z-[85] bg-background flex flex-col` |
-| `.compare__tag` | `absolute top-[16px] left-[16px]` + `<Eyebrow className="text-foreground">` |
+| `.vpanel__collapse` | `IconButton` + `absolute top-[var(--space-4)] right-[var(--space-4)] min-h-[36px] min-w-[36px]` — the explicit 36px floor is **required**: a bare `IconButton` is 28px above the phone breakpoint, which would take this control from today's 36px **down** to 28px in the 721–1080 band, where it is the drawer's only dismiss affordance (Sol B6). `max-[721px]` still lifts it to 44px from the base. |
+
+### 5.9a The three band layouts, and the compare grid
+
+The draft retired these and specified no replacement (Sol B4). All three are load-bearing.
+
+**Desktop (≥1081px)** — `.viewer` is a two-column grid, `grid-cols-[1fr_380px]`, `.vpanel` in
+column 2. Already in §5.1.
+
+**Tablet (721–1080px)** — `.viewer` collapses to `grid-cols-[1fr]` and `.vpanel` becomes a
+right-hand **drawer**, which the draft dropped entirely. Replacement, on `.vpanel`:
+
+```
+max-[1081px]:fixed max-[1081px]:right-0 max-[1081px]:top-0 max-[1081px]:bottom-0
+max-[1081px]:w-[min(420px,90vw)] max-[1081px]:z-[6]
+max-[1081px]:shadow-[var(--shadow-lg)] max-[1081px]:translate-x-full
+max-[1081px]:transition-transform max-[1081px]:duration-[var(--dur-slow)]
+max-[1081px]:ease-[var(--ease-entrance)]
+max-[1081px]:data-[open=true]:translate-x-0
+```
+
+The `.open` class becomes `data-[open]`, so open state is one attribute across all three bands.
+`.viewer__panel-scrim` (marked **D**) is replaced by a plain element rendered only when
+`panelOpen && band !== "desktop"`:
+`fixed inset-0 z-[5] bg-[var(--scrim-overlay)] backdrop-blur-[2px]` — closing TB8-02-E-1, which
+deferred this scrim here by name.
+
+**Phone (≤720px)** — the bottom sheet, **K** in full, below.
+
+**Compare mode** is `.viewer.viewer--compare` (`Lightbox.tsx:484`), a modifier on the same root —
+not a separate `.compare` element, which does not exist. Its grid replaces §5.1's on the root when
+`compareActive`:
+
+| | Classes |
+|---|---|
+| root when comparing | `grid-cols-[minmax(0,1fr)_minmax(0,1fr)_380px] max-[1081px]:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]` |
+| `.vpanel` when comparing | `col-start-3` |
+| `.strip` when comparing | `col-start-1 col-end-3` |
+
+`.compare`, `.compare__pair`, `.compare__cell`, `.compare__tag` and `.compare__pickbtn` are
+**deleted as dead CSS** (§0a) — zero consumers; nothing replaces them because nothing renders them.
+
+### 5.9b Elements the draft named but did not specify
+
+| Element | Classes |
+|---|---|
+| `.viewer__img` | `max-w-full max-h-full object-contain select-none` (the `.canvasframe .viewer__img` override stays **K**) |
+| `.viewer__meta` | `absolute top-[16px] left-1/2 -translate-x-1/2 z-[4] text-center text-foreground max-[721px]:top-[calc(18px+env(safe-area-inset-top))] max-[721px]:max-w-[45vw]` |
+| `.viewer__meta .a` | `[font:var(--type-h3)] [font-family:var(--font-display)] max-[721px]:hidden` |
+| `.viewer__meta .b` | `<Eyebrow className="mt-[3px] text-on-inverse-muted max-[721px]:mt-0">` |
+| `.viewer__shortcuts` | `absolute bottom-[18px] left-1/2 -translate-x-1/2 z-[4] flex items-center gap-[var(--space-2)] px-[var(--space-3)] py-[var(--space-1)] rounded-[var(--radius-pill)] border border-solid border-[length:var(--border-width-hair)] border-border bg-[var(--scrim-overlay)] text-on-inverse-muted [font:var(--type-eyebrow)] tracking-[var(--tracking-wide)] whitespace-nowrap pointer-events-none max-[721px]:hidden` |
+| — `.is-drawing` | `bottom-[70px]` — but see **R-2**: verify against the wrapped drawbar before accepting |
+| — its `span` | `inline-flex items-center gap-[var(--space-1)]` |
+| — its `i` | `not-italic text-on-inverse-muted` (was `rgba(246,244,239,.4)`, 3.55:1 on its pill — a decorative separator, so the token's 11.78:1 is a free improvement) |
+| `.kbd` | `inline-grid place-items-center min-w-[17px] px-[var(--space-1)] rounded-[var(--radius-xs)] border border-solid border-[length:var(--border-width-hair)] border-border bg-secondary text-foreground [font:var(--type-mono)] text-[length:var(--text-2xs)]` — `border-border` fixes **C-6** (2.12:1 → 3.24:1); `--text-2xs` is 11px, replacing the off-scale 10px |
+| "Save annotation" (`.dbtn` at `Lightbox.tsx:502`) | `buttonClasses("primary", { className: "w-full mt-[var(--space-2)]" })` — **was unspecified**; it is a submit action, not a toggle, so no `aria-pressed` |
+
+**No element's tag is left to the builder's judgment.** The draft said to use `<Eyebrow>` "wherever
+the element can be a `<span>`" (Sol B4); the table above states the tag at every site. `Eyebrow`
+renders a `<span>` and is used exactly where this table says `<Eyebrow>`; everywhere else uses
+`SECTION_LABEL` on the element the DOM already has.
 
 The ≤720px bottom-sheet block (`.vpanel` fixed/translate/`max-height`, `__head::before`'s grab
 handle, the seven `__peek*` rules) is a **K** in full, per §4 — eight interacting
@@ -517,15 +772,54 @@ TB8-07 kept for the same reason. Two edits only: `var(--signal-warm, #9a6a1f)` �
 
 ## 6. Tests
 
+**There is no accessible-name computation available in this repo** (Sol B10): no
+`dom-accessibility-api`, no `@testing-library/dom`. `ProjectOverviewRail.dom.test.tsx:163–170`
+already documents that absence and works around it by hand. **This release does not add a
+dependency.** It follows that precedent, with the algorithm written out so two builders cannot
+produce two different tests.
+
+**The accessible-name helper**, in the new test file, covering only the sources this surface uses:
+
+```ts
+// Not a full accname implementation — the four sources these controls actually use, in spec
+// order. Mirrors the manual approach documented in ProjectOverviewRail.dom.test.tsx:163.
+function accessibleName(el: HTMLElement): string {
+  const labelledby = el.getAttribute("aria-labelledby");
+  if (labelledby) {
+    return labelledby.split(/\s+/)
+      .map((id) => el.ownerDocument.getElementById(id)?.textContent?.trim() ?? "")
+      .join(" ").trim();
+  }
+  const label = el.getAttribute("aria-label");
+  if (label?.trim()) return label.trim();
+  const text = [...el.childNodes]
+    .filter((n) => !(n instanceof HTMLElement) || n.getAttribute("aria-hidden") !== "true")
+    .map((n) => n.textContent ?? "").join("").trim();
+  if (text) return text;
+  return el.getAttribute("title")?.trim() ?? "";
+}
+```
+
 New `components/Lightbox.a11y.dom.test.tsx`:
 
-1. Every button inside the markup toolbar has a non-empty accessible name (asserts on the computed
-   name, not on the presence of an attribute). **This is the A-1/A-2 regression lock.**
-2. The five rating radios have five *distinct* names.
-3. Each radio group exposes exactly one `aria-checked="true"` when a value is set, none when null.
+1. Every button inside the markup toolbar returns a non-empty `accessibleName`. **The A-1/A-2
+   regression lock** — nine buttons, none anonymous.
+2. The five rating buttons return five *distinct* names.
+3. Each of the four toggle groups exposes exactly one `aria-pressed="true"` when a value is set,
+   and none when the value is null. (`aria-pressed`, not `aria-checked` — §0c.)
 4. Approve/Flag/Recommend carry `aria-pressed` matching the review state — asserted in **both**
    bands, since the register's finding was that the two bands disagreed.
-5. `.strip__button` has no `outline-color: transparent` in its computed style — the §3.1 lock.
+5. The `.strip__button` lock. **The existing `Lightbox.dom.test.tsx` does not import `index.css`,
+   so a computed-style assertion would read nothing** (Sol B10). Assert against the stylesheet
+   source instead: `app.css` contains no `outline` declaration for `.strip__button`. That is what
+   the defect actually was — a rule that should not exist — so testing for the rule's absence is
+   both implementable and closer to the truth than a computed style.
+6. `tokens/inverse.css`'s two blocks declare **the same property set** — parse the file, diff the
+   two property lists, require empty. This is what stops §2.3's reset block from silently drifting
+   out of sync with the inverse block (Sol B2's failure mode).
+7. The four class names §4 requires to survive (`.viewer`, `.viewer__img`, `.vpanel`,
+   `.viewer__panel-trigger`) are still present in `Lightbox.tsx` — the counterpart to criterion 8,
+   so "retired" cannot be over-applied.
 
 Extend `components/tb8-07-regressions.dom.test.tsx` (it already owns the phantom-token pattern) to
 assert `--signal-warm` and `--panel` are absent from `tokens/` **and** from `app.css`, alongside
@@ -550,18 +844,27 @@ Measured in a real browser at `1440×900`, `1024×768`, `390×844`, `721px`, `10
    visible in a class list.
    The filmstrip specifically — it had two independent causes and both must be gone.
 2. Every button in the markup toolbar reports a non-empty accessible name. Nine, none anonymous.
-3. The rating group reports five distinct names and exactly one `aria-checked="true"`.
-4. `.swatch`, `.wbtn`, `.labelpick`, `.starpick button`, `.vpanel__collapse` and `.strip__button`
-   each measure **≥ 44 × 44** at ≤721px and **≥ 28 × 28** above it. The 721–1080 band is checked
-   explicitly, not inferred from 1440.
+3. The rating group reports five distinct names and exactly one `aria-pressed="true"`.
+4. **Touch targets, against the repo's contract, not a flat 44 (§0b).** At **≤720px**:
+   `.swatch`, `.wbtn`, `.labelpick`, `.starpick button`, `.strip__button`, `.comment-reply` and
+   `.vpanel__collapse` each measure **≥ 44 × 44**. At **721–1080px**: each measures **≥ 28 × 28**,
+   and `.vpanel__collapse` **≥ 36 × 36** (it must not regress from today's 36).
+   **At exactly 721px the desktop sizes apply**, because `max-[721px]` is `width < 721` — that is
+   correct, not a miss, and the gate records the 28px reading there rather than flagging it.
+   The 721–1080 band is measured explicitly, never inferred from 1440.
 5. Contrast, measured, no regressions from the register's §3.3 pass list, and:
    `.cmt__who span` ≥ 8:1 (was 3.36) · `.cmt__pin.unpinned` ≥ 8:1 (was 2.87) ·
    `.starpick.on` ≥ 6:1 (was 4.44) · toolbar and `.kbd` borders ≥ 3:1 (were 1.93 / 2.12) ·
    `.vpanel`'s left seam ≥ 3:1 **against the stage** (was 1.01).
 6. Zero horizontal overflow at all five widths, and zero elements overflowing their own box.
 7. The drawbar does not collide with `.viewer__shortcuts` at any width, wrapped or not (R-1/R-2).
-8. `grep -c` returns **0** for every selector marked **R** or **D** in §4; every **K** carries a
-   comment saying why.
+7a. **At exactly 1080px the JS band and the CSS layout agree** — `viewerBand()` returns `tablet`
+   and the panel renders as a drawer, not a desktop column. This is the §3.0 off-by-one; it is a
+   one-pixel check that would never surface at 1024 or 1440.
+8. **Retirement, counted as CSS rules — not class names (§4, Sol B8).** `app.css` contains **0**
+   rules for every selector marked **R** or **D**. Class *names* may survive as hooks; the four
+   in §4's table **must** survive, and test 7 asserts it. Every **K** rule carries a comment
+   saying why. The final slice reports retired-vs-kept counts.
 9. Full suite green: `npm run typecheck` (6/6), `npm run build -w @quincy/web`,
    `npm run test --workspaces`, and `packages/shared`'s standalone vitest config.
 10. Zero console errors and zero failed requests throughout.
@@ -570,20 +873,37 @@ Measured in a real browser at `1440×900`, `1024×768`, `390×844`, `721px`, `10
 
 ## 8. Slices
 
-Bottom-up, so nothing is ever half-wired. Each ends green on typecheck and build; only slice 5
-must satisfy §7 in full.
+**Restructured after Sol B9, which was the most structural finding.** The draft put the whole §4
+retirement ledger in slice 5, which does not work: `app.css` is unlayered, so it beats every
+utility an earlier slice adds. Slice 3's 28px swatch would have stayed 19px, slice 4's rating
+would have kept losing to `.starpick button`, and slice 2's phone close/nav would have stayed
+48px — three slices shipping visibly half-wired while typecheck and build stayed green, which is
+exactly the failure §8 claimed to prevent.
+
+**Rule: a slice deletes the `app.css` rules for the elements it converts, in the same commit.**
+Retirement is not a phase; it is part of each conversion. A slice is done when its elements have
+*one* styling owner, never two.
+
+Bottom-up, so nothing is ever half-wired. Each ends green on typecheck and build; only the last
+slice must satisfy §7 in full.
 
 | # | Scope | Reads in full |
 |---|---|---|
 | **1** | The role-layer indirection (§2.2) and `tokens/inverse.css` (§2.3, §2.3a). Touches no component. **Visually inert by construction** — every value is identical at `:root`, and nothing yet carries `data-surface`. Prove it: build before and after, diff the emitted CSS, and state what changed. | §2, §3 |
-| **2** | Stage: root, `__stage`, `__imgwrap`, the four `IconButton` controls, `__meta`, `__shortcuts`, `.kbd`, `__panel-trigger`, `__panel-scrim`. | §2, §3, §5.1, §5.2 |
-| **3** | Markup toolbar — the nine unnamed buttons, both radio groups, `PEN_COLOUR_NAMES`, the four text buttons. **The highest-value slice; do not merge it with another.** | §2, §3, §5.3 |
-| **4** | Side panel: decision, rating, label, thread, textarea, `review-labels.ts`, and the two peek-bar edits. | §2, §3, §5.4–§5.7, §5.9 |
-| **5** | Filmstrip, compare, the ≤720 band audit, the §4 retirement ledger, all tests, and the docs. | all |
+| **2** | Stage: root, `__stage`, `__imgwrap`, the five `IconButton` controls, `__meta` (+`.a`/`.b`), `__shortcuts` (+`span`/`i`), `.kbd`, `__panel-trigger`, `__panel-scrim`. **Deletes `app.css:255–275` in the same commit.** | §2, §3, §5.1, §5.2, §5.9b |
+| **3** | Markup toolbar — the nine unnamed buttons, both toggle groups, `PEN_COLOUR_NAMES`, the four text buttons. **Deletes `app.css:290–298`.** The highest-value slice; do not merge it with another. | §2, §3, §5.3, §0c |
+| **4** | Side panel: decision, rating, label, thread, textarea, "Save annotation", `review-labels.ts`, and the two peek-bar edits. **Deletes `app.css:454–476` and `477–491`**, keeping the ≤720 sheet block. | §2, §3, §5.4–§5.7, §0b, §0c |
+| **5** | Filmstrip and the three band layouts: `.strip*`, the tablet drawer, the compare grid, and the **deletion of the five dead `.compare*` rules**. **Deletes `app.css:492–507` and `753–755`**, and rewrites the two band blocks. | §2, §3, §3.0, §5.8, §5.9, §5.9a |
+| **6** | The §4 ledger reconciliation (counts + the four surviving names), all tests, the register correction, and the docs. **Adds no new styling.** | all |
 
 Slice 1 is the one to get exactly right — every later slice assumes the inverse scope resolves.
-If slice 1's before/after CSS diff shows any changed *value* outside the new
-`[data-surface]` blocks, stop and report rather than continuing.
+If slice 1's before/after CSS diff shows any changed *value* outside the new `[data-surface]`
+blocks, stop and report rather than continuing.
+
+**Each of slices 2–5 must end with its own two-owner check**: for every selector it deleted,
+`grep` `app.css` and confirm zero rules remain, and confirm the element renders with the intended
+utility rather than a surviving legacy value. A slice that adds utilities without deleting its
+rules has not finished, however green the build is.
 
 ---
 
@@ -592,12 +912,23 @@ If slice 1's before/after CSS diff shows any changed *value* outside the new
 1. **`.starpick` off-state at 3.36:1.** `--text-muted` on `--paper-050`. A `★` drawn with a text
    character is either text (4.5:1, fails) or a non-text graphical indicator (3:1, passes). The
    token file already draws exactly this distinction for icons. §5.4 keeps `text-muted-foreground`
-   and makes state non-colour-dependent via `aria-checked`, so nothing is *blocked* either way —
+   and makes state non-colour-dependent via `aria-pressed`, so nothing is *blocked* either way —
    but if the owner wants the stricter reading, the fix is `text-foreground-secondary` (8.66:1)
    and it is a one-word change.
 2. **The six pen colours stay literals** (§1.5). Recorded as a decision, not an accident.
-3. **§1.4's scope extension to `.actionbar`.** Approve it and `.barbtn`/`.icbtn--ondark` retire
-   completely; decline it and they survive for `PhotoGrid` and go to TB8-10.
+3. **§1.4's scope extension to `.actionbar`** — narrowed after Sol B3. Approve it and **`.barbtn`
+   alone** retires, and this release also owns the action bar's replacement classes and the nine
+   `.actionbar .barbtn` queries in `PhotoGrid.dom.test.tsx`. Decline it and `.barbtn` stays **K**
+   and goes to TB8-10. Either way **`.icbtn--ondark` stays** — its five consumers sit on
+   photographs, not on the action bar, and no scope reaches them.
 4. **Close/nav shrink from 48px to 44px on phone** (§5.2) — convergence onto the repo's stated
-   contract, and a deliberate reduction. Flagged because it is the one place this plan makes a
-   target *smaller*.
+   contract, and a deliberate reduction. Flagged because it is one of two places this plan makes a
+   target smaller; the other, `.vpanel__collapse` at 36→28, is **rejected** and floored at 36
+   (§0b).
+5. **`--signal-warm` becomes `--signal-caution-text`, not `--signal-caution`** (NB3). The register
+   proposed `--signal-caution`, and `colors.css:40–46` does say icons keep the brand tone. The
+   plan chooses the darkened text token because the peek-bar rating is a `★` **text glyph** on
+   `--paper-000`, where the brand ochre measures 4.71:1 — passing, but only just, and by the same
+   reasoning §5.4 applies to the desktop stars. Recorded because it diverges from this release's
+   own evidence base, which should never happen silently. Reverting to `--signal-caution` is a
+   one-word change if the owner reads the icon exemption as covering it.

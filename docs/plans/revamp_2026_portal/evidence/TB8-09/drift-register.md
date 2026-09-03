@@ -9,7 +9,9 @@ side panel (decision, rating, label, annotation thread).
 and the compare grid at **753–755** for paint. One component, one CSS block — the surface can
 retire its legacy owner cleanly, which is why it ranks as a candidate at all.
 
-**Status:** static pass complete (2026-09-04). Every number below is derived from the checked-in
+**Status:** static pass complete (2026-09-04), **corrected 2026-09-04** after Sol round 1 on
+the plan — see §4's header and C-2. The corrections are to this register's *verdicts and one
+arithmetic ground*, not to its measurements, which held. Every number below is derived from the checked-in
 source and is reproducible without a browser — CSS values read directly, contrast computed by
 compositing each stated `rgba()` over its real ancestor stack and applying the WCAG 2.x relative-
 luminance formula. **Items marked `RUNTIME` are asserted from source and still need confirming in
@@ -100,7 +102,7 @@ Computed by compositing each declared `rgba()` over its real ancestor stack. Sta
 | # | Site | Declared | Measured | Bar | Verdict |
 |---|---|---|---|---|---|
 | **C-1** | `.cmt__who span` (annotation author's role, 11.5px) | `--text-muted` on `--paper-050` | **3.36:1** | 4.5:1 | **Fails.** Unambiguous small text. |
-| **C-2** | `.cmt__pin.unpinned` | `--text-muted` on `--paper-200` | **2.87:1** | 4.5:1 / 3:1 | **Fails both bars.** |
+| **C-2** | `.cmt__pin.unpinned` | `--text-muted` on `--paper-200` | **2.87:1** | 4.5:1 / 3:1 | **Fails both bars.** (Fix measures **7.40:1**, not the 8.66:1 first written into the plan — 8.66 is this text colour against `--paper-050`, the wrong ground. Corrected 2026-09-04 after Sol B6.) |
 | **C-3** | `.starpick button.on` | `#9a6a1f` on `--paper-050` | **4.44:1** | 4.5:1 | **Fails**, and by the token file's own rule: caution *text* must use `--signal-caution-text`, which measures **6.27:1** here. |
 | **C-4** | `.wbtn` border (the control's own boundary) | `rgba(246,244,239,.22)` on `--ink-800` | **1.93:1** | 3:1 | **Fails 1.4.11** — this border is the only thing that identifies an unselected tool button. |
 | **C-5** | `.viewer__panel-trigger` border | `rgba(246,244,239,.28)` over 45% ink | **2.33:1** | 3:1 | **Fails 1.4.11.** |
@@ -129,21 +131,34 @@ distinction explicitly for icons. **Owner decision required**; recorded, not ass
 
 ## 4. Touch targets
 
+**Corrected 2026-09-04 (Sol B6). This section originally treated 44px as the bar at every width.
+That is not this repo's contract and the claim was overstated.** The contract is `ICON_BUTTON`'s —
+**28px desktop, 44px at ≤720px** (`icon-button.tsx:19`), applied by every converged surface since
+TB8-06. Against WCAG, 44px is 2.5.5 (**AAA**); the AA bar is 2.5.8's **24px**. The table below
+keeps the original measurements, which were right, and states the verdict honestly.
+
+Only two of the seven are true failures: **`.swatch` at 19px** (below even the 24px AA bar, at
+every width) and **`.strip__button` at 48×32 on phone** (below the repo's own 44px phone
+contract — and introduced by the phone override itself). The rest pass AA today and are raised to
+28/44 because convergence onto `ICON_BUTTON` gives that for free, not because they were failing.
+
 The ≤720px block raises `.swatch` and `.wbtn` to 44px. Nothing raises anything in the
-**721–1080px band**, which is a real device band (tablets, split-screen laptops) and is exactly
-the band-scoping failure mode TB8-04 shipped and TB8-05 had to correct.
+**721–1080px band** — still worth noting, since that band is where `.vpanel__collapse` is the
+drawer's only dismiss control, and any conversion must not shrink it below today's 36px.
 
 | # | Control | ≥721px | ≤720px | Note |
 |---|---|---|---|---|
-| **T-1** | `.swatch` | **19 × 19** | 44 × 44 ✓ | `box-sizing: border-box` is global, so 19px is the whole target. |
-| **T-2** | `.wbtn` | **28 × 28** | 44 × 44 ✓ | |
-| **T-3** | `.labelpick` | **26 × 26** | **26 × 26** | No override at any width. |
-| **T-4** | `.starpick button` | **≈26 × 26** | **≈26 × 26** | 22px glyph + 2px padding; no override at any width. |
-| **T-5** | `.strip__button` | 84 × 56 ✓ | **48 × 32** | The phone override *introduces* this one: height drops from a passing 56px to 32px. |
-| **T-6** | `.vpanel__collapse` | 36 × 36 | 44 × 44 ✓ | Fails only in the 721–1080px band, where it is the sheet's sole dismiss control. |
-| **T-7** | `.comment-reply` | inline text | inline text | Edit note / Edit drawing / Delete are bare underlined inline text with no min box — same shape as TB8-08's `Edit`/`Delete` finding (20.5 × 24 there). |
+| # | Control | ≥721px | ≤720px | Verdict |
+|---|---|---|---|---|
+| **T-1** | `.swatch` | **19 × 19** | 44 × 44 ✓ | **Real failure — WCAG 2.5.8 (24px AA), at every width.** The group's only one. `box-sizing: border-box` is global, so 19px is the whole target. |
+| **T-2** | `.wbtn` | 28 × 28 | 44 × 44 ✓ | Passes AA; meets the repo contract already. |
+| **T-3** | `.labelpick` | 26 × 26 | 26 × 26 | Passes AA. Below the repo's 44px phone contract. |
+| **T-4** | `.starpick button` | ≈26 × 26 | ≈26 × 26 | Passes AA. Below the repo's 44px phone contract. 22px glyph + 2px padding. |
+| **T-5** | `.strip__button` | 84 × 56 ✓ | **48 × 32** | **Real failure** — the phone override introduces it: height drops from a passing 56px to 32px. |
+| **T-6** | `.vpanel__collapse` | 36 × 36 | 44 × 44 ✓ | Passes AA. **Must not be reduced** — a bare `IconButton` would take it to 28px in the band where it is the drawer's only dismiss control. |
+| **T-7** | `.comment-reply` | inline text | inline text | Below the phone contract. Bare underlined inline text, no min box — same shape as TB8-08's `Edit`/`Delete` finding (20.5 × 24 there), and `buttonClasses("text")` alone **cannot** fix it: `px-0`, no `min-width`. |
 
-T-3, T-4 and T-7 fail at **every** width, phone included.
+T-3, T-4 and T-7 sit below the repo's phone contract at **every** width, phone included.
 
 ## 5. Tokens and one-owner violations
 
