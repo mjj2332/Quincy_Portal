@@ -268,7 +268,7 @@ export function KanbanCard({
   const activeStageOptions = (stageOptions ?? []).filter((stage) => stage.active);
   const moveModel = boardModel ?? { projects: [project], ...(project.authorizedBoardOrder ? { authorizedBoardOrder: project.authorizedBoardOrder } : {}) };
 
-  return <div ref={setCardRef} style={cardStyle} className={`kcard-wrap relative bg-card border border-border transition-[background-color,border-color] duration-[var(--dur-fast)] hover:bg-[var(--paper-100)] hover:border-[var(--greige-300)] ${isDragging ? "is-dragging" : ""}`}>
+  return <div ref={setCardRef} style={cardStyle} className="kcard-wrap relative bg-card border border-border transition-[background-color,border-color] duration-[var(--dur-fast)] hover:bg-[var(--paper-100)] hover:border-[var(--greige-300)] data-[dragging=true]:opacity-40" data-dragging={isDragging ? "true" : undefined}>
     <InternalLink className="kcard w-full block p-0 text-inherit text-left [font:inherit] no-underline bg-none border-0 cursor-pointer" to={projectHref ?? `/projects/${encodeURIComponent(project.id)}`}>
       <div className="kcard__media aspect-[16/9] overflow-hidden bg-[var(--ink-800)]"><CoverMedia project={project} className="size-full object-cover" retryToken={coverRetry} onFailedChange={setCoverFailed} /></div>
       <div className="kcard__b p-[var(--space-3)]">

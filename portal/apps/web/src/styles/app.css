@@ -462,7 +462,6 @@ button { font-family: var(--font-sans); }
 .mention-autocomplete__option small { color: var(--text-muted); text-transform: capitalize; }
 .mention-autocomplete__status { padding: var(--space-2); color: var(--text-muted); font-size: var(--text-xs); }
 .kcol__head > .row { flex: 1 1 auto; min-width: 0; }
-.kcard-wrap.is-dragging { opacity: .4; }
 /* §10.3: options sit flush inside a bordered, overflow-auto panel — an outward ring clips. */
 .kanban-move-popover button:focus-visible { outline: var(--border-width-bold) solid var(--ink-900); outline-offset: -2px; }
 .kanban-move-popover__option:active { background: var(--bg-sunken); }
