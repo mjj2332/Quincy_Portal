@@ -1,7 +1,9 @@
 # TB8-08 — Staff Notice Board: Visual Plan
 
-**Status: BUILT, VISUAL GATE PASSED, not yet merged or deployed.** Slices `0a36964`, `3504e30`,
-`72c2325`. Gate results in §0a.
+**Status: DEPLOYED TO PRODUCTION 2026-09-04.** Slices `0a36964`, `3504e30`, `72c2325`; merged to
+`main` as `5479ceb` and pushed. App Worker `1b35ead6` only — background and webhook-ingress were
+not redeployed (the release touches `apps/web` alone). No migration. Rollback target: app
+`3be901b7` (TB8-07). Gate results in §0a.
 
 **Prior status: REVIEWED (both Sol rounds).** Sol returned 10 findings in
 round 1 (7 blocking) and 5 in round 2 (3 blocking). **All 15 were independently verified against the

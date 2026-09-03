@@ -31,9 +31,13 @@ and pick the first surface to run through the pipeline above.
 5. Notification bell/preferences/Admin delivery UI
 6. Board filters/card controls — **shipped as TB8-06, 2026-09-03** (the whole Kanban board; the
    filters half was already converged by TB8-01)
-7. Collaboration/checklist/comments (fresh from TB6, low priority)
-8. Notice board (fresh from TB7, too new)
-9. Lightbox controls (only if evidence warrants)
+7. Collaboration/checklist/comments (fresh from TB6, low priority) — **shipped as TB8-07, 2026-09-04**
+8. Notice board (fresh from TB7, too new) — **shipped as TB8-08, 2026-09-04**
+9. Lightbox controls (only if evidence warrants) — **warrant confirmed 2026-09-04; running as TB8-09.**
+   Evidence: ~250 lines of `app.css` (the largest remaining legacy block) owned by a single
+   consumer, `Lightbox.tsx`; TB8-02-E-1's deferred `.viewer__panel-scrim` points here explicitly;
+   and TB0-VIS-02's "no local media" blocker on matched evidence is resolved (the R2 storage-plane
+   fix in `lessons.md`, plus `media.ts`'s dev direct-original fallback for `/web` and `/thumb`).
 10. Dead selectors / final base/Preflight decision (cleanup, near the end) — **registered as
     `TB8-10-Deferred-Defects-And-Cleanup-Sweep-Plan.md`**, which also absorbs every defect the
     earlier candidates deferred. Runs after #6-#9.
