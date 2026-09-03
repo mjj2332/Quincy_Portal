@@ -177,7 +177,8 @@ A new file, `styles/tokens/inverse.css`, imported from `index.css` immediately a
   --primary:               var(--paper-050);      /* inverted: a solid button is paper on ink */
   --primary-foreground:    var(--ink-900);
   --primary-hover:         var(--greige-100);   /* only works because of §2.2 */
-  --ring:                  var(--paper-050);      /* 18.64:1 — this is the §1.2 fix */
+  --ring:                  var(--paper-050);      /* 18.64:1 — the §1.2 fix, utilities half */
+  --focus-ring:            var(--paper-050);      /* 18.64:1 — the §1.2 fix, global-rule half */
 }
 ```
 
@@ -185,6 +186,41 @@ Applied as `data-surface="inverse"` on `.viewer`, on `.compare`, and (per §1.4)
 `.vpanel` is a **light** panel inside a dark stage, so it carries `data-surface="default"`, which
 resets the same properties to their `:root` values — declared in the same file so the pair is
 read in one place.
+
+### 2.3a Why the scope sets **both** `--ring` and `--focus-ring`
+
+This is the single easiest thing to get wrong here, and setting only `--ring` would leave the
+§1.2 defect half-fixed in a way that looks fixed.
+
+There are **two independent paths** by which a focus ring gets painted in this app:
+
+1. **Tailwind utilities** — `focus-visible:outline-ring` (in `buttonClasses`) reads `--ring`.
+2. **A global rule** — `tokens/base.css:25` declares an unlayered
+   `:focus-visible { outline: var(--border-width-bold) solid var(--focus-ring); outline-offset: 2px }`
+   that applies to **every focusable element in the app**, including every one inside the
+   lightbox, and it names `--focus-ring` directly. Being unlayered, it also *beats* an ordinary
+   layered `outline-*` utility — which is why `ICON_BUTTON_BASE` and `ImpersonationBanner`'s
+   `EXIT` both carry `!`-prefixed focus utilities today.
+
+Scoping only `--ring` therefore fixes path 1 and leaves path 2 painting ink-on-ink at 1.00:1 for
+every control that does not carry its own `!`-prefixed override. Scoping both closes it once, for
+every element in the subtree, whether or not it opts in.
+
+**This is the codebase's own established pattern, not an invention.**
+`styles/production-calendar.css:18` already does exactly this — `.production-calendar
+{ --focus-ring: var(--signal-info, #2f3b4d) }` — scoping the focus ring to a surface that needs a
+different one. TB8-09 uses the same mechanism for the same reason.
+
+**Consequence: `ICON_BUTTON_BASE` is NOT edited.** An earlier draft of this plan proposed changing
+its `focus-visible:!outline-[var(--focus-ring)]` to name `--ring`. That edit is now unnecessary
+and is **withdrawn** — with `--focus-ring` scoped, `IconButton` is already correct on both
+grounds, and the primitive is shared with nine other call sites
+(`NoticeBoard`, `ProjectKanbanBoard` ×4, `MentionAutocomplete`, `AnchoredPopover`,
+`SubtaskChecklist` ×2). **Do not touch `ui/icon-button.tsx`.** Not touching a shared primitive is
+strictly better than touching it and re-verifying nine surfaces.
+
+`--focus-ring` is deliberately *not* given a `@theme inline` role in §2.2: it is consumed by a
+plain CSS rule, not by a utility, so it is already scopeable as-is.
 
 ### 2.4 What this does not solve, and must not be asked to
 
@@ -293,12 +329,9 @@ now named.
 
 ### 5.2 Stage controls
 
-All four are `IconButton`. Inside the inverse scope its `focus-visible:!outline-[var(--focus-ring)]`
-still names `--focus-ring`, which the scope does **not** redefine — so **`ICON_BUTTON_BASE` must
-change `--focus-ring` to `--ring`** (`focus-visible:!outline-[var(--ring)]`). `:root` sets
-`--ring: var(--focus-ring)`, so this is value-identical everywhere else in the app and is the
-single edit that makes every icon button correct on both grounds. Verify no other primitive names
-`--focus-ring` directly; `buttonClasses` already uses `outline-ring`, which is correct as-is.
+All four are `IconButton`, used **unmodified**. Its `focus-visible:!outline-[var(--focus-ring)]`
+resolves to `--paper-050` inside the scope because §2.3 sets `--focus-ring` there — see §2.3a.
+No primitive is edited by this release.
 
 | Control | Classes | State |
 |---|---|---|
@@ -494,8 +527,11 @@ Measured in a real browser at `1440×900`, `1024×768`, `390×844`, `721px`, `10
 
 1. **The focus ring is visible on every focusable control on the dark stage.** Tab from Close
    through to the last filmstrip thumbnail; every stop shows a 2px `--paper-050` ring at
-   `offset 2px`, measured ≥ 3:1 against its own ground. The filmstrip specifically — it has two
-   independent causes and both must be gone.
+   `offset 2px`, measured ≥ 3:1 against its own ground. Check a control that carries its own
+   `!`-prefixed focus utility (any `IconButton`) **and** one that relies on the global
+   `:focus-visible` rule alone — §2.3a's two paths must both be closed, and only one of them is
+   visible in a class list.
+   The filmstrip specifically — it had two independent causes and both must be gone.
 2. Every button in the markup toolbar reports a non-empty accessible name. Nine, none anonymous.
 3. The rating group reports five distinct names and exactly one `aria-checked="true"`.
 4. `.swatch`, `.wbtn`, `.labelpick`, `.starpick button`, `.vpanel__collapse` and `.strip__button`
@@ -522,7 +558,7 @@ must satisfy §7 in full.
 
 | # | Scope | Reads in full |
 |---|---|---|
-| **1** | The role-layer indirection (§2.2), `tokens/inverse.css` (§2.3), and the `ICON_BUTTON_BASE` `--focus-ring` → `--ring` edit (§5.2). **Visually inert by construction** — every value is identical at `:root`. Prove it: build before and after, diff the emitted CSS, and state what changed. | §2, §3 |
+| **1** | The role-layer indirection (§2.2) and `tokens/inverse.css` (§2.3, §2.3a). Touches no component. **Visually inert by construction** — every value is identical at `:root`, and nothing yet carries `data-surface`. Prove it: build before and after, diff the emitted CSS, and state what changed. | §2, §3 |
 | **2** | Stage: root, `__stage`, `__imgwrap`, the four `IconButton` controls, `__meta`, `__shortcuts`, `.kbd`, `__panel-trigger`, `__panel-scrim`. | §2, §3, §5.1, §5.2 |
 | **3** | Markup toolbar — the nine unnamed buttons, both radio groups, `PEN_COLOUR_NAMES`, the four text buttons. **The highest-value slice; do not merge it with another.** | §2, §3, §5.3 |
 | **4** | Side panel: decision, rating, label, thread, textarea, `review-labels.ts`, and the two peek-bar edits. | §2, §3, §5.4–§5.7, §5.9 |
