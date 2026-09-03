@@ -5,6 +5,7 @@
 @import "./tokens/spacing.css";
 @import "./tokens/typography.css";
 @import "./tokens/tailwind.css";
+@import "./tokens/inverse.css";
 @import "./tokens/base.css";
 @import "./fonts.css";
 @import "./app.css";

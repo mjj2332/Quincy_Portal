@@ -73,6 +73,15 @@
 
   --focus-ring:       var(--ink-900);
 
+  /* ---- TB8-09 indirection roles ---- */
+  /* Give these four TB8-01 roles a semantic alias of their own so tokens/tailwind.css can
+     read the alias instead of the raw ramp — the alias, not the raw name, is what an
+     inverse-surface scope (TB8-09 §2.2) redefines. See docs/plans/TB8-09-Lightbox-Controls-Visual-Plan.md §2.2. */
+  --foreground-secondary: var(--text-secondary);
+  --surface-sunken:       var(--bg-sunken);
+  --border-hover:         var(--greige-300);
+  --primary-hover:        var(--ink-700);
+
   /* ---- TB8-02 overlay roles ---- */
   /* The wash behind a detached overlay. Was four raw rgba() literals differing by 2%
      (app.css:764, :528, :1078, :843) — one token, one value. */
