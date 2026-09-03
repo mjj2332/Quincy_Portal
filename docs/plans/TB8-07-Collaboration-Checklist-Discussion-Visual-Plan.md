@@ -1063,11 +1063,22 @@ as one.
 | `__toolbar` | `flex flex-wrap items-center gap-[var(--space-2)] p-[var(--space-1)] [border-style:solid] border-[length:var(--border-width-hair)] border-border bg-card` |
 | `__toolbar-group` | `inline-flex flex-wrap gap-[var(--space-1)]` |
 | `__toolbar-divider` | `w-px h-[var(--space-5)] bg-border shrink-0` |
-| `__toolbar-button` | `ICON_BUTTON` + `[font:var(--weight-regular)_var(--text-xs)/1.2_var(--font-sans)] aria-pressed:bg-primary aria-pressed:!text-[var(--accent-on)]` — the `!` is needed on the text colour for the same shorthand reason as the rings; the base string sets `text-foreground-secondary` unconditionally. Disabled: the `--bg-sunken` chip from `ICON_BUTTON_BASE`, **7.40:1**. |
+| `__toolbar-button` | **`ICON_BUTTON_BASE` + `w-auto px-[var(--space-2)]`** — *not* `ICON_BUTTON`; see the correction below — plus `[font:var(--weight-regular)_var(--text-xs)/1.2_var(--font-sans)] aria-pressed:bg-primary aria-pressed:!text-[var(--accent-on)]`. The `!` is needed on the text colour for the same shorthand reason as the rings; the base string sets `text-foreground-secondary` unconditionally. Disabled: the `--bg-sunken` chip from `ICON_BUTTON_BASE`, **7.40:1**. |
 | `__toolbar-select` | `<NativeSelect className="min-w-[112px] w-auto">` — `FIELD_BOX`'s own `disabled:bg-surface-sunken disabled:text-foreground-secondary` gives **7.40:1** |
 | `__editor-content` | **keeps `rich-text__editor-content`** (see below) **plus** `FIELD_BOX` + `min-h-[var(--space-8)] bg-[var(--paper-050)] group-data-[disabled]:bg-surface-sunken [&.is-editor-empty:first-child]:before:content-[attr(data-placeholder)] [&.is-editor-empty:first-child]:before:text-foreground-secondary [&.is-editor-empty:first-child]:before:float-left [&.is-editor-empty:first-child]:before:h-0 [&.is-editor-empty:first-child]:before:pointer-events-none` — every variant written out in full; no `…` |
 | `__counter` | `text-right [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary`; over → append `!text-destructive` |
 | `__validation` | **element and `aria-live="polite"` kept as they are** (`RichTextEditor.tsx:402`); it takes `min-h-[1.2em] [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-destructive`. **Not `<FieldError>`** — that primitive injects `role="alert"` (`ui/field.tsx:34-45`), which would turn a polite live region into an assertive one and change how a screen reader interrupts the user mid-typing. |
+
+> **Correction, found during the slice-2 build (2026-09-03).** This table originally said
+> `ICON_BUTTON`, which is a **fixed `w-[28px]`**. That is right for a glyph and wrong here: six of
+> these buttons carry *text* labels — `• List`, `1. List`, `☑ List`, `Undo`, `Redo`, `Link` — which
+> a 28px box overflows. The builder followed the table literally and correctly; the table was the
+> defect. `ICON_BUTTON_BASE` still supplies the 28/44 minimum, every state and the ring, and
+> `w-auto` plus symmetric padding lets a label size to its content.
+>
+> The general lesson, worth carrying into §5.2's own trigger work: **`ICON_BUTTON` is only for a
+> button whose entire content is one glyph.** Anything that can hold a word takes the base plus
+> `w-auto`, and anything that can hold a *value* takes `META_TRIGGER` (§4.1).
 
 **`rich-text__editor-content` is not retired — it is *joined*.** Nine of the selectors §1.3 keeps
 as CSS are scoped through that exact class:

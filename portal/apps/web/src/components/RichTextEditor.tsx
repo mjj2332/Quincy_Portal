@@ -9,9 +9,29 @@ import HardBreak from "@tiptap/extension-hard-break";
 import Mention from "@tiptap/extension-mention";
 import { ListItem, TaskItem, TaskList } from "@tiptap/extension-list";
 import { isHttpUrl, RICH_TEXT_JSON_MAX_BYTES, RICH_TEXT_MAX_NESTING, richTextDocByteLength, richTextPlainText, type RichTextDoc } from "@quincy/shared";
+import { cn } from "../lib/utils";
 import { MentionAutocomplete, type MentionAutocompleteHandle, type MentionableUser } from "./MentionAutocomplete";
 import { Modal } from "./Modal";
 import { Button } from "./ui/button";
+import { ICON_BUTTON_BASE } from "./ui/icon-button";
+import { FIELD_BOX } from "./ui/input";
+import { NativeSelect } from "./ui/native-select";
+
+// TB8-07 §6.4 — the editor content box's utilities, appended (as a plain string —
+// `cn()` is not used here; this feeds a Tiptap `editorProps.attributes.class`, a
+// plain HTML `class` on a ProseMirror-managed element, not a React `className`) to
+// the retained `rich-text__editor-content` class, kept because nine descendant
+// selectors in app.css are scoped through it (§1.3/§6.4). Every utility below is a
+// whole literal (or a whole literal constant, `FIELD_BOX`) so Tailwind's scanner
+// sees each one complete.
+const EDITOR_CONTENT_UTILITIES =
+  FIELD_BOX +
+  " min-h-[var(--space-8)] bg-[var(--paper-050)] group-data-[disabled]:bg-surface-sunken " +
+  "[&.is-editor-empty:first-child]:before:content-[attr(data-placeholder)] " +
+  "[&.is-editor-empty:first-child]:before:text-foreground-secondary " +
+  "[&.is-editor-empty:first-child]:before:float-left " +
+  "[&.is-editor-empty:first-child]:before:h-0 " +
+  "[&.is-editor-empty:first-child]:before:pointer-events-none";
 
 // §6.8 body-input state set, shared by the link dialog's URL field.
 const FIELD_LABEL = "grid gap-[var(--space-1)] [font:var(--type-label)] text-[length:var(--text-xs)] text-foreground-secondary";
@@ -149,14 +169,28 @@ export function createRichTextEditorExtensions() {
 }
 
 function ToolbarGroup({ children }: { children: ReactNode }) {
-  return <div className="rich-text__toolbar-group">{children}</div>;
+  return <div className="inline-flex flex-wrap gap-[var(--space-1)]">{children}</div>;
 }
+
+// `ICON_BUTTON_BASE` + `w-auto`, NOT `ICON_BUTTON`. TB8-07 §6.4's table said `ICON_BUTTON`,
+// which is a fixed `w-[28px]` — correct for a glyph, wrong here: six of these buttons carry
+// text labels ("• List", "1. List", "☑ List", "Undo", "Redo", "Link"), which a 28px box
+// overflows. The base still supplies the 28/44 minimum, every state, and the ring; `w-auto`
+// plus symmetric padding lets a label size to its content. See the plan's §6.4 correction note.
+//
+// The `!` on the pressed text colour is load-bearing, not decorative: the base string sets
+// `text-foreground-secondary` unconditionally, and an ordinary `aria-pressed:text-[...]`
+// loses to it on source order alone.
+const TOOLBAR_BUTTON =
+  ICON_BUTTON_BASE +
+  " w-auto px-[var(--space-2)] [font:var(--weight-regular)_var(--text-xs)/1.2_var(--font-sans)]" +
+  " aria-pressed:bg-primary aria-pressed:!text-[var(--accent-on)]";
 
 function ToolbarButton({ label, active, disabled, onClick, children }: { label: string; active?: boolean; disabled: boolean; onClick: () => void; children: ReactNode }) {
-  return <button type="button" className="rich-text__toolbar-button" aria-label={label} {...(active === undefined ? {} : { "aria-pressed": active })} disabled={disabled} onMouseDown={(event) => event.preventDefault()} onClick={onClick}>{children}</button>;
+  return <button type="button" className={TOOLBAR_BUTTON} aria-label={label} {...(active === undefined ? {} : { "aria-pressed": active })} disabled={disabled} onMouseDown={(event) => event.preventDefault()} onClick={onClick}>{children}</button>;
 }
 
-function ToolbarDivider() { return <span className="rich-text__toolbar-divider" aria-hidden="true" />; }
+function ToolbarDivider() { return <span className="w-px h-[var(--space-5)] bg-border shrink-0" aria-hidden="true" />; }
 
 /** Removes TipTap-only attributes before data leaves the browser. */
 export function tiptapToRichTextDoc(value: unknown): RichTextDoc {
@@ -226,7 +260,7 @@ export function RichTextEditor({ value, onChange, limit, disabled = false, loadM
     content: toTiptap(value),
     editable: !disabled,
     editorProps: {
-      attributes: { class: "rich-text__editor-content", "data-placeholder": placeholder, ...(id ? { id } : {}) },
+      attributes: { class: "rich-text__editor-content " + EDITOR_CONTENT_UTILITIES, "data-placeholder": placeholder, ...(id ? { id } : {}) },
       handleKeyDown: (view, event) => {
         if (menu.current?.handleKeyDown(event)) return true;
         if (shouldBlockListIndent(event, itemContainerDepth(view.state.selection.$from))) {
@@ -335,8 +369,8 @@ export function RichTextEditor({ value, onChange, limit, disabled = false, loadM
     closeLinkDialog({ returnFocus: false });
   };
   const canUseHeading = !disabled && (editor.can().toggleHeading({ level: 2 }) || editor.can().toggleHeading({ level: 3 }));
-  return <div className={`rich-text-editor${disabled ? " is-disabled" : ""}`}>
-    <div className="rich-text__toolbar" role="toolbar" aria-label="Formatting">
+  return <div className="group grid gap-[var(--space-2)]" data-disabled={disabled || undefined}>
+    <div className="flex flex-wrap items-center gap-[var(--space-2)] p-[var(--space-1)] [border-style:solid] border-[length:var(--border-width-hair)] border-border bg-card" role="toolbar" aria-label="Formatting">
       <ToolbarGroup>
         <ToolbarButton label="Bold" active={editor.isActive("bold")} disabled={disabled || !editor.can().toggleBold()} onClick={() => editor.chain().focus().toggleBold().run()}><strong>B</strong></ToolbarButton>
         <ToolbarButton label="Italic" active={editor.isActive("italic")} disabled={disabled || !editor.can().toggleItalic()} onClick={() => editor.chain().focus().toggleItalic().run()}><em>I</em></ToolbarButton>
@@ -345,7 +379,7 @@ export function RichTextEditor({ value, onChange, limit, disabled = false, loadM
       </ToolbarGroup>
       <ToolbarDivider />
       <ToolbarGroup>
-        <select className="rich-text__toolbar-select" aria-label="Heading" value={editor.isActive("heading", { level: 2 }) ? "2" : editor.isActive("heading", { level: 3 }) ? "3" : ""} disabled={!canUseHeading} onChange={(event) => {
+        <NativeSelect className="min-w-[112px] w-auto" aria-label="Heading" value={editor.isActive("heading", { level: 2 }) ? "2" : editor.isActive("heading", { level: 3 }) ? "3" : ""} disabled={!canUseHeading} onChange={(event) => {
           if (!canUseHeading) return;
           const level = event.currentTarget.value;
           if (level === "2" || level === "3") editor.chain().focus().toggleHeading({ level: Number(level) as 2 | 3 }).run();
@@ -354,8 +388,8 @@ export function RichTextEditor({ value, onChange, limit, disabled = false, loadM
           <option value="">Paragraph</option>
           <option value="2">Section</option>
           <option value="3">Subsection</option>
-        </select>
-        <button ref={linkTrigger} type="button" className="rich-text__toolbar-button" aria-label="Link" aria-pressed={editor.isActive("link")} disabled={disabled || !editor.can().setLink({ href: "https://example.com" })} onMouseDown={(event) => event.preventDefault()} onClick={openLinkDialog}>Link</button>
+        </NativeSelect>
+        <button ref={linkTrigger} type="button" className={TOOLBAR_BUTTON} aria-label="Link" aria-pressed={editor.isActive("link")} disabled={disabled || !editor.can().setLink({ href: "https://example.com" })} onMouseDown={(event) => event.preventDefault()} onClick={openLinkDialog}>Link</button>
         <ToolbarButton label="Bullet list" active={editor.isActive("bulletList")} disabled={disabled || atListNestingLimit || !editor.can().toggleBulletList()} onClick={() => editor.chain().focus().toggleBulletList().run()}>• List</ToolbarButton>
         <ToolbarButton label="Ordered list" active={editor.isActive("orderedList")} disabled={disabled || atListNestingLimit || !editor.can().toggleOrderedList()} onClick={() => editor.chain().focus().toggleOrderedList().run()}>1. List</ToolbarButton>
         <ToolbarButton label="Checklist" active={editor.isActive("taskList")} disabled={disabled || atListNestingLimit || !editor.can().toggleTaskList()} onClick={() => editor.chain().focus().toggleTaskList().run()}>☑ List</ToolbarButton>
@@ -398,7 +432,7 @@ export function RichTextEditor({ value, onChange, limit, disabled = false, loadM
     </Modal>
     <EditorContent editor={editor} />
     <MentionAutocomplete ref={menu} query={query} loadMentionables={loadMentionables} onSelect={selectMention} onAccessibilityChange={setMentionA11y} />
-    <div className={`rich-text__counter${plainText.length > limit ? " is-over" : ""}`}>{plainText.length}/{limit}</div>
-    <div className="rich-text__validation" aria-live="polite">{overBytes ? "This formatting is too large to save; remove list items or formatting." : nestingBlocked ? "Maximum list nesting is four levels" : ""}</div>
+    <div className={cn("text-right [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary", plainText.length > limit && "!text-destructive")}>{plainText.length}/{limit}</div>
+    <div className="min-h-[1.2em] [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-destructive" aria-live="polite">{overBytes ? "This formatting is too large to save; remove list items or formatting." : nestingBlocked ? "Maximum list nesting is four levels" : ""}</div>
   </div>;
 }
