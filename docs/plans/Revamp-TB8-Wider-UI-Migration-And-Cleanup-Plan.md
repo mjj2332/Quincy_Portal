@@ -33,7 +33,9 @@ and pick the first surface to run through the pipeline above.
 7. Collaboration/checklist/comments (fresh from TB6, low priority)
 8. Notice board (fresh from TB7, too new)
 9. Lightbox controls (only if evidence warrants)
-10. Dead selectors / final base/Preflight decision (cleanup, near the end)
+10. Dead selectors / final base/Preflight decision (cleanup, near the end) — **registered as
+    `TB8-10-Deferred-Defects-And-Cleanup-Sweep-Plan.md`**, which also absorbs every defect the
+    earlier candidates deferred. Runs after #6-#9.
 11. Legacy fetch/emission paths (roadmap-gated: last, only after replacements prove ownership)
 
 ## Decision: Tailwind adoption scope for TB8 (2026-09-01)

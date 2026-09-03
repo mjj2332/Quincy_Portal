@@ -1,10 +1,21 @@
 # TB8-05 — Notification Preferences and the Three App-Shell Defects: Visual Plan
 
-**Status: REVIEWED — Sol rounds 1 and 2 complete, not built, not deployed.** Branch off `main` at
-`e8053af`
-(TB8-04 live in production: app Worker `c620c514`, no migration, rollback target app `9a021a5e`).
-Move to `docs/plans/implemented/` once built, verified, committed **and** deployed, per the
-standing convention in `CLAUDE.md`.
+**Status: IMPLEMENTED AND DEPLOYED TO PRODUCTION, 2026-09-03.** Built on branch
+`tb8-05-notification-preferences-shell-defects` (build commit `cb6f446`), merged to `main` as
+`ffc3e79`, deployed as app Worker `fd65055a` — background/webhook-ingress not redeployed
+(frontend/CSS only), no migration, rollback target app `c620c514`. §5 gate green: typecheck 6/6,
+`@quincy/web` build, 1580 tests passing / 1 skipped / 0 failures across all seven suites.
+Post-deploy passive verification on prod: 13/13 requests 200, zero console messages, all four
+defects confirmed fixed live.
+
+**Deviations from this plan, recorded rather than quietly absorbed.** (1) §11 artefacts 8 and 8b —
+the `TB0-VIS-05` and `TB0-VIS-06` drift-register rows — were skipped by the builder and added
+afterwards by the orchestrating session (`49801c4`). (2) §10.1's grep gates 2/3/5/6/7 matched their
+own explanatory comments rather than the selectors they were meant to prove gone, and §9.1 test 6
+asserted the unmount flag rather than its three guards; both were fixed and proved fail-able
+(`532a37e`, `8d2bc5d`) — see the corrections recorded inline in those sections. (3) One defect
+found at the visual gate is deliberately deferred to TB8-10 (`docs/plans/TB8-10-Deferred-Defects-And-Cleanup-Sweep-Plan.md`, ranking candidate #10, D-01): the mobile menu has no scrim, so at
+390px the page `<h1>` shows through beside the panel, sliced mid-word.
 
 **Review record.** Sol round 1 returned ten findings (all resolved or, in one case, withdrawn by
 Sol on evidence). Sol round 2 — the lane's final round — returned one blocker, one should-fix and
