@@ -927,3 +927,113 @@ can pass happy-dom while failing Chrome.
   case, the next person adding an Escape handler to a floating/portaled surface should default to
   "restore focus in the same synchronous call that closes it," not "restore it after the DOM
   settles."
+
+## `@cloudflare/vitest-pool-workers` leaked `SELF.fetch` dispatch — the `workers/app` timing flake (2026-09-03)
+
+**Symptom.** One test in `workers/app/test/api.test.ts` — "manages and edits manual collection
+links while preserving immutable Tonomo links" (`:3160`) — intermittently failed
+`Test timed out in 5000ms`. It ran ~0.6s alone and **3.88s ± 0.07s** in-suite: not a stall, a
+stable cost that happened to sit 22% under the budget, so any load tipped it over.
+
+**Root cause.** `@cloudflare/vitest-pool-workers` 0.18.6 (and 0.22.0) leaks on its `SELF.fetch`
+service-binding round trip: *every* `SELF.fetch` permanently raises the cost of every later
+`SELF.fetch` **in the same test file**. Per-request cost is linear in prior request count, so
+cumulative cost is quadratic. A ~20-line standalone probe, 8 rounds × 50 identical 404 requests,
+no migrations and no seed:
+
+```
+CURVE appFetch  perRound=[12,6,5,5,5,6,5,5]                 <- app.fetch(req, env, ctx), FLAT
+CURVE selfFetch perRound=[36,74,151,273,444,665,925,1265]   <- SELF.fetch(), 35x growth
+```
+
+`api.test.ts` is one 3,700-line file with **354** `SELF.fetch` calls across 121 `it` blocks, so its
+late tests inherited the whole accumulated penalty — ~137ms for *any* request, including a 404 that
+touches no route and no database.
+
+**Fix: migrate to `@cloudflare/vitest-plugin` 1.1.3**, the supported replacement (pool-workers is
+superseded, not merely behind). `cloudflareTest` is exported under the same name, so the change is
+an import swap in `workers/app/vitest.config.ts`, `workers/app/vitest.dev.config.ts` and
+`workers/background/vitest.config.ts` plus the dependency. Measured on `workers/app`, same 296
+passed | 1 skipped, identical collected test-name set both ways:
+
+| | pool-workers 0.18.6 | vitest-plugin 1.1.3 |
+|---|---|---|
+| suite wall time | 68.45s | 23.26s |
+| slowest test in suite | **5668ms** | 2468ms |
+| the reported test | 3975ms | 115ms |
+| `selfFetch` curve | 35× growth | flat |
+
+Note the baseline's *slowest* test was already **over** the 5000ms default — it only passed under a
+raised measurement timeout. The flake surface was larger than the one test that got reported.
+
+**Four wrong diagnoses died on the way here, all for the same reason — arithmetic instead of
+measurement.** (1) "Intermittent 6–9× stall" — 8 timed runs showed 3850–3975ms, a 3.6% spread.
+(2) "`--workspaces` runs suites concurrently and steals CPU" — npm 11.12.1 runs workspaces
+*sequentially*, in `package.json` order. (3) "Unindexed `audit_log` scans": the shape was real
+(`EXPLAIN` gives `SCAN audit_log`, no index leads on `action`) but the table holds **302 rows** —
+30 unscoped queries cost 5ms vs 3ms scoped, i.e. 2ms of a 3300ms delta. No index and no migration
+0040 was warranted. (4) "Leaked response bodies" — consuming every body changed nothing. What
+actually localised it was a control: a 404 with no auth and no DB cost the same ~137ms as a route
+reading 225 rows, while direct D1 `SELECT 1` stayed flat at 7–9ms. **When a cost is flat across
+probes that do wildly different amounts of work, it is not in the work — it is in the transport.**
+
+**Also worth keeping:** cost resets per test file (each file gets a fresh worker), so splitting a
+huge test file is a real mitigation for this class of problem; and `isolatedStorage` does *not*
+exist in this config — it belonged to the older `poolOptions.workers` API, not the `cloudflareTest()`
+Vite plugin — which is why writes accumulate across tests in one file.
+
+## Asserting a transient loading state is a race unless the test holds the window open (2026-09-03)
+
+Found while verifying the fix above: a *second*, unrelated flake in
+`apps/web/src/screens/ProjectWorkspace.dom.test.tsx` ("uses the comments probe for a 403
+collaborator"), failing about 1 run in 12 under the full `npm run test --workspaces`.
+
+```
+AssertionError: expected 'Collaboration12 Example StBack to das…' to contain 'Loading project.'
+```
+
+The test asserted `host.textContent` contains `"Loading project."` immediately after `render()`.
+Every mocked response resolved immediately, so the whole `403 on /api/projects/p1` -> collaboration
+probe -> `collaboration-only` chain was pure microtask work and could complete *inside* `render`'s
+own `await act(...)`. Whether it did depended on how many ticks act happened to drain — which is
+exactly what machine load perturbs. The assertion was then looking at the final view, not the
+loading view.
+
+**Reproduce a load-only flake deterministically by injecting the thing load supplies.** Inserting
+`await flush(3)` before the assertion failed it 100% of the time, with a byte-identical message to
+the one observed under load. That converts "I saw it once in twelve runs" into a controlled
+experiment, and it is the same trick for any assertion suspected of depending on elapsed ticks.
+
+**Fix: gate the responses the transient state is waiting on**, using the `deferredPromise` helper
+the file already had (the neighbouring "reuses a cached collaboration probe" test was already
+written this way):
+
+```ts
+const probeGate = deferredPromise<void>();
+// /api/projects/p1 still rejects 403 immediately — that is the input under test
+if (path.includes("/collaboration-summary")) return probeGate.promise.then(() => collaborationSummaryFixture());
+...
+await render(<ProjectWorkspace … />);
+await flush(3);                       // gate closed: any tick count gives the same answer
+expect(host.textContent).toContain("Loading project.");
+expect(host.textContent).not.toContain("Project unavailable.");
+probeGate.resolve();                  // now let the probe land
+await flushUntil(…);
+```
+
+This is *stronger* than what it replaced, not looser: it proves the screen holds the loading state
+for as long as the probe is in flight and never flashes the terminal error, rather than proving
+something was true at one arbitrary instant. Verified both directions — `flush(30)` instead of
+`flush(3)` still passes (the tick dependence is gone), and changing the detail rejection from 403
+to a terminal 401 still fails loudly with `expected 'Project workspaceBack to dashboard…'`.
+
+**Rule:** never assert a state the component will leave on its own. Either hold it open with a
+deferred you control, or don't assert it. And note `flush(n)`'s companion limitation: `setTimeout(…, 0)`
+advances ~1ms, so no realistic `n` can outwait the query client's real 1–4s `retryDelay`
+(`lib/query-client.tsx:21`) — wait on a condition with a real deadline (`flushUntil`) instead.
+
+**Unrelated pre-existing quirk confirmed while measuring:** `npm run test --workspaces` **always**
+exits 1 in this repo, because `packages/shared` has a vitest config but no `test` script and npm
+reports `Missing script: "test"`. It still runs every other workspace. Judge that command by the
+per-workspace summaries, never by its exit code — and keep running
+`npx vitest run --config packages/shared/vitest.config.ts` separately, as `CLAUDE.md` says.
