@@ -14,6 +14,23 @@ TB8 so far has lived on an edge.
 
 ---
 
+## 0. Checks already run against the repo
+
+Recorded so neither Sol nor the builder repeats them, and so a later reader can see which of this
+plan's claims are verified rather than reasoned. Each says how it was checked.
+
+| # | Claim | How checked | Result |
+|---|---|---|---|
+| 0.1 | `@theme inline` makes the role layer scopeable | `grep` the built `dist/assets/index-*.css` for the emitted utilities | **Holds.** `.text-foreground{color:var(--foreground)}`, `.outline-ring{outline-color:var(--ring)}`, `.border-border{border-color:var(--border)}`. |
+| 0.2 | §2.2's list of raw-ramp roles is **complete** | Enumerated all 18 roles §2.3 sets, resolved each through `tokens/tailwind.css`'s `@theme inline` block | **Holds, exactly four.** `--foreground-secondary`→`--text-secondary`, `--border-hover`→`--greige-300`, `--surface-sunken`→`--bg-sunken`, `--primary-hover`→`--ink-700`. The other 14 read a proper role name. `--on-inverse`/`--on-inverse-muted` read raw aliases and are correctly left unscoped. |
+| 0.3 | Scoping `--ring` alone is insufficient | Read `tokens/base.css:25` and `index.css`'s import order | **Confirmed — this was a defect in the first draft.** See §2.3a; the scope now sets `--focus-ring` too. |
+| 0.4 | Scoping `--focus-ring` per surface is an established pattern here | `styles/production-calendar.css:18` | **Holds.** `.production-calendar { --focus-ring: var(--signal-info, #2f3b4d) }`. |
+| 0.5 | No **R** selector has a consumer outside `Lightbox.tsx` | Grepped each retired class as a real class token in `className=` / `querySelector` across `apps/web/src` | **Holds** for every selector in §4 except `.barbtn` / `.icbtn--ondark` / `.icbtn`, which are shared with `PhotoGrid.tsx` and are marked conditional or **K** accordingly (§1.4). Earlier broad greps hit `decide`, `strip`, `pin`, `thread`, `cmt` in unrelated files — all substring matches in prose or identifiers, not class tokens. |
+| 0.6 | `--focus-ring` is named directly by more than one primitive | `grep -rn -- "--focus-ring" apps/web/src` | **Nine call sites**: `icon-button.tsx`, `AnchoredPopover.tsx`, `NoticeBoard.tsx`, `SubtaskChecklist.tsx` ×2, `ProjectKanbanBoard.tsx` ×4. This is *why* §2.3a's scope-don't-edit approach is right: none of them needs touching. |
+| 0.7 | `ui/textarea.tsx` exists with the assumed API | Read it | **Holds.** `Textarea` wraps `FIELD_BOX` with `min-h-[96px] resize-y`; `cn` is twMerge-backed, so §5.7's `className` composes as written. |
+| 0.8 | The four brand signal tones fail on ink | Composited each over `--ink-900` and `--ink-800` | **Confirmed**, 1.75:1–4.20:1. See §2.4 — the scope must not redefine them. |
+| 0.9 | `box-sizing: border-box` is global | `tokens/base.css:6` and `app.css:10` | **Holds**, so §4's stated pixel sizes are whole targets, not content boxes. |
+
 ## 1. What this release is
 
 ### 1.1 The surface
@@ -451,7 +468,7 @@ Recommend and Compare-with-RAW: `buttonClasses(active ? "primary" : "secondary",
 | `.cmt__who` | `[font:var(--type-label)]` |
 | `.cmt__who span` | `META_TEXT ml-[var(--space-2)]` — **C-1 fixed**, 3.36:1 → 8.66:1, and 11.5px → 12px onto the scale |
 | `.cmt__txt` | `text-[length:var(--text-sm)] leading-[var(--leading-normal)] mt-[3px] text-foreground-secondary` — 14.5px → 14px |
-| `.annotation-note` | `<Textarea>` from `ui/textarea.tsx`, `className="min-h-[56px] mt-[var(--space-3)] resize-y"` |
+| `.annotation-note` | `<Textarea>` from `ui/textarea.tsx`, `className="mt-[var(--space-3)]"` — **keep its default `min-h-[96px]`**, do not restore the legacy 56px. 96px is the system's textarea contract and the panel scrolls, so there is no reason to invent a second height. The legacy `:focus` rule (a bare `border-color` swap with `outline: none`) dies with it; `FIELD_BOX` carries the real focus treatment. |
 | `.comment-reply` | `buttonClasses("text", { className: "underline" })` — **T-7 fixed**: `text` carries `max-[721px]:min-h-[44px]` |
 
 Note the `.comment-reply` group is `Edit note · Edit drawing · Delete`, separated by literal `·`
