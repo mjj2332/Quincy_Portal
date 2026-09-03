@@ -1,6 +1,12 @@
 # TB8-06 — The Kanban Board: Visual Plan
 
-**Status: BUILT AND GATED — ready to merge.** Ranking candidate #6. Not yet merged or deployed.
+**Status: IMPLEMENTED AND DEPLOYED TO PRODUCTION, 2026-09-03.** Ranking candidate #6. Merged to
+`main` as `b8c650d`, deployed as app Worker `18356d70-b29f-4acf-b96b-c84dc680d03d` —
+background/webhook-ingress not redeployed (frontend/CSS only), **no migration**, rollback target app
+`fd65055a` (TB8-05's). §5 gate on merged main: typecheck 6/6, `@quincy/web` build, **1580 tests
+across the workspaces plus 144 in `packages/shared`**, 0 failures. Post-deploy verification: `/` and
+`/api/health` both 200, the served stylesheet **byte-identical** to the local build, every TB8-06
+marker live, zero legacy board rules remaining.
 Branch `tb8-06-kanban-board`, slices `d186b3d` · `be051d1` · `a8a9822` · `07a04a5` · `8126867` ·
 `6d62fcd` · `4e6f54e` · docs. Not yet merged or deployed.
 
