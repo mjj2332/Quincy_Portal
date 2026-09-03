@@ -62,13 +62,22 @@ rich-text toolbar's disabled states.
 bar. The eventual plan must separate the text roles from the decorative ones instead of sweeping
 all 41, or it will flatten deliberate visual hierarchy in the name of a rule that does not apply.
 
-### D-06 — Retire `.button`
+### D-06 — Retire `.button` — **much larger than first recorded**
 `app.css:835-850` — the legacy button family (`.button`, `--secondary`, `--danger`, `--text`).
-**Not dead**: live consumers remain in `App.tsx:106` and `ProjectWorkspace.tsx:330,338`, and two DOM
-test suites query `.button` selectors (`ProjectWorkspace.dom.test.tsx:834`,
-`Dashboard-stage-interactions.dom.test.tsx:914`). Retirement means migrating those call sites to
-`buttonClasses()` and updating the tests — genuinely last, after the surfaces that own those call
-sites converge.
+
+**Corrected 2026-09-03, during TB8-06 slice 4.** This register first said "live consumers in
+`App.tsx:106` and `ProjectWorkspace.tsx:330,338`". That count came from a grep matching
+`className="button"`, which misses `className="button button--secondary"` — the far more common
+form. The real figure is **51 occurrences across 36 files**, spanning the production calendar
+(8 files), subtasks, notice board, discussion thread, upload dropzone, confirm dialog, external
+edited upload, and more.
+
+So D-06 is **not** a cleanup item. It is a 36-file migration to `buttonClasses()` plus the test
+updates that follow, and it should be scoped as its own release rather than folded into a sweep.
+TB8-06 retires three of the 51 (`.kcard__retry` in slice 4; the move-to popover's two action
+buttons in slice 7). Every other TB8 candidate that converges a surface will retire a few more, so
+the number to re-measure before planning D-06 is whatever survives once #7-#9 are done — not this
+one.
 
 ### D-07 — The base/Preflight decision
 The roadmap's own open question, carried since TB1: whether Tailwind Preflight stays disabled once
@@ -88,6 +97,7 @@ explicitly *not* claimed as passes. They are recorded here so the gap has an own
 |---|---|---|---|
 | TB8-04 | §10.2 items 3 and 5 | The stacked table reapplies every ARIA role it loses to `display: block`; `FieldError` wires `role="alert"` + `aria-invalid`/`aria-describedby` | What a screen reader actually announces |
 | TB8-05 | §10.2 items 1–17 (accessible name) | The computed `aria-label`, and the accname precedence rule that `aria-label` outranks a wrapping `<label>` | Whether the checkbox is announced as "Project deadline reminder emails" |
+| TB8-06 | §7 item 9 (popover step change) | `data-step`, the `radiogroup`/`listbox` roles and `aria-checked`/`aria-selected` are wired and asserted in DOM tests | Whether a screen reader announces the stage→position step transition |
 
 Both were recorded on the **TB5C precedent**, where the owner waived physical-phone and real-AT
 checks. Closing this debt needs assistive technology no agent in this pipeline can drive, so it is

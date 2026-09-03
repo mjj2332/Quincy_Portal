@@ -143,7 +143,7 @@ function isTestElement(child: ReactNode): child is TestElement {
 }
 
 function dragOverlayElement() {
-  const overlay = Children.toArray(dnd.handlers.at(-1)?.props.children).find((child) => isTestElement(child) && child.props.className === "kanban-overlay");
+  const overlay = Children.toArray(dnd.handlers.at(-1)?.props.children).find((child) => isTestElement(child) && child.props.className?.split(" ").includes("kanban-overlay"));
   if (!isTestElement(overlay)) throw new Error("No DragOverlay element");
   return overlay;
 }
@@ -310,8 +310,8 @@ describe("ProjectKanbanBoard", () => {
     const card = host.querySelector<HTMLElement>(".kcard");
     const board = host.querySelector<HTMLElement>(".kanban");
     expect(handle?.classList.contains("kcard-drag-handle")).toBe(true);
-    expect(card?.className).toBe("kcard");
-    expect(board?.className).toBe("kanban");
+    expect(card?.className?.split(" ").includes("kcard")).toBe(true);
+    expect(board?.className?.split(" ").includes("kanban")).toBe(true);
     expect(card?.getAttribute("style") ?? "").not.toMatch(/touch-action\s*:\s*none/);
     expect(board?.getAttribute("style") ?? "").not.toMatch(/touch-action\s*:\s*none/);
   });
@@ -320,8 +320,8 @@ describe("ProjectKanbanBoard", () => {
     // Markup only — active overlay placement and clipping require a real browser (QA phase).
     await renderBoard();
     const children = Children.toArray(dnd.handlers[0]?.props.children).filter(isTestElement);
-    const boardIndex = children.findIndex((child) => child.props.className === "kanban");
-    const overlayIndex = children.findIndex((child) => child.props.className === "kanban-overlay");
+    const boardIndex = children.findIndex((child) => child.props.className?.split(" ").includes("kanban"));
+    const overlayIndex = children.findIndex((child) => child.props.className?.split(" ").includes("kanban-overlay"));
     expect(children).toHaveLength(2);
     expect(boardIndex).toBeGreaterThanOrEqual(0);
     expect(overlayIndex).toBeGreaterThanOrEqual(0);
@@ -354,7 +354,7 @@ describe("ProjectKanbanBoard", () => {
     await act(async () => { [...document.querySelectorAll<HTMLButtonElement>('[role="radio"]')].find((button) => button.textContent === "RAW review")!.click(); await Promise.resolve(); });
     const dialog = bodyPopover("move-to-dialog-source")!;
     await act(async () => { [...dialog.querySelectorAll<HTMLButtonElement>('[role="option"]')].find((button) => button.textContent?.includes("Before visual-first Street"))!.click(); await Promise.resolve(); });
-    const submit = bodyPopover("move-to-dialog-source")!.querySelector<HTMLButtonElement>(".button:not(.button--secondary)")!;
+    const submit = [...bodyPopover("move-to-dialog-source")!.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Move project")!;
     await act(async () => { submit.click(); await Promise.resolve(); });
     expect(callbacks.onMoveStage).toHaveBeenCalledWith(expect.objectContaining({ id: "source" }), { targetStageKey: "raw_review", successor: "visual-first" }, "cross", expect.objectContaining({ control: "move-to" }));
   });

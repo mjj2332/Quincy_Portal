@@ -94,6 +94,30 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
   doc moved to `docs/plans/implemented/TB8-03-Project-Workspace-Rail-Visual-Plan.md`. (Like TB8-01,
   this phase had no entry in this file until 2026-09-03 — an oversight from the deploying session,
   recovered from git and closed here.)
+- **TB8-06 (the Kanban board — columns, cards, card controls, the move-to popover, drag overlay and
+  preview) is BUILT on branch `tb8-06-kanban-board`, not merged, not deployed** (2026-09-03,
+  `docs/plans/TB8-06-Kanban-Board-Visual-Plan.md`). Eight slices: `d186b3d` `be051d1` `a8a9822`
+  `07a04a5` `8126867` `6d62fcd` `4e6f54e` `0de5e03`. **`app.css` now holds exactly one board
+  selector** — `.kcol__head > .row`, a deliberate keep. All six gates pass, 682/682 tests across 63
+  files, typecheck and build green at every slice. **The visual gate has NOT run** — it is this
+  session's own and is the remaining step before merge.
+  **Scope was measured, not inherited.** The roadmap's "board filters/card controls" was half done
+  already: TB8-01 converged the filters and left one `.prow__thumb` selector, while
+  `ProjectKanbanBoard.tsx` — 46 KB — had zero Tailwind. The shaping constraint: 14 board selectors
+  are queried by DOM tests and five elements are asserted by **exact `className` equality**, so most
+  classes had to survive as non-styling hooks while their CSS retired — the inverse of TB8-01/04.
+  **Real defects fixed**: three contrast failures (`.kcol__empty` 2.17:1, `.kcol__ordinal` and the
+  card count 3.36:1, disabled controls ≈1.72:1 once `opacity: .48` compounded them), registered as
+  `TB0-VIS-07`/`TB0-VIS-08`; and the Priority `<select>`, which had no field treatment at all, now
+  adopts TB8-04's `NativeSelect`.
+  **The plan was wrong three times, each caught before shipping.** Its headline touch-target finding
+  was *backwards* — a `@media (pointer: coarse), (max-width: 640px)` block six lines past the range
+  read already set every control to 44px, so the build's job was to preserve it. Its retirement
+  range would have deleted `.wsbar`, a rule belonging to Project Workspace. And rows 25/37 gave
+  disabled controls the same colour as their base state, caught at Sol's slice-5 review. Two
+  `lessons.md` entries record the generalisations.
+  **`.button` re-measured at 51 occurrences across 36 files**, not the four recorded — TB8-10's D-06
+  is a migration, not a cleanup, and is re-scoped accordingly.
 - **TB8-05 (Notification preferences screen plus four app-shell defects) is deployed to
   production, 2026-09-03** (branch `tb8-05-notification-preferences-shell-defects`, build commit
   `cb6f446`, merged to `main` `ffc3e79`; app Worker `fd65055a` only, background/webhook-ingress not

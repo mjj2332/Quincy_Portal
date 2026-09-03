@@ -911,7 +911,7 @@ describe("Dashboard Stage interactions", () => {
     await act(async () => { [...document.querySelectorAll<HTMLButtonElement>('[role="option"]')].find((button) => button.textContent?.includes("Before target Street"))!.click(); await Promise.resolve(); });
     runtime.markProjectRemoved("target");
     await flush();
-    const submit = document.querySelector<HTMLButtonElement>(".kanban-move-popover .button:not(.button--secondary)")!;
+    const submit = [...document.querySelectorAll<HTMLButtonElement>(".kanban-move-popover button")].find((button) => button.textContent === "Move project")!;
     await act(async () => { submit.click(); await Promise.resolve(); });
     await flush(); await flush();
     expect(apiPostMock).not.toHaveBeenCalled();
