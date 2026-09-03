@@ -311,7 +311,7 @@ describe("ProjectKanbanBoard", () => {
     const board = host.querySelector<HTMLElement>(".kanban");
     expect(handle?.classList.contains("kcard-drag-handle")).toBe(true);
     expect(card?.className).toBe("kcard");
-    expect(board?.className).toBe("kanban");
+    expect(board?.className?.split(" ").includes("kanban")).toBe(true);
     expect(card?.getAttribute("style") ?? "").not.toMatch(/touch-action\s*:\s*none/);
     expect(board?.getAttribute("style") ?? "").not.toMatch(/touch-action\s*:\s*none/);
   });
@@ -320,7 +320,7 @@ describe("ProjectKanbanBoard", () => {
     // Markup only — active overlay placement and clipping require a real browser (QA phase).
     await renderBoard();
     const children = Children.toArray(dnd.handlers[0]?.props.children).filter(isTestElement);
-    const boardIndex = children.findIndex((child) => child.props.className === "kanban");
+    const boardIndex = children.findIndex((child) => child.props.className?.split(" ").includes("kanban"));
     const overlayIndex = children.findIndex((child) => child.props.className === "kanban-overlay");
     expect(children).toHaveLength(2);
     expect(boardIndex).toBeGreaterThanOrEqual(0);

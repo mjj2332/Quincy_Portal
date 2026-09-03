@@ -126,7 +126,6 @@ button { font-family: var(--font-sans); }
 .lazy-image-placeholder { width: 100%; height: 100%; }
 .lazy-image-placeholder--failed { gap: 8px; padding: 10px; text-align: center; font-family: var(--font-sans); font-size: 12px; }
 .lazy-image-retry { border: 1px solid currentColor; background: transparent; color: inherit; border-radius: var(--radius-xs); padding: 4px 8px; font: var(--type-label); font-size: 10px; text-transform: uppercase; letter-spacing: var(--tracking-wide); cursor: pointer; }
-.kcard__media .project-cover-placeholder { width: 100%; height: 100%; }
 
 /* progress meter */
 .meter { height: 3px; background: var(--paper-200); position: relative; overflow: hidden; flex: 1; }
@@ -302,10 +301,7 @@ button { font-family: var(--font-sans); }
 /* ---------------------------------------------------------------------
    Workspace additions — bar, autoHDR, video, copy, dropzone
    --------------------------------------------------------------------- */
-.board { display: flex; flex-direction: column; min-width: 0; }
 .wsbar { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-4) var(--space-6); background: var(--paper-050); border-bottom: 1px solid var(--border-hairline); flex-wrap: wrap; }
-.boardnote { display: flex; align-items: center; gap: 12px; padding: 12px var(--space-6); background: var(--paper-100); border-bottom: 1px solid var(--border-hairline); font-size: 13.5px; color: var(--text-secondary); }
-.boardnote svg { flex: none; color: var(--text-muted); }
 
 .hdr { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 12px; border: 1px solid var(--border-hairline); background: var(--paper-000); }
 .hdr .row { flex-wrap: wrap; }
@@ -375,9 +371,6 @@ button { font-family: var(--font-sans); }
 /* ---------------------------------------------------------------------
    Kanban board (dashboard view)
    --------------------------------------------------------------------- */
-.kanban { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(244px, 1fr); gap: var(--border-width-hair); background: var(--border-hairline); border: var(--border-width-hair) solid var(--border-hairline); overflow-x: auto; overscroll-behavior-x: contain; scrollbar-gutter: stable; }
-.kanban:focus-visible { outline: var(--border-width-bold) solid var(--focus-ring); outline-offset: 2px; }
-
 /* ---------------------------------------------------------------------
    Staff notice board
    --------------------------------------------------------------------- */
@@ -542,7 +535,6 @@ button { font-family: var(--font-sans); }
 }
 
 @media (max-width: 640px) {
-  .kanban { grid-auto-columns: minmax(240px, 1fr); }
   /* `.kanban-move-popover`'s width is `AnchoredPopover`'s now (§7.3) — this override would
      fight it (unlayered app.css always wins over Tailwind's utilities). */
 }

@@ -106,8 +106,8 @@ function CoverMedia({
   }
   const content = project.street.trim().charAt(0).toUpperCase() || "Q";
   return inlinePlaceholder
-    ? <span className={`project-cover-placeholder ${className}`} aria-hidden="true">{content}</span>
-    : <div className={`project-cover-placeholder ${className}`} aria-hidden="true">{content}</div>;
+    ? <span className={`project-cover-placeholder size-full ${className}`} aria-hidden="true">{content}</span>
+    : <div className={`project-cover-placeholder size-full ${className}`} aria-hidden="true">{content}</div>;
 }
 
 function location(project: ProjectSummary) {
@@ -894,7 +894,7 @@ export function ProjectKanbanBoard({
   };
 
   return <DndContext {...dndContextProps}>
-    <div className="kanban" data-focus-key="board" tabIndex={-1} aria-label="Project pipeline board">
+    <div className="kanban grid grid-flow-col auto-cols-[minmax(244px,1fr)] max-[641px]:auto-cols-[minmax(240px,1fr)] gap-[var(--border-width-hair)] bg-border border border-[length:var(--border-width-hair)] border-border overflow-x-auto overscroll-x-contain [scrollbar-gutter:stable] focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--focus-ring)] focus-visible:!outline-offset-2" data-focus-key="board" tabIndex={-1} aria-label="Project pipeline board">
       {activeStages.map((stage, stageIndex) => {
         return <KanbanColumn
           key={stage.key}

@@ -66,10 +66,12 @@ Round-2 finding 8. Two suites do not *query* classes — they assert the **whole
 | Site | Assertion |
 |---|---|
 | `ProjectKanbanBoard.dom.test.tsx:146` | `child.props.className === "kanban-overlay"` |
+| `ProjectKanbanBoard.dom.test.tsx:313` | `card?.className).toBe("kcard")` — row 39, slice 4 |
+| **`ProjectKanbanBoard.dom.test.tsx:314`** | `board?.className).toBe("kanban")` — **row 4, slice 1.** Missed by both Sol rounds and by this table's first version; found by the slice-1 builder, which fixed it and said so rather than working around it |
 | `ProjectKanbanBoard.dom.test.tsx:323–324` | `className === "kanban"`, `=== "kanban-overlay"` |
 | `dashboard-routing.test.ts:20,28` | SSR regexes matching `<a class="kcard"`, `class="kcard-drag-handle"`, `class="kcard-controls"` **exactly** |
 
-**Adding a single utility to any of those five elements fails these tests.** They are not incidental
+**Adding a single utility to any of those elements fails these tests.** They are not incidental
 — `dashboard-routing.test.ts` asserts rendered HTML, so it also guards SSR output shape.
 
 Every affected row (4, 21, 26, 39, 57) therefore carries a **mandatory test update in its own
