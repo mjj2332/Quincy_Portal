@@ -503,14 +503,6 @@ button { font-family: var(--font-sans); }
 .kanban-move-popover__actions { display: flex; justify-content: flex-end; gap: var(--space-2); }
 .kanban-move-popover__actions .button { min-height: 38px; padding: 9px 14px; font-size: var(--text-xs); }
 .kcard-wrap--drop-indicator { min-height: 3px; border-radius: 2px; background: var(--signal-positive); box-shadow: 0 0 0 1px color-mix(in srgb, var(--signal-positive) 20%, transparent); }
-.kcard { width: 100%; display: block; padding: 0; color: inherit; text-align: left; font: inherit; text-decoration: none; background: none; border: 0; cursor: pointer; }
-.kcard__media { aspect-ratio: 16 / 9; overflow: hidden; background: var(--ink-800); }
-.kcard__media img { width: 100%; height: 100%; object-fit: cover; }
-.kcard__b { padding: 11px 12px 12px; }
-.kcard__addr { font-size: var(--text-base); letter-spacing: var(--tracking-tight); line-height: var(--leading-snug); text-wrap: pretty; }
-.kcard__meta { font-size: var(--text-xs); color: var(--text-secondary); margin-top: var(--space-1); }
-.kcard__foot { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-1) var(--space-3); margin-top: var(--space-3); }
-.kcard__retry { margin: 8px 12px 10px; }
 .kanban-overlay { pointer-events: none; z-index: 10; }
 .kanban-card-preview { width: min(320px, calc(100vw - 24px)); max-width: calc(100vw - 24px); box-sizing: border-box; box-shadow: 0 18px 36px color-mix(in srgb, var(--ink-900) 22%, transparent); pointer-events: none; }
 .kanban-card-preview .kcard__media { pointer-events: none; }

@@ -310,7 +310,7 @@ describe("ProjectKanbanBoard", () => {
     const card = host.querySelector<HTMLElement>(".kcard");
     const board = host.querySelector<HTMLElement>(".kanban");
     expect(handle?.classList.contains("kcard-drag-handle")).toBe(true);
-    expect(card?.className).toBe("kcard");
+    expect(card?.className?.split(" ").includes("kcard")).toBe(true);
     expect(board?.className?.split(" ").includes("kanban")).toBe(true);
     expect(card?.getAttribute("style") ?? "").not.toMatch(/touch-action\s*:\s*none/);
     expect(board?.getAttribute("style") ?? "").not.toMatch(/touch-action\s*:\s*none/);

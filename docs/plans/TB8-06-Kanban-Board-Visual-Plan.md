@@ -184,7 +184,13 @@ This retraction is the release's main lesson so far and belongs in `docs/lessons
 | `.boardnote` | `13.5px`, `gap/padding: 12px` | `--text-sm`, `--space-3` — moot, see §2.6 |
 
 `.kcard__retry` consumes the legacy `.button` family, which TB8-10/D-06 lists as **not** dead.
-Converging the board retires one of its four consumers.
+
+**Corrected during slice 4:** this plan and TB8-10 both said `.button` had "four consumers". It has
+**51 occurrences across 36 files** — the original grep matched `className="button"` but missed the
+far more common `className="button button--secondary"`. The board holds three of them
+(`.kcard__retry`, and the popover's two action buttons at `:224-225`, row 56), so TB8-06 retires
+three, not one. The correction matters to TB8-10, not here: D-06 is a 36-file migration, not a
+tidy-up.
 
 ### 2.4 The drag preview's shadow — sanctioned exception
 

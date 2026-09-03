@@ -17,7 +17,7 @@ describe("dashboard project card markup", () => {
     const html = renderToStaticMarkup(createElement(KanbanCard, {
       project, canMove: false, isDragging: false, initialCoverFailed: true,
     }));
-    expect(html).toMatch(/<a class="kcard"[^>]*href="\/projects\/123e4567-e89b-42d3-a456-426614174000">[\s\S]*<\/a><button/);
+    expect(html).toMatch(/<a class="(?:[^"]*\s)?kcard(?:\s[^"]*)?"[^>]*href="\/projects\/123e4567-e89b-42d3-a456-426614174000">[\s\S]*<\/a><button/);
     expect(html).not.toContain("draggable=");
   });
 
@@ -25,7 +25,7 @@ describe("dashboard project card markup", () => {
     const html = renderToStaticMarkup(createElement(KanbanCard, {
       project, canMove: false, canPrioritize: true, canReorder: true, isDragging: false,
     }));
-    expect(html).toMatch(/<a class="kcard"[\s\S]*<\/a><button[^>]*class="kcard-drag-handle"[\s\S]*<\/button><div class="kcard-controls"/);
+    expect(html).toMatch(/<a class="(?:[^"]*\s)?kcard(?:\s[^"]*)?"[\s\S]*<\/a><button[^>]*class="kcard-drag-handle"[\s\S]*<\/button><div class="kcard-controls"/);
     expect(html).toContain('aria-label="Move project up"');
   });
 

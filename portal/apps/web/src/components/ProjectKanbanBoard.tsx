@@ -34,6 +34,7 @@ import { AnchoredPopover, useAnchoredPopover } from "./AnchoredPopover";
 import { StatusBadge } from "./atoms";
 import { InternalLink } from "./InternalLink";
 import { LazyImage } from "./LazyImage";
+import { buttonClasses } from "./ui/button";
 import {
   announce,
   eligibleTarget,
@@ -267,13 +268,13 @@ export function KanbanCard({
   const moveModel = boardModel ?? { projects: [project], ...(project.authorizedBoardOrder ? { authorizedBoardOrder: project.authorizedBoardOrder } : {}) };
 
   return <div ref={setCardRef} style={cardStyle} className={`kcard-wrap ${isDragging ? "is-dragging" : ""}`}>
-    <InternalLink className="kcard" to={projectHref ?? `/projects/${encodeURIComponent(project.id)}`}>
-      <div className="kcard__media"><CoverMedia project={project} retryToken={coverRetry} onFailedChange={setCoverFailed} /></div>
-      <div className="kcard__b">
-        <div className="kcard__addr serif">{project.street}</div>
-        <div className="kcard__meta">{location(project)}</div>
-        <div className="kcard__meta">{project.agencyName || "Agency pending"}</div>
-        <div className="kcard__foot">
+    <InternalLink className="kcard w-full block p-0 text-inherit text-left [font:inherit] no-underline bg-none border-0 cursor-pointer" to={projectHref ?? `/projects/${encodeURIComponent(project.id)}`}>
+      <div className="kcard__media aspect-[16/9] overflow-hidden bg-[var(--ink-800)]"><CoverMedia project={project} className="size-full object-cover" retryToken={coverRetry} onFailedChange={setCoverFailed} /></div>
+      <div className="kcard__b p-[var(--space-3)]">
+        <div className="kcard__addr serif text-base tracking-tight leading-snug [text-wrap:pretty]">{project.street}</div>
+        <div className="kcard__meta text-xs text-foreground-secondary mt-[var(--space-1)]">{location(project)}</div>
+        <div className="kcard__meta text-xs text-foreground-secondary mt-[var(--space-1)]">{project.agencyName || "Agency pending"}</div>
+        <div className="kcard__foot flex items-center flex-wrap gap-[var(--space-1)_var(--space-3)] mt-[var(--space-3)]">
           {projectDeadlineLabel && <time className={overdue ? "project-deadline__overdue" : ""} dateTime={new Date(project.deadlineAt!).toISOString()}>{overdue ? "Overdue" : "Due"} {projectDeadlineLabel} Sydney</time>}
           {project.priority !== null && <span className="ey">Priority {project.priority}</span>}
         </div>
@@ -305,7 +306,7 @@ export function KanbanCard({
     {canMove && <div className="kcard-stage-control">
       <MoveToControl project={project} model={moveModel} activeStages={activeStageOptions} role={role} sort={effectiveKanbanSort} canMoveStages={canMoveStages} canPrioritize={canPrioritize} movementDisabled={movementDisabled} onMoveStage={onMoveStage} onMoveToProposalChange={onMoveToProposalChange} />
     </div>}
-    {coverFailed && <button className="kcard__retry button button--secondary" type="button" onClick={() => { setCoverFailed(false); setCoverRetry((current) => current + 1); }}>Retry cover image</button>}
+    {coverFailed && <button className={buttonClasses("secondary", { className: "kcard__retry mt-[var(--space-2)] mx-[var(--space-3)] mb-[var(--space-3)]" })} type="button" onClick={() => { setCoverFailed(false); setCoverRetry((current) => current + 1); }}>Retry cover image</button>}
   </div>;
 }
 
@@ -313,12 +314,12 @@ export function KanbanCardPreview({ project }: { project: ProjectSummary }) {
   const overdue = isDeadlineOverdue(project.deadlineAt);
   const projectDeadlineLabel = deadlineLabel(project);
   return <div className="kanban-card-preview kcard-wrap" aria-hidden="true">
-    <div className="kcard__media"><CoverMedia project={project} /></div>
-    <div className="kcard__b">
-      <div className="kcard__addr serif">{project.street}</div>
-      <div className="kcard__meta">{location(project)}</div>
-      <div className="kcard__meta">{project.agencyName || "Agency pending"}</div>
-      <div className="kcard__foot">
+    <div className="kcard__media aspect-[16/9] overflow-hidden bg-[var(--ink-800)]"><CoverMedia project={project} className="size-full object-cover" /></div>
+    <div className="kcard__b p-[var(--space-3)]">
+      <div className="kcard__addr serif text-base tracking-tight leading-snug [text-wrap:pretty]">{project.street}</div>
+      <div className="kcard__meta text-xs text-foreground-secondary mt-[var(--space-1)]">{location(project)}</div>
+      <div className="kcard__meta text-xs text-foreground-secondary mt-[var(--space-1)]">{project.agencyName || "Agency pending"}</div>
+      <div className="kcard__foot flex items-center flex-wrap gap-[var(--space-1)_var(--space-3)] mt-[var(--space-3)]">
         {projectDeadlineLabel && <time className={overdue ? "project-deadline__overdue" : ""} dateTime={new Date(project.deadlineAt!).toISOString()}>{overdue ? "Overdue" : "Due"} {projectDeadlineLabel} Sydney</time>}
         {project.priority !== null && <span className="ey">Priority {project.priority}</span>}
       </div>
