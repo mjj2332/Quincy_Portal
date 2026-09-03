@@ -1335,13 +1335,28 @@ Plus a grep gate, run from `portal/apps/web/src`, each of which must return **ze
 
 ```
 grep -rn "preferences-card\|admin-toggle\|preferences-page\|page__head" --include='*.tsx' --include='*.css' .
-grep -rn "impersonation-banner .button--text" styles/app.css
-grep -rn "button--text" components/ImpersonationBanner.tsx components/Topbar.tsx | grep -v "sign-out\|topbar__user"
+CSS() { perl -0pe 's{/\*.*?\*/}{}gs' styles/app.css; }
+CSS | grep -n "impersonation-banner .button--text"
+grep -rnE '"[^"]*button--text' components/ImpersonationBanner.tsx components/Topbar.tsx | grep -v "sign-out\|topbar__user"
 grep -rn "max-\[720px\]\|min-\[720px\]" --include='*.tsx' .
-grep -rn "topbar__notification" styles/app.css
-grep -rn "topbar__mobile-menu" styles/app.css
-grep -rn "\.avatar[ ,{:]" styles/app.css
+CSS | grep -n "topbar__notification"
+CSS | grep -n "topbar__mobile-menu"
+CSS | grep -n "\.avatar[ ,{:]"
 ```
+
+**Correction, applied after the build (2026-09-03).** The first draft of gates 3 and 5 matched a
+class name *anywhere in the file, comments included*, and both therefore could not return zero
+against the very content this plan mandates: §5.4.2b's explanatory comments at `Topbar.tsx:71`
+and `:99` name `.button--text` in backticks to record why the class is gone, and `app.css:770`
+keeps a comment explaining that the bell menu's position is Base UI's Positioner. Those comments
+are correct and worth keeping; the gates were wrong. Gates 2, 5, 6 and 7 now strip CSS comments
+before matching, so they test **selectors**, and gate 3 requires the class inside a double-quoted
+string, so it tests a `className`. All five were re-proved able to fail against planted probes
+(`className="button--text"`; `.topbar__notification-menu {}`; `.topbar__mobile-menu {}`;
+`.avatar {}`; `.impersonation-banner .button--text {}`) — each is caught. This is the second
+release running where a gate shipped that could not fail (TB8-04 round 1 shipped two); the
+"prove it can fail" step in the paragraph below exists precisely because writing the gate is
+easier than writing a gate that discriminates.
 
 The fifth is §12 Q4's gate: `app.css` must hold no bell selector at all after this release. **The
 sixth is defect B4's** (§5.4.2a): `app.css` must hold no rule targeting the mobile menu panel — the
