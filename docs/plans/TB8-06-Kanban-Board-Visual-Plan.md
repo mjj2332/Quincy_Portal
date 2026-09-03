@@ -1,7 +1,12 @@
 # TB8-06 — The Kanban Board: Visual Plan
 
-**Status: REVISED after Sol round 1 (REVISE, 10 blocking / 5 should-fix — all addressed).**
-Ranking candidate #6. Awaiting Sol round 2.
+**Status: APPROVED FOR BUILD by the orchestrating session, 2026-09-03.** Ranking candidate #6.
+
+Sol reviewed twice and returned REVISE both times (round 1: 10 blocking; round 2: 13 blocking, of
+which 3 were round-1 findings still not properly fixed). That exhausts the 2-round cap, so
+`Subagent-Orchestration.md` §2.1 hands resolution to this session, which has verified and fixed all
+of round 2's findings below and self-approves. Per §1, the Opus subagent touchpoints are skipped —
+this session is Opus 5.
 
 Pipeline: `docs/Subagent-Frontend-Orchestration.md` — this session drafts, Sol reviews scope
 (≤2 rounds), a Sonnet subagent builds, this session holds the visual gate.
@@ -51,8 +56,26 @@ is byte-identical.
 
 `components/ProjectKanbanBoard.tsx` · `components/KanbanCardPreview.dom.test.tsx` ·
 `components/ProjectKanbanBoard.dom.test.tsx` · `screens/Dashboard-stage-interactions.dom.test.tsx` ·
-`screens/Dashboard-kanban-sort.dom.test.tsx` *(added in round 1 — it holds the two `.kcard__foot`
-queries)* · `styles/app.css`.
+`screens/Dashboard-kanban-sort.dom.test.tsx` *(added round 1 — the two `.kcard__foot` queries)* ·
+**`screens/dashboard-routing.test.ts`** *(added round 2)* · `styles/app.css`.
+
+### 1.2a The hard constraint: exact-equality class assertions
+
+Round-2 finding 8. Two suites do not *query* classes — they assert the **whole `className` string**:
+
+| Site | Assertion |
+|---|---|
+| `ProjectKanbanBoard.dom.test.tsx:146` | `child.props.className === "kanban-overlay"` |
+| `ProjectKanbanBoard.dom.test.tsx:323–324` | `className === "kanban"`, `=== "kanban-overlay"` |
+| `dashboard-routing.test.ts:20,28` | SSR regexes matching `<a class="kcard"`, `class="kcard-drag-handle"`, `class="kcard-controls"` **exactly** |
+
+**Adding a single utility to any of those five elements fails these tests.** They are not incidental
+— `dashboard-routing.test.ts` asserts rendered HTML, so it also guards SSR output shape.
+
+Every affected row (4, 21, 26, 39, 57) therefore carries a **mandatory test update in its own
+slice**: convert equality to containment (`className.split(" ").includes("kanban")`) and the SSR
+regexes to `class="[^"]*\bkcard\b[^"]*"`. A slice that touches those elements without its test
+edit does not compile green, and the builder must not "fix" it by omitting utilities.
 
 ### 1.3 The constraint that shapes this release
 
@@ -88,7 +111,8 @@ Computed from `styles/tokens/colors.css`.
 |---|---|---|---|
 | `.kcol__empty` placeholder | `--greige-300` `#b3aa97` on `--paper-050` | **2.17:1** | fails 4.5:1 **and** 3:1 |
 | `.kcol__ordinal`, `.kcol__head .cnt` | `--text-muted` `#8f8775` on `--paper-050` | **3.36:1** | fails 4.5:1 |
-| `.kcard-move-to:disabled`, `.kcard-drag-handle:disabled` | `--text-muted` on `--paper-000`, plus `opacity: .48` | **3.57:1** compounded | fails |
+| `.kcard-move-to:disabled`, `.kcard-drag-handle:disabled` | `--text-muted` on `--paper-000` | 3.57:1 raw | fails |
+| …the same, **after `opacity: .48`** | effective | **≈1.72:1** | fails badly (round-2 SF4 — the draft called 3.57 "compounded"; 3.57 is the *raw* figure, and the compounded one is far worse) |
 | `.kcard-move-to` rest | `--text-secondary` `#4d473c` on `--paper-000` | 9.20:1 | passes |
 | `.kcard-wrap--drop-indicator` | `--signal-positive` on `--paper-050` | 7.14:1 | passes |
 
@@ -96,6 +120,20 @@ TB8-04 §2.1/E-16 already ruled on this family: every muted **text** role become
 `text-foreground-secondary`. This plan applies that precedent. Per TB8-10/D-05, icon fills and
 decorative marks are not bound by 4.5:1 — but `.kcol__empty` **is**, being the column's empty-state
 message rather than an ornament.
+
+### 2.2b Breakpoint arithmetic — a trap this repo already documented
+
+Round-2 finding 2, and the sharpest process failure of this plan. The revision wrote the
+`@media (max-width: 640px)` rules as `max-[641px]:`. **Tailwind 4 compiles `max-[640px]` to
+`width < 640px`, which excludes 640px itself** — so a viewport at exactly 640 would lose the
+override.
+
+`docs/lessons.md:1098–1103` records this exact trap and sets the repo convention: the complementary
+pair **`max-[N+1px]` / `min-[N+1px]`**. Source `max-width: 640px` (inclusive) is therefore
+**`max-[641px]:`**, and every such variant in §4 now reads `max-[641px]:`.
+
+The lesson is not the arithmetic — it is that this plan walked into a trap its own repo had already
+written down. Slice 7's `lessons.md` entry says so.
 
 ### 2.2a The `pointer: coarse` variant must be proved before it is used
 
@@ -107,7 +145,7 @@ pair, not a media-feature variant.
 **Slice 5 proves it first**: render one control with `pointer-coarse:size-11`, confirm in a coarse-
 pointer emulation that it applies, and only then use it across rows 21, 26, 27, 28 and 34. If it
 does not apply, fall back to the arbitrary variant `[@media(pointer:coarse)]:size-11`, which needs
-no plugin support. **`max-[640px]:` alone is not a substitute** — the source rule is
+no plugin support. **`max-[641px]:` alone is not a substitute** — the source rule is
 `(pointer: coarse), (max-width: 640px)`, an *or*, and dropping the first half would regress a
 touch-screen laptop at desktop width.
 
@@ -123,7 +161,7 @@ The corrected position: the small geometry (`28×26`, `36×36`, `min-height: 30p
 fine-pointer desktop**, where WCAG 2.5.5 Enhanced is not the operative bar and 2.5.8 AA (24 px) is
 comfortably met. **There is no touch-target defect on this surface.** The build must **preserve**
 the responsive block, not "fix" it — §4 marks each of those rules **R** with its 44 px value
-carried into a `max-[640px]:`/`pointer-coarse` variant, byte-equivalent in effect.
+carried into a `max-[641px]:`/`pointer-coarse` variant, byte-equivalent in effect.
 
 This retraction is the release's main lesson so far and belongs in `docs/lessons.md` at slice 7:
 *a media query outside the range you read will invert your finding.*
@@ -134,7 +172,7 @@ This retraction is the release's main lesson so far and belongs in `docs/lessons
 |---|---|---|
 | `.kcard__b` | `padding: 11px 12px 12px` | `--space-3` |
 | `.kcol__body` | `gap: 10px; padding: 12px` | `--space-3` |
-| `.kcard-move-to` | `font-size: 11px`, `padding: 7px 9px` | `--text-2xs` |
+| `.kcard-move-to` | `font-size: 11px`, `padding: 7px 9px` | `--text-[length:var(--text-2xs)]` |
 | `.kcard-drag-handle` | `top/right: 8px`, `36px`, `font-size: 20px` | `--space-2` |
 | `.kcard-controls` | `gap: 4px; padding: 0 12px 10px` | `--space-1`, `--space-3` |
 | `.kcard-stage-control` | `padding: 0 12px 10px` | `--space-3` |
@@ -191,8 +229,9 @@ Tailwind utility regardless of specificity.
 
 1. Retiring an `app.css` rule → the Tailwind replacement needs **no `!`** for background, border,
    colour, spacing, type, and layout.
-2. **Every one of the board's five focus rings needs `!`** on `outline-*`, because `base.css` wins
-   otherwise. Rows 5, 15, 22, 29, 34 and 47. Without it the **inward** offsets on `.kcol__head`
+2. **Every one of the board's six focus rings needs `!`** on `outline-*`, because `base.css` wins
+   otherwise. Rows 5, 15, 22, 29, **35** and 47 — six, not five (round-2 SF1); row 34 is the
+   move-to's base rule, row 35 is its focus ring. Without it the **inward** offsets on `.kcol__head`
    (`-2px`) and the popover's buttons (`-2px`) silently become the base rule's outward `2px` — and
    the popover's comment at `:530` says an outward ring **clips** inside its overflow-auto panel.
 3. **Row 11 (`.kcol__head .ey`) also needs `!`.** `.ey` at `app.css:20` sets `font:` — a shorthand
@@ -215,7 +254,7 @@ it replaces — round-1 finding 7 flagged seven rows that dropped some.
 | 2 | `.boardnote` `:307` | **D** — dead |
 | 3 | `.boardnote svg` `:308` | **D** — dead |
 | — | `.wsbar` `:306` | **OUT OF SCOPE — do not touch** (§1.1) |
-| 4 | `.kanban` `:378` | **R** — `grid grid-flow-col auto-cols-[minmax(244px,1fr)] max-[640px]:auto-cols-[minmax(240px,1fr)] gap-[var(--border-width-hair)] bg-border border border-[length:var(--border-width-hair)] border-border overflow-x-auto overscroll-x-contain [scrollbar-gutter:stable]` — folds in `:545` |
+| 4 | `.kanban` `:378` | **R** — `grid grid-flow-col auto-cols-[minmax(244px,1fr)] max-[641px]:auto-cols-[minmax(240px,1fr)] gap-[var(--border-width-hair)] bg-border border border-[length:var(--border-width-hair)] border-border overflow-x-auto overscroll-x-contain [scrollbar-gutter:stable]` — folds in `:545` |
 | 5 | `.kanban:focus-visible` `:379` | **R** — `focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--focus-ring)] focus-visible:!outline-offset-2` (§3.2) |
 | 6 | `.kcard__media .project-cover-placeholder` `:129` | **R**, not **K** — round-1 finding 6: `.project-cover-placeholder` (`:125`) sets **no** width or height, so there is nothing to out-rank. `size-full` on the placeholder's own consumer suffices |
 
@@ -228,12 +267,12 @@ it replaces — round-1 finding 7 flagged seven rows that dropped some.
 | 9 | `.kcol__head` | **R** — `flex items-center gap-[var(--space-3)] p-[var(--space-4)] border-b border-b-border bg-[var(--bg-canvas)]` |
 | 10 | `.kcol.is-over .kcol__head` | **R** — round-1 finding 7: `.kcol__head` sets its **own** background, so a parent change does not inherit. The head needs its own `group-data-[over=true]:bg-[var(--paper-100)]`, with `.kcol` carrying `group` |
 | 11 | `.kcol__head .ey` | **R** — `!leading-[1.25]` (§3.3) |
-| 12 | `.kcol__ordinal` | **R** — **contrast fix** + full coverage: `flex-none font-[var(--type-eyebrow)] uppercase tracking-[var(--tracking-wide)] tabular-nums text-foreground-secondary` |
-| 13 | `.kcol__head > .row` | **R** — round-1 finding 6: `.row` is rendered **inside `StatusBadge`**, not by this component. Do not target it from outside. Pass the utility through `StatusBadge`'s own `className` prop, or leave the rule as a scoped **K** and say so. Builder must pick one and record it |
+| 12 | `.kcol__ordinal` | **R** — **contrast fix** + full coverage: `flex-none [font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-wide)] tabular-nums text-foreground-secondary` |
+| 13 | `.kcol__head > .row` | **K — decision closed.** Round-2 finding 6: `StatusBadge` takes only `{ stageKey }` (`components/atoms.tsx:12`), so there is no `className` prop to pass through, and adding one would pull `atoms.tsx` — a shared component used well outside this surface — into scope. **Keep the rule as CSS, verbatim.** It is one declaration pair on a child this component does not own. Any Tailwind utility targeting `flex` or `min-width` on that element would need `!`; none is planned, so none is added |
 | 14 | `.kcol__head .cnt` | **R** — **contrast fix** + coverage: `flex-none tabular-nums text-sm text-foreground-secondary` |
-| 15 | `.kcol__head:focus-visible` | **R** — outline utilities with `!`, `!outline-offset-[-2px]` (§3.2) |
+| 15 | `.kcol__head:focus-visible` | **R** — `focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--focus-ring)] focus-visible:!outline-offset-[-2px]` (§3.2) |
 | 16 | `.kcol__body` | **R** — `flex flex-col gap-[var(--space-3)] p-[var(--space-3)] min-h-[120px] flex-1`; **carry the `:472` comment across** — `flex-1` makes the drop target fill the column |
-| 17 | `.kcol__empty` | **R** — **contrast fix**: `py-[var(--space-5)] font-[var(--font-display)] text-lg text-center text-foreground-secondary` |
+| 17 | `.kcol__empty` | **R** — **contrast fix**: `py-[var(--space-5)] [font-family:var(--font-display)] text-lg text-center text-foreground-secondary` |
 
 ### 4.3 Card and controls
 
@@ -242,25 +281,25 @@ it replaces — round-1 finding 7 flagged seven rows that dropped some.
 | 18 | `.kcard-wrap` | **R** — `relative bg-card border border-border transition-[background-color,border-color] duration-[var(--dur-fast)]` |
 | 19 | `.kcard-wrap:hover` | **R** — `hover:bg-[var(--paper-100)] hover:border-[var(--greige-300)]` |
 | 20 | `.kcard-wrap.is-dragging` | **R** — `data-[dragging=true]:opacity-40` |
-| 21 | `.kcard-drag-handle` | **R** — full coverage: `absolute top-[var(--space-2)] right-[var(--space-2)] z-[2] size-9 max-[640px]:size-11 pointer-coarse:size-11 inline-grid place-items-center border border-[color-mix(in_srgb,var(--ink-900)_18%,transparent)] rounded-[var(--radius-sm)] bg-[color-mix(in_srgb,var(--paper-000)_88%,transparent)] text-foreground-secondary cursor-grab text-[20px] leading-none [touch-action:none]`. **`touch-action: none` is behavioural** (round-1 finding 8) — it keeps touch scrolling off the dnd-kit activator. Losing it changes TouchSensor activation |
+| 21 | `.kcard-drag-handle` | **R** — full coverage: `absolute top-[var(--space-2)] right-[var(--space-2)] z-[2] size-9 max-[641px]:size-11 pointer-coarse:size-11 inline-grid place-items-center border border-[color-mix(in_srgb,var(--ink-900)_18%,transparent)] rounded-[var(--radius-sm)] bg-[color-mix(in_srgb,var(--paper-000)_88%,transparent)] text-foreground-secondary cursor-grab text-[20px] leading-none [touch-action:none]`. **`touch-action: none` is behavioural** (round-1 finding 8) — it keeps touch scrolling off the dnd-kit activator. Losing it changes TouchSensor activation |
 | 22 | `.kcard-drag-handle:focus-visible` | **R** — `!outline-2 !outline-[var(--ink-900)] !outline-offset-2` |
-| 23 | `.kcard-drag-handle:hover:not(:disabled)` | **R** |
+| 23 | `.kcard-drag-handle:hover:not(:disabled)` | **R** — `hover:not-disabled:bg-[var(--paper-100)] hover:not-disabled:text-foreground` |
 | 24 | `.kcard-drag-handle:active:not(:disabled)` | **R** — `active:not-disabled:cursor-grabbing` |
 | 25 | `.kcard-drag-handle:disabled` | **R** — `disabled:text-foreground-secondary disabled:cursor-not-allowed` (§2.1: drop `opacity-[.48]`) |
-| 26 | `.kcard-controls` | **R** — `flex items-center gap-[var(--space-1)] px-[var(--space-3)] pb-[var(--space-3)] max-[640px]:flex-wrap pointer-coarse:flex-wrap` — folds in `:538` |
+| 26 | `.kcard-controls` | **R** — `flex items-center gap-[var(--space-1)] px-[var(--space-3)] pb-[var(--space-3)] max-[641px]:flex-wrap pointer-coarse:flex-wrap` — folds in `:538` |
 | 27 | `.kcard-controls select` | **R** + **adopt `NativeSelect`** (§2.5) — `min-w-12`, plus the 44 px coarse min-height from `:539` |
-| 28 | `.kcard-controls__arrow` | **R** — full coverage: `w-7 h-[26px] max-[640px]:size-11 pointer-coarse:size-11 p-0 border border-[length:var(--border-width-hair)] border-border rounded-[var(--radius-sm)] bg-[var(--bg-surface)] text-foreground-secondary font-[var(--type-label)] text-sm leading-none cursor-pointer transition-[background-color,color] duration-[var(--dur-fast)] ease-[var(--ease-standard)]` — folds in `:540` |
-| 29 | `.kcard-controls__arrow:focus-visible` | **R** — outline utilities with `!` |
-| 30 | `.kcard-controls__arrow:hover:not(:disabled)` | **R** |
+| 28 | `.kcard-controls__arrow` | **R** — full coverage: `w-7 h-[26px] max-[641px]:size-11 max-[641px]:min-w-11 pointer-coarse:size-11 pointer-coarse:min-w-11 p-0 border border-[length:var(--border-width-hair)] border-border rounded-[var(--radius-sm)] bg-[var(--bg-surface)] text-foreground-secondary [font:var(--type-label)] text-sm leading-none cursor-pointer transition-[background-color,color] duration-[var(--dur-fast)] ease-[var(--ease-standard)]` — folds in `:540` |
+| 29 | `.kcard-controls__arrow:focus-visible` | **R** — `focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--focus-ring)] focus-visible:!outline-offset-2` |
+| 30 | `.kcard-controls__arrow:hover:not(:disabled)` | **R** — `hover:not-disabled:bg-[var(--bg-raised)] hover:not-disabled:text-foreground` |
 | 31 | `.kcard-controls__arrow:active:not(:disabled)` | **R** — `active:not-disabled:translate-y-px` |
 | 32 | `.kcard-controls__arrow:disabled` | **R** — `disabled:text-foreground-secondary disabled:bg-[var(--bg-sunken)] disabled:cursor-not-allowed` |
 | 33 | `.kcard-stage-control` | **R** — `px-[var(--space-3)] pb-[var(--space-3)]` |
-| 34 | `.kcard-move-to` | **R** — full coverage: `w-full min-h-[30px] max-[640px]:min-h-11 pointer-coarse:min-h-11 px-[9px] py-[7px] border border-border bg-card text-foreground-secondary font-inherit text-2xs text-left cursor-pointer` — folds in `:541` |
+| 34 | `.kcard-move-to` | **R** — full coverage: `w-full min-h-[30px] max-[641px]:min-h-11 pointer-coarse:min-h-11 px-[9px] py-[7px] border border-border bg-card text-foreground-secondary [font:inherit] text-[length:var(--text-2xs)] text-left cursor-pointer` — folds in `:541` |
 | 35 | `.kcard-move-to:focus-visible` | **R** — `!outline-2 !outline-[var(--ink-900)] !outline-offset-2` |
-| 36 | `.kcard-move-to:hover:not(:disabled)` | **R** |
+| 36 | `.kcard-move-to:hover:not(:disabled)` | **R** — `hover:not-disabled:bg-[var(--paper-100)] hover:not-disabled:text-foreground` |
 | 37 | `.kcard-move-to:disabled` | **R** — `disabled:text-foreground-secondary disabled:cursor-not-allowed`; drop `opacity-[.48]` (§2.1) |
 | 38 | `.kcard-wrap--drop-indicator` | **R** — `min-h-[3px] rounded-[2px] bg-[var(--signal-positive)] shadow-[0_0_0_1px_color-mix(in_srgb,var(--signal-positive)_20%,transparent)]` |
-| 39 | `.kcard` | **R** — link reset, full coverage |
+| 39 | `.kcard` | **R** — `w-full block p-0 text-inherit text-left [font:inherit] no-underline bg-none border-0 cursor-pointer`. **Exact-equality test — see §1.2a** |
 | 40 | `.kcard__media` | **R** — `aspect-[16/9] overflow-hidden bg-[var(--ink-800)]` |
 | 41 | `.kcard__media img` | **R** — `size-full object-cover` |
 | 42 | `.kcard__b` | **R** — `p-[var(--space-3)]` |
@@ -273,16 +312,17 @@ it replaces — round-1 finding 7 flagged seven rows that dropped some.
 
 | # | Selector | Disposition |
 |---|---|---|
-| 47 | `.kanban-move-popover button:focus-visible` `:530` | **R** — `!outline-[length:var(--border-width-bold)] !outline-[var(--ink-900)] !outline-offset-[-2px]`. **Carry the `:529` comment**: an outward ring clips inside the overflow-auto panel |
-| 48 | `.kanban-move-popover` | **HOOK ONLY** — round-1 finding 9: there is **no standalone rule** to retire. `AnchoredPopover.tsx:138` already applies `cn(className, PANEL)`, and `app.css:532–533` says so in a comment. `ui/menu.tsx` does **not** export `PANEL`, so the draft's "reuse it" would fail typecheck, and duplicating it would create a second styling owner. Keep the class as a test/descendant hook; change nothing |
+| 47 | `.kanban-move-popover button:focus-visible` (`:511`, comment `:510`) | **R** — `!outline-[length:var(--border-width-bold)] !outline-[var(--ink-900)] !outline-offset-[-2px]`. **Carry the `:529` comment**: an outward ring clips inside the overflow-auto panel |
+| 48 | `.kanban-move-popover` | **HOOK ONLY** — round-1 finding 9: there is **no standalone rule** to retire. `AnchoredPopover.tsx:138` already applies `cn(className, PANEL)`, and `app.css:514–515` says so in a comment. `ui/menu.tsx` does **not** export `PANEL`, so the draft's "reuse it" would fail typecheck, and duplicating it would create a second styling owner. Keep the class as a test/descendant hook; change nothing |
 | 49 | `.kanban-move-popover__option:active` | **R** — `active:bg-[var(--bg-sunken)]` |
 | 50 | `.kanban-move-popover__content` | **R** — `grid gap-[var(--space-3)] p-[var(--space-3)]` |
 | 51 | `.kanban-move-popover__stages`, `__positions` | **R** — `grid gap-[2px]` |
-| 52 | `.kanban-move-popover__option` | **R** — full coverage; **keep `min-h-11` and carry its WCAG 2.5.5 comment across** |
-| 53 | `.kanban-move-popover__option:hover` | **R** |
+| 52 | `.kanban-move-popover__option` | **R** — `w-full min-h-11 px-[var(--space-3)] py-[var(--space-2)] border-0 border-l-[length:var(--border-width-bold)] border-l-transparent bg-transparent text-foreground [font:inherit] text-xs text-left cursor-pointer`; **carry the WCAG 2.5.5 comment across** |
+| 53 | `.kanban-move-popover__option:hover` | **R** — `hover:bg-[var(--paper-100)]` |
 | 54 | `.kanban-move-popover__option[aria-selected="true"]` | **R** — `aria-selected:border-l-[var(--border-strong)]` |
 | 55 | `.kanban-move-popover__actions` | **R** — `flex justify-end gap-[var(--space-2)]` |
-| 56 | `.kanban-move-popover__actions .button` `:521` + `:794` | **R** — to `buttonClasses()` sized `min-h-[38px] px-[14px] py-[9px] text-xs`, plus `max-[640px]:min-h-11` from `:794`. **See §5.4 — this row changes two tests** |
+| 56 | `.kanban-move-popover__actions .button` (`:522`) | **R** — to `buttonClasses()` sized `min-h-[38px] px-[14px] py-[9px] text-xs`. **See §5.1 — this row changes two tests** |
+| 56a | `app.css:793-794` — the shared 44 px rule | **PARTIAL, co-selector to protect.** Round-2 findings 1 and 3: this rule sits inside `@media (max-width: 720px)`, **not** 640px, and its selector list also contains **`.project-team-picker > input`**, which is out of scope. Delete **only** the `.kanban-move-popover__actions .button` clause; leave the rule and its other selector intact. No replacement utility needed — `buttonClasses()` already supplies the repo's `max-[721px]:min-h-[44px]` |
 | 57 | `.kanban-overlay` | **R** — `pointer-events-none z-10` |
 | 58 | `.kanban-card-preview` | **R** — `w-[min(320px,calc(100vw-var(--space-5)))] max-w-[calc(100vw-var(--space-5))] box-border shadow-[0_18px_36px_color-mix(in_srgb,var(--ink-900)_22%,transparent)] pointer-events-none` — shadow retained per §2.4 |
 | 59 | `.kanban-card-preview .kcard__media` | **R** — `pointer-events-none` |
@@ -317,19 +357,32 @@ it replaces — round-1 finding 7 flagged seven rows that dropped some.
 
 ## 6. Slicing
 
-Bottom-up; each slice ends green on `npm run typecheck` and `npm run build -w @quincy/web`.
+> **Round-2 finding 9 — the draft's slicing was broken.** It put the `is-over` → `data-*` change in
+> slice 1 and *all* CSS deletion in slice 7. But the unlayered `.kcol.is-over` rule would still be
+> live through slices 1–6 while the class that triggers it was already gone, so the new layered
+> `data-[over=true]:` utility would lose the cascade and **the drag-over highlight would simply be
+> missing for five slices**. The "no visual change" claim was false.
 
-| Slice | Content | Rows |
-|---|---|---|
-| 1 | `is-over`/`is-dragging` → `data-*`, `.kcol` gains `group`. No visual change | 8, 10, 20 |
-| 2 | Frame: delete the three dead rules; `.kanban` + its focus ring + `:545` | 1–6 |
-| 3 | Column, incl. the three contrast fixes and row 13's recorded decision | 7, 9, 11–17 |
-| 4 | Card body | 39–46 |
-| 5 | Card controls: handle, arrows, `NativeSelect`, move-to; folds in `:536–542` | 18–19, 21–38 |
-| 6 | Popover, overlay, preview; **row 56 + its two test rewrites** | 47–59 |
-| 7 | Delete retired `app.css` ranges; drift-register rows; `docs/lessons.md` §2.2 entry; todo | — |
+**The fix is a rule, not a reshuffle: each slice retires the `app.css` rules for its own rows, in
+that same slice.** A slice is a complete swap — utilities in, CSS out, together — never a swap
+split across slices. This is the only ordering that keeps every intermediate state correct.
 
-Slice 7 carries the full §5 gate.
+Each slice ends green on `npm run typecheck` and `npm run build -w @quincy/web`, and runs the test
+files its rows touch.
+
+| Slice | Content (utilities **and** the matching `app.css` deletions) | Rows | Test edits |
+|---|---|---|---|
+| 1 | Frame. Delete the three dead rules outright; convert `.kanban` + focus ring + `:545` | 1–6 | §1.2a: `className === "kanban"` at `:323` |
+| 2 | Column, incl. the three contrast fixes; row 13 stays as CSS | 7, 9, 11–17 | — |
+| 3 | Column drag state: `is-over` → `data-*`, `.kcol` gains `group`, **and** `:472`/`:474` deleted in the same slice | 8, 10 | — |
+| 4 | Card body | 39–46 | §1.2a: `dashboard-routing.test.ts` `class="kcard"` regexes |
+| 5 | Card controls: handle, arrows, `NativeSelect`, move-to; folds in `:536–542`. **Proves the `pointer-coarse` variant first (§2.2a)** | 18–19, 21–38 | §1.2a: `kcard-drag-handle`, `kcard-controls` regexes |
+| 6 | Card drag state: `is-dragging` → `data-*`, `:485` deleted with it | 20 | — |
+| 7 | Popover, overlay, preview; row 56 + 56a's surgical clause removal | 47–59, 56a | §5.1's two `.button` queries; `className === "kanban-overlay"` at `:146`, `:324` |
+| 8 | Docs only: drift-register rows, `lessons.md` (§2.2 retraction **and** §2.2b breakpoint entry), `todo.md`, TB8-10 updates | — | — |
+
+Slice 8 carries the full §5 gate. No `app.css` deletion is deferred to it — by then there is
+nothing left to delete, which is the point.
 
 ---
 
@@ -366,34 +419,68 @@ pipeline cannot drive. Items 1–14 verify structure. Recorded on the TB5C/TB8-0
 Round-1 finding 10 rejected the draft's gates as unrunnable. Each below is a command. **Run against
 `main` first (must fail), then the branch (must pass).** A gate that cannot fail is not a gate.
 
-`ifne` (moreutils) is **not installed on this machine** — verified — so every gate below is plain
-POSIX shell. Each exits non-zero on failure.
+`ifne` (moreutils) is **not installed here** — verified — so every gate is plain POSIX shell and
+signals failure by **exit status**, never by echoing a word.
+
+> **Round-2 findings 10–13.** The previous gate block was rejected wholesale and deserved to be:
+> gates 1 and 5 ended in a successful `echo`, so they exited 0 no matter what; gate 5's substring
+> patterns let `kcard` match inside `kcard__addr`; gate 2 missed every compound, descendant and
+> attribute selector; gate 4 used process substitution, which is not POSIX. All rewritten.
+
+**All six were executed against the unchanged tree before this plan was approved.** Change gates
+2, 3 and 6 fail on `main`, as they must. Preservation gates 1, 4 and 5 pass on `main` (gate 4
+matching all 6 focus anchors), and gate 5 was additionally **mutation-tested** — renaming
+`kcard-move-to` in a scratch copy makes it fail, so it is a real gate and not a tautology. Its
+first draft gave a false MISS on `kcol`; that was a defect in the gate, caught by running it.
+
+**On "must fail on `main`"** (round-2 SF3): that instruction only applies to *change* gates (2, 3,
+6). Gates 1, 4 and 5 are **preservation** gates — a correct baseline is supposed to pass them, and
+demanding they fail on `main` is incoherent. Prove those instead by **mutation**: break the thing
+deliberately in a scratch copy, confirm the gate catches it, discard.
 
 ```bash
+set -e
 W=portal/apps/web/src
-# 1 — .wsbar untouched (§1.1)
-git diff main -- $W/styles/app.css | grep -q '^[-+].*\.wsbar' && echo FAIL || echo PASS
-# 2 — every retired selector gone, at any indent, including media blocks
-! grep -nE '^[[:space:]]*\.(board|boardnote|kanban|kcol|kcard)[a-zA-Z0-9_-]*[[:space:]]*[,{:]' \
-    $W/styles/app.css | grep -v 'kcard__media .project-cover-placeholder' | grep -q .
-# 3 — the component adopts the shared primitives
-grep -q 'buttonClasses' $W/components/ProjectKanbanBoard.tsx \
-  && grep -q 'NativeSelect' $W/components/ProjectKanbanBoard.tsx
-# 4 — focus-restoration anchors byte-identical
-diff <(git show main:$W/components/ProjectKanbanBoard.tsx | grep -o 'data-focus-key={`[^`]*`}' | sort) \
-     <(grep -o 'data-focus-key={`[^`]*`}' $W/components/ProjectKanbanBoard.tsx | sort)
-# 5 — every test-queried hook (§1.3) still present in the component
-for c in kcol kcard__addr kcard kcard-drag-handle kcard-move-to kcard-controls__arrow \
-         kcol__head kcard-wrap--drop-indicator kcard__foot kanban-overlay \
-         kanban-move-popover kanban kcard-wrap; do
-  grep -q "\"$c\|$c " $W/components/ProjectKanbanBoard.tsx || echo "MISSING: $c"
+C=$W/components/ProjectKanbanBoard.tsx
+
+# 1 — PRESERVATION: .wsbar untouched. Non-zero if any .wsbar line was added or removed.
+! git diff main -- $W/styles/app.css | grep -qE '^[-+][^-+].*\.wsbar'
+
+# 2 — CHANGE: no retired board selector survives, at any indent, in any form
+#     (compound .kcol.is-over, descendant .kcol__head > .row, attribute [aria-selected], media blocks)
+! grep -nE '(^|[ \t,>+~])\.(board|boardnote|kanban|kcol|kcard)[a-zA-Z0-9_-]*' $W/styles/app.css \
+  | grep -vE '\.kcol__head > \.row' \
+  | grep -q .
+
+# 3 — CHANGE: the primitives are rendered, not merely imported (round-2 SF2)
+grep -qE '<NativeSelect' $C
+grep -qE 'className=\{?buttonClasses\(' $C
+
+# 4 — PRESERVATION: focus-restoration anchors identical. POSIX: temp files, not <(...).
+git show main:$C | grep -o 'data-focus-key=[^ >]*' | sort > /tmp/tb806.a
+grep -o 'data-focus-key=[^ >]*' $C | sort > /tmp/tb806.b
+diff /tmp/tb806.a /tmp/tb806.b
+# also catches the static anchor the previous gate ignored:
+git show main:$C | grep -c 'data-focus-key' > /tmp/tb806.na
+grep -c 'data-focus-key' $C > /tmp/tb806.nb
+diff /tmp/tb806.na /tmp/tb806.nb
+
+# 5 — PRESERVATION: every test-queried hook still present, matched on a WHOLE word so that
+#     `kcard` cannot be satisfied by `kcard__addr` (round-2 finding 11). The delimiter class is
+#     [^a-zA-Z0-9_-] on BOTH sides, not a quote/space set: the column is written
+#     `className={`kcol ${...}`}`, so a backtick is a legal delimiter and a quote-only
+#     pattern gives a false MISS. Found by running it, not by reading it.
+for c in kcol kcol__head kcard kcard__addr kcard__foot kcard-wrap kcard-wrap--drop-indicator \
+         kcard-drag-handle kcard-move-to kcard-controls__arrow kanban kanban-overlay \
+         kanban-move-popover; do
+  grep -qE "[^a-zA-Z0-9_-]${c}[^a-zA-Z0-9_-]" $C || { echo "MISSING HOOK: $c" >&2; exit 1; }
 done
-# 6 — the legacy .button queries are gone from both suites (§5.1)
+
+# 6 — CHANGE: the legacy .button queries are gone from both suites (§5.1)
 ! grep -rqn 'button:not(.button--secondary)' $W/components $W/screens
 ```
-
-Gate 5 drops `.board` — it is deleted by row 1, and the draft's version asserted a string that
-never existed in this component.
+Gate 5 drops `.board` — row 1 deletes it, and the draft asserted a string this component never
+rendered. Gate 2's one exception is row 13's deliberately-kept `.kcol__head > .row` (§4.2).
 
 ## 9. Artefacts
 
