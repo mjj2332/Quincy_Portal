@@ -21,9 +21,55 @@ in *behaviour*; it makes no visual claim, and TB8 is where the visual claim gets
 
 ---
 
+## 0.5 What Sol's round 1 changed
+
+Sol returned **REVISE** with 14 blocking findings on the first draft. Every one was independently
+re-verified against the repo by this session before being accepted (per
+`docs/Subagent-Orchestration.md` — an agent's claims are unverified until checked). All 14 held.
+They are recorded rather than quietly patched, because four of them were the draft being *wrong*,
+not merely thin, and a plan that hides its own corrections teaches the next one nothing.
+
+The four that were outright wrong:
+
+1. **The inward focus rings could not have worked.** `tokens/base.css:25-28` sets
+   `:focus-visible { outline: …; outline-offset: 2px }` **unlayered**, and the `outline` shorthand
+   resets `outline-offset`. The draft specified ordinary `focus-visible:outline-offset-[-2px]`
+   utilities, which lose to it silently — the exact defect `docs/lessons.md` records from TB8-06
+   ("A shorthand always resets its longhands"). Every ring in this plan now carries `!`, in the
+   idiom `ProjectKanbanBoard.tsx` already ships (§4.3).
+2. **Retiring `rich-text__editor-content` would have broken the prose CSS this plan keeps.** The
+   draft replaced the class outright with a utility string, but nine retained selectors
+   (`app.css:410, 414-415, 421-423, 443-446`) are scoped *through* that class. It stays, alongside
+   the utilities (§6.4).
+3. **Retiring `.subtask-checklist__title-trigger` would have broken live focus restoration.**
+   `SubtaskChecklist.tsx:216` does
+   `itemRefs.current.get(nextFocusId)?.querySelector(".subtask-checklist__title-trigger")?.focus()`
+   after a delete. The draft marked the class retired *and* promised focus management was
+   untouched — those two cannot both be true. The class survives as a non-painting hook (§5.2).
+4. **`<Eyebrow>` cannot replace `<time>`.** It is hard-coded to a `<span>`
+   (`ui/eyebrow.tsx:5-14`), so the substitution would have dropped `dateTime`. It also carries
+   `--tracking-widest`, and `--type-eyebrow` is **12px**, not the 11px the draft's §4.5 claimed
+   (`typography.css:25, 67`). Timestamps keep `<time dateTime>` and take a new exported class
+   string instead (§4.1).
+
+Plus one where **Sol was right and this session was wrong about Tailwind itself**: the draft
+warned that a bare `aria-current:` variant "generates nothing." Probed against the installed
+Tailwind **4.3.3**, `aria-current:underline` compiles to `[aria-current="true"]` exactly as the
+arbitrary form does. The warning is deleted; the arbitrary form is kept only because it is
+explicit, not because the short form is broken.
+
+The other nine were scope and rigor: retirement assigned to the wrong slice (§4.4, §11), an
+overclaimed "byte-identical" invariant that the plan's own structural changes contradict (§9),
+contrast targets computed against the wrong ground (§2.1), a square icon primitive that cannot
+hold a date string (§4.1), under-specified buttons (§5-§7), a ledger with overlaps and gaps (§8),
+directional responsive prose (§4.2, §5.2, §5.4), an understated Notice Board blast radius (§1.2),
+and stale inventory counts (§1.1, §13).
+
+---
+
 ## 1. Scope
 
-### 1.1 In scope — six files, one screen
+### 1.1 In scope — six components, one screen (seven files)
 
 | File | What it owns | Lines |
 |---|---|---|
@@ -37,12 +83,25 @@ in *behaviour*; it makes no visual claim, and TB8 is where the visual claim gets
 
 ### 1.2 Out of scope, stated rather than assumed
 
-- **The Notice Board** is candidate **#8** and is not touched — *except* that it consumes
-  `RichTextEditor` and `RichTextContent`. Converting the editor chrome (§1.3) necessarily changes
-  the Notice Board composer's appearance. This is deliberate: the component is one styling owner,
-  and splitting it would create exactly the duplicated-owner problem the roadmap forbids. **The
-  visual gate must therefore also open the Notice Board composer at all three viewports**, and
-  candidate #8 inherits an already-converged composer.
+- **The Notice Board's own surface** is candidate **#8** and is not touched. But this release
+  reaches into it through two shared owners, and the blast radius is wider than "the composer":
+
+  | What this release changes | Where the Notice Board feels it |
+  |---|---|
+  | `RichTextEditor` chrome (§6.4) | its **create** composer (`NoticeBoard.tsx:145`) **and** its **edit** composer (`:124`) — toolbar, content box, counter, validation, disabled state |
+  | `MentionAutocomplete` (§6.3) | the mention popup inside both of those composers |
+  | `.rich-text` prose tokens (§4.6) | **every rendered post** (`RichTextContent` at `:138`), not just composers — the line-height and the mention chip's radius |
+
+  This is deliberate and is the correct call: `RichTextEditor`, `MentionAutocomplete` and the
+  `.rich-text` block are each **one** styling owner with two consumers, and splitting any of them
+  would create exactly the duplicated-owner problem the roadmap forbids. Candidate #8 inherits
+  already-converged shared pieces.
+
+  **The price is paid at the gate, not in the plan.** §10's walk covers the Notice Board's
+  rendered posts, both composers, their disabled states, and the mention popup, at all three
+  viewports — the same standard as the surfaces this release owns. The `.rich-text` edits are
+  deliberately held to three token substitutions with no selector or structural change (§4.6) so
+  that the rendered-post blast radius stays measurable rather than open-ended.
 - **`AnchoredPopover`'s panel** (`components/AnchoredPopover.tsx`, `PANEL`) is TB8-02's, already
   converged, and is not re-litigated. This release only owns what goes *inside* the panel.
 - **`confirm()` / `ConfirmDialog` / `Modal`** are TB8-02's. Untouched.
@@ -89,28 +148,46 @@ Every contrast figure below was computed from the token hex values in
 `styles/tokens/colors.css` (WCAG 2.x relative luminance). Alpha composites were flattened against
 their real ground before measuring. The script is reproducible from the token values alone.
 
-### 2.1 Contrast failures
+**The grounds, established first, because the redesign moves several of them.** §3 deletes the
+white `--paper-000` card each comment and each subtask row sits on today. What is underneath is
+the panel: `.project-collaboration` sets `background: var(--paper-050)` (`app.css:845`) and
+`--standalone` does not override it, so **both** panel modes are `--paper-050`, and a hovered row
+or comment is `bg-secondary` = `--paper-100`. `AnchoredPopover`'s `PANEL` is `bg-popover` =
+`--bg-surface` = `--paper-000` (`AnchoredPopover.tsx:36`), and so is the mention listbox. The
+"After" column below is measured against **those** grounds, not against the card that is being
+removed — the first draft got this wrong on five rows.
 
-| Site | Paint today | Ratio | Bar | After |
+| Site | Paint today | Ratio | Bar | After (ground) |
 |---|---|---|---|---|
-| Comment `<time>`, `<small>Edited</small>` (app.css:857) | `--text-muted` on `--paper-000` | **3.57** | 4.5 | `--text-secondary`, **9.20** |
-| `.mention-autocomplete__option small` (:462) | `--text-muted` on `--bg-surface` | **3.57** | 4.5 | **9.20** |
-| `.mention-autocomplete__status` (:463) | `--text-muted` on `--bg-surface` | **3.57** | 4.5 | **9.20** |
-| `.subtask-popover__member small` (:952) | `--text-muted` on `--bg-surface` | **3.57** | 4.5 | **9.20** |
-| Done subtask title (:906) | `--text-muted` on `--paper-000` | **3.57** | 4.5 | **9.20** |
-| Idle collaboration tab (:873) | `--text-muted` on `--paper-050` | **3.36** | 4.5 | **8.66** |
-| `.rich-text__toolbar-button:disabled` (:437) | `--text-muted` on `--paper-000` | **3.57** | 4.5 | **9.20** |
-| `.rich-text__toolbar-select:disabled` (:440) | `--text-muted` on `--paper-000` | **3.57** | 4.5 | **9.20** |
-| `.rich-text__counter` (:448) | `--text-muted` on `--paper-050` | **3.36** | 4.5 | **9.20** |
-| RTE placeholder (:447) | `--text-muted` on `--paper-050` | **3.36** | 4.5 | **8.66** |
-| `.empty` in `ProjectActivityView` (:638) | `--text-muted` on `--paper-050` | **3.36** | 4.5 | `EmptyState`, **8.66** |
-| Disabled drag grip (:913) | `--text-secondary` **× `opacity:.5`** | **2.51** | 3.0 | `--text-muted`, **3.57**, no opacity |
-| `.subtask-checklist__overflow` (:918) | `--text-secondary` **× `opacity:.72`** | **4.21** | 4.5 | `--text-secondary`, **9.20**, no opacity |
+| Comment `<time>`, `<small>Edited</small>` (app.css:857) | `--text-muted` on `--paper-000` | **3.57** | 4.5 | `--text-secondary` on `--paper-050`, **8.66** |
+| `.mention-autocomplete__option small` (:462) | `--text-muted` on `--bg-surface` | **3.57** | 4.5 | on `--paper-000`, **9.20** |
+| `.mention-autocomplete__status` (:463) | `--text-muted` on `--bg-surface` | **3.57** | 4.5 | on `--paper-000`, **9.20** |
+| `.subtask-popover__member small` (:952) | `--text-muted` on `--bg-surface` | **3.57** | 4.5 | on `--paper-000`, **9.20** |
+| Done subtask title (:906) | `--text-muted` on `--paper-000` | **3.57** | 4.5 | on `--paper-050`, **8.66**; hovered `--paper-100`, **8.09** |
+| Idle collaboration tab (:873) | `--text-muted` on `--paper-050` | **3.36** | 4.5 | `TAB_IDLE` on `--paper-050`, **8.66** |
+| `.rich-text__toolbar-button:disabled` (:437) | `--text-muted` on `--paper-000` | **3.57** | 4.5 | `--text-secondary` on `--bg-sunken`, **7.40** |
+| `.rich-text__toolbar-select:disabled` (:440) | `--text-muted` on `--paper-000` | **3.57** | 4.5 | `FIELD_BOX` disabled on `--bg-sunken`, **7.40** |
+| `.rich-text__counter` (:448) | `--text-muted` on `--paper-050` | **3.36** | 4.5 | on `--paper-050`, **8.66** |
+| RTE placeholder (:447) | `--text-muted` on `--paper-050` | **3.36** | 4.5 | on `--paper-050`, **8.66** |
+| `.empty` in `ProjectActivityView` (:638) | `--text-muted` on `--paper-050` | **3.36** | 4.5 | `EmptyState` on `--paper-050`, **8.66** |
+| Disabled drag grip (:913) | `--text-secondary` **× `opacity:.5`** | **2.51** | 3.0 | `--text-secondary` on `--bg-sunken`, **7.40**, no opacity |
+| `.subtask-checklist__overflow` (:918) | `--text-secondary` **× `opacity:.72`** | **4.21** | 4.5 | on `--paper-050`, **8.66**; hovered `--paper-100`, **8.09** |
 
 The disabled-grip row is **the same defect TB8-06 fixed on the Kanban board's disabled drag
-handle**, in a different file — an opacity multiplier stacked on an already-quiet colour. The fix
-matches TB8-06's exactly (drop the opacity; differentiate with the colour alone, at the 3:1
-graphical-object bar), so the two disabled handles in the app finally agree.
+handle**, in a different file — an opacity multiplier stacked on an already-quiet colour.
+
+**How the disabled state is differentiated, since the opacity goes.** Not by dimming the colour:
+`--text-muted` on the hovered row's `--paper-100` is only **3.13:1**, which clears the 3:1
+graphical bar by a margin too thin to defend. Instead the disabled control keeps
+`--text-secondary` and takes a **`--bg-sunken` chip** — 7.40:1, and the affordance difference is
+carried by the recessed background. That is TB8-06's *other* precedent, the one it used for the
+disabled arrow ("differentiated by background, as the original rule did"), and it is the stronger
+of the two. §4.1 encodes it once.
+
+**And the RTE root `opacity: .65` goes with it** (`app.css:429`). A group opacity multiplies every
+child's measured contrast, so no per-child "After" figure in this table survives it. The disabled
+editor is instead expressed by its children's own disabled treatments — toolbar buttons and select
+via `ICON_BUTTON`/`FIELD_BOX`, and the content box via an explicit `--bg-sunken` fill (§6.4).
 
 ### 2.2 `.subtask-checklist__metadata-trigger { opacity: .06 }` — 1.10:1, and no touch equivalent
 
@@ -255,12 +332,19 @@ brief is discipline. The eyebrow attribution carries the same information in 11p
 
 ## 4. Shared work — primitives and tokens
 
-### 4.1 New primitive: `components/ui/icon-button.tsx`
+### 4.1 New primitives: `components/ui/icon-button.tsx` and one exported meta-text class
 
-The surface has **five** icon-glyph affordances (grip, overflow, schedule trigger, assignee
-trigger, chevron) with five different hand-rolled treatments, three of them contrast failures.
-`buttonClasses("text")` does not fit — these are square glyph targets, not text buttons. The app
-has a legacy `.icbtn` (app.css:77-87) with the right *idea* and no Tailwind equivalent.
+The surface has **four** interactive icon affordances — the drag grip, the overflow `⋯`, the
+schedule trigger and the assignee trigger — with four different hand-rolled treatments, three of
+them contrast failures. (The chevron is a non-interactive `<span>` inside the checklist toggle and
+is **not** one of them; it is styled inline in §5.1.) `buttonClasses("text")` does not fit — these
+are glyph targets, not text buttons. The app has a legacy `.icbtn` (`app.css:77-87`) with the
+right *idea* and no Tailwind equivalent.
+
+Two of the four are **not square**: `ScheduleControl` and `AssigneeControl` render a
+`StatusPill`-shaped value inside the trigger when one is set (`SubtaskChecklist.tsx:101, :130` —
+`formatSchedule()` can return a full date, a timestamp, or a range). A primitive that fixes both
+dimensions would overflow at 390px. So the file exports **two** treatments off one base.
 
 ```tsx
 // components/ui/icon-button.tsx
@@ -268,42 +352,86 @@ import * as React from "react";
 import { cn } from "@/lib/utils";
 
 /**
- * A square glyph affordance: drag grips, overflow menus, popover triggers.
- * Not `buttonClasses("text")` — that is a text control with a text baseline.
- * 28px desktop / 44px at <=720px (44px touch target — WCAG 2.5.5 Enhanced / HIG,
- * not a spacing token). Colour, never opacity, carries the disabled state — an
- * opacity multiplier on an already-quiet colour is what took the Kanban board's
- * disabled handle to 1.72:1 (TB8-06) and this surface's grip to 2.51:1 (TB8-07 §2.1).
+ * Shared geometry and states for a glyph affordance: drag grips, overflow menus,
+ * popover triggers. Not `buttonClasses("text")` — that is a text control with a
+ * text baseline. 28px desktop / 44px at <=720px (44px touch target — WCAG 2.5.5
+ * Enhanced / HIG, not a spacing token).
+ *
+ * Colour is NEVER dimmed by opacity to express disabled: a group opacity on an
+ * already-quiet colour is what took the Kanban board's disabled handle to 1.72:1
+ * (TB8-06) and this surface's drag grip to 2.51:1 (TB8-07 §2.1). The recessed
+ * `--bg-sunken` chip carries it instead, at 7.40:1.
  */
-const ICON_BUTTON =
+const ICON_BUTTON_BASE =
   "inline-grid place-items-center shrink-0 p-0 m-0 " +
-  "size-[28px] max-[721px]:size-[44px] " +
+  "min-h-[28px] min-w-[28px] max-[721px]:min-h-[44px] max-[721px]:min-w-[44px] " +
   "bg-transparent border-0 rounded-[var(--radius-sm)] " +
   "text-foreground-secondary cursor-pointer " +
   "[font:var(--weight-regular)_var(--text-md)/1_var(--font-sans)] " +
   "transition-[background-color,color] duration-[var(--dur-fast)] ease-[var(--ease-standard)] " +
   "hover:not-disabled:bg-secondary " +
-  "focus-visible:outline-[length:var(--border-width-bold)] focus-visible:outline-solid " +
-  "focus-visible:outline-ring focus-visible:outline-offset-2 " +
-  "disabled:text-[var(--text-muted)] disabled:bg-transparent disabled:cursor-not-allowed " +
-  "aria-disabled:text-[var(--text-muted)] aria-disabled:cursor-default";
+  // Important, not decorative: `tokens/base.css`'s unlayered
+  // `:focus-visible { outline: … }` shorthand resets `outline-offset` (§4.3).
+  "focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] " +
+  "focus-visible:!outline-[var(--focus-ring)] focus-visible:!outline-offset-2 " +
+  "disabled:bg-surface-sunken disabled:cursor-not-allowed " +
+  "aria-disabled:bg-surface-sunken aria-disabled:cursor-default";
+
+/** Square, glyph-only: the drag grip and the overflow menu. */
+const ICON_BUTTON = ICON_BUTTON_BASE + " w-[28px] max-[721px]:w-[44px]";
+
+/**
+ * Variable width: a popover trigger that shows a glyph when empty and a value
+ * chip when set (schedule, assignee). `min-w` keeps the empty state on the same
+ * 28/44 grid as `ICON_BUTTON`; `max-w-full` plus the pill overrides keep a long
+ * date range from overflowing a 390px row.
+ */
+const META_TRIGGER = ICON_BUTTON_BASE +
+  " w-auto max-w-full px-[var(--space-1)] " +
+  "[&>[data-slot=status-pill]]:max-w-full " +
+  "[&>[data-slot=status-pill]]:overflow-hidden " +
+  "[&>[data-slot=status-pill]]:text-ellipsis";
 
 function IconButton({ className, ...props }: React.ComponentProps<"button">) {
   return <button type="button" data-slot="icon-button" className={cn(ICON_BUTTON, className)} {...props} />;
 }
 
-export { IconButton, ICON_BUTTON };
+export { IconButton, ICON_BUTTON, ICON_BUTTON_BASE, META_TRIGGER };
 ```
 
 Notes the builder must not "clean up":
 
-- `disabled:text-[var(--text-muted)]` is an **arbitrary value, deliberately**, not
-  `text-muted-foreground`. It is the 3.57:1 graphical-object treatment §2.1 specifies, matching
-  TB8-06's disabled handle. The 3:1 bar applies because these are glyphs, not text.
-- Both `disabled:` and `aria-disabled:` are needed: the drag grip is disabled via
-  `aria-disabled` (dnd-kit keeps it focusable), the popover triggers via the real attribute.
-- `size-[28px]` (not 24px) because 28px is the smallest square that clears the 3:1 target-size
-  guidance with the existing 18px glyphs and still fits five controls on a 1440 row.
+- Both `disabled:` and `aria-disabled:` are needed. The drag grip is disabled via
+  `aria-disabled` (dnd-kit keeps it focusable); the popover triggers use the real attribute.
+  Both are Tailwind v4 built-in variants — verified against the installed 4.3.3.
+- The disabled state sets **background only**. `text-foreground-secondary` from the base is
+  inherited unchanged, which is what produces §2.1's 7.40:1.
+- `min-h/min-w` on the base and `w-` on the two variants, rather than `size-`, is what lets
+  `META_TRIGGER` grow while `ICON_BUTTON` stays square. Do not collapse them back to `size-`.
+- 28px (not 24px) is the smallest square that clears the 3:1 target-size guidance with the
+  existing 18px glyphs and still fits four controls beside a title on a 1440px row.
+
+### 4.1a `META_TEXT` — the attribution/timestamp treatment
+
+Timestamps, actor names, "Edited", role labels and the mention hint all want an eyebrow's
+*typography* on an element that is **not** a `<span>` — `<time dateTime>` above all, which must
+keep both its element and its attribute (§9). `Eyebrow` is hard-coded to a `<span>`
+(`ui/eyebrow.tsx:5-14`), so it cannot be used for them, and it carries `--tracking-widest`
+(0.22em), which is a section-label tracking, too loose for a timestamp.
+
+Export a class string from the same file, beside the component:
+
+```tsx
+// components/ui/eyebrow.tsx — added export
+/** Eyebrow typography for elements that are not <span>: <time>, <small>, <strong>. */
+const META_TEXT =
+  "[font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-wide)] text-foreground-secondary";
+```
+
+`--type-eyebrow` is `var(--weight-regular) var(--text-xs)/1.2 var(--font-sans)` — **12px**
+(`typography.css:25, 67`). Every "eyebrow" size figure in this plan is 12px; an earlier draft said
+11px and was wrong (§0.5). The `<Eyebrow>` *component* is still used, unchanged, for real section
+labels: "Collaboration", "Checklist", "Read-only summary", "Photographers", "Editors".
 
 ### 4.2 New shared constants in `components/AnchoredPopover.tsx`
 
@@ -319,19 +447,58 @@ export const POPOVER_LABEL =
   "grid gap-[var(--space-1)] min-w-0 " +
   "[font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-wide)] text-foreground-secondary";
 
-/** The action row that closes a popover or a composer. */
-export const POPOVER_ACTIONS = "flex flex-wrap items-center gap-[var(--space-2)] min-w-0";
+/**
+ * The action row that closes a popover or a composer. Wrapping starts at <=600px only —
+ * that is where `app.css:958-965` puts it today and this release preserves the breakpoint
+ * rather than folding it into the app's usual 720px (§5.4).
+ */
+export const POPOVER_ACTIONS =
+  "flex items-center gap-[var(--space-2)] min-w-0 max-[601px]:flex-wrap";
 ```
 
 `POPOVER_LABEL` replaces `.subtask-popover__content label` (:924), whose 11px un-uppercased grey
 label is the only field label in the app that is not `FieldLabel`'s eyebrow.
 
-### 4.3 The inward focus ring stays inward
+### 4.3 Focus rings — every one of them is `!`-prefixed
 
-app.css:892 exists because popover contents sit flush inside a bordered, `overflow: auto` panel,
-so an `outline-offset: 2px` ring is clipped. That fact has not changed. Every control **inside**
-an `AnchoredPopover` in this release uses `focus-visible:outline-offset-[-2px]`, overriding the
-`+2px` its base constant sets. Spelled out per site in §5-§6; the builder must not omit it.
+`app.css:892` exists because popover contents sit flush inside a bordered, `overflow: auto` panel,
+so an outward ring is clipped. That fact has not changed. What the first draft missed is *why an
+ordinary utility cannot express the fix*:
+
+`tokens/base.css:25-28` declares, **unlayered**:
+
+```css
+:focus-visible {
+  outline: var(--border-width-bold) solid var(--focus-ring);
+  outline-offset: 2px;
+}
+```
+
+Unlayered author CSS beats `@layer utilities` regardless of specificity (§4.4), **and** the
+`outline` shorthand resets `outline-offset`. So a plain `focus-visible:outline-offset-[-2px]`
+loses twice over and the ring silently renders outward, clipped. This is the defect
+`docs/lessons.md` records under "A shorthand always resets its longhands" — TB8-06 hit it on all
+six of the board's rings.
+
+**The idiom, exactly as `ProjectKanbanBoard.tsx:220-230` already ships it.** Write all four
+utilities; writing only the offset does not work.
+
+```
+/* outward — the default for anything not inside an AnchoredPopover */
+focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)]
+focus-visible:!outline-[var(--focus-ring)] focus-visible:!outline-offset-2
+
+/* inward — every control inside an AnchoredPopover */
+focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)]
+focus-visible:!outline-[var(--focus-ring)] focus-visible:!outline-offset-[-2px]
+```
+
+Below, these two strings are referred to as **`RING_OUT`** and **`RING_IN`**. They are written out
+in full at every site the builder touches — they are not new exported constants, because the
+existing primitives (`buttonClasses`, `FIELD_BOX`, `TAB_BASE`, `CHECKBOX_INPUT`) already carry
+their own non-important outward rings that happen to match the base rule, and this release does
+not widen scope to edit them. `RING_OUT` is therefore only written where this plan specifies a
+*new* class string; `RING_IN` is written at **every** popover-internal control without exception.
 
 ### 4.4 The unlayered-`app.css` trap
 
@@ -341,18 +508,31 @@ rule the builder follows without thinking:
 
 > A class is either **retired from `app.css` in the same slice that stops using it**, or it is
 > **kept as a non-styling hook only**. There is no third state. A component may not carry both a
-> legacy class that still paints and the Tailwind utilities meant to replace it.
+> legacy class that still paints and the Tailwind utilities meant to replace it — not even for
+> one slice.
+
+**This is a slicing constraint, not just a style note, and the first draft got the slicing
+wrong.** It put every `app.css` deletion in slice 8. That would leave slices 2-7 each shipping a
+component whose new utilities are dead on arrival, overridden by the legacy rule still sitting
+unlayered in `app.css` — and each of those slices would end "green" on `typecheck` and `build`
+while rendering the old design. TB8-06 hit exactly this and made deletion same-slice.
+
+So: **each of slices 2-7 owns the `app.css` removals for the selectors it stops using**, listed
+per slice in §11. Slice 8 no longer performs the retirement; it *audits* it against §8's ledger,
+adds the survivors' justifying comments, and owns the tests and docs.
 
 Where a class must survive as a test hook or a CSS-side selector target, it is converted to a
 `data-*` attribute instead — the convention TB8-06 established (`data-*` conversions in its
-slices 6-7). Named per site below.
+slices 3 and 6). Named per site below. Two classes survive as **plain hooks** rather than
+`data-*`, each for a stated reason: `.subtask-checklist__title-trigger` (§5.2) and
+`.rich-text__editor-content` (§6.4).
 
 ### 4.5 Off-scale type → tokens (§2.6's answer)
 
 | Was | Becomes | Note |
 |---|---|---|
 | 9px | `--text-2xs` (11px) | unread badge grows 18px → 20px to fit; assignee chip stays 24px (two initials at 11px ≈ 14px wide) |
-| 10px | `--text-2xs` (11px) where the value is an eyebrow; `--text-xs` (12px) where it is body | per site below |
+| 10px | `--text-2xs` (11px) for the two chips (`__unread`, `__assignee`); `META_TEXT`'s `--type-eyebrow` (**12px**) for every attribution/timestamp/label; `--text-xs` (12px) for body | per site below. **12px, not 11px** — `--type-eyebrow` resolves through `--text-xs` (`typography.css:25, 67`); the first draft said 11px and was wrong (§0.5) |
 | 12px literal | `--text-xs` | |
 | 13px | `--text-sm` (14px) | |
 | 13.5px (`.member`, :779) | untouched — shared global, D-05's | |
@@ -398,13 +578,13 @@ bar spanning both columns. That structure is right and is preserved verbatim; on
 |---|---|
 | `<section>` | `grid gap-[var(--space-3)] pb-[var(--space-4)] [border-bottom-style:solid] border-b-[length:var(--border-width-hair)] border-b-border` |
 | `<h3>` | `m-0` |
-| toggle `<button>` | `grid grid-cols-[minmax(0,1fr)_auto] w-full gap-x-[var(--space-3)] gap-y-[var(--space-1)] p-[var(--space-2)] min-h-[38px] max-[721px]:min-h-[44px] bg-transparent border-0 text-left cursor-pointer text-foreground transition-[background-color] duration-[var(--dur-fast)] ease-[var(--ease-standard)] hover:bg-secondary focus-visible:outline-[length:var(--border-width-bold)] focus-visible:outline-solid focus-visible:outline-ring focus-visible:outline-offset-2` |
+| toggle `<button>` | `grid grid-cols-[minmax(0,1fr)_auto] w-full gap-x-[var(--space-3)] gap-y-[var(--space-1)] p-[var(--space-2)] min-h-[38px] max-[721px]:min-h-[44px] bg-transparent border-0 text-left cursor-pointer text-foreground transition-[background-color] duration-[var(--dur-fast)] ease-[var(--ease-standard)] hover:bg-secondary` + `RING_OUT` |
 | eyebrow span | `<Eyebrow>` (replaces `className="ey"`) |
 | `__toggle-meta` | `flex items-center justify-end gap-[var(--space-2)]` |
 | `__progress-text` | `[font:var(--type-h3)] tracking-[var(--tracking-tight)] text-foreground` |
-| `__chevron` | `[font:var(--weight-regular)_var(--text-md)/1_var(--font-sans)] text-foreground-secondary` |
+| `__chevron` | a non-interactive `<span>`, so **not** an `IconButton`: `[font:var(--weight-regular)_var(--text-md)/1_var(--font-sans)] text-foreground-secondary` |
 | `<progress>` | `col-span-full w-full h-[5px] [accent-color:var(--accent)]` |
-| `__notice` | `min-h-0 [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-destructive` |
+| `__notice` | `min-h-0 [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-destructive` — `aria-live="polite"` kept |
 | `__panel` | `grid gap-[var(--space-3)]`, collapsed → `hidden` |
 
 **§2.6's 17px:** `.subtask-checklist__progress-text` currently overrides `--type-h3` down to 17px,
@@ -415,9 +595,12 @@ normalisation** — the gate must confirm it does not crowd the chevron at 390px
 against a 44px chevron in a `minmax(0,1fr) auto` grid: it wraps to two lines before it collides,
 which is acceptable and is why `gap-y-[var(--space-1)]` exists).
 
-**`is-collapsed` → `hidden`.** The panel's collapsed state moves from a class to the plain
-`hidden` attribute, matching the tab panels. `aria-hidden={!open}` is already on the element and
-is unchanged; `aria-controls`/`aria-expanded` on the toggle are unchanged.
+**`is-collapsed` → the `hidden` *utility class*, not the `hidden` attribute.** The collapsed
+state stays a class swap — `className={cn("grid gap-[var(--space-3)]", !open && "hidden")}` —
+because adding a real `hidden` attribute where there is none today
+(`SubtaskChecklist.tsx:221` has only the class and `aria-hidden`) would be an ARIA/DOM change this
+release has no business making. `aria-hidden={!open}`, `id`, and the toggle's
+`aria-controls`/`aria-expanded` are all unchanged.
 
 ### 5.2 The row — and the end of hover-reveal
 
@@ -449,28 +632,63 @@ width band rather than an inset block. `--dragging` becomes
 `data-*` per §4.4 — the class strings are gone from `app.css` and the DOM tests key off the
 attributes.
 
-`__summary`:
-- ≤720px: `grid grid-cols-[auto_auto_minmax(0,1fr)] items-center gap-[var(--space-2)]` with the
-  three meta controls on a **second** row spanning all columns
-  (`col-span-full flex items-center gap-[var(--space-1)]`).
-- ≥721px: `flex items-center gap-[var(--space-2)] min-w-0`, single line.
+`__summary` and the meta wrapper — written as **mutually exclusive** breakpoint variants so that
+Tailwind's emission order cannot decide the outcome. No bare `flex` or `grid` appears in either
+string; every `display` declaration is inside a variant, and the two variants never both match.
+(`docs/lessons.md`, "Tailwind's emission order is not your class order" — the first draft told the
+builder to test the order and improvise a fallback, which is not a specification.)
 
-Implemented as one container with `flex max-[721px]:grid …` plus a meta wrapper
-`contents max-[721px]:col-span-full max-[721px]:flex …`. The builder must verify in the browser
-which of the two `display` utilities Tailwind emits last (**this repo has been bitten twice**:
-`docs/lessons.md`, "Tailwind's emission order is not your class order"), and if the media-query
-variant loses, split the container into an explicit `md:`-style pair rather than relying on order.
+```
+/* summary container */
+min-w-0
+max-[720px]:grid max-[720px]:grid-cols-[auto_auto_minmax(0,1fr)]
+max-[720px]:items-center max-[720px]:gap-[var(--space-2)]
+min-[721px]:flex min-[721px]:items-center min-[721px]:gap-[var(--space-2)]
+
+/* meta wrapper — a plain <div> with no ARIA, holding schedule + assignee + overflow */
+min-w-0
+max-[720px]:col-span-full max-[720px]:flex max-[720px]:items-center
+max-[720px]:gap-[var(--space-1)] max-[720px]:pt-[var(--space-1)]
+min-[721px]:contents
+```
+
+At ≥721px the wrapper is `display: contents`, so the three controls are direct flex children of
+the summary row and the layout is byte-for-byte the single line it is today. At ≤720px it becomes
+its own full-width row beneath the title, which is what gives the three controls their 44px.
+
+**The wrapper `<div>` is a new element.** It is one of §9's eight authorized structural changes;
+it carries no `role`, no `aria-*`, no `id`, and does not sit between a label and its control.
+
+Note the breakpoints are `max-[720px]` / `min-[721px]`, not the `max-[721px]` that
+`buttonClasses` and `FIELD_BOX` use internally. Those two are `max-width: 721px` and so also match
+*at* 721px; that overlap is harmless for a `min-height` but would be a real conflict for a
+`display`. Do not "align" these with the primitives' breakpoint.
 
 | Control | Treatment |
 |---|---|
-| grip | `<IconButton>` + `cursor-grab active:cursor-grabbing aria-disabled:cursor-default`. **`opacity: .5` deleted** (§2.1). |
+| grip | `<IconButton>` (square) + `cursor-grab active:cursor-grabbing`. **`opacity: .5` deleted**; disabled is the `--bg-sunken` chip from `ICON_BUTTON_BASE`, **7.40:1** (§2.1). |
 | done checkbox | `<label>` wrapping `<Checkbox>` (`CHECKBOX_INPUT`, 18px, `accent-[var(--accent)]`) — `grid place-items-center min-h-[28px] max-[721px]:min-h-[44px] max-[721px]:min-w-[44px] cursor-pointer`. The `sr-only` "Mark X complete" span is unchanged. |
-| title (read) | `flex-1 min-w-0 p-0 border-0 bg-transparent text-left cursor-pointer [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground [overflow-wrap:anywhere] min-h-[28px] max-[721px]:min-h-[44px] focus-visible:outline-…offset-2`; done → `text-foreground-secondary line-through` (**9.20:1**, was 3.57) |
+| title (read) | **keeps `subtask-checklist__title-trigger` as a non-painting hook** (see below), plus `flex-1 min-w-0 p-0 border-0 bg-transparent text-left cursor-pointer [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground [overflow-wrap:anywhere] min-h-[28px] max-[721px]:min-h-[44px]` + `RING_OUT`; done → `text-foreground-secondary line-through` (**8.66:1**, was 3.57) |
 | title (editing) | `<Input className="flex-1 min-w-0">` — retires the hand-rolled box at `:908` |
-| schedule / assignee triggers | `<IconButton>`, **always visible** |
+| schedule / assignee triggers | `<button className={cn(META_TRIGGER, …)}>` — **`META_TRIGGER`, not `ICON_BUTTON`** (§4.1): each holds a value chip when set, and a fixed square would overflow at 390px. **Always visible.** |
 | due pill | `<StatusPill tone="neutral">` — retires `.subtask-checklist__due` (:909) |
 | assignee chip | `grid place-items-center size-[var(--space-5)] shrink-0 rounded-[var(--radius-pill)] bg-primary text-[var(--accent-on)] [font:var(--weight-regular)_var(--text-2xs)/1_var(--font-sans)] tracking-[0.02em]` (**18.64:1**) |
-| overflow `⋯` | `<IconButton>`. **`opacity: .72` and the hover-reveal deleted.** |
+| overflow `⋯` | `<IconButton>` (square — it only ever holds a glyph). **`opacity: .72` and the hover-reveal deleted.** |
+
+**`.subtask-checklist__title-trigger` is the one class in this file that survives.** Not as
+paint — its rule at `app.css:904` is retired — but as a live **runtime selector**:
+
+```ts
+// SubtaskChecklist.tsx:216, inside remove()
+itemRefs.current.get(nextFocusId)?.querySelector<HTMLButtonElement>(".subtask-checklist__title-trigger")?.focus();
+```
+
+Deleting a subtask restores focus to the next row's title button through that query. The first
+draft marked the class retired *and* promised focus management was untouched; both could not be
+true (§0.5). It stays on the element as a hook and is not converted to `data-*` — converting it
+would mean editing the runtime query too, which is a behaviour change inside a visual release for
+no gain. §8 marks it **H**, and it gets a comment in the component saying it is a focus hook so
+the next sweep does not delete it as dead.
 
 **The hover-reveal mechanic is removed outright.** `.subtask-checklist__metadata-trigger`'s
 `opacity: .06` → `1` on hover (:914, :916) and `.subtask-checklist__overflow`'s `.72` → `1`
@@ -493,7 +711,7 @@ focus-ring rule at `:892` scopes to `.subtask-popover` (the `AnchoredPopover` de
 
 **Schedule.** Every `<label>` → `POPOVER_LABEL`; every `<select>` → `<NativeSelect>`; every
 `<input type="date"|"time"|"radio">` → `<Input>` / native radio in a `TOGGLE_ROW`-shaped label.
-Each gets `focus-visible:outline-offset-[-2px]` (§4.3).
+Each gets `RING_IN` in full (§4.3) — all four utilities, `!`-prefixed.
 
 - `__endpoint` `<fieldset>`: `grid gap-[var(--space-2)] min-w-0 p-[var(--space-2)] [border-style:solid] border-[length:var(--border-width-hair)] border-border`
 - its `<legend>`: `px-[var(--space-1)] [font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-wide)] text-foreground`
@@ -505,14 +723,22 @@ Each gets `focus-visible:outline-offset-[-2px]` (§4.3).
   the darkened value). **This is §2.4's fix**: the conflict block finally paints as a warning.
 - the conflict `<dl>`: `grid gap-[var(--space-1)] m-0` with each `<div>`
   `flex items-baseline justify-between gap-[var(--space-3)]`, `<dt>` `POPOVER_LABEL`,
-  `<dd>` `m-0 [font:…_var(--text-xs)/…] text-foreground`
-- `__actions`: `POPOVER_ACTIONS`, buttons `buttonClasses("primary"|"secondary")` — retires the
-  `min-height: 38px` override at `:934` **and its 44px `@media` counterpart at `:935-943`**,
-  because `buttonClasses` BASE already ships `min-h-[38px] max-[721px]:min-h-[44px]`. The long
-  comment at `:936-941` explaining the cascade ordering goes with them; a short note in the
-  ledger records that the whole mechanism is obsolete, not that the lesson was forgotten.
+  `<dd>` `m-0 [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground`
+- the two **"Use latest…" (discard draft)** buttons (`SubtaskChecklist.tsx:107` — one for
+  `error.currentSubtask`, one for `error.current`):
+  `buttonClasses("secondary", { className: "justify-self-start " + RING_IN })`. The
+  `justify-self-start` replaces `:932`'s `.subtask-schedule__conflict .button` rule.
+- the two trailing `<span>`s ("Save reapplies your retained schedule draft; Cancel discards it.")
+  in each conflict block: `className={META_TEXT}` plus `[text-transform:none]` — these are
+  sentences, not labels.
+- `__actions`: `POPOVER_ACTIONS`; **Save** → `buttonClasses("primary", { className: RING_IN })`,
+  **Cancel** → `buttonClasses("secondary", { className: RING_IN })`. This retires the
+  `min-height: 38px` override at `:934` **and** its 44px `@media` counterpart at `:935-943`,
+  because `buttonClasses` BASE already ships `min-h-[38px] max-[721px]:min-h-[44px]`. The 6-line
+  comment at `:936-941` explaining the cascade ordering goes with them; the lesson it records
+  lives in `docs/lessons.md`, which is where it belongs.
 
-**Assignee.** Search `<input type="search">` → `<Input>` (`focus-visible:outline-offset-[-2px]`).
+**Assignee.** Search `<input type="search">` → `<Input className={RING_IN}>`.
 `__members` → `grid overflow-auto min-w-0`. `__member` button:
 
 ```
@@ -521,16 +747,27 @@ min-h-[44px] px-[var(--space-3)] py-[var(--space-2)]   /* 44px touch target — 
 bg-transparent border-0 [border-left-style:solid] border-l-[length:var(--border-width-bold)] border-l-transparent
 text-foreground [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] cursor-pointer
 hover:bg-secondary active:bg-surface-sunken
-aria-current:border-l-border-strong
+aria-[current=true]:border-l-border-strong
 aria-selected:text-signal-positive
 disabled:bg-surface-sunken disabled:text-foreground-secondary disabled:cursor-not-allowed
-focus-visible:outline-[length:var(--border-width-bold)] focus-visible:outline-solid focus-visible:outline-ring focus-visible:outline-offset-[-2px]
+focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)]
+focus-visible:!outline-[var(--focus-ring)] focus-visible:!outline-offset-[-2px]
 ```
 
-`<small>` → `text-foreground-secondary` (**9.20**, was 3.57). `border-l-border-strong` needs
-`--color-border-strong` adding to the `@theme inline` block in `tokens/tailwind.css` — one line,
-aliasing the existing `--border-strong`; it is the same left-rule selection marker
-`.mention-autocomplete__option.is-active` uses, so both consumers get it.
+`<small>` → `text-foreground-secondary` (**9.20**, was 3.57).
+
+Two things in that string are deliberate and must not be "simplified":
+
+- `border-l-border-strong` needs **`--color-border-strong` adding to the `@theme inline` block in
+  `tokens/tailwind.css`** (slice 1) — one line aliasing the existing `--border-strong`. It is the
+  same left-rule selection marker `.mention-autocomplete__option.is-active` uses at `:460`, so
+  both consumers of the marker get it from one place.
+- `aria-[current=true]:` is written in the arbitrary form for explicitness only. **Both forms
+  work**: probed against the installed Tailwind 4.3.3, `aria-current:underline` and
+  `aria-[current=true]:underline` both compile to an `[aria-current="true"]` selector, and
+  `SubtaskChecklist.tsx:134` supplies exactly `"true"` or omits the attribute. An earlier draft of
+  this plan claimed the short form generates nothing; that was wrong (§0.5). Do not "fix" either
+  form into the other.
 
 **Actions.** The single Delete button → `buttonClasses("danger")`. It is a destructive action
 behind a `confirm()`; `secondary` (its treatment today) understates it and the `danger` variant
@@ -551,7 +788,8 @@ px-[var(--space-2)] py-[7px] bg-transparent
 [border-style:solid] border-[length:var(--border-width-hair)] border-transparent
 text-foreground-secondary [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] cursor-pointer
 hover:border-border hover:bg-secondary hover:text-foreground
-focus-visible:outline-…offset-2
+focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)]
+focus-visible:!outline-[var(--focus-ring)] focus-visible:!outline-offset-2
 ```
 
 The `@media (max-width: 600px)` block (`:958-966`) becomes `max-[601px]:` variants on the two
@@ -591,16 +829,29 @@ edit/delete gate — **no new data**):
 
 `<header>`: `flex flex-wrap items-baseline gap-x-[var(--space-2)] gap-y-[var(--space-1)] min-w-0`
 - author `<strong>`: `[font:var(--weight-regular)_var(--text-sm)/1.2_var(--font-sans)] text-foreground min-w-0 [overflow-wrap:anywhere]`
-- `<time>` and `<small>Edited</small>`: `<Eyebrow>` (11px, **8.66:1**, was 10px at 3.57:1)
+- `<time dateTime={comment.createdAt}>` — **the element and the attribute both stay**; it takes
+  `className={META_TEXT}` (§4.1a). It is **not** replaced by `<Eyebrow>`, which is hard-coded to a
+  `<span>` and would drop `dateTime` (§0.5). 12px, **8.66:1**, was 10px at 3.57:1.
+- `<small>Edited</small>`: same — element kept, `className={META_TEXT}`.
 - external-editor badge: `<StatusPill tone="info">External editor</StatusPill>` (§2.7)
 
 `__comments` container: `grid gap-[var(--space-5)]` — 24px, up from 12px. The rules need air; this
 is the whitespace that replaces the deleted borders.
 
-`__comment-actions`: `flex justify-end gap-[var(--space-3)]`. Edit and Delete become
-`buttonClasses("text")`; Cancel and Save while editing stay `secondary` and `primary`. This
-retires `:859`'s `min-height: 30px; font-size: 10px` override, which was the one place in the app
-where a `.button` was smaller than the 44px phone floor (§2.3).
+`__comment-actions`: `flex justify-end gap-[var(--space-3)]`. All four buttons in this file, by
+name and variant — no `.button` string survives in `ProjectDiscussionThread.tsx`:
+
+| Line | Control | Becomes |
+|---|---|---|
+| 211 | **Edit** | `buttonClasses("text")` |
+| 211 | **Delete** | `buttonClasses("text")` |
+| 211 | **Cancel** (while editing) | `buttonClasses("secondary")` |
+| 211 | **Save** (while editing) | `buttonClasses("primary")` |
+| 212 | **Load older comments** | `buttonClasses("secondary", { className: "justify-self-start" })` |
+| 213 | **Post comment** | `buttonClasses("primary")` |
+
+This retires `:859`'s `min-height: 30px; font-size: 10px` override, which was the one place in the
+app where a `.button` was smaller than the 44px phone floor (§2.3).
 
 > **Builder check, not optional.** `buttonClasses("text")` sets `min-h-[32px]` in its variant
 > string while BASE sets `max-[721px]:min-h-[44px]`. Whether the phone floor survives depends on
@@ -624,17 +875,44 @@ The `.notice` error divs → `<Notice tone="critical">`.
 
 The same ledger, one level quieter — it is machine-written, so nothing in it is ever inked.
 
+**The root `<section>` keeps a class, because it currently has one that does real work.**
+`app.css:879` is `.project-activity-view { min-width: 0; }` — the only rule the component has, and
+it is what stops a long activity title blowing out the 460px panel. Retiring the rule without
+replacing it (the first draft's ledger did exactly that) would ship an overflow bug, and the
+proposed `justify-self-start` on the load-more button would have had no grid parent to work
+against. The section becomes:
+
+```
+grid content-start gap-[var(--space-4)] min-w-0
+```
+
 `<ol>`: `grid gap-[var(--space-4)] list-none m-0 p-0`
 `<li> > <article>`: `grid gap-[var(--space-1)] min-w-0 ps-[var(--space-3)] [border-left-style:solid] border-l-[length:var(--border-width-hair)] border-l-border`
 - `<header>`: `flex flex-wrap items-baseline gap-x-[var(--space-2)] gap-y-[var(--space-1)]`,
   title `<strong>` `[font:var(--weight-regular)_var(--text-sm)/1.2_var(--font-sans)] text-foreground`,
   actor + `<time>` as `<Eyebrow>`
 - `<p>`: `m-0 [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary`
+- the `<li>`s carry no class; the `<ol>`'s `list-none` covers them
 
-Three states → `<EmptyState>` (`tone="error"` for the error state, which gives it the
-3px destructive left rule and makes the ledger's own rule vocabulary carry the failure).
-"Refreshing activity…" → `<Eyebrow role="status">`. `hasNextPage` button →
-`buttonClasses("secondary")`, `justify-self-start`.
+- `<time dateTime={occurredAt.toISOString()}>` and the actor `<span>`: elements kept,
+  `className={META_TEXT}` (§4.1a) — **not** `<Eyebrow>`, same reason as §6.1.
+
+Four states and both buttons, by name:
+
+| Line | Element | Becomes |
+|---|---|---|
+| 42 | "Activity is not available in this view." `.empty` | `<EmptyState role="status" title="Activity is not available in this view.">` |
+| 44 | "Loading activity." `.empty` | `<EmptyState role="status" title="Loading activity.">` |
+| 46 | error `.empty` (+ its **Retry**) | `<EmptyState role="alert" tone="error" …>`; Retry → `buttonClasses("secondary")` |
+| 48 | "No activity yet." `.empty` | `<EmptyState role="status" title="No activity yet.">` |
+| 53 | inline `.notice` (+ its **Retry**) | `<Notice tone="critical" role="alert">`; Retry → `buttonClasses("text")` |
+| 54 | "Refreshing activity…" `.muted` | `<span role="status" className={META_TEXT}>` |
+| 60 | **Load more activity** | `buttonClasses("secondary", { className: "justify-self-start" })` |
+
+`role` and `aria-*` pass through to `EmptyState`/`Notice` unchanged — both spread
+`...props` onto their root `<div>` (`quincy/EmptyState.tsx:14-19`, `quincy/Notice.tsx:18`). The
+`tone="error"` variant gives the failure state the 3px destructive left rule, so the ledger's own
+rule vocabulary carries it.
 
 `.project-activity-view` / `__list` / `__item` / `__actor` paint nothing after this; all four
 retire. `role="status"` / `role="alert"` / `aria-label` / `dateTime` are untouched.
@@ -649,24 +927,41 @@ Container `<div>`:
 `grid-cols` (it is `flex items-baseline justify-between`) — the two are the same control
 (a person-picker row) and after this release they share one treatment.
 `.is-active` → `data-active` → `data-[active=true]:border-l-border-strong` (§4.4).
-`__status`: `p-[var(--space-2)] [font:…_var(--text-xs)/…] text-foreground-secondary` (**9.20**).
+`__status`: `p-[var(--space-2)] [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary` (**9.20**).
 `<small>` role text: `text-foreground-secondary capitalize`.
 
 ### 6.4 `RichTextEditor` chrome
 
 | Element | Classes |
 |---|---|
-| root | `grid gap-[var(--space-2)]`; disabled → `data-disabled` → `data-[disabled=true]:opacity-65` (a whole-control disabled wash is legitimate; it is not stacked on a quiet colour) |
+| root | `grid gap-[var(--space-2)]`. **The `opacity: .65` disabled wash is deleted, not ported** (`app.css:429`, §2.1): a group opacity multiplies every child's contrast and makes this section's figures unmeetable. Disabled is expressed by the children below. |
 | `__toolbar` | `flex flex-wrap items-center gap-[var(--space-2)] p-[var(--space-1)] [border-style:solid] border-[length:var(--border-width-hair)] border-border bg-card` |
 | `__toolbar-group` | `inline-flex flex-wrap gap-[var(--space-1)]` |
 | `__toolbar-divider` | `w-px h-[var(--space-5)] bg-border shrink-0` |
-| `__toolbar-button` | `ICON_BUTTON` + `[font:var(--weight-regular)_var(--text-xs)/1.2_var(--font-sans)] aria-pressed:bg-primary aria-pressed:text-[var(--accent-on)]` |
-| `__toolbar-select` | `<NativeSelect className="min-w-[112px] w-auto">` |
-| `__editor-content` | `FIELD_BOX` + `min-h-[var(--space-8)] bg-[var(--paper-050)] [&.is-editor-empty:first-child]:before:content-[attr(data-placeholder)] …:before:text-foreground-secondary …:before:float-left …:before:h-0 …:before:pointer-events-none` — **see the note below on where this string goes** |
-| `__counter` | `text-right [font:…_var(--text-xs)/…] text-foreground-secondary`; over → `text-destructive` |
-| `__validation` | `<FieldError>` (already `role="alert"`) |
+| `__toolbar-button` | `ICON_BUTTON` + `[font:var(--weight-regular)_var(--text-xs)/1.2_var(--font-sans)] aria-pressed:bg-primary aria-pressed:!text-[var(--accent-on)]` — the `!` is needed on the text colour for the same shorthand reason as the rings; the base string sets `text-foreground-secondary` unconditionally. Disabled: the `--bg-sunken` chip from `ICON_BUTTON_BASE`, **7.40:1**. |
+| `__toolbar-select` | `<NativeSelect className="min-w-[112px] w-auto">` — `FIELD_BOX`'s own `disabled:bg-surface-sunken disabled:text-foreground-secondary` gives **7.40:1** |
+| `__editor-content` | **keeps `rich-text__editor-content`** (see below) **plus** `FIELD_BOX` + `min-h-[var(--space-8)] bg-[var(--paper-050)] data-[disabled=true]:bg-surface-sunken [&.is-editor-empty:first-child]:before:content-[attr(data-placeholder)] [&.is-editor-empty:first-child]:before:text-foreground-secondary [&.is-editor-empty:first-child]:before:float-left [&.is-editor-empty:first-child]:before:h-0 [&.is-editor-empty:first-child]:before:pointer-events-none` — every variant written out in full; no `…` |
+| `__counter` | `text-right [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary`; over → append `!text-destructive` |
+| `__validation` | **element and `aria-live="polite"` kept as they are** (`RichTextEditor.tsx:402`); it takes `min-h-[1.2em] [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-destructive`. **Not `<FieldError>`** — that primitive injects `role="alert"` (`ui/field.tsx:34-45`), which would turn a polite live region into an assertive one and change how a screen reader interrupts the user mid-typing. |
 
-**Where the editor-content class string actually goes.** `<EditorContent editor={editor} />`
+**`rich-text__editor-content` is not retired — it is *joined*.** Nine of the selectors §1.3 keeps
+as CSS are scoped through that exact class:
+
+```
+app.css:410       .rich-text__editor-content h2:first-child, .rich-text__editor-content h3:first-child
+app.css:414-415   .rich-text__editor-content ul[data-type="taskList"]  (+ the nested-list rule)
+app.css:421-423   .rich-text__editor-content ul[data-type="taskList"] li  (+ its label, + its input)
+app.css:443-446   .rich-text__editor-content p / h2 / h3 / (p+p, ul, ol)
+```
+
+Replacing the class with a utility string, as the first draft specified, would have silently
+unstyled every heading, paragraph, list and task item **inside the composer** while leaving them
+correct in the posted comment — the exact two-renderer divergence §1.3 exists to prevent (§0.5).
+The class stays first in the attribute, with the utilities appended after it. `app.css:441-442`
+(the box itself and its `:focus` border) are still retired; only the descendant rules survive, and
+they need the ancestor class to reach.
+
+**Where the class string actually goes.** `<EditorContent editor={editor} />`
 (`RichTextEditor.tsx:399`) takes **no** `className` for this. The class is set through Tiptap at
 `:228-229`:
 
@@ -676,8 +971,9 @@ editorProps: {
 },
 ```
 
-The Tailwind string replaces that `class` value **in place**, in the `attributes` object. It is a
-plain HTML `class` attribute on a ProseMirror-managed element, so:
+The Tailwind string is **appended to** that `class` value, in place, in the `attributes` object —
+`class: "rich-text__editor-content " + EDITOR_CONTENT_UTILITIES`. It is a plain HTML `class`
+attribute on a ProseMirror-managed element, so:
 
 - `cn()` is not available there — write the string as a single literal (or a module-level `const`
   next to the others), and do not try to merge it at render time.
@@ -796,64 +1092,123 @@ becomes an inline treatment on the element itself:
 
 ## 8. Retirement ledger — every selector, with a disposition
 
-**R** = retired (deleted from `app.css`). **H** = kept as a non-styling hook (paints nothing).
-**D** = converted to a `data-*` attribute. **K** = kept as CSS, deliberately, reason given.
+**Counting method, stated once so every figure below means the same thing:** a **rule** is one
+`selector-list { … }` block; a **selector member** is one comma-separated selector inside it. All
+counts here are **rules**. Line numbers are `app.css` at `main@e4f7ffc`; they will drift as slices
+delete, which is why every slice locates its targets **by selector grep, not by line range**
+(`docs/lessons.md` — after six slices TB8-06's own line numbers were 60-70 lines stale).
 
-| Lines | Selector(s) | Disp. |
+**R** = retired (rule deleted). **H** = rule deleted, class name kept on the element as a
+non-painting hook. **D** = class modifier converted to a `data-*` attribute. **K** = rule kept as
+CSS, deliberately, reason given.
+
+### 8a. Retired, by slice
+
+The slice column is binding: §4.4 requires the deletion to land in the same slice as its
+replacement.
+
+| Slice | Lines | Rules | Disp. |
+|---|---|---|---|
+| 2 | 428, 429 | `.rich-text-editor`, `.is-disabled` | **R** / **D** (`data-disabled`) |
+| 2 | 430-440 | `.rich-text__toolbar`, `-group`, `-divider`, `-button` (+ `:hover`, `:focus-visible`, `[aria-pressed]`, `:disabled`), `-select` (+ `:focus-visible`, `:disabled`) — 11 rules | **R** |
+| 2 | 441, 442 | `.rich-text__editor-content` (the box), `:focus` | **R** — the *class* survives on the element (§6.4) |
+| 2 | 447 | `.rich-text__editor-content.is-editor-empty:first-child::before` | **R** |
+| 2 | 448, 449, 450 | `.rich-text__counter`, `.is-over`, `__validation` | **R** |
+| 2 | 455-463 | `.mention-autocomplete`, `__list`, `__option`, `:hover`, `:active`, `.is-active`, `:focus-visible`, `__option small`, `__status` — 9 rules | **R**; `.is-active` → **D** (`data-active`) |
+| 3 | 886-889 | `.subtask-checklist`, `__head h3`, `__toggle`, `__toggle:hover` | **R** |
+| 3 | 890 | the 6-selector `:focus-visible` group | **R** — every member now carries its own `RING_OUT` |
+| 3 | 893-900 | `__progress-text`, `__toggle-meta`, `__chevron`, `__toggle progress`, `__panel`, `.is-collapsed`, `__notice`, `__items` | **R** |
+| 3 | 953-957 | `__composer`, `__composer-controls > span`, `__composer-trigger`, `__add-button`, `__add-button:hover` | **R** |
+| 3 | 958-966 | the `@media (max-width: 600px)` block (3 rules) | **R** → `max-[601px]:` variants; **the 600px breakpoint is preserved deliberately** (§5.4) |
+| 4 | 891, 892 | `.subtask-popover button/input:focus-visible` (the inward ring) | **R** — replaced by per-site `RING_IN` (§4.3). The `:891` comment explaining *why* the ring is inward moves into `AnchoredPopover.tsx` beside `PANEL`; the fact outlives the rule |
+| 4 | 901-903 | `__item`, `__item:hover/:focus-within`, `__summary` | **R**; `--done` / `--dragging` / `--popover-open` → **D** |
+| 4 | 904 | `__title-trigger` | **H** — live focus-restoration selector at `SubtaskChecklist.tsx:216` (§5.2) |
+| 4 | 905-920 | `__title`, the done-title rule, `__done`, the shared input rule at `:908`, `__due`, `__assignee`, `__grip`, `:active`, `[aria-disabled]`, `__metadata-trigger` (+ `--filled`, the hover group, the nested `__due`), `__overflow`, its hover group, `__item--dragging` — 16 rules | **R** |
+| 4 | 921-932 | `__content`, `__content label`, `__endpoint`, `__endpoint legend`, `__fold`, `__fold legend`, `__fold label`, `__error`/`__conflict`, `__conflict`, `__conflict .button` — 9 rules | **R**, class name included; **no DOM test queries `.subtask-popover__content`** (§5.3) |
+| 4 | 933, 934 | `__actions`/`__composer-controls`, `__actions .button` (38px) | **R** — obsolete: `buttonClasses` BASE ships 38px and the ≤721px 44px |
+| 4 | 935-943 | the `@720` 44px block **and its 6-line cascade-ordering comment** | **R** — same reason; the lesson lives in `docs/lessons.md`, not in a rule that no longer exists |
+| 4 | 944-952 | `__member` (the 44px rule), `__members`, `__member` (the layout rule), `:hover`, `:active`, `[aria-current]`, `[aria-selected]`, `:disabled`, `small` — **9 rules** | **R** |
+| 5 | 851-861 | `__state`, `__read-anchor`, `__comments`, `__comment`, `__comment header`, `__comment header strong`, `__comment time/small`, `__comment-actions`, `__comment-actions .button`, `__comment-compose`, `__comment-compose > div:last-child` — 11 rules | **R** |
+| 6 | 879 | `.project-activity-view` | **R** — replaced by an explicit `min-w-0` on the section (§6.2) |
+| 7 | 844 | `__unread` | **R** |
+| 7 | 847-850 | `__head`, the overlay `__head`, `__head h2`, `__scroll` | **R** |
+| 7 | 872-878 | `__tabs`, `__tab`, `:hover`, `.is-active`, `:focus-visible`, `__panel`, `__panel[hidden]` | **R** |
+| 7 | 880, 881 | the standalone `__tabs` bleed, the standalone `__panel` | **R** |
+| 7 | 882-885 | the `@720` block (2 rules) | **R** → `max-[721px]:` variants |
+| 7 | 862-867 | `.project-collaboration-only`, `-summary`, `-summary h2`, `__facts`/`__team`, `__team`, `-summary .member` — 6 rules | **R** |
+| 7 | 213 | `.project-collaboration-summary .member em` | **R** — a scoped override whose scoping class this release deletes; it would otherwise dangle (§7.3) |
+| 7 | 717 | `.project-collaboration-summary__team` @720 | **R** |
+
+**86 rules retired**, across six slices.
+
+### 8b. Kept, and why
+
+| Lines | Rules | Justified by |
 |---|---|---|
-| 407-450 | `.rich-text` **prose** half — `.rich-text`, `p`, `h2`, `h3`, `ul`, `ol`, `a`, `u`, `s`, `__task-list`, `__task-item`, `__task-indicator`, `__task-content`, `__mention`, and the four `__editor-content ul[data-type="taskList"]` rules | **K** — ProseMirror authors this markup; §1.3, §4.6 |
-| 428-429 | `.rich-text-editor`, `.is-disabled` | **R** / **D** (`data-disabled`) |
-| 430-440 | `.rich-text__toolbar`, `-group`, `-divider`, `-button` (+4 states), `-select` (+2 states) | **R** |
-| 441-447 | `.rich-text__editor-content` and its `p`/`h2`/`h3`/`p+p`/`ul`/`ol`/placeholder rules | **R** for the box and placeholder; **K** for the four ProseMirror descendant rules (same reason as the prose half) |
-| 448-450 | `.rich-text__counter`, `.is-over`, `__validation` | **R** |
-| 455-463 | `.mention-autocomplete` and all 8 descendants; `.is-active` | **R**; `.is-active` → **D** (`data-active`) |
-| 717 | `.project-collaboration-summary__team` @720 | **R** |
-| 842-846 | `__wrap`, `__toggle`, `__unread`, `.project-collaboration`, `--overlay` | **K** (§7.1), except `__unread` → **R** |
-| 847-850 | `__head`, overlay `__head`, `__head h2`, `__scroll` | **R** |
-| 851-861 | `__state`, `__read-anchor`, `__comments`, `__comment` (+3 descendant rules), `__comment-actions` (+`.button`), `__comment-compose` (+`> div:last-child`) | **R** |
-| 862-867 | `.project-collaboration-only`, `-summary` (+`h2`, `__facts`, `__team`, `.member`) | **R** |
-| 213 | `.project-collaboration-summary .member em` | **R** — a scoped override whose scoping class this release deletes; it would otherwise dangle (§7.3) |
-| 868-869 | `--standalone`, its `@min-width:1080px` width rule | **K** (§7.1) |
-| 872-885 | `__tabs`, `__tab` (+3 states), `__panel`, `__panel[hidden]`, `.project-activity-view`, standalone tab/panel rules, the @720 block | **R** |
-| 886-900 | `.subtask-checklist`, `__head h3`, `__toggle` (+2), `__progress-text`, `__toggle-meta`, `__chevron`, `__toggle progress`, `__panel`, `.is-collapsed`, `__notice`, `__items` | **R**; `.is-collapsed` → the `hidden` attribute |
-| 890 | the 6-selector `:focus-visible` group | **R** — every member now carries its own ring |
-| 891-892 | `.subtask-popover button/input:focus-visible` (the inward ring) | **R** — replaced by per-site `outline-offset-[-2px]` (§4.3). The *comment* at `:891` explaining why the ring is inward moves into `AnchoredPopover.tsx` beside `PANEL`; the fact outlives the rule. |
-| 901-920 | `__item` (+3 modifier/state rules), `__summary`, `__title-trigger`, `__title`, done-title rule, `__done`, the shared input rule at `:908`, `__due`, `__assignee`, `__grip` (+2), `__metadata-trigger` (+3), `__overflow` (+1) | **R**; `--done`/`--dragging`/`--popover-open` → **D** |
-| 921-932 | `__content` (+`label`), `__endpoint` (+`legend`), `__fold` (+`legend`,`label`), `__error`, `__conflict` (+`.button`) | **R** — including the class name itself; it has no DOM-test consumer (§5.3) |
-| 933-943 | `__actions`/`__composer-controls`, `.button` 38px, the whole @720 44px block and its 6-line comment | **R** — obsolete: `buttonClasses` BASE ships both heights |
-| 944-952 | `__member` (both rules), `__members`, 4 state rules, `small` | **R** |
-| 953-957 | `__composer`, `__composer-controls > span`, `__composer-trigger`, `__add-button` (+hover) | **R** |
-| 958-966 | the `@media (max-width: 600px)` block | **R** → `max-[601px]:` variants; the 600px breakpoint is **preserved deliberately** (§5.4) |
-| 967-969 | the `@720` and `.app--impersonating` `__wrap` custom-property blocks | **K** (§7.1) |
-| 178 | `.statetag` | **K** — shared with the media grid; this surface stops using it (§2.7) |
-| 638-639 | `.empty` | **K** — shared app-wide; this surface stops using it |
-| 775 | `.notice` | **K** — shared app-wide; this surface stops using it |
+| 408-427 | the 20 `.rich-text` prose rules | §1.3 — two renderers, one stored document, mostly bare tags |
+| 410 (the `__editor-content` members), 414-415, 421-423, 443-446 | the 9 rules scoped through `.rich-text__editor-content` | §1.3, §6.4 — which is why that class survives on the element |
+| 842, 843, 845, 846 | `__wrap`, `__toggle`, `.project-collaboration`, `--overlay` | §7.1 — eight interacting `env()`/custom-property declarations |
+| 868, 869 | `--standalone`, its `@min-width:1080px` width rule | §7.1 |
+| 967, 968, 969 | the `@720` and two `.app--impersonating` custom-property blocks | §7.1 |
 
-**Expected end state — the exact survivors, enumerated rather than counted:**
+**Note the overlap:** `app.css:410` is a single rule whose selector list spans both halves of the
+`.rich-text` block — six `.rich-text …:first-child` members and two
+`.rich-text__editor-content …:first-child` members. It is counted **once**, in the 408-427 row.
+The 443-446 range likewise contains the four editor-prose rules and no others.
 
-| Lines | What survives | Justified by |
-|---|---|---|
-| 408-427 | the 20 `.rich-text` prose rules | §1.3 |
-| 443-446 | the 4 `.rich-text__editor-content` prose-descendant rules | §1.3 |
-| 842, 843, 845, 846 | `__wrap`, `__toggle`, `.project-collaboration`, `--overlay` | §7.1 |
-| 868, 869 | `--standalone` and its `@min-width:1080px` width rule | §7.1 |
-| 967, 968, 969 | the `@720` and `.app--impersonating` custom-property blocks | §7.1 |
+Rules **untouched** by this release because they are shared app-wide, and which this surface
+merely stops *using*: `.statetag` (`:178`), `.empty` (`:638-639`), `.notice` (`:775`), `.muted`
+(`:21`), `.serif` (`:22`), `.ey` (`:20`), `.member` (`:779`), `.kv` (`:235-237`), `.pagehead`
+(`:121-122`). They are listed here so the slice-8 audit does not read them as misses. Their
+`--text-muted` paint sites belong to `TB8-10` D-05, not here.
 
-**33 rules, zero marked H.** Every one gets a one-line comment naming the section of this plan
-that justifies it, so the next sweep reads them as decisions rather than leftovers. Any
-collaboration, checklist, mention or rich-text-chrome selector in `app.css` that is not in this
-table after slice 8 is a finding for the Sol diff review.
+### 8c. The slice-8 audit
 
----
+Slice 8 performs **no deletions**. It:
 
-## 9. What must not change — behavioural invariants
+1. greps `app.css` for every selector in 8a and asserts zero matches;
+2. greps for every selector in 8b and asserts it is present, with a one-line comment naming the
+   section of this plan that justifies it;
+3. asserts no collaboration, checklist, mention or rich-text-chrome selector exists in `app.css`
+   that appears in neither table.
 
-The builder verifies each of these with a `className`-stripped diff against `main`, per slice:
+Any selector that fails one of those three is a finding for the Sol diff review.
+
+## 9. What must not change — and the eight changes that are authorized
+
+The first draft claimed a `className`-stripped diff would show "only class strings and `data-*`
+conversions." That was not achievable and is corrected here: this release makes a small number of
+**structural** changes, and a plan that promises otherwise gives the reviewer a check that must
+fail. They are enumerated below; the invariant is that **nothing outside this list changes**.
+
+### 9a. The eight authorized structural changes
+
+| # | Change | Files | Why it is safe |
+|---|---|---|---|
+| 1 | `<div className="notice">` → `<Notice>` | Discussion, Activity | Same `<div>`; adds `data-slot="notice"`; `role` passed through |
+| 2 | `<div className="empty">…</div>` → `<EmptyState>` | Activity, `CollaborationOnly*`, checklist/discussion `__state` | **Changes inner structure** — `<span class="serif">` + text becomes `<strong>` + a nested `<div>` (`quincy/EmptyState.tsx:23-33`). `role`/`aria-*` pass through via `...props`. Accessible name and reading order are preserved; the wrapper `<div>` carries no role |
+| 3 | `<span className="statetag">` → `<StatusPill tone="info">` | Discussion | Same `<span>`; adds `data-slot` |
+| 4 | Subtask due text → `<StatusPill tone="neutral">` | Checklist | Same `<span>`; the `sr-only` "Schedule " prefix is kept verbatim |
+| 5 | A meta-wrapper `<div>` added inside each subtask row | Checklist | §5.2 — no `role`, no `aria-*`, no `id`; `display: contents` at ≥721px so the desktop DOM box tree is unchanged |
+| 6 | `<Input>` / `<NativeSelect>` / `<Checkbox>` replace bare `<input>` / `<select>` | Checklist, popovers | Same elements; each adds only `data-slot` and `className` |
+| 7 | Six `data-*` attributes replace six class modifiers | Checklist (`data-done`, `data-dragging`, `data-popover-open`), Mention (`data-active`), RTE (`data-disabled`) | Attributes carry no semantics; no `aria-*` is displaced |
+| 8 | Hand-rolled buttons → `buttonClasses()` / `<IconButton>` | all | `<button type="button">` in, `<button type="button">` out |
+
+**Explicitly *not* authorized**, each having been considered and rejected: adding a `hidden`
+attribute to the checklist panel (§5.1), replacing `.rich-text__validation` with `FieldError`
+(§6.4), replacing `<time>` with `<Eyebrow>` (§6.1), and swapping the collaboration tab strip for
+the `TabStrip` component (§7.2). Each would have changed ARIA to buy paint.
+
+### 9b. The invariants
+
+The builder verifies each with a `className`-stripped diff against `main`, per slice. Anything the
+diff shows that is not one of 9a's eight is a finding.
 
 1. Every `aria-label`, `aria-labelledby`, `aria-controls`, `aria-expanded`, `aria-selected`,
    `aria-current`, `aria-checked`, `aria-invalid`, `aria-describedby`, `aria-live`, `aria-hidden`,
    `role`, `id`, `htmlFor`, `dateTime` and `sr-only` span is byte-identical.
 2. Every `disabled`, `hidden`, `tabIndex` and `autoFocus` expression is byte-identical.
+   **No `hidden` attribute is added or removed anywhere.**
 3. Focus management is untouched: `closeRef`/`triggerRef`/`panelRootRef`/`tabRefs`,
    `scheduleReorderFocus`, `titleInputRef`, `composerInputRef`, `gripRef`, `initialFocus`.
 4. dnd-kit wiring is untouched: sensors, `SortableContext`, `dragProps`, `combinedNodeRef`,
@@ -864,6 +1219,11 @@ The builder verifies each of these with a `className`-stripped diff against `mai
 7. `onAccessFailure` routing, `consumeOrForward`, `presentation.isCurrent` and every 401/403/404
    branch are untouched.
 8. The read-anchor `IntersectionObserver` still observes the same element.
+9. `remove()`'s focus restoration still finds `.subtask-checklist__title-trigger`
+   (`SubtaskChecklist.tsx:216`) — the class stays on the element (§5.2).
+10. The composer's `aria-activedescendant` still resolves: `MentionAutocomplete`'s `listboxId` and
+    per-option ids are unchanged, so the `data-active` conversion must replace only
+    `className="…is-active"`, never the `id`.
 
 ---
 
@@ -897,11 +1257,17 @@ another user and one from the signed-in user, and ≥3 activity events.
    ArrowUp/Down/Enter/Tab/Escape work; subtask drag-by-keyboard works and focus lands on the moved
    item's grip; Escape closes each popover and returns focus to its trigger; Escape closes the
    overlay panel and returns focus to the toggle.
-10. **The Notice Board composer** (§1.2) renders correctly at all three viewports with the
-    converted toolbar and content box.
+10. **The Notice Board**, at all three viewports (§1.2's shared-owner blast radius): rendered
+    posts (line-height and mention-chip radius), the **create** composer, the **edit** composer,
+    a disabled composer, and the mention popup inside one. Headings, paragraphs, lists and task
+    items must render **identically** in a rendered post and in the composer that produced it —
+    that equivalence is the whole reason §1.3 keeps the prose block as CSS, and it is the check
+    that would have caught the retired-editor-content-class defect (§0.5).
 11. **Zero console errors and zero failed requests** across the walk (in-flight `ERR_ABORTED`s on
     navigation excepted, per TB8-05/TB8-06 precedent).
-12. **`app.css`'s surviving rules are exactly §8's 33**, each carrying its justifying comment.
+12. **`app.css` matches §8**: the slice-8 audit's three greps (§8c) all pass — 86 rules gone,
+    §8b's survivors present and commented, and nothing collaboration-, checklist-, mention- or
+    rich-text-chrome-shaped that appears in neither table.
 13. `npm run typecheck` (6 workspaces), `npm run build -w @quincy/web`, and the full suite
     (`npm run test --workspaces` plus `npx vitest run --config packages/shared/vitest.config.ts`)
     are green with **zero** failures.
@@ -957,6 +1323,14 @@ New assertions this release owns:
 5. `CollaborationOnlyUnavailable` does not render `class="project-collaboration"` — the guard for
    §2.5.
 6. `IconButton` renders `type="button"` by default and forwards `aria-disabled`.
+7. **`SubtaskChecklist`'s delete still restores focus to the next row's title button** — the
+   regression guard for the `.subtask-checklist__title-trigger` hook (§5.2, §0.5). This one is
+   load-bearing: it is the assertion that would fail if a later sweep deletes the class as dead.
+8. **`RichTextEditor`'s content element still carries `rich-text__editor-content`** — the guard
+   for §6.4, so the retained prose CSS keeps its ancestor.
+9. `RichTextEditor`'s validation element still has `aria-live="polite"` and **no** `role="alert"`
+   — the guard for the rejected `FieldError` substitution (§9a).
+10. `META_TRIGGER` truncates rather than overflows when given a long schedule string.
 
 `docs/todo.md` gains a TB8-07 entry; `docs/lessons.md` gains the two new lesson candidates
 (**an undefined custom property in an inherited property falls back to `inherit`, not to the
@@ -969,11 +1343,11 @@ the viewport it is most used on**) if the build confirms them.
 
 | Item | Why | Owner |
 |---|---|---|
-| The remaining `--text-muted` paint sites app-wide | Global sweep; this release fixes only what it owns | `TB8-10` D-05 |
-| `.button` → `buttonClasses()` across the app | 51 occurrences / 36 files; this release retires **19** of them (17 in the four components, 2 in `CollaborationOnly`), leaving 32 to re-measure | `TB8-10` D-06 |
+| The remaining `--text-muted` paint sites app-wide | **Re-measured: 36 `var(--text-muted)` declarations in `app.css` at `main@e4f7ffc`**, not TB8-10 D-05's 41 (that figure counted selector members, and `:857` and `:906` each carry two selectors). This release fixes only the sites it owns; the global sweep, and D-05's own split of text roles from decorative ones, stays there | `TB8-10` D-05 |
+| `.button` → `buttonClasses()` across the app | **Re-measured at `main@e4f7ffc`, one explicit method** — `className="button…"` string literals plus `className={\`button…\`}` template literals in non-test `.tsx` under `apps/web/src`: **50 occurrences across 19 files** (48 + 2). TB8-10's "51 / 36 files" predates TB8-06's three retirements and used a looser file count. This release retires **19** (17 across the four components, 2 in `CollaborationOnly`), leaving **31** | `TB8-10` D-06 |
 | The Notice Board's own surface | Candidate #8; only its shared composer moves here | TB8-08 |
 | Real assistive-technology verification of the new ledger semantics | No agent in this pipeline can drive a screen reader | The existing owner decision in `TB8-10`'s verification-debt table — this release adds a fourth row rather than a new question |
-| `.subtask-popover__content` as a surviving hook | Retired once its DOM-test consumers move to `data-*`; not worth a test rewrite inside a visual release | `TB8-10` D-02/D-03 sweep |
+| — | *(removed: `.subtask-popover__content` is retired outright in slice 4; it has no DOM-test consumer, so there is nothing to defer — §5.3)* | — |
 
 ---
 
