@@ -94,6 +94,48 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
   doc moved to `docs/plans/implemented/TB8-03-Project-Workspace-Rail-Visual-Plan.md`. (Like TB8-01,
   this phase had no entry in this file until 2026-09-03 — an oversight from the deploying session,
   recovered from git and closed here.)
+- **TB8-07 (Collaboration, checklist and discussion — the panel shell, tab strip, subtask
+  checklist and its three popovers, the comment thread, the activity ledger, the mention
+  autocomplete and the rich-text editor chrome) is BUILT AND VERIFIED, NOT YET DEPLOYED**, branch
+  `tb8-07-collaboration-checklist`, 2026-09-04. Ranking candidate #7.
+  (`docs/plans/TB8-07-Collaboration-Checklist-Discussion-Visual-Plan.md`.) Slices: `e255d3e`
+  `fa6c66e` `5b248a6` `175bb00` `09e055d` `25af0a6` `5aad9cc` `f88e506`. **The visual gate has NOT
+  run** — it is this session's own and is the remaining step before merge.
+  **This release fixed four defects that were invisible rather than ugly**, which is why it is
+  worth more than a repaint:
+  - The subtask schedule and assignee triggers were `opacity: .06` (**1.10:1**) revealed only on
+    hover. A phone has no hover, so at 390px there was **no way to schedule or assign a subtask at
+    all**. The hover-reveal mechanic is deleted, not tuned — it has no touch equivalent, so it does
+    not degrade, it fails.
+  - `.subtask-schedule__conflict` set `color: var(--signal-warning)`, a token defined nowhere.
+    Because `color` inherits, that resolves to `inherit`, **not** to the `--signal-critical` on the
+    line above — so the "someone else edited this first" warning had been rendering as ordinary ink
+    since it shipped. Now `<Notice tone="caution">`. (`--signal-red` on the unread badge was the
+    same class of bug, harmless only because its literal fallback was correct.)
+  - `CollaborationOnlyUnavailable` rendered `class="project-collaboration project-collaboration--unavailable"`,
+    and `--unavailable` has no rule of its own — so it inherited a `position: fixed`, `z-index: 70`,
+    460px hard-shadowed panel whose `--project-collaboration-*` custom properties are declared on a
+    non-ancestor, leaving `top`/`bottom`/`max-height` at `auto`. A floating overlay on the one page
+    that exists to say the discussion is gone.
+  - The disabled drag grip was `--text-secondary` **times `opacity: .5`** = **2.51:1** — the same
+    opacity-on-a-quiet-colour bug TB8-06 fixed on the board's handle, in a different file. Now a
+    `--bg-sunken` chip at 7.40:1.
+  Plus 13 contrast failures fixed, six sub-44px touch targets raised, and nine off-scale type sizes
+  moved onto the scale. **128 `app.css` rules retired, 34 kept** — 24 rich-text prose rules (one
+  stored document, two renderers that must agree, mostly bare tags with nowhere to hang a utility)
+  and 10 panel-geometry rules (eight interacting `env(safe-area-inset-*)` declarations), both
+  carrying a comment saying why. 1,730 tests green across six workspaces plus `packages/shared`.
+  **The plan cost two Sol rounds and 22 findings, all verified before acceptance and all upheld** —
+  including one where Sol was right about Tailwind and this session was wrong. Two were caught only
+  by compiling against the installed Tailwind rather than reasoning: a `max-[720px]`/`min-[721px]`
+  pair that left **[720, 721) matching neither layout**, and a hand-counted ledger that was wrong by
+  a third (86 vs 128). **Every build slice found a further spec defect** — a fixed-width
+  `ICON_BUTTON` on six text-labelled toolbar buttons, an off-by-one in the per-slice split, a
+  React-19 ref hazard on the drag grip (`IconButton` is not `forwardRef`-wrapped; under React 18
+  semantics dragging would break silently), and DST-fold radios that lost both their layout and
+  their focus rings. Slice 4 also **stalled a builder during exploration having written nothing** —
+  the TB8-04 failure mode — and was split into 4a/4b with exact line ranges to read.
+
 - **TB8-06 (the Kanban board — columns, cards, card controls, the move-to popover, drag overlay and
   preview) is DEPLOYED TO PRODUCTION, 2026-09-03** — merge `b8c650d`, app Worker `18356d70` only,
   no migration, rollback target app `fd65055a`. Post-deploy: `/` and `/api/health` 200, served

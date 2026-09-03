@@ -29,6 +29,10 @@ type AnchoredPopoverOptions = {
 // hand-written CSS panels (`.project-team-picker`, `.kanban-move-popover`, `.subtask-popover`
 // panel-level properties). Consumers' own scoped class (e.g. "kanban-move-popover") stays as a
 // content-selector/test hook; it no longer carries panel-level CSS.
+// §10.3: popover contents sit flush inside a bordered, overflow-auto panel — an outward ring
+// clips. (Formerly `app.css`'s `.subtask-popover button:focus-visible, .subtask-popover
+// input:focus-visible` rule, retired in TB8-07 slice 4b now that every popover control carries
+// `RING_IN` directly.)
 const PANEL = cn(
   "z-[var(--z-popover)] w-max",
   "max-w-[min(320px,calc(100vw-var(--space-4)))]",
@@ -41,6 +45,43 @@ const PANEL = cn(
   "data-open:motion-safe:[transition:opacity_var(--overlay-enter),translate_var(--overlay-enter)]",
   "opacity-0 translate-y-[var(--space-1)] data-open:opacity-100 data-open:translate-y-0",
 );
+
+/**
+ * The content stack inside a `PANEL`. Padding lives here, not on the panel — the panel is
+ * `overflow: auto`, and padding on a scroll container clips its own last child's ring.
+ */
+const POPOVER_CONTENT = "grid gap-[var(--space-2)] p-[var(--space-3)] min-w-0";
+
+/** A labelled control inside `POPOVER_CONTENT`. The eyebrow treatment `FieldLabel` uses. */
+const POPOVER_LABEL =
+  "grid gap-[var(--space-1)] min-w-0 " +
+  "[font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-wide)] text-foreground-secondary";
+
+/**
+ * The action row that closes a popover or a composer.
+ *
+ * Deliberately NOT `justify-end`. Both consumers align by content, not by the container:
+ * the checklist composer pushes its buttons right with an existing `<span className="flex-1" />`
+ * spacer (which `max-[601px]:hidden` collapses), and the schedule popover's actions are
+ * left-aligned under a left-aligned form. `justify-end` here would fight the spacer.
+ *
+ * Wrapping starts at <=600px only — that is where `app.css`'s `@media (max-width: 600px)` block
+ * puts it today, and TB8-07 preserves that breakpoint rather than folding it into the app's
+ * usual 721px.
+ */
+const POPOVER_ACTIONS = "flex items-center gap-[var(--space-2)] min-w-0 max-[601px]:flex-wrap";
+
+/**
+ * Every control rendered inside a `PANEL` needs an INWARD focus ring: the panel is bordered and
+ * `overflow: auto`, so an outward ring is clipped at the edge. And it must be `!`-prefixed —
+ * `tokens/base.css`'s unlayered `:focus-visible { outline: … }` is a shorthand, which resets
+ * `outline-offset`, and unlayered author CSS beats `@layer utilities` regardless of specificity.
+ * Writing only the offset utility silently loses on both counts (TB8-07 §4.3; `docs/lessons.md`,
+ * "A shorthand always resets its longhands").
+ */
+const RING_IN =
+  "focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] " +
+  "focus-visible:!outline-[var(--focus-ring)] focus-visible:!outline-offset-[-2px]";
 
 /** Small checklist-facing positioning and close-boundary helper, not an app-wide menu system. */
 export function useAnchoredPopover({ open, onClose, placement = "bottom-end" }: AnchoredPopoverOptions) {
@@ -145,3 +186,5 @@ export function AnchoredPopover({
     </FloatingFocusManager>
   </FloatingPortal>;
 }
+
+export { POPOVER_CONTENT, POPOVER_LABEL, POPOVER_ACTIONS, RING_IN };

@@ -9,6 +9,11 @@ const NOTICE_BASE =
 const NOTICE_TONE = {
   critical: "border-signal-critical/35 bg-signal-critical/7 text-signal-critical",
   positive: "border-signal-positive/35 bg-signal-positive/8 text-signal-positive",
+  // Text takes the darkened ochre, border and wash keep the brand value — the same split
+  // `StatusPill` makes, and for the same reason: `--signal-caution` is the one signal too
+  // light to carry small text (see `--signal-caution-text` in tokens/colors.css).
+  // `--signal-caution-text` measures 6.65:1 on `--paper-000`.
+  caution: "border-signal-caution/35 bg-signal-caution/7 text-signal-caution-text",
 };
 
 type NoticeTone = keyof typeof NOTICE_TONE;

@@ -56,6 +56,10 @@
   --color-on-inverse-muted: var(--text-on-inverse-muted);
   /* The border a control takes on hover — one step up from the hairline. */
   --color-border-hover: var(--greige-300);
+  /* TB8-07: the ink left-rule that marks the active/selected row in a person picker.
+     Two consumers — the checklist assignee popover and the mention autocomplete — which is
+     why it is a theme alias rather than an arbitrary value repeated at both sites. */
+  --color-border-strong: var(--border-strong);
   /* The ink surface a primary control takes on hover. */
   --color-primary-hover: var(--ink-700);
 }

@@ -2,7 +2,7 @@ import { DndContext, KeyboardSensor, PointerSensor, useSensor, useSensors, type 
 import { SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
-import { AnchoredPopover, useAnchoredPopover } from "./AnchoredPopover";
+import { AnchoredPopover, useAnchoredPopover, POPOVER_ACTIONS, POPOVER_CONTENT, POPOVER_LABEL, RING_IN } from "./AnchoredPopover";
 import { ApiError, apiDelete, apiGet, apiPatch, apiPost } from "../lib/api";
 import { externalApiGet } from "../lib/external-api-response";
 import { useSession } from "../lib/auth";
@@ -12,7 +12,72 @@ import { CHECKLIST_SCHEDULE_RANGES_ENABLED, CHECKLIST_SCHEDULE_ZONE, type Checkl
 import { initials } from "../lib/initials";
 import { reorderNeighbors } from "../lib/reorder-neighbors";
 import { confirm } from "../lib/confirm";
+import { cn } from "../lib/utils";
+import { Eyebrow, META_TEXT } from "./ui/eyebrow";
+import { EmptyState } from "./quincy/EmptyState";
+import { Notice } from "./quincy/Notice";
+import { Input } from "./ui/input";
+import { NativeSelect } from "./ui/native-select";
+import { Checkbox } from "./ui/checkbox";
+import { StatusPill } from "./ui/status-pill";
+import { buttonClasses } from "./ui/button";
+import { IconButton, META_TRIGGER } from "./ui/icon-button";
 import type { MentionableUser } from "./MentionAutocomplete";
+
+// TB8-07 §5.1 — the toggle's outward focus ring. Not exported: `RING_OUT` is deliberately
+// written out at each new-class-string site rather than centralised (§4.3).
+const RING_OUT =
+  "focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] " +
+  "focus-visible:!outline-[var(--focus-ring)] focus-visible:!outline-offset-2";
+
+// TB8-07 §5.4 — the composer trigger's compact-arm treatment. `META_TRIGGER`, not
+// `ICON_BUTTON`/`IconButton`: the schedule/assignee triggers can hold a value chip
+// (a formatted schedule string or an assignee's initials), same as the row triggers
+// §5.2 gives `META_TRIGGER` to. A fixed-width glyph button would overflow. This
+// The composer's trigger differs from the row's only in carrying a visible border:
+// it sits in a control row rather than in a hovered list row, so it needs its own
+// edge. Both arms are `META_TRIGGER` now; the hover-reveal both used to depend on
+// is gone (§5.2).
+const COMPOSER_TRIGGER_CLASSES = cn(META_TRIGGER, "border-solid border-[length:var(--border-width-hair)] border-border");
+
+// TB8-07 §5.4 — the composer's "+ Add an item" affordance. Outward ring: not inside
+// an `AnchoredPopover`.
+const ADD_BUTTON_CLASSES =
+  "justify-self-start inline-flex items-center min-h-[38px] max-[721px]:min-h-[44px] " +
+  "px-[var(--space-2)] py-[7px] bg-transparent " +
+  "[border-style:solid] border-[length:var(--border-width-hair)] border-transparent " +
+  "text-foreground-secondary [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] cursor-pointer " +
+  "hover:border-border hover:bg-secondary hover:text-foreground " +
+  "focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] " +
+  "focus-visible:!outline-[var(--focus-ring)] focus-visible:!outline-offset-2";
+
+// TB8-07 §5.4 — the loading/empty checklist states. No `role` here today, and §9a #10
+// says none may be added.
+const CHECKLIST_STATE_CLASSES = "px-0 py-[var(--space-4)] text-left";
+
+// TB8-07 §5.3 — the assignee popover's member row, ending in `RING_IN`'s four utilities like
+// every other control inside a popover (§4.3).
+// The DST-fold radio rows. `.subtask-schedule__fold label` was `display:flex; align-items:center;
+// gap:5px` — a flex row, deliberately overriding `.subtask-popover__content label`'s grid. That
+// override retires with the rule, so the row treatment moves here rather than being dropped.
+// `min-h-[38px]`/44px is the same control floor the rest of this surface uses; the radio itself
+// carries RING_IN because an outward ring clips inside the popover's `overflow: auto` panel.
+const FOLD_CHOICE_LABEL =
+  "flex items-center gap-[var(--space-1)] min-h-[38px] max-[721px]:min-h-[44px] cursor-pointer " +
+  "[font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground";
+
+const ASSIGNEE_MEMBER_CLASSES = cn(
+  "grid grid-cols-[minmax(0,1fr)_auto] items-baseline gap-[var(--space-3)] w-full text-left",
+  // 44px touch target — WCAG 2.5.5 Enhanced / HIG, not a spacing token.
+  "min-h-[44px] px-[var(--space-3)] py-[var(--space-2)]",
+  "bg-transparent border-0 [border-left-style:solid] border-l-[length:var(--border-width-bold)] border-l-transparent",
+  "text-foreground [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] cursor-pointer",
+  "hover:bg-secondary active:bg-surface-sunken",
+  "aria-[current=true]:border-l-border-strong",
+  "aria-selected:text-signal-positive",
+  "disabled:bg-surface-sunken disabled:text-foreground-secondary disabled:cursor-not-allowed",
+  RING_IN,
+);
 
 type Subtask = ProjectSubtask;
 type PopoverKind = "schedule" | "assignee" | "actions";
@@ -95,17 +160,17 @@ function ScheduleControl({ owner, label, value, open, setOpen, onSave, onUseLate
   const id = popoverId(owner, "schedule");
   const readOnly = value.state === "invalid" || (!CHECKLIST_SCHEDULE_RANGES_ENABLED && value.state === "range");
   const setEndpoint = (which: "start" | "end", next: Partial<EndpointDraft>) => setDraft((current) => ({ ...current, [which]: { ...current[which], ...next } }));
-  const endpointFields = (which: "start" | "end", endpoint: EndpointDraft) => <fieldset className="subtask-schedule__endpoint"><legend>{which === "start" ? "Start" : "End"}</legend><label>Date <input type="date" value={endpoint.date} onChange={(event) => setEndpoint(which, { date: event.target.value })} /></label>{draft.kind === "timed" && <label>Time <input type="time" step={60} value={endpoint.time} disabled={!endpoint.date} onChange={(event) => setEndpoint(which, { time: event.target.value })} /></label>}{error?.endpoint === which && error.choices && <fieldset className="subtask-schedule__fold"><legend>Choose the Sydney occurrence</legend>{error.choices.map((choice) => <label key={choice.disambiguation}><input type="radio" name={`${id}-${which}-fold`} checked={endpoint.disambiguation === choice.disambiguation} onChange={() => setEndpoint(which, { disambiguation: choice.disambiguation })} />{choice.disambiguation === "earlier" ? "Earlier" : "Later"} ({choice.utcOffsetMinutes >= 0 ? "+" : ""}{choice.utcOffsetMinutes} min)</label>)}</fieldset>}</fieldset>;
+  const endpointFields = (which: "start" | "end", endpoint: EndpointDraft) => <fieldset className="grid gap-[var(--space-2)] min-w-0 p-[var(--space-2)] [border-style:solid] border-[length:var(--border-width-hair)] border-border"><legend className="px-[var(--space-1)] [font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-wide)] text-foreground">{which === "start" ? "Start" : "End"}</legend><label className={POPOVER_LABEL}>Date <Input type="date" className={RING_IN} value={endpoint.date} onChange={(event) => setEndpoint(which, { date: event.target.value })} /></label>{draft.kind === "timed" && <label className={POPOVER_LABEL}>Time <Input type="time" className={RING_IN} step={60} value={endpoint.time} disabled={!endpoint.date} onChange={(event) => setEndpoint(which, { time: event.target.value })} /></label>}{error?.endpoint === which && error.choices && <fieldset className="grid gap-[var(--space-1)] m-0 min-w-0 p-[var(--space-2)] [border-style:dashed] border-[length:var(--border-width-hair)] border-border"><legend className="px-[var(--space-1)] [font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-wide)] text-foreground-secondary">Choose the Sydney occurrence</legend>{error.choices.map((choice) => <label key={choice.disambiguation} className={FOLD_CHOICE_LABEL}><input type="radio" className={cn("accent-[var(--accent)] cursor-pointer", RING_IN)} name={`${id}-${which}-fold`} checked={endpoint.disambiguation === choice.disambiguation} onChange={() => setEndpoint(which, { disambiguation: choice.disambiguation })} />{choice.disambiguation === "earlier" ? "Earlier" : "Later"} ({choice.utcOffsetMinutes >= 0 ? "+" : ""}{choice.utcOffsetMinutes} min)</label>)}</fieldset>}</fieldset>;
   return <>
-    <button ref={floating.refs.setReference} type="button" className={`subtask-checklist__metadata-trigger${value.state !== "unscheduled" ? " subtask-checklist__metadata-trigger--filled" : ""}${compact ? " subtask-checklist__composer-trigger" : ""}`} aria-label={label} aria-expanded={open && !readOnly} aria-controls={open && !readOnly ? id : undefined} disabled={readOnly || busy} title={readOnly && value.state === "invalid" ? "Schedule data needs repair" : undefined} onKeyDown={floating.onKeyDown} onClick={() => { if (!readOnly) setOpen(!open); }}>
-      {value.state !== "unscheduled" ? <span className="subtask-checklist__due"><span className="sr-only">Schedule </span>{formatSchedule(value)}</span> : <span aria-hidden="true">◷</span>}
+    <button ref={floating.refs.setReference} type="button" className={compact ? COMPOSER_TRIGGER_CLASSES : META_TRIGGER} aria-label={label} aria-expanded={open && !readOnly} aria-controls={open && !readOnly ? id : undefined} disabled={readOnly || busy} title={readOnly && value.state === "invalid" ? "Schedule data needs repair" : undefined} onKeyDown={floating.onKeyDown} onClick={() => { if (!readOnly) setOpen(!open); }}>
+      {value.state !== "unscheduled" ? <StatusPill tone="neutral" className="min-w-0"><span className="sr-only">Schedule </span><span className="block truncate min-w-0">{formatSchedule(value)}</span></StatusPill> : <span aria-hidden="true">◷</span>}
     </button>
-    {floating.mounted && !readOnly && <AnchoredPopover context={floating.context} floatingStyles={floating.floatingStyles} initialFocus={0} onKeyDown={floating.onKeyDown} status={floating.status}><div id={id} className="subtask-popover__content" role="group" aria-label={label}>
-      <label>State <select value={draft.state} onChange={(event) => setDraft((current) => ({ ...current, state: event.target.value as ScheduleDraft["state"] }))}><option value="unscheduled">Unscheduled</option><option value="due_only">Due only</option>{CHECKLIST_SCHEDULE_RANGES_ENABLED && <option value="range">Range</option>}</select></label>
-      {draft.state !== "unscheduled" && <><label>Endpoint kind <select value={draft.kind} onChange={(event) => setDraft((current) => ({ ...current, kind: event.target.value as "date" | "timed" }))}><option value="date">Date</option><option value="timed">Timed · Australia/Sydney</option></select></label>{draft.state === "range" ? <>{endpointFields("start", draft.start)}{endpointFields("end", draft.end)}</> : endpointFields("end", draft.end)}</>}
-      {error && !error.choices && !error.current && <div className="subtask-schedule__error" role="alert">The schedule could not be saved. Review the highlighted fields.</div>}
-      {error?.currentSubtask ? <div className="subtask-schedule__conflict" role="status"><strong>Latest checklist item · schedule v{error.currentSubtask.schedule.version}</strong><dl><div><dt>Title</dt><dd>{error.currentSubtask.title}</dd></div><div><dt>Done</dt><dd>{error.currentSubtask.done ? "Complete" : "Open"}</dd></div><div><dt>Assignee</dt><dd>{error.currentSubtask.assignee?.name ?? "Unassigned"}</dd></div><div><dt>Schedule</dt><dd>{formatSchedule(error.currentSubtask.schedule)}</dd></div></dl><button type="button" className="button button--secondary" disabled={busy} onClick={() => { onUseLatestItem?.(error.currentSubtask!); close(); }}>Use latest item (discard draft)</button><span>Save reapplies your retained schedule draft; Cancel discards it.</span></div> : error?.current && <div className="subtask-schedule__conflict" role="status"><strong>Latest schedule · v{error.current.version}</strong><span>{formatSchedule(error.current)}</span><button type="button" className="button button--secondary" disabled={busy} onClick={() => { onUseLatest?.(error.current!); close(); }}>Use latest schedule (discard draft)</button><span>Save reapplies your retained schedule draft; Cancel discards it.</span></div>}
-      <div className="subtask-popover__actions"><button type="button" className="button" disabled={busy} onClick={() => { retainedDraft.current = draft; onSave({ expectedVersion: error?.current?.version ?? draftBaseVersion.current ?? value.version, schedule: scheduleInput(draft) }); close(); }}>Save</button><button type="button" className="button button--secondary" disabled={busy} onClick={() => { draftBaseVersion.current = null; retainedDraft.current = null; setDraft(scheduleDraft(value)); close(); }}>Cancel</button></div>
+    {floating.mounted && !readOnly && <AnchoredPopover context={floating.context} floatingStyles={floating.floatingStyles} initialFocus={0} onKeyDown={floating.onKeyDown} status={floating.status}><div id={id} className={POPOVER_CONTENT} role="group" aria-label={label}>
+      <label className={POPOVER_LABEL}>State <NativeSelect className={RING_IN} value={draft.state} onChange={(event) => setDraft((current) => ({ ...current, state: event.target.value as ScheduleDraft["state"] }))}><option value="unscheduled">Unscheduled</option><option value="due_only">Due only</option>{CHECKLIST_SCHEDULE_RANGES_ENABLED && <option value="range">Range</option>}</NativeSelect></label>
+      {draft.state !== "unscheduled" && <><label className={POPOVER_LABEL}>Endpoint kind <NativeSelect className={RING_IN} value={draft.kind} onChange={(event) => setDraft((current) => ({ ...current, kind: event.target.value as "date" | "timed" }))}><option value="date">Date</option><option value="timed">Timed · Australia/Sydney</option></NativeSelect></label>{draft.state === "range" ? <>{endpointFields("start", draft.start)}{endpointFields("end", draft.end)}</> : endpointFields("end", draft.end)}</>}
+      {error && !error.choices && !error.current && <Notice tone="critical" role="alert">The schedule could not be saved. Review the highlighted fields.</Notice>}
+      {error?.currentSubtask ? <Notice tone="caution" role="status"><strong>Latest checklist item · schedule v{error.currentSubtask.schedule.version}</strong><dl className="grid gap-[var(--space-1)] m-0"><div className="flex items-baseline justify-between gap-[var(--space-3)]"><dt className={POPOVER_LABEL}>Title</dt><dd className="m-0 [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground">{error.currentSubtask.title}</dd></div><div className="flex items-baseline justify-between gap-[var(--space-3)]"><dt className={POPOVER_LABEL}>Done</dt><dd className="m-0 [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground">{error.currentSubtask.done ? "Complete" : "Open"}</dd></div><div className="flex items-baseline justify-between gap-[var(--space-3)]"><dt className={POPOVER_LABEL}>Assignee</dt><dd className="m-0 [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground">{error.currentSubtask.assignee?.name ?? "Unassigned"}</dd></div><div className="flex items-baseline justify-between gap-[var(--space-3)]"><dt className={POPOVER_LABEL}>Schedule</dt><dd className="m-0 [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground">{formatSchedule(error.currentSubtask.schedule)}</dd></div></dl><button type="button" className={buttonClasses("secondary", { className: "justify-self-start " + RING_IN })} disabled={busy} onClick={() => { onUseLatestItem?.(error.currentSubtask!); close(); }}>Use latest item (discard draft)</button><span className={cn(META_TEXT, "!normal-case")}>Save reapplies your retained schedule draft; Cancel discards it.</span></Notice> : error?.current && <Notice tone="caution" role="status"><strong>Latest schedule · v{error.current.version}</strong><span>{formatSchedule(error.current)}</span><button type="button" className={buttonClasses("secondary", { className: "justify-self-start " + RING_IN })} disabled={busy} onClick={() => { onUseLatest?.(error.current!); close(); }}>Use latest schedule (discard draft)</button><span className={cn(META_TEXT, "!normal-case")}>Save reapplies your retained schedule draft; Cancel discards it.</span></Notice>}
+      <div className={POPOVER_ACTIONS}><button type="button" className={buttonClasses("primary", { className: RING_IN })} disabled={busy} onClick={() => { retainedDraft.current = draft; onSave({ expectedVersion: error?.current?.version ?? draftBaseVersion.current ?? value.version, schedule: scheduleInput(draft) }); close(); }}>Save</button><button type="button" className={buttonClasses("secondary", { className: RING_IN })} disabled={busy} onClick={() => { draftBaseVersion.current = null; retainedDraft.current = null; setDraft(scheduleDraft(value)); close(); }}>Cancel</button></div>
     </div></AnchoredPopover>}
   </>;
 }
@@ -126,12 +191,12 @@ function AssigneeControl({ owner, label, assignee, users, open, setOpen, onSelec
     floating.onKeyDown(event);
   }
   return <>
-    <button ref={floating.refs.setReference} type="button" className={`subtask-checklist__metadata-trigger${assignee ? " subtask-checklist__metadata-trigger--filled" : ""}${compact ? " subtask-checklist__composer-trigger" : ""}`} aria-label={label} aria-expanded={open} aria-controls={open ? id : undefined} onKeyDown={floating.onKeyDown} onClick={() => setOpen(!open)} title={assignee?.name}>
-      {assignee ? <span className="subtask-checklist__assignee"><span aria-hidden="true">{initials(assignee.name)}</span><span className="sr-only">Assigned to {assignee.name}</span></span> : <span aria-hidden="true">♙</span>}
+    <button ref={floating.refs.setReference} type="button" className={compact ? COMPOSER_TRIGGER_CLASSES : META_TRIGGER} aria-label={label} aria-expanded={open} aria-controls={open ? id : undefined} onKeyDown={floating.onKeyDown} onClick={() => setOpen(!open)} title={assignee?.name}>
+      {assignee ? <span className="grid place-items-center size-[var(--space-5)] shrink-0 rounded-[var(--radius-pill)] bg-primary text-[var(--accent-on)] [font:var(--weight-regular)_var(--text-2xs)/1_var(--font-sans)] tracking-[0.02em]"><span aria-hidden="true">{initials(assignee.name)}</span><span className="sr-only">Assigned to {assignee.name}</span></span> : <span aria-hidden="true">♙</span>}
     </button>
-    {floating.mounted && <AnchoredPopover context={floating.context} floatingStyles={floating.floatingStyles} initialFocus={searchRef} onKeyDown={onListKeyDown} status={floating.status}><div id={id} className="subtask-popover__content" role="group" aria-label={label}>
-      <label className="sr-only" htmlFor={`${id}-search`}>Search assignees</label><input ref={searchRef} id={`${id}-search`} type="search" value={query} placeholder="Search members…" onChange={(event) => { setQuery(event.target.value); setActiveIndex(0); }} />
-      <div className="subtask-popover__members" role="listbox" aria-label={label}>{matches.map((user, index) => <button key={user.id} type="button" role="option" aria-selected={user.id === assignee?.id} aria-current={index === activeIndex ? "true" : undefined} className="subtask-popover__member" disabled={busy} onMouseEnter={() => setActiveIndex(index)} onClick={() => { onSelect(user.id === assignee?.id ? null : user.id); close(); }}>{user.name}<small>{user.role}</small></button>)}</div>
+    {floating.mounted && <AnchoredPopover context={floating.context} floatingStyles={floating.floatingStyles} initialFocus={searchRef} onKeyDown={onListKeyDown} status={floating.status}><div id={id} className={POPOVER_CONTENT} role="group" aria-label={label}>
+      <label className="sr-only" htmlFor={`${id}-search`}>Search assignees</label><Input ref={searchRef} id={`${id}-search`} type="search" className={RING_IN} value={query} placeholder="Search members…" onChange={(event) => { setQuery(event.target.value); setActiveIndex(0); }} />
+      <div className="grid overflow-auto min-w-0" role="listbox" aria-label={label}>{matches.map((user, index) => <button key={user.id} type="button" role="option" aria-selected={user.id === assignee?.id} aria-current={index === activeIndex ? "true" : undefined} className={ASSIGNEE_MEMBER_CLASSES} disabled={busy} onMouseEnter={() => setActiveIndex(index)} onClick={() => { onSelect(user.id === assignee?.id ? null : user.id); close(); }}>{user.name}<small className="text-foreground-secondary">{user.role}</small></button>)}</div>
     </div></AnchoredPopover>}
   </>;
 }
@@ -139,8 +204,8 @@ function AssigneeControl({ owner, label, assignee, users, open, setOpen, onSelec
 function ActionsControl({ owner, title, open, setOpen, busy, onDelete }: { owner: string; title: string; open: boolean; setOpen: (open: boolean) => void; busy: boolean; onDelete: () => void }) {
   const close = useCallback(() => setOpen(false), [setOpen]); const floating = useAnchoredPopover({ open, onClose: close }); const id = popoverId(owner, "actions");
   return <>
-    <button ref={floating.refs.setReference} type="button" className="subtask-checklist__overflow" aria-label={`Actions for ${title}`} aria-expanded={open} aria-controls={open ? id : undefined} onKeyDown={floating.onKeyDown} onClick={() => setOpen(!open)}>⋯</button>
-    {floating.mounted && <AnchoredPopover context={floating.context} floatingStyles={floating.floatingStyles} initialFocus={0} onKeyDown={floating.onKeyDown} status={floating.status}><div id={id} className="subtask-popover__content" role="group" aria-label={`Actions for ${title}`}><button type="button" className="button button--secondary" disabled={busy} onClick={() => { void (async () => { if (!await confirm({ title: "Delete subtask?", message: "Delete this subtask?", confirmLabel: "Delete", danger: true })) return; close(); onDelete(); })(); }}>Delete</button></div></AnchoredPopover>}
+    <IconButton ref={floating.refs.setReference} aria-label={`Actions for ${title}`} aria-expanded={open} aria-controls={open ? id : undefined} onKeyDown={floating.onKeyDown} onClick={() => setOpen(!open)}>⋯</IconButton>
+    {floating.mounted && <AnchoredPopover context={floating.context} floatingStyles={floating.floatingStyles} initialFocus={0} onKeyDown={floating.onKeyDown} status={floating.status}><div id={id} className={POPOVER_CONTENT} role="group" aria-label={`Actions for ${title}`}><button type="button" className={buttonClasses("danger", { className: RING_IN })} disabled={busy} onClick={() => { void (async () => { if (!await confirm({ title: "Delete subtask?", message: "Delete this subtask?", confirmLabel: "Delete", danger: true })) return; close(); onDelete(); })(); }}>Delete</button></div></AnchoredPopover>}
   </>;
 }
 
@@ -152,18 +217,61 @@ function SortableSubtaskRow({ item, users, busy, editing, draftTitle, popover, s
   const combinedNodeRef = (element: HTMLElement | null) => { setNodeRef(element); itemRef(element); };
   const combinedGripRef = (element: HTMLButtonElement | null) => { setActivatorNodeRef(element); gripRef(element); };
   const dragProps = { ...attributes, ...listeners, ...(busy ? { "aria-disabled": true } : {}) };
-  return <article ref={combinedNodeRef} style={style} className={`subtask-checklist__item${item.done ? " subtask-checklist__item--done" : ""}${activeKind ? " subtask-checklist__item--popover-open" : ""}${isDragging ? " subtask-checklist__item--dragging" : ""}`} onBlur={(event) => {
-    const next = event.relatedTarget as Node | null;
-    if (event.currentTarget.contains(next) || (activeKind && document.getElementById(popoverId(item.id, activeKind))?.contains(next))) return;
-    if (editing) onEndEditing();
-  }}>
-    <div className="subtask-checklist__summary">
-      <button ref={combinedGripRef} type="button" className="subtask-checklist__grip" aria-label={`Reorder ${item.title}`} {...dragProps}>⠿</button>
-      <label className="subtask-checklist__done"><input type="checkbox" checked={item.done} disabled={busy} onChange={(event) => onUpdate({ done: event.target.checked }, "done")} /><span className="sr-only">Mark {item.title} complete</span></label>
-      {editing ? <input ref={titleInputRef} className="subtask-checklist__title" aria-label="Subtask title" value={draftTitle} disabled={busy} onChange={(event) => onUpdate({ __draft: event.target.value }, "draft")} onBlur={() => onUpdate({ __saveTitle: true }, "title")} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); if (event.key === "Escape") { event.preventDefault(); onUpdate({ __cancelTitle: true }, "title"); event.currentTarget.blur(); } }} /> : <button type="button" className="subtask-checklist__title-trigger" disabled={busy} onClick={onBeginEditing} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onBeginEditing(); } }}>{item.title}</button>}
-      <ScheduleControl owner={item.id} label={`Schedule for ${item.title}`} value={item.schedule} error={scheduleError} open={activeKind === "schedule"} setOpen={(open) => setKind("schedule", open)} onSave={(schedule) => onUpdate({ schedule }, "schedule")} onUseLatest={onUseLatest} onUseLatestItem={onUseLatestItem} busy={busy} />
-      <AssigneeControl owner={item.id} label={`Assignee for ${item.title}`} assignee={item.assignee} users={users} open={activeKind === "assignee"} setOpen={(open) => setKind("assignee", open)} onSelect={(assigneeId) => onUpdate({ assigneeId }, "assignee")} busy={busy} />
-      <ActionsControl owner={item.id} title={item.title} open={activeKind === "actions"} setOpen={(open) => setKind("actions", open)} busy={busy} onDelete={onRemove} />
+  return <article
+    ref={combinedNodeRef}
+    style={style}
+    data-done={item.done ? "true" : undefined}
+    data-dragging={isDragging ? "true" : undefined}
+    data-popover-open={activeKind ? "true" : undefined}
+    className={cn(
+      "grid gap-[var(--space-2)] py-[var(--space-2)] -mx-[var(--space-2)] px-[var(--space-2)]",
+      "[border-bottom-style:solid] border-b-[length:var(--border-width-hair)] border-b-border",
+      "last:border-b-0",
+      "transition-[background-color] duration-[var(--dur-fast)] ease-[var(--ease-standard)]",
+      "hover:bg-secondary focus-within:bg-secondary",
+      "data-[dragging=true]:opacity-45 data-[dragging=true]:shadow-[var(--shadow-sm)]",
+    )}
+    onBlur={(event) => {
+      const next = event.relatedTarget as Node | null;
+      if (event.currentTarget.contains(next) || (activeKind && document.getElementById(popoverId(item.id, activeKind))?.contains(next))) return;
+      if (editing) onEndEditing();
+    }}>
+    <div className={cn(
+      "min-w-0",
+      "max-[721px]:grid max-[721px]:grid-cols-[auto_auto_minmax(0,1fr)]",
+      "max-[721px]:items-center max-[721px]:gap-[var(--space-2)]",
+      "min-[721px]:flex min-[721px]:items-center min-[721px]:gap-[var(--space-2)]",
+    )}>
+      <IconButton ref={combinedGripRef} aria-label={`Reorder ${item.title}`} className="cursor-grab active:cursor-grabbing" {...dragProps}>⠿</IconButton>
+      <label className="grid place-items-center min-h-[28px] max-[721px]:min-h-[44px] max-[721px]:min-w-[44px] cursor-pointer"><Checkbox checked={item.done} disabled={busy} onChange={(event) => onUpdate({ done: event.target.checked }, "done")} /><span className="sr-only">Mark {item.title} complete</span></label>
+      {editing ? <Input ref={titleInputRef} className="flex-1 min-w-0" aria-label="Subtask title" value={draftTitle} disabled={busy} onChange={(event) => onUpdate({ __draft: event.target.value }, "draft")} onBlur={() => onUpdate({ __saveTitle: true }, "title")} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); if (event.key === "Escape") { event.preventDefault(); onUpdate({ __cancelTitle: true }, "title"); event.currentTarget.blur(); } }} /> : <button
+        type="button"
+        // `.subtask-checklist__title-trigger` no longer carries any CSS (its app.css rule is
+        // retired) — it stays on this element only as a runtime hook: `remove()` below queries
+        // for it (`.querySelector(".subtask-checklist__title-trigger")`) to restore focus to the
+        // next row's title after a delete. Do not delete the class as dead.
+        className={cn(
+          "subtask-checklist__title-trigger",
+          "flex-1 min-w-0 p-0 border-0 bg-transparent text-left cursor-pointer",
+          "[font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)]",
+          "[overflow-wrap:anywhere] min-h-[28px] max-[721px]:min-h-[44px]",
+          item.done ? "text-foreground-secondary line-through" : "text-foreground",
+          RING_OUT,
+        )}
+        disabled={busy}
+        onClick={onBeginEditing}
+        onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onBeginEditing(); } }}
+      >{item.title}</button>}
+      <div className={cn(
+        "min-w-0",
+        "max-[721px]:col-span-full max-[721px]:flex max-[721px]:items-center",
+        "max-[721px]:gap-[var(--space-1)] max-[721px]:pt-[var(--space-1)]",
+        "min-[721px]:contents",
+      )}>
+        <ScheduleControl owner={item.id} label={`Schedule for ${item.title}`} value={item.schedule} error={scheduleError} open={activeKind === "schedule"} setOpen={(open) => setKind("schedule", open)} onSave={(schedule) => onUpdate({ schedule }, "schedule")} onUseLatest={onUseLatest} onUseLatestItem={onUseLatestItem} busy={busy} />
+        <AssigneeControl owner={item.id} label={`Assignee for ${item.title}`} assignee={item.assignee} users={users} open={activeKind === "assignee"} setOpen={(open) => setKind("assignee", open)} onSelect={(assigneeId) => onUpdate({ assigneeId }, "assignee")} busy={busy} />
+        <ActionsControl owner={item.id} title={item.title} open={activeKind === "actions"} setOpen={(open) => setKind("actions", open)} busy={busy} onDelete={onRemove} />
+      </div>
     </div>
   </article>;
 }
@@ -218,5 +326,5 @@ export function SubtaskChecklist({ projectId, onAccessFailure }: { projectId: st
   async function onDragEnd(event: DragEndEvent) { const activeId = String(event.active.id); const neighbors = reorderNeighbors(subtasks.map((item) => item.id), activeId, event.over ? String(event.over.id) : null); setDragging(false); if (!neighbors) return; const formerIndex = subtasks.findIndex((item) => item.id === activeId); const key = `${activeId}:reorder`; setAction(key, true); setNotice(""); let reload = false; try { await apiPost<{ position: number }, { beforeId: string | null; afterId: string | null }>(`/api/projects/${encodeURIComponent(projectId)}/subtasks/${encodeURIComponent(activeId)}/reorder`, { beforeId: neighbors.beforeId, afterId: neighbors.afterId }); const refreshed = await subtasksQuery.refetch(); if (refreshed.data) setSubtasks(refreshed.data.map(ensureSchedule)); reload = !refreshed.error; } catch (error) { terminateOnUnauthorized(error); if (error instanceof ApiError && error.status === 409) { setNotice("Subtask order changed; reload and try again"); const refreshed = await subtasksQuery.refetch(); if (refreshed.data) setSubtasks(refreshed.data.map(ensureSchedule)); reload = !refreshed.error; } else setNotice(message(error, "Subtask could not be reordered.")); } finally { setAction(key, false); if (reload) scheduleReorderFocus(gripRefs.current, activeId, formerIndex, composerOpen, composerInputRef.current, projectId, () => busyRef.current.has(key)); } }
   const doneCount = subtasks.filter((item) => item.done).length; const total = subtasks.length; const percent = total === 0 ? 0 : Math.round((doneCount / total) * 100); const composerAssignee = users.find((user) => user.id === newAssigneeId) ?? null;
   const loading = subtasksQuery.isPending && !subtasks.length;
-  return <section className="subtask-checklist" aria-label="Project checklist"><header className="subtask-checklist__head"><h3><button type="button" className="subtask-checklist__toggle" aria-expanded={open} aria-controls={panelId} onClick={() => setOpen((value) => !value)}><span className="ey">Checklist</span><span className="subtask-checklist__toggle-meta"><span className="subtask-checklist__progress-text">{doneCount} of {total} complete · {percent}%</span><span className="subtask-checklist__chevron" aria-hidden="true">{open ? "−" : "+"}</span></span><progress value={doneCount} max={Math.max(total, 1)} aria-hidden="true" /></button></h3></header><div className="subtask-checklist__notice" aria-live="polite">{notice}</div><div id={panelId} className={`subtask-checklist__panel${open ? "" : " is-collapsed"}`} aria-hidden={!open}>{loading ? <div className="project-collaboration__state" aria-live="polite">Loading checklist…</div> : <>{!subtasks.length && <div className="project-collaboration__state">No subtasks yet.</div>}<DndContext sensors={sensors} onDragStart={() => { setDragging(true); setActivePopover(null); }} onDragEnd={(event) => void onDragEnd(event)}><SortableContext items={subtasks.map((item) => item.id)} strategy={verticalListSortingStrategy}><div className="subtask-checklist__items">{subtasks.map((item, index) => <SortableSubtaskRow key={item.id} item={item} users={users} busy={itemIsBusy(item.id)} editing={editingId === item.id} draftTitle={draftTitles[item.id] ?? item.title} popover={activePopover} setPopover={setActivePopover} scheduleError={scheduleErrors[item.id]} onUpdate={(body, action) => action === "draft" || action === "title" ? titleAction(item, body) : void update(item, body, action)} onUseLatest={(schedule) => useLatestSchedule(item, schedule)} onUseLatestItem={useLatestItem} onRemove={() => void remove(item, index)} onBeginEditing={() => beginEditing(item)} onEndEditing={() => { if (editingId === item.id) setEditingId(null); }} titleInputRef={titleInputRef(item.id)} itemRef={itemRef(item.id)} gripRef={gripRef(item.id)} />)}</div></SortableContext></DndContext>{composerOpen ? <form className="subtask-checklist__composer" onKeyDown={(event) => { if (event.key === "Escape" && !event.defaultPrevented) { event.preventDefault(); resetComposer(); } }} onSubmit={(event) => void add(event)}><label className="sr-only" htmlFor={`subtask-composer-${projectId}`}>Add a subtask</label><input ref={composerInputRef} id={`subtask-composer-${projectId}`} autoFocus value={newTitle} maxLength={500} disabled={adding} onChange={(event) => setNewTitle(event.target.value)} placeholder="Add a subtask…" /><div className="subtask-checklist__composer-controls"><AssigneeControl owner="composer" label="Assignee for new subtask" assignee={composerAssignee} users={users} open={activePopover?.owner === "composer" && activePopover.kind === "assignee"} setOpen={(value) => setActivePopover(value ? { owner: "composer", kind: "assignee" } : null)} onSelect={setNewAssigneeId} busy={adding} compact /><ScheduleControl owner="composer" label="Schedule for new subtask" value={newSchedulePreview} open={activePopover?.owner === "composer" && activePopover.kind === "schedule"} setOpen={(value) => setActivePopover(value ? { owner: "composer", kind: "schedule" } : null)} onSave={(request) => { setNewSchedule(request.schedule); setNewSchedulePreview(schedulePreview(request.schedule)); }} busy={adding} compact /><span /><button className="button button--secondary" type="button" disabled={adding} onClick={() => resetComposer()}>Cancel</button><button className="button" type="submit" disabled={adding || !newTitle.trim()}>{adding ? "Adding…" : "Add"}</button></div></form> : <button id={`subtask-add-${projectId}`} type="button" className="subtask-checklist__add-button" onClick={() => setComposerOpen(true)}>+ Add an item</button>}</>}</div></section>;
+  return <section className="grid gap-[var(--space-3)] pb-[var(--space-4)] [border-bottom-style:solid] border-b-[length:var(--border-width-hair)] border-b-border" aria-label="Project checklist"><header><h3 className="m-0"><button type="button" className={cn("grid grid-cols-[auto_minmax(0,1fr)] w-full gap-x-[var(--space-3)] gap-y-[var(--space-1)] p-[var(--space-2)] min-h-[38px] max-[721px]:min-h-[44px] bg-transparent border-0 text-left cursor-pointer text-foreground transition-[background-color] duration-[var(--dur-fast)] ease-[var(--ease-standard)] hover:bg-secondary", RING_OUT)} aria-expanded={open} aria-controls={panelId} onClick={() => setOpen((value) => !value)}><Eyebrow>Checklist</Eyebrow><span className="flex items-center justify-end gap-[var(--space-2)] min-w-0"><span className="[font:var(--type-h3)] max-[721px]:!text-[length:var(--text-md)] tracking-[var(--tracking-tight)] text-foreground min-w-0 text-right">{doneCount} of {total} complete · {percent}%</span><span className="[font:var(--weight-regular)_var(--text-md)/1_var(--font-sans)] text-foreground-secondary" aria-hidden="true">{open ? "−" : "+"}</span></span><progress value={doneCount} max={Math.max(total, 1)} aria-hidden="true" className="col-span-full w-full h-[5px] [accent-color:var(--accent)]" /></button></h3></header><div className="min-h-0 [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-destructive" aria-live="polite">{notice}</div><div id={panelId} className={cn("grid gap-[var(--space-3)]", !open && "hidden")} aria-hidden={!open}>{loading ? <EmptyState aria-live="polite" title="Loading checklist…" className={CHECKLIST_STATE_CLASSES} /> : <>{!subtasks.length && <EmptyState title="No subtasks yet." className={CHECKLIST_STATE_CLASSES} />}<DndContext sensors={sensors} onDragStart={() => { setDragging(true); setActivePopover(null); }} onDragEnd={(event) => void onDragEnd(event)}><SortableContext items={subtasks.map((item) => item.id)} strategy={verticalListSortingStrategy}><div className="subtask-checklist__items">{subtasks.map((item, index) => <SortableSubtaskRow key={item.id} item={item} users={users} busy={itemIsBusy(item.id)} editing={editingId === item.id} draftTitle={draftTitles[item.id] ?? item.title} popover={activePopover} setPopover={setActivePopover} scheduleError={scheduleErrors[item.id]} onUpdate={(body, action) => action === "draft" || action === "title" ? titleAction(item, body) : void update(item, body, action)} onUseLatest={(schedule) => useLatestSchedule(item, schedule)} onUseLatestItem={useLatestItem} onRemove={() => void remove(item, index)} onBeginEditing={() => beginEditing(item)} onEndEditing={() => { if (editingId === item.id) setEditingId(null); }} titleInputRef={titleInputRef(item.id)} itemRef={itemRef(item.id)} gripRef={gripRef(item.id)} />)}</div></SortableContext></DndContext>{composerOpen ? <form className="grid gap-[var(--space-2)]" onKeyDown={(event) => { if (event.key === "Escape" && !event.defaultPrevented) { event.preventDefault(); resetComposer(); } }} onSubmit={(event) => void add(event)}><label className="sr-only" htmlFor={`subtask-composer-${projectId}`}>Add a subtask</label><Input ref={composerInputRef} id={`subtask-composer-${projectId}`} autoFocus value={newTitle} maxLength={500} disabled={adding} onChange={(event) => setNewTitle(event.target.value)} placeholder="Add a subtask…" /><div className={POPOVER_ACTIONS}><AssigneeControl owner="composer" label="Assignee for new subtask" assignee={composerAssignee} users={users} open={activePopover?.owner === "composer" && activePopover.kind === "assignee"} setOpen={(value) => setActivePopover(value ? { owner: "composer", kind: "assignee" } : null)} onSelect={setNewAssigneeId} busy={adding} compact /><ScheduleControl owner="composer" label="Schedule for new subtask" value={newSchedulePreview} open={activePopover?.owner === "composer" && activePopover.kind === "schedule"} setOpen={(value) => setActivePopover(value ? { owner: "composer", kind: "schedule" } : null)} onSave={(request) => { setNewSchedule(request.schedule); setNewSchedulePreview(schedulePreview(request.schedule)); }} busy={adding} compact /><span className="flex-1 max-[601px]:hidden" /><button className={buttonClasses("secondary")} type="button" disabled={adding} onClick={() => resetComposer()}>Cancel</button><button className={buttonClasses("primary")} type="submit" disabled={adding || !newTitle.trim()}>{adding ? "Adding…" : "Add"}</button></div></form> : <button id={`subtask-add-${projectId}`} type="button" className={ADD_BUTTON_CLASSES} onClick={() => setComposerOpen(true)}>+ Add an item</button>}</>}</div></section>;
 }

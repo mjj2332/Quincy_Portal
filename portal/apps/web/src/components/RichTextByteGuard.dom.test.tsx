@@ -49,7 +49,7 @@ describe("rich-text serialized-width submit guards", () => {
     mocks.apiPost.mockResolvedValue({ ...ownComment, id: "comment-new", content: accepted }); const host = mount(); await render(<ProjectCollaborationPanel projectId={projectId} />);
     await click(button(host, "Use oversized formatting")); expect(button(host, "Post comment").disabled).toBe(true);
     await click(button(host, "Use accepted formatting")); expect(button(host, "Post comment").disabled).toBe(false); await click(button(host, "Post comment")); expect(mocks.apiPost).toHaveBeenCalledWith(`/api/projects/${projectId}/comments`, { content: accepted });
-    await click(button(host, "Edit")); const article = host.querySelector(".project-collaboration__comment")!;
+    await click(button(host, "Edit")); const article = host.querySelector("article")!;
     await click(button(article as HTMLElement, "Use oversized formatting")); expect(button(article as HTMLElement, "Save").disabled).toBe(true);
     await click(button(article as HTMLElement, "Use accepted formatting")); expect(button(article as HTMLElement, "Save").disabled).toBe(false); await click(button(article as HTMLElement, "Save"));
     expect(mocks.apiPatch).toHaveBeenCalledWith(`/api/projects/${projectId}/comments/comment-own`, { content: accepted });

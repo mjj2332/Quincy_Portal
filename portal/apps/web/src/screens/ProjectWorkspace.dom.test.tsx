@@ -139,6 +139,23 @@ function editedTabButton(host: HTMLElement): HTMLButtonElement {
   return button;
 }
 
+// `.project-collaboration__head` was retired to Tailwind (TB8-07 §7.1) — the Hide button carries
+// no class hook of its own, so it is found by its accessible name instead.
+function hideCollaborationButton(host: HTMLElement): HTMLButtonElement {
+  const button = [...host.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent === "Hide ›");
+  if (!button) throw new Error("No Hide collaboration button");
+  return button;
+}
+
+// `.project-collaboration--unavailable` was retired (TB8-07 §7.3, the fixed-overlay defect fix):
+// the unavailable state is now a static in-flow section, identified by its unchanged aria-label
+// and its distinguishing "Collaboration unavailable." title rather than by a class name.
+function collaborationUnavailableSection(host: HTMLElement): HTMLElement | null {
+  return [...host.querySelectorAll<HTMLElement>('[aria-label="Project collaboration"]')].find(
+    (item) => item.tagName === "SECTION" && item.textContent?.includes("Collaboration unavailable."),
+  ) ?? null;
+}
+
 describe("ProjectWorkspace cross-tab asset/selection/lightbox safety", () => {
   let host: HTMLElement;
   let rawAssets: WorkspaceAsset[];
@@ -883,7 +900,7 @@ describe("ProjectWorkspace collaboration relocation", () => {
     expect(host.querySelector(".viewer")).not.toBeNull(); expect(host.querySelector(".project-collaboration")).not.toBeNull();
     await render(<ProjectWorkspace projectId="p1" collaborationOpenSignal={2} onCollaborationOpenSignalConsumed={(signal) => consumed.push(signal)} />); await flush();
     expect(consumed).toEqual([1, 2]);
-    await click(host.querySelector<HTMLButtonElement>(".project-collaboration__head button")!); await flush();
+    await click(hideCollaborationButton(host)); await flush();
     expect(host.querySelector(".project-collaboration")).toBeNull();
     await render(<ProjectWorkspace projectId="p1" collaborationOpenSignal={3} onCollaborationOpenSignalConsumed={(signal) => consumed.push(signal)} />); await flush();
     expect(host.querySelector(".project-collaboration")).not.toBeNull(); expect(consumed).toEqual([1, 2, 3]);
@@ -902,8 +919,8 @@ describe("ProjectWorkspace collaboration relocation", () => {
       return Promise.resolve({});
     });
     await render(<ProjectWorkspace projectId="p1" />); await flush(20);
-    await typeIntoEditor(host.querySelector<HTMLElement>(".project-collaboration__comment-compose [contenteditable=\"true\"]")!, "unsent draft");
-    await click(host.querySelector<HTMLButtonElement>(".project-collaboration__head button")!);
+    await typeIntoEditor(host.querySelector<HTMLElement>("[data-testid=discussion-composer] [contenteditable=\"true\"]")!, "unsent draft");
+    await click(hideCollaborationButton(host));
     expect(host.querySelector<HTMLButtonElement>(".project-collaboration__toggle")?.getAttribute("aria-expanded")).toBe("false");
 
     await click(editedTabButton(host)); await flush(20);
@@ -911,7 +928,7 @@ describe("ProjectWorkspace collaboration relocation", () => {
     const toggle = host.querySelector<HTMLButtonElement>(".project-collaboration__toggle")!;
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
     await click(toggle); await flush(4);
-    expect(host.querySelector<HTMLElement>(".project-collaboration__comment-compose [contenteditable=\"true\"]")?.textContent).toContain("unsent draft");
+    expect(host.querySelector<HTMLElement>("[data-testid=discussion-composer] [contenteditable=\"true\"]")?.textContent).toContain("unsent draft");
     expect(commentRequests).toBe(1);
   });
 
@@ -981,7 +998,7 @@ describe("ProjectWorkspace collaboration relocation", () => {
     commentsAvailable = false;
     await queryClient!.invalidateQueries({ queryKey: projectDataKeys.comments("p1"), exact: true, refetchType: "active" }); await flush(20);
 
-    expect(host.querySelector(".project-collaboration--unavailable")).not.toBeNull();
+    expect(collaborationUnavailableSection(host)).not.toBeNull();
     expect(host.querySelector(".project-collaboration--standalone")).toBeNull();
     expect(host.querySelector(".work, .rail, .workmain")).toBeNull();
     expect(detailCalls).toBe(1);
@@ -1026,7 +1043,7 @@ describe("ProjectWorkspace collaboration relocation", () => {
       : path.includes("/collaboration-summary") ? Promise.resolve(collaborationSummaryFixture())
       : path.includes("comments?limit=50") ? Promise.reject(new ApiError("Forbidden", 403)) : Promise.resolve({}));
     await render(<ProjectWorkspace projectId="p1" collaborationOpenSignal={11} onCollaborationOpenSignalConsumed={(signal) => consumed.push(signal)} />); await flush();
-    expect(host.textContent).toContain("Collaboration unavailable."); expect(host.querySelector(".project-collaboration--unavailable")).not.toBeNull(); expect(consumed).toEqual([11]);
+    expect(host.textContent).toContain("Collaboration unavailable."); expect(collaborationUnavailableSection(host)).not.toBeNull(); expect(consumed).toEqual([11]);
 
     apiGetMock.mockReset().mockImplementation((path: string) => path === "/api/projects/p2" ? Promise.reject(new ApiError("Session expired", 401)) : Promise.resolve({}));
     await render(<ProjectWorkspace projectId="p2" collaborationOpenSignal={12} onCollaborationOpenSignalConsumed={(signal) => consumed.push(signal)} />); await flush();
@@ -1097,7 +1114,7 @@ describe("ProjectWorkspace collaboration relocation", () => {
     commentsForbidden = true;
     await queryClient!.invalidateQueries({ queryKey: projectDataKeys.comments("p1"), exact: true, refetchType: "active" }); await flush(20);
     expect(host.querySelector(".work")).not.toBeNull();
-    expect(host.querySelector(".project-collaboration--unavailable")).not.toBeNull();
+    expect(collaborationUnavailableSection(host)).not.toBeNull();
     expect(queryClient!.getQueryData(projectDataKeys.detail("p1"))).toBeDefined();
     expect(queryClient!.getQueryData(projectDataKeys.comments("p1"))).toBeUndefined();
     expect(queryClient!.getQueryData(projectDataKeys.commentReadMarker("p1"))).toBeUndefined();
@@ -1119,7 +1136,7 @@ describe("ProjectWorkspace collaboration relocation", () => {
     markerForbidden = true;
     await queryClient!.invalidateQueries({ queryKey: projectDataKeys.commentReadMarker("p1"), exact: true, refetchType: "active" }); await flush(20);
     expect(host.querySelector(".work")).not.toBeNull();
-    expect(host.querySelector(".project-collaboration--unavailable")).not.toBeNull();
+    expect(collaborationUnavailableSection(host)).not.toBeNull();
     expect(queryClient!.getQueryData(projectDataKeys.detail("p1"))).toBeDefined();
   });
 
@@ -1139,11 +1156,11 @@ describe("ProjectWorkspace collaboration relocation", () => {
     });
     apiPostMock.mockRejectedValueOnce(new ApiError(`Comment POST ${status}`, status));
     await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>); await flush(20);
-    await typeIntoEditor(host.querySelector<HTMLElement>('.project-collaboration__comment-compose [contenteditable="true"]')!, "A comment");
-    await click(host.querySelector<HTMLButtonElement>('.project-collaboration__comment-compose button[type="submit"]')!); await flush(20);
+    await typeIntoEditor(host.querySelector<HTMLElement>('[data-testid=discussion-composer] [contenteditable="true"]')!, "A comment");
+    await click(host.querySelector<HTMLButtonElement>('[data-testid=discussion-composer] button[type="submit"]')!); await flush(20);
     if (expected === "collaboration") {
       expect(host.querySelector(".work")).not.toBeNull();
-      expect(host.querySelector(".project-collaboration--unavailable")).not.toBeNull();
+      expect(collaborationUnavailableSection(host)).not.toBeNull();
       expect(queryClient!.getQueryData(projectDataKeys.detail("p1"))).toBeDefined();
     } else {
       expect(host.textContent).toContain("Project unavailable.");
@@ -1181,15 +1198,15 @@ describe("ProjectWorkspace collaboration relocation", () => {
     });
     apiPatchMock.mockRejectedValueOnce(new ApiError(`Read marker PATCH ${status}`, status));
     await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>); await flush(20);
-    const anchor = host.querySelector<HTMLElement>(".project-collaboration__read-anchor")!;
-    const scroll = host.querySelector<HTMLElement>(".project-collaboration__scroll")!;
+    const anchor = host.querySelector<HTMLElement>("[data-testid=discussion-read-anchor]")!;
+    const scroll = host.querySelector<HTMLElement>('[data-testid="project-collaboration-scroll"]')!;
     Object.defineProperty(anchor, "getBoundingClientRect", { configurable: true, value: () => ({ left: 0, top: 0, right: 100, bottom: 20, width: 100, height: 20 }) });
     Object.defineProperty(scroll, "getBoundingClientRect", { configurable: true, value: () => ({ left: 0, top: 0, right: 100, bottom: 900, width: 100, height: 900 }) });
     callback?.([{ isIntersecting: true, intersectionRatio: 1, boundingClientRect: anchor.getBoundingClientRect() } as IntersectionObserverEntry] as IntersectionObserverEntry[], {} as IntersectionObserver);
     await flush(20);
     if (expected === "collaboration") {
       expect(host.querySelector(".work")).not.toBeNull();
-      expect(host.querySelector(".project-collaboration--unavailable")).not.toBeNull();
+      expect(collaborationUnavailableSection(host)).not.toBeNull();
       expect(queryClient!.getQueryData(projectDataKeys.detail("p1"))).toBeDefined();
     } else {
       expect(host.textContent).toContain("Project unavailable.");
@@ -1375,7 +1392,7 @@ describe("ProjectWorkspace collaboration relocation", () => {
       expect(queryClient!.getQueryCache().getAll()).toHaveLength(0);
     } else if (expected === "collaboration") {
       expect(host.querySelector(".work")).not.toBeNull();
-      expect(host.querySelector(".project-collaboration--unavailable")).not.toBeNull();
+      expect(collaborationUnavailableSection(host)).not.toBeNull();
       expect(queryClient!.getQueryData(projectDataKeys.detail("p1"))).toBeDefined();
       expect(queryClient!.getQueryData(projectDataKeys.comments("p1"))).toBeUndefined();
     } else {
@@ -1485,7 +1502,7 @@ describe("ProjectWorkspace collaboration relocation", () => {
         expect(queryClient!.getQueryData(projectDataKeys.detail("p1"))).toBeUndefined();
       } else {
         expect(host.querySelector(".work")).not.toBeNull();
-        expect(host.querySelector(".project-collaboration--unavailable")).toBeNull();
+        expect(collaborationUnavailableSection(host)).toBeNull();
         expect(host.querySelector('[role="tabpanel"][id$="-activity-panel"] [role="alert"]')?.textContent).toContain("isn't available");
         expect(host.querySelector('[role="tabpanel"][id$="-activity-panel"] button')?.textContent).not.toBe("Retry");
       }

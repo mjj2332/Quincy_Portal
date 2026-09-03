@@ -198,12 +198,12 @@ describe("ProjectCollaborationPanel", () => {
     await click(host.querySelector<HTMLButtonElement>('[aria-label="Checklist"]')!);
     await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Post comment")!); await flush();
     expect(apiPostMock).toHaveBeenCalledWith(`/api/projects/${projectId}/comments`, { content });
-    expect(host.querySelector(".project-collaboration__comments input")).toBeNull();
+    expect(host.querySelector("[data-testid=discussion-comments] input")).toBeNull();
     apiPostMock.mockClear(); apiPatchMock.mockClear();
-    await click(host.querySelector(".project-collaboration__comments .rich-text__task-indicator")!);
+    await click(host.querySelector("[data-testid=discussion-comments] .rich-text__task-indicator")!);
     expect(apiPostMock).not.toHaveBeenCalled(); expect(apiPatchMock).not.toHaveBeenCalled();
-    expect(host.querySelector(".project-collaboration__comments .rich-text__task-content .sr-only")?.textContent).toBe("Not completed");
-    expect(host.querySelector(".project-collaboration__comments .rich-text__task-indicator")?.closest("article")?.textContent).not.toContain("Edit");
+    expect(host.querySelector("[data-testid=discussion-comments] .rich-text__task-content .sr-only")?.textContent).toBe("Not completed");
+    expect(host.querySelector("[data-testid=discussion-comments] .rich-text__task-indicator")?.closest("article")?.textContent).not.toContain("Edit");
   });
 
   it("posts and renders a Subsection heading through the shared composer", async () => {
@@ -217,7 +217,7 @@ describe("ProjectCollaborationPanel", () => {
     await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Post comment")!);
     await flush();
     expect(apiPostMock).toHaveBeenCalledWith(`/api/projects/${projectId}/comments`, { content });
-    expect(host.querySelector(".project-collaboration__comments h3")?.textContent).toBe("Comment subsection");
+    expect(host.querySelector("[data-testid=discussion-comments] h3")?.textContent).toBe("Comment subsection");
   });
 
   it("posts newly underlined and struck-through comment content through the composer", async () => {
@@ -275,12 +275,12 @@ describe("ProjectCollaborationPanel", () => {
     const host = mount(); await render(<ProjectCollaborationPanel projectId={projectId} />);
     const overlay = host.querySelector<HTMLElement>(".project-collaboration")!;
     expect(overlay.classList.contains("project-collaboration--overlay")).toBe(true);
-    expect(overlay.firstElementChild).toBe(overlay.querySelector(".project-collaboration__head"));
-    const scroll = overlay.querySelector<HTMLElement>(".project-collaboration__scroll")!;
-    expect(overlay.children[2]).toBe(scroll); expect(scroll.querySelector(".subtask-checklist")).not.toBeNull(); expect(scroll.querySelector(".project-collaboration__comment-compose")).not.toBeNull();
+    expect(overlay.firstElementChild).toBe(overlay.querySelector('[data-testid="project-collaboration-head"]'));
+    const scroll = overlay.querySelector<HTMLElement>('[data-testid="project-collaboration-scroll"]')!;
+    expect(overlay.children[2]).toBe(scroll); expect(scroll.querySelector('[aria-label="Project checklist"]')).not.toBeNull(); expect(scroll.querySelector("[data-testid=discussion-composer]")).not.toBeNull();
     await unmount(); host.remove(); const standalone = mount(); await render(<ProjectCollaborationPanel projectId={projectId} mode="standalone" />);
     const panel = standalone.querySelector<HTMLElement>(".project-collaboration")!;
-    expect(panel.classList.contains("project-collaboration--overlay")).toBe(false); expect(panel.querySelector(".project-collaboration__scroll")).toBeNull(); expect(panel.querySelector(".subtask-checklist")).not.toBeNull();
+    expect(panel.classList.contains("project-collaboration--overlay")).toBe(false); expect(panel.querySelector('[data-testid="project-collaboration-scroll"]')).toBeNull(); expect(panel.querySelector('[aria-label="Project checklist"]')).not.toBeNull();
   });
 
   it("renders Discussion and Activity as persistent semantic tabs with roving keyboard focus", async () => {
@@ -335,10 +335,10 @@ describe("ProjectCollaborationPanel", () => {
       await click(host.querySelector<HTMLButtonElement>('[role="tab"][aria-controls$="-activity-panel"]')!);
       headId = "new-head";
       await click(host.querySelector<HTMLButtonElement>('[role="tab"][aria-controls$="-discussion-panel"]')!);
-      const anchor = host.querySelector<HTMLElement>(".project-collaboration__read-anchor")!;
+      const anchor = host.querySelector<HTMLElement>("[data-testid=discussion-read-anchor]")!;
       const visibleRect = () => ({ left: 0, top: 0, right: 100, bottom: 100, width: 100, height: 100 });
       Object.defineProperty(anchor, "getBoundingClientRect", { configurable: true, value: visibleRect });
-      Object.defineProperty(host.querySelector<HTMLElement>(".project-collaboration__scroll")!, "getBoundingClientRect", { configurable: true, value: visibleRect });
+      Object.defineProperty(host.querySelector<HTMLElement>('[data-testid="project-collaboration-scroll"]')!, "getBoundingClientRect", { configurable: true, value: visibleRect });
       window.dispatchEvent(new Event("scroll"));
       await flush(20);
       expect(apiPatchMock).toHaveBeenCalledWith("/api/projects/" + projectId + "/comment-read-marker", { throughCommentId: "new-head" });
@@ -356,13 +356,13 @@ describe("ProjectCollaborationPanel", () => {
     const activity = () => host.querySelector<HTMLButtonElement>('[role="tab"][aria-controls$="-activity-panel"]')!;
     await click(activity());
     expect(activity().getAttribute("aria-selected")).toBe("true");
-    const hide = host.querySelector<HTMLButtonElement>(".project-collaboration__head button")!;
+    const hide = host.querySelector<HTMLButtonElement>('[data-testid="project-collaboration-head"] button')!;
     await click(hide); await click(host.querySelector<HTMLButtonElement>(".project-collaboration__toggle")!);
     expect(host.querySelector<HTMLButtonElement>('[role="tab"][aria-controls$="-activity-panel"]')?.getAttribute("aria-selected")).toBe("true");
     await render(<ProjectCollaborationPanel projectId={projectId} openSignal={2} onOpenSignalConsumed={(signal) => consumed.push(signal)} />);
     expect(consumed).toEqual([1, 2]);
     expect(host.querySelector<HTMLButtonElement>('[role="tab"][aria-controls$="-discussion-panel"]')?.getAttribute("aria-selected")).toBe("true");
-    expect(host.querySelector(".subtask-checklist")).not.toBeNull();
+    expect(host.querySelector('[aria-label="Project checklist"]')).not.toBeNull();
   });
 
   it("keeps the standalone composer draft across an active comments refetch", async () => {
@@ -384,7 +384,7 @@ describe("ProjectCollaborationPanel", () => {
     const host = mount(); await render(<ProjectCollaborationPanel projectId={projectId} />);
     const panel = host.querySelector(".project-collaboration")!;
     const title = host.querySelector<HTMLButtonElement>(".subtask-checklist__title-trigger")!; await click(title);
-    const input = host.querySelector<HTMLInputElement>(".subtask-checklist__title")!; input.focus(); await act(async () => { input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await Promise.resolve(); });
+    const input = host.querySelector<HTMLInputElement>('[aria-label="Subtask title"]')!; input.focus(); await act(async () => { input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await Promise.resolve(); });
     expect(host.querySelector(".project-collaboration")).toBe(panel); expect(host.querySelector(".subtask-checklist__title-trigger")).not.toBeNull();
     const dispatchEscape = async (element: Element) => { const event = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }); await act(async () => { element.dispatchEvent(event); await Promise.resolve(); }); await waitForClose(); expect(event.defaultPrevented).toBe(true); expect(host.querySelector(".project-collaboration")).toBe(panel); };
     for (const label of ["Schedule for Call client", "Assignee for Call client", "Actions for Call client"] as const) {
@@ -409,7 +409,7 @@ describe("ProjectCollaborationPanel", () => {
     apiGetMock.mockImplementation((path: string) => path.includes("/comments?") ? new Promise((resolve) => { resolves.push(resolve); }) : path.includes("comment-read-marker") ? Promise.resolve(readState()) : Promise.resolve({ subtasks: [] }));
     const host = mount();
     await render(<ProjectCollaborationPanel projectId={projectId} openSignal={1} />);
-    expect([...host.querySelectorAll(".project-collaboration__state")].map((element) => element.textContent)).toContain("Loading comments…");
+    expect([...host.querySelectorAll('[role="status"]')].map((element) => element.textContent)).toContain("Loading comments…");
     for (const resolve of resolves) resolve(comments([])); await act(async () => { await Promise.resolve(); await Promise.resolve(); await new Promise<void>((resolve) => setTimeout(resolve, 0)); });
     expect(host.textContent).toContain("No comments yet.");
     await unmount(); host.remove();
@@ -423,14 +423,14 @@ describe("ProjectCollaborationPanel", () => {
     const consumed: number[] = [];
     const host = mount();
     await render(<ProjectCollaborationPanel projectId={projectId} openSignal={1} onOpenSignalConsumed={(signal) => consumed.push(signal)} />);
-    expect(consumed).toEqual([1]); expect(document.activeElement).toBe(host.querySelector(".project-collaboration__head button"));
+    expect(consumed).toEqual([1]); expect(document.activeElement).toBe(host.querySelector('[data-testid="project-collaboration-head"] button'));
     await render(<ProjectCollaborationPanel projectId={projectId} openSignal={2} onOpenSignalConsumed={(signal) => consumed.push(signal)} />);
-    expect(consumed).toEqual([1, 2]); expect(document.activeElement).toBe(host.querySelector(".project-collaboration__head button"));
-    await click(host.querySelector<HTMLButtonElement>(".project-collaboration__head button")!);
+    expect(consumed).toEqual([1, 2]); expect(document.activeElement).toBe(host.querySelector('[data-testid="project-collaboration-head"] button'));
+    await click(host.querySelector<HTMLButtonElement>('[data-testid="project-collaboration-head"] button')!);
     expect(host.querySelector(".project-collaboration")).toBeNull();
     await waitForTimer();
     await render(<ProjectCollaborationPanel projectId={projectId} openSignal={3} onOpenSignalConsumed={(signal) => consumed.push(signal)} />);
-    expect(host.querySelector(".project-collaboration")).not.toBeNull(); expect(consumed).toEqual([1, 2, 3]); expect(document.activeElement).toBe(host.querySelector(".project-collaboration__head button"));
+    expect(host.querySelector(".project-collaboration")).not.toBeNull(); expect(consumed).toEqual([1, 2, 3]); expect(document.activeElement).toBe(host.querySelector('[data-testid="project-collaboration-head"] button'));
   });
 
   it("only closes on Escape while panel focus owns an unprevented event", async () => {
@@ -446,7 +446,7 @@ describe("ProjectCollaborationPanel", () => {
     editor.addEventListener("keydown", (event) => event.preventDefault(), { once: true });
     await act(async () => { editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await Promise.resolve(); });
     expect(host.querySelector(".project-collaboration")).toBe(panel);
-    host.querySelector<HTMLButtonElement>(".project-collaboration__head button")!.focus(); await escape();
+    host.querySelector<HTMLButtonElement>('[data-testid="project-collaboration-head"] button')!.focus(); await escape();
     await waitForTimer();
     expect(host.querySelector(".project-collaboration")).toBeNull();
   });
@@ -454,9 +454,9 @@ describe("ProjectCollaborationPanel", () => {
   it("shows the compact capped unread count on the closed collaboration toggle", async () => {
     apiGetMock.mockImplementation((path) => path.includes("comment-read-marker") ? Promise.resolve({ ...readState(), unreadCount: 123 }) : path.includes("subtasks") ? Promise.resolve({ subtasks: [] }) : Promise.resolve(comments()));
     const host = mount(); await render(<ProjectCollaborationPanel projectId={projectId} />);
-    await click(host.querySelector<HTMLButtonElement>(".project-collaboration__head button")!); await flush();
+    await click(host.querySelector<HTMLButtonElement>('[data-testid="project-collaboration-head"] button')!); await flush();
     const toggle = host.querySelector<HTMLButtonElement>(".project-collaboration__toggle")!;
-    expect(toggle.querySelector(".project-collaboration__unread")?.textContent).toBe("99+"); expect(toggle.getAttribute("aria-label")).toContain("123 unread comments");
+    expect(toggle.querySelector('[data-testid="project-collaboration-unread"]')?.textContent).toBe("99+"); expect(toggle.getAttribute("aria-label")).toContain("123 unread comments");
   });
 
   it("keeps the panel open when Topbar user and notification menus consume Escape", async () => {
@@ -578,9 +578,9 @@ describe("ProjectCollaborationPanel", () => {
     const host = mount();
     await render(<ProjectCollaborationPanel projectId={projectId} openSignal={1} />);
 
-    const list = host.querySelector<HTMLElement>(".project-collaboration__comments")!;
+    const list = host.querySelector<HTMLElement>("[data-testid=discussion-comments]")!;
     const loadOlder = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Load older comments")!;
-    const composer = host.querySelector<HTMLElement>(".project-collaboration__comment-compose")!;
+    const composer = host.querySelector<HTMLElement>("[data-testid=discussion-composer]")!;
     expect([...list.querySelectorAll("article")].map((article) => article.querySelector("p")?.textContent)).toEqual(["Other comment", "My comment"]);
     expect(list.nextElementSibling).toBe(loadOlder); expect(loadOlder.nextElementSibling).toBe(composer);
 
@@ -656,8 +656,8 @@ describe("ProjectCollaborationPanel", () => {
     const host = mount();
     await render(<RerenderingPanel />);
     const initialCommentGets = pendingComments.length;
-    const anchor = host.querySelector<HTMLElement>(".project-collaboration__read-anchor")!;
-    const scroll = host.querySelector<HTMLElement>(".project-collaboration__scroll")!;
+    const anchor = host.querySelector<HTMLElement>("[data-testid=discussion-read-anchor]")!;
+    const scroll = host.querySelector<HTMLElement>('[data-testid="project-collaboration-scroll"]')!;
     Object.defineProperty(anchor, "getBoundingClientRect", { configurable: true, value: () => ({ left: 0, top: 0, right: 100, bottom: 20, width: 100, height: 20 }) });
     Object.defineProperty(scroll, "getBoundingClientRect", { configurable: true, value: () => ({ left: 0, top: 0, right: 100, bottom: 900, width: 100, height: 900 }) });
     callback?.([{ isIntersecting: true, intersectionRatio: 1, boundingClientRect: anchor.getBoundingClientRect() } as IntersectionObserverEntry] as IntersectionObserverEntry[], {} as IntersectionObserver);
@@ -698,8 +698,8 @@ describe("ProjectCollaborationPanel", () => {
     apiPatchMock.mockResolvedValueOnce({ ...readState(), marker: { throughCommentId: "strict-head", throughCreatedAt: "2026-08-25T00:00:00.000Z", updatedAt: "2026-08-25T00:00:01.000Z" }, latest: { commentId: "strict-head", createdAt: "2026-08-25T00:00:00.000Z" } });
     const host = mount();
     await render(<StrictMode><ProjectCollaborationPanel projectId={projectId} /></StrictMode>);
-    const anchor = host.querySelector<HTMLElement>(".project-collaboration__read-anchor")!;
-    const scroll = host.querySelector<HTMLElement>(".project-collaboration__scroll")!;
+    const anchor = host.querySelector<HTMLElement>("[data-testid=discussion-read-anchor]")!;
+    const scroll = host.querySelector<HTMLElement>('[data-testid="project-collaboration-scroll"]')!;
     Object.defineProperty(anchor, "getBoundingClientRect", { configurable: true, value: () => ({ left: 0, top: 0, right: 100, bottom: 20, width: 100, height: 20 }) });
     Object.defineProperty(scroll, "getBoundingClientRect", { configurable: true, value: () => ({ left: 0, top: 0, right: 100, bottom: 900, width: 100, height: 900 }) });
     callback?.([{ isIntersecting: true, intersectionRatio: 1, boundingClientRect: anchor.getBoundingClientRect() } as IntersectionObserverEntry] as IntersectionObserverEntry[], {} as IntersectionObserver);
