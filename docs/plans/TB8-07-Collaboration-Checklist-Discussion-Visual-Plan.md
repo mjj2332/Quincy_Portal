@@ -567,12 +567,19 @@ focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)]
 focus-visible:!outline-[var(--focus-ring)] focus-visible:!outline-offset-[-2px]
 ```
 
-Below, these two strings are referred to as **`RING_OUT`** and **`RING_IN`**. They are written out
-in full at every site the builder touches — they are not new exported constants, because the
-existing primitives (`buttonClasses`, `FIELD_BOX`, `TAB_BASE`, `CHECKBOX_INPUT`) already carry
-their own non-important outward rings that happen to match the base rule, and this release does
-not widen scope to edit them. `RING_OUT` is therefore only written where this plan specifies a
-*new* class string; `RING_IN` is written at **every** popover-internal control without exception.
+Below, these two strings are referred to as **`RING_OUT`** and **`RING_IN`**.
+
+**`RING_IN` is a real export** — slice 1 put it in `components/AnchoredPopover.tsx` beside
+`PANEL`, because it is used at roughly a dozen popover-internal controls and repeating four
+`!`-prefixed utilities that many times is how one of them ends up subtly different. Import it.
+
+**`RING_OUT` is not an export**; write those four utilities out at the sites that need them. It is
+deliberately not centralised: the existing primitives (`buttonClasses`, `FIELD_BOX`, `TAB_BASE`,
+`CHECKBOX_INPUT`) already carry their own non-important outward rings that happen to match the
+base rule exactly, so they need no change and this release does not widen scope to edit them.
+`RING_OUT` is therefore only written where this plan specifies a *new* class string — the
+checklist toggle, the title trigger, the add-item button. `RING_IN` goes on **every**
+popover-internal control without exception.
 
 ### 4.4 The unlayered-`app.css` trap
 
@@ -662,7 +669,7 @@ bar spanning both columns. That structure is right and is preserved verbatim; on
 | `__chevron` | a non-interactive `<span>`, so **not** an `IconButton`: `[font:var(--weight-regular)_var(--text-md)/1_var(--font-sans)] text-foreground-secondary` |
 | `<progress>` | `col-span-full w-full h-[5px] [accent-color:var(--accent)]` |
 | `__notice` | `min-h-0 [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-destructive` — `aria-live="polite"` kept |
-| `__panel` | `grid gap-[var(--space-3)]`, collapsed → `hidden` |
+| `__panel` | `grid gap-[var(--space-3)]`, collapsed → the **`hidden` utility class**, never the `hidden` attribute — see the note below the table |
 
 **§2.6's 17px:** `.subtask-checklist__progress-text` currently overrides `--type-h3` down to 17px,
 which makes "4 of 7 complete · 57%" the same weight as body text. It is the one number that says
