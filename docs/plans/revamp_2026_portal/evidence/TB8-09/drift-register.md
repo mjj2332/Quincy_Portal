@@ -4,10 +4,14 @@
 and its zoom frame, the markup layer and its toolbar, the filmstrip, compare mode, and the review
 side panel (decision, rating, label, annotation thread).
 
-**Owner of record today:** `portal/apps/web/src/components/Lightbox.tsx` (506 lines) for markup,
-`portal/apps/web/src/styles/app.css` lines **255–507** plus the responsive overrides at **622–690**
-and the compare grid at **753–755** for paint. One component, one CSS block — the surface can
-retire its legacy owner cleanly, which is why it ranks as a candidate at all.
+**Owner of record today:** `Lightbox.tsx` (506 lines) for markup; for paint, `app.css`
+**255–299 · 454–507 · 626–631 · 645 · 660–690 · 749–757**, plus **245–253** (the selection action
+bar, brought into scope by the plan's §9.3). **Corrected 2026-09-04** — this register originally
+said "255–507, one CSS block", wrong twice over: `300–453` belongs to unrelated surfaces, and six
+selectors sat outside the stated range entirely. See the plan's §0e, which also records that **an
+entire abandoned compare-mode implementation** is sitting in these ranges with zero consumers. One
+component, one *set* of ranges — the surface can still retire its legacy owner cleanly, which is
+why it ranks as a candidate.
 
 **Status:** static pass complete (2026-09-04), **corrected 2026-09-04** after Sol round 1 on
 the plan — see §4's header and C-2. The corrections are to this register's *verdicts and one
@@ -55,8 +59,10 @@ and `/thumb` when no rendition cache exists. A populated local lightbox is captu
 | Comments thread | 477–491 | `.thread`, `.cmt*`, `.annotation-note`, `.comment-reply` |
 | Filmstrip | 492–499 | `.strip`, `.strip.full`, `.strip__button`, `.strip__t` |
 | Compare mode | 500–507 | `.compare`, `.compare__pair/__cell/__tag/__pickbtn` |
-| Responsive overrides | 622–631 (≤1080), 659–690 (≤720) | band behaviour for all of the above |
-| Compare grid | 753–755 | `.viewer--compare` |
+| Responsive overrides | 626–631 (≤1080), 645, 660–690 (≤720) | band behaviour for all of the above |
+| Live compare grid | 753–755 | `.viewer--compare` and its two children |
+| Selection action bar | 245–253 | `.actionbar` + children, `.barbtn`, `.barbtn--solid` — in scope by the plan's §9.3 |
+| **Dead compare implementation** | 501–506, 645, 752, 756, 757, half of 750, plus 494 and 259 | Zero consumers — see the plan's §0e |
 
 The ≤720px block is **not** neglected — it already raises `.swatch`/`.wbtn` to 44px, handles
 `env(safe-area-inset-*)` on four properties, and converts the panel to a bottom sheet with a peek
@@ -137,34 +143,42 @@ settles `--signal-warm`'s replacement at the peek bar (K-1), which becomes
 
 ## 4. Touch targets
 
-**Corrected 2026-09-04 (Sol B6). This section originally treated 44px as the bar at every width.
-That is not this repo's contract and the claim was overstated.** The contract is `ICON_BUTTON`'s —
-**28px desktop, 44px at ≤720px** (`icon-button.tsx:19`), applied by every converged surface since
-TB8-06. Against WCAG, 44px is 2.5.5 (**AAA**); the AA bar is 2.5.8's **24px**. The table below
-keeps the original measurements, which were right, and states the verdict honestly.
+**This section's verdicts were wrong twice and are now settled** (Sol B6, then round 2). The
+*measurements* below were right throughout; only the bar they were judged against changed.
 
-Only two of the seven are true failures: **`.swatch` at 19px** (below even the 24px AA bar, at
-every width) and **`.strip__button` at 48×32 on phone** (below the repo's own 44px phone
-contract — and introduced by the phone override itself). The rest pass AA today and are raised to
-28/44 because convergence onto `ICON_BUTTON` gives that for free, not because they were failing.
+**The bar is this repo's own contract**, which is stricter than WCAG AA and is what every
+converged surface since TB8-06 has been held to:
 
-The ≤720px block raises `.swatch` and `.wbtn` to 44px. Nothing raises anything in the
-**721–1080px band** — still worth noting, since that band is where `.vpanel__collapse` is the
-drawer's only dismiss control, and any conversion must not shrink it below today's 36px.
+| | Glyph affordances | Text buttons |
+|---|---|---|
+| ≥721px | **28px** (`icon-button.tsx:19`) | **38px** (`button.tsx:24`) |
+| ≤720px | **44px** | **44px** |
 
-| # | Control | ≥721px | ≤720px | Note |
-|---|---|---|---|---|
+WCAG for reference: **2.5.5 (44×44) is AAA**, **2.5.8 (24×24) is AA**, and 2.5.8 carries a
+*spacing exception* — an undersized target passes if 24px circles centred on it do not overlap a
+neighbour's.
+
+**Five of the seven fail the contract**: `.swatch` on desktop, and `.labelpick`,
+`.starpick button`, `.strip__button` and `.comment-reply` on phone. The first correction said
+"only two", which understated it by measuring against AA instead; the original text overstated it
+by treating 44px as the bar everywhere. The plan's §0b carries the same framing.
+
+The ≤720px block already raises `.swatch` and `.wbtn` to 44px. Nothing raises anything in the
+**721–1080px band** — worth noting, since that is where `.vpanel__collapse` is the drawer's only
+dismiss control and no conversion may shrink it below today's 36px.
+
 | # | Control | ≥721px | ≤720px | Verdict |
 |---|---|---|---|---|
-| **T-1** | `.swatch` | **19 × 19** | 44 × 44 ✓ | **Real failure — WCAG 2.5.8 (24px AA), at every width.** The group's only one. `box-sizing: border-box` is global, so 19px is the whole target. |
-| **T-2** | `.wbtn` | 28 × 28 | 44 × 44 ✓ | Passes AA; meets the repo contract already. |
-| **T-3** | `.labelpick` | 26 × 26 | 26 × 26 | Passes AA. Below the repo's 44px phone contract. |
-| **T-4** | `.starpick button` | ≈26 × 26 | ≈26 × 26 | Passes AA. Below the repo's 44px phone contract. 22px glyph + 2px padding. |
-| **T-5** | `.strip__button` | 84 × 56 ✓ | **48 × 32** | **Real failure** — the phone override introduces it: height drops from a passing 56px to 32px. |
-| **T-6** | `.vpanel__collapse` | 36 × 36 | 44 × 44 ✓ | Passes AA. **Must not be reduced** — a bare `IconButton` would take it to 28px in the band where it is the drawer's only dismiss control. |
-| **T-7** | `.comment-reply` | inline text | inline text | Below the phone contract. Bare underlined inline text, no min box — same shape as TB8-08's `Edit`/`Delete` finding (20.5 × 24 there), and `buttonClasses("text")` alone **cannot** fix it: `px-0`, no `min-width`. |
+| **T-1** | `.swatch` | **19 × 19** | 44 × 44 ✓ | **Fails the repo's 28px desktop contract.** It does *not* fail WCAG 2.5.8 — six 19px targets with 6px gaps put centres 25px apart, clearing the spacing exception — and it does *not* fail "at every width": `app.css:689` already lifts it to 44 on phone. Both claims in this register's first correction were wrong. |
+| **T-2** | `.wbtn` | 28 × 28 ✓ | 44 × 44 ✓ | **Meets the contract already.** Converted for consistency, not to fix anything. |
+| **T-3** | `.labelpick` | 26 × 26 | **26 × 26** | **Fails the 44px phone contract.** Passes AA. |
+| **T-4** | `.starpick button` | ≈26 × 26 | **≈26 × 26** | **Fails the 44px phone contract.** Passes AA. 22px glyph + 2px padding. |
+| **T-5** | `.strip__button` | 84 × 56 ✓ | **48 × 32** | **Fails the 44px phone contract**, and the phone override is what introduced it — height drops from a passing 56px to 32px. |
+| **T-6** | `.vpanel__collapse` | 36 × 36 ✓ | 44 × 44 ✓ | Meets it. **Must not be reduced** — a bare `IconButton` would take it to 28px in the band where it is the drawer's only dismiss control. |
+| **T-7** | `.comment-reply` | inline text | inline text | **Fails the 44px phone contract.** Bare underlined inline text, no min box — same shape as TB8-08's `Edit`/`Delete` finding (20.5 × 24 there), and `buttonClasses("text")` alone **cannot** fix it: `px-0`, no `min-width`. |
 
-T-3, T-4 and T-7 sit below the repo's phone contract at **every** width, phone included.
+T-3, T-4 and T-7 sit below the phone contract; T-1 below the desktop one; T-5 is introduced by
+the phone override itself.
 
 ## 5. Tokens and one-owner violations
 
