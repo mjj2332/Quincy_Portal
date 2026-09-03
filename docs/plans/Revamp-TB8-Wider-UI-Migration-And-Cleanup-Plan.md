@@ -29,7 +29,8 @@ and pick the first surface to run through the pipeline above.
 3. Project Workspace rail/collection controls/states
 4. Remaining project/admin forms
 5. Notification bell/preferences/Admin delivery UI
-6. Board filters/card controls
+6. Board filters/card controls — **shipped as TB8-06, 2026-09-03** (the whole Kanban board; the
+   filters half was already converged by TB8-01)
 7. Collaboration/checklist/comments (fresh from TB6, low priority)
 8. Notice board (fresh from TB7, too new)
 9. Lightbox controls (only if evidence warrants)
