@@ -277,10 +277,10 @@ describe("ProjectCollaborationPanel", () => {
     expect(overlay.classList.contains("project-collaboration--overlay")).toBe(true);
     expect(overlay.firstElementChild).toBe(overlay.querySelector(".project-collaboration__head"));
     const scroll = overlay.querySelector<HTMLElement>(".project-collaboration__scroll")!;
-    expect(overlay.children[2]).toBe(scroll); expect(scroll.querySelector(".subtask-checklist")).not.toBeNull(); expect(scroll.querySelector(".project-collaboration__comment-compose")).not.toBeNull();
+    expect(overlay.children[2]).toBe(scroll); expect(scroll.querySelector('[aria-label="Project checklist"]')).not.toBeNull(); expect(scroll.querySelector(".project-collaboration__comment-compose")).not.toBeNull();
     await unmount(); host.remove(); const standalone = mount(); await render(<ProjectCollaborationPanel projectId={projectId} mode="standalone" />);
     const panel = standalone.querySelector<HTMLElement>(".project-collaboration")!;
-    expect(panel.classList.contains("project-collaboration--overlay")).toBe(false); expect(panel.querySelector(".project-collaboration__scroll")).toBeNull(); expect(panel.querySelector(".subtask-checklist")).not.toBeNull();
+    expect(panel.classList.contains("project-collaboration--overlay")).toBe(false); expect(panel.querySelector(".project-collaboration__scroll")).toBeNull(); expect(panel.querySelector('[aria-label="Project checklist"]')).not.toBeNull();
   });
 
   it("renders Discussion and Activity as persistent semantic tabs with roving keyboard focus", async () => {
@@ -362,7 +362,7 @@ describe("ProjectCollaborationPanel", () => {
     await render(<ProjectCollaborationPanel projectId={projectId} openSignal={2} onOpenSignalConsumed={(signal) => consumed.push(signal)} />);
     expect(consumed).toEqual([1, 2]);
     expect(host.querySelector<HTMLButtonElement>('[role="tab"][aria-controls$="-discussion-panel"]')?.getAttribute("aria-selected")).toBe("true");
-    expect(host.querySelector(".subtask-checklist")).not.toBeNull();
+    expect(host.querySelector('[aria-label="Project checklist"]')).not.toBeNull();
   });
 
   it("keeps the standalone composer draft across an active comments refetch", async () => {

@@ -875,9 +875,16 @@ an `AnchoredPopover`'s `overflow: auto` panel, where an outward ring clips (§4.
 
 `<form>` `grid gap-[var(--space-2)]`; title `<input>` → `<Input>`; controls row →
 `POPOVER_ACTIONS` with `<span className="flex-1" />` as the spacer (unchanged element, so the
-`max-[601px]:hidden` behaviour at `:964` is preserved as a utility). `__composer-trigger` →
-`<IconButton className="border-solid border-[length:var(--border-width-hair)] border-border">`,
-which is what `:955` meant by `opacity: 1; border: …` once the hover-reveal is gone.
+`max-[601px]:hidden` behaviour at `:964` is preserved as a utility). `__composer-trigger` → **`META_TRIGGER`** plus
+`border-solid border-[length:var(--border-width-hair)] border-border` — which is what `:955` meant
+by `opacity: 1; border: …` once the hover-reveal is gone.
+
+**`META_TRIGGER`, not `IconButton`.** An earlier draft of this line said `IconButton`; that is
+wrong for the same reason §6.4's toolbar correction is: the composer's schedule and assignee
+triggers hold a value chip (a schedule preview, an assignee's initials) exactly as the row's do,
+and `IconButton` is a fixed `w-[28px]`. The rule, stated once for the whole plan: **`ICON_BUTTON`
+is only for a button whose entire content is one glyph; anything that can hold a word takes
+`ICON_BUTTON_BASE + w-auto`; anything that can hold a value takes `META_TRIGGER`.**
 `__add-button`:
 
 ```
@@ -1276,7 +1283,8 @@ replacement.
 | 4 | 891, 892 | `.subtask-popover button/input:focus-visible` (the inward ring) | **R** — replaced by per-site `RING_IN` (§4.3). The `:891` comment explaining *why* the ring is inward moves into `AnchoredPopover.tsx` beside `PANEL`; the fact outlives the rule |
 | 4 | 901-903 | `__item`, `__item:hover/:focus-within`, `__summary` | **R**; `--done` / `--dragging` / `--popover-open` → **D** |
 | 4 | 904 | `__title-trigger` | **H** — live focus-restoration selector at `SubtaskChecklist.tsx:216` (§5.2) |
-| 4 | 905-920 | `__title`, the done-title rule, `__done`, the shared input rule at `:908`, `__due`, `__assignee`, `__grip`, `:active`, `[aria-disabled]`, `__metadata-trigger` (+ `--filled`, the hover group, the nested `__due`), `__overflow`, its hover group, `__item--dragging` — 16 rules | **R** |
+| 4 | 905-920 | `__title`, the done-title rule, `__done`, the shared 3-member input rule at `:908`, `__due`, `__assignee`, `__grip`, `:active`, `[aria-disabled]`, `__metadata-trigger` (+ `--filled`, the hover group, the nested `__due`), `__overflow`, its hover group, `__item--dragging` — 16 rules | **R** |
+| 4 | — | *(note)* `:908` is `.subtask-checklist__title, .subtask-checklist__composer input, .subtask-popover input` — **three selector members, one rule**. Its middle member goes dead the moment slice 3 converts the composer, and the other two die here. Slice 4 deletes the whole rule; there is nothing left to scope it to. Recorded because §8c check 3 would otherwise flag an orphaned member with no ledger row | **R** |
 | 4 | 921-932 | `__content`, `__content label`, `__endpoint`, `__endpoint legend`, `__fold`, `__fold legend`, `__fold label`, `__error`/`__conflict`, `__conflict`, `__conflict .button` — 9 rules | **R**, class name included; **no DOM test queries `.subtask-popover__content`** (§5.3) |
 | 4 | 933, 934 | `__actions`/`__composer-controls`, `__actions .button` (38px) | **R** — obsolete: `buttonClasses` BASE ships 38px and the ≤721px 44px |
 | 4 | 935-943 | the `@720` 44px block **and its 6-line cascade-ordering comment** | **R** — same reason; the lesson lives in `docs/lessons.md`, not in a rule that no longer exists |
@@ -1292,7 +1300,12 @@ replacement.
 | 7 | 213 | `.project-collaboration-summary .member em` | **R** — a scoped override whose scoping class this release deletes; it would otherwise dangle (§7.3) |
 | 7 | 717 | `.project-collaboration-summary__team` @720 | **R** |
 
-**128 rules retired**, across six slices: **28 / 21 / 43 / 11 / 1 / 24** for slices 2-7.
+**128 rules retired**, across six slices: **28 / 20 / 44 / 11 / 1 / 24** for slices 2-7.
+
+*(Corrected during the slice-3 build: the split was written 28/21/43/… on the assumption that
+slice 3 removes all three rules inside the `@media (max-width: 600px)` block. It removes only the
+two composer-only ones — §11a assigns the third to slice 4 — so one rule moves from slice 3 to
+slice 4. The **total is unchanged at 128**; only the boundary moved.)*
 
 Counted mechanically over the ranges above rather than by hand — a hand count in the previous
 revision said 86 and was wrong by a third. Two things a re-counter must get right, both of which
@@ -1463,8 +1476,8 @@ the slice, not deferred to slice 8; §8a is the authority on which.
 |---|---|---|---|
 | 1 | `ui/icon-button.tsx` (new: `ICON_BUTTON_BASE`, `ICON_BUTTON`, `META_TRIGGER`, `IconButton`); `META_TEXT` exported from `ui/eyebrow.tsx`; `POPOVER_CONTENT`/`POPOVER_LABEL`/`POPOVER_ACTIONS` exported from `AnchoredPopover.tsx`; `Notice` gains the `caution` tone; `--color-border-strong` added to `tokens/tailwind.css` | none | §4 |
 | 2 | `MentionAutocomplete.tsx`; `RichTextEditor.tsx` chrome; the three `.rich-text` token edits | 428-442, 447-450, 455-463 — **28 rules** | §4.6, §6.3, §6.4 |
-| 3 | `SubtaskChecklist.tsx` — section, head, toggle, progress, panel, notice, **composer**, add-button, empty/loading states | 886-890, 893-900, 953-957, and **`:964`, `:965` only** from the `@600` block — **21 rules** | §5.1, §5.4, **and §5.3's assignee/schedule specs for the `compact` branch only** |
-| 4 | `SubtaskChecklist.tsx` — `SortableSubtaskRow`, and the non-`compact` branches of `ScheduleControl`/`AssigneeControl`/`ActionsControl` | 891-892, 901-952, and the **`@600` block's remaining rule `:963` plus the wrapper** — **43 rules** | §5.2, §5.3 |
+| 3 | `SubtaskChecklist.tsx` — section, head, toggle, progress, panel, notice, **composer**, add-button, empty/loading states | 886-890, 893-900, 953-957, and **`:964`, `:965` only** from the `@600` block — **20 rules** | §5.1, §5.4, **and §5.3's assignee/schedule specs for the `compact` branch only** |
+| 4 | `SubtaskChecklist.tsx` — `SortableSubtaskRow`, and the non-`compact` branches of `ScheduleControl`/`AssigneeControl`/`ActionsControl` | 891-892, 901-952, and the **`@600` block's remaining rule `:963` plus the now-empty wrapper** — **44 rules** | §5.2, §5.3 |
 | 5 | `ProjectDiscussionThread.tsx` | 851-861 — **11 rules** | §6.1 |
 | 6 | `ProjectActivityView.tsx` | 879 — **1 rule** | §6.2 |
 | 7 | `ProjectCollaborationPanel.tsx`; `ProjectWorkspace.tsx`'s `CollaborationOnly` and `CollaborationOnlyUnavailable` | 213, 717, 844, 847-850, 862-867, 872-885 — **24 rules** | §7 |
@@ -1500,6 +1513,19 @@ Deleting the whole `@media (max-width: 600px)` block in slice 3, as the previous
 range implied, would have removed the popover-action wrapping a slice before slice 4 installs its
 replacement — a real, if brief, regression. Slice 3 deletes two rules from inside the block and
 leaves it standing; slice 4 deletes the last rule and the now-empty wrapper.
+
+**A second one-slice gap, found during the slice-3 build and recorded so slice 4's builder and
+the slice-8 audit do not read it as an oversight.** The 6-selector `:focus-visible` group at
+`:890` is deleted by slice 3, but only two of its six members (`__toggle`, `__add-button`) are
+slice 3's. The other four — `__title-trigger`, `__overflow`, `__metadata-trigger`, `__grip` — are
+row elements that do not receive their own `RING_OUT` until slice 4. So between slice 3 and slice
+4 those four have **no focus ring**.
+
+This is accepted, not a defect: it is an intra-branch gap between two sequential slices with no
+deploy between them, exactly like the `:933`/`:963` overlap above. It is called out because the
+ledger's own justification for deleting `:890` in slice 3 ("every member now carries its own
+ring") is only true *after* slice 4. **Slice 4 must therefore verify all six rings, not just its
+own four** — and the visual gate's §10 item 8 checks every one regardless.
 
 Everything else is disjoint: slice 3 owns `886-890`, `893-900`, `953-957`; slice 4 owns
 `891-892`, `901-952`. No selector appears in both lists.

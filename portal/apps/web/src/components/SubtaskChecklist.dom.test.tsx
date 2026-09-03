@@ -48,7 +48,7 @@ afterEach(async () => { await act(async () => root?.unmount()); root = null; doc
 
 describe("SubtaskChecklist", () => {
   it("preserves accordion/progress, literal schedule badges, and compact title edit/Escape behavior", async () => {
-    const host = mount(); await render(); const toggle = host.querySelector<HTMLButtonElement>(".subtask-checklist__toggle")!;
+    const host = mount(); await render(); const toggle = [...host.querySelectorAll<HTMLButtonElement>("button[aria-expanded]")].find((button) => button.textContent?.includes("Checklist"))!;
     expect(toggle.textContent).toContain("0 of 2 complete · 0%"); expect(toggle.querySelector("progress")?.max).toBe(2); expect(item(host, "Call client").querySelector<HTMLButtonElement>('[aria-label="Schedule for Call client"]')?.textContent).toContain("Due 30 May");
     expect(host.querySelector("select")).toBeNull(); expect([...host.querySelectorAll("button")].some((button) => button.textContent?.startsWith("Move "))).toBe(false);
     const title = item(host, "Call client").querySelector<HTMLButtonElement>(".subtask-checklist__title-trigger")!; await click(title); const input = item(host, "Call client").querySelector<HTMLInputElement>(".subtask-checklist__title")!; await typeInto(input, "Discarded"); const escape = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }); await act(async () => input.dispatchEvent(escape));
