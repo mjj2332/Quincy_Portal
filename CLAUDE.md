@@ -106,15 +106,15 @@ up by `npm run test --workspaces` — no separate invocation needed for it.
   default.** Agy took the testing role over from Luna 2026-08-27. Agy drives a human-authenticated
   dedicated Chrome over CDP (`docs/subagents/agy-cli.md` Option A) and never runs Google OAuth
   itself, on `mjj2332@gmail.com`, the disposable QA account (`tsseotsseo@gmail.com`), or anywhere.
-  If a task needs an authenticated session that Chrome doesn't already have, Agy stops and reports
-  it — it never works around the gap, proceeds unauthenticated, forges a session, or reads
-  `BETTER_AUTH_SECRET`. The sanctioned fallback when Agy is blocked is the orchestrating session
-  driving local-dev QA in its own Browser pane after a human sign-in. **Once signed in as Admin,
-  use admin impersonation (`docs/Admin-Impersonation.md`) to test as a Photographer/Editor instead
-  of a second sign-in** — one sign-in covers every role. YOLO-mode additionally permits real writes
-  during a smoke test, but only while impersonating the disposable QA test account, which has no
-  real memberships; danger-mode alone stays passive-only. Open-ended bug diagnosis that outruns Agy
-  escalates to Luna (`codex exec`, xhigh).
+  If a task needs an authenticated session that Chrome doesn't already have, Agy self-mints one and
+  says so in its report (`docs/Subagent-Orchestration.md` §2.12); a self-minted production session
+  is passive, so production writes keep the impersonation path. The sanctioned fallback when Agy
+  is blocked is the orchestrating session driving local-dev QA in its own Browser pane after a
+  human sign-in. **Once signed in as Admin, use admin impersonation (`docs/Admin-Impersonation.md`)
+  to test as a Photographer/Editor instead of a second sign-in** — one sign-in covers every role.
+  YOLO-mode additionally permits real writes during a smoke test, but only while impersonating the
+  disposable QA test account, which has no real memberships; danger-mode alone stays passive-only.
+  Open-ended bug diagnosis that outruns Agy escalates to Luna (`codex exec`, xhigh).
 
 - **PR #44 AutoHDR preservation:** direct send is Admin-only and send-only, distinct from Stage
   movement; credentials remain on the background Worker. Later phases must not revive direct-path

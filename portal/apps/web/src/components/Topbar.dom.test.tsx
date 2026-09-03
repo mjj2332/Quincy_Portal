@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -349,5 +352,70 @@ describe("Topbar mobile menu", () => {
     const signOutButton = [...document.querySelectorAll("button")].find((button) => button.textContent === "Sign out")!;
     await act(async () => { signOutButton.click(); await Promise.resolve(); await Promise.resolve(); });
     expect(signOutMock).toHaveBeenCalledOnce();
+  });
+});
+
+describe("Topbar shell convergence (§9.3)", () => {
+  it("gives the brand link a 44px phone touch target and no legacy button class", async () => {
+    const host = document.body.firstElementChild as HTMLElement;
+    await render(host);
+    const brand = host.querySelector<HTMLAnchorElement>(".topbar__brand")!;
+    expect(brand.classList.contains("max-[721px]:min-h-[44px]")).toBe(true);
+    expect(brand.classList.contains("button--text")).toBe(false);
+  });
+
+  it("collapses the desktop cluster in two independent stages (1007px, then 771px), not one", async () => {
+    const host = document.body.firstElementChild as HTMLElement;
+    await render(host);
+
+    const identity = host.querySelector(".topbar__identity")!;
+    const avatar = host.querySelector('[data-slot="avatar"]')!;
+    expect(identity.classList.contains("max-[1007px]:hidden")).toBe(true);
+    expect(avatar.classList.contains("max-[1007px]:hidden")).toBe(true);
+    // The retired `.avatar` class must not have come back on either element.
+    expect(avatar.classList.contains("avatar")).toBe(false);
+    expect(identity.classList.contains("avatar")).toBe(false);
+
+    const prefsLink = host.querySelector<HTMLAnchorElement>('a[href="/settings/notifications"]')!;
+    const signOutButton = [...host.querySelectorAll("button")].find((button) => button.textContent === "Sign out")!;
+    expect(prefsLink.classList.contains("max-[771px]:hidden")).toBe(true);
+    expect(prefsLink.classList.contains("button--text")).toBe(false);
+    expect(signOutButton.classList.contains("max-[771px]:hidden")).toBe(true);
+    expect(signOutButton.classList.contains("button--text")).toBe(false);
+
+    const menuTrigger = host.querySelector(".topbar__menu-trigger")!;
+    expect(menuTrigger.classList.contains("hidden")).toBe(true);
+    expect(menuTrigger.classList.contains("max-[771px]:inline-flex")).toBe(true);
+    expect(menuTrigger.classList.contains("min-h-[44px]")).toBe(true);
+    expect(menuTrigger.classList.contains("ml-auto")).toBe(true);
+  });
+
+  it("supplies the notification trigger icon size and wrapper positioning app.css no longer does", async () => {
+    const host = document.body.firstElementChild as HTMLElement;
+    await render(host);
+    const trigger = host.querySelector(".topbar__notification-trigger")!;
+    expect(trigger.classList.contains("[&_svg]:size-[19px]")).toBe(true);
+    const wrapper = host.querySelector(".topbar__notifications")!;
+    expect(wrapper.classList.contains("relative")).toBe(true);
+  });
+
+  it("keeps the mobile menu panel free of any display-setting utility, and app.css free of any rule targeting it (defect B4 regression guard)", async () => {
+    const host = document.body.firstElementChild as HTMLElement;
+    await render(host);
+    await click(host.querySelector<HTMLButtonElement>('[aria-label="Open account and navigation menu"]')!);
+    const panel = document.querySelector(".topbar__mobile-menu")!;
+    expect(panel).not.toBeNull();
+    // Structural guard only (§9.3): happy-dom applies no stylesheet and computes no layout, so
+    // this cannot prove the panel paints — that is §10.2 item 14's job. This proves the panel
+    // carries no class that would hide it, and that no CSS rule exists that could.
+    expect(panel.classList.contains("hidden")).toBe(false);
+    expect([...panel.classList].some((cls) => /(?:^|:)(?:hidden|block|flex|grid|inline|inline-flex|inline-grid|table|contents|none)$/.test(cls))).toBe(false);
+
+    // happy-dom's global `URL` does not resolve a relative path against a `file:` base
+    // correctly (it substitutes its own emulated page location), so the path is built with
+    // `node:path` against this test file's own absolute path instead of `new URL(rel, base)`.
+    const appCssPath = join(dirname(fileURLToPath(import.meta.url)), "..", "styles", "app.css");
+    const appCss = readFileSync(appCssPath, "utf8");
+    expect(appCss).not.toMatch(/\.topbar__mobile-menu\b/);
   });
 });

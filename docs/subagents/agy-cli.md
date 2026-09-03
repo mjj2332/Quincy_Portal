@@ -26,12 +26,14 @@ agy --mode plan --effort high --sandbox --dangerously-skip-permissions \
 - `--sandbox` — OS-level terminal restrictions. A planning-only safety layer; see the build
   section, where it must be dropped.
 - `--effort low|medium|high` — use `high` for real planning work.
-- `--model <name>` — optional. `agy models` lists the account roster (2026-08-28:
-  `gemini-3.7-flash-{high,medium,low}`, `gemini-3.6-flash-{high,medium,low}`,
-  `gemini-3.5-flash-{high,medium,low}`, `gemini-3.1-pro-{high,low}`, `claude-sonnet-4-6`,
-  `claude-opus-4-6-thinking`, `gpt-oss-120b-medium`). Default is `gemini-3.7-flash-high`; pass it
-  explicitly rather than relying on the default, but don't invent a preference for a different
-  underlying model unasked.
+- `--model <name>` — optional. `agy models` lists the account roster (verified 2026-09-03:
+  `gemini-3.8-flash-{high,medium,low}`, `gemini-3.7-flash-{high,medium,low}`,
+  `gemini-3.6-flash-{high,medium,low}`, `gemini-3.1-pro-{high,low}`, `claude-sonnet-4-6`,
+  `claude-opus-4-6-thinking`, `gpt-oss-120b-medium` — `gemini-3.5-*` has since dropped off).
+  Default is `gemini-3.8-flash-high`; pass it explicitly rather than relying on the default, but
+  don't invent a preference for a different underlying model unasked. **Re-run `agy models` before
+  assuming this list is current** — the roster shifts under the account without notice, and a
+  retired id fails the run.
 - `--print-timeout <duration>` — default `5m0s`; `10m0s` handled a real cross-system
   architecture plan. On the print-mode shutdown hang (below) this also bounds dead wait time, so
   don't set it lavishly wide on a run you aren't watching.
@@ -45,7 +47,7 @@ agy --mode plan --effort low -p "reply with exactly: agy reachable"
 ## Building (`--mode accept-edits`)
 
 ```bash
-agy --model gemini-3.6-flash-high --mode accept-edits --effort high \
+agy --model gemini-3.8-flash-high --mode accept-edits --effort high \
   --dangerously-skip-permissions \
   --add-dir "<absolute repo root>" \
   --print-timeout 10m0s \
@@ -133,8 +135,7 @@ text — the DB does.
 `agy` v1.1.22 lists native `browser_*` tools (`open_browser_url`, `read_browser_page`,
 `browser_click_element`, `execute_browser_javascript`, …) alongside `read_url_content` (static
 HTTP, no JS) and `search_web` — but they are untested here for a human-authenticated Quincy
-session, and forging the better-auth cookie stays §6-forbidden. The verified path is driving a
-real Chrome through the
+session. The verified path is driving a real Chrome through the
 [`chrome-devtools-mcp`](https://github.com/ChromeDevTools/chrome-devtools-mcp) MCP server.
 
 Tools exposed (~29): `navigate_page`, `new_page`, `select_page`, `list_pages`, `close_page`,
@@ -154,8 +155,8 @@ actually works reliably.
 - **`--mode plan` does not execute tools** — it only drafts a plan and waits for a "Proceed"
   click. Use **`--mode accept-edits`** (the build invocation shape; `--add-dir` only matters if
   the task also writes repo files).
-- **Model and effort must agree.** `--model gemini-3.7-flash-high` (current default; `3.6` and
-  `3.5` also on the roster) rejects `--effort medium`/`low` with `invalid model selection …
+- **Model and effort must agree.** `--model gemini-3.8-flash-high` (current default; `3.7` and
+  `3.6` also on the roster) rejects `--effort medium`/`low` with `invalid model selection …
   conflicts with --effort` — the tier is baked into the model id, so always pass `--effort high`
   with a `*-high` model.
 - **Launch through the harness (`Bash` `run_in_background: true`).** The prompt travels as a
@@ -201,7 +202,7 @@ agy mcp list
 
 # 4. run tasks — harness-backgrounded (Bash run_in_background: true), -p kept last,
 #    --print-timeout sized to the task (10m0s+ for a QA matrix)
-agy --model gemini-3.7-flash-high --mode accept-edits --effort high \
+agy --model gemini-3.8-flash-high --mode accept-edits --effort high \
   --dangerously-skip-permissions --print-timeout 30m0s \
   -p "$(cat "$SCRATCH/task.md")" > report.md 2> run.log
 ```
@@ -228,7 +229,7 @@ session cookie lasts ~7 days; re-sign-in is one click in the same window.
 
 ```bash
 agy mcp add chrome-devtools npx -y chrome-devtools-mcp@latest
-agy --model gemini-3.7-flash-high --mode accept-edits --effort high \
+agy --model gemini-3.8-flash-high --mode accept-edits --effort high \
   --dangerously-skip-permissions --print-timeout 9m0s \
   -p "Do not write files or draft a plan. Use the chrome-devtools MCP tools now: navigate_page
       to <url>, take_snapshot, report ..." > report.md 2> run.log
@@ -240,8 +241,8 @@ Smoke test (navigate `example.com` → `take_snapshot` → report `h1`/`title`) 
 - Browser is persistent by default (`~/.cache/chrome-devtools-mcp/chrome-profile`, `--isolated`
   is false) but **logged into nothing**. Fine for public sites, `prototype.`/marketing pages,
   Lighthouse/perf audits, unauthenticated smoke checks. Does **not** close the Quincy local-auth
-  gap — and forging the better-auth cookie stays the
-  [Subagent-Orchestration.md](../Subagent-Orchestration.md) §6-forbidden move.
+  gap on its own — to reach an authenticated page here, self-mint a session and disclose it
+  ([Subagent-Orchestration.md](../Subagent-Orchestration.md) §2.12).
 - Coordinating a human sign-in *inside* one non-interactive `-p` turn is fragile — that's what
   Option A exists for.
 

@@ -42,6 +42,27 @@ mechanical review. This lane keeps Sol for what it's actually good at — scope 
    focus rings, anything that does not match the plan's stated intent. Luna does **not** judge
    whether a design is good; it has no more taste than Sol. Prod stays passive-only; mutations go
    to local dev. Luna never runs Google OAuth itself — if a session is missing it stops and says so.
+
+   **How Luna actually reaches Chrome** (established 2026-09-03, TB8-05 — the decision above named
+   the router but not the mechanism, and there wasn't one written down). Attach
+   `chrome-devtools-mcp` to the same human-authenticated Chrome Agy uses, over CDP on port 9333,
+   passed per-run with `-c` so nothing in the user's codex config changes:
+
+   ```
+   codex exec --dangerously-bypass-approvals-and-sandbox -m gpt-5.6-luna \
+     -c model_reasoning_effort=xhigh \
+     -c 'mcp_servers.chrome_devtools={command="npx",args=["-y","chrome-devtools-mcp@latest",\
+         "--browserUrl=http://127.0.0.1:9333"],startup_timeout_sec=180}' \
+     --output-last-message <report> < <prompt>
+   ```
+
+   The unsandboxed flag is **required, not a convenience**: under a sandbox, `list_pages` works but
+   `evaluate_script` returns *"requires approval, which is unavailable"*, and every measurement in
+   a browser pass is an `evaluate_script`. `-c approval_policy="never"` does not lift it. This mode
+   is owner-authorized and governed by `Subagent-Orchestration.md` §2.11 — its restriction block
+   goes in **every** such prompt, and the orchestrating session snapshots the repo (`git status`,
+   `git rev-parse HEAD`, a `shasum` manifest) before the spawn and diffs it after, because
+   read-only-on-the-repo is the one restriction the prompt cannot enforce on itself.
 9. **Opus visual/taste review — the last gate, and this session's own.** Open the rendering in the
    Browser pane and compare it against the plan's *intent*, not just the diff and not just Luna's
    report. Luna's findings are input, not a verdict: verify them, and look for what it could not
