@@ -1,8 +1,8 @@
 # TB8-08 — Staff Notice Board: Visual Plan
 
-**Status: REVISED after Sol round 1, not yet built.** Sol returned 10 findings (7 blocking); all
-10 were independently verified against the repo and **all 10 were upheld** — see §0. Round 2 of 2
-remains available. Ranking candidate **#8** in
+**Status: REVIEWED (both Sol rounds), READY TO BUILD, not yet built.** Sol returned 10 findings in
+round 1 (7 blocking) and 5 in round 2 (3 blocking). **All 15 were independently verified against the
+repo and all 15 were upheld** — see §0. The ≤2-round cap is now spent. Ranking candidate **#8** in
 `Revamp-TB8-Wider-UI-Migration-And-Cleanup-Plan.md` ("Notice board"). Branch
 `tb8-08-notice-board`, to be cut from `main` at `c025fbb` (TB8-07 shipped).
 
@@ -12,7 +12,7 @@ final visual gate. Matched-evidence viewports stay TB1's: `1440×900`, `1024×76
 
 ---
 
-## 0. What Sol round 1 changed, and what I got wrong
+## 0. What the two Sol rounds changed, and what I got wrong
 
 Ten findings, seven blocking. I verified each against the repo before acting. **All ten held.**
 Four of them were the draft being outright wrong, not merely thin:
@@ -32,6 +32,21 @@ Four of them were the draft being outright wrong, not merely thin:
 
 **The one thing I found that Sol did not:** a wrap defect at 480px with a long author name, where
 `Delete` orphans onto a second line at the far left. Measured after the draft, recorded as §2.1b.
+
+### Round 2 — five findings, three blocking, all upheld
+
+| # | Finding | Verified how | Outcome |
+|---|---|---|---|
+| 1 | §6 counted only class selectors and **missed 12 `[aria-label="New notice"]` assertions** that §5.2's badge change breaks | Counted the selector form specifically: **4 in dom, 8 in freshness**, exactly Sol's split | **Upheld.** Total migration is **61 sites, not 49**. Also replaced my non-actionable "scoped button-text lookup" with explicit `data-slot` hooks. |
+| 2 | Retiring the block drops `.notice-board__post > .rich-text { margin-top: 8px }` (`app.css:391`) with no replacement — content would render flush against the header | Read the rule; confirmed §5.3's markup omitted it and the article is not a grid | **Upheld.** `RichTextContent` now carries `className="mt-[var(--space-2)]"`. |
+| 3 | The edit composer was specified as the create composer "but instead" — leaving the winner to composition and emission order | Read; `.px-0` is emitted before `.px-[var(--space-5)]` | **Upheld.** Both composers are now separate complete strings, with a standing rule against "base plus overrides" in §5.4. |
+| 4 | `cn()` **silently discards** the bare `focus-visible:!outline` from `RING` as conflicting with the `-[length:…]` utility | Ran the real `cn()`; then read the built CSS | **Upheld** as an accuracy fix → `!outline-solid`. **No live defect**, here or in TB8-07's shipped `ICON_BUTTON_BASE`: the length utility already emits `outline-style:…!important`. |
+| 5 | §7's viewport list and criterion 1 disagreed (720 missing), and "both composer buttons" is three | Read; `Post notice` / `Cancel` / `Save` | **Upheld.** Five viewports; criterion 9 corrected. |
+
+Sol also confirmed, unprompted, three things I had asked about and resolved myself: `ACTION_SIZING`
+belongs at the call site rather than in `button.tsx` (the compact `text` variant is intentional
+across 21 call sites), `hidden` preserves the mounted anchor and the freshness gating, and the
+author shorthand really is `--type-eyebrow`.
 
 ---
 
@@ -321,11 +336,21 @@ are literal. Where a class carries `!`, the `!` is load-bearing and stated why.
   `outline` **shorthand**, which resets `outline-offset`. **Every focus-ring utility in this
   release must be `!`-prefixed**, exactly as `ICON_BUTTON_BASE` does.
 
-Shared constant, defined once at the top of `NoticeBoard.tsx`:
+Shared constant, defined once at the top of `NoticeBoard.tsx`.
+
+> **Why `!outline-solid` and not `!outline`.** Sol r2 #4, verified by running the real `cn()`: a
+> bare `focus-visible:!outline` is **silently dropped by twMerge** as conflicting with
+> `focus-visible:!outline-[length:…]`. Nothing breaks visually, because the length utility emits
+> `outline-style:var(--tw-outline-style)!important` alongside the width — confirmed by reading the
+> built CSS — **so TB8-07's shipped `ICON_BUTTON_BASE`, which has the same bare `!outline`, is not
+> defective either.** But the class list is not what it claims to be, and a future reader would
+> reasonably assume all four survive. `!outline-solid` makes all four survive unambiguously.
 
 ```tsx
 const RING =
-  "focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] " +
+  // `!outline-solid`, not `!outline`: `cn()` is twMerge, and it discards a bare
+  // `focus-visible:!outline` as conflicting with the `-[length:…]` utility (Sol r2 #4, verified).
+  "focus-visible:!outline-solid focus-visible:!outline-[length:var(--border-width-bold)] " +
   "focus-visible:!outline-[var(--focus-ring)] focus-visible:!outline-offset-2";
 ```
 
@@ -379,7 +404,15 @@ action row placed **after the rendered content**, matching `ProjectDiscussionThr
     <time dateTime={post.createdAt} className={META_TEXT}>{relativeTime(post.createdAt)}</time>
     {post.editedAt && <span title={post.editedAt} className={META_TEXT}>edited</span>}
   </header>
-  {editingId === post.id ? renderEditComposer(post.id) : <RichTextContent content={post.content} />}
+  {editingId === post.id
+    ? renderEditComposer(post.id)
+    /* `mt-[var(--space-2)]` replaces the retired `.notice-board__post > .rich-text { margin-top: 8px }`
+       (app.css:391). The article is not a grid, and the first rich-text child has no margin of its
+       own, so without this the content renders flush against the header (Sol r2 #2).
+       `RichTextContent` takes `className` and appends it to `rich-text` by plain string
+       concatenation — no `cn()`, so no twMerge — which is fine here: `mt-` conflicts with nothing
+       in `.rich-text`. */
+    : <RichTextContent content={post.content} className="mt-[var(--space-2)]" />}
   {post.authorId === currentUserId && (
     <div className="flex justify-end gap-[var(--space-3)] mt-[var(--space-2)]">
       <button type="button" className={EDIT_ACTION} onClick={…}>Edit</button>
@@ -433,13 +466,21 @@ short label like "Edit", instead of relying on `min-w` alone to stretch an unpad
 
 | Element | Classes |
 |---|---|
-| composer `<form>` / edit composer `<div>` | `grid gap-[var(--space-3)] px-[var(--space-5)] py-[var(--space-4)]`; the **edit** variant instead `pt-[var(--space-4)] px-0 pb-0` (mirrors the retired `padding: var(--space-4) 0 0`) |
+| create composer `<form>` | `grid gap-[var(--space-3)] px-[var(--space-5)] py-[var(--space-4)]` |
+| edit composer `<div>` | `grid gap-[var(--space-3)] pt-[var(--space-4)] px-0 pb-0` — **a separate complete string, not the create string plus overrides** (mirrors the retired `padding: var(--space-4) 0 0`) |
 | composer foot | `flex flex-wrap items-center justify-between gap-[var(--space-3)]` |
-| mention hint | `<span className={cn(META_TEXT, "!normal-case")}>` + `flex-[1_1_12rem] min-w-0` — **`!normal-case` is mandatory** (§2.2, Sol #5) |
+| mention hint | exactly `<span className={cn(META_TEXT, "!normal-case", "flex-[1_1_12rem] min-w-0")}>` — **`!normal-case` is mandatory** (§2.2, Sol r1 #5) |
 | error | `<Notice tone="critical" role="alert">` — `Notice` does **not** inject a role, so `role="alert"` must be passed explicitly or the announcement is lost |
 | changed-target message | `<Notice tone="caution" role="status">` — same reasoning |
 | Post notice / Save | `buttonClasses("primary")` |
 | Cancel | `buttonClasses("secondary")` |
+
+> **No "base plus overrides" anywhere in this table.** Sol r2 #3: writing the edit composer as the
+> create composer "but with `px-0`" leaves the winner to whichever the builder composes and, absent
+> `cn()`, to Tailwind's emission order — `.px-0` is emitted *before* `.px-[var(--space-5)]`, so the
+> padding the edit composer is supposed to drop would come back. Each row above is a complete,
+> standalone string. Compose with `cn()` only to add call-site classes, never to cancel one from
+> this table.
 
 ### 5.5 States, in full
 
@@ -511,7 +552,9 @@ with its `htmlFor`, and `<time dateTime>` as a real `<time>`.
 `NoticeBoard.dom.test.tsx` (470), `NoticeBoard.freshness.dom.test.tsx` (702),
 `Dashboard-notice-board.dom.test.tsx` (46), `RichTextByteGuard.dom.test.tsx` (57).
 
-**49 `.notice-board__*` occurrences across 6 classes.** (The draft said 48; that came from `grep
+**61 selector sites in total**, in two groups the first draft counted as one:
+
+**Group A — 49 `.notice-board__*` occurrences across 6 classes.** (The draft said 48; that came from `grep
 -c`, which counts *lines*, and one line carries two.) Per-file, verified:
 
 | Class | dom | freshness | byte-guard | total |
@@ -523,7 +566,16 @@ with its `htmlFor`, and `<time dateTime>` as a real `<time>`.
 | `__delete` | 2 | 2 | 0 | 4 |
 | `__composer` | 0 | 3 | 0 | 3 |
 
-`Dashboard-notice-board.dom.test.tsx` has **zero** and is safe.
+**Group B — 12 `[aria-label="New notice"]` selector assertions**, which §6 originally missed
+entirely because it only counted class selectors (Sol r2 #1). Verified: **4 in
+`NoticeBoard.dom.test.tsx`, 8 in `NoticeBoard.freshness.dom.test.tsx`.** §5.2's badge change
+**removes that attribute**, so all 12 fail unless migrated in the same slice.
+
+(Careful when counting these: a bare `grep -c "New notice"` returns 5 and 10, because both files
+also carry a *post-body fixture* whose text is the string "New notice". Only the
+`[aria-label="New notice"]` selector form counts.)
+
+`Dashboard-notice-board.dom.test.tsx` has **zero** of either group and is safe.
 
 **Sol's #7, upheld and adopted: delete none of these.** None of the four files contains
 `getComputedStyle`, `classList`, `toHaveClass`, or a class-attribute assertion — every occurrence is
@@ -542,14 +594,24 @@ My draft's "prefer accessible-name selectors" was **not actionable** — these a
 | `.notice-board__post` | `[data-slot="notice-board-post"]` |
 | `.notice-board__composer` | `[data-slot="notice-board-composer"]` |
 | `.notice-board__edit-composer` | `[data-slot="notice-board-edit-composer"]` |
-| `.notice-board__edit` / `__delete` | scoped button-text lookup within a post |
+| `.notice-board__edit` | `[data-slot="notice-board-edit"]` |
+| `.notice-board__delete` | `[data-slot="notice-board-delete"]` |
+| `[aria-label="New notice"]` | `[data-slot="notice-board-unread-indicator"]` on the `sr-only` span in §5.2 |
+
+The draft said "scoped button-text lookup" for Edit/Delete. Sol r2 #1 is right that this is not an
+implementation prescription — and since these are plain `querySelector` tests, a text lookup would
+need a hand-written helper. **Explicit `data-slot` attributes instead**, on the two action buttons
+and on the unread indicator, so every one of the 61 sites has an exact one-for-one replacement and
+no test needs new machinery.
 
 ---
 
 ## 7. Acceptance criteria
 
-Measured at 1440×900, 1024×768 and 390×844, on a board with at least one own-authored notice, **and
-once more at 480×900 with a ≥40-character author name** (§2.1b).
+Measured at **1440×900, 1024×768, 720×900, 480×900 and 390×844** — five viewports, on a board with
+at least one own-authored notice. 720 is required because criterion 1's breakpoint contract lives
+at `max-[721px]`; 480 because that is where §2.1b's orphaning appears, and that pass uses a
+≥40-character author name.
 
 1. `Edit` and `Delete` each measure **≥44 × 44 at 390 and 720**, and **≥38px tall at 1440**.
 2. Timestamp, "edited" and the mention hint each measure **≥4.5:1** (expected 9.2:1).
@@ -559,14 +621,15 @@ once more at 480×900 with a ≥40-character author name** (§2.1b).
 5. The `<time>` is **not** a full-width strut at 1440.
 6. **At 480 with a long author name, no control is orphaned onto its own line** — the §2.1b table
    is the before; the after must show the actions in one right-aligned group.
-7. Zero horizontal overflow at all four widths; nothing inside the board overflows its own box.
+7. Zero horizontal overflow at all five widths; nothing inside the board overflows its own box.
 8. The toggle's **computed accessible name ends in "New notice"** when `hasUnread` is true.
    Verified in local dev, where an unread state can be produced without writing to production.
-9. Every focus ring visible and unclipped — toggle, both owner actions, both composer buttons.
+9. Every focus ring visible and unclipped — the toggle, both owner actions, and **all three**
+   composer buttons (`Post notice`, `Cancel`, `Save`; the draft said "both", which missed one).
 10. `app.css:374-404` contains **zero** `.notice-board` selectors.
 11. `npm run typecheck` 6/6, `npm run build -w @quincy/web`, the full suite green **including**
     `npx vitest run --config packages/shared/vitest.config.ts`, with **all 49 test sites migrated
-    and none deleted**.
+    and none deleted** — all 61 sites, both groups.
 
 ---
 
@@ -574,7 +637,7 @@ once more at 480×900 with a ≥40-character author name** (§2.1b).
 
 | Slice | Scope | Commit |
 |---|---|---|
-| **1** | §5.1 shell + toggle, §5.2 badge/panel/posts/empty. Migrates `__toggle` (12 sites). | `feat(tb8-08): slice 1 — the board shell, the unread badge and the empty state` |
+| **1** | §5.1 shell + toggle, §5.2 badge/panel/posts/empty. Migrates `__toggle` (12) **and all 12 `[aria-label="New notice"]` assertions** — the badge change lands here, so its test migration must too. | `feat(tb8-08): slice 1 — the board shell, the unread badge and the empty state` |
 | **2** | §5.3 in full — head split, meta on `META_TEXT`, the two action constants. Migrates `__post` (14), `__edit` (12), `__delete` (4). | `feat(tb8-08): slice 2 — the post, its meta line and its owner actions` |
 | **3** | §5.4 composers + notices, the 3 `.button` migrations, and the whole `app.css:374-404` retirement. Migrates `__composer` (3), `__edit-composer` (4). | `feat(tb8-08): slice 3 — the composers, the notices and the app.css retirement` |
 
@@ -583,9 +646,10 @@ merge, deploy on the owner's word.
 
 ---
 
-## 9. For Sol round 2
+## 9. Review record — closed
 
-Round 1's ten findings are all adopted. What I most want checked now:
+Both Sol rounds are spent and all 15 findings are adopted. The questions this section carried are
+resolved:
 
 1. **§5 as a whole** — it is new, and it is the finding-#3 fix. Is it actually at implementation
    resolution, or have I left a decision to the builder that I think I have closed?
