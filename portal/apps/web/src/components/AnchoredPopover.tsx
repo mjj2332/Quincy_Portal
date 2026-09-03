@@ -29,6 +29,10 @@ type AnchoredPopoverOptions = {
 // hand-written CSS panels (`.project-team-picker`, `.kanban-move-popover`, `.subtask-popover`
 // panel-level properties). Consumers' own scoped class (e.g. "kanban-move-popover") stays as a
 // content-selector/test hook; it no longer carries panel-level CSS.
+// §10.3: popover contents sit flush inside a bordered, overflow-auto panel — an outward ring
+// clips. (Formerly `app.css`'s `.subtask-popover button:focus-visible, .subtask-popover
+// input:focus-visible` rule, retired in TB8-07 slice 4b now that every popover control carries
+// `RING_IN` directly.)
 const PANEL = cn(
   "z-[var(--z-popover)] w-max",
   "max-w-[min(320px,calc(100vw-var(--space-4)))]",

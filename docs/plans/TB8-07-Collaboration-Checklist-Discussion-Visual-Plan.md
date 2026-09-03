@@ -811,10 +811,25 @@ Each gets `RING_IN` in full (§4.3) — all four utilities, `!`-prefixed.
 
 - `__endpoint` `<fieldset>`: `grid gap-[var(--space-2)] min-w-0 p-[var(--space-2)] [border-style:solid] border-[length:var(--border-width-hair)] border-border`
 - its `<legend>`: `px-[var(--space-1)] [font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-wide)] text-foreground`
-- `__fold` `<fieldset>`: same, `[border-style:dashed]`, `<legend>` `text-foreground-secondary`
+- `__fold` `<fieldset>`: same as `__endpoint` **except** `gap-[var(--space-1)]` (its rule was
+  `gap: 4px`, which is `--space-1`, not the endpoint's `--space-2`) and `m-0`; plus
+  `[border-style:dashed]` and a `text-foreground-secondary` `<legend>`. "Same as endpoint" was
+  written loosely in an earlier draft and a builder correctly read it as identical, silently
+  widening the fold's internal gap — the two fieldsets are *not* the same.
+- **the fold's radio rows.** `.subtask-schedule__fold label` was `display: flex; align-items:
+  center; gap: 5px` — a flex row that deliberately overrode `.subtask-popover__content label`'s
+  grid. That override retires with the rule, so the treatment has to move onto the element or the
+  rows collapse into the grid they were escaping:
+  `flex items-center gap-[var(--space-1)] min-h-[38px] max-[721px]:min-h-[44px] cursor-pointer
+  [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground`.
+  The `<input type="radio">` itself takes `accent-[var(--accent)] cursor-pointer` **plus
+  `RING_IN`** — it is a popover-internal control like every other, and an earlier draft left it
+  out of the "every control" list by describing it only as "a native radio in a `TOGGLE_ROW`-shaped
+  label", which reads as *keep the structure* rather than *convert it*.
 - `__error`: `<Notice tone="critical">`
-- `__conflict`: `<Notice tone="caution">` — **requires adding a `caution` tone to
-  `components/quincy/Notice.tsx`**, `"border-signal-caution/35 bg-signal-caution/7 text-signal-caution-text"`,
+- `__conflict`: `<Notice tone="caution">` — the `caution` tone is **added by slice 1**, not here
+  (this line originally read "requires adding", which is true of the release but not of this
+  slice); `"border-signal-caution/35 bg-signal-caution/7 text-signal-caution-text"`,
   mirroring `StatusPill`'s existing caution split (border/wash keep the brand ochre, text takes
   the darkened value). **This is §2.4's fix**: the conflict block finally paints as a warning.
 - the conflict `<dl>`: `grid gap-[var(--space-1)] m-0` with each `<div>`
