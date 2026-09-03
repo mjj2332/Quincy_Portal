@@ -1,6 +1,9 @@
 # TB8-08 — Staff Notice Board: Visual Plan
 
-**Status: REVIEWED (both Sol rounds), READY TO BUILD, not yet built.** Sol returned 10 findings in
+**Status: BUILT, VISUAL GATE PASSED, not yet merged or deployed.** Slices `0a36964`, `3504e30`,
+`72c2325`. Gate results in §0a.
+
+**Prior status: REVIEWED (both Sol rounds).** Sol returned 10 findings in
 round 1 (7 blocking) and 5 in round 2 (3 blocking). **All 15 were independently verified against the
 repo and all 15 were upheld** — see §0. The ≤2-round cap is now spent. Ranking candidate **#8** in
 `Revamp-TB8-Wider-UI-Migration-And-Cleanup-Plan.md` ("Notice board"). Branch
@@ -49,6 +52,76 @@ across 21 call sites), `hidden` preserves the mounted anchor and the freshness g
 author shorthand really is `--type-eyebrow`.
 
 ---
+
+---
+
+## 0a. Visual gate — PASSED
+
+Run by this session (never delegated), on local dev at all five §7 viewports, against a **seeded
+own-authored notice** — local dev is the project's sanctioned mutation-safe target, and the fixture
+was deleted afterwards (both copies, `200` each; the 6 pre-existing posts untouched).
+
+### The headline fix, measured
+
+| Width | `Edit` | `Delete` | Same row |
+|---|---|---|---|
+| 1440 | 46.4 × **38** | 65 × **38** | yes |
+| 1024 | 46.4 × **38** | 65 × **38** | yes |
+| 720 | 46.4 × **44** | 65 × **44** | yes |
+| 480 | 46.4 × **44** | 65 × **44** | yes |
+| 390 | 46.4 × **44** | 65 × **44** | yes |
+
+Was 20.5 × 24 and 34.2 × 24. Both axes now clear 44 at and below the `max-[721px]` breakpoint, and
+38 above it — criterion 1 met exactly, including the `min-w` that §2.1 proved `buttonClasses` does
+not supply on its own.
+
+### Contrast
+
+| Site | Before | After |
+|---|---|---|
+| Timestamp | **3.57:1** | **9.2:1** |
+| "edited" | **3.57:1** | **9.2:1** |
+| Mention hint | **3.57:1** | **9.2:1** |
+| `Edit` | 9.2:1 | 9.2:1 (held) |
+| `Delete` | 10.0:1 | 10.0:1 (held) |
+| Author | 19.8:1 | 19.8:1 (held) |
+| Eyebrow / summary / chevron | 9.2:1 | 9.2:1 (held) |
+
+Nothing regressed. Summary is now **14px** (was the hard-coded 13px) and the chevron **28px** (was
+24px), both at 9.2:1.
+
+### The rest of §7
+
+| # | Criterion | Result |
+|---|---|---|
+| 4 | Mention hint in sentence case | `text-transform: none` at all five widths — `!normal-case` held |
+| 5 | `<time>` is not a strut | **102.8px** at 1440 (was 1,138.8px) |
+| 6 | **No orphaning at 480 with a long name** | Edit and Delete on the **same row**, 11.9px apart, 24px right inset, 0 overflow. Was: Delete alone at x=0 on a second line |
+| 7 | Zero horizontal overflow | 0 at all five widths; 0 elements overflowing their own box |
+| 8 | Toggle name carries the unread signal | `"STAFF NOTICE BOARD Messages for the production desk **New notice**"` — and via the `sr-only` span, not a descendant `aria-label` |
+| 9 | Focus rings | toggle / Edit / Delete all `solid 2px rgb(10,10,10)` at `offset 2px`; Post notice / Cancel / Save all carry the ring |
+| 10 | `app.css` retirement | `grep -c "notice-board"` → **0**; `grep -rn "notice-board__" src/` → **0** |
+| 11 | Full suite | typecheck 6/6, build green, **1,742 tests** (115+221+700+296+253+13, plus 144 shared), 0 failures, all 61 test sites migrated, none deleted |
+
+Zero console errors and zero failed requests throughout.
+
+### Two things worth recording
+
+**Sol r2 #3 was confirmed by direct measurement, not just reasoning.** The edit composer computes
+`padding-left: 0px`, `padding-top: 16px`, `padding-bottom: 0px` — exactly what
+`pt-[var(--space-4)] px-0 pb-0` asks for. Had it been written as the create composer *plus* an
+override, `px-[var(--space-5)]` would have won and the left padding would read 24px.
+
+**One apparent defect that was my own measurement error.** My first gate pass reported the summary
+at 13.333px and 19.8:1 — wrong on both counts. The selector `querySelectorAll("span").find(…text
+matches…)` had matched the *outer label-stack span*, which contains the summary and inherits the
+button's UA font size. Re-measuring the element itself gave 14px at 9.2:1. **Nothing was wrong with
+the build.** Recorded because the failure mode — a text-matching selector silently resolving to an
+ancestor — will recur.
+
+*Limit:* the focus-ring check reports an ancestor with `overflow-x: clip` (`main.page`). The board
+sits 24px inside it and the ring is 2px at 2px offset, so it cannot reach that boundary; the rings
+are not clipped. Stated rather than assumed.
 
 ---
 
