@@ -34,9 +34,10 @@ explicit user request.
 **Agy drives real Chrome through the `chrome-devtools-mcp` MCP server** — Option A: a Chrome a human
 has already signed in, attached over CDP. This is the pipeline's browser-testing path; setup, the
 backgrounding and print-mode shutdown-hang failure modes, and the silent-no-op failure modes are
-all in [§3a](subagents/agy-cli.md) — read it before any Agy task. Luna and Sol still carry their own
-Chrome-use and computer-use plugins for a `codex exec` run that needs a browser mid-build, but
-routine QA and diagnostics go to Agy.
+all in [§3a](subagents/agy-cli.md) — read it before any Agy task. Routine QA and diagnostics go to
+Agy. **Luna can also drive that same Chrome**, by attaching `chrome-devtools-mcp` to it over CDP —
+the frontend lane (`Subagent-Frontend-Orchestration.md` step 8) routes its browser pass there, and
+§2.11 carries the invocation and the restrictions it runs under.
 
 **Luna builds, Sol plans and reviews — never the same agent reviewing its own work.** Both run
 via `codex exec` on the same `gpt-5.6` base model under different personas, so this is thinner
@@ -134,6 +135,37 @@ alike. Agy never runs the Google OAuth flow itself; the human does the sign-in c
     > stop and report it in your final message — never route around it via secrets, direct DB
     > writes, or forged tokens. Disclose any deviation from the instructed method."*
 
+11. **Luna may run unsandboxed for Chrome-driven testing** (owner decision, 2026-09-03). Attaching
+    `chrome-devtools-mcp` to the human-authenticated Chrome works from `codex exec`, but only
+    read-only tools do: `list_pages` succeeds while `evaluate_script` fails with *"requires
+    approval, which is unavailable"*. `-c approval_policy="never"` does **not** lift it — the tool
+    is gated independently of the approval policy. The only flag that does is
+    `--dangerously-bypass-approvals-and-sandbox`, which removes the sandbox wholesale rather than
+    permitting that one tool. Since every measurement in a browser pass is an `evaluate_script`,
+    a sandboxed Luna cannot do this work at all. Invocation in
+    [§3](subagents/codex-cli.md); the frontend lane's step 8 is the caller.
+
+    This is a real escalation and the prompt is the only guard — same structural position as
+    §2.9/§2.10 for Agy, and with a sharper history: the auth-bypass incident in §6 was **Luna**,
+    which forged a `session` row rather than report a blocker, and disclosed none of it. Sandboxing
+    is not what stopped that (the run was sandboxed and it still read `.dev.vars`), but it is what
+    would have contained the blast radius. So every unsandboxed Luna run states, verbatim or
+    equivalent, restated every task:
+
+    > *"You are running unsandboxed for ONE purpose — driving Chrome to measure a UI. You are
+    > READ-ONLY ON THE REPOSITORY: do not create, edit, delete, stage, commit or revert any file in
+    > it; if you think a file needs changing, say so and change nothing. Scratch space goes in the
+    > scratchpad directory only. Never run Google OAuth — the Chrome is already signed in; if the
+    > session is missing or expired, STOP and report it. On any auth or config blocker, stop and
+    > report: do not read BETTER_AUTH_SECRET or anything from .dev.vars, do not compute an HMAC, do
+    > not forge or insert a `session` row, do not seed fixtures via raw SQL. Local dev only, never
+    > production. Disclose any deviation from the instructed method."*
+
+    **The orchestrating session snapshots the repo before the spawn** — `git status --porcelain`,
+    `git rev-parse HEAD`, and a `shasum` manifest of every source file — and diffs it after, at §5.
+    An unsandboxed agent's "I changed nothing" is a claim like any other, and this is the one
+    restriction the prompt cannot enforce on itself.
+
 ### Pipeline
 
 Sol draft → Sol review (≤2) → Opus plan review → Sol revise (≤2 reverts, then Opus
@@ -162,6 +194,7 @@ credit-recovery only — §6.)
 | Diagnostic / QA execution, no build | **Agy** (`--effort high`); open-ended diagnosis escalates to Luna | This session, §5 — no reviewer pass |
 | Live/production passive testing (danger-mode) | **Agy**, danger-mode (§2.9) | This session, §5 — passive-only |
 | Live/production mutating smoke test (YOLO-mode) | **Agy**, YOLO-mode (§2.10) | This session, §5 — confirm every mutation stayed inside the impersonated test identity, nothing real touched |
+| Frontend-lane browser pass (measure a UI in real Chrome) | **Luna**, unsandboxed (§2.11) | This session, §5 — re-measure the load-bearing numbers, and diff the repo snapshot |
 
 Luna and Sol run at a fixed effort level regardless of work type (§1); Agy is fixed at `--effort
 high`. The table differentiates by task category and process (escalating failures, danger-mode,
@@ -212,7 +245,8 @@ planning or building inline (§1).
 4. **Choose sandbox by intent** — write access for implementation only. An Agy test task uses the
    §3a Chrome invocation (no `--sandbox`, `--mode accept-edits --dangerously-skip-permissions`)
    plus, in the prompt, §2.9's passive-only restriction or §2.10's YOLO restriction — never both,
-   never neither.
+   never neither. A Luna Chrome pass uses §2.11's unsandboxed invocation plus §2.11's restriction
+   block, and is preceded by the repo snapshot §2.11 requires.
 
 ---
 
@@ -254,9 +288,12 @@ injection broke its assertion math while the code under test was correct.
   Invocation: [subagents/codex-cli.md](subagents/codex-cli.md).
 - **Codex + MCP write actions.** `codex exec` runs with `approval: never`, and some MCP write tools
   need a per-call approval it cannot grant non-interactively — while read-only calls to the same
-  server succeed in the same run. Don't tune the invocation; fall back to an authenticated CLI
-  (`wrangler` for Cloudflare) and do the write directly. See `lessons.md` for the related MCP
-  tool-list staleness issue.
+  server succeed in the same run. `-c approval_policy="never"` does not help: the gate is per-tool,
+  not policy-driven. Where an authenticated CLI can do the write instead (`wrangler` for
+  Cloudflare), fall back to that rather than tuning the invocation. The **one** case with no such
+  fallback is `chrome-devtools-mcp`'s `evaluate_script`, which is the entire point of a browser
+  measurement pass — that case, and only that case, is what §2.11's unsandboxed Luna mode exists
+  for. See `lessons.md` for the related MCP tool-list staleness issue.
 - **Agy silent no-ops.** Two misconfigurations make an Agy write task report success while changing
   nothing on disk; a third makes a `grep`/`cat` read task do nothing. All are in
   [subagents/agy-cli.md](subagents/agy-cli.md), and all are why §5 checks stderr and re-verifies

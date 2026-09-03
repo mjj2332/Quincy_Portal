@@ -92,6 +92,35 @@ it cannot grant non-interactively, so the call fails while read-only calls to th
 succeed in the same run. Don't keep tuning the invocation — fall back to an already
 authenticated CLI (e.g. `wrangler` for Cloudflare) and perform the write directly.
 
+`-c approval_policy="never"` does **not** lift this. The gate is per-tool, decided independently
+of the approval policy, so the policy knob looks like the fix and changes nothing. Verified
+2026-09-03 against `chrome-devtools-mcp`: same run, `list_pages` succeeded and `evaluate_script`
+returned *"requires approval, which is unavailable"* under both the default policy and `never`.
+
+## Driving Chrome (Luna browser-testing mode)
+
+Established 2026-09-03 (TB8-05). Attach `chrome-devtools-mcp` to the Chrome a human has already
+signed in — the same dedicated CDP-port-9333 profile Agy uses (`agy-cli.md` Option A; the profile
+and sign-in are shared, not duplicated). Pass the server per-run with `-c` so the user's persistent
+codex config is never modified:
+
+```
+cat <prompt> | codex exec --dangerously-bypass-approvals-and-sandbox \
+  -m gpt-5.6-luna -c model_reasoning_effort=xhigh \
+  -c 'mcp_servers.chrome_devtools={command="npx",args=["-y","chrome-devtools-mcp@latest",\
+      "--browserUrl=http://127.0.0.1:9333"],startup_timeout_sec=180}' \
+  --output-last-message <report> > <run.log> 2>&1
+```
+
+`--dangerously-bypass-approvals-and-sandbox` is **required**, per the failure mode above: every
+measurement in a browser pass is an `evaluate_script`, and nothing short of that flag permits it.
+That makes the run unsandboxed, which is owner-authorized but governed —
+`Subagent-Orchestration.md` §2.11 carries the mandatory restriction block for the prompt and the
+repo-snapshot requirement for the caller. Do not run this mode without both.
+
+Note `timeout` does not exist on this macOS shell — don't wrap the call in it (it fails with
+`command not found` and exit 127). Background the run instead and read the report file.
+
 ## Failure mode: silent stdin hang from shell-argument corruption
 
 If the prompt is passed as a positional `"$(cat file)..."` argument inside a double-quoted
