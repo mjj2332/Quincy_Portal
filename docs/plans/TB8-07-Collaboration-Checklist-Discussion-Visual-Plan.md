@@ -1342,7 +1342,13 @@ Each range appears **once**; no rule is listed twice.
 | 868, 869 | **2** rules — `--standalone`, and the one rule inside its `@min-width:1080px` block | §7.1 |
 | 967, 968, 969 | **3** rules — the `@720` block's one rule, `.app--impersonating __wrap`, and the second `@720` block's one rule | §7.1 |
 
-**33 rules kept.**
+**34 rules kept** — 24 prose + 10 panel. The table above predicts 33; the extra one is
+`.project-collaboration__toggle { min-width: 44px }` inside the `@720` block, a rule §7.1
+authorizes slice 7 to **add** (the toggle is ~30px wide today). The ledger counted only rules that
+survive, not rules the release creates, so the audit's arithmetic has to allow for it. Verified by
+parsing `app.css` rather than by grep — a `grep -c` over these lines returns 38, because it counts
+`@media` wrappers as rules and picks up `.notice-board__post > .rich-text`, which belongs to the
+notice board and is not this release's.
 
 A previous revision listed `410, 414-415, 421-423` as a separate row from `408-427`, which
 double-counted them — they are inside that range. And **`:410` is one rule, not two**: its selector
@@ -1367,8 +1373,10 @@ Slice 8 performs **no deletions**. Its four checks:
    section of this plan that justifies it;
 3. asserts no collaboration, checklist, mention or rich-text-chrome selector exists in `app.css`
    that appears in neither table;
-4. re-counts mechanically and asserts **128 gone, 33 kept**, using 8a's stated counting method
-   (a one-line `@media` wrapper is not a rule; a selector list is one rule).
+4. re-counts by **parsing** `app.css` (not `grep -c`) and asserts **128 gone, 34 kept** — 24
+   prose plus 10 panel, the tenth being the `min-width: 44px` toggle rule §7.1 adds. `grep -c`
+   over-reports here: it counts `@media` wrappers and catches `.notice-board__post > .rich-text`,
+   which is the notice board's rule, not this release's.
 
 Any selector that fails one of those three is a finding for the Sol diff review.
 

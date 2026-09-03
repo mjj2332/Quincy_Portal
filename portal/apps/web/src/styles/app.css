@@ -811,7 +811,15 @@ button { font-family: var(--font-sans); }
   .document-group__head { align-items: stretch; flex-direction: column; }
 }
 
-/* Project collaboration and deletion -------------------------------- */
+/* Project collaboration panel geometry — KEPT AS CSS DELIBERATELY (TB8-07 §7.1/§8b).
+   Everything else on this surface moved to Tailwind; these nine rules did not, and the reason
+   is specific rather than reluctance: this is four `env(safe-area-inset-*)` calculations feeding
+   three custom properties that are declared on a `display: contents` wrapper, consumed by two
+   different children, and re-declared both at one breakpoint and again under an
+   `.app--impersonating` ancestor. As Tailwind arbitrary values it would be longer, unreadable,
+   and would lose the single-point-of-change the custom properties give it. This is the roadmap's
+   "specialized CSS remains where evidence shows it is clearer", claimed once and on purpose.
+   The vertical toggle tab is likewise kept as the signature it already is. */
 .project-collaboration__wrap { display: contents; --project-collaboration-top: calc(64px + env(safe-area-inset-top) + 22px); --project-collaboration-bottom: calc(env(safe-area-inset-bottom) + 12px); --project-collaboration-max-height: calc(100dvh - 64px - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 34px); }
 .project-collaboration__toggle { position: fixed; top: var(--project-collaboration-top); right: calc(env(safe-area-inset-right) + 12px); z-index: 70; max-height: var(--project-collaboration-max-height); writing-mode: vertical-rl; padding: 14px 9px; border: 1px solid var(--border-hairline); background: var(--paper-050); box-shadow: var(--shadow-sm); color: var(--text-primary); font: var(--type-label); font-size: var(--text-2xs); letter-spacing: var(--tracking-wide); text-transform: uppercase; cursor: pointer; }
 .project-collaboration { position: fixed; top: var(--project-collaboration-top); right: calc(env(safe-area-inset-right) + 12px); bottom: var(--project-collaboration-bottom); z-index: 70; width: min(460px, calc(100vw - env(safe-area-inset-right) - 24px)); max-height: var(--project-collaboration-max-height); border: 1px solid var(--border-hairline); background: var(--paper-050); box-shadow: var(--shadow-lg); }

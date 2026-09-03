@@ -1244,3 +1244,54 @@ Three separate defects in one release, all the same shape:
 the longhand needs `!` in its replacement. Class order in JSX does not decide this — Tailwind emits
 utilities in *its* property order, so a utility can lose to a shorthand it appears after in your
 markup. Confirm in the built stylesheet, comparing byte offsets, rather than reasoning about it.
+
+## An undefined custom property in an inherited property falls back to `inherit`, not to the declaration above it (TB8-07, 2026-09-04)
+
+`app.css` had, on consecutive lines:
+
+```css
+.subtask-schedule__error, .subtask-schedule__conflict { … color: var(--signal-critical); … }
+.subtask-schedule__conflict { color: var(--signal-warning); }
+```
+
+`--signal-warning` is defined **nowhere** in this codebase. The intuition — "the invalid
+declaration is discarded, so the `--signal-critical` on the line above wins" — is wrong, and the
+reason is worth internalising because it applies to every `var()` in an inherited property.
+
+A `var()` that references an undefined custom property makes the declaration **invalid at
+computed-value time**. That is not the same as a syntax error. A syntax error is dropped at parse
+time and the cascade proceeds as if it were never written. Invalid-at-computed-value-time
+declarations *win the cascade first*, and only then resolve — to `unset`, which for an **inherited**
+property like `color` means `inherit`. So the conflict block inherited ordinary ink from its
+parent, and the schedule-conflict warning — the thing that tells you someone else's edit landed
+first — had been rendering as plain body text since it shipped. It looked deliberate.
+
+**What to take from it:**
+
+- An undefined token in `color`, `font`, `visibility` or any other inherited property is
+  *invisible in review*: it renders as something plausible rather than as nothing.
+- `grep -c -- "--your-token:"` before trusting any `var()` you did not personally define. This
+  release found two undefined tokens (`--signal-warning`, `--signal-red`); the second happened to
+  carry a correct literal fallback, so it was harmless and had also gone unnoticed for months.
+- The fix is never to define the missing token to make the symptom go away. `--signal-warning`
+  stays undefined; the rule moved to `--signal-caution-text`, the token the palette already had
+  for exactly this "caution as text" case.
+
+## A hover-reveal affordance has no touch equivalent, so it does not degrade — it fails (TB8-07, 2026-09-04)
+
+The subtask row hid its schedule and assignee triggers at `opacity: .06` (**1.10:1** — visually
+absent) and revealed them on `:hover` / `:focus-within`. On a desktop that reads as a tidy,
+uncluttered row. On the 390px viewport it means there is **no way to discover that the controls
+exist at all**: a phone has no hover, and a sighted touch user would have to guess that an
+invisible 24px target sits at a particular point in the row.
+
+This is not a contrast nit that can be tuned. There is no opacity value that fixes it, because the
+mechanic's *reveal trigger* is the thing phones lack. The release deleted the mechanic outright and
+made every control visible at full strength, moving the three meta controls onto their own line at
+≤721px so each gets a real 44px target.
+
+**The general rule: when a control's visibility depends on an input a target device does not have,
+that is a missing control on that device, not a styling preference.** Audit for `:hover`-gated
+`opacity`, `visibility` and `display` the same way you audit for contrast — and check the finding
+at the smallest supported viewport, not the one you are developing on.
+

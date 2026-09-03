@@ -34,9 +34,10 @@ const RING_OUT =
 // `ICON_BUTTON`/`IconButton`: the schedule/assignee triggers can hold a value chip
 // (a formatted schedule string or an assignee's initials), same as the row triggers
 // §5.2 gives `META_TRIGGER` to. A fixed-width glyph button would overflow. This
-// converts only the `compact` arm (§11a) — the non-`compact` (row) arm below is
-// untouched and stays on the legacy `subtask-checklist__metadata-trigger` classes,
-// which slice 4 owns.
+// The composer's trigger differs from the row's only in carrying a visible border:
+// it sits in a control row rather than in a hovered list row, so it needs its own
+// edge. Both arms are `META_TRIGGER` now; the hover-reveal both used to depend on
+// is gone (§5.2).
 const COMPOSER_TRIGGER_CLASSES = cn(META_TRIGGER, "border-solid border-[length:var(--border-width-hair)] border-border");
 
 // TB8-07 §5.4 — the composer's "+ Add an item" affordance. Outward ring: not inside
