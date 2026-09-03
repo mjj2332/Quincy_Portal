@@ -851,7 +851,6 @@ button { font-family: var(--font-sans); }
 .project-collaboration__tab:focus-visible { outline: 2px solid var(--ink-900); outline-offset: 2px; }
 .project-collaboration__panel { min-width: 0; }
 .project-collaboration__panel[hidden] { display: none; }
-.project-activity-view { min-width: 0; }
 .project-collaboration--standalone .project-collaboration__tabs { margin: 0 calc(var(--space-5) * -1); padding: 0 var(--space-5); }
 .project-collaboration--standalone .project-collaboration__panel { min-width: 0; }
 @media (max-width: 720px) {
