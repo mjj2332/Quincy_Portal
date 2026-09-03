@@ -198,12 +198,12 @@ describe("ProjectCollaborationPanel", () => {
     await click(host.querySelector<HTMLButtonElement>('[aria-label="Checklist"]')!);
     await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Post comment")!); await flush();
     expect(apiPostMock).toHaveBeenCalledWith(`/api/projects/${projectId}/comments`, { content });
-    expect(host.querySelector(".project-collaboration__comments input")).toBeNull();
+    expect(host.querySelector("[data-testid=discussion-comments] input")).toBeNull();
     apiPostMock.mockClear(); apiPatchMock.mockClear();
-    await click(host.querySelector(".project-collaboration__comments .rich-text__task-indicator")!);
+    await click(host.querySelector("[data-testid=discussion-comments] .rich-text__task-indicator")!);
     expect(apiPostMock).not.toHaveBeenCalled(); expect(apiPatchMock).not.toHaveBeenCalled();
-    expect(host.querySelector(".project-collaboration__comments .rich-text__task-content .sr-only")?.textContent).toBe("Not completed");
-    expect(host.querySelector(".project-collaboration__comments .rich-text__task-indicator")?.closest("article")?.textContent).not.toContain("Edit");
+    expect(host.querySelector("[data-testid=discussion-comments] .rich-text__task-content .sr-only")?.textContent).toBe("Not completed");
+    expect(host.querySelector("[data-testid=discussion-comments] .rich-text__task-indicator")?.closest("article")?.textContent).not.toContain("Edit");
   });
 
   it("posts and renders a Subsection heading through the shared composer", async () => {
@@ -217,7 +217,7 @@ describe("ProjectCollaborationPanel", () => {
     await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Post comment")!);
     await flush();
     expect(apiPostMock).toHaveBeenCalledWith(`/api/projects/${projectId}/comments`, { content });
-    expect(host.querySelector(".project-collaboration__comments h3")?.textContent).toBe("Comment subsection");
+    expect(host.querySelector("[data-testid=discussion-comments] h3")?.textContent).toBe("Comment subsection");
   });
 
   it("posts newly underlined and struck-through comment content through the composer", async () => {
@@ -277,7 +277,7 @@ describe("ProjectCollaborationPanel", () => {
     expect(overlay.classList.contains("project-collaboration--overlay")).toBe(true);
     expect(overlay.firstElementChild).toBe(overlay.querySelector(".project-collaboration__head"));
     const scroll = overlay.querySelector<HTMLElement>(".project-collaboration__scroll")!;
-    expect(overlay.children[2]).toBe(scroll); expect(scroll.querySelector('[aria-label="Project checklist"]')).not.toBeNull(); expect(scroll.querySelector(".project-collaboration__comment-compose")).not.toBeNull();
+    expect(overlay.children[2]).toBe(scroll); expect(scroll.querySelector('[aria-label="Project checklist"]')).not.toBeNull(); expect(scroll.querySelector("[data-testid=discussion-composer]")).not.toBeNull();
     await unmount(); host.remove(); const standalone = mount(); await render(<ProjectCollaborationPanel projectId={projectId} mode="standalone" />);
     const panel = standalone.querySelector<HTMLElement>(".project-collaboration")!;
     expect(panel.classList.contains("project-collaboration--overlay")).toBe(false); expect(panel.querySelector(".project-collaboration__scroll")).toBeNull(); expect(panel.querySelector('[aria-label="Project checklist"]')).not.toBeNull();
@@ -335,7 +335,7 @@ describe("ProjectCollaborationPanel", () => {
       await click(host.querySelector<HTMLButtonElement>('[role="tab"][aria-controls$="-activity-panel"]')!);
       headId = "new-head";
       await click(host.querySelector<HTMLButtonElement>('[role="tab"][aria-controls$="-discussion-panel"]')!);
-      const anchor = host.querySelector<HTMLElement>(".project-collaboration__read-anchor")!;
+      const anchor = host.querySelector<HTMLElement>("[data-testid=discussion-read-anchor]")!;
       const visibleRect = () => ({ left: 0, top: 0, right: 100, bottom: 100, width: 100, height: 100 });
       Object.defineProperty(anchor, "getBoundingClientRect", { configurable: true, value: visibleRect });
       Object.defineProperty(host.querySelector<HTMLElement>(".project-collaboration__scroll")!, "getBoundingClientRect", { configurable: true, value: visibleRect });
@@ -409,7 +409,7 @@ describe("ProjectCollaborationPanel", () => {
     apiGetMock.mockImplementation((path: string) => path.includes("/comments?") ? new Promise((resolve) => { resolves.push(resolve); }) : path.includes("comment-read-marker") ? Promise.resolve(readState()) : Promise.resolve({ subtasks: [] }));
     const host = mount();
     await render(<ProjectCollaborationPanel projectId={projectId} openSignal={1} />);
-    expect([...host.querySelectorAll(".project-collaboration__state")].map((element) => element.textContent)).toContain("Loading comments…");
+    expect([...host.querySelectorAll('[role="status"]')].map((element) => element.textContent)).toContain("Loading comments…");
     for (const resolve of resolves) resolve(comments([])); await act(async () => { await Promise.resolve(); await Promise.resolve(); await new Promise<void>((resolve) => setTimeout(resolve, 0)); });
     expect(host.textContent).toContain("No comments yet.");
     await unmount(); host.remove();
@@ -578,9 +578,9 @@ describe("ProjectCollaborationPanel", () => {
     const host = mount();
     await render(<ProjectCollaborationPanel projectId={projectId} openSignal={1} />);
 
-    const list = host.querySelector<HTMLElement>(".project-collaboration__comments")!;
+    const list = host.querySelector<HTMLElement>("[data-testid=discussion-comments]")!;
     const loadOlder = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Load older comments")!;
-    const composer = host.querySelector<HTMLElement>(".project-collaboration__comment-compose")!;
+    const composer = host.querySelector<HTMLElement>("[data-testid=discussion-composer]")!;
     expect([...list.querySelectorAll("article")].map((article) => article.querySelector("p")?.textContent)).toEqual(["Other comment", "My comment"]);
     expect(list.nextElementSibling).toBe(loadOlder); expect(loadOlder.nextElementSibling).toBe(composer);
 
@@ -656,7 +656,7 @@ describe("ProjectCollaborationPanel", () => {
     const host = mount();
     await render(<RerenderingPanel />);
     const initialCommentGets = pendingComments.length;
-    const anchor = host.querySelector<HTMLElement>(".project-collaboration__read-anchor")!;
+    const anchor = host.querySelector<HTMLElement>("[data-testid=discussion-read-anchor]")!;
     const scroll = host.querySelector<HTMLElement>(".project-collaboration__scroll")!;
     Object.defineProperty(anchor, "getBoundingClientRect", { configurable: true, value: () => ({ left: 0, top: 0, right: 100, bottom: 20, width: 100, height: 20 }) });
     Object.defineProperty(scroll, "getBoundingClientRect", { configurable: true, value: () => ({ left: 0, top: 0, right: 100, bottom: 900, width: 100, height: 900 }) });
@@ -698,7 +698,7 @@ describe("ProjectCollaborationPanel", () => {
     apiPatchMock.mockResolvedValueOnce({ ...readState(), marker: { throughCommentId: "strict-head", throughCreatedAt: "2026-08-25T00:00:00.000Z", updatedAt: "2026-08-25T00:00:01.000Z" }, latest: { commentId: "strict-head", createdAt: "2026-08-25T00:00:00.000Z" } });
     const host = mount();
     await render(<StrictMode><ProjectCollaborationPanel projectId={projectId} /></StrictMode>);
-    const anchor = host.querySelector<HTMLElement>(".project-collaboration__read-anchor")!;
+    const anchor = host.querySelector<HTMLElement>("[data-testid=discussion-read-anchor]")!;
     const scroll = host.querySelector<HTMLElement>(".project-collaboration__scroll")!;
     Object.defineProperty(anchor, "getBoundingClientRect", { configurable: true, value: () => ({ left: 0, top: 0, right: 100, bottom: 20, width: 100, height: 20 }) });
     Object.defineProperty(scroll, "getBoundingClientRect", { configurable: true, value: () => ({ left: 0, top: 0, right: 100, bottom: 900, width: 100, height: 900 }) });

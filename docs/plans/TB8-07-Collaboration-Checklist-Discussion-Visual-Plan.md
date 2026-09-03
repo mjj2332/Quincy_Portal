@@ -740,7 +740,7 @@ At ≥721px the wrapper is `display: contents`, so the three controls are direct
 the summary row and the layout is byte-for-byte the single line it is today. At ≤720px it becomes
 its own full-width row beneath the title, which is what gives the three controls their 44px.
 
-**The wrapper `<div>` is a new element.** It is one of §9a's ten authorized structural changes;
+**The wrapper `<div>` is a new element.** It is one of §9a's authorized structural changes (#5);
 it carries no `role`, no `aria-*`, no `id`, and does not sit between a label and its control.
 
 **The breakpoint pair is `max-[721px]` / `min-[721px]`, and it must be that pair.** Compiled
@@ -980,12 +980,14 @@ name and variant — no `.button` string survives in `ProjectDiscussionThread.ts
 This retires `:859`'s `min-height: 30px; font-size: 10px` override, which was the one place in the
 app where a `.button` was smaller than the 44px phone floor (§2.3).
 
-> **Builder check, not optional.** `buttonClasses("text")` sets `min-h-[32px]` in its variant
-> string while BASE sets `max-[721px]:min-h-[44px]`. Whether the phone floor survives depends on
-> Tailwind's *emission* order, not the order in the class string. Measure the computed height of
-> an Edit button at 390px in the browser and report the number. If it is 32px, add an explicit
-> `className="max-[721px]:min-h-[44px]"` at the call sites rather than editing `button.tsx`
-> (which would change every text button in the app — out of scope).
+> **Builder check — MEASURED, and the answer is no override needed.** `buttonClasses("text")`
+> sets `min-h-[32px]` in its variant string while BASE sets `max-[721px]:min-h-[44px]`, and which
+> wins depends on Tailwind's *emission* order, not the class-string order. Measured in the
+> compiled bundle during the slice-5 build and re-verified independently: `.min-h-[32px]` is
+> emitted at byte offset **7995**, unconditional; `.max-[721px]:min-h-[44px]` at **53250**, inside
+> `@media not all and (width>=721px)`. Equal specificity, later source order, so the **44px media
+> rule wins at ≤720px** and the phone floor holds on its own. No call-site override was added, and
+> none should be.
 
 `__comment-compose` `<form>`:
 `grid gap-[var(--space-2)] pt-[var(--space-3)] [border-top-style:solid] border-t-[length:var(--border-width-hair)] border-t-border`;
@@ -1370,14 +1372,14 @@ Slice 8 performs **no deletions**. Its four checks:
 
 Any selector that fails one of those three is a finding for the Sol diff review.
 
-## 9. What must not change — and the ten changes that are authorized
+## 9. What must not change — and the eleven changes that are authorized
 
 The first draft claimed a `className`-stripped diff would show "only class strings and `data-*`
 conversions." That was not achievable and is corrected here: this release makes a small number of
 **structural** changes, and a plan that promises otherwise gives the reviewer a check that must
 fail. They are enumerated below; the invariant is that **nothing outside this list changes**.
 
-### 9a. The ten authorized structural changes
+### 9a. The eleven authorized structural changes
 
 | # | Change | Files | Why it is safe |
 |---|---|---|---|
@@ -1392,7 +1394,9 @@ fail. They are enumerated below; the invariant is that **nothing outside this li
 | 9 | **`<div className="ey">` → `<Eyebrow>`, which changes `<div>` to `<span>`** | `ProjectCollaborationPanel.tsx:64`; `ProjectWorkspace.tsx:330, :332` (×3 — "Collaboration", "Read-only summary", "Photographers"/"Editors") | `Eyebrow` is hard-coded to a `<span>` (`ui/eyebrow.tsx:5-14`). Each of these is a bare label inside a flow container with no role, no id and no `aria-*`, and each is followed by a sibling heading — so the block→inline change is absorbed by the parent's `grid`/`flex` layout. `<Eyebrow className="block">` is used where the label must still occupy its own line. **This is the one place an element *type* changes**; it is listed rather than hidden inside "class changes" |
 | 10 | `<div className="empty">` inside `CollaborationOnlyUnavailable` and the `__state` divs → `<EmptyState>` | Discussion, Checklist, `CollaborationOnly*` | Same as #2; called out separately only because these three sites have no `role` today and must not gain one |
 
-**Ten, and nothing else.** §11's per-slice report checks the diff against *this* list, not against
+| 11 | **Three `data-testid` attributes added** — `discussion-comments`, `discussion-composer`, `discussion-read-anchor` | Discussion | Added during the slice-5 build. Five retired `.project-collaboration__*` classes turned out to be **query selectors in four test files**, and the alternatives were worse: loosening the assertions (forbidden) or inventing accessible names that do not exist on a list wrapper, a form, and an `aria-hidden` scroll sentinel. `data-testid` is inert, carries no semantics, displaces no `aria-*`, and is an **established pattern in this repo** — `ConfirmDialog.tsx`, `ProductionCalendarFoldChoice.tsx`, `ProductionCalendarScheduleEditor.tsx` and others already use it. Listed here rather than waved through as "a class change" |
+
+**Eleven, and nothing else.** §11's per-slice report checks the diff against *this* list, not against
 a "classes and `data-*` only" rule — an earlier revision said the latter, which §9a's own contents
 contradict.
 
@@ -1404,7 +1408,7 @@ the `TabStrip` component (§7.2). Each would have changed ARIA to buy paint.
 ### 9b. The invariants
 
 The builder verifies each with a `className`-stripped diff against `main`, per slice. Anything the
-diff shows that is not one of 9a's **ten** is a finding.
+diff shows that is not one of 9a's **eleven** is a finding.
 
 1. Every `aria-label`, `aria-labelledby`, `aria-controls`, `aria-expanded`, `aria-selected`,
    `aria-current`, `aria-checked`, `aria-invalid`, `aria-describedby`, `aria-live`, `aria-hidden`,
@@ -1561,7 +1565,7 @@ Everything else is disjoint: slice 3 owns `886-890`, `893-900`, `953-957`; slice
 
 ### 11b. What a slice reports
 
-The diff; its §9b check **against §9a's ten authorized changes** (not against a "classes and
+The diff; its §9b check **against §9a's authorized changes** (not against a "classes and
 `data-*` only" rule — §9a's own contents contradict that); `typecheck` and `build` output; a grep
 proving its `app.css` deletions landed and its neighbours did not; and, for slices 2-7, the
 `className`-stripped semantic diff against `main`.

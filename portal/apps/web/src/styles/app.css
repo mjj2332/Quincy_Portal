@@ -823,17 +823,6 @@ button { font-family: var(--font-sans); }
 .project-collaboration--overlay .project-collaboration__head { flex: none; padding: var(--space-5); border-bottom: 1px solid var(--border-hairline); background: var(--paper-050); }
 .project-collaboration__head h2 { margin: 5px 0 0; font: var(--type-h3); font-size: 25px; }
 .project-collaboration__scroll { display: grid; align-content: start; gap: var(--space-4); min-height: 0; flex: 1; overflow: auto; padding: var(--space-5); }
-.project-collaboration__state { padding: var(--space-4); color: var(--text-secondary); background: var(--paper-100); font-size: 13px; }
-.project-collaboration__read-anchor { width: 1px; height: 1px; margin: 0; overflow: hidden; }
-.project-collaboration__comments { display: grid; gap: var(--space-3); }
-.project-collaboration__comment { display: grid; gap: var(--space-2); padding: var(--space-3); border: 1px solid var(--border-hairline); background: var(--paper-000); }
-.project-collaboration__comment header { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-2); }
-.project-collaboration__comment header strong { font-size: 13px; font-weight: 500; }
-.project-collaboration__comment time, .project-collaboration__comment small { color: var(--text-muted); font-size: 10px; }
-.project-collaboration__comment-actions { display: flex; justify-content: flex-end; gap: var(--space-2); }
-.project-collaboration__comment-actions .button { min-height: 30px; padding: 5px 8px; font-size: 10px; }
-.project-collaboration__comment-compose { display: grid; gap: var(--space-2); padding-top: var(--space-3); border-top: 1px solid var(--border-hairline); }
-.project-collaboration__comment-compose > div:last-child { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); color: var(--text-secondary); font-size: 11px; }
 .project-collaboration-only { display: grid; gap: var(--space-5); }
 .project-collaboration-summary { display: grid; gap: var(--space-3); padding: var(--space-5); border: 1px solid var(--border-hairline); background: var(--paper-000); }
 .project-collaboration-summary h2 { margin: 3px 0 0; font: var(--type-h3); font-size: 24px; }

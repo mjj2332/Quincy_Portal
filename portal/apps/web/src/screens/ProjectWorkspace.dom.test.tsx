@@ -902,7 +902,7 @@ describe("ProjectWorkspace collaboration relocation", () => {
       return Promise.resolve({});
     });
     await render(<ProjectWorkspace projectId="p1" />); await flush(20);
-    await typeIntoEditor(host.querySelector<HTMLElement>(".project-collaboration__comment-compose [contenteditable=\"true\"]")!, "unsent draft");
+    await typeIntoEditor(host.querySelector<HTMLElement>("[data-testid=discussion-composer] [contenteditable=\"true\"]")!, "unsent draft");
     await click(host.querySelector<HTMLButtonElement>(".project-collaboration__head button")!);
     expect(host.querySelector<HTMLButtonElement>(".project-collaboration__toggle")?.getAttribute("aria-expanded")).toBe("false");
 
@@ -911,7 +911,7 @@ describe("ProjectWorkspace collaboration relocation", () => {
     const toggle = host.querySelector<HTMLButtonElement>(".project-collaboration__toggle")!;
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
     await click(toggle); await flush(4);
-    expect(host.querySelector<HTMLElement>(".project-collaboration__comment-compose [contenteditable=\"true\"]")?.textContent).toContain("unsent draft");
+    expect(host.querySelector<HTMLElement>("[data-testid=discussion-composer] [contenteditable=\"true\"]")?.textContent).toContain("unsent draft");
     expect(commentRequests).toBe(1);
   });
 
@@ -1139,8 +1139,8 @@ describe("ProjectWorkspace collaboration relocation", () => {
     });
     apiPostMock.mockRejectedValueOnce(new ApiError(`Comment POST ${status}`, status));
     await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>); await flush(20);
-    await typeIntoEditor(host.querySelector<HTMLElement>('.project-collaboration__comment-compose [contenteditable="true"]')!, "A comment");
-    await click(host.querySelector<HTMLButtonElement>('.project-collaboration__comment-compose button[type="submit"]')!); await flush(20);
+    await typeIntoEditor(host.querySelector<HTMLElement>('[data-testid=discussion-composer] [contenteditable="true"]')!, "A comment");
+    await click(host.querySelector<HTMLButtonElement>('[data-testid=discussion-composer] button[type="submit"]')!); await flush(20);
     if (expected === "collaboration") {
       expect(host.querySelector(".work")).not.toBeNull();
       expect(host.querySelector(".project-collaboration--unavailable")).not.toBeNull();
@@ -1181,7 +1181,7 @@ describe("ProjectWorkspace collaboration relocation", () => {
     });
     apiPatchMock.mockRejectedValueOnce(new ApiError(`Read marker PATCH ${status}`, status));
     await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>); await flush(20);
-    const anchor = host.querySelector<HTMLElement>(".project-collaboration__read-anchor")!;
+    const anchor = host.querySelector<HTMLElement>("[data-testid=discussion-read-anchor]")!;
     const scroll = host.querySelector<HTMLElement>(".project-collaboration__scroll")!;
     Object.defineProperty(anchor, "getBoundingClientRect", { configurable: true, value: () => ({ left: 0, top: 0, right: 100, bottom: 20, width: 100, height: 20 }) });
     Object.defineProperty(scroll, "getBoundingClientRect", { configurable: true, value: () => ({ left: 0, top: 0, right: 100, bottom: 900, width: 100, height: 900 }) });

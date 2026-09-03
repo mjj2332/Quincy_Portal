@@ -99,8 +99,8 @@ describe("ProjectDiscussionThread", () => {
     state.readState = { unreadCount: 4 };
     state.commentsQuery = queryState({ data: { pages: [{ project, comments: [ownComment], nextCursor: "older" }], pageParams: [null] }, hasNextPage: true });
     render({ onUnreadCountChange }); await flush();
-    expect(host.querySelector(".project-collaboration__comments")?.textContent).toContain("Own comment");
-    expect(host.querySelector(".project-collaboration__comments")?.textContent).not.toContain("Other comment");
+    expect(host.querySelector("[data-testid=discussion-comments]")?.textContent).toContain("Own comment");
+    expect(host.querySelector("[data-testid=discussion-comments]")?.textContent).not.toContain("Other comment");
     expect(onUnreadCountChange).toHaveBeenLastCalledWith(4);
     const loadOlder = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Load older comments");
     expect(loadOlder).toBeDefined();
@@ -146,7 +146,7 @@ describe("ProjectDiscussionThread", () => {
     expect(updatedComposer.limit).toBe(10_000);
     const byteOversized = doc("x".repeat(40_000));
     await act(async () => { updatedComposer.onChange(byteOversized); await Promise.resolve(); });
-    expect(host.querySelector<HTMLButtonElement>(`.project-collaboration__comment-compose button[type="submit"]`)?.disabled).toBe(true);
+    expect(host.querySelector<HTMLButtonElement>(`[data-testid=discussion-composer] button[type="submit"]`)?.disabled).toBe(true);
     expect(apiPostMock).not.toHaveBeenCalled();
   });
 
@@ -155,7 +155,7 @@ describe("ProjectDiscussionThread", () => {
     state.commentsQuery = queryState({ data: undefined, error: new ApiError("Discussion denied", 403), isPending: false });
     render({ onAccessFailure }); await flush();
     expect(host.textContent).toContain("No discussion access");
-    expect(host.querySelector(".project-collaboration__comment-compose")).toBeNull();
+    expect(host.querySelector("[data-testid=discussion-composer]")).toBeNull();
     expect(onAccessFailure).not.toHaveBeenCalled();
     expect(terminateMock).not.toHaveBeenCalled();
   });
@@ -189,7 +189,7 @@ describe("ProjectDiscussionThread", () => {
     const editSubmit = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Submit");
     await act(async () => { editSubmit!.click(); await Promise.resolve(); });
     expect(host.textContent).not.toContain("No discussion access");
-    expect(host.querySelector(".project-collaboration__comments")).not.toBeNull();
+    expect(host.querySelector("[data-testid=discussion-comments]")).not.toBeNull();
     expect(onAccessFailure).toHaveBeenCalledWith(expect.any(ApiError), "nested-comment");
     expect(terminateMock).toHaveBeenCalledTimes(1);
   });
@@ -201,7 +201,7 @@ describe("ProjectDiscussionThread", () => {
     const deleteButton = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Delete");
     await act(async () => { deleteButton!.click(); await Promise.resolve(); await Promise.resolve(); });
     expect(host.textContent).not.toContain("No discussion access");
-    expect(host.querySelector(".project-collaboration__comments")).not.toBeNull();
+    expect(host.querySelector("[data-testid=discussion-comments]")).not.toBeNull();
     expect(onAccessFailure).toHaveBeenCalledWith(expect.any(ApiError), "nested-comment");
     expect(terminateMock).toHaveBeenCalledTimes(1);
   });
