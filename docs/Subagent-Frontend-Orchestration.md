@@ -15,15 +15,20 @@ mechanical review. This lane keeps Sol for what it's actually good at — scope 
 
 ## Pipeline
 
-1. **Opus drafts the plan.** Load `/frontend-design` first. Write at implementation-detail
+1. **The session drafts the plan.** Load `/frontend-design` first. Write at implementation-detail
    resolution — exact Tailwind classes/tokens, spacing scale, every component state (default/
    hover/focus/disabled/error) — never directional prose ("make it feel more premium"). Every
    token traces to an existing design-system source (below); invent none. **Done when:** the plan
    closes every design decision itself rather than deferring it to the builder's judgment.
+   Design authority is Claude's throughout this lane, whichever Claude model the session runs
+   (`Subagent-Orchestration.md` §1) — what matters is that taste never passes to Sol or Luna, not
+   that it belongs to one particular Claude.
 2. **Sol reviews scope and correctness** (`codex exec`, read-only, ≤2 rounds — mechanics in
    `Subagent-Orchestration.md` §3–4). Not aesthetics — Sol has no more taste than Luna does. **Done
-   when:** Sol returns APPROVE, or a findings list Opus/Sol resolves within the 2-round cap.
-3. **Opus plan-approves**, or — past the 2-round cap — edits the plan itself and self-approves.
+   when:** Sol returns APPROVE, or a findings list the session resolves within the 2-round cap.
+3. **The plan is approved** — by the session, plus the Opus plan-review touchpoint on a Sonnet
+   session (`Subagent-Orchestration.md` §2.1). Past the 2-round cap Opus edits the plan and
+   self-approves.
 4. **A Sonnet subagent builds** (`Agent` tool, `model: sonnet`) — never Luna. A different model
    family catches and fixes plan ambiguity in place instead of defaulting to generic-shadcn output.
    **Slice a large plan** (see "Slicing a large plan" below) rather than handing one agent the
@@ -63,7 +68,7 @@ mechanical review. This lane keeps Sol for what it's actually good at — scope 
    goes in **every** such prompt, and the orchestrating session snapshots the repo (`git status`,
    `git rev-parse HEAD`, a `shasum` manifest) before the spawn and diffs it after, because
    read-only-on-the-repo is the one restriction the prompt cannot enforce on itself.
-9. **Opus visual/taste review — the last gate, and this session's own.** Open the rendering in the
+9. **The visual/taste review — the last gate, and the session's own.** Open the rendering in the
    Browser pane and compare it against the plan's *intent*, not just the diff and not just Luna's
    report. Luna's findings are input, not a verdict: verify them, and look for what it could not
    see. This step exists specifically to catch what a mechanical pipeline misses, and it does not

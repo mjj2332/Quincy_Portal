@@ -12,14 +12,14 @@ stable anchors — other docs link to them. Policy history belongs in `git log -
 
 | Agent | Spawned via | Model | Job | Builds? |
 |---|---|---|---|---|
-| **Sonnet 5** | this session, directly — no subprocess | Claude Sonnet 5 | Orchestrates the pipeline; builds tasks too small to hand off | Yes, at this session's discretion |
-| **Sol** | `codex exec` | `gpt-5.6-sol`, always medium effort | Default planner and diff reviewer — drafts plans, reviews plans, reviews diffs | No — plans and reviews only |
+| **The session** | runs in Claude Code — no subprocess | whichever Claude model the user started on: Sonnet, Opus, Fable, any | Orchestrates the pipeline; **drafts every plan**; builds tasks too small to hand off | Yes, at its own discretion |
+| **Sol** | `codex exec` | `gpt-5.6-sol`, always high effort | Default plan and diff reviewer | No — reviews only |
 | **Luna** | `codex exec` | `gpt-5.6-luna`, always xhigh effort | Default builder (includes authoring/fixing test *code*); takes an open-ended diagnosis escalated from Agy | Yes |
 | **Agy** | `agy` CLI subprocess — [§3a](subagents/agy-cli.md) | `gemini-3.8-flash-high`, `--effort high` | Default **tester** — runs all QA and diagnostics (§2.8), including danger-mode (§2.9) and YOLO-mode (§2.10) | Groundwork only — never a pipeline build step |
 | **Terra** | `codex exec` — [§3](subagents/codex-cli.md) | `gpt-5.6-terra` | No role assigned — not spawned in this pipeline | No |
 | **Opus reviewer** | `Agent` tool, `model: opus` | Claude Opus 5 | Reviews the plan (§2.1) and the final diff | No code — plan-document exception in §2.4 |
 
-**Sol always runs at `-c model_reasoning_effort=medium` and Luna always runs at
+**Sol always runs at `-c model_reasoning_effort=high` and Luna always runs at
 `-c model_reasoning_effort=xhigh`** — both fixed regardless of work type, never dialed up or down
 per task. **Agy always runs at `--effort high`** — the tier is baked into the `gemini-3.8-flash-high`
 model id, which rejects a mismatched `--effort` (§3a). The Gemini generation moves (3.6 → 3.7 →
@@ -27,9 +27,15 @@ model id, which rejects a mismatched `--effort` (§3a). The Gemini generation mo
 re-check it rather than trust the written list. The `Agent` tool has no effort dial — ask for
 maximum rigor in the prompt.
 
-**"Sonnet 5" means this orchestrating session acting directly**, with its own file tools. Distinct
-from the `Agent` tool's `model: sonnet`, which launches a *separate* Claude builder — used only on
-explicit user request.
+**"The session" means whoever is reading this**, acting directly with its own file tools. The
+pipeline is model-agnostic by design: it names *roles*, never the session's model, so the same
+routing holds whether the user started on Sonnet, Opus or Fable. Distinct from the `Agent` tool's
+`model: sonnet`, which launches a *separate* Claude builder — used only on explicit user request.
+
+**The session's model changes exactly one thing: whether the Opus touchpoints are worth spawning.**
+They exist to put a second, stronger pair of Claude eyes on a plan and a final diff. When the
+session is already Opus 5 or Fable 5, the §5 gate carries that judgment and a second spawn buys
+latency, not insight — skip both. On a Sonnet session, run them. Check the driver before spawning.
 
 **Agy drives real Chrome through the `chrome-devtools-mcp` MCP server** — Option A: a Chrome a human
 has already signed in, attached over CDP. This is the pipeline's browser-testing path; setup, the
@@ -39,15 +45,12 @@ Agy. **Luna can also drive that same Chrome**, by attaching `chrome-devtools-mcp
 the frontend lane (`Subagent-Frontend-Orchestration.md` step 8) routes its browser pass there, and
 §2.11 carries the invocation and the restrictions it runs under.
 
-**Luna builds, Sol plans and reviews — never the same agent reviewing its own work.** Both run
-via `codex exec` on the same `gpt-5.6` base model under different personas, so this is thinner
-separation than a genuinely different model's eyes; Opus's plan and final-draft passes are the
-deeper cross-model check already built into the pipeline. Agy is a third model family again, which
+**Luna builds, Sol reviews — never the same agent reviewing its own work.** Both run via
+`codex exec` on the same `gpt-5.6` base model under different personas, so a Luna build reviewed by
+Sol is thinner separation than a genuinely different model's eyes. A session-drafted plan reviewed
+by Sol is the real thing, which is half of why planning moved (§2.1); Opus's plan and final-draft
+passes are the other cross-model check, on a Sonnet session. Agy is a third model family again, which
 is why its QA findings still get the full §5 gate rather than a reviewer pass.
-
-**Skip Opus's final-draft review when this session is itself Opus 5** — the §5 gate already carries
-that judgment, and a second Opus reviewing its own session's work buys latency, not insight. Check
-the driver before spawning.
 
 **Agy is Google's Antigravity CLI, a separate binary** — there is no `gpt-5.6-agy` model id; the
 account rejects it. Agy took over the testing role from Luna on **2026-08-27**, after a trial pass
@@ -69,14 +72,22 @@ alike. Agy never runs the Google OAuth flow itself; the human does the sign-in c
 
 ## 2. Policy
 
-1. **Plan review is two-tier, each capped.** Sol drafts; a fresh Sol reviews, **max 2 rounds**.
-   Then a fresh **Opus** subagent reviews the plan document: approve, or revert to a fresh Sol
-   spawn with its findings, **max 2 reverts**. Past that cap Opus edits the plan itself and a fresh
-   Opus self-review approves it. Build starts only after this resolves.
+1. **The session drafts the plan; review is two-tier, each capped.** The session writes the plan
+   itself — it already holds the codebase reading, the user's intent and the conversation that
+   produced the task, and an agent that drafts from a brief has to rebuild all of it from a worse
+   starting position. A fresh Sol then reviews for scope and correctness, **max 2 rounds**. Then a
+   fresh **Opus** subagent reviews the plan document (per §1, skip on an Opus/Fable session):
+   approve, or return findings the session revises and a fresh Opus re-reviews, **max 2 reverts**.
+   Past that cap Opus edits the plan itself and a fresh Opus self-review approves it. Build starts
+   only after this resolves.
+
+   This also restores the separation §1 demands. When Sol both drafted and reviewed, the review was
+   one persona checking its own base model's work in fresh context — thinner than it looked. A
+   Claude-drafted, Sol-reviewed plan is a genuine cross-family check.
 2. **Build tasks go to Luna, always at xhigh effort.** This includes authoring or fixing test
    *code* — new test files, regression tests, fixture fixes — which is build work, not §2.8 QA.
-   Sonnet 5 may also build directly, including tasks too small to be worth delegating — either is
-   valid there. Don't delegate reflexively; don't inline something substantial to dodge overhead.
+   The session may also build directly, including tasks too small to be worth delegating — either
+   is valid there. Don't delegate reflexively; don't inline something substantial to dodge overhead.
 3. **Sol reviews the diff**, in a fresh invocation separate from whichever run built it.
 4. **Reviewers are read-only**, so they cannot quietly fix what they review: Codex review runs use
    `--sandbox read-only`, always fresh context. The one exception is §2.1's terminal case — Opus
@@ -191,15 +202,15 @@ alike. Agy never runs the Google OAuth flow itself; the human does the sign-in c
 
 ### Pipeline
 
-Sol draft → Sol review (≤2) → Opus plan review → Sol revise (≤2 reverts, then Opus
-self-edits and self-approves) → Luna build (xhigh effort), or Sonnet 5 direct → builder self-checks
-the diff against every plan item → **fresh Sol diff review** → builder applies fixes → Sol final
-focused pass → Opus final-draft review (skip per §1 when the session is Opus 5) → **§5 gate** →
-deploy and commit. QA (Agy, §2.8–§2.10) runs against the deployed change or local dev — it is not a
+Session drafts → Sol review (≤2) → Opus plan review → session revises (≤2 reverts, then Opus
+self-edits and self-approves) → Luna build (xhigh effort), or the session builds directly → builder
+self-checks the diff against every plan item → **fresh Sol diff review** → builder applies fixes →
+Sol final focused pass → Opus final-draft review → **§5 gate** → deploy and commit. Both Opus
+touchpoints are skipped on an Opus/Fable session (§1). QA (Agy, §2.8–§2.10) runs against the deployed change or local dev — it is not a
 gate on the build pipeline itself.
 
-Fix loops go back to the same *persona* — Luna for build fixes, a fresh Sol for a review re-run —
-in a **new `codex exec`** with a per-finding spec written to its own scratchpad file. Sharp
+Fix loops go back to the same *persona* — Luna for build fixes, a fresh Sol for a review re-run,
+the session for plan revisions — in a **new `codex exec`** where a subagent is involved, with a per-finding spec written to its own scratchpad file. Sharp
 specifics every round, never a vague "address the review comments." (`codex exec resume` is
 credit-recovery only — §6.)
 
@@ -207,7 +218,7 @@ credit-recovery only — §6.)
 
 | Work type | Builder | Reviewer |
 |---|---|---|
-| Too small to be worth delegating | Sonnet 5 (this session) or Luna | Sol |
+| Too small to be worth delegating | This session or Luna | Sol |
 | Small, mechanical, strongly tested | Luna | Sol |
 | Cheap high-volume implementation | Luna, escalate failures | Sol |
 | Normal feature or refactor | Luna | Sol |
@@ -220,7 +231,7 @@ credit-recovery only — §6.)
 | Frontend-lane browser pass (measure a UI in real Chrome) | **Luna**, unsandboxed (§2.11) | This session, §5 — re-measure the load-bearing numbers, and diff the repo snapshot |
 
 Luna and Sol run at a fixed effort level regardless of work type (§1); Agy is fixed at `--effort
-high`. The table differentiates by task category and process (escalating failures, danger-mode,
+high`. Planning has no row: it is the session's, always (§2.1). The table differentiates by task category and process (escalating failures, danger-mode,
 YOLO-mode) only, never by dialing effort up or down per row. Terra has no row: no role in this
 pipeline (§1, §2.5).
 

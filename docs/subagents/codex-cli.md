@@ -6,10 +6,10 @@ Loaded on demand from `docs/Subagent-Orchestration.md` §3. Verified live 2026-0
 sandbox, output read back from a file. It is not the `Agent` tool.
 
 ```bash
-codex exec --sandbox read-only -m gpt-5.6-sol -c model_reasoning_effort=medium "..."
+codex exec --sandbox read-only -m gpt-5.6-sol -c model_reasoning_effort=high "..."
 ```
 
-Sol's effort is **medium** and Luna's is **xhigh** — both fixed by `Subagent-Orchestration.md` §1,
+Sol's effort is **high** and Luna's is **xhigh** — both fixed by `Subagent-Orchestration.md` §1,
 which is the source of truth; the values here just match it.
 
 Full spawn shape, with the spec in a scratchpad file and the report captured separately.
@@ -29,7 +29,7 @@ them into the pipe rather than interpolating any of them into a quoted argument:
 
 ```bash
 { cat "$SCRATCH/wp-x-prompt.md"; cat "$SCRATCH/wp-x-reference-a.md"; cat "$SCRATCH/wp-x-reference-b.md"; } \
-  | codex exec --sandbox read-only -m gpt-5.6-sol -c model_reasoning_effort=medium \
+  | codex exec --sandbox read-only -m gpt-5.6-sol -c model_reasoning_effort=high \
     --output-last-message "$SCRATCH/wp-x-report.md" \
   > "$SCRATCH/wp-x-run.log" 2>&1
 ```
@@ -42,7 +42,7 @@ them into the pipe rather than interpolating any of them into a quoted argument:
 | `--sandbox read-only` | Review and planning — writes are structurally impossible |
 | `--output-last-message <file>` | Write only the final report to a clean file |
 | `-m <model>` | Override the default model for one invocation |
-| `-c model_reasoning_effort=medium` | Set reasoning effort (Sol `medium`, Luna `xhigh` — §1) |
+| `-c model_reasoning_effort=high` | Set reasoning effort (Sol `high`, Luna `xhigh` — §1) |
 | `-c 'sandbox_workspace_write.network_access=true'` | Allow network from a workspace-write sandbox (needed for MCP calls) |
 
 - **The account default drifted 2026-07-29**: `~/.codex/config.toml`'s `model` line was found set
