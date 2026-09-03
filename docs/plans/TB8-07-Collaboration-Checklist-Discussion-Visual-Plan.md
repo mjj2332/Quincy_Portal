@@ -1,6 +1,6 @@
 # TB8-07 — Collaboration, Checklist and Discussion: Visual Plan
 
-**Status: DRAFTED, NOT BUILT.** Ranking candidate **#7** in
+**Status: APPROVED, NOT BUILT.** Ranking candidate **#7** in
 `Revamp-TB8-Wider-UI-Migration-And-Cleanup-Plan.md` ("Collaboration/checklist/comments"). Branch
 `tb8-07-collaboration-checklist`, cut from `main` at `e4f7ffc` (TB8-06 shipped).
 
@@ -21,7 +21,7 @@ in *behaviour*; it makes no visual claim, and TB8 is where the visual claim gets
 
 ---
 
-## 0.5 What Sol's round 1 changed
+## 0.5 What the two Sol review rounds changed
 
 Sol returned **REVISE** with 14 blocking findings on the first draft. Every one was independently
 re-verified against the repo by this session before being accepted (per
@@ -64,6 +64,59 @@ contrast targets computed against the wrong ground (§2.1), a square icon primit
 hold a date string (§4.1), under-specified buttons (§5-§7), a ledger with overlaps and gaps (§8),
 directional responsive prose (§4.2, §5.2, §5.4), an understated Notice Board blast radius (§1.2),
 and stale inventory counts (§1.1, §13).
+
+### Round 2, and where the review stopped
+
+Sol reviewed the revision and returned **REVISE** again — eight new blocking findings. That
+exhausts `Subagent-Frontend-Orchestration.md` step 2's **two-round cap**, so resolution passed to
+this session, which verified each finding, fixed all eight, and self-approves (§1 of
+`Subagent-Orchestration.md`: this session is Opus 5, so the Opus touchpoint is not a separate
+spawn).
+
+Sol confirmed round 1's #1, #2, #3, #7, #12, #13 and #14 as fully fixed, and its round-2 report
+independently reproduced the contrast figures, the inventory counts, the ring compilation, the
+`display: contents` analysis and the Tiptap attachment point. What it found still wrong:
+
+1. **The ledger arithmetic was wrong — 128 rules, not 86.** Re-counted mechanically: 28 / 21 / 43
+   / 11 / 1 / 24 across slices 2-7, and 33 kept. The hand count had treated a one-line
+   `@media (…) { .x { … } }` as two rules and mis-sized three ranges. The kept table also listed
+   `410, 414-415, 421-423` as a row of its own when they are inside `408-427`. Both fixed in §8.
+2. **The responsive pair left a one-pixel dead zone.** Compiled against Tailwind 4.3.3,
+   `max-[720px]:` is `width < 720px` and `min-[721px]:` is `width >= 721px`, so **[720, 721)
+   matched neither** and the subtask row would have had no `display` there. It also disproved this
+   plan's own claim that `max-[721px]` matches *at* 721px — it compiles to a strict `<`. The pair
+   is now `max-[721px]` / `min-[721px]`, which is exhaustive, non-overlapping, and the same
+   breakpoint the existing primitives already use (§5.2).
+3. **`META_TRIGGER` inherited `shrink-0` from the base**, so `max-w-full` was not the no-overflow
+   guarantee §4.1 claimed — a long schedule string would have taken the row and refused to give it
+   back. It now overrides with `shrink` (§4.1).
+4. **The RTE disabled fill selected the wrong element.** `data-[disabled=true]:` was written as a
+   self-selector on the ProseMirror element, but the state lives on the React root, which is the
+   only element that can carry it. Now `group` on the root and `group-data-[disabled]:` on the
+   content box (§6.4).
+5. **§9a's authorized list was incomplete** — it missed the `<div className="ey">` → `<Eyebrow>`
+   substitution, which changes a `<div>` to a `<span>` at four sites, and the RTE's own
+   `<NativeSelect>`; and it said "six `data-*`" while listing five. Now ten changes, enumerated.
+6. **The Actions-popover Delete button had no `RING_IN`**, so it would have rendered an outward
+   ring inside an `overflow: auto` panel — the exact clipping §4.3 exists to prevent (§5.3).
+7. **Slices 3 and 4 were not independently executable.** They share `ScheduleControl` and
+   `AssigneeControl` through the `compact` prop, and they share two `app.css` rules (`:933`,
+   `:963`). The previous revision's slice-3 range would have deleted the whole `@600` block,
+   removing popover-action wrapping a slice before its replacement landed. §11a now draws the
+   boundary explicitly.
+8. **§6.2 still carried the old `<Eyebrow>` instruction** two lines above its own correction.
+   Deleted.
+
+Plus four non-blocking notes, all taken: the Tailwind-scanner explanation was narrower than
+stated, `POPOVER_ACTIONS`' left alignment is deliberate and now says so, §6.3's option string is
+written out instead of derived, and §4.6's retained-CSS comment now carries §1.3's accurate
+two-renderer rationale rather than the "React does not author this" slogan that §1.3 itself
+disproves.
+
+**One defect this session caught on its own** while round 2 was running, and fixed in `5187bf2`:
+the round-1 fix for the overflow finding put `text-ellipsis` on the `StatusPill`, which is
+`inline-flex` — and `text-overflow` truncates a flex *item*, not a flex container's own overflow.
+It would have clipped without an ellipsis. Truncation is now a three-part contract (§4.1).
 
 ---
 
@@ -387,7 +440,11 @@ const ICON_BUTTON = ICON_BUTTON_BASE + " w-[28px] max-[721px]:w-[44px]";
  * date range from overflowing a 390px row.
  */
 const META_TRIGGER = ICON_BUTTON_BASE +
-  " w-auto max-w-full min-w-0 overflow-hidden px-[var(--space-1)] " +
+  // `shrink` overrides the base's `shrink-0`. Without it `max-w-full` is not a
+  // no-overflow guarantee: a long schedule string would take the full row width
+  // and refuse to give any back, pushing the assignee and overflow controls out
+  // of a 390px row. `min-w-[28px]/[44px]` from the base still floors the target.
+  " shrink w-auto max-w-full min-w-0 overflow-hidden px-[var(--space-1)] " +
   // The pill is `inline-flex` (`ui/status-pill.tsx`), and `text-overflow` does not
   // apply to a flex container's own overflow — it truncates a flex *item*. So the
   // pill gets `min-w-0` and the value text inside it is wrapped in a `truncate`
@@ -457,9 +514,17 @@ export const POPOVER_LABEL =
   "[font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-wide)] text-foreground-secondary";
 
 /**
- * The action row that closes a popover or a composer. Wrapping starts at <=600px only —
- * that is where `app.css:958-965` puts it today and this release preserves the breakpoint
- * rather than folding it into the app's usual 720px (§5.4).
+ * The action row that closes a popover or a composer.
+ *
+ * Deliberately NOT `justify-end`. Both consumers align by content, not by the
+ * container: the checklist composer pushes its buttons right with an existing
+ * `<span className="flex-1" />` spacer (which `max-[601px]:hidden` collapses),
+ * and the schedule popover's actions are left-aligned under a left-aligned form.
+ * Adding `justify-end` here would fight the spacer.
+ *
+ * Wrapping starts at <=600px only — that is where `app.css:958-965` puts it today
+ * and this release preserves the breakpoint rather than folding it into the app's
+ * usual 721px (§5.4).
  */
 export const POPOVER_ACTIONS =
   "flex items-center gap-[var(--space-2)] min-w-0 max-[601px]:flex-wrap";
@@ -564,8 +629,11 @@ owner.
 | 427 | `border-radius: 3px` | `border-radius: var(--radius-xs)` |
 | 417 | `font-size: 11px` | `font-size: var(--text-2xs)` |
 
-A comment above the block records that it is deliberately retained CSS and why (React does not
-author ProseMirror's output), so the next sweep does not read it as an oversight.
+A comment above the block records that it is deliberately retained CSS and why — using §1.3's
+accurate two-renderer rationale (**one stored document, two renderers that must agree, and mostly
+bare tags with no element to hang a utility on**), *not* the inaccurate short version that "React
+does not author this markup": `RichTextContent.tsx` demonstrably does author part of it. The next
+sweep should inherit the real reason, not a slogan that a five-minute grep disproves.
 
 ---
 
@@ -650,14 +718,14 @@ builder to test the order and improvise a fallback, which is not a specification
 ```
 /* summary container */
 min-w-0
-max-[720px]:grid max-[720px]:grid-cols-[auto_auto_minmax(0,1fr)]
-max-[720px]:items-center max-[720px]:gap-[var(--space-2)]
+max-[721px]:grid max-[721px]:grid-cols-[auto_auto_minmax(0,1fr)]
+max-[721px]:items-center max-[721px]:gap-[var(--space-2)]
 min-[721px]:flex min-[721px]:items-center min-[721px]:gap-[var(--space-2)]
 
 /* meta wrapper — a plain <div> with no ARIA, holding schedule + assignee + overflow */
 min-w-0
-max-[720px]:col-span-full max-[720px]:flex max-[720px]:items-center
-max-[720px]:gap-[var(--space-1)] max-[720px]:pt-[var(--space-1)]
+max-[721px]:col-span-full max-[721px]:flex max-[721px]:items-center
+max-[721px]:gap-[var(--space-1)] max-[721px]:pt-[var(--space-1)]
 min-[721px]:contents
 ```
 
@@ -665,13 +733,25 @@ At ≥721px the wrapper is `display: contents`, so the three controls are direct
 the summary row and the layout is byte-for-byte the single line it is today. At ≤720px it becomes
 its own full-width row beneath the title, which is what gives the three controls their 44px.
 
-**The wrapper `<div>` is a new element.** It is one of §9's eight authorized structural changes;
+**The wrapper `<div>` is a new element.** It is one of §9a's ten authorized structural changes;
 it carries no `role`, no `aria-*`, no `id`, and does not sit between a label and its control.
 
-Note the breakpoints are `max-[720px]` / `min-[721px]`, not the `max-[721px]` that
-`buttonClasses` and `FIELD_BOX` use internally. Those two are `max-width: 721px` and so also match
-*at* 721px; that overlap is harmless for a `min-height` but would be a real conflict for a
-`display`. Do not "align" these with the primitives' breakpoint.
+**The breakpoint pair is `max-[721px]` / `min-[721px]`, and it must be that pair.** Compiled
+directly against the installed Tailwind 4.3.3:
+
+| Utility | Compiles to |
+|---|---|
+| `max-[721px]:…` | `@media (width < 721px)` |
+| `min-[721px]:…` | `@media (width >= 721px)` |
+| `max-[720px]:…` | `@media (width < 720px)` |
+
+`max-[721px]` / `min-[721px]` is **exhaustive and non-overlapping** — every width matches exactly
+one. The revision's first attempt used `max-[720px]` / `min-[721px]`, which leaves the interval
+**[720px, 721px) matching neither**, so the row would have had no `display` at all there. (It also
+claimed `max-[721px]` matches *at* 721px; it does not — the compiled query is strictly `<`.)
+Using `max-[721px]` additionally aligns this pair with the breakpoint `buttonClasses`,
+`FIELD_BOX`, `TAB_BASE` and `CHECKBOX_INPUT` already use internally, so the whole surface changes
+layout at one width.
 
 | Control | Treatment |
 |---|---|
@@ -778,9 +858,11 @@ Two things in that string are deliberate and must not be "simplified":
   this plan claimed the short form generates nothing; that was wrong (§0.5). Do not "fix" either
   form into the other.
 
-**Actions.** The single Delete button → `buttonClasses("danger")`. It is a destructive action
-behind a `confirm()`; `secondary` (its treatment today) understates it and the `danger` variant
-exists precisely for this.
+**Actions.** The single Delete button → `buttonClasses("danger", { className: RING_IN })`. It is a
+destructive action behind a `confirm()`; `secondary` (its treatment today) understates it and the
+`danger` variant exists precisely for this. **`RING_IN` is not optional here**: `buttonClasses`
+BASE carries a non-important *outward* ring (`ui/button.tsx:29-31`), and this button sits inside
+an `AnchoredPopover`'s `overflow: auto` panel, where an outward ring clips (§4.3).
 
 ### 5.4 The composer
 
@@ -805,9 +887,16 @@ The `@media (max-width: 600px)` block (`:958-966`) becomes `max-[601px]:` varian
 elements that need it. **600px, not 720px** — it is a different breakpoint from the app's usual
 one and changing it is out of scope; the ledger records that it was preserved deliberately.
 
+The composer's two buttons (`SubtaskChecklist.tsx:221`): **Cancel** →
+`buttonClasses("secondary")`, **Add** → `buttonClasses("primary")`. Neither is inside an
+`AnchoredPopover`, so both take the default outward ring from `buttonClasses` and **not** `RING_IN`.
+With §5.3's Save/Cancel and the two "Use latest" buttons, that is all six `.button` strings in
+`SubtaskChecklist.tsx` accounted for.
+
 Loading and empty states (`.project-collaboration__state`) → `<EmptyState>` with
 `tone="empty"`, `className="px-0 py-[var(--space-4)] text-left"` (the panel is 460px wide; the
-default `--space-8` vertical padding and centred text are for a full page).
+default `--space-8` vertical padding and centred text are for a full page). `role`/`aria-live`
+pass through unchanged.
 
 ---
 
@@ -872,7 +961,9 @@ app where a `.button` was smaller than the 44px phone floor (§2.3).
 `__comment-compose` `<form>`:
 `grid gap-[var(--space-2)] pt-[var(--space-3)] [border-top-style:solid] border-t-[length:var(--border-width-hair)] border-t-border`;
 its footer row `flex flex-wrap items-center justify-between gap-[var(--space-3)]` with the
-"Use @ to mention project participants" hint as `<Eyebrow>` and the submit as
+"Use @ to mention project participants" hint as `<span className={META_TEXT}>` plus
+`[text-transform:none]` (it is a sentence, not a label — same treatment as §5.3's conflict
+captions), and the submit as
 `buttonClasses("primary")`.
 
 `__state` (loading / no-access / empty) → `<EmptyState>` as in §5.4.
@@ -898,8 +989,9 @@ grid content-start gap-[var(--space-4)] min-w-0
 `<ol>`: `grid gap-[var(--space-4)] list-none m-0 p-0`
 `<li> > <article>`: `grid gap-[var(--space-1)] min-w-0 ps-[var(--space-3)] [border-left-style:solid] border-l-[length:var(--border-width-hair)] border-l-border`
 - `<header>`: `flex flex-wrap items-baseline gap-x-[var(--space-2)] gap-y-[var(--space-1)]`,
-  title `<strong>` `[font:var(--weight-regular)_var(--text-sm)/1.2_var(--font-sans)] text-foreground`,
-  actor + `<time>` as `<Eyebrow>`
+  title `<strong>` `[font:var(--weight-regular)_var(--text-sm)/1.2_var(--font-sans)] text-foreground`;
+  the actor `<span>` and the `<time dateTime>` keep their existing elements and take
+  `className={META_TEXT}` — **not** `<Eyebrow>`, which emits a `<span>` and would drop `dateTime`
 - `<p>`: `m-0 [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary`
 - the `<li>`s carry no class; the `<ol>`'s `list-none` covers them
 
@@ -932,9 +1024,26 @@ Container `<div>`:
 `[border-style:solid] border-[length:var(--border-width-hair)] border-border bg-card shadow-[var(--shadow-md)]`
 (a floating listbox — the sanctioned elevation exception).
 `__list`: `m-0 p-[var(--space-1)] list-none`.
-`__option` button: the **same** string as `.subtask-popover__member` in §5.3, minus the
-`grid-cols` (it is `flex items-baseline justify-between`) — the two are the same control
-(a person-picker row) and after this release they share one treatment.
+`__option` button — written out in full rather than by reference, because "the same string minus
+one utility" is an instruction to derive, not a specification:
+
+```
+flex items-baseline justify-between gap-[var(--space-3)] w-full text-left min-w-0
+min-h-[44px] px-[var(--space-3)] py-[var(--space-2)]   /* 44px touch target — WCAG 2.5.5 Enhanced / HIG, not a spacing token */
+bg-transparent border-0 [border-left-style:solid]
+border-l-[length:var(--border-width-bold)] border-l-transparent
+text-foreground [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)]
+cursor-pointer hover:bg-secondary active:bg-surface-sunken
+data-[active=true]:border-l-border-strong
+focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)]
+focus-visible:!outline-[var(--focus-ring)] focus-visible:!outline-offset-[-2px]
+```
+
+It is deliberately the **same treatment** as `.subtask-popover__member` (§5.3) but for the
+`grid-cols` (this one is `flex justify-between`, that one is a two-column grid) and the selection
+marker (`data-active` here, `aria-[current=true]` there — different state sources, same 2px ink
+left rule). The two are the same control — a person-picker row — and after this release they read
+as one.
 `.is-active` → `data-active` → `data-[active=true]:border-l-border-strong` (§4.4).
 `__status`: `p-[var(--space-2)] [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary` (**9.20**).
 `<small>` role text: `text-foreground-secondary capitalize`.
@@ -943,13 +1052,13 @@ Container `<div>`:
 
 | Element | Classes |
 |---|---|
-| root | `grid gap-[var(--space-2)]`. **The `opacity: .65` disabled wash is deleted, not ported** (`app.css:429`, §2.1): a group opacity multiplies every child's contrast and makes this section's figures unmeetable. Disabled is expressed by the children below. |
+| root | `group grid gap-[var(--space-2)]`, plus `data-disabled={disabled \|\| undefined}`. **The `opacity: .65` disabled wash is deleted, not ported** (`app.css:429`, §2.1): a group opacity multiplies every child's contrast and makes this section's figures unmeetable. Disabled is expressed by the children below. The `group` class is what lets the ProseMirror element — which is not a React child and cannot read the prop — reach the root's state. |
 | `__toolbar` | `flex flex-wrap items-center gap-[var(--space-2)] p-[var(--space-1)] [border-style:solid] border-[length:var(--border-width-hair)] border-border bg-card` |
 | `__toolbar-group` | `inline-flex flex-wrap gap-[var(--space-1)]` |
 | `__toolbar-divider` | `w-px h-[var(--space-5)] bg-border shrink-0` |
 | `__toolbar-button` | `ICON_BUTTON` + `[font:var(--weight-regular)_var(--text-xs)/1.2_var(--font-sans)] aria-pressed:bg-primary aria-pressed:!text-[var(--accent-on)]` — the `!` is needed on the text colour for the same shorthand reason as the rings; the base string sets `text-foreground-secondary` unconditionally. Disabled: the `--bg-sunken` chip from `ICON_BUTTON_BASE`, **7.40:1**. |
 | `__toolbar-select` | `<NativeSelect className="min-w-[112px] w-auto">` — `FIELD_BOX`'s own `disabled:bg-surface-sunken disabled:text-foreground-secondary` gives **7.40:1** |
-| `__editor-content` | **keeps `rich-text__editor-content`** (see below) **plus** `FIELD_BOX` + `min-h-[var(--space-8)] bg-[var(--paper-050)] data-[disabled=true]:bg-surface-sunken [&.is-editor-empty:first-child]:before:content-[attr(data-placeholder)] [&.is-editor-empty:first-child]:before:text-foreground-secondary [&.is-editor-empty:first-child]:before:float-left [&.is-editor-empty:first-child]:before:h-0 [&.is-editor-empty:first-child]:before:pointer-events-none` — every variant written out in full; no `…` |
+| `__editor-content` | **keeps `rich-text__editor-content`** (see below) **plus** `FIELD_BOX` + `min-h-[var(--space-8)] bg-[var(--paper-050)] group-data-[disabled]:bg-surface-sunken [&.is-editor-empty:first-child]:before:content-[attr(data-placeholder)] [&.is-editor-empty:first-child]:before:text-foreground-secondary [&.is-editor-empty:first-child]:before:float-left [&.is-editor-empty:first-child]:before:h-0 [&.is-editor-empty:first-child]:before:pointer-events-none` — every variant written out in full; no `…` |
 | `__counter` | `text-right [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary`; over → append `!text-destructive` |
 | `__validation` | **element and `aria-live="polite"` kept as they are** (`RichTextEditor.tsx:402`); it takes `min-h-[1.2em] [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-destructive`. **Not `<FieldError>`** — that primitive injects `role="alert"` (`ui/field.tsx:34-45`), which would turn a polite live region into an assertive one and change how a screen reader interrupts the user mid-typing. |
 
@@ -988,10 +1097,19 @@ attribute on a ProseMirror-managed element, so:
   next to the others), and do not try to merge it at render time.
 - The `data-placeholder` attribute and the conditional `id` are untouched. `data-placeholder` is
   load-bearing: `content-[attr(data-placeholder)]` reads it.
-- Tailwind's scanner must see the literal. It scans `.tsx` source, and a module-level `const`
-  string literal is scanned fine — but a string **built** at runtime is not. Keep it literal.
+- Tailwind's scanner works on lexical candidates in the source text, so the concatenation itself
+  is fine: `"rich-text__editor-content " + EDITOR_CONTENT_UTILITIES` is safe **because every
+  utility appears as a complete literal** in a module-level `const`. What is unsafe is a candidate
+  *name* assembled at runtime (`` `bg-${tone}-500` ``). Keep every utility whole; concatenating
+  whole strings is not the hazard.
 - `is-editor-empty` is added to this same element by ProseMirror, which is why the placeholder
   variant is written as `[&.is-editor-empty:first-child]:before:…` rather than a `:empty` variant.
+- **The disabled fill is `group-data-[disabled]:`, not `data-[disabled=true]:`.** The state lives
+  on the React-rendered root (`RichTextEditor.tsx:338`); the ProseMirror element receives only
+  `class`, `data-placeholder` and an optional `id` (`:223-230`), so a self-selector would never
+  match and the disabled editor would silently stay `--paper-050`. The root carries `group` and
+  `data-disabled` (set to `undefined` when enabled, so the attribute is absent rather than
+  `"false"` — `group-data-[disabled]` is an attribute-presence test).
 
 The toolbar gap goes 7px → `--space-2` (8px) and its padding 5px → `--space-1` (4px): both were
 off-grid. Toolbar buttons rise from ~24px to 28px desktop / **44px at ≤720px**, which is the
@@ -1035,6 +1153,9 @@ the surface and it predates this plan. It is not redesigned.
 since it shipped. Same family as §2.4, harmless because the fallback is correct, recorded because
 the next person should not have to rediscover it.)
 
+The overlay head's **Hide ›** button (`ProjectCollaborationPanel.tsx:64`) →
+`buttonClasses("secondary")` — the only `.button` string in that file.
+
 `__head` → `flex items-start justify-between gap-[var(--space-3)]`; overlay variant adds
 `flex-none p-[var(--space-5)] [border-bottom-style:solid] border-b-[length:var(--border-width-hair)] border-b-border bg-[var(--paper-050)]`.
 Its `<h2>` → unmodified `--type-h3` (§2.6's 25px goes). `<div className="ey">` → `<Eyebrow>`.
@@ -1072,6 +1193,11 @@ grid content-start p-[var(--space-5)] bg-card
 
 `.project-collaboration--unavailable` had **zero** rules of its own; nothing is retired but the
 class name. `.project-collaboration` keeps every rule — it still has its real consumer.
+
+The two **Back to dashboard** `InternalLink`s (`ProjectWorkspace.tsx:330, :338`) →
+`buttonClasses("secondary")`. They render real `<a>` elements, which is exactly why every
+text-colour utility in `buttonClasses` is `!`-prefixed (`ui/button.tsx:6-14`, against `base.css`'s
+unlayered `a { color: inherit }`) — no extra work is needed here, but do not strip the `!`s.
 
 The read-only summary card: `.project-collaboration-summary` → Tailwind
 (`grid gap-[var(--space-3)] p-[var(--space-5)] bg-card [border-style:solid] border-[length:var(--border-width-hair)] border-border`),
@@ -1148,22 +1274,35 @@ replacement.
 | 7 | 213 | `.project-collaboration-summary .member em` | **R** — a scoped override whose scoping class this release deletes; it would otherwise dangle (§7.3) |
 | 7 | 717 | `.project-collaboration-summary__team` @720 | **R** |
 
-**86 rules retired**, across six slices.
+**128 rules retired**, across six slices: **28 / 21 / 43 / 11 / 1 / 24** for slices 2-7.
+
+Counted mechanically over the ranges above rather than by hand — a hand count in the previous
+revision said 86 and was wrong by a third. Two things a re-counter must get right, both of which
+that count got wrong: a one-line `@media (…) { .x { … } }` block contributes **one** rule, not
+two (the wrapper is not a rule); and a comma-separated selector list is **one** rule regardless of
+how many members it has. `app.css:921-932` is ten rules, not the nine an earlier draft claimed.
 
 ### 8b. Kept, and why
 
+Each range appears **once**; no rule is listed twice.
+
 | Lines | Rules | Justified by |
 |---|---|---|
-| 408-427 | the 20 `.rich-text` prose rules | §1.3 — two renderers, one stored document, mostly bare tags |
-| 410 (the `__editor-content` members), 414-415, 421-423, 443-446 | the 9 rules scoped through `.rich-text__editor-content` | §1.3, §6.4 — which is why that class survives on the element |
-| 842, 843, 845, 846 | `__wrap`, `__toggle`, `.project-collaboration`, `--overlay` | §7.1 — eight interacting `env()`/custom-property declarations |
-| 868, 869 | `--standalone`, its `@min-width:1080px` width rule | §7.1 |
-| 967, 968, 969 | the `@720` and two `.app--impersonating` custom-property blocks | §7.1 |
+| 408-427 | **20** rules — the whole `.rich-text` prose block, including `:410`, `:414-415` and `:421-423` | §1.3 — two renderers, one stored document, mostly bare tags |
+| 443-446 | **4** rules — the editor-content prose descendants (`p`, `h2`, `h3`, and the `p+p`/`ul`/`ol` group) | §1.3, §6.4 |
+| 842, 843, 845, 846 | **4** rules — `__wrap`, `__toggle`, `.project-collaboration`, `--overlay` | §7.1 — eight interacting `env()`/custom-property declarations |
+| 868, 869 | **2** rules — `--standalone`, and the one rule inside its `@min-width:1080px` block | §7.1 |
+| 967, 968, 969 | **3** rules — the `@720` block's one rule, `.app--impersonating __wrap`, and the second `@720` block's one rule | §7.1 |
 
-**Note the overlap:** `app.css:410` is a single rule whose selector list spans both halves of the
-`.rich-text` block — six `.rich-text …:first-child` members and two
-`.rich-text__editor-content …:first-child` members. It is counted **once**, in the 408-427 row.
-The 443-446 range likewise contains the four editor-prose rules and no others.
+**33 rules kept.**
+
+A previous revision listed `410, 414-415, 421-423` as a separate row from `408-427`, which
+double-counted them — they are inside that range. And **`:410` is one rule, not two**: its selector
+list spans both halves of the `.rich-text` block (six `.rich-text …:first-child` members and two
+`.rich-text__editor-content …:first-child` members), and a selector list is one rule. It lives in
+the `408-427` row and nowhere else. This is why the class must survive on the element (§6.4): the
+`__editor-content` members of `:410`, and all of `:414-415`, `:421-423` and `:443-446`, reach
+through it.
 
 Rules **untouched** by this release because they are shared app-wide, and which this surface
 merely stops *using*: `.statetag` (`:178`), `.empty` (`:638-639`), `.notice` (`:775`), `.muted`
@@ -1173,24 +1312,26 @@ merely stops *using*: `.statetag` (`:178`), `.empty` (`:638-639`), `.notice` (`:
 
 ### 8c. The slice-8 audit
 
-Slice 8 performs **no deletions**. It:
+Slice 8 performs **no deletions**. Its four checks:
 
 1. greps `app.css` for every selector in 8a and asserts zero matches;
 2. greps for every selector in 8b and asserts it is present, with a one-line comment naming the
    section of this plan that justifies it;
 3. asserts no collaboration, checklist, mention or rich-text-chrome selector exists in `app.css`
-   that appears in neither table.
+   that appears in neither table;
+4. re-counts mechanically and asserts **128 gone, 33 kept**, using 8a's stated counting method
+   (a one-line `@media` wrapper is not a rule; a selector list is one rule).
 
 Any selector that fails one of those three is a finding for the Sol diff review.
 
-## 9. What must not change — and the eight changes that are authorized
+## 9. What must not change — and the ten changes that are authorized
 
 The first draft claimed a `className`-stripped diff would show "only class strings and `data-*`
 conversions." That was not achievable and is corrected here: this release makes a small number of
 **structural** changes, and a plan that promises otherwise gives the reviewer a check that must
 fail. They are enumerated below; the invariant is that **nothing outside this list changes**.
 
-### 9a. The eight authorized structural changes
+### 9a. The ten authorized structural changes
 
 | # | Change | Files | Why it is safe |
 |---|---|---|---|
@@ -1199,9 +1340,15 @@ fail. They are enumerated below; the invariant is that **nothing outside this li
 | 3 | `<span className="statetag">` → `<StatusPill tone="info">` | Discussion | Same `<span>`; adds `data-slot` |
 | 4 | Subtask due text → `<StatusPill tone="neutral">` | Checklist | Same `<span>`; the `sr-only` "Schedule " prefix is kept verbatim |
 | 5 | A meta-wrapper `<div>` added inside each subtask row | Checklist | §5.2 — no `role`, no `aria-*`, no `id`; `display: contents` at ≥721px so the desktop DOM box tree is unchanged |
-| 6 | `<Input>` / `<NativeSelect>` / `<Checkbox>` replace bare `<input>` / `<select>` | Checklist, popovers | Same elements; each adds only `data-slot` and `className` |
-| 7 | Six `data-*` attributes replace six class modifiers | Checklist (`data-done`, `data-dragging`, `data-popover-open`), Mention (`data-active`), RTE (`data-disabled`) | Attributes carry no semantics; no `aria-*` is displaced |
-| 8 | Hand-rolled buttons → `buttonClasses()` / `<IconButton>` | all | `<button type="button">` in, `<button type="button">` out |
+| 6 | `<Input>` / `<NativeSelect>` / `<Checkbox>` replace bare `<input>` / `<select>` | Checklist row + composer, both schedule/assignee popovers, **and the RTE toolbar's heading select** (`RichTextEditor.tsx:348-357`) | Same elements; each adds only `data-slot` and `className` |
+| 7 | **Five** `data-*` attributes replace five class modifiers | Checklist (`data-done`, `data-dragging`, `data-popover-open`), Mention (`data-active`), RTE root (`data-disabled`) | Attributes carry no semantics; no `aria-*` is displaced |
+| 8 | Hand-rolled buttons → `buttonClasses()` / `<IconButton>` | all | `<button type="button">` in, `<button type="button">` out; the two `InternalLink`s stay `<a>` |
+| 9 | **`<div className="ey">` → `<Eyebrow>`, which changes `<div>` to `<span>`** | `ProjectCollaborationPanel.tsx:64`; `ProjectWorkspace.tsx:330, :332` (×3 — "Collaboration", "Read-only summary", "Photographers"/"Editors") | `Eyebrow` is hard-coded to a `<span>` (`ui/eyebrow.tsx:5-14`). Each of these is a bare label inside a flow container with no role, no id and no `aria-*`, and each is followed by a sibling heading — so the block→inline change is absorbed by the parent's `grid`/`flex` layout. `<Eyebrow className="block">` is used where the label must still occupy its own line. **This is the one place an element *type* changes**; it is listed rather than hidden inside "class changes" |
+| 10 | `<div className="empty">` inside `CollaborationOnlyUnavailable` and the `__state` divs → `<EmptyState>` | Discussion, Checklist, `CollaborationOnly*` | Same as #2; called out separately only because these three sites have no `role` today and must not gain one |
+
+**Ten, and nothing else.** §11's per-slice report checks the diff against *this* list, not against
+a "classes and `data-*` only" rule — an earlier revision said the latter, which §9a's own contents
+contradict.
 
 **Explicitly *not* authorized**, each having been considered and rejected: adding a `hidden`
 attribute to the checklist panel (§5.1), replacing `.rich-text__validation` with `FieldError`
@@ -1211,7 +1358,7 @@ the `TabStrip` component (§7.2). Each would have changed ARIA to buy paint.
 ### 9b. The invariants
 
 The builder verifies each with a `className`-stripped diff against `main`, per slice. Anything the
-diff shows that is not one of 9a's eight is a finding.
+diff shows that is not one of 9a's **ten** is a finding.
 
 1. Every `aria-label`, `aria-labelledby`, `aria-controls`, `aria-expanded`, `aria-selected`,
    `aria-current`, `aria-checked`, `aria-invalid`, `aria-describedby`, `aria-live`, `aria-hidden`,
@@ -1274,9 +1421,10 @@ another user and one from the signed-in user, and ≥3 activity events.
     that would have caught the retired-editor-content-class defect (§0.5).
 11. **Zero console errors and zero failed requests** across the walk (in-flight `ERR_ABORTED`s on
     navigation excepted, per TB8-05/TB8-06 precedent).
-12. **`app.css` matches §8**: the slice-8 audit's three greps (§8c) all pass — 86 rules gone,
-    §8b's survivors present and commented, and nothing collaboration-, checklist-, mention- or
-    rich-text-chrome-shaped that appears in neither table.
+12. **`app.css` matches §8**: all four of the slice-8 audit's checks (§8c) pass — **128 rules
+    gone**, §8b's **33** survivors present and each carrying its justifying comment, nothing
+    collaboration-, checklist-, mention- or rich-text-chrome-shaped that appears in neither table,
+    and the mechanical re-count agreeing.
 13. `npm run typecheck` (6 workspaces), `npm run build -w @quincy/web`, and the full suite
     (`npm run test --workspaces` plus `npx vitest run --config packages/shared/vitest.config.ts`)
     are green with **zero** failures.
@@ -1287,27 +1435,66 @@ another user and one from the signed-in user, and ≥3 activity events.
 
 Bottom-up, per `Subagent-Frontend-Orchestration.md`. Each slice ends green on `typecheck` and
 `build -w @quincy/web`; only slice 8 must satisfy the full gate. Each slice agent is given the
-exact line ranges below **plus** §1, §3, §4 and §9 in full — those four are the shared constraint
+sections named below **plus** §1, §3, §4 and §9 in full — those four are the shared constraint
 sections every slice needs.
 
-| # | Scope | Reads |
+**Every slice from 2 onward deletes its own `app.css` rules** (§4.4). The deletions are part of
+the slice, not deferred to slice 8; §8a is the authority on which.
+
+| # | Scope | `app.css` deletions | Reads |
+|---|---|---|---|
+| 1 | `ui/icon-button.tsx` (new: `ICON_BUTTON_BASE`, `ICON_BUTTON`, `META_TRIGGER`, `IconButton`); `META_TEXT` exported from `ui/eyebrow.tsx`; `POPOVER_CONTENT`/`POPOVER_LABEL`/`POPOVER_ACTIONS` exported from `AnchoredPopover.tsx`; `Notice` gains the `caution` tone; `--color-border-strong` added to `tokens/tailwind.css` | none | §4 |
+| 2 | `MentionAutocomplete.tsx`; `RichTextEditor.tsx` chrome; the three `.rich-text` token edits | 428-442, 447-450, 455-463 — **28 rules** | §4.6, §6.3, §6.4 |
+| 3 | `SubtaskChecklist.tsx` — section, head, toggle, progress, panel, notice, **composer**, add-button, empty/loading states | 886-890, 893-900, 953-957, and **`:964`, `:965` only** from the `@600` block — **21 rules** | §5.1, §5.4, **and §5.3's assignee/schedule specs for the `compact` branch only** |
+| 4 | `SubtaskChecklist.tsx` — `SortableSubtaskRow`, and the non-`compact` branches of `ScheduleControl`/`AssigneeControl`/`ActionsControl` | 891-892, 901-952, and the **`@600` block's remaining rule `:963` plus the wrapper** — **43 rules** | §5.2, §5.3 |
+| 5 | `ProjectDiscussionThread.tsx` | 851-861 — **11 rules** | §6.1 |
+| 6 | `ProjectActivityView.tsx` | 879 — **1 rule** | §6.2 |
+| 7 | `ProjectCollaborationPanel.tsx`; `ProjectWorkspace.tsx`'s `CollaborationOnly` and `CollaborationOnlyUnavailable` | 213, 717, 844, 847-850, 862-867, 872-885 — **24 rules** | §7 |
+| 8 | **Audit only** (§8c) — no deletions; adds the survivors' justifying comments; test updates; docs | none | §8, §12 |
+
+### 11a. The slice 3 / slice 4 boundary — the one real hazard
+
+Slices 3 and 4 both edit `SubtaskChecklist.tsx` and run **in sequence**, never in parallel. They
+also *share two components*, and the previous revision did not say how, which would have left the
+boundary to the builder's judgment. It is fixed here:
+
+**`ScheduleControl` and `AssigneeControl` each render the same trigger element for two callers**,
+switched by the `compact` prop (`SubtaskChecklist.tsx:73-103` and `:113-135`): the checklist
+composer passes `compact`, a row does not.
+
+- **Slice 3 converts only the `compact` branch** — the `subtask-checklist__composer-trigger`
+  modifier and the composer's own layout. It leaves the non-`compact` trigger's class string, and
+  every popover *body* (schedule fields, member list, actions), exactly as it finds them.
+- **Slice 4 converts the non-`compact` branch and all three popover bodies.**
+
+Because both branches live in one `className` template string, slice 3's edit is a **conditional**
+change — convert the `compact ? …` arm, leave the base arm — and slice 4 collapses the two into
+one converted string. Slice 3's report must show the non-`compact` arm unchanged.
+
+**Two `app.css` rules are shared between the slices and are split, not duplicated:**
+
+| Rule | Members | Owner |
 |---|---|---|
-| 1 | `ui/icon-button.tsx` (new), `AnchoredPopover.tsx` constants, `Notice` gains `caution`, `--color-border-strong` in `tokens/tailwind.css` | §4 |
-| 2 | `MentionAutocomplete.tsx`, `RichTextEditor.tsx` chrome, `app.css` rich-text token edits | §4.6, §6.3, §6.4 |
-| 3 | `SubtaskChecklist.tsx` — head, toggle, progress, panel, notice, composer, add-button, states | §5.1, §5.4 |
-| 4 | `SubtaskChecklist.tsx` — `SortableSubtaskRow` and the three popover controls | §5.2, §5.3 |
-| 5 | `ProjectDiscussionThread.tsx` | §6.1 |
-| 6 | `ProjectActivityView.tsx` | §6.2 |
-| 7 | `ProjectCollaborationPanel.tsx`, `ProjectWorkspace.tsx`'s two collaboration functions | §7 |
-| 8 | The `app.css` retirement ledger, test updates, docs | §8, §12 |
+| `:933` | `.subtask-popover__actions, .subtask-checklist__composer-controls` | **Slice 4** deletes the whole rule. Slice 3 replaces the composer's use of it with `POPOVER_ACTIONS`; the popover's use survives one slice on the legacy rule, which is the documented one-slice overlap |
+| `:963` | `.subtask-popover__actions, .subtask-checklist__composer-controls { flex-wrap }` inside `@600` | **Slice 4**, same reason. Slice 3 must **not** delete the `@600` wrapper — `:963` still needs it. Slice 3 deletes only `:964` and `:965`, which are composer-only |
 
-Slices 3 and 4 both edit `SubtaskChecklist.tsx` and run **in sequence**, not in parallel.
+Deleting the whole `@media (max-width: 600px)` block in slice 3, as the previous revision's
+range implied, would have removed the popover-action wrapping a slice before slice 4 installs its
+replacement — a real, if brief, regression. Slice 3 deletes two rules from inside the block and
+leaves it standing; slice 4 deletes the last rule and the now-empty wrapper.
 
-A slice reports: the diff, its own §9 check, `typecheck`/`build` output, and — for slices 2-7 —
-the `className`-stripped semantic diff against `main` showing that nothing but class strings and
-the named `data-*` conversions changed.
+Everything else is disjoint: slice 3 owns `886-890`, `893-900`, `953-957`; slice 4 owns
+`891-892`, `901-952`. No selector appears in both lists.
 
----
+### 11b. What a slice reports
+
+The diff; its §9b check **against §9a's ten authorized changes** (not against a "classes and
+`data-*` only" rule — §9a's own contents contradict that); `typecheck` and `build` output; a grep
+proving its `app.css` deletions landed and its neighbours did not; and, for slices 2-7, the
+`className`-stripped semantic diff against `main`.
+
+Each slice locates its deletions **by selector grep**, never by the line numbers in the table —
+they drift as earlier slices delete (§8, and `docs/lessons.md` on TB8-06's 60-70-line drift).
 
 ## 12. Tests
 
