@@ -633,13 +633,41 @@ at `max-[721px]`; 480 because that is where §2.1b's orphaning appears, and that
 
 ---
 
+## 7a. Slices 1 and 2 are visually inert by construction — verified
+
+Legacy `.notice-board__*` classes stay on the elements until slice 3 retires the CSS, so that
+nothing regresses mid-release. But `styles/index.css` imports `app.css` **outside every `@layer`**,
+so while both are present **the legacy rule wins and the new utilities do nothing**.
+
+Measured on local dev after slice 1 landed, using two properties where old and new disagree:
+
+| | Legacy | Slice 1's utility | Computed |
+|---|---|---|---|
+| `.notice-board__summary` | 13px | `--text-sm` = 14px | **13px** |
+| `.notice-board__chevron` | 24px | `--text-xl` = 28px | **24px** |
+
+**This is expected, not a defect** — but three things follow, and they are why it is written down:
+
+1. **The visual gate cannot run until slice 3.** Do not attempt it after slice 1 or 2; it would
+   measure the old surface and report a false pass.
+2. **Slice 3 must strip the legacy classes from the JSX**, not only the rules from `app.css`.
+   Retiring the CSS alone would leave dead attributes behind and hide which classes were load-
+   bearing.
+3. A reviewer reading slice 1's diff in isolation will correctly observe that it changes nothing on
+   screen. That is the staging, not a broken build.
+
+What *is* immediately live after slice 1 — because it is markup, not paint — is the badge change,
+the `<EmptyState>` substitution, `hidden` on the panel, and the `data-slot` hooks.
+
+---
+
 ## 8. Slicing
 
 | Slice | Scope | Commit |
 |---|---|---|
 | **1** | §5.1 shell + toggle, §5.2 badge/panel/posts/empty. Migrates `__toggle` (12) **and all 12 `[aria-label="New notice"]` assertions** — the badge change lands here, so its test migration must too. | `feat(tb8-08): slice 1 — the board shell, the unread badge and the empty state` |
 | **2** | §5.3 in full — head split, meta on `META_TEXT`, the two action constants. Migrates `__post` (14), `__edit` (12), `__delete` (4). | `feat(tb8-08): slice 2 — the post, its meta line and its owner actions` |
-| **3** | §5.4 composers + notices, the 3 `.button` migrations, and the whole `app.css:374-404` retirement. Migrates `__composer` (3), `__edit-composer` (4). | `feat(tb8-08): slice 3 — the composers, the notices and the app.css retirement` |
+| **3** | §5.4 composers + notices, the 3 `.button` migrations, **stripping every remaining legacy `.notice-board__*` class from the JSX** (§7a), and the whole `app.css:374-404` retirement. Migrates `__composer` (3), `__edit-composer` (4). | `feat(tb8-08): slice 3 — the composers, the notices and the app.css retirement` |
 
 Then: this session's visual gate (including the 480px long-name case), the §5 orchestration gate,
 merge, deploy on the owner's word.
