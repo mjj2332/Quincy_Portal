@@ -1,6 +1,6 @@
 # TB8-06 — The Kanban Board: Visual Plan
 
-**Status: BUILT — all 8 slices complete, awaiting the visual gate.** Ranking candidate #6.
+**Status: BUILT AND GATED — ready to merge.** Ranking candidate #6. Not yet merged or deployed.
 Branch `tb8-06-kanban-board`, slices `d186b3d` · `be051d1` · `a8a9822` · `07a04a5` · `8126867` ·
 `6d62fcd` · `4e6f54e` · docs. Not yet merged or deployed.
 
@@ -22,6 +22,66 @@ Pipeline: `docs/Subagent-Frontend-Orchestration.md` — this session drafts, Sol
 below rather than quietly patched: the touch-target finding (§2.2) was **backwards**, and the
 retirement range would have deleted a live rule belonging to another screen (§1.1). Both are
 recorded because a plan that hides its own corrections teaches the next one nothing.
+
+---
+
+## 0. The visual gate — PASSED, 2026-09-03
+
+Run by the orchestrating session in the human-authenticated Chrome (CDP 9333) against local dev,
+after three Luna measurement rounds. **This step is never delegated** (`Subagent-Frontend-Orchestration.md`
+step 9); Luna's findings were input to verify, not a verdict.
+
+**Measured, in the browser:**
+
+| | Before | After |
+|---|---|---|
+| Empty-column placeholder | `#b3aa97`, **2.17:1** | `#4d473c`, 9.20:1 |
+| Stage ordinal, card count | `#8f8775`, 3.36:1 | `#4d473c`, 9.20:1 |
+| Disabled drag handle | `#8f8775` **plus `opacity:.48`** → ≈1.72:1 | `#8f8775`, **3.57:1**, no opacity |
+| Disabled arrow | — | `#4d473c` on `--bg-sunken`, **7.40:1** (differentiated by background, as the original rule did) |
+| Columns | — | 267.6px @1440 · 244px @1024 · **240px @390** |
+| Drag handle / arrows / select / move-to @390 | 44px | **44px — preserved** |
+| Six focus rings | — | all `2px solid #0a0a0a`; column head and popover **inward −2px**, no clipping |
+| Drag | — | dragged card `0.4`; preview shadow present; **column and its header both highlight** |
+
+**Judged by eye at three viewports.** The board reads as one Quincy surface: hairline column
+dividers on warm paper, Mazius display for addresses, uppercase eyebrow stage labels, square
+corners, flat elevation everywhere except the sanctioned drag preview (§2.4). At 390 the controls
+are visibly generous without the row wrapping, and the Priority select sits in the field treatment
+without squeezing the arrows beside it — the `w-auto` correction from slice 5, confirmed visually.
+Nothing reads as a regression against `main`; the only visible differences are the three contrast
+fixes and the select.
+
+**Three Luna FAILs were investigated and dismissed, each with evidence:**
+
+1. *Cross-column drag returned 409.* Two different codes, neither a defect.
+   `stage_contract_reload_required` in round 2 — the page predated the flag flip, and the server
+   was literally saying "reload". `stage_confirmation_required` in round 3 — TB5A's confirmation
+   modal (`fa80298`), which appears **zero times** in this release's diff; Luna confirmed, got 200,
+   and the card moved with no white screen.
+2. *"Top card's up arrow not disabled."* `movementDisabled` is
+   `movementSettlePending || !boardMutationEnabled` — position in the column has nothing to do with
+   it. The expectation was wrong in the spec, not the code.
+3. *Console errors.* Both were the 409s above; the `ERR_ABORTED`s are in-flight cancels during
+   navigation, the same pattern TB8-05 recorded.
+
+The decisive check was a semantic diff of `ProjectKanbanBoard.tsx` against `main` with every
+`className` value stripped: what remains is two imports, the `NativeSelect` swap, three
+`buttonClasses` calls, and the two `data-*` conversions. **Every gating prop is byte-identical**, so
+this release cannot have caused a behavioural failure.
+
+**Environment note.** `tb5a_board_contract_enabled` was OFF in the local D1, which blocked half of
+round 1 — the arrows, move-to and popover never mounted. Flipped ON locally, which now **matches
+production**; left ON deliberately so future local QA exercises the same code path. Local D1 also
+carries un-normalised `board_revision` values (0, 1, 5) that prod's migration 0037 fixed — harmless
+locally, but worth knowing before reading a local 409.
+
+**§2.11 discipline held across all three unsandboxed runs**: HEAD unchanged, all 554 source hashes
+identical after each, only the permitted scratchpad written. Luna disclosed on every run that it
+self-minted nothing — the session was already valid.
+
+**Declared limit** (§7.1): whether a screen reader announces the popover's step change is untested.
+Recorded in TB8-10's verification-debt table, not claimed as a pass.
 
 ---
 
