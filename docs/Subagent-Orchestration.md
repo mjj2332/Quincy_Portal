@@ -15,14 +15,16 @@ stable anchors — other docs link to them. Policy history belongs in `git log -
 | **Sonnet 5** | this session, directly — no subprocess | Claude Sonnet 5 | Orchestrates the pipeline; builds tasks too small to hand off | Yes, at this session's discretion |
 | **Sol** | `codex exec` | `gpt-5.6-sol`, always medium effort | Default planner and diff reviewer — drafts plans, reviews plans, reviews diffs | No — plans and reviews only |
 | **Luna** | `codex exec` | `gpt-5.6-luna`, always xhigh effort | Default builder (includes authoring/fixing test *code*); takes an open-ended diagnosis escalated from Agy | Yes |
-| **Agy** | `agy` CLI subprocess — [§3a](subagents/agy-cli.md) | `gemini-3.7-flash-high`, `--effort high` | Default **tester** — runs all QA and diagnostics (§2.8), including danger-mode (§2.9) and YOLO-mode (§2.10) | Groundwork only — never a pipeline build step |
+| **Agy** | `agy` CLI subprocess — [§3a](subagents/agy-cli.md) | `gemini-3.8-flash-high`, `--effort high` | Default **tester** — runs all QA and diagnostics (§2.8), including danger-mode (§2.9) and YOLO-mode (§2.10) | Groundwork only — never a pipeline build step |
 | **Terra** | `codex exec` — [§3](subagents/codex-cli.md) | `gpt-5.6-terra` | No role assigned — not spawned in this pipeline | No |
 | **Opus reviewer** | `Agent` tool, `model: opus` | Claude Opus 5 | Reviews the plan (§2.1) and the final diff | No code — plan-document exception in §2.4 |
 
 **Sol always runs at `-c model_reasoning_effort=medium` and Luna always runs at
 `-c model_reasoning_effort=xhigh`** — both fixed regardless of work type, never dialed up or down
-per task. **Agy always runs at `--effort high`** — the tier is baked into the `gemini-3.7-flash-high`
-model id, which rejects a mismatched `--effort` (§3a). The `Agent` tool has no effort dial — ask for
+per task. **Agy always runs at `--effort high`** — the tier is baked into the `gemini-3.8-flash-high`
+model id, which rejects a mismatched `--effort` (§3a). The Gemini generation moves (3.6 → 3.7 →
+**3.8**, current as of 2026-09-03); §3a carries the live roster and the standing instruction to
+re-check it rather than trust the written list. The `Agent` tool has no effort dial — ask for
 maximum rigor in the prompt.
 
 **"Sonnet 5" means this orchestrating session acting directly**, with its own file tools. Distinct
