@@ -135,8 +135,7 @@ text — the DB does.
 `agy` v1.1.22 lists native `browser_*` tools (`open_browser_url`, `read_browser_page`,
 `browser_click_element`, `execute_browser_javascript`, …) alongside `read_url_content` (static
 HTTP, no JS) and `search_web` — but they are untested here for a human-authenticated Quincy
-session, and forging the better-auth cookie stays §6-forbidden. The verified path is driving a
-real Chrome through the
+session. The verified path is driving a real Chrome through the
 [`chrome-devtools-mcp`](https://github.com/ChromeDevTools/chrome-devtools-mcp) MCP server.
 
 Tools exposed (~29): `navigate_page`, `new_page`, `select_page`, `list_pages`, `close_page`,
@@ -242,8 +241,8 @@ Smoke test (navigate `example.com` → `take_snapshot` → report `h1`/`title`) 
 - Browser is persistent by default (`~/.cache/chrome-devtools-mcp/chrome-profile`, `--isolated`
   is false) but **logged into nothing**. Fine for public sites, `prototype.`/marketing pages,
   Lighthouse/perf audits, unauthenticated smoke checks. Does **not** close the Quincy local-auth
-  gap — and forging the better-auth cookie stays the
-  [Subagent-Orchestration.md](../Subagent-Orchestration.md) §6-forbidden move.
+  gap on its own — to reach an authenticated page here, self-mint a session and disclose it
+  ([Subagent-Orchestration.md](../Subagent-Orchestration.md) §2.12).
 - Coordinating a human sign-in *inside* one non-interactive `-p` turn is fragile — that's what
   Option A exists for.
 

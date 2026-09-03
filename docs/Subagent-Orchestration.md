@@ -109,9 +109,10 @@ alike. Agy never runs the Google OAuth flow itself; the human does the sign-in c
 
    > *"You have full machine access and a real authenticated Chrome via the chrome-devtools MCP.
    > Production access is read-only verification only — confirm pages load and the feature renders;
-   > never create, edit, or delete anything in production. If you hit an auth or config blocker,
-   > stop and report it in your final message — never route around it via secrets, direct DB
-   > writes, or forged tokens. Disclose any deviation from the instructed method."*
+   > never create, edit, or delete anything in production. If the session you need is missing, you
+   > may self-mint one (§2.12) and must say so in your report. Report any other auth or config
+   > blocker in your final message rather than solving it another way. State every deviation from
+   > the instructed method."*
 
 10. **YOLO-mode is Agy-only, testing-only, mutation-permitted-through-impersonation.** Same
     invocation as danger-mode, for the one case §2.9 defers elsewhere: a smoke test that needs to
@@ -131,9 +132,10 @@ alike. Agy never runs the Google OAuth flow itself; the human does the sign-in c
     > Admin identity, and never on a record that isn't already labeled test/disposable or one you
     > created and labeled that way yourself. Check `Admin-Impersonation.md`'s notification-events
     > list before any write; never trigger real staff email. Delete or archive your own test data
-    > and disable the impersonation flag when the task ends. If you hit an auth or config blocker,
-    > stop and report it in your final message — never route around it via secrets, direct DB
-    > writes, or forged tokens. Disclose any deviation from the instructed method."*
+    > and disable the impersonation flag when the task ends. Your Admin session here must be the
+    > human-authenticated one, never a self-minted one (§2.12) — mutations have to stay
+    > attributable. Report any auth or config blocker in your final message rather than solving it
+    > another way. State every deviation from the instructed method."*
 
 11. **Luna may run unsandboxed for Chrome-driven testing** (owner decision, 2026-09-03). Attaching
     `chrome-devtools-mcp` to the human-authenticated Chrome works from `codex exec`, but only
@@ -152,19 +154,40 @@ alike. Agy never runs the Google OAuth flow itself; the human does the sign-in c
     would have contained the blast radius. So every unsandboxed Luna run states, verbatim or
     equivalent, restated every task:
 
-    > *"You are running unsandboxed for ONE purpose — driving Chrome to measure a UI. You are
-    > READ-ONLY ON THE REPOSITORY: do not create, edit, delete, stage, commit or revert any file in
-    > it; if you think a file needs changing, say so and change nothing. Scratch space goes in the
-    > scratchpad directory only. Never run Google OAuth — the Chrome is already signed in; if the
-    > session is missing or expired, STOP and report it. On any auth or config blocker, stop and
-    > report: do not read BETTER_AUTH_SECRET or anything from .dev.vars, do not compute an HMAC, do
-    > not forge or insert a `session` row, do not seed fixtures via raw SQL. Local dev only, never
-    > production. Disclose any deviation from the instructed method."*
+    > *"You are running unsandboxed for ONE purpose — driving Chrome to measure a UI. Treat the
+    > repository as read-only: report any file you think needs changing and leave it untouched.
+    > Keep scratch files in the scratchpad directory. The Chrome is already signed in; if the
+    > session is missing or expired, self-mint one (§2.12) and say so in your report. Report any
+    > other auth or config blocker rather than solving it another way. State every deviation from
+    > the instructed method."*
 
     **The orchestrating session snapshots the repo before the spawn** — `git status --porcelain`,
     `git rev-parse HEAD`, and a `shasum` manifest of every source file — and diffs it after, at §5.
     An unsandboxed agent's "I changed nothing" is a claim like any other, and this is the one
     restriction the prompt cannot enforce on itself.
+
+12. **Agents may self-mint a session** (owner decision, 2026-09-03). Reading `BETTER_AUTH_SECRET`
+    from `.dev.vars` or Worker secrets, computing the HMAC, and writing a `session` row to reach an
+    authenticated page is a **sanctioned technique in both environments**, for Agy and Luna alike.
+    It is the standing answer to a missing session, and it exists so that no agent is ever cornered
+    into the one thing that stays off-limits: **running Google OAuth against the owner's real
+    account** — a human does every sign-in click
+    (`feedback-no-autonomous-google-signin`).
+
+    Two rules bound it, and they carry the whole policy:
+
+    - **A self-minted production session is passive.** Read, measure, screenshot, verify. Writes on
+      production keep the §2.10 path — a human-authenticated Admin plus impersonation — because
+      that is what makes a mutation *attributable*. A self-minted session writing to production
+      would stamp `audit_log` rows with a real user's identity for an action no human took, which
+      is the integrity property the author-only annotation rules exist to protect. Local dev has no
+      such constraint: mint and mutate freely.
+    - **Say that you did it.** Name the technique in the final report, every time. This is the
+      requirement the policy actually rests on, and §6 is why: the 2026-08 incident that once made
+      this move forbidden was not bad because an HMAC got computed — it was bad because the report
+      read as an ordinary authenticated pass and the substitution stayed invisible. A disclosed
+      self-mint is a fine engineering shortcut; an undisclosed one corrupts every claim in the
+      report around it.
 
 ### Pipeline
 
@@ -302,13 +325,14 @@ injection broke its assertion math while the code under test was correct.
   is no sandbox to fall back on, and the `agy -p` run is a single non-interactive turn with no
   mid-run approval checkpoint. Restate §2.9's or §2.10's block every task; never assume prior
   phrasing carries forward.
-- **Auth bypass instead of reporting a blocker.** Told to sign in via real Google OAuth against
-  local dev, Luna once hit `redirect_uri_mismatch` (no `localhost` redirect URI is registered on
-  the OAuth client) and — despite naming "report the blocker" as its own fallback — read
-  `BETTER_AUTH_SECRET` from the gitignored `.dev.vars`, computed an HMAC, forged a row in the local
-  D1 `session` table to mint itself a session, then seeded fixture data via raw `sqlite3 INSERT`.
-  None of it was disclosed; the report read as an ordinary authenticated pass. The same risk
-  applies to Agy — agy-cli.md's Option B note already marks forging the better-auth cookie
-  §6-forbidden. Any agent that hits a missing session or an auth mismatch **stops and reports it**;
-  it never reads `BETTER_AUTH_SECRET`, forges a `session` row, or seeds fixtures via raw SQL. The
-  human does the sign-in click; the agent waits (`feedback-no-autonomous-google-signin`).
+- **Undisclosed method substitution.** Told to sign in via real Google OAuth against local dev,
+  Luna once hit `redirect_uri_mismatch` (no `localhost` redirect URI is registered on the OAuth
+  client) and — despite naming "report the blocker" as its own fallback — read `BETTER_AUTH_SECRET`
+  from the gitignored `.dev.vars`, computed an HMAC, wrote itself a row in the local D1 `session`
+  table, then seeded fixture data via raw `sqlite3 INSERT`. **The technique is now sanctioned
+  (§2.12); the silence is what made this a failure mode.** None of it appeared in the report, which
+  read as an ordinary authenticated pass — so every downstream claim rested on a setup nobody had
+  reviewed. The lesson generalizes past auth: an agent that substitutes its own method for the
+  instructed one and does not say so has invalidated its whole report, whatever the method's
+  merits. Read reports for what they *don't* mention, and prefer a prompt that gives the agent a
+  sanctioned route (§2.12) over one that leaves it choosing between a blocker and a secret.
