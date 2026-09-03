@@ -9,6 +9,7 @@ import { RichTextEditor } from "./RichTextEditor";
 import { Eyebrow, META_TEXT } from "./ui/eyebrow";
 import { buttonClasses } from "./ui/button";
 import { EmptyState } from "./quincy/EmptyState";
+import { Notice } from "./quincy/Notice";
 import type { MentionableUser } from "./MentionAutocomplete";
 import type { NoticeBoardPost } from "../lib/notice-board-data";
 
@@ -30,6 +31,16 @@ const EDIT_ACTION = buttonClasses("text", { className: ACTION_SIZING });
 const DELETE_ACTION = buttonClasses("text", {
   className: ACTION_SIZING + " !text-destructive hover:not-disabled:!text-destructive",
 });
+
+// Two separate complete strings, not "create plus overrides" — `.px-0` is emitted before
+// `.px-[var(--space-5)]` under Tailwind's utility order, so an override form would silently
+// lose the padding drop the edit composer needs (§5.4, Sol r2 #3).
+const CREATE_COMPOSER = "grid gap-[var(--space-3)] px-[var(--space-5)] py-[var(--space-4)]";
+const EDIT_COMPOSER = "grid gap-[var(--space-3)] pt-[var(--space-4)] px-0 pb-0";
+const COMPOSER_FOOT = "flex flex-wrap items-center justify-between gap-[var(--space-3)]";
+// `!normal-case` is mandatory: a plain `normal-case` loses to `META_TEXT`'s `uppercase` on
+// emission order (§2.2, Sol r1 #5 — this exact bug shipped once already in TB8-07).
+const MENTION_HINT = cn(META_TEXT, "!normal-case", "flex-[1_1_12rem] min-w-0");
 
 const COLLAPSE_KEY = "quincy:dashboard:noticeboard:v2";
 const EMPTY_DOC: RichTextDoc = { type: "doc", content: [{ type: "paragraph" }] };
@@ -143,18 +154,17 @@ export function NoticeBoard({ currentUserId }: { currentUserId: string }) {
     } catch (reason) { setMutationError("delete", reason, "The post could not be deleted."); }
   }
 
-  const renderEditComposer = (id: string) => <div className="notice-board__composer notice-board__edit-composer">
+  const renderEditComposer = (id: string) => <div data-slot="notice-board-edit-composer" className={EDIT_COMPOSER}>
     <RichTextEditor value={editingContent} onChange={setEditingContent} limit={2_000} disabled={isBusy} loadMentionables={loadMentionables} placeholder="Edit notice…" onSubmit={() => void saveEdit(id)} />
-    <div className="notice-board__composer-foot"><button className="button button--secondary" type="button" disabled={isBusy} onClick={() => { setEditingId(null); setEditingContent(EMPTY_DOC); }}>Cancel</button><button className="button" type="button" disabled={isBusy || editingOverBytes} onClick={() => void saveEdit(id)}>{isSaving ? "Saving…" : "Save"}</button></div>
+    <div className={COMPOSER_FOOT}><button className={buttonClasses("secondary")} type="button" disabled={isBusy} onClick={() => { setEditingId(null); setEditingContent(EMPTY_DOC); }}>Cancel</button><button className={buttonClasses("primary")} type="button" disabled={isBusy || editingOverBytes} onClick={() => void saveEdit(id)}>{isSaving ? "Saving…" : "Save"}</button></div>
   </div>;
 
   const hasUnread = (readState?.unreadCount ?? 0) > 0;
   const editingPostStillExists = editingId !== null && posts.some((post) => post.id === editingId);
-  return <section className="notice-board mb-[var(--space-6)] border-[length:var(--border-width-hair)] border-solid border-border bg-card" aria-label="Notice board">
+  return <section className="mb-[var(--space-6)] border-[length:var(--border-width-hair)] border-solid border-border bg-card" aria-label="Notice board">
     <button
       data-slot="notice-board-toggle"
       className={cn(
-        `notice-board__toggle${hasUnread ? " is-unread" : ""}`,
         "w-full flex items-center gap-[var(--space-4)] px-[var(--space-5)] py-[var(--space-4)] min-h-[44px] bg-transparent border-0 [border-left-style:solid] border-l-[length:var(--border-width-rule)] text-left text-foreground cursor-pointer transition-[background-color,border-color] duration-[var(--dur-fast)] ease-[var(--ease-standard)] hover:bg-secondary",
         hasUnread ? "border-l-border-strong" : "border-l-transparent",
         RING,
@@ -166,7 +176,7 @@ export function NoticeBoard({ currentUserId }: { currentUserId: string }) {
     >
       <span className="flex flex-col gap-[var(--space-1)] flex-1 min-w-0">
         <Eyebrow>Staff notice board</Eyebrow>
-        <span className="notice-board__summary [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary">Messages for the production desk</span>
+        <span className="[font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary">Messages for the production desk</span>
       </span>
       {hasUnread && (
         <>
@@ -174,13 +184,13 @@ export function NoticeBoard({ currentUserId }: { currentUserId: string }) {
           <span aria-hidden="true" className="w-[7px] h-[7px] flex-none rounded-[var(--radius-pill)] bg-primary" />
         </>
       )}
-      <span className="notice-board__chevron [font:var(--weight-regular)_var(--text-xl)/1_var(--font-sans)] text-foreground-secondary" aria-hidden="true">{open ? "−" : "+"}</span>
+      <span className="[font:var(--weight-regular)_var(--text-xl)/1_var(--font-sans)] text-foreground-secondary" aria-hidden="true">{open ? "−" : "+"}</span>
     </button>
-    <div id={panelId} className="notice-board__panel border-t-[length:var(--border-width-hair)] [border-top-style:solid] border-t-border" aria-hidden={!open} hidden={!open}>
-      {visibleError && <div className="notice-board__error" role="alert">{visibleError}</div>}
-      <div className="notice-board__posts grid" aria-live="polite" ref={posts.length === 0 ? presentation.anchorRef : undefined}>
+    <div id={panelId} className="border-t-[length:var(--border-width-hair)] [border-top-style:solid] border-t-border" aria-hidden={!open} hidden={!open}>
+      {visibleError && <Notice tone="critical" role="alert">{visibleError}</Notice>}
+      <div className="grid" aria-live="polite" ref={posts.length === 0 ? presentation.anchorRef : undefined}>
         {posts.length === 0 && <EmptyState title="No notices yet." className="px-[var(--space-5)] py-[var(--space-5)] text-left" />}
-        {posts.map((post) => <article className="notice-board__post" data-slot="notice-board-post" key={post.id} ref={post.id === posts[0]?.id ? presentation.anchorRef : undefined}>
+        {posts.map((post) => <article className="px-[var(--space-5)] py-[var(--space-4)] border-b-[length:var(--border-width-hair)] [border-bottom-style:solid] border-b-border" data-slot="notice-board-post" key={post.id} ref={post.id === posts[0]?.id ? presentation.anchorRef : undefined}>
           <header className="flex flex-wrap items-baseline gap-x-[var(--space-3)] gap-y-[var(--space-1)] min-w-0">
             <span className="[font:var(--type-eyebrow)] text-foreground min-w-0 [overflow-wrap:anywhere]">{post.authorName}</span>
             <time dateTime={post.createdAt} className={META_TEXT}>{relativeTime(post.createdAt)}</time>
@@ -188,8 +198,8 @@ export function NoticeBoard({ currentUserId }: { currentUserId: string }) {
           </header>
           {editingId === post.id
             ? renderEditComposer(post.id)
-            /* `mt-[var(--space-2)]` replaces the retired `.notice-board__post > .rich-text { margin-top: 8px }`
-               (app.css:391). The article is not a grid, and the first rich-text child has no margin of its
+            /* `mt-[var(--space-2)]` replaces the now-retired post-body top-margin rule that used to
+               live in app.css. The article is not a grid, and the first rich-text child has no margin of its
                own, so without this the content renders flush against the header (Sol r2 #2).
                `RichTextContent` takes `className` and appends it to `rich-text` by plain string
                concatenation — no `cn()`, so no twMerge — which is fine here: `mt-` conflicts with nothing
@@ -202,12 +212,12 @@ export function NoticeBoard({ currentUserId }: { currentUserId: string }) {
             </div>
           )}
         </article>)}
-        {editingId && !editingPostStillExists && <article className="notice-board__post notice-board__post--changed" data-slot="notice-board-post">
-          <div className="notice-board__edit-target-changed" role="status">This notice was changed or deleted elsewhere. Your draft is still here.</div>
+        {editingId && !editingPostStillExists && <article className="px-[var(--space-5)] py-[var(--space-4)] border-b-[length:var(--border-width-hair)] [border-bottom-style:solid] border-b-border bg-secondary" data-slot="notice-board-post">
+          <Notice tone="caution" role="status">This notice was changed or deleted elsewhere. Your draft is still here.</Notice>
           {renderEditComposer(editingId)}
         </article>}
       </div>
-      <form className="notice-board__composer" onSubmit={(event) => void submit(event)}><label className="sr-only" htmlFor={`${panelId}-body`}>Write a notice</label><RichTextEditor id={`${panelId}-body`} value={content} onChange={setContent} limit={2_000} disabled={isBusy} loadMentionables={loadMentionables} placeholder="Write a notice for the team…" onSubmit={() => void submit()} /><div className="notice-board__composer-foot"><span>Use @ to mention active staff</span><button className="button" type="submit" disabled={isBusy || postingOverBytes}>{isPosting ? "Posting…" : "Post notice"}</button></div></form>
+      <form data-slot="notice-board-composer" className={CREATE_COMPOSER} onSubmit={(event) => void submit(event)}><label className="sr-only" htmlFor={`${panelId}-body`}>Write a notice</label><RichTextEditor id={`${panelId}-body`} value={content} onChange={setContent} limit={2_000} disabled={isBusy} loadMentionables={loadMentionables} placeholder="Write a notice for the team…" onSubmit={() => void submit()} /><div className={COMPOSER_FOOT}><span className={MENTION_HINT}>Use @ to mention active staff</span><button className={buttonClasses("primary")} type="submit" disabled={isBusy || postingOverBytes}>{isPosting ? "Posting…" : "Post notice"}</button></div></form>
     </div>
   </section>;
 }

@@ -282,13 +282,13 @@ describe("Notice Board presentation freshness", () => {
     const createEditorSelection = selectionSnapshot(createEditor);
 
     const assertEditComposerPreserved = () => {
-      const currentEditEditor = host.querySelector<HTMLElement>('.notice-board__edit-composer [contenteditable="true"]');
+      const currentEditEditor = host.querySelector<HTMLElement>('[data-slot="notice-board-edit-composer"] [contenteditable="true"]');
       if (!currentEditEditor) throw new Error("Edit composer editor is missing.");
       expect(currentEditEditor).toBe(editEditor);
       expect(currentEditEditor.textContent).toContain("Keep this edit draft");
     };
     const assertCreateComposerPreserved = () => {
-      const currentCreateEditor = host.querySelector<HTMLElement>('form.notice-board__composer [contenteditable="true"]');
+      const currentCreateEditor = host.querySelector<HTMLElement>('form[data-slot="notice-board-composer"] [contenteditable="true"]');
       if (!currentCreateEditor) throw new Error("Create composer editor is missing.");
       expect(currentCreateEditor).toBe(createEditor);
       expect(currentCreateEditor.textContent).toContain("Keep this create draft");
@@ -435,8 +435,8 @@ describe("Notice Board presentation freshness", () => {
     apiPatchMock.mockResolvedValue({ post: edited, readState: state(0, marker(oldPost.id, oldPost.createdAt), edited) });
     const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
     await click(host.querySelector('[data-slot="notice-board-edit"]')!);
-    const editEditor = host.querySelector<HTMLElement>('.notice-board__edit-composer [contenteditable="true"]')!;
-    const createEditor = host.querySelector<HTMLElement>('form.notice-board__composer [contenteditable="true"]')!;
+    const editEditor = host.querySelector<HTMLElement>('[data-slot="notice-board-edit-composer"] [contenteditable="true"]')!;
+    const createEditor = host.querySelector<HTMLElement>('form[data-slot="notice-board-composer"] [contenteditable="true"]')!;
     await typeIntoEditor(editEditor, "Edited");
     await typeIntoEditor(createEditor, "Created");
     await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Post notice")!);
@@ -463,10 +463,10 @@ describe("Notice Board presentation freshness", () => {
     apiPostMock.mockResolvedValue({ post: { ...newPost, authorId: "user-a" }, readState: state(0, marker(newPost.id, newPost.createdAt), newPost) });
     apiPatchMock.mockImplementationOnce(() => new Promise((resolve) => { resolveEdit = resolve; }));
     const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
-    const createEditor = host.querySelector<HTMLElement>('form.notice-board__composer [contenteditable="true"]')!;
+    const createEditor = host.querySelector<HTMLElement>('form[data-slot="notice-board-composer"] [contenteditable="true"]')!;
     await typeIntoEditor(createEditor, "Created");
     await click(host.querySelector('[data-slot="notice-board-edit"]')!);
-    const editEditor = host.querySelector<HTMLElement>('.notice-board__edit-composer [contenteditable="true"]')!;
+    const editEditor = host.querySelector<HTMLElement>('[data-slot="notice-board-edit-composer"] [contenteditable="true"]')!;
     await typeIntoEditor(editEditor, "Edited");
     await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Save")!);
     expect(apiPatchMock).toHaveBeenCalledTimes(1);
