@@ -165,5 +165,12 @@ describe("NotificationPreferences", () => {
     const source = readFileSync(sourcePath, "utf8");
     expect(source).toMatch(/let active = true;/);
     expect(source).toContain("return () => { active = false; };");
+    // The flag and its cleanup are not the guard — the three `if (active)` checks are. Asserting
+    // only the first two passes even with every guard deleted (Sol, diff review): assert each
+    // guarded continuation by name, and that there are exactly three of them.
+    expect(source.match(/if \(active\)/g)).toHaveLength(3);
+    expect(source).toContain("if (active) setEnabled(value.projectDeadlineReminderEmails)");
+    expect(source).toContain("if (active) setError(");
+    expect(source).toContain("if (active) setLoading(false)");
   });
 });

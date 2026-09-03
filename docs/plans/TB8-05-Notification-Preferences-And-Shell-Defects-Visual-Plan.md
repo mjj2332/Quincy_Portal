@@ -1270,6 +1270,18 @@ Six tests are added — the four the design needs, plus two closing that gap:
    reason §9.3 gives — happy-dom plus React 19 leave no observable behavioural difference to assert
    on. The runtime half is kept as the smoke test it honestly is.
 
+   **Second correction, from Sol's diff review (2026-09-03).** The paragraph above was still not
+   enough, and the built test inherited its gap: asserting `let active = true;` and the cleanup
+   return does **not** assert the guard, because deleting all three `if (active)` checks leaves
+   both of those intact. The flag and its cleanup are the *scaffolding*; the three guarded
+   continuations are the thing invariant 9 actually depends on. The test asserts each of them by
+   name — `if (active) setEnabled(...)`, `if (active) setError(`, `if (active) setLoading(false)` —
+   plus `toHaveLength(3)` on the guard count, and was proved able to fail by stripping the guards
+   from the real source (1 failed / 7 passed) and passing again once restored. Three rounds of
+   review on one test is the honest cost of a source-level assertion: each round asserted the
+   nearest visible token rather than the behaviour, which is the failure mode this note exists to
+   record.
+
 ### 9.2 `ImpersonationBanner.dom.test.tsx`
 
 The existing test (`alert.parentElement` is `.impersonation-banner`) must still pass — that is why
