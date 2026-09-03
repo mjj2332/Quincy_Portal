@@ -1,6 +1,6 @@
 # TB8-07 — Collaboration, Checklist and Discussion: Visual Plan
 
-**Status: APPROVED, NOT BUILT.** Ranking candidate **#7** in
+**Status: BUILT, VISUAL GATE PASSED, NOT YET MERGED OR DEPLOYED.** Ranking candidate **#7** in
 `Revamp-TB8-Wider-UI-Migration-And-Cleanup-Plan.md` ("Collaboration/checklist/comments"). Branch
 `tb8-07-collaboration-checklist`, cut from `main` at `e4f7ffc` (TB8-06 shipped).
 
@@ -15,9 +15,74 @@ in *behaviour*; it makes no visual claim, and TB8 is where the visual claim gets
 
 ---
 
-## 0. The visual gate
+## 0. The visual gate — PASSED, 2026-09-04
 
-*Not run. This section is filled in by the orchestrating session after slice 8, before merge.*
+Run by this session in the human-authenticated Chrome (CDP 9333) against local dev, at
+1440×900 / 1024×768 / 390×844, on a seeded fixture: 6 subtasks (2 done, 1 assigned, one
+unscheduled, one date-due, one timed, one range, one deliberately long title) and 7 comments
+(6 the signed-in user's, 1 another user's). **This step is never delegated**
+(`Subagent-Frontend-Orchestration.md` step 9) — and it earned that rule this release, catching
+three defects nothing else had.
+
+### Measured, in the browser
+
+| | Before | After |
+|---|---|---|
+| Schedule / assignee trigger | `opacity: .06` → **1.10:1**, hover-only | **opacity 1, visible, 44×44 at 390** |
+| Disabled drag grip | `--text-secondary` × `opacity:.5` → **2.51:1** | `--bg-sunken` chip, **7.40:1** |
+| Done subtask title | `--text-muted`, **3.57:1** | **8.66:1** |
+| Comment `<time>` | 10px `--text-muted`, **3.57:1** | 12px, **8.66:1** |
+| Due pill | — | **7.40:1** |
+| Idle collaboration tab | **3.36:1** | **8.66:1** |
+| Counter | **3.36:1** | **8.66:1** |
+| Row controls @390 | 22-24px | **44×44** — grip, checkbox, title, schedule, assignee, overflow |
+| Row controls @1440 | — | **28×28** |
+| Focus rings (11 controls) | — | all `2px solid #0a0a0a`, **offset +2px** |
+| Focus rings (popover, 3 controls) | — | all `2px solid`, **offset −2px**, inside `overflow:auto` — unclipped |
+| Horizontal overflow | — | **0** at all three viewports, and on the standalone page |
+| `CollaborationOnlyUnavailable` | `fixed`, `z-index:70`, 460px, `--shadow-lg` | **`static`, `z-index:auto`, 1344px, no shadow, zero fixed elements** |
+| Own-comment rule | — | **6 inked / 1 hairline** — exactly the authorship split |
+| Notice Board rendered post | 14px/1.55 | **14px/21px** = `--text-sm` / `--leading-normal` |
+
+The unavailable state is not reachable by URL — it is derived from a 403 on the collaboration
+probe — so it was forced by shimming `fetch` to 403 and then measured, rather than reasoned about.
+
+### Three defects the gate caught, which every earlier check had passed
+
+1. **The checklist head collided at 390px.** `grid-cols-[minmax(0,1fr)_auto]` let the `auto` meta
+   column take 257px and squeezed the eyebrow column to **31px** while "CHECKLIST" needs **85px**,
+   so the label overflowed its box and ran under the progress readout. §5.1's own prediction — "it
+   wraps to two lines before it collides" — was **wrong**: `CHECKLIST` is a single uppercase word
+   and cannot wrap. Fixed by inverting the track sizing to `[auto_minmax(0,1fr)]`, so the fixed
+   label gets its natural width and the flexible column goes to the readout.
+2. **The 28px progress readout does not fit a 460px panel.** Measured against the real 203px
+   column: 28px needs 239px, 22px needs 188px (still over the 184px left after the chevron), 18px
+   needs 154px. It now steps to `--text-md` at ≤721px. The full `--type-h3` statement is a desktop
+   affordance; at 18px it is still visibly the largest thing in the head, so §5.1's intent — lead
+   with the number — survives. The "Hide ›" button was wrapping to three lines and took
+   `shrink-0 whitespace-nowrap`.
+3. **`[text-transform:none]` silently lost to `META_TEXT`'s `uppercase`** at all three sites, so
+   the mention hint and both schedule-conflict captions rendered as shouty labels instead of
+   sentences. Computed `text-transform` read `uppercase`. This is the release's **fourth**
+   encounter with the same rule — two same-layer utilities are decided by Tailwind's emission
+   order, not by class order — and the fix is `!normal-case`.
+
+### Judged by eye
+
+The board reads as one Quincy surface at all three viewports: hairline separators instead of four
+nested boxes, uppercase eyebrow attribution, Mazius for the display numbers, square corners, flat
+elevation except the sanctioned popover. At 390 the subtask row splits cleanly into a title line
+and a control line, and the controls are unmistakably present — which is the whole point of the
+release. The own-comment ink rule does what §3 claimed: with 6 of 7 comments mine, the single
+hairline entry from another user is immediately findable, which is the same signal read from the
+other side.
+
+**One honest limitation.** The ink rule is the *majority* treatment in a thread you wrote most of,
+rather than the rare accent §3 describes. It still reads correctly — the contrast is legible and
+the odd-one-out is obvious — but the framing in §3 is truer of a busy multi-party thread than of a
+solo one. Recorded rather than fixed: changing it would mean inverting the marker to "someone
+else's", which is a product decision about whose voice should be findable, not a visual one, and
+belongs to the owner.
 
 ---
 

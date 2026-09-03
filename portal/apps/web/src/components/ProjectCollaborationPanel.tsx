@@ -73,7 +73,7 @@ export function ProjectCollaborationPanel({ projectId, openSignal, onOpenSignalC
       "flex items-start justify-between gap-[var(--space-3)]",
       overlay && "flex-none p-[var(--space-5)] [border-bottom-style:solid] border-b-[length:var(--border-width-hair)] border-b-border bg-[var(--paper-050)]",
     );
-    const headerMarkup = <div data-testid="project-collaboration-head" className={headClass}><div><Eyebrow>Collaboration</Eyebrow><h2 className="serif [font:var(--type-h3)]">{project?.street ?? "Project comments"}</h2></div>{overlay && <button ref={closeRef} type="button" className={buttonClasses("secondary")} onClick={close}>Hide ›</button>}</div>;
+    const headerMarkup = <div data-testid="project-collaboration-head" className={headClass}><div><Eyebrow>Collaboration</Eyebrow><h2 className="serif [font:var(--type-h3)]">{project?.street ?? "Project comments"}</h2></div>{overlay && <button ref={closeRef} type="button" className={buttonClasses("secondary", { className: "shrink-0 whitespace-nowrap" })} onClick={close}>Hide ›</button>}</div>;
     const tabId = (view: CollaborationView) => `project-collaboration-${projectId}-${view}-tab`;
     const panelId = (view: CollaborationView) => `project-collaboration-${projectId}-${view}-panel`;
     const tabIndex = (view: CollaborationView) => activeView === view ? 0 : -1;
