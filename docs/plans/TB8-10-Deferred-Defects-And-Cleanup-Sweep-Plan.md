@@ -102,6 +102,53 @@ dock the toolbar to the top, or make it scrollable. That is a product decision, 
 one, and inventing one at the end of a release is the kind of unowned change this pipeline exists
 to prevent. **Needs owner input before it can be planned.**
 
+### D-09 — `.tile` has no keyboard focus indicator
+**Found:** the `design-system-guards.test.ts` focus guard, 2026-09-04 — not by a review.
+**Surface owner:** photo grid (`app.css`).
+**Evidence:** `.tile` sets `outline: 0` in unlayered `app.css`, and `--ring` is set only for
+`is-selected` / `st-approved` / `st-flagged` — never for `:focus-visible`. The tile carries
+`role="button"` and `tabindex`, so it *is* in the tab order: a keyboard user tabbing the grid
+gets no focus indicator at all. This is the same family as TB8-09's headline defect
+(`.strip__button`) on a different surface, and the fourth instance of the pattern.
+**Recorded in:** `SUPPRESSED_FOCUS_BASELINE`, which fails the build if the entry is fixed but not
+deleted.
+
+---
+
+### D-10 — Five phantom custom properties
+**Found:** the `design-system-guards.test.ts` phantom-token guard, 2026-09-04.
+**Evidence:** used in CSS, defined nowhere, so each renders its fallback (or, in an inherited
+property with no fallback, resolves to `inherit`):
+
+| Token | Site | Note |
+|---|---|---|
+| `--dur-reveal` | `app.css` tile/vtile reveal transition | timing not owned by the token system |
+| `--scrim-bottom` | `app.css` `.tile__scrim` | gradient stop |
+| `--scrim-full` | `app.css` `.chero__scrim` | gradient stop |
+| `--font-body` | `production-calendar.css` | the real token is `--font-sans` |
+| `--font-serif` | `production-calendar.css` | the real token is `--font-body-serif` — this is **D-04's** second door |
+
+Three earlier instances (`--signal-warning`, `--signal-warm`, `--panel`) were each found by hand,
+one release at a time. The guard found these five in one pass.
+**Recorded in:** `PHANTOM_TOKEN_BASELINE`.
+
+---
+
+### D-11 — Dead `text-[length:…]` beside a `[font:…]` shorthand
+**Found:** the `design-system-guards.test.ts` font-size guard, 2026-09-04.
+**Evidence:** Tailwind emits `[font:…]` arbitrary-property rules after `text-[length:…]` utilities
+at equal specificity, so the shorthand always wins and the `text-[length:]` is dead. Remaining
+sites: `components/RichTextEditor.tsx` ×2, `components/Topbar.tsx` ×1, `screens/Dashboard.tsx` ×2. Each renders a size nobody
+asked for; the fix is to merge the size into one shorthand, as
+`components/Lightbox.tsx` now does.
+**Two Lightbox instances were fixed while writing the guard** (`SHORTCUT_KBD` and `.cmt__pin`,
+both 14px → the authored 11px) — verified in the browser against the built stylesheet. Those were
+not cosmetic: the shortcut bar's own label text is 12px, so its `kbd` chips were rendering
+*larger* than the text they annotate.
+**Recorded in:** `FONT_SIZE_COLLISION_BASELINE`, per file and per count.
+
+---
+
 ## Verification debt (not defects)
 
 These are **not** failures; they are acceptance items that were verified structurally and were
@@ -129,4 +176,8 @@ Each item's origin, so none of this rests on this document alone:
 - D-04 — `portal/apps/web/src/styles/tokens/typography.css:5-13`.
 - D-05 — `docs/plans/implemented/TB8-04-…-Visual-Plan.md` §2.1 contrast table and E-16.
 - D-07 — `docs/plans/Revamp-TB8-Wider-UI-Migration-And-Cleanup-Plan.md`, ranking item 10.
+- D-08 — `docs/plans/implemented/TB8-09-…-Visual-Plan.md` §11 visual gate.
+- D-09, D-10, D-11 — `portal/apps/web/src/styles/design-system-guards.test.ts`; each item's
+  baseline entry names this document as its owner, and the guard fails if an entry is fixed
+  without being deleted.
 - Verification debt — TB8-04 plan status line; TB8-05 plan §10.3.

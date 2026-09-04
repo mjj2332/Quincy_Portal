@@ -1295,3 +1295,38 @@ that is a missing control on that device, not a styling preference.** Audit for 
 `opacity`, `visibility` and `display` the same way you audit for contrast — and check the finding
 at the smallest supported viewport, not the one you are developing on.
 
+
+## A trap documented in prose keeps shipping; a trap in a test does not (2026-09-04)
+
+Three defect families in this repo have each shipped **more than once**, and one of them shipped
+*after* being written up in a comment in the very file that then violated it — `ui/button.tsx`
+describes the `font-size` collision, and TB8-09 shipped it anyway, rendering the Lightbox rating
+stars at 18px where the code asked for 22px. It survived 1,763 passing tests and two review rounds.
+The failure is not that people did not read the lesson. It is that a lesson has no failure mode.
+
+`portal/apps/web/src/styles/design-system-guards.test.ts` mechanises the three:
+
+1. **A `var(--x)` whose `--x` is defined nowhere.** Silent by construction — it renders the
+   fallback, or, in an *inherited* property with no fallback, resolves to `inherit` rather than to
+   the declaration above it.
+2. **A `text-[length:…]` beside a `[font:…]` shorthand.** Tailwind emits the arbitrary-property
+   rule later at equal specificity, so the shorthand always wins and the `text-[length:]` is dead
+   — regardless of the order the classes appear in the class string.
+3. **`outline: none | 0 | transparent` in unlayered CSS.** `app.css` and `production-calendar.css`
+   are imported outside every cascade layer, so such a rule beats any utility and, on a specificity
+   tie, also beats the global `:focus-visible` in `tokens/base.css`.
+
+Two things are worth carrying forward beyond the guards themselves.
+
+**Write the guard against the real historical defect before trusting it.** The first draft of the
+`font-size` guard passed cleanly when the exact TB8-09 star defect was pasted back in. It scanned
+single string literals, and the shipped bug spanned a reference — `ICON_BUTTON_BASE + " … text-
+[length:…]"`, with the shorthand in another file entirely. A guard that only catches the tidy form
+of a bug does not catch the form that actually ships. Reintroduce the original defect, watch the
+test go red, then restore.
+
+**Guards find more than the incidents that motivated them.** Three phantom tokens had been found by
+hand, one release at a time; the guard found five more in one pass. The focus guard found
+`.tile { outline: 0 }` — the photo grid gives a keyboard user no focus indicator anywhere — which
+no review had ever reported. Both are recorded as TB8-10 D-09/D-10, in a baseline that **fails the
+build if an entry is fixed but not deleted**, so the lists can only shrink.
