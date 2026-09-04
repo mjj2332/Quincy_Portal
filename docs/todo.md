@@ -216,6 +216,29 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
   summary, reporting 13.3px/19.8:1 for what is really 14px/9.2:1 — a reminder that a gate
   measurement is only as good as its selector.
 
+- **TB8-10A (the Dashboard toolbar and seven deferred defects) is BUILT AND GATED, NOT DEPLOYED**
+  (commit `f320b25`; plan `docs/plans/TB8-10A-Dashboard-Toolbar-And-Deferred-Defects-Visual-Plan.md`).
+  Splits candidate #10: re-measuring the deferred register after #6–#9 shows `.button` is **50 tokens
+  across 14 files**, not 51 across 36, and **8 of the 14 are Production Calendar** — so D-05/D-06/D-07
+  become TB8-10B (converging the calendar's buttons is a visual release, not a cleanup item) and the
+  seven bounded defects shipped now with the owner-requested toolbar change. Search and New shoot
+  move out of the page-title block onto the board's own control strip; that also fixes a tab-order
+  mismatch, since search was previously reached before the notice board and summary.
+  **D-09 was the headline and worse than recorded**: PhotoGrid renders each tile
+  `role="button" tabIndex={0}` with Enter/Space handling while `app.css` set `outline: 0` and lit
+  `--ring` only for selection state — a keyboard user tabbing the photo grid got **no focus
+  indicator at all**, a live WCAG 2.4.7 failure, found by the design-system guards rather than by any
+  review. Also: mobile menu scrim (D-01, bell deliberately excluded), five phantom tokens gone,
+  four dead `text-[length:…]` now rendering their authored sizes, two dead CSS blocks deleted.
+  Both guard baselines this release owned are now empty; the two remaining belong to TB8-10B.
+  **Three findings landed against this session's own work** — Sol caught that `mr-auto` cannot
+  prevent a flex wrap and that the drafted focus ring was 1.07:1 on the tile's ground; a builder
+  caught that the plan's `role="presentation"` test assertion was false (Base UI stamps it on the
+  Positioner unconditionally). **The visual gate then found a defect the whole chain missed**: the
+  moved group wrapped internally at every desktop width because the field's
+  `min-w-[min(100%,300px)]` is circular inside a wrapping flex container — pre-existing and latent,
+  exposed by the move. See `docs/lessons.md`. typecheck 0 · build 0 · 1,630 + 144 tests · guards 6/6.
+
 - **TB8-06 (the Kanban board — columns, cards, card controls, the move-to popover, drag overlay and
   preview) is DEPLOYED TO PRODUCTION, 2026-09-03** — merge `b8c650d`, app Worker `18356d70` only,
   no migration, rollback target app `fd65055a`. Post-deploy: `/` and `/api/health` 200, served

@@ -40,7 +40,12 @@ and pick the first surface to run through the pipeline above.
    fix in `lessons.md`, plus `media.ts`'s dev direct-original fallback for `/web` and `/thumb`).
 10. Dead selectors / final base/Preflight decision (cleanup, near the end) — **registered as
     `TB8-10-Deferred-Defects-And-Cleanup-Sweep-Plan.md`**, which also absorbs every defect the
-    earlier candidates deferred. Runs after #6-#9.
+    earlier candidates deferred. Runs after #6-#9. **Split in two, 2026-09-04**, once re-measurement
+    showed the register's figures were stale: **TB8-10A** (the owner's toolbar change plus the seven
+    bounded defects — built and gated, `f320b25`) and **TB8-10B** (D-05 `--text-muted`, D-06 the
+    `.button` retirement, D-07 the base/Preflight decision). D-06 is now 50 tokens across 14 files,
+    8 of them Production Calendar — i.e. converging a surface that was never on the TB8 list, which
+    is a visual release with its own evidence and gate, not a cleanup item.
 11. Legacy fetch/emission paths (roadmap-gated: last, only after replacements prove ownership)
 
 ## Decision: Tailwind adoption scope for TB8 (2026-09-01)
