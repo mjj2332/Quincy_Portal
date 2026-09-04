@@ -109,6 +109,17 @@ dock the toolbar to the top, or make it scrollable. That is a product decision, 
 one, and inventing one at the end of a release is the kind of unowned change this pipeline exists
 to prevent. **Needs owner input before it can be planned.**
 
+**RESOLVED 2026-09-04 — owner chose "collapse the filmstrip while drawing."** Added
+`.viewer__stage:has(.drawbar) ~ .strip { display: none; }` inside `app.css`'s existing
+`@media (max-width: 720px)` block, next to the same-shaped `.vpanel.open + .strip` idiom it reuses.
+`:has()` is needed rather than a plain sibling combinator because `.vpanel`/the panel scrim sit
+between `.viewer__stage` and `.strip` in DOM order. No JSX change. Frame-switching already prompts
+"Discard unsaved markup?" while a draft exists (`selectFilmstrip`), so hiding the filmstrip during
+an active markup session removes no reachable affordance. Verified via synthetic DOM injection at a
+390×844 CDP-emulated viewport, using the exact class names and DOM order from `Lightbox.tsx`:
+`.strip` computes `display: none` when `.viewer__stage` contains `.drawbar`, and reverts to
+`display: block; position: fixed` (unaffected, normal behaviour) once the drawbar is removed.
+
 ### D-09 — `.tile` has no keyboard focus indicator
 **Found:** the `design-system-guards.test.ts` focus guard, 2026-09-04 — not by a review.
 **Surface owner:** photo grid (`app.css`).

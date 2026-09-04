@@ -464,6 +464,12 @@ button { font-family: var(--font-sans); }
   .vpanel__peek-handle span:first-child { font-size: 20px; line-height: 1; }
   .strip { position: fixed; left: 0; right: 0; bottom: calc(72px + env(safe-area-inset-bottom)); z-index: 4; gap: 6px; padding: 8px 12px; }
   .vpanel.open + .strip { bottom: 85vh; z-index: 7; }
+  /* D-08: the drawbar (z-6) sits over the fixed filmstrip (z-4) on phone once it wraps to two
+     lines. Frame-switching is already gated behind a discard-markup confirm while a draft exists
+     (`selectFilmstrip`), so hiding the filmstrip during an active markup session loses no reachable
+     affordance — same idiom as `.vpanel.open + .strip` above, reaching across the review panel/scrim
+     siblings that sit between `.viewer__stage` and `.strip` in DOM order. */
+  .viewer__stage:has(.drawbar) ~ .strip { display: none; }
 }
 
 /* ---------------------------------------------------------------------
