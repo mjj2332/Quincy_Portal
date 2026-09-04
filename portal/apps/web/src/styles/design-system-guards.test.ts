@@ -283,11 +283,14 @@ describe("guard: no dead `text-[length:…]` beside a `[font:…]` shorthand", (
  *
  * The guard deliberately does not try to decide whether an alternative indicator exists — that
  * needs judgement. It flags the suppression and requires a human to record why.
+ *
+ * Cleared by TB8-10B. `.tile` was fixed by TB8-10A (it was a live WCAG 2.4.7 failure — the photo
+ * grid gave keyboard users no indicator at all). The other two, `.search input:focus` and
+ * `.copyinput:focus`, turned out not to need a focus treatment designed for them: both selectors
+ * were unreachable, and the dead-CSS sweep deleted them. **All three baselines in this file now
+ * read `{}` — that is the steady state, not an invitation to add entries.**
  */
-const SUPPRESSED_FOCUS_BASELINE: Record<string, string> = {
-  ".search input:focus": "Topbar search. Replaced by a border-color change only. Owner: TB8-10.",
-  ".copyinput:focus": "Client copywriting field. Same shape. Owner: TB8-10.",
-};
+const SUPPRESSED_FOCUS_BASELINE: Record<string, string> = {};
 
 describe("guard: no focus ring is suppressed in unlayered CSS", () => {
   const findSuppressions = () => {

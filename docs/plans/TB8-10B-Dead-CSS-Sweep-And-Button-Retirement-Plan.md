@@ -1,6 +1,6 @@
 # TB8-10B — The Dead-CSS Sweep and the `.button` Retirement
 
-**Status: DRAFTED, NOT BUILT.** Second half of TB8 candidate #10. Runs the frontend lane in
+**Status: §1 BUILT AND GATED, NOT DEPLOYED. §2–§5 not started.** Second half of TB8 candidate #10. Runs the frontend lane in
 `docs/Subagent-Frontend-Orchestration.md`: this session drafts and holds the visual gate, Sol
 reviews scope only, a Sonnet subagent builds.
 
@@ -347,3 +347,67 @@ through `tokens/base.css` (TB8-05) are why this is delicate rather than mechanic
 4. `npm run build -w @quincy/web`.
 5. Guards 6/6, all three baselines `{}`.
 6. The visual pass at the three viewports — this session's own, not delegated.
+
+
+---
+
+## §7 — §1 build record and gate (2026-09-04) — **PASSED**
+
+Built by this session directly, after the delegated builder was stopped. Its last action before
+stopping was to question two neighbours — `.doccard__icon` and a `.cgallery` base rule — while
+cross-referencing the plan's table against the file. **It was right, and that turned out to be the
+release's most important finding.**
+
+### The plan's 63 was an undercount, for a reason worth recording
+
+§1.2's table was generated from a root list matched with `\.root(?![\w-])`. `_` is a word
+character, so that pattern **excludes every BEM child of its own roots** — `.doccard__icon`,
+`.doccard__b`, `.chero__scrim`, `.cfoot__top`, `.premium-intro__stat` and the rest were silently
+outside the enumeration even though their parents were in it. The rules were dead; the table just
+did not list them.
+
+Re-derived by enumerating **every class in `app.css`** (226 of them), classifying each, and then
+scoping to the plan's families **plus their BEM children** — 42 classes, every one verified dead by
+both `classcheck.py` and a word-boundary raw grep. `search`'s only surviving hits are
+`calendarState.search`, an object property.
+
+**Final: 100 whole-rule deletions, 1 selector edit, 112 physical lines, 7 section comments.**
+`app.css` 683 → 562 lines.
+
+This is the fourth distinct way this measurement has gone wrong in this release, and the second
+caused by a regex that looked right. The rule that keeps holding: **enumerate the file and classify
+what you find; never enumerate from a list you wrote yourself.**
+
+### The selector edit
+
+```
+line 543 before:  .topnav, .search, .topbar__divider { display: none; }
+line 425 after :  .topnav, .topbar__divider { display: none; }
+```
+
+Verified in the browser: `.topnav` and `.topbar__divider` compute `display: flex` / `block` at 1440
+and 1024, and `display: none` at 390 — identical to before. This was the release's only route to a
+rendering regression.
+
+### Comments removed (7)
+
+`search`, `comment count pin on tile` (it belonged to `.cbubble`, not the live `.pin` — checked
+against the backup), `copywriting`, `document (PDF) card`, `dropzone`, `premium section`,
+`tweak: client gallery ink theme`.
+
+### Survivors confirmed
+
+`.rich-text u` / `.rich-text s` (now `:323-324`), `.pin` (`:259`), `.topnav`, `.topbar__divider`,
+`.muted`, `.empty`, `.kv`, `.upload-zone`, `.tile*`. No in-scope class remains anywhere in the file.
+
+### Gate
+
+typecheck 0 · build 0 · **115 / 227 / 726 / 296+1skip / 253 / 13**, `packages/shared` 144 —
+**no count moved**, which is the correctness condition for a pure deletion · guards 6/6 with **all
+three baselines now `{}`** · braces balanced (335/335), comments balanced (53/53), 10 `@media`
+blocks intact.
+
+Visual pass at 1440×900, 1024×768, 390×844 on local dev: no horizontal overflow at any width, board
+and project workspace render unchanged, every live neighbour of a deleted rule still resolves its
+own styles (`.muted` `rgb(143,135,117)`, `.empty`, `.kv`, `.rich-text` 14px). **0 console
+errors, 0 failed requests** across the dashboard and the project workspace.
