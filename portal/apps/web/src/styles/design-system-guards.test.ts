@@ -144,7 +144,7 @@ describe("guard: every custom property used in CSS is defined in CSS", () => {
 const FONT_SIZE_COLLISION_BASELINE: Record<string, number> = {
   "components/RichTextEditor.tsx": 2,
   "components/Topbar.tsx": 1,
-  "screens/Dashboard.tsx": 2,
+  "screens/Dashboard.tsx": 1,
 };
 
 describe("guard: no dead `text-[length:…]` beside a `[font:…]` shorthand", () => {
@@ -175,11 +175,19 @@ describe("guard: no dead `text-[length:…]` beside a `[font:…]` shorthand", (
    */
   const fontBearingRanges = (text: string, carriers: Set<string>) => {
     const ranges: [number, number][] = [];
+    // A `before:`/`after:` shorthand styles the pseudo-element, not the box that carries the
+    // `text-[length:…]`, so the two never collide. Only an unprefixed `[font:…]` (or one behind a
+    // state/breakpoint variant, which collides whenever that state is active) can win the size.
+    const setsOwnFontSize = (value: string) =>
+      value
+        .split(/\s+/)
+        .some((token) => token.includes("[font:") && !/(?:^|:)(?:before|after|first-letter|first-line|placeholder|marker|selection|file|backdrop):/.test(token));
+
     const bearsFont = (value: string) =>
-      value.includes("[font:") || [...carriers].some((name) => new RegExp(`\\b${name}\\b`).test(value));
+      setsOwnFontSize(value) || [...carriers].some((name) => new RegExp(`\\b${name}\\b`).test(value));
 
     for (const literal of text.matchAll(/"[^"\n]{0,800}?"/g)) {
-      if (literal[0].includes("[font:")) ranges.push([literal.index, literal.index + literal[0].length]);
+      if (setsOwnFontSize(literal[0])) ranges.push([literal.index, literal.index + literal[0].length]);
     }
 
     // `NAME + "…"` / `"…" + NAME` chains.
