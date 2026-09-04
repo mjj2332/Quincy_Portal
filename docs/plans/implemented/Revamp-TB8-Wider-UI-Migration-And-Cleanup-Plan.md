@@ -1,6 +1,12 @@
 # TB8 — Wider UI Migration and Cleanup: Kickoff
 
-**Status:** drafted, not yet built. See [roadmap/TB8-Wider-UI-Migration-And-Cleanup.md](revamp_2026_portal/roadmap/TB8-Wider-UI-Migration-And-Cleanup.md) for the approved scope (selection order, candidate releases, rules, completion criteria) — this doc adds the pipeline this session is using and the scope extension agreed 2026-09-01. Move to `implemented/` once built, verified, and deployed, per the standing convention.
+**Status: COMPLETE, 2026-09-04.** All 11 roadmap candidates resolved: #1–#10 shipped to production
+(see their own dated status lines below); #11 (legacy fetch/emission paths) investigated and closed
+as not applicable — its two plausible targets turned out to be active, load-bearing code, not dead
+legacy owners (see #10's entry below for the full finding). See
+[roadmap/TB8-Wider-UI-Migration-And-Cleanup.md](revamp_2026_portal/roadmap/TB8-Wider-UI-Migration-And-Cleanup.md)
+for the approved scope (selection order, candidate releases, rules, completion criteria) — this doc
+adds the pipeline this session used and the scope extension agreed 2026-09-01.
 
 ## Why this deviates from the standing pipeline
 
@@ -48,7 +54,27 @@ and pick the first surface to run through the pipeline above.
     100 whole-app tokens across 14 files, 8 of them Production Calendar — i.e. converging a surface
     that was never on the TB8 list, which is a visual release with its own evidence and gate, not a
     cleanup item. D-07 (enable Preflight) revised approved D-16.
-11. Legacy fetch/emission paths (roadmap-gated: last, only after replacements prove ownership)
+11. Legacy fetch/emission paths (roadmap-gated: last, only after replacements prove ownership) —
+    **investigated 2026-09-04, closed as not applicable to the two candidates checked.** The two
+    plausible "legacy" targets in the codebase are `emitNotifications()` (`packages/db/src/
+    notifications.ts`) and the AutoHDR poll fallback (`legacyTimerRef`,
+    `screens/ProjectWorkspace.tsx`). Neither is a safe retirement as scoped:
+    - `emitNotifications()` is **not legacy-dead code** — it is the active, only in-app-notification
+      /email path for `raw_ready`, `sent_to_editing`, `edited_landed`, `comment_added`,
+      `autohdr_stalled`, `subtask_due_today`, `subtask_assigned`, and `mentioned`, called from 13+
+      live sites across background Workflows, Durable Object claims, ingest, and annotation routes
+      (verified directly, not just by a subagent's report). The TB4 `notification_outbox` system is
+      a parallel mechanism for external-editor-safe delivery, not a superset replacement — retiring
+      this would delete real notification delivery, not clean up dead code.
+    - The AutoHDR poll loop is confirmed scoped only to the pre-PR-44 manual/scaffold AutoHDR flow —
+      its effect explicitly bails out (`jobs.some((job) => job.kind === "autohdr_api_send")`)
+      whenever a modern Direct Send job exists (verified directly at
+      `ProjectWorkspace.tsx` line ~270). Whether it is safe to retire depends on whether the manual/
+      scaffold flow is still used in production, which is a product fact, not something code-reading
+      answers, and it was not available this session.
+    If "legacy fetch/emission paths" was meant to refer to something else, it needs re-identifying
+    before this candidate can be planned. **TB8 is otherwise complete** — see candidate #10's
+    close-out above.
 
 ## Decision: Tailwind adoption scope for TB8 (2026-09-01)
 

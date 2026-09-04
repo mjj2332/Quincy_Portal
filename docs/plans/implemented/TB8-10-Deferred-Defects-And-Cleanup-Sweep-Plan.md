@@ -1,11 +1,11 @@
 # TB8-10 — Deferred Defects and the App-Wide Cleanup Sweep: Register
 
-**Status: PARTLY CLEARED — see TB8-10A.** D-01, D-02, D-03, D-04, D-09, D-10 and D-11 were built,
-gated and committed as `f320b25` on 2026-09-04
-(`TB8-10A-Dashboard-Toolbar-And-Deferred-Defects-Visual-Plan.md`). **What remains here is D-05,
-D-06, D-07 and D-08**, and the numbers below for D-05/D-06 are the stale 2026-09-03 ones — TB8-10A
-§0 re-measured them as **50 `.button` tokens across 14 files** (8 of them Production Calendar) and
-**19 `var(--text-muted)` sites**. D-08 still needs owner input. Original status line follows.
+**Status: ALL CLEARED, 2026-09-04.** D-01, D-02, D-03, D-04, D-09, D-10 and D-11 shipped via
+`TB8-10A-Dashboard-Toolbar-And-Deferred-Defects-Visual-Plan.md` (`f320b25`). D-05, D-06 and D-07
+shipped via `TB8-10B-Dead-CSS-Sweep-And-Button-Retirement-Plan.md` (§4/§8-9/§11, in
+`docs/plans/implemented/`). D-08 resolved in this file, below, once the owner chose "collapse the
+filmstrip while drawing." Every defect this register named is now resolved and deployed. Original
+status line follows.
 
 **Status: DRAFTED, NOT BUILT.** This is a *register*, not yet a visual plan: it collects work that
 earlier TB8 releases deliberately deferred, so none of it is carried only in a closed release's

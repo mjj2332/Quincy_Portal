@@ -1,6 +1,7 @@
 # TB8-10A — The Dashboard Toolbar, and the Deferred Defects That Do Not Wait
 
-**Status: BUILT AND GATED, NOT YET DEPLOYED.** Owner-requested 2026-09-04. Runs the frontend lane in
+**Status: DEPLOYED TO PRODUCTION, 2026-09-04** — app Worker `e8825a98`, rollback target app
+`7c7cdafe` (frontend/CSS only, no migration). Owner-requested 2026-09-04. Runs the frontend lane in
 `docs/Subagent-Frontend-Orchestration.md`: this session drafts and holds the visual gate, Sol
 reviews scope only, a Sonnet subagent builds the slices.
 
