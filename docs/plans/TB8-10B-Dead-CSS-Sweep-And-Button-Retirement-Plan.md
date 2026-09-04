@@ -507,9 +507,18 @@ merely-plausible cascade argument is not good enough here.
 
 **Case A — bare `.button`/`.button--secondary`, no calendar-specific override** (toolbar Prev/Today/
 Next, the two dialog Cancel buttons' pattern, `ProductionCalendar.tsx`'s Refresh/Try again):
-measured padding `9px 14px`, font-size 12px, min-height 38px→44px at ≤721px or coarse pointer —
-**identical to `BASE` + `secondary`**. `buttonClasses("secondary")` / `buttonClasses()` reproduce
-this exactly; confirmed by §2 already shipping the identical pattern outside the calendar.
+measured padding `9px 14px`, font-size 12px, min-height 38px, enabled state identical to `BASE` +
+`secondary`. `buttonClasses("secondary")` / `buttonClasses()` reproduce this exactly for every site
+**except two things, both corrected by Sol r1 (§3.2a) and both deliberate:**
+
+- **Disabled paint changes** on every disabled site (Fold Choice submit, Move submit, Clear
+  Filters, the two unscheduled-action buttons) from a faded variant colour to `buttonClasses()`'s
+  fixed disabled treatment — already the shipped behaviour on three §2 sites, not a calendar-only
+  change.
+- **`.qc-calendar-state`'s "Try again"** (not "Refresh", which sits in the covered
+  `.qc-calendar-recovery`) goes from 38px to 44px at ≤721px, because it was never in the
+  touch-target media query's selector list — a pre-existing gap this migration closes, matching
+  the 44px "Refresh" one state over.
 
 **Case B — `.button--text` plus a calendar-specific hook class that already sets its own paint**
 (`.qc-cal-event-card__move`, `.qc-calendar-unscheduled__action` — both `margin-top; padding: 0;
@@ -530,6 +539,62 @@ plain alias for `--text-secondary` in `tokens/colors.css:80` — the same value 
 unlayered contests this element once `.button`/`.button--text` are gone, so `buttonClasses("text")`'s
 own `px-0 py-[6px]` applies uncontested — **identical computed padding**. The ≤420px `align-self`
 regression is §3.1's fix, applied here.
+
+### 3.2a Sol round 1: 2 blocking, 2 non-blocking, both resolved
+
+`codex exec -m gpt-5.6-sol -c model_reasoning_effort=high`, read-only.
+
+**B1 — disabled-state paint is not identical, and §3.2's "identical" claim was wrong to say so.**
+Legacy `.button:disabled` keeps the variant's own colours and fades to `opacity: .62`
+(`app.css:468-482`); `buttonClasses()`'s disabled state swaps to a different, fixed treatment —
+`disabled:!text-foreground-secondary disabled:bg-surface-sunken disabled:border-border` — regardless
+of variant. Real sites in scope: the initially-disabled Fold Choice submit, the invalid-state Move
+Deadline submit, Clear Filters when there is nothing to clear, and the unscheduled-action buttons
+when their entry is not actionable.
+
+**Resolution: this is not a new inconsistency to design around — it is already live production
+behaviour.** §2 (shipped as app Worker `2abd01ca`, hours before this review) put exactly this same
+disabled treatment on `UploadDropzone.tsx`'s and `ExternalEditedUpload.tsx`'s "Choose files"
+(`disabled={isUploading}`/`disabled={busy}`) and `ProjectWorkspace.tsx`'s "Download selected (zip)"/
+"Send to AutoHDR" (`disabled={selectionCount === 0}`, `disabled={... isSending ...}`) with no special
+casing and no incident. `buttonClasses()`'s disabled look **is** the converged design-system
+treatment for a disabled control, app-wide, not an exception the calendar needs to be shielded from.
+Corrected in §3.2 below; added as acceptance 3-7 so it is checked deliberately at the gate rather
+than assumed.
+
+**B2 — "Try again" is 38px tall at 390px today, not 44px, and would become 44px after migration.**
+`.qc-calendar-state` (`production-calendar.css:131`, the container both "Try again" and "Refresh"
+sit in — no, only "Try again"; "Refresh" is in `.qc-calendar-recovery`, which **is** covered) is
+**absent from the touch-target media query's selector list** (`production-calendar.css:231-236`
+names `.qc-cal-event-card__move`, `.qc-calendar-unscheduled__action`, `.qc-cal-toolbar button`,
+`.qc-cal-filters button`, `.qc-calendar-recovery button`, `[data-modal-variant="calendar"] button`
+— `.qc-calendar-state` is not among them). Today's 38px comes from legacy `.button`'s own
+`min-height: 38px` with nothing raising it at 390px. After migration, `buttonClasses()`'s
+`max-[721px]:min-h-[44px]` applies uncontested (nothing unlayered in `.qc-calendar-state` claims
+`min-height`), producing 44px.
+
+**Resolution: accept it, and name it as a fix, not a side effect.** This repo's own touch-target
+contract (`CLAUDE.md`: 44px at ≤720px) already applies to every sibling control in this file — the
+identical "Refresh" button one state over is already 44px on phone. `.qc-calendar-state` missing
+that coverage was TB5C's oversight, not a design decision to preserve. §3.2's Case A is corrected to
+carve this one control out explicitly rather than claim uniform pixel identity across all of Case A.
+
+**Non-blocking, both fixed:**
+- NB1 — `ProductionCalendar-deadline.dom.test.tsx:434,436` selects
+  `.button[data-focus-key="calendar-recovery"]` for the Refresh button. Update to
+  `[data-focus-key="calendar-recovery"]` alone (the attribute is already unique in that tree; the
+  runtime focus-recovery lookup Sol found at `ProductionCalendar.tsx:717` already has a
+  class-independent fallback, so behaviour is unaffected — only the test selector needs to drop the
+  class).
+- NB2 — §3.1's "no other file in `styles/` references `.button`/`.button--*`" meant *besides
+  `app.css` itself* (the source these rules are being retired from). Reworded for precision; no
+  content change.
+
+Sol confirmed everything else: the unlayered-cascade premise; `.qc-cal-filters__head .button` is
+the sweep's only hit and `button` (tag) is safe because Clear Filters is the header's only button;
+Case B's two properties and the touch-target coverage for both hook classes; the colour alias is
+exact; all 14 table rows checked against the file, variant mappings correct; `min-h-[32px]` is a
+plain (non-important) utility, so the text variant's override behaves as claimed.
 
 ### 3.3 The 11 sites
 
@@ -569,3 +634,5 @@ unaffected by any class change on the button itself).
 | 3-4 | `.qc-cal-event-card__move` and `.qc-calendar-unscheduled__action` still reach 44×44 at 390px and under `(pointer: coarse)`. |
 | 3-5 | `.button` in `app.css` now has zero consumers anywhere in the app — the last one. |
 | 3-6 | Every calendar dialog (Fold Choice, Move, Schedule Editor) still opens, Cancel/Save both work, at 1440 and 390. |
+| 3-7 | Disabled paint on Fold Choice submit / Move submit / Clear Filters / unscheduled-action matches `buttonClasses()`'s standard disabled treatment (Sol B1) — checked visually, not assumed identical to the legacy fade. |
+| 3-8 | "Try again" (`.qc-calendar-state`) is 44px tall at 390px, matching "Refresh" one state over (Sol B2) — a deliberate fix, not a regression to catch. |
