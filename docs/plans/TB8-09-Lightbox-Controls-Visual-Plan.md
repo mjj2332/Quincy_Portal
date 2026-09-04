@@ -750,7 +750,7 @@ Recommend and Compare-with-RAW: `buttonClasses(active ? "primary" : "secondary",
 | `.cmt` | `flex gap-[var(--space-3)] rounded-[var(--radius-sm)] transition-[background-color] duration-[1600ms] ease-[var(--ease-standard)]` |
 | `.cmt--highlighted` | `bg-surface-sunken` |
 | `.cmt__pin` | `flex-none w-[22px] h-[22px] rounded-full bg-primary text-primary-foreground grid place-items-center [font:var(--type-mono)] text-[length:var(--text-2xs)] mt-[2px]` + **`aria-hidden="true"`** (A-6: the `✎` is decoration) |
-| `.cmt__pin.unpinned` | `bg-surface-sunken text-foreground-secondary` — **C-2 fixed**, 2.87:1 → **7.40:1**. (Sol B6: the draft said 8.66:1, which is this text colour against `--paper-050`; the real ground here is `--bg-sunken` = `--paper-200`. 7.40 clears the 4.5:1 bar comfortably — the fix stands, the number was wrong.) |
+| `.cmt__pin.unpinned` | **DELETE — dead.** Zero JSX consumers; the modifier has never rendered (Sol R2-3 flagged it alongside `.strip.full` and `.viewer.no-panel`, and this row previously gave it a conversion spec anyway). **C-2 is therefore withdrawn as a live defect** — a 2.87:1 contrast on a state nothing can reach is not a user-visible failure. Deleted, not converted, and **not given a newly-invented trigger**: slice 4's builder inferred one (`!annotation.strokeR2Key`, i.e. a note with no drawing), which is plausible product design but is a *product change*, not convergence. Reverted in review. If the studio wants an unpinned state it is a separate, owner-approved change. |
 | `.cmt__who` | `[font:var(--type-label)]` |
 | `.cmt__who span` | `META_TEXT ml-[var(--space-2)]` — **C-1 fixed**, 3.36:1 → 8.66:1, and 11.5px → 12px onto the scale |
 | `.cmt__txt` | `text-[length:var(--text-sm)] leading-[var(--leading-normal)] mt-[3px] text-foreground-secondary` — 14.5px → 14px |
@@ -969,7 +969,7 @@ Measured in a real browser at `1440×900`, `1024×768`, `390×844`, `721px`, `10
    correct, not a miss, and the gate records the 28px reading there rather than flagging it.
    The 721–1080 band is measured explicitly, never inferred from 1440.
 5. Contrast, measured, no regressions from the register's §3.3 pass list, and:
-   `.cmt__who span` ≥ 8:1 (was 3.36) · `.cmt__pin.unpinned` **≥ 7:1** (was 2.87; the specified fix measures **7.40:1** — the earlier ≥8:1 was copied from the wrong ground and the implementation could not have passed its own gate, Sol R2-5) ·
+   `.cmt__who span` ≥ 8:1 (was 3.36) · `.cmt__pin.unpinned` — **criterion withdrawn**, the state is dead and deleted (see §5.7) ·
    `.starpick.on` ≥ 6:1 (was 4.44) · toolbar and `.kbd` borders ≥ 3:1 (were 1.93 / 2.12) ·
    `.vpanel`'s left seam ≥ 3:1 **against the stage** (was 1.01).
 6. Zero horizontal overflow at all five widths, and zero elements overflowing their own box.
