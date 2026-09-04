@@ -13,12 +13,12 @@ img { display: block; max-width: 100%; }
 .boot {
   min-height: 100vh; display: grid; place-items: center;
   font: var(--type-eyebrow); text-transform: uppercase;
-  letter-spacing: var(--tracking-widest); color: var(--text-muted);
+  letter-spacing: var(--tracking-widest); color: var(--text-secondary);
 }
 
 /* tiny helpers --------------------------------------------------------- */
 .ey { font: var(--type-eyebrow); text-transform: uppercase; letter-spacing: var(--tracking-widest); color: var(--text-secondary); }
-.muted { color: var(--text-muted); }
+.muted { color: var(--text-secondary); }
 .serif { font-family: var(--font-display); letter-spacing: var(--tracking-tight); }
 .nowrap { white-space: nowrap; }
 .row { display: flex; align-items: center; }
@@ -227,10 +227,10 @@ button { font-family: var(--font-sans); }
 .project-team-picker__option > span:first-child { display: grid; min-width: 0; gap: 2px; }
 .project-team-picker__option strong, .project-team-picker__option small { overflow-wrap: anywhere; }
 .project-team-picker__option strong { font-size: var(--text-xs); font-weight: var(--weight-regular); }
-.project-team-picker__option small { color: var(--text-muted); font-size: var(--text-2xs); }
-.project-team-picker__empty { margin: 0; padding: var(--space-3) var(--space-2); color: var(--text-muted); font-size: var(--text-xs); }
+.project-team-picker__option small { color: var(--text-secondary); font-size: var(--text-2xs); }
+.project-team-picker__empty { margin: 0; padding: var(--space-3) var(--space-2); color: var(--text-secondary); font-size: var(--text-xs); }
 .kv { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; font-size: 14px; }
-.kv .k { color: var(--text-muted); font: var(--type-eyebrow); text-transform: uppercase; letter-spacing: var(--tracking-wide); }
+.kv .k { color: var(--text-secondary); font: var(--type-eyebrow); text-transform: uppercase; letter-spacing: var(--tracking-wide); }
 .kv .vv { text-align: right; }
 .project-deadline__overdue { display: block; margin-top: 3px; font-size: 11px; color: var(--signal-critical); }
 .workmain { min-width: 0; display: flex; flex-direction: column; }
@@ -399,7 +399,7 @@ button { font-family: var(--font-sans); }
    --------------------------------------------------------------------- */
 
 /* empty states */
-.empty { padding: var(--space-9) var(--space-6); text-align: center; color: var(--text-muted); }
+.empty { padding: var(--space-9) var(--space-6); text-align: center; color: var(--text-secondary); }
 .empty .serif { font: var(--type-h2); color: var(--text-secondary); display: block; margin-bottom: var(--space-3); }
 
 /* animations */
@@ -504,7 +504,7 @@ button { font-family: var(--font-sans); }
 .document-history { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); padding-top: var(--space-3); border-top: 1px solid var(--border-hairline); }
 .document-history .ey { margin-right: var(--space-2); }
 .document-history a { display: inline-flex; align-items: baseline; gap: 5px; padding: 5px 8px; border: 1px solid var(--border-hairline); border-radius: var(--radius-pill); color: var(--text-secondary); font-size: 12px; text-decoration: none; }
-.document-history small { color: var(--text-muted); font-size: 10px; }
+.document-history small { color: var(--text-secondary); font-size: 10px; }
 .document-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 .upload-zone { border: 1.5px dashed var(--greige-300); background: var(--paper-100); padding: 28px; text-align: center; transition: background var(--dur-fast), border-color var(--dur-fast); }
 .upload-zone.is-dragging { background: var(--paper-000); border-color: var(--ink-900); }
@@ -513,7 +513,7 @@ button { font-family: var(--font-sans); }
 .upload-progress { max-width: 600px; margin: 20px auto 0; text-align: left; }
 .upload-progress > .ey { display: block; margin: 7px 0 10px; text-align: right; }
 .upload-file { display: flex; justify-content: space-between; gap: 14px; padding: 6px 0; border-top: 1px solid var(--border-hairline); font-size: 12.5px; color: var(--text-secondary); }
-.upload-file span:last-child { max-width: 46%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); }
+.upload-file span:last-child { max-width: 46%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); }
 .upload-rejected { max-width: 600px; margin: 15px auto 0; padding: 10px; background: color-mix(in srgb, var(--signal-critical) 7%, var(--paper-050)); color: var(--signal-critical); font-size: 12.5px; text-align: left; }
 .filter-chips { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 .filter-chips .chip { padding: 6px 10px; }

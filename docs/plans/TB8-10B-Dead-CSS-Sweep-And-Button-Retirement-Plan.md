@@ -1,6 +1,6 @@
 # TB8-10B — The Dead-CSS Sweep and the `.button` Retirement
 
-**Status: §1 DEPLOYED (`876fb239`). §2 DEPLOYED (`2abd01ca`). §3 BUILT AND GATED, NOT DEPLOYED. §4–§5 not started.** Second half of TB8 candidate #10. Runs the frontend lane in
+**Status: §1 DEPLOYED (`876fb239`). §2 DEPLOYED (`2abd01ca`). §3 BUILT AND GATED, NOT DEPLOYED. §4 BUILT AND GATED, NOT DEPLOYED. §5 not started.** Second half of TB8 candidate #10. Runs the frontend lane in
 `docs/Subagent-Frontend-Orchestration.md`: this session drafts and holds the visual gate, Sol
 reviews scope only, a Sonnet subagent builds.
 
@@ -685,3 +685,33 @@ survives the class retirement) · `packages/shared` 144 · `.button` and all thr
 **zero consumers anywhere in the application** — `classcheck.py button button--secondary
 button--text button--danger` all DEAD; `grep -n '\.button\b\|\.button--' production-calendar.css`
 empty. **D-06 is complete.**
+
+
+---
+
+## §10 — §4 build record and gate (2026-09-04) — **PASSED**
+
+D-05. All 8 live text sites: `color: var(--text-muted)` → `color: var(--text-secondary)` — a pure
+CSS token swap in `app.css`, zero JSX/className changes, matching the pattern TB8-10A used for D-04.
+
+**Contrast, computed independently (WCAG relative-luminance formula, not eyeballed):**
+
+| | greige-400 (before) | greige-600 (after) |
+|---|---|---|
+| on `--paper-000` `#ffffff` | 3.57:1 — fails 4.5:1 | **9.20:1** |
+| on `--paper-050` `#faf8f2` | 3.36:1 — fails | **8.66:1** |
+| on `--bg-sunken`/`--paper-200` `#ece6d8` | 2.87:1 — fails | **7.40:1** |
+
+Every site clears AA on every surface it could plausibly sit on, with wide margin — not a
+borderline fix. `.rich-text u`/`.rich-text s` (`app.css:323-324`) are untouched, correctly: they set
+`text-decoration-color`, not `color`, where the 4.5:1 text bar does not apply.
+
+Verified live in the browser (local dev, rebuilt): `.muted` and `.upload-file span:last-child`
+render `rgb(77, 71, 60)` — exactly `#4D473C`, `--greige-600` — confirming the swap took effect
+through the unlayered cascade as expected.
+
+### Gate
+
+typecheck 0 · build 0 · **726/726 unchanged**, `packages/shared` 144 unchanged — a pure colour
+value change touches no test. `grep -c "var(--text-muted)" app.css` → 2, both `.rich-text`
+decoration-colour, both correctly excluded.
