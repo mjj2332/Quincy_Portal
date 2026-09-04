@@ -1,6 +1,6 @@
 # TB8-10B — The Dead-CSS Sweep and the `.button` Retirement
 
-**Status: §1 BUILT AND GATED, NOT DEPLOYED. §2–§5 not started.** Second half of TB8 candidate #10. Runs the frontend lane in
+**Status: §1 DEPLOYED (app Worker `876fb239`). §2 BUILT AND GATED, NOT DEPLOYED. §3–§5 not started.** Second half of TB8 candidate #10. Runs the frontend lane in
 `docs/Subagent-Frontend-Orchestration.md`: this session drafts and holds the visual gate, Sol
 reviews scope only, a Sonnet subagent builds.
 
@@ -411,3 +411,59 @@ Visual pass at 1440×900, 1024×768, 390×844 on local dev: no horizontal overfl
 and project workspace render unchanged, every live neighbour of a deleted rule still resolves its
 own styles (`.muted` `rgb(143,135,117)`, `.empty`, `.kv`, `.rich-text` 14px). **0 console
 errors, 0 failed requests** across the dashboard and the project workspace.
+
+
+---
+
+## §8 — §2 build record and gate (2026-09-04) — **PASSED**
+
+Built directly by this session. Re-measured before building: this session's own token count (17)
+was itself wrong for the same reason Sol's B2 finding predicted — a naive `className={...}` regex
+using `[^}]*` truncates at the **first** `}`, which is inside `${danger ? " button--danger" : ""}`
+long before the JSX expression actually closes. Rebuilt with brace-balanced extraction and got
+Sol's figure exactly: **19 tokens, 6 files.**
+
+### The 10 sites, variant mapping
+
+All eight `.button`/`.button--secondary`/`.button--danger` **elements** across 10 usages (some
+sites have 2 legacy classes on one element) map onto `buttonClasses()` one-to-one — no
+`button--text` sites in this scope, so TB8-07's known 44px trap does not apply here:
+
+| File | Site | Legacy | `buttonClasses()` |
+|---|---|---|---|
+| `App.tsx` | not-found/reserved return link | `button button--secondary` | `buttonClasses("secondary")` |
+| `ConfirmDialog.tsx` | Cancel | `button button--secondary` | `buttonClasses("secondary")` |
+| `ConfirmDialog.tsx` | Confirm | `` `button${danger?" button--danger":""}` `` | `buttonClasses(danger ? "danger" : "primary")` |
+| `CollectionPanel.tsx` | Upload (video/floorplan/copy) | `button` | `buttonClasses()` |
+| `CollectionPanel.tsx` | Approve/Unapprove | `` `button ${approved?"button--secondary":""}` `` | `buttonClasses(approved ? "secondary" : "primary")` |
+| `UploadDropzone.tsx` | Choose files | `button button--secondary` | `buttonClasses("secondary")` |
+| `ExternalEditedUpload.tsx` | Choose files | `button button--secondary` | `buttonClasses("secondary")` |
+| `ProjectWorkspace.tsx` | Back to dashboard | `button button--secondary` | `buttonClasses("secondary")` |
+| `ProjectWorkspace.tsx` | Retry (load error) | `button` | `buttonClasses()` |
+| `ProjectWorkspace.tsx` | Download selected (zip) | `button button--secondary` | `buttonClasses("secondary")` |
+| `ProjectWorkspace.tsx` | Send to AutoHDR | `button` | `buttonClasses()` |
+
+Bare `.button` (`app.css:589`, ink-900 fill) maps to the **default/primary** variant — confirmed
+against the legacy rule, not assumed.
+
+### Two tests asserted the retired class name, not the design-system contract
+
+Both fixed to assert the actual contract instead of an implementation detail:
+
+- `ConfirmDialog.dom.test.tsx` — `classList.contains("button--danger")` → `className` contains
+  `text-destructive` (both the positive and negative case).
+- `ProjectWorkspace.dom.test.tsx` — the button-download test selected `.hdr .button`; updated to
+  `.hdr button`, since `buttonClasses()` carries no stable class hook and `.hdr` itself is untouched.
+
+### Gate
+
+typecheck 0 · build 0 · **726 / 726 unchanged** across all six web-adjacent suites, `packages/shared`
+144 — pure retirement, no count moved except the two test edits above, which assert the same
+behaviour through a different selector. `.button` in `app.css` now has **zero non-calendar
+consumers** (`classcheck.py button` → only `ProductionCalendar.tsx`, `ProductionCalendarEvent.tsx`,
+§3's scope).
+
+Visual, local dev: the Admin "Deactivate" confirm dialog renders `buttonClasses("secondary")` /
+`buttonClasses("danger")` correctly — outlined critical red for Deactivate, matching the legacy
+`.button--danger` look; both buttons carry the shared `buttonClasses()` base (`min-h-[38px]`,
+`focus-visible` ring, `disabled` treatment) that the legacy rule never had.

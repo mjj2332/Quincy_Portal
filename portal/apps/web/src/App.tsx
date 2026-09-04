@@ -16,6 +16,7 @@ import { PrincipalFreshnessBoundary } from "./components/PrincipalFreshnessBound
 import { StagesProvider } from "./lib/stages";
 import { QuincyQueryProvider } from "./lib/query-client";
 import { roleHasCapability, type Role } from "@quincy/shared";
+import { buttonClasses } from "./components/ui/button";
 
 type SessionUser = { id: string; name?: string | null; email?: string | null; role: Role; authorizationEpoch: number };
 type Notice = { path: string; message: string } | null;
@@ -103,7 +104,7 @@ function Shell({ user, impersonating }: { user: SessionUser; impersonating: bool
       {!blocked && route.kind === "edit-project" && <EditProject key={route.projectId} projectId={route.projectId} onNavigate={navigate} />}
       {!blocked && route.kind === "admin" && <Admin currentUserId={user.id} />}
       {!blocked && route.kind === "notifications" && <NotificationPreferences />}
-      {!blocked && (route.kind === "not-found" || route.kind === "reserved") && <main className="page"><div className="empty" role="status"><span className="serif">That page is not available.</span><InternalLink className="button button--secondary" to="/">Return to dashboard</InternalLink></div></main>}
+      {!blocked && (route.kind === "not-found" || route.kind === "reserved") && <main className="page"><div className="empty" role="status"><span className="serif">That page is not available.</span><InternalLink className={buttonClasses("secondary")} to="/">Return to dashboard</InternalLink></div></main>}
     </div>
   );
 }

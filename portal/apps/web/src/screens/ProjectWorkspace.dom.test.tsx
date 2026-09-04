@@ -848,7 +848,9 @@ describe("ProjectWorkspace selection download", () => {
     const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
     const anchorRemove = vi.spyOn(HTMLAnchorElement.prototype, "remove");
     await render(<ProjectWorkspace projectId="p1" />); await flush();
-    const button = [...host.querySelectorAll<HTMLButtonElement>(".hdr .button")].find((item) => item.textContent === "Download 1 selected (zip)")!;
+    // TB8-10B: the legacy `.button` hook is retired onto buttonClasses(); select by role within
+    // the still-live `.hdr` wrapper instead.
+    const button = [...host.querySelectorAll<HTMLButtonElement>(".hdr button")].find((item) => item.textContent === "Download 1 selected (zip)")!;
     await click(button);
     const anchor = append.mock.calls.map(([node]) => node).find((node): node is HTMLAnchorElement => node instanceof HTMLAnchorElement)!;
     expect(anchor.href).toBe("http://localhost:3000/api/projects/p1/selected-raw.zip"); expect(anchor.href).not.toContain("download-selection"); expect(anchorClick).toHaveBeenCalled(); expect(anchorRemove).toHaveBeenCalledWith(); expect(anchor.isConnected).toBe(false);

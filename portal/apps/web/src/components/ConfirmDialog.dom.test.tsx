@@ -54,7 +54,9 @@ describe("ConfirmModalHost", () => {
     expect(dialog?.textContent).toContain("This cannot be undone.");
     expect(document.querySelector('[data-testid="confirm-modal-cancel"]')?.textContent).toBe("Keep file");
     expect(document.querySelector('[data-testid="confirm-modal-confirm"]')?.textContent).toBe("Delete file");
-    expect(document.querySelector('[data-testid="confirm-modal-confirm"]')?.classList.contains("button--danger")).toBe(true);
+    // TB8-10B: `.button--danger` retired onto buttonClasses("danger") — assert the design-system
+    // contract (the destructive text-colour utility) rather than the legacy class name.
+    expect(document.querySelector('[data-testid="confirm-modal-confirm"]')?.className).toContain("text-destructive");
     expect(document.querySelector("[data-confirm-modal-root]")).not.toBeNull();
     // §6.1 item 4 — aria-describedby now resolves to the message <p>'s id (a useId() value, not
     // a stable literal, so this asserts the property rather than an exact innerHTML string).
@@ -89,7 +91,7 @@ describe("ConfirmModalHost", () => {
     const confirmButton = document.querySelector<HTMLButtonElement>('[data-testid="confirm-modal-confirm"]')!;
     expect(cancel.textContent).toBe("Cancel");
     expect(confirmButton.textContent).toBe("Confirm");
-    expect(confirmButton.classList.contains("button--danger")).toBe(false);
+    expect(confirmButton.className).not.toContain("text-destructive");
     expect(document.activeElement).toBe(cancel);
 
     // Real Tab/Shift-Tab wraparound is a browser-native focus-traversal behavior that jsdom does

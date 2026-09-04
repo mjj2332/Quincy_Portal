@@ -2,6 +2,7 @@ import { useRef, useState, type ChangeEvent, type DragEvent } from "react";
 import { isAcceptedPhotoFilename } from "@quincy/shared";
 import { apiPost } from "../lib/api";
 import { decodeExternalResponse } from "../lib/external-api-response";
+import { buttonClasses } from "./ui/button";
 
 type UploadPart = { partNumber: number; uploadUrl: string; expectedBytes: number };
 type UploadPlan = { sessionToken: string; parts: UploadPart[]; completeUrl: string; abortUrl: string };
@@ -57,7 +58,7 @@ export function ExternalEditedUpload({ projectId, onComplete, onToast }: { proje
     <div className="ey">Edited image upload</div>
     <div className="upload-zone__title serif">Drop JPEG frames here</div>
     <p>Uploads stay inside Quincy Portal and are published to the Edited collection after integrity and rendition checks.</p>
-    <button className="button button--secondary" type="button" disabled={busy} onClick={() => inputRef.current?.click()}>{busy ? "Uploading…" : "Choose files"}</button>
+    <button className={buttonClasses("secondary")} type="button" disabled={busy} onClick={() => inputRef.current?.click()}>{busy ? "Uploading…" : "Choose files"}</button>
     {Object.keys(progress).length > 0 && <div className="upload-progress" aria-live="polite">{Object.entries(progress).map(([name, value]) => <div className="upload-file" key={name}><span>{name}</span><span>{value}%</span></div>)}</div>}
   </section>;
 }

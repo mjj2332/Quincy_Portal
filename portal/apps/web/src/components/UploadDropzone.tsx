@@ -5,6 +5,7 @@ import { uploadMultipartFile, type MultipartPresign } from "../lib/multipart-upl
 import { useProjectAccessTermination } from "../lib/project-data";
 import { useSession } from "../lib/auth";
 import { ExternalEditedUpload } from "./ExternalEditedUpload";
+import { buttonClasses } from "./ui/button";
 
 type PresignResponse = MultipartPresign & {
   assetId?: string;
@@ -145,7 +146,7 @@ export function UploadDropzone({ projectId, collection = "raw", onComplete, onTo
       <div className="ey">{collection === "raw" ? "RAW capture upload" : "Edited image upload"}</div>
       <div className="upload-zone__title serif">Drop JPEG frames here</div>
       <p>{collection === "raw" ? "JPEG only. The upload manifest verifies the expected capture count before ingest." : "JPEG only. Each upload is published to Dropbox before it appears in the Edited collection."}</p>
-      <button className="button button--secondary" type="button" disabled={isUploading} onClick={() => fileInput.current?.click()}>{isUploading ? "Uploading…" : "Choose files"}</button>
+      <button className={buttonClasses("secondary")} type="button" disabled={isUploading} onClick={() => fileInput.current?.click()}>{isUploading ? "Uploading…" : "Choose files"}</button>
       {progress.length > 0 && <div className="upload-progress" aria-live="polite"><div className="meter"><i style={{ width: `${overall}%` }} /></div><span className="ey">{overall}% uploaded</span>{progress.map((item) => <div className="upload-file" key={item.name}><span>{item.name}</span><span>{item.state === "failed" ? item.error : item.state === "publishing" ? "Publishing to Dropbox…" : `${item.percent}%`}</span></div>)}</div>}
       {rejected.length > 0 && <div className="upload-rejected" role="status"><strong>Not uploaded — JPEG only:</strong> {rejected.join(", ")}</div>}
     </section>
