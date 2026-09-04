@@ -216,6 +216,20 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
   summary, reporting 13.3px/19.8:1 for what is really 14px/9.2:1 — a reminder that a gate
   measurement is only as good as its selector.
 
+- **TB8-10B §4 (`--text-muted` contrast — D-05 complete) is DEPLOYED TO PRODUCTION, 2026-09-04**
+  — no migration, app Worker `90bb0652-1823-4b1a-8252-33312ea28d10` only, background/webhook-ingress
+  not redeployed (frontend/CSS only), rollback target app `5eeea274`. All 8 live text sites:
+  `color: var(--text-muted)` → `color: var(--text-secondary)`, a pure token swap in `app.css`, zero
+  JSX changes. `--text-muted` (greige-400) failed 4.5:1 AA on every surface it could render on
+  (3.57:1/3.36:1/2.87:1); `--text-secondary` (greige-600) clears with wide margin everywhere
+  (9.20:1/8.66:1/7.40:1). `.rich-text u`/`.rich-text s` left untouched — `text-decoration-color`,
+  not `color`, isn't subject to the text-contrast bar. Verified live in the browser: `.muted` and
+  siblings render `rgb(77, 71, 60)`, exactly `--greige-600`. Gate: typecheck 0, build 0,
+  726/726 unchanged, `packages/shared` 144 unchanged. Post-deploy: `/` and `/api/health` 200,
+  served CSS byte-identical (sha256) to the local build. Remaining in
+  `TB8-10B-Dead-CSS-Sweep-And-Button-Retirement-Plan.md`: §5 (the base/Preflight decision, now
+  unblocked — `app.css` no longer carries a button family).
+
 - **TB8-10B §3 (the Production Calendar's `.button` retirement — D-06 complete) is DEPLOYED TO
   PRODUCTION, 2026-09-04** — no migration, app Worker `5eeea274-fc20-4771-b77b-3bb0a7a4b7ce` only,
   background/webhook-ingress not redeployed (frontend/CSS only), rollback target app `2abd01ca`.
