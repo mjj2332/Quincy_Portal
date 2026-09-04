@@ -1,6 +1,6 @@
 # TB8-10B — The Dead-CSS Sweep and the `.button` Retirement
 
-**Status: §1 DEPLOYED (app Worker `876fb239`). §2 BUILT AND GATED, NOT DEPLOYED. §3–§5 not started.** Second half of TB8 candidate #10. Runs the frontend lane in
+**Status: §1 DEPLOYED (`876fb239`). §2 DEPLOYED (`2abd01ca`). §3 PLANNED, awaiting Sol. §4–§5 not started.** Second half of TB8 candidate #10. Runs the frontend lane in
 `docs/Subagent-Frontend-Orchestration.md`: this session drafts and holds the visual gate, Sol
 reviews scope only, a Sonnet subagent builds.
 
@@ -467,3 +467,105 @@ Visual, local dev: the Admin "Deactivate" confirm dialog renders `buttonClasses(
 `buttonClasses("danger")` correctly — outlined critical red for Deactivate, matching the legacy
 `.button--danger` look; both buttons carry the shared `buttonClasses()` base (`min-h-[38px]`,
 `focus-visible` ring, `disabled` treatment) that the legacy rule never had.
+
+
+---
+
+## §3 — `.button` retirement, Production Calendar (implementation detail, 2026-09-04)
+
+31 tokens, 8 files (per Sol's `@babel/parser` count in §0a). Unlike §2, **three of these sites use
+`button--text`** — the variant TB8-07 found has no `min-width` and a `min-h-[32px]` that beats
+`BASE`'s `min-h-[38px]`, so it cannot reach 44px on its own. This section verifies, rather than
+assumes, that the calendar's own CSS already carries the touch target for exactly those sites.
+
+### 3.1 The one real risk: an unlayered rule keyed on the literal `.button` class
+
+`production-calendar.css` has exactly one selector that names `.button` directly:
+
+```css
+@media (max-width: 420px) {
+  .qc-cal-filters__head .button { align-self: start; }
+}
+```
+
+`ProductionCalendarFilters.tsx:97`'s "Clear filters" is the only button in that header. At ≤420px
+the header becomes `flex-direction: column` with `align-items: stretch`; this rule opts the button
+back out to `align-self: start` so it stays compact rather than stretching full-width. **420px is
+inside this repo's 390px fixed viewport.** Retiring `.button` off that element without fixing this
+selector regresses the phone layout.
+
+**Fix:** change the selector to `.qc-cal-filters__head button` (tag, not class) — it is the only
+button in that container, verified by reading the component. No other file in `styles/` references
+`.button`/`.button--*` (confirmed: `grep -n '\.button\b\|\.button--' production-calendar.css`
+returns only this one line).
+
+### 3.2 Verified by measuring computed styles before touching any code
+
+Three structural cases exist, and each was measured live (CDP, local dev) rather than reasoned
+about statically, because `production-calendar.css` is unlayered — same trap as `app.css` — so a
+merely-plausible cascade argument is not good enough here.
+
+**Case A — bare `.button`/`.button--secondary`, no calendar-specific override** (toolbar Prev/Today/
+Next, the two dialog Cancel buttons' pattern, `ProductionCalendar.tsx`'s Refresh/Try again):
+measured padding `9px 14px`, font-size 12px, min-height 38px→44px at ≤721px or coarse pointer —
+**identical to `BASE` + `secondary`**. `buttonClasses("secondary")` / `buttonClasses()` reproduce
+this exactly; confirmed by §2 already shipping the identical pattern outside the calendar.
+
+**Case B — `.button--text` plus a calendar-specific hook class that already sets its own paint**
+(`.qc-cal-event-card__move`, `.qc-calendar-unscheduled__action` — both `margin-top; padding: 0;
+font-size: 11px`, and both get `min-width/min-height: 44px` at `(pointer: coarse), (max-width:
+720px)` keyed on the **hook class**, not on `.button`). Measured: padding 0, font-size 11px,
+min-height 32px at desktop; 44×44 with `padding: 8px 4px` at 390px. **Keep the hook class, drop only
+`button`/`button--text`.** Because the hook class's rules are unlayered and `buttonClasses()`'s are
+Tailwind utilities, the hook class keeps winning on every property it sets — padding and font-size
+are unaffected — and the touch-target media query, keyed on the hook class, is untouched by the
+swap. Only `min-height` at desktop and `color` are not set by the hook class; `buttonClasses("text")`
+supplies both, at `min-h-[32px]` (matches current, since nothing unlayered contests it once
+`.button--text` is gone) and `!text-foreground-secondary` (verified `--foreground-secondary` is a
+plain alias for `--text-secondary` in `tokens/colors.css:80` — the same value `.button--text`'s
+`color: var(--text-secondary)` produces today, and the `!` wins regardless of layer).
+
+**Case C — bare `.button--text`, no calendar-specific class** (`ProductionCalendarFilters.tsx:97`,
+"Clear filters"): measured padding `6px 0px`, font-size 12px, min-height 32px→44px. Nothing
+unlayered contests this element once `.button`/`.button--text` are gone, so `buttonClasses("text")`'s
+own `px-0 py-[6px]` applies uncontested — **identical computed padding**. The ≤420px `align-self`
+regression is §3.1's fix, applied here.
+
+### 3.3 The 11 sites
+
+| File | Line | Legacy | `buttonClasses()` | Case |
+|---|---|---|---|---|
+| `ProductionCalendarToolbar.tsx` | 85 | `button button--secondary` (Prev) | `buttonClasses("secondary")` | A |
+| `ProductionCalendarToolbar.tsx` | 86 | `button button--secondary` (Today) | `buttonClasses("secondary")` | A |
+| `ProductionCalendarToolbar.tsx` | 87 | `button button--secondary` (Next) | `buttonClasses("secondary")` | A |
+| `ProductionCalendarEvent.tsx` | 105, 122, 142 | `button button--text qc-cal-event-card__move` | `buttonClasses("text", { className: "qc-cal-event-card__move" })` | B |
+| `ProductionCalendar.tsx` | 1558 | `button button--secondary` (Refresh) | `buttonClasses("secondary")` | A |
+| `ProductionCalendar.tsx` | 1565 | `button button--secondary` (Try again) | `buttonClasses("secondary")` | A |
+| `ProductionCalendarUnscheduledPanel.tsx` | 131, 177 | `button button--text qc-calendar-unscheduled__action` | `buttonClasses("text", { className: "qc-calendar-unscheduled__action" })` | B |
+| `ProductionCalendarFoldChoice.tsx` | 24 | `button button--secondary` (Cancel) | `buttonClasses("secondary")` | A |
+| `ProductionCalendarFoldChoice.tsx` | 25 | `button` (Use this time) | `buttonClasses()` | A |
+| `ProductionCalendarMoveDialog.tsx` | 49 | `button button--secondary` (Cancel) | `buttonClasses("secondary")` | A |
+| `ProductionCalendarMoveDialog.tsx` | 50 | `button` (Save Deadline) | `buttonClasses()` | A |
+| `ProductionCalendarScheduleEditor.tsx` | 147 | `button button--secondary` (Cancel) | `buttonClasses("secondary")` | A |
+| `ProductionCalendarScheduleEditor.tsx` | 148 | `button` (Save schedule) | `buttonClasses()` | A |
+| `ProductionCalendarFilters.tsx` | 97 | `button button--text` (Clear filters) | `buttonClasses("text")` | C |
+
+(14 rows for 11 usage sites — three are ×2/×3 within one component, matching Sol's 31-token count:
+6+6+4+4+3+3+3+2.)
+
+### 3.4 What survives untouched
+
+Every `qc-*` hook class (layout, spacing, the touch-target media queries keyed on them or on tag
+selectors); `[data-modal-variant="calendar"] button`'s dialog touch-target rule (tag-based,
+unaffected by any class change on the button itself).
+
+### 3.5 Acceptance
+
+| # | Criterion |
+|---|---|
+| 3-1 | `.qc-cal-filters__head button { align-self: start; }` replaces the `.button` selector; verified only one button lives in that header. |
+| 3-2 | `grep -n '\.button\b\|\.button--' production-calendar.css` returns nothing. |
+| 3-3 | Computed padding, font-size, min-height/min-width and colour for all three cases, at 1440 and 390, match the pre-change measurements in §3.2 exactly — re-measure after, do not assume. |
+| 3-4 | `.qc-cal-event-card__move` and `.qc-calendar-unscheduled__action` still reach 44×44 at 390px and under `(pointer: coarse)`. |
+| 3-5 | `.button` in `app.css` now has zero consumers anywhere in the app — the last one. |
+| 3-6 | Every calendar dialog (Fold Choice, Move, Schedule Editor) still opens, Cancel/Save both work, at 1440 and 390. |
