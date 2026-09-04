@@ -32,9 +32,9 @@ Before delegating work to Codex or Sonnet subagents, read
 (§2.6), and §7 has what's additionally required for frontend/UI work: a new screen, a component
 redesign, a visual convergence release, design-system adoption.
 
-Authority order when docs conflict: `docs/PRD/Implementation-Plan.md` → `docs/PRD/PRD.md` /
-`Personas.md` / `Sitemap.md`. Auth is **Google OAuth**, not Cloudflare Access; renditions use the
-**remote Image Transformation** path, not a Container.
+Authority order when docs conflict: `docs/PRD/PRD.md` → `Personas.md` / `Sitemap.md`. Auth is
+**Google OAuth**, not Cloudflare Access; renditions use the **remote Image Transformation** path,
+not a Container.
 
 ## Approved revamp targets — not live until their tracer bullet deploys
 

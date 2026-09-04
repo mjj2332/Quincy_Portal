@@ -214,7 +214,7 @@ between stages are where QA happens.
   - **Sync from Dropbox** — a one-click pull of the RAW frames from the shoot's Dropbox folder. The folder link/path can be **pasted manually** or **carried over automatically from the Tonomo booking** (`rawFolderLink` / `rawFolderPath` in the webhook). Syncing populates the RAW collection and moves the project into **RAW review**.
 - Photographers annotate / comment on RAWs and **recommend** their picks to guide QA.
 - **Accepted files:** JPEG-only ingest (`.jpg` / `.jpeg`) per D-01; camera RAW remains with the photographer and is never uploaded. Bracketed sets are **not** grouped automatically; the editor brackets them manually during selection.
-- ⬜ **Embedded star rating ingest.** Photographers cull on-site in Lightroom before export, applying a 1–5 star rating per frame. On upload/sync, the Portal **reads that rating from the JPEG's embedded XMP metadata** (`xmp:Rating`) and pre-populates the frame's star rating in RAW QA automatically — no re-rating by hand. An un-rated export (no `xmp:Rating` attribute present) shows as unrated, not zero-starred-by-default. QA can still override any rating manually; the metadata read only sets the *starting* value. Validated against 44 real studio export JPEGs (2.9–28 MB) — see `Implementation-Plan.md` §2 A2.
+- ⬜ **Embedded star rating ingest.** Photographers cull on-site in Lightroom before export, applying a 1–5 star rating per frame. On upload/sync, the Portal **reads that rating from the JPEG's embedded XMP metadata** (`xmp:Rating`) and pre-populates the frame's star rating in RAW QA automatically — no re-rating by hand. An un-rated export (no `xmp:Rating` attribute present) shows as unrated, not zero-starred-by-default. QA can still override any rating manually; the metadata read only sets the *starting* value. Validated against 44 real studio export JPEGs (2.9–28 MB).
 
 **2. RAW QA & selection** ✅ Built
 - Editor/QA reviews all RAWs, compares similar frames, annotates, and sees photographer recommendations.
@@ -377,11 +377,9 @@ MVP, and display ordering/configuration never redefines automation semantics.
 ## 8. Tech stack & architecture — current production `portal/` baseline
 
 > This section describes the **production application** in `portal/` — a TypeScript
-> monorepo running entirely on Cloudflare. It is a **summary**; the authoritative
-> architecture and phase plan live in **`Implementation-Plan.md`** (§4 target
-> architecture, §5 data model), which overrides this section on any conflict. The
-> `prototype/` app (React via CDN + in-browser Babel, mock data, no backend) is
-> **reference-only** and is not the production stack described here.
+> monorepo running entirely on Cloudflare. The `prototype/` app (React via CDN +
+> in-browser Babel, mock data, no backend) is **reference-only** and is not the
+> production stack described here.
 
 ### 8.1 Stack at a glance
 
