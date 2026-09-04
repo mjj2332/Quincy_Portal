@@ -1,6 +1,9 @@
 # TB8-09 — Review Lightbox: Visual Plan
 
-**Status: BUILT — all six slices committed; visual gate not yet run.** Slices `3a3f387`,
+**Status: BUILT, VISUAL GATE PASSED — not yet merged or deployed.** Gate results in §11; it found
+**three defects** that 1,763 tests and two review rounds all missed.
+
+**Prior status: BUILT — all six slices committed; visual gate not yet run.** Slices `3a3f387`,
 `90bb4e1`, `0d3453a`, `4d3ad17`, `b16c152`, and slice 6. `app.css` **800 → 679 lines**;
 1,763 tests green (up 21). Build record in §10.
 
@@ -1136,3 +1139,102 @@ found three real problems the builders' own self-checks did not.
 
 The browser pass and the visual gate (§7's ten criteria), then deploy. Six `RUNTIME` items in the
 drift register (§7 there) are asserted from source and still need confirming in a real browser.
+
+
+---
+
+## 11. Visual gate — PASSED
+
+Run by this session (never delegated), against local dev at `1440×900`, `1024×768`, `900`, `721`,
+`720` and `390`, in the human-authenticated Chrome on CDP 9333. **No OAuth was performed by this
+session** — the session was already signed in as Admin from the human's earlier work, which is the
+sanctioned path. Local D1 had zero `asset_renditions` rows, so no asset was ever reviewable; four
+fixture rows were inserted to make two RAW assets `ready`, and **deleted afterwards** (verified).
+
+### The headline fix, measured
+
+`--focus-ring` was `--ink-900` on a `--ink-900` stage — **1.00:1**. Now, forcing `:focus-visible`
+per element via CDP and reading the computed ring:
+
+| Control | Ring | Ground | Contrast |
+|---|---|---|---|
+| Close, Prev/Next | `rgb(250,248,242)` 2px @ offset 2 | `rgb(10,10,10)` | **18.64:1** |
+| Pen swatch, stroke width | `rgb(250,248,242)` 2px @ offset 2 | `rgb(20,20,20)` | **17.35:1** |
+| Filmstrip thumbnail | `rgb(250,248,242)` 2px @ offset 2 | 50% ink | **~18.6:1** |
+| Rating, colour label (panel) | `rgb(10,10,10)` 2px @ offset 2 | `rgb(250,248,242)` | **18.64:1** |
+
+The filmstrip was additionally confirmed with **real keyboard Tab** over CDP (`:focus-visible`
+matched `true`), not just a forced pseudo-state — it was the one control with two independent
+causes. Scope resolution verified directly: `--ring`/`--focus-ring` are `#faf8f2` on `.viewer`,
+`#0a0a0a` on `.vpanel`, and `#0a0a0a` at `:root` — unchanged for the rest of the app.
+
+### Touch targets, at every band edge
+
+| | 1440 | 1024 | 721 | 720 | 390 |
+|---|---|---|---|---|---|
+| swatch / wbtn / star / label | 28×28 | 28×28 | 28×28 | **44×44** | **44×44** |
+| filmstrip button | 84×56 | 84×56 | 84×56 | **60×44** | **60×44** |
+| `.vpanel__collapse` | — | **36×36** | — | — | **44×44** |
+
+The 721→720 flip lands exactly on the boundary, confirming `max-[721px]`. `.vpanel__collapse`
+holds **36px** in the tablet band — the regression §0b blocked is verified absent.
+
+### The 1080px off-by-one (criterion 7a)
+
+| Width | `viewerBand()` | `.vpanel` position | Agree |
+|---|---|---|---|
+| 1081 | desktop | `static` | ✓ |
+| **1080** | **tablet** | **`fixed`** | **✓** |
+| 1024 | tablet | `fixed` | ✓ |
+
+Sol's B5 fix verified at the exact pixel. With `max-[1080px]` the CSS would have said desktop
+while the JS said tablet.
+
+### Contrast (no regressions, and the owner's ruling applied)
+
+meta filename 18.64:1 · meta eyebrow 11.78:1 · `.kbd` 14.8:1 · drawbar label 10.96:1 · panel
+address 18.64:1 · section label 8.66:1 · **star unselected 8.66:1 (was 3.36)**.
+
+### Three defects the gate found — and nothing else did
+
+**1. The rating stars silently shrank, 22px → 18px.** `RATING_BUTTON` asked for
+`text-[length:var(--text-lg)]`, but `ICON_BUTTON_BASE` already carries
+`[font:…var(--text-md)…]`, and two utilities touching `font-size` are resolved by Tailwind's
+*emission order*, not class order. **`button.tsx` documents this exact trap in its own comment**
+and I walked into it anyway. Fixed by overriding the whole shorthand, the precedent that file
+already sets. Re-measured live: 22px.
+
+**2. The markup toolbar wrapped to two rows and covered the shortcut hints.** Root cause is a
+CSS-layout subtlety, not a spacing miss: an absolutely-positioned shrink-to-fit box at
+`left: 50%` can never be wider than *half* its containing block, so the toolbar was capped at
+530px inside a 1060px stage and wrapped at 106px tall. This release's larger touch targets are
+what pushed it over — the constraint is pre-existing (the legacy CSS centred the same way), the
+overflow is new. Fixed by centring with `inset-x-0 mx-auto w-max` instead. Now **56px, one row,
+at every width ≥721**, and the same fix applied to the shortcut pill.
+
+**3. The shortcut pill sat behind the toolbar whenever markup was available.** Both were anchored
+at `bottom: 18px`; `.is-drawing` only lifted the pill while a draft existed. Pre-existing —
+verified against `7c9544f` — but in scope. The pill now clears the measured toolbar height
+whenever the toolbar is present: **8px gap, zero overlap, at every width ≥721**.
+
+R-1 was initially mis-called: my first reading counted three "rows" that were really one
+centre-aligned row. Re-measured properly before acting.
+
+### Deferred, with measurement
+
+**The toolbar covers the filmstrip on phone.** At 390px the toolbar wraps to 136px at
+`bottom: 18px`, spanning 746–882, while the fixed filmstrip sits at 766–828. Pre-existing: the
+legacy phone rules also set 44px targets and pinned the filmstrip at `72px`. Fixing it means
+deciding where the annotation toolbar lives on a phone when the filmstrip is fixed above it —
+a product-shaped decision, not a convergence one, and not something to invent at the end of a
+release. **To TB8-10 with this measurement.**
+
+### The rest
+
+Zero horizontal overflow and zero elements overflowing their own box at all six widths. Eleven
+toolbar buttons, **none unnamed**. Typecheck and build green by exit code; 1,763 tests passing.
+
+### A method correction worth keeping
+
+`npm run typecheck 2>&1 | grep -c "error TS"` reports **0 even when `tsc` fails** — ANSI colour
+codes sit between `error` and `TS`, and the pipe discards the exit code. Check the exit code.
