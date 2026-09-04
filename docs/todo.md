@@ -216,6 +216,20 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
   summary, reporting 13.3px/19.8:1 for what is really 14px/9.2:1 — a reminder that a gate
   measurement is only as good as its selector.
 
+- **TB8-10B §2 (the non-calendar `.button` retirement) is DEPLOYED TO PRODUCTION, 2026-09-04**
+  — no migration, app Worker `2abd01ca-292d-40fc-8dd3-22e8ebb31e5a` only,
+  background/webhook-ingress not redeployed (frontend/CSS only), rollback target app `876fb239`.
+  19 tokens across 6 files (`App.tsx`, `ConfirmDialog.tsx`, `CollectionPanel.tsx`,
+  `UploadDropzone.tsx`, `ExternalEditedUpload.tsx`, `ProjectWorkspace.tsx`) moved onto
+  `buttonClasses()`; `.button` in `app.css` now has zero non-calendar consumers. Two tests were
+  asserting the retired class name rather than the design-system contract and were updated
+  (`ConfirmDialog.dom.test.tsx`'s danger-treatment check, `ProjectWorkspace.dom.test.tsx`'s
+  download-route selector). Post-deploy: `/` and `/api/health` 200, served stylesheet
+  byte-identical. Remaining in `TB8-10B-Dead-CSS-Sweep-And-Button-Retirement-Plan.md`: §3 (the
+  Production Calendar's `.button` retirement — 31 tokens, 8 files, needs its own visual-convergence
+  evidence since the calendar has never been through a TB8 candidate), §4 (`--text-muted` contrast
+  on 8 live sites), §5 (the base/Preflight decision).
+
 - **TB8-10B §1 (the dead-CSS sweep) is DEPLOYED TO PRODUCTION, 2026-09-04** — no migration, app
   Worker `876fb239-263e-4632-b89c-6bfc4d0d652c` only, background/webhook-ingress not redeployed
   (frontend/CSS only), rollback target app `e8825a98`. `app.css` 683 → 562 lines: 100 whole-rule
