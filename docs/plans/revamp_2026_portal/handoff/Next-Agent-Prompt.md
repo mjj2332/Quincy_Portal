@@ -6,7 +6,7 @@ You are continuing planning or implementation for `mjj2332/Quincy_Portal`.
 
 1. Inspect current `main` and record exact SHA.
 2. Read `AGENTS.md`, `docs/todo.md`, `docs/lessons.md`, and `docs/Subagent-Orchestration.md`.
-3. Start at `docs/plans/Quincy-Portal-Revamp-Index.md`.
+3. Start at `docs/plans/revamp_2026_portal/Index.md`.
 4. Read only the active tracer-bullet path.
 5. Do not load archive unless auditing history.
 6. The corrected authority package is now promoted: revised **D-13/D-15, D-16–D-19, and A8–A14**. Treat planned outcomes as targets until their owning tracer bullets ship.

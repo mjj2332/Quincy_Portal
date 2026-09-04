@@ -13,6 +13,16 @@ The package contains proposed implementation details below the repository author
 corrected D/A authority wording was promoted on 2026-08-24; planned outcomes remain non-live until
 their owning tracer bullets are shipped.
 
+## Package entry points
+
+- [`Brief.md`](./Brief.md) — the high-level owner brief; authoritative over the rest of the package
+  on the specific points it names in its own header.
+- [`Index.md`](./Index.md) — the shortest entry point for an agent: read only the path relevant to
+  the active task, rather than this whole tree.
+
+Both moved into this folder 2026-09-04 so everything related to the revamp lives in one place; see
+their own headers for full status.
+
 ## Package sections
 
 ### `core/`

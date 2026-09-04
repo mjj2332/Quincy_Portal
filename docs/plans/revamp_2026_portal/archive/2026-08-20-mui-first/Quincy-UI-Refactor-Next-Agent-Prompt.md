@@ -1,5 +1,5 @@
 > [!WARNING]
-> **Archived and superseded.** Preserve for provenance only. Do not use this file as active implementation guidance; start at `../../../Quincy-Portal-Revamp-Index.md`.
+> **Archived and superseded.** Preserve for provenance only. Do not use this file as active implementation guidance; start at `../../Index.md`.
 
 # Ready-to-Paste Prompt for the Next Agent
 

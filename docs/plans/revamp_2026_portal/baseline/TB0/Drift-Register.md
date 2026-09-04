@@ -14,7 +14,7 @@
 - The worktree was clean before TB0 evidence work. The current TB0 artifacts are untracked under
   `docs/plans/revamp_2026_portal/baseline/TB0/` only.
 - The source contract for the direct-send baseline is copied from
-  [`Quincy-Portal-Revamp-Index.md` § “Baseline drift: direct send-only AutoHDR”](../../../../Quincy-Portal-Revamp-Index.md#baseline-drift-direct-send-only-autohdr),
+  [`Index.md` § “Baseline drift: direct send-only AutoHDR”](../../Index.md#baseline-drift-direct-send-only-autohdr),
   with tracer-bullet assignments cross-referenced against its § “AutoHDR compatibility
   checkpoints by tracer bullet”.
 

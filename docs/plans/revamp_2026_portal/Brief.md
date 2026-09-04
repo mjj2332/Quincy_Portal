@@ -3,7 +3,7 @@
 **Status:** Revised owner/planning brief; decisions settled in the proposal package, authority promotion still pending  
 **Revised:** 2026-08-24  
 **Baseline:** `main` at `2ac2ca27a1e0ded328b9265613ab4ebeeb7db1b0`  
-**Detailed documentation:** [`revamp_2026_portal/`](./revamp_2026_portal/README.md)
+**Detailed documentation:** [`revamp_2026_portal/`](./README.md)
 
 > **This revision intentionally supersedes the linked `revamp_2026_portal/` package on four specific points**, pending TB0 propagating them into the package documents themselves. Until that propagation lands, this Brief is authoritative on each, and an implementer reading only the package would be misled:
 >
@@ -242,13 +242,13 @@ TB7   Notice Board per-user read-state migration
 TB8   Evidence-driven surface-by-surface convergence
 ```
 
-**TB0B — Pipeline configuration boundary.** Ordinary Admins retain Stage label and active/inactive management, while global Stage ordering moves out of self-service UI/API and into a reviewed developer migration or maintenance script; project-level Stage movement remains unaffected and is owned later by TB5A. See the [TB0B roadmap](./revamp_2026_portal/roadmap/TB0B-Pipeline-Configuration-Boundary.md).
+**TB0B — Pipeline configuration boundary.** Ordinary Admins retain Stage label and active/inactive management, while global Stage ordering moves out of self-service UI/API and into a reviewed developer migration or maintenance script; project-level Stage movement remains unaffected and is owned later by TB5A. See the [TB0B roadmap](./roadmap/TB0B-Pipeline-Configuration-Boundary.md).
 
-**TB4C — Editor-wide project-change notifications.** Every active, event-time-eligible assigned Editor receives one privacy-safe durable in-app alert for each approved semantic project change, using membership cycles, a defined event registry, and noise/coalescing rules to avoid storms, duplicates, and access leakage. See the [TB4C roadmap](./revamp_2026_portal/roadmap/TB4C-Editor-Wide-Project-Change-Notifications.md).
+**TB4C — Editor-wide project-change notifications.** Every active, event-time-eligible assigned Editor receives one privacy-safe durable in-app alert for each approved semantic project change, using membership cycles, a defined event registry, and noise/coalescing rules to avoid storms, duplicates, and access leakage. See the [TB4C roadmap](./roadmap/TB4C-Editor-Wide-Project-Change-Notifications.md).
 
-**TB6 — Project-card detail and shared discussion.** Authorized users can inspect a project's summary, structured activity, and existing discussion from URL-addressable production views without duplicating project data, comments, activity, or Calendar state; External Editors receive only the TB4E external-safe projection for assigned non-archived projects. See the [TB6 roadmap](./revamp_2026_portal/roadmap/TB6-Project-Card-Detail-And-Discussion.md).
+**TB6 — Project-card detail and shared discussion.** Authorized users can inspect a project's summary, structured activity, and existing discussion from URL-addressable production views without duplicating project data, comments, activity, or Calendar state; External Editors receive only the TB4E external-safe projection for assigned non-archived projects. See the [TB6 roadmap](./roadmap/TB6-Project-Card-Detail-And-Discussion.md).
 
-**TB7 — Notice Board per-user read-state migration.** Notice Board read/unread state moves from localStorage to a per-user D1 record so it follows that user across their own devices, while the current direct mention-delivery path remains unchanged. Durable global/non-project mention delivery is separate, not-yet-scheduled future work. The Notice Board remains asynchronous: this adds neither realtime delivery nor an external platform. See the [TB7 roadmap](./revamp_2026_portal/roadmap/TB7-Notice-Board-Migration.md).
+**TB7 — Notice Board per-user read-state migration.** Notice Board read/unread state moves from localStorage to a per-user D1 record so it follows that user across their own devices, while the current direct mention-delivery path remains unchanged. Durable global/non-project mention delivery is separate, not-yet-scheduled future work. The Notice Board remains asynchronous: this adds neither realtime delivery nor an external platform. See the [TB7 roadmap](./roadmap/TB7-Notice-Board-Migration.md).
 
 ## Authority proposal
 

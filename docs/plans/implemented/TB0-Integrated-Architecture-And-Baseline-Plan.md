@@ -11,8 +11,8 @@
 
 **Detailed-package baseline:** `2ac2ca27a1e0ded328b9265613ab4ebeeb7db1b0`
 
-**Primary sources:** `Quincy-Portal-Revamp-Brief.md` (authoritative where it corrects the package),
-`Quincy-Portal-Revamp-Index.md`, and `revamp_2026_portal/roadmap/TB0-Integrated-Architecture-And-Baseline.md`
+**Primary sources:** `revamp_2026_portal/Brief.md` (authoritative where it corrects the package),
+`revamp_2026_portal/Index.md`, and `revamp_2026_portal/roadmap/TB0-Integrated-Architecture-And-Baseline.md`
 
 ## What this phase resolves
 
@@ -545,7 +545,7 @@ Only after the checkpoint in step 4:
    diff those two files alone against pre-edit `HEAD` and confirm A1–A7 plus the PR #44 AutoHDR
    wording are byte-for-byte preserved except for the declared header/footer insertions.
 2. Propagate the Brief's corrected numbering into the five files its header explicitly names:
-   `Quincy-Portal-Revamp-Index.md`, package `README.md`, `core/01-Decision-Register.md`,
+   `revamp_2026_portal/Index.md`, package `README.md`, `core/01-Decision-Register.md`,
    `core/10-Repository-Document-Update-Map.md`, and the TB0 scope brief. Use D-16–D-19 plus revised
    D-13/D-15 everywhere.
 3. Also update active routing/index duplicates revealed by the bounded consistency search—notably
