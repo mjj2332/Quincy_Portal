@@ -1,6 +1,8 @@
 # TB8-10B — The Dead-CSS Sweep and the `.button` Retirement
 
-**Status: §1 DEPLOYED (`876fb239`). §2 DEPLOYED (`2abd01ca`). §3 DEPLOYED (`5eeea274`). §4 DEPLOYED (`90bb0652`). §5 BUILT AND GATED, NOT DEPLOYED.** Second half of TB8 candidate #10. Runs the frontend lane in
+**Status: ALL DEPLOYED. §1 (`876fb239`). §2 (`2abd01ca`). §3 (`5eeea274`). §4 (`90bb0652`). §5
+(`f0e41474`). D-05, D-06, D-07 all complete — TB8-10B is finished.** Second half of TB8 candidate
+#10. Runs the frontend lane in
 `docs/Subagent-Frontend-Orchestration.md`: this session drafts and holds the visual gate, Sol
 reviews scope only, a Sonnet subagent builds.
 

@@ -216,6 +216,22 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
   summary, reporting 13.3px/19.8:1 for what is really 14px/9.2:1 — a reminder that a gate
   measurement is only as good as its selector.
 
+- **TB8-10B §5 (enable Tailwind Preflight — D-07 complete, revises D-16) is DEPLOYED TO
+  PRODUCTION, 2026-09-04** — no migration, app Worker `f0e41474-42b8-49b7-bb73-a2acc275e265` only,
+  background/webhook-ingress not redeployed (frontend/CSS only), rollback target app `90bb0652`.
+  `@import "tailwindcss/preflight.css" layer(base);` added to `index.css`. Audited every Preflight
+  rule against the app; Sol's scope review on the first-pass audit found 5 blocking gaps the initial
+  read missed (the live Tiptap editor's own lists, four bare calendar date/time inputs, inherited
+  `letter-spacing` on three independent field constants, a glyph-only icon-button family, and
+  sequencing) — all fixed before building. Verified with live computed styles and a real user flow
+  (typed a bullet list through the actual Discussion-tab editor) rather than a CSS bundle diff: zero
+  list-marker-lost, zero control-stripped across a whole-page sweep of the Project Workspace and
+  Production Calendar. The `.chip`-as-link underline question resolved empirically as a pre-existing
+  latent defect that Preflight silently fixes, not a regression. Revises approved D-16 in
+  `Decision-Sheet.md` (re-approved by the owner 2026-09-04 after two audit rounds). Full record:
+  `TB8-10B-Dead-CSS-Sweep-And-Button-Retirement-Plan.md` §5/§11. **TB8-10B is now fully complete —
+  D-05, D-06, D-07 all shipped.**
+
 - **TB8-10B §4 (`--text-muted` contrast — D-05 complete) is DEPLOYED TO PRODUCTION, 2026-09-04**
   — no migration, app Worker `90bb0652-1823-4b1a-8252-33312ea28d10` only, background/webhook-ingress
   not redeployed (frontend/CSS only), rollback target app `5eeea274`. All 8 live text sites:
