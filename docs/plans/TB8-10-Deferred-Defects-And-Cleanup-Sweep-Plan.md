@@ -116,3 +116,22 @@ Each item's origin, so none of this rests on this document alone:
 - D-05 — `docs/plans/implemented/TB8-04-…-Visual-Plan.md` §2.1 contrast table and E-16.
 - D-07 — `docs/plans/Revamp-TB8-Wider-UI-Migration-And-Cleanup-Plan.md`, ranking item 10.
 - Verification debt — TB8-04 plan status line; TB8-05 plan §10.3.
+
+## D-TB8-09-1 — the annotation toolbar covers the filmstrip on phone
+
+**Deferred from TB8-09's visual gate, 2026-09-04, with the measurement.**
+
+At 390px the markup toolbar wraps to **136px** tall at `bottom: 18px`, spanning y 746–882, while
+the fixed filmstrip sits at 766–828. The toolbar (z-6) covers the filmstrip (z-4) whenever markup
+is available.
+
+**Pre-existing, not introduced by TB8-09** — verified against `7c9544f`: the legacy phone rules
+also set 44px `.swatch`/`.wbtn` targets and pinned `.strip` at `bottom: calc(72px + safe-area)`,
+so the same collision existed before the convergence.
+
+**Why it was not fixed in TB8-09:** the fix requires deciding *where the annotation toolbar lives
+on a phone* when the filmstrip is fixed above it — collapse the filmstrip while drawing, dock the
+toolbar to the top, or make it scrollable. That is a product decision, not a convergence one, and
+inventing one at the end of a release is exactly the kind of unowned change the pipeline is meant
+to prevent. **Needs owner input before it is planned.**
+

@@ -1,7 +1,14 @@
 # TB8-09 — Review Lightbox: Visual Plan
 
-**Status: BUILT, VISUAL GATE PASSED — not yet merged or deployed.** Gate results in §11; it found
-**three defects** that 1,763 tests and two review rounds all missed.
+**Status: DEPLOYED TO PRODUCTION 2026-09-04.** Merged to `main` as `150e40c`; app Worker
+`7c7cdafe` only — background and webhook-ingress not redeployed (the release touches `apps/web`
+alone). No migration. Rollback target: app `1b35ead6` (TB8-08). Post-deploy verification: `/api/health`
+200, root 200, and the production stylesheet confirmed to carry `--focus-ring:var(--paper-050)`
+inside the inverse scope, the `[data-surface=default]` reset block, and **zero**
+`outline:2px solid transparent` rules.
+
+**Prior status: BUILT, VISUAL GATE PASSED — not yet merged or deployed.** Gate results in §11; it
+found **three defects** that 1,763 tests and two review rounds all missed.
 
 **Prior status: BUILT — all six slices committed; visual gate not yet run.** Slices `3a3f387`,
 `90bb4e1`, `0d3453a`, `4d3ad17`, `b16c152`, and slice 6. `app.css` **800 → 679 lines**;
