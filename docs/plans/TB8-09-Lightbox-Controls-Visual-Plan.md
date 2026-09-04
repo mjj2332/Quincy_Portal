@@ -1,6 +1,10 @@
 # TB8-09 — Review Lightbox: Visual Plan
 
-**Status: DRAFTED, both Sol rounds resolved, self-approved.** Round 1 returned 13 findings
+**Status: BUILT — all six slices committed; visual gate not yet run.** Slices `3a3f387`,
+`90bb4e1`, `0d3453a`, `4d3ad17`, `b16c152`, and slice 6. `app.css` **800 → 679 lines**;
+1,763 tests green (up 21). Build record in §10.
+
+**Prior status: DRAFTED, both Sol rounds resolved, self-approved.** Round 1 returned 13 findings
 (12 upheld), round 2 returned 7 (6 upheld, 1 stale). Every one was verified against the repo
 before acting. **The ≤2-round cap is spent**, so per `Subagent-Frontend-Orchestration.md` §3 the
 remaining resolution and approval are this session's. See §0a and §0d. Ranking candidate **#9** in
@@ -1078,3 +1082,57 @@ rules has not finished, however green the build is.
    owner's "treat the glyph as text" ruling covers this site too, so the divergence from the
    evidence base is now a decision rather than an unexplained change. The register is annotated to
    match.
+
+
+---
+
+## 10. Build record
+
+Six slices, each retiring its own `app.css` rules in the same commit. Every slice independently
+re-verified in the orchestrating session rather than accepted on the builder's report — which
+found three real problems the builders' own self-checks did not.
+
+| Slice | Commit | What |
+|---|---|---|
+| 1 | `3a3f387` | The role indirection and `tokens/inverse.css`. Visually inert, proven by a before/after CSS diff. |
+| 2 | `90bb4e1` | The stage, and `data-surface` on both `.viewer` and `.vpanel`. |
+| 3 | `0d3453a` | The markup toolbar — the nine unnamed buttons. |
+| 4 | `4d3ad17` | The side panel. |
+| 5 | `b16c152` | Filmstrip, band layouts, the dead compare implementation, the action bar. |
+| 6 | this commit | The ledger reconciliation, `Lightbox.a11y.dom.test.tsx`, docs. |
+
+### What review caught that the builders did not
+
+1. **Slice 2 — a plan defect, not a build defect.** The plan put `data-surface="inverse"` in
+   slice 2 and `data-surface="default"` in slice 4. But `.vpanel` is a *descendant* of `.viewer`,
+   so the moment the inverse scope activated, every role inherited into the light panel — and the
+   panel's own zoom controls were converted in slice 2, so they would have rendered
+   `--paper-050` text on a `--paper-050` panel. Invisible, immediately, for two slices. The
+   builder noticed the leak and classified it as an expected intermediate state; it was not.
+   **Rule added to §8: an inverse scope and the `default` scopes nested inside it are one atomic
+   change.**
+2. **Slice 4 — an invented product state.** The builder wired `.cmt__pin`'s dormant `.unpinned`
+   modifier to "annotation has no drawing". Plausible design, but the modifier has never
+   rendered: that is a *product change*, not convergence. Reverted; the modifier is deleted as
+   dead, which also withdraws C-2 (a contrast failure on an unreachable state is not a defect).
+3. **Slice 6 — the session's own verification was unsound.** `npm run typecheck 2>&1 | grep -c
+   "error TS"` reports **0 even when `tsc` fails**: the output carries ANSI colour codes between
+   `error` and `TS`, and the pipe discards the exit code. Caught when `build` failed on a file
+   `typecheck` had just "passed". Earlier slices are unaffected — their `✓ built in` line only
+   prints when `tsc` succeeds, so the flawed check was redundant rather than load-bearing — but
+   **check the exit code, never grep the output.**
+
+### Deviations accepted
+
+- **`.vpanel__collapse` is a raw `<button>` carrying `ICON_BUTTON`'s classes**, not `IconButton`.
+  That component is not `forwardRef`-wrapped and the collapse ref must keep working. It carries
+  the explicit 36px floor either way.
+- **The tablet drawer was built in slice 4 rather than slice 5**, because slice 4 deleted its
+  rules — leaving it would have been exactly the half-wired state the slicing exists to prevent.
+- **`.cmt__role` was deleted as dead** — zero consumers, inside a block slice 4 was retiring
+  anyway. Not in the §4 ledger because the register never found it.
+
+### Still to do
+
+The browser pass and the visual gate (§7's ten criteria), then deploy. Six `RUNTIME` items in the
+drift register (§7 there) are asserted from source and still need confirming in a real browser.
