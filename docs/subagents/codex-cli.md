@@ -1,6 +1,6 @@
 # Codex CLI mechanics (Sol / Terra / Luna)
 
-Loaded on demand from `docs/Subagent-Orchestration.md` §3. Verified live 2026-07-19.
+Loaded on demand from `Subagent-Orchestration.md` §3. Verified live 2026-07-19.
 
 `codex exec` runs the real Codex CLI as an OS subprocess via `Bash` — OpenAI's model, its own
 sandbox, output read back from a file. It is not the `Agent` tool.
@@ -115,7 +115,7 @@ cat <prompt> | codex exec --dangerously-bypass-approvals-and-sandbox \
 `--dangerously-bypass-approvals-and-sandbox` is **required**, per the failure mode above: every
 measurement in a browser pass is an `evaluate_script`, and nothing short of that flag permits it.
 That makes the run unsandboxed, which is owner-authorized but governed —
-`Subagent-Orchestration.md` §2.11 carries the mandatory restriction block for the prompt and the
+`Subagent-Orchestration.md` §2.6 carries the mandatory restriction block for the prompt and the
 repo-snapshot requirement for the caller. Do not run this mode without both.
 
 Note `timeout` does not exist on this macOS shell — don't wrap the call in it (it fails with

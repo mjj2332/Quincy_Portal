@@ -13,7 +13,7 @@ client delivery, with role-based access for admin, photographers, and editors.
 |---|---|
 | **`portal/`** | **The production app.** TypeScript monorepo — React 18 + Vite SPA, Hono API on Cloudflare Workers, D1 · R2 · KV · Queues · Workflows, Google-OAuth sign-in. This is the real, deployed software. |
 | **`prototype/`** | The original **design prototype** (HTML/CSS/JS, React via CDN, mock data — no backend). A look-and-flow reference the production app was built from; not extended. Demo at <https://prototype.quincy.flamingfire.my>. |
-| **`docs/`** | Product & planning docs — [PRD](docs/PRD.md), [Personas](docs/Personas.md), [Sitemap](docs/Sitemap.md), the approved [Decision Sheet](docs/Decision-Sheet.md), the [Implementation Plan](docs/Implementation-Plan.md), setup/handoff guides, plus the live [to-do list](docs/todo.md), [lessons log](docs/lessons.md), and archived [reviews](docs/reviews/). |
+| **`docs/`** | [`PRD/`](docs/PRD/) — [PRD](docs/PRD/PRD.md), [Personas](docs/PRD/Personas.md), [Sitemap](docs/PRD/Sitemap.md), the [Implementation Plan](docs/PRD/Implementation-Plan.md). [`Guides/`](docs/Guides/) — Cloudflare/Google/Dropbox setup and admin how-tos. [`subagents/`](docs/subagents/) — orchestration docs and CLI references. Plus the [lessons log](docs/lessons.md) at the top level. (The Decision Sheet, Implementation Proposal, to-do list, `plans/`, and `reviews/` were retired 2026-09-04 to start a fresh development cycle.) |
 | **`test-data/`** | Local-only test fixtures (media is large and gitignored — see [test-data/README.md](test-data/README.md)). |
 | **`chats/`** | Early design-conversation transcript (archival). |
 
@@ -32,7 +32,7 @@ npx vitest run --config workers/app/vitest.config.ts   # API/integration tests
 
 Local app/auth secrets go in `portal/workers/app/.dev.vars`; background-provider secrets such as
 `AUTOHDR_API_KEY` go in `portal/workers/background/.dev.vars` (both are gitignored). See the
-adjacent `.dev.vars.example` files, [docs/Google-OAuth-Setup.md](docs/Google-OAuth-Setup.md) for
+adjacent `.dev.vars.example` files, [docs/Guides/Google-OAuth-Setup.md](docs/Guides/Google-OAuth-Setup.md) for
 sign-in, and [CLAUDE.md](CLAUDE.md) for the full build/verify/deploy workflow and conventions.
 Provision the production AutoHDR key from `portal/workers/background/` with
 `npx wrangler secret put AUTOHDR_API_KEY`; never place it in `wrangler.jsonc`.

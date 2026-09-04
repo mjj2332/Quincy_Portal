@@ -660,8 +660,8 @@ was expensive: three wrong root causes were shipped before the plan page was eve
   that produces no type error (both are `Record<string, unknown>` as far as TypeScript is
   concerned) and no crash (the schema just silently substitutes its default) — so it has to be
   caught by a round-trip test that mounts the real editor, not by types or by testing serialization
-  in only one direction. See the fix and its regression test:
-  `docs/plans/implemented/RichText-Link-Edit-Roundtrip-Fix-Plan.md`.
+  in only one direction. (The fix and its regression test were documented in a plan under
+  `docs/plans/`, retired 2026-09-04 — see `git log` for that history if needed.)
 
 ## `ON CONFLICT DO NOTHING` needs its status code checked client-side, not just server-side (2026-08-18)
 
@@ -1138,7 +1138,7 @@ colour space and alpha to the actual painted sRGB pixel.
 
 ## The unlayered-cascade trap has a second door: `tokens/base.css`, via shorthand (TB8-05, 2026-09-03)
 
-`docs/Subagent-Frontend-Orchestration.md` states the cascade rule in terms of `app.css` — legacy
+`docs/subagents/Subagent-Orchestration.md` §7 states the cascade rule in terms of `app.css` — legacy
 rules there beat Tailwind utilities because `index.css` imports it outside any layer. TB8-05 hit
 the same trap through a **different file**, and the mechanism has a second half worth naming.
 

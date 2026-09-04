@@ -24,25 +24,17 @@ templates and render scripts live in the parent Dropbox workspace, not here.
 
 ## Read first
 
-`docs/todo.md` is the live phase-by-phase status — the current-state source of truth, ahead of
-this file. Check it before starting new work. `docs/lessons.md` collects real bugs from this
-build; read it before touching auth, Hono routing, or the review lightbox. Keep both current
-as you work.
+`docs/lessons.md` collects real bugs from this build — read it before touching auth, Hono
+routing, or the review lightbox, and keep it current as you work.
 
-When docs conflict, earlier wins: `docs/Decision-Sheet.md` (approved decisions D-01–D-19; D-13/D-15 revised 2026-08-24) →
-`docs/Implementation-Plan.md` → `docs/PRD.md` / `Personas.md` / `Sitemap.md`. The Plan
-supersedes `docs/Implementation-Proposal.md` — notably auth is **Google OAuth**, not
-Cloudflare Access, and renditions use the **remote Image Transformation** path, not a
-Container.
+Before delegating work to Codex or Sonnet subagents, read
+`docs/subagents/Subagent-Orchestration.md` — Sonnet builds every build task now (§2.2), Luna tests
+(§2.6), and §7 has what's additionally required for frontend/UI work: a new screen, a component
+redesign, a visual convergence release, design-system adoption.
 
-To-do and lessons live in **`docs/`**, not a top-level `tasks/`. Before delegating work to
-Codex or Agy subagents, read `docs/Subagent-Orchestration.md`. Before any frontend/UI
-implementation task — a new screen, a component redesign, a visual convergence release, design-
-system adoption — also read `docs/Subagent-Frontend-Orchestration.md`: it supersedes the standard
-Luna-builds routing for that work (this session owns the design decisions and the final visual
-gate, a Sonnet subagent builds, Sol reviews scope only), while `Subagent-Orchestration.md`'s CLI
-mechanics, spawn
-procedure, Agy's testing role, and the §5 gate still apply unchanged.
+Authority order when docs conflict: `docs/PRD/Implementation-Plan.md` → `docs/PRD/PRD.md` /
+`Personas.md` / `Sitemap.md`. Auth is **Google OAuth**, not Cloudflare Access; renditions use the
+**remote Image Transformation** path, not a Container.
 
 ## Approved revamp targets — not live until their tracer bullet deploys
 
@@ -56,13 +48,6 @@ an authorized Calendar range/direct-manipulation boundary are planned. The assig
 `external_editor` role uses one external-safe server projection and has no staff Notice Board,
 global directory, or Admin scope. Calendar, External Editor, React 19, Tailwind, and shadcn remain
 non-live until their owning tracer bullets deploy.
-
-Plan docs live in `docs/plans/`. Once a plan's change is built, verified, committed, **and**
-deployed to production, update its own status line to say so (with the commit hash) and move the
-file to `docs/plans/implemented/` (`git mv`, to keep history). Leave a plan in `docs/plans/` while
-it's still drafted/not built, or explicitly superseded/historical (its own status line will say
-so) — `implemented/` means "matches what's live in production right now," not "was built at some
-point."
 
 ## Verify before committing (from `portal/`)
 
@@ -91,9 +76,9 @@ up by `npm run test --workspaces` — no separate invocation needed for it.
   integrity. Every mutation is audit-logged. (The separate "Comments" thread feature existed
   briefly and was removed 2026-07-29 — annotations' own note field covers that need.) **One
   deliberate exception**: while an Admin is impersonating a user via the runtime-gated user-
-  impersonation feature (`docs/plans/implemented/Confirmation-Modal-And-Admin-Impersonation-Plan.md`),
-  they act as that user for every author-only check, including this one — that bypass is
-  intentional, toggle-gated, and audit-logged (`metaJson.impersonatedBy`), not a bug to fix.
+  impersonation feature (`docs/Guides/Admin-Impersonation.md`), they act as that user for every
+  author-only check, including this one — that bypass is intentional, toggle-gated, and
+  audit-logged (`metaJson.impersonatedBy`), not a bug to fix.
 - Media in R2 is **never deleted** on edit or delete: write a new immutable key and retain the
   old object.
 - `portal/workers/app/.dev.vars` holds local dev secrets and is gitignored — never commit it.
@@ -102,21 +87,12 @@ up by `npm run test --workspaces` — no separate invocation needed for it.
   Browse `http://localhost:8787` directly (build `apps/web` first) — not the Vite 5173 proxy — and
   sign in as the seeded admin (`mjj2332@gmail.com`; this is a closed system, `disableSignUp: true`,
   no other account works locally). See `docs/lessons.md` for why.
-- **Chrome-browser QA/testing tasks go to Agy (danger-mode or YOLO-mode — see
-  `docs/Subagent-Orchestration.md` §2.8–§2.10), not Luna and not the orchestrating session by
-  default.** Agy took the testing role over from Luna 2026-08-27. Agy drives a human-authenticated
-  dedicated Chrome over CDP (`docs/subagents/agy-cli.md` Option A) and never runs Google OAuth
-  itself, on `mjj2332@gmail.com`, the disposable QA account (`tsseotsseo@gmail.com`), or anywhere.
-  If a task needs an authenticated session that Chrome doesn't already have, Agy self-mints one and
-  says so in its report (`docs/Subagent-Orchestration.md` §2.12); a self-minted production session
-  is passive, so production writes keep the impersonation path. The sanctioned fallback when Agy
-  is blocked is the orchestrating session driving local-dev QA in its own Browser pane after a
-  human sign-in. **Once signed in as Admin, use admin impersonation (`docs/Admin-Impersonation.md`)
-  to test as a Photographer/Editor instead of a second sign-in** — one sign-in covers every role.
-  YOLO-mode additionally permits real writes during a smoke test, but only while impersonating the
-  disposable QA test account, which has no real memberships; danger-mode alone stays passive-only.
-  Open-ended bug diagnosis that outruns Agy escalates to Luna (`codex exec`, xhigh).
-
+- **Chrome-browser QA/testing goes to Luna**, not this session, by default —
+  `docs/subagents/Subagent-Orchestration.md` §2.6 has the unsandboxed invocation and the local-dev
+  fallback when Luna is blocked; §2.8 has Agy's danger-mode/YOLO-mode/self-minting mechanics,
+  dormant but kept current for reactivation. One habit worth stating here since it's easy to reach
+  for a second sign-in instead: once signed in as Admin, use admin impersonation
+  (`docs/Guides/Admin-Impersonation.md`) to test as a Photographer/Editor — one sign-in covers every role.
 - **PR #44 AutoHDR preservation:** direct send is Admin-only and send-only, distinct from Stage
   movement; credentials remain on the background Worker. Later phases must not revive direct-path
   retrieval/polling or duplicate semantic delivery.
