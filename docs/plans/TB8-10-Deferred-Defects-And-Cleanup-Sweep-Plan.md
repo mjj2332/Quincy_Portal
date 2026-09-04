@@ -119,6 +119,8 @@ an active markup session removes no reachable affordance. Verified via synthetic
 390×844 CDP-emulated viewport, using the exact class names and DOM order from `Lightbox.tsx`:
 `.strip` computes `display: none` when `.viewer__stage` contains `.drawbar`, and reverts to
 `display: block; position: fixed` (unaffected, normal behaviour) once the drawbar is removed.
+Deployed to production 2026-09-04, app Worker `1beddd4c-4ee7-44fc-928b-4c7a43c25259` only
+(frontend/CSS only, no migration), rollback target app `f0e41474`.
 
 ### D-09 — `.tile` has no keyboard focus indicator
 **Found:** the `design-system-guards.test.ts` focus guard, 2026-09-04 — not by a review.

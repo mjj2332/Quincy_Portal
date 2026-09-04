@@ -216,6 +216,19 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
   summary, reporting 13.3px/19.8:1 for what is really 14px/9.2:1 — a reminder that a gate
   measurement is only as good as its selector.
 
+- **D-08 (Lightbox annotation toolbar covering the filmstrip on phone) is DEPLOYED TO PRODUCTION,
+  2026-09-04** — owner chose "collapse the filmstrip while drawing." No migration, app Worker
+  `1beddd4c-4ee7-44fc-928b-4c7a43c25259` only, background/webhook-ingress not redeployed
+  (frontend/CSS only), rollback target app `f0e41474`.
+  `.viewer__stage:has(.drawbar) ~ .strip { display: none }` added to `app.css`'s existing
+  `@media (max-width: 720px)` block, reusing the same idiom as `.vpanel.open + .strip`; `:has()`
+  needed since the review panel/scrim sit between `.viewer__stage` and `.strip` in DOM order. No
+  JSX change. Frame-switching already prompts a discard-markup confirm while a draft exists, so
+  hiding the filmstrip during markup loses no reachable affordance. Verified via synthetic DOM
+  injection at a 390×844 CDP-emulated viewport with the real class names/DOM order: `.strip` goes
+  `display: none` with `.drawbar` present, reverts to normal (`block`/`fixed`) without it. Record:
+  `TB8-10-Deferred-Defects-And-Cleanup-Sweep-Plan.md` D-08.
+
 - **TB8-10B §5 (enable Tailwind Preflight — D-07 complete, revises D-16) is DEPLOYED TO
   PRODUCTION, 2026-09-04** — no migration, app Worker `f0e41474-42b8-49b7-bb73-a2acc275e265` only,
   background/webhook-ingress not redeployed (frontend/CSS only), rollback target app `90bb0652`.
