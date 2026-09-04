@@ -1,9 +1,11 @@
 # TB0 — Integrated Architecture, Authority Promotion, and Baseline Plan
 
-> **Status: DRAFT FOR OWNER REVIEW. Nothing in this plan authorizes the authority-file edits.**
-> TB0 is a documentation, evidence, and planning phase. It changes no product source, package
-> dependency, schema, Worker configuration, or production resource. The exact authority wording
-> in this plan requires a second, explicit owner go-ahead at build time before it is applied.
+> **Status: APPROVED AND ACTIONED, 2026-08-24.** D-16–D-19 approved by the owner that day
+> (`Decision-Sheet.md`); every subsequent tracer bullet (TB0A onward) has been built against this
+> authority package since. This header was never updated after approval — corrected 2026-09-04
+> during a full TB0–TB8 completion audit. TB0 changed no product source, package dependency,
+> schema, Worker configuration, or production resource itself; it is the documentation/decision
+> phase every later bullet depends on.
 
 **Plan drafted against:** `main` at `0c771df5bc00c8d6e81820b0c0762bfde6138ff2` on 2026-08-24
 
