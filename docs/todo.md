@@ -216,6 +216,23 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
   summary, reporting 13.3px/19.8:1 for what is really 14px/9.2:1 — a reminder that a gate
   measurement is only as good as its selector.
 
+- **TB8-10B §3 (the Production Calendar's `.button` retirement — D-06 complete) is DEPLOYED TO
+  PRODUCTION, 2026-09-04** — no migration, app Worker `5eeea274-fc20-4771-b77b-3bb0a7a4b7ce` only,
+  background/webhook-ingress not redeployed (frontend/CSS only), rollback target app `2abd01ca`.
+  11 sites, 8 files, 31 tokens onto `buttonClasses()`. Three sites use the `text` variant; verified
+  the calendar's own touch-target CSS is keyed on its component hook classes, not `.button`, so it
+  survives untouched. Fixed the one real CSS dependency:
+  `.qc-cal-filters__head .button { align-self: start }` at ≤420px (inside the fixed 390px viewport)
+  re-keyed onto the tag. Sol found two accepted, deliberate deviations from pixel parity: disabled
+  paint now matches the `buttonClasses()` treatment already live on three §2 sites; "Try again" in
+  `.qc-calendar-state` goes 38px→44px, closing a touch-target gap TB5C's original media query
+  missed (matching "Refresh" one control over). Re-measured computed styles at 1440/390 against the
+  pre-change baseline for every other property: byte-identical. `.button` and every variant now
+  have **zero consumers anywhere in the application** — confirmed in the served production CSS.
+  Remaining in `TB8-10B-Dead-CSS-Sweep-And-Button-Retirement-Plan.md`: §4 (`--text-muted` contrast
+  on 8 live sites), §5 (the base/Preflight decision, now unblocked — `app.css` no longer carries a
+  button family).
+
 - **TB8-10B §2 (the non-calendar `.button` retirement) is DEPLOYED TO PRODUCTION, 2026-09-04**
   — no migration, app Worker `2abd01ca-292d-40fc-8dd3-22e8ebb31e5a` only,
   background/webhook-ingress not redeployed (frontend/CSS only), rollback target app `876fb239`.
