@@ -216,6 +216,21 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
   summary, reporting 13.3px/19.8:1 for what is really 14px/9.2:1 — a reminder that a gate
   measurement is only as good as its selector.
 
+- **TB8-10B §1 (the dead-CSS sweep) is DEPLOYED TO PRODUCTION, 2026-09-04** — no migration, app
+  Worker `876fb239-263e-4632-b89c-6bfc4d0d652c` only, background/webhook-ingress not redeployed
+  (frontend/CSS only), rollback target app `e8825a98`. `app.css` 683 → 562 lines: 100 whole-rule
+  deletions (including the entire ported client-gallery region — owner decision 2026-09-04, since
+  the gallery will be rebuilt on the current stack rather than on this ported CSS) plus one
+  selector edit (`.topnav, .search, .topbar__divider` → dropped `.search`, verified unchanged at
+  all three viewports). All three `design-system-guards.test.ts` baselines now read `{}`. Plan's
+  own table undercounted at 63 — a root-matching regex (`\.root(?![\w-])`) silently excluded
+  every BEM child of its own roots, since `_` is a word character; re-derived by enumerating all
+  226 classes in the file. Post-deploy: `/` and `/api/health` 200, served stylesheet byte-identical
+  (sha256 `3e486a0c…`). `docs/plans/TB8-10B-Dead-CSS-Sweep-And-Button-Retirement-Plan.md` §2–§5
+  (`.button` retirement — 19 tokens outside the calendar, 31 inside it and needing its own visual
+  convergence evidence; `--text-muted` contrast on 8 live sites; the base/Preflight decision)
+  remain, unstarted.
+
 - **TB8-10A (the Dashboard toolbar and seven deferred defects) is DEPLOYED TO PRODUCTION, 2026-09-04**
   — no migration, app Worker `e8825a98-c1b5-49e1-8913-089bad0bb932` only, background/webhook-ingress
   not redeployed (frontend/CSS only — the release touched zero files under `workers/` or `packages/`),
