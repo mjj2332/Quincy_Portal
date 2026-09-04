@@ -43,9 +43,18 @@ describe("TB8-07 — the schedule conflict paints as a warning (§2.4)", () => {
   // `--signal-warning` is defined NOWHERE. Because `color` is inherited, an invalid value falls
   // back to `inherit` — NOT to the `--signal-critical` set on the line above — so the
   // "someone else edited this first" warning rendered as ordinary ink body text.
-  it("still has no --signal-warning token anywhere (the fix is not to define it)", () => {
-    expect(read("../styles/tokens/colors.css")).not.toContain("--signal-warning");
-  });
+  // Generalised at TB8-09: --signal-warm and --panel were the same bug, found on the Lightbox.
+  // Each was used and defined nowhere, surviving only because it carried a literal fallback that
+  // happened to be correct. --signal-warning had no fallback and so rendered as inherited ink for
+  // its whole life. A list, so the next one is a one-line addition rather than a new test.
+  it.each(["--signal-warning", "--signal-warm", "--panel"])(
+    "still has no %s token anywhere (the fix is never to define it)",
+    (token) => {
+      for (const file of ["../styles/tokens/colors.css", "../styles/app.css"]) {
+        expect(read(file)).not.toContain(token);
+      }
+    },
+  );
 
   it("renders the conflict through Notice's caution tone", () => {
     expect(read("./SubtaskChecklist.tsx")).toContain('<Notice tone="caution"');

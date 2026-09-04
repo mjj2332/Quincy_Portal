@@ -1,0 +1,68 @@
+/* ==========================================================================
+   Inverse surface scope — TB8-09
+
+   The app is a light surface. Two places are not: the review Lightbox and the
+   selection action bar. Rather than build dark variants of every control,
+   this file redefines the role layer (the --background/--foreground/etc.
+   custom properties that tokens/tailwind.css's `@theme inline` roles read)
+   for the subtree carrying `data-surface="inverse"` — every primitive then
+   renders correctly on the dark stage unchanged, because it was already
+   reading these roles rather than raw colours.
+
+   A data attribute resets nothing on its own: a nested light panel
+   (`.vpanel`) inside the dark stage must be given its own scope,
+   `data-surface="default"`, that restores every one of the same roles back
+   to its normal `:root` value — otherwise a role the inverse block sets and
+   the light panel doesn't re-set would inherit the dark value into the
+   light panel. The two blocks below therefore declare the same 19
+   properties, one inverted, one restored. See
+   docs/plans/TB8-09-Lightbox-Controls-Visual-Plan.md §2.3 and §2.3a for the
+   full reasoning, including why both --ring and --focus-ring must be set
+   together (two independent paths paint a focus ring in this app).
+   ========================================================================== */
+
+[data-surface="inverse"] {
+  --background:            var(--ink-900);
+  --foreground:            var(--paper-050);      /* 18.64:1 on the stage */
+  --foreground-secondary:  var(--greige-200);     /* 11.78:1 */
+  --muted-foreground:      var(--greige-300);     /*  8.59:1 */
+  --card:                  var(--ink-800);        /* raised chrome: toolbar, pills */
+  --card-foreground:       var(--paper-050);
+  --popover:               var(--ink-800);
+  --popover-foreground:    var(--paper-050);
+  --secondary:             var(--ink-700);        /* the hover lift */
+  --secondary-foreground:  var(--paper-050);
+  --border:                var(--greige-500);     /*  3.48:1 vs ink-900, 3.24:1 vs ink-800 */
+  --border-hover:          var(--greige-400);     /*  5.55:1 / 5.17:1 */
+  --input:                 var(--greige-500);
+  --surface-sunken:        var(--ink-700);
+  --primary:               var(--paper-050);      /* inverted: a solid button is paper on ink */
+  --primary-foreground:    var(--ink-900);
+  --primary-hover:         var(--greige-100);   /* only works because of §2.2 */
+  --ring:                  var(--paper-050);      /* 18.64:1 — the §1.2 fix, utilities half */
+  --focus-ring:            var(--paper-050);      /* 18.64:1 — the §1.2 fix, global-rule half */
+}
+
+/* The light panel inside the dark stage. Must mirror the inverse block property-for-property;
+   anything omitted here inherits the ink value from .viewer. */
+[data-surface="default"] {
+  --background:            var(--bg-canvas);
+  --foreground:            var(--text-primary);
+  --foreground-secondary:  var(--text-secondary);
+  --muted-foreground:      var(--text-muted);
+  --card:                  var(--bg-surface);
+  --card-foreground:       var(--text-primary);
+  --popover:               var(--bg-surface);
+  --popover-foreground:    var(--text-primary);
+  --secondary:             var(--bg-raised);
+  --secondary-foreground:  var(--text-primary);
+  --border:                var(--border-hairline);
+  --border-hover:          var(--greige-300);
+  --input:                 var(--border-hairline);
+  --surface-sunken:        var(--bg-sunken);
+  --primary:               var(--accent);
+  --primary-foreground:    var(--accent-on);
+  --primary-hover:         var(--ink-700);
+  --ring:                  var(--focus-ring);
+  --focus-ring:            var(--ink-900);
+}

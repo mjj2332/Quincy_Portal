@@ -46,20 +46,25 @@
   --color-signal-info: var(--signal-info);
 
   /* ---- TB8-01 narrow semantic roles — never the raw ramp (colors.css:33) ---- */
-  /* Mid-tone body text: darker than muted-foreground, lighter than foreground. */
-  --color-foreground-secondary: var(--text-secondary);
-  /* Recessed surface for disabled controls and skeleton fills. */
-  --color-surface-sunken: var(--bg-sunken);
+  /* Mid-tone body text: darker than muted-foreground, lighter than foreground.
+     TB8-09: reads the --foreground-secondary alias (colors.css), not --text-secondary
+     directly, so an inverse surface (TB8-09 §2.2/§2.3) can scope this role. */
+  --color-foreground-secondary: var(--foreground-secondary);
+  /* Recessed surface for disabled controls and skeleton fills.
+     TB8-09: reads the --surface-sunken alias, not --bg-sunken directly — same reason. */
+  --color-surface-sunken: var(--surface-sunken);
   /* Ink surface for inverse elements (toasts). */
   --color-surface-inverse: var(--bg-inverse);
   --color-on-inverse: var(--text-on-inverse);
   --color-on-inverse-muted: var(--text-on-inverse-muted);
-  /* The border a control takes on hover — one step up from the hairline. */
-  --color-border-hover: var(--greige-300);
+  /* The border a control takes on hover — one step up from the hairline.
+     TB8-09: reads the --border-hover alias, not the raw ramp directly — same reason. */
+  --color-border-hover: var(--border-hover);
   /* TB8-07: the ink left-rule that marks the active/selected row in a person picker.
      Two consumers — the checklist assignee popover and the mention autocomplete — which is
      why it is a theme alias rather than an arbitrary value repeated at both sites. */
   --color-border-strong: var(--border-strong);
-  /* The ink surface a primary control takes on hover. */
-  --color-primary-hover: var(--ink-700);
+  /* The ink surface a primary control takes on hover.
+     TB8-09: reads the --primary-hover alias, not --ink-700 directly — same reason. */
+  --color-primary-hover: var(--primary-hover);
 }

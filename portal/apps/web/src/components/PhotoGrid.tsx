@@ -3,14 +3,13 @@ import { DOWNLOAD_SELECTION_MAX_ASSETS, DOWNLOAD_SELECTION_MAX_BYTES } from "@qu
 import { LabelDot, Stars } from "./atoms";
 import { LazyImage } from "./LazyImage";
 import { confirm } from "../lib/confirm";
+import { cn } from "../lib/utils";
+import { buttonClasses } from "./ui/button";
+import { REVIEW_LABELS as LABELS } from "./lightbox/review-labels";
 
 export type Review = { stars: number | null; colorLabel: "select" | "maybe" | "cut" | "hero" | null; decision: "approved" | "flagged" | null; recommended: boolean };
 export type WorkspaceAsset = { id: string; collectionId: string; kind: "photo" | "video" | "floorplan_pdf" | "floorplan_preview" | "copy_pdf"; originalFilename: string; bytes: number; width: number | null; height: number | null; ratingFromMetadata: number | null; section: string | null; renditionStatus: "processing" | "ready"; createdAt: string; sourceRawAssetId: string | null; version: number; versionGroupId: string | null; supersedesAssetId: string | null; review: Review | null; selected: boolean };
 export type ReviewPatch = Partial<Pick<Review, "stars" | "colorLabel" | "decision" | "recommended">>;
-
-const LABELS: { value: NonNullable<Review["colorLabel"]>; name: string; color: string }[] = [
-  { value: "hero", name: "Hero", color: "#9a6a1f" }, { value: "select", name: "Select", color: "#3f5b3a" }, { value: "maybe", name: "Maybe", color: "#2f3b4d" }, { value: "cut", name: "Cut", color: "#7a2420" },
-];
 
 interface PhotoGridProps {
   assets: WorkspaceAsset[];
@@ -34,6 +33,16 @@ interface PhotoGridProps {
   canDownloadSelection?: boolean;
   onDownloadSelection?: (assetIds: string[]) => Promise<void>;
 }
+
+// TB8-09 slice 5, owner decision §9.3 (approved 2026-09-04): `.actionbar` takes the inverse
+// scope and `.barbtn`/`.barbtn--solid` retire onto `buttonClasses`. Class names stay as
+// non-styling hooks -- `PhotoGrid.dom.test.tsx` has nine `.actionbar .barbtn` queries.
+const ACTIONBAR =
+  "actionbar fixed left-1/2 bottom-[24px] -translate-x-1/2 z-[60] flex items-center " +
+  "gap-[var(--space-4)] py-[10px] pr-[12px] pl-[20px] rounded-[var(--radius-pill)] " +
+  "shadow-[var(--shadow-lg)] bg-background text-foreground";
+const BARBTN = cn("barbtn", buttonClasses("secondary"));
+const BARBTN_SOLID = cn("barbtn barbtn--solid", buttonClasses("primary"));
 
 function rating(asset: WorkspaceAsset) { return asset.review?.stars ?? asset.ratingFromMetadata ?? 0; }
 function labelName(value: Review["colorLabel"]) { return LABELS.find((label) => label.value === value)?.name ?? ""; }
@@ -190,11 +199,11 @@ export function PhotoGrid({ assets, showSections, canReview, canRecommend, canSe
     <div className="workgrid">
       {visible.length === 0 ? <div className="empty"><span className="serif">No frames in this view.</span>Choose another filter or upload the capture set.</div> : showSections ? sectionGroups.map((group, index) => <section className="workspace-section" key={workspaceSectionKey(group.section)}><div className="ey" style={{ margin: index === 0 ? "4px 0 10px" : "22px 0 10px" }}>{group.label}</div>{renderGrid(group.assets)}</section>) : renderGrid(visible)}
     </div>
-    {multi.size > 0 && <div className="actionbar"><span className="n">{multi.size}</span><span className="lbl">selected</span><span className="vline" />{canReview && <><button className="barbtn" type="button" onClick={() => void bulk("rate")}>Rate 5</button><button className="barbtn" type="button" onClick={() => void bulk("label")}>Label</button><button className="barbtn barbtn--solid" type="button" onClick={() => void bulk("approve")}>Approve</button><button className="barbtn" type="button" onClick={() => void bulk("flag")}>Flag</button></>}{canRecommend && <button className="barbtn barbtn--solid" type="button" onClick={() => void bulk("recommend")}>Recommend</button>}{canSelect && <button className="barbtn" type="button" onClick={() => void bulk("select")}>Select for editing</button>}{canDelete && onBulkDelete && <button className="barbtn" type="button" onClick={() => void deleteMany().catch(() => undefined)}>Delete {multi.size}</button>}<button className="barbtn" type="button" onClick={() => { setMulti(new Set()); lastSelected.current = null; }}>Clear</button>{canDownloadSelection && onDownloadSelection && (() => {
+    {multi.size > 0 && <div className={ACTIONBAR} data-surface="inverse"><span className="n [font:400_18px/1.18_var(--font-display)]">{multi.size}</span><span className="lbl [font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-wide)] text-on-inverse-muted">selected</span><span className="vline w-px h-[22px] bg-border" />{canReview && <><button className={BARBTN} type="button" onClick={() => void bulk("rate")}>Rate 5</button><button className={BARBTN} type="button" onClick={() => void bulk("label")}>Label</button><button className={BARBTN_SOLID} type="button" onClick={() => void bulk("approve")}>Approve</button><button className={BARBTN} type="button" onClick={() => void bulk("flag")}>Flag</button></>}{canRecommend && <button className={BARBTN_SOLID} type="button" onClick={() => void bulk("recommend")}>Recommend</button>}{canSelect && <button className={BARBTN} type="button" onClick={() => void bulk("select")}>Select for editing</button>}{canDelete && onBulkDelete && <button className={BARBTN} type="button" onClick={() => void deleteMany().catch(() => undefined)}>Delete {multi.size}</button>}<button className={BARBTN} type="button" onClick={() => { setMulti(new Set()); lastSelected.current = null; }}>Clear</button>{canDownloadSelection && onDownloadSelection && (() => {
       const totalBytes = [...multi].reduce((total, id) => total + (bytesById.get(id) ?? 0), 0);
       const exceedsLimit = multi.size > DOWNLOAD_SELECTION_MAX_ASSETS || totalBytes > DOWNLOAD_SELECTION_MAX_BYTES;
       const maxMiB = Math.floor(DOWNLOAD_SELECTION_MAX_BYTES / (1024 * 1024));
-      return <button className="barbtn" type="button" disabled={isPreparingDownload || exceedsLimit} title={exceedsLimit ? `Download up to ${DOWNLOAD_SELECTION_MAX_ASSETS} assets / ${maxMiB} MiB` : undefined} onClick={() => void downloadSelection().catch(() => undefined)}>{isPreparingDownload ? "Preparing download…" : "Download selection"}</button>;
+      return <button className={BARBTN} type="button" disabled={isPreparingDownload || exceedsLimit} title={exceedsLimit ? `Download up to ${DOWNLOAD_SELECTION_MAX_ASSETS} assets / ${maxMiB} MiB` : undefined} onClick={() => void downloadSelection().catch(() => undefined)}>{isPreparingDownload ? "Preparing download…" : "Download selection"}</button>;
     })()}</div>}
   </>;
 }
