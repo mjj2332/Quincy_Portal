@@ -10,7 +10,7 @@ const FIELD_BOX =
   "w-full min-h-[38px] max-[721px]:min-h-[44px] " +
   "border-solid border-[length:var(--border-width-hair)] border-border rounded-[var(--radius-sm)] " +
   "bg-[var(--field-bg)] text-foreground px-[10px] py-[8px] " +
-  "[font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] " +
+  "[font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] tracking-normal " +
   "placeholder:text-foreground-secondary " +
   "transition-[border-color] duration-[var(--dur-fast)] ease-[var(--ease-standard)] " +
   "hover:not-disabled:border-border-hover " +

@@ -29,7 +29,7 @@ this file. Check it before starting new work. `docs/lessons.md` collects real bu
 build; read it before touching auth, Hono routing, or the review lightbox. Keep both current
 as you work.
 
-When docs conflict, earlier wins: `docs/Decision-Sheet.md` (approved decisions D-01–D-19; D-13/D-15 revised 2026-08-24) →
+When docs conflict, earlier wins: `docs/Decision-Sheet.md` (approved decisions D-01–D-19; D-13/D-15 revised 2026-08-24; D-16 revised 2026-09-04 — Preflight enabled) →
 `docs/Implementation-Plan.md` → `docs/PRD.md` / `Personas.md` / `Sitemap.md`. The Plan
 supersedes `docs/Implementation-Proposal.md` — notably auth is **Google OAuth**, not
 Cloudflare Access, and renditions use the **remote Image Transformation** path, not a

@@ -6,7 +6,7 @@ export const RAIL_FIELD =
   "px-[var(--space-3)] py-[var(--space-2)] " +
   "rounded-[var(--radius-sm)] border-solid border-[length:var(--border-width-hair)] border-border " +
   "bg-card text-foreground " +
-  "[font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] " +
+  "[font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] tracking-normal " +
   "hover:not-disabled:border-border-hover " +
   "focus-visible:outline-[length:var(--border-width-bold)] focus-visible:outline-solid " +
   "focus-visible:outline-ring focus-visible:outline-offset-2 focus-visible:border-[color:var(--border-strong)]";

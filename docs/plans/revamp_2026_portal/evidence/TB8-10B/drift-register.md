@@ -120,11 +120,15 @@ the guard file was written to reach, reached by deletion rather than by redesign
 
 ---
 
-## D-07 — the base/Preflight decision
+## D-07 — the base/Preflight decision — **RESOLVED 2026-09-04: enabled**
 
-Unchanged and still last: it cannot be answered until `app.css` stops carrying a button family,
-which is D-06's job. `docs/lessons.md`'s unlayered-cascade entry and its second door through
-`tokens/base.css` (TB8-05) are why this is delicate rather than mechanical.
+Answered once D-06 retired `.button` from `app.css`. Full record, audit, Sol review, and
+computed-style verification: `TB8-10B-Dead-CSS-Sweep-And-Button-Retirement-Plan.md` §5/§11. Revises
+approved D-16 (`Decision-Sheet.md`, re-approved 2026-09-04 by the owner after two rounds of audit —
+the second round found two more confirmed regressions the first had missed by not reading Preflight's
+full ruleset). `docs/lessons.md`'s unlayered-cascade entry and its second door through
+`tokens/base.css` (TB8-05) were the reason this needed a rule-by-rule audit rather than a one-line
+toggle.
 
 ---
 

@@ -1,6 +1,6 @@
 # TB8-10B — The Dead-CSS Sweep and the `.button` Retirement
 
-**Status: §1 DEPLOYED (`876fb239`). §2 DEPLOYED (`2abd01ca`). §3 BUILT AND GATED, NOT DEPLOYED. §4 BUILT AND GATED, NOT DEPLOYED. §5 not started.** Second half of TB8 candidate #10. Runs the frontend lane in
+**Status: §1 DEPLOYED (`876fb239`). §2 DEPLOYED (`2abd01ca`). §3 DEPLOYED (`5eeea274`). §4 DEPLOYED (`90bb0652`). §5 BUILT AND GATED, NOT DEPLOYED.** Second half of TB8 candidate #10. Runs the frontend lane in
 `docs/Subagent-Frontend-Orchestration.md`: this session drafts and holds the visual gate, Sol
 reviews scope only, a Sonnet subagent builds.
 
@@ -330,8 +330,176 @@ Some of the 8 may be retired outright by §2/§3 rather than restyled. Re-measur
 
 The roadmap's open question since TB1: whether Tailwind Preflight stays disabled once the ported
 `tokens/base.css` no longer has to co-exist with `app.css`. Answerable only after §2 and §3 remove
-the button family. **Read `docs/lessons.md` first** — the unlayered-cascade trap and its second door
-through `tokens/base.css` (TB8-05) are why this is delicate rather than mechanical.
+the button family — both are now deployed. **Read `docs/lessons.md` first** — the unlayered-cascade
+trap and its second door through `tokens/base.css` (TB8-05) are why this is delicate rather than
+mechanical.
+
+This revises **approved D-16** ("controlled/disabled Preflight initially" — `Decision-Sheet.md`),
+so it went to the owner rather than being decided in-session. Presented with one confirmed
+regression, the owner chose to enable and fix rather than leave it parked. A fuller read of
+Preflight's complete ruleset (not just the tags first checked) found two more confirmed
+regressions; presented again, the owner reconfirmed **enable it — audit the rest and fix
+everything**. That is this section's mandate.
+
+### Mechanism
+
+`index.css` declares `@layer theme, base, components, utilities;` and currently imports Tailwind's
+`theme.css` and `utilities.css` but never `preflight.css`. Enabling Preflight is adding one import:
+
+```css
+@import "tailwindcss/preflight.css" layer(base);
+```
+
+Landing in `layer(base)` means Preflight loses to **every** Tailwind utility class and **every**
+unlayered author rule (`app.css`, `production-calendar.css`, `tokens/base.css`) regardless of
+selector specificity or source order — the layer order alone decides it. Preflight can only reach
+an element/property pair that nothing else touches. That is why the audit below is organized by
+Preflight rule, not by screen: each rule's blast radius is exactly "what does *not* already have
+this property covered."
+
+### Audit method
+
+Built the app locally with the import added, diffed the emitted CSS against the production build
+byte-for-byte (confirms exactly which Preflight rules survive into the bundle), then read Preflight's
+full stylesheet from `node_modules/tailwindcss/preflight.css` rule-by-rule and, for every property it
+touches, grepped the app for elements that rely on the browser default for that property with no
+unlayered or utility-class coverage. Static grep evidence is corroborated below by ancestor-selector
+tracing (checking the actual parent DOM element, not just the element's own className) — a plain
+`grep '<h2'` undercounted twice in this exact release already (§1's BEM-child miss, D-05's
+`.rich-text` template-literal miss), so every "uncovered" candidate below was traced to its real
+parent before being called safe or unsafe.
+
+### Confirmed regressions — must fix before enabling
+
+| # | Preflight rule | What breaks | Where | Fix |
+|---|---|---|---|---|
+| 1 | `ol, ul, menu { list-style: none }` | `.rich-text ul`/`.rich-text ol` (`app.css:311`) set `margin`+`padding-left` but never `list-style` — Notice Board and discussion bullet/numbered lists lose their markers. The task-list variant (`.rich-text ul.rich-text__task-list`) already sets `list-style: none` itself and is unaffected either way. | Every rendered `bulletList`/`orderedList` node from `RichTextContent.tsx:39-41` | Add `list-style: disc` to `.rich-text ul` and `list-style: decimal` to `.rich-text ol` (or a combined rule with the two values on the shared selector's specific list-type). Confirmed in the built CSS diff: only the production build lacks `ol,ul,menu{list-style:none}`; the Preflight build has it. |
+| 2 | `select { background-color: transparent; border: 0 solid; font: inherit }` | Two bare `<select>` elements carry no `className` at all — `production-calendar.css:177` sets only `max-width` on their wrapper selector. Today they render full native OS chrome (visible border, background) by browser default; Preflight would strip it to an invisible box with just the dropdown arrow. | `ProductionCalendarScheduleEditor.tsx:154,162` (checklist schedule state/endpoint-mode selects) | Give both selects the shared field styling — either `className={FIELD_BOX}` from `components/ui/input.tsx` (the pattern already used for every other select/input/textarea in the app) or an explicit `.qc-calendar-schedule-editor__state select` rule adding `background`/`border`/`font`. Prefer `FIELD_BOX`: it is the one place in the app a native form control skips the shared component, and nothing about the schedule editor's design calls for a different control. |
+
+### Traced safe — do not touch
+
+| Preflight rule | Why it can't reach anything live |
+|---|---|
+| `* { margin:0; padding:0; border:0 solid; box-sizing:border-box }` | `box-sizing` already matches `tokens/base.css`'s own universal rule (no-op). Every element that visibly depends on non-zero margin/padding/border already gets it from an unlayered rule or a utility class — confirmed for every heading, list, form control, and table checked below; no bare structural element (`fieldset`, `dl`, `blockquote`, `figure`) is used anywhere in non-test source. |
+| `h1–h6 { font-size: inherit; font-weight: inherit }` | Every bare heading traced to its real parent resolves to an unlayered ancestor rule that sets the full `font` shorthand directly on that heading tag: `.pagehead h1`, `.workspace-intro h1`, `.qc-cal-filters__head h2`, `.qc-cal-event-card h4`, `.qc-calendar-unscheduled__row h3`, `.qc-calendar-unscheduled__section-head h2`, `.rich-text h2/h3`. The one heading with no ancestor rule (`SubtaskChecklist.tsx:329`'s `<h3 className="m-0">`) contains no text of its own — every descendant (`Eyebrow`, the progress label span) carries its own explicit `[font:…]` utility, so nothing inherits the h3's font-size. Every remaining heading sets `[font:…]` directly in its own `className`. |
+| `a { color: inherit; text-decoration: inherit }` | `tokens/base.css` already sets `a { color: inherit }` unlayered (no-op, same value). `text-decoration: inherit` needs a live check, not a grep verdict — see Open question below. Every `<a>` this audit could trace to a specific rule is already covered: `.rich-text a`, `.qc-cal-event-card__project-link`, `.document-title`, `.document-history a` (descendant selector — covers the version-history links even though they carry no `className` of their own) all set `text-decoration: none` explicitly, unlayered. |
+| `table { border-collapse: collapse; text-indent: 0 }` | `components/ui/table.tsx`'s `Table` sets `border-collapse` via the Tailwind utility `border-collapse` directly — utilities beat base regardless of the property already being set there. No other `<table>` exists in non-test source. |
+| `img, svg, video, canvas, iframe, embed, object { display:block; vertical-align:middle }` / `img, video { max-width:100%; height:auto }` | `img` already has an identical unlayered rule (`app.css:11`, no-op). Only 3 files render raw `<svg>`: two are flex items (`flex:none` in app.css, or `shrink-0`/`size-[…]` utility classes — flexbox blockifies its children regardless of their own `display`, so `inline`→`block` is a no-op there too) and the third (`Lightbox.tsx`'s `.markup-svg`) is `position:absolute`, which the CSS spec blockifies unconditionally regardless of Preflight. The one un-sized bell icon (`Topbar.tsx:206`) is sized by a `[&_svg]:size-[19px]` utility on its trigger wrapper — a layered rule, wins regardless. |
+| `button, input, ::file-selector-button { font:inherit; border-radius:0; background-color:transparent; opacity:1 }` (the input/select/textarea/optgroup half not already covered above) | Every `<input>`/`<textarea>` in non-test source renders through `Input`/`Textarea` (`components/ui/input.tsx`, `components/ui/textarea.tsx`), both built on the shared `FIELD_BOX` constant, which sets `bg-[…]`, `border-…`, and the full `[font:…]` shorthand as Tailwind utilities. Every `<button>` renders through `buttonClasses()` or carries its own utility classes covering the same properties (`.chip`, `.icbtn`, calendar `.qc-cal-*` component classes) — confirmed zero bare, unstyled `<button>` in non-test source. |
+
+### Open question — resolve by live render, not by grep
+
+`.chip` (`app.css:81-89`, used on both `<button>` and `<InternalLink>`/`<a>` — e.g. the "← Dashboard"
+link and every AutoHDR "Retry"/document "Delete" chip) sets `font`, `border`, `background`,
+`border-radius`, `color` directly but never `text-decoration`. **This means a `.chip` rendered as an
+`<a>` may already be showing a browser-default underline today, independent of Preflight** — nothing
+in the current unlayered CSS suppresses it. If so, enabling Preflight's `text-decoration: inherit`
+would *fix* a pre-existing latent defect, not introduce a regression. This is exactly the kind of
+claim this release's own evidence discipline says not to settle by reasoning: check the computed
+`text-decoration-line` on a live `.chip`-as-`<a>` both before and after the Preflight import, at
+1440×900. Record the answer as evidence in the build record, whichever way it comes out — no CSS
+change either way unless the "before" state turns out to already be underlined and the visual gate
+judges that an existing defect worth fixing in the same release.
+
+### Build sequence
+
+1. Add the two confirmed fixes (list-style, schedule-editor selects) first, independent of Preflight
+   — they're correct regardless of D-07's outcome, and building them first means the Preflight-on
+   diff should be empty everywhere except the deliberately-scoped `.chip`-as-link question.
+2. Add the one-line `@import "tailwindcss/preflight.css" layer(base);` to `index.css`.
+3. Rebuild, diff the emitted CSS against the pre-Preflight build to confirm the only new rules are
+   the ones this audit predicted (no surprise survivors).
+4. Visual gate at 1440×900, 1024×768, 390×844 across: Dashboard (search box, toolbar, Kanban),
+   Project Workspace (pagehead, workspace-intro heading, AutoHDR hdr block, chip buttons/links,
+   document history version list), Notice Board or a discussion thread with a bullet list, ordered
+   list, and task list all present, Production Calendar (toolbar, filters panel including the "Clear
+   filters" text button, unscheduled panel, a schedule-editor popover with both selects open, an
+   event card), Admin. Read every computed style this audit named, not just a screenshot compare —
+   this session's own lesson (§4 of this same document) is that a screenshot can miss what a computed
+   value catches.
+5. Sol scope review on this section before building, per the frontend pipeline.
+
+---
+
+## §11 — §5 build record and gate (2026-09-04) — **PASSED**
+
+Sol's scope review (before building, per the corrected sequence) found **5 blocking, 5 non-blocking**
+against the spec above. Every blocking finding was a real gap this audit's own method should have
+caught and didn't:
+
+1. **The live Tiptap editor** (`.rich-text__editor-content ul/ol`) has the identical list-marker
+   defect as the read-only render path — missed because the audit traced `RichTextContent.tsx` but
+   not `RichTextEditor.tsx`.
+2. **Four bare date/time inputs** (`ProductionCalendarScheduleEditor.tsx:116`,
+   `ProductionCalendarMoveDialog.tsx:54-55`) have the identical stripped-chrome defect as the two
+   bare selects — missed because the audit searched for bare `<select>` but not bare `<input>`.
+3. **Inherited `letter-spacing`** — Preflight's form-control rule resets more than `font`; `FIELD_BOX`,
+   `RAIL_FIELD`, and `RichTextEditor.tsx`'s separate `FIELD_INPUT` constant all set the font shorthand
+   but never `letter-spacing`, so any control nested inside a tracked-uppercase label (checklist
+   popovers, the Deadline rail, calendar labels) would silently inherit that tracking.
+4. **A bundle diff proves the wrong thing.** Confirming Preflight's rules are present in the built CSS
+   says nothing about which declaration wins on a live element — that requires reading computed styles
+   on real or synthetic DOM, which is what this record does below.
+5. **Sequencing and gate completeness** — Sol review belongs before building (the doc's own step order
+   listed it last), and the named visual-gate surfaces omitted several states this audit's own logic
+   should have flagged (composer/edit-mode lists, disabled controls, glyph-only icon buttons).
+
+### Fixes applied, beyond the original two
+
+| Fix | File |
+|---|---|
+| `.rich-text__editor-content ul`/`ol`: `list-style: disc`/`decimal`, `padding-left: 22px` (task-list variant untouched, still wins on specificity) | `app.css` |
+| `.qc-calendar-schedule-editor__endpoint input`, `.qc-calendar-move-dialog__inputs input`: explicit `border`/`background`/`font`/`letter-spacing`/`padding`, matching the existing schedule-editor select treatment | `production-calendar.css` |
+| `FIELD_BOX` (covers `Input`/`Textarea`/`NativeSelect` — and therefore the SubtaskChecklist popover controls Sol named): added `tracking-normal` | `components/ui/input.tsx` |
+| `RAIL_FIELD` (Deadline rail, CollectionPanel link form): added `tracking-normal` | `lib/rail-field.ts` |
+| `FIELD_INPUT` (RichTextEditor's own link-dialog input, a third independent field constant Sol's audit surfaced): added `tracking-normal` | `components/RichTextEditor.tsx` |
+| `.icbtn` (PhotoGrid's glyph-only review/flag/recommend/select/cover/delete buttons — direct text nodes with no font coverage): added `font: 16px/1 var(--font-sans)` | `app.css` |
+
+`.selbox` was checked and already carries a full `font: 700 15px/1 var(--font-sans)` — no change
+needed. Radio/checkbox inputs (the fold-choice controls, calendar filter checkboxes) were checked and
+confirmed exempt: native `appearance: auto` widgets ignore `border`/`background`/`border-radius` CSS
+regardless of Preflight, so no fix applies there.
+
+### Verification — computed styles, not a bundle diff
+
+Built locally with `@import "tailwindcss/preflight.css" layer(base);` added to `index.css`, against
+the running local-dev worker (`localhost:8787`, signed in as seeded admin). Two methods, both live:
+
+**Synthetic DOM injection** (element created with the exact class/tag structure, appended to
+`document.body` in the running page, computed style read, removed) for the calendar's schedule-editor
+select and all four date/time inputs, confirmed on the actual page (not a static analysis) after
+navigating to a real Production Calendar view so `production-calendar.css` was genuinely loaded:
+every one now computes `border: 1px solid`, `background: rgb(255,255,255)`, `font: 13px/16.9px`,
+`letter-spacing: normal` — restored, not stripped.
+
+**Real user flow, no synthetic DOM at all**: opened a live project's Discussion tab, typed into the
+actual Tiptap editor, clicked the real "• List" toolbar button. The resulting live `<ul>` computed
+`list-style-type: disc; padding-left: 22px` and rendered a visible bullet in a screenshot — the
+identical fix confirmed through the product's real interaction path, the strongest evidence available
+short of the deployed site itself.
+
+**Whole-page sweep** (every `ul`/`ol`, `button`/`select`/`input`/`textarea`, `a`, `h1`–`h6` on the
+page, computed styles read and scanned for anomaly signatures — a list with `list-style-type: none`
+outside the task-list variant, or a native text-like input/select with both zero border and
+transparent background) run on the Project Workspace (62 controls, 6 anchors, 6 headings) and the
+Production Calendar (51 controls, 14 anchors, 13 headings, including live event cards): **zero
+list-marker-lost, zero control-stripped** on either page. The only `control-stripped` hit anywhere was
+a `.sr-only` (visually hidden) file-input trigger — expected and harmless, not a regression.
+
+### The open question, resolved
+
+`.chip`-as-`<a>` (`ProjectWorkspace.tsx:491`, "← Dashboard"): measured on the same live page,
+Preflight off vs on. **Before: `text-decoration-line: underline`. After: `none`.** Confirms Sol's
+non-blocking finding #4 exactly — this was a pre-existing latent defect (the pill-shaped chip has
+always rendered a stray browser-default underline; nothing in `app.css` ever suppressed it), and
+enabling Preflight silently fixes it rather than introducing a regression. No CSS change needed; this
+is a welcome side effect, recorded here as evidence rather than left as an assumption.
+
+### Gate
+
+typecheck 0 · build 0 (with the Preflight import present) · **115 / 227 / 726 / 296+1skip / 253 / 13
+unchanged**, `packages/shared` 144 unchanged — no count moved, consistent with a pure CSS/cascade
+change touching no test-observed behavior.
 
 ---
 
