@@ -104,10 +104,10 @@ alone" bucket the register warned about, and they are live, so they must not be 
 
 ---
 
-## The focus-guard baselines: one dead, one **a live defect**
+## The focus-guard baselines: **both dead**
 
 `SUPPRESSED_FOCUS_BASELINE` carries two entries, both recorded as "replaced by a border-color change
-only. Owner: TB8-10." They are not the same case:
+only. Owner: TB8-10." Neither is a live defect — both selectors are unreachable:
 
 - **`.copyinput:focus`** (`app.css:305-307`) — **dead.** Zero occurrences of the string `copyinput`
   anywhere in non-test source. Delete all three rules; the baseline entry goes with them.
