@@ -269,16 +269,6 @@ button { font-family: var(--font-sans); }
 .markup-svg g[data-annotation-id] { transition: opacity var(--dur-base); }
 .pin { position: absolute; z-index: 4; width: 24px; height: 24px; border-radius: 50% 50% 50% 2px; background: var(--paper-050); color: var(--ink-900); display: grid; place-items: center; font: var(--type-mono); font-size: 12px; transform: translate(-50%, -100%); box-shadow: var(--shadow-md); }
 
-/* markup toolbar */
-.drawbar { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 6; display: flex; align-items: center; gap: 12px; padding: 8px 10px 8px 16px; background: var(--ink-800); border: 1px solid rgba(246,244,239,.18); border-radius: var(--radius-pill); box-shadow: var(--shadow-lg); color: var(--paper-050); max-width: calc(100vw - 32px); flex-wrap: wrap; }
-.drawbar__lbl { font: var(--type-eyebrow); text-transform: uppercase; letter-spacing: var(--tracking-widest); color: var(--text-on-inverse-muted); }
-.drawbar__grp { display: inline-flex; align-items: center; gap: 6px; padding: 0 4px; }
-.swatch { width: 19px; height: 19px; border-radius: 50%; border: 1px solid rgba(255,255,255,.35); cursor: pointer; padding: 0; }
-.swatch.on { box-shadow: 0 0 0 2px var(--ink-800), 0 0 0 4px var(--paper-050); }
-.wbtn { width: 28px; height: 28px; display: grid; place-items: center; background: transparent; border: 1px solid rgba(246,244,239,.22); border-radius: var(--radius-sm); cursor: pointer; }
-.wbtn span { background: var(--paper-050); border-radius: 50%; display: block; }
-.wbtn.on { background: rgba(246,244,239,.16); }
-
 /* ---------------------------------------------------------------------
    Workspace additions — bar, autoHDR, video, copy, dropzone
    --------------------------------------------------------------------- */
@@ -656,8 +646,6 @@ button { font-family: var(--font-sans); }
   .vpanel.open + .strip { bottom: 85vh; z-index: 7; }
   .strip__button { flex-basis: 48px; width: 48px; height: 32px; }
   .strip__t { width: 48px; height: 32px; }
-  .swatch, .wbtn { width: 44px; min-width: 44px; height: 44px; min-height: 44px; }
-  .drawbar { bottom: calc(18px + env(safe-area-inset-bottom)); max-width: calc(100vw - 16px); gap: 8px; padding: 6px 8px; }
 }
 
 /* ---------------------------------------------------------------------
