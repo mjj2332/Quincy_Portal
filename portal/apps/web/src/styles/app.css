@@ -153,17 +153,17 @@ button { font-family: var(--font-sans); }
 }
 .tile {
   position: relative; aspect-ratio: 3 / 2; overflow: hidden; background: var(--ink-800);
-  cursor: pointer; outline: 0; --ring: transparent;
+  cursor: pointer; --ring: transparent;
   box-shadow: inset 0 0 0 2px var(--ring);
   transition: box-shadow var(--dur-fast);
 }
-.tile img { width: 100%; height: 100%; object-fit: cover; transition: transform var(--dur-reveal, 720ms) var(--ease-entrance), opacity var(--dur-base); }
+.tile img { width: 100%; height: 100%; object-fit: cover; transition: transform var(--dur-reveal) var(--ease-entrance), opacity var(--dur-base); }
 .tile:hover img { transform: scale(1.04); }
 .tile__ph { position: absolute; inset: 0; display: grid; place-items: center; opacity: .25; }
 .tile__ph img { width: 40px; height: auto; }
 .tile__cap { position: absolute; left: 10px; bottom: 9px; right: 10px; z-index: 2; font: var(--type-eyebrow); text-transform: uppercase; letter-spacing: var(--tracking-wide); color: #fff; opacity: 0; transform: translateY(4px); transition: all var(--dur-base); text-shadow: 0 1px 6px rgba(0,0,0,.6); }
 .tile:hover .tile__cap { opacity: .92; transform: none; }
-.tile__scrim { position: absolute; inset: 0; z-index: 1; background: var(--scrim-bottom, linear-gradient(to top, rgba(10,10,10,.55), transparent 45%)); opacity: 0; transition: opacity var(--dur-base); pointer-events: none; }
+.tile__scrim { position: absolute; inset: 0; z-index: 1; background: linear-gradient(to top, rgba(10,10,10,.55), transparent 45%); opacity: 0; transition: opacity var(--dur-base); pointer-events: none; }
 .tile:hover .tile__scrim, .tile.has-state .tile__scrim { opacity: 1; }
 .tile__tools { position: absolute; top: 9px; right: 9px; z-index: 3; display: flex; gap: 6px; opacity: 0; transform: translateY(-4px); transition: all var(--dur-base); }
 .tile:hover .tile__tools, .tile.is-selected .tile__tools { opacity: 1; transform: none; }
@@ -173,6 +173,19 @@ button { font-family: var(--font-sans); }
 .tile.is-selected { --ring: var(--ink-900); }
 .tile.st-approved { --ring: var(--signal-positive); }
 .tile.st-flagged  { --ring: var(--signal-critical); }
+/* D-09 (TB8-10A). The base rule above carried `outline: 0`, which in this unlayered file beat the
+   global `:focus-visible` ring from tokens/base.css:25 — and --ring is lit only for selection and
+   review state, never for keyboard focus. The tile is `role="button" tabindex="0"` with Enter/Space
+   handling, so a keyboard user tabbing the grid got no indicator whatsoever: a WCAG 2.4.7 failure.
+   The suppression is gone and the app-wide treatment is restored explicitly here.
+   Why an outline rather than lighting the inset --ring: --focus-ring is ink (#0a0a0a), which is
+   1.07:1 against the tile's own ground and arbitrary over a photograph, whereas an outline at a
+   positive offset is drawn outside the tile on paper. The tile's own `overflow: hidden` does not
+   clip its own outline, and no ancestor clips it either. */
+.tile:focus-visible {
+  outline: var(--border-width-bold) solid var(--focus-ring);
+  outline-offset: 2px;
+}
 .tile.is-dim img { opacity: .4; filter: grayscale(.3); }
 .statetags { position: absolute; left: 9px; bottom: 9px; z-index: 3; display: flex; flex-wrap: wrap; gap: 5px; max-width: calc(100% - 18px); }
 .statetag { display: inline-flex; align-items: center; gap: 6px; padding: 4px 9px; border-radius: var(--radius-xs); font: var(--type-eyebrow); text-transform: uppercase; letter-spacing: var(--tracking-wide); color: #fff; background: rgba(20,20,21,.6); backdrop-filter: blur(6px); }
@@ -273,7 +286,7 @@ button { font-family: var(--font-sans); }
 .vtile { cursor: pointer; display: flex; flex-direction: column; gap: 0; background: var(--paper-000); border: 1px solid var(--border-hairline); transition: background var(--dur-base); }
 .vtile:hover { background: var(--paper-100); }
 .vtile__media { position: relative; aspect-ratio: 16 / 10; overflow: hidden; background: var(--ink-800); }
-.vtile__media img { width: 100%; height: 100%; object-fit: cover; transition: transform var(--dur-reveal, 720ms) var(--ease-entrance); }
+.vtile__media img { width: 100%; height: 100%; object-fit: cover; transition: transform var(--dur-reveal) var(--ease-entrance); }
 .vtile:hover .vtile__media img { transform: scale(1.04); }
 .vtile__play { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 3; width: 52px; height: 52px; border-radius: 50%; display: grid; place-items: center; background: rgba(20,20,21,.5); backdrop-filter: blur(6px); color: #fff; border: 1px solid rgba(255,255,255,.4); }
 .vtile__play--lg { position: static; transform: none; width: 72px; height: 72px; }
@@ -420,7 +433,7 @@ button { font-family: var(--font-sans); }
 .chero { position: relative; min-height: 78vh; display: flex; align-items: flex-end; overflow: hidden; background: var(--ink-900); }
 .chero__bg { position: absolute; inset: 0; }
 .chero__bg img { width: 100%; height: 100%; object-fit: cover; }
-.chero__scrim { position: absolute; inset: 0; background: var(--scrim-full, linear-gradient(to top, rgba(10,10,10,.78), rgba(10,10,10,.12) 55%, rgba(10,10,10,.32))); }
+.chero__scrim { position: absolute; inset: 0; background: linear-gradient(to top, rgba(10,10,10,.78), rgba(10,10,10,.12) 55%, rgba(10,10,10,.32)); }
 .chero__inner { position: relative; z-index: 2; width: 100%; max-width: 1480px; margin: 0 auto; padding: var(--space-9) var(--space-7) var(--space-8); color: var(--paper-050); }
 .chero__eyebrow { font: var(--type-eyebrow); text-transform: uppercase; letter-spacing: var(--tracking-widest); color: var(--text-on-inverse-muted); margin-bottom: var(--space-4); }
 .chero__title { font: var(--type-display); font-size: clamp(40px, 6vw, 84px); line-height: .98; letter-spacing: var(--tracking-tightest); max-width: 14ch; text-wrap: balance; }
@@ -490,15 +503,6 @@ button { font-family: var(--font-sans); }
 /* empty states */
 .empty { padding: var(--space-9) var(--space-6); text-align: center; color: var(--text-muted); }
 .empty .serif { font: var(--type-h2); color: var(--text-secondary); display: block; margin-bottom: var(--space-3); }
-
-/* ---- tweak: olive accent variant ---- */
-.app.acc-olive { --accent: var(--signal-positive); }
-.app.acc-olive .chip.is-active,
-.app.acc-olive .segment button.is-active { background: var(--signal-positive); border-color: var(--signal-positive); }
-.app.acc-olive .meter > i { background: var(--signal-positive); }
-.app.acc-olive .topnav a.is-active,
-.app.acc-olive .ctab.is-active { border-bottom-color: var(--signal-positive); }
-.app.acc-olive .tile.is-selected { --ring: var(--signal-positive); }
 
 /* ---- tweak: client gallery ink theme ---- */
 .client--ink { background: var(--ink-900); }
@@ -650,7 +654,6 @@ button { font-family: var(--font-sans); }
    imported outside any `@layer`, it was silently beating `TILE_HINT`'s and `CHECKLIST_EMPTY`'s
    own colour/size/leading utilities. The two class names stay on the elements purely as
    `ProjectFields.dom.test.tsx` selector hooks (case R, retire paint / keep hook). */
-.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
 @media (max-width: 720px) {
   .document-group { grid-template-columns: 1fr; }

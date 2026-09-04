@@ -1330,3 +1330,35 @@ hand, one release at a time; the guard found five more in one pass. The focus gu
 `.tile { outline: 0 }` — the photo grid gives a keyboard user no focus indicator anywhere — which
 no review had ever reported. Both are recorded as TB8-10 D-09/D-10, in a baseline that **fails the
 build if an entry is fixed but not deleted**, so the lists can only shrink.
+
+## A percentage min-width inside a wrapping flex container is circular, and moving the element is what reveals it (TB8-10A, 2026-09-04)
+
+The Dashboard search field carried `min-w-[min(100%,300px)]`. That is fine in a roomy container and
+was fine for as long as the field lived in the page header. Moved into the board's control strip —
+a `flex-wrap` container holding two groups — it stacked the `New shoot` button underneath itself at
+**every** desktop width, making the toolbar 89px tall instead of 39px.
+
+The mechanic: `100%` resolves against the group whose width depends on the field. During intrinsic
+sizing the percentage contributes nothing, so the group measures **338px**; at layout the field
+takes its 300px and the 104px button no longer fits beside it, so it wraps. `min-width: max-content`
+does not rescue it — for a *wrapping* flex container, `max-content` **is** the already-wrapped size,
+which is the same 338px. The fix is to remove the circularity: a plain `min-w-[300px]`.
+
+Three things to carry forward.
+
+**A percentage sizing constraint on a flex item is a latent bug wherever the container's own width
+is content-derived.** It does not announce itself; it waits for a layout change. Prefer a fixed
+value plus an explicit breakpoint override — which is what the field already had for phones
+(`max-[721px]:min-w-0`), meaning the percentage was doing no work at any width.
+
+**Moving an element is not a neutral operation, even when the diff is "DOM-only".** The review chain
+confirmed, correctly, that no state, handler or conditional changed. Every one of those checks
+passed and the layout was still wrong, because sizing depends on the *ancestor chain*, which a
+DOM-only move is precisely what changes.
+
+**Measure the mechanism before believing the symptom.** The first probe reported "the groups
+wrapped", which pointed at the group structure. They had not: the right group's `ml-auto` had
+resolved to 403px, proving both were on one line, and the y-difference was `items-center` on a
+taller left group. The real fault was one level down. A layout assertion that reads bounding boxes
+should check the property that actually distinguishes the hypotheses — here, the resolved auto
+margin — not a proxy for it.

@@ -1,6 +1,6 @@
 # TB8-10A — The Dashboard Toolbar, and the Deferred Defects That Do Not Wait
 
-**Status: DRAFTED, NOT BUILT.** Owner-requested 2026-09-04. Runs the frontend lane in
+**Status: BUILT AND GATED, NOT YET DEPLOYED.** Owner-requested 2026-09-04. Runs the frontend lane in
 `docs/Subagent-Frontend-Orchestration.md`: this session drafts and holds the visual gate, Sol
 reviews scope only, a Sonnet subagent builds the slices.
 
@@ -620,4 +620,93 @@ except two entries**, both of which belong to TB8-10B's surfaces.
 
 ## §10 — Build record
 
-_(filled in as slices land)_
+Two Sonnet builders, sequential: slices 1–4 (the CSS/token/class work), then 5–6 (component, tests,
+layout). Both reported green and both reports were checked against the diff rather than taken on
+trust.
+
+**Builder findings worth keeping:**
+
+1. **Slice 3 removed `outline: 0` from `.tile`'s base rule**, which this plan's literal instruction
+   ("insert after `.tile.st-flagged`") never asked for. It was right to: criterion 5-5 is otherwise
+   unsatisfiable, because the guard flags the declaration unconditionally and knows nothing about a
+   later override. Side effect, verified: with the suppression gone the global `:focus-visible` in
+   `tokens/base.css` reaches the tile on its own, so `.tile:focus-visible` is now documentation
+   rather than load-bearing. Kept anyway — the next reader needs the reason at the site.
+2. **§8a's `role="presentation"` assertion was factually wrong.** Base UI's shared
+   `usePositioner.js:33` stamps `role="presentation"` on the **Positioner**, unconditionally and
+   independent of any Backdrop, so a bare `[role="presentation"]` selector is ambiguous whenever any
+   menu is open — the "renders none by default" test failed on first run by matching the Positioner.
+   Confirmed in the installed package. The builder disambiguated by the element that does **not**
+   contain the `role="menu"` popup (the Backdrop is always empty, the Positioner always wraps the
+   popup), in both test files, each with a comment. Sound, and it is what §3.2's z-index reasoning
+   actually rests on.
+3. **A guard defect, fixed at the root rather than worked around.** Guard 3 read raw CSS, so the
+   comment *documenting* the `.tile` fix — which quotes `outline: 0` while explaining why the
+   declaration was removed — was flagged as an instance of the thing it described, and the builder
+   had to reword it. A guard that punishes you for documenting its own subject teaches people to
+   stop writing the comment. `design-system-guards.test.ts` now strips CSS comments
+   (line-preserving, since guard 3 reports line numbers) and the comment is back in its natural
+   wording.
+
+---
+
+## §11 — Visual gate (this session, 2026-09-04) — **PASSED**
+
+Chrome over CDP on the human-authenticated local-dev session, at 1440×900, 1024×768 and 390×844.
+
+### One defect found and fixed at the gate
+
+**The moved group wrapped internally at every desktop width**, stacking `New shoot` under the search
+field and making the toolbar 89px tall where it should be 39px. The two groups were on one line
+(`ml-auto` resolved to 403px, so the mechanism was working); the left group was simply being sized
+to **338px when its content needs 416px**.
+
+Cause: the search field carried `min-w-[min(100%,300px)]`, and once the group became a flex item in
+a wrapping container that percentage is **circular** — `100%` resolves against the group whose width
+depends on the field. During intrinsic sizing the percentage contributes nothing, the group is
+measured at 338px, and then at layout the field takes its 300px and no longer fits beside the
+button. `min-width: max-content` does not help: for a *wrapping* flex container that resolves to the
+already-wrapped size.
+
+This is a **pre-existing latent bug the move exposed, not one it introduced** — the circularity was
+always in that class string; the header block's roomier context masked it. Fixed by de-circularising
+to a plain `min-w-[300px]`; the field already carries `max-[721px]:min-w-0`, which is what actually
+governs on a phone, so the percentage was doing no work there either.
+
+### Measured results
+
+| Criterion | 1440 | 1024 | 390 |
+|---|---|---|---|
+| Left group on one line, `New shoot` beside the field | 416×39 ✓ | 416×39 ✓ | n/a — full-width field, button below (by design) ✓ |
+| Groups share a line / wrap **between** groups | same line ✓ | wraps between groups ✓ | stacked ✓ |
+| `View` and `Projects` labels stay with their controls | ✓ | ✓ (**Sol B1's case**) | own line, by existing design ✓ |
+| Segments right-aligned to the viewbar edge | ✓ | ✓ | ✓ |
+| Horizontal overflow | none | none | none |
+
+**§3 scrim:** mobile menu open → one `fixed` 390×844 backdrop, `ink/50%` + `blur(3px)`, `z-index: 90`
+— identical to `Modal.tsx`'s SCRIM. Notification bell open → **no backdrop**. Closed → none. The
+page behind now reads as dimmed background rather than a rendering fault.
+
+**§5 D-09:** `.tile` computes `outline: none` normally and
+`outline: solid 2px rgb(10,10,10)` at `outline-offset: 2px` under a forced `:focus-visible` (CDP
+`CSS.forcePseudoState`; the local fixtures are `previewPending`, hence `tabindex="-1"`, so real Tab
+focus was not available). Before the fix it was `none` in both states. Confirmed visually: the
+focused tile carries a clear outline, the adjacent one none. **§5.2's dark-photograph concern is
+resolved structurally rather than merely untested** — the outline is drawn outside the tile on the
+paper ground, so the photograph beneath is irrelevant. That was the point of choosing it over the
+inset ring.
+
+**§6:** all four sizes correct — `FIELD_LABEL` 12px, `FIELD_INPUT` 14px, `DISMISS` 18px mono in its
+44px box, search input 14px.
+
+**§7:** inert as claimed. `--font-sans` leads with "Apfel Grotezk" and `--font-body-serif` with
+"Athelas" — the exact faces the deleted `var()` fallbacks named, so the calendar renders unchanged.
+
+### Gate
+
+typecheck 0 · build 0 · `apps/web` **726** (721 + §8a's five) · 115 / 227 / 726 / 296+1skip / 253 /
+13 · `packages/shared` 144 · guards 6/6. `--workspaces` exits 1 only for `@quincy/shared`'s missing
+`test` script, verified identical on a stashed clean tree.
+
+`PHANTOM_TOKEN_BASELINE` and `FONT_SIZE_COLLISION_BASELINE` are both `{}`.
+`SUPPRESSED_FOCUS_BASELINE` holds two entries, both owned by TB8-10B.

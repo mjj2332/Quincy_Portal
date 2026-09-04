@@ -13,10 +13,10 @@ import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 let root: Root | null = null;
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-function Harness({ onSelect, disabled }: { onSelect?: (id: string) => void; disabled?: boolean }) {
+function Harness({ onSelect, disabled, backdrop }: { onSelect?: (id: string) => void; disabled?: boolean; backdrop?: boolean }) {
   const [open, setOpen] = useState(false);
   return (
-    <Menu open={open} onOpenChange={setOpen} trigger={<span>Open</span>} triggerLabel="Open menu" label="Test menu" disabled={disabled}>
+    <Menu open={open} onOpenChange={setOpen} trigger={<span>Open</span>} triggerLabel="Open menu" label="Test menu" disabled={disabled} backdrop={backdrop}>
       <MenuPrimitive.Item label="Alpha" onClick={() => onSelect?.("alpha")}>Alpha</MenuPrimitive.Item>
       <MenuPrimitive.Item label="Bravo" onClick={() => onSelect?.("bravo")}>Bravo</MenuPrimitive.Item>
       <MenuPrimitive.Item label="Charlie" onClick={() => onSelect?.("charlie")}>Charlie</MenuPrimitive.Item>
@@ -32,9 +32,9 @@ function mount() {
   return host;
 }
 
-async function render(host: HTMLElement, onSelect?: (id: string) => void, disabled?: boolean) {
+async function render(host: HTMLElement, onSelect?: (id: string) => void, disabled?: boolean, backdrop?: boolean) {
   await act(async () => {
-    root!.render(<Harness onSelect={onSelect} disabled={disabled} />);
+    root!.render(<Harness onSelect={onSelect} disabled={disabled} backdrop={backdrop} />);
     await Promise.resolve();
   });
   return host.querySelector<HTMLButtonElement>('[aria-label="Open menu"]')!;
@@ -42,6 +42,14 @@ async function render(host: HTMLElement, onSelect?: (id: string) => void, disabl
 
 function menu() { return document.querySelector<HTMLElement>('[role="menu"]'); }
 function items() { return [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]; }
+// Base UI's shared `usePositioner` (`utils/usePositioner.js`) already stamps `role="presentation"`
+// on the Positioner wrapper itself, independent of any Backdrop — so a bare `[role="presentation"]`
+// selector is ambiguous once the menu is open. The Backdrop is the *other* one: it never wraps the
+// `role="menu"` popup, where the Positioner always does.
+function backdropEl() {
+  return [...document.querySelectorAll<HTMLElement>('[role="presentation"]')].find((el) => !el.querySelector('[role="menu"]')) ?? null;
+}
+function positionerEl() { return menu()?.closest<HTMLElement>('[role="presentation"]') ?? null; }
 
 async function click(element: HTMLElement) {
   await act(async () => { element.click(); await Promise.resolve(); await Promise.resolve(); });
@@ -238,5 +246,37 @@ describe("Menu accessibility contract", () => {
     expect(trigger.disabled).toBe(true);
     await click(trigger);
     expect(menu()).toBeNull();
+  });
+
+  // §3/§8a (D-01): the opt-in backdrop prop, exercised on the shared primitive itself —
+  // consumer wiring (which of the app's two menus passes it) is Topbar.dom.test.tsx's job.
+  it("9. renders a backdrop when asked", async () => {
+    const host = mount();
+    const trigger = await render(host, undefined, false, true);
+    await click(trigger);
+    expect(menu()).not.toBeNull();
+    expect(backdropEl()).not.toBeNull();
+  });
+
+  it("10. renders none by default", async () => {
+    const host = mount();
+    const trigger = await render(host);
+    await click(trigger);
+    expect(menu()).not.toBeNull();
+    expect(backdropEl()).toBeNull();
+  });
+
+  it("11. the panel paints above its own scrim (backdrop precedes the positioner in DOM order)", async () => {
+    const host = mount();
+    const trigger = await render(host, undefined, false, true);
+    await click(trigger);
+    const backdrop = backdropEl()!;
+    const positioner = positionerEl()!;
+    expect(backdrop).not.toBeNull();
+    expect(positioner).not.toBeNull();
+    // Both are portaled as siblings under `Portal`; `DOCUMENT_POSITION_FOLLOWING` on this call
+    // means `positioner` comes after `backdrop`, which — at the shared `--z-popover` — is what
+    // lets the popup paint above its own scrim (§3.2).
+    expect(backdrop.compareDocumentPosition(positioner) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });

@@ -418,4 +418,29 @@ describe("Topbar shell convergence (§9.3)", () => {
     const appCss = readFileSync(appCssPath, "utf8");
     expect(appCss).not.toMatch(/\.topbar__mobile-menu\b/);
   });
+
+  // §3/§8a (D-01): wiring, not mechanism — which of the app's two menus gets the backdrop.
+  // Base UI's shared `usePositioner` stamps `role="presentation"` on the Positioner wrapper
+  // itself, independent of any Backdrop, so a bare `[role="presentation"]` selector is
+  // ambiguous once a menu is open — it always matches the Positioner. The Backdrop is the
+  // *other* one: it never wraps the `role="menu"` popup, where the Positioner always does.
+  function backdropEl() {
+    return [...document.querySelectorAll<HTMLElement>('[role="presentation"]')].find((el) => !el.querySelector('[role="menu"]')) ?? null;
+  }
+
+  it("dims the page behind the mobile account/navigation menu", async () => {
+    const host = document.body.firstElementChild as HTMLElement;
+    await render(host);
+    await click(host.querySelector<HTMLButtonElement>('[aria-label="Open account and navigation menu"]')!);
+    expect(document.querySelector(".topbar__mobile-menu")).not.toBeNull();
+    expect(backdropEl()).not.toBeNull();
+  });
+
+  it("does not dim the page behind the notification menu", async () => {
+    const host = document.body.firstElementChild as HTMLElement;
+    await render(host);
+    await click(host.querySelector<HTMLButtonElement>('.topbar__notification-trigger')!);
+    expect(document.querySelector(".topbar__notification-menu")).not.toBeNull();
+    expect(backdropEl()).toBeNull();
+  });
 });

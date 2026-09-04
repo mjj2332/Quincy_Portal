@@ -59,6 +59,20 @@ function stripComments(text: string): string {
   return text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^[ \t]*\/\/.*$/gm, "");
 }
 
+/**
+ * The same, for CSS — but line-preserving, because guard 3 reports the line it found. Blanking a
+ * comment to "" would shift every line number after it.
+ *
+ * This is not hypothetical tidiness. TB8-10A's builder had to reword the comment *documenting*
+ * the `.tile` focus fix, because that comment quotes `outline: 0` while explaining why the
+ * declaration was removed — and the guard flagged the prose as an instance of the very thing it
+ * described. A guard that punishes you for documenting its own subject teaches people to stop
+ * writing the comment.
+ */
+function stripCssComments(text: string): string {
+  return text.replace(/\/\*[\s\S]*?\*\//g, (match) => "\n".repeat((match.match(/\n/g) ?? []).length));
+}
+
 const rel = (file: string) => relative(srcDir, file);
 
 // ---------------------------------------------------------------------------
@@ -72,15 +86,12 @@ const rel = (file: string) => relative(srcDir, file);
  * warning as ordinary ink for its entire life (TB8-07).
  *
  * Three instances were found by hand across TB8-07 and TB8-09 (`--signal-warning`,
- * `--signal-warm`, `--panel`). Writing this guard immediately found five more.
+ * `--signal-warm`, `--panel`). Writing this guard immediately found five more, all cleared by
+ * TB8-10A (D-04, D-10): `--dur-reveal` was defined at `tokens/spacing.css`; `--scrim-bottom` and
+ * `--scrim-full` were inlined at their single use sites; `--font-body`/`--font-serif` in
+ * `production-calendar.css` were replaced with the real tokens `--font-sans`/`--font-body-serif`.
  */
-const PHANTOM_TOKEN_BASELINE: Record<string, string> = {
-  "--dur-reveal": "app.css tile/vtile reveal transition. Owner: TB8-10 (cleanup sweep).",
-  "--scrim-bottom": "app.css .tile__scrim gradient. Owner: TB8-10.",
-  "--scrim-full": "app.css .chero__scrim gradient. Owner: TB8-10.",
-  "--font-body": "production-calendar.css; the real token is --font-sans. Owner: TB8-10.",
-  "--font-serif": "production-calendar.css; the real token is --font-body-serif. Owner: TB8-10 D-04.",
-};
+const PHANTOM_TOKEN_BASELINE: Record<string, string> = {};
 
 describe("guard: every custom property used in CSS is defined in CSS", () => {
   it("has no phantom tokens beyond the recorded baseline", () => {
@@ -141,11 +152,7 @@ describe("guard: every custom property used in CSS is defined in CSS", () => {
  * `[font:var(--weight-regular)_var(--text-2xs)/1.4_var(--font-mono)]`. An `!`-prefixed
  * `!text-[length:…]` also wins reliably (important beats non-important) and is not flagged.
  */
-const FONT_SIZE_COLLISION_BASELINE: Record<string, number> = {
-  "components/RichTextEditor.tsx": 2,
-  "components/Topbar.tsx": 1,
-  "screens/Dashboard.tsx": 1,
-};
+const FONT_SIZE_COLLISION_BASELINE: Record<string, number> = {};
 
 describe("guard: no dead `text-[length:…]` beside a `[font:…]` shorthand", () => {
   /**
@@ -280,12 +287,6 @@ describe("guard: no dead `text-[length:…]` beside a `[font:…]` shorthand", (
 const SUPPRESSED_FOCUS_BASELINE: Record<string, string> = {
   ".search input:focus": "Topbar search. Replaced by a border-color change only. Owner: TB8-10.",
   ".copyinput:focus": "Client copywriting field. Same shape. Owner: TB8-10.",
-  ".tile": [
-    "Photo-grid tile — `role=button tabindex`, so it IS focusable, and `--ring` is only set for",
-    "is-selected/st-approved/st-flagged, never for :focus-visible. A keyboard user tabbing the",
-    "grid gets no focus indicator at all. Same family as TB8-09's headline defect, on a different",
-    "surface. Found by this guard, not by a review. Owner: TB8-10.",
-  ].join(" "),
 };
 
 describe("guard: no focus ring is suppressed in unlayered CSS", () => {
@@ -294,7 +295,7 @@ describe("guard: no focus ring is suppressed in unlayered CSS", () => {
     // Only the unlayered files can win this fight; the token files are imported into layers.
     const unlayered = cssFiles().filter((file) => /(?:app|production-calendar)\.css$/.test(file));
     for (const file of unlayered) {
-      const lines = readFileSync(file, "utf8").split("\n");
+      const lines = stripCssComments(readFileSync(file, "utf8")).split("\n");
       // Track the selector of the rule currently open. A declaration-only line carries no `{`,
       // so it belongs to the last selector seen — getting this wrong makes a multi-line rule
       // report its own declaration text as the selector.

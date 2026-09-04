@@ -53,6 +53,12 @@ export type MenuProps = {
   align?: MenuAlign;
   sideOffset?: number;
   popupRef?: React.Ref<HTMLDivElement>;
+  /**
+   * Dim the page behind the open menu. Off by default: a dropdown list under an icon (the
+   * notification bell) should not dim the page, while a full-height phone navigation surface must,
+   * or the page shows through beside the panel and reads as a rendering fault (D-01).
+   */
+  backdrop?: boolean;
 };
 
 /**
@@ -75,6 +81,7 @@ export function Menu({
   align = "end",
   sideOffset = 10,
   popupRef,
+  backdrop = false,
 }: MenuProps) {
   // §4.2a nested-overlay container: null at page level — both Topbar menus render there today,
   // so this is wiring for a future candidate (notification bell/preferences/Admin delivery UI)
@@ -87,6 +94,19 @@ export function Menu({
         {trigger}
       </MenuPrimitive.Trigger>
       <MenuPrimitive.Portal container={container}>
+        {backdrop && (
+          <MenuPrimitive.Backdrop className={cn(
+            // Same z-index as the Positioner below, deliberately: the Backdrop is rendered first, and
+            // equal z-index resolves by DOM order, so the panel paints above its own scrim without a
+            // new stacking token. `tokens/spacing.css:58-63` defines only --z-popover (90), --z-dialog
+            // (95) and --z-toast (98) — there is nothing below 90, and inventing one for a single
+            // sibling pair would be a token with no second consumer.
+            "fixed inset-0 z-[var(--z-popover)] bg-[var(--scrim-overlay)] backdrop-blur-[3px]",
+            "motion-safe:[transition:opacity_var(--overlay-exit)]",
+            "data-open:motion-safe:[transition:opacity_var(--overlay-enter)]",
+            "opacity-0 data-open:opacity-100",
+          )} />
+        )}
         <MenuPrimitive.Positioner
           side={side}
           align={align}

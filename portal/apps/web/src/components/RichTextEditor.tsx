@@ -34,9 +34,9 @@ const EDITOR_CONTENT_UTILITIES =
   "[&.is-editor-empty:first-child]:before:pointer-events-none";
 
 // §6.8 body-input state set, shared by the link dialog's URL field.
-const FIELD_LABEL = "grid gap-[var(--space-1)] [font:var(--type-label)] text-[length:var(--text-xs)] text-foreground-secondary";
+const FIELD_LABEL = "grid gap-[var(--space-1)] [font:var(--weight-regular)_var(--text-xs)/1.2_var(--font-sans)] text-foreground-secondary";
 const FIELD_INPUT = "bg-card border-solid border-[length:var(--border-width-hair)] border-border " +
-  "rounded-[var(--radius-sm)] [font:var(--type-body)] text-[length:var(--text-sm)] " +
+  "rounded-[var(--radius-sm)] [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] " +
   "px-[var(--space-3)] py-[var(--space-2)] text-foreground hover:border-border-hover " +
   "focus-visible:outline-[length:var(--border-width-bold)] focus-visible:outline-solid " +
   "focus-visible:outline-ring focus-visible:outline-offset-2 aria-invalid:border-destructive " +

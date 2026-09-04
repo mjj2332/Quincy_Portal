@@ -49,7 +49,7 @@ const ITEM_BODY = "text-[length:var(--text-xs)] leading-[var(--leading-normal)] 
 const ITEM_META = "text-[length:var(--text-2xs)] text-muted-foreground";
 const DISMISS = cn(
   "size-[44px] border-0 bg-transparent text-foreground-secondary cursor-pointer",
-  "[font:var(--type-mono)] text-[length:var(--text-md)] leading-none hover:!text-foreground hover:bg-secondary",
+  "[font:var(--weight-regular)_var(--text-md)/1_var(--font-mono)] leading-none hover:!text-foreground hover:bg-secondary",
   /* 44px touch target — WCAG 2.5.5 Enhanced / HIG, not a spacing token */
   HIGHLIGHT_STATE,
 );
@@ -260,6 +260,7 @@ export function Topbar({ activeView, canAccessAdmin, user, notificationPollMs = 
         label="Account and navigation menu"
         triggerClassName={MENU_TRIGGER}
         panelClassName="topbar__mobile-menu"
+        backdrop
         trigger={<span aria-hidden="true">Menu</span>}
       >
         <div className="topbar__mobile-identity"><strong>{displayName}</strong>{user.email && <span>{user.email}</span>}</div>

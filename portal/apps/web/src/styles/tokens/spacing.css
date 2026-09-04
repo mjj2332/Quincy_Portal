@@ -46,6 +46,7 @@
   --ease-exit:     cubic-bezier(0.4, 0, 1, 1);          /* @kind other */
   --dur-fast:   120ms;  /* @kind other */
   --dur-base:   220ms;  /* @kind other */
+  --dur-reveal: 720ms;  /* @kind other */
   --dur-slow:   420ms;  /* @kind other */
 
   /* ---- Layout -------------------------------------------------------- */

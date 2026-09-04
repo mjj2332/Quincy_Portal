@@ -911,14 +911,6 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
           <Eyebrow className="mb-[var(--space-3)]">Quincy Portal · production desk</Eyebrow>
           <h1 className="[font:var(--type-h1)] tracking-[var(--tracking-tight)] max-[721px]:[font:var(--type-h2)]">Projects</h1>
         </div>
-        <div className="flex items-center gap-[var(--space-3)] flex-wrap">
-          <label className={cn("dashboard-search", "group flex items-center min-w-[min(100%,300px)] px-[var(--space-3)] bg-card border-solid border-[length:var(--border-width-hair)] border-border rounded-[var(--radius-sm)] transition-[border-color] duration-[var(--dur-fast)] ease-[var(--ease-standard)] hover:border-border-hover focus-within:border-primary focus-within:outline-[length:var(--border-width-bold)] focus-within:outline-solid focus-within:outline-ring focus-within:outline-offset-2 max-[721px]:basis-full max-[721px]:min-w-0")}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true" className="size-[15px] shrink-0 text-muted-foreground transition-colors duration-[var(--dur-fast)] ease-[var(--ease-standard)] group-focus-within:text-foreground-secondary"><circle cx="11" cy="11" r="6" /><path d="m16 16 4 4" /></svg>
-            <span className="sr-only">Search projects</span>
-            <input className="min-w-0 w-full py-[var(--space-2)] px-[var(--space-3)] border-0 outline-0 bg-transparent text-foreground [font:var(--type-body)] text-[length:var(--text-sm)] placeholder:text-muted-foreground max-[721px]:py-[var(--space-3)]" value={query} onChange={(event) => setQuery(sanitizeDashboardCalendarSearch(event.target.value))} placeholder="Search address, suburb, client…" />
-          </label>
-          {canCreateProject && <InternalLink className={buttonClasses()} to="/projects/new">New shoot</InternalLink>}
-        </div>
         <hr className="basis-full m-0 mb-[var(--space-6)] border-0 [border-top-style:solid] border-t-[length:var(--border-width-rule)] border-t-primary max-[721px]:mb-[var(--space-5)]" />
       </div>
 
@@ -943,7 +935,19 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         </div>
       </section>}
 
-      <div className={cn("dashboard-viewbar", "flex flex-wrap items-center justify-end gap-x-[var(--space-3)] gap-y-[var(--space-2)] mb-[var(--space-4)] pt-[var(--space-4)] [border-top-style:solid] border-t-[length:var(--border-width-hair)] border-t-border max-[721px]:justify-start")}>
+      <div className={cn("dashboard-viewbar",
+        "flex flex-wrap items-center gap-x-[var(--space-6)] gap-y-[var(--space-3)] " +
+        "mb-[var(--space-4)] pt-[var(--space-4)] [border-top-style:solid] " +
+        "border-t-[length:var(--border-width-hair)] border-t-border")}>
+        <div className="flex items-center gap-[var(--space-3)] flex-wrap max-[721px]:basis-full">
+          <label className={cn("dashboard-search", "group flex items-center min-w-[300px] px-[var(--space-3)] bg-card border-solid border-[length:var(--border-width-hair)] border-border rounded-[var(--radius-sm)] transition-[border-color] duration-[var(--dur-fast)] ease-[var(--ease-standard)] hover:border-border-hover focus-within:border-primary focus-within:outline-[length:var(--border-width-bold)] focus-within:outline-solid focus-within:outline-ring focus-within:outline-offset-2 max-[721px]:basis-full max-[721px]:min-w-0")}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true" className="size-[15px] shrink-0 text-muted-foreground transition-colors duration-[var(--dur-fast)] ease-[var(--ease-standard)] group-focus-within:text-foreground-secondary"><circle cx="11" cy="11" r="6" /><path d="m16 16 4 4" /></svg>
+            <span className="sr-only">Search projects</span>
+            <input className="min-w-0 w-full py-[var(--space-2)] px-[var(--space-3)] border-0 outline-0 bg-transparent text-foreground [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] placeholder:text-muted-foreground max-[721px]:py-[var(--space-3)]" value={query} onChange={(event) => setQuery(sanitizeDashboardCalendarSearch(event.target.value))} placeholder="Search address, suburb, client…" />
+          </label>
+          {canCreateProject && <InternalLink className={buttonClasses()} to="/projects/new">New shoot</InternalLink>}
+        </div>
+        <div className="flex items-center flex-wrap justify-end gap-x-[var(--space-3)] gap-y-[var(--space-2)] ml-auto max-[721px]:basis-full max-[721px]:justify-start">
         {canViewArchived && <>
           <Eyebrow className="max-[721px]:basis-full max-[721px]:-mb-[var(--space-1)]">Projects</Eyebrow>
           <div className={SEGMENT_GROUP} aria-label="Project status">
@@ -976,6 +980,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
           </div>
         )}
         </>}
+        </div>
       </div>
 
       {boardUnavailableMessage && !viewingArchived && !isCalendarView && (
