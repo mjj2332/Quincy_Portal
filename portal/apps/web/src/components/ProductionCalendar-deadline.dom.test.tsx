@@ -431,11 +431,11 @@ describe("ProductionCalendar Project Deadline mutation", () => {
     await click("month-drop");
     await waitForMutation();
     expect(settleStates.length).toBeGreaterThan(1);
-    expect(document.querySelector('.button[data-focus-key="calendar-recovery"]')).not.toBeNull();
+    expect(document.querySelector('button[data-focus-key="calendar-recovery"]')).not.toBeNull();
     expect(document.querySelector('[aria-live]')?.textContent).toContain("latest Calendar could not be loaded");
-    await act(async () => { document.querySelector<HTMLButtonElement>('.button[data-focus-key="calendar-recovery"]')!.click(); await Promise.resolve(); });
+    await act(async () => { document.querySelector<HTMLButtonElement>('button[data-focus-key="calendar-recovery"]')!.click(); await Promise.resolve(); });
     await waitForMutation();
-    expect(document.querySelector('.button[data-focus-key="calendar-recovery"]')).toBeNull();
+    expect(document.querySelector('button[data-focus-key="calendar-recovery"]')).toBeNull();
     expect(settleStates.at(-1)).toEqual({ pending: false, recoveryReason: null });
   });
 

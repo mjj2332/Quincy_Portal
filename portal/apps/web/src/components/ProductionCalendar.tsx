@@ -73,6 +73,7 @@ import { ProductionCalendarUnscheduledPanel, unscheduledChecklistDraggable, unsc
 import { presentationStages, useStages } from "../lib/stages";
 import { useCapabilities } from "../lib/capabilities";
 import { useMediaQuery, usePrefersReducedMotion } from "../lib/use-media-query";
+import { buttonClasses } from "./ui/button";
 
 export type ProductionCalendarProps = {
   identity: DashboardIdentity;
@@ -1555,14 +1556,14 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
         onChange={(next) => { if (!calendarInteractionBlocked) { clearSettleOnNavigation(); onNavigate({ ...calendar, ...next, view: "calendar" }); } }}
       />
 
-      {calendarSettle.recoveryReason && <div className="notice qc-calendar-recovery" role="alert"><span>{calendarSettle.recoveryReason}</span><button className="button button--secondary" type="button" data-focus-key="calendar-recovery" onClick={() => void refreshRecovery()}>Refresh</button></div>}
+      {calendarSettle.recoveryReason && <div className="notice qc-calendar-recovery" role="alert"><span>{calendarSettle.recoveryReason}</span><button className={buttonClasses("secondary")} type="button" data-focus-key="calendar-recovery" onClick={() => void refreshRecovery()}>Refresh</button></div>}
       {query.isPending && !query.data && <div className="empty qc-calendar-state" role="status">Loading calendar…</div>}
 
       {!query.isPending && query.error && !query.data && (
         <div className="empty qc-calendar-state" role="alert">
           <span className="serif">Calendar unavailable.</span>
           {dense ? <><p>That range is too dense — narrow the filters.</p><p>{refinement}</p></> : <p>Calendar could not be loaded. Try again.</p>}
-          {!dense && <div style={{ marginTop: 16 }}><button className="button button--secondary" type="button" onClick={() => void query.refetch()}>Try again</button></div>}
+          {!dense && <div style={{ marginTop: 16 }}><button className={buttonClasses("secondary")} type="button" onClick={() => void query.refetch()}>Try again</button></div>}
         </div>
       )}
 

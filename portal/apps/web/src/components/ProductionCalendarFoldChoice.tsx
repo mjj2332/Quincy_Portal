@@ -1,5 +1,6 @@
 import { useId, useState, type JSX } from "react";
 import { Modal } from "./Modal";
+import { buttonClasses } from "./ui/button";
 
 export type ProductionCalendarFoldChoiceProps = {
   open: boolean;
@@ -21,8 +22,8 @@ export function ProductionCalendarFoldChoice({ open, title = "Choose Sydney time
   const [choice, setChoice] = useState<"earlier" | "later" | undefined>();
   const name = useId();
   return <Modal open={open} title={title} eyebrow={eyebrow} onClose={onCancel} initialFocus={0} testId="calendar-fold-choice" variant="calendar" footer={<>
-    <button className="button button--secondary" type="button" data-testid="calendar-fold-cancel" onClick={onCancel}>Cancel</button>
-    <button className="button" type="button" data-testid="calendar-fold-submit" disabled={!choice} onClick={() => { if (choice) onSubmit(choice); }}>Use this time</button>
+    <button className={buttonClasses("secondary")} type="button" data-testid="calendar-fold-cancel" onClick={onCancel}>Cancel</button>
+    <button className={buttonClasses()} type="button" data-testid="calendar-fold-submit" disabled={!choice} onClick={() => { if (choice) onSubmit(choice); }}>Use this time</button>
   </>}>
     <fieldset className="qc-calendar-schedule-editor__fold">
       <legend>{endpoint === "start" ? "Start" : "End"} occurs twice in Sydney</legend>

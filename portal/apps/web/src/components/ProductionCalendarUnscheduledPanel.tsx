@@ -6,6 +6,7 @@ import type {
 import { useEffect, useRef, type ReactNode } from "react";
 import { Draggable } from "@fullcalendar/react/interaction";
 import { ProjectCalendarAnchor } from "./ProductionCalendarEvent";
+import { buttonClasses } from "./ui/button";
 
 type UnscheduledFacet = { matched: number; returned: number; truncated: boolean };
 
@@ -128,7 +129,7 @@ function ProjectRow({ entry, subview, onSchedule, disabled, dragSuppressed, proj
   if (actionMode) {
     return <article className="qc-calendar-unscheduled__row qc-calendar-unscheduled__row--project" data-unscheduled-id={entry.id}>
       {content}
-      <button className="button button--text qc-calendar-unscheduled__action" type="button" disabled={disabled} onClick={() => onSchedule(entry)}>Schedule Deadline</button>
+      <button className={buttonClasses("text", { className: "qc-calendar-unscheduled__action" })} type="button" disabled={disabled} onClick={() => onSchedule(entry)}>Schedule Deadline</button>
     </article>;
   }
 
@@ -174,7 +175,7 @@ function ChecklistRow({ entry, subview, rangesEnabled, onSchedule, disabled, dra
 
   return <article className={`qc-calendar-unscheduled__row qc-calendar-unscheduled__row--checklist${attention ? " is-attention" : ""}`} data-unscheduled-id={entry.id}>
     {content}
-    {invalid ? <p className="qc-calendar-unscheduled__attention" role="status">This checklist schedule needs repair. Repair is unavailable in Calendar.</p> : showAction && <button className="button button--text qc-calendar-unscheduled__action" type="button" disabled={disabled} onClick={() => onSchedule(entry)}>{legacy ? "Repair schedule" : "Schedule"}</button>}
+    {invalid ? <p className="qc-calendar-unscheduled__attention" role="status">This checklist schedule needs repair. Repair is unavailable in Calendar.</p> : showAction && <button className={buttonClasses("text", { className: "qc-calendar-unscheduled__action" })} type="button" disabled={disabled} onClick={() => onSchedule(entry)}>{legacy ? "Repair schedule" : "Schedule"}</button>}
   </article>;
 }
 

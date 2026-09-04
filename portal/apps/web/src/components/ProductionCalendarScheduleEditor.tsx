@@ -10,6 +10,7 @@ import {
   type InitialChecklistScheduleInput,
 } from "@quincy/shared";
 import { Modal } from "./Modal";
+import { buttonClasses } from "./ui/button";
 
 type ScheduleEvent = ChecklistCalendarEventDto | ChecklistCalendarUnscheduledEntryDto;
 type EndpointKind = "date" | "timed";
@@ -144,8 +145,8 @@ export function ProductionCalendarScheduleEditor({ open, event, rangesEnabled, o
   };
 
   return <Modal open={open} title="Schedule checklist item" eyebrow={event.project.street} onClose={onCancel} wide initialFocus={0} testId="calendar-schedule-editor" variant="calendar" footer={<>
-    <button className="button button--secondary" type="button" data-testid="calendar-schedule-cancel" onClick={onCancel}>Cancel</button>
-    <button className="button" type="button" data-testid="calendar-schedule-submit" onClick={submit}>Save schedule</button>
+    <button className={buttonClasses("secondary")} type="button" data-testid="calendar-schedule-cancel" onClick={onCancel}>Cancel</button>
+    <button className={buttonClasses()} type="button" data-testid="calendar-schedule-submit" onClick={submit}>Save schedule</button>
   </>}>
     <div className="qc-calendar-schedule-editor">
       <p className="qc-calendar-schedule-editor__intro">Sydney civil time is saved exactly as entered. Both endpoints use the same mode.</p>

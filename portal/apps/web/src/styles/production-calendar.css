@@ -222,7 +222,7 @@
 
 @media (max-width: 420px) {
   .qc-cal-filters__head { align-items: stretch; flex-direction: column; gap: 8px; }
-  .qc-cal-filters__head .button { align-self: start; }
+  .qc-cal-filters__head button { align-self: start; }
   .qc-cal-filters__groups { grid-template-columns: 1fr; }
 }
 

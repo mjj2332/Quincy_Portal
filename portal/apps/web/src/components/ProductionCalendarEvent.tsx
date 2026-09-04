@@ -1,6 +1,7 @@
 import { useRef, type ReactNode } from "react";
 import type { CalendarEventDto, CalendarUnscheduledEntryDto, ChecklistCalendarEventDto, ChecklistCalendarUnscheduledEntryDto, ProductionCalendarSubview, ProjectDeadlineCalendarEventDto } from "@quincy/shared";
 import { checklistScheduleEditorButtonLabel } from "./ProductionCalendarScheduleEditor";
+import { buttonClasses } from "./ui/button";
 
 export type ProjectCalendarAnchorProps = {
   href: string;
@@ -102,7 +103,7 @@ export function ProductionCalendarEvent({ event, subview, compact = false, onMov
           {event.status.overdue && <Pill tone="overdue">Overdue</Pill>}
           {event.status.delivered && <Pill tone="delivered">Delivered</Pill>}
         </div>
-        {event.permissions.canDrag && onMoveReschedule && <button className="button button--text qc-cal-event-card__move" type="button" data-focus-key={`calendar-move:${event.id}`} onClick={() => onMoveReschedule(event)}>Move / Reschedule</button>}
+        {event.permissions.canDrag && onMoveReschedule && <button className={buttonClasses("text", { className: "qc-cal-event-card__move" })} type="button" data-focus-key={`calendar-move:${event.id}`} onClick={() => onMoveReschedule(event)}>Move / Reschedule</button>}
       </article>
     );
   }
@@ -119,7 +120,7 @@ export function ProductionCalendarEvent({ event, subview, compact = false, onMov
         {event.status.delivered && <Pill tone="delivered">Delivered</Pill>}
         {event.status.sameAssigneeOverlap === true && <Pill tone="overlap">Overlaps another task</Pill>}
       </div>
-      {needsAttention ? <p className="qc-cal-event-card__attention" role="status">Schedule data needs attention. Repair is unavailable in Calendar.</p> : !compact && event.permissions.canOpenScheduleEditor && onChecklistSchedule && <button className="button button--text qc-cal-event-card__move" type="button" data-focus-key={`calendar-move:${event.id}`} onClick={() => onChecklistSchedule(event)}>{checklistScheduleEditorButtonLabel(event)}</button>}
+      {needsAttention ? <p className="qc-cal-event-card__attention" role="status">Schedule data needs attention. Repair is unavailable in Calendar.</p> : !compact && event.permissions.canOpenScheduleEditor && onChecklistSchedule && <button className={buttonClasses("text", { className: "qc-cal-event-card__move" })} type="button" data-focus-key={`calendar-move:${event.id}`} onClick={() => onChecklistSchedule(event)}>{checklistScheduleEditorButtonLabel(event)}</button>}
     </article>
   );
 }
@@ -139,7 +140,7 @@ export function ProductionCalendarUnscheduledEntry({ entry, onChecklistSchedule,
     <div className="qc-cal-event-card__meta"><span>Checklist</span><span>Unscheduled</span></div>
     <h4 title={entry.title}>{entry.title}</h4>
     <p className="qc-cal-event-card__title" title={entry.project.street}>{projectHref ? <ProjectCalendarAnchor href={projectHref} onOpenProject={onOpenProject}>{entry.project.street}</ProjectCalendarAnchor> : entry.project.street}</p>
-    {invalid ? <p className="qc-cal-event-card__attention" role="status">Schedule data needs attention. Repair is unavailable in Calendar.</p> : onChecklistSchedule && entry.permissions.canOpenScheduleEditor && <button className="button button--text qc-cal-event-card__move" type="button" data-focus-key={`calendar-move:${entry.id}`} onClick={() => onChecklistSchedule(entry)}>{legacy ? "Repair schedule" : "Schedule"}</button>}
+    {invalid ? <p className="qc-cal-event-card__attention" role="status">Schedule data needs attention. Repair is unavailable in Calendar.</p> : onChecklistSchedule && entry.permissions.canOpenScheduleEditor && <button className={buttonClasses("text", { className: "qc-cal-event-card__move" })} type="button" data-focus-key={`calendar-move:${entry.id}`} onClick={() => onChecklistSchedule(entry)}>{legacy ? "Repair schedule" : "Schedule"}</button>}
   </article>;
 }
 

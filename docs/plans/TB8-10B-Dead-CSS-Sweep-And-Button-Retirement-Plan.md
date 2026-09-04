@@ -1,6 +1,6 @@
 # TB8-10B — The Dead-CSS Sweep and the `.button` Retirement
 
-**Status: §1 DEPLOYED (`876fb239`). §2 DEPLOYED (`2abd01ca`). §3 PLANNED, awaiting Sol. §4–§5 not started.** Second half of TB8 candidate #10. Runs the frontend lane in
+**Status: §1 DEPLOYED (`876fb239`). §2 DEPLOYED (`2abd01ca`). §3 BUILT AND GATED, NOT DEPLOYED. §4–§5 not started.** Second half of TB8 candidate #10. Runs the frontend lane in
 `docs/Subagent-Frontend-Orchestration.md`: this session drafts and holds the visual gate, Sol
 reviews scope only, a Sonnet subagent builds.
 
@@ -636,3 +636,52 @@ unaffected by any class change on the button itself).
 | 3-6 | Every calendar dialog (Fold Choice, Move, Schedule Editor) still opens, Cancel/Save both work, at 1440 and 390. |
 | 3-7 | Disabled paint on Fold Choice submit / Move submit / Clear Filters / unscheduled-action matches `buttonClasses()`'s standard disabled treatment (Sol B1) — checked visually, not assumed identical to the legacy fade. |
 | 3-8 | "Try again" (`.qc-calendar-state`) is 44px tall at 390px, matching "Refresh" one state over (Sol B2) — a deliberate fix, not a regression to catch. |
+
+
+---
+
+## §9 — §3 build record and gate (2026-09-04) — **PASSED**
+
+Built directly by this session, after Sol's two blocking findings (§3.2a) were resolved in the
+plan. `.button`/`.button--*` retired from all 11 sites across 8 files onto `buttonClasses()`,
+matching the plan's table exactly.
+
+### The CSS fix and one runtime finding beyond the plan
+
+`.qc-cal-filters__head .button { align-self: start; }` → `.qc-cal-filters__head button { ... }`,
+as specified.
+
+**Sol's suggested test fix was itself wrong, and building it surfaced why.** §3.2a NB1 said the
+attribute selector `[data-focus-key="calendar-recovery"]` was already unique once the class was
+dropped. It is not: `ProductionCalendarToolbar.tsx:84` carries the **same** attribute value on the
+toolbar's root `<div>`, as a deliberate second half of the focus-recovery fallback at
+`ProductionCalendar.tsx:718` (`.button[data-focus-key=…] ?? [data-focus-key=…]` — try the Refresh
+button first, fall back to the toolbar container once it's gone). Dropping the class from the test
+selector made it match the toolbar `<div>` instead, which never disappears, so the "button is gone
+after refresh" assertion failed for a different reason than intended. Fixed by qualifying on the
+tag (`button[data-focus-key="calendar-recovery"]`) rather than dropping the qualifier — this
+distinguishes the two elements the way `.button` used to, without depending on the retired class.
+
+### Verified against the pre-change baseline, not just "looks fine"
+
+Re-measured computed styles at 1440 and 390 after the swap and compared against §3.2's pre-change
+numbers directly:
+
+| | Before → After (1440 / 390) |
+|---|---|
+| `.qc-cal-event-card__move` / `.qc-calendar-unscheduled__action` | padding, font-size, min-width/height, colour — **byte-identical at both viewports** |
+| Toolbar `button--secondary` (Prev/Today/Next pattern) | padding, font-size, min-height — **byte-identical at both viewports** |
+
+Both accepted deviations from §3.2a are mechanisms already proven elsewhere in this same session,
+not new risk: the disabled-paint change is the exact CSS `buttonClasses()` already produces on
+three §2 sites live in production; the 44px `min-h-[721px]` utility on "Try again" is the identical
+utility already rendering correctly on "Refresh" one control over.
+
+### Gate
+
+typecheck 0 · build 0 · **726/726 unchanged** (the one test that needed updating for the
+`data-focus-key` disambiguation still asserts the same behaviour, just through a selector that
+survives the class retirement) · `packages/shared` 144 · `.button` and all three variants now have
+**zero consumers anywhere in the application** — `classcheck.py button button--secondary
+button--text button--danger` all DEAD; `grep -n '\.button\b\|\.button--' production-calendar.css`
+empty. **D-06 is complete.**

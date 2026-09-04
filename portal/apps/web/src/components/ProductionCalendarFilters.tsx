@@ -1,3 +1,4 @@
+import { buttonClasses } from "./ui/button";
 import {
   PRODUCTION_CALENDAR_LAYERS,
   productionCalendarFiltersSchema,
@@ -94,7 +95,7 @@ export function ProductionCalendarFilters({
           <div className="ey">Refine the desk</div>
           <h2>Calendar filters</h2>
         </div>
-        <button className="button button--text" type="button" disabled={disabled} onClick={clearFilters}>Clear filters</button>
+        <button className={buttonClasses("text")} type="button" disabled={disabled} onClick={clearFilters}>Clear filters</button>
       </div>
 
       <div className="qc-cal-filters__groups">

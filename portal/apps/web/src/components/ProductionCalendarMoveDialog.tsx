@@ -1,6 +1,7 @@
 import { useId, useState, type JSX } from "react";
 import type { ProjectDeadlineCalendarEventDto, ProjectDeadlineDisambiguation } from "@quincy/shared";
 import { Modal } from "./Modal";
+import { buttonClasses } from "./ui/button";
 
 export type ProductionCalendarMoveDialogProps = {
   open: boolean;
@@ -46,8 +47,8 @@ export function ProductionCalendarMoveDialog({ open, event, initialCivil, foldCh
   const valid = validCivil(localCivil) && (!foldChoices || foldChoices.length === 0 || disambiguation !== undefined);
 
   return <Modal open={open} title="Move / Reschedule Deadline" eyebrow={event.project.street} onClose={onCancel} initialFocus={0} testId="calendar-move-dialog" variant="calendar" footer={<>
-    <button className="button button--secondary" type="button" data-testid="calendar-move-cancel" onClick={onCancel}>Cancel</button>
-    <button className="button" type="button" data-testid="calendar-move-submit" disabled={!valid} onClick={() => onSubmit(localCivil, disambiguation)}>Save Deadline</button>
+    <button className={buttonClasses("secondary")} type="button" data-testid="calendar-move-cancel" onClick={onCancel}>Cancel</button>
+    <button className={buttonClasses()} type="button" data-testid="calendar-move-submit" disabled={!valid} onClick={() => onSubmit(localCivil, disambiguation)}>Save Deadline</button>
   </>}>
     <div className="qc-calendar-move-dialog__inputs">
       <label>Date<input aria-label="Deadline date" type="date" value={date} onChange={(input) => setDate(input.target.value)} /></label>
