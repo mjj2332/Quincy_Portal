@@ -33,7 +33,7 @@ and pick the first surface to run through the pipeline above.
    filters half was already converged by TB8-01)
 7. Collaboration/checklist/comments (fresh from TB6, low priority) — **shipped as TB8-07, 2026-09-04**
 8. Notice board (fresh from TB7, too new) — **shipped as TB8-08, 2026-09-04**
-9. Lightbox controls (only if evidence warrants) — **warrant confirmed 2026-09-04; running as TB8-09.**
+9. Lightbox controls (only if evidence warrants) — **warrant confirmed and BUILT as TB8-09, 2026-09-04; merged `150e40c`, awaiting deploy.**
    Evidence: ~250 lines of `app.css` (the largest remaining legacy block) owned by a single
    consumer, `Lightbox.tsx`; TB8-02-E-1's deferred `.viewer__panel-scrim` points here explicitly;
    and TB0-VIS-02's "no local media" blocker on matched evidence is resolved (the R2 storage-plane

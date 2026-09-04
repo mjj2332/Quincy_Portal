@@ -142,6 +142,48 @@ Orchestration: Claude = planner/orchestrator/contract-layer; Codex/Agy = groundw
   their focus rings. Slice 4 also **stalled a builder during exploration having written nothing** —
   the TB8-04 failure mode — and was split into 4a/4b with exact line ranges to read.
 
+- **TB8-09 (the review Lightbox — the stage, the markup toolbar, the filmstrip, the compare
+  layout and the review side panel) is BUILT, VISUAL GATE PASSED, MERGED TO `main` (`150e40c`) —
+  NOT YET DEPLOYED.** Awaiting owner approval for the production deploy; the app-Worker deploy was
+  blocked by the permission classifier 2026-09-04. Frontend/CSS only, no migration; rollback target
+  app `1b35ead6`. Plan: `docs/plans/TB8-09-Lightbox-Controls-Visual-Plan.md` (stays there until it
+  is live, per the standing convention). Slices `3a3f387` `90bb4e1` `0d3453a` `4d3ad17` `b16c152`
+  `df071ac`, plus the gate's own fixes `016e891`.
+  **The headline defect was a keyboard one: the focus ring measured 1.00:1 against the entire dark
+  stage.** `--focus-ring` is `--ink-900` and `.viewer`'s background is `--ink-900`, so nothing
+  focusable on the dark half of the lightbox showed focus at all — close, nav, zoom, nine
+  markup-toolbar buttons, every filmstrip thumbnail. The filmstrip had a *second* independent
+  cause: `.strip__button`'s `outline: 2px solid transparent` tied `:focus-visible` on specificity
+  and won on source order, so it would have stayed ringless even after the token was fixed. Now
+  **18.64:1** on every stage control, measured.
+  **The architectural move: the lightbox is the app's only dark surface, which is why it never
+  converged.** Every shadcn role in `tokens/tailwind.css` is defined for the light paper canvas, so
+  a Tailwind utility written inside `.viewer` resolved ink-on-ink. Rather than dark variants of
+  every control, the release inverts the role layer for the subtree (`tokens/inverse.css`,
+  `data-surface="inverse"` / `"default"`), after which `Button`, `IconButton`, `Notice` and
+  `Eyebrow` all work unchanged. Four roles had to gain a semantic alias first — they read the raw
+  ramp, so scoping them would have been silently inert.
+  Also fixed: **nine markup-toolbar buttons with no accessible name at all**, five rating buttons
+  that all computed the name `"★"`, `aria-pressed` on the desktop decision path (the phone peek bar
+  had it all along), and five touch targets below the repo's 28/44 contract. **`app.css` 800 → 679
+  lines**, including **an entire abandoned compare-mode implementation** — twelve rules with zero
+  consumers, found by chasing a review finding rather than accepting it. Two phantom tokens
+  (`--signal-warm`, `--panel`) removed; both had survived only on a literal fallback.
+  **Pipeline: two Sol rounds (13 findings then 7; 18 upheld, 2 stale, all verified against the repo
+  before acting), five Sonnet build slices, and this session's visual gate.** Sol caught three
+  things I had wrong about my own work: a `data-open` swap that would have broken the tablet drawer
+  *and* the phone sheet, a touch-target bar I first overstated then understated, and an acceptance
+  criterion the specified fix could not have passed. **The gate then found three more that 1,763
+  tests and both review rounds missed** — the rating stars silently shrunk 22px → 18px (two
+  utilities touching `font-size`, resolved by Tailwind's emission order — the exact trap
+  `button.tsx` documents in its own comment), the markup toolbar wrapping and covering the shortcut
+  hints (an absolutely-positioned shrink-to-fit box at `left: 50%` can never exceed *half* its
+  containing block), and the shortcut pill sitting behind the toolbar whenever markup was
+  available. Full gate evidence in the plan's §11.
+  **One finding deferred to TB8-10 with its measurement**: on phone the toolbar (136px at 390px)
+  covers the fixed filmstrip. Pre-existing; fixing it means deciding where the annotation toolbar
+  lives on a phone, which is product-shaped rather than convergence.
+
 - **TB8-08 (the Staff Notice Board — the collapsed toggle, the post, its meta line, the owner
   actions and the two composers) is DEPLOYED TO PRODUCTION, 2026-09-04** — merge `5479ceb`, app
   Worker `1b35ead6` only (background/webhook-ingress not redeployed; the release touches
