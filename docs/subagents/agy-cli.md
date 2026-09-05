@@ -170,9 +170,9 @@ actually works reliably.
   watch the conversation DB step count and kill once the final reply step lands rather than
   trusting a wide timeout. In Option A the human signs in *before* Agy spawns, so there is no
   in-run wait to worry about.
-- **Agy is dormant** (§2.8) — it was the pipeline's tester from 2026-08-27, after a trial pass on
-  the TB4C QA matrix, until build routing moved to Sonnet and Luna took testing over (§2.6). Its
-  danger-mode and YOLO-mode sanction (both §2.8) and everything below stay current for
+- **Agy is dormant** — it was the pipeline's tester from 2026-08-27, after a trial pass on
+  the TB4C QA matrix, until build routing moved to Sonnet and Luna took testing over. Its
+  danger-mode and YOLO-mode sanction and everything below stay current for
   reactivation. Planning and building never go to Agy, dormant or not. Every QA finding still
   clears the full §5 gate in the orchestrating session — the report is not ground truth.
 
@@ -215,7 +215,7 @@ session cookie lasts ~7 days; re-sign-in is one click in the same window.
 
 - **Local dev is the usual target.** Local-dev Google sign-in works for `localhost:8787`
   (redirect registered 2026-08-19). For production danger-mode (passive) or YOLO-mode (mutating
-  via impersonation) — both §2.8 — the human points this same dedicated Chrome at
+  via impersonation) the human points this same dedicated Chrome at
   `https://quincy.flamingfire.my` and signs in there once instead — the invocation is
   identical, the containment is entirely prompt-level plus (for YOLO) server-side impersonation.
 - **Do NOT point this at your everyday Chrome profile.** Chrome blocks `--remote-debugging-port`
@@ -243,7 +243,7 @@ Smoke test (navigate `example.com` → `take_snapshot` → report `h1`/`title`) 
   is false) but **logged into nothing**. Fine for public sites, `prototype.`/marketing pages,
   Lighthouse/perf audits, unauthenticated smoke checks. Does **not** close the Quincy local-auth
   gap on its own — to reach an authenticated page here, self-mint a session and disclose it
-  ([Subagent-Orchestration.md](Subagent-Orchestration.md) §2.9).
+  ([Subagent-Orchestration.md](Subagent-Orchestration.md) §2.1).
 - Coordinating a human sign-in *inside* one non-interactive `-p` turn is fragile — that's what
   Option A exists for.
 

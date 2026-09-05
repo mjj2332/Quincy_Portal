@@ -1,6 +1,6 @@
-# Codex CLI mechanics (Sol / Terra / Luna)
+# Codex CLI mechanics (Sol / Terra / Luna / Astra)
 
-Loaded on demand from `Subagent-Orchestration.md` §3. Verified live 2026-07-19.
+Loaded on demand from `Subagent-Orchestration.md` §3. Updated 2026-09-05.
 
 `codex exec` runs the real Codex CLI as an OS subprocess via `Bash` — OpenAI's model, its own
 sandbox, output read back from a file. It is not the `Agent` tool.
@@ -9,8 +9,10 @@ sandbox, output read back from a file. It is not the `Agent` tool.
 codex exec --sandbox read-only -m gpt-5.6-sol -c model_reasoning_effort=high "..."
 ```
 
-Sol's effort is **high** and Luna's is **xhigh** — both fixed by `Subagent-Orchestration.md` §1,
-which is the source of truth; the values here just match it.
+
+**GPT-6-Astra** is available as the `gpt-6-astra` Codex model. Pass `-m gpt-6-astra` explicitly
+when Astra is required; the account default is not a reliable model selector. Codex models have
+native **Chrome-use** and **Computer-use** skills/plugins for browser and desktop control.
 
 Full spawn shape, with the spec in a scratchpad file and the report captured separately.
 **Pipe the prompt via stdin — do not embed it as a `"$(cat ...)"` positional argument** (see
@@ -45,19 +47,6 @@ them into the pipe rather than interpolating any of them into a quoted argument:
 | `-c model_reasoning_effort=high` | Set reasoning effort (Sol `high`, Luna `xhigh` — §1) |
 | `-c 'sandbox_workspace_write.network_access=true'` | Allow network from a workspace-write sandbox (needed for MCP calls) |
 
-- **The account default drifted 2026-07-29**: `~/.codex/config.toml`'s `model` line was found set
-  to `gpt-5.6-luna`, not `gpt-5.6-terra` as this doc previously assumed — confirmed live when two
-  consecutive `codex exec` calls with no `-m` flag both banner-printed `model: gpt-5.6-luna`
-  (visible in the run log's `--------` header block, always worth checking after any invocation
-  that matters). The account default is **not reliable** and can change outside this session's
-  control. **Always pass `-m gpt-5.6-luna` explicitly** for any Luna invocation (build, diagnostics,
-  testing) rather than trusting the account default — the same applies for Sol (draft, review),
-  pass `-m` for that too. Terra has no role in the pipeline as of 2026-08-22 (see
-  `Subagent-Orchestration.md` §1, §2.5) and is not spawned. Don't skip re-checking the run log's
-  `model:` line after a spawn just because this was fixed once; a config default can drift again.
-- There is **no `--reasoning-effort` flag** — effort goes through `-c model_reasoning_effort`.
-- There is **no `--no-terminal` flag** on `codex exec`; that belongs to `acpx`'s Claude-session
-  wrapper.
 
 ## Resuming a session
 
@@ -93,33 +82,50 @@ succeed in the same run. Don't keep tuning the invocation — fall back to an al
 authenticated CLI (e.g. `wrangler` for Cloudflare) and perform the write directly.
 
 `-c approval_policy="never"` does **not** lift this. The gate is per-tool, decided independently
-of the approval policy, so the policy knob looks like the fix and changes nothing. Verified
-2026-09-03 against `chrome-devtools-mcp`: same run, `list_pages` succeeded and `evaluate_script`
-returned *"requires approval, which is unavailable"* under both the default policy and `never`.
+of the approval policy, so the policy knob looks like the fix and changes nothing. If a required
+MCP write is blocked, use an already-authenticated CLI where one exists and report the deviation.
 
-## Driving Chrome (Luna browser-testing mode)
+## Browser and computer control
 
-Established 2026-09-03 (TB8-05). Attach `chrome-devtools-mcp` to the Chrome a human has already
-signed in — the same dedicated CDP-port-9333 profile Agy uses (`agy-cli.md` Option A; the profile
-and sign-in are shared, not duplicated). Pass the server per-run with `-c` so the user's persistent
-codex config is never modified:
+Any Codex model, including Luna, may handle a task that needs live browser or desktop interaction.
+Use the native Chrome-use and Computer-use skills/plugins by default. Tell the selected model the
+purpose, target environment, authentication state, and evidence to collect.
+
+The capabilities do not change task authorization. Follow `Subagent-Orchestration.md` for
+testing restrictions, and restate the applicable passive-only, local-dev, impersonation,
+authentication, and disclosure requirements in every browser/computer prompt. A real sign-in click
+remains a human action; report an auth or configuration blocker instead of routing around it.
+
+Example invocation shape (select the model required by the task):
 
 ```
+cat <prompt> | codex exec \
+  -m <model> \
+  --output-last-message <report> > <run.log> 2>&1
+```
+
+Choose sandbox and approval flags from the task's authorization policy. Browser access alone does
+not authorize production mutations or repository writes. Background the run when it needs to
+continue asynchronously, then read the report file and independently verify its claims.
+
+## Optional Chrome control via `chrome-devtools-mcp`
+
+`chrome-devtools-mcp` remains an alternative for Chrome-only tasks when the user explicitly asks
+for it. It is opt-in and not the default browser-control path. Attach it to the human-authenticated
+Chrome over CDP, passing the server per run so persistent Codex configuration stays unchanged:
+
+```bash
 cat <prompt> | codex exec --dangerously-bypass-approvals-and-sandbox \
-  -m gpt-5.6-luna -c model_reasoning_effort=xhigh \
+  -m <model> \
   -c 'mcp_servers.chrome_devtools={command="npx",args=["-y","chrome-devtools-mcp@latest",\
       "--browserUrl=http://127.0.0.1:9333"],startup_timeout_sec=180}' \
   --output-last-message <report> > <run.log> 2>&1
 ```
 
-`--dangerously-bypass-approvals-and-sandbox` is **required**, per the failure mode above: every
-measurement in a browser pass is an `evaluate_script`, and nothing short of that flag permits it.
-That makes the run unsandboxed, which is owner-authorized but governed —
-`Subagent-Orchestration.md` §2.6 carries the mandatory restriction block for the prompt and the
-repo-snapshot requirement for the caller. Do not run this mode without both.
-
-Note `timeout` does not exist on this macOS shell — don't wrap the call in it (it fails with
-`command not found` and exit 127). Background the run instead and read the report file.
+The unsandboxed flag is required for MCP browser measurements that use `evaluate_script`. Apply
+the browser-testing restrictions in `Subagent-Orchestration.md`, including the prompt
+restriction block and the orchestrator's repo snapshot before the run. Use this method only when
+the user names `chrome-devtools-mcp`; otherwise use the native Codex skills/plugins.
 
 ## Failure mode: silent stdin hang from shell-argument corruption
 
