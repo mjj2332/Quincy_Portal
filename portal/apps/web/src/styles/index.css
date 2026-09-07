@@ -6,7 +6,8 @@
 @import "./tokens/spacing.css";
 @import "./tokens/typography.css";
 @import "./tokens/tailwind.css";
-/* Must sit between tailwind.css and inverse.css — see the header of reui.css. */
+/* Convention: extends tailwind.css, and should not read as overriding inverse.css.
+   See the header of reui.css. */
 @import "./tokens/reui.css";
 @import "./tokens/inverse.css";
 @import "./tokens/base.css";

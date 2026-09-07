@@ -11,12 +11,16 @@
    BEYOND that set belongs here — one `cat` answers "what did ReUI add", and #56
    can retire this file wholesale if the migration is ever unwound.
 
-   ## Import position is load-bearing
+   ## Import position
 
-   index.css must import this file AFTER tokens/tailwind.css and BEFORE
-   tokens/inverse.css. `:root` and `[data-surface="inverse"]` tie at (0,1,0)
-   specificity, so inverse.css wins today only by being imported later. Move
-   this file after it and the inverse surface silently stops overriding.
+   index.css imports this file after tokens/tailwind.css and before
+   tokens/inverse.css: it extends the former, and it should not be read as
+   overriding the latter. That ordering is convention, not a cascade
+   requirement — inverse.css scopes [data-surface="inverse"], which applies to
+   different (descendant) elements, and a declaration on the descendant beats an
+   inherited :root value regardless of source order. This file also redeclares
+   none of inverse.css's 19 roles today. Keep the position; do not rely on it
+   for correctness.
 
    ## Three things deliberately NOT defined here
 
@@ -33,8 +37,13 @@
    3. --sidebar and its seven siblings. Quincy's shell is a Topbar; no sidebar
       exists or is planned, and @reui/sidebar is their only consumer. Defining
       eight dead tokens against a component we may never install contradicts
-      this codebase's dead-CSS doctrine. If sidebar is ever installed, the
-      phantom-token guard names all eight and they get real values then.
+      this codebase's dead-CSS doctrine.
+
+      Note what will NOT catch that omission: the phantom-token guard scans
+      authored CSS, so a `bg-sidebar` arriving as a TSX class is invisible to
+      it. This is not theoretical — it is exactly how --focus below was missed.
+      Whoever installs @reui/sidebar must read its variants and bridge the
+      roles by hand.
    ========================================================================== */
 :root {
   /* ---- Radius --------------------------------------------------------
@@ -52,31 +61,76 @@
 
   /* ---- Signal roles --------------------------------------------------
      Convention matches the existing --destructive pair in tokens/tailwind.css:
-     the role is the FILL, and `-foreground` is the ink that sits ON that fill.
-     Every fill here is a deep brand tone, so every foreground is warm paper. */
+     the role is the FILL. But `-foreground` does NOT follow shadcn's convention
+     here, and getting this wrong is invisible until you render something.
+
+     shadcn core (tokens/tailwind.css) reads `-foreground` as "the light ink that
+     sits ON the solid fill" — Topbar.tsx:208 and ui/button.tsx:40 both rely on
+     --destructive-foreground being warm paper over a solid oxblood fill.
+
+     ReUI's extended roles use the OPPOSITE convention. Its solid variants
+     hardcode `text-white` and never read `-foreground` at all; the only consumer
+     is the `-light` wash variant, `bg-success/10 text-success-foreground`, which
+     wants a DARK same-hue tone (ReUI's own default pairs emerald-500 with
+     emerald-900). Mapping these to paper — the shadcn reading — produced
+     near-white text on a near-white wash: four illegible variants, caught by
+     rendering @reui/badge, invisible to every test in the suite.
+
+     So each of these three is the same deep brand tone as its fill. Quincy's
+     signals are already dark enough to serve as text on their own 10% wash.
+     --destructive-foreground is deliberately NOT redefined here: it is shared
+     with the two live consumers above, and changing it would be a visual
+     regression. The cost is that ReUI's `destructive-light` variant renders
+     poorly; recorded for #57 rather than fixed by breaking production. */
   --success: var(--signal-positive);
-  --success-foreground: var(--paper-050);
+  --success-foreground: var(--signal-positive);
   --info: var(--signal-info);
-  --info-foreground: var(--paper-050);
+  --info-foreground: var(--signal-info);
 
   /* Deliberate deviation, and the one place this file does not take the obvious
-     value. colors.css records that --signal-caution (#9a6a1f) measures 4.27:1
-     as text on white — under the 4.5:1 AA floor — and mandates
-     --signal-caution-text (#7b5519) wherever caution carries TEXT. nova uses a
-     single --warning for both `text-warning` and `bg-warning`, so it cannot
-     distinguish the two; it therefore takes the text-safe value, which is also
-     perfectly good as a fill. Borders, washes and icons that want the brand
-     ochre keep reading --signal-caution directly and are unaffected. */
-  --warning: var(--signal-caution-text);
-  --warning-foreground: var(--paper-050);
+     value. The brand ochre --signal-caution (#9a6a1f) is marginal as small text
+     — 4.71:1 on white and 4.44:1 on Quincy's own warm paper canvas, i.e. already
+     under the 4.5:1 AA floor where it actually sits — which is why colors.css
+     mandates --signal-caution-text (#7b5519, 6.27:1 on warm paper) wherever
+     caution carries TEXT.
 
+     nova uses ONE --warning for both `text-warning` and `bg-warning`, so no
+     single mapping is lossless. It takes the text-safe value, because an
+     illegible label is a worse failure than a marginally darker fill.
+
+     The rule that follows, for every later slice: use `text-warning` for caution
+     text, but when reproducing an EXISTING ochre fill or wash, keep reading
+     --signal-caution directly rather than reaching for `bg-warning`. */
+  --warning: var(--signal-caution-text);
+  --warning-foreground: var(--signal-caution-text);
+
+  /* invert and focus keep the LIGHT foreground: unlike success/info/warning,
+     the badge's solid `invert` and `focus` variants do read `-foreground`
+     (`bg-invert text-invert-foreground`), over an ink fill. Their `-light`
+     wash variants are correspondingly weak — `focus-light` especially, being
+     paper-on-10%-ink. Same tradeoff as destructive, recorded for #57. */
   --invert: var(--bg-inverse);
   --invert-foreground: var(--text-on-inverse);
+
+  /* nova's "focus" role is an emphasis colour (badge/alert `focus` and `focus-light`
+     variants), NOT the focus ring — Quincy's ring stays --focus-ring in tokens/base.css.
+     Found by installing @reui/badge and reading its variants: it uses `bg-focus` and
+     `text-focus-foreground`, which resolved to nothing. The phantom-token guard did not
+     catch it, because that guard scans authored CSS and this arrived as a TSX class. */
+  --focus: var(--accent);
+  --focus-foreground: var(--accent-on);
 
   /* ---- Charts --------------------------------------------------------
      Not five hues invented for a monochrome brand: nova's own ramp is already
      greyscale (oklch chroma 0), so Quincy's greige ramp is a like-for-like
-     substitution that keeps ordinal reading order light -> dark. */
+     substitution that keeps ordinal reading order light -> dark.
+
+     This is an ORDINAL ramp, and a brand-aligned placeholder rather than a
+     finished categorical palette: chart-1 and chart-2 measure only 1.58:1 and
+     2.17:1 against warm paper, and adjacent steps sit close together. Fine for
+     sequential data. The first slice to ship a CATEGORICAL chart must add
+     labels, boundaries or patterns rather than relying on hue alone, and should
+     revisit this mapping then. */
   --chart-1: var(--greige-200);
   --chart-2: var(--greige-300);
   --chart-3: var(--greige-400);
@@ -102,6 +156,8 @@
   --color-warning-foreground: var(--warning-foreground);
   --color-invert: var(--invert);
   --color-invert-foreground: var(--invert-foreground);
+  --color-focus: var(--focus);
+  --color-focus-foreground: var(--focus-foreground);
   --color-chart-1: var(--chart-1);
   --color-chart-2: var(--chart-2);
   --color-chart-3: var(--chart-3);

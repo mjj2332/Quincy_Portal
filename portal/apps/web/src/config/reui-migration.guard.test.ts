@@ -103,14 +103,91 @@ function sourceFiles(): string[] {
 // Import extraction and resolution — relative and `@/`-alias imports only, static forms only.
 // ---------------------------------------------------------------------------
 
-/**
- * Matches `import ... from "x"`, `export ... from "x"`, and bare `import "x"` side-effect
- * imports. Deliberately does not match `import(...)` — dynamic imports are out of scope.
- */
-const IMPORT_SPECIFIER_RE = /(?:import|export)\s+(?:[^'";]*?\s+from\s+)?["']([^"']+)["']/g;
+interface ImportEdge {
+  specifier: string;
+  /**
+   * True for `import type {...}` and for a clause whose named bindings are ALL `type`-only.
+   * Such an edge disappears at runtime, so it cannot make a screen impure — but it still
+   * pins the module at compile time, so it DOES count as an importer for the orphan guard.
+   */
+  typeOnly: boolean;
+}
 
-function importSpecifiers(text: string): string[] {
-  return [...text.matchAll(IMPORT_SPECIFIER_RE)].map((match) => match[1]).filter((spec): spec is string => Boolean(spec));
+/**
+ * Blanks out comment bodies, preserving offsets and newlines, without touching string or
+ * template literals (a `//` inside a URL string must survive). Deliberately hand-rolled: the
+ * installed `typescript` package is the native port, which ships a binary and no JS compiler
+ * API, and pulling in a parser dependency to serve one guard is not a trade worth making.
+ */
+function stripComments(source: string): string {
+  let out = "";
+  let state: "code" | "line" | "block" | "'" | '"' | "`" = "code";
+  for (let i = 0; i < source.length; i += 1) {
+    const char = source[i] as string;
+    const next = source[i + 1];
+    if (state === "code") {
+      if (char === "/" && next === "/") { state = "line"; out += "  "; i += 1; continue; }
+      if (char === "/" && next === "*") { state = "block"; out += "  "; i += 1; continue; }
+      if (char === "'" || char === '"' || char === "`") state = char;
+      out += char;
+      continue;
+    }
+    if (state === "line") {
+      if (char === "\n") { state = "code"; out += char; } else out += " ";
+      continue;
+    }
+    if (state === "block") {
+      if (char === "*" && next === "/") { state = "code"; out += "  "; i += 1; } else out += char === "\n" ? char : " ";
+      continue;
+    }
+    // Inside a string/template: copy verbatim, honour escapes, close on the matching quote.
+    out += char;
+    if (char === "\\") { const escaped = source[i + 1]; if (escaped !== undefined) { out += escaped; i += 1; } continue; }
+    if (char === state) state = "code";
+  }
+  return out;
+}
+
+/**
+ * Extracts import edges from comment-stripped source.
+ *
+ * The earlier version regexed raw source. It counted commented-out imports, could not see
+ * `import{X}from"y"` without spaces, treated `import type` as a runtime edge, and — worst —
+ * ignored dynamic `import()` entirely. That last one was not hypothetical: Dashboard.tsx
+ * lazy-loads ProductionCalendar, which imports ui/button, so Dashboard could have passed the
+ * purity guard while rendering legacy UI through its calendar view. Every one of those cases
+ * is pinned by a test in this file.
+ */
+function importEdges(_file: string, text: string): ImportEdge[] {
+  const source = stripComments(text);
+  const edges: ImportEdge[] = [];
+
+  // `import <clause> from "spec"` — clause cannot cross a `;` or another `from`.
+  for (const match of source.matchAll(/\bimport\s*((?:(?!\bfrom\b)[^;])*?)\bfrom\s*["']([^"']+)["']/g)) {
+    const clause = (match[1] ?? "").trim();
+    const named = /^\{([\s\S]*)\}$/.exec(clause)?.[1];
+    const allNamedAreTypeOnly =
+      named !== undefined &&
+      named.trim().length > 0 &&
+      named.split(",").every((part) => part.trim().length === 0 || /^type\s+/.test(part.trim()));
+    edges.push({
+      specifier: match[2] as string,
+      typeOnly: /^type\b/.test(clause) || allNamedAreTypeOnly,
+    });
+  }
+  // `export ... from "spec"` (re-export).
+  for (const match of source.matchAll(/\bexport\s*((?:(?!\bfrom\b)[^;])*?)\bfrom\s*["']([^"']+)["']/g)) {
+    edges.push({ specifier: match[2] as string, typeOnly: /^type\b/.test((match[1] ?? "").trim()) });
+  }
+  // Dynamic `import("spec")`. A non-literal argument is unresolvable and skipped.
+  for (const match of source.matchAll(/\bimport\s*\(\s*["']([^"']+)["']/g)) {
+    edges.push({ specifier: match[1] as string, typeOnly: false });
+  }
+  // Side-effect `import "spec"` — no clause, no parenthesis.
+  for (const match of source.matchAll(/\bimport\s*["']([^"']+)["']/g)) {
+    edges.push({ specifier: match[1] as string, typeOnly: false });
+  }
+  return edges;
 }
 
 /**
@@ -130,11 +207,19 @@ function resolveSpecifier(fromFile: string, specifier: string): string | undefin
   return undefined;
 }
 
-function localImportsOf(file: string): string[] {
+/**
+ * Local import targets of `file`, resolved to absolute paths.
+ *
+ * `runtimeOnly` drops type-only edges. Screen purity uses it (a type-only import renders
+ * nothing, so it cannot make a screen visually mixed); the orphan guard does not (deleting a
+ * primitive that something imports a type from still breaks the build).
+ */
+function localImportsOf(file: string, runtimeOnly: boolean): string[] {
   const text = readFileSync(file, "utf8");
   const resolved = new Set<string>();
-  for (const specifier of importSpecifiers(text)) {
-    const target = resolveSpecifier(file, specifier);
+  for (const edge of importEdges(file, text)) {
+    if (runtimeOnly && edge.typeOnly) continue;
+    const target = resolveSpecifier(file, edge.specifier);
     if (target) resolved.add(target);
   }
   return [...resolved];
@@ -246,18 +331,21 @@ const ORPHAN_PRIMITIVE_BASELINE: Record<string, string> = {};
 // Real-world scan setup, shared by both guards below.
 // ---------------------------------------------------------------------------
 
-const ROOT_NAMES = [
-  "main.tsx",
-  "App.tsx",
-  "screens/Admin.tsx",
-  "screens/CreateProject.tsx",
-  "screens/Dashboard.tsx",
-  "screens/EditProject.tsx",
-  "screens/NotificationPreferences.tsx",
-  "screens/ProjectWorkspace.tsx",
-  "screens/SignIn.tsx",
-];
-const ROOTS = ROOT_NAMES.map((name) => join(srcDir, name));
+/**
+ * Roots are DISCOVERED, never listed. A hardcoded list silently omits the next screen someone
+ * adds, and an omitted screen is one the purity guard never checks — the exact failure this
+ * guard exists to prevent, reintroduced by maintenance drift.
+ */
+function roots(): string[] {
+  const screensDir = join(srcDir, "screens");
+  const screens = existsSync(screensDir)
+    ? readdirSync(screensDir, { withFileTypes: true })
+        .filter((entry) => entry.isFile() && /\.tsx$/.test(entry.name) && !isTestFile(entry.name))
+        .map((entry) => join(screensDir, entry.name))
+    : [];
+  const shells = ["main.tsx", "App.tsx"].map((name) => join(srcDir, name)).filter((path) => existsSync(path));
+  return [...shells, ...screens].sort();
+}
 
 // `rel()` returns POSIX-style separators on this platform; normalize defensively so the regexes
 // below never depend on OS.
@@ -281,8 +369,9 @@ function legacyPrimitives(): string[] {
 
 describe("guard: a migrated screen root does not also carry a legacy primitive", () => {
   const scan = () => {
-    const graph: ImportGraph = new Map(sourceFiles().map((file) => [file, localImportsOf(file)]));
-    return findImpureRoots(graph, ROOTS, isReuiModule, isLegacyPrimitive);
+    // Runtime edges only — a type-only import renders nothing and cannot mix two design systems.
+    const graph: ImportGraph = new Map(sourceFiles().map((file) => [file, localImportsOf(file, true)]));
+    return findImpureRoots(graph, roots(), isReuiModule, isLegacyPrimitive);
   };
 
   it("has no impure roots beyond the recorded baseline", () => {
@@ -338,16 +427,66 @@ describe("guard A self-test: the impure-root detector actually fires on a synthe
   });
 });
 
+describe("the import parser itself — exercised directly, because the graph tests above inject their own", () => {
+  const parse = (source: string, runtimeOnly: boolean) =>
+    importEdges("probe.tsx", source)
+      .filter((edge) => !(runtimeOnly && edge.typeOnly))
+      .map((edge) => edge.specifier)
+      .sort();
+
+  it("sees a dynamic import(), the miss that let a lazy-loaded screen hide legacy UI", () => {
+    // Dashboard.tsx's real shape: lazy(() => import("../components/ProductionCalendar")).
+    expect(parse(`const C = lazy(() => import("./ProductionCalendar"));`, true)).toEqual(["./ProductionCalendar"]);
+  });
+
+  it("ignores a commented-out import", () => {
+    expect(parse(`// import { Button } from "./ui/button";\nconst x = 1;`, true)).toEqual([]);
+    expect(parse(`/* import { Button } from "./ui/button"; */\nconst x = 1;`, true)).toEqual([]);
+  });
+
+  it("sees compact syntax with no spaces", () => {
+    expect(parse(`import{Button}from"./ui/button";`, true)).toEqual(["./ui/button"]);
+  });
+
+  it("treats `import type` as type-only, and a value import as runtime", () => {
+    expect(parse(`import type { Props } from "./ui/button";`, true)).toEqual([]);
+    expect(parse(`import type { Props } from "./ui/button";`, false)).toEqual(["./ui/button"]);
+    expect(parse(`import { Button } from "./ui/button";`, true)).toEqual(["./ui/button"]);
+  });
+
+  it("treats an all-inline-type named clause as type-only, but a mixed one as runtime", () => {
+    expect(parse(`import { type Props } from "./ui/button";`, true)).toEqual([]);
+    expect(parse(`import { Button, type Props } from "./ui/button";`, true)).toEqual(["./ui/button"]);
+  });
+
+  it("sees side-effect and re-export forms", () => {
+    expect(parse(`import "./styles.css";`, true)).toEqual(["./styles.css"]);
+    expect(parse(`export { Button } from "./ui/button";`, true)).toEqual(["./ui/button"]);
+  });
+});
+
+describe("root discovery", () => {
+  it("finds every non-test screen plus the two shells, with nothing hardcoded", () => {
+    const found = roots().map((path) => toPosix(rel(path)));
+    expect(found).toContain("App.tsx");
+    expect(found).toContain("main.tsx");
+    expect(found.filter((path) => path.startsWith("screens/")).length).toBeGreaterThan(0);
+    expect(found.every((path) => !isTestFile(path))).toBe(true);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Guard B — real scan
 // ---------------------------------------------------------------------------
 
 describe("guard: no legacy primitive has zero non-test importers", () => {
   const scan = () => {
+    // Type-only edges DO count here: deleting a primitive something imports a type from
+    // still breaks the build, so it is not orphaned.
     const files: FileNode[] = allFiles().map((file) => ({
       path: file,
       isTest: isTestFile(file),
-      imports: localImportsOf(file),
+      imports: localImportsOf(file, false),
     }));
     return findOrphanPrimitives(files, legacyPrimitives());
   };

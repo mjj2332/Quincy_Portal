@@ -76,6 +76,35 @@ describe("guard: if the @reui registry entry exists, its url is exactly the prox
   });
 });
 
+describe("guard: styles/index.css stays an import manifest, so a CLI install cannot inject a palette", () => {
+  it("contains only @layer and @import statements", () => {
+    const indexCss = join(fileURLToPath(new URL(".", import.meta.url)), "..", "styles", "index.css");
+    const offending = readFileSync(indexCss, "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split("\n")
+      .map((line, index) => ({ line: line.trim(), number: index + 1 }))
+      .filter(({ line }) => line.length > 0)
+      .filter(({ line }) => !/^@(layer|import)\b/.test(line));
+
+    expect(
+      offending.map(({ line, number }) => `${number}: ${line}`),
+      [
+        "styles/index.css must contain nothing but @layer and @import.",
+        "",
+        "`shadcn add` merges each registry item's cssVars and css blocks into the file named by",
+        "`tailwind.css` in components.json — which is this file. Installing @reui/badge appended a",
+        "`:root` block redefining --success/--info/--warning/--invert to ReUI's emerald, violet and",
+        "yellow defaults. Because it landed AFTER the @import of tokens/reui.css at equal specificity,",
+        "it silently overrode the entire Quincy token bridge: the brand would have shipped as a ReUI",
+        "demo. That is not hypothetical — it is what happened, and this guard is the result.",
+        "",
+        "If this fires after an install: move the injected declarations into tokens/reui.css (mapping",
+        "them onto Quincy tokens), and leave this file a manifest. Do not silence the guard.",
+      ].join("\n"),
+    ).toEqual([]);
+  });
+});
+
 describe("guard: no ReUI license key is ever inlined in components.json", () => {
   it("keeps the Authorization header as an unexpanded env placeholder, and leaks no raw key", () => {
     const registries = parsed().registries as Record<string, unknown> | undefined;
