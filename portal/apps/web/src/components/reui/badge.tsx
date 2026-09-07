@@ -4,9 +4,18 @@ import { cva, type VariantProps } from "class-variance-authority"
 
 import { cn } from "@/lib/utils"
 
+// Two corrections, marked inline below. Tones are deliberately NOT touched here — Stage B maps
+// Quincy's tones onto (or past) nova's semantic variants; see `tokens/reui.css`'s header for why
+// `destructive-light` and the `[data-surface="inverse"]` roles are not safe to reconcile yet.
 const badgeVariants = cva(
   [
-    "relative inline-flex shrink-0 items-center justify-center w-fit border border-transparent font-medium whitespace-nowrap outline-none transition-shadow",
+    // Correction 1: nova's `font-medium` is replaced by Quincy's small-caps badge typography,
+    // ported from `ui/status-pill.tsx`'s PILL_BASE — the closest existing Quincy analogue to a
+    // badge. Same shorthand-vs-utility conflict as the other primitives corrected in this slice,
+    // which is also why every SIZE variant below has its own text-*/leading-* utilities removed:
+    // left in place, they would compete with this base font-size on Tailwind's generated rule
+    // order rather than source order.
+    "relative inline-flex shrink-0 items-center justify-center w-fit border border-transparent [font:var(--weight-regular)_var(--text-2xs)/1.2_var(--font-sans)] uppercase tracking-[var(--tracking-wide)] whitespace-nowrap outline-none transition-shadow",
     "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-50",
     "[&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*=size-])]:size-3",
   ],
@@ -51,12 +60,15 @@ const badgeVariants = cva(
         "focus-outline":
           "bg-background border-border text-focus-foreground dark:bg-input/30",
       },
+      // Correction 2: every size's text-*/leading-* utility is dropped — see the base comment
+      // above. All five sizes now share the same base type size; they differ only in box
+      // dimensions (padding/height/min-width/gap).
       size: {
-        xs: "px-1 py-0.25 text-[0.6rem] leading-none h-4 min-w-4 gap-1",
-        sm: "px-1 py-0.25 text-[0.625rem] leading-none h-4.5 min-w-4.5 gap-1",
-        default: "px-1.25 py-0.5 text-xs h-5 min-w-5 gap-1",
-        lg: "px-1.5 py-0.5 text-xs h-5.5 min-w-5.5 gap-1",
-        xl: "px-2 py-0.75 text-sm h-6 min-w-6 gap-1.5",
+        xs: "px-1 py-0.25 h-4 min-w-4 gap-1",
+        sm: "px-1 py-0.25 h-4.5 min-w-4.5 gap-1",
+        default: "px-1.25 py-0.5 h-5 min-w-5 gap-1",
+        lg: "px-1.5 py-0.5 h-5.5 min-w-5.5 gap-1",
+        xl: "px-2 py-0.75 h-6 min-w-6 gap-1.5",
       },
       /** `default`: active style radius. `full`: pill radius. */
       radius: {

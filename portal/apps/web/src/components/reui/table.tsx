@@ -1,15 +1,30 @@
 import * as React from "react"
 import { cn } from "@/lib/utils"
 
-function Table({ className, ...props }: React.ComponentProps<"table">) {
+// Two corrections, marked inline below.
+function Table({
+  className,
+  containerClassName,
+  ...props
+}: React.ComponentProps<"table"> & { containerClassName?: string }) {
   return (
     <div
       data-slot="table-container"
-      className="relative w-full overflow-x-auto"
+      // Correction: nova hardcoded this wrapper div with no escape hatch. `containerClassName`
+      // is a deliberate vendor addition — Stage B needs `min-[721px]:overflow-x-auto` plus a
+      // hairline border and card background at >=721px only (Quincy's TableWrap), which is not
+      // reachable through nova's `className` prop because that only reaches the <table> itself.
+      className={cn("relative w-full overflow-x-auto", containerClassName)}
     >
       <table
         data-slot="table"
-        className={cn("w-full caption-bottom text-sm", className)}
+        className={cn(
+          // Correction: nova's bare `text-sm` is replaced by Quincy's table-cell typography,
+          // ported from `ui/table.tsx`'s TableCell — same shorthand-vs-utility conflict as
+          // button.tsx and field.tsx above.
+          "w-full caption-bottom [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)]",
+          className
+        )}
         {...props}
       />
     </div>
