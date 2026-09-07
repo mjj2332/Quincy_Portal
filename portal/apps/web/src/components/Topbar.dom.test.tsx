@@ -57,7 +57,7 @@ describe("Topbar notifications", () => {
     await click(host.querySelector<HTMLButtonElement>('[aria-label="Open account and navigation menu"]')!);
     // The menu popup is portaled to `document.body` (a sibling of `host`), not `host`'s own
     // subtree — Base UI's `Menu.Portal`, like `FloatingPortal`, portals by default.
-    expect(document.querySelector<HTMLAnchorElement>('.topbar__mobile-menu a[href="/settings/notifications"]')).not.toBeNull();
+    expect(document.querySelector<HTMLAnchorElement>('[role="menu"][aria-label="Account and navigation menu"] a[href="/settings/notifications"]')).not.toBeNull();
   });
 
   it("polls on a configurable interval and supports open, focus, escape, outside click, and read", async () => {
@@ -67,13 +67,13 @@ describe("Topbar notifications", () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
     expect(apiGetMock).toHaveBeenCalledTimes(2);
 
-    const trigger = host.querySelector<HTMLButtonElement>(".topbar__notification-trigger")!;
+    const trigger = host.querySelector<HTMLButtonElement>('[data-testid="topbar-notification-trigger"]')!;
     await click(trigger);
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
     // `.topbar__notification-item`, not the bare `[role="menuitem"]` — "Mark all read" is also a
     // real `role="menuitem"` now (Menu.Item, ahead of it in DOM order), which is itself a fix:
     // the old markup left it an untagged `<button>` inside a `role="menu"` container.
-    const item = document.querySelector<HTMLButtonElement>('.topbar__notification-item')!;
+    const item = document.querySelector<HTMLButtonElement>('[data-testid="topbar-notification-item"]')!;
     expect(document.querySelector('[role="menu"]')).not.toBeNull();
     // A mouse/click-initiated open does not move real DOM focus onto an item (Base UI leaves
     // focus on the trigger, avoiding a focus-visible flash for a pointer user); only a
@@ -102,12 +102,12 @@ describe("Topbar notifications", () => {
     apiDeleteMock.mockImplementation(() => new Promise((resolve) => { resolveDelete = resolve; }));
     const host = document.body.firstElementChild as HTMLElement;
     await render(host);
-    await click(host.querySelector<HTMLButtonElement>(".topbar__notification-trigger")!);
+    await click(host.querySelector<HTMLButtonElement>('[data-testid="topbar-notification-trigger"]')!);
     await click(document.querySelector<HTMLButtonElement>('[aria-label="Dismiss notification: RAW ready for review"]')!);
     expect(document.querySelector('[aria-label="Dismiss notification: RAW ready for review"]')).toBeNull();
-    expect(document.querySelector(".topbar__notification-empty")).not.toBeNull();
-    expect(host.querySelector(".topbar__notification-badge")).toBeNull();
-    expect(host.querySelector<HTMLButtonElement>(".topbar__notification-trigger")!.getAttribute("aria-label")).toBe("Notifications");
+    expect(document.querySelector('[data-testid="topbar-notifications-empty"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="topbar-notification-badge"]')).toBeNull();
+    expect(host.querySelector<HTMLButtonElement>('[data-testid="topbar-notification-trigger"]')!.getAttribute("aria-label")).toBe("Notifications");
     expect(apiDeleteMock).toHaveBeenCalledWith("/api/notifications/n-1");
     expect(apiPostMock).not.toHaveBeenCalled();
     resolveDelete?.({ ok: true });
@@ -120,11 +120,11 @@ describe("Topbar notifications", () => {
     ], unreadCount: 1 });
     const host = document.body.firstElementChild as HTMLElement;
     await render(host);
-    await click(host.querySelector<HTMLButtonElement>(".topbar__notification-trigger")!);
+    await click(host.querySelector<HTMLButtonElement>('[data-testid="topbar-notification-trigger"]')!);
     await click(document.querySelector<HTMLButtonElement>('[aria-label="Dismiss notification: Read notification"]')!);
     expect(document.querySelector('[aria-label="Dismiss notification: Unread notification"]')).not.toBeNull();
-    expect(host.querySelector(".topbar__notification-badge")?.textContent).toBe("1");
-    expect(host.querySelector<HTMLButtonElement>(".topbar__notification-trigger")!.getAttribute("aria-label")).toBe("1 unread notifications");
+    expect(host.querySelector('[data-testid="topbar-notification-badge"]')?.textContent).toBe("1");
+    expect(host.querySelector<HTMLButtonElement>('[data-testid="topbar-notification-trigger"]')!.getAttribute("aria-label")).toBe("1 unread notifications");
   });
 
   it("hands focus to the next dismiss button, then the open menu when it becomes empty — synchronously", async () => {
@@ -134,7 +134,7 @@ describe("Topbar notifications", () => {
     ], unreadCount: 2 });
     const host = document.body.firstElementChild as HTMLElement;
     await render(host);
-    await click(host.querySelector<HTMLButtonElement>(".topbar__notification-trigger")!);
+    await click(host.querySelector<HTMLButtonElement>('[data-testid="topbar-notification-trigger"]')!);
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
     await click(document.querySelector<HTMLButtonElement>('[aria-label="Dismiss notification: First notification"]')!);
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
@@ -148,7 +148,7 @@ describe("Topbar notifications", () => {
     const menu = document.querySelector<HTMLElement>('[role="menu"]')!;
     expect(menu).not.toBeNull();
     expect(document.activeElement).toBe(menu);
-    expect(document.querySelector(".topbar__notification-empty")).not.toBeNull();
+    expect(document.querySelector('[data-testid="topbar-notifications-empty"]')).not.toBeNull();
   });
 
   it("hands focus to the previous dismiss button when the last row is dismissed", async () => {
@@ -158,7 +158,7 @@ describe("Topbar notifications", () => {
     ], unreadCount: 2 });
     const host = document.body.firstElementChild as HTMLElement;
     await render(host);
-    await click(host.querySelector<HTMLButtonElement>(".topbar__notification-trigger")!);
+    await click(host.querySelector<HTMLButtonElement>('[data-testid="topbar-notification-trigger"]')!);
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
     const firstDismiss = document.querySelector<HTMLButtonElement>('[data-notification-dismiss="n-1"]')!;
     // Dismiss the *last* remaining row (Second) — no next row exists, so focus must land on the
@@ -175,7 +175,7 @@ describe("Topbar notifications", () => {
     ], unreadCount: 2 });
     const host = document.body.firstElementChild as HTMLElement;
     await render(host);
-    await click(host.querySelector<HTMLButtonElement>(".topbar__notification-trigger")!);
+    await click(host.querySelector<HTMLButtonElement>('[data-testid="topbar-notification-trigger"]')!);
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
     // These items pass `nativeButton` explicitly (Base UI's own recommendation for a real
     // `<button>` render target, silencing its "expected a non-<button>" dev warning) — which
@@ -186,7 +186,8 @@ describe("Topbar notifications", () => {
     // assertion below dispatches the real key first, proving that gap directly, before falling
     // back to `.click()` — the browser's own substitute action for the same key, not a shortcut
     // around it. True native-keydown verification is real-browser-only (criterion 18).
-    const markAllRead = [...document.querySelectorAll("button")].find((button) => button.textContent === "Mark all read")!;
+    const markAllRead = document.querySelector<HTMLButtonElement>('[data-testid="topbar-mark-all-read"]')!;
+    expect(markAllRead.textContent).toBe("Mark all read");
     markAllRead.focus();
     await act(async () => { markAllRead.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })); await Promise.resolve(); await Promise.resolve(); });
     expect(apiPostMock, "a raw Enter keydown alone does not activate it in jsdom").not.toHaveBeenCalledWith("/api/notifications/read-all", {});
@@ -212,8 +213,8 @@ describe("Topbar notifications", () => {
     // Spy on the actual navigation primitive `locationStore().push()` calls (`lib/router.ts`) —
     // proof that no SPA navigation was attempted, not just that the event object looks right.
     const pushStateSpy = vi.spyOn(window.history, "pushState");
-    await click(host.querySelector<HTMLButtonElement>(".topbar__notification-trigger")!);
-    const link = () => document.querySelector<HTMLAnchorElement>("a.topbar__notification-item")!;
+    await click(host.querySelector<HTMLButtonElement>('[data-testid="topbar-notification-trigger"]')!);
+    const link = () => document.querySelector<HTMLAnchorElement>('[data-testid="topbar-notification-item"][data-notification-route="project"]')!;
 
     const ctrlClick = new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, ctrlKey: true });
     await act(async () => { link().dispatchEvent(ctrlClick); await Promise.resolve(); await Promise.resolve(); });
@@ -237,7 +238,7 @@ describe("Topbar notifications", () => {
     // simulation cannot: the handler that intercepts navigation and marks read never runs at all
     // for this event type, so no assertion here can pass by accident.
     apiPostMock.mockClear();
-    await click(host.querySelector<HTMLButtonElement>(".topbar__notification-trigger")!);
+    await click(host.querySelector<HTMLButtonElement>('[data-testid="topbar-notification-trigger"]')!);
     const auxClick = new MouseEvent("auxclick", { bubbles: true, cancelable: true, button: 1 });
     await act(async () => { link().dispatchEvent(auxClick); await Promise.resolve(); await Promise.resolve(); });
     expect(auxClick.defaultPrevented).toBe(false);
@@ -254,7 +255,7 @@ describe("Topbar notifications", () => {
     ], unreadCount: 2 });
     const host = document.body.firstElementChild as HTMLElement;
     await render(host);
-    const trigger = host.querySelector<HTMLButtonElement>(".topbar__notification-trigger")!;
+    const trigger = host.querySelector<HTMLButtonElement>('[data-testid="topbar-notification-trigger"]')!;
     trigger.focus();
     // Two ArrowDowns from the trigger: the first lands on "Mark all read" (the head, ahead of
     // the rows in DOM order per §8.1 item 1); the second lands on "First notification"'s own
@@ -263,7 +264,7 @@ describe("Topbar notifications", () => {
     const menu = document.querySelector<HTMLElement>('[role="menu"]')!;
     expect(menu).not.toBeNull();
     await act(async () => { menu.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true })); await Promise.resolve(); await Promise.resolve(); });
-    const firstItem = [...document.querySelectorAll<HTMLElement>(".topbar__notification-item")].find((el) => el.textContent?.includes("First notification"))!;
+    const firstItem = [...document.querySelectorAll<HTMLElement>('[data-testid="topbar-notification-item"]')].find((el) => el.textContent?.includes("First notification"))!;
     expect(firstItem.textContent).toContain("First notification");
     expect(firstItem.getAttribute("data-highlighted")).toBe("");
     // Real DOM focus, captured by reference — the strongest possible proof of identity, not
@@ -282,12 +283,12 @@ describe("Topbar notifications", () => {
     // Still open, still functional, and the new item is present (§8.1 item 4: "no bookkeeping
     // from us" — the primitive re-registers on render).
     expect(document.querySelector('[role="menu"]')).not.toBeNull();
-    expect(document.querySelectorAll(".topbar__notification-item")).toHaveLength(3);
+    expect(document.querySelectorAll('[data-testid="topbar-notification-item"]')).toHaveLength(3);
     expect(document.querySelector('[data-notification-dismiss="n-3"]')).not.toBeNull();
     // Identity, not just content, survives the array-index shift: React's `key={n.id}` keeps
     // "First notification" as the *same* DOM node, even though it moved from array index 0 to
     // index 1 — it was never torn down and rebuilt as "the item now at index 0".
-    const firstItemAfter = [...document.querySelectorAll<HTMLElement>(".topbar__notification-item")].find((el) => el.textContent?.includes("First notification"))!;
+    const firstItemAfter = [...document.querySelectorAll<HTMLElement>('[data-testid="topbar-notification-item"]')].find((el) => el.textContent?.includes("First notification"))!;
     expect(firstItemAfter.textContent).toContain("First notification");
     expect(firstItemAfter).toBe(firstItem);
     // Real, actual DOM focus — the accessibility-critical guarantee — stays on that same node
@@ -320,14 +321,14 @@ describe("Topbar notifications", () => {
       { id: "project-assigned", projectId, type: "assigned_to_project", title: "Assigned", body: null, readAt: null, createdAt: "2026-08-17T00:00:00.000Z" },
     ], unreadCount: 11 });
     const host = document.body.firstElementChild as HTMLElement;
-    await render(host); await click(host.querySelector<HTMLButtonElement>(".topbar__notification-trigger")!);
+    await render(host); await click(host.querySelector<HTMLButtonElement>('[data-testid="topbar-notification-trigger"]')!);
     const links = document.querySelectorAll<HTMLAnchorElement>(`a[href="/projects/${projectId}?collaboration=open"]`);
     expect(links).toHaveLength(3); expect([...links].map((link) => link.textContent)).toEqual(expect.arrayContaining([expect.stringContaining("You were mentioned"), expect.stringContaining("Subtask assigned"), expect.stringContaining("Due today")]));
     expect(document.querySelectorAll(`a[href="/projects/${projectId}"]`)).toHaveLength(7);
     const link = links[0]!;
     expect(link.getAttribute("role")).toBe("menuitem");
-    expect([...document.querySelectorAll("button.topbar__notification-item")].map((button) => button.textContent)).toEqual([expect.stringContaining("You were mentioned")]);
-    expect(document.querySelectorAll("button.topbar__notification-item")).toHaveLength(1);
+    expect([...document.querySelectorAll('[data-testid="topbar-notification-item"][data-notification-route="none"]')].map((button) => button.textContent)).toEqual([expect.stringContaining("You were mentioned")]);
+    expect(document.querySelectorAll('[data-testid="topbar-notification-item"][data-notification-route="none"]')).toHaveLength(1);
     await click(link);
     expect(apiPostMock).toHaveBeenCalledWith("/api/notifications/project-mention/read", {});
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
@@ -344,12 +345,12 @@ describe("Topbar mobile menu", () => {
     });
     await click(host.querySelector<HTMLButtonElement>('[aria-label="Open account and navigation menu"]')!);
 
-    const dashboard = document.querySelector<HTMLAnchorElement>('.topbar__mobile-menu a[href="/"]')!;
-    const admin = document.querySelector<HTMLAnchorElement>('.topbar__mobile-menu a[href="/admin"]')!;
+    const dashboard = document.querySelector<HTMLAnchorElement>('[role="menu"][aria-label="Account and navigation menu"] a[href="/"]')!;
+    const admin = document.querySelector<HTMLAnchorElement>('[role="menu"][aria-label="Account and navigation menu"] a[href="/admin"]')!;
     expect(dashboard.hasAttribute("data-active")).toBe(false);
     expect(admin.getAttribute("data-active")).toBe("");
 
-    const signOutButton = [...document.querySelectorAll("button")].find((button) => button.textContent === "Sign out")!;
+    const signOutButton = host.querySelector<HTMLButtonElement>('[data-testid="topbar-signout"]')!;
     await act(async () => { signOutButton.click(); await Promise.resolve(); await Promise.resolve(); });
     expect(signOutMock).toHaveBeenCalledOnce();
   });
@@ -359,7 +360,7 @@ describe("Topbar shell convergence (§9.3)", () => {
   it("gives the brand link a 44px phone touch target and no legacy button class", async () => {
     const host = document.body.firstElementChild as HTMLElement;
     await render(host);
-    const brand = host.querySelector<HTMLAnchorElement>(".topbar__brand")!;
+    const brand = host.querySelector<HTMLAnchorElement>('[aria-label="Quincy Portal home"]')!;
     expect(brand.classList.contains("max-[721px]:min-h-[44px]")).toBe(true);
     expect(brand.classList.contains("button--text")).toBe(false);
   });
@@ -368,7 +369,7 @@ describe("Topbar shell convergence (§9.3)", () => {
     const host = document.body.firstElementChild as HTMLElement;
     await render(host);
 
-    const identity = host.querySelector(".topbar__identity")!;
+    const identity = host.querySelector('[data-testid="topbar-identity"]')!;
     const avatar = host.querySelector('[data-slot="avatar"]')!;
     expect(identity.classList.contains("max-[1007px]:hidden")).toBe(true);
     expect(avatar.classList.contains("max-[1007px]:hidden")).toBe(true);
@@ -377,13 +378,13 @@ describe("Topbar shell convergence (§9.3)", () => {
     expect(identity.classList.contains("avatar")).toBe(false);
 
     const prefsLink = host.querySelector<HTMLAnchorElement>('a[href="/settings/notifications"]')!;
-    const signOutButton = [...host.querySelectorAll("button")].find((button) => button.textContent === "Sign out")!;
+    const signOutButton = host.querySelector<HTMLButtonElement>('[data-testid="topbar-signout"]')!;
     expect(prefsLink.classList.contains("max-[771px]:hidden")).toBe(true);
     expect(prefsLink.classList.contains("button--text")).toBe(false);
     expect(signOutButton.classList.contains("max-[771px]:hidden")).toBe(true);
     expect(signOutButton.classList.contains("button--text")).toBe(false);
 
-    const menuTrigger = host.querySelector(".topbar__menu-trigger")!;
+    const menuTrigger = host.querySelector('[aria-label="Open account and navigation menu"]')!;
     expect(menuTrigger.classList.contains("hidden")).toBe(true);
     expect(menuTrigger.classList.contains("max-[771px]:inline-flex")).toBe(true);
     expect(menuTrigger.classList.contains("min-h-[44px]")).toBe(true);
@@ -393,9 +394,9 @@ describe("Topbar shell convergence (§9.3)", () => {
   it("supplies the notification trigger icon size and wrapper positioning app.css no longer does", async () => {
     const host = document.body.firstElementChild as HTMLElement;
     await render(host);
-    const trigger = host.querySelector(".topbar__notification-trigger")!;
+    const trigger = host.querySelector('[data-testid="topbar-notification-trigger"]')!;
     expect(trigger.classList.contains("[&_svg]:size-[19px]")).toBe(true);
-    const wrapper = host.querySelector(".topbar__notifications")!;
+    const wrapper = host.querySelector('[data-testid="topbar-notifications"]')!;
     expect(wrapper.classList.contains("relative")).toBe(true);
   });
 
@@ -403,7 +404,7 @@ describe("Topbar shell convergence (§9.3)", () => {
     const host = document.body.firstElementChild as HTMLElement;
     await render(host);
     await click(host.querySelector<HTMLButtonElement>('[aria-label="Open account and navigation menu"]')!);
-    const panel = document.querySelector(".topbar__mobile-menu")!;
+    const panel = document.querySelector('[role="menu"][aria-label="Account and navigation menu"]')!;
     expect(panel).not.toBeNull();
     // Structural guard only (§9.3): happy-dom applies no stylesheet and computes no layout, so
     // this cannot prove the panel paints — that is §10.2 item 14's job. This proves the panel
@@ -432,15 +433,15 @@ describe("Topbar shell convergence (§9.3)", () => {
     const host = document.body.firstElementChild as HTMLElement;
     await render(host);
     await click(host.querySelector<HTMLButtonElement>('[aria-label="Open account and navigation menu"]')!);
-    expect(document.querySelector(".topbar__mobile-menu")).not.toBeNull();
+    expect(document.querySelector('[role="menu"][aria-label="Account and navigation menu"]')).not.toBeNull();
     expect(backdropEl()).not.toBeNull();
   });
 
   it("does not dim the page behind the notification menu", async () => {
     const host = document.body.firstElementChild as HTMLElement;
     await render(host);
-    await click(host.querySelector<HTMLButtonElement>('.topbar__notification-trigger')!);
-    expect(document.querySelector(".topbar__notification-menu")).not.toBeNull();
+    await click(host.querySelector<HTMLButtonElement>('[data-testid="topbar-notification-trigger"]')!);
+    expect(document.querySelector('[role="menu"][aria-label="Notifications"]')).not.toBeNull();
     expect(backdropEl()).toBeNull();
   });
 });

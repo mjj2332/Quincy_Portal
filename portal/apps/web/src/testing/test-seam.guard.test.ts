@@ -12,8 +12,9 @@
  * a failure. Guard E tests the matchers against fixtures, so a later "simplification" of a regex
  * cannot quietly stop matching.
  *
- * Baselines shrink, never grow. Guard A's reaches {} when #50 lands; Guard B's is already {} and
- * must stay there. Guard C's does NOT reach {} — see its own note.
+ * Baselines shrink, never grow. Guard B's and Guard C's are {} and must stay there. Guard A's does
+ * NOT reach {}: #50 emptied it down to the two `<DragOverlay>` sites, which cannot carry an
+ * identifier at all — see the note on the baseline itself.
  *
  * This file is `.test.ts`, so it runs in the NODE suite (`vitest.config.ts`), not the happy-dom
  * one. It reads test sources as text; it renders nothing.
@@ -347,17 +348,6 @@ const CLASS_SELECTOR_BASELINE: Record<string, number> = {
   // `.kanban-overlay` is our own class on a vendor component, not Quincy markup a re-skin replaces,
   // so it is the only identifier that element can carry. Batch B, #50.
   "screens/Dashboard-stage-interactions.dom.test.tsx": 2,
-  "components/Topbar.dom.test.tsx": 35,
-  "screens/Admin.dom.test.tsx": 15,
-  "components/ProductionCalendar-phone.dom.test.tsx": 5,
-  "components/ProductionCalendar-unscheduled.dom.test.tsx": 4,
-  "components/ConfirmDialog.dom.test.tsx": 3,
-  "components/ProductionCalendar-reconciliation.dom.test.tsx": 2,
-  "components/ProductionCalendar.dom.test.tsx": 2,
-  "components/ProductionCalendarEvent.dom.test.tsx": 2,
-  "components/ImpersonationBanner.dom.test.tsx": 1,
-  "components/ProductionCalendar-checklist.dom.test.tsx": 1,
-  "components/ProductionCalendarUnscheduledPanel.dom.test.tsx": 1,
 };
 
 describe("guard A: no DOM test selects an element by a Quincy class name", () => {

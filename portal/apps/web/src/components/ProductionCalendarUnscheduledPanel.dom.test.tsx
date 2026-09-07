@@ -66,7 +66,7 @@ describe("ProductionCalendarUnscheduledPanel", () => {
     expect(host.querySelector('[aria-label="Unscheduled projects"]')?.textContent).toContain("Showing 0 of 2");
     expect(host.querySelector('[aria-label="Unscheduled projects"]')?.textContent).toContain("2 more — refine filters or search");
     expect(host.querySelector('[aria-label="Unscheduled checklist items"]')?.textContent).toContain("Showing 0 of 0");
-    expect(host.querySelectorAll(".qc-calendar-unscheduled__empty")).toHaveLength(2);
+    expect(host.querySelectorAll('[data-testid="calendar-unscheduled-empty"]')).toHaveLength(2);
     expect(host.textContent).toContain("Nothing unscheduled");
   });
 
@@ -105,11 +105,12 @@ describe("ProductionCalendarUnscheduledPanel", () => {
     await act(async () => { root.render(renderPanel({ rangesEnabled: false, checklistEntries: [checklistEntry()] })); await Promise.resolve(); });
     const inertChecklist = host.querySelector('[data-unscheduled-id="checklist:one"]')!;
     expect(inertChecklist.getAttribute("data-event")).toBeNull();
-    expect(inertChecklist.querySelector("button")?.textContent).toBe("Schedule");
+    expect(inertChecklist.querySelector('[data-testid="calendar-unscheduled-action"]')?.textContent).toBe("Schedule");
     expect(onScheduleChecklist).not.toHaveBeenCalled();
 
     await act(async () => { root.render(renderPanel({ disabled: true, projectEntries: [projectEntry()], checklistEntries: [checklistEntry()] })); await Promise.resolve(); });
     expect(host.querySelectorAll("[data-event]")).toHaveLength(0);
+    expect(host.querySelectorAll("button")).toHaveLength(2);
     expect([...host.querySelectorAll<HTMLButtonElement>("button")].every((button) => button.disabled)).toBe(true);
   });
 });

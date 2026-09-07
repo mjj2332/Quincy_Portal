@@ -44,7 +44,7 @@ describe("ProductionCalendarSurface", () => {
     });
 
     expect(PRODUCTION_CALENDAR_PLUGINS).toHaveLength(4);
-    expect(host.querySelector(".production-calendar")).not.toBeNull();
+    expect(host.querySelector('[data-testid="production-calendar-surface"]')).not.toBeNull();
     expect(host.querySelector('[role="grid"]')).not.toBeNull();
     expect(host.querySelector('[aria-label="April 2026"]')).not.toBeNull();
   });
@@ -69,7 +69,7 @@ describe("ProductionCalendarSurface", () => {
       root.render(<ProductionCalendarSurface initialDate="2026-04-05" initialView="dayGridMonth" headerToolbar={false} height={420} reducedMotion events={[]} />);
       await Promise.resolve();
     });
-    expect(host.querySelector<HTMLElement>(".production-calendar")?.dataset.reducedMotion).toBe("true");
+    expect(host.querySelector<HTMLElement>('[data-testid="production-calendar-surface"]')?.dataset.reducedMotion).toBe("true");
     expect(SUPPRESS_FULLCALENDAR_DROP_ANNOUNCEMENT).toBe(false);
   });
 });

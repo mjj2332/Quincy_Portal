@@ -112,8 +112,8 @@ describe("ProductionCalendar reconciliation", () => {
     expect(lastSurfaceProps.value.editable).toBe(false);
     expect(lastSurfaceProps.value.droppable).toBe(false);
     expect(acceptGateStates.at(-1)).toBe(false);
-    expect(host.querySelector(".qc-cal-toolbar button")?.textContent).toBe("Prev");
-    await act(async () => { (host.querySelector(".qc-cal-toolbar button") as HTMLButtonElement).click(); await Promise.resolve(); });
+    expect(host.querySelector('[aria-label="Previous period"]')?.textContent).toBe("Prev");
+    await act(async () => { (host.querySelector('[aria-label="Previous period"]') as HTMLButtonElement).click(); await Promise.resolve(); });
     expect(onNavigate).toHaveBeenCalled();
     expect(settleStates.some((state) => state.pending && state.recoveryReason === null)).toBe(true);
 

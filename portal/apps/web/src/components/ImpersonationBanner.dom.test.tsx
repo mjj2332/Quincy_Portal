@@ -34,7 +34,7 @@ describe("ImpersonationBanner", () => {
     stopImpersonatingMock.mockImplementation(() => new Promise<void>((resolve) => { resolveExit = resolve; }));
     await act(async () => { root!.render(<ImpersonationBanner user={{ name: "Editor Example", role: "editor" }} invalidated={false} />); });
     expect(host.textContent).toContain("Acting as Editor Example (Editor) · Exit");
-    const button = host.querySelector<HTMLButtonElement>("button")!;
+    const button = host.querySelector<HTMLButtonElement>('[data-testid="impersonation-exit"]')!;
     await act(async () => { button.click(); });
     expect(button.disabled).toBe(true);
     resolveExit();
@@ -48,19 +48,19 @@ describe("ImpersonationBanner", () => {
     stopImpersonatingMock.mockRejectedValueOnce(new Error("flag is off"));
     await act(async () => { root!.render(<ImpersonationBanner user={{ name: "Photographer Example", role: "photographer" }} invalidated={true} />); });
     expect(host.querySelector("[data-invalidated='true']")).not.toBeNull();
-    const button = host.querySelector<HTMLButtonElement>("button")!;
+    const button = host.querySelector<HTMLButtonElement>('[data-testid="impersonation-exit"]')!;
     await act(async () => { button.click(); await Promise.resolve(); });
     const alert = host.querySelector<HTMLElement>('[role="alert"]')!;
     expect(alert.textContent).toBe("Could not automatically exit. Sign out completely and sign back in as Admin to restore your session.");
     expect(alert.title).toBe(alert.textContent);
-    expect(alert.parentElement).toBe(host.querySelector(".impersonation-banner"));
+    expect(alert.parentElement).toBe(host.querySelector('[aria-label="Impersonation status"]'));
     expect(button.disabled).toBe(false);
     expect(refetchMock).not.toHaveBeenCalled();
   });
 
   it("keeps Exit off the legacy scoped-override class and on the inverted hover colour utility", async () => {
     await act(async () => { root!.render(<ImpersonationBanner user={{ name: "Editor Example", role: "editor" }} invalidated={false} />); });
-    const button = host.querySelector<HTMLButtonElement>("button")!;
+    const button = host.querySelector<HTMLButtonElement>('[data-testid="impersonation-exit"]')!;
     // Guards against a future "cleanup" reintroducing `.button--text`, whose
     // `:hover:not(:disabled)` (0,3,0) outranked the old scoped override (0,2,0) — see E-11/E-12.
     expect(button.classList.contains("button--text")).toBe(false);

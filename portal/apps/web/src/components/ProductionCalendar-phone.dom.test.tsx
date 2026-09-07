@@ -140,8 +140,8 @@ describe("ProductionCalendar phone Week action-only mode", () => {
     checklistMutationId = "checklist:unscheduled";
     await render();
     expect(host.querySelectorAll("[data-unscheduled-id][data-event]")).toHaveLength(0);
-    const checklistAction = [...host.querySelectorAll<HTMLButtonElement>(".qc-calendar-unscheduled__action")].find((button) => button.textContent === "Schedule");
-    const projectAction = [...host.querySelectorAll<HTMLButtonElement>(".qc-calendar-unscheduled__action")].find((button) => button.textContent === "Schedule Deadline");
+    const checklistAction = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="calendar-unscheduled-action"]')].find((button) => button.textContent === "Schedule");
+    const projectAction = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="calendar-unscheduled-action"]')].find((button) => button.textContent === "Schedule Deadline");
     expect(checklistAction).not.toBeNull();
     expect(projectAction).not.toBeNull();
     expect(checklistAction?.disabled).toBe(false);
@@ -152,10 +152,10 @@ describe("ProductionCalendar phone Week action-only mode", () => {
     // Interaction is now blocked: the action buttons disable, but an eligible
     // entry keeps its "Schedule Deadline" action — it never demotes to the
     // "Deadline is read-only" row.
-    expect(host.querySelector<HTMLButtonElement>('[data-unscheduled-id="checklist:unscheduled"] .qc-calendar-unscheduled__action')?.disabled).toBe(true);
-    expect(host.querySelector('[data-unscheduled-id="project:unscheduled"].is-disabled')).toBeNull();
+    expect(host.querySelector<HTMLButtonElement>('[data-unscheduled-id="checklist:unscheduled"] [data-testid="calendar-unscheduled-action"]')?.disabled).toBe(true);
+    expect(host.querySelector('[data-unscheduled-id="project:unscheduled"][data-testid="calendar-unscheduled-readonly-row"]')).toBeNull();
     expect(host.querySelector('[data-unscheduled-id="project:unscheduled"]')?.tagName).toBe("ARTICLE");
-    expect(host.querySelector<HTMLButtonElement>('[data-unscheduled-id="project:unscheduled"] .qc-calendar-unscheduled__action')?.disabled).toBe(true);
+    expect(host.querySelector<HTMLButtonElement>('[data-unscheduled-id="project:unscheduled"] [data-testid="calendar-unscheduled-action"]')?.disabled).toBe(true);
     await act(async () => { (document.querySelector('[data-testid="calendar-schedule-submit"]') as HTMLButtonElement).click(); await Promise.resolve(); });
     expect((fetch as ReturnType<typeof vi.fn>).mock.calls.some((call) => call[1]?.method === "PATCH")).toBe(true);
   });

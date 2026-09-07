@@ -82,20 +82,20 @@ async function blur(element: HTMLInputElement) {
 }
 
 async function openPipeline(host: HTMLElement) {
-  const pipelineTab = [...host.querySelectorAll<HTMLButtonElement>(".admin-tabs button")].find((button) => button.textContent === "Pipeline");
+  const pipelineTab = [...host.querySelectorAll<HTMLButtonElement>('[role="tablist"][aria-label="Administration sections"] [role="tab"]')].find((button) => button.textContent === "Pipeline");
   if (!pipelineTab) throw new Error("No Pipeline tab");
   await click(pipelineTab);
   await flush();
 }
 
 function stageRow(host: HTMLElement, key: string): HTMLElement {
-  const row = [...host.querySelectorAll<HTMLElement>(".admin-stage")].find((item) => item.textContent?.includes(key.replace(/_/g, " ")));
+  const row = [...host.querySelectorAll<HTMLElement>('[data-testid="admin-stage"]')].find((item) => item.textContent?.includes(key.replace(/_/g, " ")));
   if (!row) throw new Error(`No Stage row for ${key}`);
   return row;
 }
 
 function userRow(host: HTMLElement, name: string): HTMLTableRowElement {
-  const row = [...host.querySelectorAll<HTMLTableRowElement>(".admin-table tbody tr")]
+  const row = [...host.querySelectorAll<HTMLTableRowElement>('[data-testid="admin-user-row"]')]
     .find((item) => item.textContent?.includes(name));
   if (!row) throw new Error(`No user row for ${name}`);
   return row;
@@ -134,13 +134,13 @@ describe("Admin Pipeline configuration boundary", () => {
     await act(async () => { root!.render(<Admin />); await Promise.resolve(); });
     await openPipeline(host);
 
-    expect(host.querySelectorAll(".admin-stage")).toHaveLength(5);
-    expect([...host.querySelectorAll<HTMLElement>(".admin-stage__order")].map((element) => element.textContent)).toEqual(["1", "2", "3", "4", "5"]);
-    expect(host.querySelector(".admin-stage-list + button")).toBeNull();
-    expect(host.querySelectorAll(".admin-stage button")).toHaveLength(0);
+    expect(host.querySelectorAll('[data-testid="admin-stage"]')).toHaveLength(5);
+    expect([...host.querySelectorAll<HTMLElement>('[data-testid="admin-stage-order"]')].map((element) => element.textContent)).toEqual(["1", "2", "3", "4", "5"]);
+    expect([...host.querySelectorAll<HTMLButtonElement>("#admin-panel-pipeline button")].map((button) => button.textContent)).toEqual(["Refresh"]);
+    expect(host.querySelectorAll('[data-testid="admin-stage"] button')).toHaveLength(0);
     expect(host.textContent).not.toContain("Up");
     expect(host.textContent).not.toContain("Down");
-    expect(host.querySelector(".admin-section .admin-section__head button")?.textContent).toBe("Refresh");
+    expect(host.querySelector('[data-testid="admin-pipeline-refresh"]')?.textContent).toBe("Refresh");
     expect(apiGetMock.mock.calls.map(([path]) => path)).not.toEqual(expect.arrayContaining([expect.stringContaining("/move")]));
     expect(apiPostMock).not.toHaveBeenCalled();
   });
@@ -180,10 +180,10 @@ describe("Admin Pipeline configuration boundary", () => {
     });
     await act(async () => { root!.render(<Admin />); await Promise.resolve(); });
     await flush();
-    await click([...host.querySelectorAll<HTMLButtonElement>(".admin-table__action button")].find((button) => button.textContent === "Edit")!);
+    await click([...host.querySelectorAll<HTMLButtonElement>('[data-testid="admin-user-actions"] button')].find((button) => button.textContent === "Edit")!);
     const input = host.querySelector<HTMLInputElement>('input[aria-label="Name for Old Name"]')!;
     await typeInto(input, "New Name");
-    await click([...host.querySelectorAll<HTMLButtonElement>(".admin-table__action button")].find((button) => button.textContent === "Save")!);
+    await click([...host.querySelectorAll<HTMLButtonElement>('[data-testid="admin-user-actions"] button')].find((button) => button.textContent === "Save")!);
     await flush();
     expect(apiPatchMock).toHaveBeenCalledWith("/api/users/user-1", { name: "New Name" });
     expect(invalidateActiveProjectDetailsMock).toHaveBeenCalledTimes(1);
@@ -245,7 +245,7 @@ describe("Admin Pipeline configuration boundary", () => {
     impersonateUserMock.mockRejectedValueOnce(new Error("Impersonation unavailable"));
     await act(async () => { root!.render(<Admin currentUserId="self" />); await Promise.resolve(); });
     await flush();
-    await click(host.querySelector<HTMLButtonElement>('[class*="admin-table__action"] button:last-child')!);
+    await click([...host.querySelectorAll<HTMLButtonElement>('[data-testid="admin-user-actions"] button')].find((button) => button.textContent === "Act as")!);
     await flush();
     expect(host.textContent).toContain("Impersonation unavailable");
     expect(window.location.pathname).toBe("/");
@@ -286,7 +286,7 @@ describe("Admin notification delivery operations", () => {
   }
 
   async function openIntegrations() {
-    const tab = [...host.querySelectorAll<HTMLButtonElement>(".admin-tabs > button")].find((button) => button.textContent === "Integrations");
+    const tab = [...host.querySelectorAll<HTMLButtonElement>('[role="tablist"][aria-label="Administration sections"] [role="tab"]')].find((button) => button.textContent === "Integrations");
     if (!tab) throw new Error("No Integrations tab");
     await click(tab);
     await flush();
@@ -390,11 +390,11 @@ describe("Admin notification delivery operations", () => {
       if (path === "/api/admin/renditions-dlq") return Promise.resolve({ events: [], openCount: 0 });
       return Promise.resolve({ users: [] });
     });
-    const refresh = host.querySelector<HTMLButtonElement>('.admin-poison[aria-label="Notification delivery operations"] .admin-section__head button')!;
+    const refresh = host.querySelector<HTMLButtonElement>('[data-testid="admin-notification-delivery-refresh"]')!;
     await click(refresh);
     await flush(12);
     expect(host.textContent).toContain("Duplicate email possible");
-    const replay = [...host.querySelectorAll<HTMLButtonElement>('.admin-poison[aria-label="Notification delivery operations"] .admin-table__action button')].find((button) => button.textContent === "Replay")!;
+    const replay = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="admin-notification-delivery-actions"] button')].find((button) => button.textContent === "Replay")!;
     let resolveReplay!: (value: unknown) => void;
     apiPostMock.mockImplementation(() => new Promise((resolve) => { resolveReplay = resolve; }));
     await click(replay);
@@ -428,6 +428,7 @@ describe("Admin notification delivery operations", () => {
     await click(preference!); await flush(10);
     expect(host.textContent).toContain("Deadline reminder");
     expect(host.textContent).toContain("recipient_preference_disabled");
-    expect([...host.querySelectorAll<HTMLButtonElement>('.admin-poison[aria-label="Notification delivery operations"] .admin-table__action button')]).toHaveLength(0);
+    expect(host.querySelectorAll('[data-testid="admin-notification-delivery-actions"]')).toHaveLength(1);
+    expect([...host.querySelectorAll<HTMLButtonElement>('[data-testid="admin-notification-delivery-actions"] button')]).toHaveLength(0);
   });
 });

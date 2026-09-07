@@ -292,7 +292,7 @@ describe("ProductionCalendar unscheduled external drops", () => {
   it("executes the Agenda Schedule Deadline action", async () => {
     await render("agenda", [unscheduledProject]);
     expect(lastSurfaceProps?.droppable).toBe(false);
-    const action = [...host.querySelectorAll<HTMLButtonElement>(".qc-calendar-unscheduled__action")].find((button) => button.textContent === "Schedule Deadline");
+    const action = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="calendar-unscheduled-action"]')].find((button) => button.textContent === "Schedule Deadline");
     expect(action).not.toBeUndefined();
     await act(async () => { action!.click(); await Promise.resolve(); });
     expect(document.querySelector('[data-testid="calendar-move-dialog"]')).not.toBeNull();
@@ -303,7 +303,7 @@ describe("ProductionCalendar unscheduled external drops", () => {
 
   it("repairs a legacy unresolved checklist with a version-zero schedule command", async () => {
     await render("month", [legacyChecklist]);
-    const repair = host.querySelector<HTMLButtonElement>(`[data-unscheduled-id="${legacyChecklist.id}"] .qc-calendar-unscheduled__action`);
+    const repair = host.querySelector<HTMLButtonElement>(`[data-unscheduled-id="${legacyChecklist.id}"] [data-testid="calendar-unscheduled-action"]`);
     expect(repair?.textContent).toBe("Repair schedule");
     await act(async () => { repair!.click(); await Promise.resolve(); });
     await change(document.querySelector<HTMLSelectElement>('[aria-label="Checklist endpoint mode"]')!, "date");
@@ -363,7 +363,7 @@ describe("ProductionCalendar unscheduled external drops", () => {
     // checklist entry like this fixture — matching the existing "executes the Agenda Schedule
     // Deadline action" / "keeps Agenda external drag off…" tests' own subview choice.
     await render("agenda", [unscheduledChecklist]);
-    const action = () => host.querySelector<HTMLButtonElement>(`[data-unscheduled-id="${unscheduledChecklist.id}"] .qc-calendar-unscheduled__action`)!;
+    const action = () => host.querySelector<HTMLButtonElement>(`[data-unscheduled-id="${unscheduledChecklist.id}"] [data-testid="calendar-unscheduled-action"]`)!;
     await act(async () => { action().click(); await Promise.resolve(); });
     const stateSelect = () => document.querySelector<HTMLSelectElement>('[aria-label="Checklist schedule state"]')!;
     const endDate = () => document.querySelector<HTMLInputElement>('[aria-label="Checklist end date"]')!;
@@ -397,7 +397,7 @@ describe("ProductionCalendar unscheduled external drops", () => {
     await render("week", [inertChecklist]);
     expect(lastSurfaceProps?.droppable).toBe(false);
     expect(host.querySelector(`[data-unscheduled-id="${inertChecklist.id}"]`)?.getAttribute("data-event")).toBeNull();
-    await act(async () => { host.querySelector<HTMLButtonElement>(`.qc-calendar-unscheduled__action`)!.click(); await Promise.resolve(); });
+    await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="calendar-unscheduled-action"]')!.click(); await Promise.resolve(); });
     const submit = document.querySelector<HTMLButtonElement>('[data-testid="calendar-schedule-submit"]');
     expect(submit).not.toBeNull();
     await act(async () => { submit!.click(); await Promise.resolve(); await Promise.resolve(); });

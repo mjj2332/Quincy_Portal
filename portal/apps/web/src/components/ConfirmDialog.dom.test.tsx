@@ -49,7 +49,7 @@ describe("ConfirmModalHost", () => {
     expect(document.querySelector('[data-testid="confirm-modal-confirm"]')).not.toBeNull();
     expect(dialog?.getAttribute("role")).toBe("dialog");
     expect(dialog?.getAttribute("aria-modal")).toBe("true");
-    expect(dialog?.getAttribute("aria-labelledby")).toBe(dialog?.querySelector("h3")?.id);
+    expect(document.getElementById(dialog?.getAttribute("aria-labelledby") ?? "")?.textContent).toBe("Delete a file?");
     expect(dialog?.textContent).toContain("Delete a file?");
     expect(dialog?.textContent).toContain("This cannot be undone.");
     expect(document.querySelector('[data-testid="confirm-modal-cancel"]')?.textContent).toBe("Keep file");
@@ -60,7 +60,7 @@ describe("ConfirmModalHost", () => {
     expect(document.querySelector("[data-confirm-modal-root]")).not.toBeNull();
     // §6.1 item 4 — aria-describedby now resolves to the message <p>'s id (a useId() value, not
     // a stable literal, so this asserts the property rather than an exact innerHTML string).
-    const message = dialog?.querySelector(".modal__body p");
+    const message = dialog?.querySelector('[data-testid="confirm-modal-message"]');
     expect(message?.textContent).toBe("This cannot be undone.");
     expect(dialog?.getAttribute("aria-describedby")).toBe(message?.id);
     confirmStore.resolve(false);
@@ -71,8 +71,8 @@ describe("ConfirmModalHost", () => {
     await mount();
     const pending = confirm({ title: "Move Deadline", message: "Review this move.", content: <div data-testid="rich-confirmation">Old → New</div> });
     await flush();
-    const body = document.querySelector<HTMLElement>(".modal__body")!;
-    expect(body.querySelector("p")?.textContent).toBe("Review this move.");
+    const body = document.querySelector<HTMLElement>('[data-testid="modal-body"]')!;
+    expect(body.querySelector('[data-testid="confirm-modal-message"]')?.textContent).toBe("Review this move.");
     expect(body.querySelector('[data-testid="rich-confirmation"]')?.textContent).toBe("Old → New");
     confirmStore.resolve(false);
     expect(await pending).toBe(false);
@@ -139,7 +139,7 @@ describe("ConfirmModalHost", () => {
     // itself, then a click also on the scrim — a bare click with no preceding pointerdown does
     // not close it (that is exactly the fix: a press that began inside the panel and is released
     // past its edge must not dismiss).
-    const scrim = document.querySelector<HTMLElement>(".scrim")!;
+    const scrim = document.querySelector<HTMLElement>('[data-testid="modal-scrim"]')!;
     scrim.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true }));
     scrim.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     expect(await scrimPromise).toBe(false);

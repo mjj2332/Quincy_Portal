@@ -69,16 +69,16 @@ describe("ProductionCalendarEvent overlap state", () => {
     } as unknown as CalendarEventDto;
     act(() => root.render(<ProductionCalendarEvent event={deadline} subview="week" onMoveReschedule={() => undefined} />));
     expect(host.textContent).not.toContain("Overlaps another task");
-    expect(host.querySelector("a")).toBeNull();
-    expect(host.querySelector<HTMLElement>("article")?.tabIndex).toBe(-1);
+    expect(host.querySelector('[data-testid="calendar-project-link"]')).toBeNull();
+    expect(host.querySelector<HTMLElement>('[data-testid="calendar-event-card"]')?.tabIndex).toBe(-1);
     expect(host.querySelectorAll("button")).toHaveLength(1);
   });
 
   it("keeps current Calendar events action-only with no project anchor", () => {
     act(() => root.render(<ProductionCalendarEvent event={checklist(false)} subview="week" onChecklistSchedule={() => undefined} />));
-    const event = host.querySelector<HTMLElement>("article.qc-cal-event-card")!;
+    const event = host.querySelector<HTMLElement>('[data-testid="calendar-event-card"]')!;
     expect(event.tabIndex).toBe(-1);
-    expect(event.querySelector("a")).toBeNull();
+    expect(event.querySelector('[data-testid="calendar-project-link"]')).toBeNull();
     expect(event.querySelectorAll("button")).toHaveLength(1);
     expect(event.querySelector("button")?.textContent).toBe("Reschedule");
   });
@@ -98,7 +98,7 @@ describe("ProductionCalendarEvent overlap state", () => {
       reminderOffsetsMinutes: [],
     } as unknown as CalendarEventDto;
     act(() => root.render(<ProductionCalendarEvent event={deadline} subview="week" projectHref="/projects/11111111-1111-4111-8111-111111111111" onOpenProject={onOpenProject} onMoveReschedule={() => undefined} />));
-    const anchor = host.querySelector<HTMLAnchorElement>("a.qc-cal-event-card__project-link")!;
+    const anchor = host.querySelector<HTMLAnchorElement>('[data-testid="calendar-project-link"]')!;
     anchor.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, detail: 1 }));
     expect(onOpenProject).toHaveBeenCalledTimes(1);
     anchor.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));

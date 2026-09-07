@@ -542,7 +542,7 @@ describe("ProductionCalendar checklist manipulation", () => {
     resolvePatch(new Response(JSON.stringify({ error: "invalid", code: "subtask_schedule_storage_invalid", current: invalidEntry.schedule }), { status: 422, headers: { "content-type": "application/json" } }));
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 50)); await Promise.resolve(); await Promise.resolve(); });
     expect(getCount).toBe(2);
-    expect(host.querySelector(".qc-calendar-unscheduled__row.is-attention")).not.toBeNull();
+    expect(host.querySelector('[data-unscheduled-id][data-attention="true"]')).not.toBeNull();
     expect(host.textContent).toContain("Repair is unavailable in Calendar");
     expect(host.querySelector('[aria-live]')?.textContent).toContain("This checklist schedule needs attention. Repair is unavailable in Calendar.");
   });
