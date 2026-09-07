@@ -49,7 +49,13 @@ describe("ConfirmModalHost", () => {
     expect(document.querySelector('[data-testid="confirm-modal-confirm"]')).not.toBeNull();
     expect(dialog?.getAttribute("role")).toBe("dialog");
     expect(dialog?.getAttribute("aria-modal")).toBe("true");
-    expect(document.getElementById(dialog?.getAttribute("aria-labelledby") ?? "")?.textContent).toBe("Delete a file?");
+    // Resolve the IDREF rather than hopping through `h3`: the tag is not the contract, and a ReUI
+    // DialogTitle swap could legitimately emit `h2`. Both halves are load-bearing — the text proves
+    // the accessible name resolves to the rendered title, `contains` proves it resolves *inside*
+    // the dialog rather than to a same-worded element elsewhere in the document.
+    const dialogTitle = document.getElementById(dialog?.getAttribute("aria-labelledby") ?? "");
+    expect(dialogTitle?.textContent).toBe("Delete a file?");
+    expect(dialog?.contains(dialogTitle)).toBe(true);
     expect(dialog?.textContent).toContain("Delete a file?");
     expect(dialog?.textContent).toContain("This cannot be undone.");
     expect(document.querySelector('[data-testid="confirm-modal-cancel"]')?.textContent).toBe("Keep file");

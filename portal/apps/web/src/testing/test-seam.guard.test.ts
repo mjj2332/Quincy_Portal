@@ -338,8 +338,8 @@ function assertBaselineHonest(findings: Finding[], baseline: Record<string, numb
 // ---------------------------------------------------------------------------
 
 /**
- * #50 drives every one of these to zero, batch by batch. Delete each entry as its file is
- * converted; the whole map goes when the ticket closes. NOTHING may be added.
+ * #50 drove this map down batch by batch to the one entry below, which is permanent — see the
+ * note on it. NOTHING may be added, and the surviving entry may not be raised.
  */
 const CLASS_SELECTOR_BASELINE: Record<string, number> = {
   // The 2 remaining entries here are dnd-kit's <DragOverlay>, which accepts a fixed prop list
@@ -417,8 +417,8 @@ describe("guard B: every DOM query in a DOM test takes a literal selector", () =
  * breaks on a re-skin just as a selector does. #50's acceptance criteria say "selects", which
  * would let all of these through, so the owner widened it to "selects or asserts on".
  *
- * Unlike A and B, **this baseline does not reach {}**. Two kinds of class assertion are
- * legitimate and are already excluded by the matcher rather than baselined:
+ * **This baseline reached {} in Batch B and must stay there.** It gets there because two kinds of
+ * class assertion are legitimate and are excluded by the matcher rather than baselined:
  *
  *   - assertions that a class is ABSENT (`.toBe(false)`, `.not.toContain`) — a re-skin can only
  *     make those more true;
