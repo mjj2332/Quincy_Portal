@@ -1,14 +1,26 @@
 import * as React from "react";
 
 import { cn } from "@/lib/utils";
-import { Tabs, TabsList, TabsTrigger } from "@/components/reui/tabs";
 
 type TabItem = { value: string; label: React.ReactNode; count?: number };
 
-// Carried across verbatim from `components/ui/tabs.tsx:6-24` — this is Quincy's underline-tab
-// visual treatment, not nova's boxed segmented control. `min-h-[38px] max-[721px]:min-h-[44px]`
-// is the 44px touch target (WCAG 2.5.5 Enhanced / HIG, not a spacing token) and
-// `-mb-[var(--border-width-hair)]` laps the strip's own bottom rule.
+// Deliberately hand-rolled rather than composed over `@/components/reui/tabs`, and this is the one
+// place in #53 where a ReUI primitive was installed and then not adopted.
+//
+// Base UI's `Tabs.Root` remounts this component's subtree on every value change: with it in place,
+// `Admin.dom.test.tsx`'s delivery-filter loop captures the five `[role="tab"]` nodes once, and from
+// the second click onward every captured node is `isConnected === false` — React had replaced them,
+// so the dispatched click never reaches a handler and the filter silently does not change. Swapping
+// only the strip's internals back to plain elements, with the parent screen untouched, makes the
+// remount and the failure disappear, so the cause is the primitive, not Admin. In a real browser
+// the same remount would drop focus out of the tablist on every arrow key. Neither
+// `activateOnFocus` nor the `contents` wrapper is responsible — removing either changes nothing.
+//
+// Adopting Base UI's tabs needs that remount understood and a behavioural seam agreed, which is a
+// design decision rather than a re-skin, so it is recorded in #57 alongside the two checkbox
+// deviations. `components/reui/tabs.tsx` is deleted in the same commit rather than left as an
+// unimported vendor file. Everything below is Quincy's shipped tab strip, unchanged.
+
 const TAB_BASE =
   "relative -mb-[var(--border-width-hair)] inline-flex items-center gap-[var(--space-2)] " +
   "min-h-[38px] max-[721px]:min-h-[44px] px-0 pt-[var(--space-2)] pb-[11px] " + // 44px touch target — WCAG 2.5.5 Enhanced / HIG, not a spacing token
@@ -23,28 +35,6 @@ const TAB_SELECTED = "border-b-primary text-foreground";
 
 const TAB_COUNT = "[font-variant-numeric:tabular-nums] [font:var(--weight-regular)_var(--text-2xs)/1.2_var(--font-sans)] text-foreground-secondary";
 
-// `@/components/reui/tabs`'s `TabsList`/`TabsTrigger` carry nova's boxed segmented-control
-// look (rounded container, fixed heights, an active background + shadow, a line-indicator
-// pseudo-element). TAB_BASE/TAB_IDLE/TAB_SELECTED above replace it with Quincy's underline
-// tabs, but a handful of nova's classes are gated behind modifiers (`group-data-*:`,
-// `data-active:`) that an unmodified override can't reach — those need an exact-modifier
-// counter-class to cancel. (The line-indicator `after:` pseudo-element needs no cancelling: its
-// opacity only ever leaves 0 under `group-data-[variant=line]/tabs-list:`, and this list never
-// sets `variant="line"`.)
-const TAB_LIST_RESET =
-  // `flex-wrap` is Quincy's, not nova's: nova's list is a fixed-height segmented control and
-  // never wraps. Admin's delivery strip carries labels as long as "Preference suppressed", which
-  // overflow a 390px viewport unless the strip wraps.
-  "flex w-full flex-wrap items-center justify-start gap-[var(--space-5)] rounded-none bg-transparent p-0 " +
-  "group-data-horizontal/tabs:h-auto " +
-  "[border-bottom-style:solid] border-b-[length:var(--border-width-hair)] border-b-border";
-
-const TAB_TRIGGER_RESET =
-  "h-auto flex-none justify-start rounded-none " +
-  "focus-visible:ring-0 " +
-  "data-active:bg-transparent dark:data-active:bg-transparent " +
-  "group-data-[variant=default]/tabs-list:data-active:shadow-none";
-
 function TabStrip({ items, value, onValueChange, idPrefix, label, className }: {
   items: TabItem[];
   value: string;
@@ -53,45 +43,72 @@ function TabStrip({ items, value, onValueChange, idPrefix, label, className }: {
   label: string;
   className?: string;
 }) {
+  const refs = React.useRef<Record<string, HTMLButtonElement | null>>({});
+
+  function move(delta: number) {
+    const index = items.findIndex((item) => item.value === value);
+    if (index < 0) return;
+    // `noUncheckedIndexedAccess` makes this access possibly-undefined; it never is in practice
+    // (the modulo stays in range), but the guard is required to compile.
+    const next = items[(index + delta + items.length) % items.length];
+    if (!next) return;
+    onValueChange(next.value);
+    refs.current[next.value]?.focus();
+  }
+
+  function onKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
+    if (event.key === "ArrowRight") { event.preventDefault(); move(1); }
+    else if (event.key === "ArrowLeft") {
+      event.preventDefault(); move(-1);
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      const first = items[0];
+      if (first) { onValueChange(first.value); refs.current[first.value]?.focus(); }
+    } else if (event.key === "End") {
+      event.preventDefault();
+      const last = items[items.length - 1];
+      if (last) { onValueChange(last.value); refs.current[last.value]?.focus(); }
+    }
+  }
+
   return (
-    <Tabs
+    <div
+      role="tablist"
+      aria-label={label}
       data-slot="tab-strip"
-      value={value}
-      onValueChange={(next) => onValueChange(next)}
-      // `Tabs` (reui's `Tabs.Root`) wraps its children in a `group/tabs flex gap-2
-      // data-horizontal:flex-col` div. `contents` takes that wrapper out of layout so Admin's
-      // tab strip doesn't gain a stray flex container around it.
-      className="contents"
+      onKeyDown={onKeyDown}
+      className={cn(
+        "flex flex-wrap gap-[var(--space-5)]",
+        "[border-bottom-style:solid] border-b-[length:var(--border-width-hair)] border-b-border",
+        className,
+      )}
     >
-      <TabsList
-        role="tablist"
-        aria-label={label}
-        // Base UI's roving-tabindex defaults to focus-only arrow keys (`activateOnFocus` is
-        // false by default) — Enter/Space would be needed to select. The hand-rolled
-        // `move()`/`onKeyDown` this replaces both focused *and* selected on Left/Right/Home/End,
-        // so `activateOnFocus` is turned on to keep that behaviour.
-        activateOnFocus
-        className={cn(TAB_LIST_RESET, className)}
-      >
-        {items.map((item) => {
-          const selected = item.value === value;
-          return (
-            <TabsTrigger
-              key={item.value}
-              value={item.value}
-              id={`${idPrefix}-tab-${item.value}`}
-              className={cn(TAB_TRIGGER_RESET, TAB_BASE, selected ? TAB_SELECTED : TAB_IDLE)}
-            >
-              {item.label}
-              {/* A whitespace-only text node between flex items is discarded by flex layout, so this is
-                  visually inert — the `gap-[var(--space-2)]` above still supplies the separation. It
-                  exists so `textContent` and the accessible name read "DLQ 0", not "DLQ0". */}
-              {typeof item.count === "number" ? <>{" "}<span className={TAB_COUNT}>{item.count}</span></> : null}
-            </TabsTrigger>
-          );
-        })}
-      </TabsList>
-    </Tabs>
+      {items.map((item) => {
+        const selected = item.value === value;
+        return (
+          <button
+            key={item.value}
+            type="button"
+            role="tab"
+            id={`${idPrefix}-tab-${item.value}`}
+            // Only the selected panel is mounted, so only the selected tab may claim one.
+            // `undefined` omits the attribute entirely; `""` would emit a broken IDREF. (§8)
+            aria-controls={selected ? `${idPrefix}-panel-${item.value}` : undefined}
+            aria-selected={selected}
+            tabIndex={selected ? 0 : -1}
+            ref={(node) => { refs.current[item.value] = node; }}
+            onClick={() => onValueChange(item.value)}
+            className={cn(TAB_BASE, selected ? TAB_SELECTED : TAB_IDLE)}
+          >
+            {item.label}
+            {/* A whitespace-only text node between flex items is discarded by flex layout, so this is
+                visually inert — the `gap-[var(--space-2)]` above still supplies the separation. It
+                exists so `textContent` and the accessible name read "DLQ 0", not "DLQ0". */}
+            {typeof item.count === "number" ? <>{" "}<span className={TAB_COUNT}>{item.count}</span></> : null}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 

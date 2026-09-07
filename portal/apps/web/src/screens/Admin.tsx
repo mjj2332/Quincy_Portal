@@ -8,15 +8,14 @@ import { confirm } from "../lib/confirm";
 import { impersonateUser } from "../lib/auth";
 import { locationStore } from "../lib/router";
 import { Modal } from "../components/Modal";
-import { Button, buttonClasses } from "@/components/ui/button";
+import { Button } from "@/components/reui/button";
 import { cn } from "@/lib/utils";
 import { Eyebrow } from "@/components/quincy/Eyebrow";
-import { Input } from "@/components/ui/input";
-import { NativeSelect } from "@/components/ui/native-select";
-import { TOGGLE_ROW, CHECKBOX_INPUT } from "@/components/ui/checkbox";
-import { StatusPill, type StatusTone } from "@/components/ui/status-pill";
-import { TabStrip } from "@/components/ui/tabs";
-import { TableWrap, Table, TableHead, TableBody, TableRow, TableHeader, TableCell } from "@/components/ui/table";
+import { Input } from "@/components/reui/input";
+import { NativeSelect } from "@/components/quincy/NativeSelect";
+import { StatusPill, type StatusTone } from "@/components/quincy/StatusPill";
+import { TabStrip } from "@/components/quincy/TabStrip";
+import { TableWrap, Table, TableHead, TableBody, TableRow, TableHeader, TableCell } from "@/components/quincy/Table";
 import { SectionHead } from "@/components/quincy/SectionHead";
 import { Notice } from "@/components/quincy/Notice";
 import { EmptyState } from "@/components/quincy/EmptyState";
@@ -69,6 +68,33 @@ const DELIVERY_LABELS: Record<NotificationDeliveryView, string> = {
   unknown: "UNKNOWN",
   preference_suppressed: "Preference suppressed",
 };
+// Inlined from the legacy `ui/checkbox` primitive, which this screen no longer imports. Both the
+// impersonation switch and the per-stage active toggle stay native `<input type="checkbox">`s,
+// not ReUI's Base UI `Checkbox`: `Admin.dom.test.tsx:206,261` read `.checked` off
+// `[aria-label="Enable user impersonation (testing)"]`, but Base UI puts `aria-label` on the
+// `<span role="checkbox">` root, whose `.checked` is `undefined`. Applied uniformly to both
+// checkboxes in this screen even though the stage toggle alone would have survived a swap — one
+// native checkbox and one Base UI checkbox in the same screen is worse than either. Same device as
+// `screens/NotificationPreferences.tsx`'s `TOGGLE_ROW` and `components/ProjectFields.tsx`'s
+// `CHECK_TILE`/`CHECKBOX_INPUT`.
+const TOGGLE_ROW =
+  "flex items-center gap-[var(--space-2)] cursor-pointer " +
+  "min-h-[38px] max-[721px]:min-h-[44px] text-foreground-secondary " + // 44px touch target — WCAG 2.5.5 Enhanced / HIG, not a spacing token
+  "[font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)]";
+
+const CHECKBOX_INPUT =
+  "size-[18px] shrink-0 m-0 accent-[var(--accent)] cursor-pointer " +
+  "focus-visible:outline-[length:var(--border-width-bold)] focus-visible:outline-solid " +
+  "focus-visible:outline-ring focus-visible:outline-offset-2 " +
+  "disabled:cursor-not-allowed";
+
+// Quincy's `text` button variant was a compact, padding-free label (`min-h-[32px] px-0 py-[6px]`);
+// nova's nearest analogue, `ghost`, is a fully padded 38px button. In this screen's dense table
+// action cells that reads wrong, so the Quincy metrics are restored on top of `variant="ghost"`.
+// The `max-[721px]:min-h-[44px]` touch target in the cva base is a different modifier and survives
+// the merge, exactly as it did under `ui/button.tsx`'s own `text` variant.
+const TEXT_BUTTON = "min-h-[32px] px-0 py-[6px]";
+
 const TONE_FOR_STATUS: Record<IntegrationStatus | "not-configured", StatusTone> = {
   connected: "positive",
   disconnected: "neutral",
@@ -449,7 +475,7 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
         <SectionHead
           eyebrow="Access roster"
           className="admin-section__head"
-          actions={<button type="button" className={buttonClasses("secondary")} onClick={() => void loadUsers()} disabled={isLoadingUsers}>Refresh</button>}
+          actions={<Button type="button" variant="outline" onClick={() => void loadUsers()} disabled={isLoadingUsers}>Refresh</Button>}
         >
           Users
         </SectionHead>
@@ -488,11 +514,11 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
           >
             {ROLES.map((role) => <option key={role} value={role}>{roleLabel(role)}</option>)}
           </QuincySelectField>
-          <button type="submit" className={buttonClasses("primary", { busy: isProvisioning, className: "max-[721px]:w-full" })} disabled={isProvisioning}>{isProvisioning ? "Provisioning…" : "Provision user"}</button>
+          <Button type="submit" className={cn("max-[721px]:w-full", isProvisioning && "cursor-wait")} disabled={isProvisioning}>{isProvisioning ? "Provisioning…" : "Provision user"}</Button>
         </form>
 
         {isLoadingUsers && <EmptyState role="status" title="Loading users.">Reading the studio access roster.</EmptyState>}
-        {!isLoadingUsers && usersError && <EmptyState role="alert" tone="error" title="Users are unavailable.">{usersError}<div className="mt-[var(--space-4)]"><button type="button" className={buttonClasses("secondary")} onClick={() => void loadUsers()}>Try again</button></div></EmptyState>}
+        {!isLoadingUsers && usersError && <EmptyState role="alert" tone="error" title="Users are unavailable.">{usersError}<div className="mt-[var(--space-4)]"><Button type="button" variant="outline" onClick={() => void loadUsers()}>Try again</Button></div></EmptyState>}
         {!isLoadingUsers && !usersError && <label className={cn(TOGGLE_ROW, "mb-[var(--space-4)]")}><input type="checkbox" className={CHECKBOX_INPUT} checked={impersonationEnabled} disabled={isUpdatingImpersonation} onChange={toggleImpersonation} aria-label="Enable user impersonation (testing)" /><span>Enable user impersonation (testing)</span></label>}
         {!isLoadingUsers && !usersError && users.length === 0 && <EmptyState title="No users provisioned.">Provision a team member to give them closed-access Google sign-in.</EmptyState>}
         {!isLoadingUsers && !usersError && users.length > 0 && <TableWrap><Table className="admin-table">
@@ -508,14 +534,14 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
             <TableCell data-label="Role"><label className="sr-only" htmlFor={`role-${user.id}`}>Role for {user.name}</label><NativeSelect id={`role-${user.id}`} className="min-w-[128px]" value={user.role} disabled={isUpdating} onChange={(event) => void updateUser(user, { role: event.target.value as Role })}>{ROLES.map((role) => <option key={role} value={role}>{roleLabel(role)}</option>)}</NativeSelect></TableCell>
             <TableCell data-label="Access"><StatusPill tone={user.active ? "positive" : "neutral"}>{user.active ? "Active" : "Inactive"}</StatusPill></TableCell>
             <TableCell data-label="Created">{formatDate(user.createdAt)}</TableCell>
-            <TableCell className="admin-table__action min-[721px]:text-right min-[721px]:[&>button+button]:ml-[var(--space-3)] max-[721px]:flex max-[721px]:flex-wrap max-[721px]:gap-[var(--space-3)] max-[721px]:pt-[var(--space-3)]" data-testid="admin-user-actions">{isEditingName ? <><button type="button" className={buttonClasses("secondary")} disabled={isUpdating} onClick={() => void saveUserName(user)}>Save</button><button type="button" className={buttonClasses("text")} onClick={() => setEditingUserId(undefined)}>Cancel</button></> : <><button type="button" className={buttonClasses("text")} disabled={isUpdating} onClick={() => startEditingUserName(user)}>Edit</button><button type="button" className={buttonClasses("secondary")} disabled={isUpdating || isSelf} title={isSelf ? "You cannot deactivate your own account." : undefined} onClick={() => void toggleActive(user)}>{user.active ? "Deactivate" : "Reactivate"}</button>{canImpersonate && <button type="button" className={buttonClasses("text")} disabled={isUpdating} onClick={() => void actAs(user)}>Act as</button>}</>}</TableCell>
+            <TableCell className="admin-table__action min-[721px]:text-right min-[721px]:[&>button+button]:ml-[var(--space-3)] max-[721px]:flex max-[721px]:flex-wrap max-[721px]:gap-[var(--space-3)] max-[721px]:pt-[var(--space-3)]" data-testid="admin-user-actions">{isEditingName ? <><Button type="button" variant="outline" disabled={isUpdating} onClick={() => void saveUserName(user)}>Save</Button><Button type="button" variant="ghost" className={TEXT_BUTTON} onClick={() => setEditingUserId(undefined)}>Cancel</Button></> : <><Button type="button" variant="ghost" className={TEXT_BUTTON} disabled={isUpdating} onClick={() => startEditingUserName(user)}>Edit</Button><Button type="button" variant="outline" disabled={isUpdating || isSelf} title={isSelf ? "You cannot deactivate your own account." : undefined} onClick={() => void toggleActive(user)}>{user.active ? "Deactivate" : "Reactivate"}</Button>{canImpersonate && <Button type="button" variant="ghost" className={TEXT_BUTTON} disabled={isUpdating} onClick={() => void actAs(user)}>Act as</Button>}</>}</TableCell>
           </TableRow>;
         })}</TableBody>
         </Table></TableWrap>}
       </section>}
 
       {activeTab === "directory" && canAdminBackend && <section className="admin-section" role="tabpanel" id="admin-panel-directory" aria-labelledby="admin-tab-directory" tabIndex={0}>
-        <SectionHead eyebrow="Client directory" className="admin-section__head" actions={<button type="button" className={buttonClasses("secondary")} onClick={() => void loadDirectory()}>Refresh</button>}>Agencies & agents</SectionHead>
+        <SectionHead eyebrow="Client directory" className="admin-section__head" actions={<Button type="button" variant="outline" onClick={() => void loadDirectory()}>Refresh</Button>}>Agencies & agents</SectionHead>
         {directoryError && <Notice role="alert" className="mb-[var(--space-4)]">{directoryError}</Notice>}
         <form
           className="grid gap-[var(--space-4)] items-end mb-[var(--space-6)] grid-cols-1 min-[721px]:grid-cols-2 min-[1081px]:grid-cols-[minmax(200px,1.2fr)_minmax(180px,1fr)_minmax(180px,1fr)_auto]"
@@ -527,7 +553,7 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
           </div>
           <QuincyField id="admin-agency-name" label="Name" value={agencyForm.name} onChange={(event) => setAgencyForm((value) => ({ ...value, name: event.target.value }))} />
           <QuincyField id="admin-agency-notes" label="Notes" value={agencyForm.notes} onChange={(event) => setAgencyForm((value) => ({ ...value, notes: event.target.value }))} />
-          <button type="submit" className={buttonClasses("primary", { className: "max-[721px]:w-full" })}>Add agency</button>
+          <Button type="submit" className="max-[721px]:w-full">Add agency</Button>
         </form>
         <TableWrap><Table className="admin-table">
           <TableHead><TableRow><TableHeader>Agency</TableHeader><TableHeader>Notes</TableHeader><TableHeader>Agents</TableHeader><TableHeader>Created</TableHeader><TableHeader><span className="sr-only">Actions</span></TableHeader></TableRow></TableHead>
@@ -542,11 +568,11 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
               <TableCell data-label="Notes">{editingAgency === agency.id ? <Input className="min-w-[130px] border-[var(--field-border)]" aria-label={`Notes for ${agency.name}`} value={agency.notes ?? ""} onChange={(event) => setAgencies((current) => current.map((item) => item.id === agency.id ? { ...item, notes: event.target.value || null } : item))} /> : agency.notes || "—"}</TableCell>
               <TableCell data-label="Agents">{agency.agentCount}</TableCell>
               <TableCell data-label="Created">{formatDate(agency.createdAt)}</TableCell>
-              <TableCell className="admin-table__action min-[721px]:text-right min-[721px]:[&>button+button]:ml-[var(--space-3)] max-[721px]:flex max-[721px]:flex-wrap max-[721px]:gap-[var(--space-3)] max-[721px]:pt-[var(--space-3)]">{editingAgency === agency.id ? <><button type="button" className={buttonClasses("secondary")} onClick={() => void saveAgencyEdit(agency)}>Save</button><button type="button" className={buttonClasses("text")} onClick={() => setEditingAgency(undefined)}>Cancel</button></> : <><button type="button" className={buttonClasses("text")} onClick={() => { setSelectedAgencyId(agency.id); void loadDirectory(agency.id); }}>Agents</button><button type="button" className={buttonClasses("text")} onClick={() => setEditingAgency(agency.id)}>Edit</button></>}</TableCell>
+              <TableCell className="admin-table__action min-[721px]:text-right min-[721px]:[&>button+button]:ml-[var(--space-3)] max-[721px]:flex max-[721px]:flex-wrap max-[721px]:gap-[var(--space-3)] max-[721px]:pt-[var(--space-3)]">{editingAgency === agency.id ? <><Button type="button" variant="outline" onClick={() => void saveAgencyEdit(agency)}>Save</Button><Button type="button" variant="ghost" className={TEXT_BUTTON} onClick={() => setEditingAgency(undefined)}>Cancel</Button></> : <><Button type="button" variant="ghost" className={TEXT_BUTTON} onClick={() => { setSelectedAgencyId(agency.id); void loadDirectory(agency.id); }}>Agents</Button><Button type="button" variant="ghost" className={TEXT_BUTTON} onClick={() => setEditingAgency(agency.id)}>Edit</Button></>}</TableCell>
             </TableRow>;
           })}</TableBody>
         </Table></TableWrap>
-        <SectionHead eyebrow={selectedAgencyId ? agencies.find((agency) => agency.id === selectedAgencyId)?.name ?? "Selected agency" : "All agencies"} className={cn("admin-section__head", "mt-[var(--space-8)]")} actions={selectedAgencyId ? <button type="button" className={buttonClasses("secondary")} onClick={() => { setSelectedAgencyId(undefined); void loadDirectory(undefined); }}>Show all</button> : undefined}>Agents</SectionHead>
+        <SectionHead eyebrow={selectedAgencyId ? agencies.find((agency) => agency.id === selectedAgencyId)?.name ?? "Selected agency" : "All agencies"} className={cn("admin-section__head", "mt-[var(--space-8)]")} actions={selectedAgencyId ? <Button type="button" variant="outline" onClick={() => { setSelectedAgencyId(undefined); void loadDirectory(undefined); }}>Show all</Button> : undefined}>Agents</SectionHead>
         <form
           className="grid gap-[var(--space-4)] items-end mb-[var(--space-6)] grid-cols-1 min-[721px]:grid-cols-2 min-[1081px]:grid-cols-[minmax(190px,1fr)_minmax(150px,0.8fr)_minmax(180px,1fr)_minmax(160px,0.8fr)_auto]"
           onSubmit={saveAgent}
@@ -558,7 +584,7 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
           <QuincyField id="admin-agent-name" label="Name" value={agentForm.name} onChange={(event) => setAgentForm((value) => ({ ...value, name: event.target.value }))} />
           <QuincyField id="admin-agent-email" label="Email" type="email" value={agentForm.email} onChange={(event) => setAgentForm((value) => ({ ...value, email: event.target.value }))} />
           <QuincyField id="admin-agent-phone" label="Phone" value={agentForm.phone} onChange={(event) => setAgentForm((value) => ({ ...value, phone: event.target.value }))} />
-          <button type="submit" className={buttonClasses("primary", { className: "max-[721px]:w-full" })}>Add agent</button>
+          <Button type="submit" className="max-[721px]:w-full">Add agent</Button>
         </form>
         <TableWrap><Table className="admin-table">
           <TableHead><TableRow><TableHeader>Name</TableHeader><TableHeader>Email</TableHeader><TableHeader>Phone</TableHeader><TableHeader>Agency</TableHeader><TableHeader><span className="sr-only">Actions</span></TableHeader></TableRow></TableHead>
@@ -567,13 +593,13 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
             <TableCell data-label="Email">{editingAgent === agent.id ? <Input className="min-w-[130px] border-[var(--field-border)]" aria-label={`Email for ${agent.name}`} value={agent.email ?? ""} onChange={(event) => setAgents((current) => current.map((item) => item.id === agent.id ? { ...item, email: event.target.value || null } : item))} /> : agent.email || "—"}</TableCell>
             <TableCell data-label="Phone">{editingAgent === agent.id ? <Input className="min-w-[130px] border-[var(--field-border)]" aria-label={`Phone for ${agent.name}`} value={agent.phone ?? ""} onChange={(event) => setAgents((current) => current.map((item) => item.id === agent.id ? { ...item, phone: event.target.value || null } : item))} /> : agent.phone || "—"}</TableCell>
             <TableCell data-label="Agency">{agent.agencyName || "—"}</TableCell>
-            <TableCell className="admin-table__action min-[721px]:text-right min-[721px]:[&>button+button]:ml-[var(--space-3)] max-[721px]:flex max-[721px]:flex-wrap max-[721px]:gap-[var(--space-3)] max-[721px]:pt-[var(--space-3)]">{editingAgent === agent.id ? <><button type="button" className={buttonClasses("secondary")} onClick={() => void saveAgentEdit(agent)}>Save</button><button type="button" className={buttonClasses("text")} onClick={() => setEditingAgent(undefined)}>Cancel</button></> : <button type="button" className={buttonClasses("text")} onClick={() => setEditingAgent(agent.id)}>Edit</button>}</TableCell>
+            <TableCell className="admin-table__action min-[721px]:text-right min-[721px]:[&>button+button]:ml-[var(--space-3)] max-[721px]:flex max-[721px]:flex-wrap max-[721px]:gap-[var(--space-3)] max-[721px]:pt-[var(--space-3)]">{editingAgent === agent.id ? <><Button type="button" variant="outline" onClick={() => void saveAgentEdit(agent)}>Save</Button><Button type="button" variant="ghost" className={TEXT_BUTTON} onClick={() => setEditingAgent(undefined)}>Cancel</Button></> : <Button type="button" variant="ghost" className={TEXT_BUTTON} onClick={() => setEditingAgent(agent.id)}>Edit</Button>}</TableCell>
           </TableRow>)}</TableBody>
         </Table></TableWrap>
       </section>}
 
       {activeTab === "pipeline" && canAdminBackend && <section className="admin-section" role="tabpanel" id="admin-panel-pipeline" aria-labelledby="admin-tab-pipeline" tabIndex={0}>
-        <SectionHead eyebrow="Project flow" className="admin-section__head" actions={<button type="button" className={buttonClasses("secondary")} onClick={() => void loadPipeline()} data-testid="admin-pipeline-refresh">Refresh</button>}>Pipeline stages</SectionHead>
+        <SectionHead eyebrow="Project flow" className="admin-section__head" actions={<Button type="button" variant="outline" onClick={() => void loadPipeline()} data-testid="admin-pipeline-refresh">Refresh</Button>}>Pipeline stages</SectionHead>
         {pipelineError && <Notice role="alert" className="mb-[var(--space-4)]">{pipelineError}</Notice>}
         {stageError && <Notice role="alert" className="mb-[var(--space-4)]">{stageError}</Notice>}
         <div className="admin-stage-list flex flex-col [border-top-style:solid] border-t-[length:var(--border-width-hair)] border-t-border">{stages.map((stage) => <div className="admin-stage grid gap-[var(--space-4)] items-end p-[var(--space-4)] border-solid border-[length:var(--border-width-hair)] border-border border-t-0 bg-card grid-cols-[28px_minmax(0,1fr)] min-[721px]:grid-cols-[34px_minmax(150px,0.8fr)_minmax(180px,1fr)_90px]" key={stage.key} data-testid="admin-stage">
@@ -592,9 +618,9 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
       </section>}
 
       {activeTab === "integrations" && canManageIntegrations && <section className="admin-section" role="tabpanel" id="admin-panel-integrations" aria-labelledby="admin-tab-integrations" tabIndex={0}>
-        <SectionHead eyebrow="Studio connections" className="admin-section__head" actions={<button type="button" className={buttonClasses("secondary")} onClick={() => void loadIntegrationsTab()} disabled={isLoadingIntegrations}>Refresh</button>}>Integrations</SectionHead>
+        <SectionHead eyebrow="Studio connections" className="admin-section__head" actions={<Button type="button" variant="outline" onClick={() => void loadIntegrationsTab()} disabled={isLoadingIntegrations}>Refresh</Button>}>Integrations</SectionHead>
         {isLoadingIntegrations && <EmptyState role="status" title="Loading integrations.">Checking studio connections.</EmptyState>}
-        {!isLoadingIntegrations && integrationsError && <EmptyState role="alert" tone="error" title="Integrations are unavailable.">{integrationsError}<div className="mt-[var(--space-4)]"><button type="button" className={buttonClasses("secondary")} onClick={() => void loadIntegrationsTab()}>Try again</button></div></EmptyState>}
+        {!isLoadingIntegrations && integrationsError && <EmptyState role="alert" tone="error" title="Integrations are unavailable.">{integrationsError}<div className="mt-[var(--space-4)]"><Button type="button" variant="outline" onClick={() => void loadIntegrationsTab()}>Try again</Button></div></EmptyState>}
         {!isLoadingIntegrations && !integrationsError && <div className="grid gap-[var(--space-4)] grid-cols-1 min-[1081px]:grid-cols-3">{PROVIDERS.map((provider) => {
           const integration = integrations.find((item) => item.provider === provider);
           const status = provider === "tonomo" ? (tonomoHealth?.lastEventAt ? "connected" : "disconnected") : integration?.status ?? "not-configured";
@@ -614,7 +640,7 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
                 {integration?.expiresAt && <div><dt>Expires</dt><dd>{formatDate(integration.expiresAt)}</dd></div>}
               </dl>
               {dropboxNotice && <Notice role="alert" className="mb-[var(--space-3)]">{dropboxNotice}</Notice>}
-              <button type="button" className={buttonClasses("primary", { className: "self-start mt-auto" })} onClick={() => void connectDropbox()} disabled={isConnectingDropbox}>{isConnectingDropbox ? "Opening Dropbox…" : integration?.status === "connected" ? "Reconnect Dropbox" : "Connect Dropbox"}</button>
+              <Button type="button" className={cn("self-start mt-auto", isConnectingDropbox && "cursor-wait")} onClick={() => void connectDropbox()} disabled={isConnectingDropbox}>{isConnectingDropbox ? "Opening Dropbox…" : integration?.status === "connected" ? "Reconnect Dropbox" : "Connect Dropbox"}</Button>
             </> : provider === "tonomo" ? <>
               <p className="!mt-[var(--space-5)] mb-0 [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary">Order deliveries are recorded and reconciled automatically.</p>
               <dl className="flex flex-wrap gap-x-[var(--space-5)] gap-y-[var(--space-3)] my-[var(--space-5)] [&>div]:flex [&>div]:flex-col [&>div]:gap-[var(--space-1)] [&_dt]:[font:var(--type-eyebrow)] [&_dt]:uppercase [&_dt]:tracking-[var(--tracking-wide)] [&_dt]:text-foreground-secondary [&_dd]:m-0 [&_dd]:[font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] [&_dd]:text-foreground-secondary">
@@ -646,10 +672,10 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
                 <TableCell data-label="Received">{formatDate(event.receivedAt)}</TableCell>
                 <TableCell data-label="Order">{event.summary ? <>{event.summary.street}<br /><small>{event.summary.orderId}</small></> : "Unparseable"}</TableCell>
                 <TableCell data-label="Error reason">{event.error || "—"}</TableCell>
-                <TableCell className="admin-table__action min-[721px]:text-right min-[721px]:[&>button+button]:ml-[var(--space-3)] max-[721px]:flex max-[721px]:flex-wrap max-[721px]:gap-[var(--space-3)] max-[721px]:pt-[var(--space-3)]"><button type="button" className={buttonClasses("text")} onClick={() => void viewPayload(event.id)}>View payload</button><button type="button" className={buttonClasses("secondary")} disabled={isOperating} onClick={() => void operateEvent(event.id, "retry")}>Retry</button><button type="button" className={buttonClasses("text")} disabled={isOperating} onClick={() => void operateEvent(event.id, "discard")}>Discard</button></TableCell>
+                <TableCell className="admin-table__action min-[721px]:text-right min-[721px]:[&>button+button]:ml-[var(--space-3)] max-[721px]:flex max-[721px]:flex-wrap max-[721px]:gap-[var(--space-3)] max-[721px]:pt-[var(--space-3)]"><Button type="button" variant="ghost" className={TEXT_BUTTON} onClick={() => void viewPayload(event.id)}>View payload</Button><Button type="button" variant="outline" disabled={isOperating} onClick={() => void operateEvent(event.id, "retry")}>Retry</Button><Button type="button" variant="ghost" className={TEXT_BUTTON} disabled={isOperating} onClick={() => void operateEvent(event.id, "discard")}>Discard</Button></TableCell>
               </TableRow>; })}</TableBody>
             </Table></TableWrap>
-            {poisonTotal > poisonEvents.length && <div className="mt-[var(--space-4)]"><button type="button" className={buttonClasses("secondary")} onClick={() => void loadTonomo(poisonEvents.length, true)}>Load more</button></div>}
+            {poisonTotal > poisonEvents.length && <div className="mt-[var(--space-4)]"><Button type="button" variant="outline" onClick={() => void loadTonomo(poisonEvents.length, true)}>Load more</Button></div>}
           </>}
         </div>}
         {!isLoadingIntegrations && !integrationsError && canAdminBackend && <div className="admin-poison mt-[var(--space-8)]">
@@ -666,7 +692,7 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
               <TableCell data-label="First failed">{formatDate(event.receivedAt)}</TableCell>
               <TableCell data-label="Project">{event.street || "—"}</TableCell>
               <TableCell data-label="Asset"><code className="[font:var(--weight-regular)_var(--text-xs)/1.4_var(--font-mono)]">{event.assetId}</code></TableCell>
-              <TableCell className="admin-table__action min-[721px]:text-right min-[721px]:[&>button+button]:ml-[var(--space-3)] max-[721px]:flex max-[721px]:flex-wrap max-[721px]:gap-[var(--space-3)] max-[721px]:pt-[var(--space-3)]"><button type="button" className={buttonClasses("secondary")} disabled={isOperating} onClick={() => void operateRenditionDlqEvent(event.id, "replay")}>Replay</button><button type="button" className={buttonClasses("text")} disabled={isOperating} onClick={() => void operateRenditionDlqEvent(event.id, "discard")}>Discard</button></TableCell>
+              <TableCell className="admin-table__action min-[721px]:text-right min-[721px]:[&>button+button]:ml-[var(--space-3)] max-[721px]:flex max-[721px]:flex-wrap max-[721px]:gap-[var(--space-3)] max-[721px]:pt-[var(--space-3)]"><Button type="button" variant="outline" disabled={isOperating} onClick={() => void operateRenditionDlqEvent(event.id, "replay")}>Replay</Button><Button type="button" variant="ghost" className={TEXT_BUTTON} disabled={isOperating} onClick={() => void operateRenditionDlqEvent(event.id, "discard")}>Discard</Button></TableCell>
             </TableRow>; })}</TableBody>
           </Table></TableWrap>}
         </div>}
@@ -676,7 +702,7 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
             className="admin-section__head"
             actions={<>
               <StatusPill tone={notificationDeliveryCounts[notificationDeliveryView] > 0 ? "critical" : "neutral"}>{notificationDeliveryCounts[notificationDeliveryView] > 0 ? `${notificationDeliveryCounts[notificationDeliveryView]} deliveries` : "No deliveries"}</StatusPill>
-              <button type="button" className={buttonClasses("secondary", { busy: isLoadingNotificationDeliveries })} disabled={isLoadingNotificationDeliveries} onClick={() => void loadNotificationDeliveries(notificationDeliveryView)} data-testid="admin-notification-delivery-refresh">Refresh</button>
+              <Button type="button" variant="outline" className={isLoadingNotificationDeliveries ? "cursor-wait" : undefined} disabled={isLoadingNotificationDeliveries} onClick={() => void loadNotificationDeliveries(notificationDeliveryView)} data-testid="admin-notification-delivery-refresh">Refresh</Button>
             </>}
           >
             Notification delivery
@@ -702,10 +728,10 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
                 <TableCell data-label="Recipient">{item.recipientName || "Unavailable"}</TableCell>
                 <TableCell data-label="Channels">{item.channels.map((channel) => `${channel.channel}: ${channel.status}`).join(" · ")}{item.unknownEmailPossible && <><br /><strong className="text-destructive [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)]">Duplicate email possible</strong></>}</TableCell>
                 <TableCell data-label="State">{item.status}{item.safeErrorCode && <><br /><small>{item.safeErrorCode}</small></>}</TableCell>
-                <TableCell className="admin-table__action min-[721px]:text-right min-[721px]:[&>button+button]:ml-[var(--space-3)] max-[721px]:flex max-[721px]:flex-wrap max-[721px]:gap-[var(--space-3)] max-[721px]:pt-[var(--space-3)]" data-testid="admin-notification-delivery-actions">{notificationDeliveryView !== "preference_suppressed" && <><button type="button" className={buttonClasses("secondary")} disabled={isOperating} onClick={() => void operateNotificationDelivery(item, "replay")}>Replay</button><button type="button" className={buttonClasses("text")} disabled={isOperating} onClick={() => void operateNotificationDelivery(item, "discard")}>Discard</button></>}</TableCell>
+                <TableCell className="admin-table__action min-[721px]:text-right min-[721px]:[&>button+button]:ml-[var(--space-3)] max-[721px]:flex max-[721px]:flex-wrap max-[721px]:gap-[var(--space-3)] max-[721px]:pt-[var(--space-3)]" data-testid="admin-notification-delivery-actions">{notificationDeliveryView !== "preference_suppressed" && <><Button type="button" variant="outline" disabled={isOperating} onClick={() => void operateNotificationDelivery(item, "replay")}>Replay</Button><Button type="button" variant="ghost" className={TEXT_BUTTON} disabled={isOperating} onClick={() => void operateNotificationDelivery(item, "discard")}>Discard</Button></>}</TableCell>
               </TableRow>; })}</TableBody>
             </Table></TableWrap>}
-            {notificationDeliveryCursor && <div className="mt-[var(--space-4)]"><button type="button" className={buttonClasses("secondary")} disabled={isLoadingNotificationDeliveries} onClick={() => void loadNotificationDeliveries(notificationDeliveryView, notificationDeliveryCursor, true)}>Load more</button></div>}
+            {notificationDeliveryCursor && <div className="mt-[var(--space-4)]"><Button type="button" variant="outline" disabled={isLoadingNotificationDeliveries} onClick={() => void loadNotificationDeliveries(notificationDeliveryView, notificationDeliveryCursor, true)}>Load more</Button></div>}
           </div>
         </div>}
       </section>}

@@ -1,7 +1,7 @@
 import * as React from "react";
 
-import { Field, FieldError, FieldLabel } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
+import { Field, FieldError, FieldLabel } from "@/components/reui/field";
+import { Input } from "@/components/reui/input";
 
 type QuincyFieldProps = Omit<React.ComponentProps<typeof Input>, "id"> & {
   id: string;
