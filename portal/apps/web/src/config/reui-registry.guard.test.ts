@@ -20,7 +20,7 @@
  * URL or an inlined license key.
  */
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 
@@ -102,6 +102,43 @@ describe("guard: styles/index.css stays an import manifest, so a CLI install can
         "them onto Quincy tokens), and leave this file a manifest. Do not silence the guard.",
       ].join("\n"),
     ).toEqual([]);
+  });
+});
+
+describe("guard: installed components use this repo's cn helper, not the `cn` npm package", () => {
+  it("has no `cn` dependency and no import of it in src/components/reui", () => {
+    const webRoot = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..");
+    const pkg = JSON.parse(readFileSync(join(webRoot, "package.json"), "utf8")) as {
+      dependencies?: Record<string, string>;
+      devDependencies?: Record<string, string>;
+    };
+
+    expect(
+      { ...pkg.dependencies, ...pkg.devDependencies }.cn,
+      [
+        "apps/web/package.json depends on the npm package `cn`.",
+        "",
+        "Every base-nova registry item declares `\"dependencies\": [\"cn\"]` and ships",
+        "`import { cn } from \"cn\"`. `cn` is a real published package, so `shadcn add` installs it,",
+        "and the installed component then uses it instead of this repo's own src/lib/utils helper.",
+        "That helper is twMerge-backed, which is what makes conflicting Tailwind classes resolve",
+        "deterministically (see the CONTROL_ROW comment in NotificationPreferences.tsx). The npm",
+        "package is not twMerge-backed, so the swap is silent and changes which class wins.",
+        "",
+        "Fix: revert the dependency (package.json + package-lock.json) and repoint the import to",
+        "@/lib/utils. Do not silence this guard.",
+      ].join("\n"),
+    ).toBeUndefined();
+
+    const reuiDir = join(webRoot, "src", "components", "reui");
+    const offenders = (existsSync(reuiDir) ? readdirSync(reuiDir) : [])
+      .filter((name) => /\.tsx?$/.test(name))
+      // Anchored to a real import statement at the start of a line. A bare /from "cn"/ also
+      // matches prose describing the defect — including the comment at the top of checkbox.tsx,
+      // which is how this guard first fired.
+      .filter((name) => /^\s*import\s[^\n]*\sfrom\s+["']cn["']/m.test(readFileSync(join(reuiDir, name), "utf8")));
+
+    expect(offenders, "these installed components import from the `cn` package instead of @/lib/utils").toEqual([]);
   });
 });
 
