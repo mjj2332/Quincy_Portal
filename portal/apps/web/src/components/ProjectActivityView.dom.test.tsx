@@ -100,7 +100,7 @@ describe("ProjectActivityView", () => {
     render();
     expect(host.textContent).toContain("RAW sync completed");
     expect(host.textContent).not.toContain("Eli Editor");
-    expect(host.querySelector(".project-activity-view__actor")).toBeNull();
+    expect(host.querySelector('[data-testid="project-activity-actor"]')).toBeNull();
   });
 
   it("suppresses actor names through the External component guard", () => {
@@ -109,6 +109,6 @@ describe("ProjectActivityView", () => {
     render();
     expect(host.textContent).toContain("Details changed");
     expect(host.textContent).not.toContain("Eli Editor");
-    expect(host.querySelector(".project-activity-view__actor")).toBeNull();
+    expect(host.querySelector('[data-testid="project-activity-actor"]')).toBeNull();
   });
 });

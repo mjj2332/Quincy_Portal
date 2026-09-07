@@ -51,19 +51,19 @@ function selBox(host: HTMLElement, assetId: string): HTMLButtonElement {
 }
 
 function filterChip(host: HTMLElement, label: string): HTMLButtonElement {
-  const el = [...host.querySelectorAll<HTMLButtonElement>(".filter-chips .chip")].find((button) => button.textContent?.startsWith(label));
+  const el = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="photo-grid-filter"]')].find((button) => button.textContent?.startsWith(label));
   if (!el) throw new Error(`No filter chip labeled ${label}`);
   return el;
 }
 
 function selectAllButton(host: HTMLElement): HTMLButtonElement {
-  const el = [...host.querySelectorAll<HTMLButtonElement>(".filter-chips .chip")].find((button) => /Select all|Deselect all/.test(button.textContent ?? ""));
+  const el = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="photo-grid-filter"]')].find((button) => /Select all|Deselect all/.test(button.textContent ?? ""));
   if (!el) throw new Error("No select-all/deselect-all button");
   return el;
 }
 
 function isSelected(host: HTMLElement, assetId: string): boolean {
-  return selBox(host, assetId).closest(".tile")?.classList.contains("is-selected") ?? false;
+  return selBox(host, assetId).closest<HTMLElement>('[data-testid="photo-grid-tile"]')?.dataset.multiSelected === "true";
 }
 
 const baseProps = {
@@ -182,9 +182,9 @@ describe("PhotoGrid select-all / deselect-all", () => {
     await render(<PhotoGrid {...baseProps} assets={assets} />);
 
     await click(selBox(host, "a"));
-    const clearButton = [...host.querySelectorAll<HTMLButtonElement>(".actionbar .barbtn")].find((button) => button.textContent === "Clear")!;
+    const clearButton = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="photo-grid-actionbar"] button')].find((button) => button.textContent === "Clear")!;
     await click(clearButton);
-    expect(host.querySelector(".actionbar")).toBeNull();
+    expect(host.querySelector('[data-testid="photo-grid-actionbar"]')).toBeNull();
 
     await click(selBox(host, "b"), { shiftKey: true });
 
@@ -198,10 +198,10 @@ describe("PhotoGrid select-all / deselect-all", () => {
     await render(<PhotoGrid {...baseProps} assets={assets} />);
 
     await click(selBox(host, "a"));
-    const approveButton = [...host.querySelectorAll<HTMLButtonElement>(".actionbar .barbtn")].find((button) => button.textContent === "Approve")!;
+    const approveButton = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="photo-grid-actionbar"] button')].find((button) => button.textContent === "Approve")!;
     await click(approveButton);
     await flush();
-    expect(host.querySelector(".actionbar")).toBeNull();
+    expect(host.querySelector('[data-testid="photo-grid-actionbar"]')).toBeNull();
 
     await click(selBox(host, "b"), { shiftKey: true });
 
@@ -223,17 +223,17 @@ describe("PhotoGrid deletion controls", () => {
     await click(host.querySelector('[aria-label="Delete one.jpg"]')!);
     expect(confirmMock).toHaveBeenCalledWith({ title: "Delete one.jpg?", message: "Permanently delete one.jpg? This cannot be undone.", confirmLabel: "Delete", danger: true });
     expect(onDelete).toHaveBeenCalledWith("one");
-    expect(host.querySelector(".actionbar")).toBeNull();
+    expect(host.querySelector('[data-testid="photo-grid-actionbar"]')).toBeNull();
   });
 
   it("uses count-inclusive bulk confirmation and retains only failed ids", async () => {
     const onBulkDelete = vi.fn(async () => ({ succeededIds: ["one"], failedIds: ["two"] }));
     await render(<PhotoGrid {...baseProps} canDelete onBulkDelete={onBulkDelete} assets={[asset("one"), asset("two")]} />);
     await click(selBox(host, "one")); await click(selBox(host, "two"));
-    await click([...host.querySelectorAll<HTMLButtonElement>(".actionbar .barbtn")].find((button) => button.textContent === "Delete 2")!);
+    await click([...host.querySelectorAll<HTMLButtonElement>('[data-testid="photo-grid-actionbar"] button')].find((button) => button.textContent === "Delete 2")!);
     expect(confirmMock).toHaveBeenCalledWith({ title: "Delete 2 selected assets?", message: "Permanently delete 2 selected assets? This cannot be undone.", confirmLabel: "Delete selected", danger: true });
     expect(onBulkDelete).toHaveBeenCalledWith(["one", "two"]);
-    expect(host.querySelector(".actionbar")?.textContent).toContain("1");
+    expect(host.querySelector('[data-testid="photo-grid-actionbar"]')?.textContent).toContain("1");
     expect(isSelected(host, "two")).toBe(true);
   });
 
@@ -251,10 +251,10 @@ describe("PhotoGrid deletion controls", () => {
     const onBulkDelete = vi.fn(async () => ({ succeededIds: [], failedIds: [] }));
     await render(<PhotoGrid {...baseProps} canDelete onBulkDelete={onBulkDelete} assets={[asset("one"), asset("two")]} />);
     await click(selBox(host, "one")); await click(selBox(host, "two"));
-    await click([...host.querySelectorAll<HTMLButtonElement>(".actionbar .barbtn")].find((button) => button.textContent === "Delete 2")!);
+    await click([...host.querySelectorAll<HTMLButtonElement>('[data-testid="photo-grid-actionbar"] button')].find((button) => button.textContent === "Delete 2")!);
     expect(onBulkDelete).not.toHaveBeenCalled();
     expect(isSelected(host, "one")).toBe(true); expect(isSelected(host, "two")).toBe(true);
-    expect(host.querySelector(".actionbar")?.textContent).toContain("2");
+    expect(host.querySelector('[data-testid="photo-grid-actionbar"]')?.textContent).toContain("2");
   });
 });
 
@@ -267,7 +267,7 @@ describe("PhotoGrid download selection", () => {
     const onDownloadSelection = vi.fn(async () => undefined);
     await render(<PhotoGrid {...baseProps} canDownloadSelection onDownloadSelection={onDownloadSelection} assets={[asset("one"), asset("two")]} />);
     await click(selBox(host, "one")); await click(selBox(host, "two"));
-    const buttons = [...host.querySelectorAll<HTMLButtonElement>(".actionbar .barbtn")];
+    const buttons = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="photo-grid-actionbar"] button')];
     expect(buttons.slice(-2).map((button) => button.textContent)).toEqual(["Clear", "Download selection"]);
     await click(buttons.at(-1)!);
     expect(onDownloadSelection).toHaveBeenCalledTimes(1);
@@ -280,13 +280,13 @@ describe("PhotoGrid download selection", () => {
     const onDownloadSelection = vi.fn(() => new Promise<void>((_, fail) => { reject = fail; }));
     await render(<PhotoGrid {...baseProps} canDownloadSelection onDownloadSelection={onDownloadSelection} assets={[asset("one")]} />);
     await click(selBox(host, "one"));
-    const download = [...host.querySelectorAll<HTMLButtonElement>(".actionbar .barbtn")].find((button) => button.textContent === "Download selection")!;
+    const download = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="photo-grid-actionbar"] button')].find((button) => button.textContent === "Download selection")!;
     await click(download);
     expect(download.disabled).toBe(true); expect(download.textContent).toBe("Preparing download…");
-    expect([...host.querySelectorAll<HTMLButtonElement>(".actionbar .barbtn")].find((button) => button.textContent === "Clear")?.disabled).toBe(false);
+    expect([...host.querySelectorAll<HTMLButtonElement>('[data-testid="photo-grid-actionbar"] button')].find((button) => button.textContent === "Clear")?.disabled).toBe(false);
     await act(async () => { reject(new Error("nope")); await Promise.resolve(); });
     await flush();
-    expect(host.querySelector(".actionbar")).not.toBeNull(); expect(isSelected(host, "one")).toBe(true);
+    expect(host.querySelector('[data-testid="photo-grid-actionbar"]')).not.toBeNull(); expect(isSelected(host, "one")).toBe(true);
   });
 
   it("hides the control without capability and disables it for count or byte overages", async () => {
@@ -297,12 +297,12 @@ describe("PhotoGrid download selection", () => {
     const many = Array.from({ length: 501 }, (_, index) => asset(`many-${index}`));
     await render(<PhotoGrid {...baseProps} canDownloadSelection onDownloadSelection={async () => undefined} assets={many} />);
     await click(selectAllButton(host));
-    const tooMany = [...host.querySelectorAll<HTMLButtonElement>(".actionbar .barbtn")].find((button) => button.textContent === "Download selection")!;
+    const tooMany = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="photo-grid-actionbar"] button')].find((button) => button.textContent === "Download selection")!;
     expect(tooMany.disabled).toBe(true); expect(tooMany.title).toContain("500 assets / 256 MiB");
 
     await render(<PhotoGrid {...baseProps} canDownloadSelection onDownloadSelection={async () => undefined} assets={[asset("large", { bytes: 256 * 1024 * 1024 + 1 })]} />);
     await click(selBox(host, "large"));
-    const tooLarge = [...host.querySelectorAll<HTMLButtonElement>(".actionbar .barbtn")].find((button) => button.textContent === "Download selection")!;
+    const tooLarge = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="photo-grid-actionbar"] button')].find((button) => button.textContent === "Download selection")!;
     expect(tooLarge.disabled).toBe(true);
   });
 });

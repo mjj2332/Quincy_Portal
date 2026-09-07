@@ -49,7 +49,7 @@ describe("ProjectTeamControl real confirmation boundary", () => {
       root!.render(<QueryClientProvider client={queryClient!}><><ProjectTeamControl projectId={projectId} members={[member]} canEdit /><ConfirmModalHost /></></QueryClientProvider>);
       await Promise.resolve();
     });
-    await act(async () => { host.querySelector<HTMLButtonElement>(".project-team__remove")!.click(); await Promise.resolve(); });
+    await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="project-member-remove"]')!.click(); await Promise.resolve(); });
     await flush();
     expect(document.querySelector('[data-testid="confirm-modal"]')).not.toBeNull();
     expect(apiDeleteMock).toHaveBeenCalledOnce();

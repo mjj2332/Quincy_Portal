@@ -129,9 +129,9 @@ describe("NoticeBoard disclosure and polling", () => {
     expect(apiPostMock).toHaveBeenCalledWith("/api/notice-board/posts", { content });
     expect(host.querySelector('[data-slot="notice-board-post"] input')).toBeNull();
     apiPostMock.mockClear(); apiPatchMock.mockClear();
-    await click(host.querySelector('[data-slot="notice-board-post"] .rich-text__task-indicator')!);
+    await click(host.querySelector('[data-slot="notice-board-post"] [data-testid="rich-text-task-indicator"]')!);
     expect(apiPostMock).not.toHaveBeenCalled(); expect(apiPatchMock).not.toHaveBeenCalled();
-    expect(host.querySelector('[data-slot="notice-board-post"] .rich-text__task-content .sr-only')?.textContent).toBe("Not completed");
+    expect(host.querySelector('[data-slot="notice-board-post"] [data-testid="rich-text-task-status"]')?.textContent).toBe("Not completed");
     expect([...host.querySelectorAll<HTMLButtonElement>("button")].some((button) => button.textContent === "Edit")).toBe(false);
   });
 

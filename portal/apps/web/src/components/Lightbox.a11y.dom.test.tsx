@@ -103,20 +103,20 @@ describe("TB8-09 §2 — every markup-toolbar button has an accessible name", ()
   beforeEach(async () => { host = mount(); await render(lightbox()); });
 
   it("names every button in the toolbar", () => {
-    const buttons = [...host.querySelectorAll<HTMLButtonElement>(".drawbar button")];
+    const buttons = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="lightbox-markup-toolbar"] button')];
     expect(buttons.length).toBeGreaterThanOrEqual(11);
     const unnamed = buttons.filter((button) => accessibleName(button) === "");
     expect(unnamed).toHaveLength(0);
   });
 
   it("gives the six pen colours six distinct names", () => {
-    const swatches = [...host.querySelectorAll<HTMLButtonElement>(".drawbar .swatch")];
+    const swatches = [...host.querySelectorAll<HTMLButtonElement>('[aria-label="Pen colour"] button')];
     expect(swatches).toHaveLength(6);
     expect(new Set(swatches.map(accessibleName)).size).toBe(6);
   });
 
   it("gives the three stroke widths three distinct names", () => {
-    const widths = [...host.querySelectorAll<HTMLButtonElement>(".drawbar .wbtn")];
+    const widths = [...host.querySelectorAll<HTMLButtonElement>('[aria-label="Stroke width"] button')];
     expect(widths).toHaveLength(3);
     expect(new Set(widths.map(accessibleName)).size).toBe(3);
   });
@@ -124,7 +124,7 @@ describe("TB8-09 §2 — every markup-toolbar button has an accessible name", ()
   it("keeps the painted dot out of the accessible name", () => {
     // The button carries no colour; an aria-hidden inner span carries the paint. That is what
     // lets the target grow to 28/44 while the visible dot stays 19px.
-    for (const swatch of host.querySelectorAll<HTMLButtonElement>(".drawbar .swatch")) {
+    for (const swatch of host.querySelectorAll<HTMLButtonElement>('[aria-label="Pen colour"] button')) {
       expect(swatch.querySelector("span")?.getAttribute("aria-hidden")).toBe("true");
     }
   });
@@ -156,8 +156,8 @@ describe("TB8-09 §0c — state is announced, and these are toggles not radios",
   it("marks exactly one pen colour and one stroke width as pressed", async () => {
     const host = mount();
     await render(lightbox());
-    for (const group of [".swatch", ".wbtn"]) {
-      const pressed = [...host.querySelectorAll(`.drawbar ${group}`)]
+    for (const group of ["Pen colour", "Stroke width"]) {
+      const pressed = [...host.querySelectorAll(`[aria-label="${group}"] button`)]
         .filter((button) => button.getAttribute("aria-pressed") === "true");
       expect(pressed).toHaveLength(1);
     }

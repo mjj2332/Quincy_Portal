@@ -105,7 +105,7 @@ describe("Project Overview rail Stage control", () => {
     const onActiveTabChange = vi.fn();
     render(<ProjectOverviewRail {...baseProps(project())} availableTabs={["raw", "edited"] as CollectionKind[]} activeTab={"raw" as CollectionKind} onActiveTabChange={onActiveTabChange} />);
     expect(host.querySelector('aside[aria-label="Project Overview"]')).not.toBeNull();
-    const tabs = [...host.querySelectorAll<HTMLButtonElement>(".filterlist button")];
+    const tabs = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')];
     expect(tabs).toHaveLength(2);
     const rawTab = tabs.find((button) => button.textContent?.includes("RAW"))!;
     const editedTab = tabs.find((button) => button.textContent?.includes("Edited"))!;
@@ -117,7 +117,7 @@ describe("Project Overview rail Stage control", () => {
 
   it("renders only the passed-in available tabs, with exactly one pressed and every other unpressed", () => {
     render(<ProjectOverviewRail {...baseProps(project())} availableTabs={["raw", "video", "copy"] as CollectionKind[]} activeTab={"video" as CollectionKind} />);
-    const tabs = [...host.querySelectorAll<HTMLButtonElement>(".filterlist button")];
+    const tabs = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')];
     expect(tabs).toHaveLength(3);
     expect(tabs.some((button) => button.textContent?.includes("Edited"))).toBe(false);
     expect(tabs.some((button) => button.textContent?.includes("Floorplan"))).toBe(false);
@@ -131,7 +131,7 @@ describe("Project Overview rail Stage control", () => {
 
   it("renders a single available tab as the only switcher entry, pressed", () => {
     render(<ProjectOverviewRail {...baseProps(project())} availableTabs={["raw"] as CollectionKind[]} activeTab={"raw" as CollectionKind} />);
-    const tabs = [...host.querySelectorAll<HTMLButtonElement>(".filterlist button")];
+    const tabs = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')];
     expect(tabs).toHaveLength(1);
     expect(tabs[0]!.getAttribute("aria-pressed")).toBe("true");
   });
@@ -139,11 +139,11 @@ describe("Project Overview rail Stage control", () => {
   it("drops a switcher tab from the list the instant it is no longer in availableTabs, without renaming or reordering the rest", () => {
     const onActiveTabChange = vi.fn();
     render(<ProjectOverviewRail {...baseProps(project())} availableTabs={["raw", "edited", "video"] as CollectionKind[]} activeTab={"raw" as CollectionKind} onActiveTabChange={onActiveTabChange} />);
-    expect([...host.querySelectorAll<HTMLButtonElement>(".filterlist button")]).toHaveLength(3);
+    expect([...host.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')]).toHaveLength(3);
     act(() => {
       root.render(<ProjectOverviewRail {...baseProps(project())} availableTabs={["raw", "video"] as CollectionKind[]} activeTab={"raw" as CollectionKind} onActiveTabChange={onActiveTabChange} />);
     });
-    const tabs = [...host.querySelectorAll<HTMLButtonElement>(".filterlist button")];
+    const tabs = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')];
     expect(tabs).toHaveLength(2);
     expect(tabs.some((button) => button.textContent?.includes("Edited"))).toBe(false);
     expect(tabs.some((button) => button.textContent?.includes("Video"))).toBe(true);

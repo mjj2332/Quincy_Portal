@@ -75,7 +75,7 @@ describe("ProjectTeamControl", () => {
     expect(document.querySelector('[role="option"]')?.textContent).toContain("Ari Photographer");
     await act(async () => { document.querySelector<HTMLButtonElement>('[role="option"]')!.click(); await Promise.resolve(); });
     await flush();
-    expect(document.querySelector(".project-team-picker")).not.toBeNull();
+    expect(document.querySelector('[role="dialog"][aria-label^="Add "]')).not.toBeNull();
     expect(document.querySelector<HTMLInputElement>('input[type="search"]')?.value).toBe("ari");
     expect(apiPutMock).toHaveBeenCalledWith(`/api/projects/${projectId}/photographers/${photographer.id}`);
     expect(publish.mock.calls.some(([message]) => message.type === "project-data-invalidated" && JSON.stringify(message.resources) === JSON.stringify([{ kind: "activity" }]))).toBe(true);
@@ -127,7 +127,7 @@ describe("ProjectTeamControl", () => {
     delete (unknown as Partial<ProjectMember>).assignedSubtaskCount;
     const host = await mount([unknown]);
     const publish = vi.spyOn(runtime, "publish");
-    await act(async () => { host.querySelector<HTMLButtonElement>('.project-team__remove')!.click(); await Promise.resolve(); });
+    await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="project-member-remove"]')!.click(); await Promise.resolve(); });
     await flush(4);
     expect(confirmMock).toHaveBeenCalledWith(expect.objectContaining({ confirmLabel: "Remove and unassign", message: expect.stringContaining("2 checklist items") }));
     expect(apiDeleteMock.mock.calls[0]?.[1]).toEqual({ membershipCycle: members[0]!.id, clearSubtaskAssignments: false, confirmedAssignmentCount: 0 });
@@ -138,9 +138,9 @@ describe("ProjectTeamControl", () => {
   it("shows a generic error and stops when the confirmation response omits its assignment count", async () => {
     apiDeleteMock.mockRejectedValueOnce(new ApiError("malformed confirmation response", 422, { code: "subtask_assignment_confirmation_required" }));
     const host = await mount();
-    await act(async () => { host.querySelector<HTMLButtonElement>('.project-team__remove')!.click(); await Promise.resolve(); });
+    await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="project-member-remove"]')!.click(); await Promise.resolve(); });
     await flush(4);
-    expect(host.querySelector('.project-team__message--error')?.textContent).toContain("Assignment could not be removed.");
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain("Assignment could not be removed.");
     expect(confirmMock).not.toHaveBeenCalled();
     expect(apiDeleteMock).toHaveBeenCalledOnce();
   });
@@ -153,7 +153,7 @@ describe("ProjectTeamControl", () => {
       .mockRejectedValueOnce(new ApiError("changed", 422, { code: "subtask_assignment_confirmation_required", assignmentCount: 3 }))
       .mockResolvedValueOnce({ outcome: "removed", removed: { membershipCycle: unknown.id, userId: unknown.userId, roleOnProject: "editor" }, subtaskAssignmentsCleared: 3 });
     const host = await mount([unknown]);
-    await act(async () => { host.querySelector<HTMLButtonElement>('.project-team__remove')!.click(); await Promise.resolve(); });
+    await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="project-member-remove"]')!.click(); await Promise.resolve(); });
     await flush(6);
     expect(confirmMock.mock.calls.map(([options]) => (options as { message: string }).message)).toEqual([
       expect.stringContaining("2 checklist items"),
@@ -171,7 +171,7 @@ describe("ProjectTeamControl", () => {
       .mockRejectedValueOnce(new ApiError("confirm", 422, { code: "subtask_assignment_confirmation_required", assignmentCount: 2 }))
       .mockResolvedValueOnce({ outcome: "removed", removed: { membershipCycle: members[0]!.id, userId: members[0]!.userId, roleOnProject: "editor" }, subtaskAssignmentsCleared: 2 });
     const host = await mount(members);
-    await act(async () => { host.querySelector<HTMLButtonElement>('.project-team__remove')!.click(); await Promise.resolve(); });
+    await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="project-member-remove"]')!.click(); await Promise.resolve(); });
     await flush(3);
     expect(confirmMock).toHaveBeenCalledOnce();
     expect(apiDeleteMock.mock.calls[0]?.[1]).toEqual({ membershipCycle: members[0]!.id, clearSubtaskAssignments: false, confirmedAssignmentCount: 0 });
@@ -186,13 +186,13 @@ describe("ProjectTeamControl", () => {
     queryClient.setQueryData(projectDataKeys.detail(projectId), { id: projectId, street: "Test", suburb: null, postcode: null, agencyName: null, agentName: null, shootDate: null, stageKey: "raw_review", rawFolderPath: null, rawFolderLink: null, coverAssetId: null, effectiveCoverAssetId: null, collections: [], members: [members[0]!, other] });
     await act(async () => { host.querySelector<HTMLButtonElement>('[aria-label="Add Photographer"]')!.click(); await Promise.resolve(); });
     const invalidate = vi.spyOn(queryClient, "invalidateQueries");
-    const editorRow = [...host.querySelectorAll<HTMLElement>(".project-team__member")].find((row) => row.dataset.testid?.includes(`editor:${members[0]!.userId}`))!;
-    await act(async () => { editorRow.querySelector<HTMLButtonElement>('.project-team__remove')!.click(); await Promise.resolve(); });
+    const editorRow = host.querySelector<HTMLElement>(`[data-testid="project-member-editor:${members[0]!.userId}"]`)!;
+    await act(async () => { editorRow.querySelector<HTMLButtonElement>('[data-testid="project-member-remove"]')!.click(); await Promise.resolve(); });
     await flush(4);
     const detail = queryClient.getQueryData<{ members: Array<{ id: string; userId: string; roleOnProject: string }> }>(projectDataKeys.detail(projectId));
     expect(detail?.members).toEqual(expect.arrayContaining([expect.objectContaining({ id: current.id, userId: current.userId, roleOnProject: "editor" }), expect.objectContaining({ id: other.id, userId: other.userId, roleOnProject: "photographer" })]));
     expect(detail?.members).toHaveLength(2);
-    expect(document.querySelector(".project-team-picker")).not.toBeNull();
+    expect(document.querySelector('[role="dialog"][aria-label^="Add "]')).not.toBeNull();
     expect(apiDeleteMock).toHaveBeenCalledOnce();
     expect(invalidate).toHaveBeenCalledWith(expect.objectContaining({ queryKey: projectDataKeys.detail(projectId), exact: true }));
   });
@@ -203,8 +203,8 @@ describe("ProjectTeamControl", () => {
     apiDeleteMock.mockRejectedValueOnce(new Error("No network"));
     const host = await mount([members[0]!, other]);
     queryClient.setQueryData(projectDataKeys.detail(projectId), detail);
-    const editorRow = [...host.querySelectorAll<HTMLElement>(".project-team__member")].find((row) => row.dataset.testid?.includes(`editor:${members[0]!.userId}`))!;
-    await act(async () => { editorRow.querySelector<HTMLButtonElement>('.project-team__remove')!.click(); await Promise.resolve(); });
+    const editorRow = host.querySelector<HTMLElement>(`[data-testid="project-member-editor:${members[0]!.userId}"]`)!;
+    await act(async () => { editorRow.querySelector<HTMLButtonElement>('[data-testid="project-member-remove"]')!.click(); await Promise.resolve(); });
     await flush(4);
     expect(queryClient.getQueryData<typeof detail>(projectDataKeys.detail(projectId))?.members).toEqual(expect.arrayContaining([members[0], other]));
     expect(editorRow.textContent).toContain("No network");
@@ -214,7 +214,7 @@ describe("ProjectTeamControl", () => {
   it("shows inactive roster members truthfully and never offers them as new candidates", async () => {
     const host = await mount(members);
     expect(host.querySelector(`[data-testid="project-member-editor:${members[0]!.userId}"]`)?.textContent).toContain("Inactive");
-    expect(host.querySelector<HTMLButtonElement>('.project-team__remove')?.disabled).toBe(false);
+    expect(host.querySelector<HTMLButtonElement>('[data-testid="project-member-remove"]')?.disabled).toBe(false);
     await act(async () => { host.querySelector<HTMLButtonElement>('[aria-label="Add Editor"]')!.click(); await Promise.resolve(); });
     expect([...document.querySelectorAll('[role="option"]')].map((option) => option.textContent)).not.toContain(expect.stringContaining("Inactive Editor"));
   });
@@ -223,11 +223,11 @@ describe("ProjectTeamControl", () => {
     const host = await mount([]);
     const trigger = host.querySelector<HTMLButtonElement>('[aria-label="Add Photographer"]')!;
     await act(async () => { trigger.click(); await new Promise<void>((resolve) => window.setTimeout(resolve, 0)); });
-    const search = document.querySelector<HTMLInputElement>('.project-team-picker input[type="search"]')!;
+    const search = document.querySelector<HTMLInputElement>('[role="dialog"][aria-label^="Add "] input[type="search"]')!;
     expect(document.activeElement).toBe(search);
-    await act(async () => { document.querySelector<HTMLElement>('.project-team-picker')!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await Promise.resolve(); });
+    await act(async () => { document.querySelector<HTMLElement>('[role="dialog"][aria-label^="Add "]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await Promise.resolve(); });
     await waitForClose();
-    expect(document.querySelector('.project-team-picker')).toBeNull();
+    expect(document.querySelector('[role="dialog"][aria-label^="Add "]')).toBeNull();
     expect(document.activeElement).toBe(trigger);
   });
 
@@ -238,7 +238,7 @@ describe("ProjectTeamControl", () => {
     const host = await mount([]);
     await flush(4);
     await act(async () => { host.querySelector<HTMLButtonElement>('[aria-label="Add Photographer"]')!.click(); await Promise.resolve(); });
-    const search = document.querySelector<HTMLInputElement>('.project-team-picker input[type="search"]')!;
+    const search = document.querySelector<HTMLInputElement>('[role="dialog"][aria-label^="Add "] input[type="search"]')!;
     expect(search.disabled).toBe(true);
     expect(search.getAttribute("aria-invalid")).toBe("true");
   });

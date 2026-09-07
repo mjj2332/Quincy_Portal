@@ -46,7 +46,7 @@ async function typeInto(element: HTMLInputElement, value: string) {
 }
 
 async function submit() {
-  const button = host.querySelector<HTMLButtonElement>(".create-project__actions button[type=submit]")!;
+  const button = host.querySelector<HTMLButtonElement>('[data-testid="create-project-submit"]')!;
   await act(async () => { button.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); await Promise.resolve(); });
   await flush();
 }
@@ -116,7 +116,7 @@ describe("CreateProject Client payload", () => {
     const onNavigate = vi.fn();
     await act(async () => { root!.render(<ProjectQueryRuntimeProvider runtime={runtime}><QueryClientProvider client={queryClient}><CreateProject onNavigate={onNavigate} /></QueryClientProvider></ProjectQueryRuntimeProvider>); await Promise.resolve(); });
     await typeInto(host.querySelector<HTMLInputElement>('input[placeholder="12 Kings Road, Vaucluse"]')!, "12 Broadcast Street");
-    await act(async () => { host.querySelector<HTMLButtonElement>(".create-project__hero-action button")!.click(); await Promise.resolve(); });
+    await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="create-project-hero-submit"]')!.click(); await Promise.resolve(); });
     await flush();
     expect(publish.mock.calls.some(([message]) => message.type === "dashboard-board-invalidated")).toBe(true);
     expect(publish.mock.calls.some(([message]) => message.type === "production-calendar-invalidated")).toBe(true);

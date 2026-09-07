@@ -199,38 +199,22 @@ function assertBaselineHonest(findings: Finding[], baseline: Record<string, numb
  * converted; the whole map goes when the ticket closes. NOTHING may be added.
  */
 const CLASS_SELECTOR_BASELINE: Record<string, number> = {
-  "screens/ProjectWorkspace.dom.test.tsx": 98,
   "screens/Dashboard-stage-interactions.dom.test.tsx": 70,
-  "components/ProjectCollaborationPanel.dom.test.tsx": 37,
   "components/Topbar.dom.test.tsx": 35,
-  "components/CollectionPanel.dom.test.tsx": 29,
-  "components/PhotoGrid.dom.test.tsx": 18,
-  "components/Lightbox.dom.test.tsx": 17,
-  "components/ProjectTeamControl.dom.test.tsx": 16,
   "screens/Admin.dom.test.tsx": 15,
   "screens/Dashboard-kanban-sort.dom.test.tsx": 13,
   "screens/Dashboard-calendar.dom.test.tsx": 12,
-  "components/Lightbox.a11y.dom.test.tsx": 5,
   "components/ProductionCalendar-phone.dom.test.tsx": 5,
-  "components/ProjectOverviewRail.dom.test.tsx": 5,
   "components/ProductionCalendar-unscheduled.dom.test.tsx": 4,
-  "components/SubtaskChecklist.dom.test.tsx": 4,
   "components/ConfirmDialog.dom.test.tsx": 3,
   "components/ProjectKanbanBoard.dom.test.tsx": 3,
-  "components/RichTextEditor.dom.test.tsx": 3,
-  "components/NoticeBoard.dom.test.tsx": 2,
   "components/ProductionCalendar-reconciliation.dom.test.tsx": 2,
   "components/ProductionCalendar.dom.test.tsx": 2,
   "components/ProductionCalendarEvent.dom.test.tsx": 2,
-  "components/ProjectActivityView.dom.test.tsx": 2,
-  "components/ProjectFields.dom.test.tsx": 2,
-  "screens/CreateProject.dom.test.tsx": 2,
   "components/ImpersonationBanner.dom.test.tsx": 1,
   "components/KanbanCardPreview.dom.test.tsx": 1,
   "components/ProductionCalendar-checklist.dom.test.tsx": 1,
   "components/ProductionCalendarUnscheduledPanel.dom.test.tsx": 1,
-  "components/ProjectDeadlineControl.dom.test.tsx": 1,
-  "components/ProjectTeamControl.confirm.dom.test.tsx": 1,
   "screens/Dashboard-kanban-sort-priority-guard.dom.test.tsx": 1,
   "screens/Dashboard-kanban-sort-priority-render-gate.dom.test.tsx": 1,
 };
@@ -317,10 +301,6 @@ describe("guard B: every DOM query in a DOM test takes a literal selector", () =
 const CLASS_ASSERTION_BASELINE: Record<string, number> = {
   "components/ProjectKanbanBoard.dom.test.tsx": 6,
   "screens/Dashboard-calendar.dom.test.tsx": 6,
-  "components/CollectionPanel.dom.test.tsx": 3,
-  "screens/ProjectWorkspace.dom.test.tsx": 2,
-  "components/PhotoGrid.dom.test.tsx": 1,
-  "components/ProjectCollaborationPanel.dom.test.tsx": 1,
 };
 
 describe("guard C: no DOM test asserts an element carries a Quincy class name", () => {

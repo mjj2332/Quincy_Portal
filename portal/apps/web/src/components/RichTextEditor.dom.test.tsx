@@ -598,11 +598,11 @@ describe("RichTextEditor hard breaks", () => {
     pageBehind.addEventListener("click", pageBehindClick); document.body.prepend(pageBehind);
     await selectText(editor, editor.querySelector("p")!.firstChild!, 0, "Link me".length);
     await click(host.querySelector<HTMLButtonElement>('[aria-label="Link"]')!);
-    // The RTE dialog is `Modal` now (§6.7) — its scrim is the shared `.scrim`, and dismissal is
+    // The RTE dialog is `Modal` now (§6.7) — its scrim is the shared `modal-scrim` testid, and dismissal is
     // press-contained (defect F, §6.1 item 2): a press that began inside the panel and is
     // released past its edge must not dismiss. A bare click with no preceding pointerdown on the
     // scrim itself does not dismiss either (see ConfirmDialog.dom.test.tsx's identical case).
-    const scrim = document.querySelector<HTMLElement>(".scrim")!;
+    const scrim = document.querySelector<HTMLElement>('[data-testid="modal-scrim"]')!;
     await act(async () => {
       scrim.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
       await Promise.resolve(); await Promise.resolve();
@@ -708,9 +708,9 @@ describe("RichTextEditor hard breaks", () => {
       { type: "taskItem", attrs: { checked: false }, content: [{ type: "paragraph", content: [{ type: "text", text: "Open" }] }] },
     ] }] };
     await act(async () => { root!.render(<RichTextContent content={content} />); await Promise.resolve(); });
-    const indicators = host.querySelectorAll<HTMLElement>(".rich-text__task-indicator");
+    const indicators = host.querySelectorAll<HTMLElement>('[data-testid="rich-text-task-indicator"]');
     expect(host.querySelector("input")).toBeNull(); expect(indicators).toHaveLength(2);
-    expect(host.querySelectorAll(".rich-text__task-content .sr-only")).toHaveLength(2);
+    expect(host.querySelectorAll('[data-testid="rich-text-task-status"]')).toHaveLength(2);
     expect(host.textContent).toContain("Completed"); expect(host.textContent).toContain("Not completed");
     const before = host.innerHTML; await click(indicators[0]!); expect(host.innerHTML).toBe(before);
   });

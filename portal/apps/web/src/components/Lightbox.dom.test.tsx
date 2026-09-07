@@ -120,7 +120,7 @@ function reactOnClick(node: Element): unknown {
 }
 
 async function drawOneStroke(host: HTMLElement) {
-  const svg = host.querySelector(".markup-svg")!;
+  const svg = host.querySelector('[data-testid="lightbox-markup"]')!;
   (svg as unknown as { setPointerCapture: () => void }).setPointerCapture = () => {};
   await act(async () => {
     svg.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, pointerId: 1, clientX: 10, clientY: 10 }));
@@ -129,7 +129,7 @@ async function drawOneStroke(host: HTMLElement) {
 }
 
 function draftStrokeCount(host: HTMLElement) {
-  return host.querySelectorAll(".markup-svg .stroke-vis").length;
+  return host.querySelectorAll('[data-testid="lightbox-markup"] [data-testid="lightbox-stroke"]').length;
 }
 
 function baseProps(overrides: Partial<Parameters<typeof Lightbox>[0]> = {}) {
@@ -143,7 +143,7 @@ function baseProps(overrides: Partial<Parameters<typeof Lightbox>[0]> = {}) {
 }
 
 async function openReviewPanel(host: HTMLElement) {
-  const trigger = host.querySelector<HTMLButtonElement>(".viewer__panel-trigger");
+  const trigger = host.querySelector<HTMLButtonElement>('[data-testid="lightbox-review-trigger"]');
   if (!trigger) throw new Error("No Review panel trigger found");
   await click(trigger);
 }
@@ -194,7 +194,7 @@ describe("Lightbox — always-on drawing and draft protection", () => {
     const confirm = confirmMock;
     await render(<Lightbox {...baseProps()} />);
     expect([...host.querySelectorAll("button")].some((item) => item.textContent?.includes("Draw"))).toBe(false);
-    expect(host.querySelector(".drawbar")).not.toBeNull();
+    expect(host.querySelector('[data-testid="lightbox-markup-toolbar"]')).not.toBeNull();
     await drawOneStroke(host);
     expect(draftStrokeCount(host)).toBe(1);
     expect(confirm).not.toHaveBeenCalled(); // the common path — no inline edit open — never prompts at all
@@ -419,7 +419,7 @@ describe("Lightbox — always-on drawing and draft protection", () => {
     const inline = host.querySelector<HTMLTextAreaElement>('textarea[aria-label="Edit annotation note"]')!;
     expect(inline.disabled).toBe(false);
     await typeInto(inline, "changed");
-    const otherButtons = [...host.querySelectorAll<HTMLButtonElement>(".comment-reply")].filter((item) => item.textContent?.trim() === "Edit note" || item.textContent?.trim() === "Add drawing" || item.textContent?.trim() === "Delete");
+    const otherButtons = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="lightbox-annotation-action"]')].filter((item) => item.textContent?.trim() === "Edit note" || item.textContent?.trim() === "Add drawing" || item.textContent?.trim() === "Delete");
     expect(otherButtons.length).toBeGreaterThan(0);
     expect(otherButtons.every((item) => item.disabled)).toBe(true);
     await click(button(host, "Save"));
@@ -427,7 +427,7 @@ describe("Lightbox — always-on drawing and draft protection", () => {
   });
 
   function otherAnnotationButtons(host: HTMLElement) {
-    return [...host.querySelectorAll<HTMLButtonElement>(".comment-reply")].filter((item) => item.textContent?.trim() === "Edit note" || item.textContent?.trim() === "Add drawing" || item.textContent?.trim() === "Delete");
+    return [...host.querySelectorAll<HTMLButtonElement>('[data-testid="lightbox-annotation-action"]')].filter((item) => item.textContent?.trim() === "Edit note" || item.textContent?.trim() === "Add drawing" || item.textContent?.trim() === "Delete");
   }
 
   it("also disables other annotations' actions while a new, unsaved stroke draft exists (not just during an inline edit)", async () => {
@@ -467,7 +467,7 @@ describe("Lightbox — always-on drawing and draft protection", () => {
     await render(<Lightbox {...baseProps({ assets })} />);
     await openReviewPanel(host);
     await click(button(host, "Zoom in"));
-    const canvas = host.querySelector<HTMLElement>(".canvasframe")!;
+    const canvas = host.querySelector<HTMLElement>('[data-testid="lightbox-canvas"]')!;
     (canvas as unknown as { setPointerCapture: () => void }).setPointerCapture = () => {};
     const before = canvas.style.transform;
     canvas.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1, clientX: 10, clientY: 10 }));
@@ -482,9 +482,9 @@ describe("Lightbox — always-on drawing and draft protection", () => {
     const photographerHost = mount();
     await render(<Lightbox {...baseProps({ assets, canAnnotate: false })} />);
     await flush();
-    expect(photographerHost.querySelector(".drawbar")).toBeNull();
+    expect(photographerHost.querySelector('[data-testid="lightbox-markup-toolbar"]')).toBeNull();
     expect(photographerHost.querySelector('textarea[placeholder="Optional note for this markup…"]')).toBeNull();
-    const photographerCanvas = photographerHost.querySelector<HTMLElement>(".canvasframe")!;
+    const photographerCanvas = photographerHost.querySelector<HTMLElement>('[data-testid="lightbox-canvas"]')!;
     await openReviewPanel(photographerHost);
     await click(button(photographerHost, "Zoom in"));
     const photographerBefore = photographerCanvas.style.transform;
@@ -504,7 +504,7 @@ describe("Lightbox — always-on drawing and draft protection", () => {
   it("does not pinch-zoom for annotators, but retains it for photographers", async () => {
     const host = mount();
     await render(<Lightbox {...baseProps()} />);
-    const canvas = host.querySelector<HTMLElement>(".canvasframe")!;
+    const canvas = host.querySelector<HTMLElement>('[data-testid="lightbox-canvas"]')!;
     const before = canvas.style.transform;
     await act(async () => {
       twoFingerTouch(canvas, "touchstart", [[10, 10], [20, 20]]);
@@ -517,7 +517,7 @@ describe("Lightbox — always-on drawing and draft protection", () => {
     document.body.replaceChildren();
     const photographerHost = mount();
     await render(<Lightbox {...baseProps({ canAnnotate: false })} />);
-    const photographerCanvas = photographerHost.querySelector<HTMLElement>(".canvasframe")!;
+    const photographerCanvas = photographerHost.querySelector<HTMLElement>('[data-testid="lightbox-canvas"]')!;
     const photographerBefore = photographerCanvas.style.transform;
     await act(async () => {
       twoFingerTouch(photographerCanvas, "touchstart", [[10, 10], [20, 20]]);
@@ -531,7 +531,7 @@ describe("Lightbox — always-on drawing and draft protection", () => {
     const assets = [workspaceAsset("asset-1"), workspaceAsset("asset-2")];
     const host = mount();
     await render(<Lightbox {...baseProps({ assets })} />);
-    const canvas = host.querySelector<HTMLElement>(".canvasframe")!;
+    const canvas = host.querySelector<HTMLElement>('[data-testid="lightbox-canvas"]')!;
     (canvas as unknown as { setPointerCapture: () => void }).setPointerCapture = () => {};
     await act(async () => {
       canvas.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 4, pointerType: "touch", clientX: 300, clientY: 100 }));
@@ -544,7 +544,7 @@ describe("Lightbox — always-on drawing and draft protection", () => {
     document.body.replaceChildren();
     const photographerHost = mount();
     await render(<Lightbox {...baseProps({ assets, canAnnotate: false })} />);
-    const photographerCanvas = photographerHost.querySelector<HTMLElement>(".canvasframe")!;
+    const photographerCanvas = photographerHost.querySelector<HTMLElement>('[data-testid="lightbox-canvas"]')!;
     (photographerCanvas as unknown as { setPointerCapture: () => void }).setPointerCapture = () => {};
     await act(async () => {
       photographerCanvas.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 5, pointerType: "touch", clientX: 300, clientY: 100 }));
@@ -562,7 +562,7 @@ describe("Lightbox — always-on drawing and draft protection", () => {
     await openReviewPanel(host);
     await flush();
     const group = host.querySelector<SVGGElement>('[data-annotation-id="ann-1"]')!;
-    const svg = host.querySelector(".markup-svg")!;
+    const svg = host.querySelector('[data-testid="lightbox-markup"]')!;
     (svg as unknown as { setPointerCapture: () => void }).setPointerCapture = () => {};
     // The real, targeted assertion: the onClick prop itself is absent for a canAnnotate user —
     // independent of selectAnnotation's own internal guard, which would silently absorb an
@@ -576,7 +576,7 @@ describe("Lightbox — always-on drawing and draft protection", () => {
     group.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 3, clientX: 20, clientY: 20 }));
     await click(hitTarget);
     await flush();
-    expect(host.querySelector(".cmt--highlighted")).toBeNull();
+    expect(host.querySelector('[data-highlighted="true"]')).toBeNull();
     expect(annotatorScroll).not.toHaveBeenCalled();
     expect(draftStrokeCount(host)).toBe(2); // drawDown still fired correctly, from the pointerdown
     annotatorScroll.mockRestore();
@@ -604,9 +604,9 @@ describe("Lightbox — always-on drawing and draft protection", () => {
     window.innerWidth = 600;
     const host = mount();
     await render(<Lightbox {...baseProps()} />);
-    await click(host.querySelector<HTMLButtonElement>(".vpanel__peek-handle")!);
+    await click(host.querySelector<HTMLButtonElement>('[data-testid="lightbox-review-peek"]')!);
     await flush();
-    expect(host.querySelector(".vpanel.open")).not.toBeNull();
+    expect(host.querySelector('#lightbox-review-panel[data-open="true"]')).not.toBeNull();
     expect(host.querySelector('textarea[placeholder="Optional note for this markup…"]')).not.toBeNull();
   });
 

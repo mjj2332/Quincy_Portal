@@ -123,7 +123,7 @@ afterEach(async () => {
 describe("ProjectDeadlineControl", () => {
   it("renders the two rail rows read-only and hides write controls for Delivered", async () => {
     const host = await mount({ ...activeSchedule, state: "inactive_delivered" }, true);
-    expect(host.querySelectorAll(".rail-kv")).toHaveLength(2);
+    expect(host.querySelectorAll('[data-testid="project-deadline-row"]')).toHaveLength(2);
     expect(host.textContent).toContain("Sydney (Australia/Sydney)");
     expect(host.textContent).toContain("Reminders inactive while Delivered. Move the project out of Delivered before changing or resuming them.");
     expect(host.querySelectorAll("button")).toHaveLength(0);

@@ -134,7 +134,7 @@ async function typeIntoEditor(editor: HTMLElement, text: string) {
 }
 
 function editedTabButton(host: HTMLElement): HTMLButtonElement {
-  const button = [...host.querySelectorAll<HTMLButtonElement>(".frow")].find((item) => item.textContent?.includes("Edited"));
+  const button = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')].find((item) => item.textContent?.includes("Edited"));
   if (!button) throw new Error("No Edited tab button");
   return button;
 }
@@ -193,15 +193,15 @@ afterEach(async () => {
     await render(<ProjectWorkspace projectId="p1" />);
     await flush();
 
-    const selectBoxes = host.querySelectorAll<HTMLButtonElement>(".selbox");
+    const selectBoxes = host.querySelectorAll<HTMLButtonElement>('[aria-label^="Select "]');
     expect(selectBoxes.length).toBeGreaterThan(0);
     await click(selectBoxes[0]!);
-    expect(host.querySelector(".actionbar")).not.toBeNull();
+    expect(host.querySelector('[data-testid="photo-grid-actionbar"]')).not.toBeNull();
 
     await click(editedTabButton(host));
     await flush();
 
-    expect(host.querySelector(".actionbar")).toBeNull();
+    expect(host.querySelector('[data-testid="photo-grid-actionbar"]')).toBeNull();
   });
 
   it("shows the empty state instead of the previous tab's assets while the new tab's fetch is in flight", async () => {
@@ -214,7 +214,7 @@ afterEach(async () => {
 
     expect(host.textContent).not.toContain("raw-1.jpg");
     expect(host.textContent).not.toContain("raw-2.jpg");
-    expect(host.querySelector(".empty")).not.toBeNull();
+    expect(host.querySelector('[data-testid="collection-loading"]')).not.toBeNull();
 
     await act(async () => {
       editedFetch.resolve({ assets: [workspaceAsset("edited-1")] });
@@ -253,10 +253,10 @@ afterEach(async () => {
     });
     await render(<ProjectWorkspace projectId="p1" />); await flush(20);
     await click(editedTabButton(host)); await flush(20);
-    expect([...host.querySelectorAll<HTMLButtonElement>(".frow")].some((item) => item.textContent?.includes("Edited"))).toBe(false);
-    await click([...host.querySelectorAll<HTMLButtonElement>(".frow")].find((item) => item.textContent?.includes("Video"))!); await flush(20);
-    expect([...host.querySelectorAll<HTMLButtonElement>(".frow")].some((item) => item.textContent?.includes("Edited"))).toBe(false);
-    expect([...host.querySelectorAll<HTMLButtonElement>(".frow")].some((item) => item.textContent?.includes("Video"))).toBe(false);
+    expect([...host.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')].some((item) => item.textContent?.includes("Edited"))).toBe(false);
+    await click([...host.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')].find((item) => item.textContent?.includes("Video"))!); await flush(20);
+    expect([...host.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')].some((item) => item.textContent?.includes("Edited"))).toBe(false);
+    expect([...host.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')].some((item) => item.textContent?.includes("Video"))).toBe(false);
   });
 
   it("falls back the active collection switcher tab to RAW when the current non-raw tab becomes denied", async () => {
@@ -270,7 +270,7 @@ afterEach(async () => {
     });
     await render(<ProjectWorkspace projectId="p1" />); await flush(20);
     await click(editedTabButton(host)); await flush(20);
-    const tabsAfter = [...host.querySelectorAll<HTMLButtonElement>(".frow")];
+    const tabsAfter = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')];
     const rawTab = tabsAfter.find((item) => item.textContent?.includes("RAW"))!;
     expect(rawTab.getAttribute("aria-pressed")).toBe("true");
     expect(tabsAfter.some((item) => item.textContent?.includes("Edited"))).toBe(false);
@@ -288,9 +288,9 @@ afterEach(async () => {
       return Promise.resolve({});
     });
     await render(<ProjectWorkspace projectId="p1" />); await flush(20);
-    const editedTab = [...host.querySelectorAll<HTMLButtonElement>(".frow")].find((item) => item.textContent?.includes("Edited"))!;
+    const editedTab = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')].find((item) => item.textContent?.includes("Edited"))!;
     expect(editedTab.getAttribute("aria-pressed")).toBe("true");
-    expect([...host.querySelectorAll<HTMLButtonElement>(".frow")].some((item) => item.textContent?.includes("RAW"))).toBe(false);
+    expect([...host.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')].some((item) => item.textContent?.includes("RAW"))).toBe(false);
     expect(host.textContent).toContain("edited-1.jpg");
   });
 
@@ -300,7 +300,7 @@ afterEach(async () => {
     await act(async () => { editedFetch.resolve({ assets: [workspaceAsset("edited-1")] }); await Promise.resolve(); });
     await flush();
     expect(host.textContent).toContain("edited-1.jpg");
-    const editedTab = [...host.querySelectorAll<HTMLButtonElement>(".frow")].find((item) => item.textContent?.includes("Edited"))!;
+    const editedTab = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')].find((item) => item.textContent?.includes("Edited"))!;
     expect(editedTab.getAttribute("aria-pressed")).toBe("true");
 
     apiGetMock.mockImplementation((path: string) => {
@@ -319,7 +319,7 @@ afterEach(async () => {
     await render(<ProjectWorkspace projectId="p2" />);
     await flush(20);
 
-    const rawTabAfter = [...host.querySelectorAll<HTMLButtonElement>(".frow")].find((item) => item.textContent?.includes("RAW"))!;
+    const rawTabAfter = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')].find((item) => item.textContent?.includes("RAW"))!;
     expect(rawTabAfter.getAttribute("aria-pressed")).toBe("true");
     expect(host.textContent).not.toContain("edited-1.jpg");
     expect(host.textContent).toContain("p2-raw-1.jpg");
@@ -423,7 +423,7 @@ afterEach(async () => {
       return Promise.resolve({});
     });
     await render(<ProjectWorkspace projectId="p1" />); await flush(20);
-    expect(host.querySelector(".work")).not.toBeNull();
+    expect(host.querySelector('[data-testid="project-workspace"]')).not.toBeNull();
     expect(host.textContent).toContain("Ingest temporarily unavailable");
     expect(host.textContent).not.toContain("Preparing the workspace.");
   });
@@ -448,16 +448,16 @@ afterEach(async () => {
     let queryClient: ReturnType<typeof import("../lib/query-client").createQuincyQueryClient> | undefined;
     rawAssets = [workspaceAsset("raw-1"), workspaceAsset("raw-2")];
     await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>); await flush();
-    await click(host.querySelectorAll<HTMLButtonElement>(".selbox")[0]!);
-    await click(host.querySelectorAll<HTMLButtonElement>(".selbox")[1]!);
+    await click(host.querySelectorAll<HTMLButtonElement>('[aria-label^="Select "]')[0]!);
+    await click(host.querySelectorAll<HTMLButtonElement>('[aria-label^="Select "]')[1]!);
     await flush(12);
-    await click(host.querySelector<HTMLElement>(".tile")!); await flush();
-    await click(host.querySelector<HTMLButtonElement>(".viewer__panel-trigger")!); await flush();
-    const note = host.querySelector<HTMLTextAreaElement>(".annotation-note");
+    await click(host.querySelector<HTMLElement>('[data-testid="photo-grid-tile"]')!); await flush();
+    await click(host.querySelector<HTMLButtonElement>('[data-testid="lightbox-review-trigger"]')!); await flush();
+    const note = host.querySelector<HTMLTextAreaElement>('textarea[placeholder="Optional note for this markup…"]');
     expect(note).not.toBeNull();
     const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")!.set!;
     await act(async () => { setter.call(note, "unsaved markup draft"); note!.dispatchEvent(new Event("input", { bubbles: true })); await Promise.resolve(); });
-    const scroll = host.querySelector<HTMLElement>(".vpanel__scroll");
+    const scroll = host.querySelector<HTMLElement>('[data-testid="lightbox-review-scroll"]');
     expect(scroll).not.toBeNull();
     scroll!.scrollTop = 240;
     apiGetMock.mockImplementation((path: string) => {
@@ -470,11 +470,11 @@ afterEach(async () => {
     await expect(queryClient!.fetchQuery({ ...projectAssetsQueryOptions("p1", "raw"), staleTime: 0, retry: false })).rejects.toMatchObject({ status: 500 });
     await flush(12);
     expect(host.textContent).toContain("Temporary asset outage");
-    expect(host.querySelectorAll(".tile.is-selected")).toHaveLength(2);
-    expect(host.querySelector(".actionbar")).not.toBeNull();
-    expect(host.querySelector(".viewer__close")).not.toBeNull();
-    expect(host.querySelector<HTMLTextAreaElement>(".annotation-note")?.value).toBe("unsaved markup draft");
-    expect(host.querySelector<HTMLElement>(".vpanel__scroll")?.scrollTop).toBe(240);
+    expect(host.querySelectorAll('[data-testid="photo-grid-tile"][data-multi-selected="true"]')).toHaveLength(2);
+    expect(host.querySelector('[data-testid="photo-grid-actionbar"]')).not.toBeNull();
+    expect(host.querySelector('[aria-label="Close"]')).not.toBeNull();
+    expect(host.querySelector<HTMLTextAreaElement>('textarea[placeholder="Optional note for this markup…"]')?.value).toBe("unsaved markup draft");
+    expect(host.querySelector<HTMLElement>('[data-testid="lightbox-review-scroll"]')?.scrollTop).toBe(240);
   });
 
   it("preserves multi-select, Lightbox draft, and scroll across an ordinary focus refetch", async () => {
@@ -482,14 +482,14 @@ afterEach(async () => {
     let queryClient: ReturnType<typeof import("../lib/query-client").createQuincyQueryClient> | undefined;
     rawAssets = [workspaceAsset("raw-1"), workspaceAsset("raw-2")];
     await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>); await flush();
-    await click(host.querySelectorAll<HTMLButtonElement>(".selbox")[0]!);
-    await click(host.querySelectorAll<HTMLButtonElement>(".selbox")[1]!); await flush(12);
-    await click(host.querySelector<HTMLElement>(".tile")!); await flush();
-    await click(host.querySelector<HTMLButtonElement>(".viewer__panel-trigger")!); await flush();
-    const note = host.querySelector<HTMLTextAreaElement>(".annotation-note")!;
+    await click(host.querySelectorAll<HTMLButtonElement>('[aria-label^="Select "]')[0]!);
+    await click(host.querySelectorAll<HTMLButtonElement>('[aria-label^="Select "]')[1]!); await flush(12);
+    await click(host.querySelector<HTMLElement>('[data-testid="photo-grid-tile"]')!); await flush();
+    await click(host.querySelector<HTMLButtonElement>('[data-testid="lightbox-review-trigger"]')!); await flush();
+    const note = host.querySelector<HTMLTextAreaElement>('textarea[placeholder="Optional note for this markup…"]')!;
     const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")!.set!;
     await act(async () => { setter.call(note, "focus-refresh draft"); note.dispatchEvent(new Event("input", { bubbles: true })); await Promise.resolve(); });
-    const scroll = host.querySelector<HTMLElement>(".vpanel__scroll")!; scroll.scrollTop = 180;
+    const scroll = host.querySelector<HTMLElement>('[data-testid="lightbox-review-scroll"]')!; scroll.scrollTop = 180;
     const refresh = deferredPromise<{ assets: WorkspaceAsset[] }>();
     apiGetMock.mockImplementation((path: string) => {
       if (path.includes("/assets?collection=raw")) return refresh.promise;
@@ -504,11 +504,11 @@ afterEach(async () => {
     expect(refresh.promise).toBeDefined();
     refresh.resolve({ assets: rawAssets.map((asset) => ({ ...asset })) });
     await flush(12);
-    expect(host.querySelectorAll(".tile.is-selected")).toHaveLength(2);
-    expect(host.querySelector(".actionbar")).not.toBeNull();
-    expect(host.querySelector(".viewer__close")).not.toBeNull();
-    expect(host.querySelector<HTMLTextAreaElement>(".annotation-note")?.value).toBe("focus-refresh draft");
-    expect(host.querySelector<HTMLElement>(".vpanel__scroll")?.scrollTop).toBe(180);
+    expect(host.querySelectorAll('[data-testid="photo-grid-tile"][data-multi-selected="true"]')).toHaveLength(2);
+    expect(host.querySelector('[data-testid="photo-grid-actionbar"]')).not.toBeNull();
+    expect(host.querySelector('[aria-label="Close"]')).not.toBeNull();
+    expect(host.querySelector<HTMLTextAreaElement>('textarea[placeholder="Optional note for this markup…"]')?.value).toBe("focus-refresh draft");
+    expect(host.querySelector<HTMLElement>('[data-testid="lightbox-review-scroll"]')?.scrollTop).toBe(180);
     focusManager.setFocused(true);
   });
 
@@ -698,10 +698,10 @@ afterEach(async () => {
     let queryClient: ReturnType<typeof import("../lib/query-client").createQuincyQueryClient> | undefined;
     rawAssets = [workspaceAsset("rated", { review: { stars: 5, colorLabel: null, decision: null, recommended: false } }), workspaceAsset("unrated")];
     await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>); await flush();
-    await click([...host.querySelectorAll<HTMLButtonElement>(".filter-chips .chip")].find((button) => button.textContent?.startsWith("Rated"))!);
+    await click([...host.querySelectorAll<HTMLButtonElement>('[data-testid="photo-grid-filter"]')].find((button) => button.textContent?.startsWith("Rated"))!);
     apiGetMock.mockImplementation((path: string) => path.includes("/assets?collection=raw") ? Promise.resolve({ assets: rawAssets }) : path === "/api/projects/p1" ? Promise.resolve(projectFixture()) : path.includes("/ingest-status") ? Promise.resolve({ expectedCount: null, receivedCount: 2, mismatch: false }) : Promise.resolve({}));
     await queryClient!.invalidateQueries({ queryKey: ["project-data", "p1", "assets", "raw"], exact: true, refetchType: "active" }); await flush();
-    expect([...host.querySelectorAll<HTMLButtonElement>(".filter-chips .chip")].find((button) => button.textContent?.startsWith("Rated"))?.classList.contains("is-active")).toBe(true);
+    expect([...host.querySelectorAll<HTMLElement>('[data-testid="photo-grid-filter"]')].find((button) => button.textContent?.startsWith("Rated"))?.dataset.active).toBe("true");
   });
 
   it("fires exact cache invalidation and broadcast actions from real workspace mutation call sites", async () => {
@@ -709,8 +709,8 @@ afterEach(async () => {
     let queryClient: ReturnType<typeof import("../lib/query-client").createQuincyQueryClient> | undefined;
     await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>); await flush();
     const runtime = getProjectQueryRuntime(queryClient!); const publish = vi.spyOn(runtime!, "publish"); const invalidate = vi.spyOn(queryClient!, "invalidateQueries");
-    await click(host.querySelectorAll<HTMLButtonElement>(".selbox")[0]!);
-    await click([...host.querySelectorAll<HTMLButtonElement>(".actionbar .barbtn")].find((button) => button.textContent === "Select for editing")!); await flush(20);
+    await click(host.querySelectorAll<HTMLButtonElement>('[aria-label^="Select "]')[0]!);
+    await click([...host.querySelectorAll<HTMLButtonElement>('[data-testid="photo-grid-actionbar"] button')].find((button) => button.textContent === "Select for editing")!); await flush(20);
     expect(invalidate).toHaveBeenCalledWith(expect.objectContaining({ queryKey: projectDataKeys.assets("p1", "raw"), exact: true, refetchType: "active" }));
     expect(publish).toHaveBeenCalledWith(expect.objectContaining({ type: "project-data-invalidated", projectId: "p1", resources: [{ kind: "assets", collectionKind: "raw" }] }));
 
@@ -756,7 +756,7 @@ afterEach(async () => {
       : Promise.resolve({}));
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 200 })));
     await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>); await flush(20);
-    await click([...host.querySelectorAll<HTMLButtonElement>(".frow")].find((button) => button.textContent?.includes("Copy"))!); await flush(20);
+    await click([...host.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')].find((button) => button.textContent?.includes("Copy"))!); await flush(20);
     const runtime = getProjectQueryRuntime(queryClient!); const publish = vi.spyOn(runtime!, "publish"); const invalidate = vi.spyOn(queryClient!, "invalidateQueries");
     const input = host.querySelector<HTMLInputElement>('input[type="file"][accept="application/pdf"]')!;
     Object.defineProperty(input, "files", { configurable: true, value: [new File(["copy"], "copy.pdf", { type: "application/pdf" })] });
@@ -772,16 +772,16 @@ afterEach(async () => {
     await render(<ProjectWorkspace projectId="p1" />);
     await flush();
 
-    const tile = host.querySelector<HTMLElement>(".tile");
+    const tile = host.querySelector<HTMLElement>('[data-testid="photo-grid-tile"]');
     expect(tile).not.toBeNull();
     await click(tile!);
     await flush();
-    expect(host.querySelector(".viewer__close")).not.toBeNull();
+    expect(host.querySelector('[aria-label="Close"]')).not.toBeNull();
 
     await click(editedTabButton(host));
     await flush();
 
-    expect(host.querySelector(".viewer__close")).toBeNull();
+    expect(host.querySelector('[aria-label="Close"]')).toBeNull();
   });
 
   it("keeps photographer Dropbox sync capability-scoped to RAW and ingest", async () => {
@@ -795,7 +795,7 @@ afterEach(async () => {
     apiPostMock.mockResolvedValue({ raw: { jobId: "raw-job" }, edited: { skipped: "not_ready" } });
     await render(<ProjectWorkspace projectId="p1" />); await flush();
     vi.useFakeTimers();
-    await click(host.querySelector<HTMLButtonElement>(".dropcard")!);
+    await click(host.querySelector<HTMLButtonElement>('[data-testid="dropbox-sync"]')!);
     for (let cycle = 0; cycle < 6; cycle += 1) await act(async () => { vi.advanceTimersByTime(2500); await Promise.resolve(); await Promise.resolve(); });
     const paths = apiGetMock.mock.calls.map(([path]) => path);
     expect(paths.filter((path) => path.includes("/assets?collection=raw")).length).toBeGreaterThanOrEqual(7);
@@ -827,8 +827,8 @@ describe("ProjectWorkspace selection download", () => {
     const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
     const anchorRemove = vi.spyOn(HTMLAnchorElement.prototype, "remove");
     await render(<ProjectWorkspace projectId="p1" />); await flush();
-    await click(host.querySelectorAll<HTMLButtonElement>(".selbox")[0]!);
-    const button = [...host.querySelectorAll<HTMLButtonElement>(".actionbar .barbtn")].find((item) => item.textContent === "Download selection")!;
+    await click(host.querySelectorAll<HTMLButtonElement>('[aria-label^="Select "]')[0]!);
+    const button = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="photo-grid-actionbar"] button')].find((item) => item.textContent === "Download selection")!;
     await click(button); await flush();
     expect(apiPostMock).toHaveBeenCalledWith("/api/projects/p1/download-selection", { assetIds: ["raw-1"] });
     const anchor = append.mock.calls.map(([node]) => node).find((node): node is HTMLAnchorElement => node instanceof HTMLAnchorElement)!;
@@ -849,8 +849,8 @@ describe("ProjectWorkspace selection download", () => {
     const anchorRemove = vi.spyOn(HTMLAnchorElement.prototype, "remove");
     await render(<ProjectWorkspace projectId="p1" />); await flush();
     // TB8-10B: the legacy `.button` hook is retired onto buttonClasses(); select by role within
-    // the still-live `.hdr` wrapper instead.
-    const button = [...host.querySelectorAll<HTMLButtonElement>(".hdr button")].find((item) => item.textContent === "Download 1 selected (zip)")!;
+    // the `[data-testid="autohdr-handoff"]` wrapper instead.
+    const button = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="autohdr-handoff"] button')].find((item) => item.textContent === "Download 1 selected (zip)")!;
     await click(button);
     const anchor = append.mock.calls.map(([node]) => node).find((node): node is HTMLAnchorElement => node instanceof HTMLAnchorElement)!;
     expect(anchor.href).toBe("http://localhost:3000/api/projects/p1/selected-raw.zip"); expect(anchor.href).not.toContain("download-selection"); expect(anchorClick).toHaveBeenCalled(); expect(anchorRemove).toHaveBeenCalledWith(); expect(anchor.isConnected).toBe(false);
@@ -859,17 +859,17 @@ describe("ProjectWorkspace selection download", () => {
   it("toasts POST errors without removing the checked tile", async () => {
     apiPostMock.mockRejectedValue(new Error("Selection unavailable"));
     await render(<ProjectWorkspace projectId="p1" />); await flush();
-    await click(host.querySelectorAll<HTMLButtonElement>(".selbox")[0]!);
-    await click([...host.querySelectorAll<HTMLButtonElement>(".actionbar .barbtn")].find((item) => item.textContent === "Download selection")!); await flush(20);
+    await click(host.querySelectorAll<HTMLButtonElement>('[aria-label^="Select "]')[0]!);
+    await click([...host.querySelectorAll<HTMLButtonElement>('[data-testid="photo-grid-actionbar"] button')].find((item) => item.textContent === "Download selection")!); await flush(20);
     expect(host.textContent).toContain("Selection unavailable");
-    expect(host.querySelector(".tile")?.classList.contains("is-selected")).toBe(true);
+    expect(host.querySelector<HTMLElement>('[data-testid="photo-grid-tile"]')?.dataset.multiSelected).toBe("true");
   });
 
   it("treats an asset-specific mutation 404 as an ordinary mutation error", async () => {
     await render(<ProjectWorkspace projectId="p1" />); await flush();
-    await click(host.querySelectorAll<HTMLButtonElement>(".selbox")[0]!);
+    await click(host.querySelectorAll<HTMLButtonElement>('[aria-label^="Select "]')[0]!);
     apiPostMock.mockRejectedValueOnce(new ApiError("Asset disappeared", 404));
-    await click([...host.querySelectorAll<HTMLButtonElement>(".actionbar .barbtn")].find((item) => item.textContent === "Download selection")!); await flush(20);
+    await click([...host.querySelectorAll<HTMLButtonElement>('[data-testid="photo-grid-actionbar"] button')].find((item) => item.textContent === "Download selection")!); await flush(20);
     expect(host.textContent).toContain("Asset disappeared");
     expect(host.textContent).not.toContain("Project unavailable.");
   });
@@ -893,19 +893,19 @@ describe("ProjectWorkspace collaboration relocation", () => {
     });
     const consumed: number[] = [];
     await render(<ProjectWorkspace projectId="p1" collaborationOpenSignal={1} onCollaborationOpenSignalConsumed={(signal) => consumed.push(signal)} />); await flush();
-    const panel = host.querySelector<HTMLElement>(".project-collaboration")!;
-    const workspace = panel.closest<HTMLElement>(".work")!;
-    const wrap = host.querySelector<HTMLElement>(".project-collaboration__wrap")!;
-    expect(panel).not.toBeNull(); expect(workspace).toBeNull(); expect(panel.closest(".rail, .workmain")).toBeNull();
-    expect(panel.closest(".project-collaboration__wrap")).toBe(wrap); expect(consumed).toEqual([1]);
-    await click(host.querySelector<HTMLElement>(".tile")!); await flush();
-    expect(host.querySelector(".viewer")).not.toBeNull(); expect(host.querySelector(".project-collaboration")).not.toBeNull();
+    const panel = host.querySelector<HTMLElement>('[data-testid="project-collaboration-panel"]')!;
+    const workspace = panel.closest<HTMLElement>('[data-testid="project-workspace"]')!;
+    const wrap = host.querySelector<HTMLElement>('[data-testid="project-collaboration-wrap"]')!;
+    expect(panel).not.toBeNull(); expect(workspace).toBeNull(); expect(panel.closest('[aria-label="Project Overview"], [data-testid="workspace-main"]')).toBeNull();
+    expect(panel.closest('[data-testid="project-collaboration-wrap"]')).toBe(wrap); expect(consumed).toEqual([1]);
+    await click(host.querySelector<HTMLElement>('[data-testid="photo-grid-tile"]')!); await flush();
+    expect(host.querySelector('[aria-label="Photo viewer"]')).not.toBeNull(); expect(host.querySelector('[data-testid="project-collaboration-panel"]')).not.toBeNull();
     await render(<ProjectWorkspace projectId="p1" collaborationOpenSignal={2} onCollaborationOpenSignalConsumed={(signal) => consumed.push(signal)} />); await flush();
     expect(consumed).toEqual([1, 2]);
     await click(hideCollaborationButton(host)); await flush();
-    expect(host.querySelector(".project-collaboration")).toBeNull();
+    expect(host.querySelector('[data-testid="project-collaboration-panel"]')).toBeNull();
     await render(<ProjectWorkspace projectId="p1" collaborationOpenSignal={3} onCollaborationOpenSignalConsumed={(signal) => consumed.push(signal)} />); await flush();
-    expect(host.querySelector(".project-collaboration")).not.toBeNull(); expect(consumed).toEqual([1, 2, 3]);
+    expect(host.querySelector('[data-testid="project-collaboration-panel"]')).not.toBeNull(); expect(consumed).toEqual([1, 2, 3]);
   });
 
   it("preserves a comment draft, closed overlay state, and one collaboration load across RAW↔Edited tabs", async () => {
@@ -923,11 +923,11 @@ describe("ProjectWorkspace collaboration relocation", () => {
     await render(<ProjectWorkspace projectId="p1" />); await flush(20);
     await typeIntoEditor(host.querySelector<HTMLElement>("[data-testid=discussion-composer] [contenteditable=\"true\"]")!, "unsent draft");
     await click(hideCollaborationButton(host));
-    expect(host.querySelector<HTMLButtonElement>(".project-collaboration__toggle")?.getAttribute("aria-expanded")).toBe("false");
+    expect(host.querySelector<HTMLButtonElement>('[data-testid="project-collaboration-toggle"]')?.getAttribute("aria-expanded")).toBe("false");
 
     await click(editedTabButton(host)); await flush(20);
-    await click([...host.querySelectorAll<HTMLButtonElement>(".frow")].find((item) => item.textContent?.includes("RAW"))!); await flush(20);
-    const toggle = host.querySelector<HTMLButtonElement>(".project-collaboration__toggle")!;
+    await click([...host.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')].find((item) => item.textContent?.includes("RAW"))!); await flush(20);
+    const toggle = host.querySelector<HTMLButtonElement>('[data-testid="project-collaboration-toggle"]')!;
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
     await click(toggle); await flush(4);
     expect(host.querySelector<HTMLElement>("[data-testid=discussion-composer] [contenteditable=\"true\"]")?.textContent).toContain("unsent draft");
@@ -966,15 +966,15 @@ describe("ProjectWorkspace collaboration relocation", () => {
     // while its siblings used `flush(20)`, and the one observed to fail (~1 run in 12) under the
     // full `npm run test --workspaces`.
     await flushUntil(
-      () => host.querySelector(".project-collaboration-only") !== null
+      () => host.querySelector('[data-testid="project-collaboration-only"]') !== null
         && host.textContent!.includes("Hidden Street")
-        && host.querySelector(".project-collaboration--standalone") !== null
+        && host.querySelector('[data-testid="project-collaboration-panel"][data-mode="standalone"]') !== null
         && consumed.length > 0,
       "the collaboration-only probe to render and consume the open signal",
     );
-    expect(host.querySelector(".project-collaboration-only")).not.toBeNull(); expect(host.textContent).toContain("Hidden Street"); expect(host.querySelector(".work, .rail, .workmain")).toBeNull();
+    expect(host.querySelector('[data-testid="project-collaboration-only"]')).not.toBeNull(); expect(host.textContent).toContain("Hidden Street"); expect(host.querySelector('[data-testid="project-workspace"], [aria-label="Project Overview"], [data-testid="workspace-main"]')).toBeNull();
     expect(apiGetMock.mock.calls.map(([path]) => path)).not.toEqual(expect.arrayContaining([expect.stringContaining("/assets?collection=raw"), expect.stringContaining("/ingest-status")]));
-    expect(consumed).toEqual([7]); expect(host.querySelector(".project-collaboration--standalone")).not.toBeNull();
+    expect(consumed).toEqual([7]); expect(host.querySelector('[data-testid="project-collaboration-panel"][data-mode="standalone"]')).not.toBeNull();
   });
 
   it("fails closed after a collaboration-only comments 403 without mounting workspace reads", async () => {
@@ -995,14 +995,14 @@ describe("ProjectWorkspace collaboration relocation", () => {
       return Promise.resolve({});
     });
     await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>); await flush(20);
-    expect(host.querySelector(".project-collaboration-only")).not.toBeNull();
+    expect(host.querySelector('[data-testid="project-collaboration-only"]')).not.toBeNull();
 
     commentsAvailable = false;
     await queryClient!.invalidateQueries({ queryKey: projectDataKeys.comments("p1"), exact: true, refetchType: "active" }); await flush(20);
 
     expect(collaborationUnavailableSection(host)).not.toBeNull();
-    expect(host.querySelector(".project-collaboration--standalone")).toBeNull();
-    expect(host.querySelector(".work, .rail, .workmain")).toBeNull();
+    expect(host.querySelector('[data-testid="project-collaboration-panel"][data-mode="standalone"]')).toBeNull();
+    expect(host.querySelector('[data-testid="project-workspace"], [aria-label="Project Overview"], [data-testid="workspace-main"]')).toBeNull();
     expect(detailCalls).toBe(1);
     expect(assetCalls).toBe(0);
   });
@@ -1022,7 +1022,7 @@ describe("ProjectWorkspace collaboration relocation", () => {
     expect(apiGetMock.mock.calls.filter(([path]) => path.includes("/assets?collection=raw"))).toHaveLength(1);
     expect(apiGetMock.mock.calls.map(([path]) => path)).toEqual(expect.arrayContaining([expect.stringContaining("/ingest-status")]));
     expect(apiGetMock.mock.calls.map(([path]) => path)).toEqual(expect.arrayContaining([expect.stringContaining("/jobs")]));
-    expect(host.querySelector(".project-collaboration__toggle")?.getAttribute("aria-expanded")).toBe("true");
+    expect(host.querySelector('[data-testid="project-collaboration-toggle"]')?.getAttribute("aria-expanded")).toBe("true");
   });
 
   it("never probes comments after a successful details response when the workspace batch fails", async () => {
@@ -1070,7 +1070,7 @@ describe("ProjectWorkspace collaboration relocation", () => {
     await render(<ProjectWorkspace projectId="p2" />); await flush();
     expect(probeSignal?.aborted).toBe(true); expect(host.textContent).toContain("34 Second Street");
     await act(async () => { probe.resolve({ project: { id: "p1", street: "Hidden Street" }, comments: [] }); await Promise.resolve(); }); await flush();
-    expect(host.textContent).toContain("34 Second Street"); expect(host.textContent).not.toContain("Hidden Street"); expect(host.querySelector(".project-collaboration-only")).toBeNull();
+    expect(host.textContent).toContain("34 Second Street"); expect(host.textContent).not.toContain("Hidden Street"); expect(host.querySelector('[data-testid="project-collaboration-only"]')).toBeNull();
   });
 
   it("does not carry collaboration-only access into the next project generation", async () => {
@@ -1088,7 +1088,7 @@ describe("ProjectWorkspace collaboration relocation", () => {
       return Promise.resolve({});
     });
     await render(<ProjectWorkspace projectId="p1" />); await flush(20);
-    expect(host.querySelector(".project-collaboration-only")).not.toBeNull();
+    expect(host.querySelector('[data-testid="project-collaboration-only"]')).not.toBeNull();
 
     await render(<ProjectWorkspace projectId="p2" />); await flush();
 
@@ -1115,7 +1115,7 @@ describe("ProjectWorkspace collaboration relocation", () => {
     expect(queryClient!.getQueryData(projectDataKeys.detail("p1"))).toBeDefined();
     commentsForbidden = true;
     await queryClient!.invalidateQueries({ queryKey: projectDataKeys.comments("p1"), exact: true, refetchType: "active" }); await flush(20);
-    expect(host.querySelector(".work")).not.toBeNull();
+    expect(host.querySelector('[data-testid="project-workspace"]')).not.toBeNull();
     expect(collaborationUnavailableSection(host)).not.toBeNull();
     expect(queryClient!.getQueryData(projectDataKeys.detail("p1"))).toBeDefined();
     expect(queryClient!.getQueryData(projectDataKeys.comments("p1"))).toBeUndefined();
@@ -1137,7 +1137,7 @@ describe("ProjectWorkspace collaboration relocation", () => {
     await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>); await flush(20);
     markerForbidden = true;
     await queryClient!.invalidateQueries({ queryKey: projectDataKeys.commentReadMarker("p1"), exact: true, refetchType: "active" }); await flush(20);
-    expect(host.querySelector(".work")).not.toBeNull();
+    expect(host.querySelector('[data-testid="project-workspace"]')).not.toBeNull();
     expect(collaborationUnavailableSection(host)).not.toBeNull();
     expect(queryClient!.getQueryData(projectDataKeys.detail("p1"))).toBeDefined();
   });
@@ -1161,7 +1161,7 @@ describe("ProjectWorkspace collaboration relocation", () => {
     await typeIntoEditor(host.querySelector<HTMLElement>('[data-testid=discussion-composer] [contenteditable="true"]')!, "A comment");
     await click(host.querySelector<HTMLButtonElement>('[data-testid=discussion-composer] button[type="submit"]')!); await flush(20);
     if (expected === "collaboration") {
-      expect(host.querySelector(".work")).not.toBeNull();
+      expect(host.querySelector('[data-testid="project-workspace"]')).not.toBeNull();
       expect(collaborationUnavailableSection(host)).not.toBeNull();
       expect(queryClient!.getQueryData(projectDataKeys.detail("p1"))).toBeDefined();
     } else {
@@ -1207,7 +1207,7 @@ describe("ProjectWorkspace collaboration relocation", () => {
     callback?.([{ isIntersecting: true, intersectionRatio: 1, boundingClientRect: anchor.getBoundingClientRect() } as IntersectionObserverEntry] as IntersectionObserverEntry[], {} as IntersectionObserver);
     await flush(20);
     if (expected === "collaboration") {
-      expect(host.querySelector(".work")).not.toBeNull();
+      expect(host.querySelector('[data-testid="project-workspace"]')).not.toBeNull();
       expect(collaborationUnavailableSection(host)).not.toBeNull();
       expect(queryClient!.getQueryData(projectDataKeys.detail("p1"))).toBeDefined();
     } else {
@@ -1278,7 +1278,7 @@ describe("ProjectWorkspace collaboration relocation", () => {
     await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Edit")!);
     await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Save")!); await flush(20);
     expect(commentListCalls).toBeGreaterThan(initialCalls);
-    expect(host.querySelector(".work")).not.toBeNull();
+    expect(host.querySelector('[data-testid="project-workspace"]')).not.toBeNull();
     expect(host.textContent).not.toContain("Project unavailable.");
     expect(queryClient!.getQueryData(projectDataKeys.detail("p1"))).toBeDefined();
   });
@@ -1324,7 +1324,7 @@ describe("ProjectWorkspace collaboration relocation", () => {
     confirmMock.mockResolvedValue(true);
     await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Delete")!); await flush(20);
     expect(commentListCalls).toBeGreaterThan(initialCalls);
-    expect(host.querySelector(".work")).not.toBeNull();
+    expect(host.querySelector('[data-testid="project-workspace"]')).not.toBeNull();
     expect(host.textContent).not.toContain("Project unavailable.");
     expect(queryClient!.getQueryData(projectDataKeys.detail("p1"))).toBeDefined();
     vi.unstubAllGlobals();
@@ -1393,12 +1393,12 @@ describe("ProjectWorkspace collaboration relocation", () => {
       expect(host.textContent).toContain("Project unavailable.");
       expect(queryClient!.getQueryCache().getAll()).toHaveLength(0);
     } else if (expected === "collaboration") {
-      expect(host.querySelector(".work")).not.toBeNull();
+      expect(host.querySelector('[data-testid="project-workspace"]')).not.toBeNull();
       expect(collaborationUnavailableSection(host)).not.toBeNull();
       expect(queryClient!.getQueryData(projectDataKeys.detail("p1"))).toBeDefined();
       expect(queryClient!.getQueryData(projectDataKeys.comments("p1"))).toBeUndefined();
     } else {
-      expect(host.querySelector(".work")).not.toBeNull();
+      expect(host.querySelector('[data-testid="project-workspace"]')).not.toBeNull();
       expect(host.textContent).not.toContain("Project unavailable.");
       expect(queryClient!.getQueryData(projectDataKeys.detail("p1"))).toBeDefined();
       expect(queryClient!.getQueryData(projectDataKeys.comments("p1"))).toBeDefined();
@@ -1416,7 +1416,7 @@ describe("ProjectWorkspace collaboration relocation", () => {
     });
     await render(<ProjectWorkspace projectId="p1" />); await flush();
     expect(host.textContent).toContain("Edited frames");
-    await click([...host.querySelectorAll<HTMLButtonElement>(".frow")].find((item) => item.textContent?.includes("RAW"))!); await flush();
+    await click([...host.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')].find((item) => item.textContent?.includes("RAW"))!); await flush();
     expect(host.textContent).toContain("RAW frames");
     expect(apiGetMock.mock.calls.filter(([path]) => path.includes("/assets?collection=raw"))).toHaveLength(1);
   });
@@ -1456,28 +1456,28 @@ describe("ProjectWorkspace collaboration relocation", () => {
     });
     await render(<ProjectWorkspace projectId={externalProjectId} />); await flush(20);
 
-    expect(host.querySelector(".rail__edit")).toBeNull();
-    expect(host.querySelector(".dropcard")).toBeNull();
+    expect(host.querySelector('a[href$="/edit"]')).toBeNull();
+    expect(host.querySelector('[data-testid="dropbox-sync"]')).toBeNull();
     expect(host.querySelector('input[type="file"]')).toBeNull();
     expect(host.querySelector('[title="Use as project cover"]')).toBeNull();
 
-    await click([...host.querySelectorAll<HTMLButtonElement>(".frow")].find((button) => button.textContent?.startsWith("Video"))!); await flush(20);
+    await click([...host.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')].find((button) => button.textContent?.startsWith("Video"))!); await flush(20);
     expect(host.textContent).toContain("Add link");
-    expect(host.querySelector(".collection-link-form")).not.toBeNull();
+    expect(host.querySelector('[data-testid="collection-link-add"]')).not.toBeNull();
 
-    await click([...host.querySelectorAll<HTMLButtonElement>(".frow")].find((button) => button.textContent?.startsWith("Floorplan"))!); await flush(20);
+    await click([...host.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')].find((button) => button.textContent?.startsWith("Floorplan"))!); await flush(20);
     expect(host.textContent).toContain("Upload floorplan");
-    expect(host.querySelector(".document-group")).not.toBeNull();
+    expect(host.querySelector('[data-testid="document-group"]')).not.toBeNull();
     expect(host.querySelector('button[title="Approve"]')).toBeNull();
-    expect(host.querySelectorAll(".document-actions .chip").length).toBeGreaterThan(0);
+    expect(host.querySelectorAll('[data-testid="document-upload-version"]').length).toBeGreaterThan(0);
     expect(host.textContent).not.toContain("Edit details");
 
-    await click([...host.querySelectorAll<HTMLButtonElement>(".frow")].find((button) => button.textContent?.startsWith("Copy"))!); await flush(20);
+    await click([...host.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')].find((button) => button.textContent?.startsWith("Copy"))!); await flush(20);
     expect(host.textContent).toContain("Upload copy");
-    expect(host.querySelector(".document-group")).not.toBeNull();
+    expect(host.querySelector('[data-testid="document-group"]')).not.toBeNull();
     expect(host.querySelector('button[title="Approve"]')).toBeNull();
     expect(host.textContent).toContain("Delivered copy");
-    expect(host.querySelector(".collection-link-editor")).toBeNull();
+    expect(host.querySelector('[data-testid="collection-link-editor"]')).toBeNull();
   });
 
   it("keeps Activity 403 and 404 inside the selected tab while forwarding only 401", async () => {
@@ -1503,7 +1503,7 @@ describe("ProjectWorkspace collaboration relocation", () => {
         expect(host.textContent).toContain("Project unavailable.");
         expect(queryClient!.getQueryData(projectDataKeys.detail("p1"))).toBeUndefined();
       } else {
-        expect(host.querySelector(".work")).not.toBeNull();
+        expect(host.querySelector('[data-testid="project-workspace"]')).not.toBeNull();
         expect(collaborationUnavailableSection(host)).toBeNull();
         expect(host.querySelector('[role="tabpanel"][id$="-activity-panel"] [role="alert"]')?.textContent).toContain("isn't available");
         expect(host.querySelector('[role="tabpanel"][id$="-activity-panel"] button')?.textContent).not.toBe("Retry");

@@ -55,8 +55,8 @@ function click(el: Element) {
 function checklistLabel(host: HTMLElement, heading: string, userId: string): HTMLLabelElement {
   const headingEl = [...host.querySelectorAll('[data-slot="eyebrow"]')].find((el) => el.textContent === heading);
   if (!headingEl) throw new Error(`No "${heading}" heading`);
-  const checklist = headingEl.parentElement?.querySelector(".create-project__checklist");
-  const label = [...(checklist?.querySelectorAll("label.create-project__check") ?? [])].find((el) => el.querySelector(`input[type="checkbox"]`) && el.textContent?.includes(userId));
+  const checklist = headingEl.parentElement?.querySelector('[data-testid="create-project-checklist"]');
+  const label = [...(checklist?.querySelectorAll('label[data-testid="create-project-check"]') ?? [])].find((el) => el.querySelector(`input[type="checkbox"]`) && el.textContent?.includes(userId));
   if (!label) throw new Error(`No checklist entry for ${userId} under "${heading}"`);
   return label as HTMLLabelElement;
 }
