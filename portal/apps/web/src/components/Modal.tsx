@@ -8,7 +8,7 @@ import {
 import { useId, useRef, useState, type JSX, type MutableRefObject, type ReactNode } from "react";
 
 import { cn } from "../lib/utils";
-import { Eyebrow } from "./ui/eyebrow";
+import { Eyebrow } from "./quincy/Eyebrow";
 import { OverlayContainerContext } from "./OverlayContainerContext";
 
 export type ModalSize = "wide" | "prose";

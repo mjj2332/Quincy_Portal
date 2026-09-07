@@ -13,7 +13,7 @@ import { initials } from "../lib/initials";
 import { reorderNeighbors } from "../lib/reorder-neighbors";
 import { confirm } from "../lib/confirm";
 import { cn } from "../lib/utils";
-import { Eyebrow, META_TEXT } from "./ui/eyebrow";
+import { Eyebrow, META_TEXT } from "./quincy/Eyebrow";
 import { EmptyState } from "./quincy/EmptyState";
 import { Notice } from "./quincy/Notice";
 import { Input } from "./ui/input";

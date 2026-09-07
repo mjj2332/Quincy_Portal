@@ -5,7 +5,7 @@ import { apiPost } from "../lib/api";
 import { InternalLink } from "../components/InternalLink";
 import { invalidateProjectSurfaces, useOptionalProjectQueryClient } from "../lib/project-data";
 import { cn } from "@/lib/utils";
-import { Eyebrow } from "@/components/ui/eyebrow";
+import { Eyebrow } from "@/components/quincy/Eyebrow";
 import { FIELD_BOX } from "@/components/ui/input";
 import { QuincyField } from "@/components/quincy/QuincyField";
 import { Notice } from "@/components/quincy/Notice";

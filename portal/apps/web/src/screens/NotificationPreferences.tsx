@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { ApiError, apiGet, apiPatch } from "../lib/api";
-import { Eyebrow } from "@/components/ui/eyebrow";
+import { Eyebrow } from "@/components/quincy/Eyebrow";
 import { Checkbox, TOGGLE_ROW } from "@/components/ui/checkbox";
 import { Notice } from "@/components/quincy/Notice";
 import { cn } from "@/lib/utils";

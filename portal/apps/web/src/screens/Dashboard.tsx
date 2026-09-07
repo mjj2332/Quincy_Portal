@@ -11,7 +11,7 @@ import { DASHBOARD_CALENDAR_LAST_DATE_KEY, DASHBOARD_CALENDAR_SUBVIEW_KEY, forma
 import { InternalLink } from "../components/InternalLink";
 import { NoticeBoard } from "../components/NoticeBoard";
 import { Button, buttonClasses } from "../components/ui/button";
-import { Eyebrow } from "../components/ui/eyebrow";
+import { Eyebrow } from "../components/quincy/Eyebrow";
 import { Select, type SelectOption } from "../components/ui/select";
 import { cn } from "../lib/utils";
 import { invalidateProjectSurfaces, useOptionalProjectQueryClient } from "../lib/project-data";

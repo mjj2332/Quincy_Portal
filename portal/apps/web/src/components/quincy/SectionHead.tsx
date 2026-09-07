@@ -1,7 +1,7 @@
 import * as React from "react";
 
 import { cn } from "@/lib/utils";
-import { Eyebrow } from "@/components/ui/eyebrow";
+import { Eyebrow } from "@/components/quincy/Eyebrow";
 
 function SectionHead({ eyebrow, id, children, actions, className }: {
   eyebrow?: React.ReactNode;

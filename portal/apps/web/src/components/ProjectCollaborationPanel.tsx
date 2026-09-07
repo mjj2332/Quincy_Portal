@@ -5,7 +5,7 @@ import { ProjectDiscussionThread, type ProjectDiscussionAccessFailureResource } 
 import { ProjectActivityView } from "./ProjectActivityView";
 import { SubtaskChecklist } from "./SubtaskChecklist";
 import { buttonClasses } from "./ui/button";
-import { Eyebrow } from "./ui/eyebrow";
+import { Eyebrow } from "./quincy/Eyebrow";
 import { TAB_BASE, TAB_IDLE, TAB_SELECTED } from "./ui/tabs";
 
 const UNREAD_BADGE =

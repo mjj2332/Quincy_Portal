@@ -6,7 +6,7 @@ import { FieldGroup } from "@/components/ui/field";
 import { QuincyField } from "@/components/quincy/QuincyField";
 import { QuincyTextareaField } from "@/components/quincy/QuincyTextareaField";
 import { SectionHead } from "@/components/quincy/SectionHead";
-import { Eyebrow } from "@/components/ui/eyebrow";
+import { Eyebrow } from "@/components/quincy/Eyebrow";
 import { Notice } from "@/components/quincy/Notice";
 import { buttonClasses } from "@/components/ui/button";
 import { CHECKBOX_INPUT, CHECK_TILE } from "@/components/ui/checkbox";

@@ -13,7 +13,7 @@ import { InternalLink } from "../components/InternalLink";
 import { ProjectCollaborationPanel } from "../components/ProjectCollaborationPanel";
 import { ProjectOverviewRail } from "../components/ProjectOverviewRail";
 import { buttonClasses } from "../components/ui/button";
-import { Eyebrow } from "../components/ui/eyebrow";
+import { Eyebrow } from "../components/quincy/Eyebrow";
 import { EmptyState } from "../components/quincy/EmptyState";
 import {
   beginAssetOptimisticMutation, classifyProjectAccessError, discardAssetLedgerForResource, invalidateProjectResources, invalidateProjectSurfaces,

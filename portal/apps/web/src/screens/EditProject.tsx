@@ -6,7 +6,7 @@ import { useCapabilities } from "../lib/capabilities";
 import { InternalLink } from "../components/InternalLink";
 import { invalidateProjectSurfaces, projectDataKeys, removeProjectData, useOptionalProjectQueryClient } from "../lib/project-data";
 import { confirm } from "../lib/confirm";
-import { Eyebrow } from "@/components/ui/eyebrow";
+import { Eyebrow } from "@/components/quincy/Eyebrow";
 import { SectionHead } from "@/components/quincy/SectionHead";
 import { StatusPill } from "@/components/ui/status-pill";
 import { EmptyState } from "@/components/quincy/EmptyState";

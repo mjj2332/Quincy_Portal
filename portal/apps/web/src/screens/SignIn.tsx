@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { signIn } from "../lib/auth";
 import { cn } from "@/lib/utils";
-import { Eyebrow } from "@/components/ui/eyebrow";
+import { Eyebrow } from "@/components/quincy/Eyebrow";
 import { buttonClasses } from "@/components/ui/button";
 import { NOTICE_BASE, NOTICE_TONE } from "@/components/quincy/Notice";
 

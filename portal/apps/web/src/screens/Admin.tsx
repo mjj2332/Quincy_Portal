@@ -10,7 +10,7 @@ import { locationStore } from "../lib/router";
 import { Modal } from "../components/Modal";
 import { Button, buttonClasses } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { Eyebrow } from "@/components/ui/eyebrow";
+import { Eyebrow } from "@/components/quincy/Eyebrow";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
 import { TOGGLE_ROW, CHECKBOX_INPUT } from "@/components/ui/checkbox";

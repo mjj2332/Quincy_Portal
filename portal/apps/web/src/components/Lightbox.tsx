@@ -10,7 +10,7 @@ import { confirm } from "../lib/confirm";
 import { cn } from "../lib/utils";
 import { IconButton, ICON_BUTTON, ICON_BUTTON_BASE } from "./ui/icon-button";
 import { buttonClasses } from "./ui/button";
-import { Eyebrow, META_TEXT } from "./ui/eyebrow";
+import { Eyebrow, META_TEXT } from "./quincy/Eyebrow";
 import { Textarea } from "./ui/textarea";
 import { REVIEW_LABELS } from "./lightbox/review-labels";
 

@@ -21,7 +21,7 @@ import { RichTextEditor } from "./RichTextEditor";
 import type { MentionableUser } from "./MentionAutocomplete";
 import { confirm } from "../lib/confirm";
 import { cn } from "../lib/utils";
-import { META_TEXT } from "./ui/eyebrow";
+import { META_TEXT } from "./quincy/Eyebrow";
 import { buttonClasses } from "./ui/button";
 import { StatusPill } from "./ui/status-pill";
 import { EmptyState } from "./quincy/EmptyState";

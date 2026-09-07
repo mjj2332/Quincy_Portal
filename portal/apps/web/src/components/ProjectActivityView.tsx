@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { useSession } from "../lib/auth";
 import { buttonClasses } from "./ui/button";
-import { META_TEXT } from "./ui/eyebrow";
+import { META_TEXT } from "./quincy/Eyebrow";
 import { EmptyState } from "./quincy/EmptyState";
 import { Notice } from "./quincy/Notice";
 import { useProjectActivityQuery, type ProjectActivityResponse } from "../lib/project-activity";
