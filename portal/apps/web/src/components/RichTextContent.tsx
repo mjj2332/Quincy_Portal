@@ -44,8 +44,8 @@ function block(node: RichTextBlock | RichTextListItem | RichTextTaskItem, key: n
   if (node.type === "taskItem") {
     const completed = node.attrs.checked;
     return <li key={key} className={`rich-text__task-item${completed ? " is-checked" : ""}`}>
-      <span className="rich-text__task-indicator" aria-hidden="true">{completed ? "✓" : ""}</span>
-      <div className="rich-text__task-content"><span className="sr-only">{completed ? "Completed" : "Not completed"}</span>{node.content.map(block)}</div>
+      <span className="rich-text__task-indicator" data-testid="rich-text-task-indicator" aria-hidden="true">{completed ? "✓" : ""}</span>
+      <div className="rich-text__task-content"><span className="sr-only" data-testid="rich-text-task-status">{completed ? "Completed" : "Not completed"}</span>{node.content.map(block)}</div>
     </li>;
   }
   return <Fragment key={key}>{fallbackText(node)}</Fragment>;

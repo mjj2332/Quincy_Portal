@@ -197,7 +197,7 @@ export function ProjectDeadlineControl({ projectId, schedule, canEdit }: Project
   const skippedOffsets = (displaySchedule.skippedReminderOffsetsMinutes ?? []).slice(0, 8);
   const conflictDraft = reapplyBuffer ?? { date, time, offsets, ...(fold ? { fold } : {}) };
   return <div className="project-deadline">
-    <div className="rail-kv grid gap-[var(--space-1)] py-[var(--space-2)]">
+    <div className="rail-kv grid gap-[var(--space-1)] py-[var(--space-2)]" data-testid="project-deadline-row">
       <span className={DEADLINE_KV_KEY}>Deadline</span>
       <span className={DEADLINE_KV_VALUE}>{deadline ? <>
         <time dateTime={deadline.instant}>{deadline.localCivil.replace("T", " ")}</time>
@@ -209,7 +209,7 @@ export function ProjectDeadlineControl({ projectId, schedule, canEdit }: Project
                           uppercase tracking-[var(--tracking-wide)] text-[color:var(--signal-critical)]">Overdue</strong>}
       </> : "Not set"}</span>
     </div>
-    <div className="rail-kv grid gap-[var(--space-1)] py-[var(--space-2)]">
+    <div className="rail-kv grid gap-[var(--space-1)] py-[var(--space-2)]" data-testid="project-deadline-row">
       <span className={DEADLINE_KV_KEY}>Next reminder</span>
       <span className={DEADLINE_KV_VALUE}>{displaySchedule.nextOccurrence ? <time dateTime={displaySchedule.nextOccurrence.firesAt}>{displaySchedule.nextOccurrence.kind === "due_now" ? "Due now" : deadlineOffsetLabel(displaySchedule.nextOccurrence.offsetMinutes)} · {formatSydneyInstant(displaySchedule.nextOccurrence.firesAt)}</time> : displaySchedule.reminderOffsetsMinutes.length ? "No pending reminders" : "None"}</span>
     </div>

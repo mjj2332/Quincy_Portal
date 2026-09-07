@@ -246,6 +246,7 @@ function SortableSubtaskRow({ item, users, busy, editing, draftTitle, popover, s
       <label className="grid place-items-center min-h-[28px] max-[721px]:min-h-[44px] max-[721px]:min-w-[44px] cursor-pointer"><Checkbox checked={item.done} disabled={busy} onChange={(event) => onUpdate({ done: event.target.checked }, "done")} /><span className="sr-only">Mark {item.title} complete</span></label>
       {editing ? <Input ref={titleInputRef} className="flex-1 min-w-0" aria-label="Subtask title" value={draftTitle} disabled={busy} onChange={(event) => onUpdate({ __draft: event.target.value }, "draft")} onBlur={() => onUpdate({ __saveTitle: true }, "title")} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); if (event.key === "Escape") { event.preventDefault(); onUpdate({ __cancelTitle: true }, "title"); event.currentTarget.blur(); } }} /> : <button
         type="button"
+        data-testid="subtask-checklist-title"
         // `.subtask-checklist__title-trigger` no longer carries any CSS (its app.css rule is
         // retired) — it stays on this element only as a runtime hook: `remove()` below queries
         // for it (`.querySelector(".subtask-checklist__title-trigger")`) to restore focus to the

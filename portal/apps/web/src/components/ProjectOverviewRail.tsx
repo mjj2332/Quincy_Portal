@@ -183,7 +183,7 @@ export function ProjectOverviewRail({
         const collection = project.collections.find((item) => item.kind === tab);
         const isActive = activeTab === tab;
         return <button
-          key={tab} type="button" aria-pressed={isActive}
+          key={tab} type="button" aria-pressed={isActive} data-testid="project-overview-tab"
           className={cn(
             "frow flex w-full items-center justify-between gap-[var(--space-3)] text-left cursor-pointer",
             "min-h-[44px] " /* WCAG 2.5.5 Enhanced target, not a spacing token */,
@@ -212,7 +212,7 @@ export function ProjectOverviewRail({
                         last:border-b-0" aria-labelledby="project-overview-dropbox">
       <div className={RAIL_SECTION_LABEL} id="project-overview-dropbox">Dropbox</div>
       <button
-        type="button" disabled={isSyncing} aria-busy={isSyncing || undefined}
+        type="button" disabled={isSyncing} aria-busy={isSyncing || undefined} data-testid="dropbox-sync"
         className={buttonClasses("secondary", { className: "dropcard w-full min-h-[44px]" })}
         onClick={onSyncDropbox}
       >

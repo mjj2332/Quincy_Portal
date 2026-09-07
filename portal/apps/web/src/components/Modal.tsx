@@ -141,6 +141,7 @@ export function Modal({
       <FloatingOverlay
         lockScroll
         className={SCRIM}
+        data-testid="modal-scrim"
         data-open={dataOpen}
         onPointerDown={(event) => { pressStartedOutside.current = event.target === event.currentTarget; }}
         onClick={(event) => { if (event.target === event.currentTarget && pressStartedOutside.current) onClose(); }}
