@@ -1,8 +1,11 @@
 {
   "$schema": "https://ui.shadcn.com/schema.json",
-  "style": "base-sera",
+  "style": "base-nova",
   "rsc": false,
   "tsx": true,
+  "rtl": false,
+  "menuColor": "default",
+  "menuAccent": "subtle",
   "tailwind": {
     "config": "",
     "css": "src/styles/index.css",
@@ -12,11 +15,17 @@
   },
   "iconLibrary": "lucide",
   "registries": {
-    "@fullcalendar": "https://shadcn-registry.fullcalendar.io/{name}.json"
+    "@fullcalendar": "https://shadcn-registry.fullcalendar.io/{name}.json",
+    "@reui": {
+      "url": "https://proxy.collectui.pro/api/r/reui/{style}/{name}.json",
+      "headers": {
+        "Authorization": "Bearer ${REUI_LICENSE_KEY}"
+      }
+    }
   },
   "aliases": {
     "components": "@/components",
-    "ui": "@/components/ui",
+    "ui": "@/components/reui",
     "lib": "@/lib",
     "utils": "@/lib/utils",
     "hooks": "@/hooks"

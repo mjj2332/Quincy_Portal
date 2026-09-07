@@ -51,7 +51,7 @@ the tokens came from and has since been diverged from — never reconcile the ap
 
 ## ReUI component registry — do not "correct" the URL
 
-The component registry in `portal/components.json` is:
+The component registry in `portal/apps/web/components.json` is:
 
 ```
 https://proxy.collectui.pro/api/r/reui/{style}/{name}.json
@@ -67,8 +67,12 @@ config points at the `proxy.collectui.pro` equivalent.
 
 Also on this pipeline:
 
-- The license key is `REUI_LICENSE_KEY` in `.env.local` (gitignored). `components.json` refers to
-  it as `${REUI_LICENSE_KEY}` — the shadcn CLI expands that. **Never inline the key itself.**
+- The license key is `REUI_LICENSE_KEY` in `portal/apps/web/.env.local` (gitignored). It must sit
+  *beside* `components.json` — the shadcn CLI looks for `.env.local` in its own working directory,
+  so a key at the repo root will not be found. `components.json` refers to it as
+  `${REUI_LICENSE_KEY}`, which the CLI expands. **Never inline the key itself.**
+- `portal/apps/web/src/config/reui-registry.guard.test.ts` enforces the two rules above. If it
+  fails, do not edit the guard — revert whatever changed the registry URL or inlined a key.
 - `.mcp.json` is gitignored because MCP client configs *cannot* expand `${VAR}` and so must carry
   a raw bearer token. The token-free equivalents in `.cursor/mcp.json` and `opencode.json` are
   committed. If you add an MCP config, check it for credentials before staging.
