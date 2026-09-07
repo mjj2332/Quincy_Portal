@@ -1015,8 +1015,8 @@ describe("ProjectCollaborationPanel", () => {
     apiGetMock.mockReset().mockImplementation((path) => path === `/api/projects/${projectId}` ? Promise.resolve(project) : path.startsWith("/api/projects/") ? Promise.resolve(comments()) : Promise.resolve({ users: [] }));
     const editor = mount();
     await render(<EditProject projectId={projectId} onNavigate={() => undefined} />);
-    expect(apiGetMock).toHaveBeenCalledWith(`/api/projects/${projectId}`); expect(editor.querySelector("form")).not.toBeNull();
+    expect(apiGetMock).toHaveBeenCalledWith(`/api/projects/${projectId}`); expect(editor.querySelector('[data-testid="edit-project-form"]')).not.toBeNull();
     expect(editor.querySelector<HTMLInputElement>('input[value="72 Collaboration Lane"]')).not.toBeNull();
-    expect(editor.querySelector('[data-testid="project-collaboration-panel"]')).toBeNull(); expect(editor.querySelector('[data-testid="project-team-control"]')).toBeNull(); expect(editor.querySelector("header + form")).not.toBeNull();
+    expect(editor.querySelector('[data-testid="project-collaboration-panel"]')).toBeNull(); expect(editor.querySelector('[data-testid="project-team-control"]')).toBeNull(); expect(editor.querySelector('header + [data-testid="edit-project-form"]')).not.toBeNull();
   });
 });

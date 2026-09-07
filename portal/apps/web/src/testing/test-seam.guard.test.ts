@@ -6,7 +6,7 @@
  * edited to match the new markup can no longer certify that the markup change was safe. #50
  * converts those queries to stable identifiers; these guards stop the coupling coming back.
  *
- * Four guards, and one rule that governs all of them: **prove a gate can fail before trusting it**
+ * Five guards, and one rule that governs all of them: **prove a gate can fail before trusting it**
  * (lessons.md, "A grep gate that cannot fail is not a gate — twice in two releases"). Guard D
  * asserts a floor on what was actually scanned, so a glob that silently matches nothing is itself
  * a failure. Guard E tests the matchers against fixtures, so a later "simplification" of a regex
@@ -63,7 +63,7 @@ const lineOf = (source: string, index: number) => source.slice(0, index).split("
 
 /** A DOM selector call whose first argument is a string literal, capturing that literal. */
 const LITERAL_QUERY =
-  /\.(?:querySelectorAll|querySelector|closest|matches)\s*(?:<[^>]*>)?\s*\(\s*(["'`])((?:\\.|(?!\1)[\s\S])*?)\1/g;
+  /\.(?:querySelectorAll|querySelector|closest|matches)\s*(?:<[^>]*>)?\s*\(\s*(["'`])((?:\\[\s\S]|(?!\1)[^\\])*?)\1/g;
 
 /** Any DOM selector call at all — the denominator Guard D asserts a floor on. */
 const ANY_QUERY = /\.(?:querySelectorAll|querySelector|closest|matches)\s*(?:<[^>]*>)?\s*\(/g;
@@ -71,6 +71,23 @@ const ANY_QUERY = /\.(?:querySelectorAll|querySelector|closest|matches)\s*(?:<[^
 /** A DOM selector call whose first argument is NOT a string literal. */
 const NON_LITERAL_QUERY =
   /\.(?:querySelectorAll|querySelector|closest|matches)\s*(?:<[^>]*>)?\s*\(\s*[^"'`\s)]/g;
+
+/**
+ * A DOM selector call whose argument STARTS with a literal but does not END there —
+ * `querySelector("button" + ".kcard")`, `querySelector("" + SEL)`.
+ *
+ * `NON_LITERAL_QUERY` looks only at the first character after the paren, so a leading quote made
+ * these invisible to it; `LITERAL_QUERY` captures only the first literal, so guard A read `button`
+ * and shrugged. Between them a concatenated selector escaped every gate. The lookahead demands the
+ * literal be followed by the end of the argument list, nothing else.
+ */
+const CONCATENATED_QUERY =
+  /\.(?:querySelectorAll|querySelector|closest|matches)\s*(?:<[^>]*>)?\s*\(\s*(["'`])(?:\\[\s\S]|(?!\1)[^\\])*?\1\s*(?![),])/g;
+
+/** A template literal that is nothing but interpolation — `` querySelector(`${SEL}`) ``. */
+export function isFullyComputedTemplate(quote: string, body: string): boolean {
+  return quote === "`" && body.replace(/\$\{[^}]*\}/g, "").trim() === "";
+}
 
 /**
  * Does this CSS selector select on a class?
@@ -99,24 +116,81 @@ export function hasClassSelector(selector: string): boolean {
  * `expect(card.className.split(" ").includes("kanban")).toBe(true)` breaks on a re-skin exactly
  * like a selector does, but the word "selects" in #50's acceptance criteria does not cover it.
  */
-const ASSERTION_SINKS = [
-  /\.classList\s*\.\s*contains\s*\(\s*(["'`])((?:\\.|(?!\1)[\s\S])*?)\1/g,
-  /\bclassName\b[^;\n]{0,120}?\.\s*includes\s*\(\s*(["'`])((?:\\.|(?!\1)[\s\S])*?)\1/g,
-  /\bclassName\b[^;\n]{0,120}?\)\s*\.\s*(?:not\s*\.\s*)?(?:toContain|toMatch)\s*\(\s*(["'`])((?:\\.|(?!\1)[\s\S])*?)\1/g,
+const PREDICATE_SINKS = [
+  /\.classList\s*\.\s*contains\s*\(\s*(["'`])((?:\\[\s\S]|(?!\1)[^\\])*?)\1\s*\)/g,
+  /\bclassName\b[^;\n]{0,120}?\.\s*includes\s*\(\s*(["'`])((?:\\[\s\S]|(?!\1)[^\\])*?)\1\s*\)/g,
 ];
+
+/** `expect(el.className).not.toContain("x")` — the token is the MATCHER's argument, not a predicate. */
+const MATCHER_ARG_SINK =
+  /\bclassName\b[^;\n]{0,120}?\)\s*(?:\.\s*(?<negated>not)\b\s*)?\.\s*(?:toContain|toMatch)\s*\(\s*(?<quote>["'`])(?<token>(?:\\[\s\S]|(?!\k<quote>)[^\\])*?)\k<quote>/g;
+
+/**
+ * The matcher that consumes a boolean predicate, read FORWARD from the predicate's closing paren.
+ *
+ * Forward-only is the whole point. The previous version sniffed a 40-character window on BOTH
+ * sides, so an unrelated `.not.` on the same line — `expect(x).not.toBeNull(); expect(card.classList
+ * .contains("kcard")).toBe(true)` — suppressed a genuine presence assertion, and `.not.toBe(false)`
+ * (which asserts the class IS present) was read as an absence. Both were silent: the finding simply
+ * never appeared. Polarity belongs to the assertion, so it is parsed from the assertion.
+ */
+const PREDICATE_MATCHER =
+  /^\s*\)*\s*(?:\.\s*(?<negated>not)\b\s*)?\.\s*(?<matcher>toBe|toEqual|toStrictEqual|toBeTruthy|toBeFalsy)\s*\(\s*(?<arg>true|false)?\s*\)/;
+
+/**
+ * Does the assertion consuming this predicate claim the class is PRESENT?
+ *
+ * Unrecognised shapes return `true` — report it. A guard that cannot read an assertion must not
+ * assume the assertion is harmless.
+ */
+export function predicateAssertsPresence(after: string): boolean {
+  const match = PREDICATE_MATCHER.exec(after);
+  if (!match?.groups) return true;
+  const { negated, matcher, arg } = match.groups;
+  const value =
+    matcher === "toBeTruthy" ? true
+    : matcher === "toBeFalsy" ? false
+    : arg === "true" ? true
+    : arg === "false" ? false
+    : null;
+  if (value === null) return true;
+  return negated ? !value : value;
+}
+
+/**
+ * Tailwind utilities that stand alone, with no scale after them. These must be matched EXACTLY.
+ *
+ * An earlier version listed them as unbounded prefixes, which quietly swallowed real Quincy class
+ * names: `filter` as a prefix makes `filter-chips` (PhotoGrid.tsx:198) a "utility", so any
+ * assertion on it was skipped by guard C and never counted. That is the "a gate that cannot fail"
+ * failure again, wearing a regex. Exact tokens here; anything with a scale goes in the prefix list
+ * below, where the trailing `-` does the disambiguating.
+ */
+const UTILITY_EXACT = new Set([
+  "flex", "grid", "block", "inline", "inline-block", "inline-flex", "hidden", "contents", "isolate",
+  "absolute", "relative", "fixed", "sticky", "static", "border", "rounded", "shrink", "grow",
+  "transition", "shadow", "ring", "outline", "truncate", "filter", "blur", "peer", "group",
+  "italic", "underline", "uppercase", "lowercase", "capitalize", "antialiased", "invisible",
+  "visible", "sr-only", "not-sr-only",
+]);
+
+/**
+ * Tailwind families that always carry a scale. The trailing `-` is load-bearing: `border-` matches
+ * `border-border` but not `borderless-rail`.
+ *
+ * `group-` and `peer-` are deliberately absent — their real forms (`group-hover:…`) carry a `:`,
+ * which the punctuation test already catches, so listing them here would only re-open the hole.
+ */
+const UTILITY_PREFIX =
+  /^(?:min-|max-|w-|h-|p[xytblr]?-|m[xytblr]?-|gap-|text-|bg-|border-|rounded-|font-|leading-|tracking-|opacity-|z-|overflow-|items-|justify-|self-|order-|shrink-|grow-|basis-|cursor-|select-|pointer-|transition-|duration-|ease-|scale-|translate-|rotate-|shadow-|ring-|outline-|whitespace-|aspect-|col-|row-|place-|content-|space-|divide-|backdrop-|blur-|object-|top-|bottom-|left-|right-|inset-|size-|flex-|grid-)/;
 
 /**
  * A Tailwind utility carries punctuation a Quincy BEM/state name never does, or a well-known
- * prefix. Utility assertions are design-system contracts (`min-h-[44px]` is a WCAG 2.5.5 touch
- * target, not styling trivia) and must survive; Quincy BEM names are the coupling.
+ * exact name or family prefix. Utility assertions are design-system contracts (`min-h-[44px]` is a
+ * WCAG 2.5.5 touch target, not styling trivia) and must survive; Quincy BEM names are the coupling.
  */
 export function isUtilityClass(token: string): boolean {
-  return (
-    /[[\]:/!]/.test(token) ||
-    /^(?:flex|grid|block|inline|hidden|absolute|relative|fixed|sticky|static|min-|max-|w-|h-|p[xytblr]?-|m[xytblr]?-|gap-|text-|bg-|border|rounded|font-|leading-|tracking-|opacity-|z-|overflow-|items-|justify-|self-|order-|shrink|grow|basis-|cursor-|select-|pointer-|transition|duration-|ease-|scale-|translate-|rotate-|shadow|ring|outline|whitespace-|truncate|sr-only|not-sr-only|aspect-|col-|row-|place-|content-|space-|divide-|backdrop-|filter|blur|object-|top-|bottom-|left-|right-|inset-|size-|peer|group)/.test(
-      token,
-    )
-  );
+  return /[[\]:/!]/.test(token) || UTILITY_EXACT.has(token) || UTILITY_PREFIX.test(token);
 }
 
 type Finding = { file: string; line: number; detail: string };
@@ -137,29 +211,50 @@ function nonLiteralFindings(): Finding[] {
   const out: Finding[] = [];
   for (const file of domTestFiles()) {
     const source = stripComments(readFileSync(file, "utf8"));
-    for (const match of source.matchAll(NON_LITERAL_QUERY)) {
-      out.push({ file: rel(file), line: lineOf(source, match.index!), detail: match[0]!.trim() });
+    const add = (index: number, detail: string) =>
+      out.push({ file: rel(file), line: lineOf(source, index), detail: detail.trim() });
+    for (const match of source.matchAll(NON_LITERAL_QUERY)) add(match.index!, match[0]!);
+    for (const match of source.matchAll(CONCATENATED_QUERY)) add(match.index!, match[0]!);
+    for (const match of source.matchAll(LITERAL_QUERY)) {
+      if (isFullyComputedTemplate(match[1]!, match[2]!)) add(match.index!, match[0]!);
     }
   }
   return out;
 }
 
+/**
+ * An assertion that a class is ABSENT is not coupling: replacing the markup can only make it MORE
+ * true, never break it. Those are retirement guards (Topbar pins that the brand link no longer
+ * wears `button--text`) and must survive untouched.
+ */
 function classAssertionFindings(): Finding[] {
   const out: Finding[] = [];
   for (const file of domTestFiles()) {
     const source = stripComments(readFileSync(file, "utf8"));
-    for (const sink of ASSERTION_SINKS) {
+    const add = (index: number, token: string) =>
+      out.push({ file: rel(file), line: lineOf(source, index), detail: token });
+
+    for (const sink of PREDICATE_SINKS) {
       for (const match of source.matchAll(sink)) {
         const token = match[2]!;
         if (!token || isUtilityClass(token)) continue;
-        // An assertion that a class is ABSENT is not coupling: replacing the markup can only make
-        // it MORE true, never break it. Those are retirement guards (Topbar pins that the brand
-        // link no longer wears `button--text`) and must survive untouched.
-        const tail = source.slice(match.index!, match.index! + match[0]!.length + 40);
-        const head = source.slice(Math.max(0, match.index! - 40), match.index! + match[0]!.length);
-        if (/\.\s*toBe\s*\(\s*false\s*\)/.test(tail) || /\.\s*not\s*\./.test(head)) continue;
-        out.push({ file: rel(file), line: lineOf(source, match.index!), detail: token });
+        const end = match.index! + match[0]!.length;
+        // `expect(!el.classList.contains("x")).toBe(true)` inverts the predicate before the matcher
+        // ever sees it. Read the leading `!` rather than mis-scoring the polarity.
+        const before = source.slice(Math.max(0, match.index! - 200), match.index!);
+        const openIndex = before.lastIndexOf("expect(");
+        const inverted = openIndex !== -1 && /^\s*!/.test(before.slice(openIndex + "expect(".length));
+        const present = predicateAssertsPresence(source.slice(end, end + 80));
+        if (!(inverted ? !present : present)) continue;
+        add(match.index!, token);
       }
+    }
+
+    for (const match of source.matchAll(MATCHER_ARG_SINK)) {
+      const token = match.groups?.token;
+      if (!token || isUtilityClass(token)) continue;
+      if (match.groups?.negated) continue; // `.not.toContain(…)` is an absence assertion
+      add(match.index!, token);
     }
   }
   return out;
@@ -179,6 +274,53 @@ function assertWithinBaseline(findings: Finding[], baseline: Record<string, numb
     .map(([file, count]) => `  ${file}: ${count} (baseline ${baseline[file] ?? 0})`)
     .sort();
   expect(over, [...message, "", ...over].join("\n")).toEqual([]);
+}
+
+/**
+ * A count-only baseline lets a file trade one debt for another: remove `.kcard`, add `.ktile`, and
+ * both the ceiling and the honesty check still pass. Where a baseline is durable rather than a
+ * countdown, baseline the exact findings so an exchange is an addition.
+ *
+ * Guard A keeps counts on purpose — its baseline is a countdown that reaches {} inside #50, and
+ * spelling out 172 selectors that are all deleted within the ticket buys nothing. Guard C's does
+ * NOT reach {}, so it gets the exact form.
+ */
+function multiset(details: string[]): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const detail of details) out.set(detail, (out.get(detail) ?? 0) + 1);
+  return out;
+}
+
+function detailsByFile(findings: Finding[]): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  for (const { file, detail } of findings) out.set(file, [...(out.get(file) ?? []), detail]);
+  return out;
+}
+
+function assertWithinExactBaseline(findings: Finding[], baseline: Record<string, string[]>, message: string[]) {
+  const actual = detailsByFile(findings);
+  const over: string[] = [];
+  for (const [file, details] of actual) {
+    const allowed = multiset(baseline[file] ?? []);
+    for (const [detail, count] of multiset(details)) {
+      const budget = allowed.get(detail) ?? 0;
+      if (count > budget) over.push(`  ${file}: "${detail}" ×${count} (baseline ${budget})`);
+    }
+  }
+  expect(over.sort(), [...message, "", ...over.sort()].join("\n")).toEqual([]);
+}
+
+function assertExactBaselineHonest(findings: Finding[], baseline: Record<string, string[]>) {
+  const actual = detailsByFile(findings);
+  const stale: string[] = [];
+  for (const [file, details] of Object.entries(baseline)) {
+    const found = multiset(actual.get(file) ?? []);
+    for (const [detail, count] of multiset(details)) {
+      const seen = found.get(detail) ?? 0;
+      if (seen < count) stale.push(`${file} "${detail}" (baseline ${count}, actual ${seen})`);
+    }
+  }
+  expect(stale.sort(), `Improved — lower or delete these baseline entries: ${stale.sort().join(", ")}`).toEqual([]);
 }
 
 function assertBaselineHonest(findings: Finding[], baseline: Record<string, number>) {
@@ -298,14 +440,14 @@ describe("guard B: every DOM query in a DOM test takes a literal selector", () =
  * What remains below is real coupling on Quincy BEM/state names, and #50 converts it to the state
  * attributes those elements gain (`data-open`, `data-active`, `data-multi-selected`).
  */
-const CLASS_ASSERTION_BASELINE: Record<string, number> = {
-  "components/ProjectKanbanBoard.dom.test.tsx": 6,
-  "screens/Dashboard-calendar.dom.test.tsx": 6,
+const CLASS_ASSERTION_BASELINE: Record<string, string[]> = {
+  "components/ProjectKanbanBoard.dom.test.tsx": ["kanban", "kanban", "kanban-overlay", "kanban-overlay", "kcard", "kcard-drag-handle"],
+  "screens/Dashboard-calendar.dom.test.tsx": ["is-active", "is-active", "is-active", "is-active", "is-active", "is-active"],
 };
 
 describe("guard C: no DOM test asserts an element carries a Quincy class name", () => {
   it("adds no class-presence assertion beyond the #50 baseline", () => {
-    assertWithinBaseline(classAssertionFindings(), CLASS_ASSERTION_BASELINE, [
+    assertWithinExactBaseline(classAssertionFindings(), CLASS_ASSERTION_BASELINE, [
       "A DOM test asserts that an element carries a Quincy class name.",
       "",
       "This breaks on a re-skin exactly like a class-based selector does. Assert the behaviour the",
@@ -318,7 +460,7 @@ describe("guard C: no DOM test asserts an element carries a Quincy class name", 
   });
 
   it("keeps the baseline honest — no file is listed above its real count", () => {
-    assertBaselineHonest(classAssertionFindings(), CLASS_ASSERTION_BASELINE);
+    assertExactBaselineHonest(classAssertionFindings(), CLASS_ASSERTION_BASELINE);
   });
 });
 
@@ -389,5 +531,65 @@ describe("guard E: the seam matchers classify selectors correctly", () => {
     ["text-foreground", true],
   ])("isUtilityClass(%j) === %s", (token, expected) => {
     expect(isUtilityClass(token)).toBe(expected);
+  });
+
+  // The prefix-vs-exact split. `filter-chips` is a real Quincy class (PhotoGrid.tsx:198) that an
+  // unbounded `filter` prefix classified as a utility, silently exempting it from guard C.
+  it.each([
+    ["filter-chips", false],
+    ["filter", true],
+    ["grid", true],
+    ["grid-cols-2", true],
+    ["borderless-rail", false],
+    ["border", true],
+    ["border-border", true],
+    ["group-header", false],
+    ["group", true],
+    ["contents-panel", false],
+  ])("isUtilityClass(%j) === %s — prefixes are bounded", (token, expected) => {
+    expect(isUtilityClass(token)).toBe(expected);
+  });
+
+  // Polarity is read from the assertion, never from surrounding text.
+  it.each([
+    [")).toBe(true);", true],
+    [")).toBeTruthy();", true],
+    [")).toBe(false);", false],
+    [")).toBeFalsy();", false],
+    [")).not.toBe(true);", false],
+    [")).not.toBe(false);", true],
+    [")).not.toBeFalsy();", true],
+    [")).toBe(expected);", true],
+    [")).someUnknownMatcher();", true],
+  ])("predicateAssertsPresence(%j) === %s", (after, expected) => {
+    expect(predicateAssertsPresence(after)).toBe(expected);
+  });
+
+  it.each([
+    ["`", "${SEL}", true],
+    ["`", "  ${A}${B} ", true],
+    ["`", '[data-testid="row-${id}"]', false],
+    ["`", ".kcard", false],
+    ['"', "", false],
+  ])("isFullyComputedTemplate(%j, %j) === %s", (quote, body, expected) => {
+    expect(isFullyComputedTemplate(quote, body)).toBe(expected);
+  });
+
+  // The three shapes that escaped both A and B: a literal is present, so NON_LITERAL_QUERY sees a
+  // quote and stops, while LITERAL_QUERY reads only the first fragment.
+  it.each([
+    ['host.querySelector("button" + ".kcard")', true],
+    ['host.querySelector("" + SEL)', true],
+    ["host.querySelector(`${SEL}`)", true],
+    ['host.querySelector(\'[data-testid="x"]\')', false],
+    ["host.querySelector(`[data-testid=\"row-${id}\"]`)", false],
+    ['host.querySelector("[data-testid=\\"presentation-anchor\\"]")', false],
+    ['host.closest("[role=\\"dialog\\"]")', false],
+  ])("computed-selector detection on %j === %s", (code, expected) => {
+    const concatenated = new RegExp(CONCATENATED_QUERY.source).test(code);
+    const literals = [...code.matchAll(new RegExp(LITERAL_QUERY.source, "g"))];
+    const computedTemplate = literals.some((m) => isFullyComputedTemplate(m[1]!, m[2]!));
+    const nonLiteral = new RegExp(NON_LITERAL_QUERY.source).test(code);
+    expect(concatenated || computedTemplate || nonLiteral).toBe(expected);
   });
 });

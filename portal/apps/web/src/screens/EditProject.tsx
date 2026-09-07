@@ -133,7 +133,7 @@ export function EditProject({ projectId, onNavigate }: { projectId: string; onNa
       </div>
       <InternalLink className={buttonClasses("secondary")} to={`/projects/${encodeURIComponent(projectId)}`}>Cancel</InternalLink>
     </header>
-    {canEditProject && (project ? <form className="create-project__form flex flex-col gap-[var(--space-8)]" onSubmit={(event) => void submit(event)} noValidate>
+    {canEditProject && (project ? <form data-testid="edit-project-form" className="create-project__form flex flex-col gap-[var(--space-8)]" onSubmit={(event) => void submit(event)} noValidate>
       {submitError && <Notice role="alert">{submitError}</Notice>}
       <section className="create-project__section" aria-labelledby="property-heading">
         <SectionHead eyebrow="Property" id="property-heading">Where is the shoot?</SectionHead>

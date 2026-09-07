@@ -248,9 +248,13 @@ describe("CollectionPanel version history deletion wiring", () => {
     expect(host.querySelector('[data-testid="collection-link-plain"]')?.textContent).toContain("Client portal");
     expect(host.querySelector('[data-testid="collection-link-add"] input[placeholder="https://vimeo.com/…"]')).not.toBeNull();
     await act(async () => { root!.render(createElement(CollectionPanel, { ...props, collection: "floorplan", assets: [], canManage: false })); await Promise.resolve(); await Promise.resolve(); });
-    expect(host.querySelector<HTMLElement>('[data-testid="collection-links"]')?.dataset.video).toBeUndefined();
+    const floorplanLinks = host.querySelector<HTMLElement>('[data-testid="collection-links"]');
+    expect(floorplanLinks).not.toBeNull();
+    expect(floorplanLinks!.dataset.video).toBeUndefined();
     await act(async () => { root!.render(createElement(CollectionPanel, { ...props, collection: "copy", assets: [], canManage: false })); await Promise.resolve(); await Promise.resolve(); });
-    expect(host.querySelector<HTMLElement>('[data-testid="collection-links"]')?.dataset.video).toBeUndefined();
+    const copyLinks = host.querySelector<HTMLElement>('[data-testid="collection-links"]');
+    expect(copyLinks).not.toBeNull();
+    expect(copyLinks!.dataset.video).toBeUndefined();
   });
 
   it("opens the inline editor and cancels without PATCH, restoring the original tile", async () => {
