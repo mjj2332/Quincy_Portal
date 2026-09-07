@@ -9,6 +9,13 @@
 # Logs
 *.log
 
+# Local environment variables (holds the ReUI license key — never commit)
+.env.local
+
+# Per-user MCP config: carries a personal ReUI bearer token. The token-free server
+# definition lives in .cursor/mcp.json and opencode.json, which ARE committed.
+.mcp.json
+
 # Design handoff bundles
 *.zip
 
@@ -24,3 +31,8 @@ Test Images with star rating/
 
 # Local QA screenshots / evidence — transient, not part of the software project
 qa-evidence/
+
+# Scratch evaluation projects. Holds a commercially-licensed ReUI template and its
+# license key; the licence forbids sharing outside the organisation. Reference only,
+# never production code — see issue #48.
+tmp/
