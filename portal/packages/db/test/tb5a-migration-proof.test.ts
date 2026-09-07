@@ -39,6 +39,7 @@ import {
   type SqliteDatabase,
   type SqliteRow,
 } from "./tb5a-proof-support";
+import { fenceReworkSqlBlocks } from "./fence-rework-sql";
 
 const MIGRATION_ONLY_OBJECTS = [
   "project_board_order_0037_rollback",
@@ -82,11 +83,6 @@ function stageInput(db: D1Database) {
     actorId: null,
     updatedAt: FIXTURE_NOW + 100,
   };
-}
-
-function fenceReworkSqlBlocks(): string[] {
-  const design = readFileSync(new URL("../../../../docs/plans/implemented/tb5a/fence-rework-sol-design.md", import.meta.url), "utf8");
-  return [...design.matchAll(/```sql\n([\s\S]*?)```/g)].map((match) => match[1]!);
 }
 
 async function executeBundle(db: D1Database, statements: D1PreparedStatement[]): Promise<D1Result<unknown>[]> {

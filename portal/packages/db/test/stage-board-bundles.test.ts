@@ -30,6 +30,7 @@ import {
   type ExpectedTargetPlacementRow,
   type GuardedTransitionPrerequisite,
 } from "../src/index";
+import { fenceReworkSqlBlocks } from "./fence-rework-sql";
 
 type SqliteRow = Record<string, unknown>;
 type SqliteStatement = {
@@ -62,11 +63,6 @@ function migrationNames(): string[] {
   return readdirSync(directory)
     .filter((value) => /^\d{4}_.*\.sql$/.test(value))
     .sort((a, b) => Number(a.slice(0, 4)) - Number(b.slice(0, 4)));
-}
-
-function fenceReworkSqlBlocks(): string[] {
-  const design = readFileSync(new URL("../../../../docs/plans/implemented/tb5a/fence-rework-sol-design.md", import.meta.url), "utf8");
-  return [...design.matchAll(/```sql\n([\s\S]*?)```/g)].map((match) => match[1]!);
 }
 
 function applyAllMigrations(db: SqliteDatabase): void {
