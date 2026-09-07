@@ -97,7 +97,7 @@ describe("Dashboard Calendar routing", () => {
   }
 
   async function typeSearch(value: string) {
-    const input = host.querySelector<HTMLInputElement>(".dashboard-search input");
+    const input = host.querySelector<HTMLInputElement>('[data-testid="dashboard-search-input"]');
     if (!input) throw new Error("Dashboard search input is missing");
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
@@ -117,7 +117,7 @@ describe("Dashboard Calendar routing", () => {
     window.localStorage.setItem("quincy:dashboard:view", "calendar");
     await render({ role: "photographer" });
     expect([...host.querySelectorAll("button")].some((button) => button.textContent === "Calendar")).toBe(false);
-    expect([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Kanban")?.classList.contains("is-active")).toBe(true);
+    expect([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Kanban")?.getAttribute("data-active")).toBe("true");
     expect(window.localStorage.getItem("quincy:dashboard:view")).toBe("kanban");
     expect(host.querySelector('[data-testid="dashboard-calendar-surface"]')).toBeNull();
     expect(apiGetMock.mock.calls.some(([path]) => path.startsWith("/api/production-calendar"))).toBe(false);
@@ -139,7 +139,7 @@ describe("Dashboard Calendar routing", () => {
     await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "List")?.click(); await Promise.resolve(); });
     expect(window.location.search).toBe("?view=list");
     expect(window.localStorage.getItem("quincy:dashboard:view")).toBe("list");
-    const row = host.querySelector<HTMLAnchorElement>("a.prow");
+    const row = host.querySelector<HTMLAnchorElement>('[data-testid="project-list-row"]');
     expect(row?.getAttribute("href")).toBe("/projects/33333333-3333-4333-8333-333333333333");
     expect(row?.tabIndex).toBe(0);
     expect(row?.querySelector("button, select")).toBeNull();
@@ -152,7 +152,7 @@ describe("Dashboard Calendar routing", () => {
   it("opens List and Kanban project anchors on the Full Workspace", async () => {
     await render();
     await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "List")?.click(); await Promise.resolve(); });
-    const row = host.querySelector<HTMLAnchorElement>("a.prow")!;
+    const row = host.querySelector<HTMLAnchorElement>('[data-testid="project-list-row"]')!;
     expect(row.href).toContain("/projects/33333333-3333-4333-8333-333333333333");
     await act(async () => { row.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, detail: 1 })); await Promise.resolve(); });
     expect(window.location.pathname).toBe("/projects/33333333-3333-4333-8333-333333333333");
@@ -165,10 +165,10 @@ describe("Dashboard Calendar routing", () => {
   it("takes List/Kanban view state from the URL across history arrivals", async () => {
     window.history.replaceState(null, "", "/?view=list");
     await act(async () => { root.render(<DashboardRouteHarness />); await Promise.resolve(); await Promise.resolve(); });
-    expect([...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] button')].find((button) => button.textContent === "List")?.classList.contains("is-active")).toBe(true);
+    expect([...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] button')].find((button) => button.textContent === "List")?.getAttribute("data-active")).toBe("true");
     window.history.replaceState(null, "", "/?view=kanban");
     await act(async () => { window.dispatchEvent(new PopStateEvent("popstate")); await Promise.resolve(); await Promise.resolve(); });
-    expect([...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] button')].find((button) => button.textContent === "Kanban")?.classList.contains("is-active")).toBe(true);
+    expect([...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] button')].find((button) => button.textContent === "Kanban")?.getAttribute("data-active")).toBe("true");
   });
 
   it("restores the bare-route remembered view on a real Back navigation past an explicit switch", async () => {
@@ -178,20 +178,20 @@ describe("Dashboard Calendar routing", () => {
     // genuine back() needs its own pushed anchor point.
     window.history.pushState(null, "", "/");
     await render();
-    expect([...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] button')].find((button) => button.textContent === "List")?.classList.contains("is-active")).toBe(true);
+    expect([...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] button')].find((button) => button.textContent === "List")?.getAttribute("data-active")).toBe("true");
     await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Kanban")?.click(); await Promise.resolve(); });
     expect(window.location.search).toBe("?view=kanban");
-    expect([...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] button')].find((button) => button.textContent === "Kanban")?.classList.contains("is-active")).toBe(true);
+    expect([...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] button')].find((button) => button.textContent === "Kanban")?.getAttribute("data-active")).toBe("true");
     // A REAL Back pops the history entry selectView just pushed, landing back on bare "/" — the
     // view must revert to what that bare route originally showed, not stay on Kanban.
     await act(async () => { window.history.back(); await new Promise((resolve) => setTimeout(resolve, 0)); });
     expect(window.location.search).toBe("");
-    expect([...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] button')].find((button) => button.textContent === "List")?.classList.contains("is-active")).toBe(true);
+    expect([...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] button')].find((button) => button.textContent === "List")?.getAttribute("data-active")).toBe("true");
   });
 
   it("opens scheduled Calendar project anchors on the Full Workspace", async () => {
     await render({ calendar: routeCalendar });
-    const anchor = host.querySelector<HTMLAnchorElement>("a.qc-cal-event-card__project-link")!;
+    const anchor = host.querySelector<HTMLAnchorElement>('a[data-testid="calendar-project-link"]')!;
     expect(anchor.getAttribute("href")).toBe("/projects/" + projectId);
     await act(async () => { anchor.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, detail: 1 })); await Promise.resolve(); });
     expect(`${window.location.pathname}${window.location.search}`).toBe("/projects/" + projectId);
@@ -199,7 +199,7 @@ describe("Dashboard Calendar routing", () => {
 
   it("leaves a modified Calendar project click to native navigation", async () => {
     await render({ calendar: routeCalendar });
-    const anchor = host.querySelector<HTMLAnchorElement>("a.qc-cal-event-card__project-link")!;
+    const anchor = host.querySelector<HTMLAnchorElement>('a[data-testid="calendar-project-link"]')!;
     await act(async () => { anchor.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, detail: 1, metaKey: true })); await Promise.resolve(); });
     expect(`${window.location.pathname}${window.location.search}`).toBe("/projects/" + projectId);
   });
@@ -207,7 +207,7 @@ describe("Dashboard Calendar routing", () => {
   it("opens a keyboard-activated (Enter) Calendar anchor on the Full Workspace", async () => {
     window.history.replaceState(null, "", "/?view=calendar&date=" + routeCalendar.date + "&sub=month&layers=project%2Cchecklist&editors=" + editorId);
     await render({ calendar: routeCalendar });
-    const anchor = host.querySelector<HTMLAnchorElement>("a.qc-cal-event-card__project-link")!;
+    const anchor = host.querySelector<HTMLAnchorElement>('a[data-testid="calendar-project-link"]')!;
     await act(async () => { anchor.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })); await Promise.resolve(); });
     expect(`${window.location.pathname}${window.location.search}`).toBe("/projects/" + projectId);
   });
@@ -225,20 +225,20 @@ describe("Dashboard Calendar routing", () => {
     await render();
     await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "List")?.click(); await Promise.resolve(); });
     await typeSearch(`smith\\${String.fromCharCode(7)} street`);
-    expect(host.querySelector<HTMLInputElement>(".dashboard-search input")?.value).toBe("smith street");
+    expect(host.querySelector<HTMLInputElement>('[data-testid="dashboard-search-input"]')?.value).toBe("smith street");
     expect(window.location.search).toBe("?view=list");
     await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Calendar")?.click(); await Promise.resolve(); });
     expect(window.location.search).toContain("view=calendar");
     expect(window.location.search).toContain("q=smith+street");
-    expect(host.querySelector<HTMLInputElement>(".dashboard-search input")?.value).toBe("smith street");
+    expect(host.querySelector<HTMLInputElement>('[data-testid="dashboard-search-input"]')?.value).toBe("smith street");
   });
 
   it("reflects route search and replaces the normalized debounced value without a history push", async () => {
     await render({ calendar: { ...routeCalendar, editorIds: [], search: "smith street" } });
-    expect(host.querySelector<HTMLInputElement>(".dashboard-search input")?.value).toBe("smith street");
+    expect(host.querySelector<HTMLInputElement>('[data-testid="dashboard-search-input"]')?.value).toBe("smith street");
     const lengthBefore = window.history.length;
     await typeSearch("a b ");
-    expect(host.querySelector<HTMLInputElement>(".dashboard-search input")?.value).toBe("a b ");
+    expect(host.querySelector<HTMLInputElement>('[data-testid="dashboard-search-input"]')?.value).toBe("a b ");
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 350)); });
     expect(window.history.length).toBe(lengthBefore);
     expect(window.location.search).toContain("q=a+b");
@@ -261,7 +261,7 @@ describe("Dashboard Calendar routing", () => {
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
     window.history.pushState(null, "", "/?view=calendar&date=2026-08-12&sub=month&layers=project%2Cchecklist&q=harbour");
     await act(async () => { window.dispatchEvent(new PopStateEvent("popstate")); await Promise.resolve(); await Promise.resolve(); });
-    expect(host.querySelector<HTMLInputElement>(".dashboard-search input")?.value).toBe("harbour");
+    expect(host.querySelector<HTMLInputElement>('[data-testid="dashboard-search-input"]')?.value).toBe("harbour");
   });
 
   it("pushes committed filter changes and keeps them beside a debounced q", async () => {
@@ -351,7 +351,7 @@ describe("Dashboard Calendar routing", () => {
     calendarRefetchFails.value = false;
     await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Calendar")!.click(); await Promise.resolve(); });
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
-    expect(host.querySelector(".qc-calendar-recovery")).toBeNull();
+    expect(host.querySelector('[data-testid="calendar-recovery-notice"]')).toBeNull();
     expect([...host.querySelectorAll("button")].some((button) => button.textContent === "Refresh")).toBe(false);
   });
 });

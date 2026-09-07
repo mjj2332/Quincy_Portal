@@ -228,7 +228,7 @@ function MoveToControl({ project, model, activeStages, role, sort, canMoveStages
           <div className="kanban-move-popover__actions flex justify-end gap-[var(--space-2)]">
             <button type="button" className={buttonClasses("secondary", { className: "min-h-[38px] px-[14px] py-[9px] text-xs focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--ink-900)] focus-visible:!outline-offset-[-2px]" })} onClick={() => { setTargetStageKey(null); setSuccessor(null); onMoveToProposalChange?.(null); }}>Back</button>
             <button type="button" className={buttonClasses("secondary", { className: "min-h-[38px] px-[14px] py-[9px] text-xs focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--ink-900)] focus-visible:!outline-offset-[-2px]" })} onClick={close}>Cancel</button>
-            <button type="button" className={buttonClasses("primary", { className: "min-h-[38px] px-[14px] py-[9px] text-xs focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--ink-900)] focus-visible:!outline-offset-[-2px]" })} disabled={successor === null} onClick={confirmMoveTo}>Move project</button>
+            <button type="button" data-testid="move-to-submit" className={buttonClasses("primary", { className: "min-h-[38px] px-[14px] py-[9px] text-xs focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--ink-900)] focus-visible:!outline-offset-[-2px]" })} disabled={successor === null} onClick={confirmMoveTo}>Move project</button>
           </div>
         </>}
       </div>

@@ -341,24 +341,23 @@ function assertBaselineHonest(findings: Finding[], baseline: Record<string, numb
  * converted; the whole map goes when the ticket closes. NOTHING may be added.
  */
 const CLASS_SELECTOR_BASELINE: Record<string, number> = {
-  "screens/Dashboard-stage-interactions.dom.test.tsx": 70,
+  // The 2 remaining entries here are dnd-kit's <DragOverlay>, which accepts a fixed prop list
+  // (adjustScale | children | className | style | transition | dropAnimation | modifiers |
+  // wrapperElement | zIndex) and spreads nothing — a data-testid on it never reaches the DOM.
+  // `.kanban-overlay` is our own class on a vendor component, not Quincy markup a re-skin replaces,
+  // so it is the only identifier that element can carry. Batch B, #50.
+  "screens/Dashboard-stage-interactions.dom.test.tsx": 2,
   "components/Topbar.dom.test.tsx": 35,
   "screens/Admin.dom.test.tsx": 15,
-  "screens/Dashboard-kanban-sort.dom.test.tsx": 13,
-  "screens/Dashboard-calendar.dom.test.tsx": 12,
   "components/ProductionCalendar-phone.dom.test.tsx": 5,
   "components/ProductionCalendar-unscheduled.dom.test.tsx": 4,
   "components/ConfirmDialog.dom.test.tsx": 3,
-  "components/ProjectKanbanBoard.dom.test.tsx": 3,
   "components/ProductionCalendar-reconciliation.dom.test.tsx": 2,
   "components/ProductionCalendar.dom.test.tsx": 2,
   "components/ProductionCalendarEvent.dom.test.tsx": 2,
   "components/ImpersonationBanner.dom.test.tsx": 1,
-  "components/KanbanCardPreview.dom.test.tsx": 1,
   "components/ProductionCalendar-checklist.dom.test.tsx": 1,
   "components/ProductionCalendarUnscheduledPanel.dom.test.tsx": 1,
-  "screens/Dashboard-kanban-sort-priority-guard.dom.test.tsx": 1,
-  "screens/Dashboard-kanban-sort-priority-render-gate.dom.test.tsx": 1,
 };
 
 describe("guard A: no DOM test selects an element by a Quincy class name", () => {
@@ -440,10 +439,9 @@ describe("guard B: every DOM query in a DOM test takes a literal selector", () =
  * What remains below is real coupling on Quincy BEM/state names, and #50 converts it to the state
  * attributes those elements gain (`data-open`, `data-active`, `data-multi-selected`).
  */
-const CLASS_ASSERTION_BASELINE: Record<string, string[]> = {
-  "components/ProjectKanbanBoard.dom.test.tsx": ["kanban", "kanban", "kanban-overlay", "kanban-overlay", "kcard", "kcard-drag-handle"],
-  "screens/Dashboard-calendar.dom.test.tsx": ["is-active", "is-active", "is-active", "is-active", "is-active", "is-active"],
-};
+// Emptied by Batch B (#50). Every remaining class-presence assertion was converted to a stable
+// identifier; keep this at zero — a new entry means a test started asserting on styling again.
+const CLASS_ASSERTION_BASELINE: Record<string, string[]> = {};
 
 describe("guard C: no DOM test asserts an element carries a Quincy class name", () => {
   it("adds no class-presence assertion beyond the #50 baseline", () => {

@@ -73,7 +73,7 @@ describe("Dashboard Kanban sort control — Priority gate guard (negative case)"
 
   it("refuses a 'priority' value from an unauthorized user even when it reaches onValueChange directly", async () => {
     await act(async () => { root!.render(<Dashboard currentUserId="photographer-1" />); await Promise.resolve(); await Promise.resolve(); await vi.advanceTimersByTimeAsync(100); await Promise.resolve(); });
-    await vi.waitFor(() => expect(document.querySelector(".kcard")).not.toBeNull());
+    await vi.waitFor(() => expect(document.querySelector('[data-testid="kanban-card"]')).not.toBeNull());
     const mockTrigger = document.querySelector<HTMLButtonElement>('[aria-label="Sort Kanban board"]')!;
     expect(mockTrigger).not.toBeNull();
     // The initial mount already persists the default "board" mode (initializeKanbanSortMode's

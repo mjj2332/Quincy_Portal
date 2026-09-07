@@ -58,7 +58,7 @@ describe("Dashboard Kanban sort control", () => {
 
   it("hides only reorder arrows when shoot-date sorting is selected", async () => {
     await act(async () => { root!.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); await Promise.resolve(); await vi.advanceTimersByTimeAsync(100); await Promise.resolve(); });
-    await vi.waitFor(() => expect(document.querySelector(".kcard")).not.toBeNull());
+    await vi.waitFor(() => expect(document.querySelector('[data-testid="kanban-card"]')).not.toBeNull());
     expect(document.querySelector('[aria-label="Move project up"]')).not.toBeNull();
     expect(document.querySelector('[aria-label="Move project down"]')).not.toBeNull();
     const priority = document.querySelector('select[aria-label="Priority"]');
@@ -90,9 +90,9 @@ describe("Dashboard Kanban sort control", () => {
       priority: 1, boardPosition: 0, boardRevision: 0, deadlineAt: null, deadlineLocalCivil: null, deadlineZone: null,
     }], board: { contractEnabled: false, orderedProjectIdsByStage: { awaiting_raw: ["project-flag-off"] } } }) : Promise.resolve({ stages: [] }));
     await act(async () => { root!.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); await Promise.resolve(); await vi.advanceTimersByTimeAsync(100); await Promise.resolve(); });
-    await vi.waitFor(() => expect(document.querySelector(".kcard")).not.toBeNull());
+    await vi.waitFor(() => expect(document.querySelector('[data-testid="kanban-card"]')).not.toBeNull());
     expect(document.querySelector('select[aria-label="Priority"]')).not.toBeNull();
-    expect(document.querySelector(".kcard__foot")?.textContent).toContain("Priority 1");
+    expect(document.querySelector('[data-testid="kanban-card-footer"]')?.textContent).toContain("Priority 1");
     expect(document.querySelector('[aria-label="Move project up"]')).toBeNull();
     expect(document.querySelector('[aria-label="Move project down"]')).toBeNull();
     expect(document.querySelector('[aria-label="Move Flag Off Street to…"]')).toBeNull();
@@ -101,17 +101,17 @@ describe("Dashboard Kanban sort control", () => {
 
   it("renders the Sydney deadline on Kanban cards and keeps RAW out of the card footer", async () => {
     await act(async () => { root!.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); await Promise.resolve(); await vi.advanceTimersByTimeAsync(1); });
-    await vi.waitFor(() => expect(document.querySelector(".kcard")).not.toBeNull());
-    const card = document.querySelector(".kcard")!;
-    expect(card.querySelector("time")?.textContent).toContain("Due 2027-01-15 09:00 Sydney");
-    expect(card.querySelector(".kcard__foot")?.textContent).not.toContain("RAW");
-    expect(card.querySelector("time")?.getAttribute("dateTime")).toBe("2027-01-14T22:00:00.000Z");
+    await vi.waitFor(() => expect(document.querySelector('[data-testid="kanban-card"]')).not.toBeNull());
+    const card = document.querySelector('[data-testid="kanban-card"]')!;
+    expect(card.querySelector('[data-testid="kanban-card-deadline"]')?.textContent).toContain("Due 2027-01-15 09:00 Sydney");
+    expect(card.querySelector('[data-testid="kanban-card-footer"]')?.textContent).not.toContain("RAW");
+    expect(card.querySelector('[data-testid="kanban-card-deadline"]')?.getAttribute("dateTime")).toBe("2027-01-14T22:00:00.000Z");
     expect(card.getAttribute("href")).toBe("/projects/project-1");
     expect(card.getAttribute("target")).toBeNull();
 
     await act(async () => { (document.querySelector('[aria-label="Dashboard view"] button') as HTMLButtonElement).click(); await Promise.resolve(); });
-    expect(document.querySelector(".prow-wrap .prow")?.getAttribute("href")).toBe("/projects/project-1");
-    expect(document.querySelector(".prow-wrap .prow__raw")?.textContent).toBe("7");
+    expect(document.querySelector('[data-testid="project-list-row"]')?.getAttribute("href")).toBe("/projects/project-1");
+    expect(document.querySelector('[data-testid="project-list-row-raw"]')?.textContent).toBe("7");
   });
 
   it("renders the current overdue label and keeps archived Dashboard scope List-only", async () => {
@@ -121,12 +121,12 @@ describe("Dashboard Kanban sort control", () => {
       boardPosition: 10, deadlineAt: Date.parse("2020-01-01T00:00:00.000Z"), deadlineLocalCivil: "2020-01-01T11:00", deadlineZone: "Australia/Sydney", boardRevision: 1,
     }], board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: ["archived-project"] } } }) : Promise.resolve({ stages: [] }));
     await act(async () => { root!.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); await Promise.resolve(); await vi.advanceTimersByTimeAsync(100); await Promise.resolve(); });
-    await vi.waitFor(() => expect(document.querySelector(".kcard")).not.toBeNull());
-    expect(document.querySelector(".kcard time")?.textContent).toContain("Overdue 2020-01-01 11:00 Sydney");
+    await vi.waitFor(() => expect(document.querySelector('[data-testid="kanban-card"]')).not.toBeNull());
+    expect(document.querySelector('[data-testid="kanban-card"] [data-testid="kanban-card-deadline"]')?.textContent).toContain("Overdue 2020-01-01 11:00 Sydney");
 
     await act(async () => { (document.querySelector('[aria-label="Project status"] button:last-child') as HTMLButtonElement).click(); await Promise.resolve(); await vi.advanceTimersByTimeAsync(100); await Promise.resolve(); });
-    await vi.waitFor(() => expect(document.querySelector(".prow-wrap .prow")).not.toBeNull());
-    expect(document.querySelector(".kanban")).toBeNull();
+    await vi.waitFor(() => expect(document.querySelector('[data-testid="project-list-row"]')).not.toBeNull());
+    expect(document.querySelector('[aria-label="Project pipeline board"]')).toBeNull();
     expect(document.querySelector('[aria-label="Dashboard view"]')).toBeNull();
   });
 
@@ -137,7 +137,7 @@ describe("Dashboard Kanban sort control", () => {
   describe("Sort Select accessibility contract", () => {
     async function renderBoard() {
       await act(async () => { root!.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); await Promise.resolve(); await vi.advanceTimersByTimeAsync(100); await Promise.resolve(); });
-      await vi.waitFor(() => expect(document.querySelector(".kcard")).not.toBeNull());
+      await vi.waitFor(() => expect(document.querySelector('[data-testid="kanban-card"]')).not.toBeNull());
     }
     function trigger() { return document.querySelector<HTMLButtonElement>('[aria-label="Sort Kanban board"][role="combobox"]')!; }
     function listbox() { return document.querySelector<HTMLElement>('[aria-label="Sort Kanban board"][role="listbox"]'); }

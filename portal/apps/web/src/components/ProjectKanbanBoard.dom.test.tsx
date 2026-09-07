@@ -2,7 +2,7 @@
 import { Children, act, createElement, isValidElement, type ReactElement, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { AutoScrollActivator, MeasuringStrategy, type Active, type ClientRect, type DroppableContainer } from "@dnd-kit/core";
+import { AutoScrollActivator, DragOverlay, MeasuringStrategy, type Active, type ClientRect, type DroppableContainer } from "@dnd-kit/core";
 import { ProjectKanbanBoard, type BoardInteractionState } from "./ProjectKanbanBoard";
 import type { ProjectSummary } from "../lib/kanban-interaction";
 import type { PipelineStage } from "../lib/stages";
@@ -136,14 +136,14 @@ function bodyPopover(id: string) {
   return document.getElementById(id);
 }
 
-type TestElement = ReactElement<{ className?: string; dropAnimation?: unknown }>;
+type TestElement = ReactElement<{ className?: string; dropAnimation?: unknown; "aria-label"?: string }>;
 
 function isTestElement(child: ReactNode): child is TestElement {
-  return isValidElement<{ className?: string; dropAnimation?: unknown }>(child);
+  return isValidElement<{ className?: string; dropAnimation?: unknown; "aria-label"?: string }>(child);
 }
 
 function dragOverlayElement() {
-  const overlay = Children.toArray(dnd.handlers.at(-1)?.props.children).find((child) => isTestElement(child) && child.props.className?.split(" ").includes("kanban-overlay"));
+  const overlay = Children.toArray(dnd.handlers.at(-1)?.props.children).find((child) => isTestElement(child) && child.type === DragOverlay);
   if (!isTestElement(overlay)) throw new Error("No DragOverlay element");
   return overlay;
 }
@@ -306,12 +306,12 @@ describe("ProjectKanbanBoard", () => {
   it("keeps touch-action scoped to the dedicated drag handle", async () => {
     // Markup/class only — this does not prove touch gesture routing or scroll behavior (QA phase).
     await renderBoard();
-    const handle = host.querySelector<HTMLButtonElement>(".kcard-drag-handle");
-    const card = host.querySelector<HTMLElement>(".kcard");
-    const board = host.querySelector<HTMLElement>(".kanban");
-    expect(handle?.classList.contains("kcard-drag-handle")).toBe(true);
-    expect(card?.className?.split(" ").includes("kcard")).toBe(true);
-    expect(board?.className?.split(" ").includes("kanban")).toBe(true);
+    const handle = host.querySelector<HTMLButtonElement>('[data-focus-key^="move-handle:"]');
+    const card = host.querySelector<HTMLElement>('[data-testid="kanban-card"]');
+    const board = host.querySelector<HTMLElement>('[aria-label="Project pipeline board"]');
+    expect(handle?.getAttribute("data-focus-key")?.startsWith("move-handle:")).toBe(true);
+    expect(card?.getAttribute("data-testid")).toBe("kanban-card");
+    expect(board?.getAttribute("aria-label")).toBe("Project pipeline board");
     expect(card?.getAttribute("style") ?? "").not.toMatch(/touch-action\s*:\s*none/);
     expect(board?.getAttribute("style") ?? "").not.toMatch(/touch-action\s*:\s*none/);
   });
@@ -320,8 +320,8 @@ describe("ProjectKanbanBoard", () => {
     // Markup only — active overlay placement and clipping require a real browser (QA phase).
     await renderBoard();
     const children = Children.toArray(dnd.handlers[0]?.props.children).filter(isTestElement);
-    const boardIndex = children.findIndex((child) => child.props.className?.split(" ").includes("kanban"));
-    const overlayIndex = children.findIndex((child) => child.props.className?.split(" ").includes("kanban-overlay"));
+    const boardIndex = children.findIndex((child) => child.props["aria-label"] === "Project pipeline board");
+    const overlayIndex = children.findIndex((child) => child.type === DragOverlay);
     expect(children).toHaveLength(2);
     expect(boardIndex).toBeGreaterThanOrEqual(0);
     expect(overlayIndex).toBeGreaterThanOrEqual(0);

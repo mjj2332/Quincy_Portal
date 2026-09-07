@@ -41,8 +41,8 @@ describe("KanbanCardPreview", () => {
   it("is a non-interactive copy with the card's street and deadline", () => {
     const host = document.createElement("div");
     host.innerHTML = renderToStaticMarkup(createElement(KanbanCardPreview, { project }));
-    expect(host.querySelector(".kcard__addr")?.textContent).toBe("12 Preview Street");
-    expect(host.querySelector("time")?.textContent).toContain("Due 2026-09-02 08:00 Sydney");
+    expect(host.querySelector('[data-testid="kanban-card-address"]')?.textContent).toBe("12 Preview Street");
+    expect(host.querySelector('[data-testid="kanban-card-deadline"]')?.textContent).toContain("Due 2026-09-02 08:00 Sydney");
     expect(host.querySelector("a")).toBeNull();
     expect(host.querySelector("button")).toBeNull();
     expect(host.querySelector("select")).toBeNull();

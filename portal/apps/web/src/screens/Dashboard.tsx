@@ -961,7 +961,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         <div className={SEGMENT_GROUP} aria-label="Dashboard view">
           <button className={cn(SEGMENT_BUTTON, view === "list" && "is-active")} type="button" data-focus-key="dashboard-view-list" data-active={view === "list" ? "true" : undefined} disabled={interactionBlocked || calendarInteractionBlocked} onClick={() => selectView("list")}>List</button>
           <button className={cn(SEGMENT_BUTTON, view === "kanban" && "is-active")} type="button" data-focus-key="dashboard-view-kanban" data-active={view === "kanban" ? "true" : undefined} disabled={interactionBlocked || calendarInteractionBlocked} onClick={() => selectView("kanban")}>Kanban</button>
-          {canViewProductionCalendar && <button className={cn(SEGMENT_BUTTON, view === "calendar" && "is-active")} type="button" data-focus-key="dashboard-view-calendar" disabled={interactionBlocked || calendarInteractionBlocked} onClick={() => selectView("calendar")}>Calendar</button>}
+          {canViewProductionCalendar && <button className={cn(SEGMENT_BUTTON, view === "calendar" && "is-active")} type="button" data-focus-key="dashboard-view-calendar" data-active={view === "calendar" ? "true" : undefined} disabled={interactionBlocked || calendarInteractionBlocked} onClick={() => selectView("calendar")}>Calendar</button>}
         </div>
         {!viewingArchived && view === "kanban" && (
           <div className="dashboard-sort max-[721px]:basis-full">
@@ -984,7 +984,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       </div>
 
       {boardUnavailableMessage && !viewingArchived && !isCalendarView && (
-        <div role="status" className="flex items-baseline gap-[var(--space-3)] mb-[var(--space-4)] px-[var(--space-4)] py-[var(--space-3)] [border-left-style:solid] border-l-[length:var(--border-width-rule)] border-l-signal-caution bg-[color-mix(in_srgb,var(--signal-caution)_7%,var(--bg-surface))] text-foreground text-[length:var(--text-sm)] leading-[var(--leading-normal)] before:content-['Board'] before:shrink-0 before:[font:var(--type-eyebrow)] before:uppercase before:tracking-[var(--tracking-widest)] before:text-signal-caution-text">{boardUnavailableMessage}</div>
+        <div role="status" data-testid="board-unavailable-notice" className="flex items-baseline gap-[var(--space-3)] mb-[var(--space-4)] px-[var(--space-4)] py-[var(--space-3)] [border-left-style:solid] border-l-[length:var(--border-width-rule)] border-l-signal-caution bg-[color-mix(in_srgb,var(--signal-caution)_7%,var(--bg-surface))] text-foreground text-[length:var(--text-sm)] leading-[var(--leading-normal)] before:content-['Board'] before:shrink-0 before:[font:var(--type-eyebrow)] before:uppercase before:tracking-[var(--tracking-widest)] before:text-signal-caution-text">{boardUnavailableMessage}</div>
       )}
 
       {isCalendarView && (
