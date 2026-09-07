@@ -1,0 +1,120 @@
+/* ==========================================================================
+   ReUI (base-nova) token bridge — #49
+
+   nova supplies component SHAPE and STRUCTURE. Colour and typography come from
+   Quincy. This file exists so a ReUI component dropped onto a page reads as
+   Quincy rather than as a ReUI demo.
+
+   Companion to tokens/tailwind.css, which already bridges the shadcn core set
+   (--background, --foreground, --card, --popover, --primary, --secondary,
+   --muted, --destructive, --border, --input, --ring). Only what nova adds
+   BEYOND that set belongs here — one `cat` answers "what did ReUI add", and #56
+   can retire this file wholesale if the migration is ever unwound.
+
+   ## Import position is load-bearing
+
+   index.css must import this file AFTER tokens/tailwind.css and BEFORE
+   tokens/inverse.css. `:root` and `[data-surface="inverse"]` tie at (0,1,0)
+   specificity, so inverse.css wins today only by being imported later. Move
+   this file after it and the inverse surface silently stops overriding.
+
+   ## Three things deliberately NOT defined here
+
+   1. --radius-sm / --radius-md / --radius-lg. tokens/spacing.css already sets
+      these in an UNLAYERED :root (2/4/8/14px), which beats Tailwind's layered
+      @theme. So `rounded-lg` in a nova component already renders Quincy's 14px,
+      and app.css reads var(--radius-sm|lg) directly in ~20 places. Redefining
+      them is an instant "no visual change" violation.
+
+   2. Anything typographic. --font-sans and --text-* already resolve to Quincy's
+      values by that same unlayered-:root mechanism. Copying nova's Inter stack
+      would BREAK the brand, not bridge it.
+
+   3. --sidebar and its seven siblings. Quincy's shell is a Topbar; no sidebar
+      exists or is planned, and @reui/sidebar is their only consumer. Defining
+      eight dead tokens against a component we may never install contradicts
+      this codebase's dead-CSS doctrine. If sidebar is ever installed, the
+      phantom-token guard names all eight and they get real values then.
+   ========================================================================== */
+:root {
+  /* ---- Radius --------------------------------------------------------
+     Only the rungs nova reads that Quincy lacks. --radius is nova's base knob,
+     read where a component writes var(--radius) directly. Tailwind's own
+     xl..4xl defaults (12/16/24/32px) are deliberately collapsed onto
+     --radius-lg: the brand tops out at 14px ("intentionally minimal — the
+     brand is square-ish", spacing.css). Nothing in src/ uses rounded-xl..4xl
+     today, so this changes no existing screen. */
+  --radius: var(--radius-md);
+  --radius-xl: var(--radius-lg);
+  --radius-2xl: var(--radius-lg);
+  --radius-3xl: var(--radius-lg);
+  --radius-4xl: var(--radius-lg);
+
+  /* ---- Signal roles --------------------------------------------------
+     Convention matches the existing --destructive pair in tokens/tailwind.css:
+     the role is the FILL, and `-foreground` is the ink that sits ON that fill.
+     Every fill here is a deep brand tone, so every foreground is warm paper. */
+  --success: var(--signal-positive);
+  --success-foreground: var(--paper-050);
+  --info: var(--signal-info);
+  --info-foreground: var(--paper-050);
+
+  /* Deliberate deviation, and the one place this file does not take the obvious
+     value. colors.css records that --signal-caution (#9a6a1f) measures 4.27:1
+     as text on white — under the 4.5:1 AA floor — and mandates
+     --signal-caution-text (#7b5519) wherever caution carries TEXT. nova uses a
+     single --warning for both `text-warning` and `bg-warning`, so it cannot
+     distinguish the two; it therefore takes the text-safe value, which is also
+     perfectly good as a fill. Borders, washes and icons that want the brand
+     ochre keep reading --signal-caution directly and are unaffected. */
+  --warning: var(--signal-caution-text);
+  --warning-foreground: var(--paper-050);
+
+  --invert: var(--bg-inverse);
+  --invert-foreground: var(--text-on-inverse);
+
+  /* ---- Charts --------------------------------------------------------
+     Not five hues invented for a monochrome brand: nova's own ramp is already
+     greyscale (oklch chroma 0), so Quincy's greige ramp is a like-for-like
+     substitution that keeps ordinal reading order light -> dark. */
+  --chart-1: var(--greige-200);
+  --chart-2: var(--greige-300);
+  --chart-3: var(--greige-400);
+  --chart-4: var(--greige-600);
+  --chart-5: var(--ink-900);
+}
+
+/* nova ships dozens of `dark:` utilities. Tailwind v4's DEFAULT `dark` variant
+   is @media (prefers-color-scheme: dark), so without this line the first
+   installed component would render half-dark for any user whose OS is in dark
+   mode — against tokens Quincy has no dark values for. Rebinding the variant to
+   a class selector makes every one of them permanently inert: nothing in this
+   app sets `.dark`, and Quincy's own light/dark inversion is a separate
+   mechanism (tokens/inverse.css's [data-surface="inverse"]). */
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-invert: var(--invert);
+  --color-invert-foreground: var(--invert-foreground);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+}
+
+/* KNOWN GAP, recorded rather than fixed here (#57).
+   tokens/inverse.css re-scopes 19 colour roles for [data-surface="inverse"] and
+   restores the same 19 for [data-surface="default"], and its own header requires
+   both blocks to declare an identical property set. The roles added above are in
+   neither block, so on an inverse surface (the Lightbox stage) a ReUI component
+   using --success/--info/--warning/--invert would render its light-surface value.
+   Nothing consumes them yet, so this is latent, not a live defect. Closing it
+   belongs to the slice that first puts one of these roles on an inverse surface
+   (#54), where it can be verified visually rather than guessed at. */
