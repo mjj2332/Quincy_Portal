@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { ApiError, apiGet, apiPatch } from "../lib/api";
 import { Eyebrow } from "@/components/quincy/Eyebrow";
-import { Checkbox, TOGGLE_ROW } from "@/components/ui/checkbox";
+import { Checkbox } from "@/components/reui/checkbox";
 import { Notice } from "@/components/quincy/Notice";
 import { cn } from "@/lib/utils";
 
@@ -31,6 +31,15 @@ const ROW = "grid grid-cols-[minmax(0,140px)_minmax(0,1fr)] items-center gap-[va
   "py-[var(--space-4)] " +
   "[border-top-style:solid] border-t-[length:var(--border-width-hair)] border-t-border " +
   "first:border-t-0 first:pt-[var(--space-4)]";
+
+// One row toggle's metrics. Inlined from the legacy ui/checkbox primitive, which this screen no
+// longer imports — Admin.tsx and ProjectFields.tsx keep that shared export alive for their own
+// rows. Three declarations with one consumer; re-exporting them from components/quincy/ would
+// dress row metrics up as a component.
+const TOGGLE_ROW =
+  "flex items-center gap-[var(--space-2)] cursor-pointer " +
+  "min-h-[38px] max-[721px]:min-h-[44px] text-foreground-secondary " + // 44px touch target — WCAG 2.5.5 Enhanced / HIG, not a spacing token
+  "[font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)]";
 
 // The email row is the same grid, wearing TOGGLE_ROW's metrics and cursor. TOGGLE_ROW leads with
 // `flex`; `grid` appears later in the merged string and `cn` is twMerge-backed, so `grid` wins
@@ -96,10 +105,20 @@ export function NotificationPreferences() {
                 // announced as "Email On", which names the column rather than the preference.
                 // Load-bearing — do not remove as redundant.
                 aria-label="Project deadline reminder emails"
+                // Base UI auto-detects the wrapping <label>, writes an id onto it, and emits
+                // aria-labelledby pointing back at it. aria-labelledby BEATS aria-label, so
+                // without this the control is announced "Email On" — precisely what the line
+                // above exists to prevent, reintroduced by the component swap. Base UI reads
+                // `explicitAriaLabelledBy ?? labelId`, and `??` (not `||`) means the empty string
+                // suppresses the association instead of falling back to it.
+                // Load-bearing — do not remove as redundant.
+                aria-labelledby=""
                 checked={enabled}
                 disabled={busy}
-                className={saving ? "disabled:!cursor-wait" : undefined}
-                onChange={(event) => void change(event.target.checked)}
+                // `data-disabled`, not `:disabled` — Base UI's root is a <span>, which the
+                // :disabled pseudo-class never matches. See the note in components/reui/checkbox.
+                className={saving ? "data-disabled:!cursor-wait" : undefined}
+                onCheckedChange={(next) => void change(next)}
               />
               {valueText}
             </span>
