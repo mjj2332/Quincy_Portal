@@ -282,7 +282,7 @@ const routeTree = rootRoute.addChildren([
  * async route work would paint blank and fail the suite.
  */
 export function createStaffRouter(adapter: ReturnType<typeof locationStore>) {
-  const { history, dispose } = createStaffRouterHistory(adapter);
+  const { history, connect } = createStaffRouterHistory(adapter);
   const router = createRouter({
     routeTree,
     history,
@@ -295,7 +295,7 @@ export function createStaffRouter(adapter: ReturnType<typeof locationStore>) {
     defaultNotFoundComponent: NotAvailable,
   });
   router.load();
-  return { router, dispose };
+  return { router, connect };
 }
 
 /**
@@ -310,7 +310,9 @@ export function createStaffRouter(adapter: ReturnType<typeof locationStore>) {
  * route answering for the same URL.
  */
 export function StaffRouter() {
-  const [{ router, dispose }] = useState(() => createStaffRouter(locationStore()));
-  useEffect(() => dispose, [dispose]);
+  const [{ router, connect }] = useState(() => createStaffRouter(locationStore()));
+  // Subscribe inside the effect, not at construction: StrictMode double-invokes this, and a
+  // subscription made once would be torn down by the first cleanup and never rebuilt.
+  useEffect(() => connect(), [connect]);
   return <RouterProvider router={router} />;
 }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { createHistoryAdapter } from "./router";
+import { parseHref } from "@tanstack/history";
+import { createHistoryAdapter, parseStaffLocation, staffPathFor } from "./router";
 import { createStaffRouterHistory, parseStaffSearch, stringifyStaffSearch } from "./staff-history";
 
 const projectId = "123e4567-e89b-42d3-a456-426614174000";
@@ -42,8 +43,10 @@ function fakeBrowser(initial = "/") {
 function build(initial = "/") {
   const browser = fakeBrowser(initial);
   const adapter = createHistoryAdapter(browser.source);
-  const { history, dispose } = createStaffRouterHistory(adapter);
-  return { browser, adapter, history, dispose };
+  const { history, connect } = createStaffRouterHistory(adapter);
+  // Connected, as it is whenever the router is mounted.
+  const disconnect = connect();
+  return { browser, adapter, history, connect, disconnect };
 }
 
 describe("staff search codec", () => {
@@ -145,13 +148,74 @@ describe("staff router history — the router never writes the URL", () => {
   });
 });
 
+describe("the property the read-only history rests on", () => {
+  // The router's writes are suppressed because the only thing that can provoke one is a location
+  // TanStack would rebuild differently from how it arrived. The claim that matters is therefore
+  // NOT "only percent-escapes provoke it" -- a leading "//" and a bare "?" do too, with no escape
+  // in sight -- but that NO location the parser ACCEPTS is ever rebuilt differently. That is the
+  // sentence a future reader will lean on, so it is checked here rather than asserted in a comment.
+  const canonical = [
+    "/",
+    "/?view=list",
+    "/?view=kanban",
+    "/?view=calendar&date=2026-08-30&sub=agenda&layers=project%2Cchecklist&mine=1&q=smith+street",
+    "/projects/new",
+    `/projects/${projectId}`,
+    `/projects/${projectId}?collaboration=open`,
+    `/projects/${projectId}/edit`,
+    "/admin",
+    "/settings/notifications",
+  ];
+
+  it("rebuilds every canonical staff location to itself, byte for byte", () => {
+    for (const href of canonical) {
+      // The transforms TanStack applies to an arriving location before comparing.
+      const parsed = parseHref(href, undefined);
+      const rebuilt = parsed.pathname + stringifyStaffSearch(parseStaffSearch(parsed.search));
+      expect(rebuilt, `${href} would be rewritten to ${rebuilt}`).toBe(href);
+    }
+  });
+
+  it("covers every route kind the app can navigate to, so the corpus cannot silently shrink", () => {
+    const kinds = new Set(canonical.map((href) => parseStaffLocation(href).kind));
+    expect(kinds).toEqual(new Set(["dashboard", "create-project", "project", "edit-project", "admin", "notifications"]));
+    // Anchored to the serializer: if a new kind is added, staffPathFor gains an arm and this list
+    // must grow with it.
+    expect(canonical).toContain(staffPathFor({ kind: "admin" }));
+    expect(canonical).toContain(staffPathFor({ kind: "notifications" }));
+    expect(canonical).toContain(staffPathFor({ kind: "create-project" }));
+  });
+
+  it("shows the rewrite triggers really exist, and that each is a location the parser rejects", () => {
+    // Without this the test above could pass because nothing ever triggers a rewrite at all.
+    for (const href of ["//x", "/?"]) {
+      const parsed = parseHref(href, undefined);
+      const rebuilt = parsed.pathname + stringifyStaffSearch(parseStaffSearch(parsed.search));
+      expect(rebuilt, `${href} was expected to be rewritten`).not.toBe(href);
+      expect(parseStaffLocation(href).kind).toBe("not-found");
+    }
+  });
+});
+
 describe("staff router history — lifecycle", () => {
-  it("stops observing the adapter once disposed", () => {
-    const { adapter, history, dispose } = build("/");
+  it("stops observing the adapter once disconnected", () => {
+    const { adapter, history, disconnect } = build("/");
     const seen: string[] = [];
     history.subscribe(({ location }) => seen.push(location.href));
-    dispose();
+    disconnect();
     adapter.push("/admin");
     expect(seen).toEqual([]);
+  });
+
+  it("can be reconnected after a disconnect, which is what StrictMode requires", () => {
+    // StrictMode runs mount -> cleanup -> mount. If connecting were a one-shot done at
+    // construction, the cleanup would leave the router permanently deaf.
+    const { adapter, history, connect, disconnect } = build("/");
+    const seen: string[] = [];
+    history.subscribe(({ location }) => seen.push(location.href));
+    disconnect();
+    connect();
+    adapter.push("/admin");
+    expect(seen).toEqual(["/admin"]);
   });
 });

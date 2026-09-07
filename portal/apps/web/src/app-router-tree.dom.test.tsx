@@ -12,7 +12,7 @@
  * a test red. It is a NEW file: no existing test was modified, which is what lets the unmodified
  * suite keep certifying that behaviour did not change.
  */
-import { act, type ReactNode } from "react";
+import { act, StrictMode, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -117,5 +117,30 @@ describe("capability redirects still run above the route tree", () => {
     const host = await renderAt("/projects/new");
     expect(`${window.location.pathname}${window.location.search}`).toBe("/");
     expect(host.textContent).not.toContain("CREATE SCREEN");
+  });
+});
+
+describe("StrictMode", () => {
+  // main.tsx renders the app inside <StrictMode>, which double-invokes effects: mount, cleanup,
+  // mount again. A subscription created once and torn down by that cleanup is never rebuilt, and
+  // the router goes permanently deaf to location changes in development. Nothing else in the suite
+  // renders under StrictMode, so this is the only place that failure can surface.
+  it("still follows navigation after the double-invoked mount effect", async () => {
+    window.history.replaceState(null, "", "/");
+    const host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    await act(async () => {
+      root!.render(<StrictMode><App /></StrictMode>);
+      await Promise.resolve(); await Promise.resolve();
+    });
+    expect(host.textContent).toContain("DASHBOARD SCREEN");
+
+    await act(async () => {
+      window.history.pushState(null, "", "/admin");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+      await Promise.resolve(); await Promise.resolve();
+    });
+    expect(host.textContent).toContain("ADMIN SCREEN u1");
   });
 });

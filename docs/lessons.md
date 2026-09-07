@@ -1388,12 +1388,21 @@ Two things made this dangerous rather than cosmetic:
    attack whose *output* is legitimate; the defect was that the input was ever decoded.
 
 The fix was to stop the router owning the URL: `lib/staff-history.ts` gives it a history whose
-`pushState`/`replaceState` are no-ops, so it observes the location and never writes it. That is
-provably free of collateral damage — a canonicalising replace can only fire when the pathname
-contains an escape that decodes to something else, and every such pathname is one the parser
-rejects. All real navigation continues through `locationStore()`, where sanitisation still runs.
+`pushState`/`replaceState` are no-ops, so it observes the location and never writes it. All real
+navigation continues through `locationStore()`, where sanitisation still runs.
 `lib/routing-transport.guard.test.ts` fails the build if anything starts navigating through
 TanStack, because against a read-only history that would silently do nothing.
+
+**The first justification written for that fix was wrong, and the review caught it.** It claimed a
+canonicalising replace "can only fire when the pathname contains an escape that decodes to
+something else". It cannot: `parseHref`'s `sanitizePath` collapses a leading `//`, and a bare `?`
+vanishes through the search codec — two triggers with no escape in them. The conclusion happened to
+survive because those are also parser-rejected, which is exactly what makes this kind of error
+dangerous: a load-bearing sentence that is false but reaches the right answer, and that the next
+person extends into a case where it does not. The claim now stated is the converse, which is the
+one that actually holds — *no location the parser accepts is ever rebuilt differently* — and it is
+a test over every route kind, with a companion assertion proving the rewrite triggers exist so the
+check cannot pass vacuously.
 
 **Rules.**
 

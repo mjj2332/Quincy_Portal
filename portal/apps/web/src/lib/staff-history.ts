@@ -32,11 +32,18 @@
  * that replace through rewrote `/%61dmin` to `/admin` and mounted the real Admin screen from a URL
  * the contract refuses. That is a security regression, not a cosmetic one.
  *
- * The suppression is provably free of collateral damage. A canonicalising replace can only fire
- * when the pathname contains a percent-escape that decodes to something else, and *every* such
- * pathname is one `parseStaffPathname` rejects, because canonical staff paths contain no escapes.
- * So the writes being dropped are exactly the writes that must not happen; no valid navigation
- * reaches this code path at all.
+ * The suppression is free of collateral damage, but not for the reason it first appears. A
+ * canonicalising replace fires whenever TanStack rebuilds the arriving location differently from
+ * how it arrived, and percent-escapes are only one of the ways that happens: a leading `//` is
+ * collapsed by `parseHref`'s `sanitizePath`, and a bare `?` disappears through the search codec,
+ * neither of which involves an escape.
+ *
+ * The property that actually holds is the converse, and it is the one worth trusting: **no
+ * location the parser accepts is ever rebuilt differently.** Every canonical staff location is a
+ * fixed point of the rebuild, so a canonicalising replace can only ever target a location that is
+ * already `not-found` or `reserved`. The writes being dropped are exactly the writes that must not
+ * happen. `staff-history.test.ts` checks this over every route kind rather than leaving it as
+ * prose, and also proves the rewrite triggers exist at all, so the check cannot pass vacuously.
  *
  * What keeps this honest over time is `routing-transport.guard.test.ts`, which fails if anything
  * outside this module starts navigating through TanStack. Without that guard a future
@@ -59,14 +66,15 @@ type HistoryAdapter = ReturnType<typeof createHistoryAdapter>;
  *
  * Validation deliberately does NOT live here. `parseStaffLocation` remains the sole authority.
  */
-export function parseStaffSearch(search: string): Record<string, unknown> {
+export type StaffSearch = { raw?: string };
+
+export function parseStaffSearch(search: string): StaffSearch {
   const raw = search.startsWith("?") ? search.slice(1) : search;
   return raw === "" ? {} : { raw };
 }
 
-export function stringifyStaffSearch(search: Record<string, unknown>): string {
-  const raw = search["raw"];
-  return typeof raw === "string" && raw !== "" ? `?${raw}` : "";
+export function stringifyStaffSearch(search: StaffSearch): string {
+  return search.raw ? `?${search.raw}` : "";
 }
 
 /**
@@ -77,7 +85,7 @@ export function stringifyStaffSearch(search: Record<string, unknown>): string {
  * PrincipalFreshnessBoundary, InternalLink — keep navigating through that same adapter, and the
  * subscription below is how the router learns about the writes they make.
  */
-export function createStaffRouterHistory(adapter: HistoryAdapter): { history: RouterHistory; dispose: () => void } {
+export function createStaffRouterHistory(adapter: HistoryAdapter): { history: RouterHistory; connect: () => () => void } {
   const history = createHistory({
     // Raw, unsanitised. See the module comment: this is the arrival path.
     getLocation: () => parseHref(adapter.getLocation(), undefined),
@@ -85,20 +93,32 @@ export function createStaffRouterHistory(adapter: HistoryAdapter): { history: Ro
     // The router does not own the URL in this application; the adapter does. See the note below.
     pushState: () => {},
     replaceState: () => {},
-    // Traversal delegates to the real browser history. The resulting popstate comes back through
-    // the adapter's subscription below, so no history entry is created here.
+    // `createHistory` requires all of these; they are interface obligations rather than features
+    // this app reaches for. Traversal delegates to the real browser history, and the resulting
+    // popstate comes back through the adapter's subscription below, so no entry is created here.
     go: (n) => { if (typeof window !== "undefined") window.history.go(n); },
     back: () => { if (typeof window !== "undefined") window.history.back(); },
     forward: () => { if (typeof window !== "undefined") window.history.forward(); },
     createHref: (path) => path,
   });
 
-  const unsubscribe = adapter.subscribe(() => {
+  /**
+   * Subscribes to the adapter and returns the unsubscribe.
+   *
+   * This is a function rather than a subscription made once at construction because `main.tsx`
+   * renders under `<StrictMode>`, which double-invokes mount effects: mount, clean up, mount
+   * again. A subscription created alongside the router and torn down by that cleanup is never
+   * rebuilt, leaving the router deaf to every later location change — in development the app then
+   * renders "not available" on the first navigation, because the router's match stays frozen while
+   * the Shell's parsed route moves on. Re-subscribing per effect run is what makes the double
+   * invocation harmless.
+   */
+  const connect = () => adapter.subscribe(() => {
     // "REPLACE" describes the router's bookkeeping, not the browser operation that happened: the
     // entry already exists by the time we hear about it, so the router must adopt the new location
     // without creating another one. The action type only feeds scroll restoration, which is off.
     history.notify({ type: "REPLACE" });
   });
 
-  return { history, dispose: unsubscribe };
+  return { history, connect };
 }

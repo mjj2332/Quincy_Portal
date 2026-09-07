@@ -72,6 +72,15 @@ export function findTanstackNavigationCalls(
     .sort();
 }
 
+/**
+ * Non-test application source.
+ *
+ * Test files are excluded deliberately, and not merely for tidiness: the self-tests below contain
+ * `useNavigate(`, `router.navigate(` and an `@tanstack/react-router` import as *planted fixtures*,
+ * so including tests would make both detectors fire on this very file. The cost is that a test
+ * navigating through TanStack is invisible here — acceptable, since such a test would mislead only
+ * itself, while production code doing it would silently no-op.
+ */
 function appFiles(): Array<{ path: string; source: string }> {
   return walkTsFiles(srcDir)
     .filter((file) => !isTestFile(file))
@@ -149,8 +158,12 @@ describe("guard: file-based route generation is not introduced", () => {
     const declared = { ...manifest.dependencies, ...manifest.devDependencies };
     expect(Object.keys(declared)).not.toContain("@tanstack/router-plugin");
     expect(Object.keys(declared)).not.toContain("@tanstack/router-cli");
-    // The dependency that IS expected, pinned exactly.
+    // Both dependencies pinned exactly. @tanstack/history is pinned in its own right, not left to
+    // float as a transitive of react-router: staff-history.ts imports createHistory and parseHref
+    // from it directly, and the read-only-history argument rests on their exact semantics -- a
+    // react-router patch bump must not be able to move them underneath us.
     expect(manifest.dependencies?.["@tanstack/react-router"]).toBe("1.170.33");
+    expect(manifest.dependencies?.["@tanstack/history"]).toBe("1.162.2");
   });
 });
 
@@ -167,7 +180,13 @@ describe("guard: the legacy history adapter is still the application's only writ
     // The no-op pushState/replaceState are the fix for the Transitioner canonicalisation. If they
     // ever reach the adapter again, /%61dmin starts rewriting itself to /admin.
     const source = readFileSync(join(libDir, "staff-history.ts"), "utf8");
-    const body = source.slice(source.indexOf("createHistory({"), source.indexOf("const unsubscribe"));
+    const start = source.indexOf("createHistory({");
+    const end = source.indexOf("const connect");
+    // Both anchors must exist, or the slice below silently measures the wrong region — the way a
+    // gate stops being a gate without anyone noticing.
+    expect(start, "createHistory({ not found in staff-history.ts").toBeGreaterThan(-1);
+    expect(end, "const connect not found in staff-history.ts").toBeGreaterThan(start);
+    const body = source.slice(start, end);
     expect(body).toMatch(/pushState:\s*\(\)\s*=>\s*\{\}/);
     expect(body).toMatch(/replaceState:\s*\(\)\s*=>\s*\{\}/);
     expect(body).not.toMatch(/adapter\.(push|replace)\s*\(/);
