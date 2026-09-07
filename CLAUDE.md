@@ -49,6 +49,31 @@ of truth for design; `design-system-guards.test.ts` beside it mechanises the rul
 already shipped defects more than once. The 2026-06-19 export in `docs/archive/` records where
 the tokens came from and has since been diverged from — never reconcile the app back to it.
 
+## ReUI component registry — do not "correct" the URL
+
+The component registry in `portal/components.json` is:
+
+```
+https://proxy.collectui.pro/api/r/reui/{style}/{name}.json
+```
+
+**This is deliberate and owner-chosen. Leave it alone.** ReUI's own docs and its MCP both
+advertise `https://reui.io/r/{style}/{name}.json` as the canonical registry, so an agent
+comparing the repo against the documentation will read ours as a mistake and try to "fix" it.
+It is not a mistake. Changing it needs the owner's say-so, not a tidy-up commit.
+
+The same applies to the MCP server URL: the ReUI docs say `mcp.reui.io`, and the owner's local
+config points at the `proxy.collectui.pro` equivalent.
+
+Also on this pipeline:
+
+- The license key is `REUI_LICENSE_KEY` in `.env.local` (gitignored). `components.json` refers to
+  it as `${REUI_LICENSE_KEY}` — the shadcn CLI expands that. **Never inline the key itself.**
+- `.mcp.json` is gitignored because MCP client configs *cannot* expand `${VAR}` and so must carry
+  a raw bearer token. The token-free equivalents in `.cursor/mcp.json` and `opencode.json` are
+  committed. If you add an MCP config, check it for credentials before staging.
+- Style variant is `base-nova` — the one the owner evaluated and approved. Not `base-sera`.
+
 ## Agent skills
 
 ### Issue tracker
