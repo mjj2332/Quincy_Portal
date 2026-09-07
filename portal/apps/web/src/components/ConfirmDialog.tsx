@@ -15,7 +15,7 @@ export function ConfirmDialog({ open, title, message, content, confirmLabel = "C
     <button className={buttonClasses("secondary")} type="button" data-testid="confirm-modal-cancel" onClick={onCancel}>{cancelLabel}</button>
     <button className={buttonClasses(danger ? "danger" : "primary")} type="button" data-testid="confirm-modal-confirm" onClick={onConfirm}>{confirmLabel}</button>
   </>}>
-    <p id={messageId}>{message}</p>
+    <p id={messageId} data-testid="confirm-modal-message">{message}</p>
     {content}
   </Modal>;
 }

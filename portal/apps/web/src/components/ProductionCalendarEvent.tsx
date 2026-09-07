@@ -95,7 +95,7 @@ export function ProductionCalendarEvent({ event, subview, compact = false, onMov
   const className = `qc-cal-event-card qc-cal-event-card--${event.kind}${compact ? " is-compact" : ""}`;
   if (event.kind === "project_deadline") {
     return (
-      <article className={className} data-event-id={event.id} data-subview={subview} aria-readonly="true" tabIndex={-1}>
+      <article className={className} data-event-id={event.id} data-subview={subview} aria-readonly="true" tabIndex={-1} data-testid="calendar-event-card">
         <div className="qc-cal-event-card__meta"><span>Deadline</span><StageBadge stageKey={event.project.stageKey} /></div>
         <h4 title={event.project.street}>{projectHref ? <ProjectCalendarAnchor href={projectHref} onOpenProject={onOpenProject}>{event.project.street}</ProjectCalendarAnchor> : event.project.street}</h4>
         <p className="qc-cal-event-card__title" title={event.title}>{event.title}</p>
@@ -110,7 +110,7 @@ export function ProductionCalendarEvent({ event, subview, compact = false, onMov
   }
 
   return (
-    <article className={className} data-event-id={event.id} data-subview={subview} aria-readonly="true" tabIndex={-1}>
+    <article className={className} data-event-id={event.id} data-subview={subview} aria-readonly="true" tabIndex={-1} data-testid="calendar-event-card">
       <div className="qc-cal-event-card__meta"><span>Checklist</span><StageBadge stageKey={event.project.stageKey} /></div>
       <h4 title={event.title}>{event.title}</h4>
       <p className="qc-cal-event-card__title" title={event.project.street}>{projectHref ? <ProjectCalendarAnchor href={projectHref} onOpenProject={onOpenProject}>{event.project.street}</ProjectCalendarAnchor> : event.project.street}</p>

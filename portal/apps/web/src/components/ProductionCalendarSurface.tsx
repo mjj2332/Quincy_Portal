@@ -40,6 +40,7 @@ export function ProductionCalendarSurface({ reducedMotion = false, ...props }: P
   return (
     <div
       className="production-calendar"
+      data-testid="production-calendar-surface"
       data-reduced-motion={reducedMotion ? "true" : undefined}
       // This remains false until Slice 11's real VoiceOver/NVDA cadence test.
       // If enabled, the scoped CSS seam hides only FullCalendar's own region;

@@ -190,13 +190,14 @@ export function Topbar({ activeView, canAccessAdmin, user, notificationPollMs = 
       </nav>
       <div className="grow" />
       <div className="topbar__user">
-        <div className="topbar__notifications relative">
+        <div className="topbar__notifications relative" data-testid="topbar-notifications">
           <Menu
             open={notificationsOpen}
             onOpenChange={setNotificationsOpen}
             triggerLabel={unreadCount ? `${unreadCount} unread notifications` : "Notifications"}
             label="Notifications"
             triggerClassName={cn("topbar__notification-trigger", TRIGGER, "[&_svg]:size-[19px]")}
+            triggerTestId="topbar-notification-trigger"
             panelClassName={cn(
               "topbar__notification-menu",
               "max-w-[min(360px,calc(100vw-var(--space-5)))] max-h-[min(520px,calc(100dvh-var(--space-9)))]",
@@ -205,14 +206,14 @@ export function Topbar({ activeView, canAccessAdmin, user, notificationPollMs = 
             trigger={<>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9ZM10 21h4" strokeLinecap="round" strokeLinejoin="round" /></svg>
               <span className="sr-only">Notifications</span>
-              {unreadCount > 0 && <span className="topbar__notification-badge bg-destructive !text-destructive-foreground text-[length:var(--text-2xs)]" aria-label={`${unreadCount} unread`}>{unreadCount > 99 ? "99+" : unreadCount}</span>}
+              {unreadCount > 0 && <span className="topbar__notification-badge bg-destructive !text-destructive-foreground text-[length:var(--text-2xs)]" aria-label={`${unreadCount} unread`} data-testid="topbar-notification-badge">{unreadCount > 99 ? "99+" : unreadCount}</span>}
             </>}
           >
             <div className={HEAD}>
               <span className="ey">Notifications</span>
-              {unreadCount > 0 && <MenuPrimitive.Item nativeButton closeOnClick={false} render={<Button variant="text" className={HEAD_BUTTON} />} onClick={() => void markAllNotificationsRead()}>Mark all read</MenuPrimitive.Item>}
+              {unreadCount > 0 && <MenuPrimitive.Item nativeButton closeOnClick={false} render={<Button variant="text" className={HEAD_BUTTON} />} onClick={() => void markAllNotificationsRead()} data-testid="topbar-mark-all-read">Mark all read</MenuPrimitive.Item>}
             </div>
-            {notifications.length === 0 ? <div className={EMPTY} role="none">You’re all caught up.</div> : notifications.map((notification) => {
+            {notifications.length === 0 ? <div className={EMPTY} role="none" data-testid="topbar-notifications-empty">You’re all caught up.</div> : notifications.map((notification) => {
               const route = projectNotificationRoute(notification.projectId, notification.type);
               return <div key={notification.id} role="none" className={ROW} data-unread={notification.readAt ? undefined : ""}>
                 {route?.kind === "project"
@@ -221,6 +222,8 @@ export function Topbar({ activeView, canAccessAdmin, user, notificationPollMs = 
                       closeOnClick
                       label={notification.title}
                       onClick={() => void markNotificationRead(notification)}
+                      data-testid="topbar-notification-item"
+                      data-notification-route="project"
                     ><strong className={ITEM_TITLE}>{notification.title}</strong>{notification.body && <span className={ITEM_BODY}>{notification.body}</span>}<small className={ITEM_META}>{new Date(notification.createdAt).toLocaleString()}</small></MenuPrimitive.LinkItem>
                   : <MenuPrimitive.Item
                       nativeButton
@@ -228,6 +231,8 @@ export function Topbar({ activeView, canAccessAdmin, user, notificationPollMs = 
                       render={<button type="button" className={cn(ITEM, "topbar__notification-item")} />}
                       label={notification.title}
                       onClick={() => void markNotificationRead(notification)}
+                      data-testid="topbar-notification-item"
+                      data-notification-route="none"
                     ><strong className={ITEM_TITLE}>{notification.title}</strong>{notification.body && <span className={ITEM_BODY}>{notification.body}</span>}<small className={ITEM_META}>{new Date(notification.createdAt).toLocaleString()}</small></MenuPrimitive.Item>}
                 <MenuPrimitive.Item
                   nativeButton
@@ -242,13 +247,13 @@ export function Topbar({ activeView, canAccessAdmin, user, notificationPollMs = 
             })}
           </Menu>
         </div>
-        <div className={IDENTITY}>
+        <div className={IDENTITY} data-testid="topbar-identity">
           <strong>{displayName}</strong>
           {user.email && user.name && <span className="ey">{user.email}</span>}
         </div>
         <InternalLink className={cn(TOPBAR_CONTROL, activeView === "notifications" && "is-active")} to="/settings/notifications">Notification preferences</InternalLink>
         <div className={AVATAR} data-slot="avatar" aria-hidden="true">{initials(displayName)}</div>
-        <button className={TOPBAR_CONTROL} type="button" onClick={handleSignOut}>
+        <button className={TOPBAR_CONTROL} type="button" onClick={handleSignOut} data-testid="topbar-signout">
           Sign out
         </button>
       </div>

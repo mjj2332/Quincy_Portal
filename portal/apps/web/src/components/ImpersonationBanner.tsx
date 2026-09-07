@@ -69,7 +69,7 @@ export function ImpersonationBanner({ user, invalidated }: ImpersonationBannerPr
 
   return <aside className={BANNER} aria-label="Impersonation status" data-invalidated={invalidated ? "true" : undefined}>
     <span className={IDENTITY}>Acting as {user.name} ({roleTitle(user.role)}) · </span>
-    <button className={EXIT} type="button" disabled={isExiting} onClick={() => void exit()}>Exit</button>
+    <button className={EXIT} type="button" disabled={isExiting} onClick={() => void exit()} data-testid="impersonation-exit">Exit</button>
     {error && <span className={ERROR} role="alert" title={error}>{error}</span>}
   </aside>;
 }

@@ -48,6 +48,7 @@ export type MenuProps = {
   onOpenChange?: (open: boolean) => void;
   disabled?: boolean;
   triggerClassName?: string;
+  triggerTestId?: string;
   panelClassName?: string;
   side?: MenuSide;
   align?: MenuAlign;
@@ -76,6 +77,7 @@ export function Menu({
   onOpenChange,
   disabled,
   triggerClassName,
+  triggerTestId,
   panelClassName,
   side = "bottom",
   align = "end",
@@ -90,7 +92,7 @@ export function Menu({
   const container = React.useContext(OverlayContainerContext) ?? undefined;
   return (
     <MenuPrimitive.Root open={open} defaultOpen={defaultOpen} onOpenChange={onOpenChange} modal={false} disabled={disabled}>
-      <MenuPrimitive.Trigger className={cn(TRIGGER, triggerClassName)} aria-label={triggerLabel}>
+      <MenuPrimitive.Trigger className={cn(TRIGGER, triggerClassName)} aria-label={triggerLabel} data-testid={triggerTestId}>
         {trigger}
       </MenuPrimitive.Trigger>
       <MenuPrimitive.Portal container={container}>

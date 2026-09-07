@@ -120,7 +120,7 @@ function ProjectRow({ entry, subview, onSchedule, disabled, dragSuppressed, proj
   const content = <ProjectContent entry={entry} projectHrefFor={eligible ? projectHrefFor : undefined} onOpenProject={onOpenProject} />;
 
   if (!eligible) {
-    return <button type="button" className="qc-calendar-unscheduled__row qc-calendar-unscheduled__row--project is-disabled" disabled aria-label={`${entry.project.street}: Deadline is read-only`} data-unscheduled-id={entry.id}>
+    return <button type="button" className="qc-calendar-unscheduled__row qc-calendar-unscheduled__row--project is-disabled" disabled aria-label={`${entry.project.street}: Deadline is read-only`} data-unscheduled-id={entry.id} data-testid="calendar-unscheduled-readonly-row">
       {content}
       <span className="qc-calendar-unscheduled__readonly">Deadline is read-only</span>
     </button>;
@@ -129,7 +129,7 @@ function ProjectRow({ entry, subview, onSchedule, disabled, dragSuppressed, proj
   if (actionMode) {
     return <article className="qc-calendar-unscheduled__row qc-calendar-unscheduled__row--project" data-unscheduled-id={entry.id}>
       {content}
-      <button className={buttonClasses("text", { className: "qc-calendar-unscheduled__action" })} type="button" disabled={disabled} onClick={() => onSchedule(entry)}>Schedule Deadline</button>
+      <button className={buttonClasses("text", { className: "qc-calendar-unscheduled__action" })} type="button" disabled={disabled} onClick={() => onSchedule(entry)} data-testid="calendar-unscheduled-action">Schedule Deadline</button>
     </article>;
   }
 
@@ -173,16 +173,16 @@ function ChecklistRow({ entry, subview, rangesEnabled, onSchedule, disabled, dra
     </article>;
   }
 
-  return <article className={`qc-calendar-unscheduled__row qc-calendar-unscheduled__row--checklist${attention ? " is-attention" : ""}`} data-unscheduled-id={entry.id}>
+  return <article className={`qc-calendar-unscheduled__row qc-calendar-unscheduled__row--checklist${attention ? " is-attention" : ""}`} data-unscheduled-id={entry.id} data-attention={attention ? "true" : undefined}>
     {content}
-    {invalid ? <p className="qc-calendar-unscheduled__attention" role="status">This checklist schedule needs repair. Repair is unavailable in Calendar.</p> : showAction && <button className={buttonClasses("text", { className: "qc-calendar-unscheduled__action" })} type="button" disabled={disabled} onClick={() => onSchedule(entry)}>{legacy ? "Repair schedule" : "Schedule"}</button>}
+    {invalid ? <p className="qc-calendar-unscheduled__attention" role="status">This checklist schedule needs repair. Repair is unavailable in Calendar.</p> : showAction && <button className={buttonClasses("text", { className: "qc-calendar-unscheduled__action" })} type="button" disabled={disabled} onClick={() => onSchedule(entry)} data-testid="calendar-unscheduled-action">{legacy ? "Repair schedule" : "Schedule"}</button>}
   </article>;
 }
 
 function Section<T>({ label, facet, entries, children }: { label: string; facet: UnscheduledFacet; entries: T[]; children: ReactNode }) {
   return <section className="qc-calendar-unscheduled__section" aria-label={label}>
     <header className="qc-calendar-unscheduled__section-head"><h2>{label}</h2><CountLine facet={facet} /></header>
-    {entries.length === 0 ? <p className="qc-calendar-unscheduled__empty">Nothing unscheduled</p> : <div className="qc-calendar-unscheduled__rows">{children}</div>}
+    {entries.length === 0 ? <p className="qc-calendar-unscheduled__empty" data-testid="calendar-unscheduled-empty">Nothing unscheduled</p> : <div className="qc-calendar-unscheduled__rows">{children}</div>}
   </section>;
 }
 

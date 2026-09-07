@@ -167,7 +167,7 @@ export function Modal({
                   {eyebrow && <Eyebrow className="mb-[var(--space-3)]">{eyebrow}</Eyebrow>}
                   {title && <h3 className={TITLE} id={titleId}>{title}</h3>}
                 </div>}
-                <div className={BODY}>{children}</div>
+                <div className={BODY} data-testid="modal-body">{children}</div>
                 {footer && <div className={FOOT}>{footer}</div>}
               </div>
             </OverlayContainerContext.Provider>
