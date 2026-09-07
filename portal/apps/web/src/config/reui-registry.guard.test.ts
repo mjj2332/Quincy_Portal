@@ -108,13 +108,20 @@ describe("guard: styles/index.css stays an import manifest, so a CLI install can
 describe("guard: installed components use this repo's cn helper, not the `cn` npm package", () => {
   it("has no `cn` dependency and no import of it in src/components/reui", () => {
     const webRoot = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..");
-    const pkg = JSON.parse(readFileSync(join(webRoot, "package.json"), "utf8")) as {
-      dependencies?: Record<string, string>;
-      devDependencies?: Record<string, string>;
-    };
+    // Both manifests: this monorepo keeps runtime dependencies in the ROOT package.json, so
+    // checking only apps/web would let the exact defect this guard exists for land one directory
+    // up and pass. (Sol, diff review.)
+    const manifests = [join(webRoot, "package.json"), join(webRoot, "..", "..", "package.json")];
+    const declaredIn = manifests.filter((path) => {
+      const pkg = JSON.parse(readFileSync(path, "utf8")) as {
+        dependencies?: Record<string, string>;
+        devDependencies?: Record<string, string>;
+      };
+      return { ...pkg.dependencies, ...pkg.devDependencies }.cn !== undefined;
+    });
 
     expect(
-      { ...pkg.dependencies, ...pkg.devDependencies }.cn,
+      declaredIn.length === 0 ? undefined : declaredIn.join(", "),
       [
         "apps/web/package.json depends on the npm package `cn`.",
         "",
@@ -130,13 +137,29 @@ describe("guard: installed components use this repo's cn helper, not the `cn` np
       ].join("\n"),
     ).toBeUndefined();
 
+    // Recursive: components land in subdirectories as soon as a registry item ships more than one
+    // file. A flat readdir would miss them.
+    const walk = (dir: string): string[] =>
+      !existsSync(dir)
+        ? []
+        : readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+            const full = join(dir, entry.name);
+            return entry.isDirectory() ? walk(full) : /\.tsx?$/.test(entry.name) ? [full] : [];
+          });
+
+    // Comments are stripped first, then any module specifier of "cn" is matched in any form —
+    // static import (including the multi-line shape a formatter produces), re-export, require,
+    // and dynamic import. Anchoring to `^\s*import` instead, as this guard first did, misses all
+    // but the single-line form; matching the raw text instead falsely fires on prose describing
+    // the defect, which is how it first fired — on its own explanatory comment. (Sol, diff review.)
+    const stripComments = (source: string) =>
+      source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/[^\n]*/g, "$1");
+    const importsCn = (source: string) => /(?:\bfrom|\brequire\s*\(|\bimport\s*\()\s*["']cn["']/.test(stripComments(source));
+
     const reuiDir = join(webRoot, "src", "components", "reui");
-    const offenders = (existsSync(reuiDir) ? readdirSync(reuiDir) : [])
-      .filter((name) => /\.tsx?$/.test(name))
-      // Anchored to a real import statement at the start of a line. A bare /from "cn"/ also
-      // matches prose describing the defect — including the comment at the top of checkbox.tsx,
-      // which is how this guard first fired.
-      .filter((name) => /^\s*import\s[^\n]*\sfrom\s+["']cn["']/m.test(readFileSync(join(reuiDir, name), "utf8")));
+    const offenders = walk(reuiDir)
+      .filter((path) => importsCn(readFileSync(path, "utf8")))
+      .map((path) => path.slice(reuiDir.length + 1));
 
     expect(offenders, "these installed components import from the `cn` package instead of @/lib/utils").toEqual([]);
   });

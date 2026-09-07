@@ -83,10 +83,20 @@ describe("NotificationPreferences", () => {
     // narrow the name query back to `input[type="checkbox"]`.
     const control = () => host.querySelector('input[type="checkbox"], [role="checkbox"]')!;
     const input = () => host.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    //
+    // The name assertion alone is NOT enough, and it took a diff review to see why. A composite
+    // checkbox auto-detects the wrapping <label> and emits aria-labelledby pointing at it, and
+    // aria-labelledby BEATS aria-label — so the control gets announced "Email On" while
+    // `getAttribute("aria-label")` still returns the right string and this test stays green.
+    // That is a false green over a real regression, so the absence of a competing label
+    // reference is pinned too. Empty string and null are both "no reference".
+    const labelledBy = () => control().getAttribute("aria-labelledby") ?? "";
     expect(control().getAttribute("aria-label")).toBe("Project deadline reminder emails");
+    expect(labelledBy()).toBe("");
     expect(input().disabled).toBe(true);
     await act(async () => { gate.resolve({ projectDeadlineReminderEmails: true }); await Promise.resolve(); await Promise.resolve(); });
     expect(control().getAttribute("aria-label")).toBe("Project deadline reminder emails");
+    expect(labelledBy()).toBe("");
     expect(input().disabled).toBe(false);
   });
 
