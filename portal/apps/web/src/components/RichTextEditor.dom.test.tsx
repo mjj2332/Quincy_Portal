@@ -641,14 +641,15 @@ describe("RichTextEditor hard breaks", () => {
       const onChange = vi.fn((next: RichTextDoc) => { current = next; });
       const onSubmit = vi.fn(() => { submitted = current; });
       const { editor } = await render(host, value, onChange, onSubmit);
-      const marked = editor.querySelector(mark === "underline" ? "u" : "s")!.firstChild!;
+      const markEl = () => mark === "underline" ? editor.querySelector("u")! : editor.querySelector("s")!;
+      const marked = markEl().firstChild!;
       await moveCaret(editor, marked, "Marked ".length);
       await act(async () => {
         marked.parentElement!.append(document.createTextNode("@Nor"));
         editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: "@Nor" }));
         await Promise.resolve(); await Promise.resolve();
       });
-      await moveCaret(editor, editor.querySelector(mark === "underline" ? "u" : "s")!.lastChild!, "Marked @Nor".length);
+      await moveCaret(editor, markEl().lastChild!, "Marked @Nor".length);
       await act(async () => { await Promise.resolve(); await Promise.resolve(); });
       expect(mentionables).toHaveBeenLastCalledWith("Nor");
       await click(host.querySelector<HTMLButtonElement>('[role="listbox"] button')!);

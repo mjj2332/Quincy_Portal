@@ -19,7 +19,7 @@ vi.mock("../lib/auth", () => ({ useSession: () => ({ data: { user: { id: "user-1
 vi.mock("../lib/capabilities", () => ({ useCapabilities: () => ({ role: authRole.value, capabilities: [], can: (capability: string) => authRole.value === "admin" && ["adminBackend", "createProject", "viewNoticeBoard"].includes(capability) }) }));
 vi.mock("../lib/stages", () => ({ presentationStages: (stages: unknown[]) => stages, useStages: () => ({ stages: [], presentationStageKey: (key: string) => key }) }));
 vi.mock("../components/NoticeBoard", () => ({ NoticeBoard: () => null }));
-vi.mock("../components/ProjectKanbanBoard", () => ({ ProjectKanbanBoard: (props: Record<string, any>) => { boardPropsState.value = props; const project = Array.isArray(props.projects) ? props.projects.find((candidate: any) => typeof candidate?.id === "string") : undefined; return <div data-testid="dashboard-board">{project && props.projectHrefFor && <a className="mock-kanban-project-link" href={props.projectHrefFor(project)}>{project.street}</a>}</div>; } }));
+vi.mock("../components/ProjectKanbanBoard", () => ({ ProjectKanbanBoard: (props: Record<string, any>) => { boardPropsState.value = props; const project = Array.isArray(props.projects) ? props.projects.find((candidate: any) => typeof candidate?.id === "string") : undefined; return <div data-testid="dashboard-board">{project && props.projectHrefFor && <a className="mock-kanban-project-link" data-testid="mock-kanban-project-link" href={props.projectHrefFor(project)}>{project.street}</a>}</div>; } }));
 vi.mock("../components/ProductionCalendarSurface", () => ({ ProductionCalendarSurface: (props: any) => <div data-testid="dashboard-calendar-surface" data-initial-view={props.initialView}>
   {props.eventContent?.({ event: { extendedProps: props.events?.[0]?.extendedProps } })}
   <button type="button" data-testid="dashboard-calendar-drop" onClick={() => props.eventDrop?.({ event: { allDay: true, start: new Date("2026-08-20T00:00:00.000Z"), startStr: "2026-08-20", extendedProps: props.events?.[0]?.extendedProps }, revert: vi.fn() })}>Drop Deadline</button>
@@ -159,7 +159,7 @@ describe("Dashboard Calendar routing", () => {
     expect(window.location.search).toBe("");
 
     await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Kanban")?.click(); await Promise.resolve(); });
-    expect(host.querySelector<HTMLAnchorElement>("a.mock-kanban-project-link")?.getAttribute("href")).toBe("/projects/33333333-3333-4333-8333-333333333333");
+    expect(host.querySelector<HTMLAnchorElement>('[data-testid="mock-kanban-project-link"]')?.getAttribute("href")).toBe("/projects/33333333-3333-4333-8333-333333333333");
   });
 
   it("takes List/Kanban view state from the URL across history arrivals", async () => {

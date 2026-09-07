@@ -91,7 +91,7 @@ beforeEach(() => {
 afterEach(() => { act(() => root.unmount()); client.clear(); document.body.replaceChildren(); });
 
 async function flush() { await act(async () => { await Promise.resolve(); await Promise.resolve(); }); }
-async function click(selector: string) { await act(async () => { host.querySelector<HTMLElement>(selector)!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); await Promise.resolve(); }); }
+async function click(element: HTMLElement) { await act(async () => { element.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); await Promise.resolve(); }); }
 
 describe("ProjectDiscussionThread", () => {
   it("keeps newest-first pagination, mentions, and the unread callback", async () => {
@@ -110,7 +110,7 @@ describe("ProjectDiscussionThread", () => {
 
   it("loads mentionables through the existing project-scoped endpoint", async () => {
     render(); await flush();
-    await click(`[data-testid="mention-project-comment-${projectId}"]`);
+    await click(host.querySelector<HTMLElement>(`[data-testid="mention-project-comment-${projectId}"]`)!);
     expect(apiGetMock).toHaveBeenCalledWith(`/api/mentionable-users?projectId=${projectId}&q=Nor`);
   });
 
@@ -125,7 +125,7 @@ describe("ProjectDiscussionThread", () => {
     const editSubmit = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Submit");
     await act(async () => { editSubmit!.click(); await Promise.resolve(); });
     expect(apiPatchMock).toHaveBeenCalledWith(`/api/projects/${projectId}/comments/${ownComment.id}`, expect.objectContaining({ content: expect.anything() }));
-    await click(`[data-testid="submit-project-comment-${projectId}"]`);
+    await click(host.querySelector<HTMLElement>(`[data-testid="submit-project-comment-${projectId}"]`)!);
     expect(apiPostMock).toHaveBeenCalledWith(`/api/projects/${projectId}/comments`, expect.objectContaining({ content: expect.anything() }));
     const deleteButton = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Delete");
     await act(async () => { deleteButton!.click(); await Promise.resolve(); await Promise.resolve(); });
@@ -164,7 +164,7 @@ describe("ProjectDiscussionThread", () => {
     const onAccessFailure = vi.fn();
     apiGetMock.mockImplementationOnce(() => Promise.reject(new ApiError("Discussion denied", 403)));
     render({ onAccessFailure }); await flush();
-    await click(`[data-testid="mention-project-comment-${projectId}"]`); await flush();
+    await click(host.querySelector<HTMLElement>(`[data-testid="mention-project-comment-${projectId}"]`)!); await flush();
     expect(host.textContent).toContain("No discussion access");
     expect(onAccessFailure).not.toHaveBeenCalled();
     expect(terminateMock).not.toHaveBeenCalled();
@@ -174,7 +174,7 @@ describe("ProjectDiscussionThread", () => {
     const onAccessFailure = vi.fn();
     apiPostMock.mockRejectedValueOnce(new ApiError("Discussion denied", 403));
     render({ onAccessFailure }); await flush();
-    await click(`[data-testid="submit-project-comment-${projectId}"]`); await flush();
+    await click(host.querySelector<HTMLElement>(`[data-testid="submit-project-comment-${projectId}"]`)!); await flush();
     expect(host.textContent).toContain("No discussion access");
     expect(onAccessFailure).not.toHaveBeenCalled();
     expect(terminateMock).not.toHaveBeenCalled();
@@ -210,7 +210,7 @@ describe("ProjectDiscussionThread", () => {
     const onAccessFailure = vi.fn();
     apiPostMock.mockRejectedValueOnce(new ApiError("Unauthorized", 401));
     render({ onAccessFailure }); await flush();
-    await click(`[data-testid="submit-project-comment-${projectId}"]`); await flush();
+    await click(host.querySelector<HTMLElement>(`[data-testid="submit-project-comment-${projectId}"]`)!); await flush();
     expect(onAccessFailure).toHaveBeenCalledWith(expect.any(ApiError), "comments");
     expect(terminateMock).toHaveBeenCalledTimes(1);
   });
