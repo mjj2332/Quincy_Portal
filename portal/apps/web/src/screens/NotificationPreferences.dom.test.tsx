@@ -71,13 +71,23 @@ describe("NotificationPreferences", () => {
     apiGetMock.mockReset().mockReturnValue(gate.promise);
     const host = document.body.firstElementChild as HTMLElement;
     await act(async () => { root!.render(<NotificationPreferences />); await Promise.resolve(); });
-    const whileLoading = host.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
-    expect(whileLoading.getAttribute("aria-label")).toBe("Project deadline reminder emails");
-    expect(whileLoading.disabled).toBe(true);
+    // The accessible NAME belongs to the control, not to whichever element happens to implement
+    // it. Today the control is a native input and carries the name itself. A composite checkbox
+    // (Base UI, Radix) instead renders a visible root with role="checkbox" that carries the name,
+    // beside a hidden input that is aria-hidden and so is not in the accessibility tree at all —
+    // asserting a name on that input would assert something no screen reader can reach.
+    //
+    // This selector list matches whichever is present, in document order: the native input today,
+    // the widget root after a swap. `disabled` is a different question — it is genuine behaviour,
+    // stays on the real input in both worlds, and is queried as such. Decoupled under #50; do not
+    // narrow the name query back to `input[type="checkbox"]`.
+    const control = () => host.querySelector('input[type="checkbox"], [role="checkbox"]')!;
+    const input = () => host.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    expect(control().getAttribute("aria-label")).toBe("Project deadline reminder emails");
+    expect(input().disabled).toBe(true);
     await act(async () => { gate.resolve({ projectDeadlineReminderEmails: true }); await Promise.resolve(); await Promise.resolve(); });
-    const afterLoad = host.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
-    expect(afterLoad.getAttribute("aria-label")).toBe("Project deadline reminder emails");
-    expect(afterLoad.disabled).toBe(false);
+    expect(control().getAttribute("aria-label")).toBe("Project deadline reminder emails");
+    expect(input().disabled).toBe(false);
   });
 
   it("shows the optimistic value and disables the control while a save is in flight", async () => {
