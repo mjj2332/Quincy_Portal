@@ -104,55 +104,43 @@ describe("staff router history — reads are raw", () => {
   });
 });
 
-describe("staff router history — writes are sanitised", () => {
-  it.each([
-    ["/d/token", "reserved delivery namespace"],
-    ["/api/projects", "reserved backend namespace"],
-    ["/unknown", "unroutable path"],
-    [`/projects/${projectId.toUpperCase()}`, "non-canonical UUID casing"],
-    [`/?view=list&detail=${projectId}`, "retired dashboard facet"],
-  ])("collapses a router push to %s to / (%s)", (destination) => {
-    const { browser, history } = build("/");
-    history.push(destination);
-    expect(browser.calls).toEqual(["push:/"]);
-    expect(history.location.href).toBe("/");
+describe("staff router history — the router never writes the URL", () => {
+  // @tanstack/react-router's Transitioner canonicalises the URL on mount, with no opt-out. Quincy
+  // rejects percent-encoded spellings of static segments on purpose, so that replace would rewrite
+  // /%61dmin to /admin and mount the real Admin screen. The router therefore gets a read-only
+  // history; locationStore() remains the single writer, where safeStaffDestination still runs.
+  it.each(["/admin", "/d/token", "/projects/new", "/"])(
+    "drops a router-initiated push to %s without touching the browser",
+    (destination) => {
+      const { browser, history } = build("/%61dmin");
+      history.push(destination);
+      expect(browser.calls).toEqual([]);
+    },
+  );
+
+  it("drops a router-initiated replace, which is the canonicalisation that caused the regression", () => {
+    const { browser, history } = build("/%61dmin");
+    history.replace("/admin");
+    expect(browser.calls).toEqual([]);
+    expect(history.location.href).toBe("/%61dmin");
   });
 
-  it("collapses a router replace the same way", () => {
-    const { browser, history } = build("/");
-    history.replace("/d/token");
-    expect(browser.calls).toEqual(["replace:/"]);
-    expect(history.location.href).toBe("/");
+  it("still routes every real navigation through the sanitising adapter", () => {
+    // The writer the application actually uses. safeStaffDestination runs here, unchanged.
+    const { browser, adapter } = build("/");
+    adapter.push("/d/token");
+    adapter.push("/admin");
+    adapter.replace(`/projects/${projectId}?collaboration=open`);
+    expect(browser.calls).toEqual(["push:/", "push:/admin", `replace:/projects/${projectId}?collaboration=open`]);
   });
 
-  it("passes a canonical destination through untouched", () => {
-    const { browser, history } = build("/");
-    history.push(`/projects/${projectId}?collaboration=open`);
-    history.replace("/settings/notifications");
-    expect(browser.calls).toEqual([`push:/projects/${projectId}?collaboration=open`, "replace:/settings/notifications"]);
-    expect(history.location.href).toBe("/settings/notifications");
-  });
-
-  it("shows the router the committed location, never the rejected candidate", () => {
-    // @tanstack/history re-reads getLocation() inside notify(), after pushState returns, so the
-    // adapter's collapse is what the router sees. Without that, router and browser would disagree.
-    const { history } = build("/");
-    const seen: string[] = [];
-    history.subscribe(({ location }) => seen.push(location.href));
-    history.push("/d/token");
-    expect(seen.every((href) => href === "/")).toBe(true);
-    expect(seen).not.toContain("/d/token");
-  });
-
-  it("notifies exactly once per router-initiated write", () => {
-    // The adapter notifies its own subscribers AND @tanstack/history notifies after pushState.
-    // Forwarding both would double-fire every navigation.
-    const { history } = build("/");
+  it("notifies once per external write", () => {
+    const { adapter, history } = build("/");
     let notifications = 0;
     history.subscribe(() => { notifications += 1; });
-    history.push("/admin");
+    adapter.push("/admin");
     expect(notifications).toBe(1);
-    history.replace("/settings/notifications");
+    adapter.replace("/settings/notifications");
     expect(notifications).toBe(2);
   });
 });

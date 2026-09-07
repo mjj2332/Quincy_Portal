@@ -17,11 +17,30 @@
  * would break the first; not sanitising on write would break the second and lose a security
  * property besides.
  *
- * Because TanStack reaches the browser through exactly one door — the adapter — `navigate`,
- * `redirect` and history restoration are all sanitised by construction rather than by a rule
- * someone has to remember. `@tanstack/history`'s own `notify()` re-reads `getLocation()` *after*
- * calling `pushState`, so when the adapter collapses a rejected destination to `/`, the router
- * observes the real committed location and never the rejected candidate.
+ * ## Why the router's history is read-only
+ *
+ * The router observes the URL; it never writes it. Every navigation in this application already
+ * goes through `locationStore()` — the Shell's capability redirects, Dashboard's view and calendar
+ * changes, Admin, ImpersonationBanner, and `InternalLink` — so the adapter remains the single
+ * writer, and `safeStaffDestination` still runs on every one of those navigations.
+ *
+ * Making the writes no-ops is not a shortcut, it is required. `@tanstack/react-router`'s
+ * `Transitioner` canonicalises the URL on mount, unconditionally and with no option to disable it:
+ * it rebuilds the location from the *decoded* pathname and issues a `replace` when the result
+ * differs from what arrived. Quincy's parser rejects percent-encoded spellings of static segments
+ * on purpose — `/%61dmin` and `/projects/%6eew` are `not-found`, with dedicated tests — so letting
+ * that replace through rewrote `/%61dmin` to `/admin` and mounted the real Admin screen from a URL
+ * the contract refuses. That is a security regression, not a cosmetic one.
+ *
+ * The suppression is provably free of collateral damage. A canonicalising replace can only fire
+ * when the pathname contains a percent-escape that decodes to something else, and *every* such
+ * pathname is one `parseStaffPathname` rejects, because canonical staff paths contain no escapes.
+ * So the writes being dropped are exactly the writes that must not happen; no valid navigation
+ * reaches this code path at all.
+ *
+ * What keeps this honest over time is `routing-transport.guard.test.ts`, which fails if anything
+ * outside this module starts navigating through TanStack. Without that guard a future
+ * `router.navigate` would silently do nothing.
  */
 import { createHistory, parseHref, type RouterHistory } from "@tanstack/history";
 import type { createHistoryAdapter } from "./router";
@@ -59,24 +78,13 @@ export function stringifyStaffSearch(search: Record<string, unknown>): string {
  * subscription below is how the router learns about the writes they make.
  */
 export function createStaffRouterHistory(adapter: HistoryAdapter): { history: RouterHistory; dispose: () => void } {
-  // True only while TanStack is performing its own write. `@tanstack/history` notifies its
-  // subscribers itself immediately after `pushState`/`replaceState` returns, so forwarding the
-  // adapter's notification for the same write would deliver it twice. External writes — a
-  // provider-free component calling `locationStore().push`, or a popstate — are still forwarded.
-  let writing = false;
-
   const history = createHistory({
     // Raw, unsanitised. See the module comment: this is the arrival path.
     getLocation: () => parseHref(adapter.getLocation(), undefined),
     getLength: () => (typeof window === "undefined" ? 1 : window.history.length),
-    pushState: (path) => {
-      writing = true;
-      try { adapter.push(path); } finally { writing = false; }
-    },
-    replaceState: (path) => {
-      writing = true;
-      try { adapter.replace(path); } finally { writing = false; }
-    },
+    // The router does not own the URL in this application; the adapter does. See the note below.
+    pushState: () => {},
+    replaceState: () => {},
     // Traversal delegates to the real browser history. The resulting popstate comes back through
     // the adapter's subscription below, so no history entry is created here.
     go: (n) => { if (typeof window !== "undefined") window.history.go(n); },
@@ -86,7 +94,6 @@ export function createStaffRouterHistory(adapter: HistoryAdapter): { history: Ro
   });
 
   const unsubscribe = adapter.subscribe(() => {
-    if (writing) return;
     // "REPLACE" describes the router's bookkeeping, not the browser operation that happened: the
     // entry already exists by the time we hear about it, so the router must adopt the new location
     // without creating another one. The action type only feeds scroll restoration, which is off.
