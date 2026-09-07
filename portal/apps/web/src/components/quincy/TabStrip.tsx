@@ -32,7 +32,10 @@ const TAB_COUNT = "[font-variant-numeric:tabular-nums] [font:var(--weight-regula
 // opacity only ever leaves 0 under `group-data-[variant=line]/tabs-list:`, and this list never
 // sets `variant="line"`.)
 const TAB_LIST_RESET =
-  "flex w-full items-center justify-start gap-[var(--space-5)] rounded-none bg-transparent p-0 " +
+  // `flex-wrap` is Quincy's, not nova's: nova's list is a fixed-height segmented control and
+  // never wraps. Admin's delivery strip carries labels as long as "Preference suppressed", which
+  // overflow a 390px viewport unless the strip wraps.
+  "flex w-full flex-wrap items-center justify-start gap-[var(--space-5)] rounded-none bg-transparent p-0 " +
   "group-data-horizontal/tabs:h-auto " +
   "[border-bottom-style:solid] border-b-[length:var(--border-width-hair)] border-b-border";
 

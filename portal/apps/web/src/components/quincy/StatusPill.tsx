@@ -31,7 +31,14 @@ function StatusPill({ tone = "neutral", className, ...props }: React.ComponentPr
     <Badge
       data-slot="status-pill"
       radius="full"
-      className={cn(PILL_TONE[tone], className)}
+      // Nova's `size` variant is a compact counter badge (`h-5 min-w-5 px-1.25`). Quincy's pill
+      // is padding-sized, so the box metrics from `ui/status-pill.tsx`'s PILL_BASE are restored
+      // here; only the typography, pill radius and focus ring come from Badge.
+      className={cn(
+        "h-auto min-w-0 px-[var(--space-2)] py-[4px] border-solid border-[length:var(--border-width-hair)]",
+        PILL_TONE[tone],
+        className,
+      )}
       {...props}
     />
   );
