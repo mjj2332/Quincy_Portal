@@ -201,6 +201,7 @@ function MoveToControl({ project, model, activeStages, role, sort, canMoveStages
       ref={setTrigger}
       type="button"
       className="kcard-move-to w-full min-h-[30px] max-[641px]:min-h-11 pointer-coarse:min-h-11 px-[9px] py-[7px] border border-border bg-card text-foreground-secondary [font:inherit] !text-[length:var(--text-2xs)] text-left cursor-pointer focus-visible:!outline-2 focus-visible:!outline-[var(--ink-900)] focus-visible:!outline-offset-2 hover:not-disabled:bg-[var(--paper-100)] hover:not-disabled:text-foreground disabled:text-muted-foreground disabled:cursor-not-allowed"
+      data-testid="kanban-card-control"
       data-focus-key={`move-to:${project.id}`}
       aria-label={`Move ${project.street} to…`}
       aria-expanded={open}
@@ -271,15 +272,15 @@ export function KanbanCard({
   const activeStageOptions = (stageOptions ?? []).filter((stage) => stage.active);
   const moveModel = boardModel ?? { projects: [project], ...(project.authorizedBoardOrder ? { authorizedBoardOrder: project.authorizedBoardOrder } : {}) };
 
-  return <div ref={setCardRef} style={cardStyle} className="kcard-wrap relative bg-card border border-border transition-[background-color,border-color] duration-[var(--dur-fast)] hover:bg-[var(--paper-100)] hover:border-[var(--greige-300)] data-[dragging=true]:opacity-40" data-dragging={isDragging ? "true" : undefined}>
-    <InternalLink className="kcard w-full block p-0 text-inherit text-left [font:inherit] no-underline bg-none border-0 cursor-pointer" to={projectHref ?? `/projects/${encodeURIComponent(project.id)}`}>
+  return <div ref={setCardRef} style={cardStyle} className="kcard-wrap relative bg-card border border-border transition-[background-color,border-color] duration-[var(--dur-fast)] hover:bg-[var(--paper-100)] hover:border-[var(--greige-300)] data-[dragging=true]:opacity-40" data-testid="kanban-card-wrap" data-dragging={isDragging ? "true" : undefined}>
+    <InternalLink className="kcard w-full block p-0 text-inherit text-left [font:inherit] no-underline bg-none border-0 cursor-pointer" data-testid="kanban-card" to={projectHref ?? `/projects/${encodeURIComponent(project.id)}`}>
       <div className="kcard__media aspect-[16/9] overflow-hidden bg-[var(--ink-800)]"><CoverMedia project={project} className="size-full object-cover" retryToken={coverRetry} onFailedChange={setCoverFailed} /></div>
       <div className="kcard__b p-[var(--space-3)]">
-        <div className="kcard__addr serif text-base tracking-tight leading-snug [text-wrap:pretty]">{project.street}</div>
+        <div className="kcard__addr serif text-base tracking-tight leading-snug [text-wrap:pretty]" data-testid="kanban-card-address">{project.street}</div>
         <div className="kcard__meta text-xs text-foreground-secondary mt-[var(--space-1)]">{location(project)}</div>
         <div className="kcard__meta text-xs text-foreground-secondary mt-[var(--space-1)]">{project.agencyName || "Agency pending"}</div>
-        <div className="kcard__foot flex items-center flex-wrap gap-[var(--space-1)_var(--space-3)] mt-[var(--space-3)]">
-          {projectDeadlineLabel && <time className={overdue ? "project-deadline__overdue" : ""} dateTime={new Date(project.deadlineAt!).toISOString()}>{overdue ? "Overdue" : "Due"} {projectDeadlineLabel} Sydney</time>}
+        <div className="kcard__foot flex items-center flex-wrap gap-[var(--space-1)_var(--space-3)] mt-[var(--space-3)]" data-testid="kanban-card-footer">
+          {projectDeadlineLabel && <time className={overdue ? "project-deadline__overdue" : ""} data-testid="kanban-card-deadline" dateTime={new Date(project.deadlineAt!).toISOString()}>{overdue ? "Overdue" : "Due"} {projectDeadlineLabel} Sydney</time>}
           {project.priority !== null && <span className="ey">Priority {project.priority}</span>}
         </div>
       </div>
@@ -288,6 +289,7 @@ export function KanbanCard({
       ref={setDragHandleRef}
       type="button"
       className="kcard-drag-handle absolute top-[var(--space-2)] right-[var(--space-2)] z-[2] size-9 max-[641px]:size-11 pointer-coarse:size-11 inline-grid place-items-center border border-[color-mix(in_srgb,var(--ink-900)_18%,transparent)] rounded-[var(--radius-sm)] bg-[color-mix(in_srgb,var(--paper-000)_88%,transparent)] text-foreground-secondary cursor-grab text-[20px] leading-none [touch-action:none] focus-visible:!outline-2 focus-visible:!outline-[var(--ink-900)] focus-visible:!outline-offset-2 hover:not-disabled:bg-[var(--paper-100)] hover:not-disabled:text-foreground active:not-disabled:cursor-grabbing disabled:text-muted-foreground disabled:cursor-not-allowed"
+      data-testid="kanban-card-control"
       data-focus-key={`move-handle:${project.id}`}
       aria-label={`Move ${project.street}`}
       disabled={!canDragThisCard}
@@ -303,8 +305,8 @@ export function KanbanCard({
         {Array.from({ length: 10 }, (_, index) => index + 1).map((value) => <option value={value} key={value}>{value}</option>)}
       </NativeSelect>
       {canReorder && <>
-        <button type="button" className="kcard-controls__arrow w-7 h-[26px] max-[641px]:size-11 max-[641px]:min-w-11 pointer-coarse:size-11 pointer-coarse:min-w-11 p-0 border border-[length:var(--border-width-hair)] border-border rounded-[var(--radius-sm)] bg-[var(--bg-surface)] text-foreground-secondary [font:var(--type-label)] text-sm leading-none cursor-pointer transition-[background-color,color] duration-[var(--dur-fast)] ease-[var(--ease-standard)] focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--focus-ring)] focus-visible:!outline-offset-2 hover:not-disabled:bg-[var(--bg-raised)] hover:not-disabled:text-foreground active:not-disabled:translate-y-px disabled:text-foreground-secondary disabled:bg-[var(--bg-sunken)] disabled:cursor-not-allowed" data-focus-key={`arrow-up:${project.id}`} aria-label="Move project up" disabled={movementDisabled} onClick={() => onBoardPosition?.(project, "up")}>↑</button>
-        <button type="button" className="kcard-controls__arrow w-7 h-[26px] max-[641px]:size-11 max-[641px]:min-w-11 pointer-coarse:size-11 pointer-coarse:min-w-11 p-0 border border-[length:var(--border-width-hair)] border-border rounded-[var(--radius-sm)] bg-[var(--bg-surface)] text-foreground-secondary [font:var(--type-label)] text-sm leading-none cursor-pointer transition-[background-color,color] duration-[var(--dur-fast)] ease-[var(--ease-standard)] focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--focus-ring)] focus-visible:!outline-offset-2 hover:not-disabled:bg-[var(--bg-raised)] hover:not-disabled:text-foreground active:not-disabled:translate-y-px disabled:text-foreground-secondary disabled:bg-[var(--bg-sunken)] disabled:cursor-not-allowed" data-focus-key={`arrow-down:${project.id}`} aria-label="Move project down" disabled={movementDisabled} onClick={() => onBoardPosition?.(project, "down")}>↓</button>
+        <button type="button" className="kcard-controls__arrow w-7 h-[26px] max-[641px]:size-11 max-[641px]:min-w-11 pointer-coarse:size-11 pointer-coarse:min-w-11 p-0 border border-[length:var(--border-width-hair)] border-border rounded-[var(--radius-sm)] bg-[var(--bg-surface)] text-foreground-secondary [font:var(--type-label)] text-sm leading-none cursor-pointer transition-[background-color,color] duration-[var(--dur-fast)] ease-[var(--ease-standard)] focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--focus-ring)] focus-visible:!outline-offset-2 hover:not-disabled:bg-[var(--bg-raised)] hover:not-disabled:text-foreground active:not-disabled:translate-y-px disabled:text-foreground-secondary disabled:bg-[var(--bg-sunken)] disabled:cursor-not-allowed" data-testid="kanban-card-control" data-focus-key={`arrow-up:${project.id}`} aria-label="Move project up" disabled={movementDisabled} onClick={() => onBoardPosition?.(project, "up")}>↑</button>
+        <button type="button" className="kcard-controls__arrow w-7 h-[26px] max-[641px]:size-11 max-[641px]:min-w-11 pointer-coarse:size-11 pointer-coarse:min-w-11 p-0 border border-[length:var(--border-width-hair)] border-border rounded-[var(--radius-sm)] bg-[var(--bg-surface)] text-foreground-secondary [font:var(--type-label)] text-sm leading-none cursor-pointer transition-[background-color,color] duration-[var(--dur-fast)] ease-[var(--ease-standard)] focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--focus-ring)] focus-visible:!outline-offset-2 hover:not-disabled:bg-[var(--bg-raised)] hover:not-disabled:text-foreground active:not-disabled:translate-y-px disabled:text-foreground-secondary disabled:bg-[var(--bg-sunken)] disabled:cursor-not-allowed" data-testid="kanban-card-control" data-focus-key={`arrow-down:${project.id}`} aria-label="Move project down" disabled={movementDisabled} onClick={() => onBoardPosition?.(project, "down")}>↓</button>
       </>}
     </div>}
     {canMove && <div className="kcard-stage-control px-[var(--space-3)] pb-[var(--space-3)]">
@@ -317,14 +319,14 @@ export function KanbanCard({
 export function KanbanCardPreview({ project }: { project: ProjectSummary }) {
   const overdue = isDeadlineOverdue(project.deadlineAt);
   const projectDeadlineLabel = deadlineLabel(project);
-  return <div className="kanban-card-preview w-[min(320px,calc(100vw-var(--space-5)))] max-w-[calc(100vw-var(--space-5))] box-border shadow-[0_18px_36px_color-mix(in_srgb,var(--ink-900)_22%,transparent)] pointer-events-none kcard-wrap relative bg-card border border-border transition-[background-color,border-color] duration-[var(--dur-fast)]" aria-hidden="true">
+  return <div className="kanban-card-preview w-[min(320px,calc(100vw-var(--space-5)))] max-w-[calc(100vw-var(--space-5))] box-border shadow-[0_18px_36px_color-mix(in_srgb,var(--ink-900)_22%,transparent)] pointer-events-none kcard-wrap relative bg-card border border-border transition-[background-color,border-color] duration-[var(--dur-fast)]" data-testid="kanban-card-wrap" aria-hidden="true">
     <div className="kcard__media aspect-[16/9] overflow-hidden bg-[var(--ink-800)] pointer-events-none"><CoverMedia project={project} className="size-full object-cover" /></div>
     <div className="kcard__b p-[var(--space-3)]">
-      <div className="kcard__addr serif text-base tracking-tight leading-snug [text-wrap:pretty]">{project.street}</div>
+      <div className="kcard__addr serif text-base tracking-tight leading-snug [text-wrap:pretty]" data-testid="kanban-card-address">{project.street}</div>
       <div className="kcard__meta text-xs text-foreground-secondary mt-[var(--space-1)]">{location(project)}</div>
       <div className="kcard__meta text-xs text-foreground-secondary mt-[var(--space-1)]">{project.agencyName || "Agency pending"}</div>
-      <div className="kcard__foot flex items-center flex-wrap gap-[var(--space-1)_var(--space-3)] mt-[var(--space-3)]">
-        {projectDeadlineLabel && <time className={overdue ? "project-deadline__overdue" : ""} dateTime={new Date(project.deadlineAt!).toISOString()}>{overdue ? "Overdue" : "Due"} {projectDeadlineLabel} Sydney</time>}
+      <div className="kcard__foot flex items-center flex-wrap gap-[var(--space-1)_var(--space-3)] mt-[var(--space-3)]" data-testid="kanban-card-footer">
+        {projectDeadlineLabel && <time className={overdue ? "project-deadline__overdue" : ""} data-testid="kanban-card-deadline" dateTime={new Date(project.deadlineAt!).toISOString()}>{overdue ? "Overdue" : "Due"} {projectDeadlineLabel} Sydney</time>}
         {project.priority !== null && <span className="ey">Priority {project.priority}</span>}
       </div>
     </div>
@@ -560,7 +562,7 @@ function KanbanColumn({
   const indicatorAfter = proposal?.gap.targetStageKey === semanticKey && proposal.gap.successor === "end";
   const stageIsOver = activeProjectId !== undefined && (isOver || proposal?.gap.targetStageKey === semanticKey);
 
-  return <section className="kcol group bg-[var(--paper-050)] flex flex-col min-w-0 transition-[background-color] duration-[var(--dur-fast)] data-[over=true]:bg-[var(--paper-100)]" data-over={stageIsOver ? "true" : undefined}>
+  return <section className="kcol group bg-[var(--paper-050)] flex flex-col min-w-0 transition-[background-color] duration-[var(--dur-fast)] data-[over=true]:bg-[var(--paper-100)]" data-testid="kanban-column" data-over={stageIsOver ? "true" : undefined}>
     <div className="kcol__head flex items-center gap-[var(--space-3)] p-[var(--space-4)] border-b border-b-border bg-[var(--bg-canvas)] group-data-[over=true]:bg-[var(--paper-100)] [&_.ey]:!leading-[1.25] focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--focus-ring)] focus-visible:!outline-offset-[-2px]" data-focus-key={`stage-heading:${semanticKey}`} tabIndex={-1}><span className="kcol__ordinal flex-none [font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-wide)] tabular-nums text-foreground-secondary" aria-hidden="true">{String(stageIndex + 1).padStart(2, "0")}</span><StatusBadge stageKey={stage.key} /><span className="cnt flex-none tabular-nums text-sm text-foreground-secondary">{displayedProjects.length}</span></div>
     <SortableContext items={displayedIds} strategy={verticalListSortingStrategy}>
       {/* flex-1 so the drop target fills the whole column, not just the area behind the cards. */}
@@ -571,7 +573,7 @@ function KanbanColumn({
           const displayProject = proposal?.gap.targetStageKey === semanticKey && project.id === activeProjectId ? { ...project, stageKey: stage.key } : project;
           const movementPending = pendingMoves.has(project.id) || pendingOrdering.has(project.id);
           return <div key={project.id}>
-            {isDropBefore && <div className="kcard-wrap--drop-indicator min-h-[3px] rounded-[2px] bg-[var(--signal-positive)] shadow-[0_0_0_1px_color-mix(in_srgb,var(--signal-positive)_20%,transparent)]" aria-hidden="true" />}
+            {isDropBefore && <div className="kcard-wrap--drop-indicator min-h-[3px] rounded-[2px] bg-[var(--signal-positive)] shadow-[0_0_0_1px_color-mix(in_srgb,var(--signal-positive)_20%,transparent)]" data-testid="kanban-drop-indicator" aria-hidden="true" />}
             <SortableKanbanCard
               {...{
                 canMove: (canMoveStages || sameStageReorderEnabled) && !pendingMoves.has(project.id),
@@ -596,7 +598,7 @@ function KanbanColumn({
             />
           </div>;
         })}
-        {indicatorAfter && <div className="kcard-wrap--drop-indicator min-h-[3px] rounded-[2px] bg-[var(--signal-positive)] shadow-[0_0_0_1px_color-mix(in_srgb,var(--signal-positive)_20%,transparent)]" aria-hidden="true" />}
+        {indicatorAfter && <div className="kcard-wrap--drop-indicator min-h-[3px] rounded-[2px] bg-[var(--signal-positive)] shadow-[0_0_0_1px_color-mix(in_srgb,var(--signal-positive)_20%,transparent)]" data-testid="kanban-drop-indicator" aria-hidden="true" />}
       </div>
     </SortableContext>
   </section>;

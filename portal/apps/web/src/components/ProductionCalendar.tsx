@@ -1556,7 +1556,7 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
         onChange={(next) => { if (!calendarInteractionBlocked) { clearSettleOnNavigation(); onNavigate({ ...calendar, ...next, view: "calendar" }); } }}
       />
 
-      {calendarSettle.recoveryReason && <div className="notice qc-calendar-recovery" role="alert"><span>{calendarSettle.recoveryReason}</span><button className={buttonClasses("secondary")} type="button" data-focus-key="calendar-recovery" onClick={() => void refreshRecovery()}>Refresh</button></div>}
+      {calendarSettle.recoveryReason && <div className="notice qc-calendar-recovery" data-testid="calendar-recovery-notice" role="alert"><span>{calendarSettle.recoveryReason}</span><button className={buttonClasses("secondary")} type="button" data-focus-key="calendar-recovery" onClick={() => void refreshRecovery()}>Refresh</button></div>}
       {query.isPending && !query.data && <div className="empty qc-calendar-state" role="status">Loading calendar…</div>}
 
       {!query.isPending && query.error && !query.data && (
@@ -1625,7 +1625,7 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
           onOpenProject={onOpenProject}
         />
       </div>}
-      <div className="dashboard-live-region sr-only" aria-live="polite" aria-atomic="true">{announcement}</div>
+      <div className="dashboard-live-region sr-only" data-testid="dashboard-live-region" aria-live="polite" aria-atomic="true">{announcement}</div>
       {moveDialogRetained.current && <ProductionCalendarMoveDialog key={moveDialogToken} open={!!moveDialog} event={moveDialogRetained.current.event} initialCivil={moveDialogRetained.current.initialCivil} foldChoices={moveDialogRetained.current.foldChoices} onSubmit={handleMoveDialogSubmit} onCancel={handleMoveDialogCancel} />}
       {/* The key composes the open-token with the composite (source id + initialSchedule) parts
           the original design required verbatim — the two parts cover two different remount

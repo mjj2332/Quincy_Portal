@@ -133,7 +133,7 @@ const SEGMENT_BUTTON = "[font:var(--weight-regular)_var(--text-xs)/1.2_var(--fon
 function ProjectListRow({ project, projectHref }: { project: ProjectSummary; projectHref: string }) {
   const [coverFailed, setCoverFailed] = useState(false); const [coverRetry, setCoverRetry] = useState(0);
   return <div className="prow-wrap">
-    <InternalLink className={cn("prow", PROW_ROW)} to={projectHref}>
+    <InternalLink className={cn("prow", PROW_ROW)} data-testid="project-list-row" to={projectHref}>
       <CoverMedia project={project} className="prow__thumb" inlinePlaceholder retryToken={coverRetry} onFailedChange={setCoverFailed} />
       <span>
         <span className="prow__addr block font-[family-name:var(--font-display)] text-[length:var(--text-md)] tracking-[var(--tracking-tight)]">{project.street}</span>
@@ -142,7 +142,7 @@ function ProjectListRow({ project, projectHref }: { project: ProjectSummary; pro
       <span className="prow__c-agency text-[length:var(--text-sm)] max-[721px]:hidden">{project.agencyName || "Agency pending"}<span className="block mt-[var(--space-1)] text-[length:var(--text-xs)] text-muted-foreground">{project.agentName || "Agent pending"}</span></span>
       <span className="prow__c-date text-[length:var(--text-sm)] max-[721px]:hidden">{formatDashboardDate(project.shootDate)}</span>
       <span className="prow__c-status max-[721px]:hidden"><StatusBadge stageKey={project.stageKey} /></span>
-      <span className="prow__raw text-right tabular-nums text-[length:var(--text-sm)]">{project.receivedCount}</span>
+      <span className="prow__raw text-right tabular-nums text-[length:var(--text-sm)]" data-testid="project-list-row-raw">{project.receivedCount}</span>
     </InternalLink>
     {coverFailed && <Button type="button" variant="secondary" className="prow__retry mt-[var(--space-2)]" onClick={() => { setCoverFailed(false); setCoverRetry((current) => current + 1); }}>Retry cover image</Button>}
   </div>;
@@ -943,7 +943,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
           <label className={cn("dashboard-search", "group flex items-center min-w-[300px] px-[var(--space-3)] bg-card border-solid border-[length:var(--border-width-hair)] border-border rounded-[var(--radius-sm)] transition-[border-color] duration-[var(--dur-fast)] ease-[var(--ease-standard)] hover:border-border-hover focus-within:border-primary focus-within:outline-[length:var(--border-width-bold)] focus-within:outline-solid focus-within:outline-ring focus-within:outline-offset-2 max-[721px]:basis-full max-[721px]:min-w-0")}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true" className="size-[15px] shrink-0 text-muted-foreground transition-colors duration-[var(--dur-fast)] ease-[var(--ease-standard)] group-focus-within:text-foreground-secondary"><circle cx="11" cy="11" r="6" /><path d="m16 16 4 4" /></svg>
             <span className="sr-only">Search projects</span>
-            <input className="min-w-0 w-full py-[var(--space-2)] px-[var(--space-3)] border-0 outline-0 bg-transparent text-foreground [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] placeholder:text-muted-foreground max-[721px]:py-[var(--space-3)]" value={query} onChange={(event) => setQuery(sanitizeDashboardCalendarSearch(event.target.value))} placeholder="Search address, suburb, client…" />
+            <input className="min-w-0 w-full py-[var(--space-2)] px-[var(--space-3)] border-0 outline-0 bg-transparent text-foreground [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] placeholder:text-muted-foreground max-[721px]:py-[var(--space-3)]" data-testid="dashboard-search-input" value={query} onChange={(event) => setQuery(sanitizeDashboardCalendarSearch(event.target.value))} placeholder="Search address, suburb, client…" />
           </label>
           {canCreateProject && <InternalLink className={buttonClasses()} to="/projects/new">New shoot</InternalLink>}
         </div>
@@ -959,8 +959,8 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         {!viewingArchived && <>
         <Eyebrow className="max-[721px]:basis-full max-[721px]:-mb-[var(--space-1)]">View</Eyebrow>
         <div className={SEGMENT_GROUP} aria-label="Dashboard view">
-          <button className={cn(SEGMENT_BUTTON, view === "list" && "is-active")} type="button" data-focus-key="dashboard-view-list" disabled={interactionBlocked || calendarInteractionBlocked} onClick={() => selectView("list")}>List</button>
-          <button className={cn(SEGMENT_BUTTON, view === "kanban" && "is-active")} type="button" data-focus-key="dashboard-view-kanban" disabled={interactionBlocked || calendarInteractionBlocked} onClick={() => selectView("kanban")}>Kanban</button>
+          <button className={cn(SEGMENT_BUTTON, view === "list" && "is-active")} type="button" data-focus-key="dashboard-view-list" data-active={view === "list" ? "true" : undefined} disabled={interactionBlocked || calendarInteractionBlocked} onClick={() => selectView("list")}>List</button>
+          <button className={cn(SEGMENT_BUTTON, view === "kanban" && "is-active")} type="button" data-focus-key="dashboard-view-kanban" data-active={view === "kanban" ? "true" : undefined} disabled={interactionBlocked || calendarInteractionBlocked} onClick={() => selectView("kanban")}>Kanban</button>
           {canViewProductionCalendar && <button className={cn(SEGMENT_BUTTON, view === "calendar" && "is-active")} type="button" data-focus-key="dashboard-view-calendar" disabled={interactionBlocked || calendarInteractionBlocked} onClick={() => selectView("calendar")}>Calendar</button>}
         </div>
         {!viewingArchived && view === "kanban" && (
@@ -1070,7 +1070,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
           projectHrefFor={(project) => projectHrefFor(project.id)}
         />
       )}
-      <div className="dashboard-live-region sr-only" aria-live="polite" aria-atomic="true">{announcement}</div>
+      <div className="dashboard-live-region sr-only" data-testid="dashboard-live-region" aria-live="polite" aria-atomic="true">{announcement}</div>
       <div
         aria-live="polite"
         className="fixed z-[95] flex flex-col items-end gap-[var(--space-3)] pointer-events-none right-[max(var(--space-5),env(safe-area-inset-right))] bottom-[max(var(--space-5),env(safe-area-inset-bottom))] left-[max(var(--space-5),env(safe-area-inset-left))]"

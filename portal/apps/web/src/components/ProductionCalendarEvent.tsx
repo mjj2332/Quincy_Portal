@@ -41,6 +41,7 @@ export function ProjectCalendarAnchor({ href, onOpenProject, children }: Project
   };
   return <a
     className="qc-cal-event-card__project-link"
+    data-testid="calendar-project-link"
     href={href}
     onMouseDown={(event) => startPointer(event.clientX, event.clientY)}
     onMouseMove={(event) => movePointer(event.clientX, event.clientY)}
