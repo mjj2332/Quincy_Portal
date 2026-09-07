@@ -2,8 +2,9 @@
 
 > **Status:** Current product requirements + approved revamp targets · 24 August 2026
 > **Owner:** _✏️ your name_
-> **Production:** `portal/` at <https://quincy.flamingfire.my> · React 18.3.1 current baseline
-> **Prototype:** `prototype/` at <https://prototype.quincy.flamingfire.my> (reference-only)
+> **Production:** `portal/` at <https://quincy.flamingfire.my> · React 19.2.8 current baseline
+> **Design authority:** `portal/apps/web/src/styles/` (the `prototype/` app was retired in #48;
+> its export is archived under `docs/archive/`, historical and not authoritative)
 
 ---
 
@@ -377,9 +378,9 @@ MVP, and display ordering/configuration never redefines automation semantics.
 ## 8. Tech stack & architecture — current production `portal/` baseline
 
 > This section describes the **production application** in `portal/` — a TypeScript
-> monorepo running entirely on Cloudflare. The `prototype/` app (React via CDN +
-> in-browser Babel, mock data, no backend) is **reference-only** and is not the
-> production stack described here.
+> monorepo running entirely on Cloudflare, and now the only codebase in the repo.
+> The `prototype/` reference app (React via CDN + in-browser Babel, mock data, no
+> backend) was retired in #48 and never described this stack.
 
 ### 8.1 Stack at a glance
 
@@ -499,7 +500,7 @@ Six npm workspaces — three deployable Workers, one SPA, two shared libraries:
 | Environment | Host | Notes |
 |---|---|---|
 | Production | `quincy.flamingfire.my` | Live. `main` is the source of truth. |
-| Prototype | `prototype.quincy.flamingfire.my` | The old design prototype, reference-only. |
+| Prototype | `prototype.quincy.flamingfire.my` | The old design prototype. Still deployed (Worker `quincyportal`), but its source was removed from the repo in #48, so it can no longer be redeployed. Awaiting a teardown decision. |
 
 CI (`.github/portal.yml`) typechecks every workspace, runs the Vitest suites
 (`packages/shared`, `workers/app`, `webhook-ingress`) in the Workers runtime, and builds

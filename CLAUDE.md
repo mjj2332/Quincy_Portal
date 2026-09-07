@@ -1,8 +1,3 @@
-<!--
-  Everything below this comment is mirrored verbatim in AGENTS.md (for non-Claude agents).
-  Update BOTH together.
--->
-
 # Quincy Portal
 
 Internal media-pipeline + client-delivery web app for a real-estate photography studio. 
@@ -30,15 +25,14 @@ drive a real authenticated Chrome unsandboxed when a task needs it. Full roster,
 mechanics options live in
 `docs/subagents/Subagent-Orchestration.md`.
 
-## Two codebases, not one
+## One codebase
 
-- **`portal/`** — the production app, and the only place implementation happens. TS monorepo:
-  React 18.3.1 current baseline + Vite SPA, Hono API on Cloudflare Workers, D1 / R2 / KV / Queues / Workflows,
-  Google OAuth via better-auth.
-- **`prototype/`** — the original Claude-Design export (CDN React, in-browser Babel, mock
-  data, no backend). **Reference only: never extend it, never copy its structure into
-  `portal/`.** Match its look and flows — its design system is already ported to
-  `portal/apps/web/src/styles/`. Served at <https://prototype.quincy.flamingfire.my>.
+**`portal/`** — the production app, and the only place implementation happens. TS monorepo:
+React 19.2.8 current baseline + Vite SPA, Hono API on Cloudflare Workers, D1 / R2 / KV / Queues / Workflows,
+Google OAuth via better-auth.
+
+The original `prototype/` design export was retired in #48. What was worth keeping is
+archived under `docs/archive/` — **historical, explicitly not authoritative**.
 
 ## Read first
 
@@ -48,8 +42,23 @@ routing, or the review lightbox, and keep it current as you work.
 
 
 
-Authority order when docs conflict: `docs/PRD/PRD.md` → `Personas.md` / `Sitemap.md`. Auth is
-**Google OAuth**, not Cloudflare Access; renditions use the **remote Image Transformation** path,
-not a Container.
+Authority order when docs conflict: `docs/PRD/PRD.md` → `Personas.md` / `Sitemap.md`.
 
-Design-system source —`prototype/_ds/quincy-productions-design-system-*/`
+**Design authority — `portal/apps/web/src/styles/`.** The live token set is the only source
+of truth for design; `design-system-guards.test.ts` beside it mechanises the rules that have
+already shipped defects more than once. The 2026-06-19 export in `docs/archive/` records where
+the tokens came from and has since been diverged from — never reconcile the app back to it.
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues (github.com/mjj2332/Quincy_Portal), via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default canonical labels (needs-triage, needs-info, ready-for-agent, ready-for-human, wontfix). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Multi-context: root `CONTEXT-MAP.md` + one `CONTEXT.md` per workspace package under `portal/`. See `docs/agents/domain.md`.

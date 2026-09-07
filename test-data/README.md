@@ -16,8 +16,8 @@ them via `portal/packages/shared/test/tonomo.test.ts`):
   `deliverablesLinks` (Floor Plan / Photos / Video / PDF types, including a duplicated
   reel under two share links with one `content_hash` — the dedupe case).
 
-Originals were captured to `prototype/uploads/Webhook-data*.md` (kept for history);
-these copies are the canonical, referenced versions.
+Originals were captured to `docs/archive/tonomo-webhook-captures/Webhook-data*.md` (kept
+for history); these copies are the canonical, referenced versions.
 
 ## `Test Images with star rating/`
 

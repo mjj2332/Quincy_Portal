@@ -11,13 +11,13 @@ client delivery, with role-based access for admin, photographers, and editors.
 
 | Folder | What it is |
 |---|---|
-| **`portal/`** | **The production app.** TypeScript monorepo — React 18 + Vite SPA, Hono API on Cloudflare Workers, D1 · R2 · KV · Queues · Workflows, Google-OAuth sign-in. This is the real, deployed software. |
-| **`prototype/`** | The original **design prototype** (HTML/CSS/JS, React via CDN, mock data — no backend). A look-and-flow reference the production app was built from; not extended. Demo at <https://prototype.quincy.flamingfire.my>. |
-| **`docs/`** | [`PRD/`](docs/PRD/) — [PRD](docs/PRD/PRD.md), [Personas](docs/PRD/Personas.md), [Sitemap](docs/PRD/Sitemap.md). [`Guides/`](docs/Guides/) — Cloudflare/Google/Dropbox setup and admin how-tos. [`subagents/`](docs/subagents/) — orchestration docs and CLI references. Plus the [lessons log](docs/lessons.md) at the top level. (The Decision Sheet, Implementation Proposal, Implementation Plan, to-do list, `plans/`, and `reviews/` were retired to start a fresh development cycle.) |
+| **`portal/`** | **The production app, and the only place implementation happens.** TypeScript monorepo — React 19.2.8 + Vite SPA, Hono API on Cloudflare Workers, D1 · R2 · KV · Queues · Workflows, Google-OAuth sign-in. This is the real, deployed software. |
+| **`docs/`** | [`PRD/`](docs/PRD/) — [PRD](docs/PRD/PRD.md), [Personas](docs/PRD/Personas.md), [Sitemap](docs/PRD/Sitemap.md). [`Guides/`](docs/Guides/) — Cloudflare/Google/Dropbox setup and admin how-tos. [`subagents/`](docs/subagents/) — orchestration docs and CLI references. [`agents/`](docs/agents/) — issue tracker, triage labels, domain docs. [`archive/`](docs/archive/) — **historical, not authoritative**. Plus the [lessons log](docs/lessons.md) at the top level. (The Decision Sheet, Implementation Proposal, Implementation Plan, to-do list, `plans/`, and `reviews/` were retired to start a fresh development cycle.) |
 | **`test-data/`** | Local-only test fixtures (media is large and gitignored — see [test-data/README.md](test-data/README.md)). |
 | **`chats/`** | Early design-conversation transcript (archival). |
 
-`CLAUDE.md` / `AGENTS.md` are the guide for coding agents (identical mirrors).
+`CLAUDE.md` is the guide for coding agents; `AGENTS.md` is a symlink to it, so non-Claude
+agents read the same file.
 
 ## Working on the production app
 
@@ -40,15 +40,13 @@ Provision the production AutoHDR key from `portal/workers/background/` with
 Deploys go out in dependency order (**background → webhook-ingress → app**) via
 `wrangler deploy`. Current work is on the `build/phase-0-2` branch.
 
-## Reviewing the prototype
-
-Open [`prototype/index.html`](prototype/index.html) in a modern browser — no build step. It
-shows the intended design and flows (team dashboard, project workspace with RAW/Edited review
-and freehand markup, and the client delivery page). It is a reference only; the shipping
-product is `portal/`.
-
 ## Design system & brand
 
 Built on the Quincy Productions design system (ink-on-paper; Mazius Review display, Apfel
-Grotezk UI). The prototype's design system under `prototype/_ds/` has been ported into
-`portal/apps/web/src/styles/`.
+Grotezk UI). **The live token set at [`portal/apps/web/src/styles/`](portal/apps/web/src/styles/)
+is the sole design authority**, guarded by `design-system-guards.test.ts` beside it.
+
+The original design-system export it was ported from is kept at
+[`docs/archive/`](docs/archive/) for provenance only — it has since been diverged from and is
+explicitly not authoritative. The `prototype/` reference app it shipped inside was retired in
+#48; it is recoverable from git history (`git log -- prototype/`).

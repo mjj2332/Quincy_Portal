@@ -474,8 +474,9 @@ button { font-family: var(--font-sans); }
 
 /* ---------------------------------------------------------------------
    Production shell additions
-   The prototype relies on its bundled button components. These retain the
-   same quiet, editorial geometry when rendered by the Vite application.
+   The retired design export shipped these as bundled button components. These
+   rules carry the same quiet, editorial geometry in the Vite application, and
+   are now the authoritative definition (see docs/archive/).
    --------------------------------------------------------------------- */
 .button {
   display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2);
