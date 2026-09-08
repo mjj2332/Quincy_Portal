@@ -944,7 +944,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         "mb-[var(--space-4)] pt-[var(--space-4)] [border-top-style:solid] " +
         "border-t-[length:var(--border-width-hair)] border-t-border")}>
         <div className="flex items-center gap-[var(--space-3)] flex-wrap max-[721px]:basis-full">
-          <InputGroup className="dashboard-search min-w-[300px] max-[721px]:basis-full max-[721px]:min-w-0">
+          <InputGroup className="dashboard-search w-auto min-w-[300px] max-[721px]:basis-full max-[721px]:min-w-0">
             <InputGroupAddon>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true" className="size-[15px] shrink-0"><circle cx="11" cy="11" r="6" /><path d="m16 16 4 4" /></svg>
             </InputGroupAddon>
@@ -1022,7 +1022,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       )}
 
       {!isCalendarView && !isLoading && error && (
-        <EmptyState tone="error" role="alert" title={`${viewingArchived ? "Archived projects" : "Projects"} are unavailable.`} className="border-solid border-[length:var(--border-width-hair)] border-border bg-card">
+        <EmptyState tone="error" role="alert" title={`${viewingArchived ? "Archived projects" : "Projects"} are unavailable.`} className="border-solid border-[length:var(--border-width-hair)] border-border bg-card [border-left-style:solid] border-l-[length:var(--border-width-rule)] border-l-destructive">
           {error}
           <div><Button type="button" variant="secondary" className="mt-[var(--space-4)]" onClick={() => void projectsQuery.refetch()}>Try again</Button></div>
         </EmptyState>

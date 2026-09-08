@@ -200,7 +200,7 @@ function MoveToControl({ project, model, activeStages, role, sort, canMoveStages
     <button
       ref={setTrigger}
       type="button"
-      className="kcard-move-to w-full min-h-[30px] max-[641px]:min-h-11 pointer-coarse:min-h-11 px-[9px] py-[7px] border border-border bg-card text-foreground-secondary [font:inherit] !text-[length:var(--text-2xs)] text-left cursor-pointer focus-visible:!outline-2 focus-visible:!outline-[var(--ink-900)] focus-visible:!outline-offset-2 hover:not-disabled:bg-[var(--paper-100)] hover:not-disabled:text-foreground disabled:text-foreground-secondary disabled:bg-[var(--bg-sunken)] disabled:cursor-not-allowed"
+      className="kcard-move-to w-full min-h-[30px] max-[641px]:min-h-11 pointer-coarse:min-h-11 px-[9px] py-[7px] border border-border bg-card text-foreground-secondary [font:inherit] !text-[length:var(--text-2xs)] text-left cursor-pointer focus-visible:!outline-2 focus-visible:!outline-[var(--ink-900)] focus-visible:!outline-offset-2 hover:not-disabled:bg-[var(--paper-100)] hover:not-disabled:text-foreground disabled:text-foreground-secondary disabled:bg-surface-sunken disabled:cursor-not-allowed"
       data-testid="kanban-card-control"
       data-focus-key={`move-to:${project.id}`}
       aria-label={`Move ${project.street} to…`}
@@ -288,7 +288,7 @@ export function KanbanCard({
     <button
       ref={setDragHandleRef}
       type="button"
-      className="kcard-drag-handle absolute top-[var(--space-2)] right-[var(--space-2)] z-[2] size-9 max-[641px]:size-11 pointer-coarse:size-11 inline-grid place-items-center border border-[color-mix(in_srgb,var(--ink-900)_18%,transparent)] rounded-[var(--radius-sm)] bg-[color-mix(in_srgb,var(--paper-000)_88%,transparent)] text-foreground-secondary cursor-grab text-[20px] leading-none [touch-action:none] focus-visible:!outline-2 focus-visible:!outline-[var(--ink-900)] focus-visible:!outline-offset-2 hover:not-disabled:bg-[var(--paper-100)] hover:not-disabled:text-foreground active:not-disabled:cursor-grabbing disabled:text-foreground-secondary disabled:bg-[var(--bg-sunken)] disabled:cursor-not-allowed"
+      className="kcard-drag-handle absolute top-[var(--space-2)] right-[var(--space-2)] z-[2] size-9 max-[641px]:size-11 pointer-coarse:size-11 inline-grid place-items-center border border-[color-mix(in_srgb,var(--ink-900)_18%,transparent)] rounded-[var(--radius-sm)] bg-[color-mix(in_srgb,var(--paper-000)_88%,transparent)] text-foreground-secondary cursor-grab text-[20px] leading-none [touch-action:none] focus-visible:!outline-2 focus-visible:!outline-[var(--ink-900)] focus-visible:!outline-offset-2 hover:not-disabled:bg-[var(--paper-100)] hover:not-disabled:text-foreground active:not-disabled:cursor-grabbing disabled:text-foreground-secondary disabled:bg-surface-sunken disabled:cursor-not-allowed"
       data-testid="kanban-card-control"
       data-focus-key={`move-handle:${project.id}`}
       aria-label={`Move ${project.street}`}

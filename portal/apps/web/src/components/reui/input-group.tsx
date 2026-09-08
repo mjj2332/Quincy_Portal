@@ -2,9 +2,7 @@ import * as React from "react"
 import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "@/lib/utils"
 
-import { Button } from "@/components/reui/button"
 import { Input } from "@/components/reui/input"
-import { Textarea } from "@/components/reui/textarea"
 
 // Four corrections to the vendor class string, marked inline below. The box this paints is the
 // one Quincy's shipped search control already draws by hand (`Dashboard.tsx`'s
@@ -30,12 +28,24 @@ import { Textarea } from "@/components/reui/textarea"
 //    `ProjectDeadlineControl.dom.test.tsx` exists to catch, and leaving dead ones around trains
 //    the eye to skip them.
 //
-// 4. Three vendor rule groups are dropped. `in-data-[slot=combobox-content]` — this app has no
-//    combobox surface. `aria-invalid` rings — Quincy expresses invalidity through `QuincyField`'s
-//    error row, not a control-level ring. And the `has-[>[data-align=inline-*]]:[&>input]:p{l,r}-1.5`
-//    nudges, because Quincy's control carries its own `px-[var(--space-3)]` and the two would
-//    compound into an off-grid inset. The `has-[>[data-align=block-*]]` column rules are KEPT
-//    untouched — they cost nothing unused and are load-bearing for any future block-aligned addon.
+// 4. Vendor rules are dropped in two ways, and the distinction matters. DELETED outright:
+//    `in-data-[slot=combobox-content]` (this app has no combobox surface) and the
+//    `has-[>[data-align=inline-*]]:[&>input]:p{l,r}-1.5` nudges (Quincy's control carries its own
+//    `px-[var(--space-3)]`, and the two would compound into an off-grid inset). OVERRIDDEN on
+//    `InputGroupInput`, because they arrive from `FIELD_BOX` through `<Input>` rather than from
+//    this file's own string: `aria-invalid:ring-0 aria-invalid:border-0` — Quincy expresses
+//    invalidity through `QuincyField`'s error row, not a control-level ring — and
+//    `disabled:opacity-100`, because `FIELD_BOX` carries `disabled:opacity-50` and an opacity
+//    multiplier on an already-quiet colour is the contrast defect recorded in TB8-06 / TB8-07 §2.1
+//    and guarded against by name in `quincy/icon-button.tsx`. Deleting a class from this file does
+//    NOT remove it when `FIELD_BOX` also declares it; only a same-group override does.
+//    The `has-[>[data-align=block-*]]` column rules are KEPT untouched — they cost nothing unused
+//    and are load-bearing for any future block-aligned addon.
+//
+// 5. The vendor's `InputGroupButton`, `InputGroupText` and `InputGroupTextarea` are dropped. The
+//    single call site (`Dashboard.tsx`'s search control) composes only group + addon + input, and
+//    #47's rule is that a slice vendors what it uses. `InputGroupTextarea` in particular would
+//    have pulled `reui/textarea` into this module's import closure for no consumer.
 function InputGroup({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
@@ -103,57 +113,6 @@ function InputGroupAddon({
   )
 }
 
-const inputGroupButtonVariants = cva(
-  "flex items-center gap-2 text-sm shadow-none",
-  {
-    variants: {
-      size: {
-        xs: "h-6 gap-1 rounded-[calc(var(--radius)-3px)] px-1.5 [&>svg:not([class*='size-'])]:size-3.5",
-        sm: "",
-        "icon-xs":
-          "size-6 rounded-[calc(var(--radius)-3px)] p-0 has-[>svg]:p-0",
-        "icon-sm": "size-8 p-0 has-[>svg]:p-0",
-      },
-    },
-    defaultVariants: {
-      size: "xs",
-    },
-  }
-)
-
-function InputGroupButton({
-  className,
-  type = "button",
-  variant = "ghost",
-  size = "xs",
-  ...props
-}: Omit<React.ComponentProps<typeof Button>, "size" | "type"> &
-  VariantProps<typeof inputGroupButtonVariants> & {
-    type?: "button" | "submit" | "reset"
-  }) {
-  return (
-    <Button
-      type={type}
-      data-size={size}
-      variant={variant}
-      className={cn(inputGroupButtonVariants({ size }), className)}
-      {...props}
-    />
-  )
-}
-
-function InputGroupText({ className, ...props }: React.ComponentProps<"span">) {
-  return (
-    <span
-      className={cn(
-        "flex items-center gap-2 text-sm text-muted-foreground [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4",
-        className
-      )}
-      {...props}
-    />
-  )
-}
-
 // The control sheds the field box entirely — border, ground, radius and ring all belong to the
 // group wrapper, which is already painting them. `focus-visible:ring-0` stays: ReUI's ring is a
 // box-shadow, so suppressing it here does NOT suppress a focus indicator — `tokens/base.css`'s
@@ -178,7 +137,7 @@ function InputGroupInput({
     <Input
       data-slot="input-group-control"
       className={cn(
-        "flex-1 min-h-0 max-[721px]:min-h-0 rounded-none border-0 bg-transparent shadow-none ring-0 focus-visible:ring-0 focus-visible:border-0 px-[var(--space-3)] py-[var(--space-2)] max-[721px]:py-[var(--space-3)] text-foreground text-sm leading-[var(--leading-normal)] font-[var(--weight-regular)] font-[family-name:var(--font-sans)] placeholder:text-muted-foreground disabled:bg-transparent",
+        "flex-1 min-h-0 max-[721px]:min-h-0 rounded-none border-0 bg-transparent shadow-none ring-0 focus-visible:ring-0 focus-visible:border-0 px-[var(--space-3)] py-[var(--space-2)] max-[721px]:py-[var(--space-3)] text-foreground text-sm leading-[var(--leading-normal)] font-[var(--weight-regular)] font-[family-name:var(--font-sans)] placeholder:text-muted-foreground disabled:bg-transparent disabled:opacity-100 aria-invalid:ring-0 aria-invalid:border-0",
         className
       )}
       {...props}
@@ -186,27 +145,4 @@ function InputGroupInput({
   )
 }
 
-function InputGroupTextarea({
-  className,
-  ...props
-}: React.ComponentProps<"textarea">) {
-  return (
-    <Textarea
-      data-slot="input-group-control"
-      className={cn(
-        "flex-1 resize-none rounded-none border-0 bg-transparent py-2 shadow-none ring-0 focus-visible:ring-0 disabled:bg-transparent aria-invalid:ring-0 dark:bg-transparent dark:disabled:bg-transparent",
-        className
-      )}
-      {...props}
-    />
-  )
-}
-
-export {
-  InputGroup,
-  InputGroupAddon,
-  InputGroupButton,
-  InputGroupText,
-  InputGroupInput,
-  InputGroupTextarea,
-}
+export { InputGroup, InputGroupAddon, InputGroupInput }
