@@ -7,6 +7,7 @@ import { useEffect, useRef, type ReactNode } from "react";
 import { Draggable } from "@fullcalendar/react/interaction";
 import { ProjectCalendarAnchor } from "./ProductionCalendarEvent";
 import { buttonClasses } from "./quincy/Button";
+import { StatusPill, type StatusTone } from "./quincy/StatusPill";
 
 type UnscheduledFacet = { matched: number; returned: number; truncated: boolean };
 
@@ -37,8 +38,14 @@ function stageLabel(stageKey: string): string {
   return STAGE_LABELS[stageKey] ?? stageKey;
 }
 
+const CAL_PILL = "max-w-full px-[6px] py-[2px] [font:600_9px/1.2_var(--font-sans)] tracking-[.05em] uppercase";
+
+const TONE: Record<"delivered", StatusTone> = {
+  delivered: "positive",
+};
+
 function Pill({ children, tone }: { children: string; tone: "delivered" }) {
-  return <span className={`qc-cal-pill qc-cal-pill--${tone}`}>{children}</span>;
+  return <StatusPill tone={TONE[tone]} className={CAL_PILL}>{children}</StatusPill>;
 }
 
 function CountLine({ facet }: { facet: UnscheduledFacet }) {

@@ -2,6 +2,7 @@ import { useRef, type ReactNode } from "react";
 import type { CalendarEventDto, CalendarUnscheduledEntryDto, ChecklistCalendarEventDto, ChecklistCalendarUnscheduledEntryDto, ProductionCalendarSubview, ProjectDeadlineCalendarEventDto } from "@quincy/shared";
 import { checklistScheduleEditorButtonLabel } from "./ProductionCalendarScheduleEditor";
 import { buttonClasses } from "./quincy/Button";
+import { StatusPill, type StatusTone } from "./quincy/StatusPill";
 
 export type ProjectCalendarAnchorProps = {
   href: string;
@@ -76,8 +77,17 @@ function StageBadge({ stageKey }: { stageKey: string }) {
   return <span className="qc-cal-stage" title={`Stage: ${stageKey}`}>Stage: {stageKey}</span>;
 }
 
+const CAL_PILL = "max-w-full px-[6px] py-[2px] [font:600_9px/1.2_var(--font-sans)] tracking-[.05em] uppercase";
+
+const TONE: Record<"overdue" | "delivered" | "completed" | "overlap", StatusTone> = {
+  overdue: "critical",
+  delivered: "positive",
+  completed: "positive",
+  overlap: "caution",
+};
+
 function Pill({ children, tone }: { children: string; tone: "overdue" | "delivered" | "completed" | "overlap" }) {
-  return <span className={`qc-cal-pill qc-cal-pill--${tone}`}>{children}</span>;
+  return <StatusPill tone={TONE[tone]} className={CAL_PILL}>{children}</StatusPill>;
 }
 
 export type ProductionCalendarEventProps = {
