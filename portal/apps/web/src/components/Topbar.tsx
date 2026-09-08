@@ -35,10 +35,19 @@ const ROW = "grid grid-cols-[minmax(0,1fr)_auto] border-b-[length:var(--border-w
 // the row's own 3px unread rule so the two states read as separate, never collide), press
 // (`active:bg-surface-sunken`), and an inset focus-visible ring (options sit flush inside a
 // bordered, `overflow-auto` panel; an outward ring would clip).
+// The focus utilities are `!`-prefixed, and that is load-bearing rather than defensive. Without
+// it the inward offset silently loses: `tokens/base.css:25` declares an unlayered
+// `:focus-visible { outline: … ; outline-offset: 2px }`, and unlayered author CSS beats Tailwind's
+// `@layer utilities` regardless of specificity — so the ring rendered OUTWARD at +2px, clipping
+// against the panel edge these options sit flush inside, which is the exact thing the inset was
+// added to prevent. Identical mechanism and fix to `AnchoredPopover.tsx`'s `RING_IN`, whose
+// doc comment carries the full reasoning; the offset is spelled as the arbitrary
+// `!outline-offset-[-2px]` rather than `!-outline-offset-2` to match it exactly.
 const HIGHLIGHT_STATE = "border-l-[length:var(--border-width-bold)] border-l-transparent " +
   "data-highlighted:border-l-primary active:bg-surface-sunken outline-none " +
-  "focus-visible:outline-[length:var(--border-width-bold)] focus-visible:outline-solid " +
-  "focus-visible:outline-ring focus-visible:-outline-offset-2";
+  "focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] " +
+  "focus-visible:!outline-solid " +
+  "focus-visible:!outline-ring focus-visible:!outline-offset-[-2px]";
 const ITEM = cn(
   "grid gap-1 py-[var(--space-3)] pr-0 pl-[var(--space-4)] border-0 bg-transparent",
   "text-foreground text-left cursor-pointer no-underline hover:bg-secondary",
