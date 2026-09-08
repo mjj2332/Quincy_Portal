@@ -13,6 +13,10 @@ import { NoticeBoard } from "../components/NoticeBoard";
 import { Button, buttonClasses } from "../components/quincy/Button";
 import { Eyebrow } from "../components/quincy/Eyebrow";
 import { Select, type SelectOption } from "../components/quincy/Select";
+import { Skeleton } from "../components/reui/skeleton";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "../components/reui/input-group";
+import { EmptyState } from "../components/quincy/EmptyState";
+import { Notice } from "../components/quincy/Notice";
 import { cn } from "../lib/utils";
 import { invalidateProjectSurfaces, useOptionalProjectQueryClient } from "../lib/project-data";
 import { createDashboardBoardInvalidatedMessage, getProjectQueryRuntime } from "../lib/project-query-sync";
@@ -940,11 +944,12 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         "mb-[var(--space-4)] pt-[var(--space-4)] [border-top-style:solid] " +
         "border-t-[length:var(--border-width-hair)] border-t-border")}>
         <div className="flex items-center gap-[var(--space-3)] flex-wrap max-[721px]:basis-full">
-          <label className={cn("dashboard-search", "group flex items-center min-w-[300px] px-[var(--space-3)] bg-card border-solid border-[length:var(--border-width-hair)] border-border rounded-[var(--radius-sm)] transition-[border-color] duration-[var(--dur-fast)] ease-[var(--ease-standard)] hover:border-border-hover focus-within:border-primary focus-within:outline-[length:var(--border-width-bold)] focus-within:outline-solid focus-within:outline-ring focus-within:outline-offset-2 max-[721px]:basis-full max-[721px]:min-w-0")}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true" className="size-[15px] shrink-0 text-muted-foreground transition-colors duration-[var(--dur-fast)] ease-[var(--ease-standard)] group-focus-within:text-foreground-secondary"><circle cx="11" cy="11" r="6" /><path d="m16 16 4 4" /></svg>
-            <span className="sr-only">Search projects</span>
-            <input className="min-w-0 w-full py-[var(--space-2)] px-[var(--space-3)] border-0 outline-0 bg-transparent text-foreground [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] placeholder:text-muted-foreground max-[721px]:py-[var(--space-3)]" data-testid="dashboard-search-input" value={query} onChange={(event) => setQuery(sanitizeDashboardCalendarSearch(event.target.value))} placeholder="Search address, suburb, client…" />
-          </label>
+          <InputGroup className="dashboard-search w-auto min-w-[300px] max-[721px]:basis-full max-[721px]:min-w-0">
+            <InputGroupAddon>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true" className="size-[15px] shrink-0"><circle cx="11" cy="11" r="6" /><path d="m16 16 4 4" /></svg>
+            </InputGroupAddon>
+            <InputGroupInput data-testid="dashboard-search-input" aria-label="Search projects" value={query} onChange={(event) => setQuery(sanitizeDashboardCalendarSearch(event.target.value))} placeholder="Search address, suburb, client…" />
+          </InputGroup>
           {canCreateProject && <InternalLink className={buttonClasses()} to="/projects/new">New shoot</InternalLink>}
         </div>
         <div className="flex items-center flex-wrap justify-end gap-x-[var(--space-3)] gap-y-[var(--space-2)] ml-auto max-[721px]:basis-full max-[721px]:justify-start">
@@ -984,7 +989,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       </div>
 
       {boardUnavailableMessage && !viewingArchived && !isCalendarView && (
-        <div role="status" data-testid="board-unavailable-notice" className="flex items-baseline gap-[var(--space-3)] mb-[var(--space-4)] px-[var(--space-4)] py-[var(--space-3)] [border-left-style:solid] border-l-[length:var(--border-width-rule)] border-l-signal-caution bg-[color-mix(in_srgb,var(--signal-caution)_7%,var(--bg-surface))] text-foreground text-[length:var(--text-sm)] leading-[var(--leading-normal)] before:content-['Board'] before:shrink-0 before:[font:var(--type-eyebrow)] before:uppercase before:tracking-[var(--tracking-widest)] before:text-signal-caution-text">{boardUnavailableMessage}</div>
+        <Notice tone="caution" role="status" data-testid="board-unavailable-notice" className="flex items-baseline gap-[var(--space-3)] mb-[var(--space-4)] px-[var(--space-4)] py-[var(--space-3)] before:content-['Board'] before:shrink-0 before:[font:var(--type-eyebrow)] before:uppercase before:tracking-[var(--tracking-widest)] before:text-signal-caution-text text-foreground">{boardUnavailableMessage}</Notice>
       )}
 
       {isCalendarView && (
@@ -1008,28 +1013,26 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
           <span className="absolute size-px overflow-hidden [clip-path:inset(50%)] whitespace-nowrap">{`Loading ${viewingArchived ? "archived " : ""}projects. Preparing the production desk.`}</span>
           {[0, 1, 2, 3, 4].map((row) => (
             <div key={row} className="[display:grid] grid-cols-[72px_minmax(0,1fr)_96px] gap-[var(--space-4)] items-center px-[var(--space-5)] py-[var(--space-3)] [border-top-style:solid] border-t-[length:var(--border-width-hair)] border-t-border first:border-t-0" aria-hidden="true">
-              <div className="h-[var(--space-7)] bg-surface-sunken" />
-              <div className="h-[10px] w-2/5 bg-surface-sunken" />
-              <div className="h-[10px] bg-surface-sunken" />
+              <Skeleton className="h-[var(--space-7)]" />
+              <Skeleton className="h-[10px] w-2/5" />
+              <Skeleton className="h-[10px]" />
             </div>
           ))}
         </div>
       )}
 
       {!isCalendarView && !isLoading && error && (
-        <div role="alert" className="border-solid border-[length:var(--border-width-hair)] border-border [border-left-style:solid] border-l-[length:var(--border-width-rule)] border-l-destructive bg-card px-[var(--space-6)] py-[var(--space-7)] text-left">
-          <span className="[font:var(--type-h2)] text-foreground block mb-[var(--space-3)]">{viewingArchived ? "Archived projects" : "Projects"} are unavailable.</span>
+        <EmptyState tone="error" role="alert" title={`${viewingArchived ? "Archived projects" : "Projects"} are unavailable.`} className="border-solid border-[length:var(--border-width-hair)] border-border bg-card [border-left-style:solid] border-l-[length:var(--border-width-rule)] border-l-destructive">
           {error}
           <div><Button type="button" variant="secondary" className="mt-[var(--space-4)]" onClick={() => void projectsQuery.refetch()}>Try again</Button></div>
-        </div>
+        </EmptyState>
       )}
 
       {!isCalendarView && !isLoading && !error && filteredProjects.length === 0 && (
-        <div className="px-[var(--space-6)] py-[var(--space-8)] text-center text-muted-foreground max-[721px]:px-[var(--space-4)] max-[721px]:py-[var(--space-7)]">
-          <span className="[font:var(--type-h2)] text-foreground-secondary block mb-[var(--space-3)] max-w-[34ch] mx-auto max-[721px]:[font:var(--type-h3)]">{query ? "Nothing here yet." : viewingArchived ? "No archived projects." : "No shoots yet — create the first one."}</span>
+        <EmptyState title={query ? "Nothing here yet." : viewingArchived ? "No archived projects." : "No shoots yet — create the first one."} className="max-[721px]:px-[var(--space-4)] max-[721px]:py-[var(--space-7)] [&>strong]:max-w-[34ch] [&>strong]:mx-auto">
           {query ? "No projects match this search." : viewingArchived ? "Archived projects remain here until they are restored or permanently deleted." : "Start the production desk with the property, client, and team details."}
           {!query && !viewingArchived && canCreateProject && <div><InternalLink className={buttonClasses("primary", { className: "mt-[var(--space-4)]" })} to="/projects/new">New shoot</InternalLink></div>}
-        </div>
+        </EmptyState>
       )}
 
       {!isCalendarView && !isLoading && !error && filteredProjects.length > 0 && (viewingArchived || view === "list") && (
