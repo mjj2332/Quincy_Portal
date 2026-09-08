@@ -5,7 +5,7 @@ import { apiDelete, apiGet, apiPost } from "../lib/api";
 import { InternalLink } from "./InternalLink";
 import { projectNotificationRoute, staffPathFor } from "@quincy/shared";
 import { initials } from "../lib/initials";
-import { Menu } from "./ui/menu";
+import { Menu } from "./quincy/menu";
 import { Button, buttonClasses } from "./ui/button";
 import { cn } from "../lib/utils";
 
