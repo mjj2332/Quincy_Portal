@@ -2,7 +2,7 @@ import { useState, type JSX } from "react";
 import type { Role } from "@quincy/shared";
 import { stopImpersonating, useSession } from "../lib/auth";
 import { locationStore } from "../lib/router";
-import { buttonClasses } from "./ui/button";
+import { buttonClasses } from "./quincy/Button";
 
 export type ImpersonationBannerProps = {
   user: { name: string; role: Role };
@@ -35,6 +35,7 @@ const IDENTITY = "impersonation-banner__identity min-w-0 overflow-hidden text-el
 // stays `--focus-ring` (ink) on an ink strip — E-12 unfixed. This is the same trap as §2.2, met
 // through a token file rather than through `app.css`.
 const EXIT = buttonClasses("text", {
+  insetFocus: true,
   className: "!text-on-inverse-muted hover:not-disabled:!text-on-inverse " +
     "disabled:!text-on-inverse-muted disabled:bg-transparent disabled:border-transparent " +
     "focus-visible:!outline-on-inverse",

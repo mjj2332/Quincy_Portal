@@ -6,7 +6,7 @@ import { InternalLink } from "./InternalLink";
 import { projectNotificationRoute, staffPathFor } from "@quincy/shared";
 import { initials } from "../lib/initials";
 import { Menu } from "./quincy/menu";
-import { Button, buttonClasses } from "./ui/button";
+import { Button, buttonClasses } from "./quincy/Button";
 import { cn } from "../lib/utils";
 
 export type AppView = "dashboard" | "project" | "create-project" | "edit-project" | "admin" | "notifications" | "not-found";
@@ -211,7 +211,7 @@ export function Topbar({ activeView, canAccessAdmin, user, notificationPollMs = 
           >
             <div className={HEAD}>
               <span className="ey">Notifications</span>
-              {unreadCount > 0 && <MenuPrimitive.Item nativeButton closeOnClick={false} render={<Button variant="text" className={HEAD_BUTTON} />} onClick={() => void markAllNotificationsRead()} data-testid="topbar-mark-all-read">Mark all read</MenuPrimitive.Item>}
+              {unreadCount > 0 && <MenuPrimitive.Item nativeButton closeOnClick={false} render={<Button variant="text" insetFocus className={HEAD_BUTTON} />} onClick={() => void markAllNotificationsRead()} data-testid="topbar-mark-all-read">Mark all read</MenuPrimitive.Item>}
             </div>
             {notifications.length === 0 ? <div className={EMPTY} role="none" data-testid="topbar-notifications-empty">You’re all caught up.</div> : notifications.map((notification) => {
               const route = projectNotificationRoute(notification.projectId, notification.type);
