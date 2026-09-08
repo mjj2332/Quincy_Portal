@@ -101,7 +101,7 @@ function NotAvailable() {
     <main className="page">
       <div className="empty" role="status">
         <span className="serif">That page is not available.</span>
-        <InternalLink className={buttonClasses("secondary")} to="/">Return to dashboard</InternalLink>
+        <InternalLink className={buttonClasses("secondary", {})} to="/">Return to dashboard</InternalLink>
       </div>
     </main>
   );

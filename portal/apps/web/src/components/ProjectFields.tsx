@@ -8,7 +8,7 @@ import { QuincyTextareaField } from "@/components/quincy/QuincyTextareaField";
 import { SectionHead } from "@/components/quincy/SectionHead";
 import { Eyebrow } from "@/components/quincy/Eyebrow";
 import { Notice } from "@/components/quincy/Notice";
-import { buttonVariants } from "@/components/reui/button";
+import { buttonClasses } from "@/components/quincy/Button";
 
 export type User = { id: string; name: string; email: string; role: Role; active: boolean };
 export type ProjectForm = {
@@ -190,7 +190,7 @@ export function ProjectFields({ form, errors, existingCollections = [], mode = "
     {mode === "create" && <section className="create-project__section" aria-labelledby="team-heading">
       <SectionHead eyebrow="Team" id="team-heading">Who is assigned?</SectionHead>
       {isLoadingUsers && <div role="status" className={SECTION_NOTE}>Loading available team members…</div>}
-      {!isLoadingUsers && usersError && <Notice role="alert">{usersError}<div className="mt-[var(--space-3)]"><button className={buttonVariants({ variant: "outline" })} type="button" onClick={() => void loadUsers()}>Try again</button></div></Notice>}
+      {!isLoadingUsers && usersError && <Notice role="alert">{usersError}<div className="mt-[var(--space-3)]"><button className={buttonClasses("secondary", {})} type="button" onClick={() => void loadUsers()}>Try again</button></div></Notice>}
       {!isLoadingUsers && !usersError && <div className={FIELD_GRID_2}>
         <div>
           <Eyebrow className="block mb-[var(--space-2)]">Photographers</Eyebrow>

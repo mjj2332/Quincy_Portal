@@ -9,7 +9,8 @@ import { Eyebrow } from "@/components/quincy/Eyebrow";
 import { Input } from "@/components/reui/input";
 import { QuincyField } from "@/components/quincy/QuincyField";
 import { Notice } from "@/components/quincy/Notice";
-import { Button, buttonVariants } from "@/components/reui/button";
+import { Button } from "@/components/reui/button";
+import { buttonClasses } from "@/components/quincy/Button";
 
 type ProjectDetail = { id: string; collections: Array<{ id: string; kind: CollectionKind }>; members: Array<{ id: string }> };
 type FormErrors = Partial<Record<"street" | ProjectFieldError, string>>;
@@ -59,7 +60,7 @@ export function CreateProject({ onNavigate }: { onNavigate: (path: string, notic
         <Eyebrow className="block mb-[var(--space-3)]">Production desk</Eyebrow>
         <h1 className="[font:var(--type-h1)] tracking-[var(--tracking-tight)]">New shoot</h1>
       </div>
-      <InternalLink className={buttonVariants({ variant: "outline" })} to="/">Cancel</InternalLink>
+      <InternalLink className={buttonClasses("secondary", {})} to="/">Cancel</InternalLink>
     </header>
     <form onSubmit={(event) => void submit(event)} noValidate className="create-project__form flex flex-col gap-[var(--space-8)]">
       {submitError && <Notice role="alert">{submitError}</Notice>}
@@ -119,7 +120,7 @@ export function CreateProject({ onNavigate }: { onNavigate: (path: string, notic
         <div className="p-[var(--space-5)] max-[721px]:p-[var(--space-4)] flex flex-col gap-[var(--space-8)]">
           <ProjectFields form={form} errors={errors} onChange={updateField} onToggle={toggleValue} />
           <div className="create-project__actions flex flex-wrap justify-end gap-[var(--space-3)] max-[721px]:flex-col-reverse max-[721px]:[&>*]:w-full">
-            <InternalLink className={buttonVariants({ variant: "outline" })} to="/" aria-disabled={isSubmitting}>Cancel</InternalLink>
+            <InternalLink className={buttonClasses("secondary", {})} to="/" aria-disabled={isSubmitting}>Cancel</InternalLink>
             <Button data-testid="create-project-submit" className={isSubmitting ? "cursor-wait" : undefined} type="submit" disabled={isSubmitting || !form.street.trim()}>{isSubmitting ? "Creating shoot…" : "Create shoot"}</Button>
           </div>
         </div>

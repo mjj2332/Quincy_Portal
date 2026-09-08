@@ -25,30 +25,14 @@ export const TEXT_BUTTON = "min-h-[32px] px-0 py-[6px]";
 
 // `AnchoredPopover.tsx`'s `RING_IN` is an inward, `!`-prefixed outline that popover-hosted
 // controls wear so their focus ring doesn't clip against the panel's `overflow-auto` edge
-// (TB8-07 §4.3). Call sites that push it through `buttonClasses`: `SubtaskChecklist.tsx:172,173,208`
-// and inline equivalents at `ProjectKanbanBoard.tsx:229-231`.
+// (TB8-07 §4.3). It is still needed, and it is now the ONLY focus utility that has to merge here:
+// `reui/button.tsx` no longer emits a ring of its own (divergence 5 there), so `RING_IN`'s
+// `!outline` and the global `:focus-visible` outline are once again the same property, and
+// tailwind-merge collapses them to one winner exactly as it did under `ui/button.tsx`.
 //
-// Under the LEGACY `ui/button.tsx` `buttonClasses`, `RING_IN` alone was enough: the base's
-// `focus-visible:outline-*` and `RING_IN`'s `focus-visible:!outline-*` are the same CSS property
-// (`outline`), so twMerge collapsed them to one winner. Over THIS cva-derived base that is no
-// longer true — ReUI's ring (`focus-visible:border-ring focus-visible:ring-3
-// focus-visible:ring-ring/50`) lives in a different property group (`border-color`/`box-shadow`,
-// not `outline`), so twMerge cannot resolve the conflict and BOTH survive: ReUI's outward ring
-// reappears alongside `RING_IN`'s inward one and gets clipped by the popover panel.
-//
-// `insetFocus` neutralises ReUI's outward ring so only the inward outline paints. The BORDER half
-// of that is variant-sensitive, and getting it wrong deletes a real border rather than restoring
-// resting paint: `secondary` maps to ReUI's `outline` variant, which rests on `border-border`
-// (`reui/button.tsx:37`). Every other variant rests on the cva base's `border-transparent`, so
-// blanking the focus border does restore their resting state. This lives here, keyed by variant,
-// rather than as a constant callers pair by hand — a caller cannot see which variant needs which
-// border, and a hand-paired token shipped exactly that defect (Sol, slice C).
-const INSET_FOCUS: Record<ButtonVariant, string> = {
-  primary: "focus-visible:ring-0 focus-visible:border-transparent",
-  secondary: "focus-visible:ring-0 focus-visible:border-border",
-  danger: "focus-visible:ring-0 focus-visible:border-transparent",
-  text: "focus-visible:ring-0 focus-visible:border-transparent",
-};
+// The `insetFocus` option this file used to carry is GONE. It existed only to zero nova's ring
+// per variant; with no ring emitted it neutralised nothing, and a variant-keyed border map that
+// no longer has a border to restore is rot, not API.
 
 const VARIANT_MAP: Record<ButtonVariant, "default" | "outline" | "destructive" | "ghost"> = {
   primary: "default",
@@ -59,11 +43,10 @@ const VARIANT_MAP: Record<ButtonVariant, "default" | "outline" | "destructive" |
 
 export function buttonClasses(
   variant: ButtonVariant = "primary",
-  opts: { className?: string; insetFocus?: boolean } = {},
+  opts: { className?: string } = {},
 ): string {
   return cn(
     buttonVariants({ variant: VARIANT_MAP[variant] }),
-    opts.insetFocus && INSET_FOCUS[variant],
     // `ui/button.tsx:25` carried `no-underline`: `base.css` has an unlayered `a { color: inherit }`
     // rule (see `reui/button.tsx`'s own comment block for the full cascade-layer reasoning), and
     // `buttonClasses()` renders on real `<a>` elements via `InternalLink`
@@ -75,11 +58,8 @@ export function buttonClasses(
   );
 }
 
-// `insetFocus` was reachable only through `buttonClasses`, not through this component. Forwarded
-// here (and not spread onto the DOM `<button>`) so a component-rendered button can wear the same
-// inward focus treatment as a hand-called `buttonClasses` site.
-function Button({ variant = "primary", className, insetFocus, ...props }: React.ComponentProps<"button"> & { variant?: ButtonVariant; insetFocus?: boolean }) {
-  return <button className={buttonClasses(variant, { className, insetFocus })} {...props} />;
+function Button({ variant = "primary", className, ...props }: React.ComponentProps<"button"> & { variant?: ButtonVariant }) {
+  return <button className={buttonClasses(variant, { className })} {...props} />;
 }
 
 export { Button };
