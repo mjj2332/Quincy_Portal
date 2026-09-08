@@ -1,8 +1,33 @@
 import { useRef, type ReactNode } from "react";
 import type { CalendarEventDto, CalendarUnscheduledEntryDto, ChecklistCalendarEventDto, ChecklistCalendarUnscheduledEntryDto, ProductionCalendarSubview, ProjectDeadlineCalendarEventDto } from "@quincy/shared";
+import { cn } from "@/lib/utils";
 import { checklistScheduleEditorButtonLabel } from "./ProductionCalendarScheduleEditor";
 import { buttonClasses } from "./quincy/Button";
 import { StatusPill, type StatusTone } from "./quincy/StatusPill";
+
+const EVENT_CARD = "min-w-0 px-[8px] py-[7px] border-l-[3px] border-l-solid text-foreground overflow-hidden";
+const EVENT_CARD_KIND: Record<"project_deadline" | "checklist", string> = {
+  project_deadline: "border-l-signal-positive",
+  checklist: "border-l-signal-info",
+};
+const EVENT_CARD_COMPACT =
+  "px-[8px] py-[6px] border border-solid border-border border-l-[3px] bg-background";
+const EVENT_CARD_META =
+  "flex items-center justify-between gap-[8px] min-w-0 text-muted-foreground text-[10px] tracking-[.08em] uppercase";
+const EVENT_CARD_STAGE = "max-w-[55%] overflow-hidden text-ellipsis whitespace-nowrap text-foreground-secondary";
+const EVENT_CARD_H4 = "mt-[3px] mb-0 overflow-hidden text-ellipsis whitespace-nowrap [font:600_13px/1.25_var(--font-sans)]";
+const EVENT_CARD_TITLE = "mt-[3px] mb-0 overflow-hidden text-ellipsis whitespace-nowrap text-foreground-secondary text-[11px]";
+const EVENT_CARD_LINK = "text-inherit no-underline hover:underline hover:underline-offset-2 focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-current focus-visible:outline-offset-2";
+const EVENT_CARD_DETAILS = "grid gap-[2px] mt-[5px] mb-0 text-[11px]";
+const EVENT_CARD_DETAILS_ROW = "flex gap-[4px]";
+const EVENT_CARD_PILLS = "flex flex-wrap gap-[4px] mt-[6px]";
+const EVENT_CARD_ATTENTION = "mt-[8px] mb-0 text-signal-critical [font:400_11px/1.35_var(--font-sans)]";
+// `.qc-cal-event-card__move` + its coarse-block padding/44px floor. `buttonClasses("text")`
+// already carries `max-[721px]:min-h-[44px]` and `px-0`.
+const EVENT_CARD_MOVE =
+  "mt-[8px] p-0 text-[11px] " +
+  "pointer-coarse:min-w-[44px] pointer-coarse:min-h-[44px] pointer-coarse:px-[4px] pointer-coarse:py-[8px] " +
+  "max-[721px]:min-w-[44px] max-[721px]:px-[4px] max-[721px]:py-[8px]";
 
 export type ProjectCalendarAnchorProps = {
   href: string;
@@ -41,7 +66,7 @@ export function ProjectCalendarAnchor({ href, onOpenProject, children }: Project
     resetSuppression();
   };
   return <a
-    className="qc-cal-event-card__project-link"
+    className={EVENT_CARD_LINK}
     data-testid="calendar-project-link"
     href={href}
     onMouseDown={(event) => startPointer(event.clientX, event.clientY)}
@@ -74,7 +99,7 @@ export function ProjectCalendarAnchor({ href, onOpenProject, children }: Project
 }
 
 function StageBadge({ stageKey }: { stageKey: string }) {
-  return <span className="qc-cal-stage" title={`Stage: ${stageKey}`}>Stage: {stageKey}</span>;
+  return <span className={EVENT_CARD_STAGE} title={`Stage: ${stageKey}`}>Stage: {stageKey}</span>;
 }
 
 const CAL_PILL = "max-w-full px-[6px] py-[2px] [font:600_9px/1.2_var(--font-sans)] tracking-[.05em] uppercase";
@@ -102,36 +127,36 @@ export type ProductionCalendarEventProps = {
 };
 
 export function ProductionCalendarEvent({ event, subview, compact = false, onMoveReschedule, onChecklistSchedule, needsAttention = false, projectHref, onOpenProject }: ProductionCalendarEventProps) {
-  const className = `qc-cal-event-card qc-cal-event-card--${event.kind}${compact ? " is-compact" : ""}`;
+  const className = cn("qc-cal-event-card", EVENT_CARD, EVENT_CARD_KIND[event.kind], compact && EVENT_CARD_COMPACT);
   if (event.kind === "project_deadline") {
     return (
       <article className={className} data-event-id={event.id} data-subview={subview} aria-readonly="true" tabIndex={-1} data-testid="calendar-event-card">
-        <div className="qc-cal-event-card__meta"><span>Deadline</span><StageBadge stageKey={event.project.stageKey} /></div>
-        <h4 title={event.project.street}>{projectHref ? <ProjectCalendarAnchor href={projectHref} onOpenProject={onOpenProject}>{event.project.street}</ProjectCalendarAnchor> : event.project.street}</h4>
-        <p className="qc-cal-event-card__title" title={event.title}>{event.title}</p>
-        {!compact && <dl className="qc-cal-event-card__details"><div><dt>Checklist</dt><dd>{event.project.checklist.completed}/{event.project.checklist.total}</dd></div></dl>}
-        <div className="qc-cal-event-card__pills">
+        <div className={EVENT_CARD_META}><span>Deadline</span><StageBadge stageKey={event.project.stageKey} /></div>
+        <h4 className={EVENT_CARD_H4} title={event.project.street}>{projectHref ? <ProjectCalendarAnchor href={projectHref} onOpenProject={onOpenProject}>{event.project.street}</ProjectCalendarAnchor> : event.project.street}</h4>
+        <p className={EVENT_CARD_TITLE} title={event.title}>{event.title}</p>
+        {!compact && <dl className={EVENT_CARD_DETAILS}><div className={EVENT_CARD_DETAILS_ROW}><dt className="text-muted-foreground">Checklist</dt><dd className="m-0">{event.project.checklist.completed}/{event.project.checklist.total}</dd></div></dl>}
+        <div className={EVENT_CARD_PILLS}>
           {event.status.overdue && <Pill tone="overdue">Overdue</Pill>}
           {event.status.delivered && <Pill tone="delivered">Delivered</Pill>}
         </div>
-        {event.permissions.canDrag && onMoveReschedule && <button className={buttonClasses("text", { className: "qc-cal-event-card__move" })} type="button" data-focus-key={`calendar-move:${event.id}`} onClick={() => onMoveReschedule(event)}>Move / Reschedule</button>}
+        {event.permissions.canDrag && onMoveReschedule && <button className={buttonClasses("text", { className: EVENT_CARD_MOVE })} type="button" data-focus-key={`calendar-move:${event.id}`} onClick={() => onMoveReschedule(event)}>Move / Reschedule</button>}
       </article>
     );
   }
 
   return (
     <article className={className} data-event-id={event.id} data-subview={subview} aria-readonly="true" tabIndex={-1} data-testid="calendar-event-card">
-      <div className="qc-cal-event-card__meta"><span>Checklist</span><StageBadge stageKey={event.project.stageKey} /></div>
-      <h4 title={event.title}>{event.title}</h4>
-      <p className="qc-cal-event-card__title" title={event.project.street}>{projectHref ? <ProjectCalendarAnchor href={projectHref} onOpenProject={onOpenProject}>{event.project.street}</ProjectCalendarAnchor> : event.project.street}</p>
-      <dl className="qc-cal-event-card__details"><div><dt>Assignee</dt><dd>{event.assignee?.name ?? "Unassigned"}</dd></div></dl>
-      <div className="qc-cal-event-card__pills">
+      <div className={EVENT_CARD_META}><span>Checklist</span><StageBadge stageKey={event.project.stageKey} /></div>
+      <h4 className={EVENT_CARD_H4} title={event.title}>{event.title}</h4>
+      <p className={EVENT_CARD_TITLE} title={event.project.street}>{projectHref ? <ProjectCalendarAnchor href={projectHref} onOpenProject={onOpenProject}>{event.project.street}</ProjectCalendarAnchor> : event.project.street}</p>
+      <dl className={cn(EVENT_CARD_DETAILS, compact && "mt-[3px]")}><div className={EVENT_CARD_DETAILS_ROW}><dt className="text-muted-foreground">Assignee</dt><dd className="m-0">{event.assignee?.name ?? "Unassigned"}</dd></div></dl>
+      <div className={EVENT_CARD_PILLS}>
         {event.status.completed && <Pill tone="completed">✓ Completed</Pill>}
         {event.status.overdue && <Pill tone="overdue">Overdue</Pill>}
         {event.status.delivered && <Pill tone="delivered">Delivered</Pill>}
         {event.status.sameAssigneeOverlap === true && <Pill tone="overlap">Overlaps another task</Pill>}
       </div>
-      {needsAttention ? <p className="qc-cal-event-card__attention" role="status">Schedule data needs attention. Repair is unavailable in Calendar.</p> : !compact && event.permissions.canOpenScheduleEditor && onChecklistSchedule && <button className={buttonClasses("text", { className: "qc-cal-event-card__move" })} type="button" data-focus-key={`calendar-move:${event.id}`} onClick={() => onChecklistSchedule(event)}>{checklistScheduleEditorButtonLabel(event)}</button>}
+      {needsAttention ? <p className={EVENT_CARD_ATTENTION} role="status">Schedule data needs attention. Repair is unavailable in Calendar.</p> : !compact && event.permissions.canOpenScheduleEditor && onChecklistSchedule && <button className={buttonClasses("text", { className: EVENT_CARD_MOVE })} type="button" data-focus-key={`calendar-move:${event.id}`} onClick={() => onChecklistSchedule(event)}>{checklistScheduleEditorButtonLabel(event)}</button>}
     </article>
   );
 }
@@ -147,11 +172,11 @@ export type ProductionCalendarUnscheduledEntryProps = {
 export function ProductionCalendarUnscheduledEntry({ entry, onChecklistSchedule, projectHref, onOpenProject }: ProductionCalendarUnscheduledEntryProps) {
   const invalid = "attentionReason" in entry && entry.attentionReason === "invalid";
   const legacy = "attentionReason" in entry && entry.attentionReason === "legacy_unresolved";
-  return <article className="qc-cal-event-card qc-cal-event-card--checklist qc-cal-event-card--unscheduled" data-event-id={entry.id} aria-readonly="true">
-    <div className="qc-cal-event-card__meta"><span>Checklist</span><span>Unscheduled</span></div>
-    <h4 title={entry.title}>{entry.title}</h4>
-    <p className="qc-cal-event-card__title" title={entry.project.street}>{projectHref ? <ProjectCalendarAnchor href={projectHref} onOpenProject={onOpenProject}>{entry.project.street}</ProjectCalendarAnchor> : entry.project.street}</p>
-    {invalid ? <p className="qc-cal-event-card__attention" role="status">Schedule data needs attention. Repair is unavailable in Calendar.</p> : onChecklistSchedule && entry.permissions.canOpenScheduleEditor && <button className={buttonClasses("text", { className: "qc-cal-event-card__move" })} type="button" data-focus-key={`calendar-move:${entry.id}`} onClick={() => onChecklistSchedule(entry)}>{legacy ? "Repair schedule" : "Schedule"}</button>}
+  return <article className={cn("qc-cal-event-card", EVENT_CARD, EVENT_CARD_KIND.checklist)} data-event-id={entry.id} aria-readonly="true">
+    <div className={EVENT_CARD_META}><span>Checklist</span><span>Unscheduled</span></div>
+    <h4 className={EVENT_CARD_H4} title={entry.title}>{entry.title}</h4>
+    <p className={EVENT_CARD_TITLE} title={entry.project.street}>{projectHref ? <ProjectCalendarAnchor href={projectHref} onOpenProject={onOpenProject}>{entry.project.street}</ProjectCalendarAnchor> : entry.project.street}</p>
+    {invalid ? <p className={EVENT_CARD_ATTENTION} role="status">Schedule data needs attention. Repair is unavailable in Calendar.</p> : onChecklistSchedule && entry.permissions.canOpenScheduleEditor && <button className={buttonClasses("text", { className: EVENT_CARD_MOVE })} type="button" data-focus-key={`calendar-move:${entry.id}`} onClick={() => onChecklistSchedule(entry)}>{legacy ? "Repair schedule" : "Schedule"}</button>}
   </article>;
 }
 

@@ -111,26 +111,6 @@
 .qc-calendar-state p { margin: 0; }
 .qc-calendar-disclosure { margin-top: 18px; padding: 16px; border: 1px solid var(--border-hairline, #d4cec1); background: var(--paper-000, #faf8f2); }
 .qc-calendar-disclosure__events { display: grid; gap: 8px; margin-top: 12px; }
-.qc-cal-event-card { min-width: 0; padding: 7px 8px; border-left: 3px solid var(--signal-info, #2f3b4d); color: var(--text-primary, #0a0a0a); overflow: hidden; }
-.qc-cal-event-card--project { border-left-color: var(--signal-positive, #3f5b3a); }
-.qc-cal-event-card--checklist { border-left-color: var(--signal-info, #2f3b4d); }
-.qc-cal-event-card.is-compact { padding: 6px 8px; border: 1px solid var(--border-hairline, #d4cec1); border-left-width: 3px; background: var(--paper-050, #fffdf8); }
-.qc-cal-event-card__meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; color: var(--text-muted, #746f64); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
-.qc-cal-stage { max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary, #4d493f); }
-.qc-cal-event-card h4, .qc-cal-event-card__title { margin: 3px 0 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.qc-cal-event-card h4 { font: 600 13px/1.25 var(--font-sans); }
-.qc-cal-event-card__title { color: var(--text-secondary, #4d493f); font-size: 11px; }
-.qc-cal-event-card__project-link { color: inherit; text-decoration: none; }
-.qc-cal-event-card__project-link:hover { text-decoration: underline; text-underline-offset: 2px; }
-.qc-cal-event-card__project-link:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
-.qc-cal-event-card__details { display: grid; gap: 2px; margin: 5px 0 0; font-size: 11px; }
-.qc-cal-event-card__details div { display: flex; gap: 4px; }
-.qc-cal-event-card__details dt { color: var(--text-muted, #746f64); }
-.qc-cal-event-card__details dd { margin: 0; }
-.qc-cal-event-card__pills { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
-.qc-cal-event-card.is-compact .qc-cal-event-card__details { margin-top: 3px; }
-.qc-cal-event-card__move { margin-top: 8px; padding: 0; font-size: 11px; }
-.qc-cal-event-card__attention { margin: 8px 0 0; color: var(--signal-critical, #7a2420); font-size: 11px; line-height: 1.35; }
 .qc-calendar-confirmation { display: grid; gap: 12px; }
 .qc-calendar-confirmation__summary { margin: 0; line-height: 1.45; }
 .qc-calendar-confirmation__list { display: grid; gap: 9px; margin: 0; padding-left: 18px; }
@@ -179,7 +159,6 @@
 /* A Calendar action remains visually compact on desktop, but coarse and
  * phone controls get a real 44px hit area rather than relying on a sensor. */
 @media (pointer: coarse), (max-width: 720px) {
-  .qc-cal-event-card__move,
   .qc-calendar-unscheduled__action,
   .qc-calendar-recovery button,
   [data-modal-variant="calendar"] button {
@@ -187,7 +166,6 @@
     min-height: 44px;
   }
 
-  .qc-cal-event-card__move,
   .qc-calendar-unscheduled__action { padding: 8px 4px; }
   [data-modal-variant="calendar"] :where(input, select) { min-height: 44px; }
 }
