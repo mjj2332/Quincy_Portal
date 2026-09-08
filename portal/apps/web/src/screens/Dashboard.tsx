@@ -972,7 +972,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       )}
 
       {isCalendarView && (
-        <Suspense fallback={<div className="empty qc-calendar-state" role="status">Loading calendar…</div>}>
+        <Suspense fallback={<div className="empty min-h-[180px] grid place-content-center gap-[4px]" role="status">Loading calendar…</div>}>
           <ProductionCalendar
             identity={identity}
             calendar={calendarState}

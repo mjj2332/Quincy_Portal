@@ -104,29 +104,16 @@
   display: none !important;
 }
 
-.qc-calendar-screen { min-width: 0; }
-.qc-calendar-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(250px, 320px); align-items: start; gap: 20px; }
-.qc-calendar-grid { min-width: 0; }
-.qc-calendar-state { min-height: 180px; display: grid; place-content: center; gap: 4px; }
-.qc-calendar-state p { margin: 0; }
-.qc-calendar-disclosure { margin-top: 18px; padding: 16px; border: 1px solid var(--border-hairline, #d4cec1); background: var(--paper-000, #faf8f2); }
-.qc-calendar-disclosure__events { display: grid; gap: 8px; margin-top: 12px; }
 .qc-calendar-move-dialog__fold { display: grid; gap: 8px; margin: 0; padding: 0; border: 0; }
 .qc-calendar-move-dialog__fold legend { margin-bottom: 2px; color: var(--text-muted, #746f64); font-size: 11px; }
 .qc-calendar-move-dialog__fold label { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .qc-calendar-schedule-editor__fold { display: grid; gap: 8px; margin: 2px 0 0; padding: 10px 0 0; border: 0; border-top: 1px solid var(--border-hairline, #d4cec1); }
 .qc-calendar-schedule-editor__fold legend { margin-bottom: 1px; color: var(--text-muted, #746f64); font-size: 11px; }
 .qc-calendar-schedule-editor__fold label { display: flex; align-items: center; gap: 8px; color: var(--text-primary, #0a0a0a); font-size: 12px; }
-.qc-calendar-recovery { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
-
-@media (max-width: 720px) {
-  .qc-calendar-layout { grid-template-columns: 1fr; }
-}
 
 /* A Calendar action remains visually compact on desktop, but coarse and
  * phone controls get a real 44px hit area rather than relying on a sensor. */
 @media (pointer: coarse), (max-width: 720px) {
-  .qc-calendar-recovery button,
   [data-modal-variant="calendar"] button {
     min-width: 44px;
     min-height: 44px;

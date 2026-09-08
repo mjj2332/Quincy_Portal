@@ -1546,7 +1546,7 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
   }, [setOverlay, setSettle]);
 
   return (
-    <section className="qc-calendar-screen" aria-label="Production Calendar" tabIndex={-1} data-focus-key="calendar-safe-fallback" data-reduced-motion={prefersReducedMotion ? "true" : undefined}>
+    <section className="qc-calendar-screen min-w-0" aria-label="Production Calendar" tabIndex={-1} data-focus-key="calendar-safe-fallback" data-reduced-motion={prefersReducedMotion ? "true" : undefined}>
       <ProductionCalendarToolbar calendar={calendar} range={range} onNavigate={(next) => { if (!calendarInteractionBlocked) { clearSettleOnNavigation(); onNavigate(next); } }} />
       <ProductionCalendarFiltersPanel
         filters={productionCalendarFiltersFor(calendar)}
@@ -1556,20 +1556,20 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
         onChange={(next) => { if (!calendarInteractionBlocked) { clearSettleOnNavigation(); onNavigate({ ...calendar, ...next, view: "calendar" }); } }}
       />
 
-      {calendarSettle.recoveryReason && <div className="notice qc-calendar-recovery" data-testid="calendar-recovery-notice" role="alert"><span>{calendarSettle.recoveryReason}</span><button className={buttonClasses("secondary")} type="button" data-focus-key="calendar-recovery" onClick={() => void refreshRecovery()}>Refresh</button></div>}
-      {query.isPending && !query.data && <div className="empty qc-calendar-state" role="status">Loading calendar…</div>}
+      {calendarSettle.recoveryReason && <div className="notice flex items-center justify-between gap-[16px] mb-[16px]" data-testid="calendar-recovery-notice" role="alert"><span>{calendarSettle.recoveryReason}</span><button className={buttonClasses("secondary", { className: "pointer-coarse:min-w-[44px] pointer-coarse:min-h-[44px] max-[721px]:min-w-[44px]" })} type="button" data-focus-key="calendar-recovery" onClick={() => void refreshRecovery()}>Refresh</button></div>}
+      {query.isPending && !query.data && <div className="empty min-h-[180px] grid place-content-center gap-[4px]" role="status">Loading calendar…</div>}
 
       {!query.isPending && query.error && !query.data && (
-        <div className="empty qc-calendar-state" role="alert">
+        <div className="empty min-h-[180px] grid place-content-center gap-[4px]" role="alert">
           <span className="serif">Calendar unavailable.</span>
           {dense ? <><p>That range is too dense — narrow the filters.</p><p>{refinement}</p></> : <p>Calendar could not be loaded. Try again.</p>}
           {!dense && <div style={{ marginTop: 16 }}><button className={buttonClasses("secondary")} type="button" onClick={() => void query.refetch()}>Try again</button></div>}
         </div>
       )}
 
-      {acceptedResponse && !calendarAccessLost && <div className="qc-calendar-layout">
-        <div className="qc-calendar-grid">
-          {acceptedResponse.events.length === 0 && <div className="empty qc-calendar-state" role="status">No scheduled work in this range.</div>}
+      {acceptedResponse && !calendarAccessLost && <div className="grid grid-cols-[minmax(0,1fr)_minmax(250px,320px)] items-start gap-[20px] max-[721px]:grid-cols-1">
+        <div className="min-w-0">
+          {acceptedResponse.events.length === 0 && <div className="empty min-h-[180px] grid place-content-center gap-[4px]" role="status">No scheduled work in this range.</div>}
           <ProductionCalendarSurface
             key={`${calendar.subview}:${calendar.date}`}
             initialView={viewForSubview(calendar.subview)}
@@ -1605,9 +1605,9 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
           />
 
           {calendar.subview === "month" && selectedDay !== null && (
-            <section className="qc-calendar-disclosure" aria-label="Selected day">
+            <section className="mt-[18px] p-[16px] border border-solid border-border bg-card" aria-label="Selected day">
               <div className="ey">Selected day · {selectedDay}</div>
-              {selectedEvents.length === 0 ? <p className="muted">No scheduled work on this day.</p> : <div className="qc-calendar-disclosure__events">{selectedEvents.map((event) => <ProductionCalendarEvent key={event.id} event={event} subview={calendar.subview} compact needsAttention={checklistNeedsAttention.has(event.id)} projectHref={projectHrefFor?.(event.project.id)} onOpenProject={() => onOpenProject?.(event.project.id)} onMoveReschedule={calendarSettle.pending || calendarInteractionBlocked ? undefined : openMoveDialog} />)}</div>}
+              {selectedEvents.length === 0 ? <p className="muted">No scheduled work on this day.</p> : <div className="grid gap-[8px] mt-[12px]">{selectedEvents.map((event) => <ProductionCalendarEvent key={event.id} event={event} subview={calendar.subview} compact needsAttention={checklistNeedsAttention.has(event.id)} projectHref={projectHrefFor?.(event.project.id)} onOpenProject={() => onOpenProject?.(event.project.id)} onMoveReschedule={calendarSettle.pending || calendarInteractionBlocked ? undefined : openMoveDialog} />)}</div>}
             </section>
           )}
         </div>
