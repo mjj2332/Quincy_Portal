@@ -120,13 +120,6 @@
 .qc-cal-filters__groups { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 18px; }
 .qc-cal-filters fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
 .qc-cal-filters legend { margin-bottom: 8px; color: var(--text-muted, #746f64); font: var(--type-eyebrow, 600 10px/1.2 Apfel Grotezk, sans-serif); letter-spacing: .1em; text-transform: uppercase; }
-.qc-cal-filter-options { display: grid; gap: 7px; }
-.qc-cal-filter-option { display: flex; align-items: flex-start; gap: 8px; min-width: 0; color: var(--text-secondary, #4d493f); font-size: 12px; line-height: 1.35; cursor: pointer; }
-.qc-cal-filter-option input { width: 15px; height: 15px; flex: none; margin: 1px 0 0; accent-color: var(--ink-900, #0a0a0a); }
-.qc-cal-filter-option span { min-width: 0; }
-.qc-cal-filter-option strong, .qc-cal-filter-option small { display: block; overflow-wrap: anywhere; }
-.qc-cal-filter-option strong { color: var(--text-primary, #0a0a0a); font-weight: 500; }
-.qc-cal-filter-option small { margin-top: 2px; color: var(--text-muted, #746f64); font-size: 10px; }
 .qc-cal-filters__empty { margin: 8px 0 0; color: var(--text-muted, #746f64); font-size: 11px; }
 .qc-calendar-state { min-height: 180px; display: grid; place-content: center; gap: 4px; }
 .qc-calendar-state p { margin: 0; }
@@ -253,8 +246,6 @@
 
   .qc-cal-event-card__move,
   .qc-calendar-unscheduled__action { padding: 8px 4px; }
-  .qc-cal-filter-option { min-height: 44px; align-items: center; }
-  .qc-cal-filter-option input { width: 24px; height: 24px; }
   [data-modal-variant="calendar"] :where(input, select) { min-height: 44px; }
 }
 
