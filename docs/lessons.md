@@ -1416,3 +1416,33 @@ check cannot pass vacuously.
   `/admin` case returns early on the invalidated-impersonation path. Deleting four of the seven
   route leaves also left the suite green. Adding a new file that asserts every arm of a new
   structure is not ceremony; here it was the only thing standing between this and production.
+
+## An asymmetric guard exempts the one root nothing else checks (#56, 2026-09-09)
+
+Guard A of `config/reui-migration.guard.test.ts` held a root to the purity standard — no legacy
+`components/ui/` primitive left in its closure — only once that root's own closure reached a
+`components/reui/` module. The closure walk stopped at other roots, on purpose: without that rule
+`App.tsx`'s closure would swallow every screen it imports and the guard would degenerate into "is
+anything, anywhere, both migrated and unmigrated" — true forever, meaningless.
+
+`App.tsx` imports the screens, which are themselves roots and therefore leaves under that rule. Its
+own closure was `lib/auth`, `ImpersonationBanner`, `PrincipalFreshnessBoundary`, `lib/stages`,
+`lib/query-client`, `lib/app-router`, `Topbar` — and none of them imported a `components/reui/`
+module. So `App.tsx` read as unmigrated, and the asymmetry — deliberately built to protect
+unmigrated screens from a guard that could never be satisfied — exempted it too.
+
+Result: `Topbar`, `ImpersonationBanner` and `lib/app-router` sat on the legacy button through four
+slices with the guard green the whole time, and #56 arrived believing `components/ui/` was already
+empty because nothing had ever told it otherwise.
+
+The asymmetry itself was RIGHT — without it the first migrated screen fails every other screen just
+for existing. The gap is that the application shell is only ever reachable as an unmigrated root,
+so nothing in the guard's design ever held it to the standard at all.
+
+**Rules.**
+
+- When a guard is deliberately asymmetric, write down which nodes the asymmetry EXEMPTS, and check
+  that something else covers them. An exemption that covers the application shell is not a small
+  exemption.
+- "The directory is empty" is a property to verify directly and cheaply (`ls -A`), not to infer
+  from a green guard whose preconditions you have not re-read.
