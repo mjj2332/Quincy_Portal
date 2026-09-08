@@ -26,7 +26,7 @@ const EDITOR_ENDPOINT_LEGEND = "px-[4px] text-foreground text-[12px] font-semibo
 const EDITOR_ENDPOINT_LABEL = "grid gap-[5px] text-muted-foreground text-[11px]";
 const EDITOR_INPUT = "[font:400_13px/1.3_var(--font-sans)] tracking-normal px-[6px] py-[4px] pointer-coarse:min-h-[44px]";
 const EDITOR_ERROR =
-  "px-[12px] py-[10px] border-l-[3px] border-l-solid border-l-signal-critical " +
+  "px-[12px] py-[10px] border-l-[3px] [border-left-style:solid] border-l-signal-critical " +
   "bg-[color-mix(in_srgb,var(--signal-critical)_8%,transparent)] text-signal-critical " +
   "[font:400_12px/1.4_var(--font-sans)]";
 

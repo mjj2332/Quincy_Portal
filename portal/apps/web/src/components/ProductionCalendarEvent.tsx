@@ -5,7 +5,7 @@ import { checklistScheduleEditorButtonLabel } from "./ProductionCalendarSchedule
 import { buttonClasses } from "./quincy/Button";
 import { StatusPill, type StatusTone } from "./quincy/StatusPill";
 
-const EVENT_CARD = "min-w-0 px-[8px] py-[7px] border-l-[3px] border-l-solid text-foreground overflow-hidden";
+const EVENT_CARD = "min-w-0 px-[8px] py-[7px] border-l-[3px] [border-left-style:solid] text-foreground overflow-hidden";
 const EVENT_CARD_KIND: Record<"project_deadline" | "checklist", string> = {
   project_deadline: "border-l-signal-positive",
   checklist: "border-l-signal-info",
@@ -28,6 +28,16 @@ const EVENT_CARD_MOVE =
   "mt-[8px] p-0 text-[11px] " +
   "pointer-coarse:min-w-[44px] pointer-coarse:min-h-[44px] pointer-coarse:px-[4px] pointer-coarse:py-[8px] " +
   "max-[721px]:min-w-[44px] max-[721px]:px-[4px] max-[721px]:py-[8px]";
+
+/**
+ * Compact cards carry `border-border` from EVENT_CARD_COMPACT, which tailwind-merge treats as
+ * conflicting with `border-l-signal-*` (border-color vs border-color-l). The kind colour must
+ * therefore come LAST or it is silently dropped — no error, and every test stays green.
+ * `ProductionCalendarUnscheduledPanel.tsx` already orders it this way.
+ */
+export function eventCardClassName(kind: "project_deadline" | "checklist", compact = false): string {
+  return cn("qc-cal-event-card", EVENT_CARD, compact && EVENT_CARD_COMPACT, EVENT_CARD_KIND[kind]);
+}
 
 export type ProjectCalendarAnchorProps = {
   href: string;
@@ -127,7 +137,7 @@ export type ProductionCalendarEventProps = {
 };
 
 export function ProductionCalendarEvent({ event, subview, compact = false, onMoveReschedule, onChecklistSchedule, needsAttention = false, projectHref, onOpenProject }: ProductionCalendarEventProps) {
-  const className = cn("qc-cal-event-card", EVENT_CARD, EVENT_CARD_KIND[event.kind], compact && EVENT_CARD_COMPACT);
+  const className = eventCardClassName(event.kind, compact);
   if (event.kind === "project_deadline") {
     return (
       <article className={className} data-event-id={event.id} data-subview={subview} aria-readonly="true" tabIndex={-1} data-testid="calendar-event-card">
@@ -172,7 +182,7 @@ export type ProductionCalendarUnscheduledEntryProps = {
 export function ProductionCalendarUnscheduledEntry({ entry, onChecklistSchedule, projectHref, onOpenProject }: ProductionCalendarUnscheduledEntryProps) {
   const invalid = "attentionReason" in entry && entry.attentionReason === "invalid";
   const legacy = "attentionReason" in entry && entry.attentionReason === "legacy_unresolved";
-  return <article className={cn("qc-cal-event-card", EVENT_CARD, EVENT_CARD_KIND.checklist)} data-event-id={entry.id} aria-readonly="true">
+  return <article className={eventCardClassName("checklist")} data-event-id={entry.id} aria-readonly="true">
     <div className={EVENT_CARD_META}><span>Checklist</span><span>Unscheduled</span></div>
     <h4 className={EVENT_CARD_H4} title={entry.title}>{entry.title}</h4>
     <p className={EVENT_CARD_TITLE} title={entry.project.street}>{projectHref ? <ProjectCalendarAnchor href={projectHref} onOpenProject={onOpenProject}>{entry.project.street}</ProjectCalendarAnchor> : entry.project.street}</p>
