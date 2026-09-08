@@ -9,22 +9,24 @@ import {
   type ChecklistScheduleValidationError,
   type InitialChecklistScheduleInput,
 } from "@quincy/shared";
+import { cn } from "@/lib/utils";
 import { Modal } from "./Modal";
 import { buttonClasses } from "./quincy/Button";
 import { Input } from "./reui/input";
 import { NativeSelect } from "./quincy/NativeSelect";
+import { FIELD_COMPACT } from "./production-calendar-classes";
 
 const EDITOR = "grid gap-[16px]";
 const EDITOR_INTRO = "m-0 text-foreground-secondary [font:400_14px/1.5_var(--font-body-serif)]";
 const EDITOR_STATE = "grid gap-[6px] text-muted-foreground text-[11px] tracking-[.04em]";
 // FIELD_BOX (shared by NativeSelect) already carries the border, radius, field background and the
 // `max-[721px]:min-h-[44px]` floor. `max-w-[360px]` overrides its `w-full`.
-const EDITOR_SELECT = "max-w-[360px] [font:400_13px/1.3_var(--font-sans)] tracking-normal px-[6px] py-[4px] pointer-coarse:min-h-[44px]";
+const EDITOR_SELECT = cn("max-w-[360px]", FIELD_COMPACT);
 const EDITOR_ENDPOINTS = "grid grid-cols-2 gap-[16px] max-[721px]:grid-cols-1";
 const EDITOR_ENDPOINT = "grid gap-[10px] min-w-0 m-0 p-[14px] border border-solid border-border";
 const EDITOR_ENDPOINT_LEGEND = "px-[4px] text-foreground text-[12px] font-semibold";
 const EDITOR_ENDPOINT_LABEL = "grid gap-[5px] text-muted-foreground text-[11px]";
-const EDITOR_INPUT = "[font:400_13px/1.3_var(--font-sans)] tracking-normal px-[6px] py-[4px] pointer-coarse:min-h-[44px]";
+const EDITOR_INPUT = FIELD_COMPACT;
 const EDITOR_ERROR =
   "px-[12px] py-[10px] border-l-[3px] [border-left-style:solid] border-l-signal-critical " +
   "bg-[color-mix(in_srgb,var(--signal-critical)_8%,transparent)] text-signal-critical " +

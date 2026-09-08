@@ -19,6 +19,7 @@ import { InputGroup, InputGroupAddon, InputGroupInput } from "../components/reui
 import { EmptyState } from "../components/quincy/EmptyState";
 import { Notice } from "../components/quincy/Notice";
 import { cn } from "../lib/utils";
+import { CALENDAR_STATE_BOX } from "../components/production-calendar-classes";
 import { invalidateProjectSurfaces, useOptionalProjectQueryClient } from "../lib/project-data";
 import { createDashboardBoardInvalidatedMessage, getProjectQueryRuntime } from "../lib/project-query-sync";
 import { dashboardProjectsKey, useDashboardProjects } from "../lib/dashboard-projects";
@@ -972,7 +973,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       )}
 
       {isCalendarView && (
-        <Suspense fallback={<div className="empty min-h-[180px] grid place-content-center gap-[4px]" role="status">Loading calendar…</div>}>
+        <Suspense fallback={<div className={cn("empty", CALENDAR_STATE_BOX)} role="status">Loading calendar…</div>}>
           <ProductionCalendar
             identity={identity}
             calendar={calendarState}

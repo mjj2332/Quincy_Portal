@@ -70,6 +70,8 @@ import { ProductionCalendarMoveDialog } from "./ProductionCalendarMoveDialog";
 import { ProductionCalendarFoldChoice } from "./ProductionCalendarFoldChoice";
 import { ProductionCalendarScheduleEditor, type ProductionCalendarScheduleEditorError } from "./ProductionCalendarScheduleEditor";
 import { ProductionCalendarUnscheduledPanel, unscheduledChecklistDraggable, unscheduledProjectDraggable } from "./ProductionCalendarUnscheduledPanel";
+import { CALENDAR_STATE_BOX, COARSE_TAP_TARGET } from "./production-calendar-classes";
+import { cn } from "@/lib/utils";
 import { presentationStages, useStages } from "../lib/stages";
 import { useCapabilities } from "../lib/capabilities";
 import { useMediaQuery, usePrefersReducedMotion } from "../lib/use-media-query";
@@ -1556,11 +1558,11 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
         onChange={(next) => { if (!calendarInteractionBlocked) { clearSettleOnNavigation(); onNavigate({ ...calendar, ...next, view: "calendar" }); } }}
       />
 
-      {calendarSettle.recoveryReason && <div className="notice flex items-center justify-between gap-[16px] mb-[16px]" data-testid="calendar-recovery-notice" role="alert"><span>{calendarSettle.recoveryReason}</span><button className={buttonClasses("secondary", { className: "pointer-coarse:min-w-[44px] pointer-coarse:min-h-[44px] max-[721px]:min-w-[44px]" })} type="button" data-focus-key="calendar-recovery" onClick={() => void refreshRecovery()}>Refresh</button></div>}
-      {query.isPending && !query.data && <div className="empty min-h-[180px] grid place-content-center gap-[4px]" role="status">Loading calendar…</div>}
+      {calendarSettle.recoveryReason && <div className="notice flex items-center justify-between gap-[16px] mb-[16px]" data-testid="calendar-recovery-notice" role="alert"><span>{calendarSettle.recoveryReason}</span><button className={buttonClasses("secondary", { className: COARSE_TAP_TARGET })} type="button" data-focus-key="calendar-recovery" onClick={() => void refreshRecovery()}>Refresh</button></div>}
+      {query.isPending && !query.data && <div className={cn("empty", CALENDAR_STATE_BOX)} role="status">Loading calendar…</div>}
 
       {!query.isPending && query.error && !query.data && (
-        <div className="empty min-h-[180px] grid place-content-center gap-[4px]" role="alert">
+        <div className={cn("empty", CALENDAR_STATE_BOX)} role="alert">
           <span className="serif">Calendar unavailable.</span>
           {dense ? <><p>That range is too dense — narrow the filters.</p><p>{refinement}</p></> : <p>Calendar could not be loaded. Try again.</p>}
           {!dense && <div style={{ marginTop: 16 }}><button className={buttonClasses("secondary")} type="button" onClick={() => void query.refetch()}>Try again</button></div>}
@@ -1569,7 +1571,7 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
 
       {acceptedResponse && !calendarAccessLost && <div className="grid grid-cols-[minmax(0,1fr)_minmax(250px,320px)] items-start gap-[20px] max-[721px]:grid-cols-1">
         <div className="min-w-0">
-          {acceptedResponse.events.length === 0 && <div className="empty min-h-[180px] grid place-content-center gap-[4px]" role="status">No scheduled work in this range.</div>}
+          {acceptedResponse.events.length === 0 && <div className={cn("empty", CALENDAR_STATE_BOX)} role="status">No scheduled work in this range.</div>}
           <ProductionCalendarSurface
             key={`${calendar.subview}:${calendar.date}`}
             initialView={viewForSubview(calendar.subview)}

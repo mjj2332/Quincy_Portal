@@ -8,7 +8,8 @@ import { Draggable } from "@fullcalendar/react/interaction";
 import { cn } from "@/lib/utils";
 import { ProjectCalendarAnchor } from "./ProductionCalendarEvent";
 import { buttonClasses } from "./quincy/Button";
-import { StatusPill, type StatusTone } from "./quincy/StatusPill";
+import { StatusPill } from "./quincy/StatusPill";
+import { CAL_PILL, CARD_ACTION, CARD_ATTENTION, CARD_HEADING, CARD_META, CARD_SUBTITLE } from "./production-calendar-classes";
 
 type UnscheduledFacet = { matched: number; returned: number; truncated: boolean };
 
@@ -53,31 +54,14 @@ const PANEL_ROW_KIND: Record<"project" | "checklist", string> = {
 };
 const PANEL_ROW_ATTENTION =
   "border-l-signal-critical bg-[color-mix(in_srgb,var(--signal-critical)_5%,var(--bg-canvas))]";
-const PANEL_ROW_H3 = "mt-[3px] mb-0 overflow-hidden text-ellipsis whitespace-nowrap [font:600_13px/1.25_var(--font-sans)]";
-const PANEL_ROW_P = "mt-[3px] mb-0 overflow-hidden text-ellipsis whitespace-nowrap text-foreground-secondary text-[11px]";
-const PANEL_META =
-  "flex items-center justify-between gap-[8px] min-w-0 text-muted-foreground text-[10px] tracking-[.08em] uppercase";
 const PANEL_FACTS =
   "flex flex-wrap items-center gap-x-[9px] gap-y-[5px] mt-[7px] text-foreground-secondary [font:400_10px/1.35_var(--font-sans)]";
 const PANEL_READONLY = "block mt-[9px] text-muted-foreground text-[10px]";
-const PANEL_ATTENTION_TEXT = "mt-[3px] mb-0 text-signal-critical [font:400_11px/1.35_var(--font-sans)] whitespace-normal";
+const PANEL_ATTENTION_TEXT = cn("mt-[3px]", CARD_ATTENTION, "whitespace-normal");
 const PANEL_EMPTY = "m-0 text-muted-foreground text-[12px]";
 // `.qc-calendar-unscheduled__action` + its coarse-block padding/44px floor. `buttonClasses("text")`
 // already carries `max-[721px]:min-h-[44px]` and `px-0`.
-const PANEL_ACTION =
-  "mt-[9px] p-0 text-[11px] " +
-  "pointer-coarse:min-w-[44px] pointer-coarse:min-h-[44px] pointer-coarse:px-[4px] pointer-coarse:py-[8px] " +
-  "max-[721px]:min-w-[44px] max-[721px]:px-[4px] max-[721px]:py-[8px]";
-
-const CAL_PILL = "max-w-full px-[6px] py-[2px] [font:600_9px/1.2_var(--font-sans)] tracking-[.05em] uppercase";
-
-const TONE: Record<"delivered", StatusTone> = {
-  delivered: "positive",
-};
-
-function Pill({ children, tone }: { children: string; tone: "delivered" }) {
-  return <StatusPill tone={TONE[tone]} className={CAL_PILL}>{children}</StatusPill>;
-}
+const PANEL_ACTION = cn("mt-[9px]", CARD_ACTION);
 
 function CountLine({ facet }: { facet: UnscheduledFacet }) {
   return <div className={PANEL_COUNT}>
@@ -93,12 +77,12 @@ function ProjectContent({ entry, projectHrefFor, onOpenProject }: {
 }) {
   const href = projectHrefFor?.(entry.project.id);
   return <>
-    <div className={PANEL_META}><span>Deadline</span><span>Unscheduled</span></div>
-    <h3 className={PANEL_ROW_H3} title={entry.project.street}>{href ? <ProjectCalendarAnchor href={href} onOpenProject={() => onOpenProject?.(entry.project.id)}>{entry.project.street}</ProjectCalendarAnchor> : entry.project.street}</h3>
-    <p className={PANEL_ROW_P} title={entry.title}>{entry.title}</p>
+    <div className={CARD_META}><span>Deadline</span><span>Unscheduled</span></div>
+    <h3 className={CARD_HEADING} title={entry.project.street}>{href ? <ProjectCalendarAnchor href={href} onOpenProject={() => onOpenProject?.(entry.project.id)}>{entry.project.street}</ProjectCalendarAnchor> : entry.project.street}</h3>
+    <p className={CARD_SUBTITLE} title={entry.title}>{entry.title}</p>
     <div className={PANEL_FACTS}>
       <span>Stage: {stageLabel(entry.project.stageKey)}</span>
-      {entry.project.delivered && <Pill tone="delivered">Delivered</Pill>}
+      {entry.project.delivered && <StatusPill tone="positive" className={CAL_PILL}>Delivered</StatusPill>}
     </div>
   </>;
 }
@@ -110,9 +94,9 @@ function ChecklistContent({ entry, projectHrefFor, onOpenProject }: {
 }) {
   const href = projectHrefFor?.(entry.project.id);
   return <>
-    <div className={PANEL_META}><span>Checklist</span><span>{entry.reason === "schedule_needs_attention" ? "Needs attention" : "Unscheduled"}</span></div>
-    <h3 className={PANEL_ROW_H3} title={entry.title}>{entry.title}</h3>
-    <p className={PANEL_ROW_P} title={entry.project.street}>{href ? <ProjectCalendarAnchor href={href} onOpenProject={() => onOpenProject?.(entry.project.id)}>{entry.project.street}</ProjectCalendarAnchor> : entry.project.street}</p>
+    <div className={CARD_META}><span>Checklist</span><span>{entry.reason === "schedule_needs_attention" ? "Needs attention" : "Unscheduled"}</span></div>
+    <h3 className={CARD_HEADING} title={entry.title}>{entry.title}</h3>
+    <p className={CARD_SUBTITLE} title={entry.project.street}>{href ? <ProjectCalendarAnchor href={href} onOpenProject={() => onOpenProject?.(entry.project.id)}>{entry.project.street}</ProjectCalendarAnchor> : entry.project.street}</p>
     <div className={PANEL_FACTS}>
       <span>Assignee: {entry.assignee?.name ?? "Unassigned"}</span>
       <span>Stage: {stageLabel(entry.project.stageKey)}</span>

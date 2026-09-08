@@ -3,13 +3,14 @@ import type { ProjectDeadlineCalendarEventDto, ProjectDeadlineDisambiguation } f
 import { Modal } from "./Modal";
 import { buttonClasses } from "./quincy/Button";
 import { Input } from "./reui/input";
+import { FIELD_COMPACT } from "./production-calendar-classes";
 
 const MOVE_INPUTS = "grid grid-cols-2 gap-[12px]";
 const MOVE_INPUT_LABEL = "grid gap-[5px] text-muted-foreground text-[11px]";
 // FIELD_BOX (reui/input) already carries `min-h-[38px] max-[721px]:min-h-[44px]`, `border-border`,
 // `rounded-[var(--radius-sm)]`, `bg-[var(--field-bg)]` and `w-full min-w-0`. Only the legacy
 // compact type/padding and the coarse-pointer half of the 44px floor are local.
-const MOVE_INPUT = "[font:400_13px/1.3_var(--font-sans)] tracking-normal px-[6px] py-[4px] pointer-coarse:min-h-[44px]";
+const MOVE_INPUT = FIELD_COMPACT;
 
 export type ProductionCalendarMoveDialogProps = {
   open: boolean;

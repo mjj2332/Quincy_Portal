@@ -1,5 +1,6 @@
 import { buttonClasses } from "./quincy/Button";
 import { Checkbox } from "./quincy/Checkbox";
+import { COARSE_TAP_TARGET } from "./production-calendar-classes";
 import { cn } from "@/lib/utils";
 import {
   PRODUCTION_CALENDAR_LAYERS,
@@ -73,8 +74,7 @@ const FILTERS_LEGEND =
 
 // `.qc-cal-filters button` in the coarse block. `buttonClasses` already ships
 // `max-[721px]:min-h-[44px]`, so only the width floor and the coarse-pointer half are local.
-const FILTERS_CLEAR =
-  "self-start pointer-coarse:min-w-[44px] pointer-coarse:min-h-[44px] max-[721px]:min-w-[44px]";
+const FILTERS_CLEAR = cn("self-start", COARSE_TAP_TARGET);
 
 export function ProductionCalendarFilters({
   filters,

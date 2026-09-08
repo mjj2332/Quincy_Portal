@@ -1,5 +1,6 @@
 import { buttonClasses } from "./quincy/Button";
 import { SEGMENT_GROUP, SEGMENT_BUTTON } from "./quincy/segment";
+import { COARSE_TAP_TARGET } from "./production-calendar-classes";
 import { cn } from "@/lib/utils";
 import {
   formatSydneyCivilMinute,
@@ -26,8 +27,7 @@ const TOOLBAR_VIEWS =
 
 // `.qc-cal-toolbar button` in the coarse block. `buttonClasses` and SEGMENT_BUTTON already ship
 // `max-[721px]:min-h-[44px]`, so only the width floor and the coarse-pointer half are local.
-const TOOLBAR_BUTTON =
-  "pointer-coarse:min-w-[44px] pointer-coarse:min-h-[44px] max-[721px]:min-w-[44px]";
+const TOOLBAR_BUTTON = COARSE_TAP_TARGET;
 
 // `.qc-cal-toolbar__views button { min-width: 72px }`, and `flex: 1` under 720px.
 const TOOLBAR_VIEW_BUTTON = "min-w-[72px] max-[721px]:flex-1";
