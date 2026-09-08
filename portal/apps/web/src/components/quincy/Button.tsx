@@ -75,8 +75,11 @@ export function buttonClasses(
   );
 }
 
-function Button({ variant = "primary", className, ...props }: React.ComponentProps<"button"> & { variant?: ButtonVariant }) {
-  return <button className={buttonClasses(variant, { className })} {...props} />;
+// `insetFocus` was reachable only through `buttonClasses`, not through this component. Forwarded
+// here (and not spread onto the DOM `<button>`) so a component-rendered button can wear the same
+// inward focus treatment as a hand-called `buttonClasses` site.
+function Button({ variant = "primary", className, insetFocus, ...props }: React.ComponentProps<"button"> & { variant?: ButtonVariant; insetFocus?: boolean }) {
+  return <button className={buttonClasses(variant, { className, insetFocus })} {...props} />;
 }
 
 export { Button };
