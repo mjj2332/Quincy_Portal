@@ -22,8 +22,8 @@ import type { MentionableUser } from "./MentionAutocomplete";
 import { confirm } from "../lib/confirm";
 import { cn } from "../lib/utils";
 import { META_TEXT } from "./quincy/Eyebrow";
-import { buttonClasses } from "./ui/button";
-import { StatusPill } from "./ui/status-pill";
+import { buttonClasses } from "./quincy/Button";
+import { StatusPill } from "./quincy/StatusPill";
 import { EmptyState } from "./quincy/EmptyState";
 import { Notice } from "./quincy/Notice";
 

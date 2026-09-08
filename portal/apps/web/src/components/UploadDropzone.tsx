@@ -5,7 +5,7 @@ import { uploadMultipartFile, type MultipartPresign } from "../lib/multipart-upl
 import { useProjectAccessTermination } from "../lib/project-data";
 import { useSession } from "../lib/auth";
 import { ExternalEditedUpload } from "./ExternalEditedUpload";
-import { buttonClasses } from "./ui/button";
+import { buttonClasses } from "./quincy/Button";
 
 type PresignResponse = MultipartPresign & {
   assetId?: string;

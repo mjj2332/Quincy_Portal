@@ -1,7 +1,7 @@
 import { useRef, type ReactNode } from "react";
 import type { CalendarEventDto, CalendarUnscheduledEntryDto, ChecklistCalendarEventDto, ChecklistCalendarUnscheduledEntryDto, ProductionCalendarSubview, ProjectDeadlineCalendarEventDto } from "@quincy/shared";
 import { checklistScheduleEditorButtonLabel } from "./ProductionCalendarScheduleEditor";
-import { buttonClasses } from "./ui/button";
+import { buttonClasses } from "./quincy/Button";
 
 export type ProjectCalendarAnchorProps = {
   href: string;

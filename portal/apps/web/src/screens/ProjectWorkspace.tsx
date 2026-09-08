@@ -12,7 +12,7 @@ import { useCapabilities } from "../lib/capabilities";
 import { InternalLink } from "../components/InternalLink";
 import { ProjectCollaborationPanel } from "../components/ProjectCollaborationPanel";
 import { ProjectOverviewRail } from "../components/ProjectOverviewRail";
-import { buttonClasses } from "../components/ui/button";
+import { buttonClasses } from "../components/quincy/Button";
 import { Eyebrow } from "../components/quincy/Eyebrow";
 import { EmptyState } from "../components/quincy/EmptyState";
 import {

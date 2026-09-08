@@ -1,6 +1,6 @@
 import { useId, useState, type JSX } from "react";
 import { Modal } from "./Modal";
-import { buttonClasses } from "./ui/button";
+import { buttonClasses } from "./quincy/Button";
 
 export type ProductionCalendarFoldChoiceProps = {
   open: boolean;

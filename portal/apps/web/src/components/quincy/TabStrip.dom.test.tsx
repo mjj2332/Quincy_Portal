@@ -2,7 +2,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { TabStrip, type TabItem } from "./tabs";
+import { TabStrip, type TabItem } from "./TabStrip";
 
 let root: Root | null = null;
 let host: HTMLElement;

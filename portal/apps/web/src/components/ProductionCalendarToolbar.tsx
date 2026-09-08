@@ -1,4 +1,4 @@
-import { buttonClasses } from "./ui/button";
+import { buttonClasses } from "./quincy/Button";
 import {
   formatSydneyCivilMinute,
   isSydneyCalendarDate,

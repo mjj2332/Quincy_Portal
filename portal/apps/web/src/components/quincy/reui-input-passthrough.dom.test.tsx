@@ -3,7 +3,11 @@ import { createRoot, type Root } from "react-dom/client";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Input } from "@/components/reui/input";
-import { QuincyField } from "./QuincyField";
+
+// Replicates the prop matrix at `quincy/QuincyField.dom.test.tsx:38-69` against
+// `@/components/reui/input` instead of `@/components/ui/input`, pre-proving slice C's one-token
+// repoint of that file: every prop that survives here today must keep surviving once
+// `QuincyField.tsx` swaps its `Input` import. Do not edit `QuincyField.dom.test.tsx`.
 
 let root: Root | null = null;
 let host: HTMLElement;
@@ -25,17 +29,8 @@ afterEach(async () => {
   host.remove();
 });
 
-describe("QuincyField primitives", () => {
-  it("passes a React 19 ref through to the native input and focuses it", async () => {
-    const ref = createRef<HTMLInputElement>();
-    await render(<QuincyField ref={ref} id="test-field" label="Test field" value="value" onChange={() => undefined} />);
-
-    expect(ref.current).toBeInstanceOf(HTMLInputElement);
-    ref.current!.focus();
-    expect(document.activeElement).toBe(ref.current);
-  });
-
-  it("preserves representative native Input props without adding them to the production fields", async () => {
+describe("reui/input prop passthrough", () => {
+  it("preserves representative native Input props through Base UI's InputPrimitive", async () => {
     const ref = createRef<HTMLInputElement>();
     await render(
       <Input

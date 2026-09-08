@@ -4,7 +4,7 @@ import { LabelDot, Stars } from "./atoms";
 import { LazyImage } from "./LazyImage";
 import { confirm } from "../lib/confirm";
 import { cn } from "../lib/utils";
-import { buttonClasses } from "./ui/button";
+import { buttonClasses } from "./quincy/Button";
 import { REVIEW_LABELS as LABELS } from "./lightbox/review-labels";
 
 export type Review = { stars: number | null; colorLabel: "select" | "maybe" | "cut" | "hero" | null; decision: "approved" | "flagged" | null; recommended: boolean };

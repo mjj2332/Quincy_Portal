@@ -4,9 +4,9 @@ import { cn } from "../lib/utils";
 import { ProjectDiscussionThread, type ProjectDiscussionAccessFailureResource } from "./ProjectDiscussionThread";
 import { ProjectActivityView } from "./ProjectActivityView";
 import { SubtaskChecklist } from "./SubtaskChecklist";
-import { buttonClasses } from "./ui/button";
+import { buttonClasses } from "./quincy/Button";
 import { Eyebrow } from "./quincy/Eyebrow";
-import { TAB_BASE, TAB_IDLE, TAB_SELECTED } from "./ui/tabs";
+import { TAB_BASE, TAB_IDLE, TAB_SELECTED } from "./quincy/TabStrip";
 
 const UNREAD_BADGE =
   "inline-grid place-items-center min-w-[20px] min-h-[20px] mt-[7px] rounded-[var(--radius-pill)] " +

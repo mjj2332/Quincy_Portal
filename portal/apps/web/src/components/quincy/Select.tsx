@@ -3,15 +3,27 @@ import { Select as SelectPrimitive } from "@base-ui/react/select";
 import { ChevronDown } from "lucide-react";
 
 import { cn } from "@/lib/utils";
-import { buttonClasses } from "@/components/ui/button";
+import { buttonClasses } from "@/components/quincy/Button";
 import { OverlayContainerContext } from "@/components/OverlayContainerContext";
 
 // Built on @base-ui/react's Select primitives — already a dependency (portal/package.json) and
-// the foundation this repo's `base-sera` shadcn config is configured against (see input.tsx for
+// the foundation this repo's `base-nova` shadcn config is configured against (see input.tsx for
 // the established `X as XPrimitive` import convention). Base UI's Positioner supplies real
 // collision/flip handling so the popup stays on-screen at 390×844 without any custom viewport
 // math, and the trigger reuses `buttonClasses("secondary", …)` so it carries the exact same
 // press/disabled/focus state set as `Button` — no separate hand-rolled listbox.
+//
+// Deliberately NOT a ReUI/shadcn `select` install. Unlike `quincy/NativeSelect.tsx:6-8` (a real
+// `<select>`, where swapping to a Base UI popup select would trade away the native mobile picker
+// and keyboard model — logged to #57), this file is ALREADY a Base UI popup select, so that
+// argument does not apply here. The honest reason is narrower: this repo's own Base UI Select
+// wiring — the `OverlayContainerContext` nested-overlay handling, the positioner/collision
+// settings, the null-filtering `onValueChange` below — is behaviour a vendor swap would put at
+// risk, unchanged since #48, for no re-skin benefit, since the trigger is the only part that
+// carries the design. This file is `components/ui/select.tsx` ported verbatim, with only the
+// trigger's `buttonClasses("secondary")` re-pointed from `@/components/ui/button` to
+// `@/components/quincy/Button`, so nothing about the popup, keyboard model or native picker
+// changes here. Install nothing.
 
 export type SelectOption<T extends string> = { value: T; label: string };
 

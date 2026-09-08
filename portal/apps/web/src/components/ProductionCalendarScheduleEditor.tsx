@@ -10,7 +10,7 @@ import {
   type InitialChecklistScheduleInput,
 } from "@quincy/shared";
 import { Modal } from "./Modal";
-import { buttonClasses } from "./ui/button";
+import { buttonClasses } from "./quincy/Button";
 
 type ScheduleEvent = ChecklistCalendarEventDto | ChecklistCalendarUnscheduledEntryDto;
 type EndpointKind = "date" | "timed";

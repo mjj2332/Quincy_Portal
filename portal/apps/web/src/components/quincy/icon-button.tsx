@@ -1,6 +1,28 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
 
+// Hand-rolled rather than composed over `reui/button`'s `buttonVariants`, for two reasons:
+//
+// 1. `reui/button.tsx`'s cva base carries `disabled:opacity-50`. An opacity multiplier on an
+//    already-quiet colour is exactly the defect `ICON_BUTTON_BASE` exists to prevent — it took
+//    the Kanban board's disabled drag handle to 1.72:1 (TB8-06) and this surface's drag grip to
+//    2.51:1 (TB8-07 §2.1). `ui/icon-button.dom.test.tsx:52-61` asserts no `opacity-` appears in
+//    any of the three constants below; a cva base that always emits `disabled:opacity-50` cannot
+//    satisfy that.
+// 2. `buttonVariants`'s `size="icon"` is a flat `size-8` with no `min-w`. That can express neither
+//    the 28px desktop / 44px touch-target split nor `META_TRIGGER`'s `shrink w-auto max-w-full
+//    min-w-0` variable-width contract, both of which need `min-h`/`min-w` on the base and `w-` (or
+//    its absence) on the variant.
+//
+// Logged to #57: "give ReUI's button an icon size that does not dim by opacity."
+//
+// Ported verbatim (including comments, for the TB8-06/TB8-07 contrast history) from
+// `components/ui/icon-button.tsx`. **Keep the constant NAMED `ICON_BUTTON_BASE`** —
+// `styles/design-system-guards.test.ts` treats an ALL-CAPS constant carrying a `[font:…]`
+// shorthand as a global "carrier" by name; a differently-named carrier here would retroactively
+// flag `text-[length:…]` usages elsewhere in `src/` that this constant's own font shorthand is
+// meant to license.
+
 /**
  * Shared geometry and states for a glyph affordance: drag grips, overflow menus,
  * popover triggers. Not `buttonClasses("text")` — that is a text control with a

@@ -4,7 +4,7 @@ import { StatusBadge } from "./atoms";
 import { InternalLink } from "./InternalLink";
 import { ProjectTeamControl } from "./ProjectTeamControl";
 import { ProjectDeadlineControl } from "./ProjectDeadlineControl";
-import { buttonClasses } from "./ui/button";
+import { buttonClasses } from "./quincy/Button";
 import { cn } from "../lib/utils";
 import { useStages } from "../lib/stages";
 import { useCapabilities } from "../lib/capabilities";

@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { useSession } from "../lib/auth";
-import { buttonClasses } from "./ui/button";
+import { buttonClasses } from "./quincy/Button";
 import { META_TEXT } from "./quincy/Eyebrow";
 import { EmptyState } from "./quincy/EmptyState";
 import { Notice } from "./quincy/Notice";

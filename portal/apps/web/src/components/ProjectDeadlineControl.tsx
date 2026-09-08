@@ -5,7 +5,7 @@ import { confirm } from "../lib/confirm";
 import { invalidateProjectSurfaces, projectDataKeys, type ProjectDetail } from "../lib/project-data";
 import { useOptionalProjectQueryClient } from "../lib/project-data";
 import { useProjectQueryRuntime } from "../lib/project-query-sync";
-import { buttonClasses } from "./ui/button";
+import { buttonClasses } from "./quincy/Button";
 import { cn } from "../lib/utils";
 import { RAIL_FIELD } from "../lib/rail-field";
 

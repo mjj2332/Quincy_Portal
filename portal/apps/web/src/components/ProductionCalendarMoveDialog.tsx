@@ -1,7 +1,7 @@
 import { useId, useState, type JSX } from "react";
 import type { ProjectDeadlineCalendarEventDto, ProjectDeadlineDisambiguation } from "@quincy/shared";
 import { Modal } from "./Modal";
-import { buttonClasses } from "./ui/button";
+import { buttonClasses } from "./quincy/Button";
 
 export type ProductionCalendarMoveDialogProps = {
   open: boolean;
