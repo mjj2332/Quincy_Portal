@@ -113,14 +113,6 @@
 .qc-cal-toolbar__period strong { font: var(--type-h3, 600 20px/1.2 Apfel Grotezk, sans-serif); letter-spacing: -.02em; }
 .qc-cal-zone { color: var(--text-muted, #746f64); font: var(--type-eyebrow, 600 10px/1.2 Apfel Grotezk, sans-serif); letter-spacing: .1em; text-transform: uppercase; }
 .qc-cal-toolbar__views button { min-width: 72px; }
-.qc-cal-filters { margin: 0 0 20px; padding: 16px; border: 1px solid var(--border-hairline, #d4cec1); background: var(--paper-000, #faf8f2); }
-.qc-cal-filters.is-disabled { opacity: .58; }
-.qc-cal-filters__head { display: flex; align-items: start; justify-content: space-between; gap: 16px; margin-bottom: 15px; }
-.qc-cal-filters__head h2 { margin: 4px 0 0; font: var(--type-h3, 600 20px/1.2 Apfel Grotezk, sans-serif); letter-spacing: -.02em; }
-.qc-cal-filters__groups { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 18px; }
-.qc-cal-filters fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
-.qc-cal-filters legend { margin-bottom: 8px; color: var(--text-muted, #746f64); font: var(--type-eyebrow, 600 10px/1.2 Apfel Grotezk, sans-serif); letter-spacing: .1em; text-transform: uppercase; }
-.qc-cal-filters__empty { margin: 8px 0 0; color: var(--text-muted, #746f64); font-size: 11px; }
 .qc-calendar-state { min-height: 180px; display: grid; place-content: center; gap: 4px; }
 .qc-calendar-state p { margin: 0; }
 .qc-calendar-disclosure { margin-top: 18px; padding: 16px; border: 1px solid var(--border-hairline, #d4cec1); background: var(--paper-000, #faf8f2); }
@@ -221,14 +213,7 @@
   .qc-cal-toolbar__controls, .qc-cal-toolbar__views { justify-content: center; }
   .qc-cal-toolbar__period { order: -1; }
   .qc-cal-toolbar__views button { flex: 1; }
-  .qc-cal-filters__groups { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 12px; }
   .qc-calendar-schedule-editor__endpoints { grid-template-columns: 1fr; }
-}
-
-@media (max-width: 420px) {
-  .qc-cal-filters__head { align-items: stretch; flex-direction: column; gap: 8px; }
-  .qc-cal-filters__head button { align-self: start; }
-  .qc-cal-filters__groups { grid-template-columns: 1fr; }
 }
 
 /* A Calendar action remains visually compact on desktop, but coarse and
@@ -237,7 +222,6 @@
   .qc-cal-event-card__move,
   .qc-calendar-unscheduled__action,
   .qc-cal-toolbar button,
-  .qc-cal-filters button,
   .qc-calendar-recovery button,
   [data-modal-variant="calendar"] button {
     min-width: 44px;

@@ -1,5 +1,6 @@
 import { buttonClasses } from "./quincy/Button";
 import { Checkbox } from "./quincy/Checkbox";
+import { cn } from "@/lib/utils";
 import {
   PRODUCTION_CALENDAR_LAYERS,
   productionCalendarFiltersSchema,
@@ -53,6 +54,28 @@ const FILTER_OPTION =
 const FILTER_OPTION_BOX =
   "mt-[1px] pointer-coarse:size-[24px] max-[721px]:size-[24px]";
 
+const FILTERS_PANEL =
+  "mb-[20px] p-[16px] border border-solid border-border bg-card";
+
+const FILTERS_HEAD =
+  "flex items-start justify-between gap-[16px] mb-[15px] " +
+  "max-[421px]:flex-col max-[421px]:items-stretch max-[421px]:gap-[var(--space-2)]";
+
+const FILTERS_GROUPS =
+  "grid grid-cols-4 gap-[18px] " +
+  "max-[721px]:grid-cols-2 max-[721px]:gap-x-[12px] max-[721px]:gap-y-[16px] " +
+  "max-[421px]:grid-cols-1";
+
+const FILTERS_FIELDSET = "min-w-0 m-0 p-0 border-0";
+
+const FILTERS_LEGEND =
+  "mb-[8px] text-muted-foreground [font:var(--type-eyebrow)] tracking-[.1em] uppercase";
+
+// `.qc-cal-filters button` in the coarse block. `buttonClasses` already ships
+// `max-[721px]:min-h-[44px]`, so only the width floor and the coarse-pointer half are local.
+const FILTERS_CLEAR =
+  "self-start pointer-coarse:min-w-[44px] pointer-coarse:min-h-[44px] max-[721px]:min-w-[44px]";
+
 export function ProductionCalendarFilters({
   filters,
   facetPeople,
@@ -104,18 +127,18 @@ export function ProductionCalendarFilters({
   });
 
   return (
-    <section className={`qc-cal-filters${disabled ? " is-disabled" : ""}`} aria-label="Calendar filters" aria-disabled={disabled || undefined}>
-      <div className="qc-cal-filters__head">
+    <section className={cn(FILTERS_PANEL, disabled && "opacity-[.58]")} aria-label="Calendar filters" aria-disabled={disabled || undefined}>
+      <div className={FILTERS_HEAD}>
         <div>
           <div className="ey">Refine the desk</div>
-          <h2>Calendar filters</h2>
+          <h2 className="mt-[4px] mb-0 [font:var(--type-h3)] tracking-[-.02em]">Calendar filters</h2>
         </div>
-        <button className={buttonClasses("text")} type="button" disabled={disabled} onClick={clearFilters}>Clear filters</button>
+        <button className={buttonClasses("text", { className: FILTERS_CLEAR })} type="button" disabled={disabled} onClick={clearFilters}>Clear filters</button>
       </div>
 
-      <div className="qc-cal-filters__groups">
-        <fieldset disabled={disabled}>
-          <legend>Layers</legend>
+      <div className={FILTERS_GROUPS}>
+        <fieldset disabled={disabled} className={FILTERS_FIELDSET}>
+          <legend className={FILTERS_LEGEND}>Layers</legend>
           <div className={FILTER_OPTIONS}>
             {PRODUCTION_CALENDAR_LAYERS.map((layer) => (
               <label className={FILTER_OPTION} key={layer}>
@@ -126,8 +149,8 @@ export function ProductionCalendarFilters({
           </div>
         </fieldset>
 
-        <fieldset disabled={disabled}>
-          <legend>Editors</legend>
+        <fieldset disabled={disabled} className={FILTERS_FIELDSET}>
+          <legend className={FILTERS_LEGEND}>Editors</legend>
           <div className={FILTER_OPTIONS}>
             {people.map((person) => {
               const id = person.id.toLowerCase();
@@ -143,11 +166,11 @@ export function ProductionCalendarFilters({
               <span className="min-w-0">Unassigned</span>
             </label>
           </div>
-          {people.length === 0 && <p className="qc-cal-filters__empty">No editors in this range</p>}
+          {people.length === 0 && <p className="mt-[8px] mb-0 text-muted-foreground text-[11px]">No editors in this range</p>}
         </fieldset>
 
-        <fieldset disabled={disabled}>
-          <legend>Stages</legend>
+        <fieldset disabled={disabled} className={FILTERS_FIELDSET}>
+          <legend className={FILTERS_LEGEND}>Stages</legend>
           <div className={FILTER_OPTIONS}>
             {stageOptions.map((stage) => (
               <label className={FILTER_OPTION} key={stage.key}>
@@ -158,8 +181,8 @@ export function ProductionCalendarFilters({
           </div>
         </fieldset>
 
-        <fieldset disabled={disabled}>
-          <legend>Show</legend>
+        <fieldset disabled={disabled} className={FILTERS_FIELDSET}>
+          <legend className={FILTERS_LEGEND}>Show</legend>
           <div className={FILTER_OPTIONS}>
             {TOGGLE_OPTIONS.map(([key, label]) => (
               <label className={FILTER_OPTION} key={key}>
