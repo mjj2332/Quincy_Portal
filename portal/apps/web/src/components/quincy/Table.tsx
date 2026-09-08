@@ -1,8 +1,16 @@
 import * as React from "react";
+
 import { cn } from "@/lib/utils";
+import { Table as ReuiTable } from "@/components/reui/table";
+
+// Name-inversion trap: shadcn's `TableHeader` is `<thead>` and its `TableHead` is `<th>`.
+// Quincy's are the exact opposite — `TableHead` is `<thead>`, `TableHeader` is `<th>`. Keeping
+// Quincy's names in this wrapper (and mapping them onto ReUI's own, oppositely-named parts
+// internally) is what kills the trap. Do not "align" these with the vendor.
 
 /* Explicit ARIA roles are mandatory, not decorative: at <=720px the table switches to
-   display:block, which strips the native table semantics the roles then restore. */
+   display:block, which strips the native table semantics the roles then restore. ReUI's table
+   ships no roles at all. */
 
 function TableWrap({ className, ...props }: React.ComponentProps<"div">) {
   return (
@@ -20,9 +28,13 @@ function TableWrap({ className, ...props }: React.ComponentProps<"div">) {
 
 function Table({ className, ...props }: React.ComponentProps<"table">) {
   return (
-    <table
+    <ReuiTable
       role="table"
       data-slot="table"
+      // ReUI's `Table` hardcodes its own `<div className="relative w-full overflow-x-auto">`
+      // wrapper; `containerClassName` (a Stage A addition) is used here to render nothing extra
+      // — Quincy's own `TableWrap` above is the wrapping element Admin composes with.
+      containerClassName="contents"
       className={cn(
         "w-full border-collapse",
         "min-[721px]:min-w-[820px]",

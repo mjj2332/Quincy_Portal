@@ -1362,3 +1362,57 @@ resolved to 403px, proving both were on one line, and the y-difference was `item
 taller left group. The real fault was one level down. A layout assertion that reads bounding boxes
 should check the property that actually distinguishes the hypotheses — here, the resolved auto
 margin — not a proxy for it.
+
+## A router that owns the URL will canonicalise it, and canonical is not the same as valid (#52, 2026-09-08)
+
+Porting navigation to TanStack Router looked like a pure transport swap until the new route-tree
+test caught `/%61dmin` rendering the **real Admin screen**, with the browser URL rewritten to
+`/admin`. The old app left that URL alone and showed "not available", and
+`lib/router.test.ts` has asserted `parseStaffPathname("/%61dmin") === not-found` since the route
+contract was written.
+
+The cause is `@tanstack/react-router`'s `Transitioner`, in a mount-time layout effect
+(`Transitioner.js:26-42`). It rebuilds the location from `router.latestLocation.pathname` — which
+`parseLocation` has already **percent-decoded** — and, when the rebuilt `publicHref` differs from
+what arrived, issues `commitLocation({ replace: true, ignoreBlocker: true })`. It is
+unconditional; there is no option to disable it, and `ignoreBlocker` means a navigation blocker
+cannot stop it either.
+
+Two things made this dangerous rather than cosmetic:
+
+1. **It launders a rejected URL into an accepted one.** Quincy's parser rejects percent-encoded
+   spellings of static segments *on purpose* — canonical staff paths contain no escapes, so an
+   escape is evidence of someone probing. Decoding first and matching second inverts that.
+2. **Sanitising the write did not help.** The rewritten destination `/admin` is a perfectly valid
+   staff route, so `safeStaffDestination` passed it through. A write-side guard cannot catch an
+   attack whose *output* is legitimate; the defect was that the input was ever decoded.
+
+The fix was to stop the router owning the URL: `lib/staff-history.ts` gives it a history whose
+`pushState`/`replaceState` are no-ops, so it observes the location and never writes it. All real
+navigation continues through `locationStore()`, where sanitisation still runs.
+`lib/routing-transport.guard.test.ts` fails the build if anything starts navigating through
+TanStack, because against a read-only history that would silently do nothing.
+
+**The first justification written for that fix was wrong, and the review caught it.** It claimed a
+canonicalising replace "can only fire when the pathname contains an escape that decodes to
+something else". It cannot: `parseHref`'s `sanitizePath` collapses a leading `//`, and a bare `?`
+vanishes through the search codec — two triggers with no escape in them. The conclusion happened to
+survive because those are also parser-rejected, which is exactly what makes this kind of error
+dangerous: a load-bearing sentence that is false but reaches the right answer, and that the next
+person extends into a case where it does not. The claim now stated is the converse, which is the
+one that actually holds — *no location the parser accepts is ever rebuilt differently* — and it is
+a test over every route kind, with a companion assertion proving the rewrite triggers exist so the
+check cannot pass vacuously.
+
+**Rules.**
+
+- **A library that normalises URLs is making a security decision on your behalf.** If your route
+  contract distinguishes spellings — encoding, case, trailing slash, duplicate parameters — check
+  what the library does to the URL *before* your matcher sees it, and what it writes back.
+- **Decode-then-match is the wrong order** whenever a rejected spelling is meaningful. Match the
+  bytes that arrived.
+- **The test that caught this did not exist yet.** The pre-existing suite stayed green through the
+  whole regression, because nothing mounted Admin *through the router* — `App.dom.test.tsx`'s only
+  `/admin` case returns early on the invalidated-impersonation path. Deleting four of the seven
+  route leaves also left the suite green. Adding a new file that asserts every arm of a new
+  structure is not ceremony; here it was the only thing standing between this and production.

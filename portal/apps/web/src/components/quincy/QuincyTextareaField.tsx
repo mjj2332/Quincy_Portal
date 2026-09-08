@@ -1,7 +1,7 @@
 import * as React from "react";
 
-import { Field, FieldError, FieldLabel } from "@/components/ui/field";
-import { Textarea } from "@/components/ui/textarea";
+import { Field, FieldError, FieldLabel } from "@/components/reui/field";
+import { Textarea } from "@/components/reui/textarea";
 
 type QuincyTextareaFieldProps = Omit<React.ComponentProps<typeof Textarea>, "id"> & {
   id: string;

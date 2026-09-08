@@ -8,11 +8,11 @@ import { invalidateProjectSurfaces, projectDataKeys, removeProjectData, useOptio
 import { confirm } from "../lib/confirm";
 import { Eyebrow } from "@/components/quincy/Eyebrow";
 import { SectionHead } from "@/components/quincy/SectionHead";
-import { StatusPill } from "@/components/ui/status-pill";
+import { StatusPill } from "@/components/quincy/StatusPill";
 import { EmptyState } from "@/components/quincy/EmptyState";
 import { Notice } from "@/components/quincy/Notice";
 import { QuincyField } from "@/components/quincy/QuincyField";
-import { buttonClasses } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/reui/button";
 
 type ProjectResponse = {
   id: string; street: string; suburb: string | null; postcode: string | null; agencyName: string | null; agentName: string | null; agentEmail: string | null; agentPhone: string | null;
@@ -131,7 +131,7 @@ export function EditProject({ projectId, onNavigate }: { projectId: string; onNa
         <h1 className="[font:var(--type-h1)] tracking-[var(--tracking-tight)]">Edit shoot</h1>
         {archived && <StatusPill tone="caution" role="status" className="mt-[var(--space-3)]">Archived — hidden from the dashboard</StatusPill>}
       </div>
-      <InternalLink className={buttonClasses("secondary")} to={`/projects/${encodeURIComponent(projectId)}`}>Cancel</InternalLink>
+      <InternalLink className={buttonVariants({ variant: "outline" })} to={`/projects/${encodeURIComponent(projectId)}`}>Cancel</InternalLink>
     </header>
     {canEditProject && (project ? <form data-testid="edit-project-form" className="create-project__form flex flex-col gap-[var(--space-8)]" onSubmit={(event) => void submit(event)} noValidate>
       {submitError && <Notice role="alert">{submitError}</Notice>}
@@ -145,8 +145,8 @@ export function EditProject({ projectId, onNavigate }: { projectId: string; onNa
       </section>
       <ProjectFields form={form} errors={errors} existingCollections={project.collections.map((collection) => collection.kind)} mode="edit" onChange={updateField} onToggle={() => {}} />
       <div className="create-project__actions flex flex-wrap justify-end gap-[var(--space-3)] max-[721px]:flex-col-reverse max-[721px]:[&>*]:w-full">
-        <InternalLink className={buttonClasses("secondary")} to={`/projects/${encodeURIComponent(projectId)}`} aria-disabled={isSubmitting}>Cancel</InternalLink>
-        <button className={buttonClasses("primary", { busy: isSubmitting })} type="submit" disabled={isSubmitting}>{isSubmitting ? "Saving details…" : "Save changes"}</button>
+        <InternalLink className={buttonVariants({ variant: "outline" })} to={`/projects/${encodeURIComponent(projectId)}`} aria-disabled={isSubmitting}>Cancel</InternalLink>
+        <Button className={isSubmitting ? "cursor-wait" : undefined} type="submit" disabled={isSubmitting}>{isSubmitting ? "Saving details…" : "Save changes"}</Button>
       </div>
     </form> : <EmptyState role={loadError ? "alert" : "status"} tone={loadError ? "error" : "empty"} title={loadError ? "Project details unavailable." : "Loading shoot details."}>{loadError ?? "Preparing the form."}</EmptyState>)}
     {canEditProject && project && can("adminBackend") && <section
@@ -161,14 +161,14 @@ export function EditProject({ projectId, onNavigate }: { projectId: string; onNa
           <strong className={DANGER_LABEL}>Archive project</strong>
           <p className={DANGER_COPY}>Archived projects are hidden from the dashboard but remain recoverable.</p>
         </div>
-        <button className={buttonClasses("secondary", { className: "max-[721px]:w-full" })} type="button" disabled={isDangerAction} onClick={() => void archiveProject()}>{isDangerAction ? "Archiving…" : "Archive project"}</button>
+        <Button variant="outline" className="max-[721px]:w-full" type="button" disabled={isDangerAction} onClick={() => void archiveProject()}>{isDangerAction ? "Archiving…" : "Archive project"}</Button>
       </div> : <>
         <div className={`${DANGER_ROW} min-[721px]:grid-cols-[minmax(0,1fr)_auto]`}>
           <div>
             <strong className={DANGER_LABEL}>Restore project</strong>
             <p className={DANGER_COPY}>Return this project to the dashboard and active production work.</p>
           </div>
-          <button className={buttonClasses("secondary", { className: "max-[721px]:w-full" })} type="button" disabled={isDangerAction} onClick={() => void restoreProject()}>{isDangerAction ? "Restoring…" : "Restore project"}</button>
+          <Button variant="outline" className="max-[721px]:w-full" type="button" disabled={isDangerAction} onClick={() => void restoreProject()}>{isDangerAction ? "Restoring…" : "Restore project"}</Button>
         </div>
         <div className={`${DANGER_ROW} min-[721px]:grid-cols-[minmax(0,1fr)_minmax(220px,0.7fr)_auto]`}>
           <div>
@@ -176,7 +176,7 @@ export function EditProject({ projectId, onNavigate }: { projectId: string; onNa
             <p className={DANGER_COPY}>All media in cloud storage will be erased. This cannot be undone.</p>
           </div>
           <QuincyField id="project-delete-confirmation" label={<>Type “{project.street}” to confirm</>} value={deleteConfirmation} onChange={(event) => setDeleteConfirmation(event.target.value)} autoComplete="off" />
-          <button className={buttonClasses("danger", { className: "max-[721px]:w-full" })} type="button" disabled={isDangerAction || !deleteMatchesStreet} onClick={() => void deleteProject()}>{isDangerAction ? "Deleting…" : "Delete project permanently"}</button>
+          <Button variant="destructive" className="max-[721px]:w-full" type="button" disabled={isDangerAction || !deleteMatchesStreet} onClick={() => void deleteProject()}>{isDangerAction ? "Deleting…" : "Delete project permanently"}</Button>
         </div>
       </>}
     </section>}

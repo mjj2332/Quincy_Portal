@@ -1,7 +1,7 @@
 import * as React from "react";
 
-import { Field, FieldError, FieldLabel } from "@/components/ui/field";
-import { NativeSelect } from "@/components/ui/native-select";
+import { Field, FieldError, FieldLabel } from "@/components/reui/field";
+import { NativeSelect } from "@/components/quincy/NativeSelect";
 
 type QuincySelectFieldProps = Omit<React.ComponentProps<typeof NativeSelect>, "id"> & {
   id: string;

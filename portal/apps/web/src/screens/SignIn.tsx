@@ -1,9 +1,8 @@
 import { useState } from "react";
 import { signIn } from "../lib/auth";
-import { cn } from "@/lib/utils";
 import { Eyebrow } from "@/components/quincy/Eyebrow";
-import { buttonClasses } from "@/components/ui/button";
-import { NOTICE_BASE, NOTICE_TONE } from "@/components/quincy/Notice";
+import { Button } from "@/components/reui/button";
+import { Notice } from "@/components/quincy/Notice";
 
 export function SignIn({ pathname }: { pathname: string }) {
   const [error, setError] = useState<string>();
@@ -38,10 +37,13 @@ export function SignIn({ pathname }: { pathname: string }) {
             beat any margin utility Tailwind emits into `@layer utilities`. (§7 case O) */}
         <h1 id="sign-in-title" className="m-0 !mb-[var(--space-4)] [font:var(--type-h1)] max-[721px]:[font:var(--type-h2)] tracking-[var(--tracking-tight)] text-foreground">Welcome back.</h1>
         <p className="max-w-[32ch] !mb-[var(--space-6)] [font:var(--weight-regular)_var(--text-base)/var(--leading-relaxed)_var(--font-sans)] text-foreground-secondary">Sign in to manage your productions, review work, and keep every project moving.</p>
-        <button className={buttonClasses("primary", { busy: isSubmitting, className: "w-full" })} type="button" onClick={handleSignIn} disabled={isSubmitting}>
+        {/* No `busy`/`cursor-wait` here: the cva base in components/reui/button.tsx carries
+            `disabled:pointer-events-none`, and `disabled` below is exactly `isSubmitting`, so a
+            `cursor-wait` class could never render. */}
+        <Button className="w-full" type="button" onClick={handleSignIn} disabled={isSubmitting}>
           {isSubmitting ? "Connecting…" : "Continue with Google"}
-        </button>
-        {error && <div role="alert" className={cn(NOTICE_BASE, NOTICE_TONE.critical, "mt-[var(--space-4)]")}>{error}</div>}
+        </Button>
+        {error && <Notice role="alert" className="mt-[var(--space-4)]">{error}</Notice>}
         <p className="!mt-[var(--space-4)] [font:var(--type-eyebrow)] tracking-[var(--tracking-wide)] text-foreground-secondary">Access is provisioned by your administrator.</p>
       </section>
     </main>

@@ -6,10 +6,10 @@ import { InternalLink } from "../components/InternalLink";
 import { invalidateProjectSurfaces, useOptionalProjectQueryClient } from "../lib/project-data";
 import { cn } from "@/lib/utils";
 import { Eyebrow } from "@/components/quincy/Eyebrow";
-import { FIELD_BOX } from "@/components/ui/input";
+import { Input } from "@/components/reui/input";
 import { QuincyField } from "@/components/quincy/QuincyField";
 import { Notice } from "@/components/quincy/Notice";
-import { buttonClasses } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/reui/button";
 
 type ProjectDetail = { id: string; collections: Array<{ id: string; kind: CollectionKind }>; members: Array<{ id: string }> };
 type FormErrors = Partial<Record<"street" | ProjectFieldError, string>>;
@@ -59,7 +59,7 @@ export function CreateProject({ onNavigate }: { onNavigate: (path: string, notic
         <Eyebrow className="block mb-[var(--space-3)]">Production desk</Eyebrow>
         <h1 className="[font:var(--type-h1)] tracking-[var(--tracking-tight)]">New shoot</h1>
       </div>
-      <InternalLink className={buttonClasses("secondary")} to="/">Cancel</InternalLink>
+      <InternalLink className={buttonVariants({ variant: "outline" })} to="/">Cancel</InternalLink>
     </header>
     <form onSubmit={(event) => void submit(event)} noValidate className="create-project__form flex flex-col gap-[var(--space-8)]">
       {submitError && <Notice role="alert">{submitError}</Notice>}
@@ -80,7 +80,7 @@ export function CreateProject({ onNavigate }: { onNavigate: (path: string, notic
         <div className="create-project__hero-action grid gap-[var(--space-3)] grid-cols-1 min-[721px]:grid-cols-[minmax(0,1fr)_auto]">
           <label className="flex flex-col gap-[6px]">
             <span className="sr-only">Street address</span>
-            <input
+            <Input
               autoFocus
               required
               id="project-street"
@@ -90,15 +90,15 @@ export function CreateProject({ onNavigate }: { onNavigate: (path: string, notic
               aria-invalid={Boolean(errors.street)}
               aria-describedby={errors.street ? "project-street-error" : undefined}
               aria-errormessage={errors.street ? "project-street-error" : undefined}
-              className={cn(FIELD_BOX,
+              className={cn(
                 "min-h-[var(--space-7)] rounded-none px-[16px] py-[12px]",
                 "border-[var(--field-border)]",
                 "[font:var(--weight-regular)_var(--text-lg)/var(--leading-snug)_var(--font-display)]")}
             />
           </label>
-          <button data-testid="create-project-hero-submit" type="submit" className={buttonClasses("primary", { busy: isSubmitting, className: "min-h-[var(--space-7)] max-[721px]:w-full" })} disabled={isSubmitting || !form.street.trim()}>
+          <Button data-testid="create-project-hero-submit" type="submit" className={cn("min-h-[var(--space-7)] max-[721px]:w-full", isSubmitting && "cursor-wait")} disabled={isSubmitting || !form.street.trim()}>
             {isSubmitting ? "Creating shoot…" : "Create shoot"}
-          </button>
+          </Button>
         </div>
 
         {errors.street ? (
@@ -119,8 +119,8 @@ export function CreateProject({ onNavigate }: { onNavigate: (path: string, notic
         <div className="p-[var(--space-5)] max-[721px]:p-[var(--space-4)] flex flex-col gap-[var(--space-8)]">
           <ProjectFields form={form} errors={errors} onChange={updateField} onToggle={toggleValue} />
           <div className="create-project__actions flex flex-wrap justify-end gap-[var(--space-3)] max-[721px]:flex-col-reverse max-[721px]:[&>*]:w-full">
-            <InternalLink className={buttonClasses("secondary")} to="/" aria-disabled={isSubmitting}>Cancel</InternalLink>
-            <button data-testid="create-project-submit" className={buttonClasses("primary", { busy: isSubmitting })} type="submit" disabled={isSubmitting || !form.street.trim()}>{isSubmitting ? "Creating shoot…" : "Create shoot"}</button>
+            <InternalLink className={buttonVariants({ variant: "outline" })} to="/" aria-disabled={isSubmitting}>Cancel</InternalLink>
+            <Button data-testid="create-project-submit" className={isSubmitting ? "cursor-wait" : undefined} type="submit" disabled={isSubmitting || !form.street.trim()}>{isSubmitting ? "Creating shoot…" : "Create shoot"}</Button>
           </div>
         </div>
       </details>

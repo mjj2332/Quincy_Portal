@@ -2,14 +2,13 @@ import { useCallback, useEffect, useState } from "react";
 import type { CollectionKind, Role } from "@quincy/shared";
 import { apiGet } from "../lib/api";
 import { cn } from "@/lib/utils";
-import { FieldGroup } from "@/components/ui/field";
+import { FieldGroup } from "@/components/reui/field";
 import { QuincyField } from "@/components/quincy/QuincyField";
 import { QuincyTextareaField } from "@/components/quincy/QuincyTextareaField";
 import { SectionHead } from "@/components/quincy/SectionHead";
 import { Eyebrow } from "@/components/quincy/Eyebrow";
 import { Notice } from "@/components/quincy/Notice";
-import { buttonClasses } from "@/components/ui/button";
-import { CHECKBOX_INPUT, CHECK_TILE } from "@/components/ui/checkbox";
+import { buttonVariants } from "@/components/reui/button";
 
 export type User = { id: string; name: string; email: string; role: Role; active: boolean };
 export type ProjectForm = {
@@ -37,6 +36,31 @@ export const emptyProjectForm: ProjectForm = {
   shootDate: "", timeWindow: "", orderNo: "", orderId: "", invoiceAmount: "", paymentStatus: "", notes: "", productionNotes: "",
   rawFolderLink: "", rawFolderPath: "", orderedServices: [], photographerUserIds: [], editorUserIds: [],
 };
+
+// Inlined from the legacy `ui/checkbox` primitive, which this file no longer imports. The
+// checklist and services-grid checkboxes stay native `<input type="checkbox">`s, not ReUI's Base
+// UI `Checkbox`: `ProjectFields.test.ts:66,132` match serialised markup on
+// `/<input type="checkbox"[^>]*><span[^>]*>…<\/span>/g`, but Base UI's hidden input orders its
+// props `checked, disabled, form, name, id, required, ref, style, tabIndex, type, …` (so `type`
+// is never first) and renders a `<span role="checkbox">` root *before* that hidden input — the
+// regex would never match. Same device as `screens/NotificationPreferences.tsx`'s `TOGGLE_ROW`.
+const CHECKBOX_INPUT =
+  "size-[18px] shrink-0 m-0 accent-[var(--accent)] cursor-pointer " +
+  "focus-visible:outline-[length:var(--border-width-bold)] focus-visible:outline-solid " +
+  "focus-visible:outline-ring focus-visible:outline-offset-2 " +
+  "disabled:cursor-not-allowed";
+
+/* A bordered, selectable tile: the services grid and the create-mode team checklist. */
+const CHECK_TILE =
+  "flex items-start gap-[var(--space-3)] cursor-pointer " +
+  "min-h-[var(--space-7)] p-[12px] bg-card text-foreground-secondary " +
+  "[font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] " +
+  "transition-[background-color] duration-[var(--dur-fast)] ease-[var(--ease-standard)] " +
+  "hover:bg-secondary has-[:checked]:bg-surface-sunken " +
+  "has-[:focus-visible]:outline-[length:var(--border-width-bold)] has-[:focus-visible]:outline-solid " +
+  "has-[:focus-visible]:outline-ring has-[:focus-visible]:-outline-offset-2 " +
+  "has-[:disabled]:cursor-default has-[:disabled]:text-foreground-secondary " +
+  "has-[:disabled]:bg-surface-sunken has-[:disabled]:hover:bg-surface-sunken";
 
 // The three field-grid shapes, named once and used throughout (§5.14).
 export const FIELD_GRID_4 = "grid gap-[var(--space-4)] grid-cols-1 min-[721px]:grid-cols-2 min-[1081px]:grid-cols-4";
@@ -166,7 +190,7 @@ export function ProjectFields({ form, errors, existingCollections = [], mode = "
     {mode === "create" && <section className="create-project__section" aria-labelledby="team-heading">
       <SectionHead eyebrow="Team" id="team-heading">Who is assigned?</SectionHead>
       {isLoadingUsers && <div role="status" className={SECTION_NOTE}>Loading available team members…</div>}
-      {!isLoadingUsers && usersError && <Notice role="alert">{usersError}<div className="mt-[var(--space-3)]"><button className={buttonClasses("secondary")} type="button" onClick={() => void loadUsers()}>Try again</button></div></Notice>}
+      {!isLoadingUsers && usersError && <Notice role="alert">{usersError}<div className="mt-[var(--space-3)]"><button className={buttonVariants({ variant: "outline" })} type="button" onClick={() => void loadUsers()}>Try again</button></div></Notice>}
       {!isLoadingUsers && !usersError && <div className={FIELD_GRID_2}>
         <div>
           <Eyebrow className="block mb-[var(--space-2)]">Photographers</Eyebrow>
