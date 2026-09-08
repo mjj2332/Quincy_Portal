@@ -1,4 +1,7 @@
 import { buttonClasses } from "./quincy/Button";
+import { SEGMENT_GROUP, SEGMENT_BUTTON } from "./quincy/segment";
+import { COARSE_TAP_TARGET } from "./production-calendar-classes";
+import { cn } from "@/lib/utils";
 import {
   formatSydneyCivilMinute,
   isSydneyCalendarDate,
@@ -7,6 +10,27 @@ import {
   type DashboardCalendarState,
   type ProductionCalendarSubview,
 } from "@quincy/shared";
+
+const TOOLBAR =
+  "grid grid-cols-[auto_1fr_auto] items-center gap-[18px] mb-[18px] pt-[12px] pb-[16px] " +
+  "border-b border-solid border-border " +
+  "max-[721px]:grid-cols-1 max-[721px]:gap-[10px]";
+
+const TOOLBAR_CONTROLS =
+  "flex items-center gap-[6px] max-[721px]:justify-center";
+
+const TOOLBAR_PERIOD =
+  "min-w-0 flex flex-col items-center gap-[3px] text-center max-[721px]:-order-1";
+
+const TOOLBAR_VIEWS =
+  "flex items-center gap-[6px] max-[721px]:justify-center";
+
+// `.qc-cal-toolbar button` in the coarse block. `buttonClasses` and SEGMENT_BUTTON already ship
+// `max-[721px]:min-h-[44px]`, so only the width floor and the coarse-pointer half are local.
+const TOOLBAR_BUTTON = COARSE_TAP_TARGET;
+
+// `.qc-cal-toolbar__views button { min-width: 72px }`, and `flex: 1` under 720px.
+const TOOLBAR_VIEW_BUTTON = "min-w-[72px] max-[721px]:flex-1";
 
 type CalendarRange = { start: string; end: string };
 
@@ -81,18 +105,18 @@ export function ProductionCalendarToolbar({ calendar, range, onNavigate, now = D
   const setSubview = (subview: ProductionCalendarSubview) => onNavigate({ ...calendar, subview });
 
   return (
-    <div className="qc-cal-toolbar" role="toolbar" tabIndex={-1} data-focus-key="calendar-recovery" aria-label={`Production Calendar navigation · ${zoneLabel}`}>
-      <div className="qc-cal-toolbar__controls">
-        <button className={buttonClasses("secondary")} type="button" aria-label="Previous period" onClick={() => move(-1)}>Prev</button>
-        <button className={buttonClasses("secondary")} type="button" onClick={() => onNavigate({ ...calendar, date: todayFor(now) })}>Today</button>
-        <button className={buttonClasses("secondary")} type="button" aria-label="Next period" onClick={() => move(1)}>Next</button>
+    <div className={TOOLBAR} role="toolbar" tabIndex={-1} data-focus-key="calendar-recovery" aria-label={`Production Calendar navigation · ${zoneLabel}`}>
+      <div className={TOOLBAR_CONTROLS}>
+        <button className={buttonClasses("secondary", { className: TOOLBAR_BUTTON })} type="button" aria-label="Previous period" onClick={() => move(-1)}>Prev</button>
+        <button className={buttonClasses("secondary", { className: TOOLBAR_BUTTON })} type="button" onClick={() => onNavigate({ ...calendar, date: todayFor(now) })}>Today</button>
+        <button className={buttonClasses("secondary", { className: TOOLBAR_BUTTON })} type="button" aria-label="Next period" onClick={() => move(1)}>Next</button>
       </div>
-      <div className="qc-cal-toolbar__period">
-        <strong>{periodLabel(calendar, range)}</strong>
-        <span className="qc-cal-zone">{zoneLabel}</span>
+      <div className={TOOLBAR_PERIOD}>
+        <strong className="[font:var(--type-h3)] tracking-[-.02em]">{periodLabel(calendar, range)}</strong>
+        <span className="text-muted-foreground [font:var(--type-eyebrow)] tracking-[.1em] uppercase">{zoneLabel}</span>
       </div>
-      <div className="segment qc-cal-toolbar__views" aria-label="Calendar view">
-        {(["month", "week", "agenda"] as const).map((subview) => <button key={subview} className={calendar.subview === subview ? "is-active" : ""} type="button" aria-pressed={calendar.subview === subview} onClick={() => setSubview(subview)}>{subview[0]!.toUpperCase() + subview.slice(1)}</button>)}
+      <div className={cn(SEGMENT_GROUP, TOOLBAR_VIEWS)} aria-label="Calendar view">
+        {(["month", "week", "agenda"] as const).map((subview) => <button key={subview} className={cn(SEGMENT_BUTTON, TOOLBAR_VIEW_BUTTON, TOOLBAR_BUTTON, calendar.subview === subview && "is-active")} type="button" aria-pressed={calendar.subview === subview} onClick={() => setSubview(subview)}>{subview[0]!.toUpperCase() + subview.slice(1)}</button>)}
       </div>
     </div>
   );

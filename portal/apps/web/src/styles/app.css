@@ -91,16 +91,6 @@ button { font-family: var(--font-sans); }
 .chip .cnt { font-variant-numeric: tabular-nums; opacity: .6; }
 .chip.is-active .cnt { opacity: .8; }
 
-.segment { display: inline-flex; border: 1px solid var(--border-hairline); border-radius: var(--radius-sm); overflow: hidden; background: var(--paper-000); }
-.segment button {
-  font: var(--type-label); font-size: 12px; text-transform: uppercase; letter-spacing: var(--tracking-wide);
-  padding: 7px 14px; background: transparent; border: 0; border-left: 1px solid var(--border-hairline);
-  color: var(--text-secondary); cursor: pointer; transition: all var(--dur-fast);
-}
-.segment button:first-child { border-left: 0; }
-.segment button.is-active { background: var(--ink-900); color: var(--paper-050); }
-.segment button:not(.is-active):hover { background: var(--paper-100); color: var(--text-primary); }
-
 /* status dot */
 .sdot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
 

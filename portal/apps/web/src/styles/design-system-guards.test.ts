@@ -271,11 +271,12 @@ describe("guard: no dead `text-[length:…]` beside a `[font:…]` shorthand", (
 // Guard 3 — a suppressed focus ring in unlayered CSS
 // ---------------------------------------------------------------------------
 /**
- * `index.css` imports `app.css` and `production-calendar.css` **outside** any cascade layer, so a
- * rule in either beats an ordinary Tailwind utility regardless of specificity — and on an equal
- * specificity tie it also beats the global `:focus-visible` in `tokens/base.css`, because that is
- * imported first. An `outline: none | 0 | transparent` there is therefore not a suggestion; it
- * removes the focus indicator and no utility can put it back.
+ * `index.css` imports `app.css` outside any cascade layer, and `production-calendar.css` is
+ * imported the same way from JS at `ProductionCalendarSurface.tsx:8`, so a rule in either beats an
+ * ordinary Tailwind utility regardless of specificity — and on an equal specificity tie it also
+ * beats the global `:focus-visible` in `tokens/base.css`, because that is imported first. An
+ * `outline: none | 0 | transparent` there is therefore not a suggestion; it removes the focus
+ * indicator and no utility can put it back.
  *
  * That is exactly how the Lightbox filmstrip stayed ringless (TB8-09): `.strip__button` set
  * `outline: 2px solid transparent`, tying `:focus-visible` on specificity and winning on source

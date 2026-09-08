@@ -9,8 +9,28 @@ import {
   type ChecklistScheduleValidationError,
   type InitialChecklistScheduleInput,
 } from "@quincy/shared";
+import { cn } from "@/lib/utils";
 import { Modal } from "./Modal";
 import { buttonClasses } from "./quincy/Button";
+import { Input } from "./reui/input";
+import { NativeSelect } from "./quincy/NativeSelect";
+import { FIELD_COMPACT } from "./production-calendar-classes";
+
+const EDITOR = "grid gap-[16px]";
+const EDITOR_INTRO = "m-0 text-foreground-secondary [font:400_14px/1.5_var(--font-body-serif)]";
+const EDITOR_STATE = "grid gap-[6px] text-muted-foreground text-[11px] tracking-[.04em]";
+// FIELD_BOX (shared by NativeSelect) already carries the border, radius, field background and the
+// `max-[721px]:min-h-[44px]` floor. `max-w-[360px]` overrides its `w-full`.
+const EDITOR_SELECT = cn("max-w-[360px]", FIELD_COMPACT);
+const EDITOR_ENDPOINTS = "grid grid-cols-2 gap-[16px] max-[721px]:grid-cols-1";
+const EDITOR_ENDPOINT = "grid gap-[10px] min-w-0 m-0 p-[14px] border border-solid border-border";
+const EDITOR_ENDPOINT_LEGEND = "px-[4px] text-foreground text-[12px] font-semibold";
+const EDITOR_ENDPOINT_LABEL = "grid gap-[5px] text-muted-foreground text-[11px]";
+const EDITOR_INPUT = FIELD_COMPACT;
+const EDITOR_ERROR =
+  "px-[12px] py-[10px] border-l-[3px] [border-left-style:solid] border-l-signal-critical " +
+  "bg-[color-mix(in_srgb,var(--signal-critical)_8%,transparent)] text-signal-critical " +
+  "[font:400_12px/1.4_var(--font-sans)]";
 
 type ScheduleEvent = ChecklistCalendarEventDto | ChecklistCalendarUnscheduledEntryDto;
 type EndpointKind = "date" | "timed";
@@ -111,10 +131,10 @@ export function ProductionCalendarScheduleEditor({ open, event, rangesEnabled, o
     setError((current) => current?.endpoint === which ? undefined : current);
   };
 
-  const endpointFields = (which: "start" | "end", value: EndpointDraft): JSX.Element => <fieldset className="qc-calendar-schedule-editor__endpoint">
-    <legend>{endpointLabel(which)}</legend>
-    <label htmlFor={`${groupId}-${which}-date`}>Date<input id={`${groupId}-${which}-date`} aria-label={`Checklist ${which} date`} type="date" value={value.date} onChange={(input) => setEndpoint(which, { date: input.target.value })} /></label>
-    {draft.kind === "timed" && <label htmlFor={`${groupId}-${which}-time`}>Time<input id={`${groupId}-${which}-time`} aria-label={`Checklist ${which} time`} type="time" step={60} value={value.time} onChange={(input) => setEndpoint(which, { time: input.target.value })} /></label>}
+  const endpointFields = (which: "start" | "end", value: EndpointDraft): JSX.Element => <fieldset className={EDITOR_ENDPOINT}>
+    <legend className={EDITOR_ENDPOINT_LEGEND}>{endpointLabel(which)}</legend>
+    <label className={EDITOR_ENDPOINT_LABEL} htmlFor={`${groupId}-${which}-date`}>Date<Input className={EDITOR_INPUT} id={`${groupId}-${which}-date`} aria-label={`Checklist ${which} date`} type="date" value={value.date} onChange={(input) => setEndpoint(which, { date: input.target.value })} /></label>
+    {draft.kind === "timed" && <label className={EDITOR_ENDPOINT_LABEL} htmlFor={`${groupId}-${which}-time`}>Time<Input className={EDITOR_INPUT} id={`${groupId}-${which}-time`} aria-label={`Checklist ${which} time`} type="time" step={60} value={value.time} onChange={(input) => setEndpoint(which, { time: input.target.value })} /></label>}
     {(() => {
       const localCivil = `${value.date}T${value.time}`;
       const resolved = draft.kind === "timed" && value.date && value.time ? resolveSydneyCivilMinute(localCivil) : null;
@@ -148,25 +168,25 @@ export function ProductionCalendarScheduleEditor({ open, event, rangesEnabled, o
     <button className={buttonClasses("secondary")} type="button" data-testid="calendar-schedule-cancel" onClick={onCancel}>Cancel</button>
     <button className={buttonClasses()} type="button" data-testid="calendar-schedule-submit" onClick={submit}>Save schedule</button>
   </>}>
-    <div className="qc-calendar-schedule-editor">
-      <p className="qc-calendar-schedule-editor__intro">Sydney civil time is saved exactly as entered. Both endpoints use the same mode.</p>
-      <label className="qc-calendar-schedule-editor__state" htmlFor={`${groupId}-state`}>State
-        <select id={`${groupId}-state`} aria-label="Checklist schedule state" value={draft.state} onChange={(input) => setDraft((current) => ({ ...current, state: input.target.value as ScheduleDraft["state"] }))}>
+    <div className={EDITOR}>
+      <p className={EDITOR_INTRO}>Sydney civil time is saved exactly as entered. Both endpoints use the same mode.</p>
+      <label className={EDITOR_STATE} htmlFor={`${groupId}-state`}>State
+        <NativeSelect className={EDITOR_SELECT} id={`${groupId}-state`} aria-label="Checklist schedule state" value={draft.state} onChange={(input) => setDraft((current) => ({ ...current, state: input.target.value as ScheduleDraft["state"] }))}>
           <option value="unscheduled">Unscheduled</option>
           <option value="due_only">Due date only</option>
           <option value="range" disabled={!rangesEnabled}>Range{!rangesEnabled ? " · unavailable" : ""}</option>
-        </select>
+        </NativeSelect>
       </label>
       {draft.state !== "unscheduled" && <>
-        <label className="qc-calendar-schedule-editor__state" htmlFor={`${groupId}-mode`}>Endpoint mode
-          <select id={`${groupId}-mode`} aria-label="Checklist endpoint mode" value={draft.kind} onChange={(input) => setDraft((current) => ({ ...current, kind: input.target.value as EndpointKind }))}>
+        <label className={EDITOR_STATE} htmlFor={`${groupId}-mode`}>Endpoint mode
+          <NativeSelect className={EDITOR_SELECT} id={`${groupId}-mode`} aria-label="Checklist endpoint mode" value={draft.kind} onChange={(input) => setDraft((current) => ({ ...current, kind: input.target.value as EndpointKind }))}>
             <option value="date">Date</option>
             <option value="timed">Timed · Australia/Sydney</option>
-          </select>
+          </NativeSelect>
         </label>
-        {draft.state === "range" ? <div className="qc-calendar-schedule-editor__endpoints">{endpointFields("start", draft.start)}{endpointFields("end", draft.end)}</div> : endpointFields("end", draft.end)}
+        {draft.state === "range" ? <div className={EDITOR_ENDPOINTS}>{endpointFields("start", draft.start)}{endpointFields("end", draft.end)}</div> : endpointFields("end", draft.end)}
       </>}
-      {error && <div className="qc-calendar-schedule-editor__error" role="alert">{errorText(error)}</div>}
+      {error && <div className={EDITOR_ERROR} role="alert">{errorText(error)}</div>}
     </div>
   </Modal>;
 }

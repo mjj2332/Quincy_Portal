@@ -2,6 +2,15 @@ import { useId, useState, type JSX } from "react";
 import type { ProjectDeadlineCalendarEventDto, ProjectDeadlineDisambiguation } from "@quincy/shared";
 import { Modal } from "./Modal";
 import { buttonClasses } from "./quincy/Button";
+import { Input } from "./reui/input";
+import { FIELD_COMPACT } from "./production-calendar-classes";
+
+const MOVE_INPUTS = "grid grid-cols-2 gap-[12px]";
+const MOVE_INPUT_LABEL = "grid gap-[5px] text-muted-foreground text-[11px]";
+// FIELD_BOX (reui/input) already carries `min-h-[38px] max-[721px]:min-h-[44px]`, `border-border`,
+// `rounded-[var(--radius-sm)]`, `bg-[var(--field-bg)]` and `w-full min-w-0`. Only the legacy
+// compact type/padding and the coarse-pointer half of the 44px floor are local.
+const MOVE_INPUT = FIELD_COMPACT;
 
 export type ProductionCalendarMoveDialogProps = {
   open: boolean;
@@ -50,9 +59,9 @@ export function ProductionCalendarMoveDialog({ open, event, initialCivil, foldCh
     <button className={buttonClasses("secondary")} type="button" data-testid="calendar-move-cancel" onClick={onCancel}>Cancel</button>
     <button className={buttonClasses()} type="button" data-testid="calendar-move-submit" disabled={!valid} onClick={() => onSubmit(localCivil, disambiguation)}>Save Deadline</button>
   </>}>
-    <div className="qc-calendar-move-dialog__inputs">
-      <label>Date<input aria-label="Deadline date" type="date" value={date} onChange={(input) => setDate(input.target.value)} /></label>
-      <label>Time<input aria-label="Deadline time" type="time" value={time} onChange={(input) => setTime(input.target.value)} /></label>
+    <div className={MOVE_INPUTS}>
+      <label className={MOVE_INPUT_LABEL}>Date<Input className={MOVE_INPUT} aria-label="Deadline date" type="date" value={date} onChange={(input) => setDate(input.target.value)} /></label>
+      <label className={MOVE_INPUT_LABEL}>Time<Input className={MOVE_INPUT} aria-label="Deadline time" type="time" value={time} onChange={(input) => setTime(input.target.value)} /></label>
     </div>
     <p className="muted">Enter Sydney civil time. The value is not converted to this device’s time zone.</p>
     {foldChoices && foldChoices.length > 0 && <fieldset className="qc-calendar-move-dialog__fold">
