@@ -6,7 +6,7 @@ import type {
 import { useEffect, useRef, type ReactNode } from "react";
 import { Draggable } from "@fullcalendar/react/interaction";
 import { ProjectCalendarAnchor } from "./ProductionCalendarEvent";
-import { buttonClasses } from "./ui/button";
+import { buttonClasses } from "./quincy/Button";
 
 type UnscheduledFacet = { matched: number; returned: number; truncated: boolean };
 

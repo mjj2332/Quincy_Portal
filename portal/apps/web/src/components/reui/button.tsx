@@ -2,7 +2,7 @@ import { Button as ButtonPrimitive } from "@base-ui/react/button"
 import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "@/lib/utils"
 
-// Three corrections to the vendor class string, each marked inline below.
+// Four corrections to the vendor class string, each marked inline below.
 //
 // 1. cva base: nova's bare `text-sm font-medium` is replaced by Quincy's button typography,
 //    ported verbatim from `ui/button.tsx`'s BASE comment. A `[font:…]` shorthand resets
@@ -21,8 +21,15 @@ import { cn } from "@/lib/utils"
 // 3. `variants.size.default`: nova's `h-8` (32px) is re-pointed to Quincy's touch-target
 //    contract, `min-h-[38px] max-[721px]:min-h-[44px]`. 44px is WCAG 2.5.5 Enhanced / HIG, not
 //    a spacing token — see `ui/button.tsx:19-21`.
+//
+// 4. cva base: nova's bare `outline-none` is REMOVED. It is dead — `tokens/base.css:25` declares
+//    an unlayered `:focus-visible { outline: … }`, imported at `index.css:13` outside any layer,
+//    and unlayered author CSS beats Tailwind's `@layer utilities` regardless of specificity, so
+//    the global ring paints anyway. It is not harmless, though: it trips the WCAG 2.4.7
+//    outline-suppression detector at `ProjectDeadlineControl.dom.test.tsx:80`, which every
+//    `buttonClasses()` control is checked against.
 const buttonVariants = cva(
-  "group/button inline-flex shrink-0 items-center justify-center rounded-lg border border-transparent bg-clip-padding [font:var(--weight-regular)_var(--text-xs)/1.2_var(--font-sans)] uppercase tracking-[var(--tracking-wide)] whitespace-nowrap transition-all outline-none select-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 active:not-aria-[haspopup]:translate-y-px disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+  "group/button inline-flex shrink-0 items-center justify-center rounded-lg border border-transparent bg-clip-padding [font:var(--weight-regular)_var(--text-xs)/1.2_var(--font-sans)] uppercase tracking-[var(--tracking-wide)] whitespace-nowrap transition-all select-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 active:not-aria-[haspopup]:translate-y-px disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
   {
     variants: {
       variant: {

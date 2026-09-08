@@ -8,10 +8,10 @@ import { cycleLightboxIndex } from "../lib/lightbox-navigation";
 import { useLightboxNeighborPreload } from "../lib/lightbox-neighbor-preload";
 import { confirm } from "../lib/confirm";
 import { cn } from "../lib/utils";
-import { IconButton, ICON_BUTTON, ICON_BUTTON_BASE } from "./ui/icon-button";
-import { buttonClasses } from "./ui/button";
+import { IconButton, ICON_BUTTON, ICON_BUTTON_BASE } from "./quincy/icon-button";
+import { buttonClasses } from "./quincy/Button";
 import { Eyebrow, META_TEXT } from "./quincy/Eyebrow";
-import { Textarea } from "./ui/textarea";
+import { Textarea } from "./reui/textarea";
 import { REVIEW_LABELS } from "./lightbox/review-labels";
 
 // TB8-09 slice 2: the stage's keyboard-shortcut pill. Three sites of each,

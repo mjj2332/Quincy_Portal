@@ -2,9 +2,8 @@ import { act, createRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { cn } from "@/lib/utils";
 import { buttonVariants } from "@/components/reui/button";
-import { Button, buttonClasses, RING_IN_COMPAT, type ButtonVariant } from "./Button";
+import { Button, buttonClasses, type ButtonVariant } from "./Button";
 
 let root: Root | null = null;
 let host: HTMLElement;
@@ -80,26 +79,57 @@ describe("buttonClasses", () => {
   });
 });
 
-describe("RING_IN_COMPAT", () => {
+describe("buttonClasses insetFocus", () => {
   // Inlined literally rather than imported from `AnchoredPopover.tsx` — this test must not create
   // an import edge from `quincy/` into a consumer.
   const RING_IN =
     "focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] " +
     "focus-visible:!outline-[var(--focus-ring)] focus-visible:!outline-offset-[-2px]";
 
+  const VARIANTS: ButtonVariant[] = ["primary", "secondary", "danger", "text"];
+
   it("RING_IN alone leaves ReUI's outward ring in the merged string — the defect this fix addresses", () => {
-    const classes = buttonClasses("primary", { className: RING_IN });
-    expect(classes).toContain("focus-visible:ring-3");
+    for (const variant of VARIANTS) {
+      expect(buttonClasses(variant, { className: RING_IN })).toContain("focus-visible:ring-3");
+    }
   });
 
-  it("RING_IN + RING_IN_COMPAT drops ReUI's ring while RING_IN's inward outline survives intact", () => {
-    const classes = buttonClasses("primary", { className: cn(RING_IN, RING_IN_COMPAT) });
-    expect(classes).toContain("focus-visible:ring-0");
-    expect(classes).not.toContain("focus-visible:ring-3");
-    expect(classes).not.toContain("focus-visible:border-ring");
-    expect(classes).toContain("focus-visible:!outline-[length:var(--border-width-bold)]");
-    expect(classes).toContain("focus-visible:!outline-[var(--focus-ring)]");
-    expect(classes).toContain("focus-visible:!outline-offset-[-2px]");
+  it("insetFocus drops ReUI's ring on every variant while RING_IN's inward outline survives intact", () => {
+    for (const variant of VARIANTS) {
+      const classes = buttonClasses(variant, { className: RING_IN, insetFocus: true });
+      expect(classes, variant).toContain("focus-visible:ring-0");
+      expect(classes, variant).not.toContain("focus-visible:ring-3");
+      expect(classes, variant).not.toContain("focus-visible:border-ring");
+      expect(classes, variant).toContain("focus-visible:!outline-[length:var(--border-width-bold)]");
+      expect(classes, variant).toContain("focus-visible:!outline-[var(--focus-ring)]");
+      expect(classes, variant).toContain("focus-visible:!outline-offset-[-2px]");
+    }
+  });
+
+  // The border half of the fix is variant-sensitive, and this is the assertion that would have
+  // caught the slice C defect Sol found: `secondary` maps to ReUI's `outline` variant, which RESTS
+  // on `border-border` (`reui/button.tsx:37`). Blanking it to transparent on focus deletes a real
+  // border instead of restoring resting paint. Every other variant does rest on the cva base's
+  // `border-transparent`, so transparent is right for them.
+  it("keeps secondary's resting border while focused, and only blanks the border on variants that rest transparent", () => {
+    expect(buttonClasses("secondary", { className: RING_IN, insetFocus: true }))
+      .toContain("focus-visible:border-border");
+    expect(buttonClasses("secondary", { className: RING_IN, insetFocus: true }))
+      .not.toContain("focus-visible:border-transparent");
+
+    for (const variant of ["primary", "danger", "text"] as ButtonVariant[]) {
+      const classes = buttonClasses(variant, { className: RING_IN, insetFocus: true });
+      expect(classes, variant).toContain("focus-visible:border-transparent");
+      expect(classes, variant).not.toContain("focus-visible:border-border");
+    }
+  });
+
+  it("adds nothing when insetFocus is not requested", () => {
+    for (const variant of VARIANTS) {
+      const classes = buttonClasses(variant);
+      expect(classes, variant).not.toContain("focus-visible:ring-0");
+      expect(classes, variant).toContain("focus-visible:ring-3");
+    }
   });
 });
 

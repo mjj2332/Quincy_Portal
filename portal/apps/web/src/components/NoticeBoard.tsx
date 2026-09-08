@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 import { RichTextContent } from "./RichTextContent";
 import { RichTextEditor } from "./RichTextEditor";
 import { Eyebrow, META_TEXT } from "./quincy/Eyebrow";
-import { buttonClasses } from "./ui/button";
+import { buttonClasses } from "./quincy/Button";
 import { EmptyState } from "./quincy/EmptyState";
 import { Notice } from "./quincy/Notice";
 import type { MentionableUser } from "./MentionAutocomplete";

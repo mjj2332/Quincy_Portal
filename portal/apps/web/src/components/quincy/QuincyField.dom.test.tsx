@@ -2,7 +2,7 @@ import { act, createRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { Input } from "@/components/ui/input";
+import { Input } from "@/components/reui/input";
 import { QuincyField } from "./QuincyField";
 
 let root: Root | null = null;

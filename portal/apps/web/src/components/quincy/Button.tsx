@@ -25,8 +25,8 @@ export const TEXT_BUTTON = "min-h-[32px] px-0 py-[6px]";
 
 // `AnchoredPopover.tsx`'s `RING_IN` is an inward, `!`-prefixed outline that popover-hosted
 // controls wear so their focus ring doesn't clip against the panel's `overflow-auto` edge
-// (TB8-07 §4.3). Two call sites push it through `buttonClasses`: `SubtaskChecklist.tsx:172,173,208`
-// and an inline equivalent at `ProjectKanbanBoard.tsx:229`.
+// (TB8-07 §4.3). Call sites that push it through `buttonClasses`: `SubtaskChecklist.tsx:172,173,208`
+// and inline equivalents at `ProjectKanbanBoard.tsx:229-231`.
 //
 // Under the LEGACY `ui/button.tsx` `buttonClasses`, `RING_IN` alone was enough: the base's
 // `focus-visible:outline-*` and `RING_IN`'s `focus-visible:!outline-*` are the same CSS property
@@ -34,14 +34,21 @@ export const TEXT_BUTTON = "min-h-[32px] px-0 py-[6px]";
 // longer true — ReUI's ring (`focus-visible:border-ring focus-visible:ring-3
 // focus-visible:ring-ring/50`) lives in a different property group (`border-color`/`box-shadow`,
 // not `outline`), so twMerge cannot resolve the conflict and BOTH survive: ReUI's outward ring
-// reappears alongside `RING_IN`'s inward one and gets clipped by the popover panel, which is the
-// defect Button.dom.test.tsx pins. `RING_IN` alone is therefore no longer sufficient once it
-// reaches `buttonClasses` — appending `RING_IN_COMPAT` zeroes ReUI's ring box-shadow and its
-// paired border color, leaving only `RING_IN`'s inward outline visible.
+// reappears alongside `RING_IN`'s inward one and gets clipped by the popover panel.
 //
-// Slice C must append `RING_IN_COMPAT` wherever `RING_IN` (or an inline equivalent, e.g.
-// `ProjectKanbanBoard.tsx:229`) reaches `buttonClasses`.
-export const RING_IN_COMPAT = "focus-visible:ring-0 focus-visible:border-transparent";
+// `insetFocus` neutralises ReUI's outward ring so only the inward outline paints. The BORDER half
+// of that is variant-sensitive, and getting it wrong deletes a real border rather than restoring
+// resting paint: `secondary` maps to ReUI's `outline` variant, which rests on `border-border`
+// (`reui/button.tsx:37`). Every other variant rests on the cva base's `border-transparent`, so
+// blanking the focus border does restore their resting state. This lives here, keyed by variant,
+// rather than as a constant callers pair by hand — a caller cannot see which variant needs which
+// border, and a hand-paired token shipped exactly that defect (Sol, slice C).
+const INSET_FOCUS: Record<ButtonVariant, string> = {
+  primary: "focus-visible:ring-0 focus-visible:border-transparent",
+  secondary: "focus-visible:ring-0 focus-visible:border-border",
+  danger: "focus-visible:ring-0 focus-visible:border-transparent",
+  text: "focus-visible:ring-0 focus-visible:border-transparent",
+};
 
 const VARIANT_MAP: Record<ButtonVariant, "default" | "outline" | "destructive" | "ghost"> = {
   primary: "default",
@@ -50,9 +57,13 @@ const VARIANT_MAP: Record<ButtonVariant, "default" | "outline" | "destructive" |
   text: "ghost",
 };
 
-export function buttonClasses(variant: ButtonVariant = "primary", opts: { className?: string } = {}): string {
+export function buttonClasses(
+  variant: ButtonVariant = "primary",
+  opts: { className?: string; insetFocus?: boolean } = {},
+): string {
   return cn(
     buttonVariants({ variant: VARIANT_MAP[variant] }),
+    opts.insetFocus && INSET_FOCUS[variant],
     // `ui/button.tsx:25` carried `no-underline`: `base.css` has an unlayered `a { color: inherit }`
     // rule (see `reui/button.tsx`'s own comment block for the full cascade-layer reasoning), and
     // `buttonClasses()` renders on real `<a>` elements via `InternalLink`

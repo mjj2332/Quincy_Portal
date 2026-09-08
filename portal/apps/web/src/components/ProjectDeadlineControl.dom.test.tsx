@@ -136,9 +136,10 @@ describe("ProjectDeadlineControl", () => {
     // mount(emptySchedule) below), verified by direct source inspection rather than by this
     // test's own generality. Every outline-related class token this component can ever produce is
     // a hardcoded string literal, from one of three sites local to it: (a) rail-field.ts:11-12 —
-    // RAIL_FIELD, imported here as DEADLINE_FIELD for the date/time inputs; (b) ui/button.tsx:
-    // 27-28 — buttonClasses()'s shared BASE class, applied to every button built through
-    // buttonClasses() (Set/Edit Deadline, Cancel, Resume reminders, Add); and (c)
+    // RAIL_FIELD, imported here as DEADLINE_FIELD for the date/time inputs; (b) reui/button.tsx:32
+    // — buttonVariants()'s cva base string, composed into buttonClasses()'s shared BASE class via
+    // quincy/Button.tsx:53-63, applied to every button built through buttonClasses() (Set/Edit
+    // Deadline, Cancel, Resume reminders, Add); and (c)
     // ProjectDeadlineControl.tsx:264-265 — the custom reminder chip's own remove button, which is
     // hand-written and does NOT go through buttonClasses(). Of these three, only (a) and (b)
     // actually render in this specific test: emptySchedule has no reminders configured yet, so no
@@ -146,12 +147,16 @@ describe("ProjectDeadlineControl", () => {
     // loop below still checks whichever controls emptySchedule does produce. (ProjectOverviewRail.
     // tsx and CollectionPanel.tsx have their own hardcoded outline literals too, but those belong
     // to separate components this test never mounts — out of scope for this inventory, not part
-    // of it.) Each of (a)-(c) keeps the outline visible — `outline-solid` (never `outline-none`/
-    // `outline-hidden`), a non-zero `--border-width-bold` outline width (never `0`/`0px`/an
-    // out-of-scope zero spelling), `outline-ring` (a real color, never `transparent` or an
-    // out-of-scope transparent spelling), and a non-zero offset. None of these three sites
-    // construct their outline classes dynamically, so nothing outside this fixed, inspected set
-    // can ever reach this test's mounted controls' className.
+    // of it.) Each of (a)-(c) keeps the outline visible, but by two different routes. (a) and (c)
+    // spell it out: `outline-solid` (never `outline-none`/`outline-hidden`), a non-zero
+    // `--border-width-bold` outline width (never `0`/`0px`/an out-of-scope zero spelling),
+    // `outline-ring` (a real color, never `transparent` or an out-of-scope transparent spelling),
+    // and a non-zero offset. (b) supplies NO outline utilities at all since #54 slice C removed
+    // the cva base's dead `outline-none` — its buttons stay focus-visible because
+    // `tokens/base.css:25`'s unlayered global `:focus-visible` outline applies and nothing in the
+    // class string suppresses it, which is exactly the property this test's loop checks. None of
+    // these three sites construct their outline classes dynamically, so nothing outside this
+    // fixed, inspected set can ever reach this test's mounted controls' className.
     const host = await mount(emptySchedule);
     await act(async () => { host.querySelector<HTMLButtonElement>("button")!.click(); await Promise.resolve(); });
     const controls = [...host.querySelectorAll<HTMLElement>("input, button")];

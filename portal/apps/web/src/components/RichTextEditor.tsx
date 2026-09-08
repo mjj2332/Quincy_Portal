@@ -12,10 +12,10 @@ import { isHttpUrl, RICH_TEXT_JSON_MAX_BYTES, RICH_TEXT_MAX_NESTING, richTextDoc
 import { cn } from "../lib/utils";
 import { MentionAutocomplete, type MentionAutocompleteHandle, type MentionableUser } from "./MentionAutocomplete";
 import { Modal } from "./Modal";
-import { Button } from "./ui/button";
-import { ICON_BUTTON_BASE } from "./ui/icon-button";
-import { FIELD_BOX } from "./ui/input";
-import { NativeSelect } from "./ui/native-select";
+import { Button } from "./quincy/Button";
+import { ICON_BUTTON_BASE } from "./quincy/icon-button";
+import { FIELD_BOX } from "./reui/input";
+import { NativeSelect } from "./quincy/NativeSelect";
 
 // TB8-07 §6.4 — the editor content box's utilities, appended (as a plain string —
 // `cn()` is not used here; this feeds a Tiptap `editorProps.attributes.class`, a

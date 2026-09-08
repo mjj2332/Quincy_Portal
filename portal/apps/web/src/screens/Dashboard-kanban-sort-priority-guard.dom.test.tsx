@@ -2,7 +2,7 @@
 // (`next === "priority" && (!canPrioritize || !hasAuthorizedBoardMap)`) must refuse a "priority"
 // value even if it somehow reaches `onValueChange` — not merely rely on the option being
 // un-rendered. Since the real <Select> only ever offers rendered options (an unauthorized user
-// can never click "Priority" because it isn't in the list), this file mocks `../components/ui/select`
+// can never click "Priority" because it isn't in the list), this file mocks `../components/quincy/Select`
 // to a bare trigger that can invoke `onValueChange("priority")` directly, bypassing whatever
 // options were actually passed in, so the assertion is against Dashboard's own guard — not
 // against Select's list-filtering, which Dashboard-kanban-sort.dom.test.tsx's test 8 already
@@ -29,7 +29,7 @@ vi.mock("../lib/stages", () => ({
     presentationStageKey: (stageKey: string) => stageKey,
   }),
 }));
-vi.mock("../components/ui/select", () => ({
+vi.mock("../components/quincy/Select", () => ({
   Select: ({ onValueChange, ariaLabel }: { onValueChange: (value: string) => void; ariaLabel: string }) => (
     <button aria-label={ariaLabel} type="button" onClick={() => onValueChange("priority")}>mock sort trigger</button>
   ),

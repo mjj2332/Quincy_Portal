@@ -73,7 +73,7 @@ import { ProductionCalendarUnscheduledPanel, unscheduledChecklistDraggable, unsc
 import { presentationStages, useStages } from "../lib/stages";
 import { useCapabilities } from "../lib/capabilities";
 import { useMediaQuery, usePrefersReducedMotion } from "../lib/use-media-query";
-import { buttonClasses } from "./ui/button";
+import { buttonClasses } from "./quincy/Button";
 
 export type ProductionCalendarProps = {
   identity: DashboardIdentity;

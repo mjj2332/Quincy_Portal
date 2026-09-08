@@ -2,7 +2,7 @@ import { useRef, useState, type ChangeEvent, type DragEvent } from "react";
 import { isAcceptedPhotoFilename } from "@quincy/shared";
 import { apiPost } from "../lib/api";
 import { decodeExternalResponse } from "../lib/external-api-response";
-import { buttonClasses } from "./ui/button";
+import { buttonClasses } from "./quincy/Button";
 
 type UploadPart = { partNumber: number; uploadUrl: string; expectedBytes: number };
 type UploadPlan = { sessionToken: string; parts: UploadPart[]; completeUrl: string; abortUrl: string };

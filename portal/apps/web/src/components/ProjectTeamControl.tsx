@@ -3,7 +3,7 @@ import type { ProjectMemberRole } from "@quincy/shared";
 import { ApiError, apiDeleteWithBody, apiPutWithStatus } from "../lib/api";
 import { AnchoredPopover, useAnchoredPopover } from "./AnchoredPopover";
 import { confirm } from "../lib/confirm";
-import { buttonClasses } from "./ui/button";
+import { buttonClasses } from "./quincy/Button";
 import { cn } from "../lib/utils";
 import {
   beginProjectMembershipMutation,

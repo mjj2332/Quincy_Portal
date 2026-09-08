@@ -1,7 +1,7 @@
 import { useId, useRef, useSyncExternalStore, type JSX } from "react";
 import { confirmStore, type ActiveConfirm, type ConfirmOptions } from "../lib/confirm";
 import { Modal } from "./Modal";
-import { buttonClasses } from "./ui/button";
+import { buttonClasses } from "./quincy/Button";
 
 export type ConfirmDialogProps = ConfirmOptions & {
   open: boolean;

@@ -12,7 +12,7 @@ import { invalidateProjectSurfaces, useOptionalProjectQueryClient, useProjectAcc
 import { LazyImage } from "./LazyImage";
 import { reorderNeighbors } from "../lib/reorder-neighbors";
 import { confirm } from "../lib/confirm";
-import { buttonClasses } from "./ui/button";
+import { buttonClasses } from "./quincy/Button";
 import { cn } from "../lib/utils";
 import { RAIL_FIELD } from "../lib/rail-field";
 
