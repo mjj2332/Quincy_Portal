@@ -31,6 +31,21 @@ mechanics options live in
 React 19.2.8 current baseline + Vite SPA, Hono API on Cloudflare Workers, D1 / R2 / KV / Queues / Workflows,
 Google OAuth via better-auth.
 
+**UI is ReUI (`base-nova`) composed on the Quincy token set**, in
+`portal/apps/web/src/components/reui/`. There is no legacy primitive set: `components/ui/` **no
+longer exists** — do not recreate it or import from it. `components/quincy/` is the surviving
+Quincy-owned layer; `quincy/menu.tsx` is a Base UI (`@base-ui/react/menu`) component that moved
+there in #56 and is **Quincy-owned Base UI, not a ReUI component** — do not "restore" it to the
+registry.
+
+**Routing is TanStack Router** (`lib/app-router.tsx`), with one caveat that reads as working code
+if you miss it: `lib/staff-history.ts` gives the router a **read-only** history. It observes the
+URL and never writes it, because `Transitioner` canonicalises the URL on mount with no opt-out
+(it rewrote `/%61dmin` to `/admin` and mounted the real Admin screen). So a `useNavigate()`,
+`<Link>`, or `router.navigate(...)` anywhere in the app **silently does nothing**. Navigation goes
+through `InternalLink` / `locationStore()`. See `docs/lessons.md:1368-1380` and
+`lib/routing-transport.guard.test.ts`, which makes that a build failure rather than a bug report.
+
 The original `prototype/` design export was retired in #48. What was worth keeping is
 archived under `docs/archive/` — **historical, explicitly not authoritative**.
 

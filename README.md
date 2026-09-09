@@ -38,13 +38,17 @@ Provision the production AutoHDR key from `portal/workers/background/` with
 `npx wrangler secret put AUTOHDR_API_KEY`; never place it in `wrangler.jsonc`.
 
 Deploys go out in dependency order (**background → webhook-ingress → app**) via
-`wrangler deploy`. Current work is on the `build/phase-0-2` branch.
+`wrangler deploy`.
 
 ## Design system & brand
 
 Built on the Quincy Productions design system (ink-on-paper; Mazius Review display, Apfel
 Grotezk UI). **The live token set at [`portal/apps/web/src/styles/`](portal/apps/web/src/styles/)
 is the sole design authority**, guarded by `design-system-guards.test.ts` beside it.
+
+Components are **ReUI (`base-nova` variant) composed on that Quincy token set**, in
+`portal/apps/web/src/components/reui/`; `components/quincy/` holds the Quincy-owned layer built
+alongside them. There is no separate legacy primitive set.
 
 The original design-system export it was ported from is kept at
 [`docs/archive/`](docs/archive/) for provenance only — it has since been diverged from and is
