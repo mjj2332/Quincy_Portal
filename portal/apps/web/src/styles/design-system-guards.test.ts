@@ -166,7 +166,13 @@ describe("guard: no dead `text-[length:…]` beside a `[font:…]` shorthand", (
     const names = new Set<string>();
     for (const file of sourceFiles()) {
       const text = stripComments(readFileSync(file, "utf8"));
-      for (const match of text.matchAll(/const\s+([A-Z][A-Z0-9_]*)\s*(?::[^=]+)?=\s*((?:[^;]|\n)*?);/g)) {
+      // `[^;]` already matches a newline, so the old `(?:[^;]|\n)*?` gave the engine two ways to
+      // consume every newline it crossed — catastrophic backtracking, doubling with each line, on any
+      // SCREAMING_CASE const not followed by a semicolon within reach. A vendored 950-line file in
+      // Prettier's semicolon-free style (components/reui/kanban.tsx, 8 semicolons) hung this guard
+      // forever: not slow, non-terminating, and immune to --testTimeout because the work is synchronous.
+      // `[^;]*?` is exactly equivalent and unambiguous. Do not "restore" the alternation.
+      for (const match of text.matchAll(/const\s+([A-Z][A-Z0-9_]*)\s*(?::[^=]+)?=\s*([^;]*?);/g)) {
         const [, name, value] = match;
         if (name && value?.includes("[font:")) names.add(name);
       }

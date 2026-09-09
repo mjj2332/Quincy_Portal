@@ -2,7 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { KanbanCard, type ProjectSummary } from "./Dashboard";
-import { initializeDashboardCalendarState, initializeDashboardView } from "./dashboard-helpers";
+import { initializeDashboardCalendarState, initializeDashboardView, type DashboardView } from "./dashboard-helpers";
 import { shouldInterceptInternalLink } from "../lib/router";
 
 const project: ProjectSummary = {
@@ -49,7 +49,7 @@ describe("TB6 Slice 0 dashboard routing characterization", () => {
     const writes: Array<[string, string]> = [];
     const storage = {
       read: () => "list",
-      write: (view: "list" | "kanban" | "calendar") => writes.push(["quincy:dashboard:view", view]),
+      write: (view: DashboardView) => writes.push(["quincy:dashboard:view", view]),
     };
     expect(initializeDashboardView(storage)).toBe("list");
     expect(writes).toEqual([["quincy:dashboard:view", "list"]]);
