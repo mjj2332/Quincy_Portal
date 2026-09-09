@@ -78,14 +78,25 @@
 
      So each of these three is the same deep brand tone as its fill. Quincy's
      signals are already dark enough to serve as text on their own 10% wash.
-     --destructive-foreground is deliberately NOT redefined here: it is shared
-     with the two live consumers above, and changing it would be a visual
-     regression. The cost is that ReUI's `destructive-light` variant renders
-     poorly; recorded for #57 rather than fixed by breaking production. */
+
+     --destructive-foreground is still NOT redefined here — it is shared with the
+     light-on-solid consumer above (Topbar.tsx's unread badge), and remapping it
+     would be a visual regression. Instead the role is SPLIT (#72): the wash
+     readers get their own --destructive-wash-foreground, carrying the ReUI
+     convention (same deep tone as the fill) without disturbing the shadcn one.
+     Its consumers are @reui/badge's `destructive-light` (the 10% wash) and
+     `destructive-outline` (oxblood ink on --bg-canvas); both previously read
+     --destructive-foreground and rendered near-paper text on near-paper ground.
+     StatusPill's `critical` tone already ships this exact pairing
+     (`text-signal-critical` on `bg-signal-critical/8`), so it is proven legible.
+
+     `focus-light` still has the same shape for the same reason and is NOT fixed
+     here — see the invert/focus note below; it stays recorded for #57. */
   --success: var(--signal-positive);
   --success-foreground: var(--signal-positive);
   --info: var(--signal-info);
   --info-foreground: var(--signal-info);
+  --destructive-wash-foreground: var(--signal-critical);
 
   /* Deliberate deviation, and the one place this file does not take the obvious
      value. The brand ochre --signal-caution (#9a6a1f) is marginal as small text
@@ -154,6 +165,7 @@
   --color-info-foreground: var(--info-foreground);
   --color-warning: var(--warning);
   --color-warning-foreground: var(--warning-foreground);
+  --color-destructive-wash-foreground: var(--destructive-wash-foreground);
   --color-invert: var(--invert);
   --color-invert-foreground: var(--invert-foreground);
   --color-focus: var(--focus);
@@ -170,7 +182,8 @@
    restores the same 19 for [data-surface="default"], and its own header requires
    both blocks to declare an identical property set. The roles added above are in
    neither block, so on an inverse surface (the Lightbox stage) a ReUI component
-   using --success/--info/--warning/--invert would render its light-surface value.
+   using --success/--info/--warning/--invert/--destructive-wash-foreground would render its
+   light-surface value.
    Nothing consumes them yet, so this is latent, not a live defect. Closing it
    belongs to the slice that first puts one of these roles on an inverse surface
    (#54), where it can be verified visually rather than guessed at. */

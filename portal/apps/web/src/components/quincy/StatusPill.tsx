@@ -4,11 +4,12 @@ import { cn } from "@/lib/utils";
 import { Badge } from "@/components/reui/badge";
 
 // Nova supplies the shape (Badge's box/typography, here forced to a pill via `radius="full"`);
-// Quincy supplies the tones. Nova's own semantic variants aren't reused for status colour:
-// `styles/tokens/reui.css` records that `destructive-light` reads `--destructive-foreground`,
-// which is warm paper shared with two live consumers, and that none of
-// `--success/--info/--warning/--invert` are declared for `[data-surface="inverse"]`. Reconciling
-// those is tracked as a #57 entry for Stage C, not done here.
+// Quincy supplies the tones. Nova's own semantic variants still aren't reused for status colour:
+// none of `--success/--info/--warning/--invert` are declared for `[data-surface="inverse"]`, so
+// they'd render their light-surface value on the Lightbox stage. Reconciling that is tracked as a
+// #57 entry for Stage C, not done here. (The other half of this note is resolved: #72 split
+// `destructive-light`'s ink out as `--destructive-wash-foreground`, which is the same oxblood-on-
+// its-own-wash pairing the `critical` tone below already uses.)
 
 // Written as an explicit literal union, not `keyof typeof PILL_TONE`: the latter is a genuine
 // circular type reference once PILL_TONE itself is annotated `Record<StatusTone, string>`
