@@ -467,14 +467,13 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
         label="Administration sections"
         value={activeTab}
         onValueChange={(next) => setActiveTab(next as AdminTab)}
-        className="admin-tabs mb-[var(--space-6)]"
+        className="mb-[var(--space-6)]"
         items={availableTabs.map((tab) => ({ value: tab, label: TAB_LABELS[tab] }))}
       />
 
-      {activeTab === "users" && canManageUsers && <section className="admin-section" role="tabpanel" id="admin-panel-users" aria-labelledby="admin-tab-users" tabIndex={0}>
+      {activeTab === "users" && canManageUsers && <section role="tabpanel" id="admin-panel-users" aria-labelledby="admin-tab-users" tabIndex={0}>
         <SectionHead
           eyebrow="Access roster"
-          className="admin-section__head"
           actions={<Button type="button" variant="outline" onClick={() => void loadUsers()} disabled={isLoadingUsers}>Refresh</Button>}
         >
           Users
@@ -521,7 +520,7 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
         {!isLoadingUsers && usersError && <EmptyState role="alert" tone="error" title="Users are unavailable.">{usersError}<div className="mt-[var(--space-4)]"><Button type="button" variant="outline" onClick={() => void loadUsers()}>Try again</Button></div></EmptyState>}
         {!isLoadingUsers && !usersError && <label className={cn(TOGGLE_ROW, "mb-[var(--space-4)]")}><input type="checkbox" className={CHECKBOX_INPUT} checked={impersonationEnabled} disabled={isUpdatingImpersonation} onChange={toggleImpersonation} aria-label="Enable user impersonation (testing)" /><span>Enable user impersonation (testing)</span></label>}
         {!isLoadingUsers && !usersError && users.length === 0 && <EmptyState title="No users provisioned.">Provision a team member to give them closed-access Google sign-in.</EmptyState>}
-        {!isLoadingUsers && !usersError && users.length > 0 && <TableWrap><Table className="admin-table">
+        {!isLoadingUsers && !usersError && users.length > 0 && <TableWrap><Table>
           <TableHead><TableRow><TableHeader>Name</TableHeader><TableHeader>Email</TableHeader><TableHeader>Role</TableHeader><TableHeader>Access</TableHeader><TableHeader>Created</TableHeader><TableHeader><span className="sr-only">Actions</span></TableHeader></TableRow></TableHead>
           <TableBody>{users.map((user) => {
           const isSelf = user.id === currentUserId;
@@ -534,14 +533,14 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
             <TableCell data-label="Role"><label className="sr-only" htmlFor={`role-${user.id}`}>Role for {user.name}</label><NativeSelect id={`role-${user.id}`} className="min-w-[128px]" value={user.role} disabled={isUpdating} onChange={(event) => void updateUser(user, { role: event.target.value as Role })}>{ROLES.map((role) => <option key={role} value={role}>{roleLabel(role)}</option>)}</NativeSelect></TableCell>
             <TableCell data-label="Access"><StatusPill tone={user.active ? "positive" : "neutral"}>{user.active ? "Active" : "Inactive"}</StatusPill></TableCell>
             <TableCell data-label="Created">{formatDate(user.createdAt)}</TableCell>
-            <TableCell className="admin-table__action min-[721px]:text-right min-[721px]:[&>button+button]:ml-[var(--space-3)] max-[721px]:flex max-[721px]:flex-wrap max-[721px]:gap-[var(--space-3)] max-[721px]:pt-[var(--space-3)]" data-testid="admin-user-actions">{isEditingName ? <><Button type="button" variant="outline" disabled={isUpdating} onClick={() => void saveUserName(user)}>Save</Button><Button type="button" variant="ghost" className={TEXT_BUTTON} onClick={() => setEditingUserId(undefined)}>Cancel</Button></> : <><Button type="button" variant="ghost" className={TEXT_BUTTON} disabled={isUpdating} onClick={() => startEditingUserName(user)}>Edit</Button><Button type="button" variant="outline" disabled={isUpdating || isSelf} title={isSelf ? "You cannot deactivate your own account." : undefined} onClick={() => void toggleActive(user)}>{user.active ? "Deactivate" : "Reactivate"}</Button>{canImpersonate && <Button type="button" variant="ghost" className={TEXT_BUTTON} disabled={isUpdating} onClick={() => void actAs(user)}>Act as</Button>}</>}</TableCell>
+            <TableCell className="min-[721px]:text-right min-[721px]:[&>button+button]:ml-[var(--space-3)] max-[721px]:flex max-[721px]:flex-wrap max-[721px]:gap-[var(--space-3)] max-[721px]:pt-[var(--space-3)]" data-testid="admin-user-actions">{isEditingName ? <><Button type="button" variant="outline" disabled={isUpdating} onClick={() => void saveUserName(user)}>Save</Button><Button type="button" variant="ghost" className={TEXT_BUTTON} onClick={() => setEditingUserId(undefined)}>Cancel</Button></> : <><Button type="button" variant="ghost" className={TEXT_BUTTON} disabled={isUpdating} onClick={() => startEditingUserName(user)}>Edit</Button><Button type="button" variant="outline" disabled={isUpdating || isSelf} title={isSelf ? "You cannot deactivate your own account." : undefined} onClick={() => void toggleActive(user)}>{user.active ? "Deactivate" : "Reactivate"}</Button>{canImpersonate && <Button type="button" variant="ghost" className={TEXT_BUTTON} disabled={isUpdating} onClick={() => void actAs(user)}>Act as</Button>}</>}</TableCell>
           </TableRow>;
         })}</TableBody>
         </Table></TableWrap>}
       </section>}
 
-      {activeTab === "directory" && canAdminBackend && <section className="admin-section" role="tabpanel" id="admin-panel-directory" aria-labelledby="admin-tab-directory" tabIndex={0}>
-        <SectionHead eyebrow="Client directory" className="admin-section__head" actions={<Button type="button" variant="outline" onClick={() => void loadDirectory()}>Refresh</Button>}>Agencies & agents</SectionHead>
+      {activeTab === "directory" && canAdminBackend && <section role="tabpanel" id="admin-panel-directory" aria-labelledby="admin-tab-directory" tabIndex={0}>
+        <SectionHead eyebrow="Client directory" actions={<Button type="button" variant="outline" onClick={() => void loadDirectory()}>Refresh</Button>}>Agencies & agents</SectionHead>
         {directoryError && <Notice role="alert" className="mb-[var(--space-4)]">{directoryError}</Notice>}
         <form
           className="grid gap-[var(--space-4)] items-end mb-[var(--space-6)] grid-cols-1 min-[721px]:grid-cols-2 min-[1081px]:grid-cols-[minmax(200px,1.2fr)_minmax(180px,1fr)_minmax(180px,1fr)_auto]"
@@ -555,7 +554,7 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
           <QuincyField id="admin-agency-notes" label="Notes" value={agencyForm.notes} onChange={(event) => setAgencyForm((value) => ({ ...value, notes: event.target.value }))} />
           <Button type="submit" className="max-[721px]:w-full">Add agency</Button>
         </form>
-        <TableWrap><Table className="admin-table">
+        <TableWrap><Table>
           <TableHead><TableRow><TableHeader>Agency</TableHeader><TableHeader>Notes</TableHeader><TableHeader>Agents</TableHeader><TableHeader>Created</TableHeader><TableHeader><span className="sr-only">Actions</span></TableHeader></TableRow></TableHead>
           <TableBody>{agencies.length === 0 ? <TableRow><TableCell colSpan={5} className="text-center text-foreground-secondary">No agencies yet.</TableCell></TableRow> : agencies.map((agency) => {
             const isSelected = selectedAgencyId === agency.id;
@@ -568,11 +567,11 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
               <TableCell data-label="Notes">{editingAgency === agency.id ? <Input className="min-w-[130px] border-[var(--field-border)]" aria-label={`Notes for ${agency.name}`} value={agency.notes ?? ""} onChange={(event) => setAgencies((current) => current.map((item) => item.id === agency.id ? { ...item, notes: event.target.value || null } : item))} /> : agency.notes || "—"}</TableCell>
               <TableCell data-label="Agents">{agency.agentCount}</TableCell>
               <TableCell data-label="Created">{formatDate(agency.createdAt)}</TableCell>
-              <TableCell className="admin-table__action min-[721px]:text-right min-[721px]:[&>button+button]:ml-[var(--space-3)] max-[721px]:flex max-[721px]:flex-wrap max-[721px]:gap-[var(--space-3)] max-[721px]:pt-[var(--space-3)]">{editingAgency === agency.id ? <><Button type="button" variant="outline" onClick={() => void saveAgencyEdit(agency)}>Save</Button><Button type="button" variant="ghost" className={TEXT_BUTTON} onClick={() => setEditingAgency(undefined)}>Cancel</Button></> : <><Button type="button" variant="ghost" className={TEXT_BUTTON} onClick={() => { setSelectedAgencyId(agency.id); void loadDirectory(agency.id); }}>Agents</Button><Button type="button" variant="ghost" className={TEXT_BUTTON} onClick={() => setEditingAgency(agency.id)}>Edit</Button></>}</TableCell>
+              <TableCell className="min-[721px]:text-right min-[721px]:[&>button+button]:ml-[var(--space-3)] max-[721px]:flex max-[721px]:flex-wrap max-[721px]:gap-[var(--space-3)] max-[721px]:pt-[var(--space-3)]">{editingAgency === agency.id ? <><Button type="button" variant="outline" onClick={() => void saveAgencyEdit(agency)}>Save</Button><Button type="button" variant="ghost" className={TEXT_BUTTON} onClick={() => setEditingAgency(undefined)}>Cancel</Button></> : <><Button type="button" variant="ghost" className={TEXT_BUTTON} onClick={() => { setSelectedAgencyId(agency.id); void loadDirectory(agency.id); }}>Agents</Button><Button type="button" variant="ghost" className={TEXT_BUTTON} onClick={() => setEditingAgency(agency.id)}>Edit</Button></>}</TableCell>
             </TableRow>;
           })}</TableBody>
         </Table></TableWrap>
-        <SectionHead eyebrow={selectedAgencyId ? agencies.find((agency) => agency.id === selectedAgencyId)?.name ?? "Selected agency" : "All agencies"} className={cn("admin-section__head", "mt-[var(--space-8)]")} actions={selectedAgencyId ? <Button type="button" variant="outline" onClick={() => { setSelectedAgencyId(undefined); void loadDirectory(undefined); }}>Show all</Button> : undefined}>Agents</SectionHead>
+        <SectionHead eyebrow={selectedAgencyId ? agencies.find((agency) => agency.id === selectedAgencyId)?.name ?? "Selected agency" : "All agencies"} className={cn("mt-[var(--space-8)]")} actions={selectedAgencyId ? <Button type="button" variant="outline" onClick={() => { setSelectedAgencyId(undefined); void loadDirectory(undefined); }}>Show all</Button> : undefined}>Agents</SectionHead>
         <form
           className="grid gap-[var(--space-4)] items-end mb-[var(--space-6)] grid-cols-1 min-[721px]:grid-cols-2 min-[1081px]:grid-cols-[minmax(190px,1fr)_minmax(150px,0.8fr)_minmax(180px,1fr)_minmax(160px,0.8fr)_auto]"
           onSubmit={saveAgent}
@@ -586,24 +585,24 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
           <QuincyField id="admin-agent-phone" label="Phone" value={agentForm.phone} onChange={(event) => setAgentForm((value) => ({ ...value, phone: event.target.value }))} />
           <Button type="submit" className="max-[721px]:w-full">Add agent</Button>
         </form>
-        <TableWrap><Table className="admin-table">
+        <TableWrap><Table>
           <TableHead><TableRow><TableHeader>Name</TableHeader><TableHeader>Email</TableHeader><TableHeader>Phone</TableHeader><TableHeader>Agency</TableHeader><TableHeader><span className="sr-only">Actions</span></TableHeader></TableRow></TableHead>
           <TableBody>{agents.length === 0 ? <TableRow><TableCell colSpan={5} className="text-center text-foreground-secondary">No agents found.</TableCell></TableRow> : agents.map((agent) => <TableRow key={agent.id}>
             <TableCell data-label="Name">{editingAgent === agent.id ? <Input className="min-w-[130px] border-[var(--field-border)]" aria-label={`Name for ${agent.name}`} value={agent.name} onChange={(event) => setAgents((current) => current.map((item) => item.id === agent.id ? { ...item, name: event.target.value } : item))} /> : <strong>{agent.name}</strong>}</TableCell>
             <TableCell data-label="Email">{editingAgent === agent.id ? <Input className="min-w-[130px] border-[var(--field-border)]" aria-label={`Email for ${agent.name}`} value={agent.email ?? ""} onChange={(event) => setAgents((current) => current.map((item) => item.id === agent.id ? { ...item, email: event.target.value || null } : item))} /> : agent.email || "—"}</TableCell>
             <TableCell data-label="Phone">{editingAgent === agent.id ? <Input className="min-w-[130px] border-[var(--field-border)]" aria-label={`Phone for ${agent.name}`} value={agent.phone ?? ""} onChange={(event) => setAgents((current) => current.map((item) => item.id === agent.id ? { ...item, phone: event.target.value || null } : item))} /> : agent.phone || "—"}</TableCell>
             <TableCell data-label="Agency">{agent.agencyName || "—"}</TableCell>
-            <TableCell className="admin-table__action min-[721px]:text-right min-[721px]:[&>button+button]:ml-[var(--space-3)] max-[721px]:flex max-[721px]:flex-wrap max-[721px]:gap-[var(--space-3)] max-[721px]:pt-[var(--space-3)]">{editingAgent === agent.id ? <><Button type="button" variant="outline" onClick={() => void saveAgentEdit(agent)}>Save</Button><Button type="button" variant="ghost" className={TEXT_BUTTON} onClick={() => setEditingAgent(undefined)}>Cancel</Button></> : <Button type="button" variant="ghost" className={TEXT_BUTTON} onClick={() => setEditingAgent(agent.id)}>Edit</Button>}</TableCell>
+            <TableCell className="min-[721px]:text-right min-[721px]:[&>button+button]:ml-[var(--space-3)] max-[721px]:flex max-[721px]:flex-wrap max-[721px]:gap-[var(--space-3)] max-[721px]:pt-[var(--space-3)]">{editingAgent === agent.id ? <><Button type="button" variant="outline" onClick={() => void saveAgentEdit(agent)}>Save</Button><Button type="button" variant="ghost" className={TEXT_BUTTON} onClick={() => setEditingAgent(undefined)}>Cancel</Button></> : <Button type="button" variant="ghost" className={TEXT_BUTTON} onClick={() => setEditingAgent(agent.id)}>Edit</Button>}</TableCell>
           </TableRow>)}</TableBody>
         </Table></TableWrap>
       </section>}
 
-      {activeTab === "pipeline" && canAdminBackend && <section className="admin-section" role="tabpanel" id="admin-panel-pipeline" aria-labelledby="admin-tab-pipeline" tabIndex={0}>
-        <SectionHead eyebrow="Project flow" className="admin-section__head" actions={<Button type="button" variant="outline" onClick={() => void loadPipeline()} data-testid="admin-pipeline-refresh">Refresh</Button>}>Pipeline stages</SectionHead>
+      {activeTab === "pipeline" && canAdminBackend && <section role="tabpanel" id="admin-panel-pipeline" aria-labelledby="admin-tab-pipeline" tabIndex={0}>
+        <SectionHead eyebrow="Project flow" actions={<Button type="button" variant="outline" onClick={() => void loadPipeline()} data-testid="admin-pipeline-refresh">Refresh</Button>}>Pipeline stages</SectionHead>
         {pipelineError && <Notice role="alert" className="mb-[var(--space-4)]">{pipelineError}</Notice>}
         {stageError && <Notice role="alert" className="mb-[var(--space-4)]">{stageError}</Notice>}
-        <div className="admin-stage-list flex flex-col [border-top-style:solid] border-t-[length:var(--border-width-hair)] border-t-border">{stages.map((stage) => <div className="admin-stage grid gap-[var(--space-4)] items-end p-[var(--space-4)] border-solid border-[length:var(--border-width-hair)] border-border border-t-0 bg-card grid-cols-[28px_minmax(0,1fr)] min-[721px]:grid-cols-[34px_minmax(150px,0.8fr)_minmax(180px,1fr)_90px]" key={stage.key} data-testid="admin-stage">
-          <div className="admin-stage__order self-center [font:var(--type-h3)] tracking-[var(--tracking-tight)] text-foreground-secondary [font-variant-numeric:tabular-nums]" data-testid="admin-stage-order">{stage.displayOrder}</div>
+        <div className="flex flex-col [border-top-style:solid] border-t-[length:var(--border-width-hair)] border-t-border">{stages.map((stage) => <div className="grid gap-[var(--space-4)] items-end p-[var(--space-4)] border-solid border-[length:var(--border-width-hair)] border-border border-t-0 bg-card grid-cols-[28px_minmax(0,1fr)] min-[721px]:grid-cols-[34px_minmax(150px,0.8fr)_minmax(180px,1fr)_90px]" key={stage.key} data-testid="admin-stage">
+          <div className="self-center [font:var(--type-h3)] tracking-[var(--tracking-tight)] text-foreground-secondary [font-variant-numeric:tabular-nums]" data-testid="admin-stage-order">{stage.displayOrder}</div>
           <div className="min-w-0"><strong className="block capitalize text-foreground [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)]">{stage.key.replace(/_/g, " ")}</strong><small className="block mt-[var(--space-1)] [font:var(--weight-regular)_var(--text-2xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary">Stable stage key</small></div>
           <QuincyField
             id={`stage-label-${stage.key}`}
@@ -617,8 +616,8 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
         </div>)}</div>
       </section>}
 
-      {activeTab === "integrations" && canManageIntegrations && <section className="admin-section" role="tabpanel" id="admin-panel-integrations" aria-labelledby="admin-tab-integrations" tabIndex={0}>
-        <SectionHead eyebrow="Studio connections" className="admin-section__head" actions={<Button type="button" variant="outline" onClick={() => void loadIntegrationsTab()} disabled={isLoadingIntegrations}>Refresh</Button>}>Integrations</SectionHead>
+      {activeTab === "integrations" && canManageIntegrations && <section role="tabpanel" id="admin-panel-integrations" aria-labelledby="admin-tab-integrations" tabIndex={0}>
+        <SectionHead eyebrow="Studio connections" actions={<Button type="button" variant="outline" onClick={() => void loadIntegrationsTab()} disabled={isLoadingIntegrations}>Refresh</Button>}>Integrations</SectionHead>
         {isLoadingIntegrations && <EmptyState role="status" title="Loading integrations.">Checking studio connections.</EmptyState>}
         {!isLoadingIntegrations && integrationsError && <EmptyState role="alert" tone="error" title="Integrations are unavailable.">{integrationsError}<div className="mt-[var(--space-4)]"><Button type="button" variant="outline" onClick={() => void loadIntegrationsTab()}>Try again</Button></div></EmptyState>}
         {!isLoadingIntegrations && !integrationsError && <div className="grid gap-[var(--space-4)] grid-cols-1 min-[1081px]:grid-cols-3">{PROVIDERS.map((provider) => {
@@ -657,49 +656,46 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
             </>}
           </article>;
         })}</div>}
-        {!isLoadingIntegrations && !integrationsError && canAdminBackend && <div className="admin-poison mt-[var(--space-8)]">
+        {!isLoadingIntegrations && !integrationsError && canAdminBackend && <div className="mt-[var(--space-8)]">
           <SectionHead
             eyebrow="Operator queue"
-            className="admin-section__head"
             actions={<StatusPill tone={poisonTotal > 0 ? "critical" : "neutral"}>{poisonTotal > 0 ? `${poisonTotal} events` : "No events"}</StatusPill>}
           >
             Failed Tonomo events
           </SectionHead>
           {poisonEvents.length === 0 ? <EmptyState title="No failed events.">Tonomo orders are processing normally.</EmptyState> : <>
-            <TableWrap><Table className="admin-table">
+            <TableWrap><Table>
               <TableHead><TableRow><TableHeader>Received</TableHeader><TableHeader>Order</TableHeader><TableHeader>Error reason</TableHeader><TableHeader><span className="sr-only">Actions</span></TableHeader></TableRow></TableHead>
               <TableBody>{poisonEvents.map((event) => { const isOperating = operatingEventIds.has(event.id); return <TableRow key={event.id}>
                 <TableCell data-label="Received">{formatDate(event.receivedAt)}</TableCell>
                 <TableCell data-label="Order">{event.summary ? <>{event.summary.street}<br /><small>{event.summary.orderId}</small></> : "Unparseable"}</TableCell>
                 <TableCell data-label="Error reason">{event.error || "—"}</TableCell>
-                <TableCell className="admin-table__action min-[721px]:text-right min-[721px]:[&>button+button]:ml-[var(--space-3)] max-[721px]:flex max-[721px]:flex-wrap max-[721px]:gap-[var(--space-3)] max-[721px]:pt-[var(--space-3)]"><Button type="button" variant="ghost" className={TEXT_BUTTON} onClick={() => void viewPayload(event.id)}>View payload</Button><Button type="button" variant="outline" disabled={isOperating} onClick={() => void operateEvent(event.id, "retry")}>Retry</Button><Button type="button" variant="ghost" className={TEXT_BUTTON} disabled={isOperating} onClick={() => void operateEvent(event.id, "discard")}>Discard</Button></TableCell>
+                <TableCell className="min-[721px]:text-right min-[721px]:[&>button+button]:ml-[var(--space-3)] max-[721px]:flex max-[721px]:flex-wrap max-[721px]:gap-[var(--space-3)] max-[721px]:pt-[var(--space-3)]"><Button type="button" variant="ghost" className={TEXT_BUTTON} onClick={() => void viewPayload(event.id)}>View payload</Button><Button type="button" variant="outline" disabled={isOperating} onClick={() => void operateEvent(event.id, "retry")}>Retry</Button><Button type="button" variant="ghost" className={TEXT_BUTTON} disabled={isOperating} onClick={() => void operateEvent(event.id, "discard")}>Discard</Button></TableCell>
               </TableRow>; })}</TableBody>
             </Table></TableWrap>
             {poisonTotal > poisonEvents.length && <div className="mt-[var(--space-4)]"><Button type="button" variant="outline" onClick={() => void loadTonomo(poisonEvents.length, true)}>Load more</Button></div>}
           </>}
         </div>}
-        {!isLoadingIntegrations && !integrationsError && canAdminBackend && <div className="admin-poison mt-[var(--space-8)]">
+        {!isLoadingIntegrations && !integrationsError && canAdminBackend && <div className="mt-[var(--space-8)]">
           <SectionHead
             eyebrow="Operator queue"
-            className="admin-section__head"
             actions={<StatusPill tone={renditionDlqOpenCount > 0 ? "critical" : "neutral"}>{renditionDlqOpenCount > 0 ? `${renditionDlqOpenCount} stuck` : "No backlog"}</StatusPill>}
           >
             Rendition delivery failures
           </SectionHead>
-          {renditionDlq.length === 0 ? <EmptyState title="No stuck renditions.">Preview generation is processing normally.</EmptyState> : <TableWrap><Table className="admin-table">
+          {renditionDlq.length === 0 ? <EmptyState title="No stuck renditions.">Preview generation is processing normally.</EmptyState> : <TableWrap><Table>
             <TableHead><TableRow><TableHeader>First failed</TableHeader><TableHeader>Project</TableHeader><TableHeader>Asset</TableHeader><TableHeader><span className="sr-only">Actions</span></TableHeader></TableRow></TableHead>
             <TableBody>{renditionDlq.map((event) => { const isOperating = operatingRenditionDlqIds.has(event.id); return <TableRow key={event.id}>
               <TableCell data-label="First failed">{formatDate(event.receivedAt)}</TableCell>
               <TableCell data-label="Project">{event.street || "—"}</TableCell>
               <TableCell data-label="Asset"><code className="[font:var(--weight-regular)_var(--text-xs)/1.4_var(--font-mono)]">{event.assetId}</code></TableCell>
-              <TableCell className="admin-table__action min-[721px]:text-right min-[721px]:[&>button+button]:ml-[var(--space-3)] max-[721px]:flex max-[721px]:flex-wrap max-[721px]:gap-[var(--space-3)] max-[721px]:pt-[var(--space-3)]"><Button type="button" variant="outline" disabled={isOperating} onClick={() => void operateRenditionDlqEvent(event.id, "replay")}>Replay</Button><Button type="button" variant="ghost" className={TEXT_BUTTON} disabled={isOperating} onClick={() => void operateRenditionDlqEvent(event.id, "discard")}>Discard</Button></TableCell>
+              <TableCell className="min-[721px]:text-right min-[721px]:[&>button+button]:ml-[var(--space-3)] max-[721px]:flex max-[721px]:flex-wrap max-[721px]:gap-[var(--space-3)] max-[721px]:pt-[var(--space-3)]"><Button type="button" variant="outline" disabled={isOperating} onClick={() => void operateRenditionDlqEvent(event.id, "replay")}>Replay</Button><Button type="button" variant="ghost" className={TEXT_BUTTON} disabled={isOperating} onClick={() => void operateRenditionDlqEvent(event.id, "discard")}>Discard</Button></TableCell>
             </TableRow>; })}</TableBody>
           </Table></TableWrap>}
         </div>}
-        {!isLoadingIntegrations && !integrationsError && canAdminBackend && <div className="admin-poison mt-[var(--space-8)]" aria-label="Notification delivery operations">
+        {!isLoadingIntegrations && !integrationsError && canAdminBackend && <div className="mt-[var(--space-8)]" aria-label="Notification delivery operations">
           <SectionHead
             eyebrow="Operator queue"
-            className="admin-section__head"
             actions={<>
               <StatusPill tone={notificationDeliveryCounts[notificationDeliveryView] > 0 ? "critical" : "neutral"}>{notificationDeliveryCounts[notificationDeliveryView] > 0 ? `${notificationDeliveryCounts[notificationDeliveryView]} deliveries` : "No deliveries"}</StatusPill>
               <Button type="button" variant="outline" className={isLoadingNotificationDeliveries ? "cursor-wait" : undefined} disabled={isLoadingNotificationDeliveries} onClick={() => void loadNotificationDeliveries(notificationDeliveryView)} data-testid="admin-notification-delivery-refresh">Refresh</Button>
@@ -712,14 +708,14 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
             label="Notification delivery filters"
             value={notificationDeliveryView}
             onValueChange={(next) => selectNotificationDeliveryView(next as NotificationDeliveryView)}
-            className="admin-tabs mb-[var(--space-5)]"
+            className="mb-[var(--space-5)]"
             items={DELIVERY_VIEWS.map((view) => ({ value: view, label: DELIVERY_LABELS[view], count: notificationDeliveryCounts[view] }))}
           />
           <div role="tabpanel" id={`admin-delivery-panel-${notificationDeliveryView}`} aria-labelledby={`admin-delivery-tab-${notificationDeliveryView}`} tabIndex={0}>
             {notificationDeliveriesError && <Notice role="alert" className="mb-[var(--space-4)]">{notificationDeliveriesError}</Notice>}
             {isLoadingNotificationDeliveries && <EmptyState role="status" title="Loading delivery status.">Reading the durable notification ledger.</EmptyState>}
             {!isLoadingNotificationDeliveries && !notificationDeliveriesError && notificationDeliveries.length === 0 && <EmptyState title="No matching deliveries.">This queue is clear.</EmptyState>}
-            {!isLoadingNotificationDeliveries && notificationDeliveries.length > 0 && <TableWrap><Table className="admin-table">
+            {!isLoadingNotificationDeliveries && notificationDeliveries.length > 0 && <TableWrap><Table>
               <TableHead><TableRow><TableHeader>Updated</TableHeader><TableHeader>Event</TableHeader><TableHeader>Project</TableHeader><TableHeader>Recipient</TableHeader><TableHeader>Channels</TableHeader><TableHeader>State</TableHeader><TableHeader><span className="sr-only">Actions</span></TableHeader></TableRow></TableHead>
               <TableBody>{notificationDeliveries.map((item) => { const isOperating = operatingNotificationIds.has(item.outboxId); return <TableRow key={item.outboxId}>
                 <TableCell data-label="Updated">{formatDate(new Date(item.updatedAt).toISOString())}</TableCell>
@@ -728,7 +724,7 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
                 <TableCell data-label="Recipient">{item.recipientName || "Unavailable"}</TableCell>
                 <TableCell data-label="Channels">{item.channels.map((channel) => `${channel.channel}: ${channel.status}`).join(" · ")}{item.unknownEmailPossible && <><br /><strong className="text-destructive [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)]">Duplicate email possible</strong></>}</TableCell>
                 <TableCell data-label="State">{item.status}{item.safeErrorCode && <><br /><small>{item.safeErrorCode}</small></>}</TableCell>
-                <TableCell className="admin-table__action min-[721px]:text-right min-[721px]:[&>button+button]:ml-[var(--space-3)] max-[721px]:flex max-[721px]:flex-wrap max-[721px]:gap-[var(--space-3)] max-[721px]:pt-[var(--space-3)]" data-testid="admin-notification-delivery-actions">{notificationDeliveryView !== "preference_suppressed" && <><Button type="button" variant="outline" disabled={isOperating} onClick={() => void operateNotificationDelivery(item, "replay")}>Replay</Button><Button type="button" variant="ghost" className={TEXT_BUTTON} disabled={isOperating} onClick={() => void operateNotificationDelivery(item, "discard")}>Discard</Button></>}</TableCell>
+                <TableCell className="min-[721px]:text-right min-[721px]:[&>button+button]:ml-[var(--space-3)] max-[721px]:flex max-[721px]:flex-wrap max-[721px]:gap-[var(--space-3)] max-[721px]:pt-[var(--space-3)]" data-testid="admin-notification-delivery-actions">{notificationDeliveryView !== "preference_suppressed" && <><Button type="button" variant="outline" disabled={isOperating} onClick={() => void operateNotificationDelivery(item, "replay")}>Replay</Button><Button type="button" variant="ghost" className={TEXT_BUTTON} disabled={isOperating} onClick={() => void operateNotificationDelivery(item, "discard")}>Discard</Button></>}</TableCell>
               </TableRow>; })}</TableBody>
             </Table></TableWrap>}
             {notificationDeliveryCursor && <div className="mt-[var(--space-4)]"><Button type="button" variant="outline" disabled={isLoadingNotificationDeliveries} onClick={() => void loadNotificationDeliveries(notificationDeliveryView, notificationDeliveryCursor, true)}>Load more</Button></div>}
