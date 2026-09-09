@@ -86,10 +86,12 @@ const ColumnContext = createContext<{
 })
 
 const ItemContext = createContext<{
+  attributes: DraggableAttributes | undefined
   listeners: DraggableSyntheticListeners | undefined
   isDragging?: boolean
   disabled?: boolean
 }>({
+  attributes: undefined,
   listeners: undefined,
   isDragging: false,
   disabled: false,
@@ -791,6 +793,14 @@ function KanbanItem({
     transform: CSS.Transform.toString(transform),
   } as CSSProperties
 
+  // `attributes` is NOT spread here (unlike `KanbanColumn`, which spreads `attributes` on its own
+  // wrapper because the whole column is its own drag handle). A kanban2 card's handle is a small
+  // sibling button, not the card — see `KanbanCard2`'s header comment — so dnd-kit's `attributes`
+  // (which default to `role="button" tabIndex=0 aria-roledescription="draggable"`, per
+  // `@dnd-kit/core@6.3.1` `core.esm.js:3385,3432-3438`) belong on `KanbanItemHandle`, not on this
+  // wrapper `<div>`. Left on the wrapper, `role="button"` is children-presentational in ARIA 1.2
+  // and prunes any nested `role="radiogroup"` (#81's priority stars) from the accessibility tree,
+  // on top of adding a dead extra tab stop that announces the whole card as a draggable button.
   const defaultProps = isOverlay
     ? {
         "data-slot": "kanban-item",
@@ -806,7 +816,6 @@ function KanbanItem({
         "data-disabled": disabled,
         ref: setNodeRef,
         style,
-        ...attributes,
         className: cn(
           isSortableDragging && "opacity-50 z-50",
           disabled && "opacity-50",
@@ -819,8 +828,8 @@ function KanbanItem({
     <ItemContext.Provider
       value={
         isOverlay
-          ? { listeners: undefined, isDragging: true, disabled: false }
-          : { listeners, isDragging: isItemDragging, disabled }
+          ? { attributes: undefined, listeners: undefined, isDragging: true, disabled: false }
+          : { attributes, listeners, isDragging: isItemDragging, disabled }
       }
     >
       {useRender({
@@ -842,12 +851,13 @@ function KanbanItemHandle({
   cursor = true,
   ...props
 }: KanbanItemHandleProps) {
-  const { listeners, isDragging, disabled } = useContext(ItemContext)
+  const { attributes, listeners, isDragging, disabled } = useContext(ItemContext)
 
   const defaultProps = {
     "data-slot": "kanban-item-handle",
     "data-dragging": isDragging,
     "data-disabled": disabled,
+    ...attributes,
     ...listeners,
     className: cn(
       cursor && (isDragging ? "cursor-grabbing!" : "cursor-grab!"),

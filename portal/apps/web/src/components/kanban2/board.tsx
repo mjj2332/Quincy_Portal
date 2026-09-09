@@ -30,22 +30,29 @@ function semanticStageKey(value: ProjectStageKey): StageKey {
  * rendered anywhere.
  *
  * Props are intentionally the exact `ProjectKanbanBoardProps` type the existing Board exports, so
- * the Dashboard's priority and stage coordinators are unchanged (#80 acceptance criteria). Props
- * that only exist for out-of-scope features (`canPrioritize`, `onPriorityChange`,
- * `onBoardPosition`, `sameStageReorderEnabled`, `onMoveStage`, `onMoveToProposalChange`,
- * `onInteractionStateChange`, `onAnnounce`) are accepted for contract parity and intentionally
- * unused here — same-column reordering and priority are not this ticket's scope.
+ * the Dashboard's priority and stage coordinators are unchanged (#80 acceptance criteria).
+ * `canPrioritize`, `pendingOrdering` and `onPriorityChange` are consumed as of #81. The remainder
+ * (`onBoardPosition`, `sameStageReorderEnabled`, `onMoveStage`, `onMoveToProposalChange`,
+ * `onInteractionStateChange`, `onAnnounce`) are still accepted for contract parity and
+ * intentionally unused — same-column reordering is not yet ported.
+ *
+ * The coarse-pointer column track is widened to 252px (#81): five 44px star targets need 220px,
+ * and a 244px track leaves a 220px card — exactly zero slack — while the old 240px mobile track
+ * overflowed by 4px. Mouse geometry is untouched, and 252px still fits five columns at 1280px.
  */
 export function ProjectKanbanBoard2({
   projects,
   activeStages,
   canMoveStages,
+  canPrioritize = false,
   boardMutationEnabled,
   movementDisabled = false,
   effectiveKanbanSort,
   pendingMoves,
+  pendingOrdering,
   terminal,
   onBoardMove,
+  onPriorityChange,
   projectHrefFor,
 }: ProjectKanbanBoardProps) {
   const columns = useMemo(() => {
@@ -66,6 +73,10 @@ export function ProjectKanbanBoard2({
   const noopValueChange = useCallback(() => undefined, []);
 
   const dragDisabled = movementDisabled || terminal || !boardMutationEnabled || !canMoveStages;
+  // Priority is editable only for an Admin on a live, mutable Board — same gates the existing
+  // Board applies. A non-editable viewer still *sees* a set priority (read-only), and sees
+  // nothing at all where none is set; `PriorityStars` owns that split.
+  const priorityEditable = canPrioritize && boardMutationEnabled && !terminal;
 
   const handleMove = useCallback(({ event, activeContainer, overContainer }: KanbanMoveEvent) => {
     if (dragDisabled) return;
@@ -95,7 +106,7 @@ export function ProjectKanbanBoard2({
       onValueChange={noopValueChange}
       getItemValue={getItemValue}
       onMove={handleMove}
-      className="kanban2 grid grid-flow-col auto-cols-[minmax(244px,1fr)] max-[641px]:auto-cols-[minmax(240px,1fr)] gap-[var(--border-width-hair)] bg-border border border-[length:var(--border-width-hair)] border-border overflow-x-auto overscroll-x-contain [scrollbar-gutter:stable]"
+      className="kanban2 grid grid-flow-col auto-cols-[minmax(244px,1fr)] max-[641px]:auto-cols-[minmax(252px,1fr)] pointer-coarse:auto-cols-[minmax(252px,1fr)] gap-[var(--border-width-hair)] bg-border border border-[length:var(--border-width-hair)] border-border overflow-x-auto overscroll-x-contain [scrollbar-gutter:stable]"
       aria-label="Project pipeline board (kanban2)"
     >
       {activeStages.map((stage, stageIndex) => {
@@ -111,7 +122,14 @@ export function ProjectKanbanBoard2({
               {stageProjects.length === 0 && <div className="py-[var(--space-5)] [font-family:var(--font-display)] text-lg text-center text-foreground-secondary">—</div>}
               {stageProjects.map((project) => (
                 <KanbanItem key={project.id} value={project.id} disabled={dragDisabled || pendingMoves.has(project.id)}>
-                  <KanbanCard2 project={project} projectHref={projectHrefFor?.(project)} dragDisabled={dragDisabled || pendingMoves.has(project.id)} />
+                  <KanbanCard2
+                    project={project}
+                    projectHref={projectHrefFor?.(project)}
+                    dragDisabled={dragDisabled || pendingMoves.has(project.id)}
+                    canPrioritize={priorityEditable}
+                    priorityPending={pendingOrdering?.has(project.id) ?? false}
+                    onPriorityChange={onPriorityChange}
+                  />
                 </KanbanItem>
               ))}
             </KanbanColumnContent>

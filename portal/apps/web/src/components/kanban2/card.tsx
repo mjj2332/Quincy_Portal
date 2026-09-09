@@ -6,6 +6,7 @@ import { InternalLink } from "../InternalLink";
 import { LazyImage } from "../LazyImage";
 import { buttonClasses } from "../quincy/Button";
 import { KanbanItemHandle } from "../reui/kanban";
+import { PriorityStars } from "../quincy/PriorityStars";
 import { deadlineLabel } from "../../lib/deadline-label";
 import { initials } from "../../lib/initials";
 import type { ProjectSummary } from "../../lib/kanban-interaction";
@@ -101,13 +102,18 @@ export type KanbanCard2Props = {
   projectHref?: string;
   isOverlay?: boolean;
   dragDisabled?: boolean;
+  /** Admin-only (#81). False renders priority read-only, or not at all when unset. */
+  canPrioritize?: boolean;
+  /** True while a priority write for this Project is in flight. */
+  priorityPending?: boolean;
+  onPriorityChange?: (project: ProjectSummary, priority: number | null) => void;
 };
 
 /**
  * Composed on the `card` surface (#76 "Block and surface"). Quincy's `--radius-card` is 0, so
  * the corners render square — that is correct, not a porting defect.
  */
-export function KanbanCard2({ project, projectHref, isOverlay = false, dragDisabled = false }: KanbanCard2Props) {
+export function KanbanCard2({ project, projectHref, isOverlay = false, dragDisabled = false, canPrioritize = false, priorityPending = false, onPriorityChange }: KanbanCard2Props) {
   const [coverFailed, setCoverFailed] = useState(false);
   const [coverRetry, setCoverRetry] = useState(0);
   const overdue = isDeadlineOverdue(project.deadlineAt);
@@ -142,8 +148,20 @@ export function KanbanCard2({ project, projectHref, isOverlay = false, dragDisab
           </div>
         </CardContent>
       </InternalLink>
-      {/* #81's priority star row lands here — this empty sibling is the boundary #82 promised it. */}
-      <div data-testid="kanban2-card-footer-slot" />
+      {/* The star row is a sibling *outside* the anchor (#81): interactive controls cannot be <a>
+          descendants — invalid HTML, and a click would navigate. In the drag overlay it is
+          presentation-only, so it is dropped entirely rather than rendered non-focusable. */}
+      <div data-testid="kanban2-card-footer-slot">
+        {!isOverlay && (
+          <PriorityStars
+            priority={project.priority}
+            street={project.street}
+            canPrioritize={canPrioritize}
+            pending={priorityPending}
+            onPriorityChange={(next) => onPriorityChange?.(project, next)}
+          />
+        )}
+      </div>
       {!isOverlay && (
         // 44px touch target — WCAG 2.5.5 Enhanced / HIG, not a spacing token — matching the
         // existing Board's handle (`ProjectKanbanBoard.tsx`).
