@@ -106,6 +106,14 @@ const serviceSchema = z.object({
 
 const coverSchema = z.object({ assetId: uuid, url: z.string().url() }).strict();
 
+/**
+ * Only currently-assigned, active project Editors — including internal staff, consistent with
+ * the detail contract's `members` this widens alongside. No image URL: avatars render from
+ * initials. Photographers never appear here, regardless of Stage.
+ */
+export const externalProjectEditorSchema = z.object({ id: uuid, name: z.string() }).strict();
+export type ExternalProjectEditorDto = z.infer<typeof externalProjectEditorSchema>;
+
 const projectSummaryShape = {
   id: uuid,
   address: z.object({ street: z.string(), suburb: z.string().nullable(), postcode: z.string().nullable() }).strict(),
@@ -119,6 +127,9 @@ const projectSummaryShape = {
   productionNotes: z.string().nullable(),
   services: z.array(serviceSchema),
   cover: coverSchema.nullable(),
+  // Defaulted, not required: pre-existing fixtures and any not-yet-updated server response
+  // that omits this new field still parse as "no Editors assigned", never a hard failure.
+  editors: z.array(externalProjectEditorSchema).default([]),
 };
 
 export const externalProjectSummarySchema = z.object(projectSummaryShape).strict();

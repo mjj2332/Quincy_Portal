@@ -46,6 +46,12 @@ export interface ProjectSummary {
   deadlineAt: number | null;
   deadlineLocalCivil: string | null;
   deadlineZone: "Australia/Sydney" | null;
+  /**
+   * Only currently-assigned, active Editors — never Photographers. No avatar image, so avatars
+   * render from initials. Contract-only for now: #82 is the first renderer. Optional so an old
+   * cached snapshot or a fixture that predates this field still satisfies the type.
+   */
+  editors?: { id: string; name: string }[];
 }
 
 /** Kept as a local type to avoid making this dependency-free module import a screen helper. */

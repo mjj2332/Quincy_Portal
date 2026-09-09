@@ -205,4 +205,39 @@ describe("Kanban priority and Board commands", () => {
     expect(await response.json()).toEqual({ error: "Reload the application before moving this project.", code: "stage_contract_reload_required" });
     expect(await database.DB.prepare("SELECT stage_key, board_revision FROM projects WHERE id = ?").bind(target).first()).toEqual({ stage_key: "raw_review", board_revision: 0 });
   });
+
+  it("returns only currently-assigned, active Editors on the summary, never Photographers (#79)", async () => {
+    const projectId = crypto.randomUUID();
+    await seedProject(projectId, "editing_autohdr", 1024);
+    const activeEditorId = crypto.randomUUID();
+    const deactivatedEditorId = crypto.randomUUID();
+    const removedEditorId = crypto.randomUUID();
+    const now = Date.now();
+    await database.DB.batch([
+      database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, authorization_epoch, created_at, updated_at) VALUES (?, 'Active Editor', ?, 1, 'editor', 1, 0, ?, ?)")
+        .bind(activeEditorId, `${activeEditorId}@example.test`, now, now),
+      database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, authorization_epoch, created_at, updated_at) VALUES (?, 'Deactivated Editor', ?, 1, 'editor', 0, 0, ?, ?)")
+        .bind(deactivatedEditorId, `${deactivatedEditorId}@example.test`, now, now),
+      database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, authorization_epoch, created_at, updated_at) VALUES (?, 'Removed Editor', ?, 1, 'editor', 1, 0, ?, ?)")
+        .bind(removedEditorId, `${removedEditorId}@example.test`, now, now),
+      database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)")
+        .bind(crypto.randomUUID(), projectId, activeEditorId, now),
+      database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)")
+        .bind(crypto.randomUUID(), projectId, deactivatedEditorId, now),
+      database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)")
+        .bind(crypto.randomUUID(), projectId, removedEditorId, now),
+      // The Kanban Photographer is a real project member here (Photographer role), to prove
+      // Photographers never surface in `editors` even while actively assigned to the Project.
+      database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'photographer', ?)")
+        .bind(crypto.randomUUID(), projectId, photographerId, now),
+    ]);
+    // A removed assignment must not appear, even though the user is active.
+    await database.DB.prepare("DELETE FROM project_members WHERE project_id = ? AND user_id = ? AND role_on_project = 'editor'").bind(projectId, removedEditorId).run();
+
+    const response = await request("/api/projects", adminToken);
+    expect(response.status).toBe(200);
+    const body = await response.json() as { projects: Array<{ id: string; editors: Array<{ id: string; name: string }> }> };
+    const project = body.projects.find((row) => row.id === projectId);
+    expect(project?.editors).toEqual([{ id: activeEditorId, name: "Active Editor" }]);
+  });
 });

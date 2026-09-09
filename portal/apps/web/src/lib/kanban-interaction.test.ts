@@ -49,6 +49,7 @@ function project(id: string, stageKey: ProjectSummary["stageKey"] = "awaiting_ra
     deadlineAt: null,
     deadlineLocalCivil: null,
     deadlineZone: null,
+    editors: [],
     ...overrides,
   };
 }
@@ -321,6 +322,24 @@ describe("Kanban interaction model", () => {
 
     const unchanged = reconcileAuthoritativeResponse(baseline, "source", { ...response, changed: false });
     expect(unchanged.model.authorizedBoardOrder?.raw_review).toEqual(["first", "last", "source"]);
+  });
+
+  it("carries the widened summary's assigned Editors through a Stage move untouched", () => {
+    const editors = [{ id: "editor-1", name: "Assigned Editor" }];
+    const baseline = board([
+      project("source", "awaiting_raw", { boardRevision: 3, editors }),
+      project("first", "raw_review", { boardRevision: 8 }),
+    ], { awaiting_raw: ["source"], raw_review: ["first"] });
+    const overlay = applyOptimisticOverlay(baseline, "source", { targetStageKey: "raw_review", successor: "first" }, "admin");
+    expect(overlay.projects.find((item) => item.id === "source")?.editors).toEqual(editors);
+
+    const response: MoveProjectStageResponse = {
+      changed: true,
+      project: { projectId: "source", stageKey: "raw_review", boardRevision: 4 },
+      board: { sourceStageKey: "awaiting_raw", targetStageKey: "raw_review", orderedVisibleProjectIds: ["first", "source"] },
+    };
+    const settled = reconcileAuthoritativeResponse(baseline, "source", response);
+    expect(settled.model.projects.find((item) => item.id === "source")?.editors).toEqual(editors);
   });
 
   it("allows same-Stage optimism and only allows safe ordinary forward cross-Stage optimism", () => {

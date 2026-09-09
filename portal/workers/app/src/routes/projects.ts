@@ -17,6 +17,7 @@ import { abortMultipart } from "../lib/r2s3";
 import { isUserVisibleAsset } from "../lib/asset-visibility";
 import { readProjectDeadlineSchedule } from "../lib/project-deadline";
 import { listExternalProjects, readExternalProjectDetail } from "../lib/external-project-query";
+import { activeEditorRefsByProject } from "../lib/project-editors";
 import { boardContractDisabled, boardSchemaMaintenance } from "../lib/board-schema-maintenance";
 import { moveProjectStage } from "../lib/project-stage";
 import { moveProjectBoardOrder } from "../lib/project-board-order";
@@ -352,6 +353,7 @@ projectsRoutes.get("/projects", terminalRoute("/projects", async (c) => {
   const orderedRows = orderDashboardStreetTies(rows);
   const projectIds = orderedRows.map(({ project }) => project.id);
   const { storedByProject, automaticByProject } = await coverMaps(db, projectIds, user.role === "photographer");
+  const editorsByProject = await activeEditorRefsByProject(db, projectIds);
   const enabled = await boardContractEnabled(c.env.DB, variant);
   return c.json({
     projects: orderedRows.map((r) => projectStageForRole({
@@ -363,6 +365,7 @@ projectsRoutes.get("/projects", terminalRoute("/projects", async (c) => {
       deadlineAt: r.project.deadlineAt,
       deadlineLocalCivil: r.project.deadlineLocalCivil,
       deadlineZone: r.project.deadlineZone,
+      editors: editorsByProject.get(r.project.id) ?? [],
     }, user.role)),
     board: {
       contractEnabled: enabled,
