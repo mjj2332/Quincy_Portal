@@ -6,7 +6,7 @@
  * edited to match the new markup can no longer certify that the markup change was safe. #50
  * converts those queries to stable identifiers; these guards stop the coupling coming back.
  *
- * Five guards, and one rule that governs all of them: **prove a gate can fail before trusting it**
+ * Six guards, and one rule that governs all of them: **prove a gate can fail before trusting it**
  * (lessons.md, "A grep gate that cannot fail is not a gate — twice in two releases"). Guard D
  * asserts a floor on what was actually scanned, so a glob that silently matches nothing is itself
  * a failure. Guard E tests the matchers against fixtures, so a later "simplification" of a regex
@@ -14,7 +14,8 @@
  *
  * Baselines shrink, never grow. Guard B's and Guard C's are {} and must stay there. Guard A's does
  * NOT reach {}: #50 emptied it down to the two `<DragOverlay>` sites, which cannot carry an
- * identifier at all — see the note on the baseline itself.
+ * identifier at all — see the note on the baseline itself. Guard F (issue #92) is baseline-free —
+ * it must stay at zero forever, not shrink toward it.
  *
  * This file is `.test.ts`, so it runs in the NODE suite (`vitest.config.ts`), not the happy-dom
  * one. It reads test sources as text; it renders nothing.
@@ -88,6 +89,23 @@ const CONCATENATED_QUERY =
 /** A template literal that is nothing but interpolation — `` querySelector(`${SEL}`) ``. */
 export function isFullyComputedTemplate(quote: string, body: string): boolean {
   return quote === "`" && body.replace(/\$\{[^}]*\}/g, "").trim() === "";
+}
+
+/**
+ * Every `[data-slot="X"]` attribute selector inside a selector literal — guard F's matcher.
+ *
+ * A single selector can carry more than one, either combined with an element/attribute
+ * selector (`form[data-slot="notice-board-composer"] [contenteditable="true"]`) or with a second
+ * slot in a descendant combinator (`[data-slot="a"] [data-slot="b"]`), so this returns every
+ * occurrence rather than the first. It deliberately does NOT match `data-slot` sitting inside the
+ * VALUE of a different attribute — `[data-testid="data-slot-legacy"]` has no `[data-slot=`
+ * substring, because the text before "data-slot" there is `"data-slot-legacy"`'s own quote, not an
+ * attribute-selector open bracket.
+ */
+const DATA_SLOT_SELECTOR = /\[data-slot=(["'])((?:\\[\s\S]|(?!\1)[^\\])*?)\1\]/g;
+
+export function dataSlotsIn(selector: string): string[] {
+  return [...selector.matchAll(DATA_SLOT_SELECTOR)].map((match) => match[2]!);
 }
 
 /**
@@ -261,6 +279,72 @@ function classAssertionFindings(): Finding[] {
   return out;
 }
 
+/**
+ * Non-test `.tsx` source files under `src/` — everything the app SHIPS, as opposed to what tests
+ * it. `domTestFiles()` can't be reused here: it walks the same tree looking for the opposite
+ * suffix.
+ */
+function sourceTsxFiles(): string[] {
+  const out: string[] = [];
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.name.endsWith(".tsx") && !entry.name.endsWith(".test.tsx")) out.push(full);
+    }
+  };
+  walk(srcDir);
+  return out.sort();
+}
+
+/**
+ * A `data-slot` attribute AUTHORED on an element — JSX (`data-slot="x"`) or a spread-prop object
+ * literal (`"data-slot": "x"`, the shape `components/reui/kanban.tsx` and `badge.tsx` use).
+ *
+ * This is deliberately narrower than "the string data-slot appears". `components/reui/field.tsx`
+ * and `icon-button.tsx` both READ a sibling's `data-slot` in a Tailwind arbitrary-variant selector
+ * — `has-[>[data-slot=field]]:…`, `[&>[data-slot=status-pill]]:…` — with no quotes around the
+ * value. Matching those would wrongly credit a file with authoring a slot it only styles off of.
+ */
+const DATA_SLOT_AUTHOR = /(?:"data-slot"\s*:|data-slot\s*=)\s*(["'])([\w-]+)\1/g;
+
+/** slot value -> the (repo-relative) source files that author it. */
+function dataSlotAuthors(): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  for (const file of sourceTsxFiles()) {
+    const source = stripComments(readFileSync(file, "utf8"));
+    for (const match of source.matchAll(DATA_SLOT_AUTHOR)) {
+      const slot = match[2]!;
+      const files = out.get(slot) ?? [];
+      const relFile = rel(file);
+      if (!files.includes(relFile)) files.push(relFile);
+      out.set(slot, files);
+    }
+  }
+  return out;
+}
+
+/**
+ * Guard F's findings: every `[data-slot="X"]` in a DOM-test selector literal where every source
+ * file authoring `X` lives under `components/reui/` — or no source file authors it at all.
+ */
+function vendorSlotFindings(): Finding[] {
+  const authors = dataSlotAuthors();
+  const out: Finding[] = [];
+  for (const file of domTestFiles()) {
+    const source = stripComments(readFileSync(file, "utf8"));
+    for (const match of source.matchAll(LITERAL_QUERY)) {
+      for (const slot of dataSlotsIn(match[2]!)) {
+        const authoredBy = authors.get(slot) ?? [];
+        const quincyAuthored = authoredBy.some((authorFile) => !authorFile.startsWith("components/reui/"));
+        if (quincyAuthored) continue;
+        out.push({ file: rel(file), line: lineOf(source, match.index!), detail: slot });
+      }
+    }
+  }
+  return out;
+}
+
 function countByFile(findings: Finding[]): Map<string, number> {
   const byFile = new Map<string, number>();
   for (const { file } of findings) byFile.set(file, (byFile.get(file) ?? 0) + 1);
@@ -364,7 +448,7 @@ describe("guard A: no DOM test selects an element by a Quincy class name", () =>
       "  - otherwise a `data-testid` added to the source component.",
       "",
       "Do NOT use `data-slot` as a test hook. ReUI/shadcn components ship their own data-slot",
-      "values, this repo already selects on them for styling (ui/icon-button.tsx), and a component",
+      "values, this repo already selects on them for styling (reui/card.tsx), and a component",
       "swap silently replaces yours with the vendor's — leaving the test green while pointing at a",
       "different element.",
     ]);
@@ -453,6 +537,50 @@ describe("guard C: no DOM test asserts an element carries a Quincy class name", 
 });
 
 // ---------------------------------------------------------------------------
+// Guard F — no DOM test selects on a vendor-authored `data-slot`
+// ---------------------------------------------------------------------------
+
+/**
+ * Issue #92. Guard A already tells you not to reach for `data-slot`, but its own baseline note
+ * shows why a blanket ban is the wrong shape for the rule: across the DOM suite there are ~70
+ * `[data-slot="…"]` selector call sites in 9 files, and all but one of them select a slot a
+ * Quincy component authors — `notice-board-post` on `NoticeBoard.tsx`, `avatar` on `Topbar.tsx`,
+ * `checkbox` on `quincy/Checkbox.tsx`, and so on. A Quincy-authored `data-slot` is exactly as
+ * stable as a `data-testid`: same file, same repo, same blast radius on rename. Banning those
+ * would cost ~60 baseline entries in a file whose law is "baselines shrink, never grow", for zero
+ * safety gain.
+ *
+ * The actual hazard guard A names is narrower: "a component swap silently replaces yours with the
+ * vendor's." That is only possible for a slot ONLY a vendor file under `components/reui/` writes
+ * — nothing Quincy-owned exists to keep the value stable if ReUI renames or removes it. This guard
+ * is authorship-based rather than a blanket ban, and it is baseline-free: there is exactly one
+ * violation today (`kanban2/board.dom.test.tsx` selecting `components/reui/kanban.tsx`'s
+ * `kanban-column`), and it is fixed alongside this guard landing.
+ */
+describe("guard F: no DOM test selects on a vendor-authored data-slot", () => {
+  it("selects only data-slot values a Quincy-owned source file also authors", () => {
+    const findings = vendorSlotFindings();
+    expect(
+      findings.map(({ file, line, detail }) => `  ${file}:${line} — [data-slot="${detail}"]`),
+      [
+        'A DOM test selects `[data-slot="X"]` where no Quincy-owned source file writes that',
+        "attribute — either nothing authors it (the selector matches nothing, which is worse than",
+        "coupling to it — a silently vacuous test) or only a vendor file under `components/reui/`",
+        "does.",
+        "",
+        "A `data-slot` your OWN component authors is fine — it is exactly as stable as a",
+        "`data-testid`. A `data-slot` only ReUI authors is not: a component swap or a version bump",
+        "can rename or drop it with no Quincy file to keep it stable, leaving the test green while",
+        "pointing at nothing or at a different element.",
+        "",
+        "Add a `data-testid` to the Quincy component that composes the vendor primitive, and select",
+        "on that instead of the vendor's own `data-slot`.",
+      ].join("\n"),
+    ).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Guard D — the gates above actually scanned something
 // ---------------------------------------------------------------------------
 
@@ -472,6 +600,20 @@ describe("guard D: the seam guards actually scanned the DOM suite", () => {
       0,
     );
     expect(totalQueries, "far fewer DOM queries than expected — is the matcher still matching?").toBeGreaterThanOrEqual(1_400);
+  });
+
+  it("resolves a non-trivial number of distinct data-slot values (guard F)", () => {
+    const slots = new Set<string>();
+    for (const file of domTestFiles()) {
+      const source = stripComments(readFileSync(file, "utf8"));
+      for (const match of source.matchAll(LITERAL_QUERY)) {
+        for (const slot of dataSlotsIn(match[2]!)) slots.add(slot);
+      }
+    }
+    // ~13 distinct values are selected across the DOM suite today (comfortably above this floor);
+    // if the slot extractor or the source-authorship scan breaks, guard F would silently pass over
+    // an empty set — this makes that a failure instead.
+    expect(slots.size, "far fewer distinct data-slot values than expected — is guard F's matcher still matching?").toBeGreaterThanOrEqual(12);
   });
 });
 
@@ -579,5 +721,19 @@ describe("guard E: the seam matchers classify selectors correctly", () => {
     const computedTemplate = literals.some((m) => isFullyComputedTemplate(m[1]!, m[2]!));
     const nonLiteral = new RegExp(NON_LITERAL_QUERY.source).test(code);
     expect(concatenated || computedTemplate || nonLiteral).toBe(expected);
+  });
+
+  // Guard F's matcher (issue #92). A later "simplification" that stops extracting a second slot,
+  // or that starts matching `data-slot` text sitting inside an unrelated attribute's VALUE, would
+  // make guard F silently vacuous or silently noisy — these pin both directions.
+  it.each([
+    ['[data-slot="kanban-column"]', ["kanban-column"]],
+    ['[data-slot="notice-board-post"] [data-slot="notice-board-edit"]', ["notice-board-post", "notice-board-edit"]],
+    ['form[data-slot="notice-board-composer"]', ["notice-board-composer"]],
+    ['[data-slot="field"][data-disabled]', ["field"]],
+    ['[data-testid="kanban2-column"]', []],
+    ['[data-testid="data-slot-legacy"]', []],
+  ])("dataSlotsIn(%j) === %j", (selector, expected) => {
+    expect(dataSlotsIn(selector)).toEqual(expected);
   });
 });

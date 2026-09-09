@@ -120,7 +120,7 @@ describe("ProjectKanbanBoard2 (#80)", () => {
 
   it("renders one column per active Stage, in the given order and labelled, with cards showing street", async () => {
     await renderBoard();
-    const columns = host.querySelectorAll('[data-slot="kanban-column"]');
+    const columns = host.querySelectorAll('[data-testid="kanban2-column"]');
     expect(columns).toHaveLength(2);
     expect(columns[0]?.textContent).toContain("Awaiting RAW");
     expect(columns[1]?.textContent).toContain("RAW review");
