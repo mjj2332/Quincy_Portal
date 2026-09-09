@@ -117,6 +117,11 @@ export function NotificationPreferences() {
                 disabled={busy}
                 // `data-disabled`, not `:disabled` — Base UI's root is a <span>, which the
                 // :disabled pseudo-class never matches. See the note in components/reui/checkbox.
+                // LIVE, unlike the six Button call sites dropped in #71: nothing in the checkbox
+                // chain sets `pointer-events-none` while disabled (reui/checkbox.tsx pairs
+                // `data-disabled:cursor-not-allowed` with `data-disabled:opacity-50` and no
+                // pointer-events rule), so the control still hit-tests and `!` beats the base's
+                // cursor-not-allowed at equal specificity. Do not "clean this up" by analogy.
                 className={saving ? "data-disabled:!cursor-wait" : undefined}
                 onCheckedChange={(next) => void change(next)}
               />

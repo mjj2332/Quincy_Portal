@@ -513,7 +513,7 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
           >
             {ROLES.map((role) => <option key={role} value={role}>{roleLabel(role)}</option>)}
           </QuincySelectField>
-          <Button type="submit" className={cn("max-[721px]:w-full", isProvisioning && "cursor-wait")} disabled={isProvisioning}>{isProvisioning ? "Provisioning…" : "Provision user"}</Button>
+          <Button type="submit" className="max-[721px]:w-full" disabled={isProvisioning}>{isProvisioning ? "Provisioning…" : "Provision user"}</Button>
         </form>
 
         {isLoadingUsers && <EmptyState role="status" title="Loading users.">Reading the studio access roster.</EmptyState>}
@@ -639,7 +639,7 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
                 {integration?.expiresAt && <div><dt>Expires</dt><dd>{formatDate(integration.expiresAt)}</dd></div>}
               </dl>
               {dropboxNotice && <Notice role="alert" className="mb-[var(--space-3)]">{dropboxNotice}</Notice>}
-              <Button type="button" className={cn("self-start mt-auto", isConnectingDropbox && "cursor-wait")} onClick={() => void connectDropbox()} disabled={isConnectingDropbox}>{isConnectingDropbox ? "Opening Dropbox…" : integration?.status === "connected" ? "Reconnect Dropbox" : "Connect Dropbox"}</Button>
+              <Button type="button" className="self-start mt-auto" onClick={() => void connectDropbox()} disabled={isConnectingDropbox}>{isConnectingDropbox ? "Opening Dropbox…" : integration?.status === "connected" ? "Reconnect Dropbox" : "Connect Dropbox"}</Button>
             </> : provider === "tonomo" ? <>
               <p className="!mt-[var(--space-5)] mb-0 [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary">Order deliveries are recorded and reconciled automatically.</p>
               <dl className="flex flex-wrap gap-x-[var(--space-5)] gap-y-[var(--space-3)] my-[var(--space-5)] [&>div]:flex [&>div]:flex-col [&>div]:gap-[var(--space-1)] [&_dt]:[font:var(--type-eyebrow)] [&_dt]:uppercase [&_dt]:tracking-[var(--tracking-wide)] [&_dt]:text-foreground-secondary [&_dd]:m-0 [&_dd]:[font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] [&_dd]:text-foreground-secondary">
@@ -698,7 +698,7 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
             eyebrow="Operator queue"
             actions={<>
               <StatusPill tone={notificationDeliveryCounts[notificationDeliveryView] > 0 ? "critical" : "neutral"}>{notificationDeliveryCounts[notificationDeliveryView] > 0 ? `${notificationDeliveryCounts[notificationDeliveryView]} deliveries` : "No deliveries"}</StatusPill>
-              <Button type="button" variant="outline" className={isLoadingNotificationDeliveries ? "cursor-wait" : undefined} disabled={isLoadingNotificationDeliveries} onClick={() => void loadNotificationDeliveries(notificationDeliveryView)} data-testid="admin-notification-delivery-refresh">Refresh</Button>
+              <Button type="button" variant="outline" disabled={isLoadingNotificationDeliveries} onClick={() => void loadNotificationDeliveries(notificationDeliveryView)} data-testid="admin-notification-delivery-refresh">Refresh</Button>
             </>}
           >
             Notification delivery
