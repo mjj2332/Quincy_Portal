@@ -3,8 +3,8 @@ import { Children, act, createElement, isValidElement, type ReactElement, type R
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AutoScrollActivator, DragOverlay, MeasuringStrategy, type Active, type ClientRect, type DroppableContainer } from "@dnd-kit/core";
-import { ProjectKanbanBoard, type BoardInteractionState } from "./ProjectKanbanBoard";
-import type { ProjectSummary } from "../lib/kanban-interaction";
+import { ProjectKanbanBoard } from "./ProjectKanbanBoard";
+import type { BoardInteractionState, ProjectSummary } from "../lib/kanban-interaction";
 import type { PipelineStage } from "../lib/stages";
 
 type DndTestEvent = { active: { id: string; data?: unknown }; over: { id: string; data?: unknown } | null; activatorEvent?: Event };

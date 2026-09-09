@@ -38,12 +38,13 @@ import {
   reconcileAuthoritativeResponse,
   reorderIntentFromGap,
   sortKanbanProjects,
+  type BoardInteractionState,
   type BoardModel,
   type FocusDescriptor,
   type ProjectSummary,
   type SemanticGap,
 } from "../lib/kanban-interaction";
-import { ProjectKanbanBoard, type BoardInteractionState } from "../components/ProjectKanbanBoard";
+import { ProjectKanbanBoard } from "../components/ProjectKanbanBoard";
 import { ProjectKanbanBoard2 } from "../components/kanban2/board";
 // Code-split: FullCalendar + its deps (~84 kB gzip) load only when a capable
 // principal opens the Calendar view, never on the sign-in screen or a

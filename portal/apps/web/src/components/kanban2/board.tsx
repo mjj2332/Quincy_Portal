@@ -6,11 +6,11 @@ import {
   eligibleTarget,
   focusDescriptorFor,
   sortKanbanProjects,
+  type ProjectKanbanBoardProps,
   type ProjectSummary,
   type SemanticGap,
 } from "../../lib/kanban-interaction";
 import type { ProjectStageKey } from "../../lib/stages";
-import type { ProjectKanbanBoardProps } from "../ProjectKanbanBoard";
 import { KanbanCard2 } from "./card";
 
 /** `editing` is the role-safe presentation of `editing_autohdr` — see `ProjectKanbanBoard.tsx`. */
@@ -29,8 +29,8 @@ function semanticStageKey(value: ProjectStageKey): StageKey {
  * still receive a card) without ever being draggable itself, and no `KanbanColumnHandle` is
  * rendered anywhere.
  *
- * Props are intentionally the exact `ProjectKanbanBoardProps` type the existing Board exports, so
- * the Dashboard's priority and stage coordinators are unchanged (#80 acceptance criteria).
+ * Props are intentionally the exact `ProjectKanbanBoardProps` type from `lib/kanban-interaction`,
+ * so the Dashboard's priority and stage coordinators are unchanged (#80 acceptance criteria).
  * `canPrioritize`, `pendingOrdering` and `onPriorityChange` are consumed as of #81. The remainder
  * (`onBoardPosition`, `sameStageReorderEnabled`, `onMoveStage`, `onMoveToProposalChange`,
  * `onInteractionStateChange`, `onAnnounce`) are still accepted for contract parity and
