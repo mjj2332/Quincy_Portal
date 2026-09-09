@@ -14,7 +14,7 @@
    `data-surface="default"`, that restores every one of the same roles back
    to its normal `:root` value — otherwise a role the inverse block sets and
    the light panel doesn't re-set would inherit the dark value into the
-   light panel. The two blocks below therefore declare the same 19
+   light panel. The two blocks below therefore declare the same 21
    properties, one inverted, one restored. See
    docs/plans/TB8-09-Lightbox-Controls-Visual-Plan.md §2.3 and §2.3a for the
    full reasoning, including why both --ring and --focus-ring must be set
@@ -41,6 +41,9 @@
   --primary-hover:         var(--greige-100);   /* only works because of §2.2 */
   --ring:                  var(--paper-050);      /* 18.64:1 — the §1.2 fix, utilities half */
   --focus-ring:            var(--paper-050);      /* 18.64:1 — the §1.2 fix, global-rule half */
+  --star-on:               var(--star-amber);     /*  9.20:1 — the paper ochre reads 2.20:1 here */
+  --star-off:              var(--greige-200);     /* 11.78:1 — tracks --foreground-secondary,
+                                                     the same role :root's --star-off names */
 }
 
 /* The light panel inside the dark stage. Must mirror the inverse block property-for-property;
@@ -65,4 +68,6 @@
   --primary-hover:         var(--ink-700);
   --ring:                  var(--focus-ring);
   --focus-ring:            var(--ink-900);
+  --star-on:               var(--signal-caution-text);
+  --star-off:              var(--foreground-secondary);
 }

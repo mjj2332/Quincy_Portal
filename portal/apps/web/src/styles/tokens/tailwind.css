@@ -67,4 +67,10 @@
   /* The ink surface a primary control takes on hover.
      TB8-09: reads the --primary-hover alias, not --ink-700 directly — same reason. */
   --color-primary-hover: var(--primary-hover);
+  /* The two 1–5 star scales, Asset rating and Project priority (colors.css).
+     Reads the --star-on/--star-off aliases, not a value, so the ground-scoped
+     redefinitions in tokens/inverse.css and the over-media scope in app.css reach a
+     `text-star-on` utility as well as plain CSS. */
+  --color-star-on: var(--star-on);
+  --color-star-off: var(--star-off);
 }

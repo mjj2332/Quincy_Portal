@@ -343,3 +343,62 @@ describe("guard: no focus ring is suppressed in unlayered CSS", () => {
     expect(fixed, `Fixed — delete from SUPPRESSED_FOCUS_BASELINE: ${fixed.join(", ")}`).toEqual([]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Guard 4 — a star painted from a literal instead of its token
+// ---------------------------------------------------------------------------
+/**
+ * Two independent 1–5 scales render as stars: Asset rating, and Project priority from #81.
+ * They are different concepts that deliberately share a glyph, so the one thing that must not
+ * happen is the two drifting into two different yellows — which is exactly what a second
+ * hardcoded `#f0a020` at a new star site produces. Nothing about that is visible in review: the
+ * stars render, in a yellow, and only someone holding both screens side by side sees it.
+ *
+ * This guard exists because #77 found the drift had *already* started: Asset rating painted
+ * `#f0a020` over photo tiles and `--signal-caution-text` in the Lightbox panel. Both were right
+ * — they sit on different grounds — but neither was written down, so the ticket that set out to
+ * "replace the raw hex" was written believing there was one.
+ *
+ * The grounds are why this is a token pair rather than a token: `--star-on` resolves to ochre on
+ * paper, amber on ink (tokens/inverse.css) and amber over media (app.css `.tstars`). A star site
+ * names the role and is handed the value its ground needs. Naming a value instead is the defect.
+ *
+ * No baseline: the sweep it would record was done in the same change that added the guard.
+ */
+describe("guard: star colour comes from a token, never a literal", () => {
+  const STAR_PALETTE = ["#f0a020", "rgba(255,255,255,.28)"];
+
+  it("declares the star palette only at its definition in tokens/colors.css", () => {
+    for (const value of STAR_PALETTE) {
+      const files = cssFiles()
+        .filter((file) => stripCssComments(readFileSync(file, "utf8")).includes(value))
+        .map(rel);
+      // `rgba(255,255,255,.28)` is also the .wmark--lg watermark ink — same value, unrelated
+      // concept, and it stays where it is. The star half of it must live in the token file.
+      expect(files, `${value} escaped tokens/colors.css`).toContain("styles/tokens/colors.css");
+    }
+  });
+
+  it("paints every star-named rule from a --star-* role", () => {
+    const offenders: string[] = [];
+    for (const file of cssFiles()) {
+      const css = stripCssComments(readFileSync(file, "utf8"));
+      for (const rule of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+        const selector = rule[1] ?? "";
+        const body = rule[2] ?? "";
+        if (!/star/i.test(selector) || selector.includes("@")) continue;
+        for (const declaration of body.matchAll(/(?:^|;)\s*color\s*:\s*([^;]+)/g)) {
+          const value = declaration[1] ?? "";
+          if (!/var\(--star-(?:on|off)\)/.test(value)) {
+            offenders.push(`${rel(file)} — ${selector.trim()} { color: ${value.trim()} }`);
+          }
+        }
+      }
+    }
+    expect(offenders, [
+      "A star rule must read var(--star-on) / var(--star-off), not a value.",
+      "The role resolves per ground; a literal picks one ground and is wrong on the others.",
+      ...offenders,
+    ].join("\n")).toEqual([]);
+  });
+});

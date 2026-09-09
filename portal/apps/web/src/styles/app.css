@@ -186,10 +186,15 @@ button { font-family: var(--font-sans); }
 /* rating stars on tile */
 /* Stars render as text ★ spans (components/atoms.tsx), NOT svg — selectors must target
    the spans or the on/off distinction silently dies (shipped once: every tile read as 5★). */
-.tstars { position: absolute; right: 9px; bottom: 9px; z-index: 3; display: flex; gap: 2px; opacity: 0; transition: opacity var(--dur-base); line-height: 1; }
+/* The third star ground, alongside paper (:root) and ink (tokens/inverse.css): an arbitrary
+   photograph. Neither surface pair works over media — the paper ochre disappears into a dark
+   image and the ink pair's greige into a light one — so the scope redefines --star-on/--star-off
+   locally and the rules below read the tokens like every other star site. The text-shadows,
+   not the colours, are what actually carry these over an unknown image. */
+.tstars { position: absolute; right: 9px; bottom: 9px; z-index: 3; display: flex; gap: 2px; opacity: 0; transition: opacity var(--dur-base); line-height: 1; --star-on: var(--star-amber); --star-off: var(--star-off-media); }
 .tile:hover .tstars, .tile.has-rating .tstars { opacity: 1; }
-.tstars .on { color: #f0a020; text-shadow: 0 1px 4px rgba(0,0,0,.55); }
-.tstars .off { color: rgba(255,255,255,.28); text-shadow: 0 1px 3px rgba(0,0,0,.4); }
+.tstars .on { color: var(--star-on); text-shadow: 0 1px 4px rgba(0,0,0,.55); }
+.tstars .off { color: var(--star-off); text-shadow: 0 1px 3px rgba(0,0,0,.4); }
 
 /* label dot */
 .ldot { width: 9px; height: 9px; border-radius: 50%; box-shadow: 0 0 0 2px rgba(255,255,255,.5); }
@@ -448,7 +453,7 @@ button { font-family: var(--font-sans); }
   .vpanel__peek-action { display: inline-grid; place-items: center; font-size: 20px; }
   .vpanel__peek-action.on-approve.is-on { background: var(--signal-positive); border-color: var(--signal-positive); color: var(--primary-foreground); }
   .vpanel__peek-action.on-flag.is-on { background: var(--signal-critical); border-color: var(--signal-critical); color: var(--primary-foreground); }
-  .vpanel__peek-rating { display: inline-flex; align-items: center; justify-content: center; gap: 4px; min-width: 58px; color: var(--signal-caution-text); }
+  .vpanel__peek-rating { display: inline-flex; align-items: center; justify-content: center; gap: 4px; min-width: 58px; color: var(--star-on); }
   .vpanel__peek-rating span { color: var(--text-primary); font: var(--type-mono); font-size: 12px; }
   .vpanel__peek-handle { display: inline-flex; align-items: center; justify-content: center; gap: 6px; margin-left: auto; padding: 0 12px; font: var(--type-label); font-size: 11px; letter-spacing: var(--tracking-wide); text-transform: uppercase; }
   .vpanel__peek-handle span:first-child { font-size: 20px; line-height: 1; }
