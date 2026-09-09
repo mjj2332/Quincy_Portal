@@ -24,6 +24,25 @@
   needs authentication can only ever be done by (or as) that account; there is no way to
   provision a second local test user without editing the seed.
 
+- **A new baseline-free guard merged *after* the code it governs turns `main` red without either
+  PR ever being red — and "I ran the full suite" is not proof against it.** #92 added guard F
+  (`test-seam.guard.test.ts`, rejects DOM-test selectors on a `data-slot` no Quincy file authors)
+  on branch `feat/92-slice`, cut from `origin/main` at `5b6f1d0`. #81's board test — which reaches
+  for `[data-slot="kanban-item"]` — landed in `1b8b267` *after* that worktree was created. The
+  guard PR was green (371 + 798) because its base predated the violating test; the #81 PR was
+  green because the guard did not yet exist. Both merged, and `main` at `62054e4` was red on a
+  file neither PR touched. **Rule: for a PR that adds or tightens a guard, re-run the suite
+  against `origin/main` merged into the branch immediately before merging, not against the branch
+  alone.** A long-lived worktree makes this worse, because its base silently ages while other
+  slices land. Fixed 2026-09-10 in `fix/92-guard-f-board-item`.
+
+  The same merge sequence also cost the #81 commits entirely once: PR #89 was stacked on
+  `feat/82-slice` and merged into it 65 seconds *after* that branch had itself merged into `main`,
+  so GitHub reported #89 MERGED and auto-closed it while the commits sat on a dead end and `main`
+  never received them. GitHub's stacked-PR auto-retarget only fires while the child is still open.
+  **Verify a merge with `git cat-file -e origin/main:<a file the PR added>`, not the MERGED
+  badge.**
+
 - **`PRAGMA foreign_keys=OFF` does not reliably persist across statements in D1's remote migration
   execution, even though it worked fine against local Miniflare — a real production migration
   attempt (0020) failed on `DROP TABLE projects` with `FOREIGN KEY constraint failed`, even though
