@@ -71,7 +71,7 @@ function TeamPicker({ roleOnProject, candidates, selectedIds, pending, onSelect,
     floating.onKeyDown(event);
   }
   return <>
-    <button ref={setTrigger} type="button" className={buttonClasses("secondary", { className: "project-team__add min-h-[44px] px-[var(--space-3)] shrink-0" })} aria-label={`Add ${roleLabel(roleOnProject)}`} aria-expanded={open} aria-controls={open ? listId : undefined} onClick={() => setOpen((value) => !value)}>+ Add</button>
+    <button ref={setTrigger} type="button" className={buttonClasses("secondary", { className: "min-h-[44px] px-[var(--space-3)] shrink-0" })} aria-label={`Add ${roleLabel(roleOnProject)}`} aria-expanded={open} aria-controls={open ? listId : undefined} onClick={() => setOpen((value) => !value)}>+ Add</button>
     {floating.mounted && <AnchoredPopover
       context={floating.context}
       floatingStyles={floating.floatingStyles}
@@ -190,37 +190,37 @@ export function ProjectTeamControl({ projectId, members, canEdit }: { projectId:
   function roleSection(roleOnProject: ProjectMemberRole, roleMembers: ProjectMember[], roleCandidates: ProjectAssignmentCandidate[]) {
     const roleSelected = selected(roleOnProject);
     const roleErrors = Object.entries(mutationStates).filter(([key, state]) => key.startsWith(`${roleOnProject}:`) && state.kind === "error");
-    return <section className="project-team__role grid gap-[var(--space-2)]" aria-labelledby={`project-team-${roleOnProject}-heading`}>
-      <div className="project-team__role-head flex items-center justify-between gap-[var(--space-2)]">
+    return <section className="grid gap-[var(--space-2)]" aria-labelledby={`project-team-${roleOnProject}-heading`}>
+      <div className="flex items-center justify-between gap-[var(--space-2)]">
         <h3 id={`project-team-${roleOnProject}-heading`} className="[font:var(--weight-regular)_var(--text-xs)/1.2_var(--font-sans)]
                     uppercase tracking-[var(--tracking-wide)] text-foreground">{roleLabel(roleOnProject)}s</h3>
         {canEdit && <TeamPicker roleOnProject={roleOnProject} candidates={roleCandidates} selectedIds={roleSelected} pending={pending} onSelect={(candidate) => void add(roleOnProject, candidate)} candidatesUnavailable={candidatesQuery.isError} />}
       </div>
       {roleErrors.map(([key, state]) => {
         const candidate = roleCandidates.find((item) => key === cellKey(roleOnProject, item.id));
-        return <div className={cn("project-team__message project-team__message--error", PROJECT_TEAM_MESSAGE)} role="alert" key={key}>{state.kind === "error" ? state.message : "Assignment could not be added."}{candidate && <button type="button" className={buttonClasses("text", { className: "ml-[var(--space-2)] min-h-[44px]" })} onClick={() => void add(roleOnProject, candidate)}>Retry</button>}</div>;
+        return <div className={cn(PROJECT_TEAM_MESSAGE)} role="alert" key={key}>{state.kind === "error" ? state.message : "Assignment could not be added."}{candidate && <button type="button" className={buttonClasses("text", { className: "ml-[var(--space-2)] min-h-[44px]" })} onClick={() => void add(roleOnProject, candidate)}>Retry</button>}</div>;
       })}
-      {roleMembers.length ? <div className="project-team__members grid">{roleMembers.map((member) => {
+      {roleMembers.length ? <div className="grid">{roleMembers.map((member) => {
         const key = cellKey(roleOnProject, member.userId); const state = mutationStates[key];
-        return <div className="project-team__member grid grid-cols-[minmax(0,1fr)_auto] items-center
+        return <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center
                         gap-[var(--space-3)] min-w-0 min-h-[44px] py-[var(--space-2)]
                         [border-top-style:solid] border-t-[length:var(--border-width-hair)] border-t-border
                         first:border-t-0" key={member.id} data-testid={`project-member-${key}`}>
-          <div className="project-team__identity grid min-w-0 gap-[var(--space-1)]">
+          <div className="grid min-w-0 gap-[var(--space-1)]">
             <strong className="[font:var(--weight-regular)_var(--text-sm)/1.2_var(--font-sans)]
                                text-foreground [overflow-wrap:anywhere]">{member.name || member.email}</strong>
             <small className="[font:var(--weight-regular)_var(--text-2xs)/var(--leading-normal)_var(--font-sans)]
                               text-foreground-secondary [overflow-wrap:anywhere]">{member.email} · {globalRoleLabel(member.globalRole)}{!member.active && <em className="ml-[var(--space-2)] not-italic uppercase tracking-[var(--tracking-wide)] text-[color:var(--signal-caution-text)]">Inactive</em>}</small>
           </div>
-          {canEdit && <button type="button" className={buttonClasses("text", { className: "project-team__remove min-h-[44px] shrink-0" })} data-testid="project-member-remove" disabled={state?.kind === "pending"} onClick={() => void remove(member)}>{state?.kind === "pending" ? "Working…" : "Remove"}</button>}
-          {state && state.kind !== "pending" && <div className={cn(`project-team__message project-team__message--${state.kind}`, PROJECT_TEAM_MESSAGE)} role="alert">{state.message}{state.kind === "error" && <button type="button" className={buttonClasses("text", { className: "ml-[var(--space-2)] min-h-[44px]" })} onClick={() => void remove(member)}>Retry</button>}</div>}
+          {canEdit && <button type="button" className={buttonClasses("text", { className: "min-h-[44px] shrink-0" })} data-testid="project-member-remove" disabled={state?.kind === "pending"} onClick={() => void remove(member)}>{state?.kind === "pending" ? "Working…" : "Remove"}</button>}
+          {state && state.kind !== "pending" && <div className={cn(PROJECT_TEAM_MESSAGE)} role="alert">{state.message}{state.kind === "error" && <button type="button" className={buttonClasses("text", { className: "ml-[var(--space-2)] min-h-[44px]" })} onClick={() => void remove(member)}>Retry</button>}</div>}
         </div>;
-      })}</div> : <p className="project-team__empty m-0 [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary">Not assigned</p>}
+      })}</div> : <p className="m-0 [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary">Not assigned</p>}
     </section>;
   }
 
-  return <div className="project-team grid gap-[var(--space-4)]" data-testid="project-team-control">
-    {candidatesQuery.isError && canEdit && <p className={cn("project-team__message project-team__message--error", PROJECT_TEAM_MESSAGE)} role="alert">Candidates could not be loaded. {candidatesQuery.error instanceof Error ? candidatesQuery.error.message : "Try again shortly."}</p>}
+  return <div className="grid gap-[var(--space-4)]" data-testid="project-team-control">
+    {candidatesQuery.isError && canEdit && <p className={cn(PROJECT_TEAM_MESSAGE)} role="alert">Candidates could not be loaded. {candidatesQuery.error instanceof Error ? candidatesQuery.error.message : "Try again shortly."}</p>}
     {roleSection("photographer", photographers, candidateList.photographers)}
     {roleSection("editor", editors, candidateList.editors)}
   </div>;
