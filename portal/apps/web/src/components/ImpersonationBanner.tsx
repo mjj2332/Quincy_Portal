@@ -14,7 +14,7 @@ const EXIT_ERROR = "Could not automatically exit. Sign out completely and sign b
 // The banner is a fixed ink strip above the topbar. Its 42px height is load-bearing: five
 // app.css rules offset the topbar, rail, worktools, viewer and collaboration wrap by exactly
 // 42px under `.app--impersonating` (app.css:39-43, :823, :1074-1075). Do not change it here.
-const BANNER = "impersonation-banner fixed inset-x-0 top-0 z-[76] flex items-center " +
+const BANNER = "fixed inset-x-0 top-0 z-[76] flex items-center " +
   "gap-[var(--space-3)] h-[42px] overflow-hidden px-[var(--space-6)] " +
   "bg-surface-inverse text-on-inverse " +
   "[font:var(--weight-regular)_var(--text-2xs)/1.2_var(--font-sans)] " +
@@ -40,7 +40,7 @@ const EXIT = buttonClasses("text", {
     "focus-visible:!outline-on-inverse",
 });
 
-const ERROR = "impersonation-banner__error flex-[1_1_160px] min-w-0 overflow-hidden " +
+const ERROR = "flex-[1_1_160px] min-w-0 overflow-hidden " +
   "text-signal-critical normal-case tracking-normal text-ellipsis whitespace-nowrap " +
   "[font:var(--weight-regular)_var(--text-xs)/1.35_var(--font-sans)]";
 

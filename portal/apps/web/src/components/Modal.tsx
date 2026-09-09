@@ -44,7 +44,6 @@ export type ModalProps = {
 // declaration) rather than split across separate `duration-*`/`ease-*` utilities, so the token
 // is the actual, single owner of both overlay motion phases — not just a comment.
 const SCRIM = cn(
-  "scrim",
   "fixed inset-0 z-[var(--z-dialog)] grid place-items-center",
   "p-[var(--space-6)] max-[721px]:p-0 max-[721px]:items-end",
   "bg-[var(--scrim-overlay)] backdrop-blur-[3px]",
@@ -77,7 +76,7 @@ function panelClasses(size: ModalSize | undefined, wide: boolean): string {
   );
 }
 
-const PANEL_SCROLL = "modal__scroll flex-1 min-h-0 overflow-auto flex flex-col";
+const PANEL_SCROLL = "flex-1 min-h-0 overflow-auto flex flex-col";
 
 const HEAD = "p-[var(--space-6)] pb-[var(--space-4)]";
 
@@ -85,7 +84,7 @@ const TITLE = "[font:var(--type-h3)] tracking-[var(--tracking-tight)] text-prett
 
 // `.modal__body` is kept as a literal class name — no CSS rule of its own, but
 // ConfirmDialog.dom.test.tsx queries it directly (same reasoning as `.scrim` above).
-const BODY = cn("modal__body", "flex flex-col gap-[var(--space-4)] px-[var(--space-6)] pb-[var(--space-5)]");
+const BODY = "flex flex-col gap-[var(--space-4)] px-[var(--space-6)] pb-[var(--space-5)]";
 
 const FOOT = cn(
   "flex flex-wrap justify-end gap-[var(--space-3)] px-[var(--space-6)] py-[var(--space-5)]",
