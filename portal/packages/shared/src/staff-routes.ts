@@ -29,9 +29,15 @@ export type DashboardCalendarState = {
   myTasks: boolean;
 };
 
+/**
+ * `kanban2` (#80) is the second Board, built from ReUI `kanban-board-3`, running alongside the
+ * original `kanban` view for comparison against real studio data before cutover (#76 "Slice
+ * order"). It is a new legal VALUE on `view`, not a new query parameter — the List/Kanban
+ * allow-list below stays closed to `view` alone either way.
+ */
 export type DashboardListKanbanRoute = {
   kind: "dashboard";
-  dashboardView: "list" | "kanban";
+  dashboardView: "list" | "kanban" | "kanban2";
 };
 
 export type DashboardCalendarFacetRoute = {
@@ -241,7 +247,7 @@ function parseDashboardListKanbanLocation(params: URLSearchParams): DashboardLis
     if (!dashboardListKanbanParameterNames.has(name)) return null;
   }
   const dashboardView = params.get("view");
-  if (dashboardView !== "list" && dashboardView !== "kanban") return null;
+  if (dashboardView !== "list" && dashboardView !== "kanban" && dashboardView !== "kanban2") return null;
 
   return { kind: "dashboard", dashboardView };
 }
@@ -260,7 +266,7 @@ export function parseStaffLocation(location: string): StaffRoute {
   const params = parseDashboardQuery(query);
   if (params === null) return { kind: "not-found" };
   const view = params.get("view");
-  if (view === "list" || view === "kanban") return parseDashboardListKanbanLocation(params) ?? { kind: "not-found" };
+  if (view === "list" || view === "kanban" || view === "kanban2") return parseDashboardListKanbanLocation(params) ?? { kind: "not-found" };
   if (view === "calendar") {
     const calendar = parseCalendarLocation(params);
     if (calendar === null) return { kind: "not-found" };
