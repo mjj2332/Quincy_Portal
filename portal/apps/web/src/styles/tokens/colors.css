@@ -46,6 +46,18 @@
      graphical objects at a 3:1 bar, which the brand ochre clears (.tbanner svg, 3.83:1). */
   --signal-caution-text: #7b5519;
 
+  /* ---- Star palette ---------------------------------------------------
+     The dark-ground half of the star pair. Two independent 1–5 scales render as stars —
+     Asset rating today, Project priority from #81 — and they share one pair of roles
+     (--star-on / --star-off, below the banner) so they cannot drift into two yellows.
+
+     These two are raw rather than aliases because no existing role carries them: the
+     brand has no amber, and the over-media off-value is a white alpha that only works
+     against the text-shadow it ships with. The roles are what components read; these are
+     what the roles resolve to on ink and over a photograph. */
+  --star-amber:     #f0a020;               /* 9.20:1 on --ink-900; 1.89:1 on --paper-100 */
+  --star-off-media: rgba(255,255,255,.28); /* over an unknown image, carried by a text-shadow */
+
   /* ====================================================================
      SEMANTIC ALIASES — reference these in components, not the raw scale
      ==================================================================== */
@@ -81,6 +93,17 @@
   --surface-sunken:       var(--bg-sunken);
   --border-hover:         var(--greige-300);
   --primary-hover:        var(--ink-700);
+
+  /* ---- Star roles ---- */
+  /* What a star reads. Ground-dependent for the same reason as the four TB8-09 roles
+     above, and redefined in the same two places: one value cannot serve every ground a
+     star lands on. --star-amber measures 1.89:1 on --paper-100, under the 3:1 floor for
+     a non-text graphical object; --signal-caution-text measures 2.20:1 on --ink-900.
+     Each is correct on its own ground and illegible on the other, so the pair is scoped
+     per surface (tokens/inverse.css) and over media (app.css `.tstars`) instead of being
+     picked once. A component names the role and gets the right one. */
+  --star-on:  var(--signal-caution-text);  /* paper — 4.90:1, its worst ground */
+  --star-off: var(--foreground-secondary); /* paper — the secondary-text role, ~8.7:1 */
 
   /* ---- TB8-02 overlay roles ---- */
   /* The wash behind a detached overlay. Was four raw rgba() literals differing by 2%

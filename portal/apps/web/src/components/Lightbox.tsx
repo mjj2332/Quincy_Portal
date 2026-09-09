@@ -53,8 +53,11 @@ const SECTION_LABEL =
 const RATING_BUTTON =
   ICON_BUTTON_BASE + " w-[28px] max-[721px]:w-[44px] leading-none " +
   "[font:var(--weight-regular)_var(--text-lg)/1_var(--font-sans)]";
-const RATING_ON = "text-signal-caution-text";
-const RATING_OFF = "text-foreground-secondary";
+// The star pair, not the caution/secondary roles they happened to equal: Asset rating and
+// Project priority must move together (styles/tokens/colors.css). Same computed colour on the
+// `.vpanel` paper ground, so this is a rename at the source and no change on screen.
+const RATING_ON = "text-star-on";
+const RATING_OFF = "text-star-off";
 
 // TB8-09 slice 5: the filmstrip thumbnail. The thumb's hover paint depends on the button's
 // hover state, so the button carries `group` and the thumb reads it via `group-hover`; the
