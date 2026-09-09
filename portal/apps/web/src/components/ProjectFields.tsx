@@ -173,11 +173,11 @@ export function ProjectFields({ form, errors, existingCollections = [], mode = "
       {policy.servicesReadOnly && <p className={SECTION_NOTE}>Services are fixed after a project is created.</p>}
       <div role="group" aria-labelledby="services-heading"
            className="grid gap-[1px] bg-border border-solid border-[length:var(--border-width-hair)] border-border grid-cols-1 min-[721px]:grid-cols-3 min-[1081px]:grid-cols-5">
-        <label className={cn(CHECK_TILE, "create-project__check")}>
+        <label className={CHECK_TILE}>
           <input type="checkbox" checked disabled className={CHECKBOX_INPUT} />
           <span className={TILE_SPAN}><strong className={TILE_LABEL}>RAW</strong><small className={TILE_HINT}>{collectionExists("raw") ? "Already created" : "Always included"}</small></span>
         </label>
-        {SERVICES.map((service) => <label className={cn(CHECK_TILE, "create-project__check")} key={service.kind}><input type="checkbox" checked={form.orderedServices.includes(service.kind)} disabled={policy.servicesReadOnly} onChange={policy.servicesReadOnly ? undefined : () => onToggle("orderedServices", service.kind)} className={CHECKBOX_INPUT} /><span className={TILE_SPAN}>{service.label}</span></label>)}
+        {SERVICES.map((service) => <label className={CHECK_TILE} key={service.kind}><input type="checkbox" checked={form.orderedServices.includes(service.kind)} disabled={policy.servicesReadOnly} onChange={policy.servicesReadOnly ? undefined : () => onToggle("orderedServices", service.kind)} className={CHECKBOX_INPUT} /><span className={TILE_SPAN}>{service.label}</span></label>)}
       </div>
     </section>
     <section className="create-project__section" aria-labelledby="dropbox-heading">
@@ -194,11 +194,11 @@ export function ProjectFields({ form, errors, existingCollections = [], mode = "
       {!isLoadingUsers && !usersError && <div className={FIELD_GRID_2}>
         <div>
           <Eyebrow className="block mb-[var(--space-2)]">Photographers</Eyebrow>
-          <div data-testid="create-project-checklist" className={cn(TEAM_CHECKLIST, "create-project__checklist")}>{photographers.length ? photographers.map((user) => <label data-testid="create-project-check" className={cn(CHECK_TILE, "create-project__check")} key={user.id}><input type="checkbox" checked={form.photographerUserIds.includes(user.id)} onChange={() => onToggle("photographerUserIds", user.id)} className={CHECKBOX_INPUT} /><span className={TILE_SPAN}><strong className={TILE_LABEL}>{userName(user)}</strong><small className={TILE_HINT}>{user.email}{roleLabel(user.role) && ` · ${roleLabel(user.role)}`}</small></span></label>) : <p className={CHECKLIST_EMPTY}>No active photographers are provisioned.</p>}</div>
+          <div data-testid="create-project-checklist" className={TEAM_CHECKLIST}>{photographers.length ? photographers.map((user) => <label data-testid="create-project-check" className={CHECK_TILE} key={user.id}><input type="checkbox" checked={form.photographerUserIds.includes(user.id)} onChange={() => onToggle("photographerUserIds", user.id)} className={CHECKBOX_INPUT} /><span className={TILE_SPAN}><strong className={TILE_LABEL}>{userName(user)}</strong><small className={TILE_HINT}>{user.email}{roleLabel(user.role) && ` · ${roleLabel(user.role)}`}</small></span></label>) : <p className={CHECKLIST_EMPTY}>No active photographers are provisioned.</p>}</div>
         </div>
         <div>
           <Eyebrow className="block mb-[var(--space-2)]">Editors</Eyebrow>
-          <div data-testid="create-project-checklist" className={cn(TEAM_CHECKLIST, "create-project__checklist")}>{editors.length ? editors.map((user) => <label data-testid="create-project-check" className={cn(CHECK_TILE, "create-project__check")} key={user.id}><input type="checkbox" checked={form.editorUserIds.includes(user.id)} onChange={() => onToggle("editorUserIds", user.id)} className={CHECKBOX_INPUT} /><span className={TILE_SPAN}><strong className={TILE_LABEL}>{userName(user)}</strong><small className={TILE_HINT}>{user.email}{user.role === "admin" && " · admin"}{user.role === "external_editor" && " · External editor"}</small></span></label>) : <p className={CHECKLIST_EMPTY}>No active editors are provisioned.</p>}</div>
+          <div data-testid="create-project-checklist" className={TEAM_CHECKLIST}>{editors.length ? editors.map((user) => <label data-testid="create-project-check" className={CHECK_TILE} key={user.id}><input type="checkbox" checked={form.editorUserIds.includes(user.id)} onChange={() => onToggle("editorUserIds", user.id)} className={CHECKBOX_INPUT} /><span className={TILE_SPAN}><strong className={TILE_LABEL}>{userName(user)}</strong><small className={TILE_HINT}>{user.email}{user.role === "admin" && " · admin"}{user.role === "external_editor" && " · External editor"}</small></span></label>) : <p className={CHECKLIST_EMPTY}>No active editors are provisioned.</p>}</div>
         </div>
       </div>}
     </section>}

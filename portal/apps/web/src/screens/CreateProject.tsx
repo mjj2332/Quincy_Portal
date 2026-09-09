@@ -62,7 +62,7 @@ export function CreateProject({ onNavigate }: { onNavigate: (path: string, notic
       </div>
       <InternalLink className={buttonClasses("secondary", {})} to="/">Cancel</InternalLink>
     </header>
-    <form onSubmit={(event) => void submit(event)} noValidate className="create-project__form flex flex-col gap-[var(--space-8)]">
+    <form onSubmit={(event) => void submit(event)} noValidate className="flex flex-col gap-[var(--space-8)]">
       {submitError && <Notice role="alert">{submitError}</Notice>}
       <section
         aria-labelledby="property-heading"
@@ -78,7 +78,7 @@ export function CreateProject({ onNavigate }: { onNavigate: (path: string, notic
           You can fill in everything else later from the shoot&apos;s workspace.
         </p>
 
-        <div className="create-project__hero-action grid gap-[var(--space-3)] grid-cols-1 min-[721px]:grid-cols-[minmax(0,1fr)_auto]">
+        <div className="grid gap-[var(--space-3)] grid-cols-1 min-[721px]:grid-cols-[minmax(0,1fr)_auto]">
           <label className="flex flex-col gap-[6px]">
             <span className="sr-only">Street address</span>
             <Input
@@ -119,7 +119,7 @@ export function CreateProject({ onNavigate }: { onNavigate: (path: string, notic
         </summary>
         <div className="p-[var(--space-5)] max-[721px]:p-[var(--space-4)] flex flex-col gap-[var(--space-8)]">
           <ProjectFields form={form} errors={errors} onChange={updateField} onToggle={toggleValue} />
-          <div className="create-project__actions flex flex-wrap justify-end gap-[var(--space-3)] max-[721px]:flex-col-reverse max-[721px]:[&>*]:w-full">
+          <div className="flex flex-wrap justify-end gap-[var(--space-3)] max-[721px]:flex-col-reverse max-[721px]:[&>*]:w-full">
             <InternalLink className={buttonClasses("secondary", {})} to="/" aria-disabled={isSubmitting}>Cancel</InternalLink>
             <Button data-testid="create-project-submit" className={isSubmitting ? "cursor-wait" : undefined} type="submit" disabled={isSubmitting || !form.street.trim()}>{isSubmitting ? "Creating shoot…" : "Create shoot"}</Button>
           </div>

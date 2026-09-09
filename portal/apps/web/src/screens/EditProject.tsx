@@ -134,7 +134,7 @@ export function EditProject({ projectId, onNavigate }: { projectId: string; onNa
       </div>
       <InternalLink className={buttonClasses("secondary", {})} to={`/projects/${encodeURIComponent(projectId)}`}>Cancel</InternalLink>
     </header>
-    {canEditProject && (project ? <form data-testid="edit-project-form" className="create-project__form flex flex-col gap-[var(--space-8)]" onSubmit={(event) => void submit(event)} noValidate>
+    {canEditProject && (project ? <form data-testid="edit-project-form" className="flex flex-col gap-[var(--space-8)]" onSubmit={(event) => void submit(event)} noValidate>
       {submitError && <Notice role="alert">{submitError}</Notice>}
       <section className="create-project__section" aria-labelledby="property-heading">
         <SectionHead eyebrow="Property" id="property-heading">Where is the shoot?</SectionHead>
@@ -145,7 +145,7 @@ export function EditProject({ projectId, onNavigate }: { projectId: string; onNa
         </div>
       </section>
       <ProjectFields form={form} errors={errors} existingCollections={project.collections.map((collection) => collection.kind)} mode="edit" onChange={updateField} onToggle={() => {}} />
-      <div className="create-project__actions flex flex-wrap justify-end gap-[var(--space-3)] max-[721px]:flex-col-reverse max-[721px]:[&>*]:w-full">
+      <div className="flex flex-wrap justify-end gap-[var(--space-3)] max-[721px]:flex-col-reverse max-[721px]:[&>*]:w-full">
         <InternalLink className={buttonClasses("secondary", {})} to={`/projects/${encodeURIComponent(projectId)}`} aria-disabled={isSubmitting}>Cancel</InternalLink>
         <Button className={isSubmitting ? "cursor-wait" : undefined} type="submit" disabled={isSubmitting}>{isSubmitting ? "Saving details…" : "Save changes"}</Button>
       </div>
