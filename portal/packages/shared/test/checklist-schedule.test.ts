@@ -38,24 +38,45 @@ function independentParse(localCivil: string) {
   if (!daysInMonth || day < 1 || day > daysInMonth || hour > 23 || minute > 59) return null;
   return independentEpoch(year, month, day, hour, minute);
 }
-function independentCivil(date: Date) {
+const independentCivilCache = new Map<number, string>();
+function independentCivil(epochMs: number) {
+  const cached = independentCivilCache.get(epochMs);
+  if (cached !== undefined) return cached;
+  const date = new Date(epochMs);
   const parts = Object.fromEntries(INDEPENDENT_SYDNEY_FORMATTER.formatToParts(date).map(({ type, value }) => [type, value]));
-  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
+  const civil = `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
+  independentCivilCache.set(epochMs, civil);
+  return civil;
+}
+const independentUniqueCache = new Map<string, readonly Readonly<IndependentCandidate>[] | null>();
+function independentUnique(localCivil: string): readonly Readonly<IndependentCandidate>[] | null {
+  const cached = independentUniqueCache.get(localCivil);
+  if (cached !== undefined) return cached;
+  const localEpoch = independentParse(localCivil);
+  if (localEpoch === null) {
+    independentUniqueCache.set(localCivil, null);
+    return null;
+  }
+  const candidates: IndependentCandidate[] = [];
+  for (let offset = -840; offset <= 840; offset += 1) {
+    const epochMs = localEpoch - offset * 60_000;
+    if (independentCivil(epochMs) === localCivil) candidates.push({ localCivil, instant: new Date(epochMs).toISOString(), epochMs, utcOffsetMinutes: offset, fold: 0 });
+  }
+  const unique = [...new Map(candidates.map((value) => [value.epochMs, value])).values()]
+    .sort((a, b) => a.epochMs - b.epochMs)
+    .map((value) => Object.freeze(value));
+  independentUniqueCache.set(localCivil, unique);
+  return unique;
 }
 function independentResolve(localCivil: string, disambiguation?: "earlier" | "later"): IndependentResult {
   const localEpoch = independentParse(localCivil);
   if (localEpoch === null) return { ok: false, code: "invalid_local_time", message: "Enter a valid Sydney date and time to the minute." };
-  const candidates: IndependentCandidate[] = [];
-  for (let offset = -840; offset <= 840; offset += 1) {
-    const epochMs = localEpoch - offset * 60_000;
-    if (independentCivil(new Date(epochMs)) === localCivil) candidates.push({ localCivil, instant: new Date(epochMs).toISOString(), epochMs, utcOffsetMinutes: offset, fold: 0 });
-  }
-  const unique = [...new Map(candidates.map((value) => [value.epochMs, value])).values()].sort((a, b) => a.epochMs - b.epochMs);
+  const unique = independentUnique(localCivil)!;
   if (unique.length === 0) return { ok: false, code: "nonexistent_local_time", message: "That Sydney time does not exist because the clocks move forward." };
   if (unique.length > 2) return { ok: false, code: "resolver_defect", message: "Sydney time resolution returned an unexpected number of matches." };
   if (unique.length === 2 && !disambiguation) return { ok: false, code: "repeated_local_time", message: "That Sydney time occurs twice. Choose Earlier or Later.", choices: [{ disambiguation: "earlier", utcOffsetMinutes: unique[0]!.utcOffsetMinutes }, { disambiguation: "later", utcOffsetMinutes: unique[1]!.utcOffsetMinutes }] };
-  const selected = unique.length === 1 ? unique[0]! : unique[disambiguation === "later" ? 1 : 0]!;
-  selected.fold = unique.length === 2 && disambiguation === "later" ? 1 : 0;
+  const base = unique.length === 1 ? unique[0]! : unique[disambiguation === "later" ? 1 : 0]!;
+  const selected: IndependentCandidate = { ...base, fold: unique.length === 2 && disambiguation === "later" ? 1 : 0 };
   return { ok: true, value: selected };
 }
 
