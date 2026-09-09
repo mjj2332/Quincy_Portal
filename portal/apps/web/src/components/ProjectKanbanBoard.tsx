@@ -28,7 +28,7 @@ import {
 } from "@dnd-kit/core";
 import { SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS as DndCSS } from "@dnd-kit/utilities";
-import { isDeadlineOverdue, formatSydneyCivil, type Role, type StageKey } from "@quincy/shared";
+import { isDeadlineOverdue, type Role, type StageKey } from "@quincy/shared";
 import { useCallback, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefCallback } from "react";
 import { AnchoredPopover, useAnchoredPopover } from "./AnchoredPopover";
 import { StatusBadge } from "./atoms";
@@ -56,6 +56,7 @@ import {
 } from "../lib/kanban-interaction";
 import type { ProjectStageKey, PipelineStage } from "../lib/stages";
 import { usePrefersReducedMotion } from "../lib/use-media-query";
+import { deadlineLabel } from "../lib/deadline-label";
 
 export type BoardInteractionState = {
   activeId: string | undefined;
@@ -114,10 +115,6 @@ function CoverMedia({
 
 function location(project: ProjectSummary) {
   return [project.suburb, project.postcode].filter(Boolean).join(" · ") || "Location pending";
-}
-
-function deadlineLabel(project: ProjectSummary) {
-  return project.deadlineAt === null ? null : (project.deadlineLocalCivil ?? formatSydneyCivil(project.deadlineAt)).replace("T", " ");
 }
 
 function moveToStageKey(value: ProjectStageKey): StageKey {

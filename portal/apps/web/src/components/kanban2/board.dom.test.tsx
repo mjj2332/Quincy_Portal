@@ -44,7 +44,7 @@ const stages: readonly PipelineStage[] = [
   { key: "raw_review", label: "RAW review", displayOrder: 2, active: true },
 ];
 
-function project(id: string, stageKey: ProjectSummary["stageKey"]): ProjectSummary {
+function project(id: string, stageKey: ProjectSummary["stageKey"], overrides: Partial<ProjectSummary> = {}): ProjectSummary {
   return {
     id,
     street: `${id} Street`,
@@ -62,6 +62,7 @@ function project(id: string, stageKey: ProjectSummary["stageKey"]): ProjectSumma
     deadlineAt: null,
     deadlineLocalCivil: null,
     deadlineZone: null,
+    ...overrides,
   };
 }
 
@@ -152,5 +153,164 @@ describe("ProjectKanbanBoard2 (#80)", () => {
     const props = await renderBoard({ pendingMoves: new Set(["source"]) });
     await endDrag("source", "raw_review");
     expect(props.onBoardMove).not.toHaveBeenCalled();
+  });
+});
+
+describe("KanbanCard2 — Editor avatars, Deadline and RAW counts (#82)", () => {
+  beforeEach(() => {
+    dnd.handlers.length = 0;
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+  });
+
+  afterEach(async () => {
+    const { act } = await import("react");
+    await act(async () => root.unmount());
+    host.remove();
+  });
+
+  async function renderCard(overrides: Partial<ProjectSummary> = {}) {
+    return renderBoard({ projects: [project("source", "awaiting_raw", overrides)] });
+  }
+
+  it("renders the Deadline in the studio civil time, with the ISO epoch on dateTime", async () => {
+    // A day in the future — not overdue — so this asserts the "Due" rendering path, not the
+    // "Overdue" one (covered separately below).
+    const deadlineAt = Date.now() + 24 * 60 * 60 * 1000;
+    await renderCard({ deadlineAt, deadlineLocalCivil: "2999-01-01T09:15", deadlineZone: "Australia/Sydney" });
+    expect(host.querySelector('[data-testid="kanban2-card-address"]')).not.toBeNull();
+    const time = host.querySelector('[data-testid="kanban2-card-deadline"]')!;
+    expect(time.textContent).toBe("Due 2999-01-01 09:15 Sydney");
+    expect(time.getAttribute("dateTime")).toBe(new Date(deadlineAt).toISOString());
+  });
+
+  it("shows the studio's Sydney civil time even for a viewer in a different timezone", async () => {
+    const originalTz = process.env.TZ;
+    process.env.TZ = "America/Los_Angeles";
+    try {
+      // No `deadlineLocalCivil` from the server — exercises the `formatSydneyCivil(deadlineAt)`
+      // fallback, the path most at risk of drifting to the viewer's host timezone.
+      const deadlineAt = Date.parse("2026-08-26T23:15:00.000Z"); // a fixed instant, so the
+      // expected Sydney civil string below is deterministic regardless of when this test runs.
+      await renderCard({ deadlineAt, deadlineLocalCivil: null, deadlineZone: "Australia/Sydney" });
+      const time = host.querySelector('[data-testid="kanban2-card-deadline"]')!;
+      expect(time.textContent).toBe("Overdue 2026-08-27 09:15 Sydney");
+    } finally {
+      process.env.TZ = originalTz;
+    }
+  });
+
+  it("renders the literal word 'Overdue' and the critical colour token for an overdue deadline", async () => {
+    const deadlineAt = Date.now() - 60 * 60 * 1000;
+    await renderCard({ deadlineAt, deadlineLocalCivil: "2020-01-01T00:00", deadlineZone: "Australia/Sydney" });
+    expect(host.querySelector('[data-testid="kanban2-card-address"]')).not.toBeNull();
+    const time = host.querySelector('[data-testid="kanban2-card-deadline"]')!;
+    expect(time.textContent).toContain("Overdue");
+    expect(time.className).toContain("text-[var(--signal-critical)]");
+  });
+
+  it("renders 'Due', not 'Overdue', for a future deadline", async () => {
+    const deadlineAt = Date.now() + 60 * 60 * 1000;
+    await renderCard({ deadlineAt, deadlineLocalCivil: "2999-01-01T00:00", deadlineZone: "Australia/Sydney" });
+    const time = host.querySelector('[data-testid="kanban2-card-deadline"]')!;
+    expect(time.textContent).toContain("Due");
+    expect(time.textContent).not.toContain("Overdue");
+    expect(time.className).not.toContain("text-[var(--signal-critical)]");
+  });
+
+  it("renders no Deadline element at all when the Project has none", async () => {
+    await renderCard({ deadlineAt: null, deadlineLocalCivil: null, deadlineZone: null });
+    expect(host.querySelector('[data-testid="kanban2-card-address"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="kanban2-card-deadline"]')).toBeNull();
+  });
+
+  it("renders '12/40' with a spoken 'of' form when both counts are known", async () => {
+    await renderCard({ receivedCount: 12, expectedCount: 40 });
+    expect(host.querySelector('[data-testid="kanban2-card-address"]')).not.toBeNull();
+    const raw = host.querySelector('[data-testid="kanban2-card-raw"]')!;
+    expect(raw.querySelector('[aria-hidden="true"]')?.textContent).toBe("12/40");
+    // The spoken counterpart is the visible span's next sibling — structural access, not a class
+    // selector (guard: `components/testing/test-seam.guard.test.ts` bans `.sr-only` as a query).
+    expect(raw.lastElementChild?.textContent).toBe("12 of 40 RAW files received");
+  });
+
+  it("renders the received count alone with an 'unknown' spoken form when expected is null", async () => {
+    await renderCard({ receivedCount: 12, expectedCount: null });
+    const raw = host.querySelector('[data-testid="kanban2-card-raw"]')!;
+    expect(raw.querySelector('[aria-hidden="true"]')?.textContent).toBe("12");
+    expect(raw.lastElementChild?.textContent).toBe("12 RAW files received, expected count unknown");
+  });
+
+  it("renders '0/0' when both received and expected are zero — expectedCount: 0 is meaningful, not falsy", async () => {
+    await renderCard({ receivedCount: 0, expectedCount: 0 });
+    const raw = host.querySelector('[data-testid="kanban2-card-raw"]')!;
+    expect(raw.querySelector('[aria-hidden="true"]')?.textContent).toBe("0/0");
+    expect(raw.lastElementChild?.textContent).toBe("0 of 0 RAW files received");
+  });
+
+  it("renders three Editor avatars and no overflow indicator for exactly three Editors", async () => {
+    const editors = [{ id: "e1", name: "Jane Doe" }, { id: "e2", name: "Ana Maria Lopes" }, { id: "e3", name: "Sam Lee" }];
+    await renderCard({ editors });
+    expect(host.querySelector('[data-testid="kanban2-card-address"]')).not.toBeNull();
+    const meta = host.querySelector('[data-testid="kanban2-card-meta"]')!;
+    const avatars = meta.querySelectorAll('[role="img"]');
+    expect(avatars).toHaveLength(3);
+    for (const editor of editors) {
+      expect(meta.querySelector(`[role="img"][aria-label="${editor.name}"]`)).not.toBeNull();
+    }
+    expect(meta.querySelector('[aria-label*="more Editor"]')).toBeNull();
+  });
+
+  it("renders three Editor avatars plus a '+2' overflow named '2 more Editors' for five Editors", async () => {
+    const editors = [
+      { id: "e1", name: "Jane Doe" },
+      { id: "e2", name: "Ana Maria Lopes" },
+      { id: "e3", name: "Sam Lee" },
+      { id: "e4", name: "Kim Park" },
+      { id: "e5", name: "Lee Nguyen" },
+    ];
+    await renderCard({ editors });
+    const meta = host.querySelector('[data-testid="kanban2-card-meta"]')!;
+    // No `data-slot` selector (that's the vendor's own hook, not ours) — the overflow indicator is
+    // distinguished by its accessible name instead.
+    const allImgs = [...meta.querySelectorAll('[role="img"]')];
+    const shown = allImgs.filter((element) => !(element.getAttribute("aria-label") ?? "").includes("more Editor"));
+    expect(shown).toHaveLength(3);
+    const overflow = meta.querySelector('[role="img"][aria-label="2 more Editors"]')!;
+    expect(overflow).not.toBeNull();
+    expect(overflow.querySelector('[aria-hidden="true"]')?.textContent).toBe("+2");
+  });
+
+  it("renders no overflow indicator for a single Editor", async () => {
+    await renderCard({ editors: [{ id: "e1", name: "Jane Doe" }] });
+    const meta = host.querySelector('[data-testid="kanban2-card-meta"]')!;
+    expect(meta.querySelectorAll('[role="img"]')).toHaveLength(1);
+    expect(meta.querySelector('[aria-label*="more Editor"]')).toBeNull();
+  });
+
+  it("renders the empty avatar slot, named 'No Editor assigned', for an empty Editors array", async () => {
+    await renderCard({ editors: [] });
+    const meta = host.querySelector('[data-testid="kanban2-card-meta"]')!;
+    const slot = meta.querySelector('[role="img"][aria-label="No Editor assigned"]');
+    expect(slot).not.toBeNull();
+    expect(meta.querySelectorAll('[role="img"]')).toHaveLength(1);
+  });
+
+  it("renders the empty avatar slot, named 'No Editor assigned', when Editors is absent", async () => {
+    await renderCard({ editors: undefined });
+    const meta = host.querySelector('[data-testid="kanban2-card-meta"]')!;
+    const slot = meta.querySelector('[role="img"][aria-label="No Editor assigned"]');
+    expect(slot).not.toBeNull();
+    expect(meta.querySelectorAll('[role="img"]')).toHaveLength(1);
+  });
+
+  it("leaves the #81 footer-slot boundary present and empty, immediately after the card's link", async () => {
+    await renderCard();
+    const link = host.querySelector('[data-testid="kanban2-card"]')!;
+    const slot = host.querySelector('[data-testid="kanban2-card-footer-slot"]')!;
+    expect(slot).not.toBeNull();
+    expect(slot.textContent).toBe("");
+    expect(link.nextElementSibling).toBe(slot);
   });
 });
