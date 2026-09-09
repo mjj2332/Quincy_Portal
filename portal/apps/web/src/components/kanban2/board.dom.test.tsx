@@ -127,6 +127,45 @@ describe("ProjectKanbanBoard2 (#80)", () => {
     expect(host.querySelector('[data-testid="kanban2-card-address"]')?.textContent).toBe("source Street");
   });
 
+  it("renders the Admin ghost star row on an unset Project, reaching the coordinator on commit (#81)", async () => {
+    const props = await renderBoard({ canPrioritize: true });
+    const cardGroup = host.querySelector('[role="radiogroup"]');
+    expect(cardGroup?.getAttribute("aria-label")).toBe("Priority for source Street");
+
+    const first = host.querySelector('[role="radio"][aria-label="1 star"]') as HTMLElement;
+    const { act } = await import("react");
+    first.focus();
+    await act(async () => {
+      document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true }));
+      await Promise.resolve();
+    });
+    // Arrow traversal must not reach the coordinator — see PriorityStars' header comment.
+    expect(props.onPriorityChange).not.toHaveBeenCalled();
+    await act(async () => {
+      document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true }));
+      await Promise.resolve();
+    });
+    expect(props.onPriorityChange).toHaveBeenCalledTimes(1);
+    const [project, value] = (props.onPriorityChange as ReturnType<typeof vi.fn>).mock.calls[0]!;
+    expect(project.id).toBe("source");
+    expect(value).toBe(2);
+  });
+
+  it("gives a non-Admin no priority control, and no ghost row where none is set (#81)", async () => {
+    await renderBoard({ canPrioritize: false });
+    expect(host.querySelector('[role="radiogroup"]')).toBeNull();
+    expect(host.querySelector('[data-testid="kanban2-card-priority"]')).toBeNull();
+    // Anchored: the card really did render, so the nulls above mean "no control", not "no card".
+    expect(host.querySelector('[data-testid="kanban2-card-address"]')?.textContent).toBe("source Street");
+  });
+
+  it("keeps the card wrapper free of the dnd-kit button role that would prune the radiogroup (#81)", async () => {
+    await renderBoard({ canPrioritize: true });
+    const wrap = host.querySelector('[data-testid="kanban2-card-wrap"]');
+    const wrapper = wrap?.closest('[data-slot="kanban-item"]') ?? wrap?.parentElement ?? null;
+    expect(wrapper?.getAttribute("role")).not.toBe("button");
+  });
+
   it("moves a card to a different column's Stage on drop", async () => {
     const props = await renderBoard();
     await endDrag("source", "raw_review");
