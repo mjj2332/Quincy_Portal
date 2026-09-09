@@ -109,26 +109,26 @@ const PROW_GRID = "[display:grid] grid-cols-[72px_minmax(0,1.6fr)_minmax(0,1fr)_
   "items-center gap-[var(--space-4)] px-[var(--space-5)] py-[var(--space-3)] " +
   "max-[721px]:grid-cols-[56px_1fr_84px] max-[721px]:py-[var(--space-4)]";
 const PROW_ROW = PROW_GRID + " w-full border-0 [border-top-style:solid] border-t-[length:var(--border-width-hair)] " +
-  "border-t-border first:border-t-0 text-inherit text-left font-inherit bg-transparent cursor-pointer " +
+  "border-t-border first:border-t-0 text-inherit text-left bg-transparent cursor-pointer " +
   "no-underline transition-colors duration-[var(--dur-fast)] ease-[var(--ease-standard)] hover:bg-secondary " +
   "active:bg-surface-sunken focus-visible:outline-[length:var(--border-width-bold)] focus-visible:outline-solid " +
   "focus-visible:outline-ring focus-visible:-outline-offset-2";
 
 function ProjectListRow({ project, projectHref }: { project: ProjectSummary; projectHref: string }) {
   const [coverFailed, setCoverFailed] = useState(false); const [coverRetry, setCoverRetry] = useState(0);
-  return <div className="prow-wrap">
-    <InternalLink className={cn("prow", PROW_ROW)} data-testid="project-list-row" to={projectHref}>
+  return <div>
+    <InternalLink className={cn(PROW_ROW)} data-testid="project-list-row" to={projectHref}>
       <CoverMedia project={project} className="prow__thumb" inlinePlaceholder retryToken={coverRetry} onFailedChange={setCoverFailed} />
       <span>
-        <span className="prow__addr block font-[family-name:var(--font-display)] text-[length:var(--text-md)] tracking-[var(--tracking-tight)]">{project.street}</span>
-        <Eyebrow className="prow__location block mt-[var(--space-1)]">{location(project)}</Eyebrow>
+        <span className="block font-[family-name:var(--font-display)] text-[length:var(--text-md)] tracking-[var(--tracking-tight)]">{project.street}</span>
+        <Eyebrow className="block mt-[var(--space-1)]">{location(project)}</Eyebrow>
       </span>
-      <span className="prow__c-agency text-[length:var(--text-sm)] max-[721px]:hidden">{project.agencyName || "Agency pending"}<span className="block mt-[var(--space-1)] text-[length:var(--text-xs)] text-muted-foreground">{project.agentName || "Agent pending"}</span></span>
-      <span className="prow__c-date text-[length:var(--text-sm)] max-[721px]:hidden">{formatDashboardDate(project.shootDate)}</span>
-      <span className="prow__c-status max-[721px]:hidden"><StatusBadge stageKey={project.stageKey} /></span>
-      <span className="prow__raw text-right tabular-nums text-[length:var(--text-sm)]" data-testid="project-list-row-raw">{project.receivedCount}</span>
+      <span className="text-[length:var(--text-sm)] max-[721px]:hidden">{project.agencyName || "Agency pending"}<span className="block mt-[var(--space-1)] text-[length:var(--text-xs)] text-muted-foreground">{project.agentName || "Agent pending"}</span></span>
+      <span className="text-[length:var(--text-sm)] max-[721px]:hidden">{formatDashboardDate(project.shootDate)}</span>
+      <span className="max-[721px]:hidden"><StatusBadge stageKey={project.stageKey} /></span>
+      <span className="text-right tabular-nums text-[length:var(--text-sm)]" data-testid="project-list-row-raw">{project.receivedCount}</span>
     </InternalLink>
-    {coverFailed && <Button type="button" variant="secondary" className="prow__retry mt-[var(--space-2)]" onClick={() => { setCoverFailed(false); setCoverRetry((current) => current + 1); }}>Retry cover image</Button>}
+    {coverFailed && <Button type="button" variant="secondary" className="mt-[var(--space-2)]" onClick={() => { setCoverFailed(false); setCoverRetry((current) => current + 1); }}>Retry cover image</Button>}
   </div>;
 }
 
@@ -919,12 +919,12 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         </div>
       </section>}
 
-      <div className={cn("dashboard-viewbar",
+      <div className={cn(
         "flex flex-wrap items-center gap-x-[var(--space-6)] gap-y-[var(--space-3)] " +
         "mb-[var(--space-4)] pt-[var(--space-4)] [border-top-style:solid] " +
         "border-t-[length:var(--border-width-hair)] border-t-border")}>
         <div className="flex items-center gap-[var(--space-3)] flex-wrap max-[721px]:basis-full">
-          <InputGroup className="dashboard-search w-auto min-w-[300px] max-[721px]:basis-full max-[721px]:min-w-0">
+          <InputGroup className="w-auto min-w-[300px] max-[721px]:basis-full max-[721px]:min-w-0">
             <InputGroupAddon>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true" className="size-[15px] shrink-0"><circle cx="11" cy="11" r="6" /><path d="m16 16 4 4" /></svg>
             </InputGroupAddon>
@@ -949,7 +949,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
           {canViewProductionCalendar && <button className={cn(SEGMENT_BUTTON, view === "calendar" && "is-active")} type="button" data-focus-key="dashboard-view-calendar" data-active={view === "calendar" ? "true" : undefined} disabled={interactionBlocked || calendarInteractionBlocked} onClick={() => selectView("calendar")}>Calendar</button>}
         </div>
         {!viewingArchived && view === "kanban" && (
-          <div className="dashboard-sort max-[721px]:basis-full">
+          <div className="max-[721px]:basis-full">
             <Select
               value={effectiveKanbanSort}
               onValueChange={(next) => selectKanbanSort(next)}
@@ -1016,14 +1016,14 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       )}
 
       {!isCalendarView && !isLoading && !error && filteredProjects.length > 0 && (viewingArchived || view === "list") && (
-        <div className="plist border-solid border-[length:var(--border-width-hair)] border-border bg-card" aria-label="Projects list">
-          <div className={cn("prow head", PROW_GRID, "bg-secondary cursor-default")}>
+        <div className="border-solid border-[length:var(--border-width-hair)] border-border bg-card" aria-label="Projects list">
+          <div className={cn(PROW_GRID, "bg-secondary cursor-default")}>
             <div />
             <div className="[font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-widest)] text-foreground-secondary">Address</div>
-            <div className="prow__c-agency [font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-widest)] text-foreground-secondary max-[721px]:hidden">Client</div>
-            <div className="prow__c-date [font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-widest)] text-foreground-secondary max-[721px]:hidden">Shoot date</div>
-            <div className="prow__c-status [font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-widest)] text-foreground-secondary max-[721px]:hidden">Status</div>
-            <div className="prow__raw [font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-widest)] text-foreground-secondary text-right">RAW received</div>
+            <div className="[font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-widest)] text-foreground-secondary max-[721px]:hidden">Client</div>
+            <div className="[font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-widest)] text-foreground-secondary max-[721px]:hidden">Shoot date</div>
+            <div className="[font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-widest)] text-foreground-secondary max-[721px]:hidden">Status</div>
+            <div className="[font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-widest)] text-foreground-secondary text-right">RAW received</div>
           </div>
           {filteredProjects.map((project) => <ProjectListRow key={project.id} project={project} projectHref={projectHrefFor(project.id)} />)}
         </div>
@@ -1053,7 +1053,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
           projectHrefFor={(project) => projectHrefFor(project.id)}
         />
       )}
-      <div className="dashboard-live-region sr-only" data-testid="dashboard-live-region" aria-live="polite" aria-atomic="true">{announcement}</div>
+      <div className="sr-only" data-testid="dashboard-live-region" aria-live="polite" aria-atomic="true">{announcement}</div>
       <div
         aria-live="polite"
         className="fixed z-[95] flex flex-col items-end gap-[var(--space-3)] pointer-events-none right-[max(var(--space-5),env(safe-area-inset-right))] bottom-[max(var(--space-5),env(safe-area-inset-bottom))] left-[max(var(--space-5),env(safe-area-inset-left))]"

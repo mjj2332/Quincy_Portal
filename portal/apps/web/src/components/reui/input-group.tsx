@@ -5,8 +5,9 @@ import { cn } from "@/lib/utils"
 import { Input } from "@/components/reui/input"
 
 // Four corrections to the vendor class string, marked inline below. The box this paints is the
-// one Quincy's shipped search control already draws by hand (`Dashboard.tsx`'s
-// `.dashboard-search` label), so the dressing targets that exact appearance rather than nova's.
+// one Quincy's shipped search control already draws by hand (the search label in `Dashboard.tsx`;
+// it carried a `.dashboard-search` hook until #56 criterion 5 retired it as unused), so the
+// dressing targets that exact appearance rather than nova's.
 //
 // 1. Geometry and colour roles: nova's `h-8 rounded-lg border-input` (and its transparent ground)
 //    become the Quincy field box — `min-h-[38px] max-[721px]:min-h-[44px]` matching
