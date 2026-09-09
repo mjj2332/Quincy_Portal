@@ -211,6 +211,29 @@ describe("PhotoGrid select-all / deselect-all", () => {
   });
 });
 
+describe("PhotoGrid rating stars accessibility (#90)", () => {
+  let host: HTMLElement;
+  beforeEach(() => { host = mount(); });
+  afterEach(async () => { await unmount(); host.remove(); });
+
+  it("exposes an Asset's rating via a role that supports naming, not a roleless span", async () => {
+    const assets = [asset("rated", { review: { stars: 3, colorLabel: null, decision: null, recommended: false } })];
+    await render(<PhotoGrid {...baseProps} assets={assets} />);
+
+    // `role="img"` is what makes the aria-label reachable at all — a bare <span> maps to
+    // `generic`, which drops the name. Querying by role, not by class, is the point of this test.
+    const stars = host.querySelector('[role="img"]');
+    expect(stars?.getAttribute("aria-label")).toBe("3 out of 5 stars");
+  });
+
+  it("renders no rating element at all for an unrated Asset", async () => {
+    const assets = [asset("unrated")];
+    await render(<PhotoGrid {...baseProps} assets={assets} />);
+
+    expect(host.querySelector('[role="img"]')).toBeNull();
+  });
+});
+
 describe("PhotoGrid deletion controls", () => {
   let host: HTMLElement;
   beforeEach(() => { host = mount(); confirmMock.mockReset().mockResolvedValue(true); });
