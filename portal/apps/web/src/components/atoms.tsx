@@ -23,10 +23,14 @@ export function StatusBadge({ stageKey }: { stageKey: ProjectStageKey }) {
 }
 
 export function Stars({ value = 0, size = 14 }: { value?: number; size?: number }) {
+  // Deliberate: an unrated Asset renders nothing at all, rather than a "0 out of 5" row. (#90)
   if (value <= 0) return null;
 
   return (
-    <span className="tstars" aria-label={`${value} out of 5 stars`}>
+    // `role="img"` is load-bearing: an `aria-label` on a roleless <span> maps to `generic`, which
+    // does not support naming, so every major screen reader drops it (#90). Every glyph inside
+    // stays `aria-hidden` — the role and label are the sole accessible surface.
+    <span role="img" className="tstars" aria-label={`${value} out of 5 stars`}>
       {[1, 2, 3, 4, 5].map((star) => (
         <span key={star} className={star <= value ? "on" : "off"} style={{ fontSize: size }} aria-hidden="true">
           ★
