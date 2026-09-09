@@ -159,11 +159,34 @@ describe("ProjectKanbanBoard2 (#80)", () => {
     expect(host.querySelector('[data-testid="kanban2-card-address"]')?.textContent).toBe("source Street");
   });
 
-  it("keeps the card wrapper free of the dnd-kit button role that would prune the radiogroup (#81)", async () => {
+  // Asserts the BEHAVIOUR #81 fixed (01f9c21), not the shape of the vendor's tree.
+  //
+  // dnd-kit defaults a draggable/sortable role to "button" (`core.esm.js:3385`). `KanbanItem` used to
+  // spread those attributes on the card WRAPPER, and under ARIA 1.2 children-presentational a
+  // role="button" ancestor prunes a nested radiogroup out of the accessibility tree entirely —
+  // so every star control on the Board was invisible to screen readers. #81 moved `attributes`
+  // onto `KanbanItemHandle`.
+  //
+  // The previous version of this test reached for `.closest('[data-slot="kanban-item"]')` — the
+  // vendor's own hook, which `test-seam.guard` guard F now rejects — and then fell back to
+  // `parentElement` and optional-chained the result, so a lookup that found nothing asserted
+  // `expect(undefined).not.toBe("button")` and passed. It could not fail for the defect it names.
+  // Every query below is anchored non-null first, so this one can.
+  it("puts the dnd-kit drag attributes on the handle, never on the card wrapper (#81)", async () => {
     await renderBoard({ canPrioritize: true });
+
+    const handle = host.querySelector('[data-testid="kanban2-card-handle"]');
+    expect(handle, "no drag handle rendered — every assertion below would be vacuous").not.toBeNull();
+    expect(handle!.getAttribute("aria-roledescription")).toBe("sortable");
+
     const wrap = host.querySelector('[data-testid="kanban2-card-wrap"]');
-    const wrapper = wrap?.closest('[data-slot="kanban-item"]') ?? wrap?.parentElement ?? null;
-    expect(wrapper?.getAttribute("role")).not.toBe("button");
+    expect(wrap, "no card wrapper rendered — the assertions below would be vacuous").not.toBeNull();
+    expect(wrap!.getAttribute("role")).not.toBe("button");
+    expect(wrap!.getAttribute("aria-roledescription")).toBeNull();
+
+    // The point of the whole exercise: no role="button" ancestor anywhere above the radiogroup.
+    expect(host.querySelector('[role="radiogroup"]'), "no radiogroup rendered").not.toBeNull();
+    expect(host.querySelector('[role="button"] [role="radiogroup"]')).toBeNull();
   });
 
   it("moves a card to a different column's Stage on drop", async () => {
