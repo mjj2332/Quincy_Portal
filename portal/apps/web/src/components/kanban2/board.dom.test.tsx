@@ -14,6 +14,10 @@ const dnd = vi.hoisted(() => ({
   handlers: [] as Array<{ onDragEnd?: (event: unknown) => void }>,
 }));
 
+const dragOverlay = vi.hoisted(() => ({
+  props: [] as Array<{ dropAnimation?: unknown }>,
+}));
+
 vi.mock("../../lib/stages", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../lib/stages")>();
   return {
@@ -35,6 +39,14 @@ vi.mock("@dnd-kit/core", async (importOriginal) => {
     DndContext: (props: Parameters<typeof actual.DndContext>[0]) => {
       dnd.handlers.push({ onDragEnd: props.onDragEnd as (event: unknown) => void });
       return createElement(actual.DndContext, props);
+    },
+    // `KanbanOverlay` creates its own `<DragOverlay>` element deep inside its own render function
+    // (behind a `createPortal`), so it is not a literal sibling of `<DndContext>` in the element
+    // tree the way the old Board's is — intercepting the component itself is the only way to
+    // capture the actual `dropAnimation` prop it renders with, regardless of drag state.
+    DragOverlay: (props: Parameters<typeof actual.DragOverlay>[0]) => {
+      dragOverlay.props.push({ dropAnimation: props.dropAnimation });
+      return createElement(actual.DragOverlay, props);
     },
   };
 });
@@ -104,9 +116,26 @@ async function endDrag(activeId: string, overId: string) {
   await act(async () => { handler(event); await Promise.resolve(); });
 }
 
+function mockMatchMedia(reducedMotion: boolean) {
+  const originalMatchMedia = window.matchMedia;
+  const matchMedia = vi.fn(() => ({
+    matches: reducedMotion,
+    media: "(prefers-reduced-motion: reduce)",
+    onchange: null,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+  }));
+  Object.defineProperty(window, "matchMedia", { configurable: true, value: matchMedia });
+  return () => Object.defineProperty(window, "matchMedia", { configurable: true, value: originalMatchMedia });
+}
+
 describe("ProjectKanbanBoard2 (#80)", () => {
   beforeEach(() => {
     dnd.handlers.length = 0;
+    dragOverlay.props.length = 0;
     host = document.createElement("div");
     document.body.appendChild(host);
     root = createRoot(host);
@@ -252,6 +281,37 @@ describe("ProjectKanbanBoard2 (#80)", () => {
     expect(realLink, "no real card link rendered — the anti-vacuity anchor for the real card").not.toBeNull();
     expect(realLink!.tagName).toBe("A");
     expect(host.querySelector('[data-testid="kanban2-card-handle"]')).not.toBeNull();
+  });
+
+  it("suppresses the drag overlay's drop animation for reduced-motion users (#98)", async () => {
+    const restoreMatchMedia = mockMatchMedia(true);
+    try {
+      await renderBoard();
+      const captured = dragOverlay.props.at(-1);
+      expect(captured, "no DragOverlay props captured — the assertion below would be vacuous").not.toBeUndefined();
+      expect(captured!.dropAnimation).toBeNull();
+    } finally {
+      restoreMatchMedia();
+    }
+  });
+
+  it("does not suppress the drag overlay's drop animation for everyone else (#98)", async () => {
+    const restoreMatchMedia = mockMatchMedia(false);
+    try {
+      await renderBoard();
+      const captured = dragOverlay.props.at(-1);
+      expect(captured, "no DragOverlay props captured — the assertion below would be vacuous").not.toBeUndefined();
+      // Neither `null` (that's what stops the test passing for a Board that always disables
+      // animation) nor `undefined` — passing an explicit `dropAnimation={undefined}` on this
+      // branch is the exact trap: it still silently overrides the vendor's own default config
+      // with dnd-kit's raw built-in one, via the spread inside `KanbanOverlay`. The value itself
+      // is the vendor's own default config object, opaque to this test; only its
+      // defined-and-non-null-ness is our contract.
+      expect(captured!.dropAnimation).not.toBeNull();
+      expect(captured!.dropAnimation).not.toBeUndefined();
+    } finally {
+      restoreMatchMedia();
+    }
   });
 });
 

@@ -11,6 +11,7 @@ import {
   type SemanticGap,
 } from "../../lib/kanban-interaction";
 import type { ProjectStageKey } from "../../lib/stages";
+import { usePrefersReducedMotion } from "../../lib/use-media-query";
 import { KanbanCard2 } from "./card";
 
 /** `editing` is the role-safe presentation of `editing_autohdr` — see `ProjectKanbanBoard.tsx`. */
@@ -71,6 +72,7 @@ export function ProjectKanbanBoard2({
   // Kanban's `onValueChange` is only reachable via its own internal reorder paths; in `onMove`
   // mode (below) none of them ever fire — see `components/reui/kanban.tsx`'s `handleDragEnd`.
   const noopValueChange = useCallback(() => undefined, []);
+  const reducedMotion = usePrefersReducedMotion();
 
   const dragDisabled = movementDisabled || terminal || !boardMutationEnabled || !canMoveStages;
   // Priority is editable only for an Admin on a live, mutable Board — same gates the existing
@@ -136,7 +138,11 @@ export function ProjectKanbanBoard2({
           </KanbanColumn>
         );
       })}
-      <KanbanOverlay>
+      {/* Spread conditionally, never pass `dropAnimation={undefined}` explicitly: `KanbanOverlay`
+          spreads `{...props}` after its own `dropAnimation` default, so an explicit `undefined`
+          here would still win the spread and silently restore dnd-kit's own default animation for
+          every user, defeating the reduced-motion preference entirely. */}
+      <KanbanOverlay {...(reducedMotion ? { dropAnimation: null } : {})}>
         {({ value }) => {
           const project = projects.find((item) => item.id === String(value));
           return project ? <KanbanCard2 project={project} isOverlay /> : null;
