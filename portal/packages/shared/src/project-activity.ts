@@ -78,7 +78,7 @@ const payloadSchemas = {
   "project.team.member_added": z.object({ membershipCycle: identifier, roleOnProject }).strict(),
   "project.team.member_removed": z.object({ membershipCycle: identifier, roleOnProject }).strict(),
   "project.deadline.schedule_changed": z.object({ version: z.number().int().min(1), operation: z.enum(["set", "clear", "resume"]) }).strict(),
-  "project.priority.changed": z.object({ priority: z.number().int().min(1).max(10).nullable() }).strict(),
+  "project.priority.changed": z.object({ priority: z.number().int().min(1).max(5).nullable() }).strict(),
   "project.details.changed": z.object({ changedFields: safeChangedFields }).strict(),
   "project.archived": emptyPayload,
   "project.restored": emptyPayload,

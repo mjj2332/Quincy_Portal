@@ -302,7 +302,7 @@ export function KanbanCard({
       <label className="sr-only" htmlFor={`priority-${project.id}`}>Priority</label>
       <NativeSelect id={`priority-${project.id}`} className="w-auto min-w-12 pointer-coarse:min-h-11" value={project.priority ?? ""} aria-label="Priority" onChange={(event) => onPriorityChange?.(project, event.target.value === "" ? null : Number(event.target.value))}>
         <option value="">—</option>
-        {Array.from({ length: 10 }, (_, index) => index + 1).map((value) => <option value={value} key={value}>{value}</option>)}
+        {Array.from({ length: 5 }, (_, index) => index + 1).map((value) => <option value={value} key={value}>{value}</option>)}
       </NativeSelect>
       {canReorder && <>
         <button type="button" className="w-7 h-[26px] max-[641px]:size-11 max-[641px]:min-w-11 pointer-coarse:size-11 pointer-coarse:min-w-11 p-0 border border-[length:var(--border-width-hair)] border-border rounded-[var(--radius-sm)] bg-[var(--bg-surface)] text-foreground-secondary [font:var(--type-label)] text-sm leading-none cursor-pointer transition-[background-color,color] duration-[var(--dur-fast)] ease-[var(--ease-standard)] focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--focus-ring)] focus-visible:!outline-offset-2 hover:not-disabled:bg-[var(--bg-raised)] hover:not-disabled:text-foreground active:not-disabled:translate-y-px disabled:text-foreground-secondary disabled:bg-surface-sunken disabled:cursor-not-allowed" data-testid="kanban-card-control" data-focus-key={`arrow-up:${project.id}`} aria-label="Move project up" disabled={movementDisabled} onClick={() => onBoardPosition?.(project, "up")}>↑</button>
