@@ -6,6 +6,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DragEndEvent } from "@dnd-kit/core";
 import { ProjectKanbanBoard2 } from "./board";
+import { KanbanCard2 } from "./card";
 import type { ProjectKanbanBoardProps, ProjectSummary } from "../../lib/kanban-interaction";
 import type { PipelineStage } from "../../lib/stages";
 
@@ -214,6 +215,43 @@ describe("ProjectKanbanBoard2 (#80)", () => {
     const props = await renderBoard({ pendingMoves: new Set(["source"]) });
     await endDrag("source", "raw_review");
     expect(props.onBoardMove).not.toHaveBeenCalled();
+  });
+
+  // `KanbanOverlay`'s content only actually mounts under a real drag, which happy-dom's sensors
+  // cannot produce (see this file's header) — so instead of driving the whole drag pipeline, this
+  // renders `KanbanCard2` directly with `isOverlay`, exactly the way `board.tsx`'s
+  // `<KanbanOverlay>` render-prop does, and separately proves the real card is unaffected.
+  it("the drag overlay preview carries no interactive element, while the real card keeps its link and controls (#98)", async () => {
+    const summary = project("source", "awaiting_raw");
+    const overlayHost = document.createElement("div");
+    document.body.appendChild(overlayHost);
+    const overlayRoot = createRoot(overlayHost);
+    const { act } = await import("react");
+    await act(async () => { overlayRoot.render(createElement(KanbanCard2, { project: summary, isOverlay: true })); await Promise.resolve(); });
+
+    // Positive anchor first: the overlay preview really renders the card's content, so the
+    // absence assertions below cannot pass by the overlay having failed to render at all.
+    const overlayAddress = overlayHost.querySelector('[data-testid="kanban2-card-address"]');
+    expect(overlayAddress, "no overlay content rendered — the assertions below would be vacuous").not.toBeNull();
+    expect(overlayAddress!.textContent).toBe("source Street");
+    expect(overlayHost.querySelector('[data-testid="kanban2-card-overlay"]')).not.toBeNull();
+
+    expect(overlayHost.querySelector("a")).toBeNull();
+    expect(overlayHost.querySelector("button")).toBeNull();
+    expect(overlayHost.querySelector('[role="radiogroup"]')).toBeNull();
+    expect(overlayHost.querySelector('input, select, textarea, [contenteditable="true"]')).toBeNull();
+    expect(overlayHost.querySelector('[tabindex]:not([tabindex="-1"])')).toBeNull();
+
+    await act(async () => { overlayRoot.unmount(); await Promise.resolve(); });
+    overlayHost.remove();
+
+    // The real (non-overlay) card still has its actual navigable link and its drag handle — the
+    // overlay fix must not have taken interactivity away from the card that produced it.
+    await renderBoard({ canPrioritize: true });
+    const realLink = host.querySelector('[data-testid="kanban2-card"]');
+    expect(realLink, "no real card link rendered — the anti-vacuity anchor for the real card").not.toBeNull();
+    expect(realLink!.tagName).toBe("A");
+    expect(host.querySelector('[data-testid="kanban2-card-handle"]')).not.toBeNull();
   });
 });
 
