@@ -12,7 +12,8 @@ import { StatusPill } from "@/components/quincy/StatusPill";
 import { EmptyState } from "@/components/quincy/EmptyState";
 import { Notice } from "@/components/quincy/Notice";
 import { QuincyField } from "@/components/quincy/QuincyField";
-import { Button, buttonVariants } from "@/components/reui/button";
+import { Button } from "@/components/reui/button";
+import { buttonClasses } from "@/components/quincy/Button";
 
 type ProjectResponse = {
   id: string; street: string; suburb: string | null; postcode: string | null; agencyName: string | null; agentName: string | null; agentEmail: string | null; agentPhone: string | null;
@@ -131,9 +132,9 @@ export function EditProject({ projectId, onNavigate }: { projectId: string; onNa
         <h1 className="[font:var(--type-h1)] tracking-[var(--tracking-tight)]">Edit shoot</h1>
         {archived && <StatusPill tone="caution" role="status" className="mt-[var(--space-3)]">Archived — hidden from the dashboard</StatusPill>}
       </div>
-      <InternalLink className={buttonVariants({ variant: "outline" })} to={`/projects/${encodeURIComponent(projectId)}`}>Cancel</InternalLink>
+      <InternalLink className={buttonClasses("secondary", {})} to={`/projects/${encodeURIComponent(projectId)}`}>Cancel</InternalLink>
     </header>
-    {canEditProject && (project ? <form data-testid="edit-project-form" className="create-project__form flex flex-col gap-[var(--space-8)]" onSubmit={(event) => void submit(event)} noValidate>
+    {canEditProject && (project ? <form data-testid="edit-project-form" className="flex flex-col gap-[var(--space-8)]" onSubmit={(event) => void submit(event)} noValidate>
       {submitError && <Notice role="alert">{submitError}</Notice>}
       <section className="create-project__section" aria-labelledby="property-heading">
         <SectionHead eyebrow="Property" id="property-heading">Where is the shoot?</SectionHead>
@@ -144,8 +145,8 @@ export function EditProject({ projectId, onNavigate }: { projectId: string; onNa
         </div>
       </section>
       <ProjectFields form={form} errors={errors} existingCollections={project.collections.map((collection) => collection.kind)} mode="edit" onChange={updateField} onToggle={() => {}} />
-      <div className="create-project__actions flex flex-wrap justify-end gap-[var(--space-3)] max-[721px]:flex-col-reverse max-[721px]:[&>*]:w-full">
-        <InternalLink className={buttonVariants({ variant: "outline" })} to={`/projects/${encodeURIComponent(projectId)}`} aria-disabled={isSubmitting}>Cancel</InternalLink>
+      <div className="flex flex-wrap justify-end gap-[var(--space-3)] max-[721px]:flex-col-reverse max-[721px]:[&>*]:w-full">
+        <InternalLink className={buttonClasses("secondary", {})} to={`/projects/${encodeURIComponent(projectId)}`} aria-disabled={isSubmitting}>Cancel</InternalLink>
         <Button className={isSubmitting ? "cursor-wait" : undefined} type="submit" disabled={isSubmitting}>{isSubmitting ? "Saving details…" : "Save changes"}</Button>
       </div>
     </form> : <EmptyState role={loadError ? "alert" : "status"} tone={loadError ? "error" : "empty"} title={loadError ? "Project details unavailable." : "Loading shoot details."}>{loadError ?? "Preparing the form."}</EmptyState>)}

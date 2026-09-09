@@ -50,7 +50,7 @@ import { Admin } from "../screens/Admin";
 import { CreateProject } from "../screens/CreateProject";
 import { EditProject } from "../screens/EditProject";
 import { NotificationPreferences } from "../screens/NotificationPreferences";
-import { buttonClasses } from "../components/ui/button";
+import { buttonClasses } from "../components/quincy/Button";
 
 export type SessionUser = { id: string; name?: string | null; email?: string | null; role: Role; authorizationEpoch: number };
 type Notice = { path: string; message: string } | null;
@@ -101,7 +101,7 @@ function NotAvailable() {
     <main className="page">
       <div className="empty" role="status">
         <span className="serif">That page is not available.</span>
-        <InternalLink className={buttonClasses("secondary")} to="/">Return to dashboard</InternalLink>
+        <InternalLink className={buttonClasses("secondary", {})} to="/">Return to dashboard</InternalLink>
       </div>
     </main>
   );

@@ -79,57 +79,42 @@ describe("buttonClasses", () => {
   });
 });
 
-describe("buttonClasses insetFocus", () => {
-  // Inlined literally rather than imported from `AnchoredPopover.tsx` — this test must not create
-  // an import edge from `quincy/` into a consumer.
-  const RING_IN =
-    "focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] " +
-    "focus-visible:!outline-[var(--focus-ring)] focus-visible:!outline-offset-[-2px]";
-
+// The `insetFocus` suite that stood here is DELETED, not weakened. It asserted that
+// `buttonClasses` could zero nova's focus ring per variant; `reui/button.tsx` divergence 5 removed
+// that ring from the cva base, so the option had nothing left to neutralise and went with it. An
+// assertion about a mechanism that no longer exists cannot fail, and #56 deletes guards that have
+// become unfalsifiable rather than editing them to keep passing.
+//
+// What replaces it guards the fact the deletion depends on: the ring must stay absent.
+// `tokens/base.css:25` paints a global `:focus-visible` outline on every focusable element, so
+// nova's ring is a SECOND indicator, in a different CSS property group (`box-shadow`/`border-color`
+// vs `outline`) that tailwind-merge cannot collapse — every control wearing `buttonVariants` gets a
+// doubled ring. Re-fetching `button` from the ReUI registry silently reintroduces it.
+describe("buttonClasses focus ring", () => {
   const VARIANTS: ButtonVariant[] = ["primary", "secondary", "danger", "text"];
 
-  it("RING_IN alone leaves ReUI's outward ring in the merged string — the defect this fix addresses", () => {
-    for (const variant of VARIANTS) {
-      expect(buttonClasses(variant, { className: RING_IN })).toContain("focus-visible:ring-3");
-    }
-  });
-
-  it("insetFocus drops ReUI's ring on every variant while RING_IN's inward outline survives intact", () => {
-    for (const variant of VARIANTS) {
-      const classes = buttonClasses(variant, { className: RING_IN, insetFocus: true });
-      expect(classes, variant).toContain("focus-visible:ring-0");
-      expect(classes, variant).not.toContain("focus-visible:ring-3");
-      expect(classes, variant).not.toContain("focus-visible:border-ring");
-      expect(classes, variant).toContain("focus-visible:!outline-[length:var(--border-width-bold)]");
-      expect(classes, variant).toContain("focus-visible:!outline-[var(--focus-ring)]");
-      expect(classes, variant).toContain("focus-visible:!outline-offset-[-2px]");
-    }
-  });
-
-  // The border half of the fix is variant-sensitive, and this is the assertion that would have
-  // caught the slice C defect Sol found: `secondary` maps to ReUI's `outline` variant, which RESTS
-  // on `border-border` (`reui/button.tsx:37`). Blanking it to transparent on focus deletes a real
-  // border instead of restoring resting paint. Every other variant does rest on the cva base's
-  // `border-transparent`, so transparent is right for them.
-  it("keeps secondary's resting border while focused, and only blanks the border on variants that rest transparent", () => {
-    expect(buttonClasses("secondary", { className: RING_IN, insetFocus: true }))
-      .toContain("focus-visible:border-border");
-    expect(buttonClasses("secondary", { className: RING_IN, insetFocus: true }))
-      .not.toContain("focus-visible:border-transparent");
-
-    for (const variant of ["primary", "danger", "text"] as ButtonVariant[]) {
-      const classes = buttonClasses(variant, { className: RING_IN, insetFocus: true });
-      expect(classes, variant).toContain("focus-visible:border-transparent");
-      expect(classes, variant).not.toContain("focus-visible:border-border");
-    }
-  });
-
-  it("adds nothing when insetFocus is not requested", () => {
+  it("emits no ring of its own on any variant — the global :focus-visible outline is the indicator", () => {
     for (const variant of VARIANTS) {
       const classes = buttonClasses(variant);
-      expect(classes, variant).not.toContain("focus-visible:ring-0");
-      expect(classes, variant).toContain("focus-visible:ring-3");
+      expect(classes, variant).not.toContain("focus-visible:ring-3");
+      expect(classes, variant).not.toContain("focus-visible:ring-ring");
+      expect(classes, variant).not.toContain("focus-visible:border-ring");
     }
+  });
+
+  it("keeps the ring out of the vendored cva base and the destructive variant", () => {
+    for (const variant of ["default", "outline", "secondary", "ghost", "destructive", "link"] as const) {
+      const classes = buttonVariants({ variant });
+      expect(classes, variant).not.toContain("focus-visible:ring");
+      expect(classes, variant).not.toContain("focus-visible:border-ring");
+    }
+  });
+
+  // `aria-invalid`'s ring is a different affordance and is deliberately retained: it paints on an
+  // invalid control whether or not that control is focused. Asserted so a future sweep for
+  // "remove the rings" does not take this one too.
+  it("retains the aria-invalid ring, which is an error affordance and not a focus indicator", () => {
+    expect(buttonVariants({ variant: "default" })).toContain("aria-invalid:ring-3");
   });
 });
 

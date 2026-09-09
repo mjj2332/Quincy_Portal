@@ -15,8 +15,16 @@ const badgeVariants = cva(
     // which is also why every SIZE variant below has its own text-*/leading-* utilities removed:
     // left in place, they would compete with this base font-size on Tailwind's generated rule
     // order rather than source order.
-    "relative inline-flex shrink-0 items-center justify-center w-fit border border-transparent [font:var(--weight-regular)_var(--text-2xs)/1.2_var(--font-sans)] uppercase tracking-[var(--tracking-wide)] whitespace-nowrap outline-none transition-shadow",
-    "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-50",
+    "relative inline-flex shrink-0 items-center justify-center w-fit border border-transparent [font:var(--weight-regular)_var(--text-2xs)/1.2_var(--font-sans)] uppercase tracking-[var(--tracking-wide)] whitespace-nowrap transition-shadow",
+    "disabled:pointer-events-none disabled:opacity-50",
+    // Correction 2: nova's `outline-none` and its focus ring (`focus-visible:ring-2 ring-ring
+    // ring-offset-1 ring-offset-background`) are both REMOVED. `tokens/base.css:25` declares an
+    // unlayered `:focus-visible { outline: … }` that beats Tailwind's `@layer utilities`, so
+    // `outline-none` never suppressed anything — it only tripped the WCAG 2.4.7 detector — while
+    // the ring painted a second indicator beside the global outline that tailwind-merge cannot
+    // collapse against it (`box-shadow` vs `outline`). Removing the ring alone would have left a
+    // badge with no focus indicator IF `outline-none` had worked; removing both is what makes the
+    // global outline the single indicator here. Same correction as `reui/button.tsx` divergence 5.
     "[&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*=size-])]:size-3",
   ],
   {

@@ -27,8 +27,9 @@ type AnchoredPopoverOptions = {
 
 // §7.3 shared popover paint, applied by `AnchoredPopover` itself, replacing the four
 // hand-written CSS panels (`.project-team-picker`, `.kanban-move-popover`, `.subtask-popover`
-// panel-level properties). Consumers' own scoped class (e.g. "kanban-move-popover") stays as a
-// content-selector/test hook; it no longer carries panel-level CSS.
+// panel-level properties). Those scoped classes were kept as content-selector/test hooks, but
+// #56 criterion 5 found no CSS rule, runtime selector or test selecting any of them, so they and
+// the `className = "subtask-popover"` default are gone; `className` is now genuinely optional.
 // §10.3: popover contents sit flush inside a bordered, overflow-auto panel — an outward ring
 // clips. (Formerly `app.css`'s `.subtask-popover button:focus-visible, .subtask-popover
 // input:focus-visible` rule, retired in TB8-07 slice 4b now that every popover control carries
@@ -143,7 +144,7 @@ export function AnchoredPopover({
   floatingStyles,
   initialFocus = 0,
   onKeyDown,
-  className = "subtask-popover",
+  className,
   modal = false,
   label,
   status,

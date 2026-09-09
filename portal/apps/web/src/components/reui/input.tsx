@@ -2,7 +2,7 @@ import * as React from "react"
 import { Input as InputPrimitive } from "@base-ui/react/input"
 import { cn } from "@/lib/utils"
 
-// Three corrections to the vendor class string, marked inline below.
+// Four corrections to the vendor class string, marked inline below.
 //
 // 1. Geometry and colour roles: nova's `h-8 rounded-lg px-2.5 py-1` (plus `border-input` /
 //    `bg-transparent`) are re-pointed to Quincy's field box, ported from `ui/input.tsx`'s
@@ -23,8 +23,21 @@ import { cn } from "@/lib/utils"
 //    global ring paints anyway. It is not harmless, though: it trips the WCAG 2.4.7
 //    outline-suppression detector at `ProjectDeadlineControl.dom.test.tsx:80`. `reui/textarea.tsx`
 //    and `quincy/NativeSelect.tsx` share this box, so the correction covers them too.
+//
+// 4. `focus-visible:ring-3 focus-visible:ring-ring/50` is REMOVED, for the reason 3 gives: the
+//    global outline paints on every focused field, so nova's ring is a SECOND indicator. It is a
+//    `box-shadow` and the global one is an `outline`, different tailwind-merge property groups, so
+//    the two cannot collapse and both paint. See `reui/button.tsx` divergence 5, which is the same
+//    correction on the button base.
+//
+//    `focus-visible:border-ring` is KEPT, and the asymmetry with the button fix is deliberate. A
+//    field rests on a VISIBLE `border-border`, so recolouring it on focus changes existing paint
+//    rather than adding a ring. The button base rests on `border-transparent`, where the same
+//    utility materialises a border that was not there — a second ring in all but name.
+//
+//    `aria-invalid:ring-3` stays: an error affordance, painting focused or not.
 const FIELD_BOX =
-  "min-h-[38px] max-[721px]:min-h-[44px] w-full min-w-0 rounded-[var(--radius-sm)] border border-border bg-[var(--field-bg)] px-[10px] py-[8px] text-base transition-colors file:inline-flex file:h-6 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 md:text-sm dark:bg-input/30 dark:disabled:bg-input/80 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 [&:read-only:not(select)]:bg-surface-sunken [&:read-only:not(select)]:text-foreground-secondary"
+  "min-h-[38px] max-[721px]:min-h-[44px] w-full min-w-0 rounded-[var(--radius-sm)] border border-border bg-[var(--field-bg)] px-[10px] py-[8px] text-base transition-colors file:inline-flex file:h-6 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:border-ring disabled:pointer-events-none disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 md:text-sm dark:bg-input/30 dark:disabled:bg-input/80 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 [&:read-only:not(select)]:bg-surface-sunken [&:read-only:not(select)]:text-foreground-secondary"
 
 function Input({ className, type, ...props }: React.ComponentProps<"input">) {
   return (

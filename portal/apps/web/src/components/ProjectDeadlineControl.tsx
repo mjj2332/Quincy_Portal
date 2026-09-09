@@ -196,8 +196,8 @@ export function ProjectDeadlineControl({ projectId, schedule, canEdit }: Project
   const foldLabel = (choice: FoldChoice) => `${choice.disambiguation === "earlier" ? "Earlier" : "Later"} (+${choice.utcOffsetMinutes} minutes)`;
   const skippedOffsets = (displaySchedule.skippedReminderOffsetsMinutes ?? []).slice(0, 8);
   const conflictDraft = reapplyBuffer ?? { date, time, offsets, ...(fold ? { fold } : {}) };
-  return <div className="project-deadline">
-    <div className="rail-kv grid gap-[var(--space-1)] py-[var(--space-2)]" data-testid="project-deadline-row">
+  return <div>
+    <div className="grid gap-[var(--space-1)] py-[var(--space-2)]" data-testid="project-deadline-row">
       <span className={DEADLINE_KV_KEY}>Deadline</span>
       <span className={DEADLINE_KV_VALUE}>{deadline ? <>
         <time dateTime={deadline.instant}>{deadline.localCivil.replace("T", " ")}</time>
@@ -209,45 +209,45 @@ export function ProjectDeadlineControl({ projectId, schedule, canEdit }: Project
                           uppercase tracking-[var(--tracking-wide)] text-[color:var(--signal-critical)]">Overdue</strong>}
       </> : "Not set"}</span>
     </div>
-    <div className="rail-kv grid gap-[var(--space-1)] py-[var(--space-2)]" data-testid="project-deadline-row">
+    <div className="grid gap-[var(--space-1)] py-[var(--space-2)]" data-testid="project-deadline-row">
       <span className={DEADLINE_KV_KEY}>Next reminder</span>
       <span className={DEADLINE_KV_VALUE}>{displaySchedule.nextOccurrence ? <time dateTime={displaySchedule.nextOccurrence.firesAt}>{displaySchedule.nextOccurrence.kind === "due_now" ? "Due now" : deadlineOffsetLabel(displaySchedule.nextOccurrence.offsetMinutes)} · {formatSydneyInstant(displaySchedule.nextOccurrence.firesAt)}</time> : displaySchedule.reminderOffsetsMinutes.length ? "No pending reminders" : "None"}</span>
     </div>
-    {deadline && <div className={cn("project-deadline__summary", DEADLINE_SUMMARY_TEXT)} aria-label="Deadline reminder summary"><span>Configured advance reminders: {displaySchedule.reminderOffsetsMinutes.length ? displaySchedule.reminderOffsetsMinutes.slice(0, 8).map(deadlineOffsetLabel).join(", ") : "None"}</span><span>Due-now reminder: Mandatory</span><span>{skippedOffsets.length ? `Skipped elapsed advances: ${skippedOffsets.map(deadlineOffsetLabel).join(", ")}` : "Skipped elapsed advances: None"}</span></div>}
-    {inactive && <p className={cn("project-deadline__inactive", DEADLINE_SUMMARY_TEXT)} role="status">{displaySchedule.state === "inactive_delivered" ? "Reminders inactive while Delivered. Move the project out of Delivered before changing or resuming them." : "Reminders inactive while archived. Restore the project before changing or resuming them."}</p>}
-    {displaySchedule.canResume && <p className={cn("project-deadline__inactive", DEADLINE_SUMMARY_TEXT)} role="status">Reminders inactive. Resume to create a new reminder schedule.</p>}
-    {canWrite && !open && <div className={cn("project-deadline__actions", DEADLINE_ACTIONS_ROW)}>
+    {deadline && <div className={cn(DEADLINE_SUMMARY_TEXT)} aria-label="Deadline reminder summary"><span>Configured advance reminders: {displaySchedule.reminderOffsetsMinutes.length ? displaySchedule.reminderOffsetsMinutes.slice(0, 8).map(deadlineOffsetLabel).join(", ") : "None"}</span><span>Due-now reminder: Mandatory</span><span>{skippedOffsets.length ? `Skipped elapsed advances: ${skippedOffsets.map(deadlineOffsetLabel).join(", ")}` : "Skipped elapsed advances: None"}</span></div>}
+    {inactive && <p className={cn(DEADLINE_SUMMARY_TEXT)} role="status">{displaySchedule.state === "inactive_delivered" ? "Reminders inactive while Delivered. Move the project out of Delivered before changing or resuming them." : "Reminders inactive while archived. Restore the project before changing or resuming them."}</p>}
+    {displaySchedule.canResume && <p className={cn(DEADLINE_SUMMARY_TEXT)} role="status">Reminders inactive. Resume to create a new reminder schedule.</p>}
+    {canWrite && !open && <div className={cn(DEADLINE_ACTIONS_ROW)}>
       <button type="button" className={buttonClasses("text", { className: "min-h-[44px]" })} onClick={beginEditing}>{deadline ? "Edit Deadline" : "Set Deadline"}</button>
       {displaySchedule.canResume && <button type="button" className={buttonClasses("text", { className: "min-h-[44px]" })} onClick={() => void resume()}>Resume reminders</button>}
     </div>}
-    {open && canWrite && <form className="project-deadline__editor grid gap-[var(--space-3)] mt-[var(--space-3)]
+    {open && canWrite && <form className="grid gap-[var(--space-3)] mt-[var(--space-3)]
                      p-[var(--space-4)] bg-secondary
                      [border-left-style:solid] border-l-[length:var(--border-width-bold)] border-l-primary"
                      onSubmit={(event) => { event.preventDefault(); void submit(); }}>
-      <div className="project-deadline__editor-head flex items-center justify-between gap-[var(--space-2)]">
+      <div className="flex items-center justify-between gap-[var(--space-2)]">
         <strong className="[font:var(--weight-regular)_var(--text-xs)/1.2_var(--font-sans)]
                            uppercase tracking-[var(--tracking-wide)] text-foreground">
           {deadline ? "Edit Deadline" : "Set Deadline"}
         </strong>
         <button type="button" className={buttonClasses("text", { className: "min-h-[44px] shrink-0" })} onClick={closeEditing} disabled={saving}>Cancel</button>
       </div>
-      <div className="project-deadline__inputs grid gap-[var(--space-3)]">
+      <div className="grid gap-[var(--space-3)]">
         <label className={DEADLINE_LABEL}>Date<input className={DEADLINE_FIELD} aria-label="Deadline date" type="date" value={date} onChange={(event) => setDate(event.target.value)} required /></label>
         <label className={DEADLINE_LABEL}>Time<input className={DEADLINE_FIELD} aria-label="Deadline time" type="time" value={time} onChange={(event) => setTime(event.target.value)} required /></label>
       </div>
-      <fieldset className="project-deadline__fieldset grid gap-[var(--space-2)] border-0 p-0 m-0 min-w-0">
+      <fieldset className="grid gap-[var(--space-2)] border-0 p-0 m-0 min-w-0">
         <legend className={DEADLINE_LEGEND}>Advance reminders <span>({offsets.length}/8)</span></legend>
         {PROJECT_DEADLINE_PRESETS.map((preset) => <label key={preset} className={DEADLINE_CHECK_LABEL}>
           <input type="checkbox" className={DEADLINE_CHECK_INPUT} checked={selectedPresets.has(preset)} onChange={(event) => toggleOffset(preset, event.target.checked)} />
           {deadlineOffsetLabel(preset)}
         </label>)}
-        <div className="project-deadline__custom flex flex-wrap items-end gap-[var(--space-2)]">
+        <div className="flex flex-wrap items-end gap-[var(--space-2)]">
           <input className={cn(DEADLINE_FIELD, "flex-1 min-w-0")} aria-label="Custom reminder minutes" type="number" min="1" max="43200" step="1" value={custom} onChange={(event) => setCustom(event.target.value)} placeholder="Minutes" />
           <button type="button" className={buttonClasses("secondary", { className: "min-h-[44px] shrink-0" })} onClick={addCustomOffset} disabled={!custom || offsets.length >= 8}>Add</button>
         </div>
         {offsets.filter((value) => !PROJECT_DEADLINE_PRESETS.includes(value as typeof PROJECT_DEADLINE_PRESETS[number])).map((value) => <span
           key={value}
-          className="project-deadline__custom-chip inline-flex items-center gap-[var(--space-2)] w-fit px-[var(--space-2)] py-[var(--space-1)]
+          className="inline-flex items-center gap-[var(--space-2)] w-fit px-[var(--space-2)] py-[var(--space-1)]
                      bg-card border-solid border-[length:var(--border-width-hair)] border-border
                      [font:var(--weight-regular)_var(--text-2xs)/1.2_var(--font-sans)] text-foreground"
         >
@@ -267,9 +267,9 @@ export function ProjectDeadlineControl({ projectId, schedule, canEdit }: Project
             onClick={() => toggleOffset(value, false)}
           >×</button>
         </span>)}
-        <p className={cn("project-deadline__mandatory", DEADLINE_SUMMARY_TEXT)}>Due-now reminder is mandatory.</p>
+        <p className={cn(DEADLINE_SUMMARY_TEXT)}>Due-now reminder is mandatory.</p>
       </fieldset>
-      {foldChoices.length > 0 && <fieldset className="project-deadline__fieldset grid gap-[var(--space-2)] border-0 p-0 m-0 min-w-0">
+      {foldChoices.length > 0 && <fieldset className="grid gap-[var(--space-2)] border-0 p-0 m-0 min-w-0">
         <legend className={DEADLINE_LEGEND}>Choose which Sydney time</legend>
         {foldChoices.map((choice) => <label key={choice.disambiguation} className={DEADLINE_CHECK_LABEL}>
           <input type="radio" className={DEADLINE_CHECK_INPUT} name={`fold-${projectId}`} checked={fold === choice.disambiguation} onChange={() => setFold(choice.disambiguation)} />
@@ -277,7 +277,7 @@ export function ProjectDeadlineControl({ projectId, schedule, canEdit }: Project
         </label>)}
       </fieldset>}
       {error && <div className="notice" role="alert">{error}</div>}
-      {conflict && <div className="project-deadline__conflict grid gap-[var(--space-2)] p-[var(--space-3)] bg-card
+      {conflict && <div className="grid gap-[var(--space-2)] p-[var(--space-3)] bg-card
                       [border-left-style:solid] border-l-[length:var(--border-width-bold)]
                       border-l-[color:var(--signal-caution)]
                       [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)]
@@ -287,7 +287,7 @@ export function ProjectDeadlineControl({ projectId, schedule, canEdit }: Project
           Deadline changed elsewhere.
         </strong>
         <span>Latest version: {conflict.version}. Your draft is still here for review.</span>
-        {reapplyBuffer && <div className="project-deadline__conflict-comparison grid gap-[var(--space-1)]
+        {reapplyBuffer && <div className="grid gap-[var(--space-1)]
                         [font:var(--weight-regular)_var(--text-2xs)/var(--leading-normal)_var(--font-sans)]">
           <span className="text-foreground">Authoritative: {scheduleText(conflict)}</span>
           <span className="text-foreground-secondary">Saved draft: {draftText(conflictDraft)}</span>
@@ -297,7 +297,7 @@ export function ProjectDeadlineControl({ projectId, schedule, canEdit }: Project
           <button type="button" className={buttonClasses("text", { className: "min-h-[44px]" })} onClick={reapplyDraft}>Review and reapply my draft</button>
         </div>
       </div>}
-      <div className={cn("project-deadline__actions", DEADLINE_ACTIONS_ROW)}>
+      <div className={cn(DEADLINE_ACTIONS_ROW)}>
         <button type="submit" className={buttonClasses("primary", { className: "min-h-[44px]" })} disabled={saving || Boolean(foldChoices.length > 0 && !fold)}>{saving ? "Saving…" : "Save Deadline"}</button>
         {deadline && <button type="button" className={buttonClasses("text", { className: "min-h-[44px]" })} onClick={() => void clear()} disabled={saving}>Clear</button>}
       </div>

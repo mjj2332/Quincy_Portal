@@ -5,8 +5,8 @@ import { apiDelete, apiGet, apiPost } from "../lib/api";
 import { InternalLink } from "./InternalLink";
 import { projectNotificationRoute, staffPathFor } from "@quincy/shared";
 import { initials } from "../lib/initials";
-import { Menu } from "./ui/menu";
-import { Button, buttonClasses } from "./ui/button";
+import { Menu } from "./quincy/menu";
+import { Button, buttonClasses } from "./quincy/Button";
 import { cn } from "../lib/utils";
 
 export type AppView = "dashboard" | "project" | "create-project" | "edit-project" | "admin" | "notifications" | "not-found";
@@ -35,10 +35,19 @@ const ROW = "grid grid-cols-[minmax(0,1fr)_auto] border-b-[length:var(--border-w
 // the row's own 3px unread rule so the two states read as separate, never collide), press
 // (`active:bg-surface-sunken`), and an inset focus-visible ring (options sit flush inside a
 // bordered, `overflow-auto` panel; an outward ring would clip).
+// The focus utilities are `!`-prefixed, and that is load-bearing rather than defensive. Without
+// it the inward offset silently loses: `tokens/base.css:25` declares an unlayered
+// `:focus-visible { outline: … ; outline-offset: 2px }`, and unlayered author CSS beats Tailwind's
+// `@layer utilities` regardless of specificity — so the ring rendered OUTWARD at +2px, clipping
+// against the panel edge these options sit flush inside, which is the exact thing the inset was
+// added to prevent. Identical mechanism and fix to `AnchoredPopover.tsx`'s `RING_IN`, whose
+// doc comment carries the full reasoning; the offset is spelled as the arbitrary
+// `!outline-offset-[-2px]` rather than `!-outline-offset-2` to match it exactly.
 const HIGHLIGHT_STATE = "border-l-[length:var(--border-width-bold)] border-l-transparent " +
   "data-highlighted:border-l-primary active:bg-surface-sunken outline-none " +
-  "focus-visible:outline-[length:var(--border-width-bold)] focus-visible:outline-solid " +
-  "focus-visible:outline-ring focus-visible:-outline-offset-2";
+  "focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] " +
+  "focus-visible:!outline-solid " +
+  "focus-visible:!outline-ring focus-visible:!outline-offset-[-2px]";
 const ITEM = cn(
   "grid gap-1 py-[var(--space-3)] pr-0 pl-[var(--space-4)] border-0 bg-transparent",
   "text-foreground text-left cursor-pointer no-underline hover:bg-secondary",
@@ -58,7 +67,7 @@ const HEAD = "flex items-center justify-between gap-[var(--space-3)] px-[var(--s
 // "Mark all read" is a `Button` (shared primitive) rendered as a `Menu.Item` — it keeps `Button`'s
 // own hover/disabled/press states and only adds the highlight ring `Button` doesn't know about.
 const HEAD_BUTTON = HIGHLIGHT_STATE;
-const EMPTY = "topbar__notification-empty px-[var(--space-4)] py-[var(--space-5)] text-[length:var(--text-sm)] text-muted-foreground";
+const EMPTY = "px-[var(--space-4)] py-[var(--space-5)] text-[length:var(--text-sm)] text-muted-foreground";
 const TRIGGER = "relative inline-grid place-items-center size-[34px] max-[721px]:size-[44px] " +
   "text-foreground hover:bg-secondary";
 const MOBILE_ITEM = cn(
@@ -73,7 +82,7 @@ const MOBILE_ITEM = cn(
 // controls (E-14). `buttonClasses("text")` would be correct too, but a link wearing a button's
 // uppercase label type for an image it does not have is noise. 44px touch target — WCAG 2.5.5
 // Enhanced / HIG, not a spacing token.
-const BRAND = "topbar__brand flex items-center gap-[var(--space-4)] cursor-pointer no-underline " +
+const BRAND = "flex items-center gap-[var(--space-4)] cursor-pointer no-underline " +
   "min-h-[32px] max-[721px]:min-h-[44px] [&_img]:h-[18px]";
 
 // Migrated verbatim from app.css:75 (pre-retirement). No `avatar` class: the rule is gone and
@@ -90,7 +99,7 @@ const IDENTITY = "topbar__identity max-[1007px]:hidden";
 // style. `hidden` and `max-[771px]:inline-flex` are different variant keys, so twMerge keeps
 // both; `hidden` also beats menu.tsx's TRIGGER `inline-flex` in the shared base key. 44px touch
 // target — WCAG 2.5.5 Enhanced / HIG, not a spacing token.
-const MENU_TRIGGER = "topbar__menu-trigger hidden max-[771px]:inline-flex items-center " +
+const MENU_TRIGGER = "hidden max-[771px]:inline-flex items-center " +
   "justify-center min-h-[44px] ml-auto pt-[6px] pr-0 pb-[6px] pl-[10px] border-0 " +
   "bg-transparent text-[var(--text-primary)] " +
   "[font:var(--weight-regular)_11px/1.2_var(--font-sans)] " +
@@ -190,23 +199,22 @@ export function Topbar({ activeView, canAccessAdmin, user, notificationPollMs = 
       </nav>
       <div className="grow" />
       <div className="topbar__user">
-        <div className="topbar__notifications relative" data-testid="topbar-notifications">
+        <div className="relative" data-testid="topbar-notifications">
           <Menu
             open={notificationsOpen}
             onOpenChange={setNotificationsOpen}
             triggerLabel={unreadCount ? `${unreadCount} unread notifications` : "Notifications"}
             label="Notifications"
-            triggerClassName={cn("topbar__notification-trigger", TRIGGER, "[&_svg]:size-[19px]")}
+            triggerClassName={cn(TRIGGER, "[&_svg]:size-[19px]")}
             triggerTestId="topbar-notification-trigger"
             panelClassName={cn(
-              "topbar__notification-menu",
               "max-w-[min(360px,calc(100vw-var(--space-5)))] max-h-[min(520px,calc(100dvh-var(--space-9)))]",
             )}
             popupRef={notificationsPopupRef}
             trigger={<>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9ZM10 21h4" strokeLinecap="round" strokeLinejoin="round" /></svg>
               <span className="sr-only">Notifications</span>
-              {unreadCount > 0 && <span className="topbar__notification-badge bg-destructive !text-destructive-foreground text-[length:var(--text-2xs)]" aria-label={`${unreadCount} unread`} data-testid="topbar-notification-badge">{unreadCount > 99 ? "99+" : unreadCount}</span>}
+              {unreadCount > 0 && <span className="bg-destructive !text-destructive-foreground text-[length:var(--text-2xs)]" aria-label={`${unreadCount} unread`} data-testid="topbar-notification-badge">{unreadCount > 99 ? "99+" : unreadCount}</span>}
             </>}
           >
             <div className={HEAD}>
@@ -218,7 +226,7 @@ export function Topbar({ activeView, canAccessAdmin, user, notificationPollMs = 
               return <div key={notification.id} role="none" className={ROW} data-unread={notification.readAt ? undefined : ""}>
                 {route?.kind === "project"
                   ? <MenuPrimitive.LinkItem
-                      render={<InternalLink to={staffPathFor(route)} className={cn(ITEM, "topbar__notification-item")} />}
+                      render={<InternalLink to={staffPathFor(route)} className={ITEM} />}
                       closeOnClick
                       label={notification.title}
                       onClick={() => void markNotificationRead(notification)}
@@ -228,7 +236,7 @@ export function Topbar({ activeView, canAccessAdmin, user, notificationPollMs = 
                   : <MenuPrimitive.Item
                       nativeButton
                       closeOnClick
-                      render={<button type="button" className={cn(ITEM, "topbar__notification-item")} />}
+                      render={<button type="button" className={ITEM} />}
                       label={notification.title}
                       onClick={() => void markNotificationRead(notification)}
                       data-testid="topbar-notification-item"
@@ -237,7 +245,7 @@ export function Topbar({ activeView, canAccessAdmin, user, notificationPollMs = 
                 <MenuPrimitive.Item
                   nativeButton
                   closeOnClick={false}
-                  render={<button type="button" className={cn(DISMISS, "topbar__notification-dismiss")} />}
+                  render={<button type="button" className={DISMISS} />}
                   label={`Dismiss ${notification.title}`}
                   aria-label={`Dismiss notification: ${notification.title}`}
                   data-notification-dismiss={notification.id}
@@ -264,7 +272,6 @@ export function Topbar({ activeView, canAccessAdmin, user, notificationPollMs = 
         triggerLabel="Open account and navigation menu"
         label="Account and navigation menu"
         triggerClassName={MENU_TRIGGER}
-        panelClassName="topbar__mobile-menu"
         backdrop
         trigger={<span aria-hidden="true">Menu</span>}
       >
