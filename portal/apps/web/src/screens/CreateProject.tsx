@@ -97,7 +97,7 @@ export function CreateProject({ onNavigate }: { onNavigate: (path: string, notic
                 "[font:var(--weight-regular)_var(--text-lg)/var(--leading-snug)_var(--font-display)]")}
             />
           </label>
-          <Button data-testid="create-project-hero-submit" type="submit" className={cn("min-h-[var(--space-7)] max-[721px]:w-full", isSubmitting && "cursor-wait")} disabled={isSubmitting || !form.street.trim()}>
+          <Button data-testid="create-project-hero-submit" type="submit" className="min-h-[var(--space-7)] max-[721px]:w-full" disabled={isSubmitting || !form.street.trim()}>
             {isSubmitting ? "Creating shoot…" : "Create shoot"}
           </Button>
         </div>
@@ -121,7 +121,7 @@ export function CreateProject({ onNavigate }: { onNavigate: (path: string, notic
           <ProjectFields form={form} errors={errors} onChange={updateField} onToggle={toggleValue} />
           <div className="flex flex-wrap justify-end gap-[var(--space-3)] max-[721px]:flex-col-reverse max-[721px]:[&>*]:w-full">
             <InternalLink className={buttonClasses("secondary", {})} to="/" aria-disabled={isSubmitting}>Cancel</InternalLink>
-            <Button data-testid="create-project-submit" className={isSubmitting ? "cursor-wait" : undefined} type="submit" disabled={isSubmitting || !form.street.trim()}>{isSubmitting ? "Creating shoot…" : "Create shoot"}</Button>
+            <Button data-testid="create-project-submit" type="submit" disabled={isSubmitting || !form.street.trim()}>{isSubmitting ? "Creating shoot…" : "Create shoot"}</Button>
           </div>
         </div>
       </details>
