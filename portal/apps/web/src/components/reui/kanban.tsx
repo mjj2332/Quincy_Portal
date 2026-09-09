@@ -137,14 +137,14 @@ const getIsMountedOnServer = () => false
 // an async one vitest can interrupt). camelCase here is a one-character difference from the
 // vendor source that keeps the guard's regex from ever entering the vulnerable capture group;
 // none of these four carry `[font:…]` and never will.
-const mouseSensorOptions = { activationConstraint: { distance: 10 } }
-const touchSensorOptions = {
+const MOUSE_SENSOR_OPTIONS = { activationConstraint: { distance: 10 } }
+const TOUCH_SENSOR_OPTIONS = {
   activationConstraint: { delay: 250, tolerance: 5 },
 }
-const keyboardSensorOptions = {
+const KEYBOARD_SENSOR_OPTIONS = {
   coordinateGetter: sortableKeyboardCoordinates,
 }
-const measuringConfig = {
+const MEASURING_CONFIG = {
   droppable: { strategy: MeasuringStrategy.Always },
 }
 
@@ -225,9 +225,9 @@ function Kanban<T>({
   } | null>(null)
 
   const sensors = useSensors(
-    useSensor(MouseSensor, mouseSensorOptions),
-    useSensor(TouchSensor, touchSensorOptions),
-    useSensor(KeyboardSensor, keyboardSensorOptions)
+    useSensor(MouseSensor, MOUSE_SENSOR_OPTIONS),
+    useSensor(TouchSensor, TOUCH_SENSOR_OPTIONS),
+    useSensor(KeyboardSensor, KEYBOARD_SENSOR_OPTIONS)
   )
 
   const columnIds = useMemo(() => {
@@ -601,7 +601,7 @@ function Kanban<T>({
         sensors={sensors}
         modifiers={modifiers}
         accessibility={accessibility}
-        measuring={measuringConfig}
+        measuring={MEASURING_CONFIG}
         onDragStart={handleDragStart}
         onDragOver={handleDragOver}
         onDragEnd={handleDragEnd}
