@@ -21,7 +21,7 @@ function collectionLabel(value: string) {
 }
 
 const RAIL_SECTION_LABEL =
-  "rail__section-label mb-[var(--space-3)] " +
+  "mb-[var(--space-3)] " +
   "[font:var(--weight-regular)_var(--text-xs)/1.2_var(--font-sans)] " +
   "uppercase tracking-[var(--tracking-wide)] text-foreground";
 
@@ -62,8 +62,8 @@ function StageControl({ project, currentStageKey, stages, contractEnabled, pendi
   // workspace can return focus to the same control while exposing the reason.
   // The contract-off state remains a genuinely disabled control.
   const disabled = pending || (!contractEnabled && !disabledReason);
-  return <div className="stage-control grid gap-[var(--space-1)]">
-    <div className="rail-kv grid gap-[var(--space-1)] py-[var(--space-2)]">
+  return <div className="grid gap-[var(--space-1)]">
+    <div className="grid gap-[var(--space-1)] py-[var(--space-2)]">
       <span className={RAIL_KV_KEY}>Stage</span>
       <span className={RAIL_KV_VALUE}><StatusBadge stageKey={project.stageKey} /></span>
     </div>
@@ -80,7 +80,7 @@ function StageControl({ project, currentStageKey, stages, contractEnabled, pendi
         className="pointer-events-none absolute right-[var(--space-3)] top-1/2 -translate-y-1/2
                    size-[var(--space-3)] stroke-[1.5] text-foreground" />
     </div>
-    {unavailable && <span className="stage-control__message block mt-[var(--space-1)]
+    {unavailable && <span className="block mt-[var(--space-1)]
                      [font:var(--weight-regular)_var(--text-2xs)/var(--leading-normal)_var(--font-sans)]
                      text-foreground-secondary">{unavailable}</span>}
   </div>;
@@ -123,10 +123,9 @@ export function ProjectOverviewRail({
   const canMoveStage = can("moveProjectStage") && !project.archivedAt;
 
   return <aside className="rail p-[var(--space-6)] max-[721px]:p-[var(--space-4)]" aria-label="Project Overview">
-    <div className={cn("project-overview__heading hidden max-[721px]:block", RAIL_SECTION_LABEL)}>Project Overview</div>
+    <div className={cn("hidden max-[721px]:block", RAIL_SECTION_LABEL)}>Project Overview</div>
     <section
-      className="rail__sec project-overview__header
-                 pt-0 pb-[var(--space-5)] max-[721px]:pb-[var(--space-4)]
+      className="pt-0 pb-[var(--space-5)] max-[721px]:pb-[var(--space-4)]
                  [border-bottom-style:solid] border-b-[length:var(--border-width-rule)] border-b-primary"
       aria-labelledby="project-overview-property"
     >
@@ -141,32 +140,32 @@ export function ProjectOverviewRail({
       </div>
     </section>
 
-    <section className="rail__sec py-[var(--space-5)] max-[721px]:py-[var(--space-4)]
+    <section className="py-[var(--space-5)] max-[721px]:py-[var(--space-4)]
                         [border-bottom-style:solid] border-b-[length:var(--border-width-hair)] border-b-border
                         last:border-b-0" aria-labelledby="project-overview-production">
       <div className={RAIL_SECTION_LABEL} id="project-overview-production">Production</div>
-      {canMoveStage ? <StageControl project={project} currentStageKey={currentStageKey} stages={stages} contractEnabled={project.contractEnabled} pending={stageMovePending} disabledReason={stageMoveDisabledReason} onMove={onStageMove} /> : <div className="rail-kv grid gap-[var(--space-1)] py-[var(--space-2)]"><span className={RAIL_KV_KEY}>Stage</span><span className={RAIL_KV_VALUE}><StatusBadge stageKey={project.stageKey} /></span></div>}
-      <div className="rail-kv grid gap-[var(--space-1)] py-[var(--space-2)]"><span className={RAIL_KV_KEY}>Shoot</span><span className={RAIL_KV_VALUE}>{date(project.shootDate)}</span></div>
+      {canMoveStage ? <StageControl project={project} currentStageKey={currentStageKey} stages={stages} contractEnabled={project.contractEnabled} pending={stageMovePending} disabledReason={stageMoveDisabledReason} onMove={onStageMove} /> : <div className="grid gap-[var(--space-1)] py-[var(--space-2)]"><span className={RAIL_KV_KEY}>Stage</span><span className={RAIL_KV_VALUE}><StatusBadge stageKey={project.stageKey} /></span></div>}
+      <div className="grid gap-[var(--space-1)] py-[var(--space-2)]"><span className={RAIL_KV_KEY}>Shoot</span><span className={RAIL_KV_VALUE}>{date(project.shootDate)}</span></div>
       <ProjectDeadlineControl projectId={project.id} schedule={project.deadlineSchedule} canEdit={canEdit} />
-      {canEdit && <InternalLink className={buttonClasses("secondary", { className: "rail__edit w-full mt-[var(--space-4)] min-h-[44px]" })} to={`/projects/${encodeURIComponent(project.id)}/edit`}>Edit details</InternalLink>}
+      {canEdit && <InternalLink className={buttonClasses("secondary", { className: "w-full mt-[var(--space-4)] min-h-[44px]" })} to={`/projects/${encodeURIComponent(project.id)}/edit`}>Edit details</InternalLink>}
     </section>
 
-    <section className="rail__sec py-[var(--space-5)] max-[721px]:py-[var(--space-4)]
+    <section className="py-[var(--space-5)] max-[721px]:py-[var(--space-4)]
                         [border-bottom-style:solid] border-b-[length:var(--border-width-hair)] border-b-border
                         last:border-b-0" aria-labelledby="project-overview-team">
       <div className={RAIL_SECTION_LABEL} id="project-overview-team">Team</div>
       <ProjectTeamControl projectId={project.id} members={project.members} canEdit={canEdit} />
     </section>
 
-    <section className="rail__sec py-[var(--space-5)] max-[721px]:py-[var(--space-4)]
+    <section className="py-[var(--space-5)] max-[721px]:py-[var(--space-4)]
                         [border-bottom-style:solid] border-b-[length:var(--border-width-hair)] border-b-border
                         last:border-b-0" aria-labelledby="project-overview-client">
       <div className={RAIL_SECTION_LABEL} id="project-overview-client">Client</div>
-      <div className="rail-kv grid gap-[var(--space-1)] py-[var(--space-2)]"><span className={RAIL_KV_KEY}>Agency</span><span className={RAIL_KV_VALUE}>{project.agencyName ?? "—"}</span></div>
-      <div className="rail-kv grid gap-[var(--space-1)] py-[var(--space-2)]"><span className={RAIL_KV_KEY}>Agent</span><span className={RAIL_KV_VALUE}>{project.agentName ?? "—"}</span></div>
+      <div className="grid gap-[var(--space-1)] py-[var(--space-2)]"><span className={RAIL_KV_KEY}>Agency</span><span className={RAIL_KV_VALUE}>{project.agencyName ?? "—"}</span></div>
+      <div className="grid gap-[var(--space-1)] py-[var(--space-2)]"><span className={RAIL_KV_KEY}>Agent</span><span className={RAIL_KV_VALUE}>{project.agentName ?? "—"}</span></div>
     </section>
 
-    {project.productionNotes && <section className="rail__sec py-[var(--space-5)] max-[721px]:py-[var(--space-4)]
+    {project.productionNotes && <section className="py-[var(--space-5)] max-[721px]:py-[var(--space-4)]
                         [border-bottom-style:solid] border-b-[length:var(--border-width-hair)] border-b-border
                         last:border-b-0" aria-labelledby="project-overview-notes">
       <div className={RAIL_SECTION_LABEL} id="project-overview-notes">Production notes</div>
@@ -175,17 +174,17 @@ export function ProjectOverviewRail({
                     text-foreground-secondary">{project.productionNotes}</p>
     </section>}
 
-    <section className="rail__sec py-[var(--space-5)] max-[721px]:py-[var(--space-4)]
+    <section className="py-[var(--space-5)] max-[721px]:py-[var(--space-4)]
                         [border-bottom-style:solid] border-b-[length:var(--border-width-hair)] border-b-border
                         last:border-b-0" aria-labelledby="project-overview-collections">
       <div className={RAIL_SECTION_LABEL} id="project-overview-collections">Collections</div>
-      <div className="filterlist grid gap-[var(--space-1)]">{availableTabs.map((tab) => {
+      <div className="grid gap-[var(--space-1)]">{availableTabs.map((tab) => {
         const collection = project.collections.find((item) => item.kind === tab);
         const isActive = activeTab === tab;
         return <button
           key={tab} type="button" aria-pressed={isActive} data-testid="project-overview-tab"
           className={cn(
-            "frow flex w-full items-center justify-between gap-[var(--space-3)] text-left cursor-pointer",
+            "flex w-full items-center justify-between gap-[var(--space-3)] text-left cursor-pointer",
             "min-h-[44px] " /* WCAG 2.5.5 Enhanced target, not a spacing token */,
             "pl-[var(--space-3)] pr-[var(--space-3)] py-[var(--space-2)]",
             "rounded-none border-0 [border-left-style:solid] border-l-[length:var(--border-width-bold)]",
@@ -207,13 +206,13 @@ export function ProjectOverviewRail({
       })}</div>
     </section>
 
-    {canUpload && (hasRawFolder || canAdminBackend) && <section className="rail__sec py-[var(--space-5)] max-[721px]:py-[var(--space-4)]
+    {canUpload && (hasRawFolder || canAdminBackend) && <section className="py-[var(--space-5)] max-[721px]:py-[var(--space-4)]
                         [border-bottom-style:solid] border-b-[length:var(--border-width-hair)] border-b-border
                         last:border-b-0" aria-labelledby="project-overview-dropbox">
       <div className={RAIL_SECTION_LABEL} id="project-overview-dropbox">Dropbox</div>
       <button
         type="button" disabled={isSyncing} aria-busy={isSyncing || undefined} data-testid="dropbox-sync"
-        className={buttonClasses("secondary", { className: "dropcard w-full min-h-[44px]" })}
+        className={buttonClasses("secondary", { className: "w-full min-h-[44px]" })}
         onClick={onSyncDropbox}
       >
         <RefreshCw aria-hidden="true" className="size-[var(--space-4)] shrink-0 stroke-[1.5]" />
