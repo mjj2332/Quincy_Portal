@@ -18,6 +18,7 @@ function summary(id: string): ExternalProjectSummaryDto {
     productionNotes: null,
     services: [],
     cover: null,
+    editors: [],
   };
 }
 
@@ -31,6 +32,15 @@ describe("TB5A Slice 4 External Board adapter", () => {
 
 		expect(mapped.every((project) => project.boardPosition === undefined)).toBe(true);
 		expect(sortKanbanProjects(mapped, "board").map((project) => project.id)).toEqual([z.id, a.id]);
+	});
+
+	it("carries assigned Editors from the external summary into the dashboard adapter", () => {
+		const withEditor: ExternalProjectSummaryDto = {
+			...summary("00000000-0000-4000-8000-000000000004"),
+			editors: [{ id: "00000000-0000-4000-8000-000000000099", name: "Internal Staff Editor" }],
+		};
+		const mapped = externalProjectSummaryToDashboard(withEditor, {}, false);
+		expect(mapped.editors).toEqual([{ id: "00000000-0000-4000-8000-000000000099", name: "Internal Staff Editor" }]);
 	});
 
 	it("carries detail authority into a deep-link workspace adapter", () => {

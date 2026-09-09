@@ -40,6 +40,7 @@ export function externalProjectSummaryToDashboard(
     receivedCount: raw?.receivedCount ?? 0,
     expectedCount: raw?.expectedCount ?? null,
     priority: null,
+    editors: project.editors,
     boardRank: authorizedBoardRank(project.id, project.stageKey, orderedProjectIdsByStage),
     boardMapPresent: Object.keys(orderedProjectIdsByStage ?? {}).length > 0,
     authorizedBoardOrder: orderedProjectIdsByStage,

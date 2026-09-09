@@ -1,8 +1,9 @@
 import { boardContractEnabled, boardSchemaVariant, createDb, projectColumnsForVariant, schema, type BoardSchemaVariant } from "@quincy/db";
 import { and, asc, eq, isNull, sql } from "drizzle-orm";
-import { externalProjectDetailSchema, externalProjectListResponseSchema, externalProjectSummarySchema, ROLE_LABELS, stageTransportKeyForRole, type ExternalProjectDetailDto, type ExternalProjectListResponse, type ExternalProjectSummaryDto, type Role, type StageKey, type StageTransportKey } from "@quincy/shared";
+import { externalProjectDetailSchema, externalProjectListResponseSchema, externalProjectSummarySchema, ROLE_LABELS, stageTransportKeyForRole, type ExternalProjectDetailDto, type ExternalProjectListResponse, type ExternalProjectSummaryDto, type ProjectEditorRef, type Role, type StageKey, type StageTransportKey } from "@quincy/shared";
 import type { Env } from "../env";
 import { readProjectDeadlineSchedule } from "./project-deadline";
+import { activeEditorRefsByProject } from "./project-editors";
 import { visibleProjectWhere } from "./visible-project-scope";
 
 type Db = ReturnType<typeof createDb>;
@@ -95,7 +96,7 @@ function toProjectRow(row: Awaited<ReturnType<typeof projectRows>>[number]): { p
   };
 }
 
-function summaryFields(project: ProjectRow, services: ServiceRow[], deadline: Awaited<ReturnType<typeof readProjectDeadlineSchedule>>, coverAsset: string | null, origin: string): ExternalProjectSummaryDto {
+function summaryFields(project: ProjectRow, services: ServiceRow[], deadline: Awaited<ReturnType<typeof readProjectDeadlineSchedule>>, coverAsset: string | null, origin: string, editors: ProjectEditorRef[]): ExternalProjectSummaryDto {
   return externalProjectSummarySchema.parse({
     id: project.id,
     address: { street: project.street, suburb: project.suburb, postcode: project.postcode },
@@ -109,6 +110,7 @@ function summaryFields(project: ProjectRow, services: ServiceRow[], deadline: Aw
     productionNotes: project.productionNotes,
     services: services.map(({ id, kind, status, expectedCount, receivedCount }) => ({ id, kind, status, expectedCount, receivedCount })),
     cover: coverUrl(origin, coverAsset),
+    editors,
   });
 }
 
@@ -164,7 +166,8 @@ export async function listExternalProjects(env: Env, userId: string, role: Role)
     if (service && !current.services.some((item) => item.id === service.id)) current.services.push(service);
     grouped.set(project.id, current);
   }
-  const projects = await Promise.all([...grouped.values()].map(async ({ project, services }) => summaryFields(project, services, await readProjectDeadlineSchedule(env.DB, project.id), await coverFor(db, project), env.APP_ORIGIN)));
+  const editorsByProject = await activeEditorRefsByProject(db, [...grouped.keys()]);
+  const projects = await Promise.all([...grouped.values()].map(async ({ project, services }) => summaryFields(project, services, await readProjectDeadlineSchedule(env.DB, project.id), await coverFor(db, project), env.APP_ORIGIN, editorsByProject.get(project.id) ?? [])));
   return externalProjectListResponseSchema.parse({
     projects,
     board: {
@@ -184,13 +187,14 @@ export async function readExternalProjectDetail(env: Env, userId: string, role: 
     const service = toProjectRow(row).service;
     return service ? [service] : [];
   }).filter((service, index, all) => all.findIndex((item) => item.id === service.id) === index);
-  const [members, deadline, coverAsset, subtaskCounts] = await Promise.all([
+  const [members, deadline, coverAsset, subtaskCounts, editorsByProject] = await Promise.all([
     membersFor(db, projectId),
     readProjectDeadlineSchedule(env.DB, projectId),
     coverFor(db, first.project),
     assignedSubtaskCounts(db, projectId),
+    activeEditorRefsByProject(db, [projectId]),
   ]);
-  const summary = summaryFields(first.project, services, deadline, coverAsset, env.APP_ORIGIN);
+  const summary = summaryFields(first.project, services, deadline, coverAsset, env.APP_ORIGIN, editorsByProject.get(projectId) ?? []);
   return externalProjectDetailSchema.parse({
     ...summary,
     contractEnabled: await boardContractEnabled(env.DB, variant),

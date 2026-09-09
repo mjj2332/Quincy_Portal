@@ -49,9 +49,16 @@ describe("TB4E external policy and DTO boundaries", () => {
       productionNotes: null,
       services: [],
       cover: null,
+      editors: [],
     };
     expect(externalProjectSummarySchema.safeParse({ ...summary, secret: "nope" }).success).toBe(false);
     expect(externalProjectSummarySchema.safeParse(summary).success).toBe(true);
+    // Editors are allowed on the external summary, including internal staff — the schema does
+    // not distinguish a global role, only the `{ id, name }` shape and no avatar URL.
+    const withEditors = { ...summary, editors: [{ id: "22222222-2222-4222-8222-222222222222", name: "Internal Editor" }] };
+    expect(externalProjectSummarySchema.safeParse(withEditors).success).toBe(true);
+    expect(externalProjectSummarySchema.safeParse({ ...summary, editors: [{ id: summary.id, name: "X", avatarUrl: "https://example.test/a.png" }] }).success).toBe(false);
+    expect(externalProjectSummarySchema.parse(summary).editors).toEqual([]);
     expect(externalProjectSummarySchema.safeParse({ ...summary, stageKey: "editing" }).success).toBe(true);
     expect(externalProjectSummarySchema.safeParse({ ...summary, stageKey: "editing_autohdr" }).success).toBe(false);
     expect(externalProjectSummarySchema.safeParse({ ...summary, stageKey: "unknown-stage" }).success).toBe(false);

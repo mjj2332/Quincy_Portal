@@ -7,11 +7,19 @@ export type DashboardBoardProjection = {
   orderedProjectIdsByStage: AuthorizedBoardOrder<StageTransportKey>;
 };
 
+/**
+ * Only currently-assigned, active project Editors — never Photographers, and never a global-role
+ * check (a user's global role and their per-project `roleOnProject` are independent). No image
+ * URL: avatars render from initials.
+ */
+export type ProjectEditorRef = { id: string; name: string };
+
 /** The internal summary remains intentionally open to the existing staff-only fields. */
 export type InternalProjectSummaryDto = {
   id: string;
   stageKey: StageTransportKey;
   boardRevision: number;
+  editors: ProjectEditorRef[];
   [key: string]: unknown;
 };
 
