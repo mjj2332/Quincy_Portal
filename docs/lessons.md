@@ -61,6 +61,29 @@
   underlying gotcha still applies to any table-rebuild migration this codebase generates in the
   future.)
 
+- **A `CHECK` can be narrowed the same way, without a rebuild, as long as it's still inline.**
+  Migration 0040 (#78) narrowed `projects.priority` from a 1-10 `CHECK` to 1-5. `drizzle-kit
+  generate` emitted the usual table-rebuild for this, which would have hit the exact 0020 hazard
+  above — 20 tables reference `projects.id`, 18 with `ON DELETE CASCADE`. It was replaced by a
+  four-statement column swap instead: add a new column carrying the narrower `CHECK`, backfill it
+  by clamping (`min(n, 5)`, not compressing — see ADR 0001), drop the old column, rename the new
+  one into place. This works only because migration 0020 gave `priority` an **inline** column
+  `CHECK`, not a table-level named constraint — SQLite (and D1) permit `DROP COLUMN` on a column
+  with an inline check without a rebuild, and `RENAME COLUMN` carries that check along with it. A
+  historical activity-payload rewrite is ordered last, after the column swap, and touches no
+  `projects` row.
+  ```sql
+  ALTER TABLE `projects` ADD COLUMN `priority_next` integer CHECK(...);
+  UPDATE `projects` SET `priority_next` = min(`priority`, 5);
+  ALTER TABLE `projects` DROP COLUMN `priority`;
+  ALTER TABLE `projects` RENAME COLUMN `priority_next` TO `priority`;
+  ```
+  `packages/db/test/migration-fk-safety.guard.test.ts` now mechanises the rule this class of bug
+  keeps proving: no migration may contain a `PRAGMA ... foreign_keys` toggle, `legacy_alter_table`,
+  or a `CREATE TABLE __new_<x>` / `ALTER TABLE __new_<x> RENAME TO` table-rebuild — with no
+  baseline and no exception list, so a future generated migration that reintroduces the hazard
+  fails the build instead of shipping to production.
+
 - **Notification trigger correctness depends on each writer's own affected-row result.** The
   stage-transition surface is split between guarded helper calls, inline D1 batches, and ORM
   updates; a sibling `changes()` result can be successful while the stage write was fenced out.

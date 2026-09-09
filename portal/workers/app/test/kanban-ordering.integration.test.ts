@@ -68,6 +68,14 @@ describe("Kanban priority and Board commands", () => {
     expect(await database.DB.prepare("SELECT priority, board_position, board_revision FROM projects WHERE id = ?").bind(target).first()).toEqual({ priority: 2, board_position: 4096, board_revision: 0 });
   });
 
+  it("rejects an out-of-range Priority rather than clamping it silently", async () => {
+    const target = crypto.randomUUID();
+    await seedProject(target, "raw_review", 4096, 1);
+    const response = await request(`/api/projects/${target}/priority`, adminToken, { method: "POST", body: JSON.stringify({ priority: 6 }) });
+    expect(response.status).toBe(400);
+    expect(await database.DB.prepare("SELECT priority FROM projects WHERE id = ?").bind(target).first()).toEqual({ priority: 1 });
+  });
+
   it("moves a same-Stage card to the exact requested boundary", async () => {
     const first = crypto.randomUUID(); const middle = crypto.randomUUID(); const target = crypto.randomUUID();
     await seedProject(first, "edited_review", 1024); await seedProject(middle, "edited_review", 2048); await seedProject(target, "edited_review", 3072);

@@ -31,7 +31,7 @@ const deleteProjectMembershipInput = z.discriminatedUnion("clearSubtaskAssignmen
   z.object({ membershipCycle: z.string().uuid(), clearSubtaskAssignments: z.literal(true), confirmedAssignmentCount: z.number().int().nonnegative(), confirmAccessLoss: z.boolean().optional() }).strict(),
 ]);
 const coverInput = z.object({ assetId: z.string().uuid().nullable() });
-const priorityInput = z.object({ priority: z.number().int().min(1).max(10).nullable() });
+const priorityInput = z.object({ priority: z.number().int().min(1).max(5).nullable() });
 const downloadSelectionInput = z.object({
   assetIds: z.array(z.string().uuid()).min(1).max(DOWNLOAD_SELECTION_MAX_ASSETS)
     .superRefine((assetIds, ctx) => {
