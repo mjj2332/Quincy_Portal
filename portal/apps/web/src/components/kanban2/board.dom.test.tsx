@@ -6,9 +6,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DragEndEvent } from "@dnd-kit/core";
 import { ProjectKanbanBoard2 } from "./board";
-import type { ProjectSummary } from "../../lib/kanban-interaction";
+import type { ProjectKanbanBoardProps, ProjectSummary } from "../../lib/kanban-interaction";
 import type { PipelineStage } from "../../lib/stages";
-import type { ProjectKanbanBoardProps } from "../ProjectKanbanBoard";
 
 const dnd = vi.hoisted(() => ({
   handlers: [] as Array<{ onDragEnd?: (event: unknown) => void }>,

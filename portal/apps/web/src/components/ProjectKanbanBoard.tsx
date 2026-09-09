@@ -45,11 +45,13 @@ import {
   semanticGapChanged,
   sortKanbanProjects,
   type BoardDragStartSnapshot,
+  type BoardInteractionState,
   type BoardModel,
   type BoardProposal,
   boardGapChangesOrder,
   type DroppableData,
   type FocusDescriptor,
+  type ProjectKanbanBoardProps,
   type ProjectSummary,
   type SemanticGap,
   type KanbanSortMode,
@@ -57,11 +59,6 @@ import {
 import type { ProjectStageKey, PipelineStage } from "../lib/stages";
 import { usePrefersReducedMotion } from "../lib/use-media-query";
 import { deadlineLabel } from "../lib/deadline-label";
-
-export type BoardInteractionState = {
-  activeId: string | undefined;
-  proposal: SemanticGap | null;
-};
 
 type BoardMoveHandler = (project: ProjectSummary, gap: SemanticGap, kind: "cross" | "same", focusDescriptor: FocusDescriptor) => void;
 
@@ -600,31 +597,6 @@ function KanbanColumn({
     </SortableContext>
   </section>;
 }
-
-export type ProjectKanbanBoardProps = {
-  projects: ProjectSummary[];
-  activeStages: readonly PipelineStage[];
-  canMoveStages: boolean;
-  canPrioritize: boolean;
-  role?: Role;
-  boardMutationEnabled: boolean;
-  movementDisabled?: boolean;
-  sameStageReorderEnabled?: boolean;
-  effectiveKanbanSort: KanbanSortMode;
-  pendingMoves: ReadonlySet<string>;
-  pendingOrdering: ReadonlySet<string>;
-  terminal: boolean;
-  onBoardMove?: (projectId: string, gap: SemanticGap, kind: "cross" | "same", focusDescriptor: FocusDescriptor) => void;
-  /** Compatibility seam for Slice 2 callers; all current Dashboard movement uses onBoardMove. */
-  onCrossStageMove?: (projectId: string, gap: SemanticGap, focusDescriptor: FocusDescriptor) => void;
-  onBoardPosition: (project: ProjectSummary, direction: "up" | "down") => void;
-  onPriorityChange: (project: ProjectSummary, priority: number | null) => void;
-  onMoveStage: BoardMoveHandler;
-  onMoveToProposalChange?: (proposal: SemanticGap | null) => void;
-  onInteractionStateChange?: (state: BoardInteractionState) => void;
-  onAnnounce?: (message: string | undefined) => void;
-  projectHrefFor?: (project: ProjectSummary) => string | undefined;
-};
 
 export function ProjectKanbanBoard({
   projects,

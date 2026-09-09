@@ -14,6 +14,7 @@ import {
   type StageMovePlacement,
   type StageTransportKey,
 } from "@quincy/shared";
+import type { PipelineStage } from "./stages";
 
 /**
  * The Dashboard's role-safe project summary is a data boundary, so the pure Board
@@ -100,6 +101,36 @@ export type BoardDragStartSnapshot = {
 export type BoardProposal = {
   orders: Record<string, string[]>;
   gap: SemanticGap;
+};
+
+export type BoardInteractionState = {
+  activeId: string | undefined;
+  proposal: SemanticGap | null;
+};
+
+export type ProjectKanbanBoardProps = {
+  projects: ProjectSummary[];
+  activeStages: readonly PipelineStage[];
+  canMoveStages: boolean;
+  canPrioritize: boolean;
+  role?: Role;
+  boardMutationEnabled: boolean;
+  movementDisabled?: boolean;
+  sameStageReorderEnabled?: boolean;
+  effectiveKanbanSort: KanbanSortMode;
+  pendingMoves: ReadonlySet<string>;
+  pendingOrdering: ReadonlySet<string>;
+  terminal: boolean;
+  onBoardMove?: (projectId: string, gap: SemanticGap, kind: "cross" | "same", focusDescriptor: FocusDescriptor) => void;
+  /** Compatibility seam for Slice 2 callers; all current Dashboard movement uses onBoardMove. */
+  onCrossStageMove?: (projectId: string, gap: SemanticGap, focusDescriptor: FocusDescriptor) => void;
+  onBoardPosition: (project: ProjectSummary, direction: "up" | "down") => void;
+  onPriorityChange: (project: ProjectSummary, priority: number | null) => void;
+  onMoveStage: (project: ProjectSummary, gap: SemanticGap, kind: "cross" | "same", focusDescriptor: FocusDescriptor) => void;
+  onMoveToProposalChange?: (proposal: SemanticGap | null) => void;
+  onInteractionStateChange?: (state: BoardInteractionState) => void;
+  onAnnounce?: (message: string | undefined) => void;
+  projectHrefFor?: (project: ProjectSummary) => string | undefined;
 };
 
 type CanonicalStageKey = StageKey;
