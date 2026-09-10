@@ -1,8 +1,10 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useRef } from "react";
 import type { StageKey } from "@quincy/shared";
 import { StatusBadge } from "../atoms";
+import type { DragEndEvent, DragStartEvent } from "@dnd-kit/core";
 import { Kanban, KanbanColumn, KanbanColumnContent, KanbanItem, KanbanOverlay, type KanbanMoveEvent } from "../reui/kanban";
 import {
+  announce,
   eligibleTarget,
   focusDescriptorFor,
   sortKanbanProjects,
@@ -56,6 +58,7 @@ export function ProjectKanbanBoard2({
   terminal,
   onBoardMove,
   onPriorityChange,
+  onAnnounce,
   projectHrefFor,
 }: ProjectKanbanBoardProps) {
   const columns = useMemo(() => {
@@ -103,14 +106,54 @@ export function ProjectKanbanBoard2({
   );
   const priorityEditable = canPrioritize && hasAuthorizedBoardMap && !terminal;
 
+  // `restoreFocus: false` (below) hands focus back to us, so the Board keeps a handle registry and
+  // refocuses the card the user was carrying. dnd-kit's own `RestoreFocus` only ever fired for
+  // KEYBOARD drags and called a bare `.focus()`, which is why turning it off is also a scroll fix.
+  const handleRefs = useRef(new Map<string, HTMLButtonElement | null>());
+  const registerHandle = useCallback((projectId: string, element: HTMLButtonElement | null) => {
+    if (element) handleRefs.current.set(projectId, element);
+    else handleRefs.current.delete(projectId);
+  }, []);
+  const activeProjectRef = useRef<string | undefined>(undefined);
+  const lastAnnouncedContainerRef = useRef<string | undefined>(undefined);
+
+  // Only for the paths that do NOT hand off to the Dashboard. Never on the valid path: the
+  // Dashboard's restore effect owns that, and at that moment every handle is `disabled` by the
+  // pending-write lock, so a `.focus()` here would land on BODY instead.
+  const refocusActiveHandle = useCallback(() => {
+    const projectId = activeProjectRef.current;
+    if (!projectId) return;
+    handleRefs.current.get(projectId)?.focus({ preventScroll: true });
+  }, []);
+
+  const announceRejection = useCallback((type: "dnd-cancel" | "drop-outside" | "invalid-keyboard-target", projectId: string | undefined) => {
+    if (!onAnnounce) return;
+    const project = projectId ? projects.find((item) => item.id === projectId) : undefined;
+    if (!project) return;
+    const sourceStageLabel = activeStages.find((stage) => semanticStageKey(stage.key) === semanticStageKey(project.stageKey as ProjectStageKey))?.label ?? "";
+    // `announce` returns undefined when terminal, and the Dashboard drops undefined — so terminal
+    // suppression is free rather than a second branch here.
+    onAnnounce(announce({ type, street: project.street, sourceStageLabel }, { terminal }));
+  }, [activeStages, onAnnounce, projects, terminal]);
+
   const handleMove = useCallback(({ event, activeContainer, overContainer }: KanbanMoveEvent) => {
-    if (dragDisabled) return;
+    const projectId = String(event.active.id);
+    const keyboardOrigin = event.activatorEvent?.type === "keydown";
+    // Every `return` below is a REJECTED drop, and a rejected drop must say so and give the handle
+    // back — dnd-kit's default announcement ("was dropped over droppable area raw_review") is both
+    // wrong and in the other live region, which is why they are all suppressed in `accessibility`.
+    const reject = (type: "dnd-cancel" | "invalid-keyboard-target") => {
+      announceRejection(type, projectId);
+      refocusActiveHandle();
+    };
+    if (dragDisabled) return reject("dnd-cancel");
     const sourceSemantic = semanticStageKey(activeContainer as ProjectStageKey);
     const targetSemantic = semanticStageKey(overContainer as ProjectStageKey);
-    if (sourceSemantic === targetSemantic) return; // same-column reordering is not this ticket's scope
-    const projectId = String(event.active.id);
+    // Same-column reordering is #99, not this Board's behaviour — so for now it is a rejection, not
+    // a silent no-op: the card visibly returns and the user is told it did not move.
+    if (sourceSemantic === targetSemantic) return reject("dnd-cancel");
     const project = projects.find((item) => item.id === projectId);
-    if (!project || pendingMoves.has(projectId)) return;
+    if (!project || pendingMoves.has(projectId)) return reject("dnd-cancel");
     const model = { projects };
     const gap: SemanticGap = { targetStageKey: targetSemantic, successor: "end" };
     const caps = {
@@ -119,11 +162,82 @@ export function ProjectKanbanBoard2({
       sort: effectiveKanbanSort,
       activeStageKeys: activeStages.map((stage) => semanticStageKey(stage.key)),
     };
-    if (!eligibleTarget(gap, model, projectId, caps)) return;
-    const keyboardOrigin = event.activatorEvent?.type === "keydown";
+    if (!eligibleTarget(gap, model, projectId, caps)) return reject(keyboardOrigin ? "invalid-keyboard-target" : "dnd-cancel");
     const focusDescriptor = focusDescriptorFor(keyboardOrigin ? "keyboard" : "pointer", project, model, "handle");
     onBoardMove?.(projectId, gap, "cross", focusDescriptor);
-  }, [activeStages, canMoveStages, dragDisabled, effectiveKanbanSort, onBoardMove, pendingMoves, projects]);
+  }, [activeStages, announceRejection, canMoveStages, dragDisabled, effectiveKanbanSort, onBoardMove, pendingMoves, projects, refocusActiveHandle]);
+
+  const handleDragStart = useCallback((event: DragStartEvent) => {
+    activeProjectRef.current = String(event.active.id);
+  }, []);
+
+  // An outside drop never reaches `onMove` (the primitive resolves no container), so it is the one
+  // rejection that has to be handled here.
+  const handleDragEnd = useCallback((event: DragEndEvent) => {
+    if (!event.over) {
+      announceRejection("drop-outside", activeProjectRef.current);
+      refocusActiveHandle();
+    }
+  }, [announceRejection, refocusActiveHandle]);
+
+  const handleDragCancel = useCallback(() => {
+    announceRejection("dnd-cancel", activeProjectRef.current);
+    refocusActiveHandle();
+  }, [announceRejection, refocusActiveHandle]);
+
+  const accessibility = useMemo(() => ({
+    // dnd-kit's `RestoreFocus` fires only for keyboard drags and calls a bare `.focus()`, which can
+    // scroll the Board; the Board refocuses the handle itself instead, with `preventScroll`.
+    restoreFocus: false as const,
+    announcements: {
+      // Quincy copy in dnd-kit's live region for the two events it is the right region for.
+      onDragStart: ({ active }: { active: { id: string | number } }) => {
+        const project = projects.find((item) => item.id === String(active.id));
+        if (!project) return undefined;
+        const stage = activeStages.find((item) => semanticStageKey(item.key) === semanticStageKey(project.stageKey as ProjectStageKey));
+        const siblings = columns[stage?.key ?? ""] ?? [];
+        return announce({
+          type: "start",
+          street: project.street,
+          stageLabel: stage?.label ?? "",
+          position: siblings.findIndex((item) => item.id === project.id) + 1,
+          count: siblings.length,
+        }, { terminal });
+      },
+      // The ONLY hover hook available: the primitive returns early from its own `handleDragOver`
+      // whenever `onMove` is set, and exposes no `onDragOver` prop at all. De-duplicated, because a
+      // stationary hover fires this repeatedly and a live region would read it every time.
+      onDragOver: ({ active, over }: { active: { id: string | number }; over: { id: string | number } | null }) => {
+        if (!over) return undefined;
+        const project = projects.find((item) => item.id === String(active.id));
+        if (!project) return undefined;
+        const overStageKey = Object.keys(columns).find((key) => key === String(over.id) || (columns[key] ?? []).some((item) => item.id === String(over.id)));
+        if (!overStageKey) return undefined;
+        const sourceStageKey = activeStages.find((item) => semanticStageKey(item.key) === semanticStageKey(project.stageKey as ProjectStageKey))?.key;
+        if (overStageKey === sourceStageKey || overStageKey === lastAnnouncedContainerRef.current) return undefined;
+        lastAnnouncedContainerRef.current = overStageKey;
+        const stage = activeStages.find((item) => item.key === overStageKey);
+        const siblings = columns[overStageKey] ?? [];
+        // "over-end" is the accurate event for this Board: every cross-Stage drop appends (#99 owns
+        // exact placement), so announcing a card-relative position would be a lie.
+        return announce({
+          type: "over-end",
+          street: project.street,
+          stageLabel: stage?.label ?? "",
+          position: siblings.length + 1,
+          count: siblings.length + 1,
+        }, { terminal });
+      },
+      // Deliberately silent, and this is mandatory rather than stylistic: the Board's own rejection
+      // copy goes to the DASHBOARD's live region via `onAnnounce`. Leaving dnd-kit's defaults here
+      // would have two regions narrating the same drop, and contradicting each other on a rejection.
+      onDragEnd: () => undefined,
+      onDragCancel: () => undefined,
+    },
+    screenReaderInstructions: {
+      draggable: "To pick up a project, focus its Move project handle and press Space. Use the arrow keys to move between Stages. Press Space again to drop, or Escape to cancel.",
+    },
+  }), [activeStages, columns, projects, terminal]);
 
   return (
     <Kanban
@@ -131,6 +245,10 @@ export function ProjectKanbanBoard2({
       onValueChange={noopValueChange}
       getItemValue={getItemValue}
       onMove={handleMove}
+      onDragStart={handleDragStart}
+      onDragEnd={handleDragEnd}
+      onDragCancel={handleDragCancel}
+      accessibility={accessibility}
       className="kanban2 grid grid-flow-col auto-cols-[minmax(244px,1fr)] max-[641px]:auto-cols-[minmax(252px,1fr)] pointer-coarse:auto-cols-[minmax(252px,1fr)] gap-[var(--border-width-hair)] bg-border border border-[length:var(--border-width-hair)] border-border overflow-x-auto overscroll-x-contain [scrollbar-gutter:stable]"
       aria-label="Project pipeline board (kanban2)"
       // The Dashboard's focus-restore effect (`Dashboard.tsx:409-424`) resolves three tiers by
@@ -179,6 +297,7 @@ export function ProjectKanbanBoard2({
                     canPrioritize={priorityEditable}
                     priorityPending={pendingOrdering?.has(project.id) ?? false}
                     onPriorityChange={onPriorityChange}
+                    handleRef={registerHandle}
                   />
                 </KanbanItem>
               ))}
