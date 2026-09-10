@@ -9,10 +9,28 @@
 // existed. Routing is read-only history (`lib/staff-history.ts`) — `useNavigate`/`<Link>` do
 // nothing — so, like every other Dashboard DOM test, this sets the URL directly with
 // `window.history.replaceState` before render and restores it afterward.
-import { act } from "react";
+import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Dashboard } from "./Dashboard";
+import { ConfirmModalHost } from "../components/ConfirmDialog";
+import { ApiError } from "../lib/api";
+
+// Captures the `DndContext` props the vendored ReUI Kanban renders, so a drop can be driven without
+// a real pointer. Same technique as `Dashboard-stage-interactions.dom.test.tsx` and
+// `components/kanban2/board.dom.test.tsx`; ReUI's Kanban resolves the move from its own internal
+// state given only the active and over ids.
+const dnd = vi.hoisted(() => ({ handlers: [] as Array<{ onDragEnd?: (event: unknown) => void }> }));
+vi.mock("@dnd-kit/core", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@dnd-kit/core")>();
+  return {
+    ...actual,
+    DndContext: (props: Parameters<typeof actual.DndContext>[0]) => {
+      dnd.handlers.push({ onDragEnd: props.onDragEnd as (event: unknown) => void });
+      return createElement(actual.DndContext, props);
+    },
+  };
+});
 
 const apiGetMock = vi.fn<(path: string) => Promise<unknown>>();
 const apiPostMock = vi.fn<(path: string, body: unknown) => Promise<unknown>>();
@@ -49,6 +67,7 @@ function projectFixture(id: string, overrides: Record<string, unknown> = {}) {
 describe("Dashboard at view=kanban2 (#98)", () => {
   beforeEach(() => {
     window.history.replaceState(null, "", "/?view=kanban2");
+    dnd.handlers.length = 0;
     apiGetMock.mockReset();
     apiGetMock.mockImplementation((path) => path === "/api/projects" ? Promise.resolve({
       projects: [projectFixture("kb2-source")],
@@ -119,5 +138,61 @@ describe("Dashboard at view=kanban2 (#98)", () => {
     // the Board does not render at all. So any Dashboard state in which this Board is on screen
     // already carries map evidence. The Board-level predicate is covered in
     // `components/kanban2/board.dom.test.tsx`, where props are passed directly.
+  });
+
+  // The confirmation round trip. Every cross-Stage move on real data answers `409`
+  // `stage_confirmation_required` first (`workers/app/src/routes/projects.ts:1122`), so the
+  // two-step confirm is the NORMAL path, not an edge case — a browser pass tripped over it
+  // immediately. `Dashboard-stage-interactions.dom.test.tsx` proves it only at the default view
+  // (old Board), and its Move-to trigger does not exist on this Board's card, so for this Board
+  // the path was entirely unproven: the new Board could have dropped the confirmation and the
+  // suite would have stayed green.
+  describe("cross-Stage confirmation round trip", () => {
+    function twoStageProjects() {
+      apiGetMock.mockReset();
+      apiGetMock.mockImplementation((path) => path === "/api/projects" ? Promise.resolve({
+        projects: [
+          projectFixture("kb2-source", { boardMapPresent: true }),
+          projectFixture("kb2-target", { stageKey: "raw_review", boardPosition: 1, boardMapPresent: true }),
+        ],
+        board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: ["kb2-source"], raw_review: ["kb2-target"] } },
+      }) : Promise.resolve({ stages: [] }));
+    }
+
+    it("holds the 409 at the confirm modal, then resubmits once carrying the confirmation reasons", async () => {
+      twoStageProjects();
+      apiPostMock.mockReset()
+        .mockRejectedValueOnce(new ApiError("Confirmation required", 409, {
+          code: "stage_confirmation_required",
+          requiredConfirmation: { reasons: ["backward"] },
+        }))
+        .mockResolvedValueOnce({
+          changed: true,
+          project: { projectId: "kb2-source", stageKey: "raw_review", boardRevision: 1 },
+          board: { sourceStageKey: "awaiting_raw", targetStageKey: "raw_review", orderedVisibleProjectIds: ["kb2-target", "kb2-source"] },
+        });
+      await act(async () => { root!.render(<><Dashboard currentUserId="admin-1" /><ConfirmModalHost /></>); await Promise.resolve(); await Promise.resolve(); });
+      await vi.waitFor(() => expect(document.querySelector('[data-testid="kanban2-column"]')).not.toBeNull());
+
+      const handler = dnd.handlers.at(-1)?.onDragEnd;
+      expect(handler, "no drag-end handler captured — the Board did not mount a DndContext").not.toBeUndefined();
+      await act(async () => { handler!({ active: { id: "kb2-source" }, over: { id: "kb2-target" } }); await Promise.resolve(); });
+      await vi.waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1));
+
+      expect(apiPostMock).toHaveBeenNthCalledWith(1, "/api/projects/kb2-source/stage", expect.objectContaining({ targetStageKey: "raw_review" }));
+      // The first request must NOT pre-carry a confirmation: that would make the server's
+      // gate unreachable from this Board.
+      expect(apiPostMock.mock.calls[0]![1]).not.toHaveProperty("confirmation");
+
+      const confirm = document.querySelector<HTMLButtonElement>('[data-testid="confirm-modal-confirm"]');
+      expect(confirm, "the 409 did not open a confirm modal — the move was dropped or silently retried").not.toBeNull();
+      await act(async () => { confirm!.click(); await Promise.resolve(); });
+      await vi.waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(2));
+
+      expect(apiPostMock).toHaveBeenNthCalledWith(2, "/api/projects/kb2-source/stage", expect.objectContaining({
+        targetStageKey: "raw_review",
+        confirmation: { reasons: ["backward"] },
+      }));
+    });
   });
 });
