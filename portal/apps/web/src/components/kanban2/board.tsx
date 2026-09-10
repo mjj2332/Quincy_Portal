@@ -133,6 +133,12 @@ export function ProjectKanbanBoard2({
       onMove={handleMove}
       className="kanban2 grid grid-flow-col auto-cols-[minmax(244px,1fr)] max-[641px]:auto-cols-[minmax(252px,1fr)] pointer-coarse:auto-cols-[minmax(252px,1fr)] gap-[var(--border-width-hair)] bg-border border border-[length:var(--border-width-hair)] border-border overflow-x-auto overscroll-x-contain [scrollbar-gutter:stable]"
       aria-label="Project pipeline board (kanban2)"
+      // The Dashboard's focus-restore effect (`Dashboard.tsx:409-424`) resolves three tiers by
+      // `[data-focus-key]`: the moved card's control, then its Stage heading, then the Board root.
+      // This Board published none of them, so every restore fell through to a no-op. `tabIndex={-1}`
+      // is load-bearing — without it the div is not focusable and tier 3 silently does nothing.
+      data-focus-key="board"
+      tabIndex={-1}
     >
       {activeStages.map((stage, stageIndex) => {
         const stageProjects = columns[stage.key] ?? [];
@@ -144,8 +150,14 @@ export function ProjectKanbanBoard2({
           // edit, and no genuine drag-ghost to preserve (column dragging is disabled entirely,
           // so `isSortableDragging` is never true here). Confirmed live: every kanban2 column
           // rendered at `getComputedStyle(...).opacity === "0.5"` before this fix.
+          //
+          // The column heading's `data-focus-key` uses `semanticStageKey`, not `stage.key`: the
+          // Dashboard's `fallbackStageKey` is always a canonical `StageKey` (via
+          // `focusDescriptorFor` or `canonicalStageKey`), so a presentation spelling — an Editor
+          // sees `editing` for `editing_autohdr` — would never match, and tier 2 would fall
+          // through to the Board root. The old Board does the same (`ProjectKanbanBoard.tsx:560`).
           <KanbanColumn key={stage.key} value={stage.key} disabled className="bg-[var(--paper-050)] min-w-0 opacity-100" data-testid="kanban2-column">
-            <div className="flex items-center gap-[var(--space-3)] p-[var(--space-4)] border-b border-b-border bg-[var(--bg-canvas)]">
+            <div className="flex items-center gap-[var(--space-3)] p-[var(--space-4)] border-b border-b-border bg-[var(--bg-canvas)] focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--focus-ring)] focus-visible:!outline-offset-[-2px]" data-focus-key={`stage-heading:${semanticStageKey(stage.key)}`} tabIndex={-1}>
               <span className="flex-none [font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-wide)] tabular-nums text-foreground-secondary" aria-hidden="true">{String(stageIndex + 1).padStart(2, "0")}</span>
               <StatusBadge stageKey={stage.key} />
               <span className="flex-none tabular-nums text-sm text-foreground-secondary">{stageProjects.length}</span>

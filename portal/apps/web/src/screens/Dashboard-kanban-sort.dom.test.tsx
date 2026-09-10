@@ -292,4 +292,39 @@ describe("Dashboard Kanban sort control", () => {
     });
   });
 
+
+  // #98 §2.2, on the Board that is still the default. `setProjectPriority` queues a dashboard
+  // refresh whose `captureFocusForRefresh()` is called with NO arguments, recording
+  // `{ key: null, fallbackStageKey: undefined }`. The restore effect used to skip tier 1 and tier 2
+  // and run tier 3 — `[data-focus-key="board"]`.focus() — pulling focus to the Board root after a
+  // write the user made from a control that simply carries no focus key.
+  //
+  // This asserts only that the steal is gone, because focus cannot be *kept* on this Board:
+  // `ProjectKanbanBoard.tsx:575` folds `!pendingOrdering.has(project.id)` into `canPrioritize`, so
+  // the old Board unmounts its own Priority `<select>` while the write is in flight and remounts a
+  // different node afterwards. That is a second, separate defect of the old Board — deliberately not
+  // reproduced on the new Board, where `priorityEditable` omits `pendingOrdering` and the equivalent
+  // assertion in `Dashboard-kanban2-parity.dom.test.tsx` does require focus to survive intact.
+  it("does not pull focus to the Board root after a Priority write (#98)", async () => {
+    await act(async () => { root!.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); await Promise.resolve(); await vi.advanceTimersByTimeAsync(100); await Promise.resolve(); });
+    await vi.waitFor(() => expect(document.querySelector('[data-testid="kanban-card"]')).not.toBeNull());
+
+    const select = document.querySelector<HTMLSelectElement>('select[aria-label="Priority"]');
+    expect(select, "no Priority control rendered — every assertion below would be vacuous").not.toBeNull();
+    // Anchor: tier 3's target must exist, or this could pass because there was nothing to steal to.
+    expect(document.querySelector('[data-focus-key="board"]'), "no tier-3 target — the steal could not be observed").not.toBeNull();
+
+    select!.focus();
+    expect(document.activeElement).toBe(select);
+
+    select!.value = "3";
+    await act(async () => { select!.dispatchEvent(new Event("change", { bubbles: true })); await Promise.resolve(); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(100); await Promise.resolve(); await Promise.resolve(); });
+
+    expect(apiPostMock).toHaveBeenCalledWith("/api/projects/project-1/priority", { priority: 3 });
+    expect(
+      document.activeElement?.getAttribute("data-focus-key"),
+      "the post-write refresh pulled focus to the Board root",
+    ).not.toBe("board");
+  });
 });

@@ -195,4 +195,112 @@ describe("Dashboard at view=kanban2 (#98)", () => {
       }));
     });
   });
+
+  // AC 1 / §2.2. Publishing `data-focus-key="board"` on this Board makes the Dashboard's tier-3
+  // restore reachable here for the first time — and tier 3 fires after ANY refresh that was not tied
+  // to a Board control, including the one a Priority write queues itself. Without the key-less guard
+  // in `Dashboard.tsx`, adding the focus identifiers above would rip focus off the star row on every
+  // Priority change. The two changes are one unit; neither ships alone.
+  //
+  // The equivalent old-Board assertion cannot carry this claim: `ProjectKanbanBoard.tsx:575` folds
+  // `!pendingOrdering.has(id)` into `canPrioritize`, so the old Board unmounts its own Priority
+  // control mid-write and focus is destroyed before any restore runs. This Board deliberately does
+  // not (pass 1), so the restore tiers are the only thing that can move focus here.
+  describe("focus identifiers", () => {
+    it("publishes the three restore tiers the Dashboard looks for", async () => {
+      await act(async () => { root!.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); await Promise.resolve(); });
+      await vi.waitFor(() => expect(document.querySelector('[data-testid="kanban2-column"]')).not.toBeNull());
+
+      const boardRoot = document.querySelector<HTMLElement>('[data-focus-key="board"]');
+      expect(boardRoot, "tier 3 target missing — every focus restore on this Board is a silent no-op").not.toBeNull();
+      // Without tabIndex the element is not focusable and tier 3 does nothing, which is the exact
+      // failure this key is meant to end.
+      expect(boardRoot!.getAttribute("tabindex")).toBe("-1");
+
+      const heading = document.querySelector<HTMLElement>('[data-focus-key="stage-heading:awaiting_raw"]');
+      expect(heading, "tier 2 target missing for the semantic Stage key").not.toBeNull();
+      expect(heading!.getAttribute("tabindex")).toBe("-1");
+
+      expect(document.querySelector('[data-focus-key="move-handle:kb2-source"]'), "tier 1 target missing on the card handle").not.toBeNull();
+    });
+
+    it("leaves focus on the Priority control after its own write refreshes the Board", async () => {
+      await act(async () => { root!.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); await Promise.resolve(); });
+      await vi.waitFor(() => expect(document.querySelector('[data-testid="kanban2-column"]')).not.toBeNull());
+      // Anchor: tier 3 must be reachable, or this test would pass because there was nothing to
+      // steal focus to.
+      expect(document.querySelector('[data-focus-key="board"]'), "no tier-3 target — the steal could not be observed").not.toBeNull();
+
+      const third = [...document.querySelectorAll<HTMLElement>('[role="radio"]')][2];
+      expect(third, "fewer than three star targets rendered").not.toBeUndefined();
+      third!.focus();
+      expect(document.activeElement).toBe(third);
+
+      await act(async () => { third!.click(); await Promise.resolve(); });
+      await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+      expect(apiPostMock).toHaveBeenCalledWith("/api/projects/kb2-source/priority", { priority: 3 });
+
+      expect(document.contains(third!), "the Priority control was unmounted mid-write — focus cannot survive that").toBe(true);
+      expect(
+        document.activeElement === third!,
+        `focus moved to ${document.activeElement?.getAttribute("data-focus-key") ?? document.activeElement?.tagName} after the Priority write`,
+      ).toBe(true);
+    });
+  });
+
+  // AC 9 / AC 10. Deliberately NOT a source-text guard: a baseline-free grep for `preventScroll`
+  // merged after the code it governs has already turned this repo's main red once. This spies on
+  // `focus` while still performing the real focus, so the tier-1 assertions above keep working in
+  // the same file, and it fails today because the option is `undefined`.
+  //
+  // `scrollLeft` itself is unobservable in happy-dom. The evidence for the *mechanism* is the live
+  // browser measurement (#98 probe rounds 3/4: focus-induced scroll to 0, fully suppressed by
+  // `preventScroll: true`); this test is the evidence for the *call*.
+  it("restores focus without letting it scroll the Board (#98 AC 9)", async () => {
+    const realFocus = HTMLElement.prototype.focus;
+    const calls: Array<{ element: HTMLElement; options: unknown }> = [];
+    const spy = vi.spyOn(HTMLElement.prototype, "focus").mockImplementation(function (this: HTMLElement, options?: FocusOptions) {
+      calls.push({ element: this, options });
+      realFocus.call(this, options);
+    });
+    try {
+      apiGetMock.mockReset();
+      apiGetMock.mockImplementation((path) => path === "/api/projects" ? Promise.resolve({
+        projects: [
+          projectFixture("kb2-source", { boardMapPresent: true }),
+          projectFixture("kb2-target", { stageKey: "raw_review", boardPosition: 1, boardMapPresent: true }),
+        ],
+        board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: ["kb2-source"], raw_review: ["kb2-target"] } },
+      }) : Promise.resolve({ stages: [] }));
+      apiPostMock.mockReset().mockResolvedValue({
+        changed: true,
+        project: { projectId: "kb2-source", stageKey: "raw_review", boardRevision: 1 },
+        board: { sourceStageKey: "awaiting_raw", targetStageKey: "raw_review", orderedVisibleProjectIds: ["kb2-target", "kb2-source"] },
+      });
+      await act(async () => { root!.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); await Promise.resolve(); });
+      await vi.waitFor(() => expect(document.querySelector('[data-testid="kanban2-column"]')).not.toBeNull());
+
+      const handle = document.querySelector<HTMLElement>('[data-focus-key="move-handle:kb2-source"]');
+      expect(handle, "no handle to restore to — the assertion below would be vacuous").not.toBeNull();
+      handle!.focus();
+      calls.length = 0;
+
+      // A committed cross-Stage move: the Dashboard captures the handle descriptor and restores it.
+      const handler = dnd.handlers.at(-1)?.onDragEnd;
+      expect(handler).not.toBeUndefined();
+      await act(async () => { handler!({ active: { id: "kb2-source" }, over: { id: "kb2-target" } }); await Promise.resolve(); });
+      await vi.waitFor(() => expect(apiPostMock).toHaveBeenCalled());
+      await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+      expect(calls.length, "nothing called focus during the restore").toBeGreaterThan(0);
+      for (const call of calls) {
+        expect(
+          (call.options as FocusOptions | undefined)?.preventScroll,
+          `focus() on ${call.element.getAttribute("data-focus-key") ?? call.element.tagName} omitted preventScroll, so it can scroll the Board`,
+        ).toBe(true);
+      }
+    } finally {
+      spy.mockRestore();
+    }
+  });
 });
