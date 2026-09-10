@@ -6,11 +6,16 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DragEndEvent } from "@dnd-kit/core";
 import { ProjectKanbanBoard2 } from "./board";
+import { KanbanCard2 } from "./card";
 import type { ProjectKanbanBoardProps, ProjectSummary } from "../../lib/kanban-interaction";
 import type { PipelineStage } from "../../lib/stages";
 
 const dnd = vi.hoisted(() => ({
   handlers: [] as Array<{ onDragEnd?: (event: unknown) => void }>,
+}));
+
+const dragOverlay = vi.hoisted(() => ({
+  props: [] as Array<{ dropAnimation?: unknown }>,
 }));
 
 vi.mock("../../lib/stages", async (importOriginal) => {
@@ -34,6 +39,14 @@ vi.mock("@dnd-kit/core", async (importOriginal) => {
     DndContext: (props: Parameters<typeof actual.DndContext>[0]) => {
       dnd.handlers.push({ onDragEnd: props.onDragEnd as (event: unknown) => void });
       return createElement(actual.DndContext, props);
+    },
+    // `KanbanOverlay` creates its own `<DragOverlay>` element deep inside its own render function
+    // (behind a `createPortal`), so it is not a literal sibling of `<DndContext>` in the element
+    // tree the way the old Board's is — intercepting the component itself is the only way to
+    // capture the actual `dropAnimation` prop it renders with, regardless of drag state.
+    DragOverlay: (props: Parameters<typeof actual.DragOverlay>[0]) => {
+      dragOverlay.props.push({ dropAnimation: props.dropAnimation });
+      return createElement(actual.DragOverlay, props);
     },
   };
 });
@@ -61,6 +74,12 @@ function project(id: string, stageKey: ProjectSummary["stageKey"], overrides: Pa
     deadlineAt: null,
     deadlineLocalCivil: null,
     deadlineZone: null,
+    // The Dashboard derives these from the payload's `orderedProjectIdsByStage` for every project
+    // it hands either Board (`lib/dashboard-projects.ts:48-50`), so a fixture without them is not a
+    // state the app can reach. Priority eligibility reads them (#98); the missing-map case below
+    // strips them deliberately.
+    boardMapPresent: true,
+    boardRank: 0,
     ...overrides,
   };
 }
@@ -103,9 +122,26 @@ async function endDrag(activeId: string, overId: string) {
   await act(async () => { handler(event); await Promise.resolve(); });
 }
 
+function mockMatchMedia(reducedMotion: boolean) {
+  const originalMatchMedia = window.matchMedia;
+  const matchMedia = vi.fn(() => ({
+    matches: reducedMotion,
+    media: "(prefers-reduced-motion: reduce)",
+    onchange: null,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+  }));
+  Object.defineProperty(window, "matchMedia", { configurable: true, value: matchMedia });
+  return () => Object.defineProperty(window, "matchMedia", { configurable: true, value: originalMatchMedia });
+}
+
 describe("ProjectKanbanBoard2 (#80)", () => {
   beforeEach(() => {
     dnd.handlers.length = 0;
+    dragOverlay.props.length = 0;
     host = document.createElement("div");
     document.body.appendChild(host);
     root = createRoot(host);
@@ -214,6 +250,124 @@ describe("ProjectKanbanBoard2 (#80)", () => {
     const props = await renderBoard({ pendingMoves: new Set(["source"]) });
     await endDrag("source", "raw_review");
     expect(props.onBoardMove).not.toHaveBeenCalled();
+  });
+
+  it("locks movement for every card while ANY move or ordering write is in flight, not just the dragged one (#98)", async () => {
+    // "other" has a pending ordering write, not "source" — the old check ("only the dragged
+    // card") would leave source's own handle enabled and its own drag-end reaching onBoardMove.
+    const props = await renderBoard({ pendingOrdering: new Set(["other"]) });
+    const handle = host.querySelector<HTMLButtonElement>('[data-testid="kanban2-card-handle"]');
+    expect(handle, "no drag handle rendered — the assertion below would be vacuous").not.toBeNull();
+    expect(handle!.disabled).toBe(true);
+    await endDrag("source", "raw_review");
+    expect(props.onBoardMove).not.toHaveBeenCalled();
+  });
+
+  it("offers editable Priority with the Board mutation flag off, but not without board-map evidence (#98)", async () => {
+    // Priority must NOT depend on `boardMutationEnabled` — that is the movement flag. This is the
+    // regression #98 names, and this is the only seam that can express the second half: the
+    // Dashboard always supplies map evidence whenever this Board is on screen
+    // (`lib/dashboard-projects.ts:48-50`), so a missing-map Dashboard state does not exist.
+    await renderBoard({ boardMutationEnabled: false, canPrioritize: true });
+    expect(host.querySelector('[role="radiogroup"]'), "Priority is gated on the movement flag again").not.toBeNull();
+
+    // Same props, map evidence stripped from every project: read-only stars, no radiogroup.
+    await renderBoard({
+      boardMutationEnabled: false,
+      canPrioritize: true,
+      projects: [project("source", "awaiting_raw", { boardMapPresent: undefined, boardRank: undefined, priority: 2 })],
+    });
+    expect(host.querySelector('[data-testid="kanban2-card-address"]'), "no card rendered — the assertion below would be vacuous").not.toBeNull();
+    expect(host.querySelector('[role="radiogroup"]')).toBeNull();
+    expect(host.querySelector('[data-testid="kanban2-card-priority"] [role="img"]')).not.toBeNull();
+  });
+
+  it("keeps every column at full opacity — the vendor renders every disabled column at 50% (#98)", async () => {
+    await renderBoard();
+    const column = host.querySelector('[data-testid="kanban2-column"]');
+    expect(column, "no column rendered — the assertion below would be vacuous").not.toBeNull();
+    expect(column!.className).toContain("opacity-100");
+    // Not merely present alongside the vendor's `opacity-50` — actually dedup'd out by
+    // tailwind-merge, which runs in JS at render time, before either ever reaches the DOM.
+    expect(column!.className).not.toContain("opacity-50");
+  });
+
+  it("keeps a card at full opacity while it is disabled by the pending-write lock, not just while it isn't dragging (#98)", async () => {
+    await renderBoard({ pendingOrdering: new Set(["source"]) });
+    const cardWrap = host.querySelector('[data-testid="kanban2-card-wrap"]');
+    expect(cardWrap, "no card wrapper rendered — the assertion below would be vacuous").not.toBeNull();
+    const item = cardWrap!.parentElement;
+    expect(item, "no KanbanItem wrapper found — the assertion below would be vacuous").not.toBeNull();
+    expect(item!.getAttribute("data-disabled")).toBe("true");
+    expect(item!.className).toContain("data-[disabled=true]:opacity-100");
+  });
+
+  // `KanbanOverlay`'s content only actually mounts under a real drag, which happy-dom's sensors
+  // cannot produce (see this file's header) — so instead of driving the whole drag pipeline, this
+  // renders `KanbanCard2` directly with `isOverlay`, exactly the way `board.tsx`'s
+  // `<KanbanOverlay>` render-prop does, and separately proves the real card is unaffected.
+  it("the drag overlay preview carries no interactive element, while the real card keeps its link and controls (#98)", async () => {
+    const summary = project("source", "awaiting_raw");
+    const overlayHost = document.createElement("div");
+    document.body.appendChild(overlayHost);
+    const overlayRoot = createRoot(overlayHost);
+    const { act } = await import("react");
+    await act(async () => { overlayRoot.render(createElement(KanbanCard2, { project: summary, isOverlay: true })); await Promise.resolve(); });
+
+    // Positive anchor first: the overlay preview really renders the card's content, so the
+    // absence assertions below cannot pass by the overlay having failed to render at all.
+    const overlayAddress = overlayHost.querySelector('[data-testid="kanban2-card-address"]');
+    expect(overlayAddress, "no overlay content rendered — the assertions below would be vacuous").not.toBeNull();
+    expect(overlayAddress!.textContent).toBe("source Street");
+    expect(overlayHost.querySelector('[data-testid="kanban2-card-overlay"]')).not.toBeNull();
+
+    expect(overlayHost.querySelector("a")).toBeNull();
+    expect(overlayHost.querySelector("button")).toBeNull();
+    expect(overlayHost.querySelector('[role="radiogroup"]')).toBeNull();
+    expect(overlayHost.querySelector('input, select, textarea, [contenteditable="true"]')).toBeNull();
+    expect(overlayHost.querySelector('[tabindex]:not([tabindex="-1"])')).toBeNull();
+
+    await act(async () => { overlayRoot.unmount(); await Promise.resolve(); });
+    overlayHost.remove();
+
+    // The real (non-overlay) card still has its actual navigable link and its drag handle — the
+    // overlay fix must not have taken interactivity away from the card that produced it.
+    await renderBoard({ canPrioritize: true });
+    const realLink = host.querySelector('[data-testid="kanban2-card"]');
+    expect(realLink, "no real card link rendered — the anti-vacuity anchor for the real card").not.toBeNull();
+    expect(realLink!.tagName).toBe("A");
+    expect(host.querySelector('[data-testid="kanban2-card-handle"]')).not.toBeNull();
+  });
+
+  it("suppresses the drag overlay's drop animation for reduced-motion users (#98)", async () => {
+    const restoreMatchMedia = mockMatchMedia(true);
+    try {
+      await renderBoard();
+      const captured = dragOverlay.props.at(-1);
+      expect(captured, "no DragOverlay props captured — the assertion below would be vacuous").not.toBeUndefined();
+      expect(captured!.dropAnimation).toBeNull();
+    } finally {
+      restoreMatchMedia();
+    }
+  });
+
+  it("does not suppress the drag overlay's drop animation for everyone else (#98)", async () => {
+    const restoreMatchMedia = mockMatchMedia(false);
+    try {
+      await renderBoard();
+      const captured = dragOverlay.props.at(-1);
+      expect(captured, "no DragOverlay props captured — the assertion below would be vacuous").not.toBeUndefined();
+      // Neither `null` (that's what stops the test passing for a Board that always disables
+      // animation) nor `undefined` — passing an explicit `dropAnimation={undefined}` on this
+      // branch is the exact trap: it still silently overrides the vendor's own default config
+      // with dnd-kit's raw built-in one, via the spread inside `KanbanOverlay`. The value itself
+      // is the vendor's own default config object, opaque to this test; only its
+      // defined-and-non-null-ness is our contract.
+      expect(captured!.dropAnimation).not.toBeNull();
+      expect(captured!.dropAnimation).not.toBeUndefined();
+    } finally {
+      restoreMatchMedia();
+    }
   });
 });
 

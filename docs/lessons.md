@@ -1488,3 +1488,65 @@ so nothing in the guard's design ever held it to the standard at all.
   exemption.
 - "The directory is empty" is a property to verify directly and cheaply (`ls -A`), not to infer
   from a green guard whose preconditions you have not re-read.
+
+## Two identical-looking `opacity-50` overrides, resolved in two different places (#98, 2026-09-11)
+
+`reui/kanban.tsx` washes out both a disabled column (`:698`) and a disabled item (`:821`) with the
+same unconditional `disabled && "opacity-50"`. The new Board overrides both, and the two fixes look
+interchangeable. They are not, and swapping one for the other breaks something silently.
+
+The column is overridden with a **plain** `opacity-100`. `cn` is `twMerge(clsx(...))`, so the
+conflict is resolved in **JavaScript, at render time**: `opacity-50` is deleted from the class
+string before it ever reaches the DOM. Verified directly —
+
+```
+twMerge("group/kanban-column flex flex-col", "opacity-50",
+        "bg-[var(--paper-050)] min-w-0 opacity-100")
+→ "group/kanban-column flex flex-col bg-[var(--paper-050)] min-w-0 opacity-100"
+```
+
+The item is overridden with a **variant**, `data-[disabled=true]:opacity-100`. tailwind-merge does
+NOT treat a variant as conflicting with a bare utility, so both survive into the DOM together, and
+the conflict is resolved in **CSS, by specificity**:
+`.data-\[disabled\=true\]\:opacity-100[data-disabled="true"]` is (0,2,0) against `.opacity-50`'s
+(0,1,0). Order-independent, which is what makes it safe.
+
+Why the item cannot use the column's fix: the item's `opacity-50` has **two** sources — `disabled`,
+which must be overridden, and `isSortableDragging`, which is the genuine drag ghost and must
+survive. A plain `opacity-100` would win against both and delete the drag ghost. The variant is
+gated on `data-disabled`, so it wins only while genuinely disabled. Conversely the column cannot use
+the variant: its `disabled` is hardcoded (every column is a permanent drop target so empty columns
+can still receive a card), so `data-disabled="true"` is present at rest on all five columns — the
+variant would fire always, which is correct here only by accident, and column dragging is disabled
+outright so there is no ghost to protect either way.
+
+**Rules.**
+
+- A class-string assertion does not prove an opacity fix. It proves the string. Whether the pixel
+  changed depends on twMerge's conflict table *or* on CSS specificity, and a unit test that asserts
+  `className` has not distinguished them. Confirm the computed value in a real browser once.
+- Before "simplifying" a `data-[...]:` variant into the bare utility, ask what else sets the same
+  utility. If a second source must survive, the variant is load-bearing and the bare class is a
+  silent regression — the ghost just stops appearing.
+
+## The normal path answered 409 and no test had ever seen it (#98, 2026-09-11)
+
+Every cross-Stage move on real data answers `409 stage_confirmation_required`
+(`workers/app/src/routes/projects.ts:1122`) before it answers 200, so the two-step confirm is the
+ordinary path, not an edge case. `Dashboard-stage-interactions.dom.test.tsx` covered it — but only
+at the default view, and only through the Move-to menu, a control the new Board's card does not
+render. So for the new Board the entire confirmation round trip was unproven: it could have dropped
+the confirmation, or pre-carried one and made the server's gate unreachable, and the suite would
+have stayed green.
+
+It surfaced in a browser pass, immediately, as a drag that appeared to do nothing — the agent's
+first attempt to hold a write open failed because the confirmation is an in-app modal
+(`confirm-modal-confirm`), not a native dialog its listener could accept.
+
+**Rules.**
+
+- When a second UI replaces a first, inventory the *controls* the old tests drove, not just the
+  behaviours they asserted. A behaviour reachable only through a control the new UI does not have is
+  uncovered, and the test file name will not tell you.
+- The first request in a confirm round trip must be asserted to carry **no** confirmation. Only that
+  assertion proves the server-side gate is still reachable from this screen.

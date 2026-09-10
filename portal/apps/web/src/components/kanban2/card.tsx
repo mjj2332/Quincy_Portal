@@ -120,34 +120,49 @@ export function KanbanCard2({ project, projectHref, isOverlay = false, dragDisab
   const projectDeadlineLabel = deadlineLabel(project);
   const raw = rawCounts(project);
 
+  const cardBody = (
+    <>
+      <div className="aspect-video overflow-hidden bg-[var(--ink-800)]">
+        <CoverMedia project={project} retryToken={coverRetry} onFailedChange={setCoverFailed} />
+      </div>
+      <CardContent className="p-[var(--space-3)]">
+        <div className="serif text-base tracking-tight leading-snug [text-wrap:pretty]" data-testid="kanban2-card-address">{project.street}</div>
+        {projectDeadlineLabel && (
+          // Prominence is bought with contrast and position, not size (#82) — the street stays
+          // the card's title; this is the only line below it at full `foreground`.
+          <time
+            className={`block mt-[var(--space-1)] text-sm tabular-nums ${overdue ? "text-[var(--signal-critical)]" : "text-foreground"}`}
+            data-testid="kanban2-card-deadline"
+            dateTime={new Date(project.deadlineAt!).toISOString()}
+          >
+            {overdue ? "Overdue" : "Due"} {projectDeadlineLabel} Sydney
+          </time>
+        )}
+        <div className="flex items-center justify-between gap-[var(--space-2)] mt-[var(--space-3)] text-xs text-foreground-secondary" data-testid="kanban2-card-meta">
+          <span className="text-xs tabular-nums text-foreground-secondary" data-testid="kanban2-card-raw">
+            <span aria-hidden="true">{raw.visible}</span>
+            <span className="sr-only">{raw.spoken}</span>
+          </span>
+          <EditorStack editors={project.editors} />
+        </div>
+      </CardContent>
+    </>
+  );
+
   return (
     <Card size="sm" className="relative gap-0 p-0 shadow-xs transition-[border-color,box-shadow] hover:shadow-sm" data-testid="kanban2-card-wrap">
-      <InternalLink className="block no-underline text-inherit" data-testid="kanban2-card" to={projectHref ?? `/projects/${encodeURIComponent(project.id)}`}>
-        <div className="aspect-video overflow-hidden bg-[var(--ink-800)]">
-          <CoverMedia project={project} retryToken={coverRetry} onFailedChange={setCoverFailed} />
+      {isOverlay ? (
+        // The floating overlay follows the pointer/keyboard focus but is not itself a real card:
+        // it must carry no interactive element at all (#98), so it renders the same visual content
+        // in a plain, non-hit-testing, assistive-tech-hidden wrapper instead of `InternalLink`.
+        <div className="block pointer-events-none no-underline text-inherit" data-testid="kanban2-card-overlay" aria-hidden="true">
+          {cardBody}
         </div>
-        <CardContent className="p-[var(--space-3)]">
-          <div className="serif text-base tracking-tight leading-snug [text-wrap:pretty]" data-testid="kanban2-card-address">{project.street}</div>
-          {projectDeadlineLabel && (
-            // Prominence is bought with contrast and position, not size (#82) — the street stays
-            // the card's title; this is the only line below it at full `foreground`.
-            <time
-              className={`block mt-[var(--space-1)] text-sm tabular-nums ${overdue ? "text-[var(--signal-critical)]" : "text-foreground"}`}
-              data-testid="kanban2-card-deadline"
-              dateTime={new Date(project.deadlineAt!).toISOString()}
-            >
-              {overdue ? "Overdue" : "Due"} {projectDeadlineLabel} Sydney
-            </time>
-          )}
-          <div className="flex items-center justify-between gap-[var(--space-2)] mt-[var(--space-3)] text-xs text-foreground-secondary" data-testid="kanban2-card-meta">
-            <span className="text-xs tabular-nums text-foreground-secondary" data-testid="kanban2-card-raw">
-              <span aria-hidden="true">{raw.visible}</span>
-              <span className="sr-only">{raw.spoken}</span>
-            </span>
-            <EditorStack editors={project.editors} />
-          </div>
-        </CardContent>
-      </InternalLink>
+      ) : (
+        <InternalLink className="block no-underline text-inherit" data-testid="kanban2-card" to={projectHref ?? `/projects/${encodeURIComponent(project.id)}`}>
+          {cardBody}
+        </InternalLink>
+      )}
       {/* The star row is a sibling *outside* the anchor (#81): interactive controls cannot be <a>
           descendants — invalid HTML, and a click would navigate. In the drag overlay it is
           presentation-only, so it is dropped entirely rather than rendered non-focusable. */}
