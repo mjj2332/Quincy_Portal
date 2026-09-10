@@ -21,9 +21,10 @@ function semanticStageKey(value: ProjectStageKey): StageKey {
 
 /**
  * A second Board, reachable at `view=kanban2` (#80), built from the ReUI `kanban-board-3` block.
- * Scope for this ticket is Stage columns in Admin order, cards showing street + cover photo, and
- * cross-column drag moving Stage. Priority stars (#81) and Editor avatars/Deadline/RAW (#82) are
- * explicitly out of scope; their card slots are left unfilled rather than invented.
+ * Stage columns in Admin order, cards showing street + cover photo, and cross-column drag moving
+ * Stage (#80); Priority stars (#81) and Editor avatars / Deadline / RAW (#82) have since shipped
+ * and are rendered. Same-column reordering and exact drop placement remain unported — every
+ * cross-stage drop appends — and are #99, not this Board's current behaviour by choice.
  *
  * Column reordering is removed entirely (#76 "Column behaviour") — every column below is a plain
  * `KanbanColumn` with `disabled`, so it registers as a drop target (needed so an EMPTY column can
@@ -34,8 +35,9 @@ function semanticStageKey(value: ProjectStageKey): StageKey {
  * so the Dashboard's priority and stage coordinators are unchanged (#80 acceptance criteria).
  * `canPrioritize`, `pendingOrdering` and `onPriorityChange` are consumed as of #81. The remainder
  * (`onBoardPosition`, `sameStageReorderEnabled`, `onMoveStage`, `onMoveToProposalChange`,
- * `onInteractionStateChange`, `onAnnounce`) are still accepted for contract parity and
- * intentionally unused — same-column reordering is not yet ported.
+ * `onInteractionStateChange`, `onAnnounce`) are still accepted for contract parity and unused:
+ * the first two belong to same-column reordering (#99), the rest to the focus, announcement and
+ * drag-lifecycle work still outstanding on #98.
  *
  * The coarse-pointer column track is widened to 252px (#81): five 44px star targets need 220px,
  * and a 244px track leaves a 220px card — exactly zero slack — while the old 240px mobile track
@@ -79,10 +81,27 @@ export function ProjectKanbanBoard2({
   // must not be able to start mid-write.
   const movementLocked = movementDisabled || pendingMoves.size > 0 || pendingOrdering.size > 0;
   const dragDisabled = movementLocked || terminal || !boardMutationEnabled || !canMoveStages;
-  // Priority is editable only for an Admin on a live, mutable Board — same gates the existing
-  // Board applies. A non-editable viewer still *sees* a set priority (read-only), and sees
-  // nothing at all where none is set; `PriorityStars` owns that split.
-  const priorityEditable = canPrioritize && boardMutationEnabled && !terminal;
+  // Priority deliberately does NOT depend on `boardMutationEnabled`: that is the Board *movement*
+  // flag, and the shipped contract is that Priority stays editable while movement is off. Gating
+  // it on that flag was this Board's own regression (#98).
+  //
+  // The map-evidence predicate mirrors `ProjectKanbanBoard.tsx:575`. The Dashboard already folds
+  // the identical check into the `canPrioritize` prop at both render sites, so this is a second
+  // evaluation of it today — but only because the old Board enforces it too, and #83 deletes the
+  // old Board. Whatever this Board enforces becomes the only enforcement, so the guarantee is kept
+  // here rather than allowed to disappear silently at cutover.
+  //
+  // Deliberate divergence from the old Board: `pendingOrdering` is NOT folded in. `PriorityStars`
+  // already disables its own commits and sets `aria-busy` while a write is pending, and removing a
+  // control the user has focused mid-write is worse than leaving it busy. Note also that the
+  // Dashboard rejects a second Priority write for the *same* project, not globally.
+  //
+  // A non-editable viewer still *sees* a set priority (read-only), and sees nothing at all where
+  // none is set; `PriorityStars` owns that split.
+  const hasAuthorizedBoardMap = projects.some(
+    (item) => item.boardMapPresent === true || item.boardRank !== undefined || item.authorizedBoardOrder?.[item.stageKey] !== undefined,
+  );
+  const priorityEditable = canPrioritize && hasAuthorizedBoardMap && !terminal;
 
   const handleMove = useCallback(({ event, activeContainer, overContainer }: KanbanMoveEvent) => {
     if (dragDisabled) return;

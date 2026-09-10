@@ -84,4 +84,40 @@ describe("Dashboard at view=kanban2 (#98)", () => {
     expect(document.querySelector('[data-testid="kanban-card"]')).toBeNull();
     expect(document.querySelector('[data-testid="kanban2-card-address"]')?.textContent).toBe("kb2-source Street");
   });
+
+  // AC 7. The old Board's equivalent regression lives in `Dashboard-kanban-sort.dom.test.tsx` and
+  // only ever proved a Priority control *exists*; it also renders the old Board, so it could never
+  // have failed for this Board. These assert an actual write reaches the Priority endpoint.
+  describe("Priority while the Board mutation flag is off", () => {
+    function flagOffProjects() {
+      apiGetMock.mockReset();
+      apiGetMock.mockImplementation((path) => path === "/api/projects" ? Promise.resolve({
+        projects: [projectFixture("kb2-flag-off", { priority: 1, boardMapPresent: true })],
+        board: { contractEnabled: false, orderedProjectIdsByStage: { awaiting_raw: ["kb2-flag-off"] } },
+      }) : Promise.resolve({ stages: [] }));
+    }
+
+    it("keeps Priority editable, and a commit reaches the Priority endpoint", async () => {
+      flagOffProjects();
+      await act(async () => { root!.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); await Promise.resolve(); });
+      await vi.waitFor(() => expect(document.querySelector('[data-testid="kanban2-column"]')).not.toBeNull());
+
+      const group = document.querySelector('[role="radiogroup"]');
+      expect(group, "Priority is not editable with the Board mutation flag off — every assertion below would be vacuous").not.toBeNull();
+
+      const third = [...group!.querySelectorAll<HTMLElement>('[role="radio"]')][2];
+      expect(third, "fewer than three star targets rendered").not.toBeUndefined();
+      await act(async () => { third!.click(); await Promise.resolve(); });
+
+      // The write itself, not merely the presence of a control.
+      expect(apiPostMock).toHaveBeenCalledWith("/api/projects/kb2-flag-off/priority", { priority: 3 });
+    });
+
+    // The missing-board-map case is NOT testable from this seam, and that is a finding, not a
+    // gap: `lib/dashboard-projects.ts:48-50` derives `boardRank`, `boardMapPresent` and
+    // `authorizedBoardOrder` from the payload's `orderedProjectIdsByStage`, and without that key
+    // the Board does not render at all. So any Dashboard state in which this Board is on screen
+    // already carries map evidence. The Board-level predicate is covered in
+    // `components/kanban2/board.dom.test.tsx`, where props are passed directly.
+  });
 });
