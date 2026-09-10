@@ -59,6 +59,7 @@ export function ProjectKanbanBoard2({
   onBoardMove,
   onPriorityChange,
   onAnnounce,
+  onInteractionStateChange,
   projectHrefFor,
 }: ProjectKanbanBoardProps) {
   const columns = useMemo(() => {
@@ -117,11 +118,17 @@ export function ProjectKanbanBoard2({
   const activeProjectRef = useRef<string | undefined>(undefined);
   const lastAnnouncedContainerRef = useRef<string | undefined>(undefined);
 
-  // Only for the paths that do NOT hand off to the Dashboard. Never on the valid path: the
-  // Dashboard's restore effect owns that, and at that moment every handle is `disabled` by the
-  // pending-write lock, so a `.focus()` here would land on BODY instead.
-  const refocusActiveHandle = useCallback(() => {
-    const projectId = activeProjectRef.current;
+  /**
+   * Only for the paths that do NOT hand off to the Dashboard. Never on the valid path: the
+   * Dashboard's restore effect owns that, and at that moment every handle is `disabled` by the
+   * pending-write lock, so a `.focus()` here would land on BODY instead.
+   *
+   * `projectId` is passed explicitly by callers that run AFTER the lifecycle clear. The primitive
+   * calls `onDragEnd` before `onMove`, so by the time a rejecting `onMove` asks for the handle,
+   * `activeProjectRef` has already been reset — reading it there silently refocuses nothing. (This
+   * is not hypothetical: it regressed the same-Stage rejection test the moment the barrier landed.)
+   */
+  const refocusHandle = useCallback((projectId: string | undefined = activeProjectRef.current) => {
     if (!projectId) return;
     handleRefs.current.get(projectId)?.focus({ preventScroll: true });
   }, []);
@@ -144,7 +151,7 @@ export function ProjectKanbanBoard2({
     // wrong and in the other live region, which is why they are all suppressed in `accessibility`.
     const reject = (type: "dnd-cancel" | "invalid-keyboard-target") => {
       announceRejection(type, projectId);
-      refocusActiveHandle();
+      refocusHandle(projectId);
     };
     if (dragDisabled) return reject("dnd-cancel");
     const sourceSemantic = semanticStageKey(activeContainer as ProjectStageKey);
@@ -165,25 +172,51 @@ export function ProjectKanbanBoard2({
     if (!eligibleTarget(gap, model, projectId, caps)) return reject(keyboardOrigin ? "invalid-keyboard-target" : "dnd-cancel");
     const focusDescriptor = focusDescriptorFor(keyboardOrigin ? "keyboard" : "pointer", project, model, "handle");
     onBoardMove?.(projectId, gap, "cross", focusDescriptor);
-  }, [activeStages, announceRejection, canMoveStages, dragDisabled, effectiveKanbanSort, onBoardMove, pendingMoves, projects, refocusActiveHandle]);
+  }, [activeStages, announceRejection, canMoveStages, dragDisabled, effectiveKanbanSort, onBoardMove, pendingMoves, projects, refocusHandle]);
 
   const handleDragStart = useCallback((event: DragStartEvent) => {
     activeProjectRef.current = String(event.active.id);
-  }, []);
+    // Opens the Dashboard's refresh barrier: it blocks ACCEPTANCE of replacement data while a drag
+    // is live (a fetch may still run), and disables the view control so the Board cannot be swapped
+    // mid-drag. No drag-start eligibility guard is needed, unlike the old Board: `dragDisabled`
+    // already disables every item and every handle, so a drag cannot start while movement is locked.
+    onInteractionStateChange?.({ activeId: String(event.active.id), proposal: null });
+  }, [onInteractionStateChange]);
+
+  /**
+   * Clearing the barrier in drag-end is SAFE here, and this is the documented trap worth being
+   * explicit about. The primitive calls `onDragEnd` BEFORE `onMove`, so it looks as though this
+   * clears state that `handleMove` still needs. It does not: this is a parent `setState`, and
+   * `handleMove` runs later in the same synchronous `handleDragEnd` invocation from a closure that
+   * already captured `projects`, `columns`, `pendingMoves` and `dragDisabled`. React cannot
+   * re-render or flush effects mid-handler.
+   *
+   * Clearing only in `onMove` is the actual bug: `onMove` never fires for a drop outside any column
+   * or an unresolved container, so `activeId` would stay set, the barrier would latch forever, every
+   * refetch would queue permanently and the view control would stay disabled for the rest of the
+   * session. Clear in drag-end AND cancel; never only in `onMove`.
+   */
+  const clearInteraction = useCallback(() => {
+    activeProjectRef.current = undefined;
+    lastAnnouncedContainerRef.current = undefined;
+    onInteractionStateChange?.({ activeId: undefined, proposal: null });
+  }, [onInteractionStateChange]);
 
   // An outside drop never reaches `onMove` (the primitive resolves no container), so it is the one
   // rejection that has to be handled here.
   const handleDragEnd = useCallback((event: DragEndEvent) => {
     if (!event.over) {
       announceRejection("drop-outside", activeProjectRef.current);
-      refocusActiveHandle();
+      refocusHandle();
     }
-  }, [announceRejection, refocusActiveHandle]);
+    clearInteraction();
+  }, [announceRejection, clearInteraction, refocusHandle]);
 
   const handleDragCancel = useCallback(() => {
     announceRejection("dnd-cancel", activeProjectRef.current);
-    refocusActiveHandle();
-  }, [announceRejection, refocusActiveHandle]);
+    refocusHandle();
+    clearInteraction();
+  }, [announceRejection, clearInteraction, refocusHandle]);
 
   const accessibility = useMemo(() => ({
     // dnd-kit's `RestoreFocus` fires only for keyboard drags and calls a bare `.focus()`, which can

@@ -103,6 +103,7 @@ function baseProps(overrides: Partial<ProjectKanbanBoardProps> = {}): ProjectKan
     onPriorityChange: vi.fn(),
     onMoveStage: vi.fn(),
     onAnnounce: vi.fn(),
+    onInteractionStateChange: vi.fn(),
     ...overrides,
   };
 }
@@ -653,6 +654,64 @@ describe("KanbanCard2 — Editor avatars, Deadline and RAW counts (#82)", () => 
       // `announce` returns undefined when terminal and the Dashboard drops undefined, so terminal
       // suppression must not need a second branch in the Board.
       expect(props.onAnnounce).not.toHaveBeenCalledWith(expect.stringContaining("Cancelled moving"));
+    });
+  });
+
+  // AC 6. The refresh barrier the Dashboard uses to hold replacement data while a drag is live.
+  describe("drag lifecycle (#98)", () => {
+    it("opens the barrier on pick-up", async () => {
+      const props = await renderBoard();
+      await fireDnd("onDragStart", { active: { id: "source" } });
+      expect(props.onInteractionStateChange).toHaveBeenCalledWith({ activeId: "source", proposal: null });
+    });
+
+    // The ordering pin. The primitive calls `onDragEnd` BEFORE `onMove`, so a builder who "fixes"
+    // the clear by resetting something `handleMove` reads will stop delegating the move entirely.
+    // Both facts are asserted, not their order: a legitimate clear-after-move refactor must stay
+    // green.
+    it("still delegates a valid move even though the barrier clears in drag-end", async () => {
+      const props = await renderBoard();
+      await fireDnd("onDragStart", { active: { id: "source" } });
+      await endDrag("source", "other");
+
+      expect(props.onBoardMove).toHaveBeenCalledTimes(1);
+      expect((props.onInteractionStateChange as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0]).toEqual({ activeId: undefined, proposal: null });
+    });
+
+    // Clearing ONLY in `onMove` is the real bug: neither of the next two paths reaches it, so the
+    // barrier would latch forever — every refetch queued permanently, the view control disabled for
+    // the rest of the session, and nothing in happy-dom failing.
+    it("clears the barrier on a drop outside any column", async () => {
+      const props = await renderBoard();
+      await fireDnd("onDragStart", { active: { id: "source" } });
+      await fireDnd("onDragEnd", { active: { id: "source" }, over: null });
+
+      expect(props.onBoardMove).not.toHaveBeenCalled();
+      expect((props.onInteractionStateChange as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0]).toEqual({ activeId: undefined, proposal: null });
+    });
+
+    it("clears the barrier on an Escape cancel", async () => {
+      const props = await renderBoard();
+      await fireDnd("onDragStart", { active: { id: "source" } });
+      await fireDnd("onDragCancel", { active: { id: "source" } });
+
+      expect(props.onBoardMove).not.toHaveBeenCalled();
+      expect((props.onInteractionStateChange as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0]).toEqual({ activeId: undefined, proposal: null });
+    });
+
+    it("re-announces a hover after a new pick-up, rather than suppressing it as a repeat", async () => {
+      await renderBoard();
+      await fireDnd("onDragStart", { active: { id: "source" } });
+      const first = capturedAnnouncements().onDragOver({ active: { id: "source" }, over: { id: "raw_review" } });
+      expect(first).not.toBeUndefined();
+      await fireDnd("onDragCancel", { active: { id: "source" } });
+
+      // The de-duplication key is reset by the lifecycle clear, not by pick-up: without that, the
+      // second drag's first hover is silently swallowed as a repeat of the first drag's. (An extra
+      // reset in `onDragStart` was removed after proving it could not fail a test — a drag always
+      // ends through drag-end or cancel first.)
+      await fireDnd("onDragStart", { active: { id: "source" } });
+      expect(capturedAnnouncements().onDragOver({ active: { id: "source" }, over: { id: "raw_review" } })).toBe(first);
     });
   });
 });
