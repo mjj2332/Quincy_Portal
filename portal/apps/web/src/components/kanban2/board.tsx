@@ -74,7 +74,11 @@ export function ProjectKanbanBoard2({
   const noopValueChange = useCallback(() => undefined, []);
   const reducedMotion = usePrefersReducedMotion();
 
-  const dragDisabled = movementDisabled || terminal || !boardMutationEnabled || !canMoveStages;
+  // Matches the old Board (`ProjectKanbanBoard.tsx:579`): movement is locked while ANY move or
+  // ordering write is in flight, not just for the card that started it — a second interaction
+  // must not be able to start mid-write.
+  const movementLocked = movementDisabled || pendingMoves.size > 0 || pendingOrdering.size > 0;
+  const dragDisabled = movementLocked || terminal || !boardMutationEnabled || !canMoveStages;
   // Priority is editable only for an Admin on a live, mutable Board — same gates the existing
   // Board applies. A non-editable viewer still *sees* a set priority (read-only), and sees
   // nothing at all where none is set; `PriorityStars` owns that split.
@@ -114,7 +118,14 @@ export function ProjectKanbanBoard2({
       {activeStages.map((stage, stageIndex) => {
         const stageProjects = columns[stage.key] ?? [];
         return (
-          <KanbanColumn key={stage.key} value={stage.key} disabled className="bg-[var(--paper-050)] min-w-0" data-testid="kanban2-column">
+          // `disabled` is deliberate — it keeps every column (even an empty one) a valid drop
+          // target — but `reui/kanban.tsx` turns a disabled `KanbanColumn` into `opacity-50`
+          // unconditionally, washing out every column on this Board. `opacity-100` here is
+          // appended last, so tailwind-merge resolves the conflict in our favour; no vendor
+          // edit, and no genuine drag-ghost to preserve (column dragging is disabled entirely,
+          // so `isSortableDragging` is never true here). Confirmed live: every kanban2 column
+          // rendered at `getComputedStyle(...).opacity === "0.5"` before this fix.
+          <KanbanColumn key={stage.key} value={stage.key} disabled className="bg-[var(--paper-050)] min-w-0 opacity-100" data-testid="kanban2-column">
             <div className="flex items-center gap-[var(--space-3)] p-[var(--space-4)] border-b border-b-border bg-[var(--bg-canvas)]">
               <span className="flex-none [font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-wide)] tabular-nums text-foreground-secondary" aria-hidden="true">{String(stageIndex + 1).padStart(2, "0")}</span>
               <StatusBadge stageKey={stage.key} />
@@ -123,7 +134,13 @@ export function ProjectKanbanBoard2({
             <KanbanColumnContent value={stage.key} className="flex flex-col gap-[var(--space-3)] p-[var(--space-3)] min-h-[120px] flex-1">
               {stageProjects.length === 0 && <div className="py-[var(--space-5)] [font-family:var(--font-display)] text-lg text-center text-foreground-secondary">—</div>}
               {stageProjects.map((project) => (
-                <KanbanItem key={project.id} value={project.id} disabled={dragDisabled || pendingMoves.has(project.id)}>
+                // Same `opacity-50` defect as the column above, but now on every OTHER card too
+                // once the pending-write lock (above) disables movement board-wide during a
+                // single write. `data-[disabled=true]:opacity-100` is a variant selector, higher
+                // specificity than the vendor's bare `.opacity-50`, so it wins only while
+                // genuinely disabled — the real `isSortableDragging` drag ghost (a plain
+                // `opacity-50`, not gated on `data-disabled`) is untouched.
+                <KanbanItem key={project.id} value={project.id} className="data-[disabled=true]:opacity-100" disabled={dragDisabled || pendingMoves.has(project.id)}>
                   <KanbanCard2
                     project={project}
                     projectHref={projectHrefFor?.(project)}

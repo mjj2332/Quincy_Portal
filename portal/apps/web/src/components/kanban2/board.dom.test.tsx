@@ -246,6 +246,37 @@ describe("ProjectKanbanBoard2 (#80)", () => {
     expect(props.onBoardMove).not.toHaveBeenCalled();
   });
 
+  it("locks movement for every card while ANY move or ordering write is in flight, not just the dragged one (#98)", async () => {
+    // "other" has a pending ordering write, not "source" — the old check ("only the dragged
+    // card") would leave source's own handle enabled and its own drag-end reaching onBoardMove.
+    const props = await renderBoard({ pendingOrdering: new Set(["other"]) });
+    const handle = host.querySelector<HTMLButtonElement>('[data-testid="kanban2-card-handle"]');
+    expect(handle, "no drag handle rendered — the assertion below would be vacuous").not.toBeNull();
+    expect(handle!.disabled).toBe(true);
+    await endDrag("source", "raw_review");
+    expect(props.onBoardMove).not.toHaveBeenCalled();
+  });
+
+  it("keeps every column at full opacity — the vendor renders every disabled column at 50% (#98)", async () => {
+    await renderBoard();
+    const column = host.querySelector('[data-testid="kanban2-column"]');
+    expect(column, "no column rendered — the assertion below would be vacuous").not.toBeNull();
+    expect(column!.className).toContain("opacity-100");
+    // Not merely present alongside the vendor's `opacity-50` — actually dedup'd out by
+    // tailwind-merge, which runs in JS at render time, before either ever reaches the DOM.
+    expect(column!.className).not.toContain("opacity-50");
+  });
+
+  it("keeps a card at full opacity while it is disabled by the pending-write lock, not just while it isn't dragging (#98)", async () => {
+    await renderBoard({ pendingOrdering: new Set(["source"]) });
+    const cardWrap = host.querySelector('[data-testid="kanban2-card-wrap"]');
+    expect(cardWrap, "no card wrapper rendered — the assertion below would be vacuous").not.toBeNull();
+    const item = cardWrap!.parentElement;
+    expect(item, "no KanbanItem wrapper found — the assertion below would be vacuous").not.toBeNull();
+    expect(item!.getAttribute("data-disabled")).toBe("true");
+    expect(item!.className).toContain("data-[disabled=true]:opacity-100");
+  });
+
   // `KanbanOverlay`'s content only actually mounts under a real drag, which happy-dom's sensors
   // cannot produce (see this file's header) — so instead of driving the whole drag pipeline, this
   // renders `KanbanCard2` directly with `isOverlay`, exactly the way `board.tsx`'s
