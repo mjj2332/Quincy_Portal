@@ -620,6 +620,29 @@ describe("Dashboard at view=kanban2 (#98)", () => {
       ).toBe("true");
     });
 
+    // Sol review: a silenced toast must not carry information the live region lacks. The priority
+    // failure used to speak a generic line while its now-silent toast showed the specific reason.
+    it("speaks the same specific reason a silenced error toast shows", async () => {
+      apiGetMock.mockReset();
+      apiGetMock.mockImplementation((path) => path === "/api/projects" ? Promise.resolve({
+        projects: [projectFixture("kb2-prio", { priority: 1, boardMapPresent: true })],
+        board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: ["kb2-prio"] } },
+      }) : Promise.resolve({ stages: [] }));
+      apiPostMock.mockReset().mockRejectedValue(new Error("Priority is locked for this project."));
+      await act(async () => { root!.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); await Promise.resolve(); });
+      await vi.waitFor(() => expect(document.querySelector('[role="radiogroup"]'), "no Priority control rendered").not.toBeNull());
+
+      const third = [...document.querySelectorAll<HTMLElement>('[role="radiogroup"] [role="radio"]')][2];
+      await act(async () => { third!.click(); await Promise.resolve(); });
+      const toast = await vi.waitFor(() => {
+        const found = [...document.querySelectorAll<HTMLElement>('[data-testid="dashboard-toast"]')].find((node) => node.textContent?.includes("Priority is locked"));
+        expect(found, "anchor: the failure toast never rendered").not.toBeUndefined();
+        return found!;
+      });
+      expect(toast.getAttribute("aria-hidden")).toBe("true");
+      expect(document.querySelector('[data-testid="dashboard-live-region"]')?.textContent).toContain("Priority is locked for this project.");
+    });
+
     // The opt-out is per toast, NOT a removal of the viewport's `aria-live`: every Dashboard toast
     // happens to pair with an announcement today, so dropping the attribute would look green while
     // silently making any future unpaired toast unannounceable. This pins the capability rather than

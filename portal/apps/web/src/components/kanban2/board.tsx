@@ -194,6 +194,11 @@ export function ProjectKanbanBoard2({
   const activeProjectRef = useRef<string | undefined>(undefined);
   const lastAnnouncedGapRef = useRef<string | undefined>(undefined);
   const [dropProposal, setDropProposal] = useState<SemanticGap | null>(null);
+  // True while any drag is live. The non-drag controls are disabled for its duration: otherwise a
+  // keyboard user can pick up card A, Tab to card B's arrow or Move to…, and reorder the column out
+  // from under A's drag. A Board-side lock, not a Dashboard guard — the Dashboard still sees the drag
+  // as active while the drop's own `onMove` runs, so a guard there would refuse every real drop.
+  const [dragActive, setDragActive] = useState(false);
   // The Move-to chooser's chosen position (#99), drawn with the same indicator as a drag. Forwarded
   // to the Dashboard too, which treats a live proposal as an interaction and holds refreshes for it.
   const [moveToProposal, setMoveToProposal] = useState<SemanticGap | null>(null);
@@ -203,6 +208,7 @@ export function ProjectKanbanBoard2({
     onMoveToProposalChange?.(proposal);
   }, [onMoveToProposalChange]);
   const boardModel = useMemo(() => ({ projects }), [projects]);
+  const controlsDisabled = (projectId: string) => dragDisabled || dragActive || pendingMoves.has(projectId);
 
   /**
    * Only for the paths that do NOT hand off to the Dashboard. Never on the valid path: the
@@ -254,6 +260,7 @@ export function ProjectKanbanBoard2({
 
   const handleDragStart = useCallback((event: DragStartEvent) => {
     activeProjectRef.current = String(event.active.id);
+    setDragActive(true);
     // Opens the Dashboard's refresh barrier: it blocks ACCEPTANCE of replacement data while a drag
     // is live (a fetch may still run), and disables the view control so the Board cannot be swapped
     // mid-drag. No drag-start eligibility guard is needed, unlike the old Board: `dragDisabled`
@@ -278,6 +285,7 @@ export function ProjectKanbanBoard2({
     activeProjectRef.current = undefined;
     lastAnnouncedGapRef.current = undefined;
     setDropProposal(null);
+    setDragActive(false);
     onInteractionStateChange?.({ activeId: undefined, proposal: null });
   }, [onInteractionStateChange]);
 
@@ -361,7 +369,12 @@ export function ProjectKanbanBoard2({
       // moving from one card to the next within a Stage is a new position and must be spoken.
       onDragOver: ({ active, over }: { active: { id: string | number }; over: { id: string | number } | null }) => {
         const target = over ? hoverTarget(String(active.id), String(over.id)) : undefined;
-        if (!target) return undefined;
+        // Leaving for a refused gap forgets the last one, so coming back to it is spoken again — the
+        // indicator redraws there, and the narration must not stay silent while it does.
+        if (!target) {
+          lastAnnouncedGapRef.current = undefined;
+          return undefined;
+        }
         const { project, gap, position, count, stageLabel } = target;
         const gapKey = `${gap.targetStageKey}|${gap.successor}`;
         if (gapKey === lastAnnouncedGapRef.current) return undefined;
@@ -453,8 +466,8 @@ export function ProjectKanbanBoard2({
                             restores focus to `arrow-up:<id>` after the move settles, and a disabled target
                             would drop focus on the floor. An edge press is a silent no-op there instead.
                             44px coarse-pointer targets, as on the handle. */}
-                        <button type="button" className={ARROW_CLASSES} data-focus-key={`arrow-up:${project.id}`} aria-label={`Move ${project.street} up`} disabled={dragDisabled || pendingMoves.has(project.id)} onClick={() => onBoardPosition(project, "up")}><span aria-hidden="true">↑</span></button>
-                        <button type="button" className={ARROW_CLASSES} data-focus-key={`arrow-down:${project.id}`} aria-label={`Move ${project.street} down`} disabled={dragDisabled || pendingMoves.has(project.id)} onClick={() => onBoardPosition(project, "down")}><span aria-hidden="true">↓</span></button>
+                        <button type="button" className={ARROW_CLASSES} data-focus-key={`arrow-up:${project.id}`} aria-label={`Move ${project.street} up`} disabled={controlsDisabled(project.id)} onClick={() => onBoardPosition(project, "up")}><span aria-hidden="true">↑</span></button>
+                        <button type="button" className={ARROW_CLASSES} data-focus-key={`arrow-down:${project.id}`} aria-label={`Move ${project.street} down`} disabled={controlsDisabled(project.id)} onClick={() => onBoardPosition(project, "down")}><span aria-hidden="true">↓</span></button>
                       </>}
                       <MoveToControl
                         project={project}
@@ -465,7 +478,7 @@ export function ProjectKanbanBoard2({
                         sort={effectiveKanbanSort}
                         canMoveStages={canMoveStages}
                         canReorder={canReorder}
-                        disabled={dragDisabled || pendingMoves.has(project.id)}
+                        disabled={controlsDisabled(project.id)}
                         onMoveStage={onMoveStage}
                         onProposalChange={handleMoveToProposal}
                       />

@@ -293,6 +293,19 @@ describe("ProjectKanbanBoard2 (#80)", () => {
       expect(onDragOver(over("raw_review"))).toBe("source Street is over the end of RAW review, position 4 of 4.");
     });
 
+    // Sol review: the indicator redraws when the pointer comes back to a gap after a refused one, so
+    // the narration must speak it again rather than treat it as a repeat.
+    it("speaks a gap again after passing over a refused one", async () => {
+      await renderBoard({ projects: [...threeTargets(), project("sibling", "awaiting_raw")] });
+      const { onDragOver } = capturedAnnouncements();
+      const over = (id: string) => ({ active: { id: "source" }, over: { id } });
+      const first = onDragOver(over("t2"));
+      expect(first, "anchor").toBe("source Street is over RAW review, position 2 of 4.");
+      // Its own Stage: refused (same-Stage reordering is off here).
+      expect(onDragOver(over("sibling"))).toBeUndefined();
+      expect(onDragOver(over("t2"))).toBe(first);
+    });
+
     // The drop indicator. These fire the DndContext's own `onDragOver` — the vendored primitive's
     // handler — so they also pin the `reui/kanban.tsx` pass-through: upstream returns before any
     // consumer hook whenever `onMove` is set, and with that early return the indicator never draws.
@@ -503,6 +516,9 @@ describe("ProjectKanbanBoard2 (#80)", () => {
       const props = await renderBoard({ projects: threeTargets(), role: "admin" });
       await chooseBeforeT2();
       expect(indicators(), "anchor").toHaveLength(1);
+      // As in the Cancel test: the popover's own Escape handler refocuses its reference with a bare
+      // `.focus()`, so `activeElement` alone cannot prove the chooser's `preventScroll` refocus ran.
+      const focus = vi.spyOn(trigger()!, "focus");
       const { act } = await import("react");
       await act(async () => {
         document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
@@ -511,6 +527,28 @@ describe("ProjectKanbanBoard2 (#80)", () => {
       expect(props.onMoveToProposalChange).toHaveBeenLastCalledWith(null);
       expect(indicators()).toHaveLength(0);
       expect(document.activeElement).toBe(trigger());
+      expect(focus).toHaveBeenCalledWith({ preventScroll: true });
+    });
+
+    // Sol review. The Dashboard treats a live proposal as an interaction and holds refreshes and the
+    // view/sort controls for it; a proposal orphaned by an unmount latches all of that until reload.
+    it("withdraws its preview when the card goes away mid-choice", async () => {
+      const props = await renderBoard({ projects: threeTargets(), role: "admin" });
+      await chooseBeforeT2();
+      expect(props.onMoveToProposalChange, "anchor").toHaveBeenLastCalledWith({ targetStageKey: "raw_review", successor: "t2" });
+      // The moving project is removed elsewhere while the popover is open.
+      await renderBoard({ ...props, projects: threeTargets().filter((item) => item.id !== "source") });
+      expect(props.onMoveToProposalChange).toHaveBeenLastCalledWith(null);
+      expect(indicators()).toHaveLength(0);
+    });
+
+    it("withdraws its preview when the whole Board unmounts mid-choice", async () => {
+      const props = await renderBoard({ projects: threeTargets(), role: "admin" });
+      await chooseBeforeT2();
+      expect(props.onMoveToProposalChange, "anchor").toHaveBeenLastCalledWith({ targetStageKey: "raw_review", successor: "t2" });
+      const { act } = await import("react");
+      await act(async () => { root.render(null); await Promise.resolve(); });
+      expect(props.onMoveToProposalChange).toHaveBeenLastCalledWith(null);
     });
 
     it("withholds same-Stage positions from a principal who cannot reorder", async () => {
@@ -555,6 +593,21 @@ describe("ProjectKanbanBoard2 (#80)", () => {
       await act(async () => { down()!.click(); await Promise.resolve(); });
       const calls = (props.onBoardPosition as ReturnType<typeof vi.fn>).mock.calls;
       expect(calls.map(([moved, direction]) => [moved.id, direction])).toEqual([["source", "up"], ["source", "down"]]);
+    });
+
+    // Sol review: otherwise a keyboard user picks up one card, Tabs to another card's arrow or Move
+    // to…, and reorders the column out from under the live drag.
+    it("and Move to… are disabled for the whole of a drag, then come back", async () => {
+      await renderBoard({ canPrioritize: true, sameStageReorderEnabled: true });
+      const moveTo = () => host.querySelector<HTMLButtonElement>('[data-focus-key="move-to:source"]');
+      expect(up()!.disabled, "anchor: enabled before the drag").toBe(false);
+      await fireDnd("onDragStart", { active: { id: "other" } });
+      expect(up()!.disabled).toBe(true);
+      expect(down()!.disabled).toBe(true);
+      expect(moveTo()!.disabled).toBe(true);
+      await fireDnd("onDragCancel", { active: { id: "other" } });
+      expect(up()!.disabled).toBe(false);
+      expect(moveTo()!.disabled).toBe(false);
     });
 
     it("are disabled while movement is locked", async () => {

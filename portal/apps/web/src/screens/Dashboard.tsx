@@ -894,8 +894,12 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       if (reason instanceof ApiError && reason.status === 503 && reason.details && typeof reason.details === "object" && ((reason.details as { code?: unknown }).code === "board_contract_disabled" || (reason.details as { code?: unknown }).code === "board_schema_maintenance")) setBoardUnavailableReason("Board interactions are temporarily unavailable while the Board is being updated.");
       updateProjects((current) => current.map((item) => item.id === project.id && item.priority === priority ? { ...item, priority: project.priority } : item));
       queueDashboardRefresh();
-      setAnnouncement("Project priority could not be updated.");
-      toast(reason instanceof Error ? reason.message : "The project priority could not be updated.", "error", { announcedElsewhere: true });
+      // One string for both: the toast is silenced as `announcedElsewhere`, so whatever the live region
+      // says is all a screen-reader user gets. Speaking a generic line while the silent toast shows the
+      // specific reason would withhold the reason from them alone.
+      const priorityFailure = reason instanceof Error ? reason.message : "The project priority could not be updated.";
+      setAnnouncement(priorityFailure);
+      toast(priorityFailure, "error", { announcedElsewhere: true });
     } finally {
       setPendingOrdering((current) => { const next = new Set(current); next.delete(project.id); return next; });
     }

@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Role, StageKey } from "@quincy/shared";
 import { AnchoredPopover, useAnchoredPopover } from "../AnchoredPopover";
 import { buttonClasses } from "../quincy/Button";
@@ -55,11 +55,24 @@ export function MoveToControl({ project, model, activeStages, role, sort, canMov
     setOpen(false);
     setTargetStageKey(null);
     setSuccessor(null);
-    onProposalChange(null);
+    publish(null);
     // Synchronous, and `preventScroll`: a bare `.focus()` on a trigger low on a long Board scrolls it.
     triggerRef.current?.focus({ preventScroll: true });
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- `publish` only forwards to `onProposalChange`
   }, [onProposalChange]);
   const floating = useAnchoredPopover({ open, onClose: close, placement: "bottom-end" });
+  // A published proposal must be withdrawn if this control goes away with it still set — browser
+  // Back leaving the view, or the project being removed elsewhere. The Dashboard counts a live
+  // proposal as an interaction and holds refreshes and the view/sort controls for it, so an orphaned
+  // one latches all of that until reload. Refs, so the cleanup runs on unmount only.
+  const publishedRef = useRef(false);
+  const onProposalChangeRef = useRef(onProposalChange);
+  useEffect(() => { onProposalChangeRef.current = onProposalChange; });
+  useEffect(() => () => { if (publishedRef.current) onProposalChangeRef.current(null); }, []);
+  const publish = (proposal: SemanticGap | null) => {
+    publishedRef.current = proposal !== null;
+    onProposalChange(proposal);
+  };
   // Stable identity is load-bearing, not tidiness: floating-ui's `setReference` calls setState with
   // no equality guard, and an inline ref callback re-runs on every render — under a Board drag's
   // rapid re-renders that detach/attach storm blew React's update-depth limit on the old Board.
@@ -93,13 +106,13 @@ export function MoveToControl({ project, model, activeStages, role, sort, canMov
     focusDescriptorRef.current = focusDescriptorFor("move-to", project, model, "move-to");
     setTargetStageKey(null);
     setSuccessor(null);
-    onProposalChange(null);
+    publish(null);
     setOpen(true);
   };
   const back = () => {
     setTargetStageKey(null);
     setSuccessor(null);
-    onProposalChange(null);
+    publish(null);
   };
   const submit = () => {
     if (targetStageKey === null || successor === null) return;
@@ -135,7 +148,7 @@ export function MoveToControl({ project, model, activeStages, role, sort, canMov
         </div> : <>
           <div className="grid gap-[2px]" role="listbox" aria-label={`Position in ${targetLabel}`}>
             {/* 44px touch target — WCAG 2.5.5 Enhanced / HIG, not a spacing token */}
-            {positions.map((option) => <button key={option.successor} type="button" role="option" aria-selected={successor === option.successor} className={OPTION_CLASSES} onClick={() => { setSuccessor(option.successor); onProposalChange({ targetStageKey, successor: option.successor }); }}>{option.label}</button>)}
+            {positions.map((option) => <button key={option.successor} type="button" role="option" aria-selected={successor === option.successor} className={OPTION_CLASSES} onClick={() => { setSuccessor(option.successor); publish({ targetStageKey, successor: option.successor }); }}>{option.label}</button>)}
           </div>
           <div className="flex justify-end gap-[var(--space-2)]">
             <button type="button" className={buttonClasses("secondary", { className: ACTION_CLASSES })} onClick={back}>Back</button>
