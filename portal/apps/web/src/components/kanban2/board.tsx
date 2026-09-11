@@ -1,7 +1,7 @@
-import { useCallback, useMemo, useRef } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import type { StageKey } from "@quincy/shared";
 import { StatusBadge } from "../atoms";
-import type { DragEndEvent, DragStartEvent } from "@dnd-kit/core";
+import type { DragEndEvent, DragOverEvent, DragStartEvent } from "@dnd-kit/core";
 import { Kanban, KanbanColumn, KanbanColumnContent, KanbanItem, KanbanOverlay, type KanbanMoveEvent } from "../reui/kanban";
 import {
   announce,
@@ -19,6 +19,23 @@ import { KanbanCard2 } from "./card";
 /** `editing` is the role-safe presentation of `editing_autohdr` — see `ProjectKanbanBoard.tsx`. */
 function semanticStageKey(value: ProjectStageKey): StageKey {
   return value === "editing" ? "editing_autohdr" : value;
+}
+
+/**
+ * Where a dropped card will land (#99). Absolutely positioned inside the gap and ZERO-layout, and
+ * that is load-bearing rather than cosmetic: the primitive hard-codes
+ * `MeasuringStrategy.Always`, so an in-flow indicator would shift the cards it sits between,
+ * re-measure every droppable, move the collision target, move the indicator — and flip-flop.
+ * Styling matches the old Board's indicator.
+ */
+function DropIndicator({ className }: { className: string }) {
+  return (
+    <div
+      className={`pointer-events-none absolute inset-x-0 z-10 h-[3px] rounded-[2px] bg-[var(--signal-positive)] shadow-[0_0_0_1px_color-mix(in_srgb,var(--signal-positive)_20%,transparent)] ${className}`}
+      data-testid="kanban2-drop-indicator"
+      aria-hidden="true"
+    />
+  );
 }
 
 /**
@@ -142,6 +159,7 @@ export function ProjectKanbanBoard2({
   }, []);
   const activeProjectRef = useRef<string | undefined>(undefined);
   const lastAnnouncedGapRef = useRef<string | undefined>(undefined);
+  const [dropProposal, setDropProposal] = useState<SemanticGap | null>(null);
 
   /**
    * Only for the paths that do NOT hand off to the Dashboard. Never on the valid path: the
@@ -224,8 +242,45 @@ export function ProjectKanbanBoard2({
   const clearInteraction = useCallback(() => {
     activeProjectRef.current = undefined;
     lastAnnouncedGapRef.current = undefined;
+    setDropProposal(null);
     onInteractionStateChange?.({ activeId: undefined, proposal: null });
   }, [onInteractionStateChange]);
+
+  /**
+   * The gap a hover over `overId` would commit, or `undefined` where a drop there would be refused —
+   * so the narration and the indicator never promise a landing `handleMove` would reject. Shares
+   * `gapFor` with `handleMove`, so all three describe one gap.
+   */
+  const hoverTarget = useCallback((projectId: string, overId: string) => {
+    if (dragDisabled) return undefined;
+    const project = projects.find((item) => item.id === projectId);
+    if (!project) return undefined;
+    const overStageKey = Object.keys(columns).find((key) => key === overId || (columns[key] ?? []).some((item) => item.id === overId));
+    if (!overStageKey) return undefined;
+    // Same-Stage drops are still rejected, so no position in the source column is offered.
+    if (semanticStageKey(overStageKey as ProjectStageKey) === semanticStageKey(project.stageKey as ProjectStageKey)) return undefined;
+    const siblings = columns[overStageKey] ?? [];
+    // Mirrors the primitive's own `overIndex` (`reui/kanban.tsx` `handleDragEnd`).
+    const overIndex = overId === overStageKey ? siblings.length : siblings.findIndex((item) => item.id === overId);
+    const stageLabel = activeStages.find((item) => item.key === overStageKey)?.label ?? "";
+    return { project, stageLabel, ...gapFor(projectId, overStageKey, overIndex) };
+  }, [activeStages, columns, dragDisabled, gapFor, projects]);
+
+  /**
+   * Draws the drop indicator (#99), through the vendored `onDragOver` pass-through — the only hover
+   * hook that exists (`useDndMonitor` was rejected: the tests drive captured handlers, so a monitor
+   * would never fire there). Only the indicator changes on hover; the rendered column arrays never
+   * do, because rewriting them mid-hover re-measures every droppable and loops.
+   *
+   * Bails out on an unchanged gap, because dragOver fires on every collision update.
+   */
+  const handleDragOver = useCallback((event: DragOverEvent) => {
+    const target = event.over ? hoverTarget(String(event.active.id), String(event.over.id)) : undefined;
+    const next = target?.gap ?? null;
+    setDropProposal((current) => (
+      current?.targetStageKey === next?.targetStageKey && current?.successor === next?.successor ? current : next
+    ));
+  }, [hoverTarget]);
 
   // An outside drop never reaches `onMove` (the primitive resolves no container), so it is the one
   // rejection that has to be handled here.
@@ -268,28 +323,16 @@ export function ProjectKanbanBoard2({
       // stationary hover fires this repeatedly and a live region would read it every time, but
       // moving from one card to the next within a Stage is a new position and must be spoken.
       onDragOver: ({ active, over }: { active: { id: string | number }; over: { id: string | number } | null }) => {
-        if (!over) return undefined;
-        const projectId = String(active.id);
-        const project = projects.find((item) => item.id === projectId);
-        if (!project) return undefined;
-        const overId = String(over.id);
-        const overStageKey = Object.keys(columns).find((key) => key === overId || (columns[key] ?? []).some((item) => item.id === overId));
-        if (!overStageKey) return undefined;
-        const sourceStageKey = activeStages.find((item) => semanticStageKey(item.key) === semanticStageKey(project.stageKey as ProjectStageKey))?.key;
-        // Same-Stage drops are still rejected, so no position in the source column is narrated.
-        if (overStageKey === sourceStageKey) return undefined;
-        const siblings = columns[overStageKey] ?? [];
-        // Mirrors the primitive's own `overIndex` (`reui/kanban.tsx` `handleDragEnd`).
-        const overIndex = overId === overStageKey ? siblings.length : siblings.findIndex((item) => item.id === overId);
-        const { gap, position, count } = gapFor(projectId, overStageKey, overIndex);
+        const target = over ? hoverTarget(String(active.id), String(over.id)) : undefined;
+        if (!target) return undefined;
+        const { project, gap, position, count, stageLabel } = target;
         const gapKey = `${gap.targetStageKey}|${gap.successor}`;
         if (gapKey === lastAnnouncedGapRef.current) return undefined;
         lastAnnouncedGapRef.current = gapKey;
-        const stage = activeStages.find((item) => item.key === overStageKey);
         return announce({
           type: gap.successor === "end" ? "over-end" : "over-card",
           street: project.street,
-          stageLabel: stage?.label ?? "",
+          stageLabel,
           position,
           count,
         }, { terminal });
@@ -303,7 +346,7 @@ export function ProjectKanbanBoard2({
     screenReaderInstructions: {
       draggable: "To pick up a project, focus its Move project handle and press Space. Use the arrow keys to move between Stages. Press Space again to drop, or Escape to cancel.",
     },
-  }), [activeStages, columns, gapFor, projects, terminal]);
+  }), [activeStages, columns, hoverTarget, projects, terminal]);
 
   return (
     <Kanban
@@ -312,6 +355,7 @@ export function ProjectKanbanBoard2({
       getItemValue={getItemValue}
       onMove={handleMove}
       onDragStart={handleDragStart}
+      onDragOver={handleDragOver}
       onDragEnd={handleDragEnd}
       onDragCancel={handleDragCancel}
       accessibility={accessibility}
@@ -346,7 +390,7 @@ export function ProjectKanbanBoard2({
               <StatusBadge stageKey={stage.key} />
               <span className="flex-none tabular-nums text-sm text-foreground-secondary">{stageProjects.length}</span>
             </div>
-            <KanbanColumnContent value={stage.key} className="flex flex-col gap-[var(--space-3)] p-[var(--space-3)] min-h-[120px] flex-1">
+            <KanbanColumnContent value={stage.key} className="relative flex flex-col gap-[var(--space-3)] p-[var(--space-3)] min-h-[120px] flex-1">
               {stageProjects.length === 0 && <div className="py-[var(--space-5)] [font-family:var(--font-display)] text-lg text-center text-foreground-secondary">—</div>}
               {stageProjects.map((project) => (
                 // Same `opacity-50` defect as the column above, but now on every OTHER card too
@@ -355,7 +399,8 @@ export function ProjectKanbanBoard2({
                 // specificity than the vendor's bare `.opacity-50`, so it wins only while
                 // genuinely disabled — the real `isSortableDragging` drag ghost (a plain
                 // `opacity-50`, not gated on `data-disabled`) is untouched.
-                <KanbanItem key={project.id} value={project.id} className="data-[disabled=true]:opacity-100" disabled={dragDisabled || pendingMoves.has(project.id)}>
+                <KanbanItem key={project.id} value={project.id} className="relative data-[disabled=true]:opacity-100" disabled={dragDisabled || pendingMoves.has(project.id)}>
+                  {dropProposal?.successor === project.id && <DropIndicator className="top-[calc(var(--space-3)/-2)] -translate-y-1/2" />}
                   <KanbanCard2
                     project={project}
                     projectHref={projectHrefFor?.(project)}
@@ -367,6 +412,9 @@ export function ProjectKanbanBoard2({
                   />
                 </KanbanItem>
               ))}
+              {dropProposal?.successor === "end" && dropProposal.targetStageKey === semanticStageKey(stage.key) && (
+                <DropIndicator className="bottom-[calc(var(--space-3)/2)] translate-y-1/2" />
+              )}
             </KanbanColumnContent>
           </KanbanColumn>
         );

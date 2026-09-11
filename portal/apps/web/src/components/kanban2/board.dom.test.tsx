@@ -141,7 +141,7 @@ function capturedAnnouncements(): CapturedAnnouncements {
   return announcements;
 }
 
-async function fireDnd(name: "onDragStart" | "onDragCancel" | "onDragEnd", event: unknown) {
+async function fireDnd(name: "onDragStart" | "onDragOver" | "onDragCancel" | "onDragEnd", event: unknown) {
   const { act } = await import("react");
   const handler = dnd.handlers.at(-1)?.props?.[name] as ((event: unknown) => void) | undefined;
   if (!handler) throw new Error(`No ${name} handler captured`);
@@ -290,6 +290,67 @@ describe("ProjectKanbanBoard2 (#80)", () => {
       // A stationary hover repeats the event; the live region must not re-read it.
       expect(onDragOver(over("t2"))).toBeUndefined();
       expect(onDragOver(over("raw_review"))).toBe("source Street is over the end of RAW review, position 4 of 4.");
+    });
+
+    // The drop indicator. These fire the DndContext's own `onDragOver` — the vendored primitive's
+    // handler — so they also pin the `reui/kanban.tsx` pass-through: upstream returns before any
+    // consumer hook whenever `onMove` is set, and with that early return the indicator never draws.
+    describe("drop indicator", () => {
+      const indicators = () => [...host.querySelectorAll<HTMLElement>('[data-testid="kanban2-drop-indicator"]')];
+      const hover = (overId: string) => fireDnd("onDragOver", { active: { id: "source" }, over: { id: overId } });
+
+      it("marks the gap before a hovered middle card, and nowhere else", async () => {
+        await renderBoard({ projects: threeTargets() });
+        await fireDnd("onDragStart", { active: { id: "source" } });
+        await hover("t2");
+        expect(indicators(), "no indicator drawn — the hover never reached the Board").toHaveLength(1);
+        // It sits in t2's item, ahead of t2's card — the gap between t1 and t2.
+        const item = indicators()[0]!.parentElement!;
+        expect(item.textContent).toContain("t2 Street");
+        expect(item.firstElementChild).toBe(indicators()[0]);
+      });
+
+      it("marks the end of a hovered column, after its last card", async () => {
+        await renderBoard({ projects: threeTargets() });
+        await hover("raw_review");
+        expect(indicators()).toHaveLength(1);
+        expect(indicators()[0]!.previousElementSibling?.textContent).toContain("t3 Street");
+        expect(indicators()[0]!.nextElementSibling).toBeNull();
+      });
+
+      // happy-dom has no layout, so this pins the classes that take the indicator out of flow. An
+      // in-flow indicator shifts the cards, and with the primitive's `MeasuringStrategy.Always` that
+      // moves the collision target and flip-flops. The real geometry is a browser-pass claim.
+      it("is out of flow, inert and hidden from assistive technology", async () => {
+        await renderBoard({ projects: threeTargets() });
+        await hover("t1");
+        const indicator = indicators()[0];
+        expect(indicator, "no indicator drawn — nothing below is proved").not.toBeUndefined();
+        expect(indicator!.className.split(" ")).toEqual(expect.arrayContaining(["absolute", "pointer-events-none"]));
+        expect(indicator!.getAttribute("aria-hidden")).toBe("true");
+        expect(indicator!.parentElement!.className.split(" ")).toContain("relative");
+      });
+
+      it("offers no gap in the card's own Stage, which still rejects a drop", async () => {
+        await renderBoard({ projects: [...threeTargets(), project("sibling", "awaiting_raw")] });
+        await hover("t1");
+        expect(indicators(), "anchor: a cross-Stage hover draws one").toHaveLength(1);
+        await hover("sibling");
+        expect(indicators()).toHaveLength(0);
+      });
+
+      it("clears on drop and on cancel", async () => {
+        await renderBoard({ projects: threeTargets() });
+        await hover("t2");
+        expect(indicators(), "anchor").toHaveLength(1);
+        await fireDnd("onDragEnd", { active: { id: "source" }, over: null });
+        expect(indicators()).toHaveLength(0);
+
+        await hover("t2");
+        expect(indicators(), "anchor").toHaveLength(1);
+        await fireDnd("onDragCancel", { active: { id: "source" } });
+        expect(indicators()).toHaveLength(0);
+      });
     });
   });
 
