@@ -107,13 +107,19 @@ export type KanbanCard2Props = {
   /** True while a priority write for this Project is in flight. */
   priorityPending?: boolean;
   onPriorityChange?: (project: ProjectSummary, priority: number | null) => void;
+  /**
+   * Registers this card's drag handle with the Board, which refocuses it on the paths dnd-kit no
+   * longer covers (see `board.tsx`'s `restoreFocus: false`). A ref rather than a
+   * `querySelector('[data-focus-key=…]')` so the Board's focus path carries no DOM-query coupling.
+   */
+  handleRef?: (projectId: string, element: HTMLButtonElement | null) => void;
 };
 
 /**
  * Composed on the `card` surface (#76 "Block and surface"). Quincy's `--radius-card` is 0, so
  * the corners render square — that is correct, not a porting defect.
  */
-export function KanbanCard2({ project, projectHref, isOverlay = false, dragDisabled = false, canPrioritize = false, priorityPending = false, onPriorityChange }: KanbanCard2Props) {
+export function KanbanCard2({ project, projectHref, isOverlay = false, dragDisabled = false, canPrioritize = false, priorityPending = false, onPriorityChange, handleRef }: KanbanCard2Props) {
   const [coverFailed, setCoverFailed] = useState(false);
   const [coverRetry, setCoverRetry] = useState(0);
   const overdue = isDeadlineOverdue(project.deadlineAt);
@@ -183,7 +189,7 @@ export function KanbanCard2({ project, projectHref, isOverlay = false, dragDisab
         <KanbanItemHandle
           className="absolute top-[var(--space-2)] right-[var(--space-2)] z-[2] size-9 max-[641px]:size-11 pointer-coarse:size-11 inline-grid place-items-center border border-[color-mix(in_srgb,var(--ink-900)_18%,transparent)] rounded-[var(--radius-sm)] bg-[color-mix(in_srgb,var(--paper-000)_88%,transparent)] text-foreground-secondary text-[20px] leading-none [touch-action:none] focus-visible:!outline-2 focus-visible:!outline-[var(--ink-900)] focus-visible:!outline-offset-2"
           cursor={!dragDisabled}
-          render={<button type="button" data-testid="kanban2-card-handle" aria-label={`Move ${project.street}`} disabled={dragDisabled} />}
+          render={<button ref={(element) => handleRef?.(project.id, element)} type="button" data-testid="kanban2-card-handle" data-focus-key={`move-handle:${project.id}`} aria-label={`Move ${project.street}`} disabled={dragDisabled} />}
         >
           <span aria-hidden="true">⠿</span>
         </KanbanItemHandle>

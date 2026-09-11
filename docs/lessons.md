@@ -1550,3 +1550,52 @@ first attempt to hold a write open failed because the confirmation is an in-app 
   uncovered, and the test file name will not tell you.
 - The first request in a confirm round trip must be asserted to carry **no** confirmation. Only that
   assertion proves the server-side gate is still reachable from this screen.
+
+## `onDragEnd` runs before `onMove`, so "clear the drag state" clears it too early (#98, 2026-09-11)
+
+The vendored ReUI Kanban calls the consumer's `onDragEnd` and then resolves the move and calls
+`onMove`. Both run inside one synchronous `handleDragEnd` invocation. That makes two
+similar-looking decisions have opposite outcomes.
+
+**Clearing the refresh barrier in `onDragEnd` is safe.** It is a parent `setState`, and `handleMove`
+runs later in the same synchronous handler from a closure that already captured `projects`,
+`columns`, `pendingMoves` and `dragDisabled`. React cannot re-render or flush effects mid-handler, so
+nothing `handleMove` reads can change underneath it. Clearing **only** in `onMove` is the actual bug:
+`onMove` never fires for a drop outside any column or an unresolved container, so the barrier latches
+forever — every refetch queued permanently, the view control disabled for the rest of the session,
+and nothing failing in happy-dom.
+
+**Clearing a ref that a later `onMove` reads is NOT safe**, and this is where it actually bit. The
+lifecycle clear reset `activeProjectRef`, and the Board's rejection path then asked it for "the
+handle we were carrying" to restore focus. It got `undefined` and silently refocused nothing. No
+error, no failed assertion in the happy path — only the same-Stage rejection test went red, and only
+because it asserted `document.activeElement`.
+
+**Rules.**
+
+- Before clearing anything in a drag-end handler, list every callback the library still has to call
+  in that same invocation, and what each one reads. `setState` is fine; a ref another callback
+  dereferences is not.
+- Pass the identifier explicitly to anything that runs after a clear, rather than having it read
+  "current" state. `refocusHandle(projectId)` cannot go stale; `refocusActiveHandle()` can.
+- A focus restore that targets nothing fails silently. Assert `document.activeElement`, not just that
+  the handler ran.
+
+## `RestoreFocus` is keyboard-only, so turning it off is also a scroll fix (#98, 2026-09-11)
+
+dnd-kit's `RestoreFocus` looks like a general "put focus back after a drag" feature. It is not: it
+fires **only for keyboard drags**, and it calls a plain `.focus()` with no options. Three consequences
+that are easy to get wrong separately:
+
+- Setting `accessibility.restoreFocus: false` **removes a real keyboard-cancel restore**. It cannot
+  ship without a replacement, or Escape during a keyboard drag drops focus to `BODY`.
+- Because that `.focus()` takes no `preventScroll`, leaving it on means the library can scroll the
+  Board out from under the user on a keyboard cancel. Turning it off and refocusing with
+  `focus({ preventScroll: true })` is therefore an accessibility fix *and* a scroll fix, which is why
+  those two acceptance criteria could not be split into separate commits.
+- Pointer drags were never covered by it at all, so any focus behaviour you observe after a mouse
+  drag is yours, not the library's.
+
+**Rule.** For a vendored a11y behaviour you are about to disable, find the code path that triggers it
+before assuming what it covers. "Restores focus" meant "restores focus for one of the two input
+methods, in a way that can scroll the page".

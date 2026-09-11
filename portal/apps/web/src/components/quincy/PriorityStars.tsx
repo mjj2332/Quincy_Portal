@@ -74,7 +74,9 @@ export function PriorityStars({ priority, street, canPrioritize, pending = false
   useEffect(() => {
     if (!shouldFocusRef.current) return;
     shouldFocusRef.current = false;
-    starRefs.current[focusIndex]?.focus();
+    // All five stars live inside one card, so suppressing the scroll can never hide the target
+    // from the user — and roving focus across them must not move the Board (#98).
+    starRefs.current[focusIndex]?.focus({ preventScroll: true });
   }, [focusIndex]);
 
   // Non-Admins on an unset Project see nothing in this slot at all (#76 user story 7). ~90% of

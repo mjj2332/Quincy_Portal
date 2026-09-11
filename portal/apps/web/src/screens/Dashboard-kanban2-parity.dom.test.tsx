@@ -12,7 +12,9 @@
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Dashboard } from "./Dashboard";
+import { createDashboardBoardInvalidatedMessage, ProjectQueryRuntime, ProjectQueryRuntimeProvider } from "../lib/project-query-sync";
 import { ConfirmModalHost } from "../components/ConfirmDialog";
 import { ApiError } from "../lib/api";
 
@@ -20,13 +22,13 @@ import { ApiError } from "../lib/api";
 // a real pointer. Same technique as `Dashboard-stage-interactions.dom.test.tsx` and
 // `components/kanban2/board.dom.test.tsx`; ReUI's Kanban resolves the move from its own internal
 // state given only the active and over ids.
-const dnd = vi.hoisted(() => ({ handlers: [] as Array<{ onDragEnd?: (event: unknown) => void }> }));
+const dnd = vi.hoisted(() => ({ handlers: [] as Array<{ onDragEnd?: (event: unknown) => void; props?: Record<string, unknown> }> }));
 vi.mock("@dnd-kit/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@dnd-kit/core")>();
   return {
     ...actual,
     DndContext: (props: Parameters<typeof actual.DndContext>[0]) => {
-      dnd.handlers.push({ onDragEnd: props.onDragEnd as (event: unknown) => void });
+      dnd.handlers.push({ onDragEnd: props.onDragEnd as (event: unknown) => void, props: props as unknown as Record<string, unknown> });
       return createElement(actual.DndContext, props);
     },
   };
@@ -194,5 +196,185 @@ describe("Dashboard at view=kanban2 (#98)", () => {
         confirmation: { reasons: ["backward"] },
       }));
     });
+  });
+
+  // AC 1 / §2.2. Publishing `data-focus-key="board"` on this Board makes the Dashboard's tier-3
+  // restore reachable here for the first time — and tier 3 fires after ANY refresh that was not tied
+  // to a Board control, including the one a Priority write queues itself. Without the key-less guard
+  // in `Dashboard.tsx`, adding the focus identifiers above would rip focus off the star row on every
+  // Priority change. The two changes are one unit; neither ships alone.
+  //
+  // The equivalent old-Board assertion cannot carry this claim: `ProjectKanbanBoard.tsx:575` folds
+  // `!pendingOrdering.has(id)` into `canPrioritize`, so the old Board unmounts its own Priority
+  // control mid-write and focus is destroyed before any restore runs. This Board deliberately does
+  // not (pass 1), so the restore tiers are the only thing that can move focus here.
+  describe("focus identifiers", () => {
+    it("publishes the three restore tiers the Dashboard looks for", async () => {
+      await act(async () => { root!.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); await Promise.resolve(); });
+      await vi.waitFor(() => expect(document.querySelector('[data-testid="kanban2-column"]')).not.toBeNull());
+
+      const boardRoot = document.querySelector<HTMLElement>('[data-focus-key="board"]');
+      expect(boardRoot, "tier 3 target missing — every focus restore on this Board is a silent no-op").not.toBeNull();
+      // Without tabIndex the element is not focusable and tier 3 does nothing, which is the exact
+      // failure this key is meant to end.
+      expect(boardRoot!.getAttribute("tabindex")).toBe("-1");
+
+      const heading = document.querySelector<HTMLElement>('[data-focus-key="stage-heading:awaiting_raw"]');
+      expect(heading, "tier 2 target missing for the semantic Stage key").not.toBeNull();
+      expect(heading!.getAttribute("tabindex")).toBe("-1");
+
+      expect(document.querySelector('[data-focus-key="move-handle:kb2-source"]'), "tier 1 target missing on the card handle").not.toBeNull();
+    });
+
+    it("leaves focus on the Priority control after its own write refreshes the Board", async () => {
+      await act(async () => { root!.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); await Promise.resolve(); });
+      await vi.waitFor(() => expect(document.querySelector('[data-testid="kanban2-column"]')).not.toBeNull());
+      // Anchor: tier 3 must be reachable, or this test would pass because there was nothing to
+      // steal focus to.
+      expect(document.querySelector('[data-focus-key="board"]'), "no tier-3 target — the steal could not be observed").not.toBeNull();
+
+      const third = [...document.querySelectorAll<HTMLElement>('[role="radio"]')][2];
+      expect(third, "fewer than three star targets rendered").not.toBeUndefined();
+      third!.focus();
+      expect(document.activeElement).toBe(third);
+
+      await act(async () => { third!.click(); await Promise.resolve(); });
+      await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+      expect(apiPostMock).toHaveBeenCalledWith("/api/projects/kb2-source/priority", { priority: 3 });
+
+      expect(document.contains(third!), "the Priority control was unmounted mid-write — focus cannot survive that").toBe(true);
+      expect(
+        document.activeElement === third!,
+        `focus moved to ${document.activeElement?.getAttribute("data-focus-key") ?? document.activeElement?.tagName} after the Priority write`,
+      ).toBe(true);
+    });
+  });
+
+  // AC 9 / AC 10. Deliberately NOT a source-text guard: a baseline-free grep for `preventScroll`
+  // merged after the code it governs has already turned this repo's main red once. This spies on
+  // `focus` while still performing the real focus, so the tier-1 assertions above keep working in
+  // the same file, and it fails today because the option is `undefined`.
+  //
+  // `scrollLeft` itself is unobservable in happy-dom. The evidence for the *mechanism* is the live
+  // browser measurement (#98 probe rounds 3/4: focus-induced scroll to 0, fully suppressed by
+  // `preventScroll: true`); this test is the evidence for the *call*.
+  it("restores focus without letting it scroll the Board (#98 AC 9)", async () => {
+    const realFocus = HTMLElement.prototype.focus;
+    const calls: Array<{ element: HTMLElement; options: unknown }> = [];
+    const spy = vi.spyOn(HTMLElement.prototype, "focus").mockImplementation(function (this: HTMLElement, options?: FocusOptions) {
+      calls.push({ element: this, options });
+      realFocus.call(this, options);
+    });
+    try {
+      apiGetMock.mockReset();
+      apiGetMock.mockImplementation((path) => path === "/api/projects" ? Promise.resolve({
+        projects: [
+          projectFixture("kb2-source", { boardMapPresent: true }),
+          projectFixture("kb2-target", { stageKey: "raw_review", boardPosition: 1, boardMapPresent: true }),
+        ],
+        board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: ["kb2-source"], raw_review: ["kb2-target"] } },
+      }) : Promise.resolve({ stages: [] }));
+      apiPostMock.mockReset().mockResolvedValue({
+        changed: true,
+        project: { projectId: "kb2-source", stageKey: "raw_review", boardRevision: 1 },
+        board: { sourceStageKey: "awaiting_raw", targetStageKey: "raw_review", orderedVisibleProjectIds: ["kb2-target", "kb2-source"] },
+      });
+      await act(async () => { root!.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); await Promise.resolve(); });
+      await vi.waitFor(() => expect(document.querySelector('[data-testid="kanban2-column"]')).not.toBeNull());
+
+      const handle = document.querySelector<HTMLElement>('[data-focus-key="move-handle:kb2-source"]');
+      expect(handle, "no handle to restore to — the assertion below would be vacuous").not.toBeNull();
+      handle!.focus();
+      calls.length = 0;
+
+      // A committed cross-Stage move: the Dashboard captures the handle descriptor and restores it.
+      const handler = dnd.handlers.at(-1)?.onDragEnd;
+      expect(handler).not.toBeUndefined();
+      await act(async () => { handler!({ active: { id: "kb2-source" }, over: { id: "kb2-target" } }); await Promise.resolve(); });
+      await vi.waitFor(() => expect(apiPostMock).toHaveBeenCalled());
+      await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+      expect(calls.length, "nothing called focus during the restore").toBeGreaterThan(0);
+      for (const call of calls) {
+        expect(
+          (call.options as FocusOptions | undefined)?.preventScroll,
+          `focus() on ${call.element.getAttribute("data-focus-key") ?? call.element.tagName} omitted preventScroll, so it can scroll the Board`,
+        ).toBe(true);
+      }
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  // AC 6 at the Dashboard seam: the new Board arms the Dashboard's refresh barrier and — the part
+  // that actually breaks — releases it.
+  //
+  // Scope of this test, stated precisely because it is narrower than it first looks. The deferral
+  // LOGIC lives in the Dashboard and is shared by both Boards; the old Board already pins it
+  // ("defers a cross-tab Board invalidation during drag…" in
+  // `Dashboard-stage-interactions.dom.test.tsx`). What is new for this Board is that it publishes the
+  // lifecycle at all, which `components/kanban2/board.dom.test.tsx` pins directly. So what this adds
+  // is the end-to-end consequence: a cross-tab invalidation mid-drag still FETCHES (the barrier
+  // blocks acceptance, not fetching), and once the drag ends the queued refresh runs and the Board
+  // converges instead of latching forever.
+  //
+  // It deliberately does NOT assert that fresh data is withheld from the screen mid-drag. Three
+  // attempts at that assertion (a window `focus` event, a `setQueryData` push, and this cross-tab
+  // refetch) all passed with the barrier disarmed, so none of them could prove the hold at this seam;
+  // asserting it anyway would have been a vacuous test of the kind this repo has already shipped
+  // twice. The latch assertion below IS load-bearing: removing the lifecycle clear turns it red.
+  it("arms the Dashboard refresh barrier and releases it without latching (#98 AC 6)", async () => {
+    class FakeChannel {
+      static channels: FakeChannel[] = [];
+      readonly listeners = new Set<(event: MessageEvent<unknown>) => void>();
+      constructor(readonly name: string) { FakeChannel.channels.push(this); }
+      addEventListener(_type: string, listener: (event: MessageEvent<unknown>) => void) { this.listeners.add(listener); }
+      postMessage(data: unknown) { for (const channel of FakeChannel.channels.filter((item) => item.name === this.name)) for (const listener of channel.listeners) listener({ data } as MessageEvent<unknown>); }
+      close() { FakeChannel.channels = FakeChannel.channels.filter((item) => item !== this); this.listeners.clear(); }
+    }
+    vi.stubGlobal("BroadcastChannel", FakeChannel);
+    let reads = 0;
+    apiGetMock.mockReset();
+    apiGetMock.mockImplementation((path) => {
+      if (path !== "/api/projects") return Promise.resolve({ stages: [] });
+      reads += 1;
+      return Promise.resolve({
+        projects: [{ ...projectFixture("kb2-source", { boardMapPresent: true }), street: reads === 1 ? "kb2-source Street" : "Fresh Street" }],
+        board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: ["kb2-source"] } },
+      });
+    });
+    const dragClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const dragRuntime = new ProjectQueryRuntime(dragClient, "kanban2-drag-tab");
+    const otherClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const otherRuntime = new ProjectQueryRuntime(otherClient, "kanban2-other-tab");
+    dragRuntime.start(); otherRuntime.start();
+    try {
+      await act(async () => {
+        root!.render(
+          <ProjectQueryRuntimeProvider runtime={dragRuntime}>
+            <QueryClientProvider client={dragClient}><Dashboard currentUserId="admin-1" /></QueryClientProvider>
+          </ProjectQueryRuntimeProvider>,
+        );
+        await Promise.resolve();
+      });
+      await vi.waitFor(() => expect(document.querySelector('[data-testid="kanban2-column"]')).not.toBeNull());
+      expect(reads).toBe(1);
+
+      const onDragStart = dnd.handlers.at(-1)?.props?.onDragStart as ((event: unknown) => void) | undefined;
+      expect(onDragStart, "the Board published no onDragStart — the barrier can never arm").not.toBeUndefined();
+      await act(async () => { onDragStart!({ active: { id: "kb2-source" } }); await Promise.resolve(); });
+
+      await act(async () => { otherRuntime.publish(createDashboardBoardInvalidatedMessage()); await Promise.resolve(); });
+      // The fetch is deliberately NOT blocked by the barrier.
+      await vi.waitFor(() => expect(reads).toBeGreaterThan(1));
+
+      const onDragCancel = dnd.handlers.at(-1)?.props?.onDragCancel as ((event: unknown) => void) | undefined;
+      await act(async () => { onDragCancel!({ active: { id: "kb2-source" } }); await Promise.resolve(); await Promise.resolve(); });
+      // And it must not latch.
+      await vi.waitFor(() => expect(document.querySelector('[data-testid="kanban2-card-address"]')?.textContent).toBe("Fresh Street"));
+    } finally {
+      dragRuntime.dispose(); otherRuntime.dispose(); dragClient.clear(); otherClient.clear();
+      vi.unstubAllGlobals();
+    }
   });
 });

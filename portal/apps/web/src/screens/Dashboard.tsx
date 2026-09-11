@@ -412,12 +412,22 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     if (!restore) return;
     focusRestoreRef.current = null;
     window.scrollTo(restore.x, restore.y);
+    // A refresh that was never tied to a known Board control has no business moving focus. #98:
+    // `setProjectPriority` queues a refresh whose `captureFocusForRefresh()` takes no arguments, so
+    // a user editing Priority (a control that carries no `data-focus-key`) recorded
+    // `{ key: null, fallbackStageKey: undefined }` — and tier 3 below then pulled focus off the star
+    // row onto the Board root. Scroll is still restored; focus is left exactly where the user put it.
+    if (restore.key === null && restore.fallbackStageKey === undefined) return;
     const target = restore.key ? [...document.querySelectorAll<HTMLElement>("[data-focus-key]")].find((element) => element.getAttribute("data-focus-key") === restore.key) : undefined;
-    if (target && !target.hasAttribute("disabled")) { target.focus(); return; }
+    // `preventScroll` on every Board restore: the scroll position is restored explicitly by the
+    // `window.scrollTo` above, so letting focus ALSO scroll just fights it. Measured live (#98
+    // probe rounds 3/4): without this, restoring focus to a handle outside the viewport drove the
+    // Board's horizontal scroll to 0 — `preventScroll: true` suppressed it completely on both Boards.
+    if (target && !target.hasAttribute("disabled")) { target.focus({ preventScroll: true }); return; }
     const fallback = restore.fallbackStageKey
       ? document.querySelector<HTMLElement>(`[data-focus-key="stage-heading:${restore.fallbackStageKey}"]`)
       : null;
-    (fallback ?? document.querySelector<HTMLElement>('[data-focus-key="board"]'))?.focus();
+    (fallback ?? document.querySelector<HTMLElement>('[data-focus-key="board"]'))?.focus({ preventScroll: true });
   }, [acceptedProjects, announcement, boardOverlay, boardUnavailableMessage, dashboardKeyString, movementSettlePending, pendingMoves, pendingOrdering, projects, recoveryReason]);
 
   useEffect(() => {

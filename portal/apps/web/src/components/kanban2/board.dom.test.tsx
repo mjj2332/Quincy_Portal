@@ -11,7 +11,9 @@ import type { ProjectKanbanBoardProps, ProjectSummary } from "../../lib/kanban-i
 import type { PipelineStage } from "../../lib/stages";
 
 const dnd = vi.hoisted(() => ({
-  handlers: [] as Array<{ onDragEnd?: (event: unknown) => void }>,
+  // The whole props object, not just `onDragEnd`: #98 asserts the `accessibility` contract the Board
+  // hands dnd-kit, which is only observable here.
+  handlers: [] as Array<{ onDragEnd?: (event: unknown) => void; props?: Record<string, unknown> }>,
 }));
 
 const dragOverlay = vi.hoisted(() => ({
@@ -37,7 +39,7 @@ vi.mock("@dnd-kit/core", async (importOriginal) => {
   return {
     ...actual,
     DndContext: (props: Parameters<typeof actual.DndContext>[0]) => {
-      dnd.handlers.push({ onDragEnd: props.onDragEnd as (event: unknown) => void });
+      dnd.handlers.push({ onDragEnd: props.onDragEnd as (event: unknown) => void, props: props as unknown as Record<string, unknown> });
       return createElement(actual.DndContext, props);
     },
     // `KanbanOverlay` creates its own `<DragOverlay>` element deep inside its own render function
@@ -100,6 +102,8 @@ function baseProps(overrides: Partial<ProjectKanbanBoardProps> = {}): ProjectKan
     onBoardPosition: vi.fn(),
     onPriorityChange: vi.fn(),
     onMoveStage: vi.fn(),
+    onAnnounce: vi.fn(),
+    onInteractionStateChange: vi.fn(),
     ...overrides,
   };
 }
@@ -119,6 +123,28 @@ async function endDrag(activeId: string, overId: string) {
   const handler = dnd.handlers.at(-1)?.onDragEnd;
   if (!handler) throw new Error("No drag-end handler captured");
   const event = { active: { id: activeId }, over: { id: overId } } as unknown as DragEndEvent;
+  await act(async () => { handler(event); await Promise.resolve(); });
+}
+
+type CapturedAnnouncements = {
+  onDragStart: (arg: unknown) => string | undefined;
+  onDragOver: (arg: unknown) => string | undefined;
+  onDragEnd: (arg: unknown) => string | undefined;
+  onDragCancel: (arg: unknown) => string | undefined;
+};
+
+/** The `accessibility.announcements` the Board handed dnd-kit; throws rather than silently passing. */
+function capturedAnnouncements(): CapturedAnnouncements {
+  const accessibility = dnd.handlers.at(-1)?.props?.accessibility as { announcements?: CapturedAnnouncements } | undefined;
+  const announcements = accessibility?.announcements;
+  if (!announcements) throw new Error("No accessibility.announcements reached DndContext");
+  return announcements;
+}
+
+async function fireDnd(name: "onDragStart" | "onDragCancel" | "onDragEnd", event: unknown) {
+  const { act } = await import("react");
+  const handler = dnd.handlers.at(-1)?.props?.[name] as ((event: unknown) => void) | undefined;
+  if (!handler) throw new Error(`No ${name} handler captured`);
   await act(async () => { handler(event); await Promise.resolve(); });
 }
 
@@ -527,5 +553,165 @@ describe("KanbanCard2 — Editor avatars, Deadline and RAW counts (#82)", () => 
     expect(slot).not.toBeNull();
     expect(slot.textContent).toBe("");
     expect(link.nextElementSibling).toBe(slot);
+  });
+
+  // AC 2 / AC 3 / AC 10. These assert the contract the Board hands dnd-kit and the copy it sends to
+  // the Dashboard's live region. They are one group on purpose: `restoreFocus: false` alone REMOVES
+  // the keyboard-cancel focus restore dnd-kit was doing, and the Board-owned refocus alone leaves
+  // two live regions narrating the same drop.
+  describe("focus policy and announcements (#98)", () => {
+    it("turns off the library's focus restoration and keeps Quincy's keyboard instructions", async () => {
+      await renderBoard();
+      const accessibility = dnd.handlers.at(-1)?.props?.accessibility as {
+        restoreFocus?: unknown;
+        screenReaderInstructions?: { draggable?: string };
+      } | undefined;
+      expect(accessibility, "no accessibility object reached DndContext").not.toBeUndefined();
+      // dnd-kit's RestoreFocus fires only for keyboard drags and calls a bare .focus(); the Board
+      // does it itself with preventScroll, so this must be explicitly false, not merely absent.
+      expect(accessibility!.restoreFocus).toBe(false);
+      expect(accessibility!.screenReaderInstructions?.draggable).toContain("press Space");
+      // The old Board advertises "Move to…"; this Board has no such control, so promising it would
+      // send a screen-reader user looking for a button that does not exist.
+      expect(accessibility!.screenReaderInstructions?.draggable).not.toContain("Move to");
+    });
+
+    it("suppresses the library's own drop and cancel announcements", async () => {
+      await renderBoard();
+      const announcements = capturedAnnouncements();
+      // Not stylistic: the Board's rejection copy goes to the Dashboard's region via onAnnounce, so
+      // a vendor default here would contradict it in a second region on every rejected drop.
+      expect(announcements.onDragEnd({ active: { id: "source" }, over: null })).toBeUndefined();
+      expect(announcements.onDragCancel({ active: { id: "source" } })).toBeUndefined();
+    });
+
+    it("announces a pick-up with Quincy copy in the library's region", async () => {
+      await renderBoard();
+      const announcements = capturedAnnouncements();
+      expect(announcements.onDragStart({ active: { id: "source" } })).toBe("Picked up source Street. Current Stage: Awaiting RAW. Position 1 of 1.");
+    });
+
+    it("announces a hover over another Stage once, not on every repeat of the same container", async () => {
+      await renderBoard();
+      const announcements = capturedAnnouncements();
+      const hover = { active: { id: "source" }, over: { id: "raw_review" } };
+      expect(announcements.onDragOver(hover)).toBe("source Street is over the end of RAW review, position 2 of 2.");
+      // A stationary hover fires this repeatedly; a live region would read it every time.
+      expect(announcements.onDragOver(hover)).toBeUndefined();
+      // Back over its own column is not news either.
+      expect(announcements.onDragOver({ active: { id: "source" }, over: { id: "awaiting_raw" } })).toBeUndefined();
+    });
+
+    it("tells the user a same-Stage drop did not move, and gives the handle back", async () => {
+      const props = await renderBoard();
+      const handle = host.querySelector<HTMLButtonElement>('[data-focus-key="move-handle:source"]');
+      expect(handle, "no handle to restore focus to").not.toBeNull();
+      await fireDnd("onDragStart", { active: { id: "source" } });
+      await endDrag("source", "source");
+
+      expect(props.onBoardMove).not.toHaveBeenCalled();
+      expect(props.onAnnounce).toHaveBeenCalledTimes(1);
+      expect(props.onAnnounce).toHaveBeenCalledWith("Cancelled moving source Street. It remains in Awaiting RAW.");
+      expect(document.activeElement).toBe(handle);
+    });
+
+    it("says nothing itself on a valid drop — the Dashboard owns success copy", async () => {
+      const props = await renderBoard();
+      await fireDnd("onDragStart", { active: { id: "source" } });
+      await endDrag("source", "other");
+
+      expect(props.onBoardMove).toHaveBeenCalledTimes(1);
+      // Two regions announcing one successful move is the defect this prevents.
+      expect(props.onAnnounce).not.toHaveBeenCalled();
+    });
+
+    it("treats a drop outside any column as a rejection, not a silent no-op", async () => {
+      const props = await renderBoard();
+      const handle = host.querySelector<HTMLButtonElement>('[data-focus-key="move-handle:source"]');
+      await fireDnd("onDragStart", { active: { id: "source" } });
+      // An outside drop never reaches `onMove`, so the Board must handle it in drag-end.
+      await fireDnd("onDragEnd", { active: { id: "source" }, over: null });
+
+      expect(props.onBoardMove).not.toHaveBeenCalled();
+      expect(props.onAnnounce).toHaveBeenCalledWith("Cancelled moving source Street. It remains in Awaiting RAW.");
+      expect(document.activeElement).toBe(handle);
+    });
+
+    it("restores the handle on an Escape cancel, which the library no longer does", async () => {
+      const props = await renderBoard();
+      const handle = host.querySelector<HTMLButtonElement>('[data-focus-key="move-handle:source"]');
+      await fireDnd("onDragStart", { active: { id: "source" } });
+      await fireDnd("onDragCancel", { active: { id: "source" } });
+
+      expect(document.activeElement).toBe(handle);
+      expect(props.onAnnounce).toHaveBeenCalledWith("Cancelled moving source Street. It remains in Awaiting RAW.");
+    });
+
+    it("stays silent for a terminal principal", async () => {
+      const props = await renderBoard({ terminal: true });
+      await fireDnd("onDragStart", { active: { id: "source" } });
+      await fireDnd("onDragCancel", { active: { id: "source" } });
+      // `announce` returns undefined when terminal and the Dashboard drops undefined, so terminal
+      // suppression must not need a second branch in the Board.
+      expect(props.onAnnounce).not.toHaveBeenCalledWith(expect.stringContaining("Cancelled moving"));
+    });
+  });
+
+  // AC 6. The refresh barrier the Dashboard uses to hold replacement data while a drag is live.
+  describe("drag lifecycle (#98)", () => {
+    it("opens the barrier on pick-up", async () => {
+      const props = await renderBoard();
+      await fireDnd("onDragStart", { active: { id: "source" } });
+      expect(props.onInteractionStateChange).toHaveBeenCalledWith({ activeId: "source", proposal: null });
+    });
+
+    // The ordering pin. The primitive calls `onDragEnd` BEFORE `onMove`, so a builder who "fixes"
+    // the clear by resetting something `handleMove` reads will stop delegating the move entirely.
+    // Both facts are asserted, not their order: a legitimate clear-after-move refactor must stay
+    // green.
+    it("still delegates a valid move even though the barrier clears in drag-end", async () => {
+      const props = await renderBoard();
+      await fireDnd("onDragStart", { active: { id: "source" } });
+      await endDrag("source", "other");
+
+      expect(props.onBoardMove).toHaveBeenCalledTimes(1);
+      expect((props.onInteractionStateChange as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0]).toEqual({ activeId: undefined, proposal: null });
+    });
+
+    // Clearing ONLY in `onMove` is the real bug: neither of the next two paths reaches it, so the
+    // barrier would latch forever — every refetch queued permanently, the view control disabled for
+    // the rest of the session, and nothing in happy-dom failing.
+    it("clears the barrier on a drop outside any column", async () => {
+      const props = await renderBoard();
+      await fireDnd("onDragStart", { active: { id: "source" } });
+      await fireDnd("onDragEnd", { active: { id: "source" }, over: null });
+
+      expect(props.onBoardMove).not.toHaveBeenCalled();
+      expect((props.onInteractionStateChange as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0]).toEqual({ activeId: undefined, proposal: null });
+    });
+
+    it("clears the barrier on an Escape cancel", async () => {
+      const props = await renderBoard();
+      await fireDnd("onDragStart", { active: { id: "source" } });
+      await fireDnd("onDragCancel", { active: { id: "source" } });
+
+      expect(props.onBoardMove).not.toHaveBeenCalled();
+      expect((props.onInteractionStateChange as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0]).toEqual({ activeId: undefined, proposal: null });
+    });
+
+    it("re-announces a hover after a new pick-up, rather than suppressing it as a repeat", async () => {
+      await renderBoard();
+      await fireDnd("onDragStart", { active: { id: "source" } });
+      const first = capturedAnnouncements().onDragOver({ active: { id: "source" }, over: { id: "raw_review" } });
+      expect(first).not.toBeUndefined();
+      await fireDnd("onDragCancel", { active: { id: "source" } });
+
+      // The de-duplication key is reset by the lifecycle clear, not by pick-up: without that, the
+      // second drag's first hover is silently swallowed as a repeat of the first drag's. (An extra
+      // reset in `onDragStart` was removed after proving it could not fail a test — a drag always
+      // ends through drag-end or cancel first.)
+      await fireDnd("onDragStart", { active: { id: "source" } });
+      expect(capturedAnnouncements().onDragOver({ active: { id: "source" }, over: { id: "raw_review" } })).toBe(first);
+    });
   });
 });

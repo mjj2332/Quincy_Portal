@@ -140,7 +140,7 @@ function MoveToControl({ project, model, activeStages, role, sort, canMoveStages
     setTargetStageKey(null);
     setSuccessor(null);
     onMoveToProposalChange?.(null);
-    triggerRef.current?.focus();
+    triggerRef.current?.focus({ preventScroll: true });
   }, [onMoveToProposalChange]);
   const floating = useAnchoredPopover({ open, onClose: close, placement: "bottom-end" });
   // Stable ref callback: an inline `(node) => floating.refs.setReference(node)` re-runs on every
@@ -488,7 +488,9 @@ type DragSnapshot = BoardDragStartSnapshot & {
 function focusHandle(projectId: string) {
   const focusKey = `move-handle:${projectId}`;
   const target = [...document.querySelectorAll<HTMLButtonElement>("button[data-focus-key]")].find((button) => button.getAttribute("data-focus-key") === focusKey);
-  target?.focus();
+  // See the Dashboard restore effect: focus must not move the Board's scroll (#98). Harmless
+  // alongside the existing `restoreBoardScroll`, which stays until #83 deletes this Board.
+  target?.focus({ preventScroll: true });
 }
 
 function restoreBoardScroll(snapshot: DragSnapshot) {
