@@ -25,8 +25,9 @@ function semanticStageKey(value: ProjectStageKey): StageKey {
  * A second Board, reachable at `view=kanban2` (#80), built from the ReUI `kanban-board-3` block.
  * Stage columns in Admin order, cards showing street + cover photo, and cross-column drag moving
  * Stage (#80); Priority stars (#81) and Editor avatars / Deadline / RAW (#82) have since shipped
- * and are rendered. Same-column reordering and exact drop placement remain unported — every
- * cross-stage drop appends — and are #99, not this Board's current behaviour by choice.
+ * and are rendered. A cross-Stage drop lands exactly where it was released — before the card it
+ * was dropped on, or at the end for a column drop (#99). Same-column reordering is still unported
+ * and is the rest of #99.
  *
  * Column reordering is removed entirely (#76 "Column behaviour") — every column below is a plain
  * `KanbanColumn` with `disabled`, so it registers as a drop target (needed so an EMPTY column can
@@ -74,6 +75,30 @@ export function ProjectKanbanBoard2({
     return record;
   }, [activeStages, effectiveKanbanSort, projects]);
 
+  /**
+   * The exact drop gap for a card released at `overIndex` in `overContainer` (#99). Placement is
+   * semantic — "before project X" — never an index, so the index the primitive reports is turned
+   * into a successor id here.
+   *
+   * The mover is removed BEFORE indexing, and that is the whole point, not a tidy-up. `overIndex` is
+   * the hovered card's index in the column as rendered, mover included. Cross-Stage and dragging UP
+   * within a column, removal shifts nothing and the successor is the hovered card: the card lands
+   * before it. Dragging DOWN within a column, removal shifts every later index by one, so the
+   * successor is the card AFTER the hovered one: the card lands after it, which is what the user
+   * saw. Reading `event.over.id` as the successor instead lands every downward move one slot early.
+   * A column hit reports `overIndex === length`, which falls off the end to `"end"`.
+   */
+  const gapFor = useCallback((projectId: string, overContainer: string, overIndex: number) => {
+    const withoutMover = (columns[overContainer] ?? []).filter((item) => item.id !== projectId);
+    const successor = withoutMover[overIndex]?.id ?? "end";
+    const position = successor === "end" ? withoutMover.length + 1 : withoutMover.findIndex((item) => item.id === successor) + 1;
+    return {
+      gap: { targetStageKey: semanticStageKey(overContainer as ProjectStageKey), successor } satisfies SemanticGap,
+      position,
+      count: withoutMover.length + 1,
+    };
+  }, [columns]);
+
   const getItemValue = useCallback((project: ProjectSummary) => project.id, []);
   // Kanban's `onValueChange` is only reachable via its own internal reorder paths; in `onMove`
   // mode (below) none of them ever fire — see `components/reui/kanban.tsx`'s `handleDragEnd`.
@@ -116,7 +141,7 @@ export function ProjectKanbanBoard2({
     else handleRefs.current.delete(projectId);
   }, []);
   const activeProjectRef = useRef<string | undefined>(undefined);
-  const lastAnnouncedContainerRef = useRef<string | undefined>(undefined);
+  const lastAnnouncedGapRef = useRef<string | undefined>(undefined);
 
   /**
    * Only for the paths that do NOT hand off to the Dashboard. Never on the valid path: the
@@ -143,7 +168,7 @@ export function ProjectKanbanBoard2({
     onAnnounce(announce({ type, street: project.street, sourceStageLabel }, { terminal }));
   }, [activeStages, onAnnounce, projects, terminal]);
 
-  const handleMove = useCallback(({ event, activeContainer, overContainer }: KanbanMoveEvent) => {
+  const handleMove = useCallback(({ event, activeContainer, overContainer, overIndex }: KanbanMoveEvent) => {
     const projectId = String(event.active.id);
     const keyboardOrigin = event.activatorEvent?.type === "keydown";
     // Every `return` below is a REJECTED drop, and a rejected drop must say so and give the handle
@@ -162,7 +187,7 @@ export function ProjectKanbanBoard2({
     const project = projects.find((item) => item.id === projectId);
     if (!project || pendingMoves.has(projectId)) return reject("dnd-cancel");
     const model = { projects };
-    const gap: SemanticGap = { targetStageKey: targetSemantic, successor: "end" };
+    const { gap } = gapFor(projectId, overContainer, overIndex);
     const caps = {
       canMoveProjectStage: canMoveStages,
       canPrioritize: false,
@@ -172,7 +197,7 @@ export function ProjectKanbanBoard2({
     if (!eligibleTarget(gap, model, projectId, caps)) return reject(keyboardOrigin ? "invalid-keyboard-target" : "dnd-cancel");
     const focusDescriptor = focusDescriptorFor(keyboardOrigin ? "keyboard" : "pointer", project, model, "handle");
     onBoardMove?.(projectId, gap, "cross", focusDescriptor);
-  }, [activeStages, announceRejection, canMoveStages, dragDisabled, effectiveKanbanSort, onBoardMove, pendingMoves, projects, refocusHandle]);
+  }, [activeStages, announceRejection, canMoveStages, dragDisabled, effectiveKanbanSort, gapFor, onBoardMove, pendingMoves, projects, refocusHandle]);
 
   const handleDragStart = useCallback((event: DragStartEvent) => {
     activeProjectRef.current = String(event.active.id);
@@ -198,7 +223,7 @@ export function ProjectKanbanBoard2({
    */
   const clearInteraction = useCallback(() => {
     activeProjectRef.current = undefined;
-    lastAnnouncedContainerRef.current = undefined;
+    lastAnnouncedGapRef.current = undefined;
     onInteractionStateChange?.({ activeId: undefined, proposal: null });
   }, [onInteractionStateChange]);
 
@@ -237,28 +262,36 @@ export function ProjectKanbanBoard2({
           count: siblings.length,
         }, { terminal });
       },
-      // The ONLY hover hook available: the primitive returns early from its own `handleDragOver`
-      // whenever `onMove` is set, and exposes no `onDragOver` prop at all. De-duplicated, because a
-      // stationary hover fires this repeatedly and a live region would read it every time.
+      // The hover narration. It describes the SAME gap `handleMove` would commit, via the same
+      // `gapFor`, so what is spoken is where the card lands: "over-card" with its position for a
+      // card hit, "over-end" for a column hit. De-duplicated by semantic gap, not by container — a
+      // stationary hover fires this repeatedly and a live region would read it every time, but
+      // moving from one card to the next within a Stage is a new position and must be spoken.
       onDragOver: ({ active, over }: { active: { id: string | number }; over: { id: string | number } | null }) => {
         if (!over) return undefined;
-        const project = projects.find((item) => item.id === String(active.id));
+        const projectId = String(active.id);
+        const project = projects.find((item) => item.id === projectId);
         if (!project) return undefined;
-        const overStageKey = Object.keys(columns).find((key) => key === String(over.id) || (columns[key] ?? []).some((item) => item.id === String(over.id)));
+        const overId = String(over.id);
+        const overStageKey = Object.keys(columns).find((key) => key === overId || (columns[key] ?? []).some((item) => item.id === overId));
         if (!overStageKey) return undefined;
         const sourceStageKey = activeStages.find((item) => semanticStageKey(item.key) === semanticStageKey(project.stageKey as ProjectStageKey))?.key;
-        if (overStageKey === sourceStageKey || overStageKey === lastAnnouncedContainerRef.current) return undefined;
-        lastAnnouncedContainerRef.current = overStageKey;
-        const stage = activeStages.find((item) => item.key === overStageKey);
+        // Same-Stage drops are still rejected, so no position in the source column is narrated.
+        if (overStageKey === sourceStageKey) return undefined;
         const siblings = columns[overStageKey] ?? [];
-        // "over-end" is the accurate event for this Board: every cross-Stage drop appends (#99 owns
-        // exact placement), so announcing a card-relative position would be a lie.
+        // Mirrors the primitive's own `overIndex` (`reui/kanban.tsx` `handleDragEnd`).
+        const overIndex = overId === overStageKey ? siblings.length : siblings.findIndex((item) => item.id === overId);
+        const { gap, position, count } = gapFor(projectId, overStageKey, overIndex);
+        const gapKey = `${gap.targetStageKey}|${gap.successor}`;
+        if (gapKey === lastAnnouncedGapRef.current) return undefined;
+        lastAnnouncedGapRef.current = gapKey;
+        const stage = activeStages.find((item) => item.key === overStageKey);
         return announce({
-          type: "over-end",
+          type: gap.successor === "end" ? "over-end" : "over-card",
           street: project.street,
           stageLabel: stage?.label ?? "",
-          position: siblings.length + 1,
-          count: siblings.length + 1,
+          position,
+          count,
         }, { terminal });
       },
       // Deliberately silent, and this is mandatory rather than stylistic: the Board's own rejection
@@ -270,7 +303,7 @@ export function ProjectKanbanBoard2({
     screenReaderInstructions: {
       draggable: "To pick up a project, focus its Move project handle and press Space. Use the arrow keys to move between Stages. Press Space again to drop, or Escape to cancel.",
     },
-  }), [activeStages, columns, projects, terminal]);
+  }), [activeStages, columns, gapFor, projects, terminal]);
 
   return (
     <Kanban

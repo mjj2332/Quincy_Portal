@@ -195,6 +195,40 @@ describe("Dashboard at view=kanban2 (#98)", () => {
         targetStageKey: "raw_review",
         confirmation: { reasons: ["backward"] },
       }));
+
+      // #99: the card was dropped ON kb2-target, so it lands before it — and the confirmed retry must
+      // resend that exact placement, not fall back to an append once the modal has intervened.
+      const exact = { kind: "between", before: null, after: { projectId: "kb2-target", boardRevision: 0 } };
+      expect(apiPostMock.mock.calls[0]![1]).toHaveProperty("placement", exact);
+      expect(apiPostMock.mock.calls[1]![1]).toHaveProperty("placement", exact);
+    });
+
+    // #99 at the seam that reaches the server: a drop on a MIDDLE card resolves to both real
+    // neighbours, so neither an append nor a "first" placement can satisfy it.
+    it("sends the exact neighbours of a middle-card drop to /stage", async () => {
+      apiGetMock.mockReset();
+      apiGetMock.mockImplementation((path) => path === "/api/projects" ? Promise.resolve({
+        projects: [
+          projectFixture("kb2-source", { boardMapPresent: true }),
+          projectFixture("kb2-t1", { stageKey: "raw_review", boardPosition: 1, boardRevision: 3, boardMapPresent: true }),
+          projectFixture("kb2-t2", { stageKey: "raw_review", boardPosition: 2, boardRevision: 5, boardMapPresent: true }),
+          projectFixture("kb2-t3", { stageKey: "raw_review", boardPosition: 3, boardRevision: 7, boardMapPresent: true }),
+        ],
+        board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: ["kb2-source"], raw_review: ["kb2-t1", "kb2-t2", "kb2-t3"] } },
+      }) : Promise.resolve({ stages: [] }));
+      apiPostMock.mockReset().mockReturnValue(new Promise(() => undefined));
+      await act(async () => { root!.render(<><Dashboard currentUserId="admin-1" /><ConfirmModalHost /></>); await Promise.resolve(); await Promise.resolve(); });
+      await vi.waitFor(() => expect(document.querySelectorAll('[data-testid="kanban2-card-address"]')).toHaveLength(4));
+
+      const handler = dnd.handlers.at(-1)?.onDragEnd;
+      expect(handler, "no drag-end handler captured — the Board did not mount a DndContext").not.toBeUndefined();
+      await act(async () => { handler!({ active: { id: "kb2-source" }, over: { id: "kb2-t2" } }); await Promise.resolve(); });
+      await vi.waitFor(() => expect(apiPostMock, "the drop never reached the server — nothing below is proved").toHaveBeenCalledTimes(1));
+
+      expect(apiPostMock).toHaveBeenCalledWith("/api/projects/kb2-source/stage", expect.objectContaining({
+        targetStageKey: "raw_review",
+        placement: { kind: "between", before: { projectId: "kb2-t1", boardRevision: 3 }, after: { projectId: "kb2-t2", boardRevision: 5 } },
+      }));
     });
   });
 

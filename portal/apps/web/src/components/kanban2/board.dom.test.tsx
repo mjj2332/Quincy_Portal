@@ -260,6 +260,39 @@ describe("ProjectKanbanBoard2 (#80)", () => {
     expect(kind).toBe("cross");
   });
 
+  // #99: a drop lands where it was released, not appended. Three targets, so the middle one is a
+  // card that is neither first nor last — an "append" or "first" shortcut cannot pass this.
+  describe("exact cross-Stage placement (#99)", () => {
+    const threeTargets = () => [project("source", "awaiting_raw"), project("t1", "raw_review"), project("t2", "raw_review"), project("t3", "raw_review")];
+
+    it("lands a card dropped on a middle card before that card", async () => {
+      const props = await renderBoard({ projects: threeTargets() });
+      await endDrag("source", "t2");
+      expect(props.onBoardMove, "the drop was rejected — the gap below is never produced").toHaveBeenCalledTimes(1);
+      expect((props.onBoardMove as ReturnType<typeof vi.fn>).mock.calls[0]![1]).toEqual({ targetStageKey: "raw_review", successor: "t2" });
+    });
+
+    it("lands a card dropped on the column itself at the end", async () => {
+      const props = await renderBoard({ projects: threeTargets() });
+      await endDrag("source", "raw_review");
+      expect(props.onBoardMove).toHaveBeenCalledTimes(1);
+      expect((props.onBoardMove as ReturnType<typeof vi.fn>).mock.calls[0]![1]).toEqual({ targetStageKey: "raw_review", successor: "end" });
+    });
+
+    // The hover copy must describe the gap the drop would commit, card by card — de-duplicating by
+    // container (the #98 behaviour) would swallow the second card's position entirely.
+    it("narrates each card-relative position in a Stage, once each", async () => {
+      await renderBoard({ projects: threeTargets() });
+      const { onDragOver } = capturedAnnouncements();
+      const over = (id: string) => ({ active: { id: "source" }, over: { id } });
+      expect(onDragOver(over("t1"))).toBe("source Street is over RAW review, position 1 of 4.");
+      expect(onDragOver(over("t2"))).toBe("source Street is over RAW review, position 2 of 4.");
+      // A stationary hover repeats the event; the live region must not re-read it.
+      expect(onDragOver(over("t2"))).toBeUndefined();
+      expect(onDragOver(over("raw_review"))).toBe("source Street is over the end of RAW review, position 4 of 4.");
+    });
+  });
+
   it("does not move a card dropped back onto its own column", async () => {
     const props = await renderBoard();
     await endDrag("source", "awaiting_raw");
