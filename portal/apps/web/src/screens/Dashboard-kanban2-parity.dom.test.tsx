@@ -377,4 +377,75 @@ describe("Dashboard at view=kanban2 (#98)", () => {
       vi.unstubAllGlobals();
     }
   });
+
+  // #99 AC (added by the owner): a successful move must be announced exactly ONCE. The Dashboard has
+  // two polite live regions on screen at the same time — its own (`dashboard-live-region`) and the
+  // toast viewport — and the move-commit path writes to both, so a screen reader heard the same event
+  // twice. It is not a new-Board defect: `onMoveStage` is shared by both Boards, which is why it was
+  // left out of #98 rather than smuggled into a Board-parity PR.
+  //
+  // The fix is a subtraction, and the toast stays on SCREEN: suppressed toasts are `aria-hidden`, not
+  // unrendered. Both halves are asserted here, because "fixed it by deleting the toast" would
+  // otherwise pass.
+  describe("announce a successful move exactly once (#99)", () => {
+    function twoStages() {
+      apiGetMock.mockReset();
+      apiGetMock.mockImplementation((path) => path === "/api/projects" ? Promise.resolve({
+        projects: [
+          projectFixture("kb2-source", { boardMapPresent: true }),
+          projectFixture("kb2-target", { stageKey: "raw_review", boardPosition: 1, boardMapPresent: true }),
+        ],
+        board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: ["kb2-source"], raw_review: ["kb2-target"] } },
+      }) : Promise.resolve({ stages: [] }));
+    }
+
+    it("speaks the move in the Dashboard region and keeps the toast visible but silent", async () => {
+      twoStages();
+      // Resolves 200 on the first call, so this is the settled-success path with no confirm modal.
+      apiPostMock.mockReset().mockResolvedValue({
+        changed: true,
+        project: { projectId: "kb2-source", stageKey: "raw_review", boardRevision: 1 },
+        board: { sourceStageKey: "awaiting_raw", targetStageKey: "raw_review", orderedVisibleProjectIds: ["kb2-target", "kb2-source"] },
+      });
+      await act(async () => { root!.render(<><Dashboard currentUserId="admin-1" /><ConfirmModalHost /></>); await Promise.resolve(); await Promise.resolve(); });
+      await vi.waitFor(() => expect(document.querySelector('[data-testid="kanban2-column"]')).not.toBeNull());
+
+      const handler = dnd.handlers.at(-1)?.onDragEnd;
+      expect(handler, "no drag-end handler captured — the Board did not mount a DndContext").not.toBeUndefined();
+      await act(async () => { handler!({ active: { id: "kb2-source" }, over: { id: "kb2-target" } }); await Promise.resolve(); });
+      await vi.waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1));
+      await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+      // Anchor: if the move did not actually succeed there is no success toast to be silent, and every
+      // assertion below would pass vacuously.
+      const toast = await vi.waitFor(() => {
+        const found = [...document.querySelectorAll<HTMLElement>('[data-testid="dashboard-toast"]')]
+          .find((node) => node.textContent?.includes("Moved to"));
+        expect(found, "no success toast rendered — the move did not settle, so nothing here is proved").not.toBeUndefined();
+        return found!;
+      });
+
+      expect(document.querySelector('[data-testid="dashboard-live-region"]')?.textContent)
+        .toContain("Moved kb2-source Street to");
+
+      // The toast is still on screen for sighted users...
+      expect(document.contains(toast)).toBe(true);
+      // ...and out of the accessibility tree, so the toast viewport's live region has nothing new to
+      // announce. An aria-hidden subtree mutating inside a live region produces no announcement.
+      expect(
+        toast.getAttribute("aria-hidden"),
+        "the success toast is still in the accessibility tree, so this event is announced twice",
+      ).toBe("true");
+    });
+
+    // The opt-out is per toast, NOT a removal of the viewport's `aria-live`: every Dashboard toast
+    // happens to pair with an announcement today, so dropping the attribute would look green while
+    // silently making any future unpaired toast unannounceable. This pins the capability rather than
+    // an observed behaviour, and says so.
+    it("leaves the toast viewport live for toasts that are not announced elsewhere", async () => {
+      await act(async () => { root!.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); await Promise.resolve(); });
+      await vi.waitFor(() => expect(document.querySelector('[data-testid="kanban2-column"]')).not.toBeNull());
+      expect(document.querySelector('[data-testid="dashboard-toast-viewport"]')?.getAttribute("aria-live")).toBe("polite");
+    });
+  });
 });

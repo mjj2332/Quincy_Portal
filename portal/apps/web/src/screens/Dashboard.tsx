@@ -58,7 +58,7 @@ export type { ProjectSummary } from "../lib/kanban-interaction";
 export { KanbanCard } from "../components/ProjectKanbanBoard";
 
 type ProjectScope = "active" | "archived";
-type Toast = { id: number; message: string; tone: "success" | "error" };
+type Toast = { id: number; message: string; tone: "success" | "error"; announcedElsewhere?: boolean };
 type BoardOverlay = { key: string; baseline: ProjectSummary[]; model: ProjectSummary[]; movingProjectId: string };
 type FocusRestore = { key: string | null; x: number; y: number; fallbackStageKey?: StageKey };
 type MovementRecovery = { model: BoardModel; projectId: string; project: ProjectSummary; settledStageKey: StageKey };
@@ -548,9 +548,18 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     }
   }, [projectsQuery.refetch]);
 
-  const toast = useCallback((message: string, tone: Toast["tone"] = "success") => {
+  /**
+   * `announcedElsewhere` keeps a toast OUT of the toast viewport's live region, for the case where the
+   * same event was already announced in the Dashboard's own live region. Without it a screen reader
+   * hears the event twice — and for the two error paths that reuse the toast string verbatim, twice
+   * word for word. #99.
+   *
+   * It is opt-IN per call, deliberately: the viewport stays live, so a toast added later without a
+   * paired announcement still speaks. Silence has to be asked for.
+   */
+  const toast = useCallback((message: string, tone: Toast["tone"] = "success", options?: { announcedElsewhere?: boolean }) => {
     const id = Date.now() + Math.random();
-    setToasts((current) => [...current, { id, message, tone }]);
+    setToasts((current) => [...current, { id, message, tone, announcedElsewhere: options?.announcedElsewhere }]);
     window.setTimeout(() => setToasts((current) => current.filter((item) => item.id !== id)), 3600);
   }, []);
 
@@ -819,7 +828,8 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         setMovementSettlePending(true);
       }
       shouldRefresh = true;
-      if (response.changed) toast(reconciled.sourceProvisional ? `Moved to ${stageLabelFor(settledStage)}.` : `Reordered in ${stageLabelFor(settledStage)}.`);
+      // `movementAnnouncement` above already spoke this outcome in the Dashboard live region. #99
+      if (response.changed) toast(reconciled.sourceProvisional ? `Moved to ${stageLabelFor(settledStage)}.` : `Reordered in ${stageLabelFor(settledStage)}.`, "success", { announcedElsewhere: true });
     } catch (reason) {
       if (isMovementTerminal(intent.projectId)) return;
       setBoardOverlay(null);
@@ -836,7 +846,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       captureFocusTarget(focusOutcome, intent.focusDescriptor, baselineModel, sourceStageKey);
       if (isPriorityForbidden) {
         setAnnouncement("Manual Board reorder requires Priority access.");
-        toast("Manual Board reorder requires Priority access.", "error");
+        toast("Manual Board reorder requires Priority access.", "error", { announcedElsewhere: true });
       } else if (isContractUnavailable || isMaintenance) {
         const event = isContractUnavailable ? { type: "contract-off" as const } : { type: "maintenance" as const };
         const copy = isContractUnavailable
@@ -846,14 +856,14 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         movementAnnouncement(event, baselineModel, movingProject, sourceStageKey);
       } else if (isConflict) {
         movementAnnouncement({ type: "conflict" }, baselineModel, movingProject, sourceStageKey);
-        toast("The project changed elsewhere; the Board was refreshed.", "error");
+        toast("The project changed elsewhere; the Board was refreshed.", "error", { announcedElsewhere: true });
       } else {
         if (isAccessLoss && queryRuntime) {
           queryRuntime.markPrincipalTerminal();
           return;
         }
         setAnnouncement(reason instanceof Error ? reason.message : "The Board could not be updated.");
-        toast(reason instanceof Error ? reason.message : "The Board could not be updated.", "error");
+        toast(reason instanceof Error ? reason.message : "The Board could not be updated.", "error", { announcedElsewhere: true });
       }
       shouldRefresh = true;
     } finally {
@@ -885,7 +895,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       updateProjects((current) => current.map((item) => item.id === project.id && item.priority === priority ? { ...item, priority: project.priority } : item));
       queueDashboardRefresh();
       setAnnouncement("Project priority could not be updated.");
-      toast(reason instanceof Error ? reason.message : "The project priority could not be updated.", "error");
+      toast(reason instanceof Error ? reason.message : "The project priority could not be updated.", "error", { announcedElsewhere: true });
     } finally {
       setPendingOrdering((current) => { const next = new Set(current); next.delete(project.id); return next; });
     }
@@ -1098,11 +1108,17 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       <div className="sr-only" data-testid="dashboard-live-region" aria-live="polite" aria-atomic="true">{announcement}</div>
       <div
         aria-live="polite"
+        data-testid="dashboard-toast-viewport"
         className="fixed z-[95] flex flex-col items-end gap-[var(--space-3)] pointer-events-none right-[max(var(--space-5),env(safe-area-inset-right))] bottom-[max(var(--space-5),env(safe-area-inset-bottom))] left-[max(var(--space-5),env(safe-area-inset-left))]"
       >
         {toasts.map((item) => (
           <div
             key={item.id}
+            // Hidden from the accessibility tree, not from the screen: the event was already announced
+            // in the Dashboard's own live region, and an aria-hidden node mutating inside a live region
+            // produces no announcement. #99
+            aria-hidden={item.announcedElsewhere ? "true" : undefined}
+            data-testid="dashboard-toast"
             className={cn(
               "flex items-center gap-[var(--space-3)] bg-surface-inverse text-on-inverse px-[var(--space-5)] py-[var(--space-3)] rounded-[var(--radius-sm)] shadow-[var(--shadow-md)] text-[length:var(--text-sm)] leading-[var(--leading-normal)] motion-safe:animate-[slidein_var(--dur-base)_var(--ease-entrance)] pointer-events-auto max-w-[min(380px,100%)]",
               item.tone === "error" && "bg-destructive",
