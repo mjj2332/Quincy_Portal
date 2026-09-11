@@ -354,6 +354,73 @@ describe("ProjectKanbanBoard2 (#80)", () => {
     });
   });
 
+  // #99. Distinct boardRanks, so the column's Board order is s1, s2, s3 and not a tie-break.
+  describe("same-column reordering (#99)", () => {
+    const column = () => [
+      project("s1", "awaiting_raw", { boardRank: 0 }),
+      project("s2", "awaiting_raw", { boardRank: 1 }),
+      project("s3", "awaiting_raw", { boardRank: 2 }),
+      project("other", "raw_review"),
+    ];
+    const reorder = (overrides: Partial<ProjectKanbanBoardProps> = {}) => renderBoard({ projects: column(), canPrioritize: true, sameStageReorderEnabled: true, ...overrides });
+    const moveCall = (props: ProjectKanbanBoardProps) => (props.onBoardMove as ReturnType<typeof vi.fn>).mock.calls[0];
+
+    // The off-by-one both planners disagreed about. Dragging DOWN, the card lands AFTER the card it
+    // was released on — the successor is the card after that one. Reading `over.id` as the
+    // successor lands it one slot early: before s3 is a real move, before s2 is no move at all.
+    it("lands a downward drop after the card it was released on", async () => {
+      let props = await reorder();
+      await endDrag("s1", "s2");
+      expect(moveCall(props), "the downward drop was rejected").not.toBeUndefined();
+      expect(moveCall(props)!.slice(1, 3)).toEqual([{ targetStageKey: "awaiting_raw", successor: "s3" }, "same"]);
+
+      props = await reorder();
+      await endDrag("s1", "s3");
+      expect(moveCall(props), "the drop onto the last card was rejected").not.toBeUndefined();
+      expect(moveCall(props)!.slice(1, 3)).toEqual([{ targetStageKey: "awaiting_raw", successor: "end" }, "same"]);
+    });
+
+    it("lands an upward drop before the card it was released on", async () => {
+      const props = await reorder();
+      await endDrag("s3", "s1");
+      expect(moveCall(props), "the upward drop was rejected").not.toBeUndefined();
+      expect(moveCall(props)!.slice(1, 3)).toEqual([{ targetStageKey: "awaiting_raw", successor: "s1" }, "same"]);
+    });
+
+    // Picking a card up needs EITHER capability. Gating the whole drag on `canMoveStages` — as this
+    // Board did before #99 — silently locks a prioritize-only principal out of reordering.
+    it("lets a principal who can reorder but not change Stage reorder, and only reorder", async () => {
+      const props = await reorder({ canMoveStages: false });
+      const handle = host.querySelector<HTMLButtonElement>('[data-focus-key="move-handle:s3"]');
+      expect(handle, "no handle rendered").not.toBeNull();
+      expect(handle!.disabled).toBe(false);
+      await endDrag("s1", "raw_review");
+      expect(props.onBoardMove, "a Stage change went through without the capability").not.toHaveBeenCalled();
+      await endDrag("s3", "s1");
+      expect(moveCall(props)?.[2]).toBe("same");
+    });
+
+    it("treats a drop back into the card's own slot as no move, and says so", async () => {
+      const props = await reorder();
+      const handle = host.querySelector<HTMLButtonElement>('[data-focus-key="move-handle:s1"]');
+      // Released on itself: the gap is "before s2", which is exactly where s1 already is.
+      await endDrag("s1", "s1");
+      expect(props.onBoardMove).not.toHaveBeenCalled();
+      expect(props.onAnnounce).toHaveBeenCalledWith("Cancelled moving s1 Street. It remains in Awaiting RAW.");
+      expect(document.activeElement).toBe(handle);
+    });
+
+    it("narrates and marks a position in the card's own Stage", async () => {
+      await reorder();
+      expect(capturedAnnouncements().onDragOver({ active: { id: "s1" }, over: { id: "s3" } }))
+        .toBe("s1 Street is over the end of Awaiting RAW, position 3 of 3.");
+      await fireDnd("onDragOver", { active: { id: "s3" }, over: { id: "s1" } });
+      const indicator = host.querySelector('[data-testid="kanban2-drop-indicator"]');
+      expect(indicator, "no indicator in the card's own Stage").not.toBeNull();
+      expect(indicator!.parentElement!.textContent).toContain("s1 Street");
+    });
+  });
+
   it("does not move a card dropped back onto its own column", async () => {
     const props = await renderBoard();
     await endDrag("source", "awaiting_raw");

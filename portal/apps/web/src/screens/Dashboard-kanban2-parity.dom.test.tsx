@@ -232,6 +232,35 @@ describe("Dashboard at view=kanban2 (#98)", () => {
     });
   });
 
+  // #99. A same-column drop is a Board-position command, never a Stage command: it must reach
+  // `/board-position` with exact neighbours and no confirmation — that branch forbids one.
+  describe("same-column reordering", () => {
+    it("sends an upward reorder to /board-position with exact neighbours and no confirmation", async () => {
+      apiGetMock.mockReset();
+      apiGetMock.mockImplementation((path) => path === "/api/projects" ? Promise.resolve({
+        projects: [
+          projectFixture("kb2-a", { boardPosition: 0, boardRevision: 2, boardMapPresent: true }),
+          projectFixture("kb2-b", { boardPosition: 1, boardRevision: 4, boardMapPresent: true }),
+          projectFixture("kb2-c", { boardPosition: 2, boardRevision: 6, boardMapPresent: true }),
+        ],
+        board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: ["kb2-a", "kb2-b", "kb2-c"] } },
+      }) : Promise.resolve({ stages: [] }));
+      apiPostMock.mockReset().mockReturnValue(new Promise(() => undefined));
+      await act(async () => { root!.render(<><Dashboard currentUserId="admin-1" /><ConfirmModalHost /></>); await Promise.resolve(); await Promise.resolve(); });
+      await vi.waitFor(() => expect(document.querySelectorAll('[data-testid="kanban2-card-address"]')).toHaveLength(3));
+
+      const handler = dnd.handlers.at(-1)?.onDragEnd;
+      expect(handler, "no drag-end handler captured — the Board did not mount a DndContext").not.toBeUndefined();
+      await act(async () => { handler!({ active: { id: "kb2-c" }, over: { id: "kb2-b" } }); await Promise.resolve(); });
+      await vi.waitFor(() => expect(apiPostMock, "the reorder never reached the server — nothing below is proved").toHaveBeenCalledTimes(1));
+
+      const [path, body] = apiPostMock.mock.calls[0]!;
+      expect(path).toBe("/api/projects/kb2-c/board-position");
+      expect(body).toHaveProperty("placement", { kind: "between", before: { projectId: "kb2-a", boardRevision: 2 }, after: { projectId: "kb2-b", boardRevision: 4 } });
+      expect(body).not.toHaveProperty("confirmation");
+    });
+  });
+
   // AC 1 / §2.2. Publishing `data-focus-key="board"` on this Board makes the Dashboard's tier-3
   // restore reachable here for the first time — and tier 3 fires after ANY refresh that was not tied
   // to a Board control, including the one a Priority write queues itself. Without the key-less guard

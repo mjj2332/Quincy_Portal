@@ -5,6 +5,7 @@ import type { DragEndEvent, DragOverEvent, DragStartEvent } from "@dnd-kit/core"
 import { Kanban, KanbanColumn, KanbanColumnContent, KanbanItem, KanbanOverlay, type KanbanMoveEvent } from "../reui/kanban";
 import {
   announce,
+  boardGapChangesOrder,
   eligibleTarget,
   focusDescriptorFor,
   sortKanbanProjects,
@@ -43,8 +44,8 @@ function DropIndicator({ className }: { className: string }) {
  * Stage columns in Admin order, cards showing street + cover photo, and cross-column drag moving
  * Stage (#80); Priority stars (#81) and Editor avatars / Deadline / RAW (#82) have since shipped
  * and are rendered. A cross-Stage drop lands exactly where it was released — before the card it
- * was dropped on, or at the end for a column drop (#99). Same-column reordering is still unported
- * and is the rest of #99.
+ * was dropped on, or at the end for a column drop — and a card can be reordered within its own
+ * Stage by anyone holding Priority access while the Board is in Board sort (#99).
  *
  * Column reordering is removed entirely (#76 "Column behaviour") — every column below is a plain
  * `KanbanColumn` with `disabled`, so it registers as a drop target (needed so an EMPTY column can
@@ -53,11 +54,10 @@ function DropIndicator({ className }: { className: string }) {
  *
  * Props are intentionally the exact `ProjectKanbanBoardProps` type from `lib/kanban-interaction`,
  * so the Dashboard's priority and stage coordinators are unchanged (#80 acceptance criteria).
- * `canPrioritize`, `pendingOrdering` and `onPriorityChange` are consumed as of #81. The remainder
- * (`onBoardPosition`, `sameStageReorderEnabled`, `onMoveStage`, `onMoveToProposalChange`,
- * `onInteractionStateChange`, `onAnnounce`) are still accepted for contract parity and unused:
- * the first two belong to same-column reordering (#99), the rest to the focus, announcement and
- * drag-lifecycle work still outstanding on #98.
+ * `canPrioritize`, `pendingOrdering` and `onPriorityChange` are consumed as of #81,
+ * `onInteractionStateChange` and `onAnnounce` as of #98, and `sameStageReorderEnabled` as of #99.
+ * `onBoardPosition`, `onMoveStage` and `onMoveToProposalChange` are still accepted for contract
+ * parity and unused; they belong to the non-drag controls still outstanding on #99.
  *
  * The coarse-pointer column track is widened to 252px (#81): five 44px star targets need 220px,
  * and a 244px track leaves a 220px card — exactly zero slack — while the old 240px mobile track
@@ -68,6 +68,7 @@ export function ProjectKanbanBoard2({
   activeStages,
   canMoveStages,
   canPrioritize = false,
+  sameStageReorderEnabled = false,
   boardMutationEnabled,
   movementDisabled = false,
   effectiveKanbanSort,
@@ -116,6 +117,27 @@ export function ProjectKanbanBoard2({
     };
   }, [columns]);
 
+  /**
+   * Whether a drop into `gap` would be accepted — shared by the drop, the narration and the
+   * indicator so none of them promises a landing another refuses. Mirrors the old Board's verdict
+   * (`ProjectKanbanBoard.tsx:795-800`) and the Dashboard's own checks (`runBoardMovement`), which
+   * re-validate anyway: each capability gates its own kind of drop, `eligibleTarget` enforces the
+   * rest (a same-Stage move needs Priority access and Board sort), and a same-Stage gap that leaves
+   * the order unchanged — dropping a card back into its own slot — is `"unchanged"`, not a write.
+   */
+  const dropVerdict = useCallback((project: ProjectSummary, gap: SemanticGap, sameStage: boolean): "ok" | "refused" | "unchanged" => {
+    if (!(sameStage ? sameStageReorderEnabled : canMoveStages)) return "refused";
+    const model = { projects };
+    if (!eligibleTarget(gap, model, project.id, {
+      canMoveProjectStage: canMoveStages,
+      canPrioritize,
+      sort: effectiveKanbanSort,
+      activeStageKeys: activeStages.map((stage) => semanticStageKey(stage.key)),
+    })) return "refused";
+    if (sameStage && !boardGapChangesOrder(gap, model, project.id)) return "unchanged";
+    return "ok";
+  }, [activeStages, canMoveStages, canPrioritize, effectiveKanbanSort, projects, sameStageReorderEnabled]);
+
   const getItemValue = useCallback((project: ProjectSummary) => project.id, []);
   // Kanban's `onValueChange` is only reachable via its own internal reorder paths; in `onMove`
   // mode (below) none of them ever fire — see `components/reui/kanban.tsx`'s `handleDragEnd`.
@@ -126,7 +148,10 @@ export function ProjectKanbanBoard2({
   // ordering write is in flight, not just for the card that started it — a second interaction
   // must not be able to start mid-write.
   const movementLocked = movementDisabled || pendingMoves.size > 0 || pendingOrdering.size > 0;
-  const dragDisabled = movementLocked || terminal || !boardMutationEnabled || !canMoveStages;
+  // Either capability is enough to pick a card up (`ProjectKanbanBoard.tsx:575,592`): a
+  // prioritize-only principal reorders within a Stage without being able to change it. Which drops
+  // each capability permits is decided per drop, in `handleMove`.
+  const dragDisabled = movementLocked || terminal || !boardMutationEnabled || !(canMoveStages || sameStageReorderEnabled);
   // Priority deliberately does NOT depend on `boardMutationEnabled`: that is the Board *movement*
   // flag, and the shipped contract is that Priority stays editable while movement is off. Gating
   // it on that flag was this Board's own regression (#98).
@@ -176,7 +201,7 @@ export function ProjectKanbanBoard2({
     handleRefs.current.get(projectId)?.focus({ preventScroll: true });
   }, []);
 
-  const announceRejection = useCallback((type: "dnd-cancel" | "drop-outside" | "invalid-keyboard-target", projectId: string | undefined) => {
+  const announceRejection = useCallback((type: "dnd-cancel" | "drop-outside" | "unchanged-gap" | "invalid-keyboard-target", projectId: string | undefined) => {
     if (!onAnnounce) return;
     const project = projectId ? projects.find((item) => item.id === projectId) : undefined;
     if (!project) return;
@@ -192,30 +217,22 @@ export function ProjectKanbanBoard2({
     // Every `return` below is a REJECTED drop, and a rejected drop must say so and give the handle
     // back — dnd-kit's default announcement ("was dropped over droppable area raw_review") is both
     // wrong and in the other live region, which is why they are all suppressed in `accessibility`.
-    const reject = (type: "dnd-cancel" | "invalid-keyboard-target") => {
+    const reject = (type: "dnd-cancel" | "unchanged-gap" | "invalid-keyboard-target") => {
       announceRejection(type, projectId);
       refocusHandle(projectId);
     };
     if (dragDisabled) return reject("dnd-cancel");
-    const sourceSemantic = semanticStageKey(activeContainer as ProjectStageKey);
-    const targetSemantic = semanticStageKey(overContainer as ProjectStageKey);
-    // Same-column reordering is #99, not this Board's behaviour — so for now it is a rejection, not
-    // a silent no-op: the card visibly returns and the user is told it did not move.
-    if (sourceSemantic === targetSemantic) return reject("dnd-cancel");
     const project = projects.find((item) => item.id === projectId);
     if (!project || pendingMoves.has(projectId)) return reject("dnd-cancel");
-    const model = { projects };
+    const sameStage = semanticStageKey(activeContainer as ProjectStageKey) === semanticStageKey(overContainer as ProjectStageKey);
     const { gap } = gapFor(projectId, overContainer, overIndex);
-    const caps = {
-      canMoveProjectStage: canMoveStages,
-      canPrioritize: false,
-      sort: effectiveKanbanSort,
-      activeStageKeys: activeStages.map((stage) => semanticStageKey(stage.key)),
-    };
-    if (!eligibleTarget(gap, model, projectId, caps)) return reject(keyboardOrigin ? "invalid-keyboard-target" : "dnd-cancel");
-    const focusDescriptor = focusDescriptorFor(keyboardOrigin ? "keyboard" : "pointer", project, model, "handle");
-    onBoardMove?.(projectId, gap, "cross", focusDescriptor);
-  }, [activeStages, announceRejection, canMoveStages, dragDisabled, effectiveKanbanSort, gapFor, onBoardMove, pendingMoves, projects, refocusHandle]);
+    const verdict = dropVerdict(project, gap, sameStage);
+    if (verdict !== "ok") return reject(verdict === "unchanged" ? "unchanged-gap" : keyboardOrigin ? "invalid-keyboard-target" : "dnd-cancel");
+    const focusDescriptor = focusDescriptorFor(keyboardOrigin ? "keyboard" : "pointer", project, { projects }, "handle");
+    // `"same"` routes to the Dashboard's `/board-position` branch, where a confirmation is forbidden;
+    // `"cross"` to `/stage`, where the 409 confirmation round trip is the normal path.
+    onBoardMove?.(projectId, gap, sameStage ? "same" : "cross", focusDescriptor);
+  }, [announceRejection, dragDisabled, dropVerdict, gapFor, onBoardMove, pendingMoves, projects, refocusHandle]);
 
   const handleDragStart = useCallback((event: DragStartEvent) => {
     activeProjectRef.current = String(event.active.id);
@@ -257,14 +274,16 @@ export function ProjectKanbanBoard2({
     if (!project) return undefined;
     const overStageKey = Object.keys(columns).find((key) => key === overId || (columns[key] ?? []).some((item) => item.id === overId));
     if (!overStageKey) return undefined;
-    // Same-Stage drops are still rejected, so no position in the source column is offered.
-    if (semanticStageKey(overStageKey as ProjectStageKey) === semanticStageKey(project.stageKey as ProjectStageKey)) return undefined;
     const siblings = columns[overStageKey] ?? [];
     // Mirrors the primitive's own `overIndex` (`reui/kanban.tsx` `handleDragEnd`).
     const overIndex = overId === overStageKey ? siblings.length : siblings.findIndex((item) => item.id === overId);
+    const target = gapFor(projectId, overStageKey, overIndex);
+    const sameStage = semanticStageKey(overStageKey as ProjectStageKey) === semanticStageKey(project.stageKey as ProjectStageKey);
+    // A gap the drop would refuse — including the card's own current slot — is not offered at all.
+    if (dropVerdict(project, target.gap, sameStage) !== "ok") return undefined;
     const stageLabel = activeStages.find((item) => item.key === overStageKey)?.label ?? "";
-    return { project, stageLabel, ...gapFor(projectId, overStageKey, overIndex) };
-  }, [activeStages, columns, dragDisabled, gapFor, projects]);
+    return { project, stageLabel, ...target };
+  }, [activeStages, columns, dragDisabled, dropVerdict, gapFor, projects]);
 
   /**
    * Draws the drop indicator (#99), through the vendored `onDragOver` pass-through — the only hover
