@@ -259,6 +259,36 @@ describe("Dashboard at view=kanban2 (#98)", () => {
       expect(body).toHaveProperty("placement", { kind: "between", before: { projectId: "kb2-a", boardRevision: 2 }, after: { projectId: "kb2-b", boardRevision: 4 } });
       expect(body).not.toHaveProperty("confirmation");
     });
+
+    // The arrows reach the same `/board-position` orchestrator as a drag, one slot at a time, and the
+    // focus comes back to the arrow that was pressed.
+    it("sends an up-arrow press to /board-position one slot up, and refocuses that arrow", async () => {
+      apiGetMock.mockReset();
+      apiGetMock.mockImplementation((path) => path === "/api/projects" ? Promise.resolve({
+        projects: [
+          projectFixture("kb2-a", { boardPosition: 0, boardRevision: 2, boardMapPresent: true }),
+          projectFixture("kb2-b", { boardPosition: 1, boardRevision: 4, boardMapPresent: true }),
+          projectFixture("kb2-c", { boardPosition: 2, boardRevision: 6, boardMapPresent: true }),
+        ],
+        board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: ["kb2-a", "kb2-b", "kb2-c"] } },
+      }) : Promise.resolve({ stages: [] }));
+      apiPostMock.mockReset().mockResolvedValue({
+        changed: true,
+        project: { projectId: "kb2-c", stageKey: "awaiting_raw", boardRevision: 7 },
+        board: { sourceStageKey: "awaiting_raw", targetStageKey: "awaiting_raw", orderedVisibleProjectIds: ["kb2-a", "kb2-c", "kb2-b"] },
+      });
+      await act(async () => { root!.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); await Promise.resolve(); });
+      await vi.waitFor(() => expect(document.querySelector('[data-focus-key="arrow-up:kb2-c"]'), "no up arrow rendered — nothing below is proved").not.toBeNull());
+
+      await act(async () => { document.querySelector<HTMLButtonElement>('[data-focus-key="arrow-up:kb2-c"]')!.click(); await Promise.resolve(); });
+      await vi.waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1));
+
+      const [path, body] = apiPostMock.mock.calls[0]!;
+      expect(path).toBe("/api/projects/kb2-c/board-position");
+      expect(body).toHaveProperty("placement", { kind: "between", before: { projectId: "kb2-a", boardRevision: 2 }, after: { projectId: "kb2-b", boardRevision: 4 } });
+      expect(body).not.toHaveProperty("confirmation");
+      await vi.waitFor(() => expect(document.activeElement?.getAttribute("data-focus-key")).toBe("arrow-up:kb2-c"));
+    });
   });
 
   // #99's non-drag path at the seam that reaches the server. The chooser does no confirming of its

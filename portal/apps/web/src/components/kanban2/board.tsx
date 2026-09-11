@@ -23,6 +23,8 @@ function semanticStageKey(value: ProjectStageKey): StageKey {
   return value === "editing" ? "editing_autohdr" : value;
 }
 
+const ARROW_CLASSES = "flex-none w-9 max-[641px]:w-11 pointer-coarse:w-11 min-h-[30px] max-[641px]:min-h-11 pointer-coarse:min-h-11 p-0 border-0 border-r border-r-border bg-card text-foreground-secondary text-sm leading-none cursor-pointer hover:not-disabled:bg-[var(--paper-100)] hover:not-disabled:text-foreground disabled:bg-surface-sunken disabled:cursor-not-allowed focus-visible:!outline-2 focus-visible:!outline-[var(--ink-900)] focus-visible:!outline-offset-[-2px]";
+
 /**
  * Where a dropped card will land (#99). Absolutely positioned inside the gap and ZERO-layout, and
  * that is load-bearing rather than cosmetic: the primitive hard-codes
@@ -56,9 +58,8 @@ function DropIndicator({ className }: { className: string }) {
  * Props are intentionally the exact `ProjectKanbanBoardProps` type from `lib/kanban-interaction`,
  * so the Dashboard's priority and stage coordinators are unchanged (#80 acceptance criteria).
  * `canPrioritize`, `pendingOrdering` and `onPriorityChange` are consumed as of #81,
- * `onInteractionStateChange` and `onAnnounce` as of #98, and `sameStageReorderEnabled` as of #99.
- * `onBoardPosition`, `onMoveStage` and `onMoveToProposalChange` are still accepted for contract
- * parity and unused; they belong to the non-drag controls still outstanding on #99.
+ * `onInteractionStateChange` and `onAnnounce` as of #98, and `sameStageReorderEnabled`,
+ * `onBoardPosition` (the arrows), `onMoveStage` and `onMoveToProposalChange` (Move to…) as of #99.
  *
  * The coarse-pointer column track is widened to 252px (#81): five 44px star targets need 220px,
  * and a 244px track leaves a 220px card — exactly zero slack — while the old 240px mobile track
@@ -80,6 +81,7 @@ export function ProjectKanbanBoard2({
   onPriorityChange,
   onAnnounce,
   onInteractionStateChange,
+  onBoardPosition,
   onMoveStage,
   onMoveToProposalChange,
   role,
@@ -177,6 +179,9 @@ export function ProjectKanbanBoard2({
     (item) => item.boardMapPresent === true || item.boardRank !== undefined || item.authorizedBoardOrder?.[item.stageKey] !== undefined,
   );
   const priorityEditable = canPrioritize && hasAuthorizedBoardMap && !terminal;
+  // Same-Stage reordering by any non-drag path — the arrows and Move to…'s same-Stage positions.
+  // `sameStageReorderEnabled` already folds in the movement flag, map evidence and Board sort.
+  const canReorder = canPrioritize && sameStageReorderEnabled && !terminal;
 
   // `restoreFocus: false` (below) hands focus back to us, so the Board keeps a handle registry and
   // refocuses the card the user was carrying. dnd-kit's own `RestoreFocus` only ever fired for
@@ -441,7 +446,16 @@ export function ProjectKanbanBoard2({
                     priorityPending={pendingOrdering?.has(project.id) ?? false}
                     onPriorityChange={onPriorityChange}
                     handleRef={registerHandle}
-                    moveTo={
+                    controls={<div className="flex items-stretch border-t border-t-border">
+                      {canReorder && <>
+                        {/* Adjacent one-slot nudges (#99), through the Dashboard's `adjacentBoardGap` and
+                            `/board-position`. Deliberately NOT disabled at a column's edge: the Dashboard
+                            restores focus to `arrow-up:<id>` after the move settles, and a disabled target
+                            would drop focus on the floor. An edge press is a silent no-op there instead.
+                            44px coarse-pointer targets, as on the handle. */}
+                        <button type="button" className={ARROW_CLASSES} data-focus-key={`arrow-up:${project.id}`} aria-label={`Move ${project.street} up`} disabled={dragDisabled || pendingMoves.has(project.id)} onClick={() => onBoardPosition(project, "up")}><span aria-hidden="true">↑</span></button>
+                        <button type="button" className={ARROW_CLASSES} data-focus-key={`arrow-down:${project.id}`} aria-label={`Move ${project.street} down`} disabled={dragDisabled || pendingMoves.has(project.id)} onClick={() => onBoardPosition(project, "down")}><span aria-hidden="true">↓</span></button>
+                      </>}
                       <MoveToControl
                         project={project}
                         model={boardModel}
@@ -450,12 +464,12 @@ export function ProjectKanbanBoard2({
                         role={role ?? "editor"}
                         sort={effectiveKanbanSort}
                         canMoveStages={canMoveStages}
-                        canReorder={canPrioritize && sameStageReorderEnabled}
+                        canReorder={canReorder}
                         disabled={dragDisabled || pendingMoves.has(project.id)}
                         onMoveStage={onMoveStage}
                         onProposalChange={handleMoveToProposal}
                       />
-                    }
+                    </div>}
                   />
                 </KanbanItem>
               ))}

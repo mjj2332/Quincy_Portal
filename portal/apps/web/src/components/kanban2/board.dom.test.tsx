@@ -529,6 +529,42 @@ describe("ProjectKanbanBoard2 (#80)", () => {
     });
   });
 
+  // #99: the one-slot nudge. The Board only reports the intent; the Dashboard owns the gap.
+  describe("up/down arrows (#99)", () => {
+    const arrows = () => host.querySelectorAll('[data-focus-key^="arrow-"]');
+    const up = () => host.querySelector<HTMLButtonElement>('[data-focus-key="arrow-up:source"]');
+    const down = () => host.querySelector<HTMLButtonElement>('[data-focus-key="arrow-down:source"]');
+
+    it("are offered only where the principal can reorder", async () => {
+      await renderBoard({ canPrioritize: true, sameStageReorderEnabled: false });
+      expect(host.querySelector('[data-focus-key="move-to:source"]'), "anchor: the card's controls rendered").not.toBeNull();
+      expect(arrows()).toHaveLength(0);
+
+      await renderBoard({ canPrioritize: false, sameStageReorderEnabled: true });
+      expect(arrows()).toHaveLength(0);
+
+      await renderBoard({ canPrioritize: true, sameStageReorderEnabled: true });
+      expect(up()?.getAttribute("aria-label")).toBe("Move source Street up");
+      expect(down()?.getAttribute("aria-label")).toBe("Move source Street down");
+    });
+
+    it("report the direction pressed, for the Dashboard to resolve", async () => {
+      const props = await renderBoard({ canPrioritize: true, sameStageReorderEnabled: true });
+      const { act } = await import("react");
+      await act(async () => { up()!.click(); await Promise.resolve(); });
+      await act(async () => { down()!.click(); await Promise.resolve(); });
+      const calls = (props.onBoardPosition as ReturnType<typeof vi.fn>).mock.calls;
+      expect(calls.map(([moved, direction]) => [moved.id, direction])).toEqual([["source", "up"], ["source", "down"]]);
+    });
+
+    it("are disabled while movement is locked", async () => {
+      await renderBoard({ canPrioritize: true, sameStageReorderEnabled: true, pendingOrdering: new Set(["other"]) });
+      expect(up(), "no arrows rendered").not.toBeNull();
+      expect(up()!.disabled).toBe(true);
+      expect(down()!.disabled).toBe(true);
+    });
+  });
+
   it("does not move a card dropped back onto its own column", async () => {
     const props = await renderBoard();
     await endDrag("source", "awaiting_raw");

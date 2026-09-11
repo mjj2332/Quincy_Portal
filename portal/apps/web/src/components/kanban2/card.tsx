@@ -114,18 +114,18 @@ export type KanbanCard2Props = {
    */
   handleRef?: (projectId: string, element: HTMLButtonElement | null) => void;
   /**
-   * The Board's non-drag Move-to control (#99). A slot rather than a component the card builds, so
-   * the card stays presentation-only. Never rendered in the drag overlay, which must carry no
-   * interactive element (#98).
+   * The Board's non-drag controls (#99): the up/down arrows and Move to…. A slot rather than
+   * controls the card builds, so the card stays presentation-only. Never rendered in the drag
+   * overlay, which must carry no interactive element (#98).
    */
-  moveTo?: ReactNode;
+  controls?: ReactNode;
 };
 
 /**
  * Composed on the `card` surface (#76 "Block and surface"). Quincy's `--radius-card` is 0, so
  * the corners render square — that is correct, not a porting defect.
  */
-export function KanbanCard2({ project, projectHref, isOverlay = false, dragDisabled = false, canPrioritize = false, priorityPending = false, onPriorityChange, handleRef, moveTo }: KanbanCard2Props) {
+export function KanbanCard2({ project, projectHref, isOverlay = false, dragDisabled = false, canPrioritize = false, priorityPending = false, onPriorityChange, handleRef, controls }: KanbanCard2Props) {
   const [coverFailed, setCoverFailed] = useState(false);
   const [coverRetry, setCoverRetry] = useState(0);
   const overdue = isDeadlineOverdue(project.deadlineAt);
@@ -189,7 +189,7 @@ export function KanbanCard2({ project, projectHref, isOverlay = false, dragDisab
           />
         )}
       </div>
-      {!isOverlay && moveTo}
+      {!isOverlay && controls}
       {!isOverlay && (
         // 44px touch target — WCAG 2.5.5 Enhanced / HIG, not a spacing token — matching the
         // existing Board's handle (`ProjectKanbanBoard.tsx`).
