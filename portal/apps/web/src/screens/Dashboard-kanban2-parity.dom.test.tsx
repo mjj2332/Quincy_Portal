@@ -195,6 +195,188 @@ describe("Dashboard at view=kanban2 (#98)", () => {
         targetStageKey: "raw_review",
         confirmation: { reasons: ["backward"] },
       }));
+
+      // #99: the card was dropped ON kb2-target, so it lands before it — and the confirmed retry must
+      // resend that exact placement, not fall back to an append once the modal has intervened.
+      const exact = { kind: "between", before: null, after: { projectId: "kb2-target", boardRevision: 0 } };
+      expect(apiPostMock.mock.calls[0]![1]).toHaveProperty("placement", exact);
+      expect(apiPostMock.mock.calls[1]![1]).toHaveProperty("placement", exact);
+    });
+
+    // #99 at the seam that reaches the server: a drop on a MIDDLE card resolves to both real
+    // neighbours, so neither an append nor a "first" placement can satisfy it.
+    it("sends the exact neighbours of a middle-card drop to /stage", async () => {
+      apiGetMock.mockReset();
+      apiGetMock.mockImplementation((path) => path === "/api/projects" ? Promise.resolve({
+        projects: [
+          projectFixture("kb2-source", { boardMapPresent: true }),
+          projectFixture("kb2-t1", { stageKey: "raw_review", boardPosition: 1, boardRevision: 3, boardMapPresent: true }),
+          projectFixture("kb2-t2", { stageKey: "raw_review", boardPosition: 2, boardRevision: 5, boardMapPresent: true }),
+          projectFixture("kb2-t3", { stageKey: "raw_review", boardPosition: 3, boardRevision: 7, boardMapPresent: true }),
+        ],
+        board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: ["kb2-source"], raw_review: ["kb2-t1", "kb2-t2", "kb2-t3"] } },
+      }) : Promise.resolve({ stages: [] }));
+      apiPostMock.mockReset().mockReturnValue(new Promise(() => undefined));
+      await act(async () => { root!.render(<><Dashboard currentUserId="admin-1" /><ConfirmModalHost /></>); await Promise.resolve(); await Promise.resolve(); });
+      await vi.waitFor(() => expect(document.querySelectorAll('[data-testid="kanban2-card-address"]')).toHaveLength(4));
+
+      const handler = dnd.handlers.at(-1)?.onDragEnd;
+      expect(handler, "no drag-end handler captured — the Board did not mount a DndContext").not.toBeUndefined();
+      await act(async () => { handler!({ active: { id: "kb2-source" }, over: { id: "kb2-t2" } }); await Promise.resolve(); });
+      await vi.waitFor(() => expect(apiPostMock, "the drop never reached the server — nothing below is proved").toHaveBeenCalledTimes(1));
+
+      expect(apiPostMock).toHaveBeenCalledWith("/api/projects/kb2-source/stage", expect.objectContaining({
+        targetStageKey: "raw_review",
+        placement: { kind: "between", before: { projectId: "kb2-t1", boardRevision: 3 }, after: { projectId: "kb2-t2", boardRevision: 5 } },
+      }));
+    });
+  });
+
+  // #99. A same-column drop is a Board-position command, never a Stage command: it must reach
+  // `/board-position` with exact neighbours and no confirmation — that branch forbids one.
+  describe("same-column reordering", () => {
+    it("sends an upward reorder to /board-position with exact neighbours and no confirmation", async () => {
+      apiGetMock.mockReset();
+      apiGetMock.mockImplementation((path) => path === "/api/projects" ? Promise.resolve({
+        projects: [
+          projectFixture("kb2-a", { boardPosition: 0, boardRevision: 2, boardMapPresent: true }),
+          projectFixture("kb2-b", { boardPosition: 1, boardRevision: 4, boardMapPresent: true }),
+          projectFixture("kb2-c", { boardPosition: 2, boardRevision: 6, boardMapPresent: true }),
+        ],
+        board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: ["kb2-a", "kb2-b", "kb2-c"] } },
+      }) : Promise.resolve({ stages: [] }));
+      apiPostMock.mockReset().mockReturnValue(new Promise(() => undefined));
+      await act(async () => { root!.render(<><Dashboard currentUserId="admin-1" /><ConfirmModalHost /></>); await Promise.resolve(); await Promise.resolve(); });
+      await vi.waitFor(() => expect(document.querySelectorAll('[data-testid="kanban2-card-address"]')).toHaveLength(3));
+
+      const handler = dnd.handlers.at(-1)?.onDragEnd;
+      expect(handler, "no drag-end handler captured — the Board did not mount a DndContext").not.toBeUndefined();
+      await act(async () => { handler!({ active: { id: "kb2-c" }, over: { id: "kb2-b" } }); await Promise.resolve(); });
+      await vi.waitFor(() => expect(apiPostMock, "the reorder never reached the server — nothing below is proved").toHaveBeenCalledTimes(1));
+
+      const [path, body] = apiPostMock.mock.calls[0]!;
+      expect(path).toBe("/api/projects/kb2-c/board-position");
+      expect(body).toHaveProperty("placement", { kind: "between", before: { projectId: "kb2-a", boardRevision: 2 }, after: { projectId: "kb2-b", boardRevision: 4 } });
+      expect(body).not.toHaveProperty("confirmation");
+    });
+
+    // The arrows reach the same `/board-position` orchestrator as a drag, one slot at a time, and the
+    // focus comes back to the arrow that was pressed.
+    it("sends an up-arrow press to /board-position one slot up, and refocuses that arrow", async () => {
+      apiGetMock.mockReset();
+      apiGetMock.mockImplementation((path) => path === "/api/projects" ? Promise.resolve({
+        projects: [
+          projectFixture("kb2-a", { boardPosition: 0, boardRevision: 2, boardMapPresent: true }),
+          projectFixture("kb2-b", { boardPosition: 1, boardRevision: 4, boardMapPresent: true }),
+          projectFixture("kb2-c", { boardPosition: 2, boardRevision: 6, boardMapPresent: true }),
+        ],
+        board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: ["kb2-a", "kb2-b", "kb2-c"] } },
+      }) : Promise.resolve({ stages: [] }));
+      apiPostMock.mockReset().mockResolvedValue({
+        changed: true,
+        project: { projectId: "kb2-c", stageKey: "awaiting_raw", boardRevision: 7 },
+        board: { sourceStageKey: "awaiting_raw", targetStageKey: "awaiting_raw", orderedVisibleProjectIds: ["kb2-a", "kb2-c", "kb2-b"] },
+      });
+      await act(async () => { root!.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); await Promise.resolve(); });
+      await vi.waitFor(() => expect(document.querySelector('[data-focus-key="arrow-up:kb2-c"]'), "no up arrow rendered — nothing below is proved").not.toBeNull());
+
+      await act(async () => { document.querySelector<HTMLButtonElement>('[data-focus-key="arrow-up:kb2-c"]')!.click(); await Promise.resolve(); });
+      await vi.waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1));
+
+      const [path, body] = apiPostMock.mock.calls[0]!;
+      expect(path).toBe("/api/projects/kb2-c/board-position");
+      expect(body).toHaveProperty("placement", { kind: "between", before: { projectId: "kb2-a", boardRevision: 2 }, after: { projectId: "kb2-b", boardRevision: 4 } });
+      expect(body).not.toHaveProperty("confirmation");
+      await vi.waitFor(() => expect(document.activeElement?.getAttribute("data-focus-key")).toBe("arrow-up:kb2-c"));
+    });
+  });
+
+  // #99's non-drag path at the seam that reaches the server. The chooser does no confirming of its
+  // own: a cross-Stage submit must go through the same 409 modal round trip as a drop.
+  describe("Move-to chooser", () => {
+    const twoStages = () => ({
+      projects: [
+        projectFixture("kb2-source", { boardMapPresent: true }),
+        projectFixture("kb2-target", { stageKey: "raw_review", boardPosition: 1, boardRevision: 5, boardMapPresent: true }),
+      ],
+      board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: ["kb2-source"], raw_review: ["kb2-target"] } },
+    });
+    const click = async (element: HTMLElement | null | undefined, what: string) => {
+      if (!element) throw new Error(`Missing ${what}`);
+      await act(async () => { element.click(); await Promise.resolve(); });
+    };
+    // Literal selectors only (test-seam guard B), so one finder per role rather than a shared one.
+    const radio = (text: string) => [...document.querySelectorAll<HTMLButtonElement>('[role="radio"]')].find((node) => node.textContent?.startsWith(text));
+    const option = (text: string) => [...document.querySelectorAll<HTMLButtonElement>('[role="option"]')].find((node) => node.textContent?.startsWith(text));
+    const button = (text: string) => [...document.querySelectorAll<HTMLButtonElement>("button")].find((node) => node.textContent?.startsWith(text));
+    const flush = () => act(async () => { await Promise.resolve(); await Promise.resolve(); await new Promise<void>((resolve) => setTimeout(resolve, 0)); });
+    async function chooseBeforeTarget() {
+      await click(document.querySelector<HTMLButtonElement>('[data-focus-key="move-to:kb2-source"]'), "Move-to trigger");
+      await click(radio("RAW review"), "RAW review Stage");
+      await click(option("Before kb2-target Street"), "Before kb2-target position");
+    }
+
+    it("sends the chosen position, confirms through the 409 modal, and gives the trigger back", async () => {
+      apiGetMock.mockReset();
+      apiGetMock.mockImplementation((path) => path === "/api/projects" ? Promise.resolve(twoStages()) : Promise.resolve({ stages: [] }));
+      apiPostMock.mockReset()
+        .mockRejectedValueOnce(new ApiError("Confirmation required", 409, { code: "stage_confirmation_required", requiredConfirmation: { reasons: ["backward"] } }))
+        .mockResolvedValueOnce({
+          changed: true,
+          project: { projectId: "kb2-source", stageKey: "raw_review", boardRevision: 1 },
+          board: { sourceStageKey: "awaiting_raw", targetStageKey: "raw_review", orderedVisibleProjectIds: ["kb2-source", "kb2-target"] },
+        });
+      await act(async () => { root!.render(<><Dashboard currentUserId="admin-1" /><ConfirmModalHost /></>); await Promise.resolve(); await Promise.resolve(); });
+      await vi.waitFor(() => expect(document.querySelector('[data-focus-key="move-to:kb2-source"]')).not.toBeNull());
+
+      await chooseBeforeTarget();
+      await click(document.querySelector('[data-testid="kanban2-move-to-submit"]'), "submit");
+      await vi.waitFor(() => expect(apiPostMock, "the Move-to submit never reached the server").toHaveBeenCalledTimes(1));
+
+      const exact = { kind: "between", before: null, after: { projectId: "kb2-target", boardRevision: 5 } };
+      expect(apiPostMock.mock.calls[0]![0]).toBe("/api/projects/kb2-source/stage");
+      expect(apiPostMock.mock.calls[0]![1]).toHaveProperty("placement", exact);
+      expect(apiPostMock.mock.calls[0]![1]).not.toHaveProperty("confirmation");
+
+      await click(document.querySelector('[data-testid="confirm-modal-confirm"]'), "confirm modal — the 409 was dropped or silently retried");
+      await vi.waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(2));
+      expect(apiPostMock.mock.calls[1]![1]).toEqual(expect.objectContaining({ placement: exact, confirmation: { reasons: ["backward"] } }));
+
+      await flush(); await flush();
+      await vi.waitFor(() => expect(document.activeElement?.getAttribute("data-focus-key")).toBe("move-to:kb2-source"));
+    });
+
+    // Ported from the default-view scenario in `Dashboard-stage-interactions.dom.test.tsx`: the chosen
+    // neighbour disappears between choosing and submitting, so the move must abort locally — no
+    // request, no guess at a new position — refetch once, and hand the trigger back.
+    it("aborts a stale position locally, refetches, and restores its trigger", async () => {
+      let projectFetches = 0;
+      const stale = { ...twoStages(), projects: [projectFixture("kb2-source", { boardMapPresent: true })], board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: ["kb2-source"] } } };
+      apiGetMock.mockReset();
+      apiGetMock.mockImplementation((path) => path === "/api/projects"
+        ? Promise.resolve(projectFetches++ === 0 ? twoStages() : stale)
+        : Promise.resolve({ stages: [] }));
+      apiPostMock.mockReset();
+      const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      const runtime = new ProjectQueryRuntime(queryClient, "kanban2-move-to-stale-test");
+      await act(async () => {
+        root!.render(<ProjectQueryRuntimeProvider runtime={runtime}><QueryClientProvider client={queryClient}><Dashboard currentUserId="admin-1" /></QueryClientProvider></ProjectQueryRuntimeProvider>);
+        await Promise.resolve();
+      });
+      await vi.waitFor(() => expect(document.querySelector('[data-focus-key="move-to:kb2-source"]')).not.toBeNull());
+
+      await chooseBeforeTarget();
+      runtime.markProjectRemoved("kb2-target");
+      await flush();
+      await click(document.querySelector('[data-testid="kanban2-move-to-submit"]'), "submit");
+      await flush(); await flush();
+
+      expect(apiPostMock).not.toHaveBeenCalled();
+      expect(document.querySelector('[data-testid="dashboard-live-region"]')?.textContent).toContain("That position changed");
+      expect(projectFetches).toBe(2);
+      expect(document.activeElement?.getAttribute("data-focus-key")).toBe("move-to:kb2-source");
+      runtime.dispose();
+      queryClient.clear();
     });
   });
 
@@ -376,5 +558,99 @@ describe("Dashboard at view=kanban2 (#98)", () => {
       dragRuntime.dispose(); otherRuntime.dispose(); dragClient.clear(); otherClient.clear();
       vi.unstubAllGlobals();
     }
+  });
+
+  // #99 AC (added by the owner): a successful move must be announced exactly ONCE. The Dashboard has
+  // two polite live regions on screen at the same time — its own (`dashboard-live-region`) and the
+  // toast viewport — and the move-commit path writes to both, so a screen reader heard the same event
+  // twice. It is not a new-Board defect: `onMoveStage` is shared by both Boards, which is why it was
+  // left out of #98 rather than smuggled into a Board-parity PR.
+  //
+  // The fix is a subtraction, and the toast stays on SCREEN: suppressed toasts are `aria-hidden`, not
+  // unrendered. Both halves are asserted here, because "fixed it by deleting the toast" would
+  // otherwise pass.
+  describe("announce a successful move exactly once (#99)", () => {
+    function twoStages() {
+      apiGetMock.mockReset();
+      apiGetMock.mockImplementation((path) => path === "/api/projects" ? Promise.resolve({
+        projects: [
+          projectFixture("kb2-source", { boardMapPresent: true }),
+          projectFixture("kb2-target", { stageKey: "raw_review", boardPosition: 1, boardMapPresent: true }),
+        ],
+        board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: ["kb2-source"], raw_review: ["kb2-target"] } },
+      }) : Promise.resolve({ stages: [] }));
+    }
+
+    it("speaks the move in the Dashboard region and keeps the toast visible but silent", async () => {
+      twoStages();
+      // Resolves 200 on the first call, so this is the settled-success path with no confirm modal.
+      apiPostMock.mockReset().mockResolvedValue({
+        changed: true,
+        project: { projectId: "kb2-source", stageKey: "raw_review", boardRevision: 1 },
+        board: { sourceStageKey: "awaiting_raw", targetStageKey: "raw_review", orderedVisibleProjectIds: ["kb2-target", "kb2-source"] },
+      });
+      await act(async () => { root!.render(<><Dashboard currentUserId="admin-1" /><ConfirmModalHost /></>); await Promise.resolve(); await Promise.resolve(); });
+      await vi.waitFor(() => expect(document.querySelector('[data-testid="kanban2-column"]')).not.toBeNull());
+
+      const handler = dnd.handlers.at(-1)?.onDragEnd;
+      expect(handler, "no drag-end handler captured — the Board did not mount a DndContext").not.toBeUndefined();
+      await act(async () => { handler!({ active: { id: "kb2-source" }, over: { id: "kb2-target" } }); await Promise.resolve(); });
+      await vi.waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1));
+      await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+      // Anchor: if the move did not actually succeed there is no success toast to be silent, and every
+      // assertion below would pass vacuously.
+      const toast = await vi.waitFor(() => {
+        const found = [...document.querySelectorAll<HTMLElement>('[data-testid="dashboard-toast"]')]
+          .find((node) => node.textContent?.includes("Moved to"));
+        expect(found, "no success toast rendered — the move did not settle, so nothing here is proved").not.toBeUndefined();
+        return found!;
+      });
+
+      expect(document.querySelector('[data-testid="dashboard-live-region"]')?.textContent)
+        .toContain("Moved kb2-source Street to");
+
+      // The toast is still on screen for sighted users...
+      expect(document.contains(toast)).toBe(true);
+      // ...and out of the accessibility tree, so the toast viewport's live region has nothing new to
+      // announce. An aria-hidden subtree mutating inside a live region produces no announcement.
+      expect(
+        toast.getAttribute("aria-hidden"),
+        "the success toast is still in the accessibility tree, so this event is announced twice",
+      ).toBe("true");
+    });
+
+    // Sol review: a silenced toast must not carry information the live region lacks. The priority
+    // failure used to speak a generic line while its now-silent toast showed the specific reason.
+    it("speaks the same specific reason a silenced error toast shows", async () => {
+      apiGetMock.mockReset();
+      apiGetMock.mockImplementation((path) => path === "/api/projects" ? Promise.resolve({
+        projects: [projectFixture("kb2-prio", { priority: 1, boardMapPresent: true })],
+        board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: ["kb2-prio"] } },
+      }) : Promise.resolve({ stages: [] }));
+      apiPostMock.mockReset().mockRejectedValue(new Error("Priority is locked for this project."));
+      await act(async () => { root!.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); await Promise.resolve(); });
+      await vi.waitFor(() => expect(document.querySelector('[role="radiogroup"]'), "no Priority control rendered").not.toBeNull());
+
+      const third = [...document.querySelectorAll<HTMLElement>('[role="radiogroup"] [role="radio"]')][2];
+      await act(async () => { third!.click(); await Promise.resolve(); });
+      const toast = await vi.waitFor(() => {
+        const found = [...document.querySelectorAll<HTMLElement>('[data-testid="dashboard-toast"]')].find((node) => node.textContent?.includes("Priority is locked"));
+        expect(found, "anchor: the failure toast never rendered").not.toBeUndefined();
+        return found!;
+      });
+      expect(toast.getAttribute("aria-hidden")).toBe("true");
+      expect(document.querySelector('[data-testid="dashboard-live-region"]')?.textContent).toContain("Priority is locked for this project.");
+    });
+
+    // The opt-out is per toast, NOT a removal of the viewport's `aria-live`: every Dashboard toast
+    // happens to pair with an announcement today, so dropping the attribute would look green while
+    // silently making any future unpaired toast unannounceable. This pins the capability rather than
+    // an observed behaviour, and says so.
+    it("leaves the toast viewport live for toasts that are not announced elsewhere", async () => {
+      await act(async () => { root!.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); await Promise.resolve(); });
+      await vi.waitFor(() => expect(document.querySelector('[data-testid="kanban2-column"]')).not.toBeNull());
+      expect(document.querySelector('[data-testid="dashboard-toast-viewport"]')?.getAttribute("aria-live")).toBe("polite");
+    });
   });
 });

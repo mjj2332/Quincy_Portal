@@ -1599,3 +1599,56 @@ that are easy to get wrong separately:
 **Rule.** For a vendored a11y behaviour you are about to disable, find the code path that triggers it
 before assuming what it covers. "Restores focus" meant "restores focus for one of the two input
 methods, in a way that can scroll the page".
+
+## The hovered card is not the successor when you drag downwards (#99, 2026-09-11)
+
+A drop is stored as "before project X", so the Board has to turn the primitive's `overIndex` into a
+successor id. The obvious reading is that the hovered card is the successor (`event.over.id`). That is
+right across Stages and when dragging **up** within a column. It is wrong when dragging **down**
+within a column, and one of the two planners argued for it.
+
+`overIndex` is the hovered card's index in the column *as rendered, mover included*. Take the mover
+out first and index into what remains:
+
+```ts
+const withoutMover = (columns[overContainer] ?? []).filter((p) => p.id !== projectId);
+const successor = withoutMover[overIndex]?.id ?? "end";
+```
+
+Dragging down, removing the mover shifts every later index by one, so the successor becomes the card
+*after* the hovered one: the card lands after the card it was released on, which is what the user
+saw. `over.id` lands every downward move one slot early. In a three-card column, releasing the top
+card on the middle one then resolves to "before the middle card", exactly where it already was, and
+the move silently becomes a no-op. A column hit reports `overIndex === length` and falls off the end
+to `"end"`.
+
+**Rule.** When converting a drop index into a neighbour, write down the three cases (cross-container,
+same container up, same container down) and pin the downward one with a test first. It is the only
+case in which the obvious answer is wrong.
+
+## A focus test can pass because something else restored focus (#99, 2026-09-11)
+
+The Move-to chooser closes by refocusing its trigger with `focus({ preventScroll: true })`. Its
+Cancel and Escape tests asserted `document.activeElement === trigger`. Deleting the refocus left both
+tests **green**. The anchored popover returns focus to its reference element on close by itself, so
+the assertion was satisfied whether or not the chooser's own code ran. The test pinned the popover,
+not the code it was written for, and only a revert-proof showed it.
+
+What the chooser's refocus actually adds is `preventScroll`, because a bare `.focus()` on a trigger
+low on a long Board scrolls it. The test now spies on the trigger's `focus` and asserts it was called
+with `{ preventScroll: true }`. That goes red when the refocus is removed.
+
+**Rule.** When two layers can both produce an outcome, asserting the outcome proves neither of them.
+Revert your line and watch the test. If it stays green, assert what only your line contributes.
+
+## A NUL byte made `grep` report nothing, and nothing looked wrong (#99, 2026-09-11)
+
+A template-literal separator was typed as a raw NUL character. The code compiled and every test
+passed. But `grep` now treated `board.tsx` as a binary file, so `grep -n` and `grep -c` against it
+printed nothing, not even `0`. That reads exactly like "no match". A verification step
+("is the old name gone?") briefly reported success against a file it had never actually searched.
+`file` gave it away: `data` instead of `UTF-8 text`.
+
+**Rule.** When `grep` prints nothing for a string you have just written, distrust the grep before
+the file. Check `file <path>` or use `grep -a`. Separators in keys should be visible characters
+(`|`), never control characters.

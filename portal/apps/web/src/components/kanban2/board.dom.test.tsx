@@ -102,6 +102,7 @@ function baseProps(overrides: Partial<ProjectKanbanBoardProps> = {}): ProjectKan
     onBoardPosition: vi.fn(),
     onPriorityChange: vi.fn(),
     onMoveStage: vi.fn(),
+    onMoveToProposalChange: vi.fn(),
     onAnnounce: vi.fn(),
     onInteractionStateChange: vi.fn(),
     ...overrides,
@@ -141,7 +142,7 @@ function capturedAnnouncements(): CapturedAnnouncements {
   return announcements;
 }
 
-async function fireDnd(name: "onDragStart" | "onDragCancel" | "onDragEnd", event: unknown) {
+async function fireDnd(name: "onDragStart" | "onDragOver" | "onDragCancel" | "onDragEnd", event: unknown) {
   const { act } = await import("react");
   const handler = dnd.handlers.at(-1)?.props?.[name] as ((event: unknown) => void) | undefined;
   if (!handler) throw new Error(`No ${name} handler captured`);
@@ -258,6 +259,363 @@ describe("ProjectKanbanBoard2 (#80)", () => {
     expect(projectId).toBe("source");
     expect(gap).toEqual({ targetStageKey: "raw_review", successor: "end" });
     expect(kind).toBe("cross");
+  });
+
+  // #99: a drop lands where it was released, not appended. Three targets, so the middle one is a
+  // card that is neither first nor last — an "append" or "first" shortcut cannot pass this.
+  describe("exact cross-Stage placement (#99)", () => {
+    const threeTargets = () => [project("source", "awaiting_raw"), project("t1", "raw_review"), project("t2", "raw_review"), project("t3", "raw_review")];
+
+    it("lands a card dropped on a middle card before that card", async () => {
+      const props = await renderBoard({ projects: threeTargets() });
+      await endDrag("source", "t2");
+      expect(props.onBoardMove, "the drop was rejected — the gap below is never produced").toHaveBeenCalledTimes(1);
+      expect((props.onBoardMove as ReturnType<typeof vi.fn>).mock.calls[0]![1]).toEqual({ targetStageKey: "raw_review", successor: "t2" });
+    });
+
+    it("lands a card dropped on the column itself at the end", async () => {
+      const props = await renderBoard({ projects: threeTargets() });
+      await endDrag("source", "raw_review");
+      expect(props.onBoardMove).toHaveBeenCalledTimes(1);
+      expect((props.onBoardMove as ReturnType<typeof vi.fn>).mock.calls[0]![1]).toEqual({ targetStageKey: "raw_review", successor: "end" });
+    });
+
+    // The hover copy must describe the gap the drop would commit, card by card — de-duplicating by
+    // container (the #98 behaviour) would swallow the second card's position entirely.
+    it("narrates each card-relative position in a Stage, once each", async () => {
+      await renderBoard({ projects: threeTargets() });
+      const { onDragOver } = capturedAnnouncements();
+      const over = (id: string) => ({ active: { id: "source" }, over: { id } });
+      expect(onDragOver(over("t1"))).toBe("source Street is over RAW review, position 1 of 4.");
+      expect(onDragOver(over("t2"))).toBe("source Street is over RAW review, position 2 of 4.");
+      // A stationary hover repeats the event; the live region must not re-read it.
+      expect(onDragOver(over("t2"))).toBeUndefined();
+      expect(onDragOver(over("raw_review"))).toBe("source Street is over the end of RAW review, position 4 of 4.");
+    });
+
+    // Sol review: the indicator redraws when the pointer comes back to a gap after a refused one, so
+    // the narration must speak it again rather than treat it as a repeat.
+    it("speaks a gap again after passing over a refused one", async () => {
+      await renderBoard({ projects: [...threeTargets(), project("sibling", "awaiting_raw")] });
+      const { onDragOver } = capturedAnnouncements();
+      const over = (id: string) => ({ active: { id: "source" }, over: { id } });
+      const first = onDragOver(over("t2"));
+      expect(first, "anchor").toBe("source Street is over RAW review, position 2 of 4.");
+      // Its own Stage: refused (same-Stage reordering is off here).
+      expect(onDragOver(over("sibling"))).toBeUndefined();
+      expect(onDragOver(over("t2"))).toBe(first);
+    });
+
+    // The drop indicator. These fire the DndContext's own `onDragOver` — the vendored primitive's
+    // handler — so they also pin the `reui/kanban.tsx` pass-through: upstream returns before any
+    // consumer hook whenever `onMove` is set, and with that early return the indicator never draws.
+    describe("drop indicator", () => {
+      const indicators = () => [...host.querySelectorAll<HTMLElement>('[data-testid="kanban2-drop-indicator"]')];
+      const hover = (overId: string) => fireDnd("onDragOver", { active: { id: "source" }, over: { id: overId } });
+
+      it("marks the gap before a hovered middle card, and nowhere else", async () => {
+        await renderBoard({ projects: threeTargets() });
+        await fireDnd("onDragStart", { active: { id: "source" } });
+        await hover("t2");
+        expect(indicators(), "no indicator drawn — the hover never reached the Board").toHaveLength(1);
+        // It sits in t2's item, ahead of t2's card — the gap between t1 and t2.
+        const item = indicators()[0]!.parentElement!;
+        expect(item.textContent).toContain("t2 Street");
+        expect(item.firstElementChild).toBe(indicators()[0]);
+      });
+
+      it("marks the end of a hovered column, after its last card", async () => {
+        await renderBoard({ projects: threeTargets() });
+        await hover("raw_review");
+        expect(indicators()).toHaveLength(1);
+        expect(indicators()[0]!.previousElementSibling?.textContent).toContain("t3 Street");
+        expect(indicators()[0]!.nextElementSibling).toBeNull();
+      });
+
+      // happy-dom has no layout, so this pins the classes that take the indicator out of flow. An
+      // in-flow indicator shifts the cards, and with the primitive's `MeasuringStrategy.Always` that
+      // moves the collision target and flip-flops. The real geometry is a browser-pass claim.
+      it("is out of flow, inert and hidden from assistive technology", async () => {
+        await renderBoard({ projects: threeTargets() });
+        await hover("t1");
+        const indicator = indicators()[0];
+        expect(indicator, "no indicator drawn — nothing below is proved").not.toBeUndefined();
+        expect(indicator!.className.split(" ")).toEqual(expect.arrayContaining(["absolute", "pointer-events-none"]));
+        expect(indicator!.getAttribute("aria-hidden")).toBe("true");
+        expect(indicator!.parentElement!.className.split(" ")).toContain("relative");
+      });
+
+      it("offers no gap in the card's own Stage, which still rejects a drop", async () => {
+        await renderBoard({ projects: [...threeTargets(), project("sibling", "awaiting_raw")] });
+        await hover("t1");
+        expect(indicators(), "anchor: a cross-Stage hover draws one").toHaveLength(1);
+        await hover("sibling");
+        expect(indicators()).toHaveLength(0);
+      });
+
+      it("clears on drop and on cancel", async () => {
+        await renderBoard({ projects: threeTargets() });
+        await hover("t2");
+        expect(indicators(), "anchor").toHaveLength(1);
+        await fireDnd("onDragEnd", { active: { id: "source" }, over: null });
+        expect(indicators()).toHaveLength(0);
+
+        await hover("t2");
+        expect(indicators(), "anchor").toHaveLength(1);
+        await fireDnd("onDragCancel", { active: { id: "source" } });
+        expect(indicators()).toHaveLength(0);
+      });
+    });
+  });
+
+  // #99. Distinct boardRanks, so the column's Board order is s1, s2, s3 and not a tie-break.
+  describe("same-column reordering (#99)", () => {
+    const column = () => [
+      project("s1", "awaiting_raw", { boardRank: 0 }),
+      project("s2", "awaiting_raw", { boardRank: 1 }),
+      project("s3", "awaiting_raw", { boardRank: 2 }),
+      project("other", "raw_review"),
+    ];
+    const reorder = (overrides: Partial<ProjectKanbanBoardProps> = {}) => renderBoard({ projects: column(), canPrioritize: true, sameStageReorderEnabled: true, ...overrides });
+    const moveCall = (props: ProjectKanbanBoardProps) => (props.onBoardMove as ReturnType<typeof vi.fn>).mock.calls[0];
+
+    // The off-by-one both planners disagreed about. Dragging DOWN, the card lands AFTER the card it
+    // was released on — the successor is the card after that one. Reading `over.id` as the
+    // successor lands it one slot early: before s3 is a real move, before s2 is no move at all.
+    it("lands a downward drop after the card it was released on", async () => {
+      let props = await reorder();
+      await endDrag("s1", "s2");
+      expect(moveCall(props), "the downward drop was rejected").not.toBeUndefined();
+      expect(moveCall(props)!.slice(1, 3)).toEqual([{ targetStageKey: "awaiting_raw", successor: "s3" }, "same"]);
+
+      props = await reorder();
+      await endDrag("s1", "s3");
+      expect(moveCall(props), "the drop onto the last card was rejected").not.toBeUndefined();
+      expect(moveCall(props)!.slice(1, 3)).toEqual([{ targetStageKey: "awaiting_raw", successor: "end" }, "same"]);
+    });
+
+    it("lands an upward drop before the card it was released on", async () => {
+      const props = await reorder();
+      await endDrag("s3", "s1");
+      expect(moveCall(props), "the upward drop was rejected").not.toBeUndefined();
+      expect(moveCall(props)!.slice(1, 3)).toEqual([{ targetStageKey: "awaiting_raw", successor: "s1" }, "same"]);
+    });
+
+    // Picking a card up needs EITHER capability. Gating the whole drag on `canMoveStages` — as this
+    // Board did before #99 — silently locks a prioritize-only principal out of reordering.
+    it("lets a principal who can reorder but not change Stage reorder, and only reorder", async () => {
+      const props = await reorder({ canMoveStages: false });
+      const handle = host.querySelector<HTMLButtonElement>('[data-focus-key="move-handle:s3"]');
+      expect(handle, "no handle rendered").not.toBeNull();
+      expect(handle!.disabled).toBe(false);
+      await endDrag("s1", "raw_review");
+      expect(props.onBoardMove, "a Stage change went through without the capability").not.toHaveBeenCalled();
+      await endDrag("s3", "s1");
+      expect(moveCall(props)?.[2]).toBe("same");
+    });
+
+    it("treats a drop back into the card's own slot as no move, and says so", async () => {
+      const props = await reorder();
+      const handle = host.querySelector<HTMLButtonElement>('[data-focus-key="move-handle:s1"]');
+      // Released on itself: the gap is "before s2", which is exactly where s1 already is.
+      await endDrag("s1", "s1");
+      expect(props.onBoardMove).not.toHaveBeenCalled();
+      expect(props.onAnnounce).toHaveBeenCalledWith("Cancelled moving s1 Street. It remains in Awaiting RAW.");
+      expect(document.activeElement).toBe(handle);
+    });
+
+    it("narrates and marks a position in the card's own Stage", async () => {
+      await reorder();
+      expect(capturedAnnouncements().onDragOver({ active: { id: "s1" }, over: { id: "s3" } }))
+        .toBe("s1 Street is over the end of Awaiting RAW, position 3 of 3.");
+      await fireDnd("onDragOver", { active: { id: "s3" }, over: { id: "s1" } });
+      const indicator = host.querySelector('[data-testid="kanban2-drop-indicator"]');
+      expect(indicator, "no indicator in the card's own Stage").not.toBeNull();
+      expect(indicator!.parentElement!.textContent).toContain("s1 Street");
+    });
+  });
+
+  // #99's non-drag path. The popover is portalled, so option queries run on `document`.
+  describe("Move-to chooser (#99)", () => {
+    // Positions come from the authorized order map, which the Dashboard attaches to every project it
+    // hands the Board (`lib/dashboard-projects.ts`); without it only "End of" can be offered.
+    const withMap = (projects: ProjectSummary[]) => {
+      const authorizedBoardOrder: Record<string, string[]> = {};
+      for (const item of projects) (authorizedBoardOrder[item.stageKey] ??= []).push(item.id);
+      return projects.map((item) => ({ ...item, authorizedBoardOrder }));
+    };
+    const threeTargets = () => withMap([project("source", "awaiting_raw"), project("t1", "raw_review"), project("t2", "raw_review"), project("t3", "raw_review")]);
+    const indicators = () => host.querySelectorAll('[data-testid="kanban2-drop-indicator"]');
+    const click = async (element: HTMLElement | null | undefined, what: string) => {
+      if (!element) throw new Error(`Missing ${what}`);
+      const { act } = await import("react");
+      await act(async () => { element.click(); await Promise.resolve(); });
+    };
+    const trigger = () => host.querySelector<HTMLButtonElement>('[data-focus-key="move-to:source"]');
+    // Literal selectors only (test-seam guard B), so one finder per role rather than a shared one.
+    const radio = (text: string) => [...document.querySelectorAll<HTMLButtonElement>('[role="radio"]')].find((node) => node.textContent?.startsWith(text));
+    const option = (text: string) => [...document.querySelectorAll<HTMLButtonElement>('[role="option"]')].find((node) => node.textContent?.startsWith(text));
+    const button = (text: string) => [...document.querySelectorAll<HTMLButtonElement>("button")].find((node) => node.textContent?.startsWith(text));
+    async function chooseBeforeT2() {
+      await click(trigger(), "Move-to trigger");
+      await click(radio("RAW review"), "RAW review Stage");
+      await click(option("Before t2 Street"), "Before t2 position");
+    }
+
+    it("offers every permitted position, previews the chosen one, and commits exactly that gap", async () => {
+      const props = await renderBoard({ projects: threeTargets(), role: "admin" });
+      await click(trigger(), "Move-to trigger");
+      await click(radio("RAW review"), "RAW review Stage");
+      expect([...document.querySelectorAll('[role="option"]')].map((node) => node.textContent)).toEqual([
+        "End of RAW review",
+        "Before t1 Street — position 1",
+        "Before t2 Street — position 2",
+        "Before t3 Street — position 3",
+      ]);
+      await click(option("Before t2 Street"), "Before t2 position");
+      expect(props.onMoveToProposalChange).toHaveBeenLastCalledWith({ targetStageKey: "raw_review", successor: "t2" });
+      expect(indicators(), "the chosen position is not previewed").toHaveLength(1);
+      expect(indicators()[0]!.parentElement!.textContent).toContain("t2 Street");
+
+      await click(document.querySelector('[data-testid="kanban2-move-to-submit"]'), "submit");
+      expect(props.onMoveStage).toHaveBeenCalledTimes(1);
+      const [moved, gap, kind, descriptor] = (props.onMoveStage as ReturnType<typeof vi.fn>).mock.calls[0]!;
+      expect(moved.id).toBe("source");
+      expect(gap).toEqual({ targetStageKey: "raw_review", successor: "t2" });
+      expect(kind).toBe("cross");
+      // The Dashboard restores focus to this control after the move settles.
+      expect(descriptor.control).toBe("move-to");
+      expect(props.onMoveToProposalChange).toHaveBeenLastCalledWith(null);
+      expect(indicators()).toHaveLength(0);
+    });
+
+    it("clears the preview on Back, and on Cancel gives the trigger back", async () => {
+      const props = await renderBoard({ projects: threeTargets(), role: "admin" });
+      await chooseBeforeT2();
+      expect(indicators(), "anchor").toHaveLength(1);
+      await click(button("Back"), "Back");
+      expect(props.onMoveToProposalChange).toHaveBeenLastCalledWith(null);
+      expect(indicators()).toHaveLength(0);
+      expect(document.querySelector('[role="radiogroup"][aria-label="Target Stage for source Street"]'), "Back did not return to the Stage step").not.toBeNull();
+
+      await click(radio("RAW review"), "RAW review Stage");
+      await click(option("Before t2 Street"), "Before t2 position");
+      expect(indicators(), "anchor").toHaveLength(1);
+      // The popover returns focus to its reference on its own, so `activeElement` alone cannot tell
+      // whether the Board's refocus ran. What that refocus adds is `preventScroll` — spied here.
+      const focus = vi.spyOn(trigger()!, "focus");
+      await click(button("Cancel"), "Cancel");
+      expect(focus).toHaveBeenCalledWith({ preventScroll: true });
+      expect(props.onMoveToProposalChange).toHaveBeenLastCalledWith(null);
+      expect(indicators()).toHaveLength(0);
+      expect(document.activeElement).toBe(trigger());
+      expect(props.onMoveStage).not.toHaveBeenCalled();
+    });
+
+    it("clears the preview on Escape and gives the trigger back", async () => {
+      const props = await renderBoard({ projects: threeTargets(), role: "admin" });
+      await chooseBeforeT2();
+      expect(indicators(), "anchor").toHaveLength(1);
+      // As in the Cancel test: the popover's own Escape handler refocuses its reference with a bare
+      // `.focus()`, so `activeElement` alone cannot prove the chooser's `preventScroll` refocus ran.
+      const focus = vi.spyOn(trigger()!, "focus");
+      const { act } = await import("react");
+      await act(async () => {
+        document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+        await Promise.resolve();
+      });
+      expect(props.onMoveToProposalChange).toHaveBeenLastCalledWith(null);
+      expect(indicators()).toHaveLength(0);
+      expect(document.activeElement).toBe(trigger());
+      expect(focus).toHaveBeenCalledWith({ preventScroll: true });
+    });
+
+    // Sol review. The Dashboard treats a live proposal as an interaction and holds refreshes and the
+    // view/sort controls for it; a proposal orphaned by an unmount latches all of that until reload.
+    it("withdraws its preview when the card goes away mid-choice", async () => {
+      const props = await renderBoard({ projects: threeTargets(), role: "admin" });
+      await chooseBeforeT2();
+      expect(props.onMoveToProposalChange, "anchor").toHaveBeenLastCalledWith({ targetStageKey: "raw_review", successor: "t2" });
+      // The moving project is removed elsewhere while the popover is open.
+      await renderBoard({ ...props, projects: threeTargets().filter((item) => item.id !== "source") });
+      expect(props.onMoveToProposalChange).toHaveBeenLastCalledWith(null);
+      expect(indicators()).toHaveLength(0);
+    });
+
+    it("withdraws its preview when the whole Board unmounts mid-choice", async () => {
+      const props = await renderBoard({ projects: threeTargets(), role: "admin" });
+      await chooseBeforeT2();
+      expect(props.onMoveToProposalChange, "anchor").toHaveBeenLastCalledWith({ targetStageKey: "raw_review", successor: "t2" });
+      const { act } = await import("react");
+      await act(async () => { root.render(null); await Promise.resolve(); });
+      expect(props.onMoveToProposalChange).toHaveBeenLastCalledWith(null);
+    });
+
+    it("withholds same-Stage positions from a principal who cannot reorder", async () => {
+      const projects = withMap([project("source", "awaiting_raw"), project("sibling", "awaiting_raw"), project("t1", "raw_review")]);
+      await renderBoard({ projects, role: "admin", canPrioritize: true, sameStageReorderEnabled: false });
+      await click(trigger(), "Move-to trigger");
+      const stages = [...document.querySelectorAll('[role="radio"]')].map((node) => node.textContent);
+      expect(stages, "anchor: the cross-Stage target is offered").toContain("RAW review");
+      expect(stages).not.toContain("Awaiting RAW");
+    });
+
+    it("is disabled while movement is locked", async () => {
+      await renderBoard({ projects: threeTargets(), role: "admin", pendingOrdering: new Set(["t1"]) });
+      expect(trigger(), "no Move-to trigger rendered").not.toBeNull();
+      expect(trigger()!.disabled).toBe(true);
+    });
+  });
+
+  // #99: the one-slot nudge. The Board only reports the intent; the Dashboard owns the gap.
+  describe("up/down arrows (#99)", () => {
+    const arrows = () => host.querySelectorAll('[data-focus-key^="arrow-"]');
+    const up = () => host.querySelector<HTMLButtonElement>('[data-focus-key="arrow-up:source"]');
+    const down = () => host.querySelector<HTMLButtonElement>('[data-focus-key="arrow-down:source"]');
+
+    it("are offered only where the principal can reorder", async () => {
+      await renderBoard({ canPrioritize: true, sameStageReorderEnabled: false });
+      expect(host.querySelector('[data-focus-key="move-to:source"]'), "anchor: the card's controls rendered").not.toBeNull();
+      expect(arrows()).toHaveLength(0);
+
+      await renderBoard({ canPrioritize: false, sameStageReorderEnabled: true });
+      expect(arrows()).toHaveLength(0);
+
+      await renderBoard({ canPrioritize: true, sameStageReorderEnabled: true });
+      expect(up()?.getAttribute("aria-label")).toBe("Move source Street up");
+      expect(down()?.getAttribute("aria-label")).toBe("Move source Street down");
+    });
+
+    it("report the direction pressed, for the Dashboard to resolve", async () => {
+      const props = await renderBoard({ canPrioritize: true, sameStageReorderEnabled: true });
+      const { act } = await import("react");
+      await act(async () => { up()!.click(); await Promise.resolve(); });
+      await act(async () => { down()!.click(); await Promise.resolve(); });
+      const calls = (props.onBoardPosition as ReturnType<typeof vi.fn>).mock.calls;
+      expect(calls.map(([moved, direction]) => [moved.id, direction])).toEqual([["source", "up"], ["source", "down"]]);
+    });
+
+    // Sol review: otherwise a keyboard user picks up one card, Tabs to another card's arrow or Move
+    // to…, and reorders the column out from under the live drag.
+    it("and Move to… are disabled for the whole of a drag, then come back", async () => {
+      await renderBoard({ canPrioritize: true, sameStageReorderEnabled: true });
+      const moveTo = () => host.querySelector<HTMLButtonElement>('[data-focus-key="move-to:source"]');
+      expect(up()!.disabled, "anchor: enabled before the drag").toBe(false);
+      await fireDnd("onDragStart", { active: { id: "other" } });
+      expect(up()!.disabled).toBe(true);
+      expect(down()!.disabled).toBe(true);
+      expect(moveTo()!.disabled).toBe(true);
+      await fireDnd("onDragCancel", { active: { id: "other" } });
+      expect(up()!.disabled).toBe(false);
+      expect(moveTo()!.disabled).toBe(false);
+    });
+
+    it("are disabled while movement is locked", async () => {
+      await renderBoard({ canPrioritize: true, sameStageReorderEnabled: true, pendingOrdering: new Set(["other"]) });
+      expect(up(), "no arrows rendered").not.toBeNull();
+      expect(up()!.disabled).toBe(true);
+      expect(down()!.disabled).toBe(true);
+    });
   });
 
   it("does not move a card dropped back onto its own column", async () => {
@@ -571,9 +929,10 @@ describe("KanbanCard2 — Editor avatars, Deadline and RAW counts (#82)", () => 
       // does it itself with preventScroll, so this must be explicitly false, not merely absent.
       expect(accessibility!.restoreFocus).toBe(false);
       expect(accessibility!.screenReaderInstructions?.draggable).toContain("press Space");
-      // The old Board advertises "Move to…"; this Board has no such control, so promising it would
-      // send a screen-reader user looking for a button that does not exist.
-      expect(accessibility!.screenReaderInstructions?.draggable).not.toContain("Move to");
+      // #99 gave this Board a Move-to control, so the instructions now point to it. (Before that they
+      // deliberately did not: promising a control that does not exist sends a user looking for it.)
+      expect(accessibility!.screenReaderInstructions?.draggable).toContain("Move to…");
+      expect(host.querySelector('[data-focus-key="move-to:source"]'), "the instructions promise a control that is not rendered").not.toBeNull();
     });
 
     it("suppresses the library's own drop and cancel announcements", async () => {

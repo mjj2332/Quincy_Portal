@@ -170,7 +170,7 @@ export interface KanbanCommitMeta<T> {
 
 export interface KanbanRootProps<T> extends Omit<
   useRender.ComponentProps<"div">,
-  "children" | "onDragStart" | "onDragEnd"
+  "children" | "onDragStart" | "onDragEnd" | "onDragOver"
 > {
   value: Record<string, T[]>
   onValueChange: (value: Record<string, T[]>) => void
@@ -183,6 +183,14 @@ export interface KanbanRootProps<T> extends Omit<
   ) => void
   restoreOnCancel?: boolean
   onDragStart?: (event: DragStartEvent) => void
+  /**
+   * Quincy addition (#99), additive only. Upstream has no consumer hover hook: `handleDragOver`
+   * returns early whenever `onMove` is set, and `DndContext`'s `onDragOver` is wired only to that
+   * internal handler. This is called first, in every mode, so an `onMove` consumer can draw a drop
+   * indicator. It must not rewrite `value` during hover — that re-measures every droppable
+   * (`MEASURING_CONFIG` is `Always`) and loops.
+   */
+  onDragOver?: (event: DragOverEvent) => void
   onDragEnd?: (event: DragEndEvent) => void
   onDragCancel?: (event: DragCancelEvent) => void
   accessibility?: React.ComponentProps<typeof DndContext>["accessibility"]
@@ -200,6 +208,7 @@ function Kanban<T>({
   onValueCommit,
   restoreOnCancel = false,
   onDragStart,
+  onDragOver,
   onDragEnd,
   onDragCancel,
   accessibility,
@@ -361,6 +370,7 @@ function Kanban<T>({
 
   const handleDragOver = useCallback(
     (event: DragOverEvent) => {
+      onDragOver?.(event)
       if (onMove) {
         return
       }
@@ -420,7 +430,7 @@ function Kanban<T>({
         }
       }
     },
-    [findContainer, getItemValue, isColumn, setColumns, columns, onMove]
+    [findContainer, getItemValue, isColumn, setColumns, columns, onMove, onDragOver]
   )
 
   const handleDragCancel = useCallback(
