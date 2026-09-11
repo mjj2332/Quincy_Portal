@@ -16,6 +16,7 @@ import {
 import type { ProjectStageKey } from "../../lib/stages";
 import { usePrefersReducedMotion } from "../../lib/use-media-query";
 import { KanbanCard2 } from "./card";
+import { MoveToControl } from "./move-to-control";
 
 /** `editing` is the role-safe presentation of `editing_autohdr` — see `ProjectKanbanBoard.tsx`. */
 function semanticStageKey(value: ProjectStageKey): StageKey {
@@ -79,6 +80,9 @@ export function ProjectKanbanBoard2({
   onPriorityChange,
   onAnnounce,
   onInteractionStateChange,
+  onMoveStage,
+  onMoveToProposalChange,
+  role,
   projectHrefFor,
 }: ProjectKanbanBoardProps) {
   const columns = useMemo(() => {
@@ -185,6 +189,15 @@ export function ProjectKanbanBoard2({
   const activeProjectRef = useRef<string | undefined>(undefined);
   const lastAnnouncedGapRef = useRef<string | undefined>(undefined);
   const [dropProposal, setDropProposal] = useState<SemanticGap | null>(null);
+  // The Move-to chooser's chosen position (#99), drawn with the same indicator as a drag. Forwarded
+  // to the Dashboard too, which treats a live proposal as an interaction and holds refreshes for it.
+  const [moveToProposal, setMoveToProposal] = useState<SemanticGap | null>(null);
+  const shownProposal = dropProposal ?? moveToProposal;
+  const handleMoveToProposal = useCallback((proposal: SemanticGap | null) => {
+    setMoveToProposal(proposal);
+    onMoveToProposalChange?.(proposal);
+  }, [onMoveToProposalChange]);
+  const boardModel = useMemo(() => ({ projects }), [projects]);
 
   /**
    * Only for the paths that do NOT hand off to the Dashboard. Never on the valid path: the
@@ -363,7 +376,7 @@ export function ProjectKanbanBoard2({
       onDragCancel: () => undefined,
     },
     screenReaderInstructions: {
-      draggable: "To pick up a project, focus its Move project handle and press Space. Use the arrow keys to move between Stages. Press Space again to drop, or Escape to cancel.",
+      draggable: "To pick up a project, focus its Move project handle and press Space. Use the arrow keys to move between Stages and positions. Press Space again to drop, or Escape to cancel. To choose a Stage and position without dragging, use Move to… on the card.",
     },
   }), [activeStages, columns, hoverTarget, projects, terminal]);
 
@@ -419,7 +432,7 @@ export function ProjectKanbanBoard2({
                 // genuinely disabled — the real `isSortableDragging` drag ghost (a plain
                 // `opacity-50`, not gated on `data-disabled`) is untouched.
                 <KanbanItem key={project.id} value={project.id} className="relative data-[disabled=true]:opacity-100" disabled={dragDisabled || pendingMoves.has(project.id)}>
-                  {dropProposal?.successor === project.id && <DropIndicator className="top-[calc(var(--space-3)/-2)] -translate-y-1/2" />}
+                  {shownProposal?.successor === project.id && <DropIndicator className="top-[calc(var(--space-3)/-2)] -translate-y-1/2" />}
                   <KanbanCard2
                     project={project}
                     projectHref={projectHrefFor?.(project)}
@@ -428,10 +441,25 @@ export function ProjectKanbanBoard2({
                     priorityPending={pendingOrdering?.has(project.id) ?? false}
                     onPriorityChange={onPriorityChange}
                     handleRef={registerHandle}
+                    moveTo={
+                      <MoveToControl
+                        project={project}
+                        model={boardModel}
+                        activeStages={activeStages}
+                        // Fail closed: without a role, same-Stage positions (Admin-only) are withheld.
+                        role={role ?? "editor"}
+                        sort={effectiveKanbanSort}
+                        canMoveStages={canMoveStages}
+                        canReorder={canPrioritize && sameStageReorderEnabled}
+                        disabled={dragDisabled || pendingMoves.has(project.id)}
+                        onMoveStage={onMoveStage}
+                        onProposalChange={handleMoveToProposal}
+                      />
+                    }
                   />
                 </KanbanItem>
               ))}
-              {dropProposal?.successor === "end" && dropProposal.targetStageKey === semanticStageKey(stage.key) && (
+              {shownProposal?.successor === "end" && shownProposal.targetStageKey === semanticStageKey(stage.key) && (
                 <DropIndicator className="bottom-[calc(var(--space-3)/2)] translate-y-1/2" />
               )}
             </KanbanColumnContent>

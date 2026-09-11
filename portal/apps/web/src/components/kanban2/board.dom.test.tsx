@@ -102,6 +102,7 @@ function baseProps(overrides: Partial<ProjectKanbanBoardProps> = {}): ProjectKan
     onBoardPosition: vi.fn(),
     onPriorityChange: vi.fn(),
     onMoveStage: vi.fn(),
+    onMoveToProposalChange: vi.fn(),
     onAnnounce: vi.fn(),
     onInteractionStateChange: vi.fn(),
     ...overrides,
@@ -421,6 +422,113 @@ describe("ProjectKanbanBoard2 (#80)", () => {
     });
   });
 
+  // #99's non-drag path. The popover is portalled, so option queries run on `document`.
+  describe("Move-to chooser (#99)", () => {
+    // Positions come from the authorized order map, which the Dashboard attaches to every project it
+    // hands the Board (`lib/dashboard-projects.ts`); without it only "End of" can be offered.
+    const withMap = (projects: ProjectSummary[]) => {
+      const authorizedBoardOrder: Record<string, string[]> = {};
+      for (const item of projects) (authorizedBoardOrder[item.stageKey] ??= []).push(item.id);
+      return projects.map((item) => ({ ...item, authorizedBoardOrder }));
+    };
+    const threeTargets = () => withMap([project("source", "awaiting_raw"), project("t1", "raw_review"), project("t2", "raw_review"), project("t3", "raw_review")]);
+    const indicators = () => host.querySelectorAll('[data-testid="kanban2-drop-indicator"]');
+    const click = async (element: HTMLElement | null | undefined, what: string) => {
+      if (!element) throw new Error(`Missing ${what}`);
+      const { act } = await import("react");
+      await act(async () => { element.click(); await Promise.resolve(); });
+    };
+    const trigger = () => host.querySelector<HTMLButtonElement>('[data-focus-key="move-to:source"]');
+    // Literal selectors only (test-seam guard B), so one finder per role rather than a shared one.
+    const radio = (text: string) => [...document.querySelectorAll<HTMLButtonElement>('[role="radio"]')].find((node) => node.textContent?.startsWith(text));
+    const option = (text: string) => [...document.querySelectorAll<HTMLButtonElement>('[role="option"]')].find((node) => node.textContent?.startsWith(text));
+    const button = (text: string) => [...document.querySelectorAll<HTMLButtonElement>("button")].find((node) => node.textContent?.startsWith(text));
+    async function chooseBeforeT2() {
+      await click(trigger(), "Move-to trigger");
+      await click(radio("RAW review"), "RAW review Stage");
+      await click(option("Before t2 Street"), "Before t2 position");
+    }
+
+    it("offers every permitted position, previews the chosen one, and commits exactly that gap", async () => {
+      const props = await renderBoard({ projects: threeTargets(), role: "admin" });
+      await click(trigger(), "Move-to trigger");
+      await click(radio("RAW review"), "RAW review Stage");
+      expect([...document.querySelectorAll('[role="option"]')].map((node) => node.textContent)).toEqual([
+        "End of RAW review",
+        "Before t1 Street — position 1",
+        "Before t2 Street — position 2",
+        "Before t3 Street — position 3",
+      ]);
+      await click(option("Before t2 Street"), "Before t2 position");
+      expect(props.onMoveToProposalChange).toHaveBeenLastCalledWith({ targetStageKey: "raw_review", successor: "t2" });
+      expect(indicators(), "the chosen position is not previewed").toHaveLength(1);
+      expect(indicators()[0]!.parentElement!.textContent).toContain("t2 Street");
+
+      await click(document.querySelector('[data-testid="kanban2-move-to-submit"]'), "submit");
+      expect(props.onMoveStage).toHaveBeenCalledTimes(1);
+      const [moved, gap, kind, descriptor] = (props.onMoveStage as ReturnType<typeof vi.fn>).mock.calls[0]!;
+      expect(moved.id).toBe("source");
+      expect(gap).toEqual({ targetStageKey: "raw_review", successor: "t2" });
+      expect(kind).toBe("cross");
+      // The Dashboard restores focus to this control after the move settles.
+      expect(descriptor.control).toBe("move-to");
+      expect(props.onMoveToProposalChange).toHaveBeenLastCalledWith(null);
+      expect(indicators()).toHaveLength(0);
+    });
+
+    it("clears the preview on Back, and on Cancel gives the trigger back", async () => {
+      const props = await renderBoard({ projects: threeTargets(), role: "admin" });
+      await chooseBeforeT2();
+      expect(indicators(), "anchor").toHaveLength(1);
+      await click(button("Back"), "Back");
+      expect(props.onMoveToProposalChange).toHaveBeenLastCalledWith(null);
+      expect(indicators()).toHaveLength(0);
+      expect(document.querySelector('[role="radiogroup"][aria-label="Target Stage for source Street"]'), "Back did not return to the Stage step").not.toBeNull();
+
+      await click(radio("RAW review"), "RAW review Stage");
+      await click(option("Before t2 Street"), "Before t2 position");
+      expect(indicators(), "anchor").toHaveLength(1);
+      // The popover returns focus to its reference on its own, so `activeElement` alone cannot tell
+      // whether the Board's refocus ran. What that refocus adds is `preventScroll` — spied here.
+      const focus = vi.spyOn(trigger()!, "focus");
+      await click(button("Cancel"), "Cancel");
+      expect(focus).toHaveBeenCalledWith({ preventScroll: true });
+      expect(props.onMoveToProposalChange).toHaveBeenLastCalledWith(null);
+      expect(indicators()).toHaveLength(0);
+      expect(document.activeElement).toBe(trigger());
+      expect(props.onMoveStage).not.toHaveBeenCalled();
+    });
+
+    it("clears the preview on Escape and gives the trigger back", async () => {
+      const props = await renderBoard({ projects: threeTargets(), role: "admin" });
+      await chooseBeforeT2();
+      expect(indicators(), "anchor").toHaveLength(1);
+      const { act } = await import("react");
+      await act(async () => {
+        document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+        await Promise.resolve();
+      });
+      expect(props.onMoveToProposalChange).toHaveBeenLastCalledWith(null);
+      expect(indicators()).toHaveLength(0);
+      expect(document.activeElement).toBe(trigger());
+    });
+
+    it("withholds same-Stage positions from a principal who cannot reorder", async () => {
+      const projects = withMap([project("source", "awaiting_raw"), project("sibling", "awaiting_raw"), project("t1", "raw_review")]);
+      await renderBoard({ projects, role: "admin", canPrioritize: true, sameStageReorderEnabled: false });
+      await click(trigger(), "Move-to trigger");
+      const stages = [...document.querySelectorAll('[role="radio"]')].map((node) => node.textContent);
+      expect(stages, "anchor: the cross-Stage target is offered").toContain("RAW review");
+      expect(stages).not.toContain("Awaiting RAW");
+    });
+
+    it("is disabled while movement is locked", async () => {
+      await renderBoard({ projects: threeTargets(), role: "admin", pendingOrdering: new Set(["t1"]) });
+      expect(trigger(), "no Move-to trigger rendered").not.toBeNull();
+      expect(trigger()!.disabled).toBe(true);
+    });
+  });
+
   it("does not move a card dropped back onto its own column", async () => {
     const props = await renderBoard();
     await endDrag("source", "awaiting_raw");
@@ -732,9 +840,10 @@ describe("KanbanCard2 — Editor avatars, Deadline and RAW counts (#82)", () => 
       // does it itself with preventScroll, so this must be explicitly false, not merely absent.
       expect(accessibility!.restoreFocus).toBe(false);
       expect(accessibility!.screenReaderInstructions?.draggable).toContain("press Space");
-      // The old Board advertises "Move to…"; this Board has no such control, so promising it would
-      // send a screen-reader user looking for a button that does not exist.
-      expect(accessibility!.screenReaderInstructions?.draggable).not.toContain("Move to");
+      // #99 gave this Board a Move-to control, so the instructions now point to it. (Before that they
+      // deliberately did not: promising a control that does not exist sends a user looking for it.)
+      expect(accessibility!.screenReaderInstructions?.draggable).toContain("Move to…");
+      expect(host.querySelector('[data-focus-key="move-to:source"]'), "the instructions promise a control that is not rendered").not.toBeNull();
     });
 
     it("suppresses the library's own drop and cancel announcements", async () => {

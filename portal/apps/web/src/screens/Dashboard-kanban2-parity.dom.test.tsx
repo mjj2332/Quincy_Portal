@@ -261,6 +261,95 @@ describe("Dashboard at view=kanban2 (#98)", () => {
     });
   });
 
+  // #99's non-drag path at the seam that reaches the server. The chooser does no confirming of its
+  // own: a cross-Stage submit must go through the same 409 modal round trip as a drop.
+  describe("Move-to chooser", () => {
+    const twoStages = () => ({
+      projects: [
+        projectFixture("kb2-source", { boardMapPresent: true }),
+        projectFixture("kb2-target", { stageKey: "raw_review", boardPosition: 1, boardRevision: 5, boardMapPresent: true }),
+      ],
+      board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: ["kb2-source"], raw_review: ["kb2-target"] } },
+    });
+    const click = async (element: HTMLElement | null | undefined, what: string) => {
+      if (!element) throw new Error(`Missing ${what}`);
+      await act(async () => { element.click(); await Promise.resolve(); });
+    };
+    // Literal selectors only (test-seam guard B), so one finder per role rather than a shared one.
+    const radio = (text: string) => [...document.querySelectorAll<HTMLButtonElement>('[role="radio"]')].find((node) => node.textContent?.startsWith(text));
+    const option = (text: string) => [...document.querySelectorAll<HTMLButtonElement>('[role="option"]')].find((node) => node.textContent?.startsWith(text));
+    const button = (text: string) => [...document.querySelectorAll<HTMLButtonElement>("button")].find((node) => node.textContent?.startsWith(text));
+    const flush = () => act(async () => { await Promise.resolve(); await Promise.resolve(); await new Promise<void>((resolve) => setTimeout(resolve, 0)); });
+    async function chooseBeforeTarget() {
+      await click(document.querySelector<HTMLButtonElement>('[data-focus-key="move-to:kb2-source"]'), "Move-to trigger");
+      await click(radio("RAW review"), "RAW review Stage");
+      await click(option("Before kb2-target Street"), "Before kb2-target position");
+    }
+
+    it("sends the chosen position, confirms through the 409 modal, and gives the trigger back", async () => {
+      apiGetMock.mockReset();
+      apiGetMock.mockImplementation((path) => path === "/api/projects" ? Promise.resolve(twoStages()) : Promise.resolve({ stages: [] }));
+      apiPostMock.mockReset()
+        .mockRejectedValueOnce(new ApiError("Confirmation required", 409, { code: "stage_confirmation_required", requiredConfirmation: { reasons: ["backward"] } }))
+        .mockResolvedValueOnce({
+          changed: true,
+          project: { projectId: "kb2-source", stageKey: "raw_review", boardRevision: 1 },
+          board: { sourceStageKey: "awaiting_raw", targetStageKey: "raw_review", orderedVisibleProjectIds: ["kb2-source", "kb2-target"] },
+        });
+      await act(async () => { root!.render(<><Dashboard currentUserId="admin-1" /><ConfirmModalHost /></>); await Promise.resolve(); await Promise.resolve(); });
+      await vi.waitFor(() => expect(document.querySelector('[data-focus-key="move-to:kb2-source"]')).not.toBeNull());
+
+      await chooseBeforeTarget();
+      await click(document.querySelector('[data-testid="kanban2-move-to-submit"]'), "submit");
+      await vi.waitFor(() => expect(apiPostMock, "the Move-to submit never reached the server").toHaveBeenCalledTimes(1));
+
+      const exact = { kind: "between", before: null, after: { projectId: "kb2-target", boardRevision: 5 } };
+      expect(apiPostMock.mock.calls[0]![0]).toBe("/api/projects/kb2-source/stage");
+      expect(apiPostMock.mock.calls[0]![1]).toHaveProperty("placement", exact);
+      expect(apiPostMock.mock.calls[0]![1]).not.toHaveProperty("confirmation");
+
+      await click(document.querySelector('[data-testid="confirm-modal-confirm"]'), "confirm modal — the 409 was dropped or silently retried");
+      await vi.waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(2));
+      expect(apiPostMock.mock.calls[1]![1]).toEqual(expect.objectContaining({ placement: exact, confirmation: { reasons: ["backward"] } }));
+
+      await flush(); await flush();
+      await vi.waitFor(() => expect(document.activeElement?.getAttribute("data-focus-key")).toBe("move-to:kb2-source"));
+    });
+
+    // Ported from the default-view scenario in `Dashboard-stage-interactions.dom.test.tsx`: the chosen
+    // neighbour disappears between choosing and submitting, so the move must abort locally — no
+    // request, no guess at a new position — refetch once, and hand the trigger back.
+    it("aborts a stale position locally, refetches, and restores its trigger", async () => {
+      let projectFetches = 0;
+      const stale = { ...twoStages(), projects: [projectFixture("kb2-source", { boardMapPresent: true })], board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: ["kb2-source"] } } };
+      apiGetMock.mockReset();
+      apiGetMock.mockImplementation((path) => path === "/api/projects"
+        ? Promise.resolve(projectFetches++ === 0 ? twoStages() : stale)
+        : Promise.resolve({ stages: [] }));
+      apiPostMock.mockReset();
+      const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      const runtime = new ProjectQueryRuntime(queryClient, "kanban2-move-to-stale-test");
+      await act(async () => {
+        root!.render(<ProjectQueryRuntimeProvider runtime={runtime}><QueryClientProvider client={queryClient}><Dashboard currentUserId="admin-1" /></QueryClientProvider></ProjectQueryRuntimeProvider>);
+        await Promise.resolve();
+      });
+      await vi.waitFor(() => expect(document.querySelector('[data-focus-key="move-to:kb2-source"]')).not.toBeNull());
+
+      await chooseBeforeTarget();
+      runtime.markProjectRemoved("kb2-target");
+      await flush();
+      await click(document.querySelector('[data-testid="kanban2-move-to-submit"]'), "submit");
+      await flush(); await flush();
+
+      expect(apiPostMock).not.toHaveBeenCalled();
+      expect(document.querySelector('[data-testid="dashboard-live-region"]')?.textContent).toContain("That position changed");
+      expect(projectFetches).toBe(2);
+      expect(document.activeElement?.getAttribute("data-focus-key")).toBe("move-to:kb2-source");
+      runtime.dispose();
+      queryClient.clear();
+    });
+  });
+
   // AC 1 / §2.2. Publishing `data-focus-key="board"` on this Board makes the Dashboard's tier-3
   // restore reachable here for the first time — and tier 3 fires after ANY refresh that was not tied
   // to a Board control, including the one a Priority write queues itself. Without the key-less guard
