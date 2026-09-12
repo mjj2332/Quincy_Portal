@@ -7,6 +7,8 @@ import { invalidateActiveProjectDetails, useOptionalProjectQueryClient } from ".
 import { confirm } from "../lib/confirm";
 import { impersonateUser } from "../lib/auth";
 import { locationStore } from "../lib/router";
+import { pushToast as toast } from "../lib/toast-store";
+import { ToastViewport } from "../components/quincy/ToastViewport";
 import { Modal } from "../components/Modal";
 import { Button } from "@/components/reui/button";
 import { cn } from "@/lib/utils";
@@ -23,7 +25,6 @@ import { QuincyField } from "@/components/quincy/QuincyField";
 import { QuincySelectField } from "@/components/quincy/QuincySelectField";
 
 type AdminTab = "users" | "directory" | "pipeline" | "integrations";
-type Toast = { id: number; message: string; tone: "success" | "error" };
 type User = { id: string; name: string; email: string; role: Role; active: boolean; createdAt: string | null };
 type IntegrationStatus = "connected" | "disconnected" | "expired" | "error";
 type Integration = { provider: string; status: IntegrationStatus; expiresAt: string | null; lastEventAt: string | null; lastError: string | null };
@@ -200,13 +201,6 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
   const [form, setForm] = useState({ email: "", name: "", role: "photographer" as Role });
   const [formErrors, setFormErrors] = useState<{ email?: string; name?: string }>({});
   const [dropboxNotice, setDropboxNotice] = useState<string>();
-  const [toasts, setToasts] = useState<Toast[]>([]);
-
-  const toast = useCallback((message: string, tone: Toast["tone"] = "success") => {
-    const id = Date.now() + Math.random();
-    setToasts((current) => [...current, { id, message, tone }]);
-    window.setTimeout(() => setToasts((current) => current.filter((item) => item.id !== id)), 3600);
-  }, []);
 
   const loadUsers = useCallback(async () => {
     setIsLoadingUsers(true);
@@ -744,7 +738,7 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
           {shownPayload?.json}
         </pre>
       </Modal>
-      <div className="toasts" aria-live="polite">{toasts.map((item) => <div className={`toast ${item.tone === "error" ? "toast--error" : ""}`} key={item.id}>{item.tone === "error" ? "!" : "✓"}<span>{item.message}</span></div>)}</div>
+      <ToastViewport />
     </main>
   );
 }
