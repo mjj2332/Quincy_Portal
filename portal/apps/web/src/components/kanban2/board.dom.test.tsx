@@ -1,10 +1,10 @@
 // happy-dom cannot exercise real PointerSensor/KeyboardSensor drag activation — see
 // `ProjectKanbanBoard.dom.test.tsx`'s header. This test drives the captured `DndContext`
 // `onDragEnd` handler directly, the same technique the existing Board's test suite uses.
-import { createElement } from "react";
+import { createElement, useEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { DragEndEvent } from "@dnd-kit/core";
+import { KeyboardSensor, MeasuringStrategy, MouseSensor, TouchSensor, type DragEndEvent } from "@dnd-kit/core";
 import { ProjectKanbanBoard2 } from "./board";
 import { KanbanCard2 } from "./card";
 import type { ProjectKanbanBoardProps, ProjectSummary } from "../../lib/kanban-interaction";
@@ -52,6 +52,17 @@ vi.mock("@dnd-kit/core", async (importOriginal) => {
     },
   };
 });
+
+// #83: drives a real cover-load failure through the actual `onFailedChange` callback `LazyImage`
+// itself calls once a background image exhausts its retries, rather than adding a test-only
+// `initialCoverFailed` prop to `KanbanCard2`. Only the failure path matters here, so the double
+// never renders an `<img>`.
+vi.mock("../LazyImage", () => ({
+  LazyImage: ({ onFailedChange }: { onFailedChange?: (failed: boolean) => void }) => {
+    useEffect(() => { onFailedChange?.(true); }, [onFailedChange]);
+    return null;
+  },
+}));
 
 const stages: readonly PipelineStage[] = [
   { key: "awaiting_raw", label: "Awaiting RAW", displayOrder: 1, active: true },
@@ -187,6 +198,18 @@ describe("ProjectKanbanBoard2 (#80)", () => {
     expect(columns[0]?.textContent).toContain("Awaiting RAW");
     expect(columns[1]?.textContent).toContain("RAW review");
     expect(host.querySelector('[data-testid="kanban2-card-address"]')?.textContent).toBe("source Street");
+  });
+
+  // #83: this is screen-reader copy, not a test id — the "test ids may keep the kanban2 spelling"
+  // licence does not cover it. Leaving the old string would silently void
+  // `Dashboard-kanban-sort.dom.test.tsx:129`'s assertion that the label is ABSENT in archived scope:
+  // after the old Board is deleted that assertion would pass because the label changed, not because
+  // the Board unmounted.
+  it("labels the Board root 'Project pipeline board', with no internal-naming suffix (#83)", async () => {
+    await renderBoard();
+    const root = host.querySelector('[data-focus-key="board"]');
+    expect(root, "no Board root rendered — the assertion below would be vacuous").not.toBeNull();
+    expect(root!.getAttribute("aria-label")).toBe("Project pipeline board");
   });
 
   it("renders the Admin ghost star row on an unset Project, reaching the coordinator on commit (#81)", async () => {
@@ -618,6 +641,43 @@ describe("ProjectKanbanBoard2 (#80)", () => {
     });
   });
 
+  // #83: the old Board's equivalent pins die with its deletion
+  // (`ProjectKanbanBoard.dom.test.tsx:228,235,275`), and the values genuinely differ now that this
+  // Board is vendor-owned — these are re-pinned as divergences, not ports.
+  //
+  // `MeasuringStrategy.Always` re-enables the precondition of a shipped white-screen defect
+  // (`docs/lessons.md` #185: "Pair any live-reordering board with `MeasuringStrategy.BeforeDragging`,
+  // not `Always`.") — it is safe ONLY because this Board never rewrites the rendered column arrays
+  // on hover (`board.tsx:316-318`); the drop indicator is absolutely positioned and zero-layout so it
+  // cannot force a re-measure. That invariant, not this pin, is the actual safety argument.
+  describe("DndContext configuration, vendor-owned (#83)", () => {
+    it("measures every droppable on every change", async () => {
+      await renderBoard();
+      const props = dnd.handlers.at(-1)?.props;
+      expect(props, "no DndContext props captured — the assertion below would be vacuous").not.toBeUndefined();
+      expect(props!.measuring).toEqual({ droppable: { strategy: MeasuringStrategy.Always } });
+    });
+
+    it("pins the three sensors and their activation options", async () => {
+      await renderBoard();
+      const props = dnd.handlers.at(-1)?.props;
+      expect(props, "no DndContext props captured — the assertion below would be vacuous").not.toBeUndefined();
+      const sensors = props!.sensors as Array<{ sensor: unknown; options?: Record<string, unknown> }>;
+      expect(sensors.map((descriptor) => descriptor.sensor)).toEqual([MouseSensor, TouchSensor, KeyboardSensor]);
+      expect(sensors[0]?.options).toEqual({ activationConstraint: { distance: 10 } });
+      expect(sensors[1]?.options).toEqual({ activationConstraint: { delay: 250, tolerance: 5 } });
+      expect(sensors[2]?.options).toEqual({ coordinateGetter: expect.any(Function) });
+    });
+
+    it("passes no collisionDetection or autoScroll override — both stay the vendor's own defaults", async () => {
+      await renderBoard();
+      const props = dnd.handlers.at(-1)?.props;
+      expect(props, "no DndContext props captured — the assertion below would be vacuous").not.toBeUndefined();
+      expect(props).not.toHaveProperty("collisionDetection");
+      expect(props).not.toHaveProperty("autoScroll");
+    });
+  });
+
   it("does not move a card dropped back onto its own column", async () => {
     const props = await renderBoard();
     await endDrag("source", "awaiting_raw");
@@ -710,6 +770,10 @@ describe("ProjectKanbanBoard2 (#80)", () => {
     expect(overlayHost.querySelector('[role="radiogroup"]')).toBeNull();
     expect(overlayHost.querySelector('input, select, textarea, [contenteditable="true"]')).toBeNull();
     expect(overlayHost.querySelector('[tabindex]:not([tabindex="-1"])')).toBeNull();
+    // #83: the two checks `KanbanCardPreview.dom.test.tsx:49-50` had that this test did not — the
+    // preview component it covered is retired along with the old Board, so these move here.
+    expect(overlayHost.querySelector("[id]")).toBeNull();
+    expect(overlayHost.querySelector("[data-focus-key]")).toBeNull();
 
     await act(async () => { overlayRoot.unmount(); await Promise.resolve(); });
     overlayHost.remove();
@@ -1072,5 +1136,47 @@ describe("KanbanCard2 — Editor avatars, Deadline and RAW counts (#82)", () => 
       await fireDnd("onDragStart", { active: { id: "source" } });
       expect(capturedAnnouncements().onDragOver({ active: { id: "source" }, over: { id: "raw_review" } })).toBe(first);
     });
+  });
+});
+
+// #83: ports of `screens/dashboard-routing.test.ts:17` and `:25` onto `KanbanCard2`, which
+// replaces them — the defect class is real (an interactive control inside an `<a>` is invalid HTML,
+// and a click navigates instead of doing what the control promised), so the invariant is ported
+// rather than retired along with the old Board's markup. Test ids, not the old `kcard` class
+// regexes; the cover-retry button is reached through the real `onFailedChange` callback, via the
+// `LazyImage` test double above, not a test-only `initialCoverFailed` prop.
+describe("KanbanCard2 — anchor and interactive-control siblings (#83)", () => {
+  beforeEach(() => {
+    dnd.handlers.length = 0;
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+  });
+
+  afterEach(async () => {
+    const { act } = await import("react");
+    await act(async () => root.unmount());
+    host.remove();
+  });
+
+  it("keeps the cover-retry button a sibling of the project link, not inside it", async () => {
+    await renderBoard({ projects: [project("source", "awaiting_raw", { coverAssetId: "asset-1" })] });
+    const link = host.querySelector('[data-testid="kanban2-card"]');
+    expect(link, "no card link rendered — the assertion below would be vacuous").not.toBeNull();
+    const retry = [...host.querySelectorAll("button")].find((node) => node.textContent === "Retry cover image");
+    expect(retry, "no retry button rendered — the mocked LazyImage failure never reached the card").not.toBeUndefined();
+    expect(retry!.closest("a")).toBeNull();
+  });
+
+  it("keeps the Board's non-drag controls (arrows, Move to…) outside the project link", async () => {
+    await renderBoard({ canPrioritize: true, sameStageReorderEnabled: true });
+    const link = host.querySelector('[data-testid="kanban2-card"]');
+    expect(link, "no card link rendered — the assertion below would be vacuous").not.toBeNull();
+    const moveTo = host.querySelector('[data-focus-key="move-to:source"]');
+    expect(moveTo, "no Move-to control rendered — the assertion below would be vacuous").not.toBeNull();
+    expect(moveTo!.closest("a")).toBeNull();
+    const arrowUp = host.querySelector('[data-focus-key="arrow-up:source"]');
+    expect(arrowUp, "no arrow rendered — the assertion below would be vacuous").not.toBeNull();
+    expect(arrowUp!.closest("a")).toBeNull();
   });
 });
