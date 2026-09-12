@@ -30,14 +30,22 @@ export type DashboardCalendarState = {
 };
 
 /**
- * The List/Kanban `view` allow-list is closed to exactly these two values. `kanban2` (#80) was a
- * second Board value on this same grammar, used for comparison against real studio data before
- * cutover (#76 "Slice order"); the cutover (#83) retired it as a legal `view` value entirely —
- * `/?view=kanban2` now falls through to `not-found`, not to a redirect or a normalisation.
+ * The `view` allow-list is closed to exactly these three values. `kanban2` (#80) was a second Board
+ * value on this same grammar, used for comparison against real studio data before cutover (#76
+ * "Slice order"); the cutover (#83) retired it as a legal `view` value entirely — `/?view=kanban2`
+ * now falls through to `not-found`, not to a redirect or a normalisation.
+ *
+ * `calendar` joined the allow-list in #111 and is not symmetrical with the other two. `list` and
+ * `kanban` are destinations; a bare `/?view=calendar` is an *intent*, legal only as the sole query
+ * field. The navigation rail links to it and the Dashboard canonicalises it to the parameterised
+ * facet URL that `DashboardCalendarFacetRoute` describes, using the remembered subview and last
+ * date it already reads. The rail resolving those preferences itself was rejected: it would put the
+ * preference logic in two places. The accepted cost is one URL rewrite on arrival, which is why
+ * this spelling should never be observed in the address bar for more than a commit.
  */
-export type DashboardListKanbanRoute = {
+export type DashboardViewRoute = {
   kind: "dashboard";
-  dashboardView: "list" | "kanban";
+  dashboardView: "list" | "kanban" | "calendar";
 };
 
 export type DashboardCalendarFacetRoute = {
@@ -47,7 +55,7 @@ export type DashboardCalendarFacetRoute = {
 
 export type DashboardRoute =
   | { kind: "dashboard" }
-  | DashboardListKanbanRoute
+  | DashboardViewRoute
   | DashboardCalendarFacetRoute;
 
 export type StaffRoute =
@@ -242,7 +250,7 @@ function parseCalendarLocation(params: URLSearchParams): DashboardCalendarState 
   };
 }
 
-function parseDashboardListKanbanLocation(params: URLSearchParams): DashboardListKanbanRoute | null {
+function parseDashboardListKanbanLocation(params: URLSearchParams): DashboardViewRoute | null {
   for (const name of params.keys()) {
     if (!dashboardListKanbanParameterNames.has(name)) return null;
   }
@@ -268,6 +276,14 @@ export function parseStaffLocation(location: string): StaffRoute {
   const view = params.get("view");
   if (view === "list" || view === "kanban") return parseDashboardListKanbanLocation(params) ?? { kind: "not-found" };
   if (view === "calendar") {
+    // The bare `/?view=calendar` intent (#111), legal only as the sole query field. Checked before
+    // `parseCalendarLocation` because that function requires a complete facet — a date, a subview
+    // and a non-empty layer list — and would reject this spelling. Every partial facet still falls
+    // through to it and is still rejected: accepting `view=calendar` plus *some* of its parameters
+    // would silently discard the rest. Duplicate keys, a trailing `&`, an oversized query and
+    // non-canonical percent-encoding are already rejected by `parseDashboardQuery` above, so this
+    // arm inherits all of that and only has to count the keys.
+    if ([...params.keys()].length === 1) return { kind: "dashboard", dashboardView: "calendar" };
     const calendar = parseCalendarLocation(params);
     if (calendar === null) return { kind: "not-found" };
     return { kind: "dashboard", calendar };

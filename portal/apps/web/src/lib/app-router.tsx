@@ -134,7 +134,13 @@ function ShellRoute() {
   const blocked = (route.kind === "admin" && !canAccessAdmin)
     || (route.kind === "create-project" && !canCreateProject)
     || (route.kind === "edit-project" && !canEditProject);
-  const calendarBlocked = route.kind === "dashboard" && "calendar" in route && !roleHasCapability(user.role, "viewProductionCalendar");
+  // Both Calendar spellings are gated identically: the parameterised facet, and #111's bare
+  // `/?view=calendar` intent the navigation rail links to. Gating only the facet would leave the
+  // intent as an unguarded way into the Calendar for a role without the capability — it reaches
+  // the Dashboard, which canonicalises it to the facet URL before the guard ever sees one.
+  const wantsCalendar = route.kind === "dashboard"
+    && ("calendar" in route || ("dashboardView" in route && route.dashboardView === "calendar"));
+  const calendarBlocked = wantsCalendar && !roleHasCapability(user.role, "viewProductionCalendar");
 
   useEffect(() => {
     if (restored.current) return;
