@@ -422,8 +422,8 @@ function assertBaselineHonest(findings: Finding[], baseline: Record<string, numb
 // ---------------------------------------------------------------------------
 
 /**
- * #50 drove this map down batch by batch to the one entry below, which is permanent — see the
- * note on it. NOTHING may be added, and the surviving entry may not be raised.
+ * #50 drove this map down batch by batch, and #83 emptied it. NOTHING may be added: a new
+ * class-based selector in a DOM test is a build failure, not a baseline entry.
  */
 // The last entry was 2 `.kanban-overlay` selectors in `screens/Dashboard-stage-interactions.dom.test.tsx`.
 // It was recorded as permanent because the old Board's overlay was dnd-kit's own <DragOverlay>,

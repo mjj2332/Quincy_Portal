@@ -334,7 +334,9 @@ button { font-family: var(--font-sans); }
    and is deleted rather than kept as a dead rule. */
 .kcol__head > .row { flex: 1 1 auto; min-width: 0; }
 /* Panel-level properties (z-index, width, max-height, border, background, shadow) now owned by
-   `AnchoredPopover` (§7.3) — `ProjectKanbanBoard.tsx` already renders through it. */
+   `AnchoredPopover` (§7.3), which the Board's Move-to chooser renders through
+   (`components/kanban2/move-to-control.tsx`; the original Board that first moved to it was deleted
+   in #83). */
 
 @media (max-width: 640px) {
   /* `.kanban-move-popover`'s width is `AnchoredPopover`'s now (§7.3) — this override would

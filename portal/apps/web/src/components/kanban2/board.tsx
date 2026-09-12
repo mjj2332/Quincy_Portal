@@ -432,7 +432,7 @@ export function ProjectKanbanBoard2({
           // Dashboard's `fallbackStageKey` is always a canonical `StageKey` (via
           // `focusDescriptorFor` or `canonicalStageKey`), so a presentation spelling — an Editor
           // sees `editing` for `editing_autohdr` — would never match, and tier 2 would fall
-          // through to the Board root. The old Board does the same (`ProjectKanbanBoard.tsx:560`).
+          // through to the Board root. The Board this replaced keyed its headings the same way.
           <KanbanColumn key={stage.key} value={stage.key} disabled className="bg-[var(--paper-050)] min-w-0 opacity-100" data-testid="kanban2-column">
             <div className="flex items-center gap-[var(--space-3)] p-[var(--space-4)] border-b border-b-border bg-[var(--bg-canvas)] focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--focus-ring)] focus-visible:!outline-offset-[-2px]" data-focus-key={`stage-heading:${semanticStageKey(stage.key)}`} tabIndex={-1}>
               <span className="flex-none [font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-wide)] tabular-nums text-foreground-secondary" aria-hidden="true">{String(stageIndex + 1).padStart(2, "0")}</span>

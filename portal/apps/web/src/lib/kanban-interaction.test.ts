@@ -292,9 +292,13 @@ describe("Kanban interaction model", () => {
   // semantic and `resolveSemanticGap` resolves them against the authorized map either way.
   it("lists cross-Stage Move-to options in the displayed order when the Board is not in Board sort", () => {
     const mover = project("mover", "awaiting_raw", { boardRevision: 3 });
-    const boardFirst = project("board-first", "raw_review", { street: "Board First", priority: 5, boardRevision: 1 });
-    const priorityFirst = project("priority-first", "raw_review", { street: "Priority First", priority: 1, boardRevision: 2 });
-    const dateFirst = project("date-first", "raw_review", { street: "Date First", priority: 2, boardRevision: 4 });
+    // shootDate is deliberately set so that the shoot-date order ("date-first", "board-first",
+    // "priority-first") differs from BOTH the canonical Board order ("board-first", "priority-first",
+    // "date-first") and the Priority order ("priority-first", "date-first", "board-first") below — a
+    // Priority-only implementation of the #83 fix would still pass without this.
+    const boardFirst = project("board-first", "raw_review", { street: "Board First", priority: 5, boardRevision: 1, shootDate: "2026-03-03" });
+    const priorityFirst = project("priority-first", "raw_review", { street: "Priority First", priority: 1, boardRevision: 2, shootDate: "2026-03-05" });
+    const dateFirst = project("date-first", "raw_review", { street: "Date First", priority: 2, boardRevision: 4, shootDate: "2026-03-01" });
     const model = board([mover, boardFirst, priorityFirst, dateFirst], {
       awaiting_raw: ["mover"],
       raw_review: ["board-first", "priority-first", "date-first"],
@@ -321,6 +325,23 @@ describe("Kanban interaction model", () => {
       { label: "Before Priority First — position 1", successor: "priority-first" },
       { label: "Before Date First — position 2", successor: "date-first" },
       { label: "Before Board First — position 3", successor: "board-first" },
+    ]);
+
+    // shootDate-asc sort: the column renders Date First, Board First, Priority First — so does the
+    // list. This order matches neither the Board order nor the Priority order above.
+    expect(moveToPositionOptions(model, "mover", "raw_review", "admin", { ...caps, sort: "shootDate-asc" })).toEqual([
+      { label: "End of RAW review", successor: "end" },
+      { label: "Before Date First — position 1", successor: "date-first" },
+      { label: "Before Board First — position 2", successor: "board-first" },
+      { label: "Before Priority First — position 3", successor: "priority-first" },
+    ]);
+
+    // shootDate-desc sort: the reverse.
+    expect(moveToPositionOptions(model, "mover", "raw_review", "admin", { ...caps, sort: "shootDate-desc" })).toEqual([
+      { label: "End of RAW review", successor: "end" },
+      { label: "Before Priority First — position 1", successor: "priority-first" },
+      { label: "Before Board First — position 2", successor: "board-first" },
+      { label: "Before Date First — position 3", successor: "date-first" },
     ]);
 
     // Still fails closed with no authorized map: a sort cannot conjure positions the map withheld.

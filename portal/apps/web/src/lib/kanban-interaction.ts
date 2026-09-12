@@ -122,8 +122,6 @@ export type ProjectKanbanBoardProps = {
   pendingOrdering: ReadonlySet<string>;
   terminal: boolean;
   onBoardMove?: (projectId: string, gap: SemanticGap, kind: "cross" | "same", focusDescriptor: FocusDescriptor) => void;
-  /** Compatibility seam for Slice 2 callers; all current Dashboard movement uses onBoardMove. */
-  onCrossStageMove?: (projectId: string, gap: SemanticGap, focusDescriptor: FocusDescriptor) => void;
   onBoardPosition: (project: ProjectSummary, direction: "up" | "down") => void;
   onPriorityChange: (project: ProjectSummary, priority: number | null) => void;
   onMoveStage: (project: ProjectSummary, gap: SemanticGap, kind: "cross" | "same", focusDescriptor: FocusDescriptor) => void;

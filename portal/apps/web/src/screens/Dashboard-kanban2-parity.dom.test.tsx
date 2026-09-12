@@ -104,9 +104,9 @@ describe("Dashboard Board seam (#98)", () => {
     expect(document.querySelector('[data-testid="kanban2-card-address"]')?.textContent).toBe("kb2-source Street");
   });
 
-  // AC 7. The old Board's equivalent regression lives in `Dashboard-kanban-sort.dom.test.tsx` and
-  // only ever proved a Priority control *exists*; it also renders the old Board, so it could never
-  // have failed for this Board. These assert an actual write reaches the Priority endpoint.
+  // AC 7. The equivalent regression in `Dashboard-kanban-sort.dom.test.tsx` only ever proved a
+  // Priority control *exists*, which is why #83 retired it and named these as its successor: these
+  // assert an actual write reaches the Priority endpoint.
   describe("Priority while the Board mutation flag is off", () => {
     function flagOffProjects() {
       apiGetMock.mockReset();
@@ -384,10 +384,10 @@ describe("Dashboard Board seam (#98)", () => {
   // in `Dashboard.tsx`, adding the focus identifiers above would rip focus off the star row on every
   // Priority change. The two changes are one unit; neither ships alone.
   //
-  // The equivalent old-Board assertion cannot carry this claim: `ProjectKanbanBoard.tsx:575` folds
-  // `!pendingOrdering.has(id)` into `canPrioritize`, so the old Board unmounts its own Priority
-  // control mid-write and focus is destroyed before any restore runs. This Board deliberately does
-  // not (pass 1), so the restore tiers are the only thing that can move focus here.
+  // The equivalent assertion on the Board this replaced (deleted in #83) could not carry this
+  // claim: that Board folded `!pendingOrdering.has(id)` into `canPrioritize`, so it unmounted its
+  // own Priority control mid-write and focus was destroyed before any restore ran. This Board
+  // deliberately does not, so the restore tiers are the only thing that can move focus here.
   describe("focus identifiers", () => {
     it("publishes the three restore tiers the Dashboard looks for", async () => {
       await act(async () => { root!.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); await Promise.resolve(); });

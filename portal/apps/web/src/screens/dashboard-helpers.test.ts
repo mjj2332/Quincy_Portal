@@ -16,6 +16,18 @@ describe("dashboard view preferences", () => {
     expect(initializeDashboardView({ read: () => "list", write })).toBe("list");
     expect(write).toHaveBeenCalledWith("list");
   });
+
+  // #83 retired `kanban2` as a route/storage value (see dashboard-helpers.ts's header comment). It
+  // is the one value a real user's localStorage can actually hold from before the cutover — every
+  // other invalid value in the test above is synthetic — so it must be pinned as degrading to
+  // `kanban` explicitly, through both the read-time normalizer and the write-back migration path a
+  // real stored preference goes through.
+  it("migrates a stored kanban2 preference to kanban, and writes the migration back", () => {
+    expect(normalizeDashboardView("kanban2")).toBe("kanban");
+    const write = vi.fn();
+    expect(initializeDashboardView({ read: () => "kanban2", write })).toBe("kanban");
+    expect(write).toHaveBeenCalledWith("kanban");
+  });
 });
 
 describe("Calendar initial state", () => {

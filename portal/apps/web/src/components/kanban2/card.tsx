@@ -17,10 +17,10 @@ import type { ProjectSummary } from "../../lib/kanban-interaction";
  * expected RAW (#82). Star rating (#81) and the block's "next step" slot remain deliberately
  * unfilled — the latter is dropped rather than invented, per #76/#82.
  *
- * The drag handle is a small sibling button, not the whole card: `ProjectKanbanBoard.tsx`'s own
- * `KanbanCard` carries the same split deliberately, "so ordinary anchor behavior remains
- * browser-native" — dnd-kit's pointer sensor sits on the handle only, leaving `InternalLink`'s
- * click-to-navigate alone.
+ * The drag handle is a small sibling button, not the whole card. The Board this one replaced (the
+ * original `ProjectKanbanBoard`, deleted in #83) carried the same split deliberately, "so ordinary
+ * anchor behavior remains browser-native" — dnd-kit's pointer sensor sits on the handle only,
+ * leaving `InternalLink`'s click-to-navigate alone.
  */
 
 function CoverMedia({
@@ -191,8 +191,8 @@ export function KanbanCard2({ project, projectHref, isOverlay = false, dragDisab
       </div>
       {!isOverlay && controls}
       {!isOverlay && (
-        // 44px touch target — WCAG 2.5.5 Enhanced / HIG, not a spacing token — matching the
-        // existing Board's handle (`ProjectKanbanBoard.tsx`).
+        // 44px touch target — WCAG 2.5.5 Enhanced / HIG, not a spacing token — carried over from
+        // the handle on the Board this replaced (deleted in #83).
         <KanbanItemHandle
           className="absolute top-[var(--space-2)] right-[var(--space-2)] z-[2] size-9 max-[641px]:size-11 pointer-coarse:size-11 inline-grid place-items-center border border-[color-mix(in_srgb,var(--ink-900)_18%,transparent)] rounded-[var(--radius-sm)] bg-[color-mix(in_srgb,var(--paper-000)_88%,transparent)] text-foreground-secondary text-[20px] leading-none [touch-action:none] focus-visible:!outline-2 focus-visible:!outline-[var(--ink-900)] focus-visible:!outline-offset-2"
           cursor={!dragDisabled}
