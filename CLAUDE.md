@@ -93,6 +93,12 @@ Also on this pipeline:
   committed. If you add an MCP config, check it for credentials before staging.
 - Style variant is `base-nova` — the one the owner evaluated and approved. Not `base-sera`.
 
+**Before adopting another ReUI block, read `docs/reui-block-adoption.md`.** The Board (#76, shipped
+across #80–#83) is the reference adoption: what it actually cost, the traps in order, and how to
+estimate the next one. Two decisions it settled are ADRs, not preferences — `card` is the Portal's
+committed ReUI surface (`docs/adr/0002`), and the five-star priority control is Quincy-owned rather
+than the registry's `rating` (`docs/adr/0003`), so do not "restore" it to `components/reui/`.
+
 ## Agent skills
 
 ### Issue tracker
