@@ -61,7 +61,17 @@
                          .project-team-picker (app.css:1232, :583, :266) */
   --z-dialog:   95;   /* NEW: dialogs move up from 90 so they deterministically clear a popover */
   --z-toast:    98;   /* NEW: derived — the next step above --z-dialog, so a toast still shows
-                         over an open dialog (.toasts moves 95 → 98, app.css:781) */
+                         over an open dialog. #110 retired the `.toasts` rule and landed this on the one
+                         surface, components/quincy/ToastViewport.tsx — Dashboard was the last site
+                         still hardcoding 95, which was --z-dialog's value by coincidence. */
+
+  /* ---- Toast surface inset --------------------------------------------
+     #110. `--app-rail-inline-size` is 0 while only the Topbar exists; #112 sets it to the rail's
+     inline size (250px expanded / 48px collapsed) and the toast surface moves with it. Below
+     772px the rail becomes a Sheet overlaying the content (no inline size of its own), so this
+     stays 0px there too — that media query belongs to #112, not here. */
+  --app-rail-inline-size: 0px;
+  --toast-inset-inline-start: calc(var(--app-rail-inline-size) + max(var(--space-5), env(safe-area-inset-left)));
 
   /* ---- Overlay motion presets ----------------------------------------
      No new duration or easing values; the two overlay motions get named so all eight sites

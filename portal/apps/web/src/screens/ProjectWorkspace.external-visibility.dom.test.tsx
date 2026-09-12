@@ -362,6 +362,14 @@ describe("external-editor visibility inventory", () => {
 // Regenerate ONLY with DUMP_VISIBILITY_INVENTORY=1, and only when a change to what a role may see
 // is intended and reviewed. Re-freezing these to turn a red build green is exactly the failure
 // this file exists to prevent.
+//
+// Re-frozen once, deliberately, for #110: every `testids` map below gained a `"toast-viewport": 1`
+// entry. #110 mounts a single always-present `ToastViewport` in every `ProjectWorkspace` view
+// state; before it, the toast container was conditional (only `full-workspace`, plus a separate one
+// inside `UnavailableProject`) and carried no `data-testid` at all. The new id appears exactly once
+// per tab, identically for `external_editor` and `admin`, so it changes neither role's relative
+// visibility nor the leak/disappearance checks this file exists to enforce — see #110's build
+// report for the verification. Nothing else in either literal moved.
 // ---------------------------------------------------------------------------
 
 const FROZEN_EXTERNAL_EDITOR = {
@@ -381,6 +389,7 @@ const FROZEN_EXTERNAL_EDITOR = {
       "project-overview-tab": 5,
       "project-team-control": 1,
       "project-workspace": 1,
+      "toast-viewport": 1,
       "workspace-main": 1
     },
     "roles": [
@@ -445,6 +454,7 @@ const FROZEN_EXTERNAL_EDITOR = {
       "project-overview-tab": 5,
       "project-team-control": 1,
       "project-workspace": 1,
+      "toast-viewport": 1,
       "workspace-main": 1
     },
     "roles": [
@@ -509,6 +519,7 @@ const FROZEN_EXTERNAL_EDITOR = {
       "project-overview-tab": 5,
       "project-team-control": 1,
       "project-workspace": 1,
+      "toast-viewport": 1,
       "workspace-main": 1
     },
     "roles": [
@@ -565,6 +576,7 @@ const FROZEN_EXTERNAL_EDITOR = {
       "project-overview-tab": 5,
       "project-team-control": 1,
       "project-workspace": 1,
+      "toast-viewport": 1,
       "workspace-main": 1
     },
     "roles": [
@@ -620,6 +632,7 @@ const FROZEN_EXTERNAL_EDITOR = {
       "project-overview-tab": 5,
       "project-team-control": 1,
       "project-workspace": 1,
+      "toast-viewport": 1,
       "workspace-main": 1
     },
     "roles": [
@@ -682,6 +695,7 @@ const FROZEN_ADMIN = {
       "project-overview-tab": 5,
       "project-team-control": 1,
       "project-workspace": 1,
+      "toast-viewport": 1,
       "workspace-main": 1
     },
     "roles": [
@@ -763,6 +777,7 @@ const FROZEN_ADMIN = {
       "project-overview-tab": 5,
       "project-team-control": 1,
       "project-workspace": 1,
+      "toast-viewport": 1,
       "workspace-main": 1
     },
     "roles": [
@@ -835,6 +850,7 @@ const FROZEN_ADMIN = {
       "project-overview-tab": 5,
       "project-team-control": 1,
       "project-workspace": 1,
+      "toast-viewport": 1,
       "workspace-main": 1
     },
     "roles": [
@@ -897,6 +913,7 @@ const FROZEN_ADMIN = {
       "project-overview-tab": 5,
       "project-team-control": 1,
       "project-workspace": 1,
+      "toast-viewport": 1,
       "workspace-main": 1
     },
     "roles": [
@@ -958,6 +975,7 @@ const FROZEN_ADMIN = {
       "project-overview-tab": 5,
       "project-team-control": 1,
       "project-workspace": 1,
+      "toast-viewport": 1,
       "workspace-main": 1
     },
     "roles": [

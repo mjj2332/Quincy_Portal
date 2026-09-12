@@ -10,6 +10,8 @@ import { useStages } from "../lib/stages";
 import { DASHBOARD_CALENDAR_LAST_DATE_KEY, DASHBOARD_CALENDAR_SUBVIEW_KEY, formatDashboardDate, initializeDashboardCalendarState, initializeDashboardView, initializeKanbanSortMode, normalizeDashboardCalendarSearch, sanitizeDashboardCalendarSearch, type DashboardView, type KanbanSortMode } from "./dashboard-helpers";
 import { InternalLink } from "../components/InternalLink";
 import { NoticeBoard } from "../components/NoticeBoard";
+import { pushToast as toast } from "../lib/toast-store";
+import { ToastViewport } from "../components/quincy/ToastViewport";
 import { Button, buttonClasses } from "../components/quincy/Button";
 import { Eyebrow } from "../components/quincy/Eyebrow";
 import { Select, type SelectOption } from "../components/quincy/Select";
@@ -56,7 +58,6 @@ export { adjacentBoardGap, adjacentBoardPlacement, cardDropPlacement, sortKanban
 export type { ProjectSummary } from "../lib/kanban-interaction";
 
 type ProjectScope = "active" | "archived";
-type Toast = { id: number; message: string; tone: "success" | "error"; announcedElsewhere?: boolean };
 type BoardOverlay = { key: string; baseline: ProjectSummary[]; model: ProjectSummary[]; movingProjectId: string };
 type FocusRestore = { key: string | null; x: number; y: number; fallbackStageKey?: StageKey };
 type MovementRecovery = { model: BoardModel; projectId: string; project: ProjectSummary; settledStageKey: StageKey };
@@ -200,7 +201,6 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   const [calendarInteractionBlocked, setCalendarInteractionBlocked] = useState(false);
   const [calendarSettle, setCalendarSettle] = useState<CalendarSettleState>({ pending: false, recoveryReason: null });
   const [recoveryReason, setRecoveryReason] = useState<string | null>(null);
-  const [toasts, setToasts] = useState<Toast[]>([]);
   const [announcement, setAnnouncement] = useState("");
   const [boardUnavailableReason, setBoardUnavailableReason] = useState<string | null>(null);
   const [, setDocumentActivityVersion] = useState(0);
@@ -545,21 +545,6 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       void projectsQuery.refetch();
     }
   }, [projectsQuery.refetch]);
-
-  /**
-   * `announcedElsewhere` keeps a toast OUT of the toast viewport's live region, for the case where the
-   * same event was already announced in the Dashboard's own live region. Without it a screen reader
-   * hears the event twice — and for the two error paths that reuse the toast string verbatim, twice
-   * word for word. #99.
-   *
-   * It is opt-IN per call, deliberately: the viewport stays live, so a toast added later without a
-   * paired announcement still speaks. Silence has to be asked for.
-   */
-  const toast = useCallback((message: string, tone: Toast["tone"] = "success", options?: { announcedElsewhere?: boolean }) => {
-    const id = Date.now() + Math.random();
-    setToasts((current) => [...current, { id, message, tone, announcedElsewhere: options?.announcedElsewhere }]);
-    window.setTimeout(() => setToasts((current) => current.filter((item) => item.id !== id)), 3600);
-  }, []);
 
   const filteredProjects = useMemo(() => {
     const term = query.trim().toLocaleLowerCase();
@@ -1078,29 +1063,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         />
       )}
       <div className="sr-only" data-testid="dashboard-live-region" aria-live="polite" aria-atomic="true">{announcement}</div>
-      <div
-        aria-live="polite"
-        data-testid="dashboard-toast-viewport"
-        className="fixed z-[95] flex flex-col items-end gap-[var(--space-3)] pointer-events-none right-[max(var(--space-5),env(safe-area-inset-right))] bottom-[max(var(--space-5),env(safe-area-inset-bottom))] left-[max(var(--space-5),env(safe-area-inset-left))]"
-      >
-        {toasts.map((item) => (
-          <div
-            key={item.id}
-            // Hidden from the accessibility tree, not from the screen: the event was already announced
-            // in the Dashboard's own live region, and an aria-hidden node mutating inside a live region
-            // produces no announcement. #99
-            aria-hidden={item.announcedElsewhere ? "true" : undefined}
-            data-testid="dashboard-toast"
-            className={cn(
-              "flex items-center gap-[var(--space-3)] bg-surface-inverse text-on-inverse px-[var(--space-5)] py-[var(--space-3)] rounded-[var(--radius-sm)] shadow-[var(--shadow-md)] text-[length:var(--text-sm)] leading-[var(--leading-normal)] motion-safe:animate-[slidein_var(--dur-base)_var(--ease-entrance)] pointer-events-auto max-w-[min(380px,100%)]",
-              item.tone === "error" && "bg-destructive",
-            )}
-          >
-            <span aria-hidden="true" className="shrink-0 inline-grid place-items-center size-[var(--space-4)] [font:var(--weight-regular)_var(--text-xs)/1.4_var(--font-mono)]">{item.tone === "error" ? "!" : "✓"}</span>
-            <span>{item.message}</span>
-          </div>
-        ))}
-      </div>
+      <ToastViewport testId="dashboard-toast-viewport" toastTestId="dashboard-toast" />
     </main>
   );
 }

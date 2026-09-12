@@ -1740,3 +1740,50 @@ dimension held uniform (here, one priority tier) — if it passes, the layer und
 the finding belongs to whatever re-orders the result. And vary fixtures along a dimension the
 production data actually varies: a suite where every row shares a value cannot see a rule keyed on
 that value.
+
+## Two reviewers, one bug, opposite fixes — and the behaviour you replaced is the tiebreaker (#110, 2026-09-12)
+
+Consolidating four per-screen `useState` toast arrays into one module-level store moved a lifetime
+question out of React and into our own hands, and the two reviews caught it from opposite sides.
+Sol: the last viewport unregisters, a cleanup microtask is queued, a `pushToast()` lands, the
+microtask runs `clearToasts()` and eats it — announced zero times, violating the AC. Luna, with a
+real `UploadDropzone` request rejected after unmount: the same push *survives* in the module
+snapshot and the **next screen's** viewport renders it — one project's error surfacing on another.
+
+Both were real. Each one's obvious fix is the other's regression: preserve post-unmount pushes and
+you guarantee the leak; discard them and you guarantee the eaten toast. Neither reviewer could see
+that, because each had half the picture.
+
+What settled it was not adjudicating between the reports but asking what the code being replaced
+did. A per-screen `useState`: `setToasts` after unmount is a no-op, so a toast raised by a screen
+that is gone was *discarded, never carried forward*. That is one rule covering both reports —
+discard a toast pushed with no viewport mounted, on a microtask, **unless** a viewport registers
+before it runs. The exception is not a special case either: effects run child-first, so a screen's
+own mount-time push (a route `notice`) fires before its sibling viewport's registration effect, and
+by microtask time the registration has happened in the same commit.
+
+**Rule.** When a refactor moves lifetime management from the framework into your own code, the
+replaced implementation's lifetime semantics are the specification — write them down before you
+choose a mechanism. And when two reviewers hand you contradictory fixes for one area, that is
+evidence neither has the whole failure mode: find the rule that explains both reports before
+writing either patch.
+
+## A `new Set()` of filenames cannot catch the duplicate it exists to catch (#110, 2026-09-12)
+
+The consolidated toast surface must be rendered exactly once per screen — two viewports means every
+toast renders and announces twice. The test written to pin that collected filenames containing
+`<ToastViewport` into a `Set` and compared it to the expected three. It passed, and it could not
+have failed for the thing it was for: `Set` discards multiplicity, so a second `<ToastViewport />`
+added to Dashboard still yields the same three filenames. It also scanned comment text, the failure
+already recorded above in this file.
+
+The fix is to count occurrences per file and assert an exact map. The part worth keeping is that
+the defect was found by asking "what edit should turn this red?" and then *making that edit* —
+adding a duplicate to `Admin.tsx`, watching it fail, reverting. This repo's standing rule ("a grep
+gate that cannot fail is not a gate") was already written down; it was still shipped again because
+the gate was green and green reads as working.
+
+**Rule.** A gate over a *count* must assert the count. Set-membership, `.includes()` and
+"is it present" answer a different question than the one a duplicate-detection gate is asking — and
+running the mutation that should turn it red is the only thing that tells you which question you
+actually asked.

@@ -381,17 +381,17 @@ button { font-family: var(--font-sans); }
    --------------------------------------------------------------------- */
 
 /* ---------------------------------------------------------------------
-   Modals + toasts
+   Modals
    --------------------------------------------------------------------- */
 /* `Modal` (components/Modal.tsx) owns the dialog's scrim/panel/head/body/foot paint now, as
    Tailwind utility classes (§6.1-§6.3). `.scrim` and `.modal__body` survive here as bare class
    names with no CSS rule of their own — ConfirmDialog.dom.test.tsx queries both directly
    (§12.2's grep rule: a querySelector in a test file is a consumer). */
 
-.toasts { position: fixed; right: 22px; bottom: 22px; z-index: var(--z-toast); display: flex; flex-direction: column; gap: 10px; }
-.toast { display: flex; align-items: center; gap: 12px; background: var(--ink-900); color: var(--paper-050); padding: 13px 18px; border-radius: var(--radius-sm); box-shadow: var(--shadow-lg); font-size: 14px; animation: slidein var(--dur-slow) var(--ease-entrance); max-width: 380px; }
-.toast svg { width: 17px; height: 17px; flex: none; }
-.toast .sub { color: var(--text-on-inverse-muted); font-size: 12.5px; }
+/* Toasts are no longer painted here. #110 consolidated all four copies into one
+   `components/quincy/ToastViewport.tsx`, which paints from the token set as Tailwind utility
+   classes; `.toasts`, `.toast`, `.toast svg`, `.toast .sub` and `.toast--error` were deleted with
+   their last consumer. The `slidein` keyframe stays — ToastViewport still animates with it. */
 
 /* progress bar (zip prep) */
 .zipbar { height: 4px; background: var(--paper-200); overflow: hidden; }
@@ -527,7 +527,6 @@ button { font-family: var(--font-sans); }
 .upload-rejected { max-width: 600px; margin: 15px auto 0; padding: 10px; background: color-mix(in srgb, var(--signal-critical) 7%, var(--paper-050)); color: var(--signal-critical); font-size: 12.5px; text-align: left; }
 .filter-chips { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 .filter-chips .chip { padding: 6px 10px; }
-.toast--error { background: var(--signal-critical); }
 .topbar__user { display: flex; align-items: center; gap: var(--space-3); }
 .topbar__identity { min-width: 0; text-align: right; }
 .topbar__identity strong { display: block; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 400; }
