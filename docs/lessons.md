@@ -1714,3 +1714,29 @@ no authorized map still fails closed.
 map decides where a card LANDS, the display order decides what the user is OFFERED. Any list of
 positions shown to a person is presentation. And port an old suite assertion-for-assertion — the
 regression it catches is the reason it was worth porting.
+
+## A browser "regression" that was the server's read order, and the fixture that revealed it (#83, 2026-09-12)
+
+A browser acceptance pass blocked the #83 cutover: a cross-Stage drop onto a middle card sent
+`between(Target C, Target D)` — in both the unconfirmed request and the confirmed retry — and the card
+rendered at the BOTTOM of the target column. It read as a placement defect in the new Board.
+
+It was not. `authorizedInternalBoardOrder` (`workers/app/src/routes/projects.ts`) orders each Stage
+**Priority-set before Priority-null**, and only then by `board_position`. The test fixtures had a
+mover with no Priority and targets with Priorities 5, 2, 1, 4, so the mover sorted below all of them
+no matter what position was stored. A throwaway server probe settled it: the placement stored `3500`
+between `3000` and `4000`, and the authorized order still returned the mover last. No Board could
+have shown otherwise — in Board sort the client orders purely by `boardRank`, taken from that server
+map — and the Board being replaced consumed the identical map, so it behaved the same way.
+
+Two things made this expensive to diagnose. The symptom pointed at the layer that had just changed,
+which is the natural suspect and was the wrong one. And the earlier acceptance passes had used
+uniform fixtures — every Project unprioritised — so the rule had never been exercised; the new pass
+seeded mixed Priorities and exposed behaviour that had been there all along.
+
+**Rule.** When a browser pass reports a placement that disagrees with a correct request body, the
+request is evidence: the write is right, so suspect the READ. Re-run the case with the confounding
+dimension held uniform (here, one priority tier) — if it passes, the layer under test is innocent and
+the finding belongs to whatever re-orders the result. And vary fixtures along a dimension the
+production data actually varies: a suite where every row shares a value cannot see a rule keyed on
+that value.
