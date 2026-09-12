@@ -1652,3 +1652,65 @@ printed nothing, not even `0`. That reads exactly like "no match". A verificatio
 **Rule.** When `grep` prints nothing for a string you have just written, distrust the grep before
 the file. Check `file <path>` or use `grep -a`. Separators in keys should be visible characters
 (`|`), never control characters.
+
+## A workspace with no `test` script is silently absent from "the full suite" (#83, 2026-09-12)
+
+`portal/package.json`'s `test` is `npm run test --workspaces --if-present`. `packages/shared` had a
+`typecheck` script and no `test` script, so its 20 files and 145 tests — including the entire staff
+route grammar, the closed `view` allow-list that #83 changes — never ran in the root suite. They ran
+only when invoked directly in that directory. Nothing failed; the suite simply reported a smaller,
+greener world. `--if-present` is what makes the omission silent.
+
+**Rule.** After adding tests to a workspace, confirm the ROOT suite count moves. If a package has
+tests, it needs a `test` script, or `--if-present` quietly excludes it forever.
+
+## The vendored board hard-codes the measuring strategy a shipped white-screen banned (#83, 2026-09-12)
+
+The #185 entry above ends with a rule: *pair any live-reordering board with
+`MeasuringStrategy.BeforeDragging`, not `Always`.* The old Board obeyed it explicitly. Its
+replacement is composed on vendored `reui/kanban.tsx`, which hard-codes
+`measuring: { droppable: { strategy: MeasuringStrategy.Always } }` and exposes no prop to change it.
+The cutover therefore ships the precondition of that defect.
+
+It is safe for one reason only: the new Board never rewrites the rendered column arrays during a
+drag. Hover moves a drop indicator that is absolutely positioned and zero-layout, so there is no
+reflow for `Always` to re-measure and no feedback loop to enter. The safety argument lives in that
+invariant, not in the configuration — which is exactly the kind of fact that is one "small
+simplification" away from being lost, and happy-dom cannot see the loss.
+
+**Rule.** When a vendored primitive hard-codes something a lesson here forbids, pin the replacement
+invariant with a test and say in the test's comment which defect it is standing in for. The pins for
+this one are the `Always` assertion on the captured `DndContext` props and the
+"never rewrites SortableContext order from the drag proposal" test — neither is legacy, and a
+multi-card real-browser drag stays mandatory for any change under dnd-kit config.
+
+## An `aria-label` is not a test id, and renaming one can void an absence assertion (#83, 2026-09-12)
+
+The new Board shipped behind a flag as `aria-label="Project pipeline board (kanban2)"`. The issue
+licensed keeping `kanban2` in internal filenames and test ids, and the suffix looked like exactly
+that. It was not: it is copy a screen reader reads aloud. Worse,
+`Dashboard-kanban-sort.dom.test.tsx` asserts `[aria-label="Project pipeline board"]` is **absent** in
+archived scope. After the cutover that assertion would have passed because the label no longer
+matched, not because the Board had unmounted — a real test silently converted into a tautology by a
+string it did not own.
+
+**Rule.** An internal-naming licence covers identifiers no user perceives. It never covers an
+accessible name. And when you rename any string another test asserts the ABSENCE of, that test must
+be re-proved red — absence assertions fail silently upwards.
+
+## Two orders, one list: the authorized map is not the displayed order (#83, 2026-09-12)
+
+`moveToPositionOptions` built the Move to… list from the authorized Board map. Correct for placement,
+wrong for presentation: under Priority or shoot-date sort the column renders in sorted order, so the
+chooser offered "Before X — position 1" for the card the user could see sitting third. The old Board
+listed the visual successor and had a test saying so; the replacement lost it, and only the ported
+Dashboard suite — carried over assertion-for-assertion rather than rewritten — caught it.
+
+The fix orders the list by the displayed order and changes nothing else: the successor ids stay the
+same, so placement stays semantic and resolves against the authorized map as before, and a model with
+no authorized map still fails closed.
+
+**Rule.** A semantic placement system has two orders, and they are not interchangeable: the authorized
+map decides where a card LANDS, the display order decides what the user is OFFERED. Any list of
+positions shown to a person is presentation. And port an old suite assertion-for-assertion — the
+regression it catches is the reason it was worth porting.
