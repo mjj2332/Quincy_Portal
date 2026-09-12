@@ -41,8 +41,10 @@ import { roleHasCapability, type DashboardCalendarState, type Role } from "@quin
 import { locationStore, parseStaffLocation, staffPathFor, type StaffRoute } from "./router";
 import { createStaffRouterHistory, parseStaffSearch, stringifyStaffSearch } from "./staff-history";
 import { useCapabilities } from "./capabilities";
+import { buildStaffNavigation } from "./staff-navigation";
+import { DASHBOARD_VIEW_KEY, readRememberedDashboardView } from "../screens/dashboard-helpers";
 import { consumeSignInDestination } from "./auth";
-import { Topbar, type AppView } from "../components/Topbar";
+import { Topbar } from "../components/Topbar";
 import { InternalLink } from "../components/InternalLink";
 import { Dashboard } from "../screens/Dashboard";
 import { ProjectWorkspace } from "../screens/ProjectWorkspace";
@@ -82,18 +84,6 @@ function useShell(): ShellState {
   const value = use(ShellStateContext);
   if (!value) throw new Error("Shell state is unavailable outside the staff router.");
   return value;
-}
-
-function viewFor(route: StaffRoute): AppView {
-  switch (route.kind) {
-    case "dashboard": return "dashboard";
-    case "create-project": return "create-project";
-    case "project": return "project";
-    case "edit-project": return "edit-project";
-    case "admin": return "admin";
-    case "notifications": return "notifications";
-    default: return "not-found";
-  }
 }
 
 function NotAvailable() {
@@ -182,7 +172,16 @@ function ShellRoute() {
     if (replace) history.replace(path); else history.push(path);
   }
 
-  const activeView = viewFor(route);
+  // The navigation model replaces `viewFor` (#111). It is computed here, once, from the route the
+  // shell already parsed — the Topbar reads its coarse `activeSectionId` today, and the rail behind
+  // the flag reads the whole tree. Re-resolved on every location change rather than snapshotted:
+  // the Dashboard writes the view preference and then navigates, so a mount-time read goes stale.
+  const navigation = useMemo(() => buildStaffNavigation(
+    route,
+    readRememberedDashboardView({ read: () => window.localStorage.getItem(DASHBOARD_VIEW_KEY) }),
+    { adminBackend: canAccessAdmin, viewProductionCalendar: roleHasCapability(user.role, "viewProductionCalendar") },
+  ), [canAccessAdmin, route, user.role]);
+  const activeView = navigation.activeSectionId;
   const dashboardCalendar = route.kind === "dashboard" && "calendar" in route && !calendarBlocked ? route.calendar : null;
   const shell: ShellState = {
     user, route, pathname, notice, navigate,

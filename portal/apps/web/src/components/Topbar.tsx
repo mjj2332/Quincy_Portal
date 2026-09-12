@@ -8,8 +8,12 @@ import { initials } from "../lib/initials";
 import { Menu } from "./quincy/menu";
 import { Button, buttonClasses } from "./quincy/Button";
 import { cn } from "../lib/utils";
+import type { StaffNavigationSectionId } from "../lib/staff-navigation";
 
-export type AppView = "dashboard" | "project" | "create-project" | "edit-project" | "admin" | "notifications" | "not-found";
+// The coarse screen identity now comes from the navigation model (#111), which is also what the
+// rail reads. The alias keeps this component's prop name and its existing suite untouched while
+// making the model the single definition — the `viewFor` switch that used to compute it is gone.
+export type AppView = StaffNavigationSectionId;
 
 interface TopbarProps {
   activeView: AppView;

@@ -55,6 +55,31 @@ export function normalizeDashboardView(value: string | null): DashboardView {
   return value === "list" || value === "kanban" || value === "calendar" ? value : "kanban";
 }
 
+export const DASHBOARD_VIEW_KEY = "quincy:dashboard:view";
+
+/**
+ * The read half of the remembered Dashboard view, with no write of any kind (#111).
+ *
+ * `initializeDashboardView` below performs a one-time grid-to-kanban migration write, which is
+ * correct for the Dashboard — it owns the preference — but wrong for a second caller: the
+ * navigation model must read no storage at all, and the shell that feeds it must not race the
+ * Dashboard for the same migration. So the shell resolves the view through this function and
+ * passes the value in, leaving `initializeDashboardView` exactly one caller and exactly one write.
+ *
+ * Resolve it per location rather than once at mount. The Dashboard writes the preference and then
+ * changes the location, so a snapshot taken at mount goes stale the moment a Staff member switches
+ * view — the rail would keep highlighting Kanban over a List.
+ */
+export function readRememberedDashboardView(storage: Pick<DashboardPreferenceStorage, "read">): DashboardView {
+  try {
+    return normalizeDashboardView(storage.read());
+  } catch {
+    // Browser storage can be unavailable or throw on read under privacy settings; the default view
+    // is a better answer than propagating that into navigation chrome.
+    return "kanban";
+  }
+}
+
 /**
  * Reads the preference before attempting its one-time grid-to-kanban migration.
  * Browser storage can be partially available (a read may succeed while a write
