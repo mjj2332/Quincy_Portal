@@ -18,7 +18,7 @@ import { usePrefersReducedMotion } from "../../lib/use-media-query";
 import { KanbanCard2 } from "./card";
 import { MoveToControl } from "./move-to-control";
 
-/** `editing` is the role-safe presentation of `editing_autohdr` — see `ProjectKanbanBoard.tsx`. */
+/** `editing` is the role-safe presentation of `editing_autohdr`. */
 function semanticStageKey(value: ProjectStageKey): StageKey {
   return value === "editing" ? "editing_autohdr" : value;
 }
@@ -43,12 +43,13 @@ function DropIndicator({ className }: { className: string }) {
 }
 
 /**
- * A second Board, reachable at `view=kanban2` (#80), built from the ReUI `kanban-board-3` block.
- * Stage columns in Admin order, cards showing street + cover photo, and cross-column drag moving
- * Stage (#80); Priority stars (#81) and Editor avatars / Deadline / RAW (#82) have since shipped
- * and are rendered. A cross-Stage drop lands exactly where it was released — before the card it
- * was dropped on, or at the end for a column drop — and a card can be reordered within its own
- * Stage by anyone holding Priority access while the Board is in Board sort (#99).
+ * The Dashboard's Board, rendered at `view=kanban` (and at the Dashboard's default) since #83's
+ * cutover, built from the ReUI `kanban-board-3` block (originally #80). Stage columns in Admin
+ * order, cards showing street + cover photo, and cross-column drag moving Stage (#80); Priority
+ * stars (#81) and Editor avatars / Deadline / RAW (#82) have since shipped and are rendered. A
+ * cross-Stage drop lands exactly where it was released — before the card it was dropped on, or at
+ * the end for a column drop — and a card can be reordered within its own Stage by anyone holding
+ * Priority access while the Board is in Board sort (#99).
  *
  * Column reordering is removed entirely (#76 "Column behaviour") — every column below is a plain
  * `KanbanColumn` with `disabled`, so it registers as a drop target (needed so an EMPTY column can
@@ -125,11 +126,11 @@ export function ProjectKanbanBoard2({
 
   /**
    * Whether a drop into `gap` would be accepted — shared by the drop, the narration and the
-   * indicator so none of them promises a landing another refuses. Mirrors the old Board's verdict
-   * (`ProjectKanbanBoard.tsx:795-800`) and the Dashboard's own checks (`runBoardMovement`), which
-   * re-validate anyway: each capability gates its own kind of drop, `eligibleTarget` enforces the
-   * rest (a same-Stage move needs Priority access and Board sort), and a same-Stage gap that leaves
-   * the order unchanged — dropping a card back into its own slot — is `"unchanged"`, not a write.
+   * indicator so none of them promises a landing another refuses. Shares the verdict shape with
+   * the Dashboard's own checks (`runBoardMovement`), which re-validate anyway: each capability
+   * gates its own kind of drop, `eligibleTarget` enforces the rest (a same-Stage move needs
+   * Priority access and Board sort), and a same-Stage gap that leaves the order unchanged —
+   * dropping a card back into its own slot — is `"unchanged"`, not a write.
    */
   const dropVerdict = useCallback((project: ProjectSummary, gap: SemanticGap, sameStage: boolean): "ok" | "refused" | "unchanged" => {
     if (!(sameStage ? sameStageReorderEnabled : canMoveStages)) return "refused";
@@ -150,28 +151,26 @@ export function ProjectKanbanBoard2({
   const noopValueChange = useCallback(() => undefined, []);
   const reducedMotion = usePrefersReducedMotion();
 
-  // Matches the old Board (`ProjectKanbanBoard.tsx:579`): movement is locked while ANY move or
-  // ordering write is in flight, not just for the card that started it — a second interaction
-  // must not be able to start mid-write.
+  // Movement is locked while ANY move or ordering write is in flight, not just for the card that
+  // started it — a second interaction must not be able to start mid-write.
   const movementLocked = movementDisabled || pendingMoves.size > 0 || pendingOrdering.size > 0;
-  // Either capability is enough to pick a card up (`ProjectKanbanBoard.tsx:575,592`): a
-  // prioritize-only principal reorders within a Stage without being able to change it. Which drops
-  // each capability permits is decided per drop, in `handleMove`.
+  // Either capability is enough to pick a card up: a prioritize-only principal reorders within a
+  // Stage without being able to change it. Which drops each capability permits is decided per
+  // drop, in `handleMove`.
   const dragDisabled = movementLocked || terminal || !boardMutationEnabled || !(canMoveStages || sameStageReorderEnabled);
   // Priority deliberately does NOT depend on `boardMutationEnabled`: that is the Board *movement*
   // flag, and the shipped contract is that Priority stays editable while movement is off. Gating
   // it on that flag was this Board's own regression (#98).
   //
-  // The map-evidence predicate mirrors `ProjectKanbanBoard.tsx:575`. The Dashboard already folds
-  // the identical check into the `canPrioritize` prop at both render sites, so this is a second
-  // evaluation of it today — but only because the old Board enforces it too, and #83 deletes the
-  // old Board. Whatever this Board enforces becomes the only enforcement, so the guarantee is kept
-  // here rather than allowed to disappear silently at cutover.
+  // The Dashboard already folds the identical map-evidence check into the `canPrioritize` prop at
+  // both render sites; this Board re-evaluates it itself because, since #83's cutover, it is the
+  // only Board and the only place this guarantee is enforced — it must not depend on a caller
+  // getting its own prop right.
   //
-  // Deliberate divergence from the old Board: `pendingOrdering` is NOT folded in. `PriorityStars`
-  // already disables its own commits and sets `aria-busy` while a write is pending, and removing a
-  // control the user has focused mid-write is worse than leaving it busy. Note also that the
-  // Dashboard rejects a second Priority write for the *same* project, not globally.
+  // `pendingOrdering` is NOT folded in here. `PriorityStars` already disables its own commits and
+  // sets `aria-busy` while a write is pending, and removing a control the user has focused
+  // mid-write is worse than leaving it busy. Note also that the Dashboard rejects a second
+  // Priority write for the *same* project, not globally.
   //
   // A non-editable viewer still *sees* a set priority (read-only), and sees nothing at all where
   // none is set; `PriorityStars` owns that split.

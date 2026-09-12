@@ -274,6 +274,18 @@ describe("ProjectKanbanBoard2 (#80)", () => {
     expect(host.querySelector('[role="button"] [role="radiogroup"]')).toBeNull();
   });
 
+  // #83: the last assertion of `screens/dashboard-routing.test.ts`'s retired card-markup suite
+  // (`expect(html).not.toContain("draggable=")`). The defect is specific: the native HTML5 drag
+  // the attribute switches on is not dnd-kit's, and a card carrying it hands the browser a
+  // competing drag that starts on mousedown with no activation constraint — dragging the card's
+  // ghost image around instead of picking it up. An `<a href>` is natively draggable anyway, which
+  // is why the invariant is "never sets the attribute", not "nothing here can be dragged".
+  it("sets no native draggable attribute anywhere on the Board (#83)", async () => {
+    await renderBoard({ canPrioritize: true, sameStageReorderEnabled: true });
+    expect(host.querySelector('[data-testid="kanban2-card-wrap"]'), "no card rendered — the assertion below would be vacuous").not.toBeNull();
+    expect(host.querySelector("[draggable]")).toBeNull();
+  });
+
   it("moves a card to a different column's Stage on drop", async () => {
     const props = await renderBoard();
     await endDrag("source", "raw_review");

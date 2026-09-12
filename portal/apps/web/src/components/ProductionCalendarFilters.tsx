@@ -45,7 +45,7 @@ const FILTER_OPTIONS = "grid gap-[7px]";
 
 // The legacy rule lived in a `(pointer: coarse), (max-width: 720px)` block. That comma is an OR
 // and Tailwind has no OR variant, so each declaration is written twice; the union is the same
-// viewport set. Same shape as ProjectKanbanBoard.tsx:203.
+// viewport set. Same shape as `components/kanban2/board.tsx`'s `pointer-coarse:`/`max-[641px]:` pairs.
 const FILTER_OPTION =
   "flex items-start gap-[8px] min-w-0 text-foreground-secondary [font:400_12px/1.35_var(--font-sans)] cursor-pointer " +
   "pointer-coarse:min-h-[44px] pointer-coarse:items-center max-[721px]:min-h-[44px] max-[721px]:items-center";

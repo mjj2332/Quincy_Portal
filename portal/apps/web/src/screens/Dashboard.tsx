@@ -44,7 +44,6 @@ import {
   type ProjectSummary,
   type SemanticGap,
 } from "../lib/kanban-interaction";
-import { ProjectKanbanBoard } from "../components/ProjectKanbanBoard";
 import { ProjectKanbanBoard2 } from "../components/kanban2/board";
 // Code-split: FullCalendar + its deps (~84 kB gzip) load only when a capable
 // principal opens the Calendar view, never on the sign-in screen or a
@@ -55,7 +54,6 @@ import type { CalendarSettleState } from "../lib/production-calendar-interaction
 
 export { adjacentBoardGap, adjacentBoardPlacement, cardDropPlacement, sortKanbanProjects } from "../lib/kanban-interaction";
 export type { ProjectSummary } from "../lib/kanban-interaction";
-export { KanbanCard } from "../components/ProjectKanbanBoard";
 
 type ProjectScope = "active" | "archived";
 type Toast = { id: number; message: string; tone: "success" | "error"; announcedElsewhere?: boolean };
@@ -138,7 +136,7 @@ type DashboardProps = { currentUserId: string; role?: Parameters<typeof dashboar
 
 type DashboardRouteArm = Extract<DashboardRoute, { kind: "dashboard" }>;
 
-type DashboardViewRoute = Extract<DashboardRouteArm, { dashboardView: "list" | "kanban" | "kanban2" }>;
+type DashboardViewRoute = Extract<DashboardRouteArm, { dashboardView: "list" | "kanban" }>;
 type DashboardCalendarRoute = Extract<DashboardRouteArm, { calendar: DashboardCalendarState }>;
 
 function isDashboardViewRoute(route: DashboardRouteArm): route is DashboardViewRoute {
@@ -599,9 +597,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     history.push(projectHrefFor(projectId));
   }, [calendarInteractionBlocked, calendarSettle.pending, canViewProductionCalendar, history, projectHrefFor, viewingArchived]);
 
-  // `kanban2` (#80) is reached only by a route arrival — see the `routeDashboardView` effect
-  // above — never through this segmented control, so it is deliberately excluded here.
-  function selectView(next: Exclude<DashboardView, "kanban2">) {
+  function selectView(next: DashboardView) {
     if (interactionBlockedRef.current || calendarInteractionBlocked) return;
     if (next === "calendar") {
       if (!canViewProductionCalendar || viewingArchived) return;
@@ -1058,34 +1054,6 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       )}
 
       {!isCalendarView && !isLoading && !error && !viewingArchived && filteredProjects.length > 0 && view === "kanban" && (
-        <ProjectKanbanBoard
-          projects={filteredProjects}
-          activeStages={activeStages}
-          canMoveStages={canMoveStages}
-          canPrioritize={canPrioritize && hasAuthorizedBoardMap}
-          role={role}
-          boardMutationEnabled={boardMutationEnabled}
-          movementDisabled={movementSettlePending || !boardMutationEnabled}
-          sameStageReorderEnabled={boardMutationEnabled && canPrioritize && hasAuthorizedBoardMap && effectiveKanbanSort === "board"}
-          effectiveKanbanSort={effectiveKanbanSort}
-          pendingMoves={pendingMoves}
-          pendingOrdering={pendingOrdering}
-          terminal={Boolean(queryRuntime?.principalTerminal || projects.some((project) => queryRuntime?.isProjectRemoved(project.id)))}
-          onBoardMove={onBoardMove}
-          onBoardPosition={moveProjectPosition}
-          onPriorityChange={setProjectPriority}
-          onMoveStage={onMoveToStage}
-          onMoveToProposalChange={(proposal) => setBoardInteraction((current) => ({ activeId: current.activeId, proposal }))}
-          onInteractionStateChange={setBoardInteraction}
-          onAnnounce={(message) => { if (message !== undefined) setAnnouncement(message); }}
-          projectHrefFor={(project) => projectHrefFor(project.id)}
-        />
-      )}
-
-      {/* #80: the second Board (ReUI kanban-board-3), reachable only at ?view=kanban2 for
-          comparison against real studio data before cutover (#76). Same props as the Board
-          above, verbatim, so the Dashboard's priority and stage coordinators are unchanged. */}
-      {!isCalendarView && !isLoading && !error && !viewingArchived && filteredProjects.length > 0 && view === "kanban2" && (
         <ProjectKanbanBoard2
           projects={filteredProjects}
           activeStages={activeStages}

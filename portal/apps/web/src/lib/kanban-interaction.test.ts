@@ -285,6 +285,51 @@ describe("Kanban interaction model", () => {
     ]);
   });
 
+  // #83. The old Board listed the VISUAL successor ("uses the visual successor when Priority
+  // sorting changes the canonical Board order"), and the cutover suite caught the replacement
+  // listing canonical Board order instead — so "Before X — position 1" named the card the user saw
+  // third. Only the order of the list moves: the successor ids stay the same, because placement is
+  // semantic and `resolveSemanticGap` resolves them against the authorized map either way.
+  it("lists cross-Stage Move-to options in the displayed order when the Board is not in Board sort", () => {
+    const mover = project("mover", "awaiting_raw", { boardRevision: 3 });
+    const boardFirst = project("board-first", "raw_review", { street: "Board First", priority: 5, boardRevision: 1 });
+    const priorityFirst = project("priority-first", "raw_review", { street: "Priority First", priority: 1, boardRevision: 2 });
+    const dateFirst = project("date-first", "raw_review", { street: "Date First", priority: 2, boardRevision: 4 });
+    const model = board([mover, boardFirst, priorityFirst, dateFirst], {
+      awaiting_raw: ["mover"],
+      raw_review: ["board-first", "priority-first", "date-first"],
+    });
+    const caps = {
+      canMoveProjectStage: true,
+      canPrioritize: true,
+      sort: "board" as const,
+      activeStageKeys: ["awaiting_raw", "raw_review"] as const,
+      stageLabels: { awaiting_raw: "Awaiting RAW", raw_review: "RAW review" },
+    };
+
+    // Board sort: canonical Board order, unchanged.
+    expect(moveToPositionOptions(model, "mover", "raw_review", "admin", caps)).toEqual([
+      { label: "End of RAW review", successor: "end" },
+      { label: "Before Board First — position 1", successor: "board-first" },
+      { label: "Before Priority First — position 2", successor: "priority-first" },
+      { label: "Before Date First — position 3", successor: "date-first" },
+    ]);
+
+    // Priority sort: the column renders Priority First, Date First, Board First — so does the list.
+    expect(moveToPositionOptions(model, "mover", "raw_review", "admin", { ...caps, sort: "priority" })).toEqual([
+      { label: "End of RAW review", successor: "end" },
+      { label: "Before Priority First — position 1", successor: "priority-first" },
+      { label: "Before Date First — position 2", successor: "date-first" },
+      { label: "Before Board First — position 3", successor: "board-first" },
+    ]);
+
+    // Still fails closed with no authorized map: a sort cannot conjure positions the map withheld.
+    const keyless = board([mover, boardFirst, priorityFirst, dateFirst], { awaiting_raw: ["mover"] });
+    expect(moveToPositionOptions(keyless, "mover", "raw_review", "admin", { ...caps, sort: "priority" })).toEqual([
+      { label: "End of RAW review", successor: "end" },
+    ]);
+  });
+
   it("overlays only authorized arrays and the mover Stage, keeps revisions, and rolls back completely", () => {
     const baseline = movementBoard();
     const overlay = applyOptimisticOverlay(baseline, "source", { targetStageKey: "raw_review", successor: "middle" }, "admin");

@@ -65,7 +65,7 @@ describe("Dashboard Kanban sort control — Priority gate (render-gate absence h
 
   it("never offers 'Priority' in the real Select's option list to an unauthorized user", async () => {
     await act(async () => { root!.render(<Dashboard currentUserId="photographer-1" />); await Promise.resolve(); await Promise.resolve(); await vi.advanceTimersByTimeAsync(100); await Promise.resolve(); });
-    await vi.waitFor(() => expect(document.querySelector('[data-testid="kanban-card"]')).not.toBeNull());
+    await vi.waitFor(() => expect(document.querySelector('[data-testid="kanban2-card"]')).not.toBeNull());
     const trigger = document.querySelector<HTMLButtonElement>('[aria-label="Sort Kanban board"][role="combobox"]')!;
     expect(trigger).not.toBeNull();
     await act(async () => { trigger.click(); await Promise.resolve(); });

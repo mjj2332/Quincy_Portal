@@ -570,11 +570,24 @@ export function moveToPositionOptions(
 
   const order = authorizedModelOrders(model)?.[target] ?? [];
   const visibleById = projectById(model.projects);
-  const visibleSuccessors = order.filter((projectId) => {
+  const authorizedSuccessors = order.filter((projectId) => {
     if (projectId === movingProjectId) return false;
     const candidate = visibleById.get(projectId);
     return candidate !== undefined && projectStageKey(candidate) === target;
   });
+  // #83: under a non-board sort the column is DISPLAYED in sorted order, so the options have to be
+  // listed in that same order — otherwise "Before X — position 1" names the card the user sees
+  // third. The old Board listed the visual successor (its own test: "uses the visual successor when
+  // Priority sorting changes the canonical Board order"), and the cutover must not lose that.
+  //
+  // Only the ORDER of the list changes. The successor ids are untouched, so placement stays
+  // semantic and `resolveSemanticGap` still resolves each one against the authorized map. Sorting a
+  // set already filtered to authorized ids also keeps the fail-closed property: with no authorized
+  // map there are no positions to offer, whatever the sort.
+  const authorized = new Set(authorizedSuccessors);
+  const visibleSuccessors = caps.sort !== undefined && caps.sort !== "board"
+    ? sortKanbanProjects(model.projects.filter((project) => authorized.has(project.id)), caps.sort).map((project) => project.id)
+    : authorizedSuccessors;
   const label = caps.stageLabels?.[target] ?? caps.stageLabel ?? fallbackStageLabel(target);
   return [
     { label: `End of ${label}`, successor: "end" },

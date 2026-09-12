@@ -61,6 +61,13 @@ describe("App Dashboard route transport", () => {
     expect(host.querySelector("[data-calendar-route]")).toBeNull();
   });
 
+  it("does not mount Dashboard for the retired kanban2 view (#83)", async () => {
+    const host = await renderAt("/?view=kanban2");
+    expect(`${window.location.pathname}${window.location.search}`).toBe("/?view=kanban2");
+    expect(host.textContent).toContain("That page is not available.");
+    expect(host.querySelector("[data-calendar-route]")).toBeNull();
+  });
+
   it("does not navigate away from a plain Calendar route", async () => {
     const plain = "/?view=calendar&date=2026-08-30&sub=agenda&layers=project%2Cchecklist";
     await renderAt(plain);
@@ -75,6 +82,14 @@ describe("App Dashboard route transport", () => {
       expect(`${window.location.pathname}${window.location.search}`).toBe(facet);
     }
     expect(host.textContent).toContain("Dashboard");
+  });
+
+  it("does not mount Dashboard for a retired kanban2 view arriving via Back/Forward (#83)", async () => {
+    const host = await renderAt("/");
+    expect(`${window.location.pathname}${window.location.search}`).toBe("/");
+    await act(async () => { window.history.replaceState(null, "", "/?view=kanban2"); window.dispatchEvent(new PopStateEvent("popstate")); await Promise.resolve(); await Promise.resolve(); });
+    expect(`${window.location.pathname}${window.location.search}`).toBe("/?view=kanban2");
+    expect(host.textContent).toContain("That page is not available.");
   });
 
   it("renders the Dashboard for a valid Calendar root location", async () => {
