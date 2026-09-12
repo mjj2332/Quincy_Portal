@@ -32,6 +32,35 @@ function ruleBody(css: string, selector: string): string | null {
   return null;
 }
 
+/**
+ * The shell module's source.
+ *
+ * Reported by Luna: this file first read only `app.css`, so renaming the conditional class in the
+ * shell from `app--railed` to `app--rail` left the CSS rule valid, this guard green, and the real
+ * shell stacked as a column with the rail above the content. A rule nothing applies is not a
+ * layout. Asserted over the SOURCE rather than in a DOM test because
+ * `testing/test-seam.guard.test.ts` guards A and C forbid selecting on or asserting a Quincy class
+ * name from a DOM test — correctly, since a class name is not behaviour.
+ */
+const appRouter = readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)), "..", "lib", "app-router.tsx"),
+  "utf8",
+);
+
+describe("the shell applies the rule", () => {
+  it("names the same class the CSS defines", () => {
+    expect(appRouter).toContain("app--railed");
+  });
+
+  it("applies it conditionally on the rail flag, in one expression", () => {
+    // Pins the pairing, not just the presence: the class must sit in the same className expression
+    // as the flag that gates the rail, so it cannot be left applied unconditionally or dropped.
+    const className = appRouter.match(/className=\{cn\((?:[^{}]|\{[^{}]*\})*\)\}/)?.[0] ?? "";
+    expect(className, "the shell's root className expression").toContain("app--railed");
+    expect(className).toContain("railed &&");
+  });
+});
+
 describe("the railed shell layout", () => {
   it("keeps the default shell a column", () => {
     expect(ruleBody(appCss, ".app")).toContain("flex-direction: column");

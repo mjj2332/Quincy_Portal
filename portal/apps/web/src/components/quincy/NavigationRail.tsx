@@ -153,7 +153,12 @@ export function NavigationRail({ navigation, user }: NavigationRailProps) {
         </InternalLink>
       </SidebarHeader>
 
+      {/* A real `nav` landmark, named. The Topbar this replaces has
+          `<nav aria-label="Primary navigation">` (Topbar.tsx:194), and the vendor `SidebarContent`
+          is only a `div` — so rendering the rail without this would silently remove primary
+          navigation from a screen reader's landmark list. Reported independently by both reviewers. */}
       <SidebarContent>
+        <nav aria-label="Primary navigation" className="contents">
         {navigation.groups.map((group) => (
           <SidebarGroup key={group.id} data-testid="navigation-rail-group">
             {/* The model's group label is the accessible name for the region, and the design shows
@@ -173,6 +178,7 @@ export function NavigationRail({ navigation, user }: NavigationRailProps) {
             </SidebarGroupContent>
           </SidebarGroup>
         ))}
+        </nav>
       </SidebarContent>
 
       <SidebarFooter className="gap-[var(--space-3)] p-[var(--space-4)]">
@@ -216,6 +222,12 @@ export function NavigationRail({ navigation, user }: NavigationRailProps) {
  */
 function RailItem({ item, expanded }: { item: StaffNavigationItem; expanded: boolean }) {
   const children = item.children ?? [];
+  // `aria-current="page"` belongs to exactly ONE element: the current page itself. When this item's
+  // children are showing, the active CHILD is the destination and this item is merely its ancestor,
+  // so the parent must not also claim it — caught by the DOM test, which found both the Dashboard
+  // parent and its active Kanban child carrying it. When nothing is expanded beneath it (Admin,
+  // or a collapsed group), this item IS the leaf and carries it.
+  const showsChildren = expanded && children.length > 0;
 
   return (
     <SidebarMenuItem data-testid="navigation-rail-item">
@@ -223,6 +235,10 @@ function RailItem({ item, expanded }: { item: StaffNavigationItem; expanded: boo
         isActive={item.active}
         className={RAIL_ITEM}
         render={<InternalLink to={item.href} />}
+        // `data-active` is a STYLING hook, not an accessibility state — nothing announces it. The
+        // active destination needs `aria-current` as well, or a screen-reader user is never told
+        // which one they are on.
+        aria-current={item.active && !showsChildren ? "page" : undefined}
         data-testid="navigation-rail-link"
       >
         <NavigationIcon icon={item.icon} />
@@ -236,6 +252,7 @@ function RailItem({ item, expanded }: { item: StaffNavigationItem; expanded: boo
                 isActive={child.active}
                 className={RAIL_ITEM}
                 render={<InternalLink to={child.href} />}
+                aria-current={child.active ? "page" : undefined}
                 data-testid="navigation-rail-child-link"
               >
                 <NavigationIcon icon={child.icon} />

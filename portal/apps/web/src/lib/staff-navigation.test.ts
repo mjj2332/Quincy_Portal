@@ -166,3 +166,44 @@ describe("the staff navigation model", () => {
     });
   });
 });
+
+describe("an explicit Calendar location without the capability", () => {
+  // Reported by Luna. The shell replaces such a location with "/", so this is a transient frame
+  // rather than a way into the Calendar — but a nav tree with NOTHING marked active is still the
+  // wrong thing to paint while the redirect is pending, and it is what the model used to return.
+  const WITHOUT_CALENDAR = { adminBackend: true, viewProductionCalendar: false };
+
+  it("marks a real child active instead of nothing, for the bare intent", () => {
+    const navigation = buildStaffNavigation(
+      { kind: "dashboard", dashboardView: "calendar" },
+      "kanban",
+      WITHOUT_CALENDAR,
+    );
+    const children = navigation.groups[0]!.items[0]!.children ?? [];
+    expect(children.map((child) => child.label)).toEqual(["List", "Kanban"]);
+    expect(children.filter((child) => child.active).map((child) => child.label)).toEqual(["Kanban"]);
+  });
+
+  it("marks a real child active instead of nothing, for the full facet", () => {
+    const navigation = buildStaffNavigation(
+      {
+        kind: "dashboard",
+        calendar: { date: "2026-08-30", subview: "week", layers: ["project"], search: "", mine: false },
+      } as Parameters<typeof buildStaffNavigation>[0],
+      "list",
+      WITHOUT_CALENDAR,
+    );
+    const children = navigation.groups[0]!.items[0]!.children ?? [];
+    expect(children.filter((child) => child.active).map((child) => child.label)).toEqual(["List"]);
+  });
+
+  it("still honours an explicit Calendar location WITH the capability", () => {
+    const navigation = buildStaffNavigation(
+      { kind: "dashboard", dashboardView: "calendar" },
+      "list",
+      { adminBackend: true, viewProductionCalendar: true },
+    );
+    const children = navigation.groups[0]!.items[0]!.children ?? [];
+    expect(children.filter((child) => child.active).map((child) => child.label)).toEqual(["Calendar"]);
+  });
+});

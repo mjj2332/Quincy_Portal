@@ -138,6 +138,46 @@ describe("NavigationRail", () => {
     }
   });
 
+  it("exposes a named navigation landmark", async () => {
+    // Reported independently by both reviewers. The Topbar this replaces has
+    // `<nav aria-label="Primary navigation">`; the vendor `SidebarContent` is only a `div`, so
+    // without an explicit landmark the rail drops primary navigation out of the landmark list.
+    await render(<NavigationRail navigation={navigationFor("/")} user={USER} />);
+    const landmarks = [...host.querySelectorAll("nav")];
+    expect(landmarks).toHaveLength(1);
+    expect(landmarks[0]?.getAttribute("aria-label")).toBe("Primary navigation");
+    // Every destination must be inside it.
+    for (const link of testids("navigation-rail-link")) {
+      expect(landmarks[0]?.contains(link)).toBe(true);
+    }
+  });
+
+  it("marks the active destination with aria-current, not only data-active", async () => {
+    // `data-active` is a styling hook and announces nothing. Without `aria-current` a screen-reader
+    // user is never told which destination is the current one.
+    await render(<NavigationRail navigation={navigationFor("/?view=kanban")} user={USER} />);
+
+    const current = [
+      ...host.querySelectorAll('[aria-current="page"]'),
+    ].map((element) => element.textContent?.trim());
+    expect(current).toEqual(["Kanban"]);
+
+    // And it is not left on everything.
+    const all = [...testids("navigation-rail-link"), ...testids("navigation-rail-child-link")];
+    expect(all.filter((element) => element.hasAttribute("aria-current"))).toHaveLength(1);
+  });
+
+  it("gives a parent aria-current only when it is itself the destination", async () => {
+    // The parent Dashboard item is active on every Dashboard route, but while its children show,
+    // the active CHILD is the current page and the parent is only its ancestor. Two elements
+    // claiming `aria-current="page"` is a defect, and it is what the first implementation did.
+    await render(<NavigationRail navigation={navigationFor("/admin")} user={USER} />);
+    const current = [
+      ...host.querySelectorAll('[aria-current="page"]'),
+    ].map((element) => element.textContent?.trim());
+    expect(current).toEqual(["Admin"]);
+  });
+
   it("renders the wordmark, the identity and Sign out", async () => {
     await render(<NavigationRail navigation={navigationFor("/")} user={USER} />);
     expect(testids("navigation-rail-brand")[0]?.getAttribute("href")).toBe("/");

@@ -102,9 +102,19 @@ function sectionFor(route: StaffRoute): StaffNavigationSectionId {
  */
 function resolvedDashboardView(route: StaffRoute, remembered: DashboardView, capabilities: StaffNavigationCapabilities): DashboardView | null {
   if (route.kind !== "dashboard") return null;
-  if ("calendar" in route) return "calendar";
-  if ("dashboardView" in route) return route.dashboardView;
-  return remembered === "calendar" && !capabilities.viewProductionCalendar ? "kanban" : remembered;
+  // An EXPLICIT Calendar location also gets coerced, not just a remembered preference. Reported by
+  // Luna: without this, a role that cannot view the Calendar arriving at a Calendar URL resolved to
+  // "calendar", which the child filter then omits — so the rail rendered with NO active child at
+  // all for the frame before the shell's redirect effect ran. The shell does replace the location
+  // with "/", so this is transient rather than a way in; a nav tree with nothing marked active is
+  // still the wrong thing to paint while it happens.
+  const wanted = "calendar" in route ? "calendar" : "dashboardView" in route ? route.dashboardView : remembered;
+  if (wanted !== "calendar" || capabilities.viewProductionCalendar) return wanted;
+  // Coerced. The fallback is the REMEMBERED view when that is itself viewable, not a hardcoded
+  // Kanban — a Staff member who works in List should land on List, not be moved to a third view
+  // they did not choose. Only a remembered Calendar (which this role also cannot see) falls
+  // through to Kanban.
+  return remembered === "calendar" ? "kanban" : remembered;
 }
 
 const DASHBOARD_CHILDREN: readonly { view: DashboardView; id: string; label: string; icon: StaffNavigationIcon }[] = [

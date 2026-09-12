@@ -36,3 +36,7 @@ qa-evidence/
 # license key; the licence forbids sharing outside the organisation. Reference only,
 # never production code — see issue #48.
 tmp/
+
+# Agent scratch space — planning briefs, subagent specs and reports. Working notes for a slice,
+# never part of the software project. The durable conclusions belong in docs/ or a commit message.
+scratchpad/

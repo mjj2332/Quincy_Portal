@@ -48,7 +48,32 @@ import { dirname, join } from "node:path";
 
 const stylesDir = dirname(fileURLToPath(import.meta.url));
 const reuiCssPath = join(stylesDir, "tokens", "reui.css");
+/**
+ * Every TSX file that may consume a `--sidebar*` role.
+ *
+ * Reported by Luna: this guard first read ONLY the primitive, and `components/quincy/NavigationRail.tsx`
+ * is itself a consumer — its Sign out control wears `hover:bg-sidebar-accent`. So changing that to
+ * `hover:bg-sidebar-primary`, an unbridged role, left the guard green and the hover a silent no-op.
+ * The scan is therefore over the whole `src/components` tree, so any future consumer is covered
+ * without this list being maintained.
+ */
 const primitivePath = join(stylesDir, "..", "components", "reui", "sidebar.tsx");
+
+function componentSources(): string[] {
+  const componentsDir = join(stylesDir, "..", "components");
+  const out: string[] = [];
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (/\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name)) {
+        out.push(readFileSync(full, "utf8"));
+      }
+    }
+  };
+  walk(componentsDir);
+  return out;
+}
 
 // ---------------------------------------------------------------------------
 // Detectors — pure functions over text
@@ -69,20 +94,34 @@ const primitivePath = join(stylesDir, "..", "components", "reui", "sidebar.tsx")
 const UTILITY_PREFIXES = [
   "bg",
   "text",
-  "border",
-  "ring",
   "fill",
   "stroke",
-  "outline",
-  "divide",
-  "shadow",
-  "from",
-  "via",
-  "to",
   "caret",
   "accent",
   "decoration",
   "placeholder",
+  "shadow",
+  "from",
+  "via",
+  "to",
+  // Colour utilities with a DIRECTIONAL or OFFSET suffix. Reported by Sol: the list first held only
+  // the bare `border`, `ring`, `outline` and `divide` roots, so a perfectly valid consumer like
+  // `border-e-sidebar-border` or `ring-offset-sidebar-accent` matched nothing and the guard stayed
+  // green with the role unbridged. Tailwind's logical (`s`/`e`) and physical (`t`/`r`/`b`/`l`,
+  // plus the `x`/`y` axes) forms are all spellable, so all of them are listed.
+  "border",
+  "border-s",
+  "border-e",
+  "border-t",
+  "border-r",
+  "border-b",
+  "border-l",
+  "border-x",
+  "border-y",
+  "ring",
+  "ring-offset",
+  "outline",
+  "divide",
 ];
 
 /**
@@ -117,10 +156,51 @@ export function sidebarRolesConsumedBy(source: string): Set<string> {
   return roles;
 }
 
-/** Every `--sidebar*` custom property declared at the top level of a CSS source, and its value. */
+/**
+ * Strip CSS comments.
+ *
+ * Reported by Sol, and the same defect as `stripComments` above in the other direction: the
+ * extractors below read raw text, so COMMENTING OUT a role or an alias left every assertion green
+ * while the live chain was broken. The TSX side had been fixed and the CSS side had not.
+ */
+export function stripCssComments(css: string): string {
+  return css.replace(/\/\*[\s\S]*?\*\//g, " ");
+}
+
+/**
+ * The `:root` blocks of a CSS source, concatenated.
+ *
+ * Reported by Sol: the extractor used to accept a `--sidebar*` declaration ANYWHERE in the file, so
+ * moving one into a selector that never matches (`.never-matches { --sidebar: … }`) kept the guard
+ * green while the rail inherited nothing and the generated utility resolved to an invalid value.
+ * A sidebar role is only load-bearing if it is declared where the whole document inherits it.
+ *
+ * Brace-counted, because these blocks contain nested at-rules in this codebase.
+ */
+export function rootBlocksIn(css: string): string {
+  // Scrub FIRST and then work entirely in the scrubbed string. Slicing the original with offsets
+  // taken from the stripped text reads the wrong bytes — comments change the length.
+  const scrubbed = stripCssComments(css);
+  const blocks: string[] = [];
+  for (const opener of scrubbed.matchAll(/(^|[\s},])(:root)\s*\{/g)) {
+    let depth = 1;
+    let index = (opener.index ?? 0) + opener[0].length;
+    const start = index;
+    while (index < scrubbed.length && depth > 0) {
+      const char = scrubbed[index];
+      if (char === "{") depth += 1;
+      else if (char === "}") depth -= 1;
+      index += 1;
+    }
+    blocks.push(scrubbed.slice(start, index - 1));
+  }
+  return blocks.join("\n");
+}
+
+/** Every `--sidebar*` custom property declared in a CSS source, and its value. */
 export function sidebarRolesDeclaredIn(css: string): Map<string, string> {
   const out = new Map<string, string>();
-  for (const match of css.matchAll(/(--sidebar(?:-[a-z]+)*)\s*:\s*([^;]+);/g)) {
+  for (const match of stripCssComments(css).matchAll(/(--sidebar(?:-[a-z]+)*)\s*:\s*([^;]+);/g)) {
     if (match[1] && match[2]) out.set(match[1], match[2].trim());
   }
   return out;
@@ -129,7 +209,7 @@ export function sidebarRolesDeclaredIn(css: string): Map<string, string> {
 /** Every `--color-sidebar*` alias declared inside an `@theme inline` block. */
 export function themeSidebarAliasesIn(css: string): Map<string, string> {
   const out = new Map<string, string>();
-  for (const block of css.matchAll(/@theme\s+inline\s*\{([\s\S]*?)\n\}/g)) {
+  for (const block of stripCssComments(css).matchAll(/@theme\s+inline\s*\{([\s\S]*?)\n\}/g)) {
     const body = block[1];
     if (!body) continue;
     for (const match of body.matchAll(/(--color-sidebar(?:-[a-z]+)*)\s*:\s*([^;]+);/g)) {
@@ -153,18 +233,19 @@ export function themeSidebarAliasesIn(css: string): Map<string, string> {
 export function sidebarRolesInSurfaceScopes(css: string): { selector: string; role: string }[] {
   const found: { selector: string; role: string }[] = [];
 
-  for (const opener of css.matchAll(/([^{};]*\[data-surface=[^\]]*\][^{};]*)\{/g)) {
+  const scrubbed = stripCssComments(css);
+  for (const opener of scrubbed.matchAll(/([^{};]*\[data-surface=[^\]]*\][^{};]*)\{/g)) {
     const selector = (opener[1] ?? "").trim().replace(/\s+/g, " ");
     let depth = 1;
     let index = (opener.index ?? 0) + opener[0].length;
     const start = index;
-    while (index < css.length && depth > 0) {
-      const char = css[index];
+    while (index < scrubbed.length && depth > 0) {
+      const char = scrubbed[index];
       if (char === "{") depth += 1;
       else if (char === "}") depth -= 1;
       index += 1;
     }
-    const body = css.slice(start, index - 1);
+    const body = scrubbed.slice(start, index - 1);
     for (const role of sidebarRolesDeclaredIn(body).keys()) found.push({ selector, role });
   }
 
@@ -206,7 +287,7 @@ export function resolutionFailure(
 export function allDeclarations(sources: string[]): Map<string, string> {
   const out = new Map<string, string>();
   for (const css of sources) {
-    for (const match of css.matchAll(/(--[A-Za-z0-9-]+)\s*:\s*([^;]+);/g)) {
+    for (const match of stripCssComments(css).matchAll(/(--[A-Za-z0-9-]+)\s*:\s*([^;]+);/g)) {
       if (match[1] && match[2]) out.set(match[1], match[2].trim());
     }
   }
@@ -233,15 +314,29 @@ const cssSources = () => {
 describe("guard: the sidebar token bridge", () => {
   const primitive = readFileSync(primitivePath, "utf8");
   const reuiCss = readFileSync(reuiCssPath, "utf8");
-  const consumed = sidebarRolesConsumedBy(primitive);
-  const declared = sidebarRolesDeclaredIn(reuiCss);
+  // Union across every component, not just the primitive — see `componentSources`.
+  const consumed = new Set<string>(
+    componentSources().flatMap((source) => [...sidebarRolesConsumedBy(source)]),
+  );
+  // `:root` only, not the whole file — see `rootBlocksIn`.
+  const declared = sidebarRolesDeclaredIn(rootBlocksIn(reuiCss));
   const aliases = themeSidebarAliasesIn(reuiCss);
+
+  it("scans the rail as well as the primitive", () => {
+    // The specific hole Luna found. If the scan ever narrows back to one file, this goes red.
+    const railOnly = sidebarRolesConsumedBy(
+      readFileSync(join(stylesDir, "..", "components", "quincy", "NavigationRail.tsx"), "utf8"),
+    );
+    expect(railOnly.size).toBeGreaterThan(0);
+    for (const role of railOnly) expect([...consumed]).toContain(role);
+  });
 
   it("finds the roles the primitive consumes", () => {
     // Not an assertion about the count — an assertion that the extractor is not returning nothing,
     // which would make every check below pass vacuously.
     expect(consumed.size).toBeGreaterThan(0);
     expect([...consumed]).toContain("--sidebar");
+    expect([...sidebarRolesConsumedBy(primitive)]).toContain("--sidebar");
   });
 
   it("declares every role the primitive consumes", () => {
@@ -409,6 +504,56 @@ describe("guard self-test: the detectors catch a planted violation", () => {
       allDeclarations([`:root { --sidebar: var(--a); --a: var(--sidebar); }`]),
     );
     expect(failure?.reason).toBe("cycle");
+  });
+
+  it("ignores a role declared outside :root (Sol finding 3)", () => {
+    const css = `
+      :root { --sidebar: var(--bg-surface); }
+      .never-matches { --sidebar-border: var(--greige-500); }
+    `;
+    expect([...sidebarRolesDeclaredIn(rootBlocksIn(css)).keys()]).toEqual(["--sidebar"]);
+    // …and the whole-file reading is what used to let it pass.
+    expect([...sidebarRolesDeclaredIn(css).keys()].sort()).toEqual([
+      "--sidebar",
+      "--sidebar-border",
+    ]);
+  });
+
+  it("keeps a :root block that contains a nested at-rule", () => {
+    const css = `:root { --sidebar: var(--bg-surface); @media print { --x: 1; } --sidebar-border: red; }`;
+    expect([...sidebarRolesDeclaredIn(rootBlocksIn(css)).keys()].sort()).toEqual([
+      "--sidebar",
+      "--sidebar-border",
+    ]);
+  });
+
+  it("treats a commented-out role as absent (Sol finding 4)", () => {
+    const css = `:root { --sidebar: var(--bg-surface); /* --sidebar-border: var(--border-hairline); */ }`;
+    expect([...sidebarRolesDeclaredIn(rootBlocksIn(css)).keys()]).toEqual(["--sidebar"]);
+  });
+
+  it("treats a commented-out @theme alias as absent (Sol finding 4)", () => {
+    const css = `@theme inline {\n  --color-sidebar: var(--sidebar);\n  /* --color-sidebar-border: var(--sidebar-border); */\n}`;
+    expect([...themeSidebarAliasesIn(css).keys()]).toEqual(["--color-sidebar"]);
+  });
+
+  it("treats a commented-out declaration as an undefined hop", () => {
+    const failure = resolutionFailure(
+      "--sidebar",
+      allDeclarations([`:root { --sidebar: var(--a); /* --a: red; */ }`]),
+    );
+    expect(failure).toEqual({ role: "--sidebar", reason: "undefined", token: "--a" });
+  });
+
+  it("extracts a directional or offset colour utility (Sol finding 5)", () => {
+    const roles = sidebarRolesConsumedBy(
+      `className="border-e-sidebar-border ring-offset-sidebar-accent border-y-sidebar-foreground"`,
+    );
+    expect([...roles].sort()).toEqual([
+      "--sidebar-accent",
+      "--sidebar-border",
+      "--sidebar-foreground",
+    ]);
   });
 
   it("reports a sidebar role declared inside an inverse block", () => {
