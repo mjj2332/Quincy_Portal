@@ -32,6 +32,15 @@ button { font-family: var(--font-sans); }
    App shell + top bar
    --------------------------------------------------------------------- */
 .app { min-height: 100vh; display: flex; flex-direction: column; }
+/* #111, the navigation rail. This has to be a real rule rather than a `flex-row` utility on the
+   element: `.app` above is UNLAYERED, and an unlayered declaration beats anything in Tailwind's
+   `@layer utilities` regardless of specificity — the utility would be a silent no-op, the same
+   trap `tokens/reui.css` records for --radius and the type scale. The class is `app--railed`, not
+   `app--rail`: `.rail` is already taken by ProjectOverviewRail (see `.app--impersonating .rail`
+   just below). `min-width: 0` on the content column stops a wide table inside a page from pushing
+   the rail off its 250px. */
+.app--railed { flex-direction: row; align-items: stretch; }
+.app--railed > :not(.app__rail) { min-width: 0; flex: 1; }
 .app--impersonating { padding-top: 42px; }
 .app--impersonating .topbar { top: 42px; }
 .app--impersonating .rail { top: 106px; max-height: calc(100vh - 106px); }

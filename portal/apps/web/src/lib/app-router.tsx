@@ -44,7 +44,10 @@ import { useCapabilities } from "./capabilities";
 import { buildStaffNavigation } from "./staff-navigation";
 import { DASHBOARD_VIEW_KEY, readRememberedDashboardView } from "../screens/dashboard-helpers";
 import { consumeSignInDestination } from "./auth";
+import { cn } from "./utils";
+import { NAVIGATION_RAIL_FLAG, navigationRailEnabled } from "./feature-flags";
 import { Topbar } from "../components/Topbar";
+import { NavigationRail } from "../components/quincy/NavigationRail";
 import { InternalLink } from "../components/InternalLink";
 import { Dashboard } from "../screens/Dashboard";
 import { ProjectWorkspace } from "../screens/ProjectWorkspace";
@@ -189,9 +192,24 @@ function ShellRoute() {
     dashboardCalendar, collaborationIntent, acknowledgeCollaborationSignal,
   };
 
+  // #111. The ONE read of the flag in the app — `navigationRailEnabled` is a pure function over an
+  // injected env precisely so this is the only place `import.meta.env` is touched for it, and so
+  // the node suite can test the predicate without Vite's env. Flagged off, the Topbar renders
+  // exactly as before: this expression is the whole difference.
+  // The key is written OUT, not looked up with a variable: Vite statically replaces
+  // `import.meta.env.VITE_*` only when it sees the literal member access, so indexing the whole env
+  // object instead would inline every VITE_ value into the bundle and defeat dead-code elimination
+  // for whichever chrome is switched off. `vi.stubEnv` still reaches this form under Vitest, which
+  // is how `App-navigation-rail.dom.test.tsx` drives it.
+  const railed = navigationRailEnabled({
+    [NAVIGATION_RAIL_FLAG]: import.meta.env.VITE_QUINCY_NAV_RAIL,
+  });
+
   return (
-    <div className={impersonating ? "app app--impersonating" : "app"}>
-      <Topbar activeView={activeView} canAccessAdmin={canAccessAdmin} user={user} />
+    <div className={cn("app", impersonating && "app--impersonating", railed && "app--railed")}>
+      {railed
+        ? <NavigationRail navigation={navigation} user={user} />
+        : <Topbar activeView={activeView} canAccessAdmin={canAccessAdmin} user={user} />}
       {blocked
         ? <main className="page"><div className="empty" role="status"><span className="serif">Returning to dashboard.</span></div></main>
         : <ShellStateContext value={shell}><Outlet /></ShellStateContext>}

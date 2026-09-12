@@ -1,0 +1,216 @@
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import type { ReactNode } from "react";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { buildStaffNavigation, type StaffNavigation } from "../../lib/staff-navigation";
+import { NAVIGATION_RAIL_FLAG } from "../../lib/feature-flags";
+import { parseStaffLocation } from "../../lib/router";
+import { NavigationRail } from "./NavigationRail";
+
+/**
+ * The rail's rendering — #111.
+ *
+ * These tests drive the component with the output of the REAL model (`buildStaffNavigation`) rather
+ * than a hand-written navigation literal, so a change to the model that breaks the rail fails here
+ * rather than passing against a fixture that has drifted. The model's own decisions — which item is
+ * active, which group is open, whether Calendar exists — are covered by
+ * `lib/staff-navigation.test.ts` in the node suite and are not re-asserted here.
+ *
+ * Test hooks are Quincy-authored `data-testid`s. Deliberately NOT the primitive's `data-slot`
+ * values: `testing/test-seam.guard.test.ts`'s guard F (#92) makes selecting on a vendor-authored
+ * `data-slot` a build failure, and every slot in `reui/sidebar.tsx` is vendor-authored.
+ */
+
+let root: Root | null = null;
+let host: HTMLElement;
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+async function render(value: ReactNode) {
+  await act(async () => { root!.render(value); await Promise.resolve(); });
+}
+
+beforeEach(() => {
+  host = document.createElement("div");
+  document.body.appendChild(host);
+  root = createRoot(host);
+});
+
+afterEach(async () => {
+  if (root) await act(async () => { root!.unmount(); await Promise.resolve(); });
+  root = null;
+  host.remove();
+});
+
+const USER = { name: "Terry Lee", email: "terry@example.test" };
+const FULL_CAPABILITIES = { adminBackend: true, viewProductionCalendar: true };
+
+function navigationFor(location: string, remembered: "list" | "kanban" | "calendar" = "kanban") {
+  return buildStaffNavigation(parseStaffLocation(location), remembered, FULL_CAPABILITIES);
+}
+
+const testids = (name: string) =>
+  [...host.querySelectorAll(`[data-testid="${name}"]`)] as HTMLElement[];
+
+const linkTexts = (name: string) => testids(name).map((element) => element.textContent?.trim());
+
+describe("NavigationRail", () => {
+  it("renders the model's items and children in the model's order, as real anchors", async () => {
+    await render(<NavigationRail navigation={navigationFor("/")} user={USER} />);
+
+    expect(linkTexts("navigation-rail-link")).toEqual(["Dashboard", "Admin"]);
+    expect(linkTexts("navigation-rail-child-link")).toEqual(["List", "Kanban", "Calendar"]);
+
+    // Every destination is an anchor with a real href — the rail cannot navigate through
+    // `useNavigate`, which the read-only history makes a no-op.
+    for (const link of [...testids("navigation-rail-link"), ...testids("navigation-rail-child-link")]) {
+      expect(link.tagName).toBe("A");
+      expect(link.getAttribute("href")).toBeTruthy();
+    }
+  });
+
+  it("takes every href from the model rather than composing its own", async () => {
+    const navigation = navigationFor("/");
+    await render(<NavigationRail navigation={navigation} user={USER} />);
+
+    // One query for both hooks, so the result is in DOCUMENT order — a child sits inside its
+    // parent's item, so concatenating the two hooks separately would compare the wrong sequence.
+    const rendered = [
+      ...host.querySelectorAll(
+        '[data-testid="navigation-rail-link"], [data-testid="navigation-rail-child-link"]',
+      ),
+    ].map((element) => element.getAttribute("href"));
+    const modelled = navigation.groups
+      .flatMap((group) => group.items)
+      .flatMap((item) => [item.href, ...(item.children ?? []).map((child) => child.href)]);
+
+    expect(rendered).toEqual(modelled);
+  });
+
+  it("links Calendar at the bare intent URL", async () => {
+    await render(<NavigationRail navigation={navigationFor("/")} user={USER} />);
+    const calendar = testids("navigation-rail-child-link").find(
+      (element) => element.textContent?.trim() === "Calendar",
+    );
+    expect(calendar?.getAttribute("href")).toBe("/?view=calendar");
+  });
+
+  it("marks the active item with data-active=\"true\", the exact value the paint selects on", async () => {
+    // Not incidental: the primitive's paint is `data-[active=true]:…`, and Base UI's default state
+    // mapping would render a boolean as a valueless `data-active=""` that those variants do not
+    // match. `reui/sidebar.tsx` writes the attribute explicitly for this reason, and this is the
+    // assertion that would catch someone moving it back into `state`.
+    await render(<NavigationRail navigation={navigationFor("/?view=list")} user={USER} />);
+
+    const active = testids("navigation-rail-child-link").filter(
+      (element) => element.getAttribute("data-active") === "true",
+    );
+    expect(active.map((element) => element.textContent?.trim())).toEqual(["List"]);
+
+    const kanban = testids("navigation-rail-child-link").find(
+      (element) => element.textContent?.trim() === "Kanban",
+    );
+    expect(kanban?.getAttribute("data-active")).toBe("false");
+  });
+
+  it("carries the leading rule on every item, so activating one shifts no text", async () => {
+    await render(<NavigationRail navigation={navigationFor("/?view=list")} user={USER} />);
+    for (const link of testids("navigation-rail-child-link")) {
+      expect(link.className).toContain("[border-inline-start:var(--border-width-bold)_solid_transparent]");
+    }
+    // Logical, not physical: the rule follows the writing direction.
+    expect(host.innerHTML).not.toContain("border-left-color");
+  });
+
+  it("renders no children when the model closes the group", async () => {
+    const navigation = navigationFor("/admin");
+    expect(navigation.expandedItemId).toBeNull();
+    await render(<NavigationRail navigation={navigation} user={USER} />);
+    expect(testids("navigation-rail-child-link")).toEqual([]);
+  });
+
+  it("gives every item an icon", async () => {
+    await render(<NavigationRail navigation={navigationFor("/")} user={USER} />);
+    for (const link of [...testids("navigation-rail-link"), ...testids("navigation-rail-child-link")]) {
+      const icon = link.querySelector("svg");
+      expect(icon).not.toBeNull();
+      // The label is the accessible name; an announced icon would double it.
+      expect(icon?.getAttribute("aria-hidden")).toBe("true");
+    }
+  });
+
+  it("renders the wordmark, the identity and Sign out", async () => {
+    await render(<NavigationRail navigation={navigationFor("/")} user={USER} />);
+    expect(testids("navigation-rail-brand")[0]?.getAttribute("href")).toBe("/");
+    expect(testids("navigation-rail-identity")[0]?.textContent).toContain("Terry Lee");
+    expect(testids("navigation-rail-signout")[0]?.textContent?.trim()).toBe("Sign out");
+  });
+
+  it("names the flag nowhere in its output", async () => {
+    // #80's flag leaked `kanban2` into a user-visible aria-label (docs/lessons.md:1689). The shell
+    // decides whether to mount the rail; the rail itself must not know the flag exists.
+    await render(<NavigationRail navigation={navigationFor("/")} user={USER} />);
+    expect(host.innerHTML).not.toContain(NAVIGATION_RAIL_FLAG);
+    expect(host.innerHTML.toLowerCase()).not.toContain("nav_rail");
+    expect(host.innerHTML.toLowerCase()).not.toContain("nav-rail");
+  });
+
+  // -------------------------------------------------------------------------
+  // AC4 — a fourth Dashboard child costs nothing here
+  // -------------------------------------------------------------------------
+
+  it("renders a fourth Dashboard child with no change to this component", async () => {
+    // The point of the model holding children as a LIST. This appends a synthetic "Timeline" to the
+    // REAL model's output — not to a fixture — and asserts the rail renders four children in order
+    // with its own source untouched. If the rail ever hard-codes List/Kanban/Calendar, this fails.
+    const real = navigationFor("/");
+    const group = real.groups[0]!;
+    const dashboard = group.items[0]!;
+
+    const widened: StaffNavigation = {
+      ...real,
+      groups: [
+        {
+          ...group,
+          items: [
+            {
+              ...dashboard,
+              children: [
+                ...(dashboard.children ?? []),
+                {
+                  id: "dashboard-timeline",
+                  label: "Timeline",
+                  href: "/?view=timeline",
+                  icon: "calendar",
+                  active: false,
+                },
+              ],
+            },
+            ...group.items.slice(1),
+          ],
+        },
+      ],
+    };
+
+    await render(<NavigationRail navigation={widened} user={USER} />);
+
+    expect(linkTexts("navigation-rail-child-link")).toEqual([
+      "List",
+      "Kanban",
+      "Calendar",
+      "Timeline",
+    ]);
+    expect(
+      testids("navigation-rail-child-link")[3]?.getAttribute("href"),
+    ).toBe("/?view=timeline");
+  });
+
+  it("omits Calendar entirely when the model omits it", async () => {
+    const navigation = buildStaffNavigation(parseStaffLocation("/"), "kanban", {
+      adminBackend: true,
+      viewProductionCalendar: false,
+    });
+    await render(<NavigationRail navigation={navigation} user={USER} />);
+    expect(linkTexts("navigation-rail-child-link")).toEqual(["List", "Kanban"]);
+    expect(host.textContent).not.toContain("Calendar");
+  });
+});
