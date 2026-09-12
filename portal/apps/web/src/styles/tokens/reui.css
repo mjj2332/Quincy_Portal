@@ -22,7 +22,14 @@
    none of inverse.css's 19 roles today. Keep the position; do not rely on it
    for correctness.
 
-   ## Three things deliberately NOT defined here
+   ## Two things deliberately NOT defined here
+
+   (This was three. The third was `--sidebar` and its siblings; #111 installed a sidebar, so
+   that entry has moved down the file into a real bridge. Its warning was right and is worth
+   keeping in view: the phantom-token guard scans authored CSS, so a `bg-sidebar` arriving as a
+   TSX class is invisible to it — which is exactly how `--focus` below was missed. The sidebar
+   roles therefore get a guard of their own that reads the TSX,
+   `styles/sidebar-token-bridge.guard.test.ts`.)
 
    1. --radius-sm / --radius-md / --radius-lg. tokens/spacing.css already sets
       these in an UNLAYERED :root (2/4/8/14px), which beats Tailwind's layered
@@ -34,16 +41,6 @@
       values by that same unlayered-:root mechanism. Copying nova's Inter stack
       would BREAK the brand, not bridge it.
 
-   3. --sidebar and its seven siblings. Quincy's shell is a Topbar; no sidebar
-      exists or is planned, and @reui/sidebar is their only consumer. Defining
-      eight dead tokens against a component we may never install contradicts
-      this codebase's dead-CSS doctrine.
-
-      Note what will NOT catch that omission: the phantom-token guard scans
-      authored CSS, so a `bg-sidebar` arriving as a TSX class is invisible to
-      it. This is not theoretical — it is exactly how --focus below was missed.
-      Whoever installs @reui/sidebar must read its variants and bridge the
-      roles by hand.
    ========================================================================== */
 :root {
   /* ---- Radius --------------------------------------------------------
@@ -147,6 +144,54 @@
   --chart-3: var(--greige-400);
   --chart-4: var(--greige-600);
   --chart-5: var(--ink-900);
+
+  /* ---- Sidebar roles (#111) ------------------------------------------
+     The navigation rail. Five roles, not the eight the vendor component set
+     defines and not the eight #111's own acceptance criteria asked for — the
+     count is DERIVED from what `components/reui/sidebar.tsx` actually consumes
+     after trimming, and `styles/sidebar-token-bridge.guard.test.ts` reads that
+     file to check both directions: every role the TSX consumes is bridged here,
+     and every role bridged here is consumed. So this list cannot drift into
+     dead CSS, and a new `bg-sidebar-*` utility cannot arrive unbridged.
+
+     The three the vendor set has and this does not:
+
+     - --sidebar-ring. The primitive's focus ring is removed, so nothing reads
+       it. tokens/base.css:25 declares an unlayered `:focus-visible { outline }`
+       that beats @layer utilities, so a `focus-visible:ring-2` would paint a
+       SECOND indicator beside the global outline rather than replacing it.
+       Third application of a correction already recorded in reui/badge.tsx
+       (correction 2) and reui/button.tsx (divergence 5).
+     - --sidebar-primary / --sidebar-primary-foreground. Read by NONE of the
+       vendor set's 24 exports, trimmed or not. Bridging them would create
+       exactly the dead tokens the header above refuses.
+
+     ## Why these read raw aliases and not the shadcn role layer
+
+     This is the one thing here that is load-bearing rather than obvious.
+     `--sidebar: var(--card)` would look tidier and be wrong: tokens/inverse.css
+     re-scopes the ROLE layer (--card, --foreground, --border …) and leaves the
+     semantic aliases (--bg-surface, --text-primary, --border-hairline) alone.
+     Reading the role layer would make the rail flip to ink inside any
+     [data-surface="inverse"] subtree, which is what AC6 of #111 forbids. Going
+     straight to the aliases makes the rail immune to that scope by
+     construction, and the guard asserts no sidebar role is declared under an
+     inverse block.
+
+     Paint, per the #109 canvas: card paper on the canvas paper with a hairline
+     divider — RAISED, not dark. A dark rail would put the whole shell inside
+     the inverse scope's known token gap (#57).
+
+     --sidebar-accent is the HOVER lift (--bg-raised), not the active paint. The
+     vendor variants reach for it on hover, :active and [data-active=true]
+     alike; the rail overrides the active case with sunken paper plus a leading
+     ink rule. A hovered item must not look like the active one — the same rule
+     the notification rows follow for read-vs-unread. */
+  --sidebar: var(--bg-surface);
+  --sidebar-foreground: var(--text-primary);
+  --sidebar-accent: var(--bg-raised);
+  --sidebar-accent-foreground: var(--text-primary);
+  --sidebar-border: var(--border-hairline);
 }
 
 /* nova ships dozens of `dark:` utilities. Tailwind v4's DEFAULT `dark` variant
@@ -175,6 +220,16 @@
   --color-chart-3: var(--chart-3);
   --color-chart-4: var(--chart-4);
   --color-chart-5: var(--chart-5);
+
+  /* Sidebar (#111). A --sidebar* role without a matching --color-sidebar* here
+     makes every `bg-sidebar`/`text-sidebar-*` utility a SILENT no-op: Tailwind
+     v4 generates the utility from the @theme entry, not from the :root
+     declaration. The guard checks this pairing too, in both directions. */
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
 }
 
 /* KNOWN GAP, recorded rather than fixed here (#57).
